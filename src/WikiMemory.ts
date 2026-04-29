@@ -76,10 +76,7 @@ function validateTask(task: any): ExtractedTask | null {
 
 function normalizeSourceRef(value: string): string | null {
   if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  if (trimmed.length === 0) return null;
-  if (/[\u0000-\u001F\u007F]/.test(trimmed)) return null;
-  const cleaned = trimmed.slice(0, 255).trimEnd();
+  const cleaned = value.replace(/[\/\\]/g, '').split('\0').join('').trim().slice(0, 255);
   return cleaned.length > 0 ? cleaned : null;
 }
 
