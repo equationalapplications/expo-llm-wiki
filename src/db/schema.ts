@@ -89,11 +89,11 @@ export async function setupDatabase(db: SQLite.SQLiteDatabase, prefix: string) {
   //   • remove '/'  • remove '\'  • remove NUL bytes
   await db.runAsync(`
     UPDATE ${prefix}entries
-    SET source_ref = TRIM(REPLACE(REPLACE(REPLACE(source_ref, '/', ''), '\', ''), CHAR(0), ''))
+    SET source_ref = TRIM(REPLACE(REPLACE(REPLACE(source_ref, '/', ''), '\\', ''), CHAR(0), ''))
     WHERE source_ref IS NOT NULL
       AND (
         INSTR(source_ref, '/') > 0
-        OR INSTR(source_ref, '\') > 0
+        OR INSTR(source_ref, '\\') > 0
         OR INSTR(source_ref, CHAR(0)) > 0
       )
   `);
