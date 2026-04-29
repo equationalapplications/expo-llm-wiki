@@ -125,7 +125,7 @@ await wiki.write('entity-123', {
 
 ### Ingest Document
 
-Extract facts from a document chunk. Idempotent — re-calling with the same `sourceRef` replaces the prior extraction. Documents are automatically chunked at sentence boundaries; if a sentence exceeds `maxChunkLength`, it is hard-split.
+Extract facts from a document (chunked internally). Idempotent — re-calling with the same `sourceRef` replaces the prior extraction. Documents are automatically chunked at sentence boundaries; if a sentence exceeds `maxChunkLength`, it is hard-split.
 
 ```typescript
 const result = await wiki.ingestDocument('entity-123', {
