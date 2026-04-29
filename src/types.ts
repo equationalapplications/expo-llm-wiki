@@ -3,6 +3,10 @@ export interface WikiConfig {
   maxFtsResults?: number;
   pruneEventsAfter?: number;
   autoLibrarianThreshold?: number;
+  autoHealThreshold?: number;
+  orphanAfterDays?: number | null;
+  staleInferredAfterDays?: number | null;
+  maxChunkLength?: number;
 }
 
 export interface WikiFact {

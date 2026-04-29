@@ -1,7 +1,7 @@
 # Spec: Memory Hardening
 
 **Date:** 2026-04-29  
-**Status:** Draft
+**Status:** Implemented
 
 ---
 
@@ -21,13 +21,37 @@ The current implementation makes several optimistic assumptions: LLMs return wel
 
 **Current:** `parseJsonResponse` strips markdown fences then calls `JSON.parse`. Fails if the LLM emits any text before `{` (e.g. "Here is the JSON:" or a leading newline in some models).
 
-**Fix:** Scan for the outermost `{...}` (or `[...]`) by index before parsing.
+**Fix:** Find the first `{` or `[`, then walk the string tracking nesting depth (honouring string literals and escape sequences) to find the true matching close bracket. This correctly handles nested objects — `lastIndexOf` would produce wrong results for any response where a nested `}` appears after the outermost one.
 
 ```typescript
 function parseJsonResponse<T>(text: string): T {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1) throw new SyntaxError('No JSON object found in LLM response');
+  const firstBrace = text.indexOf('{');
+  const firstBracket = text.indexOf('[');
+
+  let start: number;
+  let openChar: string;
+  let closeChar: string;
+
+  if (firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
+    start = firstBrace; openChar = '{'; closeChar = '}';
+  } else if (firstBracket !== -1) {
+    start = firstBracket; openChar = '['; closeChar = ']';
+  } else {
+    throw new SyntaxError('No JSON object found in LLM response');
+  }
+
+  let depth = 0, inString = false, escape = false, end = -1;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (escape) { escape = false; continue; }
+    if (ch === '\\' && inString) { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === openChar) { depth++; continue; }
+    if (ch === closeChar) { depth--; if (depth === 0) { end = i; break; } }
+  }
+
+  if (end === -1) throw new SyntaxError('No JSON object found in LLM response');
   return JSON.parse(text.slice(start, end + 1)) as T;
 }
 ```
@@ -140,9 +164,10 @@ The LLM heal pass then operates on the already-cleaned set, handling contradicti
 **Decisions:**
 - Thresholds are configurable via `WikiConfig` with sensible defaults. Set to `null` to disable:
   ```typescript
-  orphanAfterDays?: number | null;        // default: 30
-  staleInferredAfterDays?: number | null; // default: 60
+  orphanAfterDays?: number | null;        // default: 30; must be a finite number >= 0 or null
+  staleInferredAfterDays?: number | null; // default: 60; must be a finite number >= 0 or null
   ```
+- Invalid (negative or non-finite) values throw an error to prevent accidental mass deletion.
 - Orphan rule uses `created_at`, not `updated_at`. This prevents clock resets from masking facts that have genuinely never been searched.
 - Both rules fire on every `runHeal` call. No flag required.
 
@@ -204,17 +229,18 @@ async forget(...): Promise<{ deleted: { entries: number; tasks: number } }>
 
 **Current:** `write()` fires `runLibrarian` as a fire-and-forget promise (`.catch(console.error)`). If `write()` is called rapidly — common in chat UIs — multiple librarian runs for the same entity overlap. Each sees a stale view of facts and inserts duplicates independently. `heal_checkpoint` exists in the `{prefix}checkpoints` table but is never written or read; `runHeal` is manual-only.
 
-**Fix:** A module-level `Set<string>` of in-flight entity IDs shared by both librarian and heal. Before starting any maintenance job for an entity, check the set. If already running, skip. Remove in `finally`.
+**Fix:** An instance-level `Set<string>` keyed by `${prefix}:${entityId}` tracks in-flight jobs per `WikiMemory` instance. Before starting any maintenance job for an entity, check the set. If already running, skip. Remove in `finally`.
 
 ```typescript
-const activeMaintenanceJobs = new Set<string>();
+private activeMaintenanceJobs = new Set<string>();
 
 // inside write(), before fire-and-forget:
-if (!activeMaintenanceJobs.has(entityId)) {
-  activeMaintenanceJobs.add(entityId);
+const jobKey = `${this.prefix}:${entityId}`;
+if (!this.activeMaintenanceJobs.has(jobKey)) {
+  this.activeMaintenanceJobs.add(jobKey);
   this.runLibrarianThenMaybeHeal(entityId)
     .catch(console.error)
-    .finally(() => activeMaintenanceJobs.delete(entityId));
+    .finally(() => this.activeMaintenanceJobs.delete(jobKey));
 }
 ```
 
@@ -228,8 +254,9 @@ autoHealThreshold?: number;  // default: 100, independent of autoLibrarianThresh
 **Decisions:**
 - `autoHealThreshold` is an independent knob, not derived from `autoLibrarianThreshold`. Coupling to `5×` would create surprises when a user lowers the librarian threshold for testing.
 - Sequential ordering (librarian → heal within the same lock) prevents a window where a new librarian run starts against state that heal is still processing.
-- The guard applies to both auto-triggered and manually-called `runLibrarian`/`runHeal` for the same entity.
-- This is a single-process lock (`Set` in module scope). It does not protect against two app processes sharing the same SQLite file, which is an unsupported configuration for Expo SQLite.
+- The guard applies to both auto-triggered and manually-called `runLibrarian`/`runHeal` for the same entity. Public methods acquire the same lock; if already in-flight, they return early (skip).
+- Using an instance field (not module-level) means multiple `WikiMemory` instances with different prefixes or DBs do not interfere with each other.
+- This is a single-process lock (`Set` on the instance). It does not protect against two app processes sharing the same SQLite file, which is an unsupported configuration for Expo SQLite.
 
 ---
 
@@ -273,16 +300,17 @@ async ingestDocument(entityId, params): Promise<{ truncated: boolean; chunks: nu
 
 **Chunking algorithm:**
 1. Attempt to split on sentence boundaries (`.`, `!`, `?` followed by whitespace).
-2. If any resulting segment exceeds `maxChunkBytes`, hard-split at that byte limit.
+2. If any resulting segment exceeds `maxChunkLength` characters, hard-split at that character limit.
 3. Call the LLM once per chunk; insert each chunk's facts independently (no cross-chunk dedup — let `runHeal` consolidate).
 4. Set `truncated: true` only if a hard-split was required. Sentence-boundary splits do not set `truncated`.
 
 **Return semantics:**
 - `chunks`: number of LLM calls made.
-- `truncated: true`: at least one segment exceeded `maxChunkBytes` and had to be hard-split. This indicates the input lacked adequate whitespace or sentence boundaries and the caller may want to pre-process the document.
+- `truncated: true`: at least one segment exceeded `maxChunkLength` characters and had to be hard-split. This indicates the input lacked adequate whitespace or sentence boundaries and the caller may want to pre-process the document.
 
 **Decisions:**
-- `maxChunkBytes` lives in `WikiConfig` (default: `6000`) and can be overridden per-call as an optional param on `ingestDocument`. Both.
+- `maxChunkLength` lives in `WikiConfig` (default: `6000`, measured in UTF-16 code units / characters) and can be overridden per-call as an optional param on `ingestDocument`. Both.
+- UTF-8/UTF-16 fully supported; surrogate pairs (emoji) are never fragmented at chunk boundaries (see `safeSlice` helper).
 - Cross-chunk facts are inserted independently. Merging inside ingest reintroduces the fuzzy-dedup risks from #6.
 - This is an API-breaking change. See the [Migration / Compatibility](#migration--compatibility) section.
 
@@ -313,19 +341,22 @@ No behavioral change. Access count update for FTS hits still runs after (unchang
 **Fix:** Normalize both fields before use:
 
 ```typescript
-// sourceRef: strip path separators and null bytes, trim, cap at 255, treat empty as null
+// sourceRef: allowlist [A-Za-z0-9._\- ], trim, cap at 255, treat empty as null
+// Matches production server normalization so client and server always agree.
 function normalizeSourceRef(value: string): string | null {
-  const cleaned = value.replace(/[/\\]/g, '').split('\0').join('').trim().slice(0, 255);
+  if (typeof value !== 'string') return null;
+  const cleaned = value.replace(/[^A-Za-z0-9._\- ]/g, '').trim().slice(0, 255);
   return cleaned.length > 0 ? cleaned : null;
 }
 
 // sourceHash: must be a valid 64-char hex SHA-256; discard otherwise
-function normalizeSourceHash(value: string): string | null {
+function normalizeSourceHash(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
   return /^[0-9a-f]{64}$/i.test(value) ? value.toLowerCase() : null;
 }
 ```
 
-If `sourceHash` fails validation, treat as a no-op for that target (don't delete anything). Log a warning.
+If `sourceHash` fails validation, throw an `Error` with a descriptive message. An invalid hash is a programming error (the caller was supposed to compute a SHA-256 hex digest), not a recoverable condition, so failing loudly is preferable to a silent no-op.
 
 **Consistency requirement:** `normalizeSourceRef` must be applied on **both** the write path (`ingestDocument` before INSERT) and the read path (`forget` before WHERE clause). If normalization is only applied in `forget`, stored values and query values will diverge and `forget({ sourceRef })` will silently match zero rows.
 
@@ -392,21 +423,9 @@ await wiki.ingestDocument(entityId, {
 
 ---
 
-### 18. `sourceRef` Character Allowlist
+### 18. *(Merged into #13)*
 
-**Current (from #13):** `normalizeSourceRef` strips `/`, `\`, and null bytes. Anything else passes through.
-
-**Upgrade:** Use an explicit allowlist (`[^A-Za-z0-9._\- ]` → strip) matching the production server implementation. This ensures client and server always agree on the sanitized form of a `sourceRef`, preventing a dedup mismatch where local and cloud versions of the same reference differ.
-
-```typescript
-function normalizeSourceRef(value: string): string | null {
-  const cleaned = value
-    .replace(/[^A-Za-z0-9._\- ]/g, '')
-    .trim()
-    .slice(0, 255);
-  return cleaned.length > 0 ? cleaned : null;
-}
-```
+The `sourceRef` allowlist (`[^A-Za-z0-9._\- ]` → strip) and the `typeof` guard on `normalizeSourceHash` are incorporated directly into [#13](#13-forget-input-normalization).
 
 ---
 
@@ -421,12 +440,12 @@ This spec introduces the following API-breaking changes that require a major or 
 | `forget()` return type `void` → `{ deleted: { entries: number; tasks: number } }` | Yes |
 | `ingestDocument()` return type `void` → `{ truncated: boolean; chunks: number }` | Yes |
 | All mutation hooks gain `lastResult` field | Additive — non-breaking |
-| New `WikiConfig` keys (`autoHealThreshold`, `orphanAfterDays`, `staleInferredAfterDays`, `maxChunkBytes`) | Additive — non-breaking |
+| New `WikiConfig` keys (`autoHealThreshold`, `orphanAfterDays`, `staleInferredAfterDays`, `maxChunkLength`) | Additive — non-breaking |
 | `sourceRef` normalization now applied on ingest write path | Potentially breaks callers who relied on exact path characters being stored |
 
-**Existing data:** Rows with unnormalized `source_ref` values remain valid and readable. Future `forget({ sourceRef })` and re-ingest calls will use normalized values. Callers who need to forget old unnormalized entries should pass the original exact string once, then re-ingest with normalized refs.
+**Existing data:** Rows with unnormalized `source_ref` values remain valid and are normalized in place by the setup-time migration. After migration, `forget({ sourceRef })` and re-ingest calls use normalized values, and caller-provided `sourceRef` inputs are normalized before matching, so callers do not need to pass the original exact legacy string.
 
-**`documentChunk` param rename:** The `ingestDocument` params shape is unchanged, but the implicit caller contract changes: chunking now happens internally. Callers who pre-chunked and called `ingestDocument` once per chunk should switch to passing the full document and letting the package chunk it. Callers who cannot do this (e.g. streaming) may continue passing pre-chunked content — the internal chunking will be a no-op if the chunk is already under `maxChunkBytes`.
+**`ingestDocument` chunking contract change:** The `ingestDocument` params shape is unchanged, but the implicit caller contract changes: chunking now happens internally. Callers who pre-chunked and called `ingestDocument` once per chunk should switch to passing the full document and letting the package chunk it. Callers who cannot do this (e.g. streaming) may continue passing pre-chunked content — the internal chunking will be a no-op if the chunk is already under `maxChunkLength`.
 
 ---
 

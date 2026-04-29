@@ -5,8 +5,11 @@ interface ForgetParams {
   entryId?: string;
   taskId?: string;
   sourceRef?: string;
+  sourceHash?: string;
   clearAll?: boolean;
 }
+
+type ForgetResult = { deleted: { entries: number; tasks: number } };
 
 export function useWikiForget() {
   const wiki = useWiki();
@@ -15,18 +18,24 @@ export function useWikiForget() {
 
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const [lastResult, setLastResult] = useState<ForgetResult | null>(null);
 
-  const execute = useCallback(async (entityId: string, params: ForgetParams) => {
+  const execute = useCallback(async (entityId: string, params: ForgetParams): Promise<ForgetResult> => {
     setError(null);
     setIsPending(true);
+    setLastResult(null);
     try {
-      await wikiRef.current.forget(entityId, params);
+      const result = await wikiRef.current.forget(entityId, params);
+      setLastResult(result);
+      return result;
     } catch (e) {
-      setError(e instanceof Error ? e : new Error(String(e)));
+      const err = e instanceof Error ? e : new Error(String(e));
+      setError(err);
+      throw err;
     } finally {
       setIsPending(false);
     }
   }, []);
 
-  return { execute, isPending, error };
+  return { execute, lastResult, isPending, error };
 }
