@@ -21,7 +21,9 @@ export function useWikiMaintenance() {
       await wikiRef.current.runLibrarian(entityId);
       setLastResult(undefined);
     } catch (e) {
-      setError(e instanceof Error ? e : new Error(String(e)));
+      const err = e instanceof Error ? e : new Error(String(e));
+      setError(err);
+      throw err;
     } finally {
       pendingCount.current -= 1;
       if (pendingCount.current === 0) setIsPending(false);
@@ -37,7 +39,9 @@ export function useWikiMaintenance() {
       await wikiRef.current.runHeal(entityId);
       setLastResult(undefined);
     } catch (e) {
-      setError(e instanceof Error ? e : new Error(String(e)));
+      const err = e instanceof Error ? e : new Error(String(e));
+      setError(err);
+      throw err;
     } finally {
       pendingCount.current -= 1;
       if (pendingCount.current === 0) setIsPending(false);
