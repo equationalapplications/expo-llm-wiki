@@ -7,9 +7,9 @@ function parseJsonResponse<T>(text: string): T {
   const firstBrace = text.indexOf('{');
   const firstBracket = text.indexOf('[');
 
-  let start = -1;
-  let openChar!: string;
-  let closeChar!: string;
+  let start: number;
+  let openChar: string;
+  let closeChar: string;
 
   if (firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
     start = firstBrace;
@@ -19,9 +19,9 @@ function parseJsonResponse<T>(text: string): T {
     start = firstBracket;
     openChar = '[';
     closeChar = ']';
+  } else {
+    throw new SyntaxError('No JSON object found in LLM response');
   }
-
-  if (start === -1) throw new SyntaxError('No JSON object found in LLM response');
 
   // Walk from `start`, tracking nesting depth and skipping strings/escapes,
   // so we stop at the true matching close bracket rather than the last one.
