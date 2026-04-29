@@ -341,14 +341,17 @@ No behavioral change. Access count update for FTS hits still runs after (unchang
 **Fix:** Normalize both fields before use:
 
 ```typescript
-// sourceRef: strip path separators and null bytes, trim, cap at 255, treat empty as null
+// sourceRef: allowlist [A-Za-z0-9._\- ], trim, cap at 255, treat empty as null
+// Matches production server normalization so client and server always agree.
 function normalizeSourceRef(value: string): string | null {
-  const cleaned = value.replace(/[/\\]/g, '').split('\0').join('').trim().slice(0, 255);
+  if (typeof value !== 'string') return null;
+  const cleaned = value.replace(/[^A-Za-z0-9._\- ]/g, '').trim().slice(0, 255);
   return cleaned.length > 0 ? cleaned : null;
 }
 
 // sourceHash: must be a valid 64-char hex SHA-256; discard otherwise
-function normalizeSourceHash(value: string): string | null {
+function normalizeSourceHash(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
   return /^[0-9a-f]{64}$/i.test(value) ? value.toLowerCase() : null;
 }
 ```
@@ -420,21 +423,9 @@ await wiki.ingestDocument(entityId, {
 
 ---
 
-### 18. `sourceRef` Character Allowlist
+### 18. *(Merged into #13)*
 
-**Current (from #13):** `normalizeSourceRef` strips `/`, `\`, and null bytes. Anything else passes through.
-
-**Upgrade:** Use an explicit allowlist (`[^A-Za-z0-9._\- ]` → strip) matching the production server implementation. This ensures client and server always agree on the sanitized form of a `sourceRef`, preventing a dedup mismatch where local and cloud versions of the same reference differ.
-
-```typescript
-function normalizeSourceRef(value: string): string | null {
-  const cleaned = value
-    .replace(/[^A-Za-z0-9._\- ]/g, '')
-    .trim()
-    .slice(0, 255);
-  return cleaned.length > 0 ? cleaned : null;
-}
-```
+The `sourceRef` allowlist (`[^A-Za-z0-9._\- ]` → strip) and the `typeof` guard on `normalizeSourceHash` are incorporated directly into [#13](#13-forget-input-normalization).
 
 ---
 
