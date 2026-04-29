@@ -500,8 +500,9 @@ export class WikiMemory {
         
         if (match && match.index !== undefined) {
             const splitPoint = match.index + match[0].length;
-            chunks.push(safeSlice(text, splitPoint));
-            text = text.slice(splitPoint);
+            const chunk = safeSlice(text, splitPoint);
+            chunks.push(chunk);
+            text = text.slice(chunk.length);
         } else {
             truncated = true;
             const chunk = safeSlice(text, maxChunkLength);
