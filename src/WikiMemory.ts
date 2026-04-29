@@ -520,6 +520,12 @@ export class WikiMemory {
       deletedEntries = entriesRes.changes;
       deletedTasks = tasksRes.changes;
     } else {
+        const hasIdSelectors = params.entryId !== undefined || params.taskId !== undefined;
+        const hasSourceSelectors = params.sourceRef !== undefined || params.sourceHash !== undefined;
+        if (hasIdSelectors && hasSourceSelectors) {
+          throw new Error('forget() params are mutually exclusive: use entryId/taskId together, or sourceRef/sourceHash together, but not both in the same call');
+        }
+
         const sourceRef = params.sourceRef !== undefined ? normalizeSourceRef(params.sourceRef) : null;
         if (params.sourceRef !== undefined && !sourceRef) throw new Error('Invalid sourceRef');
         const sourceHash = params.sourceHash !== undefined ? normalizeSourceHash(params.sourceHash) : null;

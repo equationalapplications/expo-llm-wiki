@@ -221,29 +221,35 @@ await runHeal('entity-123');
 ### `useWikiIngest()`
 
 ```typescript
-const { execute, isPending, error } = useWikiIngest();
+const { execute, lastResult, isPending, error } = useWikiIngest();
+// lastResult: { truncated: boolean; chunks: number } | null
 
-await execute('entity-123', {
+const result = await execute('entity-123', {
   sourceRef: 'docs/preferences.md',
   sourceHash: sha256(content),
   documentChunk: content,
 });
+// result.truncated — true if any hard-splits were required
+// result.chunks   — number of LLM calls made
 ```
 
 ### `useWikiForget()`
 
 ```typescript
-const { execute, isPending, error } = useWikiForget();
+const { execute, lastResult, isPending, error } = useWikiForget();
+// lastResult: { deleted: { entries: number; tasks: number } } | null
 
-await execute('entity-123', { entryId: 'fact_abc' });
+const result = await execute('entity-123', { entryId: 'fact_abc' });
+// result.deleted.entries — rows soft-deleted
 ```
 
-All mutation hooks share the same shape:
+All mutation hooks follow the same pattern (`TResult` is specific per hook):
 
 ```typescript
 {
-  execute: (...args) => Promise<void>;
+  execute: (...args) => Promise<TResult>;
+  lastResult: TResult | null;  // result of the last successful call; null before first call or after an error
   isPending: boolean;
-  error: Error | null;        // cleared on next execute call
+  error: Error | null;         // cleared on the next execute call
 }
 ```
