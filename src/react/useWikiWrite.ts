@@ -21,7 +21,9 @@ export function useWikiWrite() {
       await wikiRef.current.write(entityId, event);
       setLastResult(undefined);
     } catch (e) {
-      setError(e instanceof Error ? e : new Error(String(e)));
+      const error = e instanceof Error ? e : new Error(String(e));
+      setError(error);
+      throw error;
     } finally {
       setIsPending(false);
     }
