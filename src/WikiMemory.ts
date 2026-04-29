@@ -20,7 +20,7 @@ function parseJsonResponse<T>(text: string): T {
     openChar = '[';
     closeChar = ']';
   } else {
-    throw new SyntaxError('No JSON object found in LLM response');
+    throw new SyntaxError('No JSON object/array found in LLM response');
   }
 
   // Walk from `start`, tracking nesting depth and skipping strings/escapes,
@@ -42,7 +42,7 @@ function parseJsonResponse<T>(text: string): T {
     }
   }
 
-  if (end === -1) throw new SyntaxError('No JSON object found in LLM response');
+  if (end === -1) throw new SyntaxError('No JSON object/array found in LLM response');
   return JSON.parse(text.slice(start, end + 1)) as T;
 }
 

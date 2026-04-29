@@ -129,7 +129,10 @@ Extract facts from a document (chunked internally). Idempotent — re-calling wi
 
 ```typescript
 const result = await wiki.ingestDocument('entity-123', {
-  sourceRef: 'docs/preferences.md',   // stable identifier
+  // sourceRef is normalized: only [A-Za-z0-9._\- ] are kept, all other characters
+  // (including `/`) are stripped. Use underscores or dots as path separators to
+  // avoid accidental collisions (e.g. 'docs_preferences.md' not 'docs/preferences.md').
+  sourceRef: 'preferences.md',        // stable identifier
   sourceHash: sha256(content),        // for change detection
   documentChunk: content,
   maxChunkLength: 6000,               // optional, character count
@@ -156,7 +159,8 @@ const result = await wiki.forget('entity-123', { entryId: 'fact_abc' });    // s
 // result: { deleted: { entries: number; tasks: number } }
 
 await wiki.forget('entity-123', { taskId: 'task_xyz' });     // single task
-await wiki.forget('entity-123', { sourceRef: 'docs/x.md' }); // all facts from a document
+// sourceRef is normalized the same way as in ingestDocument (slashes stripped)
+await wiki.forget('entity-123', { sourceRef: 'x.md' }); // all facts from a document
 await wiki.forget('entity-123', { clearAll: true });          // wipe entity
 ```
 
@@ -225,7 +229,7 @@ const { execute, lastResult, isPending, error } = useWikiIngest();
 // lastResult: { truncated: boolean; chunks: number } | null
 
 const result = await execute('entity-123', {
-  sourceRef: 'docs/preferences.md',
+  sourceRef: 'preferences.md',  // slashes are stripped by normalizeSourceRef
   sourceHash: sha256(content),
   documentChunk: content,
 });
