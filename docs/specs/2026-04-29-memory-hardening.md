@@ -445,7 +445,7 @@ This spec introduces the following API-breaking changes that require a major or 
 
 **Existing data:** Rows with unnormalized `source_ref` values remain valid and readable. Future `forget({ sourceRef })` and re-ingest calls will use normalized values. Callers who need to forget old unnormalized entries should pass the original exact string once, then re-ingest with normalized refs.
 
-**`documentChunk` param rename:** The `ingestDocument` params shape is unchanged, but the implicit caller contract changes: chunking now happens internally. Callers who pre-chunked and called `ingestDocument` once per chunk should switch to passing the full document and letting the package chunk it. Callers who cannot do this (e.g. streaming) may continue passing pre-chunked content — the internal chunking will be a no-op if the chunk is already under `maxChunkLength`.
+**`ingestDocument` chunking contract change:** The `ingestDocument` params shape is unchanged, but the implicit caller contract changes: chunking now happens internally. Callers who pre-chunked and called `ingestDocument` once per chunk should switch to passing the full document and letting the package chunk it. Callers who cannot do this (e.g. streaming) may continue passing pre-chunked content — the internal chunking will be a no-op if the chunk is already under `maxChunkLength`.
 
 ---
 
