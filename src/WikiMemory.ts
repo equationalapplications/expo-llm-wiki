@@ -513,56 +513,56 @@ export class WikiMemory {
 
     if (params.clearAll) {
       const [entriesRes, tasksRes] = await Promise.all([
-          this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
-          this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
+        this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
+        this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
       ]);
       await this.db.runAsync(`UPDATE ${this.prefix}checkpoints SET memory_checkpoint = 0, heal_checkpoint = 0 WHERE entity_id = ?`, [entityId]);
       deletedEntries = entriesRes.changes;
       deletedTasks = tasksRes.changes;
     } else {
-        const hasIdSelectors = params.entryId !== undefined || params.taskId !== undefined;
-        const hasSourceSelectors = params.sourceRef !== undefined || params.sourceHash !== undefined;
-        if (hasIdSelectors && hasSourceSelectors) {
-          throw new Error('forget() params are mutually exclusive: use entryId/taskId together, or sourceRef/sourceHash together, but not both in the same call');
+      const hasIdSelectors = params.entryId !== undefined || params.taskId !== undefined;
+      const hasSourceSelectors = params.sourceRef !== undefined || params.sourceHash !== undefined;
+      if (hasIdSelectors && hasSourceSelectors) {
+        throw new Error('forget() params are mutually exclusive: use entryId/taskId together, or sourceRef/sourceHash together, but not both in the same call');
+      }
+
+      const sourceRef = params.sourceRef !== undefined ? normalizeSourceRef(params.sourceRef) : null;
+      if (params.sourceRef !== undefined && !sourceRef) throw new Error('Invalid sourceRef');
+      const sourceHash = params.sourceHash !== undefined ? normalizeSourceHash(params.sourceHash) : null;
+      if (params.sourceHash !== undefined && !sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
+
+      const entryPromise = params.entryId
+        ? this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, params.entryId, entityId])
+        : null;
+
+      const taskPromise = params.taskId
+        ? this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, params.taskId, entityId])
+        : null;
+
+      let refPromise: Promise<SQLite.SQLiteRunResult> | null = null;
+      if (sourceRef || sourceHash) {
+        let q = `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`;
+        const args: any[] = [now, now, entityId];
+        if (sourceRef) {
+          q += ` AND source_ref = ?`;
+          args.push(sourceRef);
         }
-
-        const sourceRef = params.sourceRef !== undefined ? normalizeSourceRef(params.sourceRef) : null;
-        if (params.sourceRef !== undefined && !sourceRef) throw new Error('Invalid sourceRef');
-        const sourceHash = params.sourceHash !== undefined ? normalizeSourceHash(params.sourceHash) : null;
-        if (params.sourceHash !== undefined && !sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
-
-        const entryPromise = params.entryId
-            ? this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, params.entryId, entityId])
-            : null;
-
-        const taskPromise = params.taskId
-            ? this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, params.taskId, entityId])
-            : null;
-
-        let refPromise: Promise<SQLite.SQLiteRunResult> | null = null;
-        if (sourceRef || sourceHash) {
-            let q = `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`;
-            const args: any[] = [now, now, entityId];
-            if (sourceRef) {
-                q += ` AND source_ref = ?`;
-                args.push(sourceRef);
-            }
-            if (sourceHash) {
-                q += ` AND source_hash = ?`;
-                args.push(sourceHash);
-            }
-            refPromise = this.db.runAsync(q, args);
+        if (sourceHash) {
+          q += ` AND source_hash = ?`;
+          args.push(sourceHash);
         }
+        refPromise = this.db.runAsync(q, args);
+      }
 
-        const [entryResult, taskResult, refResult] = await Promise.all([
-            entryPromise ?? Promise.resolve(null),
-            taskPromise ?? Promise.resolve(null),
-            refPromise ?? Promise.resolve(null),
-        ]);
+      const [entryResult, taskResult, refResult] = await Promise.all([
+        entryPromise ?? Promise.resolve(null),
+        taskPromise ?? Promise.resolve(null),
+        refPromise ?? Promise.resolve(null),
+      ]);
 
-        if (entryResult) deletedEntries += entryResult.changes;
-        if (taskResult) deletedTasks += taskResult.changes;
-        if (refResult) deletedEntries += refResult.changes;
+      if (entryResult) deletedEntries += entryResult.changes;
+      if (taskResult) deletedTasks += taskResult.changes;
+      if (refResult) deletedEntries += refResult.changes;
     }
 
     return { deleted: { entries: deletedEntries, tasks: deletedTasks } };
