@@ -83,10 +83,12 @@ export async function setupDatabase(db: SQLite.SQLiteDatabase, prefix: string) {
     );
   `);
 
-  // Migration: normalize source_ref values that pre-date the strip-separator rule (spec §13).
-  // Idempotent — after the first run, no rows match the WHERE clause so subsequent calls
-  // are no-ops.  Covers the three transformations that normalizeSourceRef() applies:
-  //   • remove '/'  • remove '\'  • remove NUL bytes
+  // Migration: normalize source_ref values created before the strip-separator rule was added.
+  // normalizeSourceRef() strips '/', '\', and NUL bytes and trims whitespace; rows written by
+  // older versions of the library that stored raw paths (e.g. 'docs/prefs.md') would otherwise
+  // never be matched by the UPDATE in ingestDocument() or the WHERE in forget().
+  // This UPDATE is idempotent: after the first run no rows contain '/', '\', or NUL bytes,
+  // so subsequent calls affect 0 rows without touching any data.
   await db.runAsync(`
     UPDATE ${prefix}entries
     SET source_ref = TRIM(REPLACE(REPLACE(REPLACE(source_ref, '/', ''), '\\', ''), CHAR(0), ''))
