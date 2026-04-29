@@ -21,13 +21,37 @@ The current implementation makes several optimistic assumptions: LLMs return wel
 
 **Current:** `parseJsonResponse` strips markdown fences then calls `JSON.parse`. Fails if the LLM emits any text before `{` (e.g. "Here is the JSON:" or a leading newline in some models).
 
-**Fix:** Scan for the outermost `{...}` (or `[...]`) by index before parsing.
+**Fix:** Find the first `{` or `[`, then walk the string tracking nesting depth (honouring string literals and escape sequences) to find the true matching close bracket. This correctly handles nested objects — `lastIndexOf` would produce wrong results for any response where a nested `}` appears after the outermost one.
 
 ```typescript
 function parseJsonResponse<T>(text: string): T {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1) throw new SyntaxError('No JSON object found in LLM response');
+  const firstBrace = text.indexOf('{');
+  const firstBracket = text.indexOf('[');
+
+  let start: number;
+  let openChar: string;
+  let closeChar: string;
+
+  if (firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
+    start = firstBrace; openChar = '{'; closeChar = '}';
+  } else if (firstBracket !== -1) {
+    start = firstBracket; openChar = '['; closeChar = ']';
+  } else {
+    throw new SyntaxError('No JSON object found in LLM response');
+  }
+
+  let depth = 0, inString = false, escape = false, end = -1;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (escape) { escape = false; continue; }
+    if (ch === '\\' && inString) { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === openChar) { depth++; continue; }
+    if (ch === closeChar) { depth--; if (depth === 0) { end = i; break; } }
+  }
+
+  if (end === -1) throw new SyntaxError('No JSON object found in LLM response');
   return JSON.parse(text.slice(start, end + 1)) as T;
 }
 ```
@@ -329,7 +353,7 @@ function normalizeSourceHash(value: string): string | null {
 }
 ```
 
-If `sourceHash` fails validation, treat as a no-op for that target (don't delete anything). Log a warning.
+If `sourceHash` fails validation, throw an `Error` with a descriptive message. An invalid hash is a programming error (the caller was supposed to compute a SHA-256 hex digest), not a recoverable condition, so failing loudly is preferable to a silent no-op.
 
 **Consistency requirement:** `normalizeSourceRef` must be applied on **both** the write path (`ingestDocument` before INSERT) and the read path (`forget` before WHERE clause). If normalization is only applied in `forget`, stored values and query values will diverge and `forget({ sourceRef })` will silently match zero rows.
 

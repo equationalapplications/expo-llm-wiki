@@ -520,21 +520,20 @@ export class WikiMemory {
       deletedEntries = entriesRes.changes;
       deletedTasks = tasksRes.changes;
     } else {
-        const promises: Promise<SQLite.SQLiteRunResult | null>[] = [];
-        
-        if (params.entryId) {
-            promises.push(this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, params.entryId, entityId]));
-        }
-        
-        if (params.taskId) {
-            promises.push(this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, params.taskId, entityId]));
-        }
-
         const sourceRef = params.sourceRef !== undefined ? normalizeSourceRef(params.sourceRef) : null;
         if (params.sourceRef !== undefined && !sourceRef) throw new Error('Invalid sourceRef');
         const sourceHash = params.sourceHash !== undefined ? normalizeSourceHash(params.sourceHash) : null;
         if (params.sourceHash !== undefined && !sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
-        
+
+        const entryPromise = params.entryId
+            ? this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, params.entryId, entityId])
+            : null;
+
+        const taskPromise = params.taskId
+            ? this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, params.taskId, entityId])
+            : null;
+
+        let refPromise: Promise<SQLite.SQLiteRunResult> | null = null;
         if (sourceRef || sourceHash) {
             let q = `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`;
             const args: any[] = [now, now, entityId];
@@ -546,20 +545,18 @@ export class WikiMemory {
                 q += ` AND source_hash = ?`;
                 args.push(sourceHash);
             }
-            promises.push(this.db.runAsync(q, args));
+            refPromise = this.db.runAsync(q, args);
         }
 
-        const results = await Promise.all(promises);
-        
-        if (params.entryId && results[0]) deletedEntries += results[0].changes;
-        if (params.taskId) {
-            const taskIdx = params.entryId ? 1 : 0;
-            if (results[taskIdx]) deletedTasks += results[taskIdx].changes;
-        }
-        if (sourceRef || sourceHash) {
-            const refIdx = (params.entryId ? 1 : 0) + (params.taskId ? 1 : 0);
-            if (results[refIdx]) deletedEntries += results[refIdx].changes;
-        }
+        const [entryResult, taskResult, refResult] = await Promise.all([
+            entryPromise ?? Promise.resolve(null),
+            taskPromise ?? Promise.resolve(null),
+            refPromise ?? Promise.resolve(null),
+        ]);
+
+        if (entryResult) deletedEntries += entryResult.changes;
+        if (taskResult) deletedTasks += taskResult.changes;
+        if (refResult) deletedEntries += refResult.changes;
     }
 
     return { deleted: { entries: deletedEntries, tasks: deletedTasks } };
@@ -584,6 +581,9 @@ export class WikiMemory {
     let truncated = false;
     
     let text = params.documentChunk.trim();
+    if (text.length === 0) {
+      return { truncated: false, chunks: 0 };
+    }
     while (text.length > 0) {
         if (text.length <= maxChunkLength) {
             chunks.push(text);
