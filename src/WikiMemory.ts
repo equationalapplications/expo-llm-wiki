@@ -410,10 +410,10 @@ export class WikiMemory {
     const staleInferredAfterDays = this.options.config?.staleInferredAfterDays !== undefined ? this.options.config.staleInferredAfterDays : 60;
     const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-    if (orphanAfterDays !== null && (!isFinite(orphanAfterDays) || orphanAfterDays < 0)) {
+    if (orphanAfterDays !== null && (typeof orphanAfterDays !== 'number' || !Number.isFinite(orphanAfterDays) || orphanAfterDays < 0)) {
       throw new Error('Invalid orphanAfterDays: must be a finite number >= 0 or null');
     }
-    if (staleInferredAfterDays !== null && (!isFinite(staleInferredAfterDays) || staleInferredAfterDays < 0)) {
+    if (staleInferredAfterDays !== null && (typeof staleInferredAfterDays !== 'number' || !Number.isFinite(staleInferredAfterDays) || staleInferredAfterDays < 0)) {
       throw new Error('Invalid staleInferredAfterDays: must be a finite number >= 0 or null');
     }
 
