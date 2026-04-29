@@ -314,16 +314,16 @@ export class WikiMemory {
         const newTokens = titleTokens(fact.title);
         let skip = false;
         if (newTokens.size >= MIN_TOKENS_TO_QUALIFY) {
-            for (const existing of currentFactsRows) {
-                if (existing.source_type !== 'agent_inferred') continue;
-                const existingTokens = titleTokens(existing.title);
-                if (existingTokens.size >= MIN_TOKENS_TO_QUALIFY) {
-                    if (jaccardScore(newTokens, existingTokens) >= FUZZY_THRESHOLD) {
-                        skip = true;
-                        break;
-                    }
-                }
+          for (const existing of currentFactsRows) {
+            if (existing.source_type !== 'agent_inferred') continue;
+            const existingTokens = titleTokens(existing.title);
+            if (existingTokens.size >= MIN_TOKENS_TO_QUALIFY) {
+              if (jaccardScore(newTokens, existingTokens) >= FUZZY_THRESHOLD) {
+                skip = true;
+                break;
+              }
             }
+          }
         }
         if (skip) continue;
 
