@@ -6,19 +6,43 @@ import { LIBRARIAN_SYSTEM_PROMPT, HEAL_SYSTEM_PROMPT, INGEST_SYSTEM_PROMPT } fro
 function parseJsonResponse<T>(text: string): T {
   const firstBrace = text.indexOf('{');
   const firstBracket = text.indexOf('[');
-  
+
   let start = -1;
-  let end = -1;
-  
+  let openChar!: string;
+  let closeChar!: string;
+
   if (firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
     start = firstBrace;
-    end = text.lastIndexOf('}');
+    openChar = '{';
+    closeChar = '}';
   } else if (firstBracket !== -1) {
     start = firstBracket;
-    end = text.lastIndexOf(']');
+    openChar = '[';
+    closeChar = ']';
   }
 
-  if (start === -1 || end === -1) throw new SyntaxError('No JSON object found in LLM response');
+  if (start === -1) throw new SyntaxError('No JSON object found in LLM response');
+
+  // Walk from `start`, tracking nesting depth and skipping strings/escapes,
+  // so we stop at the true matching close bracket rather than the last one.
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  let end = -1;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (escape) { escape = false; continue; }
+    if (ch === '\\' && inString) { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === openChar) { depth++; continue; }
+    if (ch === closeChar) {
+      depth--;
+      if (depth === 0) { end = i; break; }
+    }
+  }
+
+  if (end === -1) throw new SyntaxError('No JSON object found in LLM response');
   return JSON.parse(text.slice(start, end + 1)) as T;
 }
 
