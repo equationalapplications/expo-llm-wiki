@@ -107,12 +107,11 @@ function jaccardScore(a: Set<string>, b: Set<string>): number {
 const FUZZY_THRESHOLD = 0.5;
 const MIN_TOKENS_TO_QUALIFY = 3;
 
-const activeMaintenanceJobs = new Set<string>();
-
 export class WikiMemory {
   private db: SQLite.SQLiteDatabase;
   private prefix: string;
   private options: WikiOptions;
+  private activeMaintenanceJobs = new Set<string>();
 
   constructor(db: SQLite.SQLiteDatabase, options: WikiOptions) {
     this.db = db;
@@ -215,17 +214,18 @@ export class WikiMemory {
     if (memoryCheckpoint > count) memoryCheckpoint = 0;
 
     if (count - memoryCheckpoint >= threshold) {
-      if (!activeMaintenanceJobs.has(entityId)) {
-        activeMaintenanceJobs.add(entityId);
+      const jobKey = `${this.prefix}:${entityId}`;
+      if (!this.activeMaintenanceJobs.has(jobKey)) {
+        this.activeMaintenanceJobs.add(jobKey);
         this.runLibrarianThenMaybeHeal(entityId, count)
           .catch(console.error)
-          .finally(() => activeMaintenanceJobs.delete(entityId));
+          .finally(() => this.activeMaintenanceJobs.delete(jobKey));
       }
     }
   }
 
   private async runLibrarianThenMaybeHeal(entityId: string, currentEventCount: number) {
-    await this.runLibrarian(entityId);
+    await this._doRunLibrarian(entityId);
     
     await this.db.runAsync(`
       INSERT INTO ${this.prefix}checkpoints (entity_id, memory_checkpoint) 
@@ -239,7 +239,7 @@ export class WikiMemory {
     if (healCheckpoint > currentEventCount) healCheckpoint = 0;
     
     if (currentEventCount - healCheckpoint >= autoHealThreshold) {
-      await this.runHeal(entityId);
+      await this._doRunHeal(entityId);
       await this.db.runAsync(`
         INSERT INTO ${this.prefix}checkpoints (entity_id, heal_checkpoint) 
         VALUES (?, ?) 
@@ -248,7 +248,7 @@ export class WikiMemory {
     }
   }
 
-  async runLibrarian(entityId: string): Promise<void> {
+  private async _doRunLibrarian(entityId: string): Promise<void> {
     const events = await this.db.getAllAsync<WikiEvent>(`
       SELECT * FROM ${this.prefix}events
       WHERE entity_id = ?
@@ -316,11 +316,18 @@ export class WikiMemory {
     });
   }
 
-  async runHeal(entityId: string): Promise<void> {
+  private async _doRunHeal(entityId: string): Promise<void> {
     const now = Date.now();
     const orphanAfterDays = this.options.config?.orphanAfterDays !== undefined ? this.options.config.orphanAfterDays : 30;
     const staleInferredAfterDays = this.options.config?.staleInferredAfterDays !== undefined ? this.options.config.staleInferredAfterDays : 60;
     const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+    if (orphanAfterDays !== null && (!isFinite(orphanAfterDays) || orphanAfterDays < 0)) {
+      throw new Error('Invalid orphanAfterDays: must be a finite number >= 0 or null');
+    }
+    if (staleInferredAfterDays !== null && (!isFinite(staleInferredAfterDays) || staleInferredAfterDays < 0)) {
+      throw new Error('Invalid staleInferredAfterDays: must be a finite number >= 0 or null');
+    }
 
     await this.db.withTransactionAsync(async () => {
       if (orphanAfterDays !== null) {
@@ -384,6 +391,28 @@ export class WikiMemory {
         `, [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'agent_inferred', now, now]);
       }
     });
+  }
+
+  async runLibrarian(entityId: string): Promise<void> {
+    const jobKey = `${this.prefix}:${entityId}`;
+    if (this.activeMaintenanceJobs.has(jobKey)) return;
+    this.activeMaintenanceJobs.add(jobKey);
+    try {
+      await this._doRunLibrarian(entityId);
+    } finally {
+      this.activeMaintenanceJobs.delete(jobKey);
+    }
+  }
+
+  async runHeal(entityId: string): Promise<void> {
+    const jobKey = `${this.prefix}:${entityId}`;
+    if (this.activeMaintenanceJobs.has(jobKey)) return;
+    this.activeMaintenanceJobs.add(jobKey);
+    try {
+      await this._doRunHeal(entityId);
+    } finally {
+      this.activeMaintenanceJobs.delete(jobKey);
+    }
   }
 
   async forget(entityId: string, params: { entryId?: string; taskId?: string; sourceRef?: string; sourceHash?: string; clearAll?: boolean }): Promise<{ deleted: { entries: number; tasks: number } }> {
@@ -451,7 +480,10 @@ export class WikiMemory {
     const sourceHash = normalizeSourceHash(params.sourceHash);
     if (!sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
 
-    const maxChunkLength = params.maxChunkLength || this.options.config?.maxChunkLength || 6000;
+    const maxChunkLength = params.maxChunkLength ?? this.options.config?.maxChunkLength ?? 6000;
+    if (!Number.isInteger(maxChunkLength) || maxChunkLength < 1) {
+      throw new Error('maxChunkLength must be a positive integer');
+    }
     
     const chunks: string[] = [];
     let truncated = false;
