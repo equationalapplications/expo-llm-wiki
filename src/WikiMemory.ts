@@ -570,10 +570,14 @@ export class WikiMemory {
       throw new Error('maxChunkLength must be an integer greater than or equal to 2');
     }
     
+    if (typeof params.documentChunk !== 'string') {
+      throw new Error('documentChunk must be a string');
+    }
+
     const chunks: string[] = [];
     let truncated = false;
     
-    let text = params.documentChunk;
+    let text = params.documentChunk.trim();
     while (text.length > 0) {
         if (text.length <= maxChunkLength) {
             chunks.push(text);
