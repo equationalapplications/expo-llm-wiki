@@ -142,7 +142,7 @@ function normalizeSourceRef(value: string): string | null {
   return cleaned.length > 0 ? cleaned : null;
 }
 
-function normalizeSourceHash(value: string): string | null {
+function normalizeSourceHash(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   return /^[0-9a-f]{64}$/i.test(value) ? value.toLowerCase() : null;
 }
