@@ -19,7 +19,7 @@ export function useWikiIngest() {
   const [error, setError] = useState<Error | null>(null);
   const [lastResult, setLastResult] = useState<IngestResult | null>(null);
 
-  const execute = useCallback(async (entityId: string, params: IngestParams): Promise<IngestResult | undefined> => {
+  const execute = useCallback(async (entityId: string, params: IngestParams): Promise<IngestResult> => {
     setError(null);
     setIsPending(true);
     setLastResult(null);
@@ -28,8 +28,9 @@ export function useWikiIngest() {
       setLastResult(result);
       return result;
     } catch (e) {
-      setError(e instanceof Error ? e : new Error(String(e)));
-      return undefined;
+      const err = e instanceof Error ? e : new Error(String(e));
+      setError(err);
+      throw err;
     } finally {
       setIsPending(false);
     }

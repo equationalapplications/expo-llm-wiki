@@ -492,11 +492,11 @@ export class WikiMemory {
             break;
         }
         
-        const searchArea = text.slice(0, maxChunkLength);
+        const searchArea = text.slice(0, maxChunkLength + 1);
         const match = searchArea.match(/[.!?]\s+(?!.*[.!?]\s+)/);
         
         if (match && match.index !== undefined) {
-            const splitPoint = match.index + match[0].length;
+            const splitPoint = Math.min(match.index + match[0].length, maxChunkLength);
             const chunk = safeSlice(text, splitPoint);
             chunks.push(chunk);
             text = text.slice(chunk.length);

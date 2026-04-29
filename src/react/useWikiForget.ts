@@ -20,7 +20,7 @@ export function useWikiForget() {
   const [error, setError] = useState<Error | null>(null);
   const [lastResult, setLastResult] = useState<ForgetResult | null>(null);
 
-  const execute = useCallback(async (entityId: string, params: ForgetParams): Promise<ForgetResult | undefined> => {
+  const execute = useCallback(async (entityId: string, params: ForgetParams): Promise<ForgetResult> => {
     setError(null);
     setIsPending(true);
     setLastResult(null);
@@ -29,8 +29,9 @@ export function useWikiForget() {
       setLastResult(result);
       return result;
     } catch (e) {
-      setError(e instanceof Error ? e : new Error(String(e)));
-      return undefined;
+      const err = e instanceof Error ? e : new Error(String(e));
+      setError(err);
+      throw err;
     } finally {
       setIsPending(false);
     }
