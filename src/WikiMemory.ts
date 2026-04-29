@@ -146,11 +146,6 @@ function normalizeSourceHash(value: string): string | null {
   return /^[0-9a-f]{64}$/i.test(value) ? value.toLowerCase() : null;
 }
 
-function safeSlice(text: string, len: number): string {
-  const s = text.slice(0, len);
-  const last = s.charCodeAt(s.length - 1);
-  return (last >= 0xD800 && last <= 0xDBFF) ? s.slice(0, -1) : s;
-}
 
 function titleTokens(title: string): Set<string> {
   return new Set(title.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(t => t.length >= 3));
@@ -590,12 +585,12 @@ export class WikiMemory {
         
         if (match && match.index !== undefined) {
             const splitPoint = Math.min(match.index + match[0].length, maxChunkLength);
-            const chunk = safeSlice(text, splitPoint);
+            const chunk = safeSlice(text, 0, splitPoint);
             chunks.push(chunk);
             text = text.slice(chunk.length);
         } else {
             truncated = true;
-            const chunk = safeSlice(text, maxChunkLength);
+            const chunk = safeSlice(text, 0, maxChunkLength);
             chunks.push(chunk);
             text = text.slice(chunk.length);
         }
