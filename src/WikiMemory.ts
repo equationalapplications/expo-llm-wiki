@@ -75,10 +75,11 @@ function validateTask(task: any): ExtractedTask | null {
 }
 
 function normalizeSourceRef(value: string): string | null {
-  const cleaned = value
-    .replace(/[^A-Za-z0-9._\- ]/g, '')
-    .trim()
-    .slice(0, 255);
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return null;
+  if (/[\u0000-\u001F\u007F]/.test(trimmed)) return null;
+  const cleaned = trimmed.slice(0, 255).trimEnd();
   return cleaned.length > 0 ? cleaned : null;
 }
 
