@@ -200,8 +200,8 @@ export class WikiMemory {
         const normalized = normalizeSourceRef(row.source_ref);
         if (normalized !== row.source_ref) {
           await this.db.runAsync(
-            `UPDATE ${this.prefix}entries SET source_ref = ?, updated_at = ? WHERE rowid = ?`,
-            [normalized, Date.now(), row.rowid]
+            `UPDATE ${this.prefix}entries SET source_ref = ? WHERE rowid = ?`,
+            [normalized, row.rowid]
           );
         }
       }
