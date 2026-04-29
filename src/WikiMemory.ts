@@ -478,8 +478,8 @@ export class WikiMemory {
     if (!sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
 
     const maxChunkLength = params.maxChunkLength ?? this.options.config?.maxChunkLength ?? 6000;
-    if (!Number.isInteger(maxChunkLength) || maxChunkLength < 1) {
-      throw new Error('maxChunkLength must be a positive integer');
+    if (!Number.isInteger(maxChunkLength) || maxChunkLength < 2) {
+      throw new Error('maxChunkLength must be an integer greater than or equal to 2');
     }
     
     const chunks: string[] = [];
