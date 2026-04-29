@@ -164,13 +164,14 @@ export class WikiMemory {
     const [factsRaw, tasks, events] = await Promise.all([factsPromise, tasksPromise, eventsPromise]);
 
     if (ftsQuery && factsRaw.length > 0) {
-      const ids = factsRaw.map(f => `'${f.id}'`).join(',');
+      const ids = factsRaw.map(f => f.id);
+      const placeholders = ids.map(() => '?').join(',');
       const now = Date.now();
       await this.db.runAsync(`
         UPDATE ${this.prefix}entries 
         SET access_count = access_count + 1, last_accessed_at = ?
-        WHERE id IN (${ids})
-      `, [now]);
+        WHERE id IN (${placeholders})
+      `, [now, ...ids]);
     }
 
     const facts = factsRaw.map(f => ({
