@@ -5,7 +5,10 @@ interface IngestParams {
   sourceRef: string;
   sourceHash: string;
   documentChunk: string;
+  maxChunkBytes?: number;
 }
+
+type IngestResult = { truncated: boolean; chunks: number };
 
 export function useWikiIngest() {
   const wiki = useWiki();
@@ -14,18 +17,23 @@ export function useWikiIngest() {
 
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const [lastResult, setLastResult] = useState<IngestResult | null>(null);
 
-  const execute = useCallback(async (entityId: string, params: IngestParams) => {
+  const execute = useCallback(async (entityId: string, params: IngestParams): Promise<IngestResult | undefined> => {
     setError(null);
     setIsPending(true);
+    setLastResult(null);
     try {
-      await wikiRef.current.ingestDocument(entityId, params);
+      const result = await wikiRef.current.ingestDocument(entityId, params);
+      setLastResult(result);
+      return result;
     } catch (e) {
       setError(e instanceof Error ? e : new Error(String(e)));
+      return undefined;
     } finally {
       setIsPending(false);
     }
   }, []);
 
-  return { execute, isPending, error };
+  return { execute, lastResult, isPending, error };
 }

@@ -8,15 +8,18 @@ export function useWikiMaintenance() {
 
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const [lastResult, setLastResult] = useState<void | null>(null);
   // Counter so either operation keeping isPending=true keeps it set
   const pendingCount = useRef(0);
 
-  const runLibrarian = useCallback(async (entityId: string) => {
+  const runLibrarian = useCallback(async (entityId: string): Promise<void> => {
     setError(null);
     pendingCount.current += 1;
     setIsPending(true);
+    setLastResult(null);
     try {
       await wikiRef.current.runLibrarian(entityId);
+      setLastResult(undefined);
     } catch (e) {
       setError(e instanceof Error ? e : new Error(String(e)));
     } finally {
@@ -25,12 +28,14 @@ export function useWikiMaintenance() {
     }
   }, []);
 
-  const runHeal = useCallback(async (entityId: string) => {
+  const runHeal = useCallback(async (entityId: string): Promise<void> => {
     setError(null);
     pendingCount.current += 1;
     setIsPending(true);
+    setLastResult(null);
     try {
       await wikiRef.current.runHeal(entityId);
+      setLastResult(undefined);
     } catch (e) {
       setError(e instanceof Error ? e : new Error(String(e)));
     } finally {
@@ -39,5 +44,5 @@ export function useWikiMaintenance() {
     }
   }, []);
 
-  return { runLibrarian, runHeal, isPending, error };
+  return { runLibrarian, runHeal, lastResult, isPending, error };
 }

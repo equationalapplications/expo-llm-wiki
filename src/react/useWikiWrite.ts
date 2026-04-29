@@ -11,12 +11,15 @@ export function useWikiWrite() {
 
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const [lastResult, setLastResult] = useState<void | null>(null);
 
-  const execute = useCallback(async (entityId: string, event: WriteEvent) => {
+  const execute = useCallback(async (entityId: string, event: WriteEvent): Promise<void> => {
     setError(null);
     setIsPending(true);
+    setLastResult(null);
     try {
       await wikiRef.current.write(entityId, event);
+      setLastResult(undefined);
     } catch (e) {
       setError(e instanceof Error ? e : new Error(String(e)));
     } finally {
@@ -24,5 +27,5 @@ export function useWikiWrite() {
     }
   }, []);
 
-  return { execute, isPending, error };
+  return { execute, lastResult, isPending, error };
 }
