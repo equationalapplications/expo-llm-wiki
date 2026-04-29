@@ -1,0 +1,239 @@
+# expo-llm-wiki
+
+Offline-first, SQLite-backed memory for LLM apps built with Expo. Handles FTS5 search, episodic event logging, background fact extraction, and memory healing — bring your own LLM.
+
+## Key Principles
+
+- **Bring Your Own Inference (BYOI):** Provide one `generateText` function. The package owns prompt construction, JSON parsing, and database writes.
+- **Namespace Safe:** All tables are prefixed (default: `llm_wiki_`) — no collisions with your existing database.
+- **Multi-Entity:** Multiple independent "brains" in one database via `entityId`.
+- **Offline First:** Reads are fully local via SQLite FTS5, typically under 50ms.
+
+## How It Works
+
+```mermaid
+flowchart LR
+    subgraph API
+        direction TB
+        write["write(event)"]
+        ingest["ingestDocument()"]
+        librarian["runLibrarian()"]
+        heal["runHeal()"]
+    end
+
+    subgraph SQLite
+        direction TB
+        events[(events)]
+        entries[("entries\n(facts)")]
+        tasks[(tasks)]
+    end
+
+    LLM["LLMProvider\n.generateText()"]
+
+    read["read(entityId, query)"]
+    FTS5(["FTS5 search"])
+    Bundle(["MemoryBundle\nfacts · tasks · events"])
+
+    write --> events
+    events -. "≥ threshold" .-> librarian
+    librarian --> LLM
+    heal --> LLM
+    ingest --> LLM
+    LLM --> entries
+    LLM --> tasks
+
+    read --> FTS5
+    FTS5 --> entries
+    entries --> Bundle
+    tasks --> Bundle
+    events --> Bundle
+```
+
+## Installation
+
+In your Expo project:
+
+```bash
+npx expo install expo-sqlite
+npm install expo-llm-wiki
+```
+
+Use `npx expo install` for `expo-sqlite` so Expo's version resolver picks the correct native build for your SDK version.
+
+## Setup
+
+```typescript
+import { createWiki } from 'expo-llm-wiki';
+import * as SQLite from 'expo-sqlite';
+
+const db = await SQLite.openDatabaseAsync('my-app.db');
+
+const wiki = createWiki(db, {
+  llmProvider: {
+    generateText: async ({ systemPrompt, userPrompt }) => {
+      // Connect to OpenAI, Gemini, a local model, etc.
+      // Must return a raw string (JSON, optionally in a markdown code fence).
+      const response = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+      });
+      return response.choices[0].message.content ?? '{}';
+    },
+  },
+  config: {
+    tablePrefix: 'llm_wiki_',       // optional, default: 'llm_wiki_'
+    maxFtsResults: 10,              // optional, default: 10
+    autoLibrarianThreshold: 20,    // optional, default: 20
+  },
+});
+
+// Create tables and FTS5 indexes (call once on app startup)
+await wiki.setup();
+```
+
+## Core API
+
+### Read
+
+FTS5 full-text search over facts, plus open tasks and recent events:
+
+```typescript
+const { facts, tasks, events } = await wiki.read('entity-123', 'weekend plans');
+// facts: WikiFact[]   — matched by FTS5, ranked by confidence + access count
+// tasks: WikiTask[]   — pending and in-progress only
+// events: WikiEvent[] — 10 most recent, ascending
+```
+
+Pass an empty string to skip FTS and return the most recently updated facts.
+
+### Write
+
+Log an episodic event. Automatically triggers the librarian pass once enough events accumulate:
+
+```typescript
+await wiki.write('entity-123', {
+  event_type: 'observation',
+  summary: 'User mentioned they love hiking on weekends.',
+});
+// event_type: 'observation' | 'decision' | 'action' | 'outcome'
+```
+
+### Ingest Document
+
+Extract facts from a document chunk. Idempotent — re-calling with the same `sourceRef` replaces the prior extraction:
+
+```typescript
+await wiki.ingestDocument('entity-123', {
+  sourceRef: 'docs/preferences.md',   // stable identifier
+  sourceHash: sha256(content),        // for change detection
+  documentChunk: content,
+});
+```
+
+### Background Maintenance
+
+```typescript
+// Consolidate recent events into durable facts (auto-triggered by write, or call manually)
+await wiki.runLibrarian('entity-123');
+
+// Resolve contradictions, downgrade stale claims, remove obsolete facts
+await wiki.runHeal('entity-123');
+```
+
+### Forget
+
+```typescript
+await wiki.forget('entity-123', { entryId: 'fact_abc' });    // single fact
+await wiki.forget('entity-123', { taskId: 'task_xyz' });     // single task
+await wiki.forget('entity-123', { sourceRef: 'docs/x.md' }); // all facts from a document
+await wiki.forget('entity-123', { clearAll: true });          // wipe entity
+```
+
+---
+
+## React / Expo Component API
+
+Import from `expo-llm-wiki/react`. This entry point is separate so non-React consumers do not transitively import React.
+
+### Provider
+
+Wrap once at app root (or any subtree that needs memory access):
+
+```typescript
+import { WikiProvider } from 'expo-llm-wiki/react';
+import { createWiki } from 'expo-llm-wiki';
+
+const wiki = createWiki(db, { llmProvider });
+
+export default function App() {
+  return (
+    <WikiProvider wiki={wiki}>
+      <YourApp />
+    </WikiProvider>
+  );
+}
+```
+
+### `useMemoryRead(entityId, query)`
+
+Reactive read. Fetches on mount and whenever `entityId` or `query` changes. In-flight results always land before a queued re-fetch starts — results are never silently discarded.
+
+```typescript
+const { data, isPending, error, refetch } = useMemoryRead('entity-123', 'weekend plans');
+// data: MemoryBundle | null
+```
+
+### `useWikiWrite()`
+
+```typescript
+const { execute, isPending, error } = useWikiWrite();
+
+await execute('entity-123', {
+  event_type: 'observation',
+  summary: 'User mentioned they love hiking.',
+});
+```
+
+### `useWikiMaintenance()`
+
+Shared `isPending` — true if either operation is in-flight:
+
+```typescript
+const { runLibrarian, runHeal, isPending, error } = useWikiMaintenance();
+
+await runLibrarian('entity-123');
+await runHeal('entity-123');
+```
+
+### `useWikiIngest()`
+
+```typescript
+const { execute, isPending, error } = useWikiIngest();
+
+await execute('entity-123', {
+  sourceRef: 'docs/preferences.md',
+  sourceHash: sha256(content),
+  documentChunk: content,
+});
+```
+
+### `useWikiForget()`
+
+```typescript
+const { execute, isPending, error } = useWikiForget();
+
+await execute('entity-123', { entryId: 'fact_abc' });
+```
+
+All mutation hooks share the same shape:
+
+```typescript
+{
+  execute: (...args) => Promise<void>;
+  isPending: boolean;
+  error: Error | null;        // cleared on next execute call
+}
+```
