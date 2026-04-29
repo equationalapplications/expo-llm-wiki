@@ -5,7 +5,7 @@ interface IngestParams {
   sourceRef: string;
   sourceHash: string;
   documentChunk: string;
-  maxChunkBytes?: number;
+  maxChunkLength?: number;
 }
 
 type IngestResult = { truncated: boolean; chunks: number };
