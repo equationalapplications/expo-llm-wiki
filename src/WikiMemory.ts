@@ -571,7 +571,7 @@ export class WikiMemory {
     }
     
     if (typeof params.documentChunk !== 'string') {
-      throw new Error('documentChunk must be a string');
+      throw new Error(`documentChunk must be a string, received ${typeof params.documentChunk}`);
     }
 
     const chunks: string[] = [];
