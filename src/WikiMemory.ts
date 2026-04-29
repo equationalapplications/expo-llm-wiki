@@ -50,10 +50,48 @@ function generateId(prefix: string = '') {
   return prefix + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 }
 
+function safeSlice(value: string, start: number, end?: number): string {
+  const length = value.length;
+  let safeStart = start < 0 ? Math.max(length + start, 0) : Math.min(start, length);
+  let safeEnd = end === undefined
+    ? length
+    : end < 0
+      ? Math.max(length + end, 0)
+      : Math.min(end, length);
+
+  if (safeStart > safeEnd) {
+    [safeStart, safeEnd] = [safeEnd, safeStart];
+  }
+
+  if (
+    safeStart > 0 &&
+    safeStart < length &&
+    value.charCodeAt(safeStart) >= 0xDC00 &&
+    value.charCodeAt(safeStart) <= 0xDFFF &&
+    value.charCodeAt(safeStart - 1) >= 0xD800 &&
+    value.charCodeAt(safeStart - 1) <= 0xDBFF
+  ) {
+    safeStart--;
+  }
+
+  if (
+    safeEnd > 0 &&
+    safeEnd < length &&
+    value.charCodeAt(safeEnd - 1) >= 0xD800 &&
+    value.charCodeAt(safeEnd - 1) <= 0xDBFF &&
+    value.charCodeAt(safeEnd) >= 0xDC00 &&
+    value.charCodeAt(safeEnd) <= 0xDFFF
+  ) {
+    safeEnd--;
+  }
+
+  return value.slice(safeStart, safeEnd);
+}
+
 function clip(value: string, max: number): string {
   if (typeof value !== 'string') return '';
   const s = value.trim();
-  return s.length <= max ? s : s.slice(0, max).trimEnd();
+  return s.length <= max ? s : safeSlice(s, 0, max).trimEnd();
 }
 
 function validateTags(tags: any[]): string[] {
