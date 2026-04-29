@@ -522,7 +522,7 @@ export class WikiMemory {
 
     const now = Date.now();
     await this.db.withTransactionAsync(async () => {
-        await this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE source_ref = ? AND entity_id = ?`, [now, now, sourceRef, entityId]);
+        await this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE source_ref = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, sourceRef, entityId]);
         for (const fact of allValidFacts) {
             const id = generateId('fact_');
             await this.db.runAsync(`
