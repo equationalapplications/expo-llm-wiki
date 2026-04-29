@@ -135,7 +135,7 @@ export class WikiMemory {
           OR INSTR(source_ref, '/') > 0
           OR INSTR(source_ref, '\\') > 0
           OR INSTR(source_ref, CHAR(0)) > 0
-          OR source_ref GLOB '*[^A-Za-z0-9._ -]*'
+          OR source_ref GLOB '*[^-A-Za-z0-9._ ]*'
         )
     `);
     await this.db.withTransactionAsync(async () => {
