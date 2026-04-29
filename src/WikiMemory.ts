@@ -76,7 +76,7 @@ function validateTask(task: any): ExtractedTask | null {
 
 function normalizeSourceRef(value: string): string | null {
   if (typeof value !== 'string') return null;
-  const cleaned = value.replace(/[\/\\]/g, '').split('\0').join('').trim().slice(0, 255);
+  const cleaned = value.replace(/[^A-Za-z0-9._\- ]/g, '').trim().slice(0, 255);
   return cleaned.length > 0 ? cleaned : null;
 }
 
@@ -118,6 +118,25 @@ export class WikiMemory {
 
   async setup() {
     await setupDatabase(this.db, this.prefix);
+    // Migration: normalize any existing source_ref values that were stored before the
+    // allowlist rule ([^A-Za-z0-9._\- ] → strip) was introduced.  Read-then-update in
+    // JS so the normalization is guaranteed to match what normalizeSourceRef() produces,
+    // regardless of which characters the old normalization left behind.
+    // Idempotent: on a fresh DB or after the first run, getAllAsync returns 0 rows.
+    type Row = { rowid: number; source_ref: string };
+    const rows = await this.db.getAllAsync<Row>(
+      `SELECT rowid, source_ref FROM ${this.prefix}entries WHERE source_ref IS NOT NULL`
+    );
+    const now = Date.now();
+    for (const row of rows) {
+      const normalized = normalizeSourceRef(row.source_ref);
+      if (normalized !== row.source_ref) {
+        await this.db.runAsync(
+          `UPDATE ${this.prefix}entries SET source_ref = ?, updated_at = ? WHERE rowid = ?`,
+          [normalized, now, row.rowid]
+        );
+      }
+    }
   }
 
   private formatSearchQuery(query: string): string {
