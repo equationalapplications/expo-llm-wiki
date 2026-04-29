@@ -135,18 +135,20 @@ export class WikiMemory {
           OR INSTR(source_ref, '/') > 0
           OR INSTR(source_ref, '\\') > 0
           OR INSTR(source_ref, CHAR(0)) > 0
-          OR source_ref GLOB '*[^-A-Za-z0-9._ ]*'
+          OR source_ref GLOB '*[^A-Za-z0-9._ -]*'
         )
     `);
-    for (const row of rows) {
-      const normalized = normalizeSourceRef(row.source_ref);
-      if (normalized !== row.source_ref) {
-        await this.db.runAsync(
-          `UPDATE ${this.prefix}entries SET source_ref = ?, updated_at = ? WHERE rowid = ?`,
-          [normalized, Date.now(), row.rowid]
-        );
+    await this.db.withTransactionAsync(async () => {
+      for (const row of rows) {
+        const normalized = normalizeSourceRef(row.source_ref);
+        if (normalized !== row.source_ref) {
+          await this.db.runAsync(
+            `UPDATE ${this.prefix}entries SET source_ref = ?, updated_at = ? WHERE rowid = ?`,
+            [normalized, Date.now(), row.rowid]
+          );
+        }
       }
-    }
+    });
   }
 
   private formatSearchQuery(query: string): string {
