@@ -122,11 +122,22 @@ export class WikiMemory {
     // allowlist rule ([^A-Za-z0-9._\- ] → strip) was introduced.  Read-then-update in
     // JS so the normalization is guaranteed to match what normalizeSourceRef() produces,
     // regardless of which characters the old normalization left behind.
-    // Idempotent: on a fresh DB or after the first run, getAllAsync returns 0 rows.
+    // The WHERE clause pre-filters to rows that contain any character outside the
+    // allowlist (checking leading/trailing whitespace, slashes, backslashes, NUL, and
+    // the full 7-bit ASCII non-allowlist range via GLOB) so that already-normalized
+    // rows are never fetched.  Idempotent: after the first run no rows match the filter.
     type Row = { rowid: number; source_ref: string };
-    const rows = await this.db.getAllAsync<Row>(
-      `SELECT rowid, source_ref FROM ${this.prefix}entries WHERE source_ref IS NOT NULL`
-    );
+    const rows = await this.db.getAllAsync<Row>(`
+      SELECT rowid, source_ref FROM ${this.prefix}entries
+      WHERE source_ref IS NOT NULL
+        AND (
+          TRIM(source_ref) != source_ref
+          OR INSTR(source_ref, '/') > 0
+          OR INSTR(source_ref, '\\') > 0
+          OR INSTR(source_ref, CHAR(0)) > 0
+          OR source_ref GLOB '*[^A-Za-z0-9._-]*'
+        )
+    `);
     const now = Date.now();
     for (const row of rows) {
       const normalized = normalizeSourceRef(row.source_ref);
