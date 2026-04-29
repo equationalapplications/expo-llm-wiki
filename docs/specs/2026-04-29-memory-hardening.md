@@ -443,7 +443,7 @@ This spec introduces the following API-breaking changes that require a major or 
 | New `WikiConfig` keys (`autoHealThreshold`, `orphanAfterDays`, `staleInferredAfterDays`, `maxChunkLength`) | Additive — non-breaking |
 | `sourceRef` normalization now applied on ingest write path | Potentially breaks callers who relied on exact path characters being stored |
 
-**Existing data:** Rows with unnormalized `source_ref` values remain valid and readable. Future `forget({ sourceRef })` and re-ingest calls will use normalized values. Callers who need to forget old unnormalized entries should pass the original exact string once, then re-ingest with normalized refs.
+**Existing data:** Rows with unnormalized `source_ref` values remain valid and are normalized in place by the setup-time migration. After migration, `forget({ sourceRef })` and re-ingest calls use normalized values, and caller-provided `sourceRef` inputs are normalized before matching, so callers do not need to pass the original exact legacy string.
 
 **`ingestDocument` chunking contract change:** The `ingestDocument` params shape is unchanged, but the implicit caller contract changes: chunking now happens internally. Callers who pre-chunked and called `ingestDocument` once per chunk should switch to passing the full document and letting the package chunk it. Callers who cannot do this (e.g. streaming) may continue passing pre-chunked content — the internal chunking will be a no-op if the chunk is already under `maxChunkLength`.
 
