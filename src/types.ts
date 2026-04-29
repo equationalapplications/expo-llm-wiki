@@ -6,7 +6,7 @@ export interface WikiConfig {
   autoHealThreshold?: number;
   orphanAfterDays?: number | null;
   staleInferredAfterDays?: number | null;
-  maxChunkBytes?: number;
+  maxChunkLength?: number;
 }
 
 export interface WikiFact {

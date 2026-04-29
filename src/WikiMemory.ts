@@ -86,6 +86,12 @@ function normalizeSourceHash(value: string): string | null {
   return /^[0-9a-f]{64}$/i.test(value) ? value.toLowerCase() : null;
 }
 
+function safeSlice(text: string, len: number): string {
+  const s = text.slice(0, len);
+  const last = s.charCodeAt(s.length - 1);
+  return (last >= 0xD800 && last <= 0xDBFF) ? s.slice(0, -1) : s;
+}
+
 function titleTokens(title: string): Set<string> {
   return new Set(title.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(t => t.length >= 3));
 }
@@ -388,8 +394,8 @@ export class WikiMemory {
       const [entriesRes, tasksRes] = await Promise.all([
           this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ?`, [now, now, entityId]),
           this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE entity_id = ?`, [now, now, entityId]),
-          this.db.runAsync(`UPDATE ${this.prefix}checkpoints SET memory_checkpoint = 0, heal_checkpoint = 0 WHERE entity_id = ?`, [entityId])
       ]);
+      await this.db.runAsync(`UPDATE ${this.prefix}checkpoints SET memory_checkpoint = 0, heal_checkpoint = 0 WHERE entity_id = ?`, [entityId]);
       deletedEntries = entriesRes.changes;
       deletedTasks = tasksRes.changes;
     } else {
@@ -403,8 +409,10 @@ export class WikiMemory {
             promises.push(this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, params.taskId, entityId]));
         }
 
-        const sourceRef = params.sourceRef ? normalizeSourceRef(params.sourceRef) : null;
-        const sourceHash = params.sourceHash ? normalizeSourceHash(params.sourceHash) : null;
+        const sourceRef = params.sourceRef !== undefined ? normalizeSourceRef(params.sourceRef) : null;
+        if (params.sourceRef !== undefined && !sourceRef) throw new Error('Invalid sourceRef');
+        const sourceHash = params.sourceHash !== undefined ? normalizeSourceHash(params.sourceHash) : null;
+        if (params.sourceHash !== undefined && !sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
         
         if (sourceRef || sourceHash) {
             let q = `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`;
@@ -417,12 +425,7 @@ export class WikiMemory {
                 q += ` AND source_hash = ?`;
                 args.push(sourceHash);
             }
-            if (params.sourceHash && !sourceHash) {
-                // If invalid hash was provided, we skip this deletion completely.
-                console.warn('Invalid sourceHash provided to forget()');
-            } else {
-                promises.push(this.db.runAsync(q, args));
-            }
+            promises.push(this.db.runAsync(q, args));
         }
 
         const results = await Promise.all(promises);
@@ -432,7 +435,7 @@ export class WikiMemory {
             const taskIdx = params.entryId ? 1 : 0;
             if (results[taskIdx]) deletedTasks += results[taskIdx].changes;
         }
-        if ((sourceRef || sourceHash) && !(params.sourceHash && !sourceHash)) {
+        if (sourceRef || sourceHash) {
             const refIdx = (params.entryId ? 1 : 0) + (params.taskId ? 1 : 0);
             if (results[refIdx]) deletedEntries += results[refIdx].changes;
         }
@@ -441,60 +444,60 @@ export class WikiMemory {
     return { deleted: { entries: deletedEntries, tasks: deletedTasks } };
   }
 
-  async ingestDocument(entityId: string, params: { sourceRef: string; sourceHash: string; documentChunk: string; maxChunkBytes?: number }): Promise<{ truncated: boolean; chunks: number }> {
+  async ingestDocument(entityId: string, params: { sourceRef: string; sourceHash: string; documentChunk: string; maxChunkLength?: number }): Promise<{ truncated: boolean; chunks: number }> {
     const sourceRef = normalizeSourceRef(params.sourceRef);
     if (!sourceRef) throw new Error('Invalid sourceRef');
     const sourceHash = normalizeSourceHash(params.sourceHash);
     if (!sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
 
-    const maxChunkBytes = params.maxChunkBytes || this.options.config?.maxChunkBytes || 6000;
+    const maxChunkLength = params.maxChunkLength || this.options.config?.maxChunkLength || 6000;
     
     const chunks: string[] = [];
     let truncated = false;
     
     let text = params.documentChunk;
     while (text.length > 0) {
-        if (text.length <= maxChunkBytes) {
+        if (text.length <= maxChunkLength) {
             chunks.push(text);
             break;
         }
         
-        const searchArea = text.slice(0, maxChunkBytes);
+        const searchArea = text.slice(0, maxChunkLength);
         const match = searchArea.match(/[.!?]\s+(?!.*[.!?]\s+)/);
         
         if (match && match.index !== undefined) {
             const splitPoint = match.index + match[0].length;
-            chunks.push(text.slice(0, splitPoint));
+            chunks.push(safeSlice(text, splitPoint));
             text = text.slice(splitPoint);
         } else {
             truncated = true;
-            chunks.push(text.slice(0, maxChunkBytes));
-            text = text.slice(maxChunkBytes);
+            const chunk = safeSlice(text, maxChunkLength);
+            chunks.push(chunk);
+            text = text.slice(chunk.length);
         }
+    }
+
+    const allValidFacts: ExtractedFact[] = [];
+    for (const chunk of chunks) {
+        const userPrompt = `Document Chunk:\n${chunk}`;
+        const responseText = await this.options.llmProvider.generateText({
+          systemPrompt: INGEST_SYSTEM_PROMPT,
+          userPrompt,
+        });
+        const result = parseJsonResponse<{ facts: ExtractedFact[] }>(responseText);
+        const validFacts = (result.facts || []).map(validateFact).filter((f): f is ExtractedFact => f !== null);
+        allValidFacts.push(...validFacts);
     }
 
     const now = Date.now();
     await this.db.withTransactionAsync(async () => {
-        // Soft-delete existing before inserting new chunks
         await this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE source_ref = ? AND entity_id = ?`, [now, now, sourceRef, entityId]);
-        
-        for (const chunk of chunks) {
-            const userPrompt = `Document Chunk:\n${chunk}`;
-            const responseText = await this.options.llmProvider.generateText({
-              systemPrompt: INGEST_SYSTEM_PROMPT,
-              userPrompt,
-            });
-
-            const result = parseJsonResponse<{ facts: ExtractedFact[] }>(responseText);
-            const validFacts = (result.facts || []).map(validateFact).filter((f): f is ExtractedFact => f !== null);
-
-            for (const fact of validFacts) {
-              const id = generateId('fact_');
-              await this.db.runAsync(`
+        for (const fact of allValidFacts) {
+            const id = generateId('fact_');
+            await this.db.runAsync(`
                 INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-              `, [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'user_document', sourceHash, sourceRef, now, now]);
-            }
+            `, [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'user_document', sourceHash, sourceRef, now, now]);
         }
     });
 

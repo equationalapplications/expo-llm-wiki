@@ -8,6 +8,7 @@ Offline-first, SQLite-backed memory for LLM apps built with Expo. Handles FTS5 s
 - **Namespace Safe:** All tables are prefixed (default: `llm_wiki_`) — no collisions with your existing database.
 - **Multi-Entity:** Multiple independent "brains" in one database via `entityId`.
 - **Offline First:** Reads are fully local via SQLite FTS5, typically under 50ms.
+- **Full Unicode Support:** UTF-8 and UTF-16 (including surrogate pairs for emoji) are fully supported. Chunks are split safely at sentence boundaries; surrogate pairs are never fragmented.
 
 ## How It Works
 
@@ -86,7 +87,8 @@ const wiki = createWiki(db, {
   config: {
     tablePrefix: 'llm_wiki_',       // optional, default: 'llm_wiki_'
     maxFtsResults: 10,              // optional, default: 10
-    autoLibrarianThreshold: 20,    // optional, default: 20
+    autoLibrarianThreshold: 20,     // optional, default: 20
+    maxChunkLength: 6000,           // optional, default: 6000 (char count, not bytes)
   },
 });
 
@@ -123,14 +125,18 @@ await wiki.write('entity-123', {
 
 ### Ingest Document
 
-Extract facts from a document chunk. Idempotent — re-calling with the same `sourceRef` replaces the prior extraction:
+Extract facts from a document chunk. Idempotent — re-calling with the same `sourceRef` replaces the prior extraction. Documents are automatically chunked at sentence boundaries; if a sentence exceeds `maxChunkLength`, it is hard-split.
 
 ```typescript
-await wiki.ingestDocument('entity-123', {
+const result = await wiki.ingestDocument('entity-123', {
   sourceRef: 'docs/preferences.md',   // stable identifier
   sourceHash: sha256(content),        // for change detection
   documentChunk: content,
+  maxChunkLength: 6000,               // optional, character count
 });
+// result: { truncated: boolean; chunks: number }
+// truncated: true if at least one hard-split was required (no sentence boundary)
+// chunks: number of LLM calls made
 ```
 
 ### Background Maintenance
@@ -146,11 +152,15 @@ await wiki.runHeal('entity-123');
 ### Forget
 
 ```typescript
-await wiki.forget('entity-123', { entryId: 'fact_abc' });    // single fact
+const result = await wiki.forget('entity-123', { entryId: 'fact_abc' });    // single fact
+// result: { deleted: { entries: number; tasks: number } }
+
 await wiki.forget('entity-123', { taskId: 'task_xyz' });     // single task
 await wiki.forget('entity-123', { sourceRef: 'docs/x.md' }); // all facts from a document
 await wiki.forget('entity-123', { clearAll: true });          // wipe entity
 ```
+
+Throws `Error` if `sourceRef` or `sourceHash` is provided but invalid. Soft-deletes are idempotent — calling again with the same parameters returns `{ deleted: { entries: 0; tasks: 0 } }`.
 
 ---
 
