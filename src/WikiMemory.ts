@@ -143,6 +143,7 @@ function normalizeSourceRef(value: string): string | null {
 }
 
 function normalizeSourceHash(value: string): string | null {
+  if (typeof value !== 'string') return null;
   return /^[0-9a-f]{64}$/i.test(value) ? value.toLowerCase() : null;
 }
 
@@ -361,8 +362,10 @@ export class WikiMemory {
     });
 
     const result = parseJsonResponse<{ facts: ExtractedFact[], tasks: ExtractedTask[] }>(responseText);
-    const validFacts = (result.facts || []).map(validateFact).filter((f): f is ExtractedFact => f !== null);
-    const validTasks = (result.tasks || []).map(validateTask).filter((t): t is ExtractedTask => t !== null);
+    const facts = Array.isArray(result.facts) ? result.facts : [];
+    const tasks = Array.isArray(result.tasks) ? result.tasks : [];
+    const validFacts = facts.map(validateFact).filter((f): f is ExtractedFact => f !== null);
+    const validTasks = tasks.map(validateTask).filter((t): t is ExtractedTask => t !== null);
 
     const now = Date.now();
 
@@ -457,9 +460,12 @@ export class WikiMemory {
     const result = parseJsonResponse<{ downgraded: string[], deleted: string[], newFacts: ExtractedFact[] }>(responseText);
 
     const mutableIds = new Set(healCandidates.map(f => f.id));
-    const safeDowngraded = (result.downgraded || []).filter(id => mutableIds.has(id));
-    const safeDeleted = (result.deleted || []).filter(id => mutableIds.has(id));
-    const validNewFacts = (result.newFacts || []).map(validateFact).filter((f): f is ExtractedFact => f !== null);
+    const downgraded = Array.isArray(result.downgraded) ? result.downgraded : [];
+    const deleted = Array.isArray(result.deleted) ? result.deleted : [];
+    const newFacts = Array.isArray(result.newFacts) ? result.newFacts : [];
+    const safeDowngraded = downgraded.filter(id => mutableIds.has(id));
+    const safeDeleted = deleted.filter(id => mutableIds.has(id));
+    const validNewFacts = newFacts.map(validateFact).filter((f): f is ExtractedFact => f !== null);
 
     await this.db.withTransactionAsync(async () => {
       for (const id of safeDowngraded) {
@@ -608,7 +614,7 @@ export class WikiMemory {
           userPrompt,
         });
         const result = parseJsonResponse<{ facts: ExtractedFact[] }>(responseText);
-        const validFacts = (result.facts || []).map(validateFact).filter((f): f is ExtractedFact => f !== null);
+        const validFacts = (Array.isArray(result.facts) ? result.facts : []).map(validateFact).filter((f): f is ExtractedFact => f !== null);
         allValidFacts.push(...validFacts);
     }
 
