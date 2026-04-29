@@ -124,7 +124,7 @@ export class WikiMemory {
     // regardless of which characters the old normalization left behind.
     // The WHERE clause pre-filters to rows that contain any character outside the
     // allowlist (checking leading/trailing whitespace, slashes, backslashes, NUL, and
-    // the full 7-bit ASCII non-allowlist range via GLOB) so that already-normalized
+    // the full ASCII non-allowlist range via GLOB) so that already-normalized
     // rows are never fetched.  Idempotent: after the first run no rows match the filter.
     type Row = { rowid: number; source_ref: string };
     const rows = await this.db.getAllAsync<Row>(`
@@ -135,16 +135,15 @@ export class WikiMemory {
           OR INSTR(source_ref, '/') > 0
           OR INSTR(source_ref, '\\') > 0
           OR INSTR(source_ref, CHAR(0)) > 0
-          OR source_ref GLOB '*[^A-Za-z0-9._-]*'
+          OR source_ref GLOB '*[^-A-Za-z0-9._ ]*'
         )
     `);
-    const now = Date.now();
     for (const row of rows) {
       const normalized = normalizeSourceRef(row.source_ref);
       if (normalized !== row.source_ref) {
         await this.db.runAsync(
           `UPDATE ${this.prefix}entries SET source_ref = ?, updated_at = ? WHERE rowid = ?`,
-          [normalized, now, row.rowid]
+          [normalized, Date.now(), row.rowid]
         );
       }
     }
