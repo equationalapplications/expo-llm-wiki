@@ -652,6 +652,91 @@ export class WikiMemory {
     return { generatedAt: Date.now(), entities };
   }
 
+  async importDump(dump: MemoryDump, opts?: { merge?: boolean }): Promise<void> {
+    const merge = opts?.merge ?? false;
+
+    for (const [entityId, bundle] of Object.entries(dump.entities)) {
+      await this.db.withTransactionAsync(async () => {
+        if (!merge) {
+          const now = Date.now();
+          await this.db.runAsync(
+            `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`,
+            [now, now, entityId]
+          );
+          await this.db.runAsync(
+            `UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`,
+            [now, now, entityId]
+          );
+        }
+
+        for (const fact of bundle.facts) {
+          if (merge) {
+            const existing = await this.db.getFirstAsync<{ id: string }>(
+              `SELECT id FROM ${this.prefix}entries WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`,
+              [fact.id, entityId]
+            );
+            if (existing) continue;
+          }
+
+          await this.db.runAsync(
+            `INSERT OR REPLACE INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              fact.id,
+              entityId,
+              fact.title,
+              fact.body,
+              JSON.stringify(fact.tags),
+              fact.confidence,
+              fact.source_type,
+              fact.source_hash,
+              fact.source_ref,
+              fact.created_at,
+              fact.updated_at,
+              fact.last_accessed_at,
+              fact.access_count,
+              fact.deleted_at,
+            ]
+          );
+        }
+
+        for (const task of bundle.tasks) {
+          if (merge) {
+            const existing = await this.db.getFirstAsync<{ id: string }>(
+              `SELECT id FROM ${this.prefix}tasks WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`,
+              [task.id, entityId]
+            );
+            if (existing) continue;
+          }
+
+          await this.db.runAsync(
+            `INSERT OR REPLACE INTO ${this.prefix}tasks (id, entity_id, description, status, priority, created_at, updated_at, resolved_at, deleted_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              task.id,
+              entityId,
+              task.description,
+              task.status,
+              task.priority,
+              task.created_at,
+              task.updated_at,
+              task.resolved_at,
+              task.deleted_at,
+            ]
+          );
+        }
+
+        for (const event of bundle.events) {
+          await this.db.runAsync(
+            `INSERT OR IGNORE INTO ${this.prefix}events (id, entity_id, event_type, summary, related_entry_id, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [event.id, entityId, event.event_type, event.summary, event.related_entry_id ?? null, event.created_at]
+          );
+        }
+      });
+    }
+  }
+
   async forget(entityId: string, params: { entryId?: string; taskId?: string; sourceRef?: string; sourceHash?: string; clearAll?: boolean }): Promise<{ deleted: { entries: number; tasks: number } }> {
     const now = Date.now();
     let deletedEntries = 0;
