@@ -375,26 +375,8 @@ export class WikiMemory {
     return { facts, tasks, events: events.reverse() };
   }
 
-  async getMemoryBundle(entityId: string): Promise<{ facts: WikiFact[]; tasks: WikiTask[]; events: WikiEvent[] }> {
-    const [factsRaw, tasks, events] = await Promise.all([
-      this.db.getAllAsync<WikiFact>(
-        `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC`,
-        [entityId]
-      ),
-      this.db.getAllAsync<WikiTask>(
-        `SELECT * FROM ${this.prefix}tasks WHERE entity_id = ? AND deleted_at IS NULL ORDER BY priority DESC, created_at ASC`,
-        [entityId]
-      ),
-      this.db.getAllAsync<WikiEvent>(
-        `SELECT * FROM ${this.prefix}events WHERE entity_id = ? ORDER BY created_at DESC LIMIT 10`,
-        [entityId]
-      ),
-    ]);
-    const facts = factsRaw.map(f => ({
-      ...f,
-      tags: typeof f.tags === 'string' ? JSON.parse(f.tags) : f.tags,
-    }));
-    return { facts, tasks, events: events.reverse() };
+  async getMemoryBundle(entityId: string): Promise<MemoryBundle> {
+    return this._getFullBundle(entityId, { maxEvents: 10 });
   }
 
   async write(entityId: string, event: Omit<WikiEvent, 'id' | 'entity_id' | 'created_at'>): Promise<void> {
@@ -655,8 +637,14 @@ export class WikiMemory {
     };
   }
 
-  private async _getFullBundle(entityId: string): Promise<MemoryBundle> {
-    const [factsRaw, tasks, events] = await Promise.all([
+  private async _getFullBundle(entityId: string, opts?: { maxEvents?: number }): Promise<MemoryBundle> {
+    const maxEvents = opts?.maxEvents;
+    const eventsQuery = maxEvents != null
+      ? `SELECT * FROM ${this.prefix}events WHERE entity_id = ? ORDER BY created_at DESC LIMIT ?`
+      : `SELECT * FROM ${this.prefix}events WHERE entity_id = ? ORDER BY created_at ASC`;
+    const eventsParams: (string | number)[] = maxEvents != null ? [entityId, maxEvents] : [entityId];
+
+    const [factsRaw, tasks, eventsRaw] = await Promise.all([
       this.db.getAllAsync<WikiFact>(
         `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC`,
         [entityId]
@@ -665,15 +653,14 @@ export class WikiMemory {
         `SELECT * FROM ${this.prefix}tasks WHERE entity_id = ? AND deleted_at IS NULL ORDER BY priority DESC, created_at ASC`,
         [entityId]
       ),
-      this.db.getAllAsync<WikiEvent>(
-        `SELECT * FROM ${this.prefix}events WHERE entity_id = ? ORDER BY created_at ASC`,
-        [entityId]
-      ),
+      this.db.getAllAsync<WikiEvent>(eventsQuery, eventsParams),
     ]);
     const facts = factsRaw.map(f => ({
       ...f,
       tags: typeof f.tags === 'string' ? JSON.parse(f.tags) : f.tags,
     }));
+    // When limited, results arrive newest-first; reverse to chronological order.
+    const events = maxEvents != null ? eventsRaw.reverse() : eventsRaw;
     return { facts, tasks, events };
   }
 
@@ -889,8 +876,9 @@ export class WikiMemory {
     if (!sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
 
     const maxChunkLength = params.maxChunkLength ?? this.options.config?.maxChunkLength ?? 12000;
+    const rawOverlap = params.chunkOverlap ?? this.options.config?.chunkOverlap ?? 400;
     const chunkOverlap = Math.min(
-      params.chunkOverlap ?? this.options.config?.chunkOverlap ?? 400,
+      Number.isFinite(rawOverlap) && rawOverlap >= 0 ? Math.floor(rawOverlap) : 400,
       maxChunkLength - 1
     );
     const rawConcurrency = params.chunkConcurrency ?? this.options.config?.chunkConcurrency ?? 1;
