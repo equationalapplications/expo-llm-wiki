@@ -7,6 +7,7 @@ export interface WikiConfig {
   orphanAfterDays?: number | null;
   staleInferredAfterDays?: number | null;
   maxChunkLength?: number;
+  chunkOverlap?: number;
 }
 
 export interface WikiFact {
