@@ -120,7 +120,7 @@ function chunkText(
     // 1. paragraph break
     let splitPoint = -1;
     const paraIdx = text.lastIndexOf('\n\n', windowEnd);
-    if (paraIdx >= minSplit && paraIdx < windowEnd) {
+    if (paraIdx >= minSplit && paraIdx + 2 <= windowEnd) {
       splitPoint = paraIdx + 2;
     }
 
