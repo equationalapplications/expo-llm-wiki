@@ -1,3 +1,44 @@
+# [2.0.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v1.1.0...v2.0.0) (2026-04-30)
+
+
+### Bug Fixes
+
+* add cross-entity collision warnings, fix comment accuracy ([7bf0b04](https://github.com/equationalapplications/expo-llm-wiki/commit/7bf0b0493e60f8ed2d36b56928d4ec581c374cab))
+* auto-heal mutex, full event export, useWikiExport hook contract ([2f99606](https://github.com/equationalapplications/expo-llm-wiki/commit/2f99606f7c2c6c44a5872948dfd9a31129feba2e))
+* coerce fact.tags to array before JSON.stringify in importDump ([f795a6d](https://github.com/equationalapplications/expo-llm-wiki/commit/f795a6d2bbe3e912de87064a664ae5250cf61691))
+* correct reserved-chars comment to ~20, document merge-skips-soft-deleted intent ([11067cf](https://github.com/equationalapplications/expo-llm-wiki/commit/11067cf5e6888b6d62168603da1038acdcb7ba12))
+* exportDump concurrency limit, importDump PK safety, 64-bit shortHash, filename length cap ([fabeb50](https://github.com/equationalapplications/expo-llm-wiki/commit/fabeb507f3d1eb5948c237c5d796db62579a54d4))
+* move MockSQLiteDatabase inside vi.mock factory, use dynamic imports for WikiMemory ([b8d10d3](https://github.com/equationalapplications/expo-llm-wiki/commit/b8d10d3cabbd1f5dd4eee88e9385c7e1bce98c05))
+* remove chunkText public export, clamp chunkOverlap, expand expo-sqlite peer range ([8ac595c](https://github.com/equationalapplications/expo-llm-wiki/commit/8ac595cddc244e4ce89db149e95744e2115838c3))
+* use slice().reverse() to avoid mutating DB result array ([9345228](https://github.com/equationalapplications/expo-llm-wiki/commit/9345228c70596e2e7dff10e9b6ee9255fd99e8a8))
+* **wiki:** abort withConcurrency on first error, normalize chunkConcurrency ([6a23781](https://github.com/equationalapplications/expo-llm-wiki/commit/6a237818719044ed0852f0b9a15443ad0eb50449))
+* **wiki:** getEntityStatus key scanning and exportDump ordering ([7eefeed](https://github.com/equationalapplications/expo-llm-wiki/commit/7eefeeddfeeb1e75e988864130aab9f626b32163))
+
+
+### Documentation
+
+* add badges, update defaults, and attribution footer ([765b54c](https://github.com/equationalapplications/expo-llm-wiki/commit/765b54c81c38c1d276f15b321f8a66d7aef391d4))
+
+
+### Features
+
+* **react:** add useWikiExport hook ([b5a6f00](https://github.com/equationalapplications/expo-llm-wiki/commit/b5a6f00829ed2260c78798605d1ea4b13aab5542))
+* **wiki:** add chunkText helper with paragraph-first splitting and overlap ([57e228e](https://github.com/equationalapplications/expo-llm-wiki/commit/57e228e095b521be548836823d361f223fc64727))
+* **wiki:** add formatMemoryDump pure helper ([3f6e72a](https://github.com/equationalapplications/expo-llm-wiki/commit/3f6e72a0fe90daa8e04b08d445dd5eb26fde5e4c))
+* **wiki:** add getEntityStatus snapshot ([b0c7b16](https://github.com/equationalapplications/expo-llm-wiki/commit/b0c7b16ad1d114d9eb05260514dc1c16b7173391))
+* **wiki:** add importDump method ([12a39db](https://github.com/equationalapplications/expo-llm-wiki/commit/12a39db2fd381d64fc9caafeca204069933877b6))
+* **wiki:** add MemoryDump type and exportDump method ([995bc75](https://github.com/equationalapplications/expo-llm-wiki/commit/995bc75f0b57ec3e97cd206c5b67ab57462aab39))
+* **wiki:** add type definitions and prompt annotations ([03a625a](https://github.com/equationalapplications/expo-llm-wiki/commit/03a625a34e95efe56971c70923b7d5a3df78ab2d))
+* **wiki:** add WikiConfig.chunkOverlap ([52ebe12](https://github.com/equationalapplications/expo-llm-wiki/commit/52ebe122b4bde0b7ee2f0925eca9edd5c8b19d9b))
+* **wiki:** parallel ingest, chunkText integration, cross-chunk dedup, ingest job guard ([58b7357](https://github.com/equationalapplications/expo-llm-wiki/commit/58b73576a27000228446c67fbbc742eee19927d7))
+* **wiki:** raise fact body budget 200 -> 800 chars ([a89b596](https://github.com/equationalapplications/expo-llm-wiki/commit/a89b59625f5b25e568def2ab45aed829e687718c))
+* **wiki:** split librarian/heal mutex keys, add WikiBusyError ([6956182](https://github.com/equationalapplications/expo-llm-wiki/commit/6956182e2f9e39afbe7cf43ed431af81b384b78b))
+
+
+### BREAKING CHANGES
+
+* runLibrarian() and runHeal() now throw WikiBusyError when a run is already active for that entity and operation, instead of silently returning.
+
 # [1.1.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v1.0.0...v1.1.0) (2026-04-30)
 
 
