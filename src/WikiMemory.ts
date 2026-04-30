@@ -735,11 +735,27 @@ export class WikiMemory {
           }
         }
 
-        for (const task of bundle.tasks) {
-          const existing = await this.db.getFirstAsync<{ id: string; entity_id: string }>(
-            `SELECT id, entity_id FROM ${this.prefix}tasks WHERE id = ?`,
-            [task.id]
+        const taskIds = bundle.tasks.map((task) => task.id);
+        const existingTasksById = new Map<string, { id: string; entity_id: string }>();
+        const taskLookupChunkSize = 500;
+
+        for (let i = 0; i < taskIds.length; i += taskLookupChunkSize) {
+          const taskIdChunk = taskIds.slice(i, i + taskLookupChunkSize);
+          if (taskIdChunk.length === 0) continue;
+
+          const placeholders = taskIdChunk.map(() => '?').join(', ');
+          const existingTasks = await this.db.getAllAsync<{ id: string; entity_id: string }>(
+            `SELECT id, entity_id FROM ${this.prefix}tasks WHERE id IN (${placeholders})`,
+            taskIdChunk
           );
+
+          for (const existingTask of existingTasks) {
+            existingTasksById.set(existingTask.id, existingTask);
+          }
+        }
+
+        for (const task of bundle.tasks) {
+          const existing = existingTasksById.get(task.id);
           if (existing) {
             if (existing.entity_id !== entityId) {
               this._warnCrossEntityCollision('task', task.id, existing.entity_id, entityId);
