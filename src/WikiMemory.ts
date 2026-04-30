@@ -721,7 +721,7 @@ export class WikiMemory {
               this._warnCrossEntityCollision('entry', fact.id, existing.entity_id, entityId);
               continue;
             }
-            if (merge) continue; // merge mode: leave existing row untouched
+            if (merge) continue; // merge mode: preserve all existing data for this id (even if soft-deleted)
             // replace mode: update the existing row (restores if soft-deleted)
             await this.db.runAsync(
               `UPDATE ${this.prefix}entries SET entity_id = ?, title = ?, body = ?, tags = ?, confidence = ?, source_type = ?, source_hash = ?, source_ref = ?, created_at = ?, updated_at = ?, last_accessed_at = ?, access_count = ?, deleted_at = ? WHERE id = ?`,
@@ -745,7 +745,7 @@ export class WikiMemory {
               this._warnCrossEntityCollision('task', task.id, existing.entity_id, entityId);
               continue;
             }
-            if (merge) continue; // merge mode: leave existing row untouched
+            if (merge) continue; // merge mode: preserve all existing data for this id (even if soft-deleted)
             // replace mode: update the existing row (restores if soft-deleted)
             await this.db.runAsync(
               `UPDATE ${this.prefix}tasks SET entity_id = ?, description = ?, status = ?, priority = ?, created_at = ?, updated_at = ?, resolved_at = ?, deleted_at = ? WHERE id = ?`,
