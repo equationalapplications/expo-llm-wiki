@@ -76,7 +76,7 @@ class MockSQLiteDatabase {
 
     if (normalized.startsWith('INSERT OR IGNORE INTO') && normalized.includes('events (id, entity_id, event_type, summary, related_entry_id, created_at)')) {
       const [id, entity_id, event_type, summary, related_entry_id, created_at] = args;
-      const exists = this.events.some((e) => e.id === id && e.entity_id === entity_id);
+      const exists = this.events.some((e) => e.id === id);
       if (!exists) {
         this.events.push({ id, entity_id, event_type, summary, related_entry_id, created_at });
         return { changes: 1, lastInsertRowId: 0 };

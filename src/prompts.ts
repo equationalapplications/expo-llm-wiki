@@ -11,7 +11,7 @@ Return ONLY a valid JSON object matching this schema:
 {
   "downgraded": ["string (fact IDs)"],
   "deleted": ["string (fact IDs)"],
-  "newFacts": [{ "title": "string", "body": "string", "tags": ["string"], "confidence": "certain|inferred|tentative" }]
+  "newFacts": [{ "title": "string (max 80 chars)", "body": "string (max 800 chars)", "tags": ["string"], "confidence": "certain|inferred|tentative" }]
 }
 Do not return markdown, just raw JSON.`;
 

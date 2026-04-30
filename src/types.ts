@@ -8,6 +8,7 @@ export interface WikiConfig {
   staleInferredAfterDays?: number | null;
   maxChunkLength?: number;
   chunkOverlap?: number;
+  chunkConcurrency?: number;
 }
 
 export interface WikiFact {
