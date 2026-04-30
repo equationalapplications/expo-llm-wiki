@@ -243,6 +243,9 @@ export class WikiMemory {
 
   private _librarianKey(entityId: string) { return `${this.prefix}:${entityId}:librarian`; }
   private _healKey(entityId: string) { return `${this.prefix}:${entityId}:heal`; }
+  private _warnCrossEntityCollision(type: 'entry' | 'task', id: string, existingEntityId: string, targetEntityId: string): void {
+    console.warn(`[WikiMemory] importDump: ${type} id "${id}" already belongs to entity "${existingEntityId}"; skipping for entity "${targetEntityId}"`);
+  }
 
   constructor(db: SQLite.SQLiteDatabase, options: WikiOptions) {
     this.db = db;
@@ -715,7 +718,7 @@ export class WikiMemory {
           );
           if (existing) {
             if (existing.entity_id !== entityId) {
-              console.warn(`[WikiMemory] importDump: entry id "${fact.id}" already belongs to entity "${existing.entity_id}"; skipping for entity "${entityId}"`);
+              this._warnCrossEntityCollision('entry', fact.id, existing.entity_id, entityId);
               continue;
             }
             if (merge) continue; // merge mode: leave existing row untouched
@@ -739,7 +742,7 @@ export class WikiMemory {
           );
           if (existing) {
             if (existing.entity_id !== entityId) {
-              console.warn(`[WikiMemory] importDump: task id "${task.id}" already belongs to entity "${existing.entity_id}"; skipping for entity "${entityId}"`);
+              this._warnCrossEntityCollision('task', task.id, existing.entity_id, entityId);
               continue;
             }
             if (merge) continue; // merge mode: leave existing row untouched

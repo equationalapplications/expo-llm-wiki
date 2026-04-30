@@ -78,7 +78,7 @@ function formatEntityFileName(entityId: string): string {
     .replace(/^[_-]+|[_-]+$/g, '');
 
   // Enforce a max base-name length so the final filename stays within typical
-  // filesystem limits (~255 bytes). Reserve ~20 chars for `-<16hexchars>.md`.
+  // filesystem limits (~255 bytes). Reserve ~21 chars for `-<16hexchars>.md`.
   const MAX_BASE = 200;
   const trimmed = sanitized.length > MAX_BASE ? sanitized.slice(0, MAX_BASE) : sanitized;
 
