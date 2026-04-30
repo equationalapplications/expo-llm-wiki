@@ -1,5 +1,5 @@
 {
-  "name": "expo-llm-wiki",
+  "name": "@equationalapplications/expo-llm-wiki",
   "version": "0.0.0-development",
   "description": "A standalone, general-purpose React Native/Expo package for LLM Wiki Memory.",
   "main": "dist/index.js",
@@ -37,6 +37,9 @@
   ],
   "author": "",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "peerDependencies": {
     "expo-sqlite": "^14.0.0 || ^15.0.0",
     "react": ">=17"
