@@ -1,7 +1,7 @@
 # Spec: Ingest Performance, Job Coordination, and Memory Export
 
 **Date:** 2026-04-30
-**Status:** Proposed
+**Status:** Implemented
 **Approach:** A (performance-first) + targeted job-tracking fixes + export
 
 ---
