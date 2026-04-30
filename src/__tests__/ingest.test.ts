@@ -150,7 +150,7 @@ async function freshWiki(provider: any) {
 const sourceHash = 'a'.repeat(64);
 
 describe('ingestDocument', () => {
-  it('parallelizes LLM calls across chunks', async () => {
+  it('parallelizes LLM calls across chunks when chunkConcurrency > 1', async () => {
     const text = 'Sentence one. Sentence two.\n\n'.repeat(2000); // ~56KB, forces multiple chunks
     const m = makeMockProvider([
       [{ title: 'Fact 1', body: 'body 1', tags: [], confidence: 'certain' }],
@@ -165,10 +165,30 @@ describe('ingestDocument', () => {
       documentChunk: text,
       maxChunkLength: 3000,
       chunkOverlap: 0,
+      chunkConcurrency: 4,
     });
     expect(result.chunks).toBeGreaterThan(1);
     // max concurrency should be > 1 (parallel execution)
     expect(m.concurrentCounter.max).toBeGreaterThan(1);
+  });
+
+  it('processes chunks sequentially when chunkConcurrency is 1 (default)', async () => {
+    const text = 'Sentence one. Sentence two.\n\n'.repeat(2000);
+    const m = makeMockProvider([
+      [{ title: 'Fact 1', body: 'body 1', tags: [], confidence: 'certain' }],
+      [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [], [],
+    ]);
+    const wiki = await freshWiki(m.provider);
+    const result = await wiki.ingestDocument('e1b', {
+      sourceRef: 'doc1b',
+      sourceHash,
+      documentChunk: text,
+      maxChunkLength: 3000,
+      chunkOverlap: 0,
+      // chunkConcurrency defaults to 1
+    });
+    expect(result.chunks).toBeGreaterThan(1);
+    expect(m.concurrentCounter.max).toBe(1);
   });
 
   it('deduplicates facts with same normalized title across chunks', async () => {
@@ -208,5 +228,31 @@ describe('ingestDocument', () => {
     ).rejects.toThrow('LLM failed');
     const bundle = await wiki.getMemoryBundle('e3');
     expect(bundle.facts.length).toBe(0);
+  });
+
+  it.each([
+    ['0', 0],
+    ['-1', -1],
+    ['NaN', NaN],
+    ['fractional 1.7 floors to 1', 1.7],
+  ])('chunkConcurrency %s falls back gracefully (sequential)', async (_label, value) => {
+    const text = 'Sentence one. Sentence two.\n\n'.repeat(50);
+    const m = makeMockProvider([
+      [{ title: 'Fact A', body: 'body a', tags: [], confidence: 'certain' }],
+      [], [], [], [],
+    ]);
+    const wiki = await freshWiki(m.provider);
+    await expect(
+      wiki.ingestDocument('e_cc', {
+        sourceRef: `doc_cc_${String(value)}`,
+        sourceHash,
+        documentChunk: text,
+        maxChunkLength: 500,
+        chunkOverlap: 0,
+        chunkConcurrency: value,
+      })
+    ).resolves.toBeDefined();
+    // Invalid values fall back to 1 — max concurrency should be exactly 1
+    expect(m.concurrentCounter.max).toBe(1);
   });
 });

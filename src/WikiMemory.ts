@@ -160,6 +160,28 @@ function chunkText(
   return { chunks, truncated };
 }
 
+async function withConcurrency<T>(tasks: Array<() => Promise<T>>, limit: number): Promise<T[]> {
+  const results: T[] = new Array(tasks.length);
+  let index = 0;
+  let failed = false;
+  let firstError: unknown;
+  async function worker() {
+    while (index < tasks.length && !failed) {
+      const i = index++;
+      try {
+        results[i] = await tasks[i]();
+      } catch (e) {
+        if (!failed) { failed = true; firstError = e; }
+        return;
+      }
+    }
+  }
+  const workerCount = tasks.length === 0 ? 0 : Math.min(Math.max(limit, 1), tasks.length);
+  await Promise.allSettled(Array.from({ length: workerCount }, worker));
+  if (failed) throw firstError;
+  return results;
+}
+
 function clip(value: string, max: number): string {
   if (typeof value !== 'string') return '';
   const s = value.trim();
@@ -730,11 +752,14 @@ export class WikiMemory {
 
         const factIds = bundle.facts.map((fact) => fact.id);
         const existingFactsById = new Map<string, { id: string; entity_id: string }>();
-        if (factIds.length > 0) {
-          const placeholders = factIds.map(() => '?').join(', ');
+        const factLookupChunkSize = 500;
+        for (let i = 0; i < factIds.length; i += factLookupChunkSize) {
+          const factIdChunk = factIds.slice(i, i + factLookupChunkSize);
+          if (factIdChunk.length === 0) continue;
+          const placeholders = factIdChunk.map(() => '?').join(', ');
           const existingFacts = await this.db.getAllAsync<{ id: string; entity_id: string }>(
             `SELECT id, entity_id FROM ${this.prefix}entries WHERE id IN (${placeholders})`,
-            factIds
+            factIdChunk
           );
           for (const existingFact of existingFacts) {
             existingFactsById.set(existingFact.id, existingFact);
@@ -875,7 +900,7 @@ export class WikiMemory {
     return { deleted: { entries: deletedEntries, tasks: deletedTasks } };
   }
 
-  async ingestDocument(entityId: string, params: { sourceRef: string; sourceHash: string; documentChunk: string; maxChunkLength?: number; chunkOverlap?: number }): Promise<{ truncated: boolean; chunks: number }> {
+  async ingestDocument(entityId: string, params: { sourceRef: string; sourceHash: string; documentChunk: string; maxChunkLength?: number; chunkOverlap?: number; chunkConcurrency?: number }): Promise<{ truncated: boolean; chunks: number }> {
     const sourceRef = normalizeSourceRef(params.sourceRef);
     if (!sourceRef) throw new Error('Invalid sourceRef');
     const sourceHash = normalizeSourceHash(params.sourceHash);
@@ -886,6 +911,10 @@ export class WikiMemory {
       params.chunkOverlap ?? this.options.config?.chunkOverlap ?? 400,
       maxChunkLength - 1
     );
+    const rawConcurrency = params.chunkConcurrency ?? this.options.config?.chunkConcurrency ?? 1;
+    const chunkConcurrency = Number.isFinite(rawConcurrency) && rawConcurrency >= 1
+      ? Math.floor(rawConcurrency)
+      : 1;
 
     if (typeof params.documentChunk !== 'string') {
       throw new Error(`documentChunk must be a string, received ${typeof params.documentChunk}`);
@@ -904,9 +933,9 @@ export class WikiMemory {
         return { truncated: false, chunks: 0 };
       }
 
-      // Parallel LLM calls - each chunk is independent
-      const chunkResults = await Promise.all(
-        chunks.map(async (chunk) => {
+      // Bounded-concurrency LLM calls — each chunk is independent
+      const chunkResults = await withConcurrency(
+        chunks.map((chunk) => async () => {
           const userPrompt = `Document Chunk:\n${chunk}`;
           const responseText = await this.options.llmProvider.generateText({
             systemPrompt: INGEST_SYSTEM_PROMPT,
@@ -916,7 +945,8 @@ export class WikiMemory {
           return (Array.isArray(result.facts) ? result.facts : [])
             .map(validateFact)
             .filter((f): f is ExtractedFact => f !== null);
-        })
+        }),
+        chunkConcurrency
       );
 
       // Flatten in chunk order, then dedup by normalized title (first-wins)
