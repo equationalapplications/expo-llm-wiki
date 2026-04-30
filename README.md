@@ -1,5 +1,10 @@
 # expo-llm-wiki
 
+[![GitHub Tag](https://img.shields.io/github/v/tag/equationalapplications/expo-llm-wiki?label=github%20tag)](https://github.com/equationalapplications/expo-llm-wiki/tags)
+[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fexpo-llm-wiki?label=npm)](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki)
+[![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fexpo-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 Offline-first, SQLite-backed memory for LLM apps built with Expo. Handles FTS5 search, episodic event logging, background fact extraction, and memory healing — bring your own LLM.
 
 ## Key Principles
@@ -135,7 +140,8 @@ const result = await wiki.ingestDocument('entity-123', {
   sourceRef: 'preferences.md',        // stable identifier
   sourceHash: sha256(content),        // for change detection
   documentChunk: content,
-  maxChunkLength: 6000,               // optional, character count
+  maxChunkLength: 12000,              // optional, character count
+  chunkOverlap: 400,                  // optional, overlap in characters
 });
 // result: { truncated: boolean; chunks: number }
 // truncated: true if at least one hard-split was required (no sentence boundary)
@@ -257,3 +263,7 @@ All mutation hooks follow the same pattern (`TResult` is specific per hook):
   error: Error | null;         // cleared on the next execute call
 }
 ```
+
+---
+
+Made with ❤️ by Equational Applications LLC. [https://equationalapplications.com/](https://equationalapplications.com/)

@@ -20,7 +20,8 @@
   "scripts": {
     "build": "tsup src/index.ts src/react/index.ts --format cjs,esm --dts --external react",
     "dev": "tsup src/index.ts src/react/index.ts --format cjs,esm --dts --external react --watch",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "files": [
     "dist",
@@ -41,7 +42,7 @@
     "access": "public"
   },
   "peerDependencies": {
-    "expo-sqlite": "^14.0.0 || ^15.0.0",
+    "expo-sqlite": "^14.0.0 || ^15.0.0 || ^55.0.0",
     "react": ">=17"
   },
   "peerDependenciesMeta": {
@@ -54,11 +55,13 @@
     "@semantic-release/git": "^10.0.0",
     "@types/node": "^20.0.0",
     "@types/react": "^19.0.0",
+    "@vitest/coverage-v8": "^4.1.5",
     "expo-sqlite": "^55.0.15",
     "react": "19.2.0",
     "semantic-release": "^24.0.0",
     "tsup": "^8.0.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "vitest": "^4.1.5"
   },
   "dependencies": {
     "expo": "^55.0.18",

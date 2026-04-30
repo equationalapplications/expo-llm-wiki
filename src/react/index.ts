@@ -4,3 +4,4 @@ export { useWikiWrite } from './useWikiWrite';
 export { useWikiMaintenance } from './useWikiMaintenance';
 export { useWikiIngest } from './useWikiIngest';
 export { useWikiForget } from './useWikiForget';
+export { useWikiExport } from './useWikiExport';

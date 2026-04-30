@@ -7,6 +7,8 @@ export interface WikiConfig {
   orphanAfterDays?: number | null;
   staleInferredAfterDays?: number | null;
   maxChunkLength?: number;
+  chunkOverlap?: number;
+  chunkConcurrency?: number;
 }
 
 export interface WikiFact {
@@ -82,4 +84,32 @@ export interface MemoryBundle {
   facts: WikiFact[];
   tasks: WikiTask[];
   events: WikiEvent[];
+}
+
+export interface MemoryDump {
+  generatedAt: number;
+  entities: Record<string, MemoryBundle>;
+}
+
+export interface FormattedMemoryDump {
+  manifest: string;
+  files: Array<{ name: string; content: string }>;
+}
+
+export interface EntityStatus {
+  ingesting: boolean;
+  librarian: boolean;
+  heal: boolean;
+}
+
+export class WikiBusyError extends Error {
+  readonly operation: 'ingest' | 'librarian' | 'heal';
+  readonly entityId: string;
+
+  constructor(operation: 'ingest' | 'librarian' | 'heal', entityId: string) {
+    super(`${operation} already running for entity ${entityId}`);
+    this.name = 'WikiBusyError';
+    this.operation = operation;
+    this.entityId = entityId;
+  }
 }

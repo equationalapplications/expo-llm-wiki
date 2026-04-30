@@ -1,6 +1,6 @@
 import * as SQLite from 'expo-sqlite';
 import { setupDatabase } from './db/schema';
-import { WikiOptions, MemoryBundle, WikiEvent, WikiFact, WikiTask, WikiCheckpoint, ExtractedFact, ExtractedTask } from './types';
+import { WikiOptions, MemoryBundle, MemoryDump, WikiEvent, WikiFact, WikiTask, WikiCheckpoint, ExtractedFact, ExtractedTask, WikiBusyError, EntityStatus } from './types';
 import { LIBRARIAN_SYSTEM_PROMPT, HEAL_SYSTEM_PROMPT, INGEST_SYSTEM_PROMPT } from './prompts';
 
 function parseJsonResponse<T>(text: string): T {
@@ -88,6 +88,100 @@ function safeSlice(value: string, start: number, end?: number): string {
   return value.slice(safeStart, safeEnd);
 }
 
+function chunkText(
+  input: string,
+  maxChunkLength: number,
+  overlap: number
+): { chunks: string[]; truncated: boolean } {
+  const text = input.trim();
+  if (text.length === 0) return { chunks: [], truncated: false };
+  if (!Number.isInteger(maxChunkLength) || maxChunkLength < 2) {
+    throw new Error('maxChunkLength must be an integer >= 2');
+  }
+  if (!Number.isInteger(overlap) || overlap < 0 || overlap >= maxChunkLength) {
+    throw new Error('overlap must be a non-negative integer < maxChunkLength');
+  }
+
+  const chunks: string[] = [];
+  let truncated = false;
+  let cursor = 0;
+  const halfMax = Math.floor(maxChunkLength / 2);
+
+  while (cursor < text.length) {
+    const remaining = text.length - cursor;
+    if (remaining <= maxChunkLength) {
+      chunks.push(safeSlice(text, cursor, text.length));
+      break;
+    }
+
+    const windowEnd = cursor + maxChunkLength;
+    const minSplit = cursor + halfMax;
+
+    // 1. paragraph break
+    let splitPoint = -1;
+    const paraIdx = text.lastIndexOf('\n\n', windowEnd);
+    if (paraIdx >= minSplit && paraIdx + 2 <= windowEnd) {
+      splitPoint = paraIdx + 2;
+    }
+
+    // 2. sentence terminator (single left-to-right pass, no lookahead regex)
+    if (splitPoint === -1) {
+      let lastTerm = -1;
+      for (let i = minSplit; i < windowEnd - 1; i++) {
+        const ch = text[i];
+        if ((ch === '.' || ch === '!' || ch === '?') && /\s/.test(text[i + 1])) {
+          lastTerm = i + 2; // include the terminator + whitespace
+        }
+      }
+      if (lastTerm !== -1 && lastTerm <= windowEnd) splitPoint = lastTerm;
+    }
+
+    // 3. whitespace
+    if (splitPoint === -1) {
+      for (let i = windowEnd - 1; i >= minSplit; i--) {
+        if (/\s/.test(text[i])) {
+          splitPoint = i + 1;
+          break;
+        }
+      }
+    }
+
+    // 4. hard cut
+    if (splitPoint === -1) {
+      truncated = true;
+      splitPoint = windowEnd;
+    }
+
+    chunks.push(safeSlice(text, cursor, splitPoint));
+    const next = Math.max(splitPoint - overlap, cursor + 1);
+    cursor = next;
+  }
+
+  return { chunks, truncated };
+}
+
+async function withConcurrency<T>(tasks: Array<() => Promise<T>>, limit: number): Promise<T[]> {
+  const results: T[] = new Array(tasks.length);
+  let index = 0;
+  let failed = false;
+  let firstError: unknown;
+  async function worker() {
+    while (index < tasks.length && !failed) {
+      const i = index++;
+      try {
+        results[i] = await tasks[i]();
+      } catch (e) {
+        if (!failed) { failed = true; firstError = e; }
+        return;
+      }
+    }
+  }
+  const workerCount = tasks.length === 0 ? 0 : Math.min(Math.max(limit, 1), tasks.length);
+  await Promise.allSettled(Array.from({ length: workerCount }, worker));
+  if (failed) throw firstError;
+  return results;
+}
+
 function clip(value: string, max: number): string {
   if (typeof value !== 'string') return '';
   const s = value.trim();
@@ -106,7 +200,7 @@ function validateTags(tags: any[]): string[] {
 function validateFact(fact: any): ExtractedFact | null {
   if (typeof fact?.title !== 'string' || typeof fact?.body !== 'string') return null;
   const title = clip(fact.title, 80);
-  const body = clip(fact.body, 200);
+  const body = clip(fact.body, 800);
   if (!title || !body) return null;
   
   let confidence = fact.confidence;
@@ -167,6 +261,13 @@ export class WikiMemory {
   private prefix: string;
   private options: WikiOptions;
   private activeMaintenanceJobs = new Set<string>();
+  private activeIngestJobs = new Set<string>();
+
+  private _librarianKey(entityId: string) { return `${this.prefix}:${entityId}:librarian`; }
+  private _healKey(entityId: string) { return `${this.prefix}:${entityId}:heal`; }
+  private _warnCrossEntityCollision(type: 'entry' | 'task', id: string, existingEntityId: string, targetEntityId: string): void {
+    console.warn(`[WikiMemory] importDump: ${type} id "${id}" already belongs to entity "${existingEntityId}"; skipping for entity "${targetEntityId}"`);
+  }
 
   constructor(db: SQLite.SQLiteDatabase, options: WikiOptions) {
     this.db = db;
@@ -274,6 +375,10 @@ export class WikiMemory {
     return { facts, tasks, events: events.reverse() };
   }
 
+  async getMemoryBundle(entityId: string): Promise<MemoryBundle> {
+    return this._getFullBundle(entityId, { maxEvents: 10 });
+  }
+
   async write(entityId: string, event: Omit<WikiEvent, 'id' | 'entity_id' | 'created_at'>): Promise<void> {
     const id = generateId('evt_');
     const now = Date.now();
@@ -300,7 +405,7 @@ export class WikiMemory {
     if (memoryCheckpoint > count) memoryCheckpoint = 0;
 
     if (count - memoryCheckpoint >= threshold) {
-      const jobKey = `${this.prefix}:${entityId}`;
+      const jobKey = this._librarianKey(entityId);
       if (!this.activeMaintenanceJobs.has(jobKey)) {
         this.activeMaintenanceJobs.add(jobKey);
         this.runLibrarianThenMaybeHeal(entityId, count)
@@ -325,12 +430,20 @@ export class WikiMemory {
     if (healCheckpoint > currentEventCount) healCheckpoint = 0;
     
     if (currentEventCount - healCheckpoint >= autoHealThreshold) {
-      await this._doRunHeal(entityId);
-      await this.db.runAsync(`
-        INSERT INTO ${this.prefix}checkpoints (entity_id, heal_checkpoint) 
-        VALUES (?, ?) 
-        ON CONFLICT(entity_id) DO UPDATE SET heal_checkpoint = ?
-      `, [entityId, currentEventCount, currentEventCount]);
+      const healKey = this._healKey(entityId);
+      if (!this.activeMaintenanceJobs.has(healKey)) {
+        this.activeMaintenanceJobs.add(healKey);
+        try {
+          await this._doRunHeal(entityId);
+          await this.db.runAsync(`
+            INSERT INTO ${this.prefix}checkpoints (entity_id, heal_checkpoint) 
+            VALUES (?, ?) 
+            ON CONFLICT(entity_id) DO UPDATE SET heal_checkpoint = ?
+          `, [entityId, currentEventCount, currentEventCount]);
+        } finally {
+          this.activeMaintenanceJobs.delete(healKey);
+        }
+      }
     }
   }
 
@@ -485,8 +598,10 @@ export class WikiMemory {
   }
 
   async runLibrarian(entityId: string): Promise<void> {
-    const jobKey = `${this.prefix}:${entityId}`;
-    if (this.activeMaintenanceJobs.has(jobKey)) return;
+    const jobKey = this._librarianKey(entityId);
+    if (this.activeMaintenanceJobs.has(jobKey)) {
+      throw new WikiBusyError('librarian', entityId);
+    }
     this.activeMaintenanceJobs.add(jobKey);
     try {
       await this._doRunLibrarian(entityId);
@@ -496,13 +611,199 @@ export class WikiMemory {
   }
 
   async runHeal(entityId: string): Promise<void> {
-    const jobKey = `${this.prefix}:${entityId}`;
-    if (this.activeMaintenanceJobs.has(jobKey)) return;
+    const jobKey = this._healKey(entityId);
+    if (this.activeMaintenanceJobs.has(jobKey)) {
+      throw new WikiBusyError('heal', entityId);
+    }
     this.activeMaintenanceJobs.add(jobKey);
     try {
       await this._doRunHeal(entityId);
     } finally {
       this.activeMaintenanceJobs.delete(jobKey);
+    }
+  }
+
+  getEntityStatus(entityId: string): EntityStatus {
+    const ingestPrefix = `${this.prefix}:${entityId}:`;
+    let ingesting = false;
+    for (const k of this.activeIngestJobs) {
+      if (k.startsWith(ingestPrefix)) { ingesting = true; break; }
+    }
+
+    return {
+      ingesting,
+      librarian: this.activeMaintenanceJobs.has(this._librarianKey(entityId)),
+      heal: this.activeMaintenanceJobs.has(this._healKey(entityId)),
+    };
+  }
+
+  private async _getFullBundle(entityId: string, opts?: { maxEvents?: number }): Promise<MemoryBundle> {
+    const maxEvents = opts?.maxEvents;
+    const eventsQuery = maxEvents != null
+      ? `SELECT * FROM ${this.prefix}events WHERE entity_id = ? ORDER BY created_at DESC LIMIT ?`
+      : `SELECT * FROM ${this.prefix}events WHERE entity_id = ? ORDER BY created_at ASC`;
+    const eventsParams: (string | number)[] = maxEvents != null ? [entityId, maxEvents] : [entityId];
+
+    const [factsRaw, tasks, eventsRaw] = await Promise.all([
+      this.db.getAllAsync<WikiFact>(
+        `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC`,
+        [entityId]
+      ),
+      this.db.getAllAsync<WikiTask>(
+        `SELECT * FROM ${this.prefix}tasks WHERE entity_id = ? AND deleted_at IS NULL ORDER BY priority DESC, created_at ASC`,
+        [entityId]
+      ),
+      this.db.getAllAsync<WikiEvent>(eventsQuery, eventsParams),
+    ]);
+    const facts = factsRaw.map(f => ({
+      ...f,
+      tags: typeof f.tags === 'string' ? JSON.parse(f.tags) : f.tags,
+    }));
+    // When limited, results arrive newest-first; reverse to chronological order.
+    const events = maxEvents != null ? eventsRaw.slice().reverse() : eventsRaw;
+    return { facts, tasks, events };
+  }
+
+  async exportDump(entityIds?: string[]): Promise<MemoryDump> {
+    let ids: string[];
+    if (entityIds && entityIds.length > 0) {
+      ids = Array.from(new Set(entityIds));
+    } else {
+      // Collect all distinct entity_ids across entries, tasks, events
+      const rows = await this.db.getAllAsync<{ entity_id: string }>(`
+        SELECT DISTINCT entity_id FROM (
+          SELECT entity_id FROM ${this.prefix}entries WHERE deleted_at IS NULL
+          UNION
+          SELECT entity_id FROM ${this.prefix}tasks WHERE deleted_at IS NULL
+          UNION
+          SELECT entity_id FROM ${this.prefix}events
+        ) ORDER BY entity_id
+      `);
+      ids = rows.map(r => r.entity_id);
+    }
+
+    const entities: Record<string, MemoryBundle> = {};
+    const BATCH = 3;
+    for (let i = 0; i < ids.length; i += BATCH) {
+      const batch = ids.slice(i, i + BATCH);
+      const batchResults = await Promise.all(
+        batch.map(async (id): Promise<[string, MemoryBundle]> => [id, await this._getFullBundle(id)])
+      );
+      for (const [id, bundle] of batchResults) {
+        entities[id] = bundle;
+      }
+    }
+
+    return { generatedAt: Date.now(), entities };
+  }
+
+  async importDump(dump: MemoryDump, opts?: { merge?: boolean }): Promise<void> {
+    const merge = opts?.merge ?? false;
+
+    for (const [entityId, bundle] of Object.entries(dump.entities)) {
+      await this.db.withTransactionAsync(async () => {
+        if (!merge) {
+          const now = Date.now();
+          await this.db.runAsync(
+            `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`,
+            [now, now, entityId]
+          );
+          await this.db.runAsync(
+            `UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`,
+            [now, now, entityId]
+          );
+          await this.db.runAsync(
+            `DELETE FROM ${this.prefix}checkpoints WHERE entity_id = ?`,
+            [entityId]
+          );
+        }
+
+        const factIds = bundle.facts.map((fact) => fact.id);
+        const existingFactsById = new Map<string, { id: string; entity_id: string }>();
+        const factLookupChunkSize = 500;
+        for (let i = 0; i < factIds.length; i += factLookupChunkSize) {
+          const factIdChunk = factIds.slice(i, i + factLookupChunkSize);
+          if (factIdChunk.length === 0) continue;
+          const placeholders = factIdChunk.map(() => '?').join(', ');
+          const existingFacts = await this.db.getAllAsync<{ id: string; entity_id: string }>(
+            `SELECT id, entity_id FROM ${this.prefix}entries WHERE id IN (${placeholders})`,
+            factIdChunk
+          );
+          for (const existingFact of existingFacts) {
+            existingFactsById.set(existingFact.id, existingFact);
+          }
+        }
+
+        for (const fact of bundle.facts) {
+          const tagsJson = JSON.stringify(Array.isArray(fact.tags) ? fact.tags : []);
+          const existing = existingFactsById.get(fact.id);
+          if (existing) {
+            if (existing.entity_id !== entityId) {
+              this._warnCrossEntityCollision('entry', fact.id, existing.entity_id, entityId);
+              continue;
+            }
+            if (merge) continue; // merge mode: preserve all existing data for this id (even if soft-deleted)
+            // replace mode: update the existing row (restores if soft-deleted)
+            await this.db.runAsync(
+              `UPDATE ${this.prefix}entries SET entity_id = ?, title = ?, body = ?, tags = ?, confidence = ?, source_type = ?, source_hash = ?, source_ref = ?, created_at = ?, updated_at = ?, last_accessed_at = ?, access_count = ?, deleted_at = ? WHERE id = ?`,
+              [entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, fact.updated_at, fact.last_accessed_at, fact.access_count, fact.deleted_at, fact.id]
+            );
+          } else {
+            await this.db.runAsync(
+              `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, fact.updated_at, fact.last_accessed_at, fact.access_count, fact.deleted_at]
+            );
+          }
+        }
+
+        const taskIds = bundle.tasks.map((task) => task.id);
+        const existingTasksById = new Map<string, { id: string; entity_id: string }>();
+        const taskLookupChunkSize = 500;
+
+        for (let i = 0; i < taskIds.length; i += taskLookupChunkSize) {
+          const taskIdChunk = taskIds.slice(i, i + taskLookupChunkSize);
+          if (taskIdChunk.length === 0) continue;
+
+          const placeholders = taskIdChunk.map(() => '?').join(', ');
+          const existingTasks = await this.db.getAllAsync<{ id: string; entity_id: string }>(
+            `SELECT id, entity_id FROM ${this.prefix}tasks WHERE id IN (${placeholders})`,
+            taskIdChunk
+          );
+
+          for (const existingTask of existingTasks) {
+            existingTasksById.set(existingTask.id, existingTask);
+          }
+        }
+
+        for (const task of bundle.tasks) {
+          const existing = existingTasksById.get(task.id);
+          if (existing) {
+            if (existing.entity_id !== entityId) {
+              this._warnCrossEntityCollision('task', task.id, existing.entity_id, entityId);
+              continue;
+            }
+            if (merge) continue; // merge mode: preserve all existing data for this id (even if soft-deleted)
+            // replace mode: update the existing row (restores if soft-deleted)
+            await this.db.runAsync(
+              `UPDATE ${this.prefix}tasks SET entity_id = ?, description = ?, status = ?, priority = ?, created_at = ?, updated_at = ?, resolved_at = ?, deleted_at = ? WHERE id = ?`,
+              [entityId, task.description, task.status, task.priority, task.created_at, task.updated_at, task.resolved_at, task.deleted_at, task.id]
+            );
+          } else {
+            await this.db.runAsync(
+              `INSERT INTO ${this.prefix}tasks (id, entity_id, description, status, priority, created_at, updated_at, resolved_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [task.id, entityId, task.description, task.status, task.priority, task.created_at, task.updated_at, task.resolved_at, task.deleted_at]
+            );
+          }
+        }
+
+        for (const event of bundle.events) {
+          await this.db.runAsync(
+            `INSERT OR IGNORE INTO ${this.prefix}events (id, entity_id, event_type, summary, related_entry_id, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [event.id, entityId, event.event_type, event.summary, event.related_entry_id ?? null, event.created_at]
+          );
+        }
+      });
     }
   }
 
@@ -568,74 +869,90 @@ export class WikiMemory {
     return { deleted: { entries: deletedEntries, tasks: deletedTasks } };
   }
 
-  async ingestDocument(entityId: string, params: { sourceRef: string; sourceHash: string; documentChunk: string; maxChunkLength?: number }): Promise<{ truncated: boolean; chunks: number }> {
+  async ingestDocument(entityId: string, params: { sourceRef: string; sourceHash: string; documentChunk: string; maxChunkLength?: number; chunkOverlap?: number; chunkConcurrency?: number }): Promise<{ truncated: boolean; chunks: number }> {
     const sourceRef = normalizeSourceRef(params.sourceRef);
     if (!sourceRef) throw new Error('Invalid sourceRef');
     const sourceHash = normalizeSourceHash(params.sourceHash);
     if (!sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
 
-    const maxChunkLength = params.maxChunkLength ?? this.options.config?.maxChunkLength ?? 6000;
-    if (!Number.isInteger(maxChunkLength) || maxChunkLength < 2) {
-      throw new Error('maxChunkLength must be an integer greater than or equal to 2');
-    }
-    
+    const maxChunkLength = params.maxChunkLength ?? this.options.config?.maxChunkLength ?? 12000;
+    const rawOverlap = params.chunkOverlap ?? this.options.config?.chunkOverlap ?? 400;
+    const chunkOverlap = Math.min(
+      Number.isFinite(rawOverlap) && rawOverlap >= 0 ? Math.floor(rawOverlap) : 400,
+      maxChunkLength - 1
+    );
+    const rawConcurrency = params.chunkConcurrency ?? this.options.config?.chunkConcurrency ?? 1;
+    const chunkConcurrency = Number.isFinite(rawConcurrency) && rawConcurrency >= 1
+      ? Math.floor(rawConcurrency)
+      : 1;
+
     if (typeof params.documentChunk !== 'string') {
       throw new Error(`documentChunk must be a string, received ${typeof params.documentChunk}`);
     }
 
-    const chunks: string[] = [];
-    let truncated = false;
-    
-    let text = params.documentChunk.trim();
-    if (text.length === 0) {
-      return { truncated: false, chunks: 0 };
+    const jobKey = `${this.prefix}:${entityId}:${sourceRef}`;
+    if (this.activeIngestJobs.has(jobKey)) {
+      throw new WikiBusyError('ingest', entityId);
     }
-    while (text.length > 0) {
-        if (text.length <= maxChunkLength) {
-            chunks.push(text);
-            break;
-        }
-        
-        const searchArea = text.slice(0, maxChunkLength + 1);
-        const match = searchArea.match(/[.!?]\s+(?![\s\S]*[.!?]\s+)/);
-        
-        if (match && match.index !== undefined) {
-            const splitPoint = Math.min(match.index + match[0].length, maxChunkLength);
-            const chunk = safeSlice(text, 0, splitPoint);
-            chunks.push(chunk);
-            text = text.slice(chunk.length);
-        } else {
-            truncated = true;
-            const chunk = safeSlice(text, 0, maxChunkLength);
-            chunks.push(chunk);
-            text = text.slice(chunk.length);
-        }
-    }
+    this.activeIngestJobs.add(jobKey);
 
-    const allValidFacts: ExtractedFact[] = [];
-    for (const chunk of chunks) {
-        const userPrompt = `Document Chunk:\n${chunk}`;
-        const responseText = await this.options.llmProvider.generateText({
-          systemPrompt: INGEST_SYSTEM_PROMPT,
-          userPrompt,
-        });
-        const result = parseJsonResponse<{ facts: ExtractedFact[] }>(responseText);
-        const validFacts = (Array.isArray(result.facts) ? result.facts : []).map(validateFact).filter((f): f is ExtractedFact => f !== null);
-        allValidFacts.push(...validFacts);
-    }
+    try {
+      const { chunks, truncated } = chunkText(params.documentChunk, maxChunkLength, chunkOverlap);
 
-    const now = Date.now();
-    await this.db.withTransactionAsync(async () => {
-        await this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE source_ref = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, sourceRef, entityId]);
+      if (chunks.length === 0) {
+        return { truncated: false, chunks: 0 };
+      }
+
+      // Bounded-concurrency LLM calls — each chunk is independent
+      const chunkResults = await withConcurrency(
+        chunks.map((chunk) => async () => {
+          const userPrompt = `Document Chunk:\n${chunk}`;
+          const responseText = await this.options.llmProvider.generateText({
+            systemPrompt: INGEST_SYSTEM_PROMPT,
+            userPrompt,
+          });
+          const result = parseJsonResponse<{ facts: ExtractedFact[] }>(responseText);
+          return (Array.isArray(result.facts) ? result.facts : [])
+            .map(validateFact)
+            .filter((f): f is ExtractedFact => f !== null);
+        }),
+        chunkConcurrency
+      );
+
+      // Flatten in chunk order, then dedup by normalized title (first-wins)
+      const seen = new Set<string>();
+      const allValidFacts: ExtractedFact[] = [];
+      for (const facts of chunkResults) {
+        for (const fact of facts) {
+          const normalized = fact.title.trim().toLowerCase().replace(/\s+/g, ' ');
+          if (!seen.has(normalized)) {
+            seen.add(normalized);
+            allValidFacts.push(fact);
+          }
+        }
+      }
+
+      const now = Date.now();
+      await this.db.withTransactionAsync(async () => {
+        await this.db.runAsync(
+          `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE source_ref = ? AND entity_id = ? AND deleted_at IS NULL`,
+          [now, now, sourceRef, entityId]
+        );
         for (const fact of allValidFacts) {
-            const id = generateId('fact_');
-            await this.db.runAsync(`
-                INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `, [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'user_document', sourceHash, sourceRef, now, now]);
+          const id = generateId('fact_');
+          await this.db.runAsync(
+            `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'user_document', sourceHash, sourceRef, now, now]
+          );
         }
-    });
+      });
 
-    return { truncated, chunks: chunks.length };
+      return { truncated, chunks: chunks.length };
+    } finally {
+      this.activeIngestJobs.delete(jobKey);
+    }
   }
 }
+
+export const __testables = { validateFact, validateTask, clip, chunkText };
