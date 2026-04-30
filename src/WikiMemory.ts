@@ -1,6 +1,6 @@
 import * as SQLite from 'expo-sqlite';
 import { setupDatabase } from './db/schema';
-import { WikiOptions, MemoryBundle, WikiEvent, WikiFact, WikiTask, WikiCheckpoint, ExtractedFact, ExtractedTask } from './types';
+import { WikiOptions, MemoryBundle, WikiEvent, WikiFact, WikiTask, WikiCheckpoint, ExtractedFact, ExtractedTask, WikiBusyError } from './types';
 import { LIBRARIAN_SYSTEM_PROMPT, HEAL_SYSTEM_PROMPT, INGEST_SYSTEM_PROMPT } from './prompts';
 
 function parseJsonResponse<T>(text: string): T {
@@ -395,7 +395,7 @@ export class WikiMemory {
     if (memoryCheckpoint > count) memoryCheckpoint = 0;
 
     if (count - memoryCheckpoint >= threshold) {
-      const jobKey = `${this.prefix}:${entityId}`;
+      const jobKey = `${this.prefix}:${entityId}:librarian`;
       if (!this.activeMaintenanceJobs.has(jobKey)) {
         this.activeMaintenanceJobs.add(jobKey);
         this.runLibrarianThenMaybeHeal(entityId, count)
@@ -580,8 +580,10 @@ export class WikiMemory {
   }
 
   async runLibrarian(entityId: string): Promise<void> {
-    const jobKey = `${this.prefix}:${entityId}`;
-    if (this.activeMaintenanceJobs.has(jobKey)) return;
+    const jobKey = `${this.prefix}:${entityId}:librarian`;
+    if (this.activeMaintenanceJobs.has(jobKey)) {
+      throw new WikiBusyError('librarian', entityId);
+    }
     this.activeMaintenanceJobs.add(jobKey);
     try {
       await this._doRunLibrarian(entityId);
@@ -591,8 +593,10 @@ export class WikiMemory {
   }
 
   async runHeal(entityId: string): Promise<void> {
-    const jobKey = `${this.prefix}:${entityId}`;
-    if (this.activeMaintenanceJobs.has(jobKey)) return;
+    const jobKey = `${this.prefix}:${entityId}:heal`;
+    if (this.activeMaintenanceJobs.has(jobKey)) {
+      throw new WikiBusyError('heal', entityId);
+    }
     this.activeMaintenanceJobs.add(jobKey);
     try {
       await this._doRunHeal(entityId);
@@ -678,7 +682,7 @@ export class WikiMemory {
 
     const jobKey = `${this.prefix}:${entityId}:${sourceRef}`;
     if (this.activeIngestJobs.has(jobKey)) {
-      throw new Error(`ingest already running for entity ${entityId}`);
+      throw new WikiBusyError('ingest', entityId);
     }
     this.activeIngestJobs.add(jobKey);
 

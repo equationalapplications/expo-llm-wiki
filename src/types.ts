@@ -83,3 +83,15 @@ export interface MemoryBundle {
   tasks: WikiTask[];
   events: WikiEvent[];
 }
+
+export class WikiBusyError extends Error {
+  readonly operation: 'ingest' | 'librarian' | 'heal';
+  readonly entityId: string;
+
+  constructor(operation: 'ingest' | 'librarian' | 'heal', entityId: string) {
+    super(`${operation} already running for entity ${entityId}`);
+    this.name = 'WikiBusyError';
+    this.operation = operation;
+    this.entityId = entityId;
+  }
+}
