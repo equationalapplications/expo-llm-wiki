@@ -94,6 +94,8 @@ const wiki = createWiki(db, {
     maxFtsResults: 10,              // optional, default: 10
     autoLibrarianThreshold: 20,     // optional, default: 20
     maxChunkLength: 6000,           // optional, default: 6000 (char count, not bytes)
+    chunkOverlap: 400,              // optional, default: 400 (overlap between chunks in characters)
+    chunkConcurrency: 1,            // optional, default: 1 (parallel LLM calls per ingestDocument)
   },
 });
 
@@ -142,6 +144,7 @@ const result = await wiki.ingestDocument('entity-123', {
   documentChunk: content,
   maxChunkLength: 12000,              // optional, character count
   chunkOverlap: 400,                  // optional, overlap in characters
+  chunkConcurrency: 1,                // optional, parallel LLM calls per ingest (default: 1)
 });
 // result: { truncated: boolean; chunks: number }
 // truncated: true if at least one hard-split was required (no sentence boundary)
