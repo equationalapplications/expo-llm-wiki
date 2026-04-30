@@ -239,6 +239,7 @@ export class WikiMemory {
   private prefix: string;
   private options: WikiOptions;
   private activeMaintenanceJobs = new Set<string>();
+  private activeIngestJobs = new Set<string>();
 
   constructor(db: SQLite.SQLiteDatabase, options: WikiOptions) {
     this.db = db;
@@ -343,6 +344,28 @@ export class WikiMemory {
       tags: typeof f.tags === 'string' ? JSON.parse(f.tags) : f.tags
     }));
 
+    return { facts, tasks, events: events.reverse() };
+  }
+
+  async getMemoryBundle(entityId: string): Promise<{ facts: WikiFact[]; tasks: WikiTask[]; events: WikiEvent[] }> {
+    const [factsRaw, tasks, events] = await Promise.all([
+      this.db.getAllAsync<WikiFact>(
+        `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC`,
+        [entityId]
+      ),
+      this.db.getAllAsync<WikiTask>(
+        `SELECT * FROM ${this.prefix}tasks WHERE entity_id = ? AND deleted_at IS NULL ORDER BY priority DESC, created_at ASC`,
+        [entityId]
+      ),
+      this.db.getAllAsync<WikiEvent>(
+        `SELECT * FROM ${this.prefix}events WHERE entity_id = ? ORDER BY created_at DESC LIMIT 10`,
+        [entityId]
+      ),
+    ]);
+    const facts = factsRaw.map(f => ({
+      ...f,
+      tags: typeof f.tags === 'string' ? JSON.parse(f.tags) : f.tags,
+    }));
     return { facts, tasks, events: events.reverse() };
   }
 
@@ -640,74 +663,79 @@ export class WikiMemory {
     return { deleted: { entries: deletedEntries, tasks: deletedTasks } };
   }
 
-  async ingestDocument(entityId: string, params: { sourceRef: string; sourceHash: string; documentChunk: string; maxChunkLength?: number }): Promise<{ truncated: boolean; chunks: number }> {
+  async ingestDocument(entityId: string, params: { sourceRef: string; sourceHash: string; documentChunk: string; maxChunkLength?: number; chunkOverlap?: number }): Promise<{ truncated: boolean; chunks: number }> {
     const sourceRef = normalizeSourceRef(params.sourceRef);
     if (!sourceRef) throw new Error('Invalid sourceRef');
     const sourceHash = normalizeSourceHash(params.sourceHash);
     if (!sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
 
-    const maxChunkLength = params.maxChunkLength ?? this.options.config?.maxChunkLength ?? 6000;
-    if (!Number.isInteger(maxChunkLength) || maxChunkLength < 2) {
-      throw new Error('maxChunkLength must be an integer greater than or equal to 2');
-    }
-    
+    const maxChunkLength = params.maxChunkLength ?? this.options.config?.maxChunkLength ?? 12000;
+    const chunkOverlap = params.chunkOverlap ?? this.options.config?.chunkOverlap ?? 400;
+
     if (typeof params.documentChunk !== 'string') {
       throw new Error(`documentChunk must be a string, received ${typeof params.documentChunk}`);
     }
 
-    const chunks: string[] = [];
-    let truncated = false;
-    
-    let text = params.documentChunk.trim();
-    if (text.length === 0) {
-      return { truncated: false, chunks: 0 };
+    const jobKey = `${this.prefix}:${entityId}:${sourceRef}`;
+    if (this.activeIngestJobs.has(jobKey)) {
+      throw new Error(`ingest already running for entity ${entityId}`);
     }
-    while (text.length > 0) {
-        if (text.length <= maxChunkLength) {
-            chunks.push(text);
-            break;
-        }
-        
-        const searchArea = text.slice(0, maxChunkLength + 1);
-        const match = searchArea.match(/[.!?]\s+(?![\s\S]*[.!?]\s+)/);
-        
-        if (match && match.index !== undefined) {
-            const splitPoint = Math.min(match.index + match[0].length, maxChunkLength);
-            const chunk = safeSlice(text, 0, splitPoint);
-            chunks.push(chunk);
-            text = text.slice(chunk.length);
-        } else {
-            truncated = true;
-            const chunk = safeSlice(text, 0, maxChunkLength);
-            chunks.push(chunk);
-            text = text.slice(chunk.length);
-        }
-    }
+    this.activeIngestJobs.add(jobKey);
 
-    const allValidFacts: ExtractedFact[] = [];
-    for (const chunk of chunks) {
-        const userPrompt = `Document Chunk:\n${chunk}`;
-        const responseText = await this.options.llmProvider.generateText({
-          systemPrompt: INGEST_SYSTEM_PROMPT,
-          userPrompt,
-        });
-        const result = parseJsonResponse<{ facts: ExtractedFact[] }>(responseText);
-        const validFacts = (Array.isArray(result.facts) ? result.facts : []).map(validateFact).filter((f): f is ExtractedFact => f !== null);
-        allValidFacts.push(...validFacts);
-    }
+    try {
+      const { chunks, truncated } = chunkText(params.documentChunk, maxChunkLength, chunkOverlap);
 
-    const now = Date.now();
-    await this.db.withTransactionAsync(async () => {
-        await this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE source_ref = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, sourceRef, entityId]);
+      if (chunks.length === 0) {
+        return { truncated: false, chunks: 0 };
+      }
+
+      // Parallel LLM calls - each chunk is independent
+      const chunkResults = await Promise.all(
+        chunks.map(async (chunk) => {
+          const userPrompt = `Document Chunk:\n${chunk}`;
+          const responseText = await this.options.llmProvider.generateText({
+            systemPrompt: INGEST_SYSTEM_PROMPT,
+            userPrompt,
+          });
+          const result = parseJsonResponse<{ facts: ExtractedFact[] }>(responseText);
+          return (Array.isArray(result.facts) ? result.facts : [])
+            .map(validateFact)
+            .filter((f): f is ExtractedFact => f !== null);
+        })
+      );
+
+      // Flatten in chunk order, then dedup by normalized title (first-wins)
+      const seen = new Set<string>();
+      const allValidFacts: ExtractedFact[] = [];
+      for (const facts of chunkResults) {
+        for (const fact of facts) {
+          const normalized = fact.title.trim().toLowerCase().replace(/\s+/g, ' ');
+          if (!seen.has(normalized)) {
+            seen.add(normalized);
+            allValidFacts.push(fact);
+          }
+        }
+      }
+
+      const now = Date.now();
+      await this.db.withTransactionAsync(async () => {
+        await this.db.runAsync(
+          `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE source_ref = ? AND entity_id = ? AND deleted_at IS NULL`,
+          [now, now, sourceRef, entityId]
+        );
         for (const fact of allValidFacts) {
-            const id = generateId('fact_');
-            await this.db.runAsync(`
-                INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `, [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'user_document', sourceHash, sourceRef, now, now]);
+          const id = generateId('fact_');
+          await this.db.runAsync(
+            `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'user_document', sourceHash, sourceRef, now, now]
+          );
         }
-    });
+      });
 
-    return { truncated, chunks: chunks.length };
+      return { truncated, chunks: chunks.length };
+    } finally {
+      this.activeIngestJobs.delete(jobKey);
+    }
   }
 }
