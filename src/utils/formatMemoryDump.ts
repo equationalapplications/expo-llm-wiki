@@ -58,9 +58,34 @@ function renderEntity(entityId: string, bundle: MemoryBundle, generatedAt: numbe
   return lines.join('\n');
 }
 
+function shortHash(value: string): string {
+  let hash = 5381;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = ((hash << 5) + hash) ^ value.charCodeAt(i);
+  }
+  return (hash >>> 0).toString(16);
+}
+
+function formatEntityFileName(entityId: string): string {
+  const normalized = entityId.normalize('NFKC');
+  const sanitized = normalized
+    .replace(/[^A-Za-z0-9._-]+/g, '_')
+    .replace(/^\.+/, '_')
+    .replace(/_+/g, '_')
+    .replace(/^[_-]+|[_-]+$/g, '');
+
+  const baseName = sanitized && sanitized !== '.' && sanitized !== '..'
+    ? sanitized
+    : 'entity';
+  const needsSuffix = baseName !== entityId;
+  const uniqueBaseName = needsSuffix ? `${baseName}-${shortHash(entityId)}` : baseName;
+
+  return `${uniqueBaseName}.md`;
+}
+
 export function formatMemoryDump(dump: MemoryDump): FormattedMemoryDump {
   const files = Object.entries(dump.entities).map(([entityId, bundle]) => ({
-    name: `${entityId}.md`,
+    name: formatEntityFileName(entityId),
     content: renderEntity(entityId, bundle, dump.generatedAt),
   }));
   return {
