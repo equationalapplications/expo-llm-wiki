@@ -714,7 +714,10 @@ export class WikiMemory {
             [fact.id]
           );
           if (existing) {
-            if (existing.entity_id !== entityId) continue; // cross-entity id collision, skip
+            if (existing.entity_id !== entityId) {
+              console.warn(`[WikiMemory] importDump: entry id "${fact.id}" already belongs to entity "${existing.entity_id}"; skipping for entity "${entityId}"`);
+              continue;
+            }
             if (merge) continue; // merge mode: leave existing row untouched
             // replace mode: update the existing row (restores if soft-deleted)
             await this.db.runAsync(
@@ -735,7 +738,10 @@ export class WikiMemory {
             [task.id]
           );
           if (existing) {
-            if (existing.entity_id !== entityId) continue; // cross-entity id collision, skip
+            if (existing.entity_id !== entityId) {
+              console.warn(`[WikiMemory] importDump: task id "${task.id}" already belongs to entity "${existing.entity_id}"; skipping for entity "${entityId}"`);
+              continue;
+            }
             if (merge) continue; // merge mode: leave existing row untouched
             // replace mode: update the existing row (restores if soft-deleted)
             await this.db.runAsync(
