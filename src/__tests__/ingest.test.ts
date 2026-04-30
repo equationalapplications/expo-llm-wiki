@@ -1,118 +1,118 @@
 import { describe, it, expect, vi } from 'vitest';
-import { WikiMemory } from '../WikiMemory';
 
-type Row = Record<string, any>;
+vi.mock('expo-sqlite', () => {
+  type Row = Record<string, any>;
 
-class MockSQLiteDatabase {
-  private entries: Row[] = [];
-  private tasks: Row[] = [];
-  private events: Row[] = [];
-  private rowidCounter = 0;
+  class MockSQLiteDatabase {
+    private entries: Row[] = [];
+    private tasks: Row[] = [];
+    private events: Row[] = [];
+    private rowidCounter = 0;
 
-  async execAsync(_sql: string): Promise<void> {}
+    async execAsync(_sql: string): Promise<void> {}
 
-  async withTransactionAsync<T>(fn: () => Promise<T>): Promise<T> {
-    return fn();
-  }
+    async withTransactionAsync<T>(fn: () => Promise<T>): Promise<T> {
+      return fn();
+    }
 
-  async runAsync(sql: string, args: any[] = []): Promise<{ changes: number; lastInsertRowId: number }> {
-    const normalized = sql.replace(/\s+/g, ' ').trim();
+    async runAsync(sql: string, args: any[] = []): Promise<{ changes: number; lastInsertRowId: number }> {
+      const normalized = sql.replace(/\s+/g, ' ').trim();
 
-    if (normalized.startsWith('UPDATE') && normalized.includes('SET source_ref = ? WHERE rowid = ?')) {
-      const [sourceRef, rowid] = args;
-      let changes = 0;
-      for (const entry of this.entries) {
-        if (entry.rowid === rowid) {
-          entry.source_ref = sourceRef;
-          changes++;
+      if (normalized.startsWith('UPDATE') && normalized.includes('SET source_ref = ? WHERE rowid = ?')) {
+        const [sourceRef, rowid] = args;
+        let changes = 0;
+        for (const entry of this.entries) {
+          if (entry.rowid === rowid) {
+            entry.source_ref = sourceRef;
+            changes++;
+          }
         }
+        return { changes, lastInsertRowId: 0 };
       }
-      return { changes, lastInsertRowId: 0 };
-    }
 
-    if (normalized.startsWith('UPDATE') && normalized.includes('entries SET deleted_at = ?, updated_at = ? WHERE source_ref = ? AND entity_id = ? AND deleted_at IS NULL')) {
-      const [deletedAt, updatedAt, sourceRef, entityId] = args;
-      let changes = 0;
-      for (const entry of this.entries) {
-        if (entry.source_ref === sourceRef && entry.entity_id === entityId && entry.deleted_at == null) {
-          entry.deleted_at = deletedAt;
-          entry.updated_at = updatedAt;
-          changes++;
+      if (normalized.startsWith('UPDATE') && normalized.includes('entries SET deleted_at = ?, updated_at = ? WHERE source_ref = ? AND entity_id = ? AND deleted_at IS NULL')) {
+        const [deletedAt, updatedAt, sourceRef, entityId] = args;
+        let changes = 0;
+        for (const entry of this.entries) {
+          if (entry.source_ref === sourceRef && entry.entity_id === entityId && entry.deleted_at == null) {
+            entry.deleted_at = deletedAt;
+            entry.updated_at = updatedAt;
+            changes++;
+          }
         }
+        return { changes, lastInsertRowId: 0 };
       }
-      return { changes, lastInsertRowId: 0 };
+
+      if (normalized.startsWith('INSERT INTO') && normalized.includes('entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at)')) {
+        const [id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at] = args;
+        const rowid = ++this.rowidCounter;
+        this.entries.push({
+          rowid,
+          id,
+          entity_id,
+          title,
+          body,
+          tags,
+          confidence,
+          source_type,
+          source_hash,
+          source_ref,
+          created_at,
+          updated_at,
+          last_accessed_at: null,
+          access_count: 0,
+          deleted_at: null,
+        });
+        return { changes: 1, lastInsertRowId: rowid };
+      }
+
+      return { changes: 0, lastInsertRowId: 0 };
     }
 
-    if (normalized.startsWith('INSERT INTO') && normalized.includes('entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at)')) {
-      const [id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at] = args;
-      const rowid = ++this.rowidCounter;
-      this.entries.push({
-        rowid,
-        id,
-        entity_id,
-        title,
-        body,
-        tags,
-        confidence,
-        source_type,
-        source_hash,
-        source_ref,
-        created_at,
-        updated_at,
-        last_accessed_at: null,
-        access_count: 0,
-        deleted_at: null,
-      });
-      return { changes: 1, lastInsertRowId: rowid };
-    }
+    async getAllAsync<T>(sql: string, args: any[] = []): Promise<T[]> {
+      const normalized = sql.replace(/\s+/g, ' ').trim();
 
-    return { changes: 0, lastInsertRowId: 0 };
-  }
+      if (normalized.startsWith('SELECT rowid, source_ref FROM') && normalized.includes('entries')) {
+        return [] as T[];
+      }
 
-  async getAllAsync<T>(sql: string, args: any[] = []): Promise<T[]> {
-    const normalized = sql.replace(/\s+/g, ' ').trim();
+      if (normalized.startsWith('SELECT * FROM') && normalized.includes('entries WHERE entity_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC')) {
+        const [entityId] = args;
+        return this.entries
+          .filter(e => e.entity_id === entityId && e.deleted_at == null)
+          .sort((a, b) => b.updated_at - a.updated_at) as T[];
+      }
 
-    if (normalized.startsWith('SELECT rowid, source_ref FROM') && normalized.includes('entries')) {
+      if (normalized.startsWith('SELECT * FROM') && normalized.includes('tasks WHERE entity_id = ? AND deleted_at IS NULL ORDER BY priority DESC, created_at ASC')) {
+        const [entityId] = args;
+        return this.tasks
+          .filter(t => t.entity_id === entityId && t.deleted_at == null)
+          .sort((a, b) => b.priority - a.priority || a.created_at - b.created_at) as T[];
+      }
+
+      if (normalized.startsWith('SELECT * FROM') && normalized.includes('events WHERE entity_id = ? ORDER BY created_at DESC LIMIT 10')) {
+        const [entityId] = args;
+        return this.events
+          .filter(e => e.entity_id === entityId)
+          .sort((a, b) => b.created_at - a.created_at)
+          .slice(0, 10) as T[];
+      }
+
       return [] as T[];
     }
 
-    if (normalized.startsWith('SELECT * FROM') && normalized.includes('entries WHERE entity_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC')) {
-      const [entityId] = args;
-      return this.entries
-        .filter(e => e.entity_id === entityId && e.deleted_at == null)
-        .sort((a, b) => b.updated_at - a.updated_at) as T[];
+    async getFirstAsync<T>(): Promise<T | null> {
+      return null;
     }
-
-    if (normalized.startsWith('SELECT * FROM') && normalized.includes('tasks WHERE entity_id = ? AND deleted_at IS NULL ORDER BY priority DESC, created_at ASC')) {
-      const [entityId] = args;
-      return this.tasks
-        .filter(t => t.entity_id === entityId && t.deleted_at == null)
-        .sort((a, b) => b.priority - a.priority || a.created_at - b.created_at) as T[];
-    }
-
-    if (normalized.startsWith('SELECT * FROM') && normalized.includes('events WHERE entity_id = ? ORDER BY created_at DESC LIMIT 10')) {
-      const [entityId] = args;
-      return this.events
-        .filter(e => e.entity_id === entityId)
-        .sort((a, b) => b.created_at - a.created_at)
-        .slice(0, 10) as T[];
-    }
-
-    return [] as T[];
   }
 
-  async getFirstAsync<T>(): Promise<T | null> {
-    return null;
-  }
-}
-
-vi.mock('expo-sqlite', () => {
   return {
     openDatabaseAsync: async (_name: string) => new MockSQLiteDatabase(),
   };
 });
 
 const SQLite = await import('expo-sqlite');
+const { WikiMemory } = await import('../WikiMemory');
 
 function makeMockProvider(factsPerChunk: Array<Array<{ title: string; body: string; tags: string[]; confidence: string }>>) {
   let i = 0;
