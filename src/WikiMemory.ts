@@ -1,6 +1,6 @@
 import * as SQLite from 'expo-sqlite';
 import { setupDatabase } from './db/schema';
-import { WikiOptions, MemoryBundle, WikiEvent, WikiFact, WikiTask, WikiCheckpoint, ExtractedFact, ExtractedTask, WikiBusyError } from './types';
+import { WikiOptions, MemoryBundle, WikiEvent, WikiFact, WikiTask, WikiCheckpoint, ExtractedFact, ExtractedTask, WikiBusyError, EntityStatus } from './types';
 import { LIBRARIAN_SYSTEM_PROMPT, HEAL_SYSTEM_PROMPT, INGEST_SYSTEM_PROMPT } from './prompts';
 
 function parseJsonResponse<T>(text: string): T {
@@ -603,6 +603,26 @@ export class WikiMemory {
     } finally {
       this.activeMaintenanceJobs.delete(jobKey);
     }
+  }
+
+  getEntityStatus(entityId: string): EntityStatus {
+    const ingestPrefix = `${this.prefix}:${entityId}:`;
+    const librarianKey = `${this.prefix}:${entityId}:librarian`;
+    const healKey = `${this.prefix}:${entityId}:heal`;
+
+    let ingesting = false;
+    for (const k of this.activeIngestJobs) {
+      if (k.startsWith(ingestPrefix)) {
+        ingesting = true;
+        break;
+      }
+    }
+
+    return {
+      ingesting,
+      librarian: this.activeMaintenanceJobs.has(librarianKey),
+      heal: this.activeMaintenanceJobs.has(healKey),
+    };
   }
 
   async forget(entityId: string, params: { entryId?: string; taskId?: string; sourceRef?: string; sourceHash?: string; clearAll?: boolean }): Promise<{ deleted: { entries: number; tasks: number } }> {

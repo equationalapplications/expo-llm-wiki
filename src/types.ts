@@ -84,6 +84,12 @@ export interface MemoryBundle {
   events: WikiEvent[];
 }
 
+export interface EntityStatus {
+  ingesting: boolean;
+  librarian: boolean;
+  heal: boolean;
+}
+
 export class WikiBusyError extends Error {
   readonly operation: 'ingest' | 'librarian' | 'heal';
   readonly entityId: string;

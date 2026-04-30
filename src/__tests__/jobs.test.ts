@@ -79,3 +79,32 @@ describe('job mutex', () => {
     await expect(Promise.all([first, second])).resolves.toBeDefined();
   });
 });
+
+describe('getEntityStatus', () => {
+  it('returns all-false when idle', async () => {
+    const wiki = await freshWiki(slowProvider(0));
+    expect(wiki.getEntityStatus('idle')).toEqual({ ingesting: false, librarian: false, heal: false });
+  });
+
+  it('reports ingesting during ingest', async () => {
+    const wiki = await freshWiki(slowProvider(100));
+    const sourceHash = 'a'.repeat(64);
+    const ingestP = wiki.ingestDocument('e1', { sourceRef: 'doc1', sourceHash, documentChunk: 'some text content here' });
+    // give the async operation a moment to register
+    await new Promise(r => setTimeout(r, 10));
+    expect(wiki.getEntityStatus('e1').ingesting).toBe(true);
+    expect(wiki.getEntityStatus('e1').librarian).toBe(false);
+    await ingestP;
+    expect(wiki.getEntityStatus('e1').ingesting).toBe(false);
+  });
+
+  it('does not bleed across entities', async () => {
+    const wiki = await freshWiki(slowProvider(100));
+    const p = wiki.runLibrarian('e1');
+    await new Promise(r => setTimeout(r, 10));
+    // e1 should be busy, e2 should be idle
+    expect(wiki.getEntityStatus('e1').librarian).toBe(true);
+    expect(wiki.getEntityStatus('e2').librarian).toBe(false);
+    await p;
+  });
+});
