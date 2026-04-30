@@ -722,6 +722,10 @@ export class WikiMemory {
             `UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`,
             [now, now, entityId]
           );
+          await this.db.runAsync(
+            `DELETE FROM ${this.prefix}checkpoints WHERE entity_id = ?`,
+            [entityId]
+          );
         }
 
         const factIds = bundle.facts.map((fact) => fact.id);
