@@ -676,11 +676,17 @@ export class WikiMemory {
       ids = rows.map(r => r.entity_id);
     }
 
-    const entities = Object.fromEntries(
-      await Promise.all(
-        ids.map(async (id): Promise<[string, MemoryBundle]> => [id, await this._getFullBundle(id)])
-      )
-    ) as Record<string, MemoryBundle>;
+    const entities: Record<string, MemoryBundle> = {};
+    const BATCH = 3;
+    for (let i = 0; i < ids.length; i += BATCH) {
+      const batch = ids.slice(i, i + BATCH);
+      const batchResults = await Promise.all(
+        batch.map(async (id): Promise<[string, MemoryBundle]> => [id, await this._getFullBundle(id)])
+      );
+      for (const [id, bundle] of batchResults) {
+        entities[id] = bundle;
+      }
+    }
 
     return { generatedAt: Date.now(), entities };
   }
@@ -703,60 +709,45 @@ export class WikiMemory {
         }
 
         for (const fact of bundle.facts) {
-          if (merge) {
-            const existing = await this.db.getFirstAsync<{ id: string }>(
-              `SELECT id FROM ${this.prefix}entries WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`,
-              [fact.id, entityId]
-            );
-            if (existing) continue;
-          }
-
-          await this.db.runAsync(
-            `INSERT OR REPLACE INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              fact.id,
-              entityId,
-              fact.title,
-              fact.body,
-              JSON.stringify(fact.tags),
-              fact.confidence,
-              fact.source_type,
-              fact.source_hash,
-              fact.source_ref,
-              fact.created_at,
-              fact.updated_at,
-              fact.last_accessed_at,
-              fact.access_count,
-              fact.deleted_at,
-            ]
+          const existing = await this.db.getFirstAsync<{ id: string; entity_id: string }>(
+            `SELECT id, entity_id FROM ${this.prefix}entries WHERE id = ?`,
+            [fact.id]
           );
+          if (existing) {
+            if (existing.entity_id !== entityId) continue; // cross-entity id collision, skip
+            if (merge) continue; // merge mode: leave existing row untouched
+            // replace mode: update the existing row (restores if soft-deleted)
+            await this.db.runAsync(
+              `UPDATE ${this.prefix}entries SET entity_id = ?, title = ?, body = ?, tags = ?, confidence = ?, source_type = ?, source_hash = ?, source_ref = ?, created_at = ?, updated_at = ?, last_accessed_at = ?, access_count = ?, deleted_at = ? WHERE id = ?`,
+              [entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, fact.updated_at, fact.last_accessed_at, fact.access_count, fact.deleted_at, fact.id]
+            );
+          } else {
+            await this.db.runAsync(
+              `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [fact.id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, fact.updated_at, fact.last_accessed_at, fact.access_count, fact.deleted_at]
+            );
+          }
         }
 
         for (const task of bundle.tasks) {
-          if (merge) {
-            const existing = await this.db.getFirstAsync<{ id: string }>(
-              `SELECT id FROM ${this.prefix}tasks WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`,
-              [task.id, entityId]
-            );
-            if (existing) continue;
-          }
-
-          await this.db.runAsync(
-            `INSERT OR REPLACE INTO ${this.prefix}tasks (id, entity_id, description, status, priority, created_at, updated_at, resolved_at, deleted_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              task.id,
-              entityId,
-              task.description,
-              task.status,
-              task.priority,
-              task.created_at,
-              task.updated_at,
-              task.resolved_at,
-              task.deleted_at,
-            ]
+          const existing = await this.db.getFirstAsync<{ id: string; entity_id: string }>(
+            `SELECT id, entity_id FROM ${this.prefix}tasks WHERE id = ?`,
+            [task.id]
           );
+          if (existing) {
+            if (existing.entity_id !== entityId) continue; // cross-entity id collision, skip
+            if (merge) continue; // merge mode: leave existing row untouched
+            // replace mode: update the existing row (restores if soft-deleted)
+            await this.db.runAsync(
+              `UPDATE ${this.prefix}tasks SET entity_id = ?, description = ?, status = ?, priority = ?, created_at = ?, updated_at = ?, resolved_at = ?, deleted_at = ? WHERE id = ?`,
+              [entityId, task.description, task.status, task.priority, task.created_at, task.updated_at, task.resolved_at, task.deleted_at, task.id]
+            );
+          } else {
+            await this.db.runAsync(
+              `INSERT INTO ${this.prefix}tasks (id, entity_id, description, status, priority, created_at, updated_at, resolved_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [task.id, entityId, task.description, task.status, task.priority, task.created_at, task.updated_at, task.resolved_at, task.deleted_at]
+            );
+          }
         }
 
         for (const event of bundle.events) {

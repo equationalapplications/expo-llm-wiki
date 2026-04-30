@@ -59,11 +59,14 @@ function renderEntity(entityId: string, bundle: MemoryBundle, generatedAt: numbe
 }
 
 function shortHash(value: string): string {
-  let hash = 5381;
+  let h1 = 5381;
+  let h2 = 52711;
   for (let i = 0; i < value.length; i += 1) {
-    hash = ((hash << 5) + hash) ^ value.charCodeAt(i);
+    const c = value.charCodeAt(i);
+    h1 = Math.imul(h1, 33) ^ c;
+    h2 = Math.imul(h2, 31) ^ c;
   }
-  return (hash >>> 0).toString(16);
+  return (h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0');
 }
 
 function formatEntityFileName(entityId: string): string {
@@ -74,10 +77,15 @@ function formatEntityFileName(entityId: string): string {
     .replace(/_+/g, '_')
     .replace(/^[_-]+|[_-]+$/g, '');
 
-  const baseName = sanitized && sanitized !== '.' && sanitized !== '..'
-    ? sanitized
+  // Enforce a max base-name length so the final filename stays within typical
+  // filesystem limits (~255 bytes). Reserve 19 chars for `-<16hexchars>.md`.
+  const MAX_BASE = 200;
+  const trimmed = sanitized.length > MAX_BASE ? sanitized.slice(0, MAX_BASE) : sanitized;
+
+  const baseName = trimmed && trimmed !== '.' && trimmed !== '..'
+    ? trimmed
     : 'entity';
-  const needsSuffix = baseName !== entityId;
+  const needsSuffix = baseName !== entityId || sanitized.length > MAX_BASE;
   const uniqueBaseName = needsSuffix ? `${baseName}-${shortHash(entityId)}` : baseName;
 
   return `${uniqueBaseName}.md`;

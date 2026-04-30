@@ -42,52 +42,35 @@ class MockSQLiteDatabase {
       return { changes, lastInsertRowId: 0 };
     }
 
-    if (normalized.startsWith('INSERT OR REPLACE INTO') && normalized.includes('entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at)')) {
-      const [id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at] = args;
-      const existingIndex = this.entries.findIndex((e) => e.id === id && e.entity_id === entity_id);
-      const row = {
-        id,
-        entity_id,
-        title,
-        body,
-        tags,
-        confidence,
-        source_type,
-        source_hash,
-        source_ref,
-        created_at,
-        updated_at,
-        last_accessed_at,
-        access_count,
-        deleted_at,
-      };
-      if (existingIndex >= 0) {
-        this.entries[existingIndex] = row;
-      } else {
-        this.entries.push(row);
+    if (normalized.startsWith('UPDATE') && normalized.includes('entries SET entity_id = ?, title = ?, body = ?, tags = ?, confidence = ?, source_type = ?, source_hash = ?, source_ref = ?, created_at = ?, updated_at = ?, last_accessed_at = ?, access_count = ?, deleted_at = ? WHERE id = ?')) {
+      const [entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at, id] = args;
+      const idx = this.entries.findIndex((e) => e.id === id);
+      if (idx >= 0) {
+        this.entries[idx] = { id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at };
+        return { changes: 1, lastInsertRowId: 0 };
       }
+      return { changes: 0, lastInsertRowId: 0 };
+    }
+
+    if (normalized.startsWith('UPDATE') && normalized.includes('tasks SET entity_id = ?, description = ?, status = ?, priority = ?, created_at = ?, updated_at = ?, resolved_at = ?, deleted_at = ? WHERE id = ?')) {
+      const [entity_id, description, status, priority, created_at, updated_at, resolved_at, deleted_at, id] = args;
+      const idx = this.tasks.findIndex((t) => t.id === id);
+      if (idx >= 0) {
+        this.tasks[idx] = { id, entity_id, description, status, priority, created_at, updated_at, resolved_at, deleted_at };
+        return { changes: 1, lastInsertRowId: 0 };
+      }
+      return { changes: 0, lastInsertRowId: 0 };
+    }
+
+    if (normalized.startsWith('INSERT INTO') && normalized.includes('entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at)')) {
+      const [id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at] = args;
+      this.entries.push({ id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at });
       return { changes: 1, lastInsertRowId: 0 };
     }
 
-    if (normalized.startsWith('INSERT OR REPLACE INTO') && normalized.includes('tasks (id, entity_id, description, status, priority, created_at, updated_at, resolved_at, deleted_at)')) {
+    if (normalized.startsWith('INSERT INTO') && normalized.includes('tasks (id, entity_id, description, status, priority, created_at, updated_at, resolved_at, deleted_at)')) {
       const [id, entity_id, description, status, priority, created_at, updated_at, resolved_at, deleted_at] = args;
-      const existingIndex = this.tasks.findIndex((t) => t.id === id && t.entity_id === entity_id);
-      const row = {
-        id,
-        entity_id,
-        description,
-        status,
-        priority,
-        created_at,
-        updated_at,
-        resolved_at,
-        deleted_at,
-      };
-      if (existingIndex >= 0) {
-        this.tasks[existingIndex] = row;
-      } else {
-        this.tasks.push(row);
-      }
+      this.tasks.push({ id, entity_id, description, status, priority, created_at, updated_at, resolved_at, deleted_at });
       return { changes: 1, lastInsertRowId: 0 };
     }
 
@@ -160,16 +143,16 @@ class MockSQLiteDatabase {
   async getFirstAsync<T>(sql: string, args: any[] = []): Promise<T | null> {
     const normalized = sql.replace(/\s+/g, ' ').trim();
 
-    if (normalized.startsWith('SELECT id FROM') && normalized.includes('entries WHERE id = ? AND entity_id = ? AND deleted_at IS NULL')) {
-      const [id, entityId] = args;
-      const found = this.entries.find((e) => e.id === id && e.entity_id === entityId && e.deleted_at == null);
-      return found ? ({ id: found.id } as T) : null;
+    if (normalized.startsWith('SELECT id, entity_id FROM') && normalized.includes('entries WHERE id = ?')) {
+      const [id] = args;
+      const found = this.entries.find((e) => e.id === id);
+      return found ? ({ id: found.id, entity_id: found.entity_id } as T) : null;
     }
 
-    if (normalized.startsWith('SELECT id FROM') && normalized.includes('tasks WHERE id = ? AND entity_id = ? AND deleted_at IS NULL')) {
-      const [id, entityId] = args;
-      const found = this.tasks.find((t) => t.id === id && t.entity_id === entityId && t.deleted_at == null);
-      return found ? ({ id: found.id } as T) : null;
+    if (normalized.startsWith('SELECT id, entity_id FROM') && normalized.includes('tasks WHERE id = ?')) {
+      const [id] = args;
+      const found = this.tasks.find((t) => t.id === id);
+      return found ? ({ id: found.id, entity_id: found.entity_id } as T) : null;
     }
 
     if (normalized.startsWith('SELECT * FROM') && normalized.includes('checkpoints WHERE entity_id = ?')) {
