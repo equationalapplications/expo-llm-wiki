@@ -1,30 +1,32 @@
-import { useCallback, useState } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { useWiki } from './WikiContext';
 import type { MemoryDump } from '../types';
 
-export function useWikiExport(): {
-  exportDump: (entityIds?: string[]) => Promise<MemoryDump>;
-  isExporting: boolean;
-  error: Error | null;
-} {
+export function useWikiExport() {
   const wiki = useWiki();
-  const [isExporting, setIsExporting] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
+  const wikiRef = useRef(wiki);
+  wikiRef.current = wiki;
 
-  const exportDump = useCallback(async (entityIds?: string[]): Promise<MemoryDump> => {
-    setIsExporting(true);
+  const [isPending, setIsPending] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const [lastResult, setLastResult] = useState<MemoryDump | null>(null);
+
+  const execute = useCallback(async (entityIds?: string[]): Promise<MemoryDump> => {
     setError(null);
+    setIsPending(true);
+    setLastResult(null);
     try {
-      const result = await wiki.exportDump(entityIds);
+      const result = await wikiRef.current.exportDump(entityIds);
+      setLastResult(result);
       return result;
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e));
       setError(err);
       throw err;
     } finally {
-      setIsExporting(false);
+      setIsPending(false);
     }
-  }, [wiki]);
+  }, []);
 
-  return { exportDump, isExporting, error };
+  return { execute, lastResult, isPending, error };
 }

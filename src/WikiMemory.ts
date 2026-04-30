@@ -420,12 +420,20 @@ export class WikiMemory {
     if (healCheckpoint > currentEventCount) healCheckpoint = 0;
     
     if (currentEventCount - healCheckpoint >= autoHealThreshold) {
-      await this._doRunHeal(entityId);
-      await this.db.runAsync(`
-        INSERT INTO ${this.prefix}checkpoints (entity_id, heal_checkpoint) 
-        VALUES (?, ?) 
-        ON CONFLICT(entity_id) DO UPDATE SET heal_checkpoint = ?
-      `, [entityId, currentEventCount, currentEventCount]);
+      const healKey = `${this.prefix}:${entityId}:heal`;
+      if (!this.activeMaintenanceJobs.has(healKey)) {
+        this.activeMaintenanceJobs.add(healKey);
+        try {
+          await this._doRunHeal(entityId);
+          await this.db.runAsync(`
+            INSERT INTO ${this.prefix}checkpoints (entity_id, heal_checkpoint) 
+            VALUES (?, ?) 
+            ON CONFLICT(entity_id) DO UPDATE SET heal_checkpoint = ?
+          `, [entityId, currentEventCount, currentEventCount]);
+        } finally {
+          this.activeMaintenanceJobs.delete(healKey);
+        }
+      }
     }
   }
 
@@ -625,6 +633,28 @@ export class WikiMemory {
     };
   }
 
+  private async _getFullBundle(entityId: string): Promise<MemoryBundle> {
+    const [factsRaw, tasks, events] = await Promise.all([
+      this.db.getAllAsync<WikiFact>(
+        `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC`,
+        [entityId]
+      ),
+      this.db.getAllAsync<WikiTask>(
+        `SELECT * FROM ${this.prefix}tasks WHERE entity_id = ? AND deleted_at IS NULL ORDER BY priority DESC, created_at ASC`,
+        [entityId]
+      ),
+      this.db.getAllAsync<WikiEvent>(
+        `SELECT * FROM ${this.prefix}events WHERE entity_id = ? ORDER BY created_at ASC`,
+        [entityId]
+      ),
+    ]);
+    const facts = factsRaw.map(f => ({
+      ...f,
+      tags: typeof f.tags === 'string' ? JSON.parse(f.tags) : f.tags,
+    }));
+    return { facts, tasks, events };
+  }
+
   async exportDump(entityIds?: string[]): Promise<MemoryDump> {
     let ids: string[];
     if (entityIds && entityIds.length > 0) {
@@ -645,7 +675,7 @@ export class WikiMemory {
 
     const entities = Object.fromEntries(
       await Promise.all(
-        ids.map(async (id): Promise<[string, MemoryBundle]> => [id, await this.getMemoryBundle(id)])
+        ids.map(async (id): Promise<[string, MemoryBundle]> => [id, await this._getFullBundle(id)])
       )
     ) as Record<string, MemoryBundle>;
 

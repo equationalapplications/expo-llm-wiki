@@ -147,6 +147,13 @@ class MockSQLiteDatabase {
         .slice(0, 10) as T[];
     }
 
+    if (normalized.startsWith('SELECT * FROM') && normalized.includes('events WHERE entity_id = ? ORDER BY created_at ASC')) {
+      const [entityId] = args;
+      return this.events
+        .filter((e) => e.entity_id === entityId)
+        .sort((a, b) => a.created_at - b.created_at) as T[];
+    }
+
     return [] as T[];
   }
 
