@@ -1,34 +1,34 @@
 import { describe, it, expect, vi } from 'vitest';
-import { WikiMemory } from '../WikiMemory';
 import { WikiBusyError } from '../types';
 
-class MockSQLiteDatabase {
-  async execAsync(_sql: string): Promise<void> {}
-
-  async withTransactionAsync<T>(fn: () => Promise<T>): Promise<T> {
-    return fn();
-  }
-
-  async runAsync(_sql: string, _args: any[] = []): Promise<{ changes: number; lastInsertRowId: number }> {
-    return { changes: 0, lastInsertRowId: 0 };
-  }
-
-  async getAllAsync<T>(_sql: string, _args: any[] = []): Promise<T[]> {
-    return [] as T[];
-  }
-
-  async getFirstAsync<T>(_sql: string, _args: any[] = []): Promise<T | null> {
-    return null;
-  }
-}
-
 vi.mock('expo-sqlite', () => {
+  class MockSQLiteDatabase {
+    async execAsync(_sql: string): Promise<void> {}
+
+    async withTransactionAsync<T>(fn: () => Promise<T>): Promise<T> {
+      return fn();
+    }
+
+    async runAsync(_sql: string, _args: any[] = []): Promise<{ changes: number; lastInsertRowId: number }> {
+      return { changes: 0, lastInsertRowId: 0 };
+    }
+
+    async getAllAsync<T>(_sql: string, _args: any[] = []): Promise<T[]> {
+      return [] as T[];
+    }
+
+    async getFirstAsync<T>(_sql: string, _args: any[] = []): Promise<T | null> {
+      return null;
+    }
+  }
+
   return {
     openDatabaseAsync: async (_name: string) => new MockSQLiteDatabase(),
   };
 });
 
 const SQLite = await import('expo-sqlite');
+const { WikiMemory } = await import('../WikiMemory');
 
 const slowProvider = (delayMs: number) => ({
   generateText: async (_: any) => {
