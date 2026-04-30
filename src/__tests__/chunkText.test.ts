@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { chunkText } from '../WikiMemory';
+import { __testables } from '../WikiMemory';
+
+const { chunkText } = __testables;
 
 describe('chunkText', () => {
   it('returns empty for empty input', () => {

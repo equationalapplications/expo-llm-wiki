@@ -42,7 +42,7 @@
     "access": "public"
   },
   "peerDependencies": {
-    "expo-sqlite": "^14.0.0 || ^15.0.0",
+    "expo-sqlite": "^14.0.0 || ^15.0.0 || ^55.0.0",
     "react": ">=17"
   },
   "peerDependenciesMeta": {

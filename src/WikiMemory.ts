@@ -88,7 +88,7 @@ function safeSlice(value: string, start: number, end?: number): string {
   return value.slice(safeStart, safeEnd);
 }
 
-export function chunkText(
+function chunkText(
   input: string,
   maxChunkLength: number,
   overlap: number
@@ -806,7 +806,10 @@ export class WikiMemory {
     if (!sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
 
     const maxChunkLength = params.maxChunkLength ?? this.options.config?.maxChunkLength ?? 12000;
-    const chunkOverlap = params.chunkOverlap ?? this.options.config?.chunkOverlap ?? 400;
+    const chunkOverlap = Math.min(
+      params.chunkOverlap ?? this.options.config?.chunkOverlap ?? 400,
+      maxChunkLength - 1
+    );
 
     if (typeof params.documentChunk !== 'string') {
       throw new Error(`documentChunk must be a string, received ${typeof params.documentChunk}`);
@@ -876,4 +879,4 @@ export class WikiMemory {
   }
 }
 
-const __testables = { validateFact, validateTask, clip };
+export const __testables = { validateFact, validateTask, clip, chunkText };
