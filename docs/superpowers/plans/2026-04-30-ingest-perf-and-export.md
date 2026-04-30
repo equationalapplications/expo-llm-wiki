@@ -16,7 +16,7 @@
 
 - `src/WikiMemory.ts` — new `chunkText` helper, parallel ingest path, dedup, ingest guard `Set`, mutex split, `getEntityStatus`, `exportDump`, `importDump`.
 - `src/prompts.ts` — body budgets 200 → 800.
-- `src/types.ts` — `MemoryDump`, `FormattedMemoryDump`, `EntityStatus`, `WikiBusyError`, `WikiConfig.chunkOverlap`.
+- `src/types.ts` — `MemoryDump`, `FormattedMemoryDump`, `EntityStatus`, `WikiBusyError`, `WikiConfig.chunkOverlap`, `WikiConfig.chunkConcurrency`.
 - `src/utils/formatMemoryDump.ts` — new pure helper.
 - `src/index.ts` — re-export new symbols.
 - `src/react/useWikiExport.ts` — new hook.
@@ -380,16 +380,19 @@ async ingestDocument(entityId: string, params: { sourceRef: string; sourceHash: 
     const { chunks, truncated } = chunkText(params.documentChunk, maxChunkLength, chunkOverlap);
     if (chunks.length === 0) return { truncated: false, chunks: 0 };
 
-    const perChunk = await Promise.all(chunks.map(async (chunk) => {
-      const responseText = await this.options.llmProvider.generateText({
-        systemPrompt: INGEST_SYSTEM_PROMPT,
-        userPrompt: `Document Chunk:\n${chunk}`,
-      });
-      const result = parseJsonResponse<{ facts: ExtractedFact[] }>(responseText);
-      return (Array.isArray(result.facts) ? result.facts : [])
-        .map(validateFact)
-        .filter((f): f is ExtractedFact => f !== null);
-    }));
+    const perChunk = await withConcurrency(
+      chunks.map((chunk) => async () => {
+        const responseText = await this.options.llmProvider.generateText({
+          systemPrompt: INGEST_SYSTEM_PROMPT,
+          userPrompt: `Document Chunk:\n${chunk}`,
+        });
+        const result = parseJsonResponse<{ facts: ExtractedFact[] }>(responseText);
+        return (Array.isArray(result.facts) ? result.facts : [])
+          .map(validateFact)
+          .filter((f): f is ExtractedFact => f !== null);
+      }),
+      chunkConcurrency
+    );
 
     // Cross-chunk dedup by normalized title (first-wins)
     const seen = new Set<string>();
@@ -486,7 +489,7 @@ Expected: FAIL — `__testables` not exported, body clipped to 200.
 
 - [ ] **Step 3: Update prompts**
 
-In `src/prompts.ts`, change `(max 200 chars)` to `(max 800 chars)` in both `LIBRARIAN_SYSTEM_PROMPT` and `INGEST_SYSTEM_PROMPT`. `HEAL_SYSTEM_PROMPT`'s `newFacts` body is unbounded in the schema string — leave it (it goes through the same `validateFact` clip path).
+In `src/prompts.ts`, change `(max 200 chars)` to `(max 800 chars)` in both `LIBRARIAN_SYSTEM_PROMPT` and `INGEST_SYSTEM_PROMPT`. Also add `(max 800 chars)` annotation to `HEAL_SYSTEM_PROMPT`'s `newFacts[].body` field and `(max 80 chars)` to `newFacts[].title` — all three prompts are updated for consistency.
 
 - [ ] **Step 4: Update `validateFact`**
 
@@ -769,17 +772,18 @@ git commit -m "feat(wiki): add getEntityStatus snapshot"
 
 ---
 
-## Task 6: `WikiConfig.chunkOverlap` field
+## Task 6: `WikiConfig.chunkOverlap` and `chunkConcurrency` fields
 
 **Files:**
 - Modify: `src/types.ts`
 
-- [ ] **Step 1: Add field**
+- [ ] **Step 1: Add fields**
 
 In `WikiConfig`, after `maxChunkLength?: number;`:
 
 ```ts
 chunkOverlap?: number;
+chunkConcurrency?: number;
 ```
 
 - [ ] **Step 2: Verify**
@@ -1205,24 +1209,27 @@ import type { MemoryDump } from '../types';
 
 export function useWikiExport() {
   const wiki = useWiki();
-  const [isExporting, setIsExporting] = useState(false);
+  const [isPending, setIsPending] = useState(false);
+  const [lastResult, setLastResult] = useState<MemoryDump | null>(null);
   const [error, setError] = useState<Error | null>(null);
 
-  const exportDump = useCallback(async (entityIds?: string[]): Promise<MemoryDump> => {
-    setIsExporting(true);
+  const execute = useCallback(async (entityIds?: string[]): Promise<MemoryDump> => {
+    setIsPending(true);
     setError(null);
     try {
-      return await wiki.exportDump(entityIds);
+      const result = await wiki.exportDump(entityIds);
+      setLastResult(result);
+      return result;
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e));
       setError(err);
       throw err;
     } finally {
-      setIsExporting(false);
+      setIsPending(false);
     }
   }, [wiki]);
 
-  return { exportDump, isExporting, error };
+  return { execute, lastResult, isPending, error };
 }
 ```
 
