@@ -1,6 +1,6 @@
 import * as SQLite from 'expo-sqlite';
 import { setupDatabase } from './db/schema';
-import { WikiOptions, MemoryBundle, MemoryDump, FormattedMemoryDump, WikiEvent, WikiFact, WikiTask, WikiCheckpoint, ExtractedFact, ExtractedTask, WikiBusyError, EntityStatus } from './types';
+import { WikiOptions, MemoryBundle, MemoryDump, WikiEvent, WikiFact, WikiTask, WikiCheckpoint, ExtractedFact, ExtractedTask, WikiBusyError, EntityStatus } from './types';
 import { LIBRARIAN_SYSTEM_PROMPT, HEAL_SYSTEM_PROMPT, INGEST_SYSTEM_PROMPT } from './prompts';
 
 function parseJsonResponse<T>(text: string): T {
