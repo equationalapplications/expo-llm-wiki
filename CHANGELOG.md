@@ -1,3 +1,10 @@
+## [2.0.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v2.0.0...v2.0.1) (2026-04-30)
+
+
+### Bug Fixes
+
+* **ci:** pass NPM_TOKEN to semantic-release publish step ([752fdd9](https://github.com/equationalapplications/expo-llm-wiki/commit/752fdd93c023a5df8d611ca760bfe66df4551997))
+
 # [2.0.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v1.1.0...v2.0.0) (2026-04-30)
 
 

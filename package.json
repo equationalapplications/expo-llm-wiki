@@ -1,6 +1,6 @@
 {
   "name": "@equationalapplications/expo-llm-wiki",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "A standalone, general-purpose React Native/Expo package for LLM Wiki Memory.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
