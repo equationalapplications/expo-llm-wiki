@@ -1,3 +1,12 @@
+## [2.0.2](https://github.com/equationalapplications/expo-llm-wiki/compare/v2.0.1...v2.0.2) (2026-04-30)
+
+
+### Bug Fixes
+
+* add registry to publishConfig ([386aff2](https://github.com/equationalapplications/expo-llm-wiki/commit/386aff2df6bcd114c5f3f57b49b0796633147760))
+* **ci:** add explicit repositoryUrl to semantic-release config ([4a5d07d](https://github.com/equationalapplications/expo-llm-wiki/commit/4a5d07d602cf9c610801fa7607a578405973fbc2))
+* **ci:** retrigger release with updated NPM_TOKEN ([17556c7](https://github.com/equationalapplications/expo-llm-wiki/commit/17556c70b1c91a638158eae07ed1e48ed02babbd))
+
 ## [2.0.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v2.0.0...v2.0.1) (2026-04-30)
 
 
