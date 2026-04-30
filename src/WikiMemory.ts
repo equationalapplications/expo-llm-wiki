@@ -643,11 +643,11 @@ export class WikiMemory {
       ids = rows.map(r => r.entity_id);
     }
 
-    const entities: Record<string, MemoryBundle> = {};
-    for (const id of ids) {
-      const bundle = await this.getMemoryBundle(id);
-      entities[id] = bundle;
-    }
+    const entities = Object.fromEntries(
+      await Promise.all(
+        ids.map(async (id): Promise<[string, MemoryBundle]> => [id, await this.getMemoryBundle(id)])
+      )
+    ) as Record<string, MemoryBundle>;
 
     return { generatedAt: Date.now(), entities };
   }
