@@ -50,11 +50,15 @@
     "@semantic-release/changelog": "^6.0.0",
     "@semantic-release/git": "^10.0.0",
     "@types/node": "^20.0.0",
-    "semantic-release": "^24.0.0",
-    "@types/react": "^18.0.0",
+    "@types/react": "^19.0.0",
     "expo-sqlite": "^55.0.15",
-    "react": "^18.0.0",
+    "react": "19.2.0",
+    "semantic-release": "^24.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "expo": "^55.0.18",
+    "react-native": "0.83.6"
   }
 }
