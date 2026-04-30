@@ -660,7 +660,7 @@ export class WikiMemory {
       tags: typeof f.tags === 'string' ? JSON.parse(f.tags) : f.tags,
     }));
     // When limited, results arrive newest-first; reverse to chronological order.
-    const events = maxEvents != null ? eventsRaw.reverse() : eventsRaw;
+    const events = maxEvents != null ? eventsRaw.slice().reverse() : eventsRaw;
     return { facts, tasks, events };
   }
 
