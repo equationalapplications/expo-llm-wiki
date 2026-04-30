@@ -711,11 +711,21 @@ export class WikiMemory {
           );
         }
 
-        for (const fact of bundle.facts) {
-          const existing = await this.db.getFirstAsync<{ id: string; entity_id: string }>(
-            `SELECT id, entity_id FROM ${this.prefix}entries WHERE id = ?`,
-            [fact.id]
+        const factIds = bundle.facts.map((fact) => fact.id);
+        const existingFactsById = new Map<string, { id: string; entity_id: string }>();
+        if (factIds.length > 0) {
+          const placeholders = factIds.map(() => '?').join(', ');
+          const existingFacts = await this.db.getAllAsync<{ id: string; entity_id: string }>(
+            `SELECT id, entity_id FROM ${this.prefix}entries WHERE id IN (${placeholders})`,
+            factIds
           );
+          for (const existingFact of existingFacts) {
+            existingFactsById.set(existingFact.id, existingFact);
+          }
+        }
+
+        for (const fact of bundle.facts) {
+          const existing = existingFactsById.get(fact.id);
           if (existing) {
             if (existing.entity_id !== entityId) {
               this._warnCrossEntityCollision('entry', fact.id, existing.entity_id, entityId);
