@@ -74,9 +74,11 @@ Algorithm (no regex lookaheads):
 
 Overlap is computed in characters and applied as the prefix of the next chunk. `overlap = 0` reproduces the current non-overlapping behavior.
 
-### Phase 2 — Parallelize LLM calls
+### Phase 2 — Bounded-concurrency LLM calls
 
-Replace the `for (const chunk of chunks)` loop with `Promise.all(chunks.map(...))`. Each chunk's prompt + parse + `validateFact` filter is independent and produces its own `ExtractedFact[]`. Results are concatenated in chunk order before the single transactional DB write (preserving deterministic ordering of inserted facts).
+Replace the `for (const chunk of chunks)` loop with a worker-pool executor (`withConcurrency`) that runs at most `chunkConcurrency` chunks in parallel. Each chunk's prompt + parse + `validateFact` filter is independent and produces its own `ExtractedFact[]`. Results are collected in chunk order before the single transactional DB write (preserving deterministic ordering of inserted facts).
+
+Default `chunkConcurrency = 1` (sequential) is safe for providers with rate limits; developers can raise it for providers that support higher concurrency. The worker pool is implemented inline (no new runtime dependencies).
 
 Errors from any chunk reject the whole call, matching today's fail-fast behavior. No partial writes (the DB transaction only runs after all chunks resolve).
 
@@ -94,9 +96,10 @@ This only dedups within a single `ingestDocument` call. It does not compare agai
 
 - `WikiConfig.maxChunkLength` default: **6000 → 12000**.
 - `WikiConfig.chunkOverlap` (new): default **400**, minimum 0, must be `< maxChunkLength`.
-- `ingestDocument` accepts per-call `maxChunkLength` and `chunkOverlap` overrides, validated the same way as today.
-- `INGEST_SYSTEM_PROMPT` body budget: **200 → 800 chars**. `validateFact` (or equivalent) updated to enforce the new limit. Title budget unchanged at 80.
-- `HEAL_SYSTEM_PROMPT` body budget: **200 → 800 chars** to stay consistent with ingest output.
+- `WikiConfig.chunkConcurrency` (new): default **1** (sequential). Must be a positive integer. Controls how many LLM calls run concurrently per `ingestDocument` call.
+- `ingestDocument` accepts per-call `maxChunkLength`, `chunkOverlap`, and `chunkConcurrency` overrides.
+- `INGEST_SYSTEM_PROMPT` body budget: **200 → 800 chars**. `validateFact` clips to 800. Title budget unchanged at 80.
+- `HEAL_SYSTEM_PROMPT` `newFacts.body` schema annotation updated to `(max 800 chars)` to match ingest output. Facts returned by heal flow through the same `validateFact` clip path.
 
 ### Phase 4 — Ingest job guard
 
@@ -170,7 +173,7 @@ export interface FormattedMemoryDump {
 Pure function exported from `src/index.ts`. No DB, no I/O, no platform deps.
 
 - `manifest`: `JSON.stringify(dump, null, 2)`.
-- `files`: one entry per entity, named `${entityId}.md`, content matches the format in the brainstorm doc (Facts with title/tags/confidence/source/body, Tasks as checkboxes, Recent Events).
+- `files`: one entry per entity. Filenames are derived from `entityId` by NFKC-normalizing, replacing non-filesystem-safe characters with `_`, and appending a 16-hex-char hash suffix whenever the sanitized name differs from the original or would exceed 200 base characters (e.g. `my_entity.md` for a simple ID, `my_entity-a1b2c3d4e5f67890.md` for IDs requiring sanitization). Callers must not assume raw `${entityId}.md` naming. Content matches the format in the brainstorm doc (Facts with title/tags/confidence/source/body, Tasks as checkboxes, Recent Events).
 
 #### `WikiMemory.importDump(dump: MemoryDump, opts?: { merge?: boolean }): Promise<void>`
 
@@ -184,13 +187,14 @@ Pure function exported from `src/index.ts`. No DB, no I/O, no platform deps.
 
 ```typescript
 function useWikiExport(): {
-  exportDump: (entityIds?: string[]) => Promise<MemoryDump>;
-  isExporting: boolean;
+  execute: (entityIds?: string[]) => Promise<MemoryDump>;
+  lastResult: MemoryDump | null;
+  isPending: boolean;
   error: Error | null;
 }
 ```
 
-Uses the existing `useWikiContext()`. Caller handles ZIP / sharing / file system.
+Follows the repo's mutation-hook convention (`execute` / `lastResult` / `isPending` / `error`). Uses the existing `useWiki()` context. Caller handles ZIP / sharing / file system.
 
 Exported from `src/react/index.ts`.
 
@@ -224,6 +228,7 @@ Additive only. No breaking changes to existing public methods except the busy se
 | Symbol | Kind | Status |
 |---|---|---|
 | `WikiConfig.chunkOverlap` | new field | additive |
+| `WikiConfig.chunkConcurrency` | new field (default 1) | additive |
 | `WikiConfig.maxChunkLength` default | 6000 → 12000 | behavior change |
 | `WikiMemory.exportDump` | new method | additive |
 | `WikiMemory.importDump` | new method | additive |
@@ -264,7 +269,8 @@ Unit (no LLM):
 
 Integration (mock `LLMProvider`):
 
-- `ingestDocument` with N chunks issues N parallel calls (assert via mock call timing or a counter).
+- `ingestDocument` with `chunkConcurrency > 1` and N chunks issues concurrent calls (max concurrency > 1 via counter).
+- `ingestDocument` with default `chunkConcurrency` (1) issues calls sequentially (max concurrency = 1).
 - All facts from all chunks land in DB in chunk order.
 - Cross-chunk dedup: two chunks emitting facts with same normalized title result in one row.
 - One chunk failing rejects the whole call with no partial writes.
