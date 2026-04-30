@@ -241,6 +241,9 @@ export class WikiMemory {
   private activeMaintenanceJobs = new Set<string>();
   private activeIngestJobs = new Set<string>();
 
+  private _librarianKey(entityId: string) { return `${this.prefix}:${entityId}:librarian`; }
+  private _healKey(entityId: string) { return `${this.prefix}:${entityId}:heal`; }
+
   constructor(db: SQLite.SQLiteDatabase, options: WikiOptions) {
     this.db = db;
     this.options = options;
@@ -395,7 +398,7 @@ export class WikiMemory {
     if (memoryCheckpoint > count) memoryCheckpoint = 0;
 
     if (count - memoryCheckpoint >= threshold) {
-      const jobKey = `${this.prefix}:${entityId}:librarian`;
+      const jobKey = this._librarianKey(entityId);
       if (!this.activeMaintenanceJobs.has(jobKey)) {
         this.activeMaintenanceJobs.add(jobKey);
         this.runLibrarianThenMaybeHeal(entityId, count)
@@ -420,7 +423,7 @@ export class WikiMemory {
     if (healCheckpoint > currentEventCount) healCheckpoint = 0;
     
     if (currentEventCount - healCheckpoint >= autoHealThreshold) {
-      const healKey = `${this.prefix}:${entityId}:heal`;
+      const healKey = this._healKey(entityId);
       if (!this.activeMaintenanceJobs.has(healKey)) {
         this.activeMaintenanceJobs.add(healKey);
         try {
@@ -588,7 +591,7 @@ export class WikiMemory {
   }
 
   async runLibrarian(entityId: string): Promise<void> {
-    const jobKey = `${this.prefix}:${entityId}:librarian`;
+    const jobKey = this._librarianKey(entityId);
     if (this.activeMaintenanceJobs.has(jobKey)) {
       throw new WikiBusyError('librarian', entityId);
     }
@@ -601,7 +604,7 @@ export class WikiMemory {
   }
 
   async runHeal(entityId: string): Promise<void> {
-    const jobKey = `${this.prefix}:${entityId}:heal`;
+    const jobKey = this._healKey(entityId);
     if (this.activeMaintenanceJobs.has(jobKey)) {
       throw new WikiBusyError('heal', entityId);
     }
@@ -615,8 +618,8 @@ export class WikiMemory {
 
   getEntityStatus(entityId: string): EntityStatus {
     const ingestPrefix = `${this.prefix}:${entityId}:`;
-    const librarianKey = `${this.prefix}:${entityId}:librarian`;
-    const healKey = `${this.prefix}:${entityId}:heal`;
+    const librarianKey = this._librarianKey(entityId);
+    const healKey = this._healKey(entityId);
 
     let ingesting = false;
     for (const k of this.activeIngestJobs) {
