@@ -85,6 +85,16 @@ export interface MemoryBundle {
   events: WikiEvent[];
 }
 
+export interface MemoryDump {
+  generatedAt: number;
+  entities: Record<string, MemoryBundle>;
+}
+
+export interface FormattedMemoryDump {
+  manifest: string;
+  files: Array<{ name: string; content: string }>;
+}
+
 export interface EntityStatus {
   ingesting: boolean;
   librarian: boolean;

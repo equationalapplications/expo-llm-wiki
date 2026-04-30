@@ -1,6 +1,6 @@
 import * as SQLite from 'expo-sqlite';
 import { setupDatabase } from './db/schema';
-import { WikiOptions, MemoryBundle, WikiEvent, WikiFact, WikiTask, WikiCheckpoint, ExtractedFact, ExtractedTask, WikiBusyError, EntityStatus } from './types';
+import { WikiOptions, MemoryBundle, MemoryDump, FormattedMemoryDump, WikiEvent, WikiFact, WikiTask, WikiCheckpoint, ExtractedFact, ExtractedTask, WikiBusyError, EntityStatus } from './types';
 import { LIBRARIAN_SYSTEM_PROMPT, HEAL_SYSTEM_PROMPT, INGEST_SYSTEM_PROMPT } from './prompts';
 
 function parseJsonResponse<T>(text: string): T {
@@ -623,6 +623,33 @@ export class WikiMemory {
       librarian: this.activeMaintenanceJobs.has(librarianKey),
       heal: this.activeMaintenanceJobs.has(healKey),
     };
+  }
+
+  async exportDump(entityIds?: string[]): Promise<MemoryDump> {
+    let ids: string[];
+    if (entityIds && entityIds.length > 0) {
+      ids = Array.from(new Set(entityIds));
+    } else {
+      // Collect all distinct entity_ids across entries, tasks, events
+      const rows = await this.db.getAllAsync<{ entity_id: string }>(`
+        SELECT DISTINCT entity_id FROM (
+          SELECT entity_id FROM ${this.prefix}entries WHERE deleted_at IS NULL
+          UNION
+          SELECT entity_id FROM ${this.prefix}tasks WHERE deleted_at IS NULL
+          UNION
+          SELECT entity_id FROM ${this.prefix}events
+        )
+      `);
+      ids = rows.map(r => r.entity_id);
+    }
+
+    const entities: Record<string, MemoryBundle> = {};
+    for (const id of ids) {
+      const bundle = await this.getMemoryBundle(id);
+      entities[id] = bundle;
+    }
+
+    return { generatedAt: Date.now(), entities };
   }
 
   async forget(entityId: string, params: { entryId?: string; taskId?: string; sourceRef?: string; sourceHash?: string; clearAll?: boolean }): Promise<{ deleted: { entries: number; tasks: number } }> {
