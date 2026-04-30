@@ -88,6 +88,78 @@ function safeSlice(value: string, start: number, end?: number): string {
   return value.slice(safeStart, safeEnd);
 }
 
+export function chunkText(
+  input: string,
+  maxChunkLength: number,
+  overlap: number
+): { chunks: string[]; truncated: boolean } {
+  const text = input.trim();
+  if (text.length === 0) return { chunks: [], truncated: false };
+  if (!Number.isInteger(maxChunkLength) || maxChunkLength < 2) {
+    throw new Error('maxChunkLength must be an integer >= 2');
+  }
+  if (!Number.isInteger(overlap) || overlap < 0 || overlap >= maxChunkLength) {
+    throw new Error('overlap must be a non-negative integer < maxChunkLength');
+  }
+
+  const chunks: string[] = [];
+  let truncated = false;
+  let cursor = 0;
+  const halfMax = Math.floor(maxChunkLength / 2);
+
+  while (cursor < text.length) {
+    const remaining = text.length - cursor;
+    if (remaining <= maxChunkLength) {
+      chunks.push(safeSlice(text, cursor, text.length));
+      break;
+    }
+
+    const windowEnd = cursor + maxChunkLength;
+    const minSplit = cursor + halfMax;
+
+    // 1. paragraph break
+    let splitPoint = -1;
+    const paraIdx = text.lastIndexOf('\n\n', windowEnd);
+    if (paraIdx >= minSplit && paraIdx < windowEnd) {
+      splitPoint = paraIdx + 2;
+    }
+
+    // 2. sentence terminator (single left-to-right pass, no lookahead regex)
+    if (splitPoint === -1) {
+      let lastTerm = -1;
+      for (let i = minSplit; i < windowEnd - 1; i++) {
+        const ch = text[i];
+        if ((ch === '.' || ch === '!' || ch === '?') && /\s/.test(text[i + 1])) {
+          lastTerm = i + 2; // include the terminator + whitespace
+        }
+      }
+      if (lastTerm !== -1 && lastTerm <= windowEnd) splitPoint = lastTerm;
+    }
+
+    // 3. whitespace
+    if (splitPoint === -1) {
+      for (let i = windowEnd - 1; i >= minSplit; i--) {
+        if (/\s/.test(text[i])) {
+          splitPoint = i + 1;
+          break;
+        }
+      }
+    }
+
+    // 4. hard cut
+    if (splitPoint === -1) {
+      truncated = true;
+      splitPoint = windowEnd;
+    }
+
+    chunks.push(safeSlice(text, cursor, splitPoint));
+    const next = Math.max(splitPoint - overlap, cursor + 1);
+    cursor = next;
+  }
+
+  return { chunks, truncated };
+}
+
 function clip(value: string, max: number): string {
   if (typeof value !== 'string') return '';
   const s = value.trim();
