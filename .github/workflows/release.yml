@@ -2,13 +2,13 @@ name: Release
 
 on:
   push:
-    branches: [main]
+    branches: [ main ]
 
 permissions:
-  contents: write      # create GitHub release, push release commit
-  issues: write        # comment on issues resolved by release
+  contents: write # create GitHub release, push release commit
+  issues: write # comment on issues resolved by release
   pull-requests: write # comment on PRs resolved by release
-  id-token: write      # npm provenance
+  id-token: write # npm provenance
 
 jobs:
   release:
