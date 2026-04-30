@@ -178,7 +178,7 @@ function validateTags(tags: any[]): string[] {
 function validateFact(fact: any): ExtractedFact | null {
   if (typeof fact?.title !== 'string' || typeof fact?.body !== 'string') return null;
   const title = clip(fact.title, 80);
-  const body = clip(fact.body, 200);
+  const body = clip(fact.body, 800);
   if (!title || !body) return null;
   
   let confidence = fact.confidence;
@@ -739,3 +739,5 @@ export class WikiMemory {
     }
   }
 }
+
+export const __testables = { validateFact, validateTask, clip };
