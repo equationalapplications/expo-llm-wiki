@@ -876,4 +876,4 @@ export class WikiMemory {
   }
 }
 
-export const __testables = { validateFact, validateTask, clip };
+const __testables = { validateFact, validateTask, clip };
