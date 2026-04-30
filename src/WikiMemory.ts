@@ -748,6 +748,7 @@ export class WikiMemory {
         }
 
         for (const fact of bundle.facts) {
+          const tagsJson = JSON.stringify(Array.isArray(fact.tags) ? fact.tags : []);
           const existing = existingFactsById.get(fact.id);
           if (existing) {
             if (existing.entity_id !== entityId) {
@@ -758,12 +759,12 @@ export class WikiMemory {
             // replace mode: update the existing row (restores if soft-deleted)
             await this.db.runAsync(
               `UPDATE ${this.prefix}entries SET entity_id = ?, title = ?, body = ?, tags = ?, confidence = ?, source_type = ?, source_hash = ?, source_ref = ?, created_at = ?, updated_at = ?, last_accessed_at = ?, access_count = ?, deleted_at = ? WHERE id = ?`,
-              [entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, fact.updated_at, fact.last_accessed_at, fact.access_count, fact.deleted_at, fact.id]
+              [entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, fact.updated_at, fact.last_accessed_at, fact.access_count, fact.deleted_at, fact.id]
             );
           } else {
             await this.db.runAsync(
               `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [fact.id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, fact.updated_at, fact.last_accessed_at, fact.access_count, fact.deleted_at]
+              [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, fact.updated_at, fact.last_accessed_at, fact.access_count, fact.deleted_at]
             );
           }
         }
