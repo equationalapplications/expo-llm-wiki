@@ -641,36 +641,17 @@ export class WikiMemory {
     }
   }
 
-  private _getActiveIngestCounts(): Map<string, number> {
-    const counts = new Map<string, number>();
-    const prefix = `${this.prefix}:`;
-
-    for (const jobKey of this.activeIngestJobs) {
-      if (!jobKey.startsWith(prefix)) {
-        continue;
-      }
-
-      const lastSeparator = jobKey.lastIndexOf(':');
-      if (lastSeparator <= prefix.length) {
-        continue;
-      }
-
-      const ingestEntityId = jobKey.slice(prefix.length, lastSeparator);
-      counts.set(ingestEntityId, (counts.get(ingestEntityId) ?? 0) + 1);
+  getEntityStatus(entityId: string): EntityStatus {
+    const ingestPrefix = `${this.prefix}:${entityId}:`;
+    let ingesting = false;
+    for (const k of this.activeIngestJobs) {
+      if (k.startsWith(ingestPrefix)) { ingesting = true; break; }
     }
 
-    return counts;
-  }
-
-  getEntityStatus(entityId: string): EntityStatus {
-    const activeIngestCounts = this._getActiveIngestCounts();
-    const librarianKey = this._librarianKey(entityId);
-    const healKey = this._healKey(entityId);
-
     return {
-      ingesting: activeIngestCounts.has(entityId),
-      librarian: this.activeMaintenanceJobs.has(librarianKey),
-      heal: this.activeMaintenanceJobs.has(healKey),
+      ingesting,
+      librarian: this.activeMaintenanceJobs.has(this._librarianKey(entityId)),
+      heal: this.activeMaintenanceJobs.has(this._healKey(entityId)),
     };
   }
 
@@ -709,7 +690,7 @@ export class WikiMemory {
           SELECT entity_id FROM ${this.prefix}tasks WHERE deleted_at IS NULL
           UNION
           SELECT entity_id FROM ${this.prefix}events
-        )
+        ) ORDER BY entity_id
       `);
       ids = rows.map(r => r.entity_id);
     }
