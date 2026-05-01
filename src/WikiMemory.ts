@@ -817,15 +817,15 @@ export class WikiMemory {
 
         for (const fact of bundle.facts) {
           const tagsJson = JSON.stringify(Array.isArray(fact.tags) ? fact.tags : []);
+          // Normalize once: non-finite (undefined/null/NaN) → 0 so we never persist an
+          // invalid value to the DB and ORDER BY updated_at remains meaningful.
+          const safeUpdatedAt = Number.isFinite(fact.updated_at) ? fact.updated_at : 0;
           const existing = existingFactsById.get(fact.id);
           if (existing) {
             if (existing.entity_id !== entityId) {
               this._warnCrossEntityCollision('entry', fact.id, existing.entity_id, entityId);
               continue;
             }
-            // Normalize once: non-finite (undefined/null/NaN) → 0 so we never persist an
-            // invalid value to the DB and ORDER BY updated_at remains meaningful.
-            const safeUpdatedAt = Number.isFinite(fact.updated_at) ? fact.updated_at : 0;
             if (merge) {
               // LWW: incoming wins only if its updated_at is strictly newer than local.
               // 0 (epoch) never beats a real timestamp, so invalid incoming rows are skipped.
@@ -838,7 +838,6 @@ export class WikiMemory {
             );
             existingFactsById.set(fact.id, { id: fact.id, entity_id: entityId, updated_at: safeUpdatedAt });
           } else {
-            const safeUpdatedAt = Number.isFinite(fact.updated_at) ? fact.updated_at : 0;
             await this.db.runAsync(
               `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at]
@@ -867,15 +866,15 @@ export class WikiMemory {
         }
 
         for (const task of bundle.tasks) {
+          // Normalize once: non-finite (undefined/null/NaN) → 0 so we never persist an
+          // invalid value to the DB and ORDER BY updated_at remains meaningful.
+          const safeUpdatedAt = Number.isFinite(task.updated_at) ? task.updated_at : 0;
           const existing = existingTasksById.get(task.id);
           if (existing) {
             if (existing.entity_id !== entityId) {
               this._warnCrossEntityCollision('task', task.id, existing.entity_id, entityId);
               continue;
             }
-            // Normalize once: non-finite (undefined/null/NaN) → 0 so we never persist an
-            // invalid value to the DB and ORDER BY updated_at remains meaningful.
-            const safeUpdatedAt = Number.isFinite(task.updated_at) ? task.updated_at : 0;
             if (merge) {
               // LWW: incoming wins only if its updated_at is strictly newer than local.
               // 0 (epoch) never beats a real timestamp, so invalid incoming rows are skipped.
@@ -888,7 +887,6 @@ export class WikiMemory {
             );
             existingTasksById.set(task.id, { id: task.id, entity_id: entityId, updated_at: safeUpdatedAt });
           } else {
-            const safeUpdatedAt = Number.isFinite(task.updated_at) ? task.updated_at : 0;
             await this.db.runAsync(
               `INSERT INTO ${this.prefix}tasks (id, entity_id, description, status, priority, created_at, updated_at, resolved_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [task.id, entityId, task.description, task.status, task.priority, task.created_at, safeUpdatedAt, task.resolved_at, task.deleted_at]
