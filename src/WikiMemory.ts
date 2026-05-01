@@ -4,6 +4,8 @@ import { MIGRATIONS, CURRENT_SCHEMA_VERSION } from './db/migrations';
 import { WikiOptions, MemoryBundle, MemoryDump, WikiEvent, WikiFact, WikiTask, WikiCheckpoint, ExtractedFact, ExtractedTask, WikiBusyError, EntityStatus } from './types';
 import { LIBRARIAN_SYSTEM_PROMPT, HEAL_SYSTEM_PROMPT, INGEST_SYSTEM_PROMPT } from './prompts';
 
+export { WikiBusyError } from './types';
+
 function parseJsonResponse<T>(text: string): T {
   const firstBrace = text.indexOf('{');
   const firstBracket = text.indexOf('[');
@@ -389,6 +391,94 @@ export class WikiMemory {
     );
     if (!row) return true;
     return row.source_hash !== normalizedHash;
+  }
+
+  private _pruneKey(entityId: string) { return `${this.prefix}:${entityId}:prune`; }
+
+  async runPrune(
+    entityId: string,
+    options?: {
+      retainSoftDeletedFor?: number | null;
+      retainEventsFor?: number | null;
+      vacuum?: boolean;
+    }
+  ): Promise<{ entries: number; tasks: number; events: number }> {
+    const pruneKey = this._pruneKey(entityId);
+    if (this.activeMaintenanceJobs.has(pruneKey)) {
+      throw new WikiBusyError('prune', entityId);
+    }
+    this.activeMaintenanceJobs.add(pruneKey);
+    try {
+      const retainSoftDeletedFor = options?.retainSoftDeletedFor !== undefined
+        ? options.retainSoftDeletedFor
+        : (this.options.config?.pruneRetainSoftDeletedFor ?? 7);
+      const retainEventsFor = options?.retainEventsFor !== undefined
+        ? options.retainEventsFor
+        : (this.options.config?.pruneEventsAfter ?? 30);
+      const vacuum = options?.vacuum ?? false;
+
+      const now = Date.now();
+      let deletedEntries = 0;
+      let deletedTasks = 0;
+      let deletedEvents = 0;
+
+      if (retainSoftDeletedFor !== null) {
+        const cutoff = now - retainSoftDeletedFor * 86400000;
+        const entryRow = await this.db.getFirstAsync<{ count: number }>(
+          `SELECT COUNT(*) as count FROM ${this.prefix}entries
+           WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`,
+          [entityId, cutoff]
+        );
+        deletedEntries = entryRow?.count ?? 0;
+        if (deletedEntries > 0) {
+          await this.db.runAsync(
+            `DELETE FROM ${this.prefix}entries
+             WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`,
+            [entityId, cutoff]
+          );
+        }
+
+        const taskRow = await this.db.getFirstAsync<{ count: number }>(
+          `SELECT COUNT(*) as count FROM ${this.prefix}tasks
+           WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`,
+          [entityId, cutoff]
+        );
+        deletedTasks = taskRow?.count ?? 0;
+        if (deletedTasks > 0) {
+          await this.db.runAsync(
+            `DELETE FROM ${this.prefix}tasks
+             WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`,
+            [entityId, cutoff]
+          );
+        }
+      }
+
+      if (retainEventsFor !== null) {
+        const cutoff = now - retainEventsFor * 86400000;
+        const eventRow = await this.db.getFirstAsync<{ count: number }>(
+          `SELECT COUNT(*) as count FROM ${this.prefix}events
+           WHERE entity_id = ? AND created_at < ?`,
+          [entityId, cutoff]
+        );
+        deletedEvents = eventRow?.count ?? 0;
+        if (deletedEvents > 0) {
+          await this.db.runAsync(
+            `DELETE FROM ${this.prefix}events
+             WHERE entity_id = ? AND created_at < ?`,
+            [entityId, cutoff]
+          );
+        }
+      }
+
+      if (vacuum) {
+        await this.db.execAsync(`PRAGMA wal_checkpoint(TRUNCATE)`);
+        await this.db.execAsync(`VACUUM`);
+      }
+
+      return { entries: deletedEntries, tasks: deletedTasks, events: deletedEvents };
+    } finally {
+      this.activeMaintenanceJobs.delete(pruneKey);
+    }
   }
 
   private formatSearchQuery(query: string): string {
