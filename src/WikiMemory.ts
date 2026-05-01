@@ -830,11 +830,11 @@ export class WikiMemory {
 
   async runHeal(entityId: string): Promise<void> {
     const jobKey = this._healKey(entityId);
-    if (
-      this.activeMaintenanceJobs.has(jobKey) ||
-      this.activeMaintenanceJobs.has(this._pruneKey(entityId))
-    ) {
+    if (this.activeMaintenanceJobs.has(jobKey)) {
       throw new WikiBusyError('heal', entityId);
+    }
+    if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
+      throw new WikiBusyError('prune', entityId);
     }
     this.activeMaintenanceJobs.add(jobKey);
     try {
