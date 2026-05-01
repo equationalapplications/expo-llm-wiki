@@ -20,6 +20,7 @@
   "scripts": {
     "build": "tsup src/index.ts src/react/index.ts --format cjs,esm --dts --external react",
     "dev": "tsup src/index.ts src/react/index.ts --format cjs,esm --dts --external react --watch",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
   },

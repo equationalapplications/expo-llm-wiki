@@ -150,6 +150,43 @@ describe('importDump LWW — tasks', () => {
     const bundle = await wiki.read('user-1', '');
     expect(bundle.tasks.find(t => t.id === 't1')?.description).toBe('local-new');
   });
+
+  it('novel task id is inserted in merge mode', async () => {
+    const { wiki } = await open();
+    await wiki.importDump({
+      generatedAt: 1000,
+      entities: { 'user-1': { facts: [], tasks: [makeTask({ id: 't1', updated_at: 1000 })], events: [] } },
+    });
+
+    await wiki.importDump(
+      { generatedAt: 2000, entities: { 'user-1': { facts: [], tasks: [makeTask({ id: 't2', description: 'novel task', updated_at: 2000 })], events: [] } } },
+      { merge: true }
+    );
+
+    const bundle = await wiki.read('user-1', '');
+    expect(bundle.tasks.find(t => t.id === 't1')).toBeTruthy();
+    expect(bundle.tasks.find(t => t.id === 't2')?.description).toBe('novel task');
+  });
+});
+
+describe('importDump non-merge — replace mode', () => {
+  it('facts for entity fully replaced when merge is false', async () => {
+    const { wiki } = await open();
+    await wiki.importDump({
+      generatedAt: 1000,
+      entities: { 'user-1': { facts: [makeFact({ id: 'f1', body: 'old fact', updated_at: 1000 })], tasks: [], events: [] } },
+    });
+
+    // Non-merge import with different id — old fact should be soft-deleted
+    await wiki.importDump({
+      generatedAt: 2000,
+      entities: { 'user-1': { facts: [makeFact({ id: 'f2', body: 'replacement', updated_at: 2000 })], tasks: [], events: [] } },
+    });
+
+    const bundle = await wiki.read('user-1', '');
+    expect(bundle.facts.find(f => f.id === 'f1')).toBeFalsy();
+    expect(bundle.facts.find(f => f.id === 'f2')?.body).toBe('replacement');
+  });
 });
 
 describe('importDump LWW — events append-only', () => {
