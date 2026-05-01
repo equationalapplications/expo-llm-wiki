@@ -272,21 +272,27 @@ describe('WikiMemory.runPrune', () => {
     const db = makeMockDb({});
     const wiki = new WikiMemory(db as any, stubOptions);
     (wiki as any).activeMaintenanceJobs.add('llm_wiki_:ent:librarian');
-    await expect(wiki.runPrune('ent')).rejects.toThrow(WikiBusyError);
+    const err = await wiki.runPrune('ent').catch((e) => e);
+    expect(err).toBeInstanceOf(WikiBusyError);
+    expect(err.operation).toBe('librarian');
   });
 
   it('throws WikiBusyError when heal is already running', async () => {
     const db = makeMockDb({});
     const wiki = new WikiMemory(db as any, stubOptions);
     (wiki as any).activeMaintenanceJobs.add('llm_wiki_:ent:heal');
-    await expect(wiki.runPrune('ent')).rejects.toThrow(WikiBusyError);
+    const err = await wiki.runPrune('ent').catch((e) => e);
+    expect(err).toBeInstanceOf(WikiBusyError);
+    expect(err.operation).toBe('heal');
   });
 
   it('throws WikiBusyError when ingest is already running for same entity', async () => {
     const db = makeMockDb({});
     const wiki = new WikiMemory(db as any, stubOptions);
     (wiki as any).activeIngestJobs.add('llm_wiki_:ent:doc.md');
-    await expect(wiki.runPrune('ent')).rejects.toThrow(WikiBusyError);
+    const err = await wiki.runPrune('ent').catch((e) => e);
+    expect(err).toBeInstanceOf(WikiBusyError);
+    expect(err.operation).toBe('ingest');
   });
 
   it('throws when retainSoftDeletedFor is negative', async () => {

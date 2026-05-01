@@ -56,22 +56,26 @@ describe('job mutex', () => {
   it('runLibrarian throws WikiBusyError when prune is running for same entity', async () => {
     const wiki = await freshWiki(slowProvider(0));
     (wiki as any).activeMaintenanceJobs.add('jobs_:e1:prune');
-    await expect(wiki.runLibrarian('e1')).rejects.toBeInstanceOf(WikiBusyError);
+    const err = await wiki.runLibrarian('e1').catch((e) => e);
+    expect(err).toBeInstanceOf(WikiBusyError);
+    expect(err.operation).toBe('prune');
   });
 
   it('runHeal throws WikiBusyError when prune is running for same entity', async () => {
     const wiki = await freshWiki(slowProvider(0));
     (wiki as any).activeMaintenanceJobs.add('jobs_:e1:prune');
-    await expect(wiki.runHeal('e1')).rejects.toBeInstanceOf(WikiBusyError);
+    const err = await wiki.runHeal('e1').catch((e) => e);
+    expect(err).toBeInstanceOf(WikiBusyError);
+    expect(err.operation).toBe('prune');
   });
 
   it('ingestDocument throws WikiBusyError when prune is running for same entity', async () => {
     const wiki = await freshWiki(slowProvider(0));
     (wiki as any).activeMaintenanceJobs.add('jobs_:e1:prune');
     const sourceHash = 'a'.repeat(64);
-    await expect(
-      wiki.ingestDocument('e1', { sourceRef: 'doc1', sourceHash, documentChunk: 'some content here' })
-    ).rejects.toBeInstanceOf(WikiBusyError);
+    const err = await wiki.ingestDocument('e1', { sourceRef: 'doc1', sourceHash, documentChunk: 'some content here' }).catch((e) => e);
+    expect(err).toBeInstanceOf(WikiBusyError);
+    expect(err.operation).toBe('prune');
   });
 
   it('prune guard does not bleed to different entity', async () => {

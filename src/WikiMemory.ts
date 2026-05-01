@@ -819,11 +819,11 @@ export class WikiMemory {
 
   async runLibrarian(entityId: string): Promise<void> {
     const jobKey = this._librarianKey(entityId);
-    if (
-      this.activeMaintenanceJobs.has(jobKey) ||
-      this.activeMaintenanceJobs.has(this._pruneKey(entityId))
-    ) {
+    if (this.activeMaintenanceJobs.has(jobKey)) {
       throw new WikiBusyError('librarian', entityId);
+    }
+    if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
+      throw new WikiBusyError('prune', entityId);
     }
     this.activeMaintenanceJobs.add(jobKey);
     try {
