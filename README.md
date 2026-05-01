@@ -162,6 +162,34 @@ await wiki.runLibrarian('entity-123');
 await wiki.runHeal('entity-123');
 ```
 
+### Format Context
+
+Convert a `MemoryBundle` into a string ready for LLM prompt injection:
+
+```typescript
+import { formatContext } from 'expo-llm-wiki';
+
+const bundle = await wiki.read('entity-123', 'weekend plans');
+const context = formatContext(bundle, {
+  format: 'markdown',        // 'markdown' (default) | 'plain'
+  maxFacts: 10,              // default 10
+  maxTasks: 10,              // default 10
+  maxEvents: 10,             // default 10
+  includeConfidence: true,   // default true — appends (certain/inferred/tentative)
+  includeTags: true,         // default true — appends [tag1, tag2]
+  factWeights: {
+    confidence: 1.0,         // default 1.0
+    accessCount: 0.3,        // default 0.3 — log(1 + access_count) * weight
+    recency: 0.5,            // default 0.5 — decays over 30d
+  },
+});
+
+// Inject into your system prompt:
+const systemPrompt = `You are a helpful assistant.\n\n${context}`;
+```
+
+Facts are ranked by a weighted score combining confidence tier, access frequency, and recency. Returns an empty string for an empty bundle.
+
 ### Forget
 
 ```typescript
@@ -175,6 +203,38 @@ await wiki.forget('entity-123', { clearAll: true });          // wipe entity
 ```
 
 Throws `Error` if `sourceRef` or `sourceHash` is provided but invalid. Soft-deletes are idempotent — calling again with the same parameters returns `{ deleted: { entries: 0; tasks: 0 } }`.
+
+### Check for Changes
+
+Skip re-ingest if a document's content hasn't changed since the last ingest:
+
+```typescript
+const changed = await wiki.hasChanged('entity-123', 'preferences.md', sha256(content));
+if (changed) {
+  await wiki.ingestDocument('entity-123', { sourceRef: 'preferences.md', sourceHash: sha256(content), documentChunk: content });
+}
+```
+
+Returns `true` if the document has never been ingested, all prior ingest results were forgotten, or the stored hash differs from the supplied one. Returns `false` if the stored hash matches exactly.
+
+Throws `Error` if `sourceRef` or `sourceHash` is invalid (same rules as `ingestDocument`).
+
+### Prune (Hard Delete)
+
+Hard-delete aged soft-deleted entries/tasks and old events to reclaim storage:
+
+```typescript
+const result = await wiki.runPrune('entity-123', {
+  retainSoftDeletedFor: 7,    // days — hard-delete entries/tasks soft-deleted > 7d ago; null to skip
+  retainEventsFor: 30,         // days since created_at — hard-delete old events; null to skip
+  vacuum: false,               // set true to VACUUM (slow on mobile, rewrites entire DB)
+});
+// result: { entries: number; tasks: number; events: number }
+```
+
+Defaults: `retainSoftDeletedFor = config.pruneRetainSoftDeletedFor ?? 7`, `retainEventsFor = config.pruneEventsAfter ?? 30`, `vacuum = false`.
+
+Throws `WikiBusyError` if another prune (or maintenance job) is in-flight for the same entity.
 
 ---
 
@@ -255,6 +315,26 @@ const { execute, lastResult, isPending, error } = useWikiForget();
 
 const result = await execute('entity-123', { entryId: 'fact_abc' });
 // result.deleted.entries — rows soft-deleted
+```
+
+### `useWikiHasChanged()`
+
+```typescript
+const { execute, lastResult, isPending, error } = useWikiHasChanged();
+// lastResult: boolean | null
+
+const changed = await execute('entity-123', 'preferences.md', sha256(content));
+```
+
+### `useWikiMaintenance()` (extended)
+
+`runPrune` is now available alongside `runLibrarian` and `runHeal`. Shared `isPending` is true if any operation is in-flight:
+
+```typescript
+const { runLibrarian, runHeal, runPrune, isPending, error } = useWikiMaintenance();
+
+const result = await runPrune('entity-123', { retainSoftDeletedFor: 7, retainEventsFor: 30 });
+// result: { entries: number; tasks: number; events: number }
 ```
 
 All mutation hooks follow the same pattern (`TResult` is specific per hook):

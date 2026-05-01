@@ -1,3 +1,15 @@
+# [2.2.0] (upcoming)
+
+### Features
+
+* **utils:** add `formatContext(bundle, options?)` for LLM prompt injection with confidence/recency/access-count ranking
+* **wiki:** add `hasChanged(entityId, sourceRef, sourceHash)` to skip re-ingest of unchanged documents
+* **wiki:** add `runPrune(entityId, options?)` to hard-delete aged soft-deleted entries/tasks and old events
+* **db:** schema versioning via `{prefix}meta` table; migrate porter rebuild to numbered migration registry
+* **react:** add `useWikiHasChanged` hook
+* **react:** extend `useWikiMaintenance` with `runPrune`
+* **types:** add `FormatContextOptions`, `pruneRetainSoftDeletedFor` config key, extend `WikiBusyError` operation union with `'prune'`
+
 # [2.1.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v2.0.2...v2.1.0) (2026-05-01)
 
 
