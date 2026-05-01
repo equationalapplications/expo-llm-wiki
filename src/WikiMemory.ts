@@ -387,9 +387,8 @@ export class WikiMemory {
         const synonyms = synonymMap[t];
         if (Array.isArray(synonyms)) {
           for (const s of synonyms) {
-            if (expanded.length >= 12) break;
             if (typeof s === 'string') {
-              pushNormalized(s);
+              if (!pushNormalized(s)) break;
             }
           }
         }
