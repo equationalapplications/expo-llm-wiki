@@ -824,7 +824,10 @@ export class WikiMemory {
             }
             if (merge) {
               // LWW: incoming wins only if its updated_at is strictly newer than local.
-              if (fact.updated_at <= existing.updated_at) continue;
+              // Treat non-finite values (undefined, null, NaN) as -Infinity so an invalid
+              // incoming never overwrites a valid local row.
+              const incomingTs = Number.isFinite(fact.updated_at) ? fact.updated_at : -Infinity;
+              if (incomingTs <= existing.updated_at) continue;
             }
             // replace mode (or merge LWW winner): update the existing row (restores if soft-deleted)
             await this.db.runAsync(
@@ -869,7 +872,10 @@ export class WikiMemory {
             }
             if (merge) {
               // LWW: incoming wins only if its updated_at is strictly newer than local.
-              if (task.updated_at <= existing.updated_at) continue;
+              // Treat non-finite values (undefined, null, NaN) as -Infinity so an invalid
+              // incoming never overwrites a valid local row.
+              const incomingTs = Number.isFinite(task.updated_at) ? task.updated_at : -Infinity;
+              if (incomingTs <= existing.updated_at) continue;
             }
             // replace mode (or merge LWW winner): update the existing row (restores if soft-deleted)
             await this.db.runAsync(

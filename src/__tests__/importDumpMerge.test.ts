@@ -189,6 +189,58 @@ describe('importDump non-merge — replace mode', () => {
   });
 });
 
+describe('importDump LWW — invalid updated_at guard', () => {
+  it('fact with NaN updated_at does NOT overwrite a valid local row', async () => {
+    const { wiki } = await open();
+    await wiki.importDump({
+      generatedAt: 5000,
+      entities: { 'user-1': { facts: [makeFact({ id: 'f1', body: 'local-valid', updated_at: 5000 })], tasks: [], events: [] } },
+    });
+
+    await wiki.importDump(
+      {
+        generatedAt: 9999,
+        entities: {
+          'user-1': {
+            facts: [makeFact({ id: 'f1', body: 'incoming-nan', updated_at: NaN as unknown as number })],
+            tasks: [],
+            events: [],
+          },
+        },
+      },
+      { merge: true }
+    );
+
+    const bundle = await wiki.read('user-1', '');
+    expect(bundle.facts.find(f => f.id === 'f1')?.body).toBe('local-valid');
+  });
+
+  it('task with NaN updated_at does NOT overwrite a valid local row', async () => {
+    const { wiki } = await open();
+    await wiki.importDump({
+      generatedAt: 5000,
+      entities: { 'user-1': { facts: [], tasks: [makeTask({ id: 't1', description: 'local-valid', updated_at: 5000 })], events: [] } },
+    });
+
+    await wiki.importDump(
+      {
+        generatedAt: 9999,
+        entities: {
+          'user-1': {
+            facts: [],
+            tasks: [makeTask({ id: 't1', description: 'incoming-nan', updated_at: NaN as unknown as number })],
+            events: [],
+          },
+        },
+      },
+      { merge: true }
+    );
+
+    const bundle = await wiki.read('user-1', '');
+    expect(bundle.tasks.find(t => t.id === 't1')?.description).toBe('local-valid');
+  });
+});
+
 describe('importDump LWW — events append-only', () => {
   it('duplicate event id is skipped, novel id is inserted', async () => {
     const { db, wiki } = await open();
