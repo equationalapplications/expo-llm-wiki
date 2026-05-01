@@ -1,3 +1,31 @@
+# [2.3.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v2.2.0...v2.3.0) (2026-05-01)
+
+
+### Bug Fixes
+
+* address code review feedback on v2.2.0 ([b3da2e6](https://github.com/equationalapplications/expo-llm-wiki/commit/b3da2e678eac84901a23a93aac27a99473368eca))
+* derive CURRENT_SCHEMA_VERSION from MIGRATIONS and assert strictly-increasing order ([d1f3a87](https://github.com/equationalapplications/expo-llm-wiki/commit/d1f3a87832b20ecb7e39e1bb0bf328136667792f))
+* indent multi-line body/description/summary continuation lines in markdown renders ([836bab4](https://github.com/equationalapplications/expo-llm-wiki/commit/836bab4fbec333167f9f7eeb0945edde27c93792))
+* **package:** use npx tsc in typecheck script to avoid global tsc v4 ([49562a0](https://github.com/equationalapplications/expo-llm-wiki/commit/49562a0b77ebf6e34839262c07cc03cd3fa043f3))
+* re-export MaintenanceResult from src/react/index.ts barrel ([9a424db](https://github.com/equationalapplications/expo-llm-wiki/commit/9a424db11c57c54f7ae10fd4051017fec21b8b37))
+* remove redundant npx from typecheck script ([0d4c391](https://github.com/equationalapplications/expo-llm-wiki/commit/0d4c391439f4b95bd3b4a994a1d04ef9f24f00d4))
+* **test:** disambiguate indexOf for priority tie-break; suppress moduleResolution deprecation warning ([921d56d](https://github.com/equationalapplications/expo-llm-wiki/commit/921d56d1915bf4a17ec113c1bba5abf422bceec9))
+* **tsconfig:** upgrade moduleResolution to node16 ([364a9b3](https://github.com/equationalapplications/expo-llm-wiki/commit/364a9b3299a6dd429819af67e110ac28216809fb))
+* **tsconfig:** use moduleResolution bundler for ESNext/Expo compatibility ([1f5c998](https://github.com/equationalapplications/expo-llm-wiki/commit/1f5c998c250583b66f1de36598d63bd40aaa4b4b))
+* update sourceHash error message and validate runPrune option values ([4a0f4c2](https://github.com/equationalapplications/expo-llm-wiki/commit/4a0f4c20d7e4b9ca2422166b0b4b49836e4726e4))
+* use undefined instead of void in MaintenanceResult discriminated union ([05f7fc4](https://github.com/equationalapplications/expo-llm-wiki/commit/05f7fc4322e1ff5cad034d57bed89beb8aa09f3b))
+* WikiBusyError reports blocking operation, not requested operation ([827e7f8](https://github.com/equationalapplications/expo-llm-wiki/commit/827e7f8031514847d1d6f773a72fe5847c41af93))
+
+
+### Features
+
+* **db:** add meta table and migration registry; refactor setup() to version-driven migrations ([fa70c22](https://github.com/equationalapplications/expo-llm-wiki/commit/fa70c2286bb0642b92679f8dfdf639826677ea03))
+* **react:** add useWikiHasChanged hook; extend useWikiMaintenance with runPrune ([c01a8f0](https://github.com/equationalapplications/expo-llm-wiki/commit/c01a8f0ed71c17ddb53ab3e3ad3cc9ed59a15890))
+* **utils:** add formatContext for LLM prompt injection ([0a44f6e](https://github.com/equationalapplications/expo-llm-wiki/commit/0a44f6ee66aec38aa0fd4afce4b1b1dd956848e9))
+* validate maxFacts/maxTasks/maxEvents in formatContext; throw for negative/non-finite values ([9793e25](https://github.com/equationalapplications/expo-llm-wiki/commit/9793e25e5b9bf8dada4d1588563b942a8568134f))
+* **wiki:** add hasChanged() for skip-ingest on unchanged sources ([d1e2899](https://github.com/equationalapplications/expo-llm-wiki/commit/d1e28996fca8e2eb5dabf655ea4f300e6af96798))
+* **wiki:** add runPrune() for hard-delete of aged soft-deleted rows and events ([db22dd4](https://github.com/equationalapplications/expo-llm-wiki/commit/db22dd49fdeb7fdbdbb0eb56626c5a8277ffec62))
+
 # [2.2.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v2.1.0...v2.2.0) (2026-05-01)
 
 ### Features
