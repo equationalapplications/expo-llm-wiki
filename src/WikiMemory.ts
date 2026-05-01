@@ -423,13 +423,18 @@ export class WikiMemory {
     for (const k of this.activeIngestJobs) {
       if (k.startsWith(ingestPrefix)) { isIngestRunning = true; break; }
     }
-    if (
-      this.activeMaintenanceJobs.has(pruneKey) ||
-      this.activeMaintenanceJobs.has(this._librarianKey(entityId)) ||
-      this.activeMaintenanceJobs.has(this._healKey(entityId)) ||
-      isIngestRunning
-    ) {
-      throw new WikiBusyError('prune', entityId);
+    let blockingOperation: 'prune' | 'librarian' | 'heal' | 'ingest' | null = null;
+    if (this.activeMaintenanceJobs.has(pruneKey)) {
+      blockingOperation = 'prune';
+    } else if (this.activeMaintenanceJobs.has(this._librarianKey(entityId))) {
+      blockingOperation = 'librarian';
+    } else if (this.activeMaintenanceJobs.has(this._healKey(entityId))) {
+      blockingOperation = 'heal';
+    } else if (isIngestRunning) {
+      blockingOperation = 'ingest';
+    }
+    if (blockingOperation !== null) {
+      throw new WikiBusyError(blockingOperation, entityId);
     }
     this.activeMaintenanceJobs.add(pruneKey);
     try {
