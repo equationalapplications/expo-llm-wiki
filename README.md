@@ -341,13 +341,30 @@ const changed = await execute('entity-123', 'preferences.md', sha256(content));
 
 ### `useWikiMaintenance()` (extended)
 
-`runPrune` is now available alongside `runLibrarian` and `runHeal`. Shared `isPending` is true if any operation is in-flight:
+`runPrune` is now available alongside `runLibrarian` and `runHeal`. Shared `isPending` is true if any operation is in-flight. `lastResult` is a discriminated union — check `.operation` to narrow the type:
 
 ```typescript
-const { runLibrarian, runHeal, runPrune, isPending, error } = useWikiMaintenance();
+const { runLibrarian, runHeal, runPrune, lastResult, isPending, error } = useWikiMaintenance();
 
-const result = await runPrune('entity-123', { retainSoftDeletedFor: 7, retainEventsFor: 30 });
-// result: { entries: number; tasks: number; events: number }
+await runLibrarian('entity-123');
+// lastResult: { operation: 'librarian', result: void }
+
+await runHeal('entity-123');
+// lastResult: { operation: 'heal', result: void }
+
+const counts = await runPrune('entity-123', { retainSoftDeletedFor: 7, retainEventsFor: 30 });
+// counts: { entries: number; tasks: number; events: number }
+// lastResult: { operation: 'prune', result: { entries: number; tasks: number; events: number } }
+
+if (lastResult?.operation === 'prune') {
+  console.log(lastResult.result.entries); // type-safe access to prune counts
+}
+```
+
+The exported `MaintenanceResult` type can be imported for typed consumers:
+
+```typescript
+import type { MaintenanceResult } from 'expo-llm-wiki/react/useWikiMaintenance';
 ```
 
 All mutation hooks follow the same pattern (`TResult` is specific per hook):

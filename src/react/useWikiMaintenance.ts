@@ -1,6 +1,10 @@
 import { useState, useCallback, useRef } from 'react';
 import { useWiki } from './WikiContext';
 
+export type MaintenanceResult =
+  | { operation: 'librarian' | 'heal'; result: void }
+  | { operation: 'prune'; result: { entries: number; tasks: number; events: number } };
+
 export function useWikiMaintenance() {
   const wiki = useWiki();
   const wikiRef = useRef(wiki);
@@ -8,7 +12,7 @@ export function useWikiMaintenance() {
 
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<Error | null>(null);
-  const [lastResult, setLastResult] = useState<{ entries: number; tasks: number; events: number } | void | null>(null);
+  const [lastResult, setLastResult] = useState<MaintenanceResult | null>(null);
   // Counter so any overlapping maintenance operation keeps isPending=true until all complete
   const pendingCount = useRef(0);
 
@@ -19,7 +23,7 @@ export function useWikiMaintenance() {
     setLastResult(null);
     try {
       await wikiRef.current.runLibrarian(entityId);
-      setLastResult(undefined);
+      setLastResult({ operation: 'librarian', result: undefined });
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e));
       setError(err);
@@ -37,7 +41,7 @@ export function useWikiMaintenance() {
     setLastResult(null);
     try {
       await wikiRef.current.runHeal(entityId);
-      setLastResult(undefined);
+      setLastResult({ operation: 'heal', result: undefined });
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e));
       setError(err);
@@ -63,7 +67,7 @@ export function useWikiMaintenance() {
       setLastResult(null);
       try {
         const result = await wikiRef.current.runPrune(entityId, options);
-        setLastResult(result);
+        setLastResult({ operation: 'prune', result });
         return result;
       } catch (e) {
         const err = e instanceof Error ? e : new Error(String(e));
