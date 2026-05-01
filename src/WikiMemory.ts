@@ -277,6 +277,52 @@ export class WikiMemory {
 
   async setup() {
     await setupDatabase(this.db, this.prefix);
+
+    // FTS5 porter migration: pre-porter installs have an FTS5 table without
+    // tokenize='porter unicode61'. CREATE VIRTUAL TABLE IF NOT EXISTS is a
+    // no-op when the table already exists, so we must explicitly rebuild.
+    const ftsMeta = await this.db.getFirstAsync<{ sql: string | null }>(
+      `SELECT sql FROM sqlite_master WHERE type='table' AND name=?`,
+      [`${this.prefix}entries_fts`]
+    );
+    const hasPorterTokenizer = /tokenize\s*=\s*['"]porter\s+unicode61['"]/i.test(ftsMeta?.sql ?? '');
+    if (ftsMeta?.sql && !hasPorterTokenizer) {
+      // Whole rebuild sequence runs in a single transaction so a failure
+      // cannot leave the FTS5 table missing or unindexed.
+      await this.db.withTransactionAsync(async () => {
+        await this.db.execAsync(`
+          DROP TRIGGER IF EXISTS ${this.prefix}entries_ai;
+          DROP TRIGGER IF EXISTS ${this.prefix}entries_ad;
+          DROP TRIGGER IF EXISTS ${this.prefix}entries_au;
+          DROP TABLE IF EXISTS ${this.prefix}entries_fts;
+          CREATE VIRTUAL TABLE ${this.prefix}entries_fts USING fts5(
+            title,
+            body,
+            tags,
+            content='${this.prefix}entries',
+            content_rowid='rowid',
+            tokenize='porter unicode61'
+          );
+          INSERT INTO ${this.prefix}entries_fts(rowid, title, body, tags)
+            SELECT rowid, title, body, tags FROM ${this.prefix}entries;
+          CREATE TRIGGER ${this.prefix}entries_ai AFTER INSERT ON ${this.prefix}entries BEGIN
+            INSERT INTO ${this.prefix}entries_fts(rowid, title, body, tags)
+            VALUES (new.rowid, new.title, new.body, new.tags);
+          END;
+          CREATE TRIGGER ${this.prefix}entries_ad AFTER DELETE ON ${this.prefix}entries BEGIN
+            INSERT INTO ${this.prefix}entries_fts(${this.prefix}entries_fts, rowid, title, body, tags)
+            VALUES ('delete', old.rowid, old.title, old.body, old.tags);
+          END;
+          CREATE TRIGGER ${this.prefix}entries_au AFTER UPDATE ON ${this.prefix}entries BEGIN
+            INSERT INTO ${this.prefix}entries_fts(${this.prefix}entries_fts, rowid, title, body, tags)
+            VALUES ('delete', old.rowid, old.title, old.body, old.tags);
+            INSERT INTO ${this.prefix}entries_fts(rowid, title, body, tags)
+            VALUES (new.rowid, new.title, new.body, new.tags);
+          END;
+        `);
+      });
+    }
+
     // Migration: normalize any existing source_ref values that were stored before the
     // allowlist rule ([^A-Za-z0-9._\- ] → strip) was introduced.  Read-then-update in
     // JS so the normalization is guaranteed to match what normalizeSourceRef() produces,
@@ -311,9 +357,44 @@ export class WikiMemory {
   }
 
   private formatSearchQuery(query: string): string {
-    const tokens = query.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(t => t.length >= 3).slice(0, 6);
-    if (tokens.length === 0) return '';
-    return tokens.map(t => `"${t}"*`).join(' OR ');
+    const normalizeTokens = (value: string): string[] =>
+      value
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, '')
+        .split(/\s+/)
+        .filter(t => t.length >= 3);
+
+    const baseTokens = normalizeTokens(query);
+    if (baseTokens.length === 0) return '';
+
+    const synonymMap = this.options.config?.synonymMap;
+    const expanded: string[] = [];
+    const seen = new Set<string>();
+    const pushNormalized = (value: string): boolean => {
+      for (const token of normalizeTokens(value)) {
+        if (expanded.length >= 12) return false;
+        if (seen.has(token)) continue;
+        seen.add(token);
+        expanded.push(token);
+      }
+      return true;
+    };
+
+    for (const t of baseTokens) {
+      if (!pushNormalized(t)) break;
+      if (synonymMap) {
+        const synonyms = synonymMap[t];
+        if (Array.isArray(synonyms)) {
+          for (const s of synonyms) {
+            if (typeof s === 'string') {
+              if (!pushNormalized(s)) break;
+            }
+          }
+        }
+      }
+    }
+
+    return expanded.map(t => `"${t}"*`).join(' OR ');
   }
 
   async read(entityId: string, query: string): Promise<MemoryBundle> {
@@ -719,14 +800,14 @@ export class WikiMemory {
         }
 
         const factIds = bundle.facts.map((fact) => fact.id);
-        const existingFactsById = new Map<string, { id: string; entity_id: string }>();
+        const existingFactsById = new Map<string, { id: string; entity_id: string; updated_at: number }>();
         const factLookupChunkSize = 500;
         for (let i = 0; i < factIds.length; i += factLookupChunkSize) {
           const factIdChunk = factIds.slice(i, i + factLookupChunkSize);
           if (factIdChunk.length === 0) continue;
           const placeholders = factIdChunk.map(() => '?').join(', ');
-          const existingFacts = await this.db.getAllAsync<{ id: string; entity_id: string }>(
-            `SELECT id, entity_id FROM ${this.prefix}entries WHERE id IN (${placeholders})`,
+          const existingFacts = await this.db.getAllAsync<{ id: string; entity_id: string; updated_at: number }>(
+            `SELECT id, entity_id, updated_at FROM ${this.prefix}entries WHERE id IN (${placeholders})`,
             factIdChunk
           );
           for (const existingFact of existingFacts) {
@@ -736,28 +817,37 @@ export class WikiMemory {
 
         for (const fact of bundle.facts) {
           const tagsJson = JSON.stringify(Array.isArray(fact.tags) ? fact.tags : []);
+          // Normalize once: non-finite (undefined/null/NaN) → 0 so we never persist an
+          // invalid value to the DB and ORDER BY updated_at remains meaningful.
+          const safeUpdatedAt = Number.isFinite(fact.updated_at) ? fact.updated_at : 0;
           const existing = existingFactsById.get(fact.id);
           if (existing) {
             if (existing.entity_id !== entityId) {
               this._warnCrossEntityCollision('entry', fact.id, existing.entity_id, entityId);
               continue;
             }
-            if (merge) continue; // merge mode: preserve all existing data for this id (even if soft-deleted)
-            // replace mode: update the existing row (restores if soft-deleted)
+            if (merge) {
+              // LWW: incoming wins only if its updated_at is strictly newer than local.
+              // 0 (epoch) never beats a real timestamp, so invalid incoming rows are skipped.
+              if (safeUpdatedAt <= existing.updated_at) continue;
+            }
+            // replace mode (or merge LWW winner): update the existing row (restores if soft-deleted)
             await this.db.runAsync(
               `UPDATE ${this.prefix}entries SET entity_id = ?, title = ?, body = ?, tags = ?, confidence = ?, source_type = ?, source_hash = ?, source_ref = ?, created_at = ?, updated_at = ?, last_accessed_at = ?, access_count = ?, deleted_at = ? WHERE id = ?`,
-              [entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, fact.updated_at, fact.last_accessed_at, fact.access_count, fact.deleted_at, fact.id]
+              [entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, fact.id]
             );
+            existingFactsById.set(fact.id, { id: fact.id, entity_id: entityId, updated_at: safeUpdatedAt });
           } else {
             await this.db.runAsync(
               `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, fact.updated_at, fact.last_accessed_at, fact.access_count, fact.deleted_at]
+              [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at]
             );
+            existingFactsById.set(fact.id, { id: fact.id, entity_id: entityId, updated_at: safeUpdatedAt });
           }
         }
 
         const taskIds = bundle.tasks.map((task) => task.id);
-        const existingTasksById = new Map<string, { id: string; entity_id: string }>();
+        const existingTasksById = new Map<string, { id: string; entity_id: string; updated_at: number }>();
         const taskLookupChunkSize = 500;
 
         for (let i = 0; i < taskIds.length; i += taskLookupChunkSize) {
@@ -765,8 +855,8 @@ export class WikiMemory {
           if (taskIdChunk.length === 0) continue;
 
           const placeholders = taskIdChunk.map(() => '?').join(', ');
-          const existingTasks = await this.db.getAllAsync<{ id: string; entity_id: string }>(
-            `SELECT id, entity_id FROM ${this.prefix}tasks WHERE id IN (${placeholders})`,
+          const existingTasks = await this.db.getAllAsync<{ id: string; entity_id: string; updated_at: number }>(
+            `SELECT id, entity_id, updated_at FROM ${this.prefix}tasks WHERE id IN (${placeholders})`,
             taskIdChunk
           );
 
@@ -776,23 +866,32 @@ export class WikiMemory {
         }
 
         for (const task of bundle.tasks) {
+          // Normalize once: non-finite (undefined/null/NaN) → 0 so we never persist an
+          // invalid value to the DB and ORDER BY updated_at remains meaningful.
+          const safeUpdatedAt = Number.isFinite(task.updated_at) ? task.updated_at : 0;
           const existing = existingTasksById.get(task.id);
           if (existing) {
             if (existing.entity_id !== entityId) {
               this._warnCrossEntityCollision('task', task.id, existing.entity_id, entityId);
               continue;
             }
-            if (merge) continue; // merge mode: preserve all existing data for this id (even if soft-deleted)
-            // replace mode: update the existing row (restores if soft-deleted)
+            if (merge) {
+              // LWW: incoming wins only if its updated_at is strictly newer than local.
+              // 0 (epoch) never beats a real timestamp, so invalid incoming rows are skipped.
+              if (safeUpdatedAt <= existing.updated_at) continue;
+            }
+            // replace mode (or merge LWW winner): update the existing row (restores if soft-deleted)
             await this.db.runAsync(
               `UPDATE ${this.prefix}tasks SET entity_id = ?, description = ?, status = ?, priority = ?, created_at = ?, updated_at = ?, resolved_at = ?, deleted_at = ? WHERE id = ?`,
-              [entityId, task.description, task.status, task.priority, task.created_at, task.updated_at, task.resolved_at, task.deleted_at, task.id]
+              [entityId, task.description, task.status, task.priority, task.created_at, safeUpdatedAt, task.resolved_at, task.deleted_at, task.id]
             );
+            existingTasksById.set(task.id, { id: task.id, entity_id: entityId, updated_at: safeUpdatedAt });
           } else {
             await this.db.runAsync(
               `INSERT INTO ${this.prefix}tasks (id, entity_id, description, status, priority, created_at, updated_at, resolved_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [task.id, entityId, task.description, task.status, task.priority, task.created_at, task.updated_at, task.resolved_at, task.deleted_at]
+              [task.id, entityId, task.description, task.status, task.priority, task.created_at, safeUpdatedAt, task.resolved_at, task.deleted_at]
             );
+            existingTasksById.set(task.id, { id: task.id, entity_id: entityId, updated_at: safeUpdatedAt });
           }
         }
 

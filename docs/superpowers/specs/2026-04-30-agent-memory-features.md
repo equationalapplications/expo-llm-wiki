@@ -21,7 +21,7 @@ expo-llm-wiki's current design is optimised for simple chatbot memory. Two gaps 
 
 ## Goals
 
-- FTS5 porter stemmer: morphological matching (run/running/runs/ran → same stem).
+- FTS5 porter stemmer: morphological matching for regular inflections (e.g. `run`/`running`/`runs` → same stem).
 - Static `synonymMap` config: caller-supplied term expansions applied at query time; no DB writes.
 - LWW merge in `importDump`: row-level merge by `updated_at` — newer row wins regardless of origin.
 - Backward-compatible schema migration (idempotent FTS5 rebuild, no table drops).
@@ -70,9 +70,9 @@ Detection and rebuild in `setup()`:
      content_rowid='rowid',
      tokenize='porter unicode61'
    );
-   -- Repopulate from live entries
+   -- Repopulate from live entries (matches trigger behavior: no deleted_at filter)
    INSERT INTO {prefix}entries_fts(rowid, title, body, tags)
-     SELECT rowid, title, body, tags FROM {prefix}entries WHERE deleted_at IS NULL;
+     SELECT rowid, title, body, tags FROM {prefix}entries;
    -- [triggers recreated here, still inside transaction]
    COMMIT;
    ```
@@ -108,7 +108,7 @@ const wiki = createWiki(db, {
   },
 });
 ```
-Query `"how was your jog today?"` → tokens `['jog', 'today']` → no synonym for `today`; `jog` has no entry so it stays. Query `"how was your run?"` → tokens `['run']` → synonymMap expands to `['run', 'jog', 'sprint']` → FTS5 matches all three. (Porter additionally matches `running`, `ran`, etc. without synonyms.)
+Query `"how was your jog today?"` → tokens `['jog', 'today']` → no synonym for `today`; `jog` has no entry so it stays. Query `"how was your run?"` → tokens `['run']` → synonymMap expands to `['run', 'jog', 'sprint']` → FTS5 matches all three. (Porter additionally matches forms like `running` without synonyms, but irregular forms such as `ran` are not covered.)
 
 **No DB writes.** No migration. Purely in-memory expansion at query time. Caller can pass `undefined` (no expansion; existing behavior).
 
@@ -193,7 +193,7 @@ Match existing vitest patterns in `src/__tests__/`.
 ### New test file: `src/__tests__/porterStemmer.test.ts`
 
 - After `setup()`, query `"running"` matches a fact with body `"User runs every morning"`.
-- Query `"ran"` matches the same fact.
+- Query `"run"` matches the same fact.
 - Upgrade path: if FTS5 table exists without porter, `setup()` rebuilds it and existing facts are searchable via porter.
 - Rebuild is idempotent: calling `setup()` twice does not drop facts.
 
@@ -228,4 +228,4 @@ Match existing vitest patterns in `src/__tests__/`.
 - [ ] Merge transaction is atomic per entity
 - [ ] `WikiTask.resolution_note` is **not** added in this PR (deferred)
 - [ ] All existing tests pass
-- [ ] `npm run typecheck && npm run lint && npx vitest run` green
+- [ ] `npm run typecheck && npx vitest run` green

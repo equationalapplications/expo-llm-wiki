@@ -13,6 +13,7 @@ Offline-first, SQLite-backed memory for LLM apps built with Expo. Handles FTS5 s
 - **Namespace Safe:** All tables are prefixed (default: `llm_wiki_`) — no collisions with your existing database.
 - **Multi-Entity:** Multiple independent "brains" in one database via `entityId`.
 - **Offline First:** Reads are fully local via SQLite FTS5, typically under 50ms.
+- **Morphological Matching:** Porter stemming enables recall across word forms — queries for `running` match facts about `run`, `runs`, etc., without manual synonym configuration.
 - **Full Unicode Support:** UTF-8 and UTF-16 (including surrogate pairs for emoji) are fully supported. Chunks are split safely at sentence boundaries; surrogate pairs are never fragmented.
 
 ## How It Works

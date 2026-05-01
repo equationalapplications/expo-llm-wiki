@@ -30,7 +30,8 @@ export async function setupDatabase(db: SQLite.SQLiteDatabase, prefix: string) {
       body,
       tags,
       content='${prefix}entries',
-      content_rowid='rowid'
+      content_rowid='rowid',
+      tokenize='porter unicode61'
     );
 
     -- Triggers to keep FTS5 in sync with entries
