@@ -17,11 +17,153 @@
 - `src/db/schema.ts` — FTS5 `CREATE VIRTUAL TABLE` gains `tokenize='porter unicode61'`.
 - `src/types.ts` — `WikiConfig.synonymMap?: Record<string, string[]>`.
 - `src/WikiMemory.ts` — porter detect+rebuild in `setup()`; synonym expansion in `formatSearchQuery`; LWW merge in `importDump`.
+- `src/__tests__/helpers/sqliteAdapter.ts` — **new**, dev-only adapter that exposes a `better-sqlite3` instance behind the subset of `expo-sqlite`'s `SQLiteDatabase` API used by `WikiMemory`.
 - `src/__tests__/porterStemmer.test.ts` — new.
 - `src/__tests__/synonymMap.test.ts` — new.
 - `src/__tests__/importDumpMerge.test.ts` — new.
+- `package.json` — add `better-sqlite3` and `@types/better-sqlite3` to devDependencies.
 
-No new files outside `src/`. No `prompts.ts` change. No `WikiTask.resolution_note`.
+No new runtime files outside `src/`. No `prompts.ts` change. No `WikiTask.resolution_note`.
+
+**Why a real-SQLite adapter?** The existing `vi.mock('expo-sqlite', ...)` in `src/__tests__/importDump.test.ts` is a hand-written in-memory mock that does not implement FTS5, the porter tokenizer, or `sqlite_master` introspection. Spec acceptance criteria such as *"Query `running` matches fact body `User runs every morning`"* and *"setup() detects pre-porter FTS5 and rebuilds"* can only be verified against a real SQLite engine. `better-sqlite3` ships a recent SQLite (FTS5 + porter built-in), is sync, and is trivial to wrap behind the small async API surface (`execAsync`, `runAsync`, `getFirstAsync`, `getAllAsync`, `withTransactionAsync`) that `WikiMemory` consumes.
+
+---
+
+## Task 0: SQLite test adapter (better-sqlite3)
+
+**Files:**
+- Modify: `package.json`
+- Create: `src/__tests__/helpers/sqliteAdapter.ts`
+
+- [ ] **Step 1: Install better-sqlite3**
+
+```bash
+npm install --save-dev better-sqlite3 @types/better-sqlite3
+```
+
+- [ ] **Step 2: Create the adapter**
+
+Create `src/__tests__/helpers/sqliteAdapter.ts`:
+
+```ts
+import Database from 'better-sqlite3';
+import type * as SQLite from 'expo-sqlite';
+
+/**
+ * Test-only adapter: exposes a real better-sqlite3 in-memory database behind
+ * the subset of the expo-sqlite SQLiteDatabase API used by WikiMemory.
+ *
+ * Implements: execAsync, runAsync, getAllAsync, getFirstAsync,
+ * withTransactionAsync. Does NOT attempt full expo-sqlite parity.
+ */
+export function openTestDatabase(): SQLite.SQLiteDatabase {
+  const db = new Database(':memory:');
+
+  const adapter = {
+    async execAsync(sql: string): Promise<void> {
+      db.exec(sql);
+    },
+
+    async runAsync(sql: string, args: unknown[] = []): Promise<{ changes: number; lastInsertRowId: number }> {
+      const stmt = db.prepare(sql);
+      const info = stmt.run(...(args as any[]));
+      return { changes: info.changes, lastInsertRowId: Number(info.lastInsertRowid) };
+    },
+
+    async getAllAsync<T>(sql: string, args: unknown[] = []): Promise<T[]> {
+      const stmt = db.prepare(sql);
+      return stmt.all(...(args as any[])) as T[];
+    },
+
+    async getFirstAsync<T>(sql: string, args: unknown[] = []): Promise<T | null> {
+      const stmt = db.prepare(sql);
+      const row = stmt.get(...(args as any[]));
+      return (row ?? null) as T | null;
+    },
+
+    async withTransactionAsync<T>(fn: () => Promise<T>): Promise<T> {
+      // better-sqlite3's transaction() requires a sync function. WikiMemory
+      // uses async fns inside transactions, so we manually issue BEGIN/COMMIT/ROLLBACK.
+      db.exec('BEGIN');
+      try {
+        const result = await fn();
+        db.exec('COMMIT');
+        return result;
+      } catch (e) {
+        db.exec('ROLLBACK');
+        throw e;
+      }
+    },
+
+    // expo-sqlite exposes closeAsync; tests may want it.
+    async closeAsync(): Promise<void> {
+      db.close();
+    },
+  };
+
+  return adapter as unknown as SQLite.SQLiteDatabase;
+}
+```
+
+- [ ] **Step 3: Smoke-test the adapter**
+
+Create `src/__tests__/helpers/sqliteAdapter.test.ts`:
+
+```ts
+import { describe, it, expect } from 'vitest';
+import { openTestDatabase } from './sqliteAdapter';
+
+describe('sqliteAdapter', () => {
+  it('runs basic SQL and returns rows', async () => {
+    const db = openTestDatabase();
+    await db.execAsync(`CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)`);
+    await db.runAsync(`INSERT INTO t (name) VALUES (?)`, ['alice']);
+    await db.runAsync(`INSERT INTO t (name) VALUES (?)`, ['bob']);
+    const rows = await db.getAllAsync<{ id: number; name: string }>(`SELECT * FROM t ORDER BY id`);
+    expect(rows).toEqual([{ id: 1, name: 'alice' }, { id: 2, name: 'bob' }]);
+    const first = await db.getFirstAsync<{ name: string }>(`SELECT name FROM t WHERE id = ?`, [1]);
+    expect(first?.name).toBe('alice');
+  });
+
+  it('supports FTS5 with porter tokenizer', async () => {
+    const db = openTestDatabase();
+    await db.execAsync(`CREATE VIRTUAL TABLE fts USING fts5(body, tokenize='porter unicode61')`);
+    await db.runAsync(`INSERT INTO fts(body) VALUES (?)`, ['User runs every morning']);
+    const rows = await db.getAllAsync<{ body: string }>(`SELECT * FROM fts WHERE fts MATCH ?`, ['running']);
+    expect(rows.length).toBe(1);
+  });
+
+  it('rolls back failed transactions', async () => {
+    const db = openTestDatabase();
+    await db.execAsync(`CREATE TABLE t (id INTEGER PRIMARY KEY)`);
+    await expect(
+      db.withTransactionAsync(async () => {
+        await db.runAsync(`INSERT INTO t (id) VALUES (1)`);
+        throw new Error('boom');
+      })
+    ).rejects.toThrow('boom');
+    const rows = await db.getAllAsync<{ id: number }>(`SELECT * FROM t`);
+    expect(rows.length).toBe(0);
+  });
+});
+```
+
+- [ ] **Step 4: Run the adapter tests, confirm pass**
+
+Run: `npx vitest run src/__tests__/helpers/sqliteAdapter.test.ts`
+Expected: PASS — three green tests, including the FTS5/porter sanity check.
+
+- [ ] **Step 5: Confirm existing suite still passes**
+
+Run: `npx vitest run`
+Expected: PASS — the new adapter is opt-in; existing files that `vi.mock('expo-sqlite', ...)` are unaffected.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add package.json package-lock.json src/__tests__/helpers/sqliteAdapter.ts src/__tests__/helpers/sqliteAdapter.test.ts
+git commit -m "test: add better-sqlite3 adapter for FTS5/LWW tests"
+```
 
 ---
 
@@ -37,17 +179,38 @@ Create `src/__tests__/porterStemmer.test.ts`:
 
 ```ts
 import { describe, it, expect, beforeEach } from 'vitest';
-import * as SQLite from 'expo-sqlite';
+import type * as SQLite from 'expo-sqlite';
 import { WikiMemory } from '../WikiMemory';
-import type { LLMProvider } from '../types';
+import type { LLMProvider, WikiFact } from '../types';
+import { openTestDatabase } from './helpers/sqliteAdapter';
 
 const llmProvider: LLMProvider = {
   generateText: async () => '{}',
 };
 
 async function openDb() {
-  // expo-sqlite supports in-memory in node via :memory:
-  return SQLite.openDatabaseAsync(':memory:');
+  return openTestDatabase();
+}
+
+function makeFact(overrides: Partial<WikiFact>): WikiFact {
+  const now = Date.now();
+  return {
+    id: 'f1',
+    entity_id: 'user-1',
+    title: 'title',
+    body: 'body',
+    tags: [],
+    confidence: 'certain',
+    source_type: 'user_stated',
+    source_hash: null,
+    source_ref: null,
+    created_at: now,
+    updated_at: now,
+    last_accessed_at: null,
+    access_count: 0,
+    deleted_at: null,
+    ...overrides,
+  };
 }
 
 describe('FTS5 porter stemmer', () => {
@@ -61,10 +224,9 @@ describe('FTS5 porter stemmer', () => {
   });
 
   it('matches morphological variants (running → runs)', async () => {
-    await wiki.write('user-1', {
-      facts: [{ title: 'Morning routine', body: 'User runs every morning', tags: [], confidence: 'certain' }],
-      tasks: [],
-      events: [],
+    await wiki.importDump({
+      generatedAt: Date.now(),
+      entities: { 'user-1': { facts: [makeFact({ id: 'f1', title: 'Morning routine', body: 'User runs every morning' })], tasks: [], events: [] } },
     });
     const result = await wiki.read('user-1', 'running');
     expect(result.facts.length).toBeGreaterThan(0);
@@ -72,10 +234,9 @@ describe('FTS5 porter stemmer', () => {
   });
 
   it('matches past tense (ran → runs)', async () => {
-    await wiki.write('user-1', {
-      facts: [{ title: 'Routine', body: 'User runs every morning', tags: [], confidence: 'certain' }],
-      tasks: [],
-      events: [],
+    await wiki.importDump({
+      generatedAt: Date.now(),
+      entities: { 'user-1': { facts: [makeFact({ id: 'f1', title: 'Routine', body: 'User runs every morning' })], tasks: [], events: [] } },
     });
     const result = await wiki.read('user-1', 'ran');
     expect(result.facts.length).toBeGreaterThan(0);
@@ -176,10 +337,9 @@ describe('FTS5 porter upgrade migration', () => {
     const db = await openDb();
     const wiki = new WikiMemory(db, { llmProvider });
     await wiki.setup();
-    await wiki.write('user-1', {
-      facts: [{ title: 't', body: 'User runs every morning', tags: [], confidence: 'certain' }],
-      tasks: [],
-      events: [],
+    await wiki.importDump({
+      generatedAt: Date.now(),
+      entities: { 'user-1': { facts: [makeFact({ id: 'f1', title: 't', body: 'User runs every morning' })], tasks: [], events: [] } },
     });
     await wiki.setup(); // second call
     const result = await wiki.read('user-1', 'running');
@@ -316,7 +476,7 @@ Create `src/__tests__/synonymMap.test.ts`:
 
 ```ts
 import { describe, it, expect } from 'vitest';
-import * as SQLite from 'expo-sqlite';
+import type * as SQLite from 'expo-sqlite';
 import { WikiMemory } from '../WikiMemory';
 import type { LLMProvider, WikiConfig } from '../types';
 
@@ -475,9 +635,10 @@ Create `src/__tests__/importDumpMerge.test.ts`:
 
 ```ts
 import { describe, it, expect, beforeEach } from 'vitest';
-import * as SQLite from 'expo-sqlite';
+import type * as SQLite from 'expo-sqlite';
 import { WikiMemory } from '../WikiMemory';
 import type { LLMProvider, MemoryDump, WikiFact } from '../types';
+import { openTestDatabase } from './helpers/sqliteAdapter';
 
 const llmProvider: LLMProvider = { generateText: async () => '{}' };
 
@@ -503,7 +664,7 @@ function makeFact(overrides: Partial<WikiFact>): WikiFact {
 }
 
 async function open() {
-  const db = await SQLite.openDatabaseAsync(':memory:');
+  const db = openTestDatabase();
   const wiki = new WikiMemory(db, { llmProvider });
   await wiki.setup();
   return { db, wiki };
