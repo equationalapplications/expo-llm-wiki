@@ -381,7 +381,7 @@ In `src/WikiMemory.ts`, inside `async setup()` after `await setupDatabase(this.d
             tokenize='porter unicode61'
           );
           INSERT INTO ${this.prefix}entries_fts(rowid, title, body, tags)
-            SELECT rowid, title, body, tags FROM ${this.prefix}entries WHERE deleted_at IS NULL;
+            SELECT rowid, title, body, tags FROM ${this.prefix}entries;
           CREATE TRIGGER ${this.prefix}entries_ai AFTER INSERT ON ${this.prefix}entries BEGIN
             INSERT INTO ${this.prefix}entries_fts(rowid, title, body, tags)
             VALUES (new.rowid, new.title, new.body, new.tags);
@@ -969,17 +969,12 @@ git commit -m "test(import): lock event append-only dedup contract"
 Run: `npm run typecheck`
 Expected: PASS.
 
-- [ ] **Step 2: Lint**
-
-Run: `npm run lint`
-Expected: PASS.
-
-- [ ] **Step 3: Full test suite**
+- [ ] **Step 2: Full test suite**
 
 Run: `npx vitest run`
 Expected: PASS — every file in `src/__tests__/` green, including the three new files and all pre-existing ones.
 
-- [ ] **Step 4: Acceptance-criteria self-check**
+- [ ] **Step 3: Acceptance-criteria self-check**
 
 Verify against the spec checklist:
 - [ ] FTS5 created with `tokenize='porter unicode61'` on new install (Task 1)
@@ -996,7 +991,7 @@ Verify against the spec checklist:
 - [ ] No `WikiTask.resolution_note` added (deferred — verified by `grep -r resolution_note src/` returning nothing)
 - [ ] All existing tests pass
 
-- [ ] **Step 5: Final commit if any cleanup needed**
+- [ ] **Step 4: Final commit if any cleanup needed**
 
 ```bash
 git status

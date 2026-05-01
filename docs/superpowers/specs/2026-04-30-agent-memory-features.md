@@ -70,9 +70,9 @@ Detection and rebuild in `setup()`:
      content_rowid='rowid',
      tokenize='porter unicode61'
    );
-   -- Repopulate from live entries
+   -- Repopulate from live entries (matches trigger behavior: no deleted_at filter)
    INSERT INTO {prefix}entries_fts(rowid, title, body, tags)
-     SELECT rowid, title, body, tags FROM {prefix}entries WHERE deleted_at IS NULL;
+     SELECT rowid, title, body, tags FROM {prefix}entries;
    -- [triggers recreated here, still inside transaction]
    COMMIT;
    ```

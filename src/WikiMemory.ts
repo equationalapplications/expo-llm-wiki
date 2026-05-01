@@ -303,7 +303,7 @@ export class WikiMemory {
             tokenize='porter unicode61'
           );
           INSERT INTO ${this.prefix}entries_fts(rowid, title, body, tags)
-            SELECT rowid, title, body, tags FROM ${this.prefix}entries WHERE deleted_at IS NULL;
+            SELECT rowid, title, body, tags FROM ${this.prefix}entries;
           CREATE TRIGGER ${this.prefix}entries_ai AFTER INSERT ON ${this.prefix}entries BEGIN
             INSERT INTO ${this.prefix}entries_fts(rowid, title, body, tags)
             VALUES (new.rowid, new.title, new.body, new.tags);

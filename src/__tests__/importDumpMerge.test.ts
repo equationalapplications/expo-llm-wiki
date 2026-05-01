@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { WikiMemory } from '../WikiMemory';
-import type { LLMProvider, MemoryDump, WikiFact, WikiTask, WikiEvent } from '../types';
+import type { LLMProvider, WikiFact, WikiTask, WikiEvent } from '../types';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 
 const llmProvider: LLMProvider = { generateText: async () => '{}' };
