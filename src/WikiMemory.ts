@@ -382,8 +382,8 @@ export class WikiMemory {
 
     for (const t of baseTokens) {
       if (expanded.length >= 12) break;
-      pushNormalized(t);
-      if (synonymMap && expanded.length < 12) {
+      const canContinue = pushNormalized(t);
+      if (canContinue && synonymMap) {
         const synonyms = synonymMap[t];
         if (Array.isArray(synonyms)) {
           for (const s of synonyms) {
