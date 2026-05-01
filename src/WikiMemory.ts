@@ -1,7 +1,10 @@
 import * as SQLite from 'expo-sqlite';
 import { setupDatabase } from './db/schema';
+import { MIGRATIONS, CURRENT_SCHEMA_VERSION } from './db/migrations';
 import { WikiOptions, MemoryBundle, MemoryDump, WikiEvent, WikiFact, WikiTask, WikiCheckpoint, ExtractedFact, ExtractedTask, WikiBusyError, EntityStatus } from './types';
 import { LIBRARIAN_SYSTEM_PROMPT, HEAL_SYSTEM_PROMPT, INGEST_SYSTEM_PROMPT } from './prompts';
+
+export { WikiBusyError } from './types';
 
 function parseJsonResponse<T>(text: string): T {
   const firstBrace = text.indexOf('{');
@@ -276,51 +279,71 @@ export class WikiMemory {
   }
 
   async setup() {
+    // Probe entries-table existence BEFORE creating any tables.  setupDatabase()
+    // uses IF NOT EXISTS throughout, so once it has run the entries table always
+    // exists and the fresh-install branch would be unreachable.  Future migrations
+    // that ALTER TABLE would also fail if run against a schema already at the
+    // target version but inferred as legacy because the probe ran too late.
+    const entriesExistedBeforeSetup = await this.db.getFirstAsync<{ name: string }>(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name=?`,
+      [`${this.prefix}entries`]
+    );
+
     await setupDatabase(this.db, this.prefix);
 
-    // FTS5 porter migration: pre-porter installs have an FTS5 table without
-    // tokenize='porter unicode61'. CREATE VIRTUAL TABLE IF NOT EXISTS is a
-    // no-op when the table already exists, so we must explicitly rebuild.
-    const ftsMeta = await this.db.getFirstAsync<{ sql: string | null }>(
-      `SELECT sql FROM sqlite_master WHERE type='table' AND name=?`,
-      [`${this.prefix}entries_fts`]
-    );
-    const hasPorterTokenizer = /tokenize\s*=\s*['"]porter\s+unicode61['"]/i.test(ftsMeta?.sql ?? '');
-    if (ftsMeta?.sql && !hasPorterTokenizer) {
-      // Whole rebuild sequence runs in a single transaction so a failure
-      // cannot leave the FTS5 table missing or unindexed.
-      await this.db.withTransactionAsync(async () => {
-        await this.db.execAsync(`
-          DROP TRIGGER IF EXISTS ${this.prefix}entries_ai;
-          DROP TRIGGER IF EXISTS ${this.prefix}entries_ad;
-          DROP TRIGGER IF EXISTS ${this.prefix}entries_au;
-          DROP TABLE IF EXISTS ${this.prefix}entries_fts;
-          CREATE VIRTUAL TABLE ${this.prefix}entries_fts USING fts5(
-            title,
-            body,
-            tags,
-            content='${this.prefix}entries',
-            content_rowid='rowid',
-            tokenize='porter unicode61'
-          );
-          INSERT INTO ${this.prefix}entries_fts(rowid, title, body, tags)
-            SELECT rowid, title, body, tags FROM ${this.prefix}entries;
-          CREATE TRIGGER ${this.prefix}entries_ai AFTER INSERT ON ${this.prefix}entries BEGIN
-            INSERT INTO ${this.prefix}entries_fts(rowid, title, body, tags)
-            VALUES (new.rowid, new.title, new.body, new.tags);
-          END;
-          CREATE TRIGGER ${this.prefix}entries_ad AFTER DELETE ON ${this.prefix}entries BEGIN
-            INSERT INTO ${this.prefix}entries_fts(${this.prefix}entries_fts, rowid, title, body, tags)
-            VALUES ('delete', old.rowid, old.title, old.body, old.tags);
-          END;
-          CREATE TRIGGER ${this.prefix}entries_au AFTER UPDATE ON ${this.prefix}entries BEGIN
-            INSERT INTO ${this.prefix}entries_fts(${this.prefix}entries_fts, rowid, title, body, tags)
-            VALUES ('delete', old.rowid, old.title, old.body, old.tags);
-            INSERT INTO ${this.prefix}entries_fts(rowid, title, body, tags)
-            VALUES (new.rowid, new.title, new.body, new.tags);
-          END;
-        `);
-      });
+    let currentVersion: number;
+
+    if (!entriesExistedBeforeSetup) {
+      // Fresh install — all tables just created at current schema; no migrations needed.
+      await this.db.runAsync(
+        `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('schema_version', ?)`,
+        [String(CURRENT_SCHEMA_VERSION)]
+      );
+      currentVersion = CURRENT_SCHEMA_VERSION;
+    } else {
+      // Existing install — check meta for schema version.
+      const metaRow = await this.db.getFirstAsync<{ value: string }>(
+        `SELECT value FROM ${this.prefix}meta WHERE key = 'schema_version'`
+      );
+
+      if (metaRow) {
+        currentVersion = parseInt(metaRow.value, 10);
+        if (!Number.isFinite(currentVersion)) currentVersion = 0;
+      } else {
+        // Legacy install without meta row — infer version from porter probe.
+        const ftsMeta = await this.db.getFirstAsync<{ sql: string | null }>(
+          `SELECT sql FROM sqlite_master WHERE type='table' AND name=?`,
+          [`${this.prefix}entries_fts`]
+        );
+        const hasPorter = /tokenize\s*=\s*['"]porter\s+unicode61['"]/i.test(ftsMeta?.sql ?? '');
+        currentVersion = hasPorter ? 1 : 0;
+      }
+    }
+
+    // Run pending migrations in order.
+    for (const migration of MIGRATIONS) {
+      if (migration.version > currentVersion) {
+        await migration.run(this.db, this.prefix);
+        await this.db.runAsync(
+          `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('schema_version', ?)`,
+          [String(migration.version)]
+        );
+        currentVersion = migration.version;
+      }
+    }
+
+    // Ensure meta row exists for legacy installs already at current version
+    // (porter present, no meta row) — the migration loop may not have written it.
+    if (entriesExistedBeforeSetup) {
+      const metaCheck = await this.db.getFirstAsync<{ value: string }>(
+        `SELECT value FROM ${this.prefix}meta WHERE key = 'schema_version'`
+      );
+      if (!metaCheck) {
+        await this.db.runAsync(
+          `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('schema_version', ?)`,
+          [String(currentVersion)]
+        );
+      }
     }
 
     // Migration: normalize any existing source_ref values that were stored before the
@@ -354,6 +377,120 @@ export class WikiMemory {
         }
       }
     });
+  }
+
+  async hasChanged(entityId: string, sourceRef: string, sourceHash: string): Promise<boolean> {
+    const normalizedRef = normalizeSourceRef(sourceRef);
+    if (!normalizedRef) {
+      throw new Error(`Invalid sourceRef: "${sourceRef}"`);
+    }
+    const normalizedHash = normalizeSourceHash(sourceHash);
+    if (!normalizedHash) {
+      throw new Error(`Invalid sourceHash: must be a 64-character hex string (normalized to lowercase)`);
+    }
+    const row = await this.db.getFirstAsync<{ source_hash: string | null }>(
+      `SELECT source_hash FROM ${this.prefix}entries
+       WHERE entity_id = ? AND source_ref = ? AND deleted_at IS NULL
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [entityId, normalizedRef]
+    );
+    if (!row) return true;
+    const normalizedStoredHash = row.source_hash ? normalizeSourceHash(row.source_hash) : null;
+    return normalizedStoredHash !== normalizedHash;
+  }
+
+  private _pruneKey(entityId: string) { return `${this.prefix}:${entityId}:prune`; }
+
+  private _validatePruneDuration(value: number | null | undefined, name: string): void {
+    if (value !== null && value !== undefined && (typeof value !== 'number' || !isFinite(value) || value < 0)) {
+      throw new Error(`Invalid ${name}: must be a non-negative finite number or null`);
+    }
+  }
+
+  async runPrune(
+    entityId: string,
+    options?: {
+      retainSoftDeletedFor?: number | null;
+      retainEventsFor?: number | null;
+      vacuum?: boolean;
+    }
+  ): Promise<{ entries: number; tasks: number; events: number }> {
+    const pruneKey = this._pruneKey(entityId);
+    // Prune must not run concurrently with librarian, heal, ingest, or another
+    // prune for the same entity.
+    const ingestPrefix = `${this.prefix}:${entityId}:`;
+    let isIngestRunning = false;
+    for (const k of this.activeIngestJobs) {
+      if (k.startsWith(ingestPrefix)) { isIngestRunning = true; break; }
+    }
+    let blockingOperation: 'prune' | 'librarian' | 'heal' | 'ingest' | null = null;
+    if (this.activeMaintenanceJobs.has(pruneKey)) {
+      blockingOperation = 'prune';
+    } else if (this.activeMaintenanceJobs.has(this._librarianKey(entityId))) {
+      blockingOperation = 'librarian';
+    } else if (this.activeMaintenanceJobs.has(this._healKey(entityId))) {
+      blockingOperation = 'heal';
+    } else if (isIngestRunning) {
+      blockingOperation = 'ingest';
+    }
+    if (blockingOperation !== null) {
+      throw new WikiBusyError(blockingOperation, entityId);
+    }
+    this.activeMaintenanceJobs.add(pruneKey);
+    try {
+      const retainSoftDeletedFor = options?.retainSoftDeletedFor !== undefined
+        ? options.retainSoftDeletedFor
+        : (this.options.config?.pruneRetainSoftDeletedFor ?? 7);
+      const retainEventsFor = options?.retainEventsFor !== undefined
+        ? options.retainEventsFor
+        : (this.options.config?.pruneEventsAfter ?? 30);
+      const vacuum = options?.vacuum ?? false;
+
+      this._validatePruneDuration(retainSoftDeletedFor, 'retainSoftDeletedFor');
+      this._validatePruneDuration(retainEventsFor, 'retainEventsFor');
+
+      const now = Date.now();
+      let deletedEntries = 0;
+      let deletedTasks = 0;
+      let deletedEvents = 0;
+
+      if (retainSoftDeletedFor !== null) {
+        const cutoff = now - retainSoftDeletedFor * 86400000;
+        const entryResult = await this.db.runAsync(
+          `DELETE FROM ${this.prefix}entries
+           WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`,
+          [entityId, cutoff]
+        );
+        deletedEntries = entryResult.changes;
+
+        const taskResult = await this.db.runAsync(
+          `DELETE FROM ${this.prefix}tasks
+           WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`,
+          [entityId, cutoff]
+        );
+        deletedTasks = taskResult.changes;
+      }
+
+      if (retainEventsFor !== null) {
+        const cutoff = now - retainEventsFor * 86400000;
+        const eventResult = await this.db.runAsync(
+          `DELETE FROM ${this.prefix}events
+           WHERE entity_id = ? AND created_at < ?`,
+          [entityId, cutoff]
+        );
+        deletedEvents = eventResult.changes;
+      }
+
+      if (vacuum) {
+        await this.db.execAsync(`PRAGMA wal_checkpoint(TRUNCATE)`);
+        await this.db.execAsync(`VACUUM`);
+      }
+
+      return { entries: deletedEntries, tasks: deletedTasks, events: deletedEvents };
+    } finally {
+      this.activeMaintenanceJobs.delete(pruneKey);
+    }
   }
 
   private formatSearchQuery(query: string): string {
@@ -487,7 +624,10 @@ export class WikiMemory {
 
     if (count - memoryCheckpoint >= threshold) {
       const jobKey = this._librarianKey(entityId);
-      if (!this.activeMaintenanceJobs.has(jobKey)) {
+      if (
+        !this.activeMaintenanceJobs.has(jobKey) &&
+        !this.activeMaintenanceJobs.has(this._pruneKey(entityId))
+      ) {
         this.activeMaintenanceJobs.add(jobKey);
         this.runLibrarianThenMaybeHeal(entityId, count)
           .catch(console.error)
@@ -683,6 +823,9 @@ export class WikiMemory {
     if (this.activeMaintenanceJobs.has(jobKey)) {
       throw new WikiBusyError('librarian', entityId);
     }
+    if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
+      throw new WikiBusyError('prune', entityId);
+    }
     this.activeMaintenanceJobs.add(jobKey);
     try {
       await this._doRunLibrarian(entityId);
@@ -695,6 +838,9 @@ export class WikiMemory {
     const jobKey = this._healKey(entityId);
     if (this.activeMaintenanceJobs.has(jobKey)) {
       throw new WikiBusyError('heal', entityId);
+    }
+    if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
+      throw new WikiBusyError('prune', entityId);
     }
     this.activeMaintenanceJobs.add(jobKey);
     try {
@@ -992,6 +1138,9 @@ export class WikiMemory {
     const jobKey = `${this.prefix}:${entityId}:${sourceRef}`;
     if (this.activeIngestJobs.has(jobKey)) {
       throw new WikiBusyError('ingest', entityId);
+    }
+    if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
+      throw new WikiBusyError('prune', entityId);
     }
     this.activeIngestJobs.add(jobKey);
 

@@ -53,6 +53,39 @@ describe('job mutex', () => {
     await first;
   });
 
+  it('runLibrarian throws WikiBusyError when prune is running for same entity', async () => {
+    const wiki = await freshWiki(slowProvider(0));
+    (wiki as any).activeMaintenanceJobs.add('jobs_:e1:prune');
+    const err = await wiki.runLibrarian('e1').catch((e) => e);
+    expect(err).toBeInstanceOf(WikiBusyError);
+    expect(err.operation).toBe('prune');
+  });
+
+  it('runHeal throws WikiBusyError when prune is running for same entity', async () => {
+    const wiki = await freshWiki(slowProvider(0));
+    (wiki as any).activeMaintenanceJobs.add('jobs_:e1:prune');
+    const err = await wiki.runHeal('e1').catch((e) => e);
+    expect(err).toBeInstanceOf(WikiBusyError);
+    expect(err.operation).toBe('prune');
+  });
+
+  it('ingestDocument throws WikiBusyError when prune is running for same entity', async () => {
+    const wiki = await freshWiki(slowProvider(0));
+    (wiki as any).activeMaintenanceJobs.add('jobs_:e1:prune');
+    const sourceHash = 'a'.repeat(64);
+    const err = await wiki.ingestDocument('e1', { sourceRef: 'doc1', sourceHash, documentChunk: 'some content here' }).catch((e) => e);
+    expect(err).toBeInstanceOf(WikiBusyError);
+    expect(err.operation).toBe('prune');
+  });
+
+  it('prune guard does not bleed to different entity', async () => {
+    const wiki = await freshWiki(slowProvider(100));
+    (wiki as any).activeMaintenanceJobs.add('jobs_:e1:prune');
+    // e2 should not be affected by e1 prune lock
+    const p = wiki.runLibrarian('e2');
+    await expect(p).resolves.toBeUndefined();
+  });
+
   it('runHeal does not block runLibrarian for same entity after mutex split', async () => {
     const wiki = await freshWiki(slowProvider(100));
     // Start both simultaneously - they should NOT block each other
