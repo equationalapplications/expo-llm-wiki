@@ -93,6 +93,8 @@ where `recencyDecay = exp(-ageDays / 30)` and `confidenceWeight` is `certain=1.0
 
 **Tests:** `src/__tests__/formatContext.test.ts` covering empty bundle, markdown vs plain, truncation, ranking ties, weight overrides.
 
+> **Implementation note (task ordering test):** When asserting that "High priority" appears after "High priority early" in the output, use `indexOf('High priority (')` (anchored by the rendered `(status)` suffix) rather than `indexOf('High priority')`, which is a prefix of `'High priority early'` and would match the wrong position.
+
 ---
 
 ### 2. `hasChanged()` API
