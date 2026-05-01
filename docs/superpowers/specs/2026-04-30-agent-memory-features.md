@@ -193,7 +193,7 @@ Match existing vitest patterns in `src/__tests__/`.
 ### New test file: `src/__tests__/porterStemmer.test.ts`
 
 - After `setup()`, query `"running"` matches a fact with body `"User runs every morning"`.
-- Query `"ran"` matches the same fact.
+- Query `"run"` matches the same fact.
 - Upgrade path: if FTS5 table exists without porter, `setup()` rebuilds it and existing facts are searchable via porter.
 - Rebuild is idempotent: calling `setup()` twice does not drop facts.
 
