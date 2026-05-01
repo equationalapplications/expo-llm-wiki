@@ -6,8 +6,6 @@ export interface Migration {
   run: (db: SQLite.SQLiteDatabase, prefix: string) => Promise<void>;
 }
 
-export const CURRENT_SCHEMA_VERSION = 1;
-
 export const MIGRATIONS: Migration[] = [
   {
     version: 1,
@@ -48,3 +46,18 @@ export const MIGRATIONS: Migration[] = [
     },
   },
 ];
+
+// Verify MIGRATIONS are in strictly ascending version order at module load time.
+// This prevents skipped or repeated migrations caused by out-of-order entries.
+for (let i = 1; i < MIGRATIONS.length; i++) {
+  if (MIGRATIONS[i].version <= MIGRATIONS[i - 1].version) {
+    throw new Error(
+      `migrations.ts: MIGRATIONS must be in strictly ascending version order. ` +
+      `Found version ${MIGRATIONS[i].version} after ${MIGRATIONS[i - 1].version} at index ${i}.`
+    );
+  }
+}
+
+// Derived from the last (highest) migration version so it never drifts out of sync.
+export const CURRENT_SCHEMA_VERSION =
+  MIGRATIONS.length > 0 ? MIGRATIONS[MIGRATIONS.length - 1].version : 0;

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import type { Migration } from '../db/migrations';
 
 // ── Shared mock state ────────────────────────────────────────────────────────
 
@@ -136,5 +137,47 @@ describe('schema migrations', () => {
 
     const hasRebuild = db.execCalls.some(s => s.includes('DROP TABLE') || s.includes('DROP TRIGGER'));
     expect(hasRebuild).toBe(false);
+  });
+});
+
+// Helper that mirrors the module-level assertion in migrations.ts so we can test
+// the out-of-order guard without dynamic imports.
+function checkMigrationsOrder(migrations: Migration[]): void {
+  for (let i = 1; i < migrations.length; i++) {
+    if (migrations[i].version <= migrations[i - 1].version) {
+      throw new Error(
+        `migrations.ts: MIGRATIONS must be in strictly ascending version order. ` +
+        `Found version ${migrations[i].version} after ${migrations[i - 1].version} at index ${i}.`
+      );
+    }
+  }
+}
+
+describe('MIGRATIONS ordering and CURRENT_SCHEMA_VERSION derivation', () => {
+  it('CURRENT_SCHEMA_VERSION equals the last migration version', async () => {
+    const { MIGRATIONS, CURRENT_SCHEMA_VERSION } = await import('../db/migrations');
+    expect(CURRENT_SCHEMA_VERSION).toBe(MIGRATIONS[MIGRATIONS.length - 1].version);
+  });
+
+  it('MIGRATIONS array itself is in strictly ascending order', async () => {
+    const { MIGRATIONS } = await import('../db/migrations');
+    expect(() => checkMigrationsOrder(MIGRATIONS)).not.toThrow();
+  });
+
+  it('checkMigrationsOrder throws for out-of-order versions', () => {
+    const outOfOrder: Migration[] = [
+      { version: 1, description: 'a', run: async () => {} },
+      { version: 3, description: 'b', run: async () => {} },
+      { version: 2, description: 'c', run: async () => {} },
+    ];
+    expect(() => checkMigrationsOrder(outOfOrder)).toThrow('strictly ascending version order');
+  });
+
+  it('checkMigrationsOrder throws for duplicate versions', () => {
+    const duplicates: Migration[] = [
+      { version: 1, description: 'a', run: async () => {} },
+      { version: 1, description: 'b', run: async () => {} },
+    ];
+    expect(() => checkMigrationsOrder(duplicates)).toThrow('strictly ascending version order');
   });
 });
