@@ -1,8 +1,7 @@
 # Spec: Agent Memory Features — porter stemmer, synonymMap, LWW merge
 
 **Date:** 2026-04-30
-**Status:** Ready
-**Branch:** staging
+**Status:** Implemented
 
 ---
 

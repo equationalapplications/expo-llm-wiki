@@ -1,8 +1,7 @@
 # Spec: Next-Version Improvements (CodeGraph-Inspired)
 
 **Date:** 2026-05-01
-**Status:** Draft
-**Branch:** TBD
+**Status:** Implemented
 
 ---
 
