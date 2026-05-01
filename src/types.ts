@@ -9,6 +9,12 @@ export interface WikiConfig {
   maxChunkLength?: number;
   chunkOverlap?: number;
   chunkConcurrency?: number;
+  /**
+   * Static caller-supplied synonym expansions applied at query time.
+   * Keys must be lowercase (lookup is performed after the query is lowercased).
+   * Values are appended to the FTS5 query token list, deduped, and sliced to 12.
+   */
+  synonymMap?: Record<string, string[]>;
 }
 
 export interface WikiFact {
