@@ -371,6 +371,26 @@ export class WikiMemory {
     });
   }
 
+  async hasChanged(entityId: string, sourceRef: string, sourceHash: string): Promise<boolean> {
+    const normalizedRef = normalizeSourceRef(sourceRef);
+    if (!normalizedRef) {
+      throw new Error(`Invalid sourceRef: "${sourceRef}"`);
+    }
+    const normalizedHash = normalizeSourceHash(sourceHash);
+    if (!normalizedHash) {
+      throw new Error(`Invalid sourceHash: must be a 64-character lowercase hex string`);
+    }
+    const row = await this.db.getFirstAsync<{ source_hash: string | null }>(
+      `SELECT source_hash FROM ${this.prefix}entries
+       WHERE entity_id = ? AND source_ref = ? AND deleted_at IS NULL
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [entityId, normalizedRef]
+    );
+    if (!row) return true;
+    return row.source_hash !== normalizedHash;
+  }
+
   private formatSearchQuery(query: string): string {
     const normalizeTokens = (value: string): string[] =>
       value
