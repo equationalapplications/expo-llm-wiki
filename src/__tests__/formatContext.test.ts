@@ -274,4 +274,29 @@ describe('formatContext', () => {
     const result = formatContext(bundle, { factWeights: { confidence: 1.0, accessCount: 10, recency: 0.5 } });
     expect(result.indexOf('Inferred high-access')).toBeLessThan(result.indexOf('Certain low-access'));
   });
+
+  it('throws for negative maxFacts', () => {
+    expect(() => formatContext({ facts: [], tasks: [], events: [] }, { maxFacts: -1 }))
+      .toThrow('Invalid maxFacts: must be a non-negative finite number');
+  });
+
+  it('throws for non-finite maxFacts (Infinity)', () => {
+    expect(() => formatContext({ facts: [], tasks: [], events: [] }, { maxFacts: Infinity }))
+      .toThrow('Invalid maxFacts: must be a non-negative finite number');
+  });
+
+  it('throws for non-finite maxFacts (NaN)', () => {
+    expect(() => formatContext({ facts: [], tasks: [], events: [] }, { maxFacts: NaN }))
+      .toThrow('Invalid maxFacts: must be a non-negative finite number');
+  });
+
+  it('throws for negative maxTasks', () => {
+    expect(() => formatContext({ facts: [], tasks: [], events: [] }, { maxTasks: -5 }))
+      .toThrow('Invalid maxTasks: must be a non-negative finite number');
+  });
+
+  it('throws for negative maxEvents', () => {
+    expect(() => formatContext({ facts: [], tasks: [], events: [] }, { maxEvents: -1 }))
+      .toThrow('Invalid maxEvents: must be a non-negative finite number');
+  });
 });

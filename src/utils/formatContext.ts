@@ -1,5 +1,11 @@
 import type { MemoryBundle, WikiFact, WikiTask, WikiEvent, FormatContextOptions } from '../types';
 
+function validateMaxOption(value: number, name: string): void {
+  if (!isFinite(value) || value < 0) {
+    throw new Error(`Invalid ${name}: must be a non-negative finite number`);
+  }
+}
+
 const CONFIDENCE_WEIGHT: Record<string, number> = {
   certain: 1.0,
   inferred: 0.6,
@@ -78,6 +84,10 @@ export function formatContext(
       recency: options?.factWeights?.recency ?? 0.5,
     },
   };
+
+  validateMaxOption(opts.maxFacts, 'maxFacts');
+  validateMaxOption(opts.maxTasks, 'maxTasks');
+  validateMaxOption(opts.maxEvents, 'maxEvents');
 
   const weights = opts.factWeights as Required<NonNullable<FormatContextOptions['factWeights']>>;
 
