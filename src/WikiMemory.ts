@@ -381,8 +381,7 @@ export class WikiMemory {
     };
 
     for (const t of baseTokens) {
-      if (expanded.length >= 12) break;
-      pushNormalized(t);
+      if (!pushNormalized(t)) break;
       if (synonymMap) {
         const synonyms = synonymMap[t];
         if (Array.isArray(synonyms)) {
