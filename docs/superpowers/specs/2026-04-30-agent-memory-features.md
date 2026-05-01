@@ -57,9 +57,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS {prefix}entries_fts USING fts5(
 
 Detection and rebuild in `setup()`:
 1. Query `sqlite_master` for the FTS5 table's `sql` column.
-2. If the `sql` does not contain `porter`, rebuild:
+2. If the `sql` does not contain `porter`, rebuild. The **entire sequence — drop triggers, drop table, create table, repopulate, recreate triggers — executes inside a single SQLite transaction** so the DB is never left in a state where the FTS5 table exists without its triggers, or exists but is empty:
    ```sql
-   -- inside a transaction:
+   BEGIN;
    DROP TRIGGER IF EXISTS {prefix}entries_ai;
    DROP TRIGGER IF EXISTS {prefix}entries_ad;
    DROP TRIGGER IF EXISTS {prefix}entries_au;
@@ -73,8 +73,10 @@ Detection and rebuild in `setup()`:
    -- Repopulate from live entries
    INSERT INTO {prefix}entries_fts(rowid, title, body, tags)
      SELECT rowid, title, body, tags FROM {prefix}entries WHERE deleted_at IS NULL;
+   -- [triggers recreated here, still inside transaction]
+   COMMIT;
    ```
-   Triggers are recreated in the same transaction.
+   Any failure rolls the entire transaction back, leaving the original FTS5 table intact.
 
 **One-time cost:** repopulation scans `entries`. For typical app sizes (<10k rows) this completes in well under 1 second. `setup()` is already called once on app start; consumers already await it.
 
@@ -90,6 +92,8 @@ synonymMap?: Record<string, string[]>
 ```
 
 **Behaviour:** in `formatSearchQuery`, after building the initial token list, for each token `t` check `synonymMap[t]`. Append all matching synonym values to the token list. Deduplicate. Slice to top 12 (raised from 6 to accommodate expansion).
+
+**Case sensitivity:** synonym map lookup is **case-insensitive** — tokens are already lowercased by the pipeline before lookup, and synonym values are lowercased before being added to the token list. Keys in `synonymMap` should therefore be lowercase; uppercase keys are silently unreachable.
 
 **Example:**
 ```ts
@@ -123,6 +127,8 @@ Query `"how was your jog today?"` → tokens `['jog', 'today']` → no synonym f
 **Without `merge` (default):** behaviour is unchanged — overwrite all local data for the entity.
 
 **Implementation:** wrap the merge in a single SQLite transaction per entity for atomicity.
+
+**Conflict surfacing:** conflicts (same `id`, incoming row loses because `updated_at` is not newer) are resolved silently — no log entry, no return value, no event is emitted. This is intentional: LWW is a background sync primitive and callers have no actionable response to a skipped row. If observability is needed in the future, a `conflicts` count could be added to the return value of `importDump`; that is out of scope for this PR.
 
 **`importDump` signature:** no change. `merge` option already exists. Only the merge strategy changes.
 
