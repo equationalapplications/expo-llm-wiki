@@ -370,20 +370,24 @@ export class WikiMemory {
     const synonymMap = this.options.config?.synonymMap;
     const expanded: string[] = [];
     const seen = new Set<string>();
-    const pushNormalized = (value: string) => {
+    const pushNormalized = (value: string): boolean => {
       for (const token of normalizeTokens(value)) {
+        if (expanded.length >= 12) return false;
         if (seen.has(token)) continue;
         seen.add(token);
         expanded.push(token);
       }
+      return true;
     };
 
     for (const t of baseTokens) {
+      if (expanded.length >= 12) break;
       pushNormalized(t);
-      if (synonymMap) {
+      if (synonymMap && expanded.length < 12) {
         const synonyms = synonymMap[t];
         if (Array.isArray(synonyms)) {
           for (const s of synonyms) {
+            if (expanded.length >= 12) break;
             if (typeof s === 'string') {
               pushNormalized(s);
             }
@@ -392,8 +396,7 @@ export class WikiMemory {
       }
     }
 
-    const capped = expanded.slice(0, 12);
-    return capped.map(t => `"${t}"*`).join(' OR ');
+    return expanded.map(t => `"${t}"*`).join(' OR ');
   }
 
   async read(entityId: string, query: string): Promise<MemoryBundle> {
