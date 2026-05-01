@@ -386,7 +386,7 @@ export class WikiMemory {
     }
     const normalizedHash = normalizeSourceHash(sourceHash);
     if (!normalizedHash) {
-      throw new Error(`Invalid sourceHash: must be a 64-character lowercase hex string`);
+      throw new Error(`Invalid sourceHash: must be a 64-character hex string`);
     }
     const row = await this.db.getFirstAsync<{ source_hash: string | null }>(
       `SELECT source_hash FROM ${this.prefix}entries
