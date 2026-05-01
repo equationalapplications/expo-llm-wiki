@@ -1130,11 +1130,11 @@ export class WikiMemory {
     }
 
     const jobKey = `${this.prefix}:${entityId}:${sourceRef}`;
-    if (
-      this.activeIngestJobs.has(jobKey) ||
-      this.activeMaintenanceJobs.has(this._pruneKey(entityId))
-    ) {
+    if (this.activeIngestJobs.has(jobKey)) {
       throw new WikiBusyError('ingest', entityId);
+    }
+    if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
+      throw new WikiBusyError('prune', entityId);
     }
     this.activeIngestJobs.add(jobKey);
 
