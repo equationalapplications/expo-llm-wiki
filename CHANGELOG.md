@@ -1,4 +1,4 @@
-# [2.2.0] (upcoming)
+# [2.2.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v2.1.0...v2.2.0) (2026-05-01)
 
 ### Features
 
