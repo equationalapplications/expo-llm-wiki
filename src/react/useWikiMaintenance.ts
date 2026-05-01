@@ -2,7 +2,7 @@ import { useState, useCallback, useRef } from 'react';
 import { useWiki } from './WikiContext';
 
 export type MaintenanceResult =
-  | { operation: 'librarian' | 'heal'; result: void }
+  | { operation: 'librarian' | 'heal'; result: undefined }
   | { operation: 'prune'; result: { entries: number; tasks: number; events: number } };
 
 export function useWikiMaintenance() {
