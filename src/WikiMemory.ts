@@ -823,25 +823,27 @@ export class WikiMemory {
               this._warnCrossEntityCollision('entry', fact.id, existing.entity_id, entityId);
               continue;
             }
+            // Normalize once: non-finite (undefined/null/NaN) → 0 so we never persist an
+            // invalid value to the DB and ORDER BY updated_at remains meaningful.
+            const safeUpdatedAt = Number.isFinite(fact.updated_at) ? fact.updated_at : 0;
             if (merge) {
               // LWW: incoming wins only if its updated_at is strictly newer than local.
-              // Treat non-finite values (undefined, null, NaN) as -Infinity so an invalid
-              // incoming never overwrites a valid local row.
-              const incomingTs = Number.isFinite(fact.updated_at) ? fact.updated_at : -Infinity;
-              if (incomingTs <= existing.updated_at) continue;
+              // 0 (epoch) never beats a real timestamp, so invalid incoming rows are skipped.
+              if (safeUpdatedAt <= existing.updated_at) continue;
             }
             // replace mode (or merge LWW winner): update the existing row (restores if soft-deleted)
             await this.db.runAsync(
               `UPDATE ${this.prefix}entries SET entity_id = ?, title = ?, body = ?, tags = ?, confidence = ?, source_type = ?, source_hash = ?, source_ref = ?, created_at = ?, updated_at = ?, last_accessed_at = ?, access_count = ?, deleted_at = ? WHERE id = ?`,
-              [entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, fact.updated_at, fact.last_accessed_at, fact.access_count, fact.deleted_at, fact.id]
+              [entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, fact.id]
             );
-            existingFactsById.set(fact.id, { id: fact.id, entity_id: entityId, updated_at: fact.updated_at });
+            existingFactsById.set(fact.id, { id: fact.id, entity_id: entityId, updated_at: safeUpdatedAt });
           } else {
+            const safeUpdatedAt = Number.isFinite(fact.updated_at) ? fact.updated_at : 0;
             await this.db.runAsync(
               `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, fact.updated_at, fact.last_accessed_at, fact.access_count, fact.deleted_at]
+              [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at]
             );
-            existingFactsById.set(fact.id, { id: fact.id, entity_id: entityId, updated_at: fact.updated_at });
+            existingFactsById.set(fact.id, { id: fact.id, entity_id: entityId, updated_at: safeUpdatedAt });
           }
         }
 
@@ -871,25 +873,27 @@ export class WikiMemory {
               this._warnCrossEntityCollision('task', task.id, existing.entity_id, entityId);
               continue;
             }
+            // Normalize once: non-finite (undefined/null/NaN) → 0 so we never persist an
+            // invalid value to the DB and ORDER BY updated_at remains meaningful.
+            const safeUpdatedAt = Number.isFinite(task.updated_at) ? task.updated_at : 0;
             if (merge) {
               // LWW: incoming wins only if its updated_at is strictly newer than local.
-              // Treat non-finite values (undefined, null, NaN) as -Infinity so an invalid
-              // incoming never overwrites a valid local row.
-              const incomingTs = Number.isFinite(task.updated_at) ? task.updated_at : -Infinity;
-              if (incomingTs <= existing.updated_at) continue;
+              // 0 (epoch) never beats a real timestamp, so invalid incoming rows are skipped.
+              if (safeUpdatedAt <= existing.updated_at) continue;
             }
             // replace mode (or merge LWW winner): update the existing row (restores if soft-deleted)
             await this.db.runAsync(
               `UPDATE ${this.prefix}tasks SET entity_id = ?, description = ?, status = ?, priority = ?, created_at = ?, updated_at = ?, resolved_at = ?, deleted_at = ? WHERE id = ?`,
-              [entityId, task.description, task.status, task.priority, task.created_at, task.updated_at, task.resolved_at, task.deleted_at, task.id]
+              [entityId, task.description, task.status, task.priority, task.created_at, safeUpdatedAt, task.resolved_at, task.deleted_at, task.id]
             );
-            existingTasksById.set(task.id, { id: task.id, entity_id: entityId, updated_at: task.updated_at });
+            existingTasksById.set(task.id, { id: task.id, entity_id: entityId, updated_at: safeUpdatedAt });
           } else {
+            const safeUpdatedAt = Number.isFinite(task.updated_at) ? task.updated_at : 0;
             await this.db.runAsync(
               `INSERT INTO ${this.prefix}tasks (id, entity_id, description, status, priority, created_at, updated_at, resolved_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [task.id, entityId, task.description, task.status, task.priority, task.created_at, task.updated_at, task.resolved_at, task.deleted_at]
+              [task.id, entityId, task.description, task.status, task.priority, task.created_at, safeUpdatedAt, task.resolved_at, task.deleted_at]
             );
-            existingTasksById.set(task.id, { id: task.id, entity_id: entityId, updated_at: task.updated_at });
+            existingTasksById.set(task.id, { id: task.id, entity_id: entityId, updated_at: safeUpdatedAt });
           }
         }
 

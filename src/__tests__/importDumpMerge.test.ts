@@ -239,6 +239,52 @@ describe('importDump LWW — invalid updated_at guard', () => {
     const bundle = await wiki.read('user-1', '');
     expect(bundle.tasks.find(t => t.id === 't1')?.description).toBe('local-valid');
   });
+
+  it('new fact with NaN updated_at is inserted with updated_at=0 (not NaN)', async () => {
+    const { db, wiki } = await open();
+    const prefix = 'llm_wiki_';
+    await wiki.importDump({
+      generatedAt: 9999,
+      entities: {
+        'user-1': {
+          facts: [makeFact({ id: 'f-nan', body: 'new-nan', updated_at: NaN as unknown as number })],
+          tasks: [],
+          events: [],
+        },
+      },
+    });
+
+    const row = await db.getFirstAsync<{ updated_at: number }>(
+      `SELECT updated_at FROM ${prefix}entries WHERE id = ?`,
+      ['f-nan']
+    );
+    expect(row).not.toBeNull();
+    expect(Number.isFinite(row!.updated_at)).toBe(true);
+    expect(row!.updated_at).toBe(0);
+  });
+
+  it('new task with NaN updated_at is inserted with updated_at=0 (not NaN)', async () => {
+    const { db, wiki } = await open();
+    const prefix = 'llm_wiki_';
+    await wiki.importDump({
+      generatedAt: 9999,
+      entities: {
+        'user-1': {
+          facts: [],
+          tasks: [makeTask({ id: 't-nan', description: 'new-nan', updated_at: NaN as unknown as number })],
+          events: [],
+        },
+      },
+    });
+
+    const row = await db.getFirstAsync<{ updated_at: number }>(
+      `SELECT updated_at FROM ${prefix}tasks WHERE id = ?`,
+      ['t-nan']
+    );
+    expect(row).not.toBeNull();
+    expect(Number.isFinite(row!.updated_at)).toBe(true);
+    expect(row!.updated_at).toBe(0);
+  });
 });
 
 describe('importDump LWW — events append-only', () => {
