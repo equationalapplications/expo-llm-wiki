@@ -1,3 +1,10 @@
+# [2.2.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v2.1.0...v2.2.0) (2026-05-01)
+
+
+### Features
+
+* **types:** add FormatContextOptions, pruneRetainSoftDeletedFor, extend WikiBusyError prune op ([9d72e00](https://github.com/equationalapplications/expo-llm-wiki/commit/9d72e00e55ca04d10ac54acc9f78484454a01417))
+
 # [2.1.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v2.0.2...v2.1.0) (2026-05-01)
 
 
