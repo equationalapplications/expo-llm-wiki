@@ -19,42 +19,53 @@ Offline-first, SQLite-backed memory for LLM apps built with Expo. Handles FTS5 s
 ## How It Works
 
 ```mermaid
-flowchart LR
-    subgraph API
+flowchart TB
+    subgraph API["API Layer"]
         direction TB
         write["write(event)"]
         ingest["ingestDocument()"]
         librarian["runLibrarian()"]
         heal["runHeal()"]
+        read["read(entityId, query)"]
     end
 
-    subgraph SQLite
+    subgraph LLMLayer["LLM Provider"]
+        LLM["LLMProvider.generateText()"]
+    end
+
+    subgraph SQLiteLayer["SQLite Database"]
         direction TB
         events[(events)]
-        entries[("entries\n(facts)")]
+        entries[("entries<br/>(facts)")]
         tasks[(tasks)]
     end
 
-    LLM["LLMProvider\n.generateText()"]
+    subgraph ReadPath["Read Path"]
+        FTS5(["FTS5 search"])
+        Bundle(["MemoryBundle<br/>facts · tasks · events"])
+    end
 
-    read["read(entityId, query)"]
-    FTS5(["FTS5 search"])
-    Bundle(["MemoryBundle\nfacts · tasks · events"])
-
+    %% Write paths
     write --> events
     events -. "≥ threshold" .-> librarian
+    
+    %% LLM calls
     librarian --> LLM
     heal --> LLM
     ingest --> LLM
+    
+    %% Database writes
     LLM --> entries
     LLM --> tasks
-
+    
+    %% Read path
     read --> FTS5
     FTS5 --> entries
     entries --> Bundle
     tasks --> Bundle
     events --> Bundle
 ```
+
 
 ## Installation
 
@@ -97,6 +108,8 @@ const wiki = createWiki(db, {
     maxChunkLength: 6000,           // optional, default: 6000 (char count, not bytes)
     chunkOverlap: 400,              // optional, default: 400 (overlap between chunks in characters)
     chunkConcurrency: 1,            // optional, default: 1 (parallel LLM calls per ingestDocument)
+    pruneRetainSoftDeletedFor: 7,   // optional, default: 7  (days before hard-deleting soft-deleted rows)
+    pruneEventsAfter: 30,           // optional, default: 30 (days before hard-deleting old events)
   },
 });
 
@@ -234,7 +247,7 @@ const result = await wiki.runPrune('entity-123', {
 
 Defaults: `retainSoftDeletedFor = config.pruneRetainSoftDeletedFor ?? 7`, `retainEventsFor = config.pruneEventsAfter ?? 30`, `vacuum = false`.
 
-Throws `WikiBusyError` if another prune (or maintenance job) is in-flight for the same entity.
+Throws `WikiBusyError` if librarian, heal, ingest, or another prune is in-flight for the same entity. `ingestDocument`, `runLibrarian`, and `runHeal` reciprocally throw `WikiBusyError` if a prune is in-flight.
 
 ---
 
@@ -283,10 +296,10 @@ await execute('entity-123', {
 
 ### `useWikiMaintenance()`
 
-Shared `isPending` — true if either operation is in-flight:
+Shared `isPending` — true if any operation is in-flight. See [extended form below](#usewikimaintenance-extended) for `runPrune`:
 
 ```typescript
-const { runLibrarian, runHeal, isPending, error } = useWikiMaintenance();
+const { runLibrarian, runHeal, runPrune, isPending, error } = useWikiMaintenance();
 
 await runLibrarian('entity-123');
 await runHeal('entity-123');

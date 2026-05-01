@@ -48,28 +48,32 @@ function makeMockDb(opts: {
     async execAsync(sql: string): Promise<void> {
       pragmaAndVacuumCalls.push(sql);
     },
-    async runAsync(sql: string, args: any[] = []): Promise<void> {
+    async runAsync(sql: string, args: any[] = []): Promise<{ changes: number }> {
       // Hard delete entries
       if (sql.includes('DELETE FROM') && sql.includes('entries') && !sql.includes('fts') && !sql.includes('events') && !sql.includes('tasks')) {
-        const cutoff = args[1]; // entity_id, cutoff
         const entityId = args[0];
+        const cutoff = args[1];
+        const before = entries.length;
         entries = entries.filter(e => !(e.entity_id === entityId && e.deleted_at !== null && e.deleted_at < cutoff));
-        return;
+        return { changes: before - entries.length };
       }
       // Hard delete tasks
       if (sql.includes('DELETE FROM') && sql.includes('tasks')) {
         const entityId = args[0];
         const cutoff = args[1];
+        const before = tasks.length;
         tasks = tasks.filter(t => !(t.entity_id === entityId && t.deleted_at !== null && t.deleted_at < cutoff));
-        return;
+        return { changes: before - tasks.length };
       }
       // Hard delete events
       if (sql.includes('DELETE FROM') && sql.includes('events')) {
         const entityId = args[0];
         const cutoff = args[1];
+        const before = events.length;
         events = events.filter(e => !(e.entity_id === entityId && e.created_at < cutoff));
-        return;
+        return { changes: before - events.length };
       }
+      return { changes: 0 };
     },
     async getFirstAsync<T>(sql: string, args: any[] = []): Promise<T | null> {
       if (sql.includes('schema_version')) return { value: '1' } as any;
@@ -262,5 +266,26 @@ describe('WikiMemory.runPrune', () => {
     expect(result.entries).toBe(2);
     expect(result.tasks).toBe(1);
     expect(result.events).toBe(3);
+  });
+
+  it('throws WikiBusyError when librarian is already running', async () => {
+    const db = makeMockDb({});
+    const wiki = new WikiMemory(db as any, stubOptions);
+    (wiki as any).activeMaintenanceJobs.add('llm_wiki_:ent:librarian');
+    await expect(wiki.runPrune('ent')).rejects.toThrow(WikiBusyError);
+  });
+
+  it('throws WikiBusyError when heal is already running', async () => {
+    const db = makeMockDb({});
+    const wiki = new WikiMemory(db as any, stubOptions);
+    (wiki as any).activeMaintenanceJobs.add('llm_wiki_:ent:heal');
+    await expect(wiki.runPrune('ent')).rejects.toThrow(WikiBusyError);
+  });
+
+  it('throws WikiBusyError when ingest is already running for same entity', async () => {
+    const db = makeMockDb({});
+    const wiki = new WikiMemory(db as any, stubOptions);
+    (wiki as any).activeIngestJobs.add('llm_wiki_:ent:doc.md');
+    await expect(wiki.runPrune('ent')).rejects.toThrow(WikiBusyError);
   });
 });

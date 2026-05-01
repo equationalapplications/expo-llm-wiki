@@ -8,10 +8,11 @@ const CONFIDENCE_WEIGHT: Record<string, number> = {
 
 function scoreFactFor(
   fact: WikiFact,
-  weights: Required<NonNullable<FormatContextOptions['factWeights']>>
+  weights: Required<NonNullable<FormatContextOptions['factWeights']>>,
+  now: number
 ): number {
   const confW = CONFIDENCE_WEIGHT[fact.confidence] ?? 0.3;
-  const ageDays = (Date.now() - fact.updated_at) / 86400000;
+  const ageDays = (now - fact.updated_at) / 86400000;
   const recencyDecay = Math.exp(-ageDays / 30);
   return (
     confW * weights.confidence +
@@ -80,8 +81,9 @@ export function formatContext(
 
   const weights = opts.factWeights as Required<NonNullable<FormatContextOptions['factWeights']>>;
 
+  const now = Date.now();
   const sortedFacts = [...bundle.facts]
-    .sort((a, b) => scoreFactFor(b, weights) - scoreFactFor(a, weights))
+    .sort((a, b) => scoreFactFor(b, weights, now) - scoreFactFor(a, weights, now))
     .slice(0, opts.maxFacts);
 
   const sortedTasks = [...bundle.tasks]
@@ -103,6 +105,7 @@ export function formatContext(
     lines.push('## Memory');
 
     if (sortedFacts.length > 0) {
+      lines.push('');
       lines.push('### Known Facts');
       for (const fact of sortedFacts) {
         lines.push(renderFactMarkdown(fact, opts.includeConfidence, opts.includeTags));
@@ -110,6 +113,7 @@ export function formatContext(
     }
 
     if (sortedTasks.length > 0) {
+      lines.push('');
       lines.push('### Open Tasks');
       for (const task of sortedTasks) {
         lines.push(renderTaskMarkdown(task));
@@ -117,20 +121,30 @@ export function formatContext(
     }
 
     if (sortedEvents.length > 0) {
+      lines.push('');
       lines.push('### Recent Events');
       for (const event of sortedEvents) {
         lines.push(renderEventMarkdown(event));
       }
     }
   } else {
-    for (const fact of sortedFacts) {
-      lines.push(renderFactPlain(fact, opts.includeConfidence, opts.includeTags));
+    if (sortedFacts.length > 0) {
+      lines.push('KNOWN FACTS:');
+      for (const fact of sortedFacts) {
+        lines.push(renderFactPlain(fact, opts.includeConfidence, opts.includeTags));
+      }
     }
-    for (const task of sortedTasks) {
-      lines.push(renderTaskPlain(task));
+    if (sortedTasks.length > 0) {
+      lines.push('OPEN TASKS:');
+      for (const task of sortedTasks) {
+        lines.push(renderTaskPlain(task));
+      }
     }
-    for (const event of sortedEvents) {
-      lines.push(renderEventPlain(event));
+    if (sortedEvents.length > 0) {
+      lines.push('RECENT EVENTS:');
+      for (const event of sortedEvents) {
+        lines.push(renderEventPlain(event));
+      }
     }
   }
 

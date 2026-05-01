@@ -4,11 +4,23 @@
 
 * **utils:** add `formatContext(bundle, options?)` for LLM prompt injection with confidence/recency/access-count ranking
 * **wiki:** add `hasChanged(entityId, sourceRef, sourceHash)` to skip re-ingest of unchanged documents
-* **wiki:** add `runPrune(entityId, options?)` to hard-delete aged soft-deleted entries/tasks and old events
+* **wiki:** add `runPrune(entityId, options?)` to hard-delete aged soft-deleted entries/tasks and old events; activates previously dead `pruneEventsAfter` config key
 * **db:** schema versioning via `{prefix}meta` table; migrate porter rebuild to numbered migration registry
 * **react:** add `useWikiHasChanged` hook
-* **react:** extend `useWikiMaintenance` with `runPrune`
+* **react:** extend `useWikiMaintenance` with `runPrune`; `lastResult` now carries `{ entries, tasks, events }` counts after a prune
 * **types:** add `FormatContextOptions`, `pruneRetainSoftDeletedFor` config key, extend `WikiBusyError` operation union with `'prune'`
+
+### Bug Fixes
+
+* **wiki:** `runPrune` used `SELECT COUNT` + conditional `DELETE` per table; replaced with single `DELETE` using `result.changes` — eliminates 3 extra round-trips and closes a soft-delete/hard-delete race between the two statements
+* **wiki:** prune lock was one-way; `runLibrarian`, `runHeal`, auto-librarian, and `ingestDocument` now block when a prune is active for the same entity, making the mutex fully bidirectional
+* **utils:** `formatContext` plain mode emitted no section labels, making facts/tasks/events indistinguishable; restored `KNOWN FACTS:` / `OPEN TASKS:` / `RECENT EVENTS:` headings
+* **utils:** `formatContext` markdown mode lacked blank lines between `## Memory` and each `###` section; blank line separators restored
+* **utils:** `Date.now()` was called inside the fact sort comparator (O(N log N) times); captured once before sort
+
+### Internal
+
+* **tsconfig:** `moduleResolution` flipped from `node` to `bundler` to support `import type * as SQLite` from `expo-sqlite`
 
 # [2.1.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v2.0.2...v2.1.0) (2026-05-01)
 

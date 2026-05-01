@@ -8,7 +8,7 @@ export function useWikiMaintenance() {
 
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<Error | null>(null);
-  const [lastResult, setLastResult] = useState<void | null>(null);
+  const [lastResult, setLastResult] = useState<{ entries: number; tasks: number; events: number } | void | null>(null);
   // Counter so either operation keeping isPending=true keeps it set
   const pendingCount = useRef(0);
 
@@ -63,7 +63,7 @@ export function useWikiMaintenance() {
       setLastResult(null);
       try {
         const result = await wikiRef.current.runPrune(entityId, options);
-        setLastResult(undefined);
+        setLastResult(result);
         return result;
       } catch (e) {
         const err = e instanceof Error ? e : new Error(String(e));

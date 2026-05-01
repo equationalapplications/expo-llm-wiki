@@ -279,33 +279,38 @@ export class WikiMemory {
   }
 
   async setup() {
-    await setupDatabase(this.db, this.prefix);
-
-    // Determine current schema version
-    const entriesTable = await this.db.getFirstAsync<{ name: string }>(
+    // Probe entries-table existence BEFORE creating any tables.  setupDatabase()
+    // uses IF NOT EXISTS throughout, so once it has run the entries table always
+    // exists and the fresh-install branch would be unreachable.  Future migrations
+    // that ALTER TABLE would also fail if run against a schema already at the
+    // target version but inferred as legacy because the probe ran too late.
+    const entriesExistedBeforeSetup = await this.db.getFirstAsync<{ name: string }>(
       `SELECT name FROM sqlite_master WHERE type='table' AND name=?`,
       [`${this.prefix}entries`]
     );
 
+    await setupDatabase(this.db, this.prefix);
+
     let currentVersion: number;
 
-    if (!entriesTable) {
-      // Fresh install — write current version, no migrations needed
+    if (!entriesExistedBeforeSetup) {
+      // Fresh install — all tables just created at current schema; no migrations needed.
       await this.db.runAsync(
         `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('schema_version', ?)`,
         [String(CURRENT_SCHEMA_VERSION)]
       );
       currentVersion = CURRENT_SCHEMA_VERSION;
     } else {
-      // Existing install — read version from meta
+      // Existing install — check meta for schema version.
       const metaRow = await this.db.getFirstAsync<{ value: string }>(
         `SELECT value FROM ${this.prefix}meta WHERE key = 'schema_version'`
       );
 
       if (metaRow) {
         currentVersion = parseInt(metaRow.value, 10);
+        if (!Number.isFinite(currentVersion)) currentVersion = 0;
       } else {
-        // Legacy install without meta row — infer version from porter probe
+        // Legacy install without meta row — infer version from porter probe.
         const ftsMeta = await this.db.getFirstAsync<{ sql: string | null }>(
           `SELECT sql FROM sqlite_master WHERE type='table' AND name=?`,
           [`${this.prefix}entries_fts`]
@@ -315,7 +320,7 @@ export class WikiMemory {
       }
     }
 
-    // Run pending migrations in order
+    // Run pending migrations in order.
     for (const migration of MIGRATIONS) {
       if (migration.version > currentVersion) {
         await migration.run(this.db, this.prefix);
@@ -327,12 +332,13 @@ export class WikiMemory {
       }
     }
 
-    // Write version if not yet written (legacy with porter already at version 1)
-    if (entriesTable) {
-      const metaRow = await this.db.getFirstAsync<{ value: string }>(
+    // Ensure meta row exists for legacy installs already at current version
+    // (porter present, no meta row) — the migration loop may not have written it.
+    if (entriesExistedBeforeSetup) {
+      const metaCheck = await this.db.getFirstAsync<{ value: string }>(
         `SELECT value FROM ${this.prefix}meta WHERE key = 'schema_version'`
       );
-      if (!metaRow) {
+      if (!metaCheck) {
         await this.db.runAsync(
           `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('schema_version', ?)`,
           [String(currentVersion)]
@@ -404,7 +410,19 @@ export class WikiMemory {
     }
   ): Promise<{ entries: number; tasks: number; events: number }> {
     const pruneKey = this._pruneKey(entityId);
-    if (this.activeMaintenanceJobs.has(pruneKey)) {
+    // Prune must not run concurrently with librarian, heal, ingest, or another
+    // prune for the same entity.
+    const ingestPrefix = `${this.prefix}:${entityId}:`;
+    let isIngestRunning = false;
+    for (const k of this.activeIngestJobs) {
+      if (k.startsWith(ingestPrefix)) { isIngestRunning = true; break; }
+    }
+    if (
+      this.activeMaintenanceJobs.has(pruneKey) ||
+      this.activeMaintenanceJobs.has(this._librarianKey(entityId)) ||
+      this.activeMaintenanceJobs.has(this._healKey(entityId)) ||
+      isIngestRunning
+    ) {
       throw new WikiBusyError('prune', entityId);
     }
     this.activeMaintenanceJobs.add(pruneKey);
@@ -424,50 +442,29 @@ export class WikiMemory {
 
       if (retainSoftDeletedFor !== null) {
         const cutoff = now - retainSoftDeletedFor * 86400000;
-        const entryRow = await this.db.getFirstAsync<{ count: number }>(
-          `SELECT COUNT(*) as count FROM ${this.prefix}entries
+        const entryResult = await this.db.runAsync(
+          `DELETE FROM ${this.prefix}entries
            WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`,
           [entityId, cutoff]
         );
-        deletedEntries = entryRow?.count ?? 0;
-        if (deletedEntries > 0) {
-          await this.db.runAsync(
-            `DELETE FROM ${this.prefix}entries
-             WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`,
-            [entityId, cutoff]
-          );
-        }
+        deletedEntries = entryResult.changes;
 
-        const taskRow = await this.db.getFirstAsync<{ count: number }>(
-          `SELECT COUNT(*) as count FROM ${this.prefix}tasks
+        const taskResult = await this.db.runAsync(
+          `DELETE FROM ${this.prefix}tasks
            WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`,
           [entityId, cutoff]
         );
-        deletedTasks = taskRow?.count ?? 0;
-        if (deletedTasks > 0) {
-          await this.db.runAsync(
-            `DELETE FROM ${this.prefix}tasks
-             WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`,
-            [entityId, cutoff]
-          );
-        }
+        deletedTasks = taskResult.changes;
       }
 
       if (retainEventsFor !== null) {
         const cutoff = now - retainEventsFor * 86400000;
-        const eventRow = await this.db.getFirstAsync<{ count: number }>(
-          `SELECT COUNT(*) as count FROM ${this.prefix}events
+        const eventResult = await this.db.runAsync(
+          `DELETE FROM ${this.prefix}events
            WHERE entity_id = ? AND created_at < ?`,
           [entityId, cutoff]
         );
-        deletedEvents = eventRow?.count ?? 0;
-        if (deletedEvents > 0) {
-          await this.db.runAsync(
-            `DELETE FROM ${this.prefix}events
-             WHERE entity_id = ? AND created_at < ?`,
-            [entityId, cutoff]
-          );
-        }
+        deletedEvents = eventResult.changes;
       }
 
       if (vacuum) {
@@ -612,7 +609,10 @@ export class WikiMemory {
 
     if (count - memoryCheckpoint >= threshold) {
       const jobKey = this._librarianKey(entityId);
-      if (!this.activeMaintenanceJobs.has(jobKey)) {
+      if (
+        !this.activeMaintenanceJobs.has(jobKey) &&
+        !this.activeMaintenanceJobs.has(this._pruneKey(entityId))
+      ) {
         this.activeMaintenanceJobs.add(jobKey);
         this.runLibrarianThenMaybeHeal(entityId, count)
           .catch(console.error)
@@ -805,7 +805,10 @@ export class WikiMemory {
 
   async runLibrarian(entityId: string): Promise<void> {
     const jobKey = this._librarianKey(entityId);
-    if (this.activeMaintenanceJobs.has(jobKey)) {
+    if (
+      this.activeMaintenanceJobs.has(jobKey) ||
+      this.activeMaintenanceJobs.has(this._pruneKey(entityId))
+    ) {
       throw new WikiBusyError('librarian', entityId);
     }
     this.activeMaintenanceJobs.add(jobKey);
@@ -818,7 +821,10 @@ export class WikiMemory {
 
   async runHeal(entityId: string): Promise<void> {
     const jobKey = this._healKey(entityId);
-    if (this.activeMaintenanceJobs.has(jobKey)) {
+    if (
+      this.activeMaintenanceJobs.has(jobKey) ||
+      this.activeMaintenanceJobs.has(this._pruneKey(entityId))
+    ) {
       throw new WikiBusyError('heal', entityId);
     }
     this.activeMaintenanceJobs.add(jobKey);
@@ -1115,7 +1121,10 @@ export class WikiMemory {
     }
 
     const jobKey = `${this.prefix}:${entityId}:${sourceRef}`;
-    if (this.activeIngestJobs.has(jobKey)) {
+    if (
+      this.activeIngestJobs.has(jobKey) ||
+      this.activeMaintenanceJobs.has(this._pruneKey(entityId))
+    ) {
       throw new WikiBusyError('ingest', entityId);
     }
     this.activeIngestJobs.add(jobKey);

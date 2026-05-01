@@ -77,6 +77,9 @@ describe('formatContext', () => {
     const result = formatContext(bundle, { format: 'plain' });
     expect(result).not.toMatch(/^#{1,6} /m);
     expect(result).not.toContain('**');
+    expect(result).toContain('KNOWN FACTS:');
+    expect(result).toContain('OPEN TASKS:');
+    expect(result).toContain('RECENT EVENTS:');
   });
 
   it('plain format still contains fact title and body', () => {
