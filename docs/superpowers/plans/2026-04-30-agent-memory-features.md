@@ -345,6 +345,46 @@ describe('FTS5 porter upgrade migration', () => {
     const result = await wiki.read('user-1', 'running');
     expect(result.facts.length).toBeGreaterThan(0);
   });
+
+  it('does not skip rebuild when tablePrefix contains the substring "porter"', async () => {
+    const db = openTestDatabase();
+    const prefix = 'my_porter_';
+
+    // Simulate pre-porter install with a colliding prefix.
+    await db.execAsync(`
+      CREATE TABLE ${prefix}entries (
+        id TEXT PRIMARY KEY, entity_id TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL,
+        tags TEXT NOT NULL DEFAULT '[]', confidence TEXT NOT NULL DEFAULT 'inferred',
+        source_type TEXT NOT NULL DEFAULT 'agent_inferred', source_hash TEXT, source_ref TEXT,
+        created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+        last_accessed_at INTEGER, access_count INTEGER NOT NULL DEFAULT 0, deleted_at INTEGER
+      );
+      CREATE VIRTUAL TABLE ${prefix}entries_fts USING fts5(
+        title, body, tags, content='${prefix}entries', content_rowid='rowid'
+      );
+      CREATE TRIGGER ${prefix}entries_ai AFTER INSERT ON ${prefix}entries BEGIN
+        INSERT INTO ${prefix}entries_fts(rowid, title, body, tags) VALUES (new.rowid, new.title, new.body, new.tags);
+      END;
+    `);
+    const now = Date.now();
+    await db.runAsync(
+      `INSERT INTO ${prefix}entries (id, entity_id, title, body, tags, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ['f1', 'user-1', 'Routine', 'User runs every morning', '[]', now, now]
+    );
+
+    const wiki = new WikiMemory(db, { llmProvider, config: { tablePrefix: 'my_porter_' } });
+    await wiki.setup();
+
+    const meta = await db.getFirstAsync<{ sql: string }>(
+      `SELECT sql FROM sqlite_master WHERE type='table' AND name=?`,
+      [`${prefix}entries_fts`]
+    );
+    // Must match the tokenize clause, not just the prefix substring.
+    expect(meta?.sql).toMatch(/tokenize\s*=\s*['"]porter\s+unicode61['"]/i);
+
+    const result = await wiki.read('user-1', 'running');
+    expect(result.facts.length).toBeGreaterThan(0);
+  });
 });
 ```
 
@@ -365,7 +405,8 @@ In `src/WikiMemory.ts`, inside `async setup()` after `await setupDatabase(this.d
       `SELECT sql FROM sqlite_master WHERE type='table' AND name=?`,
       [`${this.prefix}entries_fts`]
     );
-    if (ftsMeta?.sql && !ftsMeta.sql.includes('porter')) {
+    const hasPorterTokenizer = /tokenize\s*=\s*['"]porter\s+unicode61['"]/i.test(ftsMeta?.sql ?? '');
+    if (ftsMeta?.sql && !hasPorterTokenizer) {
       // Whole rebuild sequence runs in a single transaction so a failure
       // cannot leave the FTS5 table missing or unindexed.
       await this.db.withTransactionAsync(async () => {

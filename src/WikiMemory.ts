@@ -285,7 +285,8 @@ export class WikiMemory {
       `SELECT sql FROM sqlite_master WHERE type='table' AND name=?`,
       [`${this.prefix}entries_fts`]
     );
-    if (ftsMeta?.sql && !ftsMeta.sql.includes('porter')) {
+    const hasPorterTokenizer = /tokenize\s*=\s*['"]porter\s+unicode61['"]/i.test(ftsMeta?.sql ?? '');
+    if (ftsMeta?.sql && !hasPorterTokenizer) {
       // Whole rebuild sequence runs in a single transaction so a failure
       // cannot leave the FTS5 table missing or unindexed.
       await this.db.withTransactionAsync(async () => {
