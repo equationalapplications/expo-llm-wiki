@@ -82,5 +82,10 @@ export async function setupDatabase(db: SQLite.SQLiteDatabase, prefix: string) {
       heal_checkpoint INTEGER NOT NULL DEFAULT 0,
       memory_checkpoint INTEGER NOT NULL DEFAULT 0
     );
+
+    CREATE TABLE IF NOT EXISTS ${prefix}meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `);
 }

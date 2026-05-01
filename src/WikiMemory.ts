@@ -1,5 +1,6 @@
 import * as SQLite from 'expo-sqlite';
 import { setupDatabase } from './db/schema';
+import { MIGRATIONS, CURRENT_SCHEMA_VERSION } from './db/migrations';
 import { WikiOptions, MemoryBundle, MemoryDump, WikiEvent, WikiFact, WikiTask, WikiCheckpoint, ExtractedFact, ExtractedTask, WikiBusyError, EntityStatus } from './types';
 import { LIBRARIAN_SYSTEM_PROMPT, HEAL_SYSTEM_PROMPT, INGEST_SYSTEM_PROMPT } from './prompts';
 
@@ -278,49 +279,63 @@ export class WikiMemory {
   async setup() {
     await setupDatabase(this.db, this.prefix);
 
-    // FTS5 porter migration: pre-porter installs have an FTS5 table without
-    // tokenize='porter unicode61'. CREATE VIRTUAL TABLE IF NOT EXISTS is a
-    // no-op when the table already exists, so we must explicitly rebuild.
-    const ftsMeta = await this.db.getFirstAsync<{ sql: string | null }>(
-      `SELECT sql FROM sqlite_master WHERE type='table' AND name=?`,
-      [`${this.prefix}entries_fts`]
+    // Determine current schema version
+    const entriesTable = await this.db.getFirstAsync<{ name: string }>(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name=?`,
+      [`${this.prefix}entries`]
     );
-    const hasPorterTokenizer = /tokenize\s*=\s*['"]porter\s+unicode61['"]/i.test(ftsMeta?.sql ?? '');
-    if (ftsMeta?.sql && !hasPorterTokenizer) {
-      // Whole rebuild sequence runs in a single transaction so a failure
-      // cannot leave the FTS5 table missing or unindexed.
-      await this.db.withTransactionAsync(async () => {
-        await this.db.execAsync(`
-          DROP TRIGGER IF EXISTS ${this.prefix}entries_ai;
-          DROP TRIGGER IF EXISTS ${this.prefix}entries_ad;
-          DROP TRIGGER IF EXISTS ${this.prefix}entries_au;
-          DROP TABLE IF EXISTS ${this.prefix}entries_fts;
-          CREATE VIRTUAL TABLE ${this.prefix}entries_fts USING fts5(
-            title,
-            body,
-            tags,
-            content='${this.prefix}entries',
-            content_rowid='rowid',
-            tokenize='porter unicode61'
-          );
-          INSERT INTO ${this.prefix}entries_fts(rowid, title, body, tags)
-            SELECT rowid, title, body, tags FROM ${this.prefix}entries;
-          CREATE TRIGGER ${this.prefix}entries_ai AFTER INSERT ON ${this.prefix}entries BEGIN
-            INSERT INTO ${this.prefix}entries_fts(rowid, title, body, tags)
-            VALUES (new.rowid, new.title, new.body, new.tags);
-          END;
-          CREATE TRIGGER ${this.prefix}entries_ad AFTER DELETE ON ${this.prefix}entries BEGIN
-            INSERT INTO ${this.prefix}entries_fts(${this.prefix}entries_fts, rowid, title, body, tags)
-            VALUES ('delete', old.rowid, old.title, old.body, old.tags);
-          END;
-          CREATE TRIGGER ${this.prefix}entries_au AFTER UPDATE ON ${this.prefix}entries BEGIN
-            INSERT INTO ${this.prefix}entries_fts(${this.prefix}entries_fts, rowid, title, body, tags)
-            VALUES ('delete', old.rowid, old.title, old.body, old.tags);
-            INSERT INTO ${this.prefix}entries_fts(rowid, title, body, tags)
-            VALUES (new.rowid, new.title, new.body, new.tags);
-          END;
-        `);
-      });
+
+    let currentVersion: number;
+
+    if (!entriesTable) {
+      // Fresh install — write current version, no migrations needed
+      await this.db.runAsync(
+        `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('schema_version', ?)`,
+        [String(CURRENT_SCHEMA_VERSION)]
+      );
+      currentVersion = CURRENT_SCHEMA_VERSION;
+    } else {
+      // Existing install — read version from meta
+      const metaRow = await this.db.getFirstAsync<{ value: string }>(
+        `SELECT value FROM ${this.prefix}meta WHERE key = 'schema_version'`
+      );
+
+      if (metaRow) {
+        currentVersion = parseInt(metaRow.value, 10);
+      } else {
+        // Legacy install without meta row — infer version from porter probe
+        const ftsMeta = await this.db.getFirstAsync<{ sql: string | null }>(
+          `SELECT sql FROM sqlite_master WHERE type='table' AND name=?`,
+          [`${this.prefix}entries_fts`]
+        );
+        const hasPorter = /tokenize\s*=\s*['"]porter\s+unicode61['"]/i.test(ftsMeta?.sql ?? '');
+        currentVersion = hasPorter ? 1 : 0;
+      }
+    }
+
+    // Run pending migrations in order
+    for (const migration of MIGRATIONS) {
+      if (migration.version > currentVersion) {
+        await migration.run(this.db, this.prefix);
+        await this.db.runAsync(
+          `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('schema_version', ?)`,
+          [String(migration.version)]
+        );
+        currentVersion = migration.version;
+      }
+    }
+
+    // Write version if not yet written (legacy with porter already at version 1)
+    if (entriesTable) {
+      const metaRow = await this.db.getFirstAsync<{ value: string }>(
+        `SELECT value FROM ${this.prefix}meta WHERE key = 'schema_version'`
+      );
+      if (!metaRow) {
+        await this.db.runAsync(
+          `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('schema_version', ?)`,
+          [String(currentVersion)]
+        );
+      }
     }
 
     // Migration: normalize any existing source_ref values that were stored before the
