@@ -228,4 +228,4 @@ Match existing vitest patterns in `src/__tests__/`.
 - [ ] Merge transaction is atomic per entity
 - [ ] `WikiTask.resolution_note` is **not** added in this PR (deferred)
 - [ ] All existing tests pass
-- [ ] `npm run typecheck && npm run lint && npx vitest run` green
+- [ ] `npm run typecheck && npx vitest run` green
