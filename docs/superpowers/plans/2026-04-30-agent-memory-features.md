@@ -233,12 +233,12 @@ describe('FTS5 porter stemmer', () => {
     expect(result.facts[0].body).toContain('runs');
   });
 
-  it('matches past tense (ran → runs)', async () => {
+  it('matches base form (run → runs)', async () => {
     await wiki.importDump({
       generatedAt: Date.now(),
       entities: { 'user-1': { facts: [makeFact({ id: 'f1', title: 'Routine', body: 'User runs every morning' })], tasks: [], events: [] } },
     });
-    const result = await wiki.read('user-1', 'ran');
+    const result = await wiki.read('user-1', 'run');
     expect(result.facts.length).toBeGreaterThan(0);
   });
 });
@@ -247,7 +247,7 @@ describe('FTS5 porter stemmer', () => {
 - [ ] **Step 2: Run test, confirm fails**
 
 Run: `npx vitest run src/__tests__/porterStemmer.test.ts`
-Expected: FAIL — `running` and `ran` do not match `runs` (no porter tokenizer yet).
+Expected: FAIL — `running` and `run` do not match `runs` (no porter tokenizer yet). Note: `ran` (irregular past tense) is not handled by Porter — use `run` (base form) for the second test case.
 
 - [ ] **Step 3: Add porter tokenizer to schema**
 
