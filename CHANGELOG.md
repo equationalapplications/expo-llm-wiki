@@ -1,3 +1,30 @@
+# [2.1.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v2.0.2...v2.1.0) (2026-05-01)
+
+
+### Bug Fixes
+
+* align FTS rebuild to match trigger behavior; drop lint from plan; clean imports ([e7ed13f](https://github.com/equationalapplications/expo-llm-wiki/commit/e7ed13fa083fd9931651b1b602a73c12bf72eaa6))
+* **import:** deduplicate synonym values; batch-load updated_at for LWW; cache after write for intra-bundle dupes ([23d3004](https://github.com/equationalapplications/expo-llm-wiki/commit/23d300434fdad9ae770e0edd9514b20571fa68ef))
+* **import:** guard LWW updated_at against NaN/non-finite; add regression tests ([84ce5e9](https://github.com/equationalapplications/expo-llm-wiki/commit/84ce5e96d76c6129f8eb753a22cddee98599394b))
+* normalize updated_at once per row; persist safe value (0) not NaN to DB ([5de01b3](https://github.com/equationalapplications/expo-llm-wiki/commit/5de01b32a53bc0fd766e622f165c9bb28678d733))
+* sanitize synonym values via normalizeTokens; guard with Array.isArray and typeof string ([f8de488](https://github.com/equationalapplications/expo-llm-wiki/commit/f8de488fc868f65e13ebc28000f0eb225e7be1e6))
+* **setup:** use regex for porter tokenizer detection to prevent false positives ([3a076c1](https://github.com/equationalapplications/expo-llm-wiki/commit/3a076c13f140af5a9a96fa7bdf71de86243b0375))
+
+
+### Features
+
+* **fts:** add porter tokenizer to entries_fts ([8e03fa7](https://github.com/equationalapplications/expo-llm-wiki/commit/8e03fa760e4a656b2b101d5ebe8ede7e52786817))
+* **import:** row-level LWW merge for facts and tasks by updated_at; lock event append-only dedup contract ([7a8b77e](https://github.com/equationalapplications/expo-llm-wiki/commit/7a8b77e0d5ef5f874d5e72545fc941a3912a0226))
+* **search:** synonymMap expansion with 12-token cap ([c2a877a](https://github.com/equationalapplications/expo-llm-wiki/commit/c2a877aab335843f56c6d16f3e4ba375e7bd3614))
+* **setup:** rebuild pre-porter FTS5 table inside transaction ([aac7e8b](https://github.com/equationalapplications/expo-llm-wiki/commit/aac7e8bbceac884cc24129d96fb83e13eb2e40fd))
+* **types:** add WikiConfig.synonymMap ([fde85e8](https://github.com/equationalapplications/expo-llm-wiki/commit/fde85e8f37213109314937e60d200726e45f3075))
+
+
+### Performance Improvements
+
+* break synonym inner loop when pushNormalized returns false (cap reached) ([2b2b7f0](https://github.com/equationalapplications/expo-llm-wiki/commit/2b2b7f029b17a84e88a82b60348d3a904b3c2f9a))
+* use pushNormalized return value to skip synonym lookup when cap reached ([b8d21f9](https://github.com/equationalapplications/expo-llm-wiki/commit/b8d21f9b9ec74fefff8e5e334d49af4d10384184))
+
 ## [2.0.2](https://github.com/equationalapplications/expo-llm-wiki/compare/v2.0.1...v2.0.2) (2026-04-30)
 
 
