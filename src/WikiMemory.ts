@@ -277,6 +277,51 @@ export class WikiMemory {
 
   async setup() {
     await setupDatabase(this.db, this.prefix);
+
+    // FTS5 porter migration: pre-porter installs have an FTS5 table without
+    // tokenize='porter unicode61'. CREATE VIRTUAL TABLE IF NOT EXISTS is a
+    // no-op when the table already exists, so we must explicitly rebuild.
+    const ftsMeta = await this.db.getFirstAsync<{ sql: string | null }>(
+      `SELECT sql FROM sqlite_master WHERE type='table' AND name=?`,
+      [`${this.prefix}entries_fts`]
+    );
+    if (ftsMeta?.sql && !ftsMeta.sql.includes('porter')) {
+      // Whole rebuild sequence runs in a single transaction so a failure
+      // cannot leave the FTS5 table missing or unindexed.
+      await this.db.withTransactionAsync(async () => {
+        await this.db.execAsync(`
+          DROP TRIGGER IF EXISTS ${this.prefix}entries_ai;
+          DROP TRIGGER IF EXISTS ${this.prefix}entries_ad;
+          DROP TRIGGER IF EXISTS ${this.prefix}entries_au;
+          DROP TABLE IF EXISTS ${this.prefix}entries_fts;
+          CREATE VIRTUAL TABLE ${this.prefix}entries_fts USING fts5(
+            title,
+            body,
+            tags,
+            content='${this.prefix}entries',
+            content_rowid='rowid',
+            tokenize='porter unicode61'
+          );
+          INSERT INTO ${this.prefix}entries_fts(rowid, title, body, tags)
+            SELECT rowid, title, body, tags FROM ${this.prefix}entries WHERE deleted_at IS NULL;
+          CREATE TRIGGER ${this.prefix}entries_ai AFTER INSERT ON ${this.prefix}entries BEGIN
+            INSERT INTO ${this.prefix}entries_fts(rowid, title, body, tags)
+            VALUES (new.rowid, new.title, new.body, new.tags);
+          END;
+          CREATE TRIGGER ${this.prefix}entries_ad AFTER DELETE ON ${this.prefix}entries BEGIN
+            INSERT INTO ${this.prefix}entries_fts(${this.prefix}entries_fts, rowid, title, body, tags)
+            VALUES ('delete', old.rowid, old.title, old.body, old.tags);
+          END;
+          CREATE TRIGGER ${this.prefix}entries_au AFTER UPDATE ON ${this.prefix}entries BEGIN
+            INSERT INTO ${this.prefix}entries_fts(${this.prefix}entries_fts, rowid, title, body, tags)
+            VALUES ('delete', old.rowid, old.title, old.body, old.tags);
+            INSERT INTO ${this.prefix}entries_fts(rowid, title, body, tags)
+            VALUES (new.rowid, new.title, new.body, new.tags);
+          END;
+        `);
+      });
+    }
+
     // Migration: normalize any existing source_ref values that were stored before the
     // allowlist rule ([^A-Za-z0-9._\- ] → strip) was introduced.  Read-then-update in
     // JS so the normalization is guaranteed to match what normalizeSourceRef() produces,
@@ -311,9 +356,37 @@ export class WikiMemory {
   }
 
   private formatSearchQuery(query: string): string {
-    const tokens = query.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(t => t.length >= 3).slice(0, 6);
-    if (tokens.length === 0) return '';
-    return tokens.map(t => `"${t}"*`).join(' OR ');
+    const baseTokens = query
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, '')
+      .split(/\s+/)
+      .filter(t => t.length >= 3);
+    if (baseTokens.length === 0) return '';
+
+    const synonymMap = this.options.config?.synonymMap;
+    const expanded: string[] = [];
+    const seen = new Set<string>();
+    const push = (t: string) => {
+      const lc = t.toLowerCase();
+      if (seen.has(lc)) return;
+      seen.add(lc);
+      expanded.push(lc);
+    };
+
+    for (const t of baseTokens) {
+      push(t);
+      if (synonymMap) {
+        const synonyms = synonymMap[t];
+        if (synonyms) {
+          for (const s of synonyms) {
+            push(s);
+          }
+        }
+      }
+    }
+
+    const capped = expanded.slice(0, 12);
+    return capped.map(t => `"${t}"*`).join(' OR ');
   }
 
   async read(entityId: string, query: string): Promise<MemoryBundle> {
@@ -742,8 +815,15 @@ export class WikiMemory {
               this._warnCrossEntityCollision('entry', fact.id, existing.entity_id, entityId);
               continue;
             }
-            if (merge) continue; // merge mode: preserve all existing data for this id (even if soft-deleted)
-            // replace mode: update the existing row (restores if soft-deleted)
+            if (merge) {
+              // LWW: incoming wins only if its updated_at is strictly newer than local.
+              const localRow = await this.db.getFirstAsync<{ updated_at: number }>(
+                `SELECT updated_at FROM ${this.prefix}entries WHERE id = ?`,
+                [fact.id]
+              );
+              if (!localRow || fact.updated_at <= localRow.updated_at) continue;
+            }
+            // replace mode (or merge LWW winner): update the existing row (restores if soft-deleted)
             await this.db.runAsync(
               `UPDATE ${this.prefix}entries SET entity_id = ?, title = ?, body = ?, tags = ?, confidence = ?, source_type = ?, source_hash = ?, source_ref = ?, created_at = ?, updated_at = ?, last_accessed_at = ?, access_count = ?, deleted_at = ? WHERE id = ?`,
               [entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, fact.updated_at, fact.last_accessed_at, fact.access_count, fact.deleted_at, fact.id]
@@ -782,8 +862,14 @@ export class WikiMemory {
               this._warnCrossEntityCollision('task', task.id, existing.entity_id, entityId);
               continue;
             }
-            if (merge) continue; // merge mode: preserve all existing data for this id (even if soft-deleted)
-            // replace mode: update the existing row (restores if soft-deleted)
+            if (merge) {
+              const localRow = await this.db.getFirstAsync<{ updated_at: number }>(
+                `SELECT updated_at FROM ${this.prefix}tasks WHERE id = ?`,
+                [task.id]
+              );
+              if (!localRow || task.updated_at <= localRow.updated_at) continue;
+            }
+            // replace mode (or merge LWW winner): update the existing row (restores if soft-deleted)
             await this.db.runAsync(
               `UPDATE ${this.prefix}tasks SET entity_id = ?, description = ?, status = ?, priority = ?, created_at = ?, updated_at = ?, resolved_at = ?, deleted_at = ? WHERE id = ?`,
               [entityId, task.description, task.status, task.priority, task.created_at, task.updated_at, task.resolved_at, task.deleted_at, task.id]
