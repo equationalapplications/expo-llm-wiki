@@ -11,8 +11,11 @@ export interface WikiConfig {
   chunkConcurrency?: number;
   /**
    * Static caller-supplied synonym expansions applied at query time.
-   * Keys must be lowercase (lookup is performed after the query is lowercased).
-   * Values are appended to the FTS5 query token list, deduped, and sliced to 12.
+   * Keys must match the same normalization pipeline used by query formatting:
+   * the query is lowercased, stripped to `[a-z0-9 ]`, split into tokens, and
+   * only tokens with length >= 3 are considered for synonym lookup.
+   * Values are appended to the FTS5 query token list (multi-word values are
+   * split into tokens), then deduped and sliced to 12.
    */
   synonymMap?: Record<string, string[]>;
 }
