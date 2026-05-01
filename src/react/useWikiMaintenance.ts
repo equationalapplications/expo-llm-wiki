@@ -9,7 +9,7 @@ export function useWikiMaintenance() {
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [lastResult, setLastResult] = useState<{ entries: number; tasks: number; events: number } | void | null>(null);
-  // Counter so either operation keeping isPending=true keeps it set
+  // Counter so any overlapping maintenance operation keeps isPending=true until all complete
   const pendingCount = useRef(0);
 
   const runLibrarian = useCallback(async (entityId: string): Promise<void> => {
