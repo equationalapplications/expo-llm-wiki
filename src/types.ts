@@ -2,6 +2,7 @@ export interface WikiConfig {
   tablePrefix?: string;
   maxFtsResults?: number;
   pruneEventsAfter?: number;
+  pruneRetainSoftDeletedFor?: number;
   autoLibrarianThreshold?: number;
   autoHealThreshold?: number;
   orphanAfterDays?: number | null;
@@ -105,6 +106,20 @@ export interface FormattedMemoryDump {
   files: Array<{ name: string; content: string }>;
 }
 
+export interface FormatContextOptions {
+  format?: 'markdown' | 'plain';
+  maxFacts?: number;
+  maxTasks?: number;
+  maxEvents?: number;
+  includeConfidence?: boolean;
+  includeTags?: boolean;
+  factWeights?: {
+    confidence?: number;
+    accessCount?: number;
+    recency?: number;
+  };
+}
+
 export interface EntityStatus {
   ingesting: boolean;
   librarian: boolean;
@@ -112,10 +127,10 @@ export interface EntityStatus {
 }
 
 export class WikiBusyError extends Error {
-  readonly operation: 'ingest' | 'librarian' | 'heal';
+  readonly operation: 'ingest' | 'librarian' | 'heal' | 'prune';
   readonly entityId: string;
 
-  constructor(operation: 'ingest' | 'librarian' | 'heal', entityId: string) {
+  constructor(operation: 'ingest' | 'librarian' | 'heal' | 'prune', entityId: string) {
     super(`${operation} already running for entity ${entityId}`);
     this.name = 'WikiBusyError';
     this.operation = operation;
