@@ -364,7 +364,7 @@ if (lastResult?.operation === 'prune') {
 The exported `MaintenanceResult` type can be imported for typed consumers:
 
 ```typescript
-import type { MaintenanceResult } from 'expo-llm-wiki/react/useWikiMaintenance';
+import type { MaintenanceResult } from 'expo-llm-wiki/react';
 ```
 
 All mutation hooks follow the same pattern (`TResult` is specific per hook):
