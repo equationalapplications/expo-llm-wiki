@@ -108,7 +108,7 @@ const wiki = createWiki(db, {
   },
 });
 ```
-Query `"how was your jog today?"` → tokens `['jog', 'today']` → no synonym for `today`; `jog` has no entry so it stays. Query `"how was your run?"` → tokens `['run']` → synonymMap expands to `['run', 'jog', 'sprint']` → FTS5 matches all three. (Porter additionally matches `running`, `ran`, etc. without synonyms.)
+Query `"how was your jog today?"` → tokens `['jog', 'today']` → no synonym for `today`; `jog` has no entry so it stays. Query `"how was your run?"` → tokens `['run']` → synonymMap expands to `['run', 'jog', 'sprint']` → FTS5 matches all three. (Porter additionally matches forms like `running` without synonyms, but irregular forms such as `ran` are not covered.)
 
 **No DB writes.** No migration. Purely in-memory expansion at query time. Caller can pass `undefined` (no expansion; existing behavior).
 
