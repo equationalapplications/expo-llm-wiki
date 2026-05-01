@@ -94,16 +94,16 @@ vi.mock('expo-sqlite', () => {
         return [] as T[];
       }
 
-      if (normalized.startsWith('SELECT id, entity_id FROM') && normalized.includes('entries WHERE id IN')) {
+      if (normalized.startsWith('SELECT id, entity_id') && normalized.includes('entries WHERE id IN')) {
         return this.entries
           .filter((e) => args.includes(e.id))
-          .map((e) => ({ id: e.id, entity_id: e.entity_id })) as T[];
+          .map((e) => ({ id: e.id, entity_id: e.entity_id, updated_at: e.updated_at })) as T[];
       }
 
-      if (normalized.startsWith('SELECT id, entity_id FROM') && normalized.includes('tasks WHERE id IN')) {
+      if (normalized.startsWith('SELECT id, entity_id') && normalized.includes('tasks WHERE id IN')) {
         return this.tasks
           .filter((t) => args.includes(t.id))
-          .map((t) => ({ id: t.id, entity_id: t.entity_id })) as T[];
+          .map((t) => ({ id: t.id, entity_id: t.entity_id, updated_at: t.updated_at })) as T[];
       }
 
       if (normalized.startsWith('SELECT DISTINCT entity_id FROM (')) {
