@@ -29,7 +29,7 @@ function renderFactMarkdown(
   const confPart = includeConfidence ? ` (${fact.confidence})` : '';
   const tagPart =
     includeTags && fact.tags.length > 0 ? ` [${fact.tags.join(', ')}]` : '';
-  return `- **${fact.title}**${confPart}${tagPart}\n  ${fact.body}`;
+  return `- **${fact.title}**${confPart}${tagPart}\n  ${fact.body.replace(/\n/g, '\n  ')}`;
 }
 
 function renderFactPlain(
@@ -44,7 +44,7 @@ function renderFactPlain(
 }
 
 function renderTaskMarkdown(task: WikiTask): string {
-  return `- [P${task.priority}] ${task.description} (${task.status})`;
+  return `- [P${task.priority}] ${task.description.replace(/\n/g, '\n  ')} (${task.status})`;
 }
 
 function renderTaskPlain(task: WikiTask): string {
@@ -53,7 +53,7 @@ function renderTaskPlain(task: WikiTask): string {
 
 function renderEventMarkdown(event: WikiEvent): string {
   const ts = new Date(event.created_at).toISOString();
-  return `- [${event.event_type} @ ${ts}] ${event.summary}`;
+  return `- [${event.event_type} @ ${ts}] ${event.summary.replace(/\n/g, '\n  ')}`;
 }
 
 function renderEventPlain(event: WikiEvent): string {

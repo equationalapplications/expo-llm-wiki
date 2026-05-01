@@ -226,6 +226,40 @@ describe('formatContext', () => {
     expect(hp2).toBeLessThan(lp);
   });
 
+  it('multi-line fact body indents continuation lines in markdown', () => {
+    const bundle: MemoryBundle = {
+      facts: [makeFact({ body: 'Line one\nLine two\nLine three' })],
+      tasks: [],
+      events: [],
+    };
+    const result = formatContext(bundle);
+    expect(result).toContain('  Line two');
+    expect(result).toContain('  Line three');
+    expect(result).not.toMatch(/^Line two/m);
+  });
+
+  it('multi-line task description indents continuation lines in markdown', () => {
+    const bundle: MemoryBundle = {
+      facts: [],
+      tasks: [makeTask({ description: 'Do this\nAnd also this' })],
+      events: [],
+    };
+    const result = formatContext(bundle);
+    expect(result).toContain('  And also this');
+    expect(result).not.toMatch(/^And also this/m);
+  });
+
+  it('multi-line event summary indents continuation lines in markdown', () => {
+    const bundle: MemoryBundle = {
+      facts: [],
+      tasks: [],
+      events: [makeEvent({ summary: 'First line\nSecond line' })],
+    };
+    const result = formatContext(bundle);
+    expect(result).toContain('  Second line');
+    expect(result).not.toMatch(/^Second line/m);
+  });
+
   it('custom weight overrides change ranking', () => {
     const now = Date.now();
     // With accessCount weight = 10, a high-access inferred fact beats a certain fact
