@@ -396,7 +396,8 @@ export class WikiMemory {
       [entityId, normalizedRef]
     );
     if (!row) return true;
-    return row.source_hash !== normalizedHash;
+    const normalizedStoredHash = row.source_hash ? normalizeSourceHash(row.source_hash) : null;
+    return normalizedStoredHash !== normalizedHash;
   }
 
   private _pruneKey(entityId: string) { return `${this.prefix}:${entityId}:prune`; }
