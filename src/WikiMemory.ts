@@ -356,31 +356,36 @@ export class WikiMemory {
   }
 
   private formatSearchQuery(query: string): string {
-    const baseTokens = query
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, '')
-      .split(/\s+/)
-      .filter(t => t.length >= 3);
+    const normalizeTokens = (value: string): string[] =>
+      value
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, '')
+        .split(/\s+/)
+        .filter(t => t.length >= 3);
+
+    const baseTokens = normalizeTokens(query);
     if (baseTokens.length === 0) return '';
 
     const synonymMap = this.options.config?.synonymMap;
     const expanded: string[] = [];
     const seen = new Set<string>();
-    const push = (t: string) => {
-      const lc = t.toLowerCase();
-      if (lc.length < 3) return;
-      if (seen.has(lc)) return;
-      seen.add(lc);
-      expanded.push(lc);
+    const pushNormalized = (value: string) => {
+      for (const token of normalizeTokens(value)) {
+        if (seen.has(token)) continue;
+        seen.add(token);
+        expanded.push(token);
+      }
     };
 
     for (const t of baseTokens) {
-      push(t);
+      pushNormalized(t);
       if (synonymMap) {
         const synonyms = synonymMap[t];
-        if (synonyms) {
+        if (Array.isArray(synonyms)) {
           for (const s of synonyms) {
-            push(s);
+            if (typeof s === 'string') {
+              pushNormalized(s);
+            }
           }
         }
       }
