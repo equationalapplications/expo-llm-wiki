@@ -401,6 +401,12 @@ export class WikiMemory {
 
   private _pruneKey(entityId: string) { return `${this.prefix}:${entityId}:prune`; }
 
+  private _validatePruneDuration(value: number | null | undefined, name: string): void {
+    if (value !== null && value !== undefined && (typeof value !== 'number' || !isFinite(value) || value < 0)) {
+      throw new Error(`Invalid ${name}: must be a non-negative finite number or null`);
+    }
+  }
+
   async runPrune(
     entityId: string,
     options?: {
@@ -435,12 +441,8 @@ export class WikiMemory {
         : (this.options.config?.pruneEventsAfter ?? 30);
       const vacuum = options?.vacuum ?? false;
 
-      if (retainSoftDeletedFor !== null && (typeof retainSoftDeletedFor !== 'number' || !isFinite(retainSoftDeletedFor) || retainSoftDeletedFor < 0)) {
-        throw new Error(`Invalid retainSoftDeletedFor: must be a non-negative finite number or null`);
-      }
-      if (retainEventsFor !== null && (typeof retainEventsFor !== 'number' || !isFinite(retainEventsFor) || retainEventsFor < 0)) {
-        throw new Error(`Invalid retainEventsFor: must be a non-negative finite number or null`);
-      }
+      this._validatePruneDuration(retainSoftDeletedFor, 'retainSoftDeletedFor');
+      this._validatePruneDuration(retainEventsFor, 'retainEventsFor');
 
       const now = Date.now();
       let deletedEntries = 0;
