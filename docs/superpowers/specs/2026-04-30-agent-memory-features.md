@@ -21,7 +21,7 @@ expo-llm-wiki's current design is optimised for simple chatbot memory. Two gaps 
 
 ## Goals
 
-- FTS5 porter stemmer: morphological matching (run/running/runs/ran → same stem).
+- FTS5 porter stemmer: morphological matching for regular inflections (e.g. `run`/`running`/`runs` → same stem).
 - Static `synonymMap` config: caller-supplied term expansions applied at query time; no DB writes.
 - LWW merge in `importDump`: row-level merge by `updated_at` — newer row wins regardless of origin.
 - Backward-compatible schema migration (idempotent FTS5 rebuild, no table drops).
