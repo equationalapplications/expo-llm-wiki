@@ -288,4 +288,28 @@ describe('WikiMemory.runPrune', () => {
     (wiki as any).activeIngestJobs.add('llm_wiki_:ent:doc.md');
     await expect(wiki.runPrune('ent')).rejects.toThrow(WikiBusyError);
   });
+
+  it('throws when retainSoftDeletedFor is negative', async () => {
+    const db = makeMockDb({});
+    const wiki = new WikiMemory(db as any, stubOptions);
+    await expect(wiki.runPrune('ent', { retainSoftDeletedFor: -1 })).rejects.toThrow('retainSoftDeletedFor');
+  });
+
+  it('throws when retainSoftDeletedFor is Infinity', async () => {
+    const db = makeMockDb({});
+    const wiki = new WikiMemory(db as any, stubOptions);
+    await expect(wiki.runPrune('ent', { retainSoftDeletedFor: Infinity })).rejects.toThrow('retainSoftDeletedFor');
+  });
+
+  it('throws when retainEventsFor is negative', async () => {
+    const db = makeMockDb({});
+    const wiki = new WikiMemory(db as any, stubOptions);
+    await expect(wiki.runPrune('ent', { retainEventsFor: -7 })).rejects.toThrow('retainEventsFor');
+  });
+
+  it('throws when retainEventsFor is NaN', async () => {
+    const db = makeMockDb({});
+    const wiki = new WikiMemory(db as any, stubOptions);
+    await expect(wiki.runPrune('ent', { retainEventsFor: NaN })).rejects.toThrow('retainEventsFor');
+  });
 });

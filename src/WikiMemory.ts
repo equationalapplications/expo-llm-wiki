@@ -386,7 +386,7 @@ export class WikiMemory {
     }
     const normalizedHash = normalizeSourceHash(sourceHash);
     if (!normalizedHash) {
-      throw new Error(`Invalid sourceHash: must be a 64-character hex string`);
+      throw new Error(`Invalid sourceHash: must be a 64-character hex string (normalized to lowercase)`);
     }
     const row = await this.db.getFirstAsync<{ source_hash: string | null }>(
       `SELECT source_hash FROM ${this.prefix}entries
@@ -434,6 +434,13 @@ export class WikiMemory {
         ? options.retainEventsFor
         : (this.options.config?.pruneEventsAfter ?? 30);
       const vacuum = options?.vacuum ?? false;
+
+      if (retainSoftDeletedFor !== null && (typeof retainSoftDeletedFor !== 'number' || !isFinite(retainSoftDeletedFor) || retainSoftDeletedFor < 0)) {
+        throw new Error(`Invalid retainSoftDeletedFor: must be a non-negative finite number or null`);
+      }
+      if (retainEventsFor !== null && (typeof retainEventsFor !== 'number' || !isFinite(retainEventsFor) || retainEventsFor < 0)) {
+        throw new Error(`Invalid retainEventsFor: must be a non-negative finite number or null`);
+      }
 
       const now = Date.now();
       let deletedEntries = 0;
