@@ -54,9 +54,9 @@ jobs:
           for pkg in core expo react; do
             node -e "
               const fs = require('fs');
-              const pkgPath = 'packages/$pkg/package.json';
+              const pkgPath = 'packages/${pkg}/package.json';
               const p = JSON.parse(fs.readFileSync(pkgPath));
-              p.version = '$NEW_VERSION';
+              p.version = '${NEW_VERSION}';
               fs.writeFileSync(pkgPath, JSON.stringify(p, null, 2) + '\n');
             "
           done
