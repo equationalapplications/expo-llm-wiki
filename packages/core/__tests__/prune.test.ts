@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 type EntryRow = {
   id: string;
@@ -115,8 +115,6 @@ function makeMockDb(opts: {
 
   return db;
 }
-
-vi.mock('expo-sqlite', () => ({ default: {} }));
 
 import { WikiMemory } from '../src/WikiMemory';
 import { WikiBusyError } from '../src/types';

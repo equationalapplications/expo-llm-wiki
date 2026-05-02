@@ -1,7 +1,7 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
+import { WikiMemory } from '../src/WikiMemory';
 
-vi.mock('expo-sqlite', () => {
-  class MockSQLiteDatabase {
+class MockSQLiteDatabase {
     private entries: Array<Record<string, any>> = [];
     private tasks: Array<Record<string, any>> = [];
     private events: Array<Record<string, any>> = [];
@@ -94,18 +94,10 @@ vi.mock('expo-sqlite', () => {
     }
   }
 
-  return {
-    openDatabaseAsync: async (_name: string) => new MockSQLiteDatabase(),
-  };
-});
-
-const SQLite = await import('expo-sqlite');
-const { WikiMemory } = await import('../src/WikiMemory');
-
 const noopProvider = { generateText: async (_: any) => '{"facts":[],"tasks":[]}' };
 
 async function freshWiki() {
-  const db = await SQLite.openDatabaseAsync(':memory:');
+  const db = new MockSQLiteDatabase();
   const wiki = new WikiMemory(db, { llmProvider: noopProvider, config: { tablePrefix: 'exp_' } });
   await wiki.setup();
   return wiki;

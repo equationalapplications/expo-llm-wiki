@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import type * as SQLite from 'expo-sqlite';
 import { WikiMemory } from '../src/WikiMemory';
-import type { LLMProvider, WikiConfig } from '../src/types';
+import type { LLMProvider, WikiConfig, SQLiteAdapter } from '../src/types';
 
 const llmProvider: LLMProvider = { generateText: async () => '{}' };
 
@@ -9,7 +8,7 @@ const llmProvider: LLMProvider = { generateText: async () => '{}' };
 function makeWiki(config?: WikiConfig) {
   // We don't need a real DB to call formatSearchQuery — but constructor needs one.
   // Use a stub that won't be touched.
-  const db = {} as unknown as SQLite.SQLiteDatabase;
+  const db = {} as unknown as SQLiteAdapter;
   const wiki = new WikiMemory(db, { llmProvider, config });
   return wiki as unknown as { formatSearchQuery(q: string): string };
 }

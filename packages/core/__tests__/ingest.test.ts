@@ -1,9 +1,9 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
+import { WikiMemory } from '../src/WikiMemory';
 
-vi.mock('expo-sqlite', () => {
-  type Row = Record<string, any>;
+type Row = Record<string, any>;
 
-  class MockSQLiteDatabase {
+class MockSQLiteDatabase {
     private entries: Row[] = [];
     private tasks: Row[] = [];
     private events: Row[] = [];
@@ -106,14 +106,6 @@ vi.mock('expo-sqlite', () => {
     }
   }
 
-  return {
-    openDatabaseAsync: async (_name: string) => new MockSQLiteDatabase(),
-  };
-});
-
-const SQLite = await import('expo-sqlite');
-const { WikiMemory } = await import('../src/WikiMemory');
-
 function makeMockProvider(factsPerChunk: Array<Array<{ title: string; body: string; tags: string[]; confidence: string }>>) {
   let i = 0;
   const calls: number[] = [];
@@ -141,7 +133,7 @@ function makeMockProvider(factsPerChunk: Array<Array<{ title: string; body: stri
 }
 
 async function freshWiki(provider: any) {
-  const db = await SQLite.openDatabaseAsync(':memory:');
+  const db = new MockSQLiteDatabase();
   const wiki = new WikiMemory(db, { llmProvider: provider, config: { tablePrefix: 'test_' } });
   await wiki.setup();
   return wiki;

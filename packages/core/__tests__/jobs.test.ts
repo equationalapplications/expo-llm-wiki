@@ -1,8 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { WikiBusyError } from '../src/types';
+import { WikiMemory } from '../src/WikiMemory';
 
-vi.mock('expo-sqlite', () => {
-  class MockSQLiteDatabase {
+class MockSQLiteDatabase {
     async execAsync(_sql: string): Promise<void> {}
 
     async withTransactionAsync<T>(fn: () => Promise<T>): Promise<T> {
@@ -22,14 +22,6 @@ vi.mock('expo-sqlite', () => {
     }
   }
 
-  return {
-    openDatabaseAsync: async (_name: string) => new MockSQLiteDatabase(),
-  };
-});
-
-const SQLite = await import('expo-sqlite');
-const { WikiMemory } = await import('../src/WikiMemory');
-
 const slowProvider = (delayMs: number) => ({
   generateText: async (_: any) => {
     await new Promise((r) => setTimeout(r, delayMs));
@@ -38,7 +30,7 @@ const slowProvider = (delayMs: number) => ({
 });
 
 async function freshWiki(provider: any) {
-  const db = await SQLite.openDatabaseAsync(':memory:');
+  const db = new MockSQLiteDatabase();
   const wiki = new WikiMemory(db, { llmProvider: provider, config: { tablePrefix: 'jobs_' } });
   await wiki.setup();
   return wiki;

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import type { Migration } from '../src/db/migrations';
 
 // ── Shared mock state ────────────────────────────────────────────────────────
@@ -67,8 +67,6 @@ function makeMockDb(opts: {
 
   return db;
 }
-
-vi.mock('expo-sqlite', () => ({ default: {} }));
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 

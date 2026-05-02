@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 // ── Mock factory ─────────────────────────────────────────────────────────────
 
@@ -41,8 +41,6 @@ function makeMockDb(entries: EntryRow[] = []) {
     },
   };
 }
-
-vi.mock('expo-sqlite', () => ({ default: {} }));
 
 import { WikiMemory } from '../src/WikiMemory';
 import type { WikiOptions } from '../src/types';

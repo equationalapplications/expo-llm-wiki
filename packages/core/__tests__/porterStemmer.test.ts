@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import type * as SQLite from 'expo-sqlite';
 import { WikiMemory } from '../src/WikiMemory';
-import type { LLMProvider, WikiFact } from '../src/types';
+import type { LLMProvider, WikiFact, SQLiteAdapter } from '../src/types';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 
 const llmProvider: LLMProvider = {
@@ -34,7 +33,7 @@ function makeFact(overrides: Partial<WikiFact>): WikiFact {
 }
 
 describe('FTS5 porter stemmer', () => {
-  let db: SQLite.SQLiteDatabase;
+  let db: SQLiteAdapter;
   let wiki: WikiMemory;
 
   beforeEach(async () => {
