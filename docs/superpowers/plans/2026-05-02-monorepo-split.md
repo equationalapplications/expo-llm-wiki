@@ -4,9 +4,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Split `expo-llm-wiki` into three packages — `@eq/wiki-core` (pure TS logic), `@eq/wiki-expo` (Expo/React Native wrapper), and `@eq/wiki-react` (React hooks + vanilla JS) — in a pnpm workspace monorepo.
+**Goal:** Split `expo-llm-wiki` into three packages — `@equationalapplications/core-llm-wiki` (pure TS logic), `@equationalapplications/expo-llm-wiki` (Expo/React Native wrapper), and `@equationalapplications/react-llm-wiki` (React hooks + vanilla JS) — in a pnpm workspace monorepo.
 
-**Architecture:** The key change is replacing the hardcoded `expo-sqlite` import in `WikiMemory.ts` with a generic `SQLiteAdapter` interface (pattern already exists in `src/__tests__/helpers/sqliteAdapter.ts`). Each platform package wraps its native driver behind that interface. The root package becomes a backward-compat re-export of `@eq/wiki-expo`.
+**Architecture:** The key change is replacing the hardcoded `expo-sqlite` import in `WikiMemory.ts` with a generic `SQLiteAdapter` interface (pattern already exists in `src/__tests__/helpers/sqliteAdapter.ts`). Each platform package wraps its native driver behind that interface. The root package becomes a backward-compat re-export of `@equationalapplications/expo-llm-wiki`.
 
 **Tech Stack:** pnpm workspaces, tsup, TypeScript, Vitest, better-sqlite3 (tests), expo-sqlite (expo package), sql.js (optional, for wiki-react browser tests)
 
@@ -114,9 +114,9 @@ Replace the `scripts` and add `private: true`:
   "version": "2.3.0",
   "scripts": {
     "build": "pnpm -r build",
-    "build:core": "pnpm --filter @eq/wiki-core build",
-    "build:expo": "pnpm --filter @eq/wiki-expo build",
-    "build:react": "pnpm --filter @eq/wiki-react build",
+    "build:core": "pnpm --filter @equationalapplications/core-llm-wiki build",
+    "build:expo": "pnpm --filter @equationalapplications/expo-llm-wiki build",
+    "build:react": "pnpm --filter @equationalapplications/react-llm-wiki build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
     "dev": "pnpm -r dev"
@@ -157,7 +157,7 @@ git commit -m "chore: init pnpm workspace root"
 
 ```json
 {
-  "name": "@eq/wiki-core",
+  "name": "@equationalapplications/core-llm-wiki",
   "version": "2.3.0",
   "description": "DB-agnostic core logic for LLM Wiki Memory.",
   "main": "dist/index.js",
@@ -245,7 +245,7 @@ export default defineConfig({
 
 ```bash
 git add packages/core/
-git commit -m "chore(core): scaffold @eq/wiki-core package"
+git commit -m "chore(core): scaffold @equationalapplications/core-llm-wiki package"
 ```
 
 ---
@@ -513,7 +513,7 @@ Expected: no errors.
 
 ```bash
 git add packages/core/src/db/
-git commit -m "feat(core): move db schema and migrations to @eq/wiki-core"
+git commit -m "feat(core): move db schema and migrations to @equationalapplications/core-llm-wiki"
 ```
 
 ---
@@ -591,7 +591,7 @@ Expected: no errors. Fix any `expo-sqlite` reference that was missed.
 
 ```bash
 git add packages/core/src/WikiMemory.ts packages/core/src/prompts.ts
-git commit -m "feat(core): move WikiMemory to @eq/wiki-core with SQLiteAdapter"
+git commit -m "feat(core): move WikiMemory to @equationalapplications/core-llm-wiki with SQLiteAdapter"
 ```
 
 ---
@@ -637,7 +637,7 @@ Expected: `dist/index.js`, `dist/index.mjs`, `dist/index.d.ts` created with no e
 
 ```bash
 git add packages/core/src/utils/ packages/core/src/index.ts
-git commit -m "feat(core): add utils and index — @eq/wiki-core buildable"
+git commit -m "feat(core): add utils and index — @equationalapplications/core-llm-wiki buildable"
 ```
 
 ---
@@ -659,7 +659,7 @@ cp src/__tests__/helpers/sqliteAdapter.test.ts packages/core/__tests__/helpers/s
 
 Update the import in `packages/core/__tests__/helpers/sqliteAdapter.ts`:
 - Remove `import type * as SQLite from 'expo-sqlite';`
-- Change return type from `SQLite.SQLiteDatabase` to `SQLiteAdapter` (imported from `@eq/wiki-core` types, or relative `../../src/types`)
+- Change return type from `SQLite.SQLiteDatabase` to `SQLiteAdapter` (imported from `@equationalapplications/core-llm-wiki` types, or relative `../../src/types`)
 
 The updated file:
 ```ts
@@ -762,7 +762,7 @@ Expected: all tests pass. If any test fails due to an import path that wasn't ca
 
 ```bash
 git add packages/core/__tests__/
-git commit -m "test(core): migrate test suite to @eq/wiki-core"
+git commit -m "test(core): migrate test suite to @equationalapplications/core-llm-wiki"
 ```
 
 ---
@@ -780,9 +780,9 @@ git commit -m "test(core): migrate test suite to @eq/wiki-core"
 
 ```json
 {
-  "name": "@eq/wiki-expo",
+  "name": "@equationalapplications/expo-llm-wiki",
   "version": "2.3.0",
-  "description": "Expo/React Native adapter for @eq/wiki-core.",
+  "description": "Expo/React Native adapter for @equationalapplications/core-llm-wiki.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -805,7 +805,7 @@ git commit -m "test(core): migrate test suite to @eq/wiki-core"
     "registry": "https://registry.npmjs.org"
   },
   "dependencies": {
-    "@eq/wiki-core": "workspace:*"
+    "@equationalapplications/core-llm-wiki": "workspace:*"
   },
   "peerDependencies": {
     "expo-sqlite": "^14.0.0 || ^15.0.0 || ^55.0.0",
@@ -852,7 +852,7 @@ export default defineConfig({
   dts: true,
   clean: true,
   sourcemap: true,
-  external: ['react', 'expo-sqlite', '@eq/wiki-core'],
+  external: ['react', 'expo-sqlite', '@equationalapplications/core-llm-wiki'],
 });
 ```
 
@@ -862,7 +862,7 @@ This wraps `expo-sqlite`'s `SQLiteDatabase` behind `SQLiteAdapter`:
 
 ```ts
 import type * as SQLite from 'expo-sqlite';
-import type { SQLiteAdapter } from '@eq/wiki-core';
+import type { SQLiteAdapter } from '@equationalapplications/core-llm-wiki';
 
 export function createExpoAdapter(db: SQLite.SQLiteDatabase): SQLiteAdapter {
   return {
@@ -883,10 +883,10 @@ export function createExpoAdapter(db: SQLite.SQLiteDatabase): SQLiteAdapter {
 
 ```ts
 import type * as SQLite from 'expo-sqlite';
-import { WikiMemory, type WikiOptions } from '@eq/wiki-core';
+import { WikiMemory, type WikiOptions } from '@equationalapplications/core-llm-wiki';
 import { createExpoAdapter } from './adapter';
 
-export * from '@eq/wiki-core';
+export * from '@equationalapplications/core-llm-wiki';
 
 export function createWiki(db: SQLite.SQLiteDatabase, options: WikiOptions): WikiMemory {
   return new WikiMemory(createExpoAdapter(db), options);
@@ -906,7 +906,7 @@ Expected: no errors (expo-sqlite types resolve via peerDeps).
 
 ```bash
 git add packages/expo/
-git commit -m "feat(expo): add @eq/wiki-expo with expo-sqlite adapter"
+git commit -m "feat(expo): add @equationalapplications/expo-llm-wiki with expo-sqlite adapter"
 ```
 
 ---
@@ -931,9 +931,9 @@ git commit -m "feat(expo): add @eq/wiki-expo with expo-sqlite adapter"
 
 ```json
 {
-  "name": "@eq/wiki-react",
+  "name": "@equationalapplications/react-llm-wiki",
   "version": "2.3.0",
-  "description": "React hooks for @eq/wiki-core.",
+  "description": "React hooks for @equationalapplications/core-llm-wiki.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -956,7 +956,7 @@ git commit -m "feat(expo): add @eq/wiki-expo with expo-sqlite adapter"
     "registry": "https://registry.npmjs.org"
   },
   "dependencies": {
-    "@eq/wiki-core": "workspace:*"
+    "@equationalapplications/core-llm-wiki": "workspace:*"
   },
   "peerDependencies": {
     "react": ">=17"
@@ -1000,7 +1000,7 @@ export default defineConfig({
   dts: true,
   clean: true,
   sourcemap: true,
-  external: ['react', '@eq/wiki-core'],
+  external: ['react', '@equationalapplications/core-llm-wiki'],
 });
 ```
 
@@ -1020,21 +1020,21 @@ cp src/react/useWikiHasChanged.ts packages/react/src/useWikiHasChanged.ts
 
 - [ ] **Step 5: Update imports in copied hook files**
 
-Each hook imports `WikiMemory` or types from a relative path (`'../WikiMemory'` or `'../types'`). Update to `'@eq/wiki-core'`:
+Each hook imports `WikiMemory` or types from a relative path (`'../WikiMemory'` or `'../types'`). Update to `'@equationalapplications/core-llm-wiki'`:
 
 ```bash
 cd packages/react/src
 find . -name '*.ts' -o -name '*.tsx' | xargs sed -i '' \
-  "s|from '\.\./WikiMemory'|from '@eq/wiki-core'|g"
+  "s|from '\.\./WikiMemory'|from '@equationalapplications/core-llm-wiki'|g"
 find . -name '*.ts' -o -name '*.tsx' | xargs sed -i '' \
-  "s|from '\.\./types'|from '@eq/wiki-core'|g"
+  "s|from '\.\./types'|from '@equationalapplications/core-llm-wiki'|g"
 ```
 
 Also update `WikiContext.tsx` which imports `WikiMemory` from `'../WikiMemory'`:
 ```ts
 // packages/react/src/WikiContext.tsx — final result:
 import React, { createContext, useContext, type ReactNode } from 'react';
-import { WikiMemory } from '@eq/wiki-core';
+import { WikiMemory } from '@equationalapplications/core-llm-wiki';
 
 const WikiContext = createContext<WikiMemory | null>(null);
 
@@ -1076,14 +1076,14 @@ Expected: no errors.
 
 ```bash
 git add packages/react/
-git commit -m "feat(react): add @eq/wiki-react hooks package"
+git commit -m "feat(react): add @equationalapplications/react-llm-wiki hooks package"
 ```
 
 ---
 
-## Task 10: Update root package as backward-compat alias for `@eq/wiki-expo`
+## Task 10: Update root package as backward-compat alias for `@equationalapplications/expo-llm-wiki`
 
-The original `@equationalapplications/expo-llm-wiki` package continues to work for existing consumers by re-exporting from `@eq/wiki-expo`.
+The original `@equationalapplications/expo-llm-wiki` package continues to work for existing consumers by re-exporting from `@equationalapplications/expo-llm-wiki`.
 
 **Files:**
 - Modify: `package.json` (root)
@@ -1096,7 +1096,7 @@ The original `@equationalapplications/expo-llm-wiki` package continues to work f
 {
   "name": "@equationalapplications/expo-llm-wiki",
   "version": "3.0.0",
-  "description": "LLM Wiki Memory for Expo/React Native. Alias for @eq/wiki-expo.",
+  "description": "LLM Wiki Memory for Expo/React Native. Alias for @equationalapplications/expo-llm-wiki.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -1113,15 +1113,15 @@ The original `@equationalapplications/expo-llm-wiki` package continues to work f
     }
   },
   "scripts": {
-    "build": "pnpm -r build && tsup src/index.ts src/react/index.ts --format cjs,esm --dts --external react --external expo-sqlite --external @eq/wiki-core --out-dir dist",
-    "dev": "tsup src/index.ts src/react/index.ts --format cjs,esm --dts --external react --external expo-sqlite --external @eq/wiki-core --out-dir dist --watch",
+    "build": "pnpm -r build && tsup src/index.ts src/react/index.ts --format cjs,esm --dts --external react --external expo-sqlite --external @equationalapplications/core-llm-wiki --out-dir dist",
+    "dev": "tsup src/index.ts src/react/index.ts --format cjs,esm --dts --external react --external expo-sqlite --external @equationalapplications/core-llm-wiki --out-dir dist --watch",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test"
   },
   "dependencies": {
-    "@eq/wiki-core": "workspace:*",
-    "@eq/wiki-expo": "workspace:*",
-    "@eq/wiki-react": "workspace:*"
+    "@equationalapplications/core-llm-wiki": "workspace:*",
+    "@equationalapplications/expo-llm-wiki": "workspace:*",
+    "@equationalapplications/react-llm-wiki": "workspace:*"
   },
   "peerDependencies": {
     "expo-sqlite": "^14.0.0 || ^15.0.0 || ^55.0.0",
@@ -1136,15 +1136,15 @@ The original `@equationalapplications/expo-llm-wiki` package continues to work f
 - [ ] **Step 2: Replace `src/index.ts` with a re-export**
 
 ```ts
-// Backward compat: re-export everything from @eq/wiki-expo
-export * from '@eq/wiki-expo';
+// Backward compat: re-export everything from @equationalapplications/expo-llm-wiki
+export * from '@equationalapplications/expo-llm-wiki';
 ```
 
 - [ ] **Step 3: Replace `src/react/index.ts` with a re-export**
 
 ```ts
-// Backward compat: re-export everything from @eq/wiki-react
-export * from '@eq/wiki-react';
+// Backward compat: re-export everything from @equationalapplications/react-llm-wiki
+export * from '@equationalapplications/react-llm-wiki';
 ```
 
 - [ ] **Step 4: Build root**
@@ -1159,7 +1159,7 @@ Expected: root `dist/` built. All three packages also build as part of `pnpm -r 
 
 ```bash
 git add src/index.ts src/react/index.ts package.json
-git commit -m "feat: root package is now backward-compat alias for @eq/wiki-expo v3.0.0"
+git commit -m "feat: root package is now backward-compat alias for @equationalapplications/expo-llm-wiki v3.0.0"
 ```
 
 ---
@@ -1267,9 +1267,9 @@ git commit -m "chore: remove src/ — source now lives in packages/core and pack
 ## Self-Review Notes
 
 **Spec coverage:**
-- ✅ `@eq/wiki-core` — pure TS, no runtime deps, adapter interface, all business logic
-- ✅ `@eq/wiki-expo` — expo-sqlite adapter, re-exports core, React hooks via `@eq/wiki-react`
-- ✅ `@eq/wiki-react` — all React hooks, `WikiProvider`, `useWiki`
+- ✅ `@equationalapplications/core-llm-wiki` — pure TS, no runtime deps, adapter interface, all business logic
+- ✅ `@equationalapplications/expo-llm-wiki` — expo-sqlite adapter, re-exports core, React hooks via `@equationalapplications/react-llm-wiki`
+- ✅ `@equationalapplications/react-llm-wiki` — all React hooks, `WikiProvider`, `useWiki`
 - ✅ Root package backward compat (`@equationalapplications/expo-llm-wiki`)
 - ✅ pnpm workspaces
 - ✅ Versioning locked (all `2.3.0` → bump to `3.0.0` at root for major signal)
@@ -1279,4 +1279,4 @@ git commit -m "chore: remove src/ — source now lives in packages/core and pack
 **Type consistency:**
 - `SQLiteAdapter` defined in Task 3, used in Tasks 4, 5, 7, 8 — consistent
 - `createWiki` signature: `(db: SQLiteAdapter, options: WikiOptions): WikiMemory` in core; `(db: SQLite.SQLiteDatabase, options: WikiOptions): WikiMemory` in expo — consistent with spec
-- `WikiMemory` imported from `@eq/wiki-core` in all downstream packages — consistent
+- `WikiMemory` imported from `@equationalapplications/core-llm-wiki` in all downstream packages — consistent

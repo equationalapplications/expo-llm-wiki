@@ -204,20 +204,20 @@ const wiki = createWiki(adapter, opts);
 1. Move DB-agnostic logic → `packages/core/src/`
 2. Create adapter interface
 3. Update `WikiMemory.ts` to accept adapter
-4. Build + publish `@eq/wiki-core`
+4. Build + publish `@equationalapplications/core-llm-wiki`
 
 ### Phase 2: Wrap Expo
 1. Create `packages/expo/`
-2. Import + re-export `@eq/wiki-core`
+2. Import + re-export `@equationalapplications/core-llm-wiki`
 3. Bind `expo-sqlite` adapter
-4. Build + publish `@eq/wiki-expo`
+4. Build + publish `@equationalapplications/expo-llm-wiki`
 5. Keep root `package.json` export for backward compat
 
 ### Phase 3: Web Utilities
 1. Create `packages/react/`
 2. Extract React hooks from current codebase
 3. Export vanilla JS + React entry points
-4. Build + publish `@eq/wiki-react`
+4. Build + publish `@equationalapplications/react-llm-wiki`
 
 ### Backward Compatibility
 - Root package is now `private`; the `@equationalapplications/expo-llm-wiki` name is owned by `packages/expo` directly.
@@ -299,9 +299,9 @@ pnpm -r publish
 ## Success Criteria
 
 ✓ Expo apps work unchanged (or minimal migration)  
-✓ Web apps (Vite + React) can use `@eq/wiki-react` + `sql.js`  
+✓ Web apps (Vite + React) can use `@equationalapplications/react-llm-wiki` + `sql.js`  
 ✓ Vanilla JS apps work with any framework  
-✓ Node.js backends can use `@eq/wiki-core` + `better-sqlite3`  
+✓ Node.js backends can use `@equationalapplications/core-llm-wiki` + `better-sqlite3`  
 ✓ No unnecessary dependencies in any consumer  
 ✓ Single, cohesive CHANGELOG reflects changes across monorepo  
 

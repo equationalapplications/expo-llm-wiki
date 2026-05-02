@@ -78,17 +78,17 @@ flowchart TB
 
 | Package | Platform | SQLite Adapter | Size | Dependencies |
 |---------|----------|---|---|---|
-| **`@eq/wiki-core`** | Node.js, any platform | User-provided (e.g., `better-sqlite3`) | Smallest | None |
-| **`@eq/wiki-expo`** | Expo, React Native | `expo-sqlite` (built-in) | Minimal | `expo-sqlite` (peer) |
-| **`@eq/wiki-react`** | Web (React) | User-provided (e.g., `sql.js`) | Small | `react` (peer) |
+| **`@equationalapplications/core-llm-wiki`** | Node.js, any platform | User-provided (e.g., `better-sqlite3`) | Smallest | None |
+| **`@equationalapplications/expo-llm-wiki`** | Expo, React Native | `expo-sqlite` (built-in) | Minimal | `expo-sqlite` (peer) |
+| **`@equationalapplications/react-llm-wiki`** | Web (React) | User-provided (e.g., `sql.js`) | Small | `react` (peer) |
 
 **Choose your package:**
-- **Expo/React Native app?** → `@eq/wiki-expo`
-- **React web app (CRA, Vite + React, Next.js client)?** → `@eq/wiki-react` + `sql.js`
-- **Vanilla JS or non-React framework?** → `@eq/wiki-core` + `sql.js`
-- **Node.js backend?** → `@eq/wiki-core` + `better-sqlite3`
+- **Expo/React Native app?** → `@equationalapplications/expo-llm-wiki`
+- **React web app (CRA, Vite + React, Next.js client)?** → `@equationalapplications/react-llm-wiki` + `sql.js`
+- **Vanilla JS or non-React framework?** → `@equationalapplications/core-llm-wiki` + `sql.js`
+- **Node.js backend?** → `@equationalapplications/core-llm-wiki` + `better-sqlite3`
 
-All packages share the same core API and database schema. The core library is **framework-agnostic and dependency-free**; `@eq/wiki-expo` injects the Expo adapter, while `@eq/wiki-core` and `@eq/wiki-react` require your application to provide a SQLite adapter.
+All packages share the same core API and database schema. The core library is **framework-agnostic and dependency-free**; `@equationalapplications/expo-llm-wiki` injects the Expo adapter, while `@equationalapplications/core-llm-wiki` and `@equationalapplications/react-llm-wiki` require your application to provide a SQLite adapter.
 
 ## Installation
 
@@ -97,22 +97,22 @@ Choose the package for your platform:
 ### Expo / React Native
 ```bash
 npx expo install expo-sqlite
-npm install @eq/wiki-expo
+npm install @equationalapplications/expo-llm-wiki
 ```
 
 ### React Web (Vite, CRA, etc.)
 ```bash
-npm install @eq/wiki-react @eq/wiki-core sql.js
+npm install @equationalapplications/react-llm-wiki sql.js
 ```
 
 ### Vanilla JavaScript (any framework or plain HTML)
 ```bash
-npm install @eq/wiki-core sql.js
+npm install @equationalapplications/core-llm-wiki sql.js
 ```
 
 ### Node.js Backend
 ```bash
-npm install @eq/wiki-core better-sqlite3
+npm install @equationalapplications/core-llm-wiki better-sqlite3
 ```
 
 **Note:** Use `npx expo install` for `expo-sqlite` so Expo's version resolver picks the correct native build for your SDK version.
@@ -122,7 +122,7 @@ npm install @eq/wiki-core better-sqlite3
 ### Expo / React Native
 
 ```typescript
-import { createWiki } from '@eq/wiki-expo';
+import { createWiki } from '@equationalapplications/expo-llm-wiki';
 import * as SQLite from 'expo-sqlite';
 
 const db = await SQLite.openDatabaseAsync('my-app.db');
@@ -161,13 +161,13 @@ await wiki.setup();
 ### React Web (Vite + React)
 
 ```typescript
-import { createWiki } from '@eq/wiki-core';
+import { createWiki } from '@equationalapplications/core-llm-wiki';
 import initSqlJs from 'sql.js';
 
 const SQL = await initSqlJs();
 const sqlDb = new SQL.Database();
 
-// Wrap sql.js behind the SQLiteAdapter interface required by @eq/wiki-core
+// Wrap sql.js behind the SQLiteAdapter interface required by @equationalapplications/core-llm-wiki
 const adapter = {
   execAsync(sql) { sqlDb.exec(sql); return Promise.resolve(); },
   runAsync(sql, params = []) {
@@ -216,7 +216,7 @@ await wiki.setup();
 ### Vanilla JavaScript (any framework)
 
 ```typescript
-import { createWiki } from '@eq/wiki-core';
+import { createWiki } from '@equationalapplications/core-llm-wiki';
 import initSqlJs from 'sql.js';
 
 const SQL = await initSqlJs();
@@ -248,7 +248,7 @@ await wiki.write('entity-123', { event_type: 'observation', summary: '...' });
 ### Node.js Backend
 
 ```typescript
-import { createWiki } from '@eq/wiki-core';
+import { createWiki } from '@equationalapplications/core-llm-wiki';
 import Database from 'better-sqlite3';
 
 // Create a thin adapter wrapper
@@ -358,7 +358,7 @@ Convert a `MemoryBundle` into a string ready for LLM prompt injection:
 
 ```typescript
 // Import from the appropriate package for your platform
-import { formatContext } from '@eq/wiki-core';      // or @eq/wiki-expo
+import { formatContext } from '@equationalapplications/core-llm-wiki';      // or @equationalapplications/expo-llm-wiki
 
 const bundle = await wiki.read('entity-123', 'weekend plans');
 const context = formatContext(bundle, {
@@ -431,7 +431,7 @@ Throws `WikiBusyError` if librarian, heal, ingest, or another prune is in-flight
 
 ## React Component API
 
-React hooks are available from `@eq/wiki-react` (web) and `@eq/wiki-expo` (Expo). Use the React-specific entry points when integrating with React.
+React hooks are available from `@equationalapplications/react-llm-wiki` (web) and `@equationalapplications/expo-llm-wiki` (Expo). Use the React-specific entry points when integrating with React.
 
 ### Provider
 
@@ -439,8 +439,8 @@ Wrap once at app root (or any subtree that needs memory access):
 
 **Web (React/Vite):**
 ```typescript
-import { WikiProvider } from '@eq/wiki-react';
-import { createWiki } from '@eq/wiki-core';
+import { WikiProvider } from '@equationalapplications/react-llm-wiki';
+import { createWiki } from '@equationalapplications/core-llm-wiki';
 import initSqlJs from 'sql.js';
 
 const SQL = await initSqlJs();
@@ -461,7 +461,7 @@ export default function App() {
 
 **Expo:**
 ```typescript
-import { WikiProvider, createWiki } from '@eq/wiki-expo';
+import { WikiProvider, createWiki } from '@equationalapplications/expo-llm-wiki';
 import * as SQLite from 'expo-sqlite';
 
 const db = await SQLite.openDatabaseAsync('my-app.db');
@@ -568,10 +568,10 @@ The exported `MaintenanceResult` type can be imported for typed consumers:
 
 ```typescript
 // Web (React/Vite)
-import type { MaintenanceResult } from '@eq/wiki-react';
+import type { MaintenanceResult } from '@equationalapplications/react-llm-wiki';
 
 // Expo
-import type { MaintenanceResult } from '@eq/wiki-expo';
+import type { MaintenanceResult } from '@equationalapplications/expo-llm-wiki';
 ```
 
 All mutation hooks follow the same pattern (`TResult` is specific per hook):
