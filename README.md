@@ -275,7 +275,7 @@ const adapter = {
   closeAsync: () => { db.close(); return Promise.resolve(); },
 };
 
-const wiki = await createWiki(adapter, {
+const wiki = createWiki(adapter, {
   llmProvider: {
     generateText: async ({ systemPrompt, userPrompt }) => {
       // Connect to your LLM provider
