@@ -33,8 +33,37 @@ jobs:
 
       - run: pnpm run build
 
+      - name: Get current version
+        id: pre_version
+        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+
       - run: npx semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish workspace packages
+        run: |
+          NEW_VERSION=$(node -p "require('./package.json').version")
+          if [ "$NEW_VERSION" = "${{ steps.pre_version.outputs.version }}" ]; then
+            echo "No new release, skipping workspace package publish"
+            exit 0
+          fi
+          # Update all workspace package versions to match the new root version
+          for pkg in core expo react; do
+            node -e "
+              const fs = require('fs');
+              const pkgPath = 'packages/$pkg/package.json';
+              const p = JSON.parse(fs.readFileSync(pkgPath));
+              p.version = '$NEW_VERSION';
+              fs.writeFileSync(pkgPath, JSON.stringify(p, null, 2) + '\n');
+            "
+          done
+          # Publish each workspace package (pnpm replaces workspace:* with resolved versions)
+          for pkg in core expo react; do
+            pnpm --filter "./packages/$pkg" publish --no-git-checks --access public
+          done
+        env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
