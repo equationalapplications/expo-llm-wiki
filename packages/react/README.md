@@ -74,22 +74,23 @@ const { runLibrarian, runHeal, isPending, error } = useWikiMaintenance();
 await runLibrarian('user-123');
 ```
 
-### `useWikiHasChanged(entityId)`
+### `useWikiHasChanged()`
 
-Check if memory changed.
+Check if a source document has changed since last ingest.
 
 ```typescript
-const hasChanged = useWikiHasChanged('user-123');
+const { execute, lastResult, isPending, error } = useWikiHasChanged();
+const changed = await execute('user-123', 'doc://readme', 'sha256-abc');
 ```
 
-### `useWikiExport(entityId)`
+### `useWikiExport()`
 
 Export memory dump.
 
 ```typescript
-const { execute, isPending, data } = useWikiExport();
-await execute('user-123');
-// data: FormattedMemoryDump
+const { execute, lastResult, isPending, error } = useWikiExport();
+await execute(['user-123']);
+// lastResult: MemoryDump | null
 ```
 
 ## License

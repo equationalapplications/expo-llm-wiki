@@ -1,9 +1,42 @@
 {
   "name": "@equationalapplications/expo-llm-wiki",
-  "private": true,
   "version": "2.3.0",
+  "description": "LLM Wiki Memory for Expo/React Native. Backward-compat alias for @eq/wiki-expo.",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "import": "./dist/index.mjs"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "require": "./dist/react/index.js",
+      "import": "./dist/react/index.mjs"
+    }
+  },
+  "files": ["dist", "LICENSE", "README.md"],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "peerDependencies": {
+    "expo-sqlite": "^14.0.0 || ^15.0.0 || ^55.0.0",
+    "react": ">=17"
+  },
+  "peerDependenciesMeta": {
+    "react": { "optional": true }
+  },
+  "dependencies": {
+    "@eq/wiki-core": "workspace:*",
+    "@eq/wiki-expo": "workspace:*",
+    "@eq/wiki-react": "workspace:*"
+  },
   "scripts": {
-    "build": "pnpm -r build",
+    "build": "pnpm -r build && tsup src/index.ts src/react/index.ts --format cjs,esm --dts --external react --external expo-sqlite --external @eq/wiki-core --external @eq/wiki-expo --external @eq/wiki-react --out-dir dist",
     "build:core": "pnpm --filter @eq/wiki-core build",
     "build:expo": "pnpm --filter @eq/wiki-expo build",
     "build:react": "pnpm --filter @eq/wiki-react build",
