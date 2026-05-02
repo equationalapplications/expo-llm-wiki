@@ -431,7 +431,7 @@ Throws `WikiBusyError` if librarian, heal, ingest, or another prune is in-flight
 
 ## React Component API
 
-React hooks are available from `@eq/wiki-react` (web) and `@eq/wiki-expo` (Expo). This entry point is separate so non-React consumers do not transitively import React.
+React hooks are available from `@eq/wiki-react` (web) and `@eq/wiki-expo` (Expo). Use the React-specific entry points when integrating with React.
 
 ### Provider
 
