@@ -1,7 +1,7 @@
 {
-  "name": "@eq/wiki-expo",
+  "name": "@equationalapplications/expo-llm-wiki",
   "version": "2.3.0",
-  "description": "Expo/React Native adapter for @eq/wiki-core.",
+  "description": "Expo/React Native adapter for @equationalapplications/core-llm-wiki.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -35,8 +35,8 @@
     "registry": "https://registry.npmjs.org"
   },
   "dependencies": {
-    "@eq/wiki-core": "workspace:*",
-    "@eq/wiki-react": "workspace:*"
+    "@equationalapplications/core-llm-wiki": "workspace:*",
+    "@equationalapplications/react-llm-wiki": "workspace:*"
   },
   "peerDependencies": {
     "expo-sqlite": "^14.0.0 || ^15.0.0 || ^55.0.0",

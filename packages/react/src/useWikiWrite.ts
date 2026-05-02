@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
-import type { WikiEvent } from '@eq/wiki-core';
+import type { WikiEvent } from '@equationalapplications/core-llm-wiki';
 import { useWiki } from './WikiContext';
 
 type WriteEvent = Omit<WikiEvent, 'id' | 'entity_id' | 'created_at'>;

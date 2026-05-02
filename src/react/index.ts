@@ -1,4 +1,4 @@
-// backward-compat re-export — use @eq/wiki-react (or @eq/wiki-expo for Expo) directly in new code
+// backward-compat re-export — use @equationalapplications/react-llm-wiki (or @equationalapplications/expo-llm-wiki for Expo) directly in new code
 export {
   WikiProvider,
   useWiki,
@@ -10,4 +10,4 @@ export {
   useWikiForget,
   useWikiExport,
   useWikiHasChanged,
-} from '@eq/wiki-react';
+} from '@equationalapplications/react-llm-wiki';

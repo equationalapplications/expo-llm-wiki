@@ -1,24 +1,24 @@
-# @eq/wiki-expo
+# @equationalapplications/expo-llm-wiki
 
-Expo/React Native adapter for @eq/wiki-core, powered by `expo-sqlite`.
+Expo/React Native adapter for @equationalapplications/core-llm-wiki, powered by `expo-sqlite`.
 
 ## Features
 
 - **Expo-ready** — Pre-configured for React Native + Expo
 - **Built on `expo-sqlite`** — Stable, well-supported SQLite driver
-- **React hooks** — `WikiProvider`, `useMemoryRead`, and all other hooks are re-exported directly from `@eq/wiki-expo`
+- **React hooks** — `WikiProvider`, `useMemoryRead`, and all other hooks are re-exported directly from `@equationalapplications/expo-llm-wiki`
 
 ## Installation
 
 ```bash
 npx expo install expo-sqlite
-npm install @eq/wiki-expo
+npm install @equationalapplications/expo-llm-wiki
 ```
 
 ## Usage
 
 ```typescript
-import { createWiki } from '@eq/wiki-expo';
+import { createWiki } from '@equationalapplications/expo-llm-wiki';
 import { openDatabaseSync } from 'expo-sqlite';
 
 const db = openDatabaseSync('wiki.db');
@@ -41,10 +41,10 @@ await wiki.write('user-123', { event_type: 'observation', summary: '...' });
 
 ## With React
 
-`@eq/wiki-expo` re-exports all hooks and `WikiProvider` from `@eq/wiki-react`:
+`@equationalapplications/expo-llm-wiki` re-exports all hooks and `WikiProvider` from `@equationalapplications/react-llm-wiki`:
 
 ```typescript
-import { WikiProvider } from '@eq/wiki-expo';
+import { WikiProvider } from '@equationalapplications/expo-llm-wiki';
 
 <WikiProvider wiki={wiki}>
   <MyApp />
@@ -54,7 +54,7 @@ import { WikiProvider } from '@eq/wiki-expo';
 Then use hooks in components:
 
 ```typescript
-import { useMemoryRead } from '@eq/wiki-expo';
+import { useMemoryRead } from '@equationalapplications/expo-llm-wiki';
 
 export function UserProfile({ userId }: { userId: string }) {
   const { data, isPending } = useMemoryRead(userId, 'preferences');

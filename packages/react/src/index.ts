@@ -1,3 +1,4 @@
+export * from '@equationalapplications/core-llm-wiki';
 export { WikiProvider, useWiki } from './WikiContext';
 export { useMemoryRead } from './useMemoryRead';
 export { useWikiWrite } from './useWikiWrite';

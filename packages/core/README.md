@@ -1,4 +1,4 @@
-# @eq/wiki-core
+# @equationalapplications/core-llm-wiki
 
 Pure TypeScript business logic for LLM Wiki Memory.
 
@@ -11,13 +11,13 @@ Pure TypeScript business logic for LLM Wiki Memory.
 ## Installation
 
 ```bash
-npm install @eq/wiki-core
+npm install @equationalapplications/core-llm-wiki
 ```
 
 ## Usage
 
 ```typescript
-import { WikiMemory, type SQLiteAdapter } from '@eq/wiki-core';
+import { WikiMemory, type SQLiteAdapter } from '@equationalapplications/core-llm-wiki';
 
 // Provide any SQLiteAdapter-compatible driver
 const wikiMemory = new WikiMemory(db, {
@@ -57,13 +57,13 @@ export interface SQLiteAdapter {
 }
 ```
 
-`@eq/wiki-expo` provides a pre-built adapter for Expo/React Native. For web and Node.js, implement the interface yourself — examples below.
+`@equationalapplications/expo-llm-wiki` provides a pre-built adapter for Expo/React Native. For web and Node.js, implement the interface yourself — examples below.
 
 **Browser (sql.js):**
 
 ```typescript
 import initSqlJs from 'sql.js';
-import type { SQLiteAdapter } from '@eq/wiki-core';
+import type { SQLiteAdapter } from '@equationalapplications/core-llm-wiki';
 
 const SQL = await initSqlJs({ locateFile: (f) => `/wasm/${f}` });
 const sqlDb = new SQL.Database();
@@ -103,7 +103,7 @@ const adapter: SQLiteAdapter = {
 
 ```typescript
 import Database from 'better-sqlite3';
-import type { SQLiteAdapter } from '@eq/wiki-core';
+import type { SQLiteAdapter } from '@equationalapplications/core-llm-wiki';
 
 const db = new Database('wiki.db');
 

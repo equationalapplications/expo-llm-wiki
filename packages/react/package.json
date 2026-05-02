@@ -1,7 +1,7 @@
 {
-  "name": "@eq/wiki-react",
+  "name": "@equationalapplications/react-llm-wiki",
   "version": "2.3.0",
-  "description": "React hooks for expo-llm-wiki",
+  "description": "React hooks and web utilities for LLM Wiki Memory.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -10,6 +10,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs",
       "require": "./dist/index.js"
+    },
+    "./js": {
+      "types": "./dist/js.d.ts",
+      "import": "./dist/js.mjs",
+      "require": "./dist/js.js"
     }
   },
   "files": [
@@ -26,11 +31,11 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
-    "test": "echo 'React tests disabled due to vitest 4.x + React 19 + jsdom incompatibility (see packages/react/vitest.config.ts)'",
+    "test": "echo 'React hook tests disabled pending vitest 5.x stable (see packages/react/vitest.config.ts)'",
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@eq/wiki-core": "workspace:*"
+    "@equationalapplications/core-llm-wiki": "workspace:*"
   },
   "peerDependencies": {
     "react": ">=17"
@@ -39,6 +44,7 @@
     "@testing-library/react": "^16.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "happy-dom": "^20.9.0",
     "jsdom": "^29.0.0",
     "react": "19.2.5",
     "react-dom": "19.2.5",

@@ -1,32 +1,9 @@
 {
-  "name": "@equationalapplications/expo-llm-wiki",
+  "name": "expo-llm-wiki",
+  "private": true,
   "version": "2.3.0",
-  "description": "LLM Wiki Memory for Expo/React Native. Backward-compat alias for @eq/wiki-expo.",
-  "main": "dist/index.js",
-  "module": "dist/index.mjs",
-  "types": "dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "require": "./dist/index.js",
-      "import": "./dist/index.mjs"
-    },
-    "./react": {
-      "types": "./dist/react/index.d.ts",
-      "require": "./dist/react/index.js",
-      "import": "./dist/react/index.mjs"
-    }
-  },
-  "files": [
-    "dist",
-    "LICENSE",
-    "README.md"
-  ],
+  "description": "Private workspace root. Published packages are under packages/. src/ contains backward-compat build aliases only.",
   "license": "MIT",
-  "publishConfig": {
-    "access": "public",
-    "registry": "https://registry.npmjs.org"
-  },
   "peerDependencies": {
     "expo-sqlite": "^14.0.0 || ^15.0.0 || ^55.0.0",
     "react": ">=17"
@@ -37,17 +14,19 @@
     }
   },
   "dependencies": {
-    "@eq/wiki-core": "workspace:*"
+    "@equationalapplications/core-llm-wiki": "workspace:*",
+    "@equationalapplications/expo-llm-wiki": "workspace:*",
+    "@equationalapplications/react-llm-wiki": "workspace:*"
   },
   "scripts": {
-    "build": "pnpm -r build && tsup src/index.ts src/react/index.ts --format cjs,esm --dts --external react --external expo-sqlite --external @eq/wiki-core --out-dir dist",
-    "build:core": "pnpm --filter @eq/wiki-core build",
-    "build:expo": "pnpm --filter @eq/wiki-expo build",
-    "build:react": "pnpm --filter @eq/wiki-react build",
+    "build": "pnpm -r build && tsup src/index.ts src/react/index.ts --format cjs,esm --dts --external react --external expo-sqlite --external @equationalapplications/core-llm-wiki --external @equationalapplications/expo-llm-wiki --external @equationalapplications/react-llm-wiki --out-dir dist",
+    "build:core": "pnpm --filter @equationalapplications/core-llm-wiki build",
+    "build:expo": "pnpm --filter @equationalapplications/expo-llm-wiki build",
+    "build:react": "pnpm --filter @equationalapplications/react-llm-wiki build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
     "dev:workspace": "pnpm -r --parallel dev",
-    "dev:root": "tsup src/index.ts src/react/index.ts --format cjs,esm --dts --external react --external expo-sqlite --external @eq/wiki-core --out-dir dist --watch",
+    "dev:root": "tsup src/index.ts src/react/index.ts --format cjs,esm --dts --external react --external expo-sqlite --external @equationalapplications/core-llm-wiki --external @equationalapplications/expo-llm-wiki --external @equationalapplications/react-llm-wiki --out-dir dist --watch",
     "dev": "node -e \"const { spawn } = require('node:child_process'); const procs = [spawn('pnpm', ['run', 'dev:root'], { stdio: 'inherit', shell: true }), spawn('pnpm', ['run', 'dev:workspace'], { stdio: 'inherit', shell: true })]; let done = false; const stop = (signal) => { for (const p of procs) { if (!p.killed) p.kill(signal); } }; const finish = (code) => { if (done) return; done = true; stop('SIGTERM'); process.exit(code ?? 0); }; process.on('SIGINT', () => finish(130)); process.on('SIGTERM', () => finish(143)); for (const p of procs) p.on('exit', (code) => finish(code));\""
   },
   "devDependencies": {

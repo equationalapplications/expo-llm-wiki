@@ -1,6 +1,6 @@
-# @eq/wiki-react
+# @equationalapplications/react-llm-wiki
 
-React hooks for @eq/wiki-core, designed for web and Expo.
+React hooks and web utilities for @equationalapplications/core-llm-wiki, designed for web and Expo.
 
 ## Features
 
@@ -11,7 +11,7 @@ React hooks for @eq/wiki-core, designed for web and Expo.
 ## Installation
 
 ```bash
-npm install @eq/wiki-react @eq/wiki-core
+npm install @equationalapplications/react-llm-wiki
 ```
 
 ## Setup
@@ -19,8 +19,8 @@ npm install @eq/wiki-react @eq/wiki-core
 **React** (with any `SQLiteAdapter`):
 
 ```typescript
-import { WikiProvider } from '@eq/wiki-react';
-import { createWiki } from '@eq/wiki-core';
+import { WikiProvider } from '@equationalapplications/react-llm-wiki';
+import { createWiki } from '@equationalapplications/react-llm-wiki';
 
 // Create wiki instance and initialize tables
 const wiki = createWiki(adapter, options);
@@ -32,10 +32,10 @@ await wiki.setup();
 </WikiProvider>
 ```
 
-**Expo / React Native** (`@eq/wiki-expo` re-exports both `createWiki` and `WikiProvider`):
+**Expo / React Native** (`@equationalapplications/expo-llm-wiki` re-exports both `createWiki` and `WikiProvider`):
 
 ```typescript
-import { createWiki, WikiProvider } from '@eq/wiki-expo';
+import { createWiki, WikiProvider } from '@equationalapplications/expo-llm-wiki';
 import { openDatabaseSync } from 'expo-sqlite';
 
 const db = openDatabaseSync('wiki.db');

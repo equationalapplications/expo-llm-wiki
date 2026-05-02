@@ -1,10 +1,10 @@
 import { defineConfig } from 'tsup';
 
 export default defineConfig({
-  entry: ['src/index.ts'],
+  entry: ['src/index.ts', 'src/js.ts'],
   format: ['cjs', 'esm'],
   dts: true,
   clean: true,
   sourcemap: true,
-  external: ['react', '@eq/wiki-core'],
+  external: ['react', '@equationalapplications/core-llm-wiki'],
 });

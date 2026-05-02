@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { useWiki } from './WikiContext';
-import type { MemoryDump } from '@eq/wiki-core';
+import type { MemoryDump } from '@equationalapplications/core-llm-wiki';
 
 export function useWikiExport() {
   const wiki = useWiki();

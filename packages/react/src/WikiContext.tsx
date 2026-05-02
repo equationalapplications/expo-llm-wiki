@@ -1,5 +1,5 @@
 import React, { createContext, useContext, type ReactNode } from 'react';
-import { WikiMemory } from '@eq/wiki-core';
+import { WikiMemory } from '@equationalapplications/core-llm-wiki';
 
 const WikiContext = createContext<WikiMemory | null>(null);
 

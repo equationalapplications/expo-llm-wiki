@@ -1,5 +1,5 @@
 import type * as SQLite from 'expo-sqlite';
-import type { SQLiteAdapter } from '@eq/wiki-core';
+import type { SQLiteAdapter } from '@equationalapplications/core-llm-wiki';
 
 export function createExpoAdapter(db: SQLite.SQLiteDatabase): SQLiteAdapter {
   return {

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { MemoryBundle } from '@eq/wiki-core';
+import type { MemoryBundle } from '@equationalapplications/core-llm-wiki';
 import { useWiki } from './WikiContext';
 
 export function useMemoryRead(entityId: string, query: string) {
