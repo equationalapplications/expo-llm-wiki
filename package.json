@@ -17,16 +17,20 @@
       "import": "./dist/react/index.mjs"
     }
   },
-  "files": ["dist", "LICENSE", "README.md"],
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
   "license": "MIT",
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org"
   },
   "peerDependencies": {
+    "@eq/wiki-react": "workspace:*",
     "expo-sqlite": "^14.0.0 || ^15.0.0 || ^55.0.0",
-    "react": ">=17",
-    "@eq/wiki-react": "workspace:*"
+    "react": ">=17"
   },
   "peerDependenciesMeta": {
     "react": {
@@ -58,14 +62,14 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.0.0",
     "@types/react": "^19.0.0",
-    "@vitest/coverage-v8": "^4.1.5",
+    "@vitest/coverage-v8": "4.1.5",
     "better-sqlite3": "^12.9.0",
     "expo-sqlite": "^55.0.15",
     "react": "19.2.5",
     "semantic-release": "^24.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.4.0",
-    "vitest": "^4.1.5"
+    "vitest": "4.1.5"
   },
   "pnpm": {
     "overrides": {
