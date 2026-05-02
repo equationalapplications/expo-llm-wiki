@@ -1,5 +1,7 @@
 # Monorepo Split Implementation Plan
 
+> **STATUS: STALE.** This plan was used to implement the monorepo split. The work is now complete and shipped. For current design and implementation details, see [2026-04-30-monorepo-architecture-design.md](../specs/2026-04-30-monorepo-architecture-design.md). Package names have been updated: `@eq/wiki-*` → `@equationalapplications/*-llm-wiki`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Split `expo-llm-wiki` into three packages — `@eq/wiki-core` (pure TS logic), `@eq/wiki-expo` (Expo/React Native wrapper), and `@eq/wiki-react` (React hooks + vanilla JS) — in a pnpm workspace monorepo.
