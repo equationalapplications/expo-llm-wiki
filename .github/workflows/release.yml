@@ -45,21 +45,20 @@ jobs:
 
       - name: Publish all packages
         run: |
-          # Do not gate publish retries on the checked-out package.json version.
-          # On a rerun after semantic-release has already created the tag/release,
-          # the repository still contains the original version, so we must rely on
-          # per-package npm checks below to skip already-published packages and
-          # retry any packages that failed to publish previously.
+          # Determine the released version from the latest git tag.
+          # Reading from the tag (rather than the checked-out package.json) means
+          # reruns after semantic-release has already created the tag/release will
+          # use the correct released version even though the original commit still
+          # carries the pre-release version in package.json.
+          RELEASE_VERSION=$(git tag --sort=-version:refname --list 'v[0-9]*' | head -1 | sed 's/^v//')
+          if [ -z "$RELEASE_VERSION" ]; then
+            echo "No release tag found; semantic-release did not create a new release. Nothing to publish."
+            exit 0
+          fi
+          echo "Release version: ${RELEASE_VERSION}"
 
           package_name() {
             node -p "require(process.argv[1]).name" "$1"
-          }
-
-          latest_release_version() {
-            # Read version from the latest git tag so that reruns after semantic-release
-            # has already created the tag use the released version rather than the
-            # pre-release version from the checked-out package.json.
-            git tag --sort=-version:refname --list 'v[0-9]*' | head -1 | sed 's/^v//'
           }
 
           publish_if_needed() {
@@ -67,7 +66,7 @@ jobs:
             shift
 
             PACKAGE_NAME=$(package_name "$PACKAGE_JSON_PATH")
-            PACKAGE_VERSION=$(latest_release_version)
+            PACKAGE_VERSION="${RELEASE_VERSION}"
 
             if npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" version >/dev/null 2>&1; then
               echo "${PACKAGE_NAME}@${PACKAGE_VERSION} is already published, skipping"
