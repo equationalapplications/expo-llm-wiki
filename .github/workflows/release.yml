@@ -35,7 +35,8 @@ jobs:
 
       - name: Get current version
         id: pre_version
-        run: node -p "require('./package.json').version" | xargs -I{} echo "version={}" >> $GITHUB_OUTPUT
+        run: node -p "require('./package.json').version" | xargs -I{} echo "version={}"
+          >> $GITHUB_OUTPUT
 
       - run: npx semantic-release
         env:
