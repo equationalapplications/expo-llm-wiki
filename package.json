@@ -1,23 +1,7 @@
 {
   "name": "expo-llm-wiki-workspace",
   "private": true,
-  "version": "2.3.0",
-  "description": "A standalone, general-purpose React Native/Expo package for LLM Wiki Memory.",
-  "main": "dist/index.js",
-  "module": "dist/index.mjs",
-  "types": "dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "require": "./dist/index.js",
-      "import": "./dist/index.mjs"
-    },
-    "./react": {
-      "types": "./dist/react/index.d.ts",
-      "require": "./dist/react/index.js",
-      "import": "./dist/react/index.mjs"
-    }
-  },
+  "version": "0.0.0",
   "scripts": {
     "build": "pnpm -r build",
     "build:core": "pnpm --filter @eq/wiki-core build",
@@ -25,38 +9,7 @@
     "build:react": "pnpm --filter @eq/wiki-react build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "dev": "pnpm -r dev"
-  },
-  "files": [
-    "dist",
-    "LICENSE",
-    "README.md"
-  ],
-  "keywords": [
-    "expo",
-    "react-native",
-    "llm",
-    "memory",
-    "sqlite",
-    "fts5"
-  ],
-  "author": "",
-  "license": "MIT",
-  "publishConfig": {
-    "access": "public",
-    "registry": "https://registry.npmjs.org"
-  },
-  "peerDependencies": {
-    "expo-sqlite": "^14.0.0 || ^15.0.0 || ^55.0.0",
-    "react": ">=17"
-  },
-  "peerDependenciesMeta": {
-    "react": {
-      "optional": true
-    }
-  },
-  "engines": {
-    "node": ">=20"
+    "dev": "pnpm -r --parallel dev"
   },
   "devDependencies": {
     "@semantic-release/changelog": "^6.0.0",
