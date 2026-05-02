@@ -24,6 +24,7 @@ const wikiMemory = new WikiMemory(db, {
   llmProvider: {
     generateText: async ({ systemPrompt, userPrompt }) => {
       // Your LLM call here
+      return 'Model output';
     },
   },
 });
