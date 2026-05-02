@@ -44,7 +44,9 @@
     "build:react": "pnpm --filter @eq/wiki-react build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "dev": "pnpm -r --parallel dev"
+    "dev:workspace": "pnpm -r --parallel dev",
+    "dev:root": "tsup src/index.ts src/react/index.ts --format cjs,esm --dts --external react --external expo-sqlite --external @eq/wiki-core --external @eq/wiki-expo --external @eq/wiki-react --out-dir dist --watch",
+    "dev": "node -e \"const { spawn } = require('node:child_process'); const procs = [spawn('pnpm', ['run', 'dev:root'], { stdio: 'inherit', shell: true }), spawn('pnpm', ['run', 'dev:workspace'], { stdio: 'inherit', shell: true })]; let done = false; const stop = (signal) => { for (const p of procs) { if (!p.killed) p.kill(signal); } }; const finish = (code) => { if (done) return; done = true; stop('SIGTERM'); process.exit(code ?? 0); }; process.on('SIGINT', () => finish(130)); process.on('SIGTERM', () => finish(143)); for (const p of procs) p.on('exit', (code) => finish(code));\""
   },
   "devDependencies": {
     "@semantic-release/changelog": "^6.0.0",
