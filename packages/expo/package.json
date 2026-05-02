@@ -24,7 +24,8 @@
     "registry": "https://registry.npmjs.org"
   },
   "dependencies": {
-    "@eq/wiki-core": "workspace:*"
+    "@eq/wiki-core": "workspace:*",
+    "@eq/wiki-react": "workspace:*"
   },
   "peerDependencies": {
     "expo-sqlite": "^14.0.0 || ^15.0.0 || ^55.0.0",
