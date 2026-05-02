@@ -45,11 +45,11 @@ jobs:
 
       - name: Publish all packages
         run: |
-          NEW_VERSION=$(node -p "require('./package.json').version")
-          if [ "$NEW_VERSION" = "${{ steps.pre_version.outputs.version }}" ]; then
-            echo "No new release, skipping publish"
-            exit 0
-          fi
+          # Do not gate publish retries on the checked-out package.json version.
+          # On a rerun after semantic-release has already created the tag/release,
+          # the repository still contains the original version, so we must rely on
+          # per-package npm checks below to skip already-published packages and
+          # retry any packages that failed to publish previously.
 
           package_name() {
             node -p "require(process.argv[1]).name" "$1"
