@@ -31,7 +31,7 @@ const wiki = createWiki(db, {
 });
 
 // Use wiki instance
-await wiki.write('user-123', { type: 'observation', summary: '...' });
+await wiki.write('user-123', { event_type: 'observation', summary: '...' });
 ```
 
 ## With React

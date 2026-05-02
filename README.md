@@ -161,13 +161,39 @@ await wiki.setup();
 ### React Web (Vite + React)
 
 ```typescript
-import { createWiki } from '@eq/wiki-react';
+import { createWiki } from '@eq/wiki-core';
 import initSqlJs from 'sql.js';
 
 const SQL = await initSqlJs();
-const db = new SQL.Database();
+const sqlDb = new SQL.Database();
 
-const wiki = await createWiki(db, {
+// Wrap sql.js behind the SQLiteAdapter interface required by @eq/wiki-core
+const adapter = {
+  execAsync(sql) { sqlDb.exec(sql); return Promise.resolve(); },
+  runAsync(sql, params = []) {
+    sqlDb.run(sql, params);
+    const rows = sqlDb.exec('SELECT changes(), last_insert_rowid()');
+    const [changes, lastInsertRowId] = rows[0].values[0];
+    return Promise.resolve({ changes: Number(changes), lastInsertRowId: Number(lastInsertRowId) });
+  },
+  getAllAsync(sql, params = []) {
+    const stmt = sqlDb.prepare(sql); stmt.bind(params);
+    const rows = []; while (stmt.step()) rows.push(stmt.getAsObject()); stmt.free();
+    return Promise.resolve(rows);
+  },
+  getFirstAsync(sql, params = []) {
+    const stmt = sqlDb.prepare(sql); stmt.bind(params);
+    const row = stmt.step() ? stmt.getAsObject() : null; stmt.free();
+    return Promise.resolve(row);
+  },
+  withTransactionAsync(fn) {
+    sqlDb.run('BEGIN');
+    return fn().then((r) => { sqlDb.run('COMMIT'); return r; }, (e) => { sqlDb.run('ROLLBACK'); throw e; });
+  },
+  closeAsync() { sqlDb.close(); return Promise.resolve(); },
+};
+
+const wiki = createWiki(adapter, {
   llmProvider: {
     generateText: async ({ systemPrompt, userPrompt }) => {
       // Connect to your LLM provider
@@ -190,13 +216,16 @@ await wiki.setup();
 ### Vanilla JavaScript (any framework)
 
 ```typescript
-import { createWiki } from '@eq/wiki-react';
+import { createWiki } from '@eq/wiki-core';
 import initSqlJs from 'sql.js';
 
 const SQL = await initSqlJs();
-const db = new SQL.Database();
+const sqlDb = new SQL.Database();
 
-const wiki = await createWiki(db, {
+// Wrap sql.js behind the SQLiteAdapter interface — see React Web setup above for full adapter
+const adapter = { /* sql.js adapter */ };
+
+const wiki = createWiki(adapter, {
   llmProvider: {
     generateText: async ({ systemPrompt, userPrompt }) => {
       // Connect to your LLM provider
@@ -225,9 +254,13 @@ import Database from 'better-sqlite3';
 // Create a thin adapter wrapper
 const db = new Database('memory.db');
 const adapter = {
-  execAsync: (sql) => Promise.resolve(db.exec(sql)),
-  allAsync: (sql, params) => Promise.resolve(db.prepare(sql).all(...(params || []))),
-  runAsync: (sql, params) => Promise.resolve(db.prepare(sql).run(...(params || []))),
+  execAsync: (sql) => { db.exec(sql); return Promise.resolve(); },
+  getAllAsync: (sql, params) => Promise.resolve(db.prepare(sql).all(...(params || []))),
+  getFirstAsync: (sql, params) => Promise.resolve(db.prepare(sql).get(...(params || [])) ?? null),
+  runAsync: (sql, params) => {
+    const info = db.prepare(sql).run(...(params || []));
+    return Promise.resolve({ changes: info.changes, lastInsertRowId: Number(info.lastInsertRowid) });
+  },
   withTransactionAsync: async (fn) => {
     db.exec('BEGIN');
     try {
@@ -239,7 +272,7 @@ const adapter = {
       throw error;
     }
   },
-  closeAsync: () => Promise.resolve(db.close()),
+  closeAsync: () => { db.close(); return Promise.resolve(); },
 };
 
 const wiki = await createWiki(adapter, {
@@ -325,7 +358,7 @@ Convert a `MemoryBundle` into a string ready for LLM prompt injection:
 
 ```typescript
 // Import from the appropriate package for your platform
-import { formatContext } from '@eq/wiki-core';      // or @eq/wiki-expo, @eq/wiki-react
+import { formatContext } from '@eq/wiki-core';      // or @eq/wiki-expo
 
 const bundle = await wiki.read('entity-123', 'weekend plans');
 const context = formatContext(bundle, {
@@ -406,12 +439,16 @@ Wrap once at app root (or any subtree that needs memory access):
 
 **Web (React/Vite):**
 ```typescript
-import { WikiProvider, createWiki } from '@eq/wiki-react';
+import { WikiProvider } from '@eq/wiki-react';
+import { createWiki } from '@eq/wiki-core';
 import initSqlJs from 'sql.js';
 
 const SQL = await initSqlJs();
-const db = new SQL.Database();
-const wiki = await createWiki(db, { llmProvider });
+const sqlDb = new SQL.Database();
+// Build a sql.js adapter — see React Web setup section above for the full adapter
+const adapter = { /* sql.js adapter */ };
+const wiki = createWiki(adapter, { llmProvider });
+await wiki.setup();
 
 export default function App() {
   return (
