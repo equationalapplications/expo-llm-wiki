@@ -55,8 +55,11 @@ jobs:
             node -p "require(process.argv[1]).name" "$1"
           }
 
-          package_version() {
-            node -p "require(process.argv[1]).version" "$1"
+          latest_release_version() {
+            # Read version from the latest git tag so that reruns after semantic-release
+            # has already created the tag use the released version rather than the
+            # pre-release version from the checked-out package.json.
+            git tag --sort=-version:refname --list 'v[0-9]*' | head -1 | sed 's/^v//'
           }
 
           publish_if_needed() {
@@ -64,7 +67,7 @@ jobs:
             shift
 
             PACKAGE_NAME=$(package_name "$PACKAGE_JSON_PATH")
-            PACKAGE_VERSION=$(package_version "$PACKAGE_JSON_PATH")
+            PACKAGE_VERSION=$(latest_release_version)
 
             if npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" version >/dev/null 2>&1; then
               echo "${PACKAGE_NAME}@${PACKAGE_VERSION} is already published, skipping"

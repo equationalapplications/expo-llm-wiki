@@ -18,9 +18,6 @@ importers:
       '@eq/wiki-expo':
         specifier: workspace:*
         version: link:packages/expo
-      '@eq/wiki-react':
-        specifier: workspace:*
-        version: link:packages/react
     devDependencies:
       '@semantic-release/changelog':
         specifier: ^6.0.0
