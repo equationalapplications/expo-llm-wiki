@@ -44,8 +44,8 @@ function makeMockDb(entries: EntryRow[] = []) {
 
 vi.mock('expo-sqlite', () => ({ default: {} }));
 
-import { WikiMemory } from '../WikiMemory';
-import type { WikiOptions } from '../types';
+import { WikiMemory } from '@eq/wiki-core';
+import type { WikiOptions } from '@eq/wiki-core';
 
 const stubOptions: WikiOptions = {
   llmProvider: { generateText: async () => '{}' },

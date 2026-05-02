@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { WikiBusyError } from '../types';
+import { WikiBusyError } from '@eq/wiki-core';
 
 vi.mock('expo-sqlite', () => {
   class MockSQLiteDatabase {

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type * as SQLite from 'expo-sqlite';
-import { WikiMemory } from '../WikiMemory';
-import type { LLMProvider, WikiFact } from '../types';
+import { WikiMemory } from '@eq/wiki-core';
+import type { LLMProvider, WikiFact } from '@eq/wiki-core';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 
 const llmProvider: LLMProvider = {

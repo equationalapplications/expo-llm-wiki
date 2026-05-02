@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { MemoryDump } from '../types';
+import type { MemoryDump } from '@eq/wiki-core';
 
 vi.mock('expo-sqlite', () => {
   class MockSQLiteDatabase {

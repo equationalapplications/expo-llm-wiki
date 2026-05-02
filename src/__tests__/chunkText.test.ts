@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { __testables } from '../WikiMemory';
+import { __testables } from '../../packages/core/src/WikiMemory';
 
 const { chunkText } = __testables;
 

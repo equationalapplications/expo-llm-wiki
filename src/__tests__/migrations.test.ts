@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { Migration } from '../db/migrations';
+import type { Migration } from '../../packages/core/src/db/migrations';
 
 // ── Shared mock state ────────────────────────────────────────────────────────
 
@@ -72,8 +72,8 @@ vi.mock('expo-sqlite', () => ({ default: {} }));
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
-import { WikiMemory } from '../WikiMemory';
-import type { WikiOptions } from '../types';
+import { WikiMemory } from '@eq/wiki-core';
+import type { WikiOptions } from '@eq/wiki-core';
 
 const stubOptions: WikiOptions = {
   llmProvider: { generateText: async () => '{}' },

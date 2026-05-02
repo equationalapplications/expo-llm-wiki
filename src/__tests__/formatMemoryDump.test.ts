@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { formatMemoryDump } from '../utils/formatMemoryDump';
-import type { MemoryDump } from '../types';
+import { formatMemoryDump } from '@eq/wiki-core';
+import type { MemoryDump } from '@eq/wiki-core';
 
 describe('formatMemoryDump', () => {
   it('handles empty dump', () => {

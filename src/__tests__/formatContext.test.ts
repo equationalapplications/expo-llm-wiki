@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { formatContext } from '../utils/formatContext';
-import type { MemoryBundle, WikiFact, WikiTask, WikiEvent } from '../types';
+import { formatContext } from '@eq/wiki-core';
+import type { MemoryBundle, WikiFact, WikiTask, WikiEvent } from '@eq/wiki-core';
 
 function makeFact(overrides: Partial<WikiFact> = {}): WikiFact {
   return {

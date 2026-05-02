@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type * as SQLite from 'expo-sqlite';
-import { WikiMemory } from '../WikiMemory';
-import type { LLMProvider, WikiConfig } from '../types';
+import { WikiMemory } from '@eq/wiki-core';
+import type { LLMProvider, WikiConfig } from '@eq/wiki-core';
 
 const llmProvider: LLMProvider = { generateText: async () => '{}' };
 
