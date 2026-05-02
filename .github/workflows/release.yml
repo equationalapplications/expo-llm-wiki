@@ -73,6 +73,19 @@ jobs:
               return 0
             fi
 
+            # Patch the on-disk package.json to RELEASE_VERSION before publishing.
+            # On a workflow rerun the checkout is still at the pre-release SHA, so the
+            # file on disk still carries the old version even though the git tag is correct.
+            # Without this patch pnpm publish would use the stale version from disk.
+            # Variables are passed as env vars (not interpolated into the script) to avoid
+            # any risk of injection from unexpected characters in paths or version strings.
+            PKG_PATH="${PACKAGE_JSON_PATH}" PKG_VERSION="${RELEASE_VERSION}" node -e "
+              const fs = require('fs');
+              const p = JSON.parse(fs.readFileSync(process.env.PKG_PATH, 'utf8'));
+              p.version = process.env.PKG_VERSION;
+              fs.writeFileSync(process.env.PKG_PATH, JSON.stringify(p, null, 2) + '\n');
+            "
+
             echo "Publishing ${PACKAGE_NAME}@${PACKAGE_VERSION}"
             "$@"
           }
