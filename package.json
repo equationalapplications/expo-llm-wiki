@@ -51,10 +51,16 @@
     "@vitest/coverage-v8": "^4.1.5",
     "better-sqlite3": "^12.9.0",
     "expo-sqlite": "^55.0.15",
-    "react": "19.2.0",
+    "react": "19.2.5",
     "semantic-release": "^24.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.4.0",
     "vitest": "^4.1.5"
+  },
+  "pnpm": {
+    "overrides": {
+      "react": "19.2.5",
+      "react-dom": "19.2.5"
+    }
   }
 }

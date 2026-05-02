@@ -16,15 +16,32 @@ npm install @eq/wiki-react @eq/wiki-core
 
 ## Setup
 
+**Web / Node.js** (with any `SQLiteAdapter`):
+
 ```typescript
 import { WikiProvider } from '@eq/wiki-react';
-import { createWiki } from '@eq/wiki-core'; // or '@eq/wiki-expo' for Expo apps
+import { createWiki } from '@eq/wiki-core';
 
 // Create wiki instance and initialize tables
 const wiki = createWiki(adapter, options);
 await wiki.setup();
 
 // Wrap app
+<WikiProvider wiki={wiki}>
+  <App />
+</WikiProvider>
+```
+
+**Expo / React Native** (`@eq/wiki-expo` re-exports both `createWiki` and `WikiProvider`):
+
+```typescript
+import { createWiki, WikiProvider } from '@eq/wiki-expo';
+import { openDatabaseSync } from 'expo-sqlite';
+
+const db = openDatabaseSync('wiki.db');
+const wiki = createWiki(db, options);
+await wiki.setup();
+
 <WikiProvider wiki={wiki}>
   <App />
 </WikiProvider>
