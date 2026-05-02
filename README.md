@@ -172,9 +172,9 @@ const adapter = {
   execAsync(sql) { sqlDb.exec(sql); return Promise.resolve(); },
   runAsync(sql, params = []) {
     sqlDb.run(sql, params);
-    const rows = sqlDb.exec('SELECT changes(), last_insert_rowid()');
-    const [changes, lastInsertRowId] = rows[0].values[0];
-    return Promise.resolve({ changes: Number(changes), lastInsertRowId: Number(lastInsertRowId) });
+    const changes = sqlDb.getRowsModified();
+    const [[lastInsertRowId]] = sqlDb.exec('SELECT last_insert_rowid()')[0].values;
+    return Promise.resolve({ changes, lastInsertRowId: Number(lastInsertRowId) });
   },
   getAllAsync(sql, params = []) {
     const stmt = sqlDb.prepare(sql); stmt.bind(params);
