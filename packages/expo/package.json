@@ -1,0 +1,40 @@
+{
+  "name": "@eq/wiki-expo",
+  "version": "2.3.0",
+  "description": "Expo/React Native adapter for @eq/wiki-core.",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "files": ["dist", "LICENSE", "README.md"],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "dependencies": {
+    "@eq/wiki-core": "workspace:*"
+  },
+  "peerDependencies": {
+    "expo-sqlite": "^14.0.0 || ^15.0.0 || ^55.0.0",
+    "react": ">=17"
+  },
+  "peerDependenciesMeta": {
+    "react": { "optional": true }
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.4.0"
+  }
+}
