@@ -26,7 +26,8 @@ const db = openDatabaseSync('wiki.db');
 const wiki = createWiki(db, {
   llmProvider: {
     generateText: async ({ systemPrompt, userPrompt }) => {
-      // Your LLM call
+      // Your LLM call — must return the model output as a string
+      return 'Model output';
     },
   },
 });
