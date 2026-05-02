@@ -3,4 +3,4 @@
 // factory (takes expo-sqlite SQLiteDatabase, matching the old package API).
 // React hooks remain isolated behind the ./react sub-path.
 export * from '@eq/wiki-core';
-export { createWiki } from '@eq/wiki-expo';
+export { createWiki } from '@eq/wiki-expo/factory';

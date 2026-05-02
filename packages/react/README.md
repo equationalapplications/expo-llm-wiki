@@ -16,7 +16,7 @@ npm install @eq/wiki-react @eq/wiki-core
 
 ## Setup
 
-**Web / Node.js** (with any `SQLiteAdapter`):
+**React (Web / Node.js)** (with any `SQLiteAdapter`):
 
 ```typescript
 import { WikiProvider } from '@eq/wiki-react';

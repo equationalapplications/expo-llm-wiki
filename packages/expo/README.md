@@ -6,7 +6,7 @@ Expo/React Native adapter for @eq/wiki-core, powered by `expo-sqlite`.
 
 - **Expo-ready** — Pre-configured for React Native + Expo
 - **Built on `expo-sqlite`** — Stable, well-supported SQLite driver
-- **React hooks** — Use `@eq/wiki-react` for React component integration
+- **React hooks** — `WikiProvider`, `useMemoryRead`, and all other hooks are re-exported directly from `@eq/wiki-expo`
 
 ## Installation
 
