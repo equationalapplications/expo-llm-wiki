@@ -88,7 +88,7 @@ flowchart TB
 - **Vanilla JS or non-React framework?** → `@eq/wiki-core` + `sql.js`
 - **Node.js backend?** → `@eq/wiki-core` + `better-sqlite3`
 
-All packages share the same core API and database schema. The core library is **framework-agnostic and dependency-free**; adapters are injected by the wrapper package.
+All packages share the same core API and database schema. The core library is **framework-agnostic and dependency-free**; `@eq/wiki-expo` injects the Expo adapter, while `@eq/wiki-core` and `@eq/wiki-react` require your application to provide a SQLite adapter.
 
 ## Installation
 
