@@ -25,9 +25,13 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
-      - run: npm ci
+      - uses: pnpm/action-setup@v4
+        with:
+          version: latest
 
-      - run: npm run build
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm run build
 
       - run: npx semantic-release
         env:

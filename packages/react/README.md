@@ -18,9 +18,11 @@ npm install @eq/wiki-react @eq/wiki-core
 
 ```typescript
 import { WikiProvider } from '@eq/wiki-react';
+import { createWiki } from '@eq/wiki-core'; // or '@eq/wiki-expo' for Expo apps
 
-// Create wiki instance (from @eq/wiki-core or @eq/wiki-expo)
-const wiki = createWiki(db, options);
+// Create wiki instance and initialize tables
+const wiki = createWiki(adapter, options);
+await wiki.setup();
 
 // Wrap app
 <WikiProvider wiki={wiki}>

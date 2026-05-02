@@ -11,7 +11,8 @@ Expo/React Native adapter for @eq/wiki-core, powered by `expo-sqlite`.
 ## Installation
 
 ```bash
-npm install @eq/wiki-expo expo-sqlite
+npx expo install expo-sqlite
+npm install @eq/wiki-expo
 ```
 
 ## Usage
@@ -30,14 +31,19 @@ const wiki = createWiki(db, {
   },
 });
 
+// Initialize tables (call once on app startup)
+await wiki.setup();
+
 // Use wiki instance
 await wiki.write('user-123', { event_type: 'observation', summary: '...' });
 ```
 
 ## With React
 
+`@eq/wiki-expo` re-exports all hooks and `WikiProvider` from `@eq/wiki-react`:
+
 ```typescript
-import { WikiProvider } from '@eq/wiki-react';
+import { WikiProvider } from '@eq/wiki-expo';
 
 <WikiProvider wiki={wiki}>
   <MyApp />
@@ -47,7 +53,7 @@ import { WikiProvider } from '@eq/wiki-react';
 Then use hooks in components:
 
 ```typescript
-import { useMemoryRead } from '@eq/wiki-react';
+import { useMemoryRead } from '@eq/wiki-expo';
 
 export function UserProfile({ userId }: { userId: string }) {
   const { data, isPending } = useMemoryRead(userId, 'preferences');

@@ -107,7 +107,7 @@ npm install @eq/wiki-react @eq/wiki-core sql.js
 
 ### Vanilla JavaScript (any framework or plain HTML)
 ```bash
-npm install @eq/wiki-react sql.js
+npm install @eq/wiki-core sql.js
 ```
 
 ### Node.js Backend
@@ -465,7 +465,8 @@ import { WikiProvider, createWiki } from '@eq/wiki-expo';
 import * as SQLite from 'expo-sqlite';
 
 const db = await SQLite.openDatabaseAsync('my-app.db');
-const wiki = await createWiki(db, { llmProvider });
+const wiki = createWiki(db, { llmProvider });
+await wiki.setup();
 
 export default function App() {
   return (
