@@ -50,14 +50,39 @@ jobs:
             echo "No new release, skipping publish"
             exit 0
           fi
+
+          package_name() {
+            node -p "require(process.argv[1]).name" "$1"
+          }
+
+          package_version() {
+            node -p "require(process.argv[1]).version" "$1"
+          }
+
+          publish_if_needed() {
+            PACKAGE_JSON_PATH="$1"
+            shift
+
+            PACKAGE_NAME=$(package_name "$PACKAGE_JSON_PATH")
+            PACKAGE_VERSION=$(package_version "$PACKAGE_JSON_PATH")
+
+            if npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" version >/dev/null 2>&1; then
+              echo "${PACKAGE_NAME}@${PACKAGE_VERSION} is already published, skipping"
+              return 0
+            fi
+
+            echo "Publishing ${PACKAGE_NAME}@${PACKAGE_VERSION}"
+            "$@"
+          }
+
           # Publish in dependency order so each package exists on npm before dependents are published.
           # pnpm publish replaces workspace:* dependency ranges with the real version at pack time.
           # Workspace package versions are already set by semantic-release's prepare phase.
-          pnpm --filter "./packages/core" publish --no-git-checks --access public
-          pnpm --filter "./packages/react" publish --no-git-checks --access public
-          pnpm --filter "./packages/expo" publish --no-git-checks --access public
+          publish_if_needed "./packages/core/package.json" pnpm --filter "./packages/core" publish --no-git-checks --access public
+          publish_if_needed "./packages/react/package.json" pnpm --filter "./packages/react" publish --no-git-checks --access public
+          publish_if_needed "./packages/expo/package.json" pnpm --filter "./packages/expo" publish --no-git-checks --access public
           # Publish the root compatibility package last (its workspace:* deps are now on npm)
-          pnpm publish --no-git-checks --access public
+          publish_if_needed "./package.json" pnpm publish --no-git-checks --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
