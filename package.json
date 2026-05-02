@@ -1,5 +1,6 @@
 {
-  "name": "@equationalapplications/expo-llm-wiki",
+  "name": "expo-llm-wiki-workspace",
+  "private": true,
   "version": "2.3.0",
   "description": "A standalone, general-purpose React Native/Expo package for LLM Wiki Memory.",
   "main": "dist/index.js",
@@ -18,11 +19,13 @@
     }
   },
   "scripts": {
-    "build": "tsup src/index.ts src/react/index.ts --format cjs,esm --dts --external react",
-    "dev": "tsup src/index.ts src/react/index.ts --format cjs,esm --dts --external react --watch",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "build": "pnpm -r build",
+    "build:core": "pnpm --filter @eq/wiki-core build",
+    "build:expo": "pnpm --filter @eq/wiki-expo build",
+    "build:react": "pnpm --filter @eq/wiki-react build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "dev": "pnpm -r dev"
   },
   "files": [
     "dist",
@@ -67,7 +70,7 @@
     "react": "19.2.0",
     "semantic-release": "^24.0.0",
     "tsup": "^8.0.0",
-    "typescript": "^5.0.0",
+    "typescript": "^5.4.0",
     "vitest": "^4.1.5"
   },
   "dependencies": {
