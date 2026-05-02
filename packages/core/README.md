@@ -28,6 +28,9 @@ const wikiMemory = new WikiMemory(db, {
   },
 });
 
+// Initialize schema and run migrations
+await wikiMemory.setup();
+
 // Store facts
 await wikiMemory.write('user-123', {
   event_type: 'observation',
