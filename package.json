@@ -28,15 +28,11 @@
     "registry": "https://registry.npmjs.org"
   },
   "peerDependencies": {
-    "@eq/wiki-react": "workspace:*",
     "expo-sqlite": "^14.0.0 || ^15.0.0 || ^55.0.0",
     "react": ">=17"
   },
   "peerDependenciesMeta": {
     "react": {
-      "optional": true
-    },
-    "@eq/wiki-react": {
       "optional": true
     }
   },
