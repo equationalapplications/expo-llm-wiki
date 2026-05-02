@@ -45,14 +45,13 @@ jobs:
 
       - name: Publish all packages
         run: |
-          # Determine the released version from the latest git tag.
-          # Reading from the tag (rather than the checked-out package.json) means
-          # reruns after semantic-release has already created the tag/release will
-          # use the correct released version even though the original commit still
-          # carries the pre-release version in package.json.
-          RELEASE_VERSION=$(git tag --sort=-version:refname --list 'v[0-9]*' | head -1 | sed 's/^v//')
+          # Determine the released version from a release tag that points at the
+          # checked-out commit. This keeps reruns pinned to the code being
+          # published instead of accidentally picking a newer unrelated tag from
+          # elsewhere in the repository.
+          RELEASE_VERSION=$(git tag --points-at HEAD --sort=-version:refname --list 'v[0-9]*' | head -1 | sed 's/^v//')
           if [ -z "$RELEASE_VERSION" ]; then
-            echo "No release tag found; semantic-release did not create a new release. Nothing to publish."
+            echo "No release tag found for the checked-out commit; semantic-release did not create a new release for this revision. Nothing to publish."
             exit 0
           fi
           echo "Release version: ${RELEASE_VERSION}"
