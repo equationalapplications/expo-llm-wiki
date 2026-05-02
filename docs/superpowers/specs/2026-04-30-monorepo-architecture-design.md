@@ -1,7 +1,7 @@
 # Monorepo Architecture: Cross-Platform Wiki Support
 
-**Status:** Draft  
-**Date:** April 30, 2026  
+**Status:** Implemented
+**Date:** May 2, 2026  
 **Motivation:** Enable `expo-llm-wiki` to work across Expo, web (React/Vue/Svelte/vanilla JS), and Node.js backends without coupling consumers to unnecessary dependencies.
 
 ---
