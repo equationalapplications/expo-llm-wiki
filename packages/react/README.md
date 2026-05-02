@@ -44,7 +44,7 @@ Mutate facts.
 
 ```typescript
 const { execute, isPending, error } = useWikiWrite();
-await execute('user-123', { type: 'observation', summary: '...' });
+await execute('user-123', { event_type: 'observation', summary: '...' });
 ```
 
 ### `useWikiIngest()`
@@ -53,7 +53,11 @@ Ingest documents.
 
 ```typescript
 const { execute, isPending, error } = useWikiIngest();
-await execute('user-123', 'raw document text...');
+await execute('user-123', {
+  sourceRef: 'doc://readme',
+  sourceHash: 'a3f1b2c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2',
+  documentChunk: 'raw document text...',
+});
 ```
 
 ### `useWikiForget()`
@@ -80,7 +84,7 @@ Check if a source document has changed since last ingest.
 
 ```typescript
 const { execute, lastResult, isPending, error } = useWikiHasChanged();
-const changed = await execute('user-123', 'doc://readme', 'sha256-abc');
+const changed = await execute('user-123', 'doc://readme', 'a3f1b2c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2');
 ```
 
 ### `useWikiExport()`

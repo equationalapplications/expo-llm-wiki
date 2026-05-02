@@ -81,9 +81,6 @@ importers:
       '@eq/wiki-core':
         specifier: workspace:*
         version: link:../core
-      '@eq/wiki-react':
-        specifier: workspace:*
-        version: link:../react
       expo-sqlite:
         specifier: ^14.0.0 || ^15.0.0 || ^55.0.0
         version: 55.0.15(expo@55.0.19)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0)
