@@ -31,9 +31,9 @@
     "react": { "optional": true }
   },
   "dependencies": {
-    "@eq/wiki-core": "2.3.0",
-    "@eq/wiki-expo": "2.3.0",
-    "@eq/wiki-react": "2.3.0"
+    "@eq/wiki-core": "workspace:*",
+    "@eq/wiki-expo": "workspace:*",
+    "@eq/wiki-react": "workspace:*"
   },
   "scripts": {
     "build": "pnpm -r build && tsup src/index.ts src/react/index.ts --format cjs,esm --dts --external react --external expo-sqlite --external @eq/wiki-core --external @eq/wiki-expo --external @eq/wiki-react --out-dir dist",
