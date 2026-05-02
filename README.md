@@ -80,12 +80,12 @@ flowchart TB
 |---------|----------|---|---|---|
 | **`@eq/wiki-core`** | Node.js, any platform | User-provided (e.g., `better-sqlite3`) | Smallest | None |
 | **`@eq/wiki-expo`** | Expo, React Native | `expo-sqlite` (built-in) | Minimal | `expo-sqlite` (peer) |
-| **`@eq/wiki-react`** | Web, any framework | User-provided (e.g., `sql.js`) | Small | `react` (peer, optional) |
+| **`@eq/wiki-react`** | Web (React) | User-provided (e.g., `sql.js`) | Small | `react` (peer) |
 
 **Choose your package:**
 - **Expo/React Native app?** → `@eq/wiki-expo`
-- **Web app (React, Vite, CRA)?** → `@eq/wiki-react` + `sql.js`
-- **Vanilla JS (any framework)?** → `@eq/wiki-react` + `sql.js`
+- **React web app (CRA, Vite + React, Next.js client)?** → `@eq/wiki-react` + `sql.js`
+- **Vanilla JS or non-React framework?** → `@eq/wiki-core` + `sql.js`
 - **Node.js backend?** → `@eq/wiki-core` + `better-sqlite3`
 
 All packages share the same core API and database schema. The core library is **framework-agnostic and dependency-free**; adapters are injected by the wrapper package.
