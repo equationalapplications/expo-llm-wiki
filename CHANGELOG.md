@@ -1,3 +1,46 @@
+# [2.4.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v2.3.0...v2.4.0) (2026-05-02)
+
+
+### Bug Fixes
+
+* ./react entrypoint re-exports @eq/wiki-expo; remove @eq/wiki-react optional peer ([a2c85e3](https://github.com/equationalapplications/expo-llm-wiki/commit/a2c85e3b4d2ba3a0a21325b7d84d683d7b9c4ada))
+* address code review issues [#1](https://github.com/equationalapplications/expo-llm-wiki/issues/1)-5 (round 2) ([dc142f2](https://github.com/equationalapplications/expo-llm-wiki/commit/dc142f2ea18eb081d933646b8511c7e81ff11bdf)), closes [#1-5](https://github.com/equationalapplications/expo-llm-wiki/issues/1-5)
+* address code review issues [#1](https://github.com/equationalapplications/expo-llm-wiki/issues/1)-6 ([1317e56](https://github.com/equationalapplications/expo-llm-wiki/commit/1317e56b09befc8ed7bb538d0a1fc5e53365901f)), closes [#1-6](https://github.com/equationalapplications/expo-llm-wiki/issues/1-6) [#6](https://github.com/equationalapplications/expo-llm-wiki/issues/6)
+* address pr review issues [#1](https://github.com/equationalapplications/expo-llm-wiki/issues/1)-6 (adapter claims, type fields, react re-export, examples) ([e3111c3](https://github.com/equationalapplications/expo-llm-wiki/commit/e3111c3e2b5253306c0e6390a56cd6d69d64dd65)), closes [#1-6](https://github.com/equationalapplications/expo-llm-wiki/issues/1-6)
+* address review feedback - expo re-exports react hooks, correct README examples ([0a2020b](https://github.com/equationalapplications/expo-llm-wiki/commit/0a2020ba20440e81ac4644bdf77bf122b9715ef2))
+* backward-compat createWiki, optional react peer, full hook tests, fix vitest glob ([6ec8825](https://github.com/equationalapplications/expo-llm-wiki/commit/6ec882568ef19944f4bdfa25ee9d97c3837ba056))
+* **ci:** clarify shell var expansion in workspace publish step ([c4a255e](https://github.com/equationalapplications/expo-llm-wiki/commit/c4a255e4d09ca1e03b3665b74c2a1eada51d947c))
+* **ci:** include workspace versions in release tag; add expo adapter tests ([53af260](https://github.com/equationalapplications/expo-llm-wiki/commit/53af2602daad8040613464969dae20c7dfed7bfe))
+* **ci:** publish all workspace packages in release workflow ([f8586cc](https://github.com/equationalapplications/expo-llm-wiki/commit/f8586ccb6e44eca990dd881b04ebffc61aa0df6f))
+* **ci:** publish packages in dependency order, fix quoting, fix react peer ([aebc1b2](https://github.com/equationalapplications/expo-llm-wiki/commit/aebc1b2e55721845894c810547eab99303cb9b1a))
+* clean up workspace root package.json ([140fd7e](https://github.com/equationalapplications/expo-llm-wiki/commit/140fd7e3b1780455645e7cebe3d4434ec6d0658c))
+* **core:** align dep versions and fix tsconfig rootDir conflict ([18ea207](https://github.com/equationalapplications/expo-llm-wiki/commit/18ea207e199f98a04a3bd6bf66f563fd5faf1183))
+* **core:** remove expo-sqlite references from test suite ([2a73b20](https://github.com/equationalapplications/expo-llm-wiki/commit/2a73b200067b1fc92ebdedbdf5468e301ec6088c))
+* decouple ./react from expo, fix README heading and sourceRef examples ([0bbb493](https://github.com/equationalapplications/expo-llm-wiki/commit/0bbb493bdf2009a6b22f27c623987c22267dfa00))
+* disable React hook tests due to vitest 4.1.5 + React 19 + jsdom incompatibility ([b6366e5](https://github.com/equationalapplications/expo-llm-wiki/commit/b6366e5f47a1d0331da14211944de71cd14209cc))
+* expo/factory subpath for React-free createWiki, README headings, vitest env isolation ([31ec862](https://github.com/equationalapplications/expo-llm-wiki/commit/31ec86203c4163dfc9a60bf84436277245950eaf))
+* **expo:** remove type casts from withTransactionAsync adapter ([4f3cb90](https://github.com/equationalapplications/expo-llm-wiki/commit/4f3cb905e5762dacc9ce8a435da311fbcbc6249d))
+* extract RELEASE_VERSION once with empty-string guard in publish step ([276ef62](https://github.com/equationalapplications/expo-llm-wiki/commit/276ef62b881e0dd4625f79b5869787b9f77a70c0))
+* generateText return in expo README; move @eq/wiki-react to optional peerDep ([44143bd](https://github.com/equationalapplications/expo-llm-wiki/commit/44143bdc3a09ac341cfb0a00e07bf1c1da7a88da))
+* narrow ./react subpath to React hooks only; fix release version from git tag ([cb39f32](https://github.com/equationalapplications/expo-llm-wiki/commit/cb39f32fa8e160549ee08bbe1f6db6bf8bba2d8a))
+* patch on-disk package.json version to RELEASE_VERSION before pnpm publish ([7f15ae3](https://github.com/equationalapplications/expo-llm-wiki/commit/7f15ae3660a8489d883c91eb4e76151767006ea7))
+* react README setup example, root entry React isolation, add react hook tests ([f87599c](https://github.com/equationalapplications/expo-llm-wiki/commit/f87599c135d075c82808811d9cc80e25a43675dd))
+* **react:** put types first in exports field for Node16 compat ([b40b63d](https://github.com/equationalapplications/expo-llm-wiki/commit/b40b63d80835aee2c008f52b4ead4401cd3d718b))
+* readme doc fixes and release workflow pnpm upgrade ([9bf50d1](https://github.com/equationalapplications/expo-llm-wiki/commit/9bf50d1c971741f504b494108505593d02fc17f8))
+* remove runtime deps from workspace root ([d26dead](https://github.com/equationalapplications/expo-llm-wiki/commit/d26dead3d3d6463197a1eff938156daf1f259d6c))
+* use sql.js getRowsModified() in runAsync adapter example ([83d3dfd](https://github.com/equationalapplications/expo-llm-wiki/commit/83d3dfd8b9b85102336bc6dd68abc946f46f507a))
+
+
+### Features
+
+* **core:** add SQLiteAdapter interface and core types ([d728921](https://github.com/equationalapplications/expo-llm-wiki/commit/d728921de1c66ce437fe0c235132ed5b3cea712f))
+* **core:** add utils and index — @eq/wiki-core buildable ([8825405](https://github.com/equationalapplications/expo-llm-wiki/commit/882540509cc64ea36d7158f9a1e3971d630afc0f))
+* **core:** move db schema and migrations to @eq/wiki-core ([445f437](https://github.com/equationalapplications/expo-llm-wiki/commit/445f437fc66149716a7d653823618a39abfa71b3))
+* **core:** move WikiMemory to @eq/wiki-core with SQLiteAdapter ([9b0481f](https://github.com/equationalapplications/expo-llm-wiki/commit/9b0481f7552013b1053eb32e1e1d86ac4e4a9630))
+* **expo:** add @eq/wiki-expo with expo-sqlite adapter ([6c5fa8f](https://github.com/equationalapplications/expo-llm-wiki/commit/6c5fa8faedfd7beb850e0cb19103ce0f9ac8688b))
+* make root a backward-compat alias pointing to workspace packages ([bc4c6a7](https://github.com/equationalapplications/expo-llm-wiki/commit/bc4c6a7bcbb2ed346e88d6de55c48e58f9fb0c45))
+* **react:** add @eq/wiki-react hooks package ([2ed2727](https://github.com/equationalapplications/expo-llm-wiki/commit/2ed2727cf370d0685071bbc7855204b884970e63))
+
 # [2.3.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v2.2.0...v2.3.0) (2026-05-01)
 
 
