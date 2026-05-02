@@ -1,7 +1,7 @@
 {
   "name": "expo-llm-wiki-workspace",
   "private": true,
-  "version": "0.0.0",
+  "version": "3.0.0",
   "scripts": {
     "build": "pnpm -r build",
     "build:core": "pnpm --filter @eq/wiki-core build",
@@ -10,6 +10,11 @@
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
     "dev": "pnpm -r --parallel dev"
+  },
+  "dependencies": {
+    "@eq/wiki-core": "workspace:*",
+    "@eq/wiki-expo": "workspace:*",
+    "@eq/wiki-react": "workspace:*"
   },
   "devDependencies": {
     "@semantic-release/changelog": "^6.0.0",
