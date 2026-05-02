@@ -127,7 +127,7 @@ import * as SQLite from 'expo-sqlite';
 
 const db = await SQLite.openDatabaseAsync('my-app.db');
 
-const wiki = await createWiki(db, {
+const wiki = createWiki(db, {
   llmProvider: {
     generateText: async ({ systemPrompt, userPrompt }) => {
       // Connect to OpenAI, Gemini, a local model, etc.
