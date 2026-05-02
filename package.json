@@ -27,9 +27,6 @@
     "expo-sqlite": "^14.0.0 || ^15.0.0 || ^55.0.0",
     "react": ">=17"
   },
-  "peerDependenciesMeta": {
-    "react": { "optional": true }
-  },
   "dependencies": {
     "@eq/wiki-core": "workspace:*",
     "@eq/wiki-expo": "workspace:*",

@@ -35,7 +35,7 @@ jobs:
 
       - name: Get current version
         id: pre_version
-        run: echo "version=$(node -p 'require("./package.json").version')" >> $GITHUB_OUTPUT
+        run: node -p "require('./package.json').version" | xargs -I{} echo "version={}" >> $GITHUB_OUTPUT
 
       - run: npx semantic-release
         env:
@@ -43,27 +43,29 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Publish workspace packages
+      - name: Publish all packages
         run: |
           NEW_VERSION=$(node -p "require('./package.json').version")
           if [ "$NEW_VERSION" = "${{ steps.pre_version.outputs.version }}" ]; then
-            echo "No new release, skipping workspace package publish"
+            echo "No new release, skipping publish"
             exit 0
           fi
-          # Update all workspace package versions to match the new root version
-          for pkg in core expo react; do
+          # Update workspace package versions to match the bumped root version
+          for pkg in core react expo; do
             node -e "
               const fs = require('fs');
-              const pkgPath = 'packages/${pkg}/package.json';
-              const p = JSON.parse(fs.readFileSync(pkgPath));
+              const p = JSON.parse(fs.readFileSync('packages/${pkg}/package.json'));
               p.version = '${NEW_VERSION}';
-              fs.writeFileSync(pkgPath, JSON.stringify(p, null, 2) + '\n');
+              fs.writeFileSync('packages/${pkg}/package.json', JSON.stringify(p, null, 2) + '\n');
             "
           done
-          # Publish each workspace package (pnpm replaces workspace:* with resolved versions)
-          for pkg in core expo react; do
-            pnpm --filter "./packages/$pkg" publish --no-git-checks --access public
-          done
+          # Publish in dependency order so each package exists on npm before dependents are published.
+          # pnpm publish replaces workspace:* dependency ranges with the real version at pack time.
+          pnpm --filter "./packages/core" publish --no-git-checks --access public
+          pnpm --filter "./packages/react" publish --no-git-checks --access public
+          pnpm --filter "./packages/expo" publish --no-git-checks --access public
+          # Publish the root compatibility package last (its workspace:* deps are now on npm)
+          pnpm publish --no-git-checks --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
