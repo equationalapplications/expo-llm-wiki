@@ -5,7 +5,12 @@
 [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fexpo-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Offline-first, SQLite-backed memory for LLM apps built with Expo. Handles FTS5 search, episodic event logging, background fact extraction, and memory healing — bring your own LLM.
+## Persistent, episodic memory for AI Agents.
+
+expo-llm-wiki is a cross-platform SQLite library for long-term LLM memory. It bridges the gap between raw conversation logs and a structured knowledge base, supporting background fact extraction, FTS5 search, and memory pruning.
+
+- **Universal Support:** Expo • React • Vite • Vue • Svelte • Node.js
+- **Core Engine:** Pure TypeScript logic with platform-specific adapters.
 
 ## Key Principles
 
@@ -15,6 +20,7 @@ Offline-first, SQLite-backed memory for LLM apps built with Expo. Handles FTS5 s
 - **Offline First:** Reads are fully local via SQLite FTS5, typically under 50ms.
 - **Morphological Matching:** Porter stemming enables recall across word forms — queries for `running` match facts about `run`, `runs`, etc., without manual synonym configuration.
 - **Full Unicode Support:** UTF-8 and UTF-16 (including surrogate pairs for emoji) are fully supported. Chunks are split safely at sentence boundaries; surrogate pairs are never fragmented.
+- **Cross-Platform:** Choose the right package for your platform: Expo, React web, vanilla JS, or Node.js. The core logic is framework-agnostic and dependency-free.
 
 ## How It Works
 
@@ -66,22 +72,57 @@ flowchart TB
     events --> Bundle
 ```
 
+## Monorepo Packages
+
+`expo-llm-wiki` is organized as a monorepo with three packages, each optimized for different platforms:
+
+| Package | Platform | SQLite Adapter | Size | Dependencies |
+|---------|----------|---|---|---|
+| **`@eq/wiki-core`** | Node.js, any platform | User-provided (e.g., `better-sqlite3`) | Smallest | None |
+| **`@eq/wiki-expo`** | Expo, React Native | `expo-sqlite` (built-in) | Minimal | `expo-sqlite` (peer) |
+| **`@eq/wiki-react`** | Web (React) | User-provided (e.g., `sql.js`) | Small | `react` (peer) |
+
+**Choose your package:**
+- **Expo/React Native app?** → `@eq/wiki-expo`
+- **React web app (CRA, Vite + React, Next.js client)?** → `@eq/wiki-react` + `sql.js`
+- **Vanilla JS or non-React framework?** → `@eq/wiki-core` + `sql.js`
+- **Node.js backend?** → `@eq/wiki-core` + `better-sqlite3`
+
+All packages share the same core API and database schema. The core library is **framework-agnostic and dependency-free**; `@eq/wiki-expo` injects the Expo adapter, while `@eq/wiki-core` and `@eq/wiki-react` require your application to provide a SQLite adapter.
 
 ## Installation
 
-In your Expo project:
+Choose the package for your platform:
 
+### Expo / React Native
 ```bash
 npx expo install expo-sqlite
-npm install expo-llm-wiki
+npm install @eq/wiki-expo
 ```
 
-Use `npx expo install` for `expo-sqlite` so Expo's version resolver picks the correct native build for your SDK version.
+### React Web (Vite, CRA, etc.)
+```bash
+npm install @eq/wiki-react @eq/wiki-core sql.js
+```
+
+### Vanilla JavaScript (any framework or plain HTML)
+```bash
+npm install @eq/wiki-core sql.js
+```
+
+### Node.js Backend
+```bash
+npm install @eq/wiki-core better-sqlite3
+```
+
+**Note:** Use `npx expo install` for `expo-sqlite` so Expo's version resolver picks the correct native build for your SDK version.
 
 ## Setup
 
+### Expo / React Native
+
 ```typescript
-import { createWiki } from 'expo-llm-wiki';
+import { createWiki } from '@eq/wiki-expo';
 import * as SQLite from 'expo-sqlite';
 
 const db = await SQLite.openDatabaseAsync('my-app.db');
@@ -114,6 +155,142 @@ const wiki = createWiki(db, {
 });
 
 // Create tables and FTS5 indexes (call once on app startup)
+await wiki.setup();
+```
+
+### React Web (Vite + React)
+
+```typescript
+import { createWiki } from '@eq/wiki-core';
+import initSqlJs from 'sql.js';
+
+const SQL = await initSqlJs();
+const sqlDb = new SQL.Database();
+
+// Wrap sql.js behind the SQLiteAdapter interface required by @eq/wiki-core
+const adapter = {
+  execAsync(sql) { sqlDb.exec(sql); return Promise.resolve(); },
+  runAsync(sql, params = []) {
+    sqlDb.run(sql, params);
+    const changes = sqlDb.getRowsModified();
+    const [[lastInsertRowId]] = sqlDb.exec('SELECT last_insert_rowid()')[0].values;
+    return Promise.resolve({ changes, lastInsertRowId: Number(lastInsertRowId) });
+  },
+  getAllAsync(sql, params = []) {
+    const stmt = sqlDb.prepare(sql); stmt.bind(params);
+    const rows = []; while (stmt.step()) rows.push(stmt.getAsObject()); stmt.free();
+    return Promise.resolve(rows);
+  },
+  getFirstAsync(sql, params = []) {
+    const stmt = sqlDb.prepare(sql); stmt.bind(params);
+    const row = stmt.step() ? stmt.getAsObject() : null; stmt.free();
+    return Promise.resolve(row);
+  },
+  withTransactionAsync(fn) {
+    sqlDb.run('BEGIN');
+    return fn().then((r) => { sqlDb.run('COMMIT'); return r; }, (e) => { sqlDb.run('ROLLBACK'); throw e; });
+  },
+  closeAsync() { sqlDb.close(); return Promise.resolve(); },
+};
+
+const wiki = createWiki(adapter, {
+  llmProvider: {
+    generateText: async ({ systemPrompt, userPrompt }) => {
+      // Connect to your LLM provider
+      const response = await fetch('/api/generate', {
+        method: 'POST',
+        body: JSON.stringify({ systemPrompt, userPrompt }),
+      });
+      return response.text();
+    },
+  },
+  config: {
+    tablePrefix: 'llm_wiki_',
+    // ... other options
+  },
+});
+
+await wiki.setup();
+```
+
+### Vanilla JavaScript (any framework)
+
+```typescript
+import { createWiki } from '@eq/wiki-core';
+import initSqlJs from 'sql.js';
+
+const SQL = await initSqlJs();
+const sqlDb = new SQL.Database();
+
+// Wrap sql.js behind the SQLiteAdapter interface — see React Web setup above for full adapter
+const adapter = { /* sql.js adapter */ };
+
+const wiki = createWiki(adapter, {
+  llmProvider: {
+    generateText: async ({ systemPrompt, userPrompt }) => {
+      // Connect to your LLM provider
+      const response = await fetch('/api/generate', {
+        method: 'POST',
+        body: JSON.stringify({ systemPrompt, userPrompt }),
+      });
+      return response.text();
+    },
+  },
+});
+
+await wiki.setup();
+
+// Now use the core API
+const bundle = await wiki.read('entity-123', 'query');
+await wiki.write('entity-123', { event_type: 'observation', summary: '...' });
+```
+
+### Node.js Backend
+
+```typescript
+import { createWiki } from '@eq/wiki-core';
+import Database from 'better-sqlite3';
+
+// Create a thin adapter wrapper
+const db = new Database('memory.db');
+const adapter = {
+  execAsync: (sql) => { db.exec(sql); return Promise.resolve(); },
+  getAllAsync: (sql, params) => Promise.resolve(db.prepare(sql).all(...(params || []))),
+  getFirstAsync: (sql, params) => Promise.resolve(db.prepare(sql).get(...(params || [])) ?? null),
+  runAsync: (sql, params) => {
+    const info = db.prepare(sql).run(...(params || []));
+    return Promise.resolve({ changes: info.changes, lastInsertRowId: Number(info.lastInsertRowid) });
+  },
+  withTransactionAsync: async (fn) => {
+    db.exec('BEGIN');
+    try {
+      const result = await fn();
+      db.exec('COMMIT');
+      return result;
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  },
+  closeAsync: () => { db.close(); return Promise.resolve(); },
+};
+
+const wiki = createWiki(adapter, {
+  llmProvider: {
+    generateText: async ({ systemPrompt, userPrompt }) => {
+      // Connect to your LLM provider
+      const response = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+      });
+      return response.choices[0].message.content ?? '{}';
+    },
+  },
+});
+
 await wiki.setup();
 ```
 
@@ -180,7 +357,8 @@ await wiki.runHeal('entity-123');
 Convert a `MemoryBundle` into a string ready for LLM prompt injection:
 
 ```typescript
-import { formatContext } from 'expo-llm-wiki';
+// Import from the appropriate package for your platform
+import { formatContext } from '@eq/wiki-core';      // or @eq/wiki-expo
 
 const bundle = await wiki.read('entity-123', 'weekend plans');
 const context = formatContext(bundle, {
@@ -251,19 +429,44 @@ Throws `WikiBusyError` if librarian, heal, ingest, or another prune is in-flight
 
 ---
 
-## React / Expo Component API
+## React Component API
 
-Import from `expo-llm-wiki/react`. This entry point is separate so non-React consumers do not transitively import React.
+React hooks are available from `@eq/wiki-react` (web) and `@eq/wiki-expo` (Expo). Use the React-specific entry points when integrating with React.
 
 ### Provider
 
 Wrap once at app root (or any subtree that needs memory access):
 
+**Web (React/Vite):**
 ```typescript
-import { WikiProvider } from 'expo-llm-wiki/react';
-import { createWiki } from 'expo-llm-wiki';
+import { WikiProvider } from '@eq/wiki-react';
+import { createWiki } from '@eq/wiki-core';
+import initSqlJs from 'sql.js';
 
+const SQL = await initSqlJs();
+const sqlDb = new SQL.Database();
+// Build a sql.js adapter — see React Web setup section above for the full adapter
+const adapter = { /* sql.js adapter */ };
+const wiki = createWiki(adapter, { llmProvider });
+await wiki.setup();
+
+export default function App() {
+  return (
+    <WikiProvider wiki={wiki}>
+      <YourApp />
+    </WikiProvider>
+  );
+}
+```
+
+**Expo:**
+```typescript
+import { WikiProvider, createWiki } from '@eq/wiki-expo';
+import * as SQLite from 'expo-sqlite';
+
+const db = await SQLite.openDatabaseAsync('my-app.db');
 const wiki = createWiki(db, { llmProvider });
+await wiki.setup();
 
 export default function App() {
   return (
@@ -364,7 +567,11 @@ if (lastResult?.operation === 'prune') {
 The exported `MaintenanceResult` type can be imported for typed consumers:
 
 ```typescript
-import type { MaintenanceResult } from 'expo-llm-wiki/react';
+// Web (React/Vite)
+import type { MaintenanceResult } from '@eq/wiki-react';
+
+// Expo
+import type { MaintenanceResult } from '@eq/wiki-expo';
 ```
 
 All mutation hooks follow the same pattern (`TResult` is specific per hook):

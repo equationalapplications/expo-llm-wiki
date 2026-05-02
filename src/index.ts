@@ -1,12 +1,6 @@
-import * as SQLite from 'expo-sqlite';
-import { WikiOptions } from './types';
-import { WikiMemory } from './WikiMemory';
-
-export * from './types';
-export { WikiMemory } from './WikiMemory';
-export { formatMemoryDump } from './utils/formatMemoryDump';
-export { formatContext } from './utils/formatContext';
-
-export function createWiki(db: SQLite.SQLiteDatabase, options: WikiOptions): WikiMemory {
-  return new WikiMemory(db, options);
-}
+// backward-compat re-export — use @equationalapplications/expo-llm-wiki directly in new code
+// Re-exports @equationalapplications/core-llm-wiki types/classes plus the Expo-flavoured createWiki
+// factory (takes expo-sqlite SQLiteDatabase, matching the old package API).
+// React hooks remain isolated behind the ./react sub-path.
+export * from '@equationalapplications/core-llm-wiki';
+export { createWiki } from '@equationalapplications/expo-llm-wiki/factory';

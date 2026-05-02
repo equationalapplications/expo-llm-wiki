@@ -6,11 +6,10 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "rootDir": "src",
+    "outDir": "dist",
+    "declaration": true
   },
-  "references": [
-    { "path": "./packages/core" },
-    { "path": "./packages/expo" },
-    { "path": "./packages/react" }
-  ]
+  "include": ["src"]
 }

@@ -1,8 +1,9 @@
 # Monorepo Architecture: Cross-Platform Wiki Support
 
-**Status:** Draft  
-**Date:** April 30, 2026  
+**Status:** Implemented
+**Last Reviewed:** May 2, 2026  
 **Motivation:** Enable `expo-llm-wiki` to work across Expo, web (React/Vue/Svelte/vanilla JS), and Node.js backends without coupling consumers to unnecessary dependencies.
+**Note:** Spec updated May 2, 2026 to align with shipped implementation: package names under `@equationalapplications/*`, actual adapter interface, and resolved open questions.
 
 ---
 
@@ -23,16 +24,16 @@ Constraint: Can't bundle both `expo-sqlite` (native) and web SQLite (WASM/pure J
 ```
 expo-llm-wiki/
 ├── packages/
-│   ├── core/           # @eq/wiki-core
-│   ├── expo/           # @eq/wiki-expo
-│   └── react/          # @eq/wiki-react
-├── package.json        # workspace root (pnpm/yarn workspaces)
+│   ├── core/           # @equationalapplications/core-llm-wiki
+│   ├── expo/           # @equationalapplications/expo-llm-wiki
+│   └── react/          # @equationalapplications/react-llm-wiki
+├── package.json        # workspace root (private, not published)
 ├── pnpm-workspace.yaml
 └── docs/
     └── superpowers/specs/...
 ```
 
-### **Package 1: `@eq/wiki-core` — DB-Agnostic Core**
+### **Package 1: `@equationalapplications/core-llm-wiki` — DB-Agnostic Core**
 
 **Purpose:** Pure TypeScript logic, zero framework/platform assumptions.
 
@@ -46,8 +47,9 @@ expo-llm-wiki/
 ```ts
 interface SQLiteAdapter {
   execAsync(sql: string): Promise<void>;
-  allAsync<T>(sql: string, params?: unknown[]): Promise<T[]>;
-  runAsync(sql: string, params?: unknown[]): Promise<{ lastInsertRowid?: number }>;
+  runAsync(sql: string, params?: unknown[]): Promise<{ changes: number; lastInsertRowId: number }>;
+  getAllAsync<T>(sql: string, params?: unknown[]): Promise<T[]>;
+  getFirstAsync<T>(sql: string, params?: unknown[]): Promise<T | null>;
   withTransactionAsync<T>(fn: () => Promise<T>): Promise<T>;
   closeAsync(): Promise<void>;
 }
@@ -57,60 +59,58 @@ interface SQLiteAdapter {
 - None (zero runtime deps)
 - Peer deps: None
 
-**Publishing:** `@eq/wiki-core@x.y.z`
+**Publishing:** `@equationalapplications/core-llm-wiki@x.y.z`
 
 ---
 
-### **Package 2: `@eq/wiki-expo` — Expo + React Native**
+### **Package 2: `@equationalapplications/expo-llm-wiki` — Expo + React Native**
 
 **Purpose:** Turn-key wrapper for Expo users.
 
 **Exports:**
 - `createWiki(db, options)` — pre-bound to `expo-sqlite`
-- Re-exports core types
-- React hooks (if applicable; imported from `@eq/wiki-react`)
+- Re-exports all `@equationalapplications/core-llm-wiki` types and React hooks from `@equationalapplications/react-llm-wiki`
+- `./factory` subpath: `createWiki` only, without React hooks (for non-React Expo code)
 
 **Usage:**
 ```ts
 import * as SQLite from 'expo-sqlite';
-import { createWiki } from '@eq/wiki-expo';
+import { createWiki } from '@equationalapplications/expo-llm-wiki';
 
 const db = await SQLite.openDatabaseAsync('my-app.db');
 const wiki = await createWiki(db, { llmProvider: ... });
 ```
 
 **Dependencies:**
-- `@eq/wiki-core`
+- `@equationalapplications/core-llm-wiki`
+- `@equationalapplications/react-llm-wiki`
 - `expo-sqlite` (peer)
 - `react` (peer, for hooks re-export)
 
 **Compatibility:** Works with Expo 50+, react-native-web (same `expo-sqlite` API).
 
-**Publishing:** `@eq/wiki-expo@x.y.z`
+**Publishing:** `@equationalapplications/expo-llm-wiki@x.y.z`
 
 ---
 
-### **Package 3: `@eq/wiki-react` — Web + Framework-Agnostic**
+### **Package 3: `@equationalapplications/react-llm-wiki` — Web + Framework-Agnostic**
 
 **Purpose:** React hooks + vanilla JS utilities for web, works with any JS framework or plain HTML.
 
-**Two Entry Points:**
+**Single Entry Point (`"."`):**
 
-**1. Vanilla JS (primary):**
+**Vanilla JS:**
 ```ts
-import { createWiki, read, write } from '@eq/wiki-react';
+import { createWiki } from '@equationalapplications/react-llm-wiki';
 
-const wiki = await createWiki(sqlJsAdapter, options);
+const wiki = createWiki(sqlJsAdapter, options);
 const facts = await wiki.read('entity-1', 'query');
-await wiki.write({ entityId: 'entity-1', event: { ... } });
+await wiki.write('entity-1', { event_type: 'observation', summary: '...' });
 ```
 
-**2. React Hooks (optional, same export path):**
+**React Hooks (same import path):**
 ```ts
-import { useWikiRead, useWikiWrite, useWikiMaintenance } from '@eq/wiki-react';
-
-const facts = useWikiRead(wiki, 'entity-1', 'query');
-const { write } = useWikiWrite(wiki);
+import { WikiProvider, useMemoryRead, useWikiWrite } from '@equationalapplications/react-llm-wiki';
 ```
 
 **Adapter Choices (Consumer Picks):**
@@ -119,10 +119,10 @@ const { write } = useWikiWrite(wiki);
 - **Hybrid:** Any adapter implementing the interface
 
 **Dependencies:**
-- `@eq/wiki-core`
-- `react` (peer, optional — only for `/react` export)
+- `@equationalapplications/core-llm-wiki`
+- `react` (peer)
 
-**Publishing:** `@eq/wiki-react@x.y.z`
+**Publishing:** `@equationalapplications/react-llm-wiki@x.y.z`
 
 ---
 
@@ -133,13 +133,13 @@ const { write } = useWikiWrite(wiki);
 // package.json
 {
   "dependencies": {
-    "@eq/wiki-expo": "^2.0.0",
+    "@equationalapplications/expo-llm-wiki": "^2.0.0",
     "expo-sqlite": "^15.0.0"
   }
 }
 
 // app.ts
-import { createWiki } from '@eq/wiki-expo';
+import { createWiki } from '@equationalapplications/expo-llm-wiki';
 const wiki = await createWiki(db, opts);
 ```
 
@@ -148,18 +148,18 @@ const wiki = await createWiki(db, opts);
 // package.json
 {
   "dependencies": {
-    "@eq/wiki-react": "^2.0.0",
+    "@equationalapplications/react-llm-wiki": "^2.0.0",
     "sql.js": "^1.10.0"
   }
 }
 
 // app.tsx
-import { useWikiRead } from '@eq/wiki-react';
+import { useMemoryRead, createWiki } from '@equationalapplications/react-llm-wiki';
 import initSqlJs from 'sql.js';
 
 const adapter = await initSqlJs().then(...);
-const wiki = await createWiki(adapter, opts);
-const facts = useWikiRead(wiki, ...);
+const wiki = createWiki(adapter, opts);
+const facts = useMemoryRead(wiki, ...);
 ```
 
 ### Vanilla JS (HTML + Vite)
@@ -167,33 +167,33 @@ const facts = useWikiRead(wiki, ...);
 // package.json
 {
   "dependencies": {
-    "@eq/wiki-react": "^2.0.0",
+    "@equationalapplications/react-llm-wiki": "^2.0.0",
     "sql.js": "^1.10.0"
   }
 }
 
 // main.js
-import { createWiki } from '@eq/wiki-react';
+import { createWiki } from '@equationalapplications/react-llm-wiki';
 import initSqlJs from 'sql.js';
 
-const wiki = await createWiki(sqlJsAdapter, opts);
+const wiki = createWiki(sqlJsAdapter, opts);
 const facts = await wiki.read('entity-1', 'query');
 ```
 
 ### Vue / Svelte
 ```ts
 // Same as vanilla JS above; framework has no bearing
-import { createWiki } from '@eq/wiki-react';
-const wiki = await createWiki(adapter, opts);
+import { createWiki } from '@equationalapplications/react-llm-wiki';
+const wiki = createWiki(adapter, opts);
 ```
 
 ### Node.js Backend
 ```ts
-import { createWiki } from '@eq/wiki-core';
+import { createWiki } from '@equationalapplications/core-llm-wiki';
 import Database from 'better-sqlite3';
 
 const adapter = wrapBetterSqlite3(db); // thin wrapper
-const wiki = await createWiki(adapter, opts);
+const wiki = createWiki(adapter, opts);
 ```
 
 ---
@@ -220,8 +220,8 @@ const wiki = await createWiki(adapter, opts);
 4. Build + publish `@eq/wiki-react`
 
 ### Backward Compatibility
-- **Existing consumers:** Keep root package (aliased to `@eq/wiki-expo`)
-- Default import still works: `import { createWiki } from '@eq/wiki-expo'`
+- Root package is now `private`; the `@equationalapplications/expo-llm-wiki` name is owned by `packages/expo` directly.
+- Default import still works: `import { createWiki } from '@equationalapplications/expo-llm-wiki'`
 - Major version bump (3.0.0) signals monorepo transition
 
 ---
@@ -229,20 +229,9 @@ const wiki = await createWiki(adapter, opts);
 ## Dependency Graph
 
 ```
-┌─────────────────────────────────────────┐
-│         @eq/wiki-core                   │
-│  (DB-agnostic logic, no deps)           │
-└─────────────────┬───────────────────────┘
-                  │
-        ┌─────────┴─────────┐
-        │                   │
-   ┌────▼────────┐    ┌────▼─────────────┐
-   │@eq/wiki-expo│    │ @eq/wiki-react   │
-   │             │    │  (vanilla + React)
-   │ expo-sqlite │    │   sql.js /       │
-   │ (peer)      │    │   better-sqlite3 │
-   │ expo  (peer)│    │   (injected)     │
-   └─────────────┘    └──────────────────┘
+@equationalapplications/core-llm-wiki        ← no deps
+ ├── @equationalapplications/expo-llm-wiki   ← peer: expo-sqlite, react
+ └── @equationalapplications/react-llm-wiki  ← peer: react; consumer brings adapter
 ```
 
 ---
@@ -250,7 +239,7 @@ const wiki = await createWiki(adapter, opts);
 ## Versioning Strategy
 
 **Option 1:** Lock versions (monorepo style)
-- All packages bump together: `@eq/wiki-core@3.0.0`, `@eq/wiki-expo@3.0.0`, `@eq/wiki-react@3.0.0`
+- All packages bump together: `@equationalapplications/core-llm-wiki@3.0.0`, `@equationalapplications/expo-llm-wiki@3.0.0`, `@equationalapplications/react-llm-wiki@3.0.0`
 - Single CHANGELOG.md
 - Simpler, good for cohesive library
 
@@ -265,15 +254,15 @@ const wiki = await createWiki(adapter, opts);
 
 ## Testing Strategy
 
-**`@eq/wiki-core` tests:**
+**`@equationalapplications/core-llm-wiki` tests:**
 - Existing Vitest suite, adapter-agnostic
 - Use `better-sqlite3` adapter (Node.js test env)
 
-**`@eq/wiki-expo` tests:**
+**`@equationalapplications/expo-llm-wiki` tests:**
 - Thin wrapper, smoke tests only
 - Verify `expo-sqlite` binding works
 
-**`@eq/wiki-react` tests:**
+**`@equationalapplications/react-llm-wiki` tests:**
 - Vanilla JS: core tests reused
 - React: hook tests (mount/update/unmount)
 - Can test with `sql.js` in Node (WASM works in Vitest)
@@ -320,8 +309,8 @@ pnpm -r publish
 
 ## Open Questions / TBD
 
-- Should `@eq/wiki-expo` also export React hooks, or keep them in `@eq/wiki-react` only?
-- How to handle import paths for dual exports in `@eq/wiki-react` (`.` vs `/react`)?
-- Publish to npm as separate packages or unified namespace (`@eq/wiki-*`)?
+- ~~Should `@equationalapplications/expo-llm-wiki` also export React hooks?~~ **Resolved:** Yes, expo re-exports all hooks from `@equationalapplications/react-llm-wiki`.
+- ~~How to handle import paths for dual exports in `@equationalapplications/react-llm-wiki`?~~ **Resolved:** Single `"."` entry point; hooks and `createWiki` share the same import path.
+- ~~Publish to npm as separate packages or unified namespace?~~ **Resolved:** `@equationalapplications/*` namespace.
 - What's the cutover strategy for existing npm users? (SemVer bump, docs, migration guide)
 

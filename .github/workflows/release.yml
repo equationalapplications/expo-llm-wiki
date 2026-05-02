@@ -25,12 +25,78 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
-      - run: npm ci
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
 
-      - run: npm run build
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm run build
+
+      - name: Get current version
+        id: pre_version
+        run: node -p "require('./package.json').version" | xargs -I{} echo "version={}" >> $GITHUB_OUTPUT
 
       - run: npx semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish all packages
+        run: |
+          # Determine the released version from a release tag that points at the
+          # checked-out commit. This keeps reruns pinned to the code being
+          # published instead of accidentally picking a newer unrelated tag from
+          # elsewhere in the repository.
+          RELEASE_VERSION=$(git tag --points-at HEAD --sort=-version:refname --list 'v[0-9]*' | head -1 | sed 's/^v//')
+          if [ -z "$RELEASE_VERSION" ]; then
+            echo "No release tag found for the checked-out commit; semantic-release did not create a new release for this revision. Nothing to publish."
+            exit 0
+          fi
+          echo "Release version: ${RELEASE_VERSION}"
+
+          package_name() {
+            node -p "require(process.argv[1]).name" "$1"
+          }
+
+          publish_if_needed() {
+            PACKAGE_JSON_PATH="$1"
+            shift
+
+            PACKAGE_NAME=$(package_name "$PACKAGE_JSON_PATH")
+            PACKAGE_VERSION="${RELEASE_VERSION}"
+
+            if npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" version >/dev/null 2>&1; then
+              echo "${PACKAGE_NAME}@${PACKAGE_VERSION} is already published, skipping"
+              return 0
+            fi
+
+            # Patch the on-disk package.json to RELEASE_VERSION before publishing.
+            # On a workflow rerun the checkout is still at the pre-release SHA, so the
+            # file on disk still carries the old version even though the git tag is correct.
+            # Without this patch pnpm publish would use the stale version from disk.
+            # Variables are passed as env vars (not interpolated into the script) to avoid
+            # any risk of injection from unexpected characters in paths or version strings.
+            PKG_PATH="${PACKAGE_JSON_PATH}" PKG_VERSION="${RELEASE_VERSION}" node -e "
+              const fs = require('fs');
+              const p = JSON.parse(fs.readFileSync(process.env.PKG_PATH, 'utf8'));
+              p.version = process.env.PKG_VERSION;
+              fs.writeFileSync(process.env.PKG_PATH, JSON.stringify(p, null, 2) + '\n');
+            "
+
+            echo "Publishing ${PACKAGE_NAME}@${PACKAGE_VERSION}"
+            "$@"
+          }
+
+          # Publish in dependency order so each package exists on npm before dependents are published.
+          # pnpm publish replaces workspace:* dependency ranges with the real version at pack time.
+          # Workspace package versions are already set by semantic-release's prepare phase.
+          publish_if_needed "./packages/core/package.json" pnpm --filter "./packages/core" publish --no-git-checks --access public
+          publish_if_needed "./packages/react/package.json" pnpm --filter "./packages/react" publish --no-git-checks --access public
+          publish_if_needed "./packages/expo/package.json" pnpm --filter "./packages/expo" publish --no-git-checks --access public
+          # Publish the root compatibility package last (its workspace:* deps are now on npm)
+          publish_if_needed "./package.json" pnpm publish --no-git-checks --access public
+        env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

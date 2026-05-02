@@ -1,0 +1,55 @@
+{
+  "name": "@equationalapplications/react-llm-wiki",
+  "version": "2.3.0",
+  "description": "React hooks and web utilities for LLM Wiki Memory.",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./js": {
+      "types": "./dist/js.d.ts",
+      "import": "./dist/js.mjs",
+      "require": "./dist/js.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "echo 'React hook tests disabled pending vitest 5.x stable (see packages/react/vitest.config.ts)'",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@equationalapplications/core-llm-wiki": "workspace:*"
+  },
+  "peerDependencies": {
+    "react": ">=17"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "happy-dom": "^20.9.0",
+    "jsdom": "^29.0.0",
+    "react": "19.2.5",
+    "react-dom": "19.2.5",
+    "tsup": "^8.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "4.1.5"
+  }
+}

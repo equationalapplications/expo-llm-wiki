@@ -1,0 +1,50 @@
+{
+  "name": "@equationalapplications/expo-llm-wiki",
+  "version": "2.3.0",
+  "description": "Expo/React Native adapter for @equationalapplications/core-llm-wiki.",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "import": "./dist/index.mjs"
+    },
+    "./factory": {
+      "types": "./dist/factory.d.ts",
+      "require": "./dist/factory.js",
+      "import": "./dist/factory.mjs"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "dependencies": {
+    "@equationalapplications/core-llm-wiki": "workspace:*",
+    "@equationalapplications/react-llm-wiki": "workspace:*"
+  },
+  "peerDependencies": {
+    "expo-sqlite": "^14.0.0 || ^15.0.0 || ^55.0.0",
+    "react": ">=17"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "4.1.5"
+  }
+}
