@@ -6,5 +6,5 @@ export default defineConfig({
   dts: true,
   clean: true,
   sourcemap: true,
-  external: ['react', 'expo-sqlite', '@eq/wiki-core'],
+  external: ['react', 'expo-sqlite', '@eq/wiki-core', '@eq/wiki-react'],
 });
