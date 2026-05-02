@@ -102,7 +102,7 @@ npm install @eq/wiki-expo
 
 ### React Web (Vite, CRA, etc.)
 ```bash
-npm install @eq/wiki-react sql.js
+npm install @eq/wiki-react @eq/wiki-core sql.js
 ```
 
 ### Vanilla JavaScript (any framework or plain HTML)
