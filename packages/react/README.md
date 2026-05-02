@@ -16,7 +16,7 @@ npm install @eq/wiki-react @eq/wiki-core
 
 ## Setup
 
-**React (Web / Node.js)** (with any `SQLiteAdapter`):
+**React** (with any `SQLiteAdapter`):
 
 ```typescript
 import { WikiProvider } from '@eq/wiki-react';
@@ -73,7 +73,7 @@ Ingest documents.
 ```typescript
 const { execute, isPending, error } = useWikiIngest();
 await execute('user-123', {
-  sourceRef: 'doc://readme',
+  sourceRef: 'doc-readme',
   sourceHash: 'a3f1b2c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2',
   documentChunk: 'raw document text...',
 });
@@ -103,7 +103,7 @@ Check if a source document has changed since last ingest.
 
 ```typescript
 const { execute, lastResult, isPending, error } = useWikiHasChanged();
-const changed = await execute('user-123', 'doc://readme', 'a3f1b2c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2');
+const changed = await execute('user-123', 'doc-readme', 'a3f1b2c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2');
 ```
 
 ### `useWikiExport()`

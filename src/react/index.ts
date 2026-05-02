@@ -10,4 +10,4 @@ export {
   useWikiForget,
   useWikiExport,
   useWikiHasChanged,
-} from '@eq/wiki-expo';
+} from '@eq/wiki-react';
