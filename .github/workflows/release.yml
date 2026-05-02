@@ -50,17 +50,9 @@ jobs:
             echo "No new release, skipping publish"
             exit 0
           fi
-          # Update workspace package versions to match the bumped root version
-          for pkg in core react expo; do
-            node -e "
-              const fs = require('fs');
-              const p = JSON.parse(fs.readFileSync('packages/${pkg}/package.json'));
-              p.version = '${NEW_VERSION}';
-              fs.writeFileSync('packages/${pkg}/package.json', JSON.stringify(p, null, 2) + '\n');
-            "
-          done
           # Publish in dependency order so each package exists on npm before dependents are published.
           # pnpm publish replaces workspace:* dependency ranges with the real version at pack time.
+          # Workspace package versions are already set by semantic-release's prepare phase.
           pnpm --filter "./packages/core" publish --no-git-checks --access public
           pnpm --filter "./packages/react" publish --no-git-checks --access public
           pnpm --filter "./packages/expo" publish --no-git-checks --access public
