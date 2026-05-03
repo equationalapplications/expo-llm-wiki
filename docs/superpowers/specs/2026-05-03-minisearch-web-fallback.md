@@ -1,7 +1,7 @@
 # Spec: MiniSearch Web Fallback for expo-sqlite FTS5
 
 **Date:** 2026-05-03
-**Status:** Draft
+**Status:** Superseded by `2026-05-03-embedding-retrieval.md` — Do not implement
 **Supersedes:** `2026-05-02-sqlite-wasm-fts5-web-adapter.md` (deprecated)
 
 ---
