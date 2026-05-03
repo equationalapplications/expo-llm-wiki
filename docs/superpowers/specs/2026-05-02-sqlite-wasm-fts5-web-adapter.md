@@ -1,4 +1,4 @@
-# Spec: @sqlite.org/sqlite-wasm Adapter for FTS5 on Web
+# Spec: sqlite-wasm FTS5 Web Adapter with Snapshot Rehydration
 
 **Date:** 2026-05-02
 **Status:** Draft
@@ -7,79 +7,94 @@
 
 ## Problem
 
-`@equationalapplications/expo-llm-wiki` is broken on web (react-native-web). The `expo-sqlite` package uses `wa-sqlite` as its web runtime, and the `wa-sqlite` WASM build is compiled without `-DSQLITE_ENABLE_FTS5`. When `WikiMemory.setup()` runs on web, `CREATE VIRTUAL TABLE ... USING fts5(...)` throws at runtime. Every subsequent `read()` call with a non-empty query also fails because it relies on `MATCH` against the FTS5 table.
+`@equationalapplications/expo-llm-wiki` is broken on web (`react-native-web`). The `expo-sqlite` package uses `wa-sqlite` as its web runtime, and the bundled `wa-sqlite` build is compiled without `-DSQLITE_ENABLE_FTS5`. When `WikiMemory.setup()` runs on web, `CREATE VIRTUAL TABLE ... USING fts5(...)` throws. Any `read()` call with a non-empty query also fails because it relies on `MATCH` against the FTS5 table.
+
+The previous OPFS design required a Web Worker. Expo Metro cannot support this: it fails to bundle module-type Workers required by `@sqlite.org/sqlite-wasm` (see spike results below). This spec removes the Worker and OPFS requirement. The web DB is in-memory, and durable state comes from snapshot rehydration. For Expo web, use the Vite bundler instead of Metro.
 
 Alternatives evaluated and rejected:
 
-- **`sql.js` (v1.14.1)** — Latest version. Makefile only enables `SQLITE_ENABLE_FTS3`. FTS5 is permanently absent. Not fixable without forking.
-- **`sql.js-fts5`** — Abandoned fork from 2021 (v1.4.0). No updates in 5 years. Cannot be relied on.
+- **`sql.js` (v1.14.1)** - Latest version. Makefile only enables `SQLITE_ENABLE_FTS3`. FTS5 is absent.
+- **`sql.js-fts5`** - Abandoned fork from 2021 (v1.4.0). Cannot be relied on.
+- **Custom FTS5 `wa-sqlite` package** - Rejected. It would require maintaining and publishing a custom SQLite WASM runtime.
+- **OPFS-backed sqlite-wasm** - Rejected for this spec. OPFS requires a Worker-backed runtime, and Expo Metro cannot bundle module-type Workers (verified via spike testing). This spec avoids the Worker requirement entirely.
+
+---
+
+## Requirement
+
+**Implement FTS5 full-text search in Expo (SDK 55+) on `react-native-web`, preserving wiki state across reloads through snapshot rehydration rather than persistent SQLite database storage.**
+
+Persistence is no longer a literal SQLite file requirement. The required durable unit is the logical wiki state: facts, tasks, events, and mutations produced by document ingestion, `write()`, librarian, heal, forget, prune, and import flows. On reload, the app creates a new in-memory sqlite-wasm DB, restores a saved `MemoryDump`, and lets SQLite rebuild the FTS5 index from inserted rows.
 
 ---
 
 ## Goals
 
-- Web users of `@equationalapplications/expo-llm-wiki` can use full FTS5 search with the `porter unicode61` tokenizer.
-- The fix ships as an optional adapter helper. Users who do not target web are not affected — no new required dependencies.
-- The adapter lives in `@equationalapplications/react-llm-wiki` (the web-facing package) under a new `./adapters` export subpath.
-- Shared browser runtime helpers (Worker server + main-thread client/proxy) live in `@equationalapplications/react-llm-wiki` under a new `./web` export subpath.
-- Expo web users can consume those browser helpers through a thin Expo-package re-export/subpath without changing the native Expo API.
-- The implementation does not change `@equationalapplications/core-llm-wiki` at all.
-- An integration test confirms that `@sqlite.org/sqlite-wasm` + the adapter + `WikiMemory` work end-to-end with FTS5 in Node.
-- A second test covers the Worker client/proxy boundary used by React hooks and Expo web consumers.
-- Web users can opt into OPFS-backed persistent storage by passing an `OpfsSAHPoolDb` (or `OpfsDb`) instance to `createSqliteWasmAdapter` instead of an in-memory `DB`.
-- The spec documents Worker setup requirements, package ownership, and where the `llmProvider` must live.
+- Web users can use full FTS5 search with the `porter unicode61` tokenizer.
+- The runtime uses `@sqlite.org/sqlite-wasm` on the main thread with `sqlite3.oo1.DB(':memory:', 'c')`.
+- Expensive LLM-derived state survives reloads by saving `exportDump()` snapshots and restoring them with `importDump()`.
+- Librarian, heal, prune, forget, write, ingest, and import mutations are preserved when the app saves a snapshot after successful mutation.
+- The sqlite-wasm adapter lives in `@equationalapplications/react-llm-wiki` under `./adapters`.
+- Optional snapshot helpers live in `@equationalapplications/react-llm-wiki` under `./snapshot`.
+- `@equationalapplications/expo-llm-wiki` may add a thin `./web` convenience subpath that re-exports the React web adapter, snapshot helpers, and a web factory that accepts a core `SQLiteAdapter`.
+- `@equationalapplications/core-llm-wiki` remains unchanged.
+- Tests confirm FTS5 works and snapshot rehydration restores searchable state in a fresh in-memory DB.
+- Documentation clearly recommends Vite as the supported Expo web bundler; Metro is not compatible.
 
 ## Non-Goals
 
-- Automatic detection of the web environment and transparent adapter swapping.
-- Polyfilling missing FTS5 features in adapters that lack it (e.g. graceful degradation to `LIKE`). The correct fix is a correct SQLite build.
-- Replacing or changing the native `expo-sqlite` adapter path. The Expo package may add web-only re-exports/subpaths, but native `createWiki(db, options)` remains unchanged.
-- Shipping a generic main-thread-to-Worker `llmProvider` bridge. The Worker constructs its own `llmProvider`; any custom provider RPC remains application-owned.
+- Persistent SQLite file storage on web.
+- OPFS, SAHPool, standard OPFS VFS, COOP/COEP headers, or multi-tab SQLite file locking.
+- Web Worker RPC helpers or a Worker-owned `WikiMemory`.
+- Maintaining a custom FTS5 `wa-sqlite` or `expo-sqlite` fork.
+- Automatic web environment detection and transparent adapter swapping.
+- Polyfilling FTS5 on adapters that lack it.
+- Changing the native Expo `createWiki(db, options)` path.
 
 ---
 
 ## Design
 
-### Package ownership
+### Package Ownership
 
-This work splits into shared browser runtime code and Expo-facing convenience layers.
-
-- `@equationalapplications/react-llm-wiki` owns all browser-only sqlite-wasm code: the low-level adapter, the Worker RPC/server/client helpers, and the structural `WikiClient` type consumed by the React hooks.
-- `@equationalapplications/expo-llm-wiki` remains thin. It continues to own the native `expo-sqlite` adapter and will add a `./web` re-export/factory that delegates to the React package so Expo apps can keep Expo-flavored import paths on web.
-- `@equationalapplications/core-llm-wiki` remains unchanged.
-
-Why this split: the Expo package's current adapter is typed specifically to `expo-sqlite`'s `SQLiteDatabase`, while OPFS on web is a Worker-backed sqlite-wasm runtime. Trying to embed OPFS directly into the current Expo adapter would mix two unrelated transports into one API surface. The React package is already the web-facing package, so it should own the shared browser runtime.
+- `@equationalapplications/react-llm-wiki` owns browser-only sqlite-wasm code: the low-level adapter and optional snapshot helper utilities.
+- `@equationalapplications/expo-llm-wiki` remains thin. Native usage keeps the current `expo-sqlite` adapter. Web usage may re-export React web helpers from `./web` for Expo-flavored import paths. The main `createWiki(db, options)` export stays native-bound to `expo-sqlite`; web must use a separate adapter-based factory.
+- `@equationalapplications/core-llm-wiki` remains unchanged. It already exposes `exportDump()` and `importDump()`, which are the snapshot boundary.
 
 ### Package: `@sqlite.org/sqlite-wasm`
 
-The official SQLite WASM package from the SQLite team. Full SQLite, compiled with FTS5 (including the `porter` and `unicode61` tokenizers). Available on npm as `@sqlite.org/sqlite-wasm`.
+Use the official SQLite WASM package from the SQLite team. It includes FTS5 and the `porter`/`unicode61` tokenizers.
 
-The API to use is the **OO1 API** (`sqlite3.oo1.DB`). As of 2026-04-15 the Worker1 and Promiser APIs are deprecated; use direct module loading.
-
-Initialization pattern:
+Use the OO1 API directly on the main thread:
 
 ```typescript
 import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
 
 const sqlite3 = await sqlite3InitModule({ print: console.log, printErr: console.error });
-const db = new sqlite3.oo1.DB(':memory:', 'c');
+const rawDb = new sqlite3.oo1.DB(':memory:', 'c');
 ```
 
-The OO1 API is **synchronous** (methods return values, not promises). All adapter methods must wrap calls in `Promise.resolve()` / `Promise.reject()`.
+The OO1 API is synchronous. Adapter methods wrap calls in `Promise.resolve()` / `Promise.reject()` to satisfy the shared `SQLiteAdapter` interface.
 
 ### New file: `packages/react/src/adapters/sqliteWasm.ts`
 
-Exports a single factory function:
+Exports:
 
 ```typescript
 export function createSqliteWasmAdapter(db: SqliteWasmDB): SQLiteAdapter
 ```
 
-Where `SqliteWasmDB` is a structural interface compatible with `sqlite3.oo1.DB` and its subclasses, already constructed and open. The caller is responsible for calling `sqlite3InitModule()` and constructing the DB. Once the DB is wrapped, lifecycle should flow through `adapter.closeAsync()` rather than direct `db.close()` calls behind the adapter's back.
+`SqliteWasmDB` is a local structural interface compatible with `sqlite3.oo1.DB`. The adapter file must not import `@sqlite.org/sqlite-wasm` at runtime, so the WASM binary is not pulled into this package entry. The consumer initializes sqlite-wasm and passes an open DB instance.
 
-The adapter accepts a pre-constructed `sqlite3.oo1.DB` instance. Because the adapter file must not contain a runtime `import` of `@sqlite.org/sqlite-wasm` (the WASM binary must not be bundled into the adapter), `SqliteWasmDB` is typed as a **local structural interface** listing only the methods the adapter calls (`exec`, `prepare`, `changes`, `selectValue`, `close`). No external import is needed at runtime. `@sqlite.org/sqlite-wasm` must still be added to `devDependencies` of `packages/react` so that TypeScript can resolve the types used to verify the structural match during build and typecheck.
+The adapter only needs these DB capabilities:
 
-#### Method implementations
+- `exec`
+- `prepare`
+- `changes`
+- `selectValue`
+- `close`
+
+#### Method Implementations
 
 **`execAsync(sql)`**
 
@@ -94,11 +109,9 @@ execAsync(sql: string): Promise<void> {
 }
 ```
 
-`db.exec()` accepts multi-statement SQL, which is required because `schema.ts` sends the full DDL (tables, indexes, triggers, FTS5 virtual table) as one string to `execAsync`.
+`db.exec()` must accept multi-statement SQL because `setupDatabase()` sends full DDL in one call.
 
 **`runAsync(sql, params?)`**
-
-Uses `db.prepare()` + `bind()` + `step()` to run a single DML statement. Returns `{ changes, lastInsertRowId }` via `db.changes()` and `last_insert_rowid()`.
 
 ```typescript
 runAsync(sql: string, params?: unknown[]): Promise<{ changes: number; lastInsertRowId: number }> {
@@ -120,11 +133,9 @@ runAsync(sql: string, params?: unknown[]): Promise<{ changes: number; lastInsert
 }
 ```
 
-Note: `step()` in a `try/finally` with `finalize()` is used rather than `stepFinalize()`, because `stepFinalize()` already calls `finalize()` internally and a second `finalize()` call in a wrapping `finally` block would obscure real lifecycle bugs. `db.changes()` (no argument) maps to `sqlite3_changes()`. `last_insert_rowid()` via `selectValue` is simpler than the C API pointer approach.
+Use `step()` plus `finalize()` rather than `stepFinalize()` inside another `finally`.
 
 **`getAllAsync<T>(sql, params?)`**
-
-Uses `db.exec()` with `rowMode: 'object'` and `resultRows` accumulator:
 
 ```typescript
 getAllAsync<T>(sql: string, params?: unknown[]): Promise<T[]> {
@@ -140,8 +151,6 @@ getAllAsync<T>(sql: string, params?: unknown[]): Promise<T[]> {
 
 **`getFirstAsync<T>(sql, params?)`**
 
-Calls `getAllAsync` and returns `rows[0] ?? null`:
-
 ```typescript
 async getFirstAsync<T>(sql: string, params?: unknown[]): Promise<T | null> {
   const rows = await this.getAllAsync<T>(sql, params);
@@ -151,7 +160,7 @@ async getFirstAsync<T>(sql: string, params?: unknown[]): Promise<T | null> {
 
 **`withTransactionAsync<T>(fn)`**
 
-Uses `db.transaction()`, which starts `BEGIN`, calls the callback, then `COMMIT` or `ROLLBACK` on throw. Because `db.transaction()` is synchronous and `fn` is async, we cannot use it directly. Use explicit `BEGIN` / `COMMIT` / `ROLLBACK` via `execAsync`:
+`db.transaction(fn)` cannot be used because `WikiMemory` transaction callbacks are async. Use explicit SQL:
 
 ```typescript
 async withTransactionAsync<T>(fn: () => Promise<T>): Promise<T> {
@@ -167,11 +176,7 @@ async withTransactionAsync<T>(fn: () => Promise<T>): Promise<T> {
 }
 ```
 
-`db.transaction(fn)` cannot be used here because it requires a synchronous callback. `WikiMemory`'s transaction callbacks are async: they await multiple `runAsync` / `getAllAsync` calls inside the transaction body. (LLM calls happen *before* the `withTransactionAsync` wrapper, not inside it.) Manual `BEGIN`/`COMMIT`/`ROLLBACK` is the correct approach.
-
 **`closeAsync()`**
-
-Calls `db.close()`. This releases WASM memory for in-memory DBs and — critically — releases the OPFS file lock for OPFS-backed DBs. Without closing, an OPFS-backed DB would block all other tabs from opening the same file until the page is unloaded:
 
 ```typescript
 closeAsync(): Promise<void> {
@@ -184,16 +189,95 @@ closeAsync(): Promise<void> {
 }
 ```
 
-### React-side client boundary
+### Snapshot Rehydration
 
-OPFS cannot be consumed by passing a Worker-owned `WikiMemory` instance directly into React context on the main thread. The React package must widen its provider/hook boundary from the concrete `WikiMemory` class to a structural interface.
+The sqlite-wasm DB is ephemeral. State persistence happens outside SQLite.
 
-Recommended shape:
+Existing core methods are the persistence boundary:
+
+- `wiki.exportDump(entityIds?)`
+- `wiki.importDump(dump, { merge? })`
+
+Startup flow:
+
+1. Initialize `@sqlite.org/sqlite-wasm`.
+2. Create `new sqlite3.oo1.DB(':memory:', 'c')`.
+3. Wrap it with `createSqliteWasmAdapter(rawDb)`.
+4. Create `WikiMemory` with the adapter and `llmProvider`.
+5. Call `wiki.setup()`.
+6. Load the latest saved snapshot from durable storage.
+7. Call `wiki.importDump(snapshot)`.
+8. Render `WikiProvider` after restore completes.
+
+Mutation flow:
+
+1. Run the mutating operation.
+2. If it succeeds, call `wiki.exportDump()`.
+3. Store the serialized snapshot in durable browser storage.
+
+Mutating operations that must trigger snapshot save:
+
+- `write()`
+- `ingestDocument()`
+- `forget()`
+- `runLibrarian()`
+- `runHeal()`
+- `runPrune()`
+- `importDump()`
+
+The FTS5 index is rebuilt during rehydration because `importDump()` inserts rows into the normal tables and the existing FTS triggers populate `${prefix}entries_fts`.
+
+### Snapshot Storage
+
+Recommended storage: IndexedDB.
+
+Reason: snapshots can grow beyond `localStorage` limits, and IndexedDB is async. The package should not own a specific storage backend. It should expose small structural interfaces or helpers that let apps plug in IndexedDB, AsyncStorage-for-web shims, or a backend API.
+
+`localStorage` is acceptable only for examples or tiny demos. It is synchronous and too small for meaningful document memory.
+
+Backend/object storage remains application-owned. It can support cross-device restore, but it changes privacy and hosting assumptions.
+
+### Optional Snapshot Helpers
+
+Add `packages/react/src/snapshot.ts` for ergonomic helpers around existing core APIs.
+
+Recommended structural store type:
 
 ```typescript
-import type { WikiMemory } from '@equationalapplications/core-llm-wiki';
+export interface WikiSnapshotStore {
+  getSnapshot(): Promise<string | null>;
+  setSnapshot(snapshot: string): Promise<void>;
+  removeSnapshot?(): Promise<void>;
+}
+```
 
-export type WikiClient = Pick<
+Recommended exports:
+
+```typescript
+export async function serializeWikiSnapshot(wiki: WikiMemory): Promise<string>;
+
+export async function restoreWikiSnapshot(
+  wiki: WikiMemory,
+  snapshot: string | null,
+  opts?: { merge?: boolean }
+): Promise<void>;
+
+export async function saveWikiSnapshot(
+  wiki: WikiMemory,
+  store: WikiSnapshotStore
+): Promise<void>;
+
+export async function restoreWikiSnapshotFromStore(
+  wiki: WikiMemory,
+  store: WikiSnapshotStore,
+  opts?: { merge?: boolean }
+): Promise<void>;
+```
+
+A wrapper helper may also be added to reduce missed saves. If added, it should return a structural client type rather than pretending to be an actual `WikiMemory` class instance:
+
+```typescript
+export type SnapshottingWikiClient = Pick<
   WikiMemory,
   | 'read'
   | 'write'
@@ -206,139 +290,153 @@ export type WikiClient = Pick<
   | 'exportDump'
   | 'importDump'
 >;
+
+export function createSnapshottingWiki(
+  wiki: WikiMemory,
+  store: WikiSnapshotStore,
+  options?: { debounceMs?: number }
+): SnapshottingWikiClient;
 ```
 
-`WikiMemory` satisfies this type directly for native/in-memory usage. A new main-thread `WikiWorkerClient` also satisfies it by forwarding calls over `postMessage` to a dedicated Worker.
+If implemented, the wrapper must save only after successful mutating calls. Failed mutations must not overwrite the last good snapshot.
 
-Update `packages/react/src/WikiContext.tsx` and the hooks to accept `WikiClient` instead of concrete `WikiMemory`. `packages/react/src/js.ts` should also widen its helper signatures to `WikiClient` so plain JS consumers can use the same proxy client.
+### React Integration
 
-`WikiClient` intentionally excludes shutdown/setup methods (`setup`, `closeAsync`) because the React hooks do not use them and Worker lifecycle helpers should live alongside the proxy client, not inside the provider contract. `importDump` is included because Worker-proxied clients must be able to restore from backup dumps; omitting it would make the proxy client unable to serve restore-from-dump flows.
+No Worker proxy is required. `WikiProvider` can continue receiving a concrete `WikiMemory` instance.
 
-### Worker runtime helpers
-
-Add a new `@equationalapplications/react-llm-wiki/web` export subpath. It owns the Worker RPC boundary so applications do not hand-write message protocols.
-
-Recommended exports:
+React apps should delay rendering children until setup and snapshot restore are complete:
 
 ```typescript
-export function createWikiWorkerClient(worker: Worker): WikiClient;
-export function serveWikiWorker(wiki: WikiClient, endpoint?: DedicatedWorkerGlobalScope): void;
-```
-
-`createWikiWorkerClient()` runs on the main thread and returns a `WikiClient` implementation backed by `postMessage()`.
-
-`serveWikiWorker()` runs inside the Worker and dispatches incoming RPC requests onto a real `WikiMemory` instance.
-
-The `wikiWorkerClient.test.ts` test validates this boundary using a `MessageChannel` pair (available in Node 15+) to simulate the Worker transport without spawning a real Worker. Each `MessagePort` is wrapped in a small adapter that satisfies the internal `WikiWorkerEndpoint` structural type (see below), giving a faithful round-trip without a browser runtime.
-
-To avoid typing `createWikiWorkerClient` as accepting a concrete `Worker` and `serveWikiWorker` as accepting a concrete `DedicatedWorkerGlobalScope`, the implementation should define a local structural interface:
-
-```typescript
-interface WikiWorkerEndpoint {
-  postMessage(data: unknown): void;
-  addEventListener(type: 'message', handler: (ev: { data: unknown }) => void): void;
-}
-```
-
-Both `createWikiWorkerClient` and `serveWikiWorker` accept `WikiWorkerEndpoint`, not the concrete platform types. `Worker` and `DedicatedWorkerGlobalScope` satisfy this interface structurally. In tests, a `MessagePort` does too — no adapter shim needed.
-
-RPC messages should stay JSON-serializable:
-
-- request: `{ id, method, args }`
-- success response: `{ id, result }`
-- error response: `{ id, error: { name, message } }`
-
-No attempt should be made to transfer arbitrary functions or class instances across the boundary.
-
-### OPFS persistence
-
-The same `createSqliteWasmAdapter(db)` factory works for persistent storage, but OPFS is only usable through a Worker-backed runtime. The Worker owns the real `WikiMemory`; the main thread talks to it through `createWikiWorkerClient()`.
-
-**Browser constraints:**
-- Both OPFS VFS options are only available inside a **Web Worker** (not the main UI thread). The DB must be constructed and all real `WikiMemory` calls must run inside the Worker.
-- The `llmProvider` must also be created inside the Worker. Standard `fetch`-based providers work there. If an app needs a main-thread-only provider, that custom bridge is application-owned and out of scope for this package.
-- `adapter.closeAsync()` must be called before the Worker terminates to release the OPFS file lock. Failure to close blocks other tabs from opening the same DB file.
-
-**VFS choice:**
-
-| VFS | Class | COOP/COEP headers? | Concurrency | Notes |
-|-----|-------|--------------------|-------------|-------|
-| **SAHPool** (recommended) | `PoolUtil.OpfsSAHPoolDb` | Not required | Single connection | Best performance; no header requirement |
-| Standard OPFS | `sqlite3.oo1.OpfsDb` | Required (`require-corp` + `same-origin`) | Multi-tab (with locking) | Safari < 17 not supported |
-
-**Recommended: SAHPool VFS**
-
-The SAHPool VFS does not require COOP/COEP headers, making it usable in any deployment environment. It is single-connection per origin (one tab at a time holds the lock), which is the correct model for a memory store anyway.
-
-Main thread:
-
-```typescript
-import { WikiProvider } from '@equationalapplications/react-llm-wiki';
-import { createWikiWorkerClient } from '@equationalapplications/react-llm-wiki/web';
-
-const worker = new Worker(new URL('./wiki.worker.ts', import.meta.url), { type: 'module' });
-const wiki = createWikiWorkerClient(worker);
-
-export default function App() {
-  return (
-    <WikiProvider wiki={wiki}>
-      <YourApp />
-    </WikiProvider>
-  );
-}
-```
-
-Worker initialization:
-
-```typescript
-// wiki.worker.ts
 import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
-import { createSqliteWasmAdapter } from '@equationalapplications/react-llm-wiki/adapters';
+import { WikiProvider } from '@equationalapplications/react-llm-wiki';
 import { createWiki } from '@equationalapplications/react-llm-wiki/js';
-import { serveWikiWorker } from '@equationalapplications/react-llm-wiki/web';
+import { createSqliteWasmAdapter } from '@equationalapplications/react-llm-wiki/adapters';
+import { restoreWikiSnapshotFromStore, saveWikiSnapshot } from '@equationalapplications/react-llm-wiki/snapshot';
 
 const sqlite3 = await sqlite3InitModule();
-const poolUtil = await sqlite3.installOpfsSAHPoolVfs({ initialCapacity: 12 });
-const rawDb = new poolUtil.OpfsSAHPoolDb('/wiki.db');
+const rawDb = new sqlite3.oo1.DB(':memory:', 'c');
 const adapter = createSqliteWasmAdapter(rawDb);
-const wiki = createWiki(adapter, { llmProvider: workerLocalProvider });
+const wiki = createWiki(adapter, { llmProvider });
+
 await wiki.setup();
-serveWikiWorker(wiki);
+await restoreWikiSnapshotFromStore(wiki, snapshotStore);
+
+await wiki.ingestDocument('user-1', documentText, { sourceRef: 'upload.md' });
+await saveWikiSnapshot(wiki, snapshotStore);
 ```
 
-`initialCapacity: 12` (≥ 2× expected number of DB files) is a reasonable default. The capacity is persistent across sessions — setting it at first initialization is sufficient.
+### Expo Web Integration
 
-At Worker shutdown, call `adapter.closeAsync()` before terminating the Worker.
-
-**Alternative: Standard OPFS VFS**
-
-Use `sqlite3.oo1.OpfsDb` if multi-tab concurrency is required and the deployment server can emit COOP/COEP headers:
+Native Expo usage stays unchanged:
 
 ```typescript
-// Requires: Cross-Origin-Embedder-Policy: require-corp
-//           Cross-Origin-Opener-Policy: same-origin
-const rawDb = new sqlite3.oo1.OpfsDb('/wiki.db', 'c');
-const adapter = createSqliteWasmAdapter(rawDb);
+import * as SQLite from 'expo-sqlite';
+import { createWiki } from '@equationalapplications/expo-llm-wiki';
+
+const db = await SQLite.openDatabaseAsync('wiki.db');
+const wiki = createWiki(db, { llmProvider });
+await wiki.setup();
 ```
 
-**kvvfs (localStorage) — not recommended**
+Expo web usage uses sqlite-wasm in memory plus snapshots. If `packages/expo/src/web.ts` is added, it should thinly re-export React web helpers:
 
-`sqlite3.oo1.JsStorageDb` is main-thread only (no Worker required) and backed by `localStorage`. Its effective storage limit is ~2.5 MB (localStorage is 5 MB but JS uses 2-byte encoding). Too small for a memory store with any significant history. Not recommended.
+```typescript
+import { createWiki as createCoreWiki } from '@equationalapplications/core-llm-wiki';
 
-For Expo apps targeting web, `@equationalapplications/expo-llm-wiki/web` may thinly re-export `createWikiWorkerClient` from the React package. The Worker file itself should still import sqlite-wasm helpers from `@equationalapplications/react-llm-wiki`, because that is where the browser runtime lives.
+export { createCoreWiki as createWebWiki };
+export { createSqliteWasmAdapter } from '@equationalapplications/react-llm-wiki/adapters';
+export {
+  serializeWikiSnapshot,
+  restoreWikiSnapshot,
+  saveWikiSnapshot,
+  restoreWikiSnapshotFromStore,
+} from '@equationalapplications/react-llm-wiki/snapshot';
+```
 
-### Export subpaths
+Then web consumers can use Expo-flavored imports:
 
-tsup derives the output filename from the entry filename. To get `dist/adapters.js` / `.mjs` / `.d.ts` — matching the package.json export paths — the tsup entry must be `src/adapters.ts`, not `src/adapters/sqliteWasm.ts`. Create a thin barrel:
+```typescript
+import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
+import { createSqliteWasmAdapter, createWebWiki, restoreWikiSnapshotFromStore } from '@equationalapplications/expo-llm-wiki/web';
 
-**`packages/react/src/adapters.ts`** (barrel):
+const sqlite3 = await sqlite3InitModule();
+const rawDb = new sqlite3.oo1.DB(':memory:', 'c');
+const wiki = createWebWiki(createSqliteWasmAdapter(rawDb), { llmProvider });
+await wiki.setup();
+await restoreWikiSnapshotFromStore(wiki, snapshotStore);
+```
+
+### Bundler and Deployment Requirements
+
+This design removes the Worker requirement. It still requires loading the sqlite-wasm `.wasm` asset.
+
+`@sqlite.org/sqlite-wasm` ships WASM binaries alongside its JS module. Bundlers that do not serve those assets correctly will cause `sqlite3InitModule()` to reject at runtime.
+
+**Vite** - expected to work without extra configuration.
+
+**webpack 5** - may require:
+
+```javascript
+module.exports = {
+  experiments: { asyncWebAssembly: true },
+};
+```
+
+**Next.js** - may require:
+
+```javascript
+const nextConfig = {
+  webpack(config) {
+    config.experiments = { ...config.experiments, asyncWebAssembly: true };
+    return config;
+  },
+};
+```
+
+**Expo web / Metro** - **NOT SUPPORTED.**
+
+`@sqlite.org/sqlite-wasm` requires a Web Worker by default. On initialization, it tries to load `sqlite3-worker1.mjs` using `new Worker(new URL("sqlite3-worker1.mjs", import.meta.url), { type: "module" })`. Metro does not reliably bundle or serve module-type Workers, and it fails with "Unable to resolve sqlite3-worker1.mjs" at bundler time.
+
+For Expo web projects, use **Vite bundler** instead:
+
+```bash
+npx expo start --web --bundler vite
+```
+
+Vite handles WASM and Worker imports automatically. This is the documented and supported path for Expo web development with sqlite-wasm.
+
+#### Spike Testing
+
+A spike was run on 2026-05-03 to verify Metro compatibility:
+
+1. Created a clean Expo SDK 55 project using `npx create-expo-app --template default@sdk-55`
+2. Installed `@sqlite.org/sqlite-wasm`
+3. Added `wasm` to `metro.config.js` `assetExts`
+4. Wrote a test app importing and initializing sqlite-wasm with FTS5
+5. Ran `npx expo start --web`
+
+**Result:** Metro bundler failed during compilation:
+```
+Web Bundling failed: Unable to resolve "sqlite3-worker1.mjs" 
+from "node_modules/@sqlite.org/sqlite-wasm/dist/index.mjs"
+
+Error at line 209: return new Worker(new URL("sqlite3-worker1.mjs", 
+import.meta.url), { type: "module" });
+```
+
+**Conclusion:** This is a **fundamental incompatibility**. `@sqlite.org/sqlite-wasm` uses Worker mode by default, and Metro's bundler cannot resolve module-type Worker imports. No configuration change can fix this. Vite is the only supported Expo web path for sqlite-wasm.
+
+### Export Subpaths
+
+`packages/react/src/adapters.ts` barrel:
+
 ```typescript
 export { createSqliteWasmAdapter } from './adapters/sqliteWasm';
 ```
 
-The implementation lives in `packages/react/src/adapters/sqliteWasm.ts` as before; the barrel file is the tsup entry.
+`packages/react/src/snapshot.ts` exports snapshot helpers.
 
-Add `./adapters` and `./web` to `packages/react/package.json` exports:
+Add `./adapters` and `./snapshot` to `packages/react/package.json` exports:
 
 ```json
 "./adapters": {
@@ -346,157 +444,82 @@ Add `./adapters` and `./web` to `packages/react/package.json` exports:
   "import": "./dist/adapters.mjs",
   "require": "./dist/adapters.js"
 },
-"./web": {
-  "types": "./dist/web.d.ts",
-  "import": "./dist/web.mjs",
-  "require": "./dist/web.js"
+"./snapshot": {
+  "types": "./dist/snapshot.d.ts",
+  "import": "./dist/snapshot.mjs",
+  "require": "./dist/snapshot.js"
 }
 ```
 
-Add `src/adapters.ts` and `src/web.ts` as tsup entries in `packages/react/tsup.config.ts`:
+Add `src/adapters.ts` and `src/snapshot.ts` as tsup entries:
 
 ```typescript
-entry: ['src/index.ts', 'src/js.ts', 'src/adapters.ts', 'src/web.ts'],
+entry: ['src/index.ts', 'src/js.ts', 'src/adapters.ts', 'src/snapshot.ts'],
 ```
 
-Because the adapter uses a local structural interface with no runtime import of `@sqlite.org/sqlite-wasm`, the package does not need to be listed in tsup `external`. No WASM code is referenced at module level.
+If Expo web convenience re-exports are included, add `packages/expo/src/web.ts` and `./web` in `packages/expo/package.json`. This subpath must not imply persistent DB storage or Worker support.
 
-If Expo convenience re-exports are included, add `packages/expo/src/web.ts` as a thin re-export of `@equationalapplications/react-llm-wiki/web` and expose it through `./web` in `packages/expo/package.json`. Do not duplicate adapter or Worker-runtime code inside `packages/expo`.
+### Peer Dependency
 
-### Peer dependency
-
-Add to `packages/react/package.json` `peerDependencies`:
+Add `@sqlite.org/sqlite-wasm` as an optional peer dependency in `packages/react/package.json`:
 
 ```json
-"@sqlite.org/sqlite-wasm": ">=3.46.0"
+"peerDependencies": {
+  "@sqlite.org/sqlite-wasm": ">=3.46.0"
+},
+"peerDependenciesMeta": {
+  "@sqlite.org/sqlite-wasm": { "optional": true }
+}
 ```
 
-And in `peerDependenciesMeta`:
+Also add it to `packages/react` devDependencies for typecheck and tests.
 
-```json
-"@sqlite.org/sqlite-wasm": { "optional": true }
-```
-
-This follows the same pattern used by many React libraries for optional peer deps. Users who only target native do not need to install it.
+It is optional for the package as a whole because native-only users do not need it. Docs must state that web users of `createSqliteWasmAdapter` must install it.
 
 ### Tests in `packages/react`
 
-**Why in `packages/react`, not `packages/core`?** The browser adapter and Worker client are implemented in `packages/react`. Placing the tests in `packages/core` would require core to depend on a react-package artifact, reversing the intended dependency direction.
-
-Current `packages/react/vitest.config.ts` only includes `*.test-DISABLED.*`, so new tests would not run. Update it to include `__tests__/**/*.test.ts` while leaving the React hook tests disabled by suffix. The global environment remains `happy-dom` (for future hook tests), so each new Node test file must opt in to the Node runtime via an inline vitest environment docblock at the top of the file:
+Update `packages/react/vitest.config.ts` to include `__tests__/**/*.test.ts` while leaving hook tests disabled by suffix. Node test files should include:
 
 ```typescript
 // @vitest-environment node
 ```
 
-This ensures `sqliteWasmAdapter.test.ts` and `wikiWorkerClient.test.ts` run in Node (where WASM and `MessageChannel` are available) without affecting the future hook tests.
+Update the `test` script from the echo stub to `vitest run`.
 
-Also update the `"test"` script in `packages/react/package.json` from the current `echo` stub to `vitest run` so that CI actually executes the new tests. The skip message in `vitest.config.ts` comments is sufficient documentation for why hook tests are still disabled.
+Add tests:
 
-Add two tests:
+1. `sqliteWasmAdapter.test.ts` - confirms `@sqlite.org/sqlite-wasm` + adapter + `WikiMemory` create FTS5 tables and return FTS5 search results.
+2. `snapshotRehydration.test.ts` - exports a dump from one in-memory DB, creates a fresh in-memory DB, imports the dump, and verifies `read()` finds restored facts through FTS5.
+3. Maintenance snapshot test - stubs `llmProvider`, runs `runLibrarian()` or `runHeal()`, snapshots, rehydrates, and verifies the changed state survives.
+4. Snapshot helper tests - malformed JSON rejects clearly; failed save does not mutate the wiki; failed mutation does not overwrite the last good snapshot.
 
-1. `sqliteWasmAdapter.test.ts` — Node integration test for `createSqliteWasmAdapter` + `WikiMemory` + FTS5:
+### README Updates
 
-```typescript
-import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
-import { createWiki } from '@equationalapplications/core-llm-wiki';
-import { createSqliteWasmAdapter } from '../src/adapters/sqliteWasm';
+`packages/react/README.md` should:
 
-let rawDb: { close(): void } | undefined; // closed in afterEach
+1. Note that `expo-sqlite` on web lacks FTS5.
+2. Show main-thread sqlite-wasm setup with `createSqliteWasmAdapter`.
+3. Show snapshot restore before rendering `WikiProvider`.
+4. Show snapshot save after mutating operations.
+5. Recommend IndexedDB for snapshots.
+6. Warn that `localStorage` is only for small demos.
+7. Explain that this is not persistent SQLite DB storage.
+8. Keep or add the `sql.js` FTS5 caveat.
 
-it('setup + write + read round-trips through FTS5 with porter stemming', async () => {
-  const sqlite3 = await sqlite3InitModule();
-  rawDb = new sqlite3.oo1.DB(':memory:', 'c');
-  const adapter = createSqliteWasmAdapter(rawDb);
-  const wiki = createWiki(adapter, { llmProvider: stubProvider });
-  await wiki.setup();
+`packages/expo/README.md` should:
 
-  // Insert a fact directly via runAsync (bypassing LLM)
-  await adapter.runAsync(
-    `INSERT INTO llm_wiki_entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ['fact_1', 'entity-1', 'Running habit', 'User runs every morning', '[]', 'certain', 'user_document', Date.now(), Date.now()]
-  );
+1. Keep native `expo-sqlite` docs unchanged.
+2. Add an Expo web section for sqlite-wasm in-memory + snapshot rehydration.
+3. Explain that Expo web requires Vite bundler (`npx expo start --web --bundler vite`).
+4. Document that stock Metro is not compatible with sqlite-wasm (spike-verified).
+5. Use `@equationalapplications/expo-llm-wiki/web` examples only if the thin re-export is implemented.
 
-  // 'ran' → porter stem 'ran'; 'run' → porter stem 'run'; both should match 'runs' / 'running'
-  const bundle = await wiki.read('entity-1', 'running');
-  expect(bundle.facts).toHaveLength(1);
-  expect(bundle.facts[0].title).toBe('Running habit');
-});
+Root `README.md` should:
 
-afterEach(() => { rawDb?.close(); });
-```
-
-2. `wikiWorkerClient.test.ts` — Node/unit test for `createWikiWorkerClient` + `serveWikiWorker` using an in-process mocked Worker/message transport. This validates the proxy boundary that the React hooks and Expo web wrapper rely on.
-
-A real browser/OPFS smoke test is desirable but not required for the initial spec. Manual validation in a browser remains required when implementing the OPFS path.
-
-Add `@sqlite.org/sqlite-wasm` to `devDependencies` in **`packages/react/package.json`**. It is a devDependency for build/typecheck and test; for end users it is an optional peer dep.
-
-### README updates
-
-The `packages/react/README.md` web setup section should:
-
-1. Note that `expo-sqlite` on web (react-native-web) does not support FTS5.
-2. Show the recommended setup using `createWikiWorkerClient` on the main thread and `@sqlite.org/sqlite-wasm` + `createSqliteWasmAdapter` + `serveWikiWorker` inside the Worker.
-3. Make it explicit that `llmProvider` is constructed inside the Worker.
-4. Replace or annotate any existing `sql.js` example (if present) to note that `sql.js` does not include FTS5.
-
-The `packages/expo/README.md` web setup section should:
-
-1. Distinguish Expo native from Expo web.
-2. Keep the current native `createWiki(db, options)` example unchanged.
-3. Add an Expo web example using `@equationalapplications/expo-llm-wiki/web` on the main thread, while noting that the Worker file imports browser-runtime helpers from `@equationalapplications/react-llm-wiki`.
-
-Minimal examples to include:
-
-**React web, main thread:**
-
-```typescript
-import { WikiProvider } from '@equationalapplications/react-llm-wiki';
-import { createWikiWorkerClient } from '@equationalapplications/react-llm-wiki/web';
-
-const worker = new Worker(new URL('./wiki.worker.ts', import.meta.url), { type: 'module' });
-const wiki = createWikiWorkerClient(worker);
-
-export default function App() {
-  return (
-    <WikiProvider wiki={wiki}>
-      <YourApp />
-    </WikiProvider>
-  );
-}
-```
-
-**Worker (recommended for persistence):**
-
-```typescript
-// wiki.worker.ts
-import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
-import { createSqliteWasmAdapter } from '@equationalapplications/react-llm-wiki/adapters';
-import { createWiki } from '@equationalapplications/react-llm-wiki/js';
-import { serveWikiWorker } from '@equationalapplications/react-llm-wiki/web';
-
-const sqlite3 = await sqlite3InitModule();
-const poolUtil = await sqlite3.installOpfsSAHPoolVfs({ initialCapacity: 12 });
-const rawDb = new poolUtil.OpfsSAHPoolDb('/wiki.db');
-const adapter = createSqliteWasmAdapter(rawDb);
-const wiki = createWiki(adapter, { llmProvider: workerLocalProvider });
-await wiki.setup();
-serveWikiWorker(wiki);
-```
-
-**Expo web, main thread convenience import:**
-
-```typescript
-import { WikiProvider } from '@equationalapplications/expo-llm-wiki';
-import { createWikiWorkerClient } from '@equationalapplications/expo-llm-wiki/web';
-
-const worker = new Worker(new URL('./wiki.worker.ts', import.meta.url), { type: 'module' });
-const wiki = createWikiWorkerClient(worker);
-```
-
-Note: OPFS requires a Worker context. The README should direct users to the Worker setup section and explain that all real `wiki.*` operations and the `llmProvider` live inside the Worker.
+1. Update web guidance to in-memory FTS5 + snapshot rehydration.
+2. Remove OPFS/Worker as the recommended web path.
+3. Mention Worker/OPFS as out of scope for this release.
+4. Document the Metro caveat in the Expo web section.
 
 ---
 
@@ -504,37 +527,32 @@ Note: OPFS requires a Worker context. The README should direct users to the Work
 
 | File | Action |
 |------|--------|
-| `packages/react/src/WikiClient.ts` | Create local structural interface/type alias for provider + hook boundary |
-| `packages/react/src/WikiContext.tsx` | Update to accept `WikiClient` instead of concrete `WikiMemory` |
-| `packages/react/src/js.ts` | Widen helper signatures to `WikiClient` |
-| `packages/react/src/adapters/sqliteWasm.ts` | Create |
-| `packages/react/src/adapters.ts` | Create (barrel re-export, tsup entry) |
-| `packages/react/src/web/createWikiWorkerClient.ts` | Create main-thread Worker proxy client |
-| `packages/react/src/web/serveWikiWorker.ts` | Create Worker-side RPC server helper |
-| `packages/react/src/web.ts` | Create (barrel re-export, tsup entry) |
-| `packages/react/package.json` | Add `./adapters` and `./web` exports; `@sqlite.org/sqlite-wasm` optional peer dep + devDependency |
-| `packages/react/tsup.config.ts` | Add `src/adapters.ts` and `src/web.ts` entries |
-| `packages/react/package.json` (scripts) | Change `"test"` from `echo` stub to `vitest run` |
-| `packages/react/vitest.config.ts` | Re-enable Node `*.test.ts` files while leaving hook tests disabled |
-| `packages/react/__tests__/sqliteWasmAdapter.test.ts` | Create |
-| `packages/react/__tests__/wikiWorkerClient.test.ts` | Create |
-| `packages/react/README.md` | Update web setup section: main-thread client + Worker runtime examples |
-| `packages/expo/src/web.ts` | Create thin re-export of React web helpers |
-| `packages/expo/tsup.config.ts` | Add `src/web.ts` entry |
-| `packages/expo/package.json` | Add optional `./web` export for Expo web convenience import |
-| `packages/expo/README.md` | Update Expo web section to point at `./web` helper while keeping native setup unchanged |
-| `README.md` (root) | Update web/vanilla and Expo web sections to recommend `@sqlite.org/sqlite-wasm` + Worker client/runtime helpers; annotate `sql.js` examples with FTS5 caveat |
+| `packages/react/src/adapters/sqliteWasm.ts` | Create sqlite-wasm adapter |
+| `packages/react/src/adapters.ts` | Create barrel re-export |
+| `packages/react/src/snapshot.ts` | Create snapshot helper utilities |
+| `packages/react/package.json` | Add `./adapters`, `./snapshot`, optional sqlite-wasm peer + devDependency, real test script |
+| `packages/react/tsup.config.ts` | Add `src/adapters.ts` and `src/snapshot.ts` entries |
+| `packages/react/vitest.config.ts` | Enable Node `*.test.ts` files while hook tests stay disabled |
+| `packages/react/__tests__/sqliteWasmAdapter.test.ts` | Create FTS5 integration test |
+| `packages/react/__tests__/snapshotRehydration.test.ts` | Create snapshot export/import/FTS test |
+| `packages/react/__tests__/snapshotHelpers.test.ts` | Create helper edge-case tests if helpers are added |
+| `packages/react/README.md` | Document web adapter + snapshot rehydration |
+| `packages/expo/src/web.ts` | Optional thin re-export of React adapter/snapshot helpers plus `createWebWiki` |
+| `packages/expo/tsup.config.ts` | Add `src/web.ts` only if Expo web re-export is implemented |
+| `packages/expo/package.json` | Add `./web` only if Expo web re-export is implemented |
+| `packages/expo/README.md` | Document native vs web snapshot path and Metro caveat |
+| `README.md` | Update web and Expo web sections |
 
 ---
 
 ## Open Questions
 
-1. ~~**Type imports from `@sqlite.org/sqlite-wasm`**~~ — Resolved in design: use a local structural interface. `@sqlite.org/sqlite-wasm` is `devDependencies` + optional `peerDependencies` in `packages/react`. No runtime import in the adapter file.
+1. **Expo Metro WASM loading** - Still open. This design removes Workers, but stock Expo Metro must still prove it can serve `@sqlite.org/sqlite-wasm` assets.
 
-2. **`lastInsertRowId` precision** — SQLite rowids are 64-bit integers. `db.selectValue('SELECT last_insert_rowid()')` returns a JS `number`. For the row counts used in `WikiMemory` this is safe (well within `Number.MAX_SAFE_INTEGER`), but worth noting.
+2. **Snapshot helper scope** - Decide whether to ship only serialization helpers or also a mutation-wrapping `createSnapshottingWiki()` helper. The wrapper reduces missed saves but needs careful typing.
 
-3. ~~**OPFS persistence**~~ — In scope. The same `createSqliteWasmAdapter(db)` factory accepts any `oo1.DB` subclass including `OpfsDb` and `OpfsSAHPoolDb`. No separate adapter factory is needed. OPFS is exposed through a Worker runtime owned by `@equationalapplications/react-llm-wiki`.
+3. **Snapshot storage package** - Decide whether to provide an IndexedDB store helper. Recommended initial scope: document IndexedDB and expose only structural store helpers, not a storage implementation.
 
-4. ~~**Package placement**~~ — Resolved in design: browser-only sqlite-wasm, OPFS, and Worker client code live in `packages/react`; `packages/expo` may add only thin web re-exports/factories.
+4. **Save cadence** - Recommended: save after every successful mutation, with optional debounce for repeated writes. Docs must warn that unsaved mutations can be lost on reload.
 
-5. ~~**Main-thread React integration**~~ — Resolved in design: React hooks/provider widen to a structural `WikiClient` interface so they can consume either a real `WikiMemory` instance or a main-thread Worker proxy client.
+5. **Large snapshot performance** - Rehydration cost grows with snapshot size. Initial implementation should test reasonable document-memory sizes and document that very large stores may need backend sync or a future persistent DB path.
