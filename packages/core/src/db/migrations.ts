@@ -58,9 +58,9 @@ export const MIGRATIONS: Migration[] = [
           DROP TABLE IF EXISTS ${prefix}entries_fts;
         `);
       });
-      // ALTER TABLE must run outside the transaction — SQLite does not allow
-      // ALTER TABLE on a table whose triggers were just dropped in the same tx
-      // on all platforms.
+      // ALTER TABLE ADD COLUMN must run outside any explicit transaction —
+      // SQLite (and expo-sqlite) do not permit schema alterations inside
+      // a BEGIN...COMMIT block.
       const cols = await db.getAllAsync<{ name: string }>(
         `PRAGMA table_info(${prefix}entries)`
       );
