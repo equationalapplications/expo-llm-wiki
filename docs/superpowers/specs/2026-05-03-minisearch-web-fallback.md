@@ -93,7 +93,25 @@ All pass through to the wrapped adapter unchanged. The schema probe queries in `
 
 **File:** `packages/expo/src/web.ts`
 
-`createWebWiki` returns a plain object typed as `WikiMemory` (via `as unknown as WikiMemory`). The object implements the full public API of `WikiMemory` by delegating all methods to the wrapped `WikiMemory` instance. Only `setup()`, `read()`, `ingestDocument()`, `forget()`, `runLibrarian()`, `runHeal()`, `runPrune()`, and `importDump()` are overridden to maintain the MiniSearch index.
+`createWebWiki` returns a plain object cast as `WikiMemory` (via `as unknown as WikiMemory`). **Every public method must be explicitly listed in the proxy object** — TypeScript will not catch missing delegations after the cast. The proxy must include all of the following:
+
+| Method | Override |
+|--------|----------|
+| `setup()` | Yes — rebuild index after setup |
+| `read()` | Yes — use MiniSearch when query is non-empty |
+| `write()` | Yes — fire-and-forget `rebuildIndex()` after write; see auto-maintenance note below |
+| `ingestDocument()` | Yes — rebuild index after ingest |
+| `forget()` | Yes — rebuild index after forget |
+| `runLibrarian()` | Yes — rebuild index after librarian |
+| `runHeal()` | Yes — rebuild index after heal |
+| `runPrune()` | Yes — rebuild index after prune |
+| `importDump()` | Yes — rebuild index after import |
+| `hasChanged()` | Pass-through |
+| `getMemoryBundle()` | Pass-through |
+| `getEntityStatus()` | Pass-through |
+| `exportDump()` | Pass-through |
+
+**Auto-maintenance lag:** `WikiMemory.write()` starts a fire-and-forget internal librarian job when the auto-threshold is reached; the method returns before the librarian completes. The web `write()` override therefore fires `rebuildIndex().catch(console.error)` non-blocking after `await wiki.write()`. This means auto-generated facts appear in MiniSearch only after that background rebuild settles. Callers needing guaranteed post-librarian search should call `runLibrarian()` explicitly — the override for that method awaits the rebuild synchronously before returning.
 
 **Factory:**
 
@@ -158,7 +176,7 @@ Tags are stored as a space-joined string: `fact.tags.join(' ')`.
 The index is populated from `wiki.exportDump()`. A `rebuildIndex(wiki, miniSearch, factCache)` helper (full signature in the `read()` Override section) is called:
 
 - After `wiki.setup()`.
-- After `ingestDocument()`, `runLibrarian()`, `runHeal()`, `importDump()`.
+- After `ingestDocument()`, `write()` (non-blocking fire-and-forget), `runLibrarian()`, `runHeal()`, `importDump()`.
 - After `forget()`, `runPrune()` (full rebuild keeps removal handling simple).
 
 ### Synonym Expansion Helper
@@ -173,13 +191,22 @@ function expandQuery(query: string, synonymMap?: Record<string, string[]>): stri
   const tokens = normalize(query);
   const expanded: string[] = [];
   const seen = new Set<string>();
-  const push = (t: string) => { if (!seen.has(t)) { seen.add(t); expanded.push(t); } };
+  const push = (t: string): boolean => {
+    if (expanded.length >= 12) return false;
+    if (!seen.has(t)) { seen.add(t); expanded.push(t); }
+    return true;
+  };
 
+  outer:
   for (const t of tokens) {
-    push(t);
+    if (!push(t)) break;
     if (synonymMap) {
       for (const s of (synonymMap[t] ?? [])) {
-        if (typeof s === 'string') normalize(s).forEach(push);
+        if (typeof s === 'string') {
+          for (const st of normalize(s)) {
+            if (!push(st)) break outer;
+          }
+        }
       }
     }
   }
@@ -231,7 +258,9 @@ async read(entityId: string, query: string): Promise<MemoryBundle> {
   const topResults = results.slice(0, maxResults);
   const matchingIds = new Set(topResults.map((r) => r.id));
   const allFacts = factCache.get(entityId) ?? [];
-  const facts = allFacts.filter((f) => matchingIds.has(f.id));
+  const factById = new Map(allFacts.map(f => [f.id, f]));
+  // Preserve MiniSearch rank order (highest score first).
+  const facts = topResults.map(r => factById.get(r.id)).filter((f): f is WikiFact => f !== undefined);
 
   // Update access_count and last_accessed_at, matching native behavior.
   if (matchingIds.size > 0) {
@@ -279,7 +308,7 @@ async read(entityId: string, query: string): Promise<MemoryBundle> {
 |---|---|
 | `@equationalapplications/core-llm-wiki` | None |
 | `@equationalapplications/react-llm-wiki` | Add `FTS5SkipAdapter`; add `./adapters` subpath |
-| `@equationalapplications/expo-llm-wiki` | Add `createWebWiki` in `src/web.ts`; update `src/index.ts` to auto-detect `Platform.OS`; add `./web` subpath |
+| `@equationalapplications/expo-llm-wiki` | Add `createWebWiki` in `src/web.ts`; update `src/index.ts` to auto-detect `Platform.OS`; add `./web` subpath; mark `./factory` as native-only; add `react-native` to peer and devDependencies |
 
 ---
 
@@ -296,6 +325,13 @@ Add `minisearch` as a **direct dependency** of `packages/expo` (since `createWeb
 
 Check current MiniSearch major version before pinning.
 
+## Dependency: `react-native`
+
+`packages/expo/src/index.ts` imports `{ Platform } from 'react-native'` to detect the web platform. `react-native` is not currently listed in `packages/expo/package.json`. Add it:
+
+- **`peerDependencies`**: `"react-native": ">=0.72"` — every Expo app already has it, so declaring it makes the peer graph accurate.
+- **`devDependencies`**: `"react-native": "<latest>"` (or pin to the version in the workspace) — required for TypeScript type-checking and building in CI where `react-native` may not be a transitive install.
+
 ---
 
 ## File Checklist
@@ -310,7 +346,8 @@ Check current MiniSearch major version before pinning.
 | `packages/react/__tests__/fts5Skip.test.ts` | Unit tests for `FTS5SkipAdapter` |
 | `packages/expo/src/web.ts` | `createWebWiki` factory with full `WikiMemory`-proxy client, MiniSearch, synonymMap expansion, `access_count` update |
 | `packages/expo/src/index.ts` | Add `Platform.OS === 'web'` guard in `createWiki` to call `createWebWiki` |
-| `packages/expo/package.json` | Add `./web` subpath; add `minisearch` dependency |
+| `packages/expo/src/factory.ts` | Add JSDoc noting that `./factory` is **native-only** and does not support web; no code change needed |
+| `packages/expo/package.json` | Add `./web` subpath; add `minisearch` dependency; add `react-native` peer and devDep |
 | `packages/expo/tsup.config.ts` | Add `src/web.ts` entry |
 | `packages/expo/__tests__/web.test.ts` | Integration tests (setup, read, mutations, index sync, synonymMap, access_count) |
 | `packages/expo/README.md` | Add Expo web section |
@@ -336,13 +373,14 @@ Use a real `expo-sqlite` in-memory database (or the existing `sqliteAdapter` tes
 
 - `setup()` does not throw on a database backed by `FTS5SkipAdapter`.
 - `read(entityId, '')` returns empty bundle on fresh DB.
-- After `ingestDocument(entityId, text, ...)`, `read(entityId, someQueryTerm)` returns matching facts.
+- After `ingestDocument(entityId, { sourceRef: 'doc.md', sourceHash: '<64-char-hex>', documentChunk: text })`, `read(entityId, someQueryTerm)` returns matching facts.
 - After `forget(entityId, factId)`, the forgotten fact no longer appears in `read()` results.
 - After `runLibrarian()`, new/changed facts appear in search.
 - After `importDump(dump)`, imported facts are searchable.
 - MiniSearch index survives multiple sequential mutations correctly (no stale entries).
 - `synonymMap` in config: synonym terms expand the MiniSearch query and return results matching either the original or the synonym.
 - `access_count` is incremented in the database for matched facts after a non-empty `read()`.
+- After `write()`, `read(entityId, '')` returns a bundle with the new event (index rebuild fires non-blocking; no stale facts in the empty-query path).
 - `createWiki` on a mock where `Platform.OS === 'web'` returns an instance that uses the MiniSearch path.
 
 ---
@@ -388,3 +426,7 @@ Update the web section to describe the MiniSearch degraded path. Remove OPFS/Wor
 4. **Index rebuild cost** — Full `exportDump()` + `removeAll()` + `addAll()` after every maintenance run is acceptable for now. Targeted patch strategy deferred until profiling warrants it.
 
 5. **`Platform.OS` auto-detection** — `createWiki` in `packages/expo/src/index.ts` automatically delegates to `createWebWiki` when `Platform.OS === 'web'`. Same developer installation steps and import path on all platforms.
+
+6. **`./factory` subpath** — `packages/expo/src/factory.ts` exists so callers can get `createWiki` without loading React hooks. It is native-only; `Platform.OS` detection is not added there. Web users must import from the main `'@equationalapplications/expo-llm-wiki'` entry, which re-exports everything. Document this in the `factory.ts` JSDoc.
+
+7. **Auto-maintenance and `write()`** — `write()` is added to the proxy's overridden set, with a non-blocking `rebuildIndex()` fire-and-forget. This ensures the index is eventually consistent after any write that triggers the auto-librarian, without changing `write()`'s synchronous semantics for callers.
