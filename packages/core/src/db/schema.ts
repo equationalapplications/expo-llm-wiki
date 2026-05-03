@@ -16,41 +16,14 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
       updated_at INTEGER NOT NULL,
       last_accessed_at INTEGER,
       access_count INTEGER NOT NULL DEFAULT 0,
-      deleted_at INTEGER
+      deleted_at INTEGER,
+      embedding TEXT
     );
 
     CREATE INDEX IF NOT EXISTS ${prefix}entries_entity_idx ON ${prefix}entries(entity_id);
     CREATE INDEX IF NOT EXISTS ${prefix}entries_source_ref_idx ON ${prefix}entries(entity_id, source_ref);
     CREATE INDEX IF NOT EXISTS ${prefix}entries_source_hash_idx ON ${prefix}entries(entity_id, source_hash) WHERE source_hash IS NOT NULL;
     CREATE INDEX IF NOT EXISTS ${prefix}entries_updated_idx ON ${prefix}entries(updated_at DESC);
-
-    -- FTS5 Virtual Table for full-text search
-    CREATE VIRTUAL TABLE IF NOT EXISTS ${prefix}entries_fts USING fts5(
-      title,
-      body,
-      tags,
-      content='${prefix}entries',
-      content_rowid='rowid',
-      tokenize='porter unicode61'
-    );
-
-    -- Triggers to keep FTS5 in sync with entries
-    CREATE TRIGGER IF NOT EXISTS ${prefix}entries_ai AFTER INSERT ON ${prefix}entries BEGIN
-      INSERT INTO ${prefix}entries_fts(rowid, title, body, tags) 
-      VALUES (new.rowid, new.title, new.body, new.tags);
-    END;
-
-    CREATE TRIGGER IF NOT EXISTS ${prefix}entries_ad AFTER DELETE ON ${prefix}entries BEGIN
-      INSERT INTO ${prefix}entries_fts(${prefix}entries_fts, rowid, title, body, tags) 
-      VALUES ('delete', old.rowid, old.title, old.body, old.tags);
-    END;
-
-    CREATE TRIGGER IF NOT EXISTS ${prefix}entries_au AFTER UPDATE ON ${prefix}entries BEGIN
-      INSERT INTO ${prefix}entries_fts(${prefix}entries_fts, rowid, title, body, tags) 
-      VALUES ('delete', old.rowid, old.title, old.body, old.tags);
-      INSERT INTO ${prefix}entries_fts(rowid, title, body, tags) 
-      VALUES (new.rowid, new.title, new.body, new.tags);
-    END;
 
     CREATE TABLE IF NOT EXISTS ${prefix}tasks (
       id TEXT PRIMARY KEY,

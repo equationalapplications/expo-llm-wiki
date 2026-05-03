@@ -45,6 +45,30 @@ export const MIGRATIONS: Migration[] = [
       });
     },
   },
+  {
+    version: 2,
+    description: 'Remove FTS5; add embedding column for semantic retrieval',
+    run: async (db, prefix) => {
+      // Drop FTS5 artifacts in a transaction.
+      await db.withTransactionAsync(async () => {
+        await db.execAsync(`
+          DROP TRIGGER IF EXISTS ${prefix}entries_ai;
+          DROP TRIGGER IF EXISTS ${prefix}entries_ad;
+          DROP TRIGGER IF EXISTS ${prefix}entries_au;
+          DROP TABLE IF EXISTS ${prefix}entries_fts;
+        `);
+      });
+      // ALTER TABLE must run outside the transaction — SQLite does not allow
+      // ALTER TABLE on a table whose triggers were just dropped in the same tx
+      // on all platforms.
+      const cols = await db.getAllAsync<{ name: string }>(
+        `PRAGMA table_info(${prefix}entries)`
+      );
+      if (!cols.some(c => c.name === 'embedding')) {
+        await db.execAsync(`ALTER TABLE ${prefix}entries ADD COLUMN embedding TEXT`);
+      }
+    },
+  },
 ];
 
 // Verify MIGRATIONS are in strictly ascending version order at module load time.
