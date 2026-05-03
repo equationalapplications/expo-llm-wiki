@@ -99,7 +99,7 @@ All pass through to the wrapped adapter unchanged. The schema probe queries in `
 |--------|----------|
 | `setup()` | Yes — rebuild index after setup |
 | `read()` | Yes — use MiniSearch when query is non-empty |
-| `write()` | Yes — fire-and-forget `rebuildIndex()` after write; see auto-maintenance note below |
+| `write()` | Yes — non-blocking poll-then-rebuild after write; see auto-maintenance note below |
 | `ingestDocument()` | Yes — rebuild index after ingest |
 | `forget()` | Yes — rebuild index after forget |
 | `runLibrarian()` | Yes — rebuild index after librarian |
@@ -111,7 +111,31 @@ All pass through to the wrapped adapter unchanged. The schema probe queries in `
 | `getEntityStatus()` | Pass-through |
 | `exportDump()` | Pass-through |
 
-**Auto-maintenance lag:** `WikiMemory.write()` starts a fire-and-forget internal librarian job when the auto-threshold is reached; the method returns before the librarian completes. The web `write()` override therefore fires `rebuildIndex().catch(console.error)` non-blocking after `await wiki.write()`. This means auto-generated facts appear in MiniSearch only after that background rebuild settles. Callers needing guaranteed post-librarian search should call `runLibrarian()` explicitly — the override for that method awaits the rebuild synchronously before returning.
+**Auto-maintenance and index freshness:** `WikiMemory.write()` synchronously registers the librarian job in `activeMaintenanceJobs` and fires `runLibrarianThenMaybeHeal()` before returning — so by the time `await wiki.write()` resolves in the proxy, `getEntityStatus(entityId).librarian` is already `true` if the threshold was crossed. The auto-librarian is **not** disabled on web.
+
+The `write()` override fires a non-blocking background task that:
+1. Polls `wiki.getEntityStatus(entityId)` every 50 ms until both `librarian` and `heal` are `false`.
+2. Then calls `rebuildIndex()`.
+
+```typescript
+write: async (entityId: string, event: WikiEvent): Promise<void> => {
+  await wiki.write(entityId, event);
+  // Non-blocking: wait for any auto-triggered background jobs to finish, then rebuild.
+  (async () => {
+    const MAX_WAIT_MS = 30_000;
+    const POLL_MS = 50;
+    const deadline = Date.now() + MAX_WAIT_MS;
+    while (Date.now() < deadline) {
+      const status = wiki.getEntityStatus(entityId);
+      if (!status.librarian && !status.heal) break;
+      await new Promise<void>(r => setTimeout(r, POLL_MS));
+    }
+    await rebuildIndex(wiki, miniSearch, factCache);
+  })().catch(console.error);
+},
+```
+
+Because `activeMaintenanceJobs.add()` is synchronous within `write()`, there is no race between `write()` returning and the first status poll. If no threshold was crossed the status is immediately idle and `rebuildIndex()` runs at the next microtask checkpoint. Callers needing a synchronous guarantee should call `runLibrarian()` explicitly — that override awaits the rebuild before returning.
 
 **Factory:**
 
@@ -176,7 +200,7 @@ Tags are stored as a space-joined string: `fact.tags.join(' ')`.
 The index is populated from `wiki.exportDump()`. A `rebuildIndex(wiki, miniSearch, factCache)` helper (full signature in the `read()` Override section) is called:
 
 - After `wiki.setup()`.
-- After `ingestDocument()`, `write()` (non-blocking fire-and-forget), `runLibrarian()`, `runHeal()`, `importDump()`.
+- After `ingestDocument()`, `write()` (non-blocking poll-then-rebuild), `runLibrarian()`, `runHeal()`, `importDump()`.
 - After `forget()`, `runPrune()` (full rebuild keeps removal handling simple).
 
 ### Synonym Expansion Helper
@@ -251,6 +275,11 @@ async read(entityId: string, query: string): Promise<MemoryBundle> {
   }
   const maxResults = options.config?.maxFtsResults ?? 10;
   const expandedQuery = expandQuery(query, options.config?.synonymMap);
+  // Tokens under 3 chars are dropped by expandQuery; fall back to plain latest-facts SQL
+  // for queries that normalize to nothing (e.g. "hi", punctuation-only).
+  if (!expandedQuery) {
+    return wiki.read(entityId, '');
+  }
   const results = miniSearch.search(expandedQuery, {
     filter: (r) => r.entity_id === entityId,
     combineWith: 'OR',
@@ -381,6 +410,7 @@ Use a real `expo-sqlite` in-memory database (or the existing `sqliteAdapter` tes
 - `synonymMap` in config: synonym terms expand the MiniSearch query and return results matching either the original or the synonym.
 - `access_count` is incremented in the database for matched facts after a non-empty `read()`.
 - After `write()`, `read(entityId, '')` returns a bundle with the new event (index rebuild fires non-blocking; no stale facts in the empty-query path).
+- **Auto-librarian index freshness:** configure `autoLibrarianThreshold: 1` and an `llmProvider` that returns a known fact. Call `write(entityId, event)` to cross the threshold. Await a promise that polls `wiki.getEntityStatus(entityId)` until `librarian === false` (simulating the background rebuild settling). Then `read(entityId, knownFactTerm)` must return the auto-generated fact. This verifies the polling-based rebuild mechanism produces a fresh index after auto-librarian runs.
 - `createWiki` on a mock where `Platform.OS === 'web'` returns an instance that uses the MiniSearch path.
 
 ---
@@ -429,4 +459,4 @@ Update the web section to describe the MiniSearch degraded path. Remove OPFS/Wor
 
 6. **`./factory` subpath** — `packages/expo/src/factory.ts` exists so callers can get `createWiki` without loading React hooks. It is native-only; `Platform.OS` detection is not added there. Web users must import from the main `'@equationalapplications/expo-llm-wiki'` entry, which re-exports everything. Document this in the `factory.ts` JSDoc.
 
-7. **Auto-maintenance and `write()`** — `write()` is added to the proxy's overridden set, with a non-blocking `rebuildIndex()` fire-and-forget. This ensures the index is eventually consistent after any write that triggers the auto-librarian, without changing `write()`'s synchronous semantics for callers.
+7. **Auto-maintenance and `write()`** — Auto-librarian is not disabled on web. `write()` is overridden to fire a non-blocking background task that polls `getEntityStatus(entityId)` every 50 ms until both `librarian` and `heal` are `false`, then calls `rebuildIndex()`. Because `activeMaintenanceJobs.add()` is synchronous inside `write()`, the first poll always sees an accurate job status with no race. This provides eventual-consistency without disabling auto-maintenance or blocking callers.

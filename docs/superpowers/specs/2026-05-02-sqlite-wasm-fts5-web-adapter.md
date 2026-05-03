@@ -1,7 +1,7 @@
 # Spec: sqlite-wasm FTS5 Web Adapter with Snapshot Rehydration
 
 **Date:** 2026-05-02
-**Status:** Draft
+**Status:** Infeasible - Do not implement
 
 ---
 
