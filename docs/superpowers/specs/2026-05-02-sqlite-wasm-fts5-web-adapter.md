@@ -23,10 +23,11 @@ Alternatives evaluated and rejected:
 - The adapter lives in `@equationalapplications/react-llm-wiki` (the web-facing package) under a new `./adapters` export subpath.
 - The implementation does not change `@equationalapplications/core-llm-wiki` at all.
 - An integration test confirms that `@sqlite.org/sqlite-wasm` + the adapter + `WikiMemory` work end-to-end with FTS5 in Node.
+- Web users can opt into OPFS-backed persistent storage by passing an `OpfsSAHPoolDb` (or `OpfsDb`) instance to `createSqliteWasmAdapter` instead of an in-memory `DB`.
+- The spec documents Worker setup requirements and a minimal OPFS example.
 
 ## Non-Goals
 
-- Persistence to OPFS or localStorage (in scope for a future spec — OPFS adapter would be a separate subclass of this adapter).
 - Automatic detection of the web environment and transparent adapter swapping.
 - Polyfilling missing FTS5 features in adapters that lack it (e.g. graceful degradation to `LIKE`). The correct fix is a correct SQLite build.
 - Changes to `expo` package or the native adapter.
@@ -156,13 +157,80 @@ async withTransactionAsync<T>(fn: () => Promise<T>): Promise<T> {
 
 **`closeAsync()`**
 
-No-op: the caller owns the DB lifecycle:
+Calls `db.close()`. This releases WASM memory for in-memory DBs and — critically — releases the OPFS file lock for OPFS-backed DBs. Without closing, an OPFS-backed DB would block all other tabs from opening the same file until the page is unloaded:
 
 ```typescript
 closeAsync(): Promise<void> {
-  return Promise.resolve();
+  try {
+    db.close();
+    return Promise.resolve();
+  } catch (e) {
+    return Promise.reject(e);
+  }
 }
 ```
+
+### OPFS persistence
+
+The same `createSqliteWasmAdapter(db)` factory works for persistent storage. The caller passes an OPFS-backed DB instance instead of an in-memory `DB`. No changes to the adapter implementation.
+
+**Browser constraints:**
+- Both OPFS VFS options are only available inside a **Web Worker** (not the main UI thread). The DB must be constructed and all `wiki.*` calls must run inside the Worker. The main thread communicates via `postMessage` or a message-passing wrapper.
+- Closing the DB (via `adapter.closeAsync()` or `wiki.close()` if exposed) must be called before the Worker terminates to release the OPFS file lock. Failure to close blocks other tabs from opening the same DB file.
+
+**VFS choice:**
+
+| VFS | Class | COOP/COEP headers? | Concurrency | Notes |
+|-----|-------|--------------------|-------------|-------|
+| **SAHPool** (recommended) | `PoolUtil.OpfsSAHPoolDb` | Not required | Single connection | Best performance; no header requirement |
+| Standard OPFS | `sqlite3.oo1.OpfsDb` | Required (`require-corp` + `same-origin`) | Multi-tab (with locking) | Safari < 17 not supported |
+
+**Recommended: SAHPool VFS**
+
+The SAHPool VFS does not require COOP/COEP headers, making it usable in any deployment environment. It is single-connection per origin (one tab at a time holds the lock), which is the correct model for a memory store anyway.
+
+Initialization inside a Worker:
+
+```typescript
+// wiki.worker.ts
+import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
+import { createSqliteWasmAdapter } from '@equationalapplications/react-llm-wiki/adapters';
+import { createWiki } from '@equationalapplications/react-llm-wiki/js';
+
+const sqlite3 = await sqlite3InitModule();
+const poolUtil = await sqlite3.installOpfsSAHPoolVfs({ initialCapacity: 12 });
+const rawDb = new poolUtil.OpfsSAHPoolDb('/wiki.db');
+const adapter = createSqliteWasmAdapter(rawDb);
+const wiki = createWiki(adapter, { llmProvider: /* receive via postMessage */ });
+await wiki.setup();
+
+// Handle messages from main thread
+self.onmessage = async (e) => {
+  const { type, payload } = e.data;
+  if (type === 'read') {
+    const bundle = await wiki.read(payload.entityId, payload.query);
+    self.postMessage({ type: 'readResult', bundle });
+  }
+  // ... other operations
+};
+```
+
+`initialCapacity: 12` (≥ 2× expected number of DB files) is a reasonable default. The capacity is persistent across sessions — setting it at first initialization is sufficient.
+
+**Alternative: Standard OPFS VFS**
+
+Use `sqlite3.oo1.OpfsDb` if multi-tab concurrency is required and the deployment server can emit COOP/COEP headers:
+
+```typescript
+// Requires: Cross-Origin-Embedder-Policy: require-corp
+//           Cross-Origin-Opener-Policy: same-origin
+const rawDb = new sqlite3.oo1.OpfsDb('/wiki.db', 'c');
+const adapter = createSqliteWasmAdapter(rawDb);
+```
+
+**kvvfs (localStorage) — not recommended**
+
+`sqlite3.oo1.JsStorageDb` is main-thread only (no Worker required) and backed by `localStorage`. Its effective storage limit is ~2.5 MB (localStorage is 5 MB but JS uses 2-byte encoding). Too small for a memory store with any significant history. Not recommended.
 
 ### Export subpath: `@equationalapplications/react-llm-wiki/adapters`
 
@@ -257,8 +325,9 @@ The `packages/react/README.md` web setup section should:
 2. Show the recommended setup using `@sqlite.org/sqlite-wasm` + `createSqliteWasmAdapter`.
 3. Replace or annotate any existing `sql.js` example (if present) to note that `sql.js` does not include FTS5.
 
-Minimal example to include:
+Minimal examples to include:
 
+**In-memory (non-persistent):**
 ```typescript
 import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
 import { createSqliteWasmAdapter } from '@equationalapplications/react-llm-wiki/adapters';
@@ -267,9 +336,27 @@ import { createWiki } from '@equationalapplications/react-llm-wiki/js';
 const sqlite3 = await sqlite3InitModule();
 const rawDb = new sqlite3.oo1.DB(':memory:', 'c');
 const adapter = createSqliteWasmAdapter(rawDb);
-const wiki = createWiki(adapter, { llm: myProvider });
+const wiki = createWiki(adapter, { llmProvider: myProvider });
 await wiki.setup();
 ```
+
+**OPFS-persistent (inside a Web Worker — recommended for persistence):**
+```typescript
+// wiki.worker.ts — run this file as a Worker
+import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
+import { createSqliteWasmAdapter } from '@equationalapplications/react-llm-wiki/adapters';
+import { createWiki } from '@equationalapplications/react-llm-wiki/js';
+
+const sqlite3 = await sqlite3InitModule();
+const poolUtil = await sqlite3.installOpfsSAHPoolVfs({ initialCapacity: 12 });
+const rawDb = new poolUtil.OpfsSAHPoolDb('/wiki.db');
+const adapter = createSqliteWasmAdapter(rawDb);
+const wiki = createWiki(adapter, { llmProvider: myProvider });
+await wiki.setup();
+// call adapter.closeAsync() before the Worker terminates
+```
+
+Note: OPFS requires a Worker context. The README should direct users to the Worker setup section and explain that all `wiki.*` calls must originate from within the Worker.
 
 ---
 
@@ -282,8 +369,8 @@ await wiki.setup();
 | `packages/react/package.json` | Add `./adapters` export; `@sqlite.org/sqlite-wasm` optional peer dep + devDependency |
 | `packages/react/tsup.config.ts` | Add `src/adapters.ts` entry |
 | `packages/react/__tests__/sqliteWasmAdapter.test.ts` | Create |
-| `packages/react/README.md` | Update web setup section |
-| `README.md` (root) | Update web/vanilla installation and setup sections to recommend `@sqlite.org/sqlite-wasm` + `createSqliteWasmAdapter`; annotate `sql.js` examples with FTS5 caveat |
+| `packages/react/README.md` | Update web setup section: in-memory example + OPFS Worker example |
+| `README.md` (root) | Update web/vanilla installation and setup sections to recommend `@sqlite.org/sqlite-wasm` + `createSqliteWasmAdapter`; annotate `sql.js` examples with FTS5 caveat; add OPFS Worker setup note |
 
 ---
 
@@ -293,4 +380,4 @@ await wiki.setup();
 
 2. **`lastInsertRowId` precision** — SQLite rowids are 64-bit integers. `db.selectValue('SELECT last_insert_rowid()')` returns a JS `number`. For the row counts used in `WikiMemory` this is safe (well within `Number.MAX_SAFE_INTEGER`), but worth noting.
 
-3. **OPFS persistence** — Out of scope for this spec. A future `createOpfsSqliteWasmAdapter` could subclass or wrap this one, substituting `new sqlite3.oo1.OpfsDb(filename, 'c')` for the `:memory:` DB. The adapter implementation would be identical.
+3. ~~**OPFS persistence**~~ — In scope. The same `createSqliteWasmAdapter(db)` factory accepts any `oo1.DB` subclass including `OpfsDb` and `OpfsSAHPoolDb`. No separate factory needed. See the OPFS design section. `closeAsync()` must call `db.close()` (not a no-op) to release OPFS file locks.
