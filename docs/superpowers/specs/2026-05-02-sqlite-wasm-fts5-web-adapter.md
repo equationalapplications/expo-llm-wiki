@@ -112,7 +112,7 @@ runAsync(sql: string, params?: unknown[]): Promise<{ changes: number; lastInsert
     }
     return Promise.resolve({
       changes: db.changes(),
-      lastInsertRowId: db.selectValue('SELECT last_insert_rowid()') as number ?? 0,
+      lastInsertRowId: (db.selectValue('SELECT last_insert_rowid()') as number | undefined) ?? 0,
     });
   } catch (e) {
     return Promise.reject(e);
@@ -130,7 +130,7 @@ Uses `db.exec()` with `rowMode: 'object'` and `resultRows` accumulator:
 getAllAsync<T>(sql: string, params?: unknown[]): Promise<T[]> {
   try {
     const rows: T[] = [];
-    db.exec({ sql, bind: params ?? [], resultRows: rows, rowMode: 'object' });
+    db.exec({ sql, ...(params?.length ? { bind: params } : {}), resultRows: rows, rowMode: 'object' });
     return Promise.resolve(rows);
   } catch (e) {
     return Promise.reject(e);
@@ -204,6 +204,7 @@ export type WikiClient = Pick<
   | 'runHeal'
   | 'runPrune'
   | 'exportDump'
+  | 'importDump'
 >;
 ```
 
@@ -211,7 +212,7 @@ export type WikiClient = Pick<
 
 Update `packages/react/src/WikiContext.tsx` and the hooks to accept `WikiClient` instead of concrete `WikiMemory`. `packages/react/src/js.ts` should also widen its helper signatures to `WikiClient` so plain JS consumers can use the same proxy client.
 
-`WikiClient` intentionally excludes shutdown methods because the React hooks do not use them. Any Worker lifecycle helper (`dispose()`, `terminate()`, etc.) should live alongside the proxy client, not inside the provider contract.
+`WikiClient` intentionally excludes shutdown/setup methods (`setup`, `closeAsync`) because the React hooks do not use them and Worker lifecycle helpers should live alongside the proxy client, not inside the provider contract. `importDump` is included because Worker-proxied clients must be able to restore from backup dumps; omitting it would make the proxy client unable to serve restore-from-dump flows.
 
 ### Worker runtime helpers
 
@@ -227,6 +228,19 @@ export function serveWikiWorker(wiki: WikiClient, endpoint?: DedicatedWorkerGlob
 `createWikiWorkerClient()` runs on the main thread and returns a `WikiClient` implementation backed by `postMessage()`.
 
 `serveWikiWorker()` runs inside the Worker and dispatches incoming RPC requests onto a real `WikiMemory` instance.
+
+The `wikiWorkerClient.test.ts` test validates this boundary using a `MessageChannel` pair (available in Node 15+) to simulate the Worker transport without spawning a real Worker. Each `MessagePort` is wrapped in a small adapter that satisfies the internal `WikiWorkerEndpoint` structural type (see below), giving a faithful round-trip without a browser runtime.
+
+To avoid typing `createWikiWorkerClient` as accepting a concrete `Worker` and `serveWikiWorker` as accepting a concrete `DedicatedWorkerGlobalScope`, the implementation should define a local structural interface:
+
+```typescript
+interface WikiWorkerEndpoint {
+  postMessage(data: unknown): void;
+  addEventListener(type: 'message', handler: (ev: { data: unknown }) => void): void;
+}
+```
+
+Both `createWikiWorkerClient` and `serveWikiWorker` accept `WikiWorkerEndpoint`, not the concrete platform types. `Worker` and `DedicatedWorkerGlobalScope` satisfy this interface structurally. In tests, a `MessagePort` does too — no adapter shim needed.
 
 RPC messages should stay JSON-serializable:
 
@@ -369,7 +383,15 @@ This follows the same pattern used by many React libraries for optional peer dep
 
 **Why in `packages/react`, not `packages/core`?** The browser adapter and Worker client are implemented in `packages/react`. Placing the tests in `packages/core` would require core to depend on a react-package artifact, reversing the intended dependency direction.
 
-Current `packages/react/vitest.config.ts` only includes `*.test-DISABLED.*`, so new tests would not run. Update it to include `__tests__/**/*.test.ts` in a Node environment while leaving the React hook tests disabled by suffix.
+Current `packages/react/vitest.config.ts` only includes `*.test-DISABLED.*`, so new tests would not run. Update it to include `__tests__/**/*.test.ts` while leaving the React hook tests disabled by suffix. The global environment remains `happy-dom` (for future hook tests), so each new Node test file must opt in to the Node runtime via an inline vitest environment docblock at the top of the file:
+
+```typescript
+// @vitest-environment node
+```
+
+This ensures `sqliteWasmAdapter.test.ts` and `wikiWorkerClient.test.ts` run in Node (where WASM and `MessageChannel` are available) without affecting the future hook tests.
+
+Also update the `"test"` script in `packages/react/package.json` from the current `echo` stub to `vitest run` so that CI actually executes the new tests. The skip message in `vitest.config.ts` comments is sufficient documentation for why hook tests are still disabled.
 
 Add two tests:
 
@@ -380,7 +402,7 @@ import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
 import { createWiki } from '@equationalapplications/core-llm-wiki';
 import { createSqliteWasmAdapter } from '../src/adapters/sqliteWasm';
 
-let rawDb: ReturnType<typeof sqlite3.oo1.DB>; // closed in afterEach
+let rawDb: { close(): void } | undefined; // closed in afterEach
 
 it('setup + write + read round-trips through FTS5 with porter stemming', async () => {
   const sqlite3 = await sqlite3InitModule();
@@ -492,11 +514,13 @@ Note: OPFS requires a Worker context. The README should direct users to the Work
 | `packages/react/src/web.ts` | Create (barrel re-export, tsup entry) |
 | `packages/react/package.json` | Add `./adapters` and `./web` exports; `@sqlite.org/sqlite-wasm` optional peer dep + devDependency |
 | `packages/react/tsup.config.ts` | Add `src/adapters.ts` and `src/web.ts` entries |
+| `packages/react/package.json` (scripts) | Change `"test"` from `echo` stub to `vitest run` |
 | `packages/react/vitest.config.ts` | Re-enable Node `*.test.ts` files while leaving hook tests disabled |
 | `packages/react/__tests__/sqliteWasmAdapter.test.ts` | Create |
 | `packages/react/__tests__/wikiWorkerClient.test.ts` | Create |
 | `packages/react/README.md` | Update web setup section: main-thread client + Worker runtime examples |
 | `packages/expo/src/web.ts` | Create thin re-export of React web helpers |
+| `packages/expo/tsup.config.ts` | Add `src/web.ts` entry |
 | `packages/expo/package.json` | Add optional `./web` export for Expo web convenience import |
 | `packages/expo/README.md` | Update Expo web section to point at `./web` helper while keeping native setup unchanged |
 | `README.md` (root) | Update web/vanilla and Expo web sections to recommend `@sqlite.org/sqlite-wasm` + Worker client/runtime helpers; annotate `sql.js` examples with FTS5 caveat |
