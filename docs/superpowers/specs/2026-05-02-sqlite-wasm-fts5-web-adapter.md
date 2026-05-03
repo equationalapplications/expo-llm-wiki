@@ -62,7 +62,7 @@ export function createSqliteWasmAdapter(db: SqliteWasmDB): SQLiteAdapter
 
 Where `SqliteWasmDB` is the `sqlite3.oo1.DB` instance, already constructed and open. The caller is responsible for calling `sqlite3InitModule()`, constructing the `DB`, and eventually calling `db.close()`. The adapter does not own the lifecycle of the DB.
 
-The adapter type parameter `SqliteWasmDB` should be typed as the minimal interface used by the adapter (or `unknown` with internal casts if typing the sqlite-wasm module is too noisy — prefer using the runtime package's own types if they are exported).
+The adapter accepts a pre-constructed `sqlite3.oo1.DB` instance. Because the adapter file must not contain a runtime `import` of `@sqlite.org/sqlite-wasm` (the WASM binary must not be bundled into the adapter), `SqliteWasmDB` is typed as a **local structural interface** listing only the methods the adapter calls (`exec`, `prepare`, `changes`, `selectValue`). No external import is needed at runtime. `@sqlite.org/sqlite-wasm` must still be added to `devDependencies` of `packages/react` so that TypeScript can resolve the types used to verify the structural match during build and typecheck.
 
 #### Method implementations
 
@@ -91,7 +91,7 @@ runAsync(sql: string, params?: unknown[]): Promise<{ changes: number; lastInsert
     const stmt = db.prepare(sql);
     try {
       if (params?.length) stmt.bind(params);
-      stmt.stepFinalize();
+      stmt.step();
     } finally {
       stmt.finalize();
     }
@@ -105,7 +105,7 @@ runAsync(sql: string, params?: unknown[]): Promise<{ changes: number; lastInsert
 }
 ```
 
-Note: `db.changes()` (no argument) maps to `sqlite3_changes()`. `last_insert_rowid()` via `selectValue` is simpler than the C API pointer approach.
+Note: `step()` in a `try/finally` with `finalize()` is used rather than `stepFinalize()`, because `stepFinalize()` already calls `finalize()` internally and a second `finalize()` call in a wrapping `finally` block would obscure real lifecycle bugs. `db.changes()` (no argument) maps to `sqlite3_changes()`. `last_insert_rowid()` via `selectValue` is simpler than the C API pointer approach.
 
 **`getAllAsync<T>(sql, params?)`**
 
@@ -152,7 +152,7 @@ async withTransactionAsync<T>(fn: () => Promise<T>): Promise<T> {
 }
 ```
 
-`db.transaction(fn)` cannot be used here because it requires a synchronous callback, but `WikiMemory`'s transaction callbacks (`fn`) are async (they make LLM calls inside transactions). Manual `BEGIN`/`COMMIT`/`ROLLBACK` is the correct approach.
+`db.transaction(fn)` cannot be used here because it requires a synchronous callback. `WikiMemory`'s transaction callbacks are async: they await multiple `runAsync` / `getAllAsync` calls inside the transaction body. (LLM calls happen *before* the `withTransactionAsync` wrapper, not inside it.) Manual `BEGIN`/`COMMIT`/`ROLLBACK` is the correct approach.
 
 **`closeAsync()`**
 
@@ -166,6 +166,15 @@ closeAsync(): Promise<void> {
 
 ### Export subpath: `@equationalapplications/react-llm-wiki/adapters`
 
+tsup derives the output filename from the entry filename. To get `dist/adapters.js` / `.mjs` / `.d.ts` — matching the package.json export paths — the tsup entry must be `src/adapters.ts`, not `src/adapters/sqliteWasm.ts`. Create a thin barrel:
+
+**`packages/react/src/adapters.ts`** (barrel):
+```typescript
+export { createSqliteWasmAdapter } from './adapters/sqliteWasm';
+```
+
+The implementation lives in `packages/react/src/adapters/sqliteWasm.ts` as before; the barrel file is the tsup entry.
+
 Add `./adapters` to `packages/react/package.json` exports:
 
 ```json
@@ -176,17 +185,13 @@ Add `./adapters` to `packages/react/package.json` exports:
 }
 ```
 
-Add `src/adapters/sqliteWasm.ts` as an entry point in `packages/react/tsup.config.ts`:
+Add `src/adapters.ts` as a tsup entry in `packages/react/tsup.config.ts`:
 
 ```typescript
-entry: ['src/index.ts', 'src/js.ts', 'src/adapters/sqliteWasm.ts'],
+entry: ['src/index.ts', 'src/js.ts', 'src/adapters.ts'],
 ```
 
-The `@sqlite.org/sqlite-wasm` import in `src/adapters/sqliteWasm.ts` must be listed as an external in tsup (to avoid bundling the WASM binary):
-
-```typescript
-external: ['react', '@equationalapplications/core-llm-wiki', '@sqlite.org/sqlite-wasm'],
-```
+Because the adapter uses a local structural interface with no runtime import of `@sqlite.org/sqlite-wasm`, the package does not need to be listed in tsup `external`. No WASM code is referenced at module level.
 
 ### Peer dependency
 
@@ -204,34 +209,45 @@ And in `peerDependenciesMeta`:
 
 This follows the same pattern used by many React libraries for optional peer deps. Users who only target native do not need to install it.
 
-### Integration test: `packages/core/__tests__/helpers/sqliteWasmAdapter.ts` + `packages/core/__tests__/sqliteWasmAdapter.test.ts`
+### Integration test: `packages/react/__tests__/sqliteWasmAdapter.test.ts`
 
-**Why in `packages/core`?** The `@sqlite.org/sqlite-wasm` npm package works in Node.js as well as browsers, so the test can run in the existing Node vitest environment. The test validates that the full `WikiMemory` stack (setup → ingest → read with FTS5 MATCH) works end-to-end with this adapter.
+**Why in `packages/react`, not `packages/core`?** The adapter is implemented in `packages/react`. Placing the test in `packages/core` would require core to depend on a react-package artifact, reversing the intended dependency direction. `@sqlite.org/sqlite-wasm` works in Node.js, so the test can run in a Node vitest environment with no browser required.
 
-`sqliteWasmAdapter.ts` (test helper, mirrors `helpers/sqliteAdapter.ts`):
+Add a Node vitest config or rely on the existing one in `packages/react` — check whether a Node environment is already configured before adding a second config file.
+
+`sqliteWasmAdapter.test.ts`:
 
 ```typescript
 import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
-import { createSqliteWasmAdapter } from '@equationalapplications/react-llm-wiki/adapters';
+import { createWiki } from '@equationalapplications/core-llm-wiki';
+import { createSqliteWasmAdapter } from '../src/adapters/sqliteWasm';
 
-export async function createTestSqliteWasmAdapter() {
+let rawDb: ReturnType<typeof sqlite3.oo1.DB>; // closed in afterEach
+
+it('setup + write + read round-trips through FTS5 with porter stemming', async () => {
   const sqlite3 = await sqlite3InitModule();
-  const db = new sqlite3.oo1.DB(':memory:', 'c');
-  return createSqliteWasmAdapter(db);
-}
+  rawDb = new sqlite3.oo1.DB(':memory:', 'c');
+  const adapter = createSqliteWasmAdapter(rawDb);
+  const wiki = createWiki(adapter, { llmProvider: stubProvider });
+  await wiki.setup();
+
+  // Insert a fact directly via runAsync (bypassing LLM)
+  await adapter.runAsync(
+    `INSERT INTO llm_wiki_entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ['fact_1', 'entity-1', 'Running habit', 'User runs every morning', '[]', 'certain', 'user_document', Date.now(), Date.now()]
+  );
+
+  // 'ran' → porter stem 'ran'; 'run' → porter stem 'run'; both should match 'runs' / 'running'
+  const bundle = await wiki.read('entity-1', 'running');
+  expect(bundle.facts).toHaveLength(1);
+  expect(bundle.facts[0].title).toBe('Running habit');
+});
+
+afterEach(() => { rawDb?.close(); });
 ```
 
-`sqliteWasmAdapter.test.ts` — smoke test of FTS5:
-
-1. Create adapter via `createTestSqliteWasmAdapter()`.
-2. Create a `WikiMemory` with that adapter.
-3. Call `setup()`.
-4. Write a fact entry with known body text.
-5. Call `read()` with a term that should match via FTS5 porter stemming.
-6. Assert the entry is returned.
-7. `closeAsync()` is a no-op, but `db.close()` must be called in `afterEach`.
-
-Add `@sqlite.org/sqlite-wasm` to `devDependencies` in `packages/core/package.json`. It is a test-only dependency for core; for users it is a peer dep of `react`.
+Add `@sqlite.org/sqlite-wasm` to `devDependencies` in **`packages/react/package.json`**. It is a devDependency for build/typecheck and test; for end users it is an optional peer dep.
 
 ### README updates
 
@@ -262,18 +278,18 @@ await wiki.setup();
 | File | Action |
 |------|--------|
 | `packages/react/src/adapters/sqliteWasm.ts` | Create |
-| `packages/react/package.json` | Add `./adapters` export, `@sqlite.org/sqlite-wasm` optional peer dep |
-| `packages/react/tsup.config.ts` | Add `src/adapters/sqliteWasm.ts` entry, add external |
-| `packages/core/package.json` | Add `@sqlite.org/sqlite-wasm` to `devDependencies` |
-| `packages/core/__tests__/helpers/sqliteWasmAdapter.ts` | Create |
-| `packages/core/__tests__/sqliteWasmAdapter.test.ts` | Create |
+| `packages/react/src/adapters.ts` | Create (barrel re-export, tsup entry) |
+| `packages/react/package.json` | Add `./adapters` export; `@sqlite.org/sqlite-wasm` optional peer dep + devDependency |
+| `packages/react/tsup.config.ts` | Add `src/adapters.ts` entry |
+| `packages/react/__tests__/sqliteWasmAdapter.test.ts` | Create |
 | `packages/react/README.md` | Update web setup section |
+| `README.md` (root) | Update web/vanilla installation and setup sections to recommend `@sqlite.org/sqlite-wasm` + `createSqliteWasmAdapter`; annotate `sql.js` examples with FTS5 caveat |
 
 ---
 
 ## Open Questions
 
-1. **Type imports from `@sqlite.org/sqlite-wasm`** — The package ships types. Determine whether `SqliteWasmDB` should be typed as `import('@sqlite.org/sqlite-wasm').Database` or a local minimal interface. Using the package's own exported type is preferred if available; fall back to a structural interface to avoid adding `@sqlite.org/sqlite-wasm` to `dependencies` (not just `peerDependencies`) of the react package.
+1. ~~**Type imports from `@sqlite.org/sqlite-wasm`**~~ — Resolved in design: use a local structural interface. `@sqlite.org/sqlite-wasm` is `devDependencies` + optional `peerDependencies` in `packages/react`. No runtime import in the adapter file.
 
 2. **`lastInsertRowId` precision** — SQLite rowids are 64-bit integers. `db.selectValue('SELECT last_insert_rowid()')` returns a JS `number`. For the row counts used in `WikiMemory` this is safe (well within `Number.MAX_SAFE_INTEGER`), but worth noting.
 
