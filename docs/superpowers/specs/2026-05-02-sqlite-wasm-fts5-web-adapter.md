@@ -400,10 +400,38 @@ const nextConfig = {
 For Expo web projects, use **Vite bundler** instead:
 
 ```bash
-npx expo start --web --bundler vite
+# SDK 55+ - Vite via Expo Router
+npx create-expo-app --template default@sdk-55 myapp
+cd myapp
+npm install @sqlite.org/sqlite-wasm
+npx expo start --web
+
+# If Vite is not auto-enabled, use Expo Router with Vite plugin
+# See: https://docs.expo.dev/routing/introduction/
 ```
 
 Vite handles WASM and Worker imports automatically. This is the documented and supported path for Expo web development with sqlite-wasm.
+
+#### Vite Setup Notes (SDK 55)
+
+SDK 55 uses Metro by default. To enable Vite:
+
+1. Ensure Expo Router is installed: `npx expo install expo-router`
+2. Create `vite.config.ts` (if needed):
+   ```typescript
+   import { defineConfig } from 'vite';
+   import react from '@vitejs/plugin-react';
+   
+   export default defineConfig({
+     plugins: [react()],
+     optimizeDeps: {
+       exclude: ['@sqlite.org/sqlite-wasm'],
+     },
+   });
+   ```
+3. Run `npx expo start --web` (will use Vite if configured)
+
+The `--bundler vite` flag is not available in all SDK 55 versions; use Expo Router's Vite integration instead.
 
 #### Spike Testing
 

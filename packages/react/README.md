@@ -47,6 +47,71 @@ await wiki.setup();
 </WikiProvider>
 ```
 
+**Expo Web** (SDK 55+ with Vite bundler):
+
+```typescript
+import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
+import { createSqliteWasmAdapter } from '@equationalapplications/react-llm-wiki/adapters';
+import { createWiki, WikiProvider } from '@equationalapplications/react-llm-wiki';
+import { restoreWikiSnapshot, saveWikiSnapshot } from '@equationalapplications/react-llm-wiki/snapshot';
+
+// In your root component or app initialization:
+const [wiki, setWiki] = useState(null);
+
+useEffect(() => {
+  (async () => {
+    // 1. Initialize sqlite-wasm
+    const sqlite3 = await sqlite3InitModule();
+    const rawDb = new sqlite3.oo1.DB(':memory:', 'c');
+    
+    // 2. Create adapter
+    const adapter = createSqliteWasmAdapter(rawDb);
+    
+    // 3. Create wiki and setup tables
+    const wikiInstance = createWiki(adapter, options);
+    await wikiInstance.setup();
+    
+    // 4. Restore saved snapshot (from IndexedDB, localStorage, etc.)
+    const snapshotStore = createIndexedDBSnapshotStore();
+    await restoreWikiSnapshot(wikiInstance, snapshotStore);
+    
+    setWiki(wikiInstance);
+  })();
+}, []);
+
+if (!wiki) return <Loading />;
+
+return (
+  <WikiProvider wiki={wiki}>
+    <App />
+  </WikiProvider>
+);
+```
+
+**Web with Auto-Save:**
+
+Snapshots are persisted to IndexedDB automatically after mutations:
+
+```typescript
+import { saveWikiSnapshot } from '@equationalapplications/react-llm-wiki/snapshot';
+
+// After any mutation (ingest, write, forget, etc.)
+const { execute } = useWikiIngest();
+const result = await execute(entityId, payload);
+
+// Save snapshot
+await saveWikiSnapshot(wiki, snapshotStore);
+```
+
+**Bundler Support:**
+
+- **Vite** ✅ Full support (recommended for Expo web)
+- **webpack 5** ✅ With config: `experiments: { asyncWebAssembly: true }`
+- **Next.js** ✅ With config: enable asyncWebAssembly in webpack hook
+- **Expo Metro** ❌ Not supported (Metro cannot bundle module-type Workers)
+
+See [bundler documentation](../../docs/superpowers/specs/2026-05-02-sqlite-wasm-fts5-web-adapter.md#bundler-and-deployment-requirements) for details.
+
 ## Hooks
 
 ### `useMemoryRead(entityId, query)`
