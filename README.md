@@ -22,7 +22,7 @@ expo-llm-wiki is a cross-platform SQLite library for long-term LLM memory. It br
 - **Semantic Retrieval:** Supply an optional `embed()` function on `LLMProvider` to rank facts by vector cosine similarity. Falls back to MiniSearch keyword search when `embed` is absent or offline.
 - **Offline First:** The MiniSearch fallback runs entirely in-process with no network required. The cosine similarity path requires `embed()` to vectorise the query (typically a cloud API call) but falls back to MiniSearch automatically when offline or when `embed` throws.
 - **Full Unicode Support:** UTF-8 and UTF-16 (including surrogate pairs for emoji) are fully supported. Chunks are split safely at sentence boundaries; surrogate pairs are never fragmented.
-- **Cross-Platform:** Choose the right package for your platform: Expo, React Native, React web, vanilla JS, or Node.js. The core logic is framework-agnostic and dependency-free.
+- **Cross-Platform:** Choose the right package for your platform: Expo, React Native, React web, vanilla JS, or Node.js. The core logic is framework-agnostic with platform-specific adapters.
 
 ## How It Works
 
