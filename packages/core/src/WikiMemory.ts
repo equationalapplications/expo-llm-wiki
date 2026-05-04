@@ -1551,7 +1551,7 @@ export class WikiMemory {
       for (const fact of insertedFacts) {
         await this.embedFact(fact);
       }
-      await this.rebuildMiniSearchIndex();
+      await this.rebuildMiniSearchIndex(entityId);
 
       return { truncated, chunks: chunks.length };
     } finally {
