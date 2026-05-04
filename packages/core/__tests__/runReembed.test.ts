@@ -42,10 +42,10 @@ describe('runReembed()', () => {
     expect(result.embedded).toBe(2);
     expect(result.skipped).toBe(0);
 
-    const row = await db.getFirstAsync<{ embedding: string | null }>(
-      `SELECT embedding FROM llm_wiki_entries WHERE id = 'f1'`
+    const row = await db.getFirstAsync<{ embedding_blob: Uint8Array | null }>(
+      `SELECT embedding_blob FROM llm_wiki_entries WHERE id = 'f1'`
     );
-    expect(row?.embedding).not.toBeNull();
+    expect(row?.embedding_blob).not.toBeNull();
   });
 
   it('scopes to entityId when provided', async () => {

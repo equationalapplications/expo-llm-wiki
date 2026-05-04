@@ -5,6 +5,7 @@ import { WikiOptions, MemoryBundle, MemoryDump, WikiEvent, WikiFact, WikiTask, W
 import { LIBRARIAN_SYSTEM_PROMPT, HEAL_SYSTEM_PROMPT, INGEST_SYSTEM_PROMPT } from './prompts';
 import MiniSearch from 'minisearch';
 import { cosineSimilarity } from './utils/cosine';
+import { parseEmbedding } from './utils/embedding';
 
 export { WikiBusyError } from './types';
 
@@ -414,9 +415,10 @@ export class WikiMemory {
         return false;
       }
       await this.storeEmbeddingDimension(vector.length);
+      const blob = new Uint8Array(new Float32Array(vector).buffer);
       await this.db.runAsync(
-        `UPDATE ${this.prefix}entries SET embedding = ? WHERE id = ?`,
-        [JSON.stringify(vector), fact.id]
+        `UPDATE ${this.prefix}entries SET embedding_blob = ?, embedding = NULL WHERE id = ?`,
+        [blob, fact.id]
       );
       return true;
     } catch (err) {
@@ -725,28 +727,19 @@ export class WikiMemory {
           const scoreRows = await this.db.getAllAsync<{
             id: string;
             embedding: string | null;
+            embedding_blob: Uint8Array | null;
             updated_at: number | null;
             access_count: number | null;
           }>(
-            `SELECT id, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
+            `SELECT id, embedding, embedding_blob, updated_at, access_count FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
             [entityId]
           );
           const scored = scoreRows.map(row => {
             let score = 0;
-            if (row.embedding) {
-              try {
-                const parsed: unknown = JSON.parse(row.embedding);
-                if (
-                  Array.isArray(parsed) &&
-                  parsed.length === queryVec.length &&
-                  (parsed as number[]).every(v => typeof v === 'number' && isFinite(v))
-                ) {
-                  score = cosineSimilarity(queryVec, parsed as number[]);
-                }
-                // non-array, wrong length, or non-finite values → score stays 0
-              } catch {
-                // corrupt JSON — treat as score 0
-              }
+            // Prefer BLOB over TEXT when available
+            const vec = parseEmbedding(row.embedding_blob, row.embedding);
+            if (vec !== null && vec.length === queryVec.length) {
+              score = cosineSimilarity(queryVec, vec);
             }
             return { row, score };
           });
@@ -842,7 +835,7 @@ export class WikiMemory {
     ]);
 
     const parsedFacts = facts.map(f => {
-      const { embedding: _embedding, ...rest } = f as WikiFact & { embedding?: unknown };
+      const { embedding: _embedding, embedding_blob: _blob, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
       return {
         ...rest,
         tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
@@ -943,7 +936,7 @@ export class WikiMemory {
     `, [entityId]);
 
     const currentFacts = currentFactsRows.map(f => {
-      const { embedding: _embedding, ...rest } = f as WikiFact & { embedding?: unknown };
+      const { embedding: _embedding, embedding_blob: _blob, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
       return {
         ...rest,
         tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
@@ -1051,7 +1044,7 @@ export class WikiMemory {
       .map(({ id, title, source_ref }) => ({ id, title, source_ref }));
 
     const userPrompt = `Heal Candidates:\n${JSON.stringify(healCandidates.map(f => {
-      const { embedding: _embedding, ...rest } = f as WikiFact & { embedding?: unknown };
+      const { embedding: _embedding, embedding_blob: _blob, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
       return { ...rest, tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags };
     }), null, 2)}
 \nDocument Anchors (DO NOT MODIFY OR DELETE):\n${JSON.stringify(documentAnchors, null, 2)}
@@ -1241,7 +1234,7 @@ export class WikiMemory {
       this.db.getAllAsync<WikiEvent>(eventsQuery, eventsParams),
     ]);
     const facts = factsRaw.map(f => {
-      const { embedding: _embedding, ...rest } = f as WikiFact & { embedding?: unknown };
+      const { embedding: _embedding, embedding_blob: _blob, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
       return {
         ...rest,
         tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
