@@ -972,8 +972,18 @@ export class WikiMemory {
     if (this.activeMaintenanceJobs.has(reembedKey)) {
       throw new WikiBusyError('reembed', entityId ?? '*');
     }
-    if (entityId && this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
-      throw new WikiBusyError('prune', entityId);
+    if (entityId) {
+      if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
+        throw new WikiBusyError('prune', entityId);
+      }
+    } else {
+      const pruneKeyPrefix = this._pruneKey('');
+      const hasActivePrune = Array.from(this.activeMaintenanceJobs).some((jobKey) =>
+        jobKey === pruneKeyPrefix || jobKey.startsWith(pruneKeyPrefix)
+      );
+      if (hasActivePrune) {
+        throw new WikiBusyError('prune', '*');
+      }
     }
     this.activeMaintenanceJobs.add(reembedKey);
 
