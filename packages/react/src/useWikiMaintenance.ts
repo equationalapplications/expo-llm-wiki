@@ -82,12 +82,15 @@ export function useWikiMaintenance() {
     []
   );
 
-  const runReembed = useCallback(async (entityId?: string): Promise<{ embedded: number; skipped: number }> => {
+  const runReembed = useCallback(async (entityId: string): Promise<{ embedded: number; skipped: number }> => {
     setError(null);
     pendingCount.current += 1;
     setIsPending(true);
     setLastResult(null);
     try {
+      if (!entityId) {
+        throw new Error('entityId is required for runReembed');
+      }
       const result = await wikiRef.current.runReembed(entityId);
       setLastResult({ operation: 'reembed', result });
       return result;
