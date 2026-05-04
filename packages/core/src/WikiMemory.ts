@@ -1204,7 +1204,7 @@ export class WikiMemory {
             id: fact.id,
             title: fact.title,
             body: fact.body,
-            tags: Array.isArray(fact.tags) ? fact.tags : (typeof fact.tags === 'string' ? JSON.parse(fact.tags) : []),
+            tags: Array.isArray(fact.tags) || typeof fact.tags === 'string' ? fact.tags : [],
           });
         }
       }
