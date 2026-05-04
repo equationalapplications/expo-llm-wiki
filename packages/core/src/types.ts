@@ -103,8 +103,14 @@ export interface WikiOptions {
   config?: WikiConfig;
   llmProvider: LLMProvider;
   /**
-   * Called when `embed` throws during `read()` and MiniSearch is used instead.
-   * `read()` still returns MiniSearch results — this is a notification, not an error path.
+   * Called when embedding-based retrieval is unavailable during `read()` and
+   * MiniSearch keyword search is used instead. This can happen when:
+   * - `embed()` throws (e.g. network error, model unavailable)
+   * - `embed()` returns a vector with non-finite values (NaN / Infinity)
+   * - The query vector's dimension doesn't match stored embeddings (model switch;
+   *   resolve by calling `runReembed()`)
+   *
+   * `read()` still returns keyword-search results — this is a notification, not an error path.
    */
   onRetrievalFallback?: (error: Error) => void;
 }

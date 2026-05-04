@@ -165,7 +165,8 @@ const wiki = createWiki(db, {
       return response.data[0].embedding;
     },
   },
-  // Optional: called when embed() throws during read() — use to show "offline" UI.
+  // Optional: called when embedding-based retrieval is unavailable (e.g. embed() throws,
+  // returns non-finite values, or dimension mismatch after a model switch) — use to show "offline" UI.
   onRetrievalFallback: (error) => console.warn('Embedding unavailable, using keyword search:', error),
   config: {
     tablePrefix: 'llm_wiki_',       // optional, default: 'llm_wiki_'

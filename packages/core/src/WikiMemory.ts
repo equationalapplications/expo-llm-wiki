@@ -689,6 +689,16 @@ export class WikiMemory {
         try {
           const queryVec = await embedFn(trimmedQuery);
 
+          // Validate that the provider returned a well-formed vector. Non-finite values
+          // (NaN, Infinity) propagate through cosine arithmetic and make the sort
+          // comparator (b.score - a.score) unstable, producing unpredictable rankings.
+          if (!queryVec.every(v => typeof v === 'number' && isFinite(v))) {
+            throw new Error(
+              'embed() returned a vector containing non-finite values (NaN/Infinity). ' +
+              'Falling back to keyword search.'
+            );
+          }
+
           // Detect embedding dimension mismatch: if stored dimension differs from the
           // query vector, existing fact embeddings were built with a different model and
           // cosine scoring would silently produce misleading rankings. Fall back to
