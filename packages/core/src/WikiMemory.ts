@@ -664,12 +664,12 @@ export class WikiMemory {
           const topIds = scored.slice(0, maxResults).map(s => s.row.id);
           if (topIds.length > 0) {
             const placeholders = topIds.map(() => '?').join(',');
-            const fullRows = await this.db.getAllAsync<WikiFact & { embedding?: unknown }>(
+            const fullRows = await this.db.getAllAsync<WikiFact & { embedding: string | null }>(
               `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
               topIds
             );
             const byId = new Map(fullRows.map(r => [r.id, r]));
-            facts = topIds.map(id => byId.get(id)).filter((f): f is WikiFact & { embedding?: unknown } => f !== undefined);
+            facts = topIds.map(id => byId.get(id)).filter((f): f is WikiFact & { embedding: string | null } => f !== undefined);
           }
           usedEmbed = true;
         } catch (err) {
