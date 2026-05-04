@@ -621,11 +621,17 @@ export class WikiMemory {
       if (embedFn) {
         try {
           const queryVec = await embedFn(trimmedQuery);
-          const rows = await this.db.getAllAsync<WikiFact & { embedding: string | null }>(
-            `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
+          // Phase 1: fetch only scoring columns to avoid loading large body/tags for all rows
+          const scoreRows = await this.db.getAllAsync<{
+            id: string;
+            embedding: string | null;
+            updated_at: number | null;
+            access_count: number | null;
+          }>(
+            `SELECT id, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
             [entityId]
           );
-          const scored = rows.map(row => {
+          const scored = scoreRows.map(row => {
             let score = 0;
             if (row.embedding) {
               try {
@@ -654,7 +660,17 @@ export class WikiMemory {
 
             return a.row.id.localeCompare(b.row.id);
           });
-          facts = scored.slice(0, maxResults).map(s => s.row);
+          // Phase 2: fetch full rows only for the top results
+          const topIds = scored.slice(0, maxResults).map(s => s.row.id);
+          if (topIds.length > 0) {
+            const placeholders = topIds.map(() => '?').join(',');
+            const fullRows = await this.db.getAllAsync<WikiFact & { embedding?: unknown }>(
+              `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+              topIds
+            );
+            const byId = new Map(fullRows.map(r => [r.id, r]));
+            facts = topIds.map(id => byId.get(id)).filter((f): f is WikiFact & { embedding?: unknown } => f !== undefined);
+          }
           usedEmbed = true;
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
@@ -818,10 +834,13 @@ export class WikiMemory {
       LIMIT 100
     `, [entityId]);
 
-    const currentFacts = currentFactsRows.map(f => ({
-      ...f,
-      tags: typeof f.tags === 'string' ? JSON.parse(f.tags) : f.tags
-    }));
+    const currentFacts = currentFactsRows.map(f => {
+      const { embedding: _embedding, ...rest } = f as WikiFact & { embedding?: unknown };
+      return {
+        ...rest,
+        tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
+      };
+    });
 
     const userPrompt = `Events:\n${JSON.stringify(events.reverse(), null, 2)}\n\nCurrent Facts:\n${JSON.stringify(currentFacts, null, 2)}`;
     
@@ -923,7 +942,10 @@ export class WikiMemory {
       .filter(f => f.source_type === 'user_document')
       .map(({ id, title, source_ref }) => ({ id, title, source_ref }));
 
-    const userPrompt = `Heal Candidates:\n${JSON.stringify(healCandidates.map(f => ({...f, tags: typeof f.tags === 'string' ? JSON.parse(f.tags) : f.tags})), null, 2)}
+    const userPrompt = `Heal Candidates:\n${JSON.stringify(healCandidates.map(f => {
+      const { embedding: _embedding, ...rest } = f as WikiFact & { embedding?: unknown };
+      return { ...rest, tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags };
+    }), null, 2)}
 \nDocument Anchors (DO NOT MODIFY OR DELETE):\n${JSON.stringify(documentAnchors, null, 2)}
 \nAll Tasks:\n${JSON.stringify(allTasks, null, 2)}
 \nRecent Events:\n${JSON.stringify(recentEvents, null, 2)}
@@ -1010,6 +1032,10 @@ export class WikiMemory {
       throw new WikiBusyError('reembed', entityId ?? '*');
     }
     if (entityId) {
+      // Cross-check: fail if global reembed is in-flight (it covers this entity too)
+      if (this.activeMaintenanceJobs.has(this._globalReembedKey())) {
+        throw new WikiBusyError('reembed', entityId);
+      }
       if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
         throw new WikiBusyError('prune', entityId);
       }
@@ -1023,6 +1049,10 @@ export class WikiMemory {
         throw new WikiBusyError('ingest', entityId);
       }
     } else {
+      // Cross-check: fail if any per-entity reembed is in-flight (global covers all entities)
+      if (this._isAnyMaintenanceActiveWithSuffix(':reembed')) {
+        throw new WikiBusyError('reembed', '*');
+      }
       if (this._isAnyMaintenanceActiveWithSuffix(':prune')) {
         throw new WikiBusyError('prune', '*');
       }
@@ -1091,10 +1121,13 @@ export class WikiMemory {
       ),
       this.db.getAllAsync<WikiEvent>(eventsQuery, eventsParams),
     ]);
-    const facts = factsRaw.map(f => ({
-      ...f,
-      tags: typeof f.tags === 'string' ? JSON.parse(f.tags) : f.tags,
-    }));
+    const facts = factsRaw.map(f => {
+      const { embedding: _embedding, ...rest } = f as WikiFact & { embedding?: unknown };
+      return {
+        ...rest,
+        tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
+      };
+    });
     // When limited, results arrive newest-first; reverse to chronological order.
     const events = maxEvents != null ? eventsRaw.slice().reverse() : eventsRaw;
     return { facts, tasks, events };
