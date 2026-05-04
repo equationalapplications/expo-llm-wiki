@@ -1,7 +1,7 @@
 import type { SQLiteAdapter } from './types';
 import { setupDatabase } from './db/schema';
 import { MIGRATIONS, CURRENT_SCHEMA_VERSION } from './db/migrations';
-import { WikiOptions, MemoryBundle, MemoryDump, WikiEvent, WikiFact, WikiTask, WikiCheckpoint, ExtractedFact, ExtractedTask, WikiBusyError, EntityStatus } from './types';
+import { WikiOptions, MemoryBundle, MemoryDump, WikiEvent, WikiFact, WikiTask, WikiCheckpoint, ExtractedFact, ExtractedTask, WikiBusyError, EntityStatus, ReadOptions } from './types';
 import { LIBRARIAN_SYSTEM_PROMPT, HEAL_SYSTEM_PROMPT, INGEST_SYSTEM_PROMPT } from './prompts';
 import MiniSearch from 'minisearch';
 import { cosineSimilarity } from './utils/cosine';
@@ -682,10 +682,18 @@ export class WikiMemory {
     }
   }
 
-  async read(entityId: string, query: string): Promise<MemoryBundle> {
-    const maxResults = this.options.config?.maxResults
-      ?? this.options.config?.maxFtsResults
-      ?? 10;
+  async read(entityId: string, query: string, options?: ReadOptions): Promise<MemoryBundle> {
+    const config = this.options.config;
+    const maxResults = options?.maxResults ?? config?.maxResults ?? config?.maxFtsResults ?? 10;
+    const effectivePreFilterLimit =
+      options?.preFilterLimit === null
+        ? undefined
+        : (options?.preFilterLimit ?? config?.preFilterLimit);
+    const hybridWeight = options?.hybridWeight ?? config?.hybridWeight;
+    const weight = hybridWeight !== undefined
+      ? Math.max(0, Math.min(1, hybridWeight))
+      : undefined;
+    const skipEmbed = weight === 0;
     const embedFn = this.options.llmProvider.embed;
     const trimmedQuery = query.trim();
 
