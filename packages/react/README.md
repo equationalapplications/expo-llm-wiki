@@ -156,7 +156,7 @@ const { data } = useMemoryRead('user-123', 'preferences', {
 
 ### `useMemoryRead(entityId, query, options?)`
 
-Fetch memory reactively. Auto-refetches when `entityId` or `query` change.
+Fetch memory reactively. Auto-refetches when `entityId`, `query`, or `wiki` change. `options` changes (e.g. `maxResults`, `preFilterLimit`, `hybridWeight`) are picked up on the next fetch but do not trigger an automatic refetch — call `refetch()` manually when you need to re-run with new option values.
 
 ```typescript
 const { data, isPending, error, refetch } = useMemoryRead('user-123', 'preferences');

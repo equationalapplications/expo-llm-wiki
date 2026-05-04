@@ -804,7 +804,9 @@ export class WikiMemory {
                   score = cosSim;
                 }
               } else if (weight !== undefined && weight < 1) {
-                // No usable embedding — still apply the keyword portion of the hybrid score
+                // No usable embedding — still apply the keyword portion of the hybrid score.
+                // miniSearchScores is always defined here: lines 764-767 and 776-783 both populate
+                // it whenever weight !== undefined && weight < 1, matching this guard exactly.
                 const kwScore = miniSearchScores?.get(row.id) ?? 0;
                 score = (1 - weight) * kwScore;
               }

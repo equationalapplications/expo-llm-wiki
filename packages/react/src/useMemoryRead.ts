@@ -13,6 +13,10 @@ export function useMemoryRead(entityId: string, query: string, options?: ReadOpt
 
   const optionsRef = useRef(options);
   optionsRef.current = options;
+  // options is captured via ref so the latest value is always used on the next fetch.
+  // Changes to options alone do not trigger an automatic refetch — call refetch() manually
+  // if you need to re-run the query with new option values. This avoids refetch loops
+  // when callers pass inline option objects that change reference on every render.
 
   const fetchQueue = useRef<{
     inFlight: boolean;
