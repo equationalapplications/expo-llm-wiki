@@ -49,7 +49,7 @@ const memory = await wikiMemory.read('user-123', 'What should I do this weekend?
 // E.g., fact "Saturday hiking trip" ranks high even though no lexical overlap
 ```
 
-**When `embed` is unavailable or throws**, `read()` silently falls back to MiniSearch keyword search and calls `onRetrievalFallback` if provided:
+When `embed` is unavailable, `read()` silently falls back to MiniSearch keyword search. If an embedding attempt throws, `read()` falls back and calls `onRetrievalFallback` if provided:
 
 ```typescript
 const wikiMemory = new WikiMemory(db, {
