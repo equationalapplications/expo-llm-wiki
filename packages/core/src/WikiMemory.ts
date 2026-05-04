@@ -666,7 +666,7 @@ export class WikiMemory {
         await this.db.execAsync(`VACUUM`);
       }
 
-      await this.rebuildMiniSearchIndex();
+      await this.rebuildMiniSearchIndex(entityId);
       return { entries: deletedEntries, tasks: deletedTasks, events: deletedEvents };
     } finally {
       this.activeMaintenanceJobs.delete(pruneKey);
