@@ -186,7 +186,7 @@ const { data } = useMemoryRead('user-123', 'preferences', {
 
 ### `useWikiWrite()`
 
-Record observations and events. The librarian job extracts facts from accumulated events. Invalidates cached reads for that entity.
+Record observations and events. The librarian job extracts facts from accumulated events. This does not currently invalidate `useMemoryRead()` results automatically, so existing readers keep their previous `data` until their inputs change or `refetch()` is called.
 
 ```typescript
 const { execute, isPending, error } = useWikiWrite();
