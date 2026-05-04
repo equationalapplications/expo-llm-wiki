@@ -3,8 +3,7 @@ import { useWiki } from './WikiContext';
 
 export type MaintenanceResult =
   | { operation: 'librarian' | 'heal'; result: undefined }
-  | { operation: 'prune'; result: { entries: number; tasks: number; events: number } }
-  | { operation: 'reembed'; result: { embedded: number; skipped: number } };
+  | { operation: 'prune'; result: { entries: number; tasks: number; events: number } };
 
 export function useWikiMaintenance() {
   const wiki = useWiki();
@@ -83,17 +82,17 @@ export function useWikiMaintenance() {
   );
 
   const runReembed = useCallback(async (entityId: string): Promise<{ embedded: number; skipped: number }> => {
+    if (!entityId) throw new Error('entityId is required for runReembed');
     setError(null);
     pendingCount.current += 1;
     setIsPending(true);
-    setLastResult(null);
     try {
-      if (!entityId) {
-        throw new Error('entityId is required for runReembed');
-      }
-      const result = await wikiRef.current.runReembed(entityId);
-      setLastResult({ operation: 'reembed', result });
-      return result;
+      // runReembed returns its result directly; it does not update the shared
+      // MaintenanceResult/lastResult field (which only tracks librarian, heal, prune).
+      // Using the return value directly avoids widening the MaintenanceResult union
+      // in a way that would break existing consumers that exhaustively switch on
+      // lastResult.operation.
+      return await wikiRef.current.runReembed(entityId);
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e));
       setError(err);

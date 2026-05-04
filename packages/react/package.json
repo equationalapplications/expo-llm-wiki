@@ -31,7 +31,7 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
-    "test": "echo 'React hook tests disabled pending vitest 5.x stable (see packages/react/vitest.config.ts)'",
+    "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {

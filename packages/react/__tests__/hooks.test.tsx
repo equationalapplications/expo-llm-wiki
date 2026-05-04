@@ -75,7 +75,7 @@ describe('useMemoryRead', () => {
 
     await waitFor(() => expect(result.current.isPending).toBe(false));
 
-    expect(wiki.read).toHaveBeenCalledWith('user-1', 'preferences');
+    expect(wiki.read).toHaveBeenCalledWith('user-1', 'preferences', undefined);
     expect(result.current.data).toEqual({ facts: [], tasks: [], events: [] });
     expect(result.current.error).toBeNull();
   });
@@ -93,7 +93,7 @@ describe('useMemoryRead', () => {
     await waitFor(() => expect(result.current.isPending).toBe(false));
 
     expect(wiki.read).toHaveBeenCalledTimes(2);
-    expect(wiki.read).toHaveBeenLastCalledWith('user-2', 'q');
+    expect(wiki.read).toHaveBeenLastCalledWith('user-2', 'q', undefined);
   });
 
   it('exposes error and sets error state when wiki.read rejects', async () => {
@@ -267,7 +267,7 @@ describe('useWikiMaintenance', () => {
     expect(result.current.lastResult).toEqual({ operation: 'prune', result: { entries: 3, tasks: 1, events: 2 } });
   });
 
-  it('runReembed returns embedded/skipped counts and sets lastResult', async () => {
+  it('runReembed returns embedded/skipped counts and does not update lastResult', async () => {
     wiki.runReembed.mockResolvedValue({ embedded: 5, skipped: 2 });
     const { result } = renderHook(() => useWikiMaintenance(), { wrapper: wrapper(wiki) });
 
@@ -276,18 +276,11 @@ describe('useWikiMaintenance', () => {
 
     expect(wiki.runReembed).toHaveBeenCalledWith('user-1');
     expect(reembedResult).toEqual({ embedded: 5, skipped: 2 });
-    expect(result.current.lastResult).toEqual({ operation: 'reembed', result: { embedded: 5, skipped: 2 } });
+    // runReembed is intentionally excluded from the shared MaintenanceResult union
+    // to avoid a source-breaking change for consumers that exhaustively switch on
+    // lastResult.operation. Its result is obtained directly from the return value.
+    expect(result.current.lastResult).toBeNull();
     expect(result.current.isPending).toBe(false);
-  });
-
-  it('runReembed without entityId calls wiki.runReembed(undefined)', async () => {
-    wiki.runReembed.mockResolvedValue({ embedded: 10, skipped: 0 });
-    const { result } = renderHook(() => useWikiMaintenance(), { wrapper: wrapper(wiki) });
-
-    await act(async () => { await result.current.runReembed(); });
-
-    expect(wiki.runReembed).toHaveBeenCalledWith(undefined);
-    expect(result.current.lastResult).toEqual({ operation: 'reembed', result: { embedded: 10, skipped: 0 } });
   });
 
   it('sets error state and re-throws when runReembed rejects', async () => {
