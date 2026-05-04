@@ -89,7 +89,7 @@ describe('schema migrations', () => {
 
     // Should have written schema_version
     const versionWrite = db.runCalls.find(
-      c => c.sql.includes('schema_version') && c.args[0] === '2'
+      c => c.sql.includes('schema_version') && c.args[0] === '3'
     );
     expect(versionWrite).toBeDefined();
 
@@ -109,7 +109,7 @@ describe('schema migrations', () => {
 
     // Version should have been written
     const versionWrite = db.runCalls.find(
-      c => c.sql.includes('schema_version') && c.args[0] === '2'
+      c => c.sql.includes('schema_version') && c.args[0] === '3'
     );
     expect(versionWrite).toBeDefined();
   });
@@ -130,7 +130,7 @@ describe('schema migrations', () => {
   });
 
   it('already at current version → no migration runs', async () => {
-    const db = makeMockDb({ hasEntries: true, hasPorter: true, metaVersion: '2' });
+    const db = makeMockDb({ hasEntries: true, hasPorter: true, metaVersion: '3' });
     const wiki = createWiki(db);
     await wiki.setup();
 

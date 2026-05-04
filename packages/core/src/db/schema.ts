@@ -17,7 +17,8 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
       last_accessed_at INTEGER,
       access_count INTEGER NOT NULL DEFAULT 0,
       deleted_at INTEGER,
-      embedding TEXT
+      embedding TEXT,
+      embedding_blob BLOB
     );
 
     CREATE INDEX IF NOT EXISTS ${prefix}entries_entity_idx ON ${prefix}entries(entity_id);

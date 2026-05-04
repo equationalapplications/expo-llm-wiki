@@ -77,7 +77,7 @@ describe('migration 2: remove FTS5, add embedding column', () => {
     const meta = await db.getFirstAsync<{ value: string }>(
       `SELECT value FROM llm_wiki_meta WHERE key = 'schema_version'`
     );
-    expect(meta?.value).toBe('2');
+    expect(meta?.value).toBe('3');
   });
 
   it('v1 DB: FTS5 table + triggers dropped, embedding column added, version becomes 2', async () => {
@@ -101,7 +101,7 @@ describe('migration 2: remove FTS5, add embedding column', () => {
     const meta = await db.getFirstAsync<{ value: string }>(
       `SELECT value FROM llm_wiki_meta WHERE key = 'schema_version'`
     );
-    expect(meta?.value).toBe('2');
+    expect(meta?.value).toBe('3');
   });
 
   it('running setup() twice is idempotent: embedding column appears once', async () => {
