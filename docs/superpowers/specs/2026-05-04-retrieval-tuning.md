@@ -319,10 +319,12 @@ None. All changes are additive:
 
 ---
 
-## Open Questions
+## Spiked Questions
 
-1. **SQLite BLOB type compatibility** — expo-sqlite returns BLOB as `Uint8Array`; vitest test environment uses a different SQLite adapter. Confirm BLOB round-trip works in both before implementation. If the test adapter returns `Buffer`, `parseEmbedding()` needs to handle both (`Buffer` extends `Uint8Array` so `new Float32Array(blob.buffer, blob.byteOffset, ...)` should work, but verify).
+All three open questions resolved by spike tests (2026-05-04).
 
-2. **`preFilterLimit` interaction with `maxResults`** — if `preFilterLimit < maxResults`, fewer than `maxResults` facts may be returned. Document this in the `preFilterLimit` JSDoc. No error thrown.
+1. **SQLite BLOB type compatibility — CLOSED.** `better-sqlite3` (test adapter) returns BLOB as `Buffer`, which is a subclass of `Uint8Array`. `byteOffset` is always 0. `new Float32Array(blob.buffer)` round-trips correctly without needing byteOffset. `parseEmbedding()` design confirmed correct. expo-sqlite returns `Uint8Array` directly — same API, same code path. No conditional handling needed.
 
-3. **MiniSearch score range** — MiniSearch BM25 scores are unbounded above 1.0 in theory. Normalization uses `Math.max(1, results[0].score)` as denominator to avoid divide-by-zero and keep scores in `[0, 1]`.
+2. **`preFilterLimit` interaction with `maxResults` — CLOSED.** If `preFilterLimit < maxResults`, fewer than `maxResults` facts may be returned. This is by design — the pre-filter bounds the candidate pool, not the result count. Document in JSDoc. No error thrown.
+
+3. **MiniSearch BM25 score normalization — CLOSED.** BM25 scores confirmed to exceed 1.0 in practice (observed 3.36 for a repeated-term match). `Math.max(1, results[0]?.score ?? 1)` as denominator confirmed safe: normalizes to `[0, 1]`, handles empty results without divide-by-zero.
