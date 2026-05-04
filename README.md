@@ -7,7 +7,9 @@
 
 ## Persistent, episodic memory for AI Agents.
 
-expo-llm-wiki is a cross-platform SQLite library for long-term LLM memory. It bridges the gap between raw conversation logs and a structured knowledge base, supporting background fact extraction, FTS5 search, and memory pruning.
+expo-llm-wiki is a cross-platform SQLite library for long-term LLM memory. It bridges the gap between raw conversation logs and a structured knowledge base, supporting background fact extraction, semantic embedding search, and memory pruning.
+
+> Inspired by [Andrej Karpathy's LLM Wiki memory spec](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
 
 - **Universal Support:** Expo • React • Vite • Vue • Svelte • Node.js
 - **Core Engine:** Pure TypeScript logic with platform-specific adapters.
@@ -17,10 +19,10 @@ expo-llm-wiki is a cross-platform SQLite library for long-term LLM memory. It br
 - **Bring Your Own Inference (BYOI):** Provide one `generateText` function. The package owns prompt construction, JSON parsing, and database writes.
 - **Namespace Safe:** All tables are prefixed (default: `llm_wiki_`) — no collisions with your existing database.
 - **Multi-Entity:** Multiple independent "brains" in one database via `entityId`.
-- **Offline First:** Reads are fully local via SQLite FTS5, typically under 50ms.
-- **Morphological Matching:** Porter stemming enables recall across word forms — queries for `running` match facts about `run`, `runs`, etc., without manual synonym configuration.
+- **Semantic Retrieval:** Supply an optional `embed()` function on `LLMProvider` to rank facts by vector cosine similarity. Falls back to MiniSearch keyword search when `embed` is absent or offline.
+- **Offline First:** The MiniSearch fallback runs entirely in-process with no network required. The cosine similarity path requires `embed()` to vectorise the query (typically a cloud API call) but falls back to MiniSearch automatically when offline or when `embed` throws.
 - **Full Unicode Support:** UTF-8 and UTF-16 (including surrogate pairs for emoji) are fully supported. Chunks are split safely at sentence boundaries; surrogate pairs are never fragmented.
-- **Cross-Platform:** Choose the right package for your platform: Expo, React web, vanilla JS, or Node.js. The core logic is framework-agnostic and dependency-free.
+- **Cross-Platform:** Choose the right package for your platform: Expo, React Native, React web, vanilla JS, or Node.js. The core logic is framework-agnostic with platform-specific adapters.
 
 ## How It Works
 
@@ -33,41 +35,53 @@ flowchart TB
         librarian["runLibrarian()"]
         heal["runHeal()"]
         read["read(entityId, query)"]
+        reembed["runReembed()"]
     end
 
     subgraph LLMLayer["LLM Provider"]
-        LLM["LLMProvider.generateText()"]
+        LLM["generateText()"]
+        EmbedFn["embed() — optional"]
     end
 
-    subgraph SQLiteLayer["SQLite Database"]
+    subgraph DB["SQLite Database"]
         direction TB
         events[(events)]
-        entries[("entries<br/>(facts)")]
+        entries[("entries\nfacts · vectors")]
         tasks[(tasks)]
     end
 
     subgraph ReadPath["Read Path"]
-        FTS5(["FTS5 search"])
-        Bundle(["MemoryBundle<br/>facts · tasks · events"])
+        CosineSim(["cosine similarity\nprimary path"])
+        MSFallback(["MiniSearch\nfallback"])
+        Bundle(["MemoryBundle\nfacts · tasks · events"])
     end
 
     %% Write paths
     write --> events
     events -. "≥ threshold" .-> librarian
-    
-    %% LLM calls
+
+    %% LLM text generation → DB writes
     librarian --> LLM
     heal --> LLM
     ingest --> LLM
-    
-    %% Database writes
     LLM --> entries
     LLM --> tasks
-    
+
+    %% Embedding on mutation
+    librarian --> EmbedFn
+    heal --> EmbedFn
+    ingest --> EmbedFn
+    reembed --> EmbedFn
+    EmbedFn --> entries
+
     %% Read path
-    read --> FTS5
-    FTS5 --> entries
-    entries --> Bundle
+    read --> CosineSim
+    read --> MSFallback
+    EmbedFn -. "query vector" .-> CosineSim
+    entries --> CosineSim
+    entries --> MSFallback
+    CosineSim --> Bundle
+    MSFallback --> Bundle
     tasks --> Bundle
     events --> Bundle
 ```
@@ -78,7 +92,7 @@ flowchart TB
 
 | Package | Platform | SQLite Adapter | Size | Dependencies |
 |---------|----------|---|---|---|
-| **`@equationalapplications/core-llm-wiki`** | Node.js, any platform | User-provided (e.g., `better-sqlite3`) | Smallest | None |
+| **`@equationalapplications/core-llm-wiki`** | Node.js, any platform | User-provided (e.g., `better-sqlite3`) | Smallest | `minisearch` |
 | **`@equationalapplications/expo-llm-wiki`** | Expo, React Native | `expo-sqlite` (built-in) | Minimal | `expo-sqlite` (peer) |
 | **`@equationalapplications/react-llm-wiki`** | Web (React) | User-provided (e.g., `sql.js`) | Small | `react` (peer) |
 
@@ -88,7 +102,7 @@ flowchart TB
 - **Vanilla JS or non-React framework?** → `@equationalapplications/core-llm-wiki` + `sql.js`
 - **Node.js backend?** → `@equationalapplications/core-llm-wiki` + `better-sqlite3`
 
-All packages share the same core API and database schema. The core library is **framework-agnostic and dependency-free**; `@equationalapplications/expo-llm-wiki` injects the Expo adapter, while `@equationalapplications/core-llm-wiki` and `@equationalapplications/react-llm-wiki` require your application to provide a SQLite adapter.
+All packages share the same core API and database schema. The core library is **framework-agnostic**; `@equationalapplications/expo-llm-wiki` injects the Expo adapter, while `@equationalapplications/core-llm-wiki` and `@equationalapplications/react-llm-wiki` require your application to provide a SQLite adapter.
 
 ## Installation
 
@@ -141,12 +155,24 @@ const wiki = createWiki(db, {
       });
       return response.choices[0].message.content ?? '{}';
     },
+    // Optional: supply embed() to enable cosine-similarity search.
+    // Without it, read() falls back to MiniSearch keyword search.
+    embed: async (text) => {
+      const response = await openai.embeddings.create({
+        model: 'text-embedding-3-small',
+        input: text,
+      });
+      return response.data[0].embedding;
+    },
   },
+  // Optional: called when embedding-based retrieval is unavailable (e.g. embed() throws,
+  // returns non-finite values, or dimension mismatch after a model switch) — use to show "offline" UI.
+  onRetrievalFallback: (error) => console.warn('Embedding unavailable, using keyword search:', error),
   config: {
     tablePrefix: 'llm_wiki_',       // optional, default: 'llm_wiki_'
-    maxFtsResults: 10,              // optional, default: 10
+    maxResults: 10,                 // optional, default: 10
     autoLibrarianThreshold: 20,     // optional, default: 20
-    maxChunkLength: 6000,           // optional, default: 6000 (char count, not bytes)
+    maxChunkLength: 12000,          // optional, default: 12000 (char count, not bytes)
     chunkOverlap: 400,              // optional, default: 400 (overlap between chunks in characters)
     chunkConcurrency: 1,            // optional, default: 1 (parallel LLM calls per ingestDocument)
     pruneRetainSoftDeletedFor: 7,   // optional, default: 7  (days before hard-deleting soft-deleted rows)
@@ -154,7 +180,7 @@ const wiki = createWiki(db, {
   },
 });
 
-// Create tables and FTS5 indexes (call once on app startup)
+// Create tables and indexes (call once on app startup)
 await wiki.setup();
 ```
 
@@ -298,16 +324,16 @@ await wiki.setup();
 
 ### Read
 
-FTS5 full-text search over facts, plus open tasks and recent events:
+Semantic search over facts (cosine similarity if `embed` is provided, MiniSearch keyword fallback otherwise), plus open tasks and recent events:
 
 ```typescript
 const { facts, tasks, events } = await wiki.read('entity-123', 'weekend plans');
-// facts: WikiFact[]   — matched by FTS5, ranked by confidence + access count
+// facts: WikiFact[]   — ranked by vector similarity (or keyword relevance as fallback)
 // tasks: WikiTask[]   — pending and in-progress only
 // events: WikiEvent[] — 10 most recent, ascending
 ```
 
-Pass an empty string to skip FTS and return the most recently updated facts.
+Pass an empty string to skip search and return the most recently updated facts.
 
 ### Write
 
@@ -350,6 +376,10 @@ await wiki.runLibrarian('entity-123');
 
 // Resolve contradictions, downgrade stale claims, remove obsolete facts
 await wiki.runHeal('entity-123');
+
+// Backfill embeddings after adding embed() to LLMProvider, or after changing embedding models.
+// Call with no args to reembed all entities, or pass an entityId to scope it.
+const { embedded, skipped } = await wiki.runReembed('entity-123');
 ```
 
 ### Format Context
@@ -425,7 +455,7 @@ const result = await wiki.runPrune('entity-123', {
 
 Defaults: `retainSoftDeletedFor = config.pruneRetainSoftDeletedFor ?? 7`, `retainEventsFor = config.pruneEventsAfter ?? 30`, `vacuum = false`.
 
-Throws `WikiBusyError` if librarian, heal, ingest, or another prune is in-flight for the same entity. `ingestDocument`, `runLibrarian`, and `runHeal` reciprocally throw `WikiBusyError` if a prune is in-flight.
+Throws `WikiBusyError` if librarian, heal, ingest, prune, or reembed is in-flight for the same entity. `ingestDocument`, `runLibrarian`, `runHeal`, and `runReembed` reciprocally throw `WikiBusyError` if a prune is in-flight.
 
 ---
 

@@ -1,3 +1,35 @@
+# [2.5.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v2.4.0...v2.5.0) (2026-05-04)
+
+
+### Bug Fixes
+
+* add reciprocal reembed conflict checks in runPrune() and ingestDocument() ([8f537f4](https://github.com/equationalapplications/expo-llm-wiki/commit/8f537f4a1f578dd7e7ecade32771461dcfcd8d01))
+* address PR review feedback - embedding quality, read() correctness, locking, migrations, README ([c363347](https://github.com/equationalapplications/expo-llm-wiki/commit/c363347118fb7c22bc7ba4a393623f0f4adc0dea))
+* **core:** cast MiniSearch filter result to access storeFields at runtime ([e56a692](https://github.com/equationalapplications/expo-llm-wiki/commit/e56a692c99ea2f5cb238231251f933e0d83d7e98))
+* **core:** correct ALTER TABLE transaction comment in migration 2 ([6294131](https://github.com/equationalapplications/expo-llm-wiki/commit/6294131b2540ea8636a271d7697fdb9021a270b7))
+* **core:** remove FTS5/synonymMap tests; update migration version assertions to v2 ([66f9046](https://github.com/equationalapplications/expo-llm-wiki/commit/66f9046b0c04981d0bee5ff79ffa26039a23adfc))
+* detect embedding dimension mismatch in read() and fall back to MiniSearch ([e5d9b2f](https://github.com/equationalapplications/expo-llm-wiki/commit/e5d9b2f34664041a4d86b87caea82c5ecf79ec9f))
+* entity/global runReembed() cross-check, two-phase embedding retrieval, strip embedding from bundle/LLM paths ([56b2a6b](https://github.com/equationalapplications/expo-llm-wiki/commit/56b2a6beac06662857852b05e0438bfef32e38f9))
+* fix global prune check and add librarian/heal/ingest blocking in runReembed() ([a771ef2](https://github.com/equationalapplications/expo-llm-wiki/commit/a771ef209904534a994ba6bd0538bc52babd9ded))
+* reconcile embedding_dimension after runReembed() completes ([8e72fd9](https://github.com/equationalapplications/expo-llm-wiki/commit/8e72fd9cb09ec9fc09b74822b9abeb033b2d7670))
+* reject empty/invalid vectors in read() and embedFact() ([c3a2252](https://github.com/equationalapplications/expo-llm-wiki/commit/c3a2252223bc7c2d42c97952adcd29b5223992f6))
+* use accurate type annotation for phase-2 full-row fetch in read() ([a421dcb](https://github.com/equationalapplications/expo-llm-wiki/commit/a421dcb94cee9421d5486099c8deb68054637193))
+* validate embedding vectors before cosine scoring; add reembed guards to librarian/heal ([aff8d72](https://github.com/equationalapplications/expo-llm-wiki/commit/aff8d72a63df7d028056a1e1329bacccc75604b7))
+* validate queryVec from embed(); update onRetrievalFallback docs ([468300b](https://github.com/equationalapplications/expo-llm-wiki/commit/468300b168c4f2cbe0c432e15411daf9bc515dec))
+
+
+### Features
+
+* **core:** add cosineSimilarity utility with tests ([4b718e5](https://github.com/equationalapplications/expo-llm-wiki/commit/4b718e57ce88a05f8a9afd42fde8f0c9d17cc186))
+* **core:** add embed/onRetrievalFallback to types; add minisearch dep ([4ffec9f](https://github.com/equationalapplications/expo-llm-wiki/commit/4ffec9f061d3135a806b15c77fc3287316a08418))
+* **core:** add embedFact and storeEmbeddingDimension private methods ([5771424](https://github.com/equationalapplications/expo-llm-wiki/commit/577142487764e55c0c4840530bebc9f72c792a83))
+* **core:** add MiniSearch field and rebuildMiniSearchIndex to WikiMemory ([ec1ee96](https://github.com/equationalapplications/expo-llm-wiki/commit/ec1ee9627f0b5481de0857f1f86e606c8c53f82a))
+* **core:** add runReembed() public method with concurrency guard ([5c8faad](https://github.com/equationalapplications/expo-llm-wiki/commit/5c8faad1bae491a0d48411c23c6ed07b2d7c465a))
+* **core:** remove FTS5 schema; add embedding column; migration 2 ([1fa4ac8](https://github.com/equationalapplications/expo-llm-wiki/commit/1fa4ac8e84664a424bba31842ada82c8ca588207))
+* **core:** replace FTS5 read() with cosine similarity + MiniSearch fallback ([4b101f8](https://github.com/equationalapplications/expo-llm-wiki/commit/4b101f8f333914e508a1e9b04b1559fadf76c82a))
+* **core:** wire embed+MiniSearch rebuild into ingest, importDump, forget, prune ([5c37db8](https://github.com/equationalapplications/expo-llm-wiki/commit/5c37db8b6bf6a74b9578bbd38b9204f335dc4742))
+* **core:** wire embed+MiniSearch rebuild into setup, librarian, heal ([a430a3a](https://github.com/equationalapplications/expo-llm-wiki/commit/a430a3a228955349e5e86cdbe9eb54d1c039e06b))
+
 # [2.4.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v2.3.0...v2.4.0) (2026-05-02)
 
 

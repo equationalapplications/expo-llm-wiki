@@ -3,6 +3,8 @@ import { setupDatabase } from './db/schema';
 import { MIGRATIONS, CURRENT_SCHEMA_VERSION } from './db/migrations';
 import { WikiOptions, MemoryBundle, MemoryDump, WikiEvent, WikiFact, WikiTask, WikiCheckpoint, ExtractedFact, ExtractedTask, WikiBusyError, EntityStatus } from './types';
 import { LIBRARIAN_SYSTEM_PROMPT, HEAL_SYSTEM_PROMPT, INGEST_SYSTEM_PROMPT } from './prompts';
+import MiniSearch from 'minisearch';
+import { cosineSimilarity } from './utils/cosine';
 
 export { WikiBusyError } from './types';
 
@@ -265,6 +267,163 @@ export class WikiMemory {
   private options: WikiOptions;
   private activeMaintenanceJobs = new Set<string>();
   private activeIngestJobs = new Set<string>();
+  private miniSearch = new MiniSearch<{ id: string; entity_id: string; title: string; body: string; tags: string }>({
+    fields: ['title', 'body', 'tags'],
+    storeFields: ['entity_id'],
+    searchOptions: {
+      boost: { title: 2 },
+      fuzzy: 0.2,
+      prefix: true,
+    },
+  });
+  private miniSearchEntryIdsByEntity = new Map<string, Set<string>>();
+
+  private normalizeMiniSearchRow(row: {
+    id: string; entity_id: string; title: string; body: string; tags: string;
+  }): { id: string; entity_id: string; title: string; body: string; tags: string } {
+    return {
+      id: row.id,
+      entity_id: row.entity_id,
+      title: row.title,
+      body: row.body,
+      tags: (() => {
+        try {
+          const parsed = JSON.parse(row.tags);
+          return Array.isArray(parsed) ? parsed.join(' ') : row.tags;
+        } catch {
+          return row.tags;
+        }
+      })(),
+    };
+  }
+
+  private async rebuildMiniSearchIndex(entityId?: string): Promise<void> {
+    if (entityId) {
+      const rows = await this.db.getAllAsync<{
+        id: string; entity_id: string; title: string; body: string; tags: string;
+      }>(
+        `SELECT id, entity_id, title, body, tags FROM ${this.prefix}entries WHERE deleted_at IS NULL AND entity_id = ?`,
+        [entityId],
+      );
+
+      const previousIds = this.miniSearchEntryIdsByEntity.get(entityId);
+      if (previousIds) {
+        for (const id of previousIds) {
+          this.miniSearch.discard(id);
+        }
+      }
+
+      const documents = rows.map(row => this.normalizeMiniSearchRow(row));
+      if (documents.length > 0) {
+        this.miniSearch.addAll(documents);
+      }
+
+      this.miniSearchEntryIdsByEntity.set(entityId, new Set(documents.map(document => document.id)));
+      return;
+    }
+
+    const rows = await this.db.getAllAsync<{
+      id: string; entity_id: string; title: string; body: string; tags: string;
+    }>(`SELECT id, entity_id, title, body, tags FROM ${this.prefix}entries WHERE deleted_at IS NULL`);
+
+    this.miniSearch.removeAll();
+    this.miniSearchEntryIdsByEntity.clear();
+
+    const documents = rows.map(row => this.normalizeMiniSearchRow(row));
+    if (documents.length > 0) {
+      this.miniSearch.addAll(documents);
+    }
+
+    for (const document of documents) {
+      const ids = this.miniSearchEntryIdsByEntity.get(document.entity_id) ?? new Set<string>();
+      ids.add(document.id);
+      this.miniSearchEntryIdsByEntity.set(document.entity_id, ids);
+    }
+  }
+
+  private async storeEmbeddingDimension(dim: number): Promise<void> {
+    const existing = await this.db.getFirstAsync<{ value: string }>(
+      `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension'`
+    );
+    if (existing) {
+      const storedDim = parseInt(existing.value, 10);
+      if (storedDim !== dim) {
+        console.warn(
+          `[WikiMemory] Embedding dimension mismatch: stored ${storedDim}, got ${dim}. ` +
+          `Call runReembed() to rebuild embeddings with the new model.`
+        );
+        await this.db.runAsync(
+          `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension_mismatch', ?)`,
+          [String(dim)]
+        );
+      } else {
+        await this.db.runAsync(
+          `DELETE FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
+        );
+      }
+    } else {
+      await this.db.runAsync(
+        `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension', ?)`,
+        [String(dim)]
+      );
+    }
+  }
+
+  /**
+   * After a successful runReembed(), promote the pending `embedding_dimension_mismatch`
+   * value to the canonical `embedding_dimension` key and clear the mismatch flag.
+   * This ensures future read() calls use embedding-based retrieval rather than staying
+   * stuck on the MiniSearch fallback.
+   */
+  private async _reconcileEmbeddingDimension(): Promise<void> {
+    const mismatch = await this.db.getFirstAsync<{ value: string }>(
+      `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
+    );
+    if (mismatch) {
+      await this.db.runAsync(
+        `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension', ?)`,
+        [mismatch.value]
+      );
+      await this.db.runAsync(
+        `DELETE FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
+      );
+    }
+  }
+
+  private async embedFact(fact: { id: string; title: string; body: string; tags: string | string[] }): Promise<boolean> {
+    const embedFn = this.options.llmProvider.embed;
+    if (!embedFn) return false;
+    let tagsStr: string;
+    if (Array.isArray(fact.tags)) {
+      tagsStr = fact.tags.join(' ');
+    } else {
+      try {
+        const parsed = JSON.parse(fact.tags);
+        tagsStr = Array.isArray(parsed) ? parsed.join(' ') : fact.tags;
+      } catch {
+        tagsStr = fact.tags;
+      }
+    }
+    const text = `${fact.title} ${fact.body} ${tagsStr}`.trim();
+    try {
+      const vector = await embedFn(text);
+      // Validate before persisting: an empty or non-finite vector would poison
+      // embedding_dimension and write unusable data to entries.embedding.
+      if (vector.length === 0 || !vector.every(v => typeof v === 'number' && isFinite(v))) {
+        console.warn(`[WikiMemory] embedFact: embed() returned an invalid vector for ${fact.id}; skipping.`);
+        return false;
+      }
+      await this.storeEmbeddingDimension(vector.length);
+      await this.db.runAsync(
+        `UPDATE ${this.prefix}entries SET embedding = ? WHERE id = ?`,
+        [JSON.stringify(vector), fact.id]
+      );
+      return true;
+    } catch (err) {
+      console.warn(`[WikiMemory] embedFact failed for ${fact.id}:`, err);
+      return false;
+    }
+  }
 
   private _librarianKey(entityId: string) { return `${this.prefix}:${entityId}:librarian`; }
   private _healKey(entityId: string) { return `${this.prefix}:${entityId}:heal`; }
@@ -377,6 +536,8 @@ export class WikiMemory {
         }
       }
     });
+
+    await this.rebuildMiniSearchIndex();
   }
 
   async hasChanged(entityId: string, sourceRef: string, sourceHash: string): Promise<boolean> {
@@ -401,6 +562,28 @@ export class WikiMemory {
   }
 
   private _pruneKey(entityId: string) { return `${this.prefix}:${entityId}:prune`; }
+  private _reembedKey(entityId: string) { return `${this.prefix}:${entityId}:reembed`; }
+  private _globalReembedKey() { return `${this.prefix}:reembed`; }
+  private _isReembedActive(entityId: string): boolean {
+    return this.activeMaintenanceJobs.has(this._reembedKey(entityId))
+      || this.activeMaintenanceJobs.has(this._globalReembedKey());
+  }
+  /** Returns true if any maintenance job has the given operation suffix (e.g. ':prune'). */
+  private _isAnyMaintenanceActiveWithSuffix(suffix: string): boolean {
+    const entityKeyPrefix = `${this.prefix}:`;
+    for (const k of this.activeMaintenanceJobs) {
+      if (k.startsWith(entityKeyPrefix) && k.endsWith(suffix)) return true;
+    }
+    return false;
+  }
+  /** Returns true if any ingest job is active for the given entity. */
+  private _isIngestActiveFor(entityId: string): boolean {
+    const entityKeyPrefix = `${this.prefix}:${entityId}:`;
+    for (const k of this.activeIngestJobs) {
+      if (k.startsWith(entityKeyPrefix)) return true;
+    }
+    return false;
+  }
 
   private _validatePruneDuration(value: number | null | undefined, name: string): void {
     if (value !== null && value !== undefined && (typeof value !== 'number' || !isFinite(value) || value < 0)) {
@@ -424,13 +607,15 @@ export class WikiMemory {
     for (const k of this.activeIngestJobs) {
       if (k.startsWith(ingestPrefix)) { isIngestRunning = true; break; }
     }
-    let blockingOperation: 'prune' | 'librarian' | 'heal' | 'ingest' | null = null;
+    let blockingOperation: 'prune' | 'librarian' | 'heal' | 'ingest' | 'reembed' | null = null;
     if (this.activeMaintenanceJobs.has(pruneKey)) {
       blockingOperation = 'prune';
     } else if (this.activeMaintenanceJobs.has(this._librarianKey(entityId))) {
       blockingOperation = 'librarian';
     } else if (this.activeMaintenanceJobs.has(this._healKey(entityId))) {
       blockingOperation = 'heal';
+    } else if (this._isReembedActive(entityId)) {
+      blockingOperation = 'reembed';
     } else if (isIngestRunning) {
       blockingOperation = 'ingest';
     }
@@ -487,110 +672,184 @@ export class WikiMemory {
         await this.db.execAsync(`VACUUM`);
       }
 
+      await this.rebuildMiniSearchIndex(entityId);
       return { entries: deletedEntries, tasks: deletedTasks, events: deletedEvents };
     } finally {
       this.activeMaintenanceJobs.delete(pruneKey);
     }
   }
 
-  private formatSearchQuery(query: string): string {
-    const normalizeTokens = (value: string): string[] =>
-      value
-        .toLowerCase()
-        .replace(/[^a-z0-9\s]/g, '')
-        .split(/\s+/)
-        .filter(t => t.length >= 3);
+  async read(entityId: string, query: string): Promise<MemoryBundle> {
+    const maxResults = this.options.config?.maxResults
+      ?? this.options.config?.maxFtsResults
+      ?? 10;
+    const embedFn = this.options.llmProvider.embed;
+    const trimmedQuery = query.trim();
 
-    const baseTokens = normalizeTokens(query);
-    if (baseTokens.length === 0) return '';
+    let facts: WikiFact[] = [];
 
-    const synonymMap = this.options.config?.synonymMap;
-    const expanded: string[] = [];
-    const seen = new Set<string>();
-    const pushNormalized = (value: string): boolean => {
-      for (const token of normalizeTokens(value)) {
-        if (expanded.length >= 12) return false;
-        if (seen.has(token)) continue;
-        seen.add(token);
-        expanded.push(token);
-      }
-      return true;
-    };
+    if (trimmedQuery) {
+      let usedEmbed = false;
 
-    for (const t of baseTokens) {
-      if (!pushNormalized(t)) break;
-      if (synonymMap) {
-        const synonyms = synonymMap[t];
-        if (Array.isArray(synonyms)) {
-          for (const s of synonyms) {
-            if (typeof s === 'string') {
-              if (!pushNormalized(s)) break;
+      if (embedFn) {
+        try {
+          const queryVec = await embedFn(trimmedQuery);
+
+          // Validate that the provider returned a well-formed vector. An empty vector
+          // would cause all facts to score 0 (silently bypassing the fallback), and
+          // non-finite values (NaN, Infinity) make the sort comparator unstable.
+          if (queryVec.length === 0 || !queryVec.every(v => typeof v === 'number' && isFinite(v))) {
+            throw new Error(
+              'embed() returned an empty or non-finite vector. Falling back to keyword search.'
+            );
+          }
+
+          // Detect embedding dimension mismatch: if stored dimension differs from the
+          // query vector, existing fact embeddings were built with a different model and
+          // cosine scoring would silently produce misleading rankings. Fall back to
+          // MiniSearch until the caller runs runReembed().
+          const storedDimRow = await this.db.getFirstAsync<{ value: string }>(
+            `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension'`
+          );
+          if (storedDimRow) {
+            const storedDim = parseInt(storedDimRow.value, 10);
+            if (storedDim !== queryVec.length) {
+              throw new Error(
+                `Embedding dimension mismatch: stored ${storedDim}, query has ${queryVec.length}. ` +
+                `Call runReembed() to rebuild embeddings with the new model.`
+              );
             }
           }
+
+          // Phase 1: fetch only scoring columns to avoid loading large body/tags for all rows
+          const scoreRows = await this.db.getAllAsync<{
+            id: string;
+            embedding: string | null;
+            updated_at: number | null;
+            access_count: number | null;
+          }>(
+            `SELECT id, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
+            [entityId]
+          );
+          const scored = scoreRows.map(row => {
+            let score = 0;
+            if (row.embedding) {
+              try {
+                const parsed: unknown = JSON.parse(row.embedding);
+                if (
+                  Array.isArray(parsed) &&
+                  parsed.length === queryVec.length &&
+                  (parsed as number[]).every(v => typeof v === 'number' && isFinite(v))
+                ) {
+                  score = cosineSimilarity(queryVec, parsed as number[]);
+                }
+                // non-array, wrong length, or non-finite values → score stays 0
+              } catch {
+                // corrupt JSON — treat as score 0
+              }
+            }
+            return { row, score };
+          });
+          scored.sort((a, b) => {
+            const scoreDiff = b.score - a.score;
+            if (scoreDiff !== 0) {
+              return scoreDiff;
+            }
+
+            const updatedAtDiff = (b.row.updated_at ?? 0) - (a.row.updated_at ?? 0);
+            if (updatedAtDiff !== 0) {
+              return updatedAtDiff;
+            }
+
+            const accessCountDiff = (b.row.access_count ?? 0) - (a.row.access_count ?? 0);
+            if (accessCountDiff !== 0) {
+              return accessCountDiff;
+            }
+
+            return a.row.id.localeCompare(b.row.id);
+          });
+          // Phase 2: fetch full rows only for the top results
+          const topIds = scored.slice(0, maxResults).map(s => s.row.id);
+          if (topIds.length > 0) {
+            const placeholders = topIds.map(() => '?').join(',');
+            const fullRows = await this.db.getAllAsync<WikiFact & { embedding: string | null }>(
+              `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+              topIds
+            );
+            const byId = new Map(fullRows.map(r => [r.id, r]));
+            facts = topIds.map(id => byId.get(id)).filter((f): f is WikiFact & { embedding: string | null } => f !== undefined);
+          }
+          usedEmbed = true;
+        } catch (err) {
+          const error = err instanceof Error ? err : new Error(String(err));
+          this.options.onRetrievalFallback?.(error);
         }
       }
-    }
 
-    return expanded.map(t => `"${t}"*`).join(' OR ');
-  }
+      if (!usedEmbed) {
+        // embed absent or threw — fall back to MiniSearch
+        const results = this.miniSearch.search(trimmedQuery, {
+          filter: (r) => (r as unknown as { entity_id: string }).entity_id === entityId,
+          combineWith: 'OR',
+        });
+        const topIds = results.slice(0, maxResults).map((r: { id: string }) => r.id);
+        if (topIds.length > 0) {
+          const placeholders = topIds.map(() => '?').join(',');
+          const rows = await this.db.getAllAsync<WikiFact>(
+            `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+            topIds
+          );
+          const byId = new Map(rows.map(r => [r.id, r]));
+          facts = topIds.map(id => byId.get(id)).filter((f): f is WikiFact => f !== undefined);
+        }
+      }
 
-  async read(entityId: string, query: string): Promise<MemoryBundle> {
-    const ftsQuery = this.formatSearchQuery(query);
-    const maxResults = this.options.config?.maxFtsResults || 10;
-    
-    let factsPromise: Promise<WikiFact[]>;
-
-    if (ftsQuery) {
-      factsPromise = this.db.getAllAsync<WikiFact>(`
-        SELECT e.* FROM ${this.prefix}entries e
-        JOIN ${this.prefix}entries_fts fts ON e.rowid = fts.rowid
-        WHERE fts.${this.prefix}entries_fts MATCH ?
-          AND e.entity_id = ?
-          AND e.deleted_at IS NULL
-        ORDER BY e.confidence DESC, e.access_count DESC, e.updated_at DESC
-        LIMIT ?
-      `, [ftsQuery, entityId, maxResults]);
+      if (facts.length > 0) {
+        const ids = facts.map(f => f.id);
+        const placeholders = ids.map(() => '?').join(',');
+        const now = Date.now();
+        await this.db.runAsync(
+          `UPDATE ${this.prefix}entries
+           SET access_count = access_count + 1, last_accessed_at = ?
+           WHERE id IN (${placeholders})`,
+          [now, ...ids]
+        );
+      }
     } else {
-      factsPromise = this.db.getAllAsync<WikiFact>(`
-        SELECT * FROM ${this.prefix}entries
-        WHERE entity_id = ? AND deleted_at IS NULL
-        ORDER BY updated_at DESC
-        LIMIT ?
-      `, [entityId, maxResults]);
+      facts = await this.db.getAllAsync<WikiFact>(
+        `SELECT * FROM ${this.prefix}entries
+         WHERE entity_id = ? AND deleted_at IS NULL
+         ORDER BY updated_at DESC
+         LIMIT ?`,
+        [entityId, maxResults]
+      );
     }
 
-    const tasksPromise = this.db.getAllAsync<WikiTask>(`
-      SELECT * FROM ${this.prefix}tasks
-      WHERE entity_id = ? AND status IN ('pending', 'in_progress') AND deleted_at IS NULL
-      ORDER BY priority DESC, created_at ASC
-    `, [entityId]);
+    const [tasks, events] = await Promise.all([
+      this.db.getAllAsync<WikiTask>(
+        `SELECT * FROM ${this.prefix}tasks
+         WHERE entity_id = ? AND status IN ('pending', 'in_progress') AND deleted_at IS NULL
+         ORDER BY priority DESC, created_at ASC`,
+        [entityId]
+      ),
+      this.db.getAllAsync<WikiEvent>(
+        `SELECT * FROM ${this.prefix}events
+         WHERE entity_id = ?
+         ORDER BY created_at DESC
+         LIMIT 10`,
+        [entityId]
+      ),
+    ]);
 
-    const eventsPromise = this.db.getAllAsync<WikiEvent>(`
-      SELECT * FROM ${this.prefix}events
-      WHERE entity_id = ?
-      ORDER BY created_at DESC
-      LIMIT 10
-    `, [entityId]);
+    const parsedFacts = facts.map(f => {
+      const { embedding: _embedding, ...rest } = f as WikiFact & { embedding?: unknown };
+      return {
+        ...rest,
+        tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
+      };
+    });
 
-    const [factsRaw, tasks, events] = await Promise.all([factsPromise, tasksPromise, eventsPromise]);
-
-    if (ftsQuery && factsRaw.length > 0) {
-      const ids = factsRaw.map(f => f.id);
-      const placeholders = ids.map(() => '?').join(',');
-      const now = Date.now();
-      await this.db.runAsync(`
-        UPDATE ${this.prefix}entries 
-        SET access_count = access_count + 1, last_accessed_at = ?
-        WHERE id IN (${placeholders})
-      `, [now, ...ids]);
-    }
-
-    const facts = factsRaw.map(f => ({
-      ...f,
-      tags: typeof f.tags === 'string' ? JSON.parse(f.tags) : f.tags
-    }));
-
-    return { facts, tasks, events: events.reverse() };
+    return { facts: parsedFacts, tasks, events: events.reverse() };
   }
 
   async getMemoryBundle(entityId: string): Promise<MemoryBundle> {
@@ -683,10 +942,13 @@ export class WikiMemory {
       LIMIT 100
     `, [entityId]);
 
-    const currentFacts = currentFactsRows.map(f => ({
-      ...f,
-      tags: typeof f.tags === 'string' ? JSON.parse(f.tags) : f.tags
-    }));
+    const currentFacts = currentFactsRows.map(f => {
+      const { embedding: _embedding, ...rest } = f as WikiFact & { embedding?: unknown };
+      return {
+        ...rest,
+        tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
+      };
+    });
 
     const userPrompt = `Events:\n${JSON.stringify(events.reverse(), null, 2)}\n\nCurrent Facts:\n${JSON.stringify(currentFacts, null, 2)}`;
     
@@ -702,6 +964,8 @@ export class WikiMemory {
     const validTasks = tasks.map(validateTask).filter((t): t is ExtractedTask => t !== null);
 
     const now = Date.now();
+
+    const insertedFacts: Array<{ id: string; title: string; body: string; tags: string }> = [];
 
     await this.db.withTransactionAsync(async () => {
       for (const fact of validFacts) {
@@ -726,6 +990,7 @@ export class WikiMemory {
           INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'agent_inferred', now, now]);
+        insertedFacts.push({ id, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
       }
 
       for (const task of validTasks) {
@@ -736,6 +1001,11 @@ export class WikiMemory {
         `, [id, entityId, task.description, 'pending', task.priority, now, now]);
       }
     });
+
+    for (const fact of insertedFacts) {
+      await this.embedFact(fact);
+    }
+    await this.rebuildMiniSearchIndex(entityId);
   }
 
   private async _doRunHeal(entityId: string): Promise<void> {
@@ -780,7 +1050,10 @@ export class WikiMemory {
       .filter(f => f.source_type === 'user_document')
       .map(({ id, title, source_ref }) => ({ id, title, source_ref }));
 
-    const userPrompt = `Heal Candidates:\n${JSON.stringify(healCandidates.map(f => ({...f, tags: typeof f.tags === 'string' ? JSON.parse(f.tags) : f.tags})), null, 2)}
+    const userPrompt = `Heal Candidates:\n${JSON.stringify(healCandidates.map(f => {
+      const { embedding: _embedding, ...rest } = f as WikiFact & { embedding?: unknown };
+      return { ...rest, tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags };
+    }), null, 2)}
 \nDocument Anchors (DO NOT MODIFY OR DELETE):\n${JSON.stringify(documentAnchors, null, 2)}
 \nAll Tasks:\n${JSON.stringify(allTasks, null, 2)}
 \nRecent Events:\n${JSON.stringify(recentEvents, null, 2)}
@@ -801,6 +1074,8 @@ export class WikiMemory {
     const safeDeleted = deleted.filter(id => mutableIds.has(id));
     const validNewFacts = newFacts.map(validateFact).filter((f): f is ExtractedFact => f !== null);
 
+    const insertedFacts: Array<{ id: string; title: string; body: string; tags: string }> = [];
+
     await this.db.withTransactionAsync(async () => {
       for (const id of safeDowngraded) {
         await this.db.runAsync(`UPDATE ${this.prefix}entries SET confidence = 'tentative', updated_at = ? WHERE id = ? AND entity_id = ?`, [now, id, entityId]);
@@ -814,8 +1089,14 @@ export class WikiMemory {
           INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'agent_inferred', now, now]);
+        insertedFacts.push({ id, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
       }
     });
+
+    for (const fact of insertedFacts) {
+      await this.embedFact(fact);
+    }
+    await this.rebuildMiniSearchIndex(entityId);
   }
 
   async runLibrarian(entityId: string): Promise<void> {
@@ -825,6 +1106,9 @@ export class WikiMemory {
     }
     if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
       throw new WikiBusyError('prune', entityId);
+    }
+    if (this._isReembedActive(entityId)) {
+      throw new WikiBusyError('reembed', entityId);
     }
     this.activeMaintenanceJobs.add(jobKey);
     try {
@@ -842,11 +1126,85 @@ export class WikiMemory {
     if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
       throw new WikiBusyError('prune', entityId);
     }
+    if (this._isReembedActive(entityId)) {
+      throw new WikiBusyError('reembed', entityId);
+    }
     this.activeMaintenanceJobs.add(jobKey);
     try {
       await this._doRunHeal(entityId);
     } finally {
       this.activeMaintenanceJobs.delete(jobKey);
+    }
+  }
+
+  async runReembed(entityId?: string): Promise<{ embedded: number; skipped: number }> {
+    const embedFn = this.options.llmProvider.embed;
+    if (!embedFn) return { embedded: 0, skipped: 0 };
+
+    const reembedKey = entityId ? this._reembedKey(entityId) : this._globalReembedKey();
+    if (this.activeMaintenanceJobs.has(reembedKey)) {
+      throw new WikiBusyError('reembed', entityId ?? '*');
+    }
+    if (entityId) {
+      // Cross-check: fail if global reembed is in-flight (it covers this entity too)
+      if (this.activeMaintenanceJobs.has(this._globalReembedKey())) {
+        throw new WikiBusyError('reembed', entityId);
+      }
+      if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
+        throw new WikiBusyError('prune', entityId);
+      }
+      if (this.activeMaintenanceJobs.has(this._librarianKey(entityId))) {
+        throw new WikiBusyError('librarian', entityId);
+      }
+      if (this.activeMaintenanceJobs.has(this._healKey(entityId))) {
+        throw new WikiBusyError('heal', entityId);
+      }
+      if (this._isIngestActiveFor(entityId)) {
+        throw new WikiBusyError('ingest', entityId);
+      }
+    } else {
+      // Cross-check: fail if any per-entity reembed is in-flight (global covers all entities)
+      if (this._isAnyMaintenanceActiveWithSuffix(':reembed')) {
+        throw new WikiBusyError('reembed', '*');
+      }
+      if (this._isAnyMaintenanceActiveWithSuffix(':prune')) {
+        throw new WikiBusyError('prune', '*');
+      }
+      if (this._isAnyMaintenanceActiveWithSuffix(':librarian')) {
+        throw new WikiBusyError('librarian', '*');
+      }
+      if (this._isAnyMaintenanceActiveWithSuffix(':heal')) {
+        throw new WikiBusyError('heal', '*');
+      }
+      if (this.activeIngestJobs.size > 0) {
+        throw new WikiBusyError('ingest', '*');
+      }
+    }
+    this.activeMaintenanceJobs.add(reembedKey);
+
+    try {
+      const where = entityId ? `entity_id = ? AND deleted_at IS NULL` : `deleted_at IS NULL`;
+      const params = entityId ? [entityId] : [];
+      const rows = await this.db.getAllAsync<WikiFact>(
+        `SELECT * FROM ${this.prefix}entries WHERE ${where}`,
+        params
+      );
+
+      let embedded = 0;
+      let skipped = 0;
+      for (const row of rows) {
+        const success = await this.embedFact(row);
+        if (success) embedded++;
+        else skipped++;
+      }
+      // If any fact was successfully re-embedded, promote the pending dimension to
+      // canonical and clear the mismatch flag so read() uses embeddings from here on.
+      if (embedded > 0) {
+        await this._reconcileEmbeddingDimension();
+      }
+      return { embedded, skipped };
+    } finally {
+      this.activeMaintenanceJobs.delete(reembedKey);
     }
   }
 
@@ -882,10 +1240,13 @@ export class WikiMemory {
       ),
       this.db.getAllAsync<WikiEvent>(eventsQuery, eventsParams),
     ]);
-    const facts = factsRaw.map(f => ({
-      ...f,
-      tags: typeof f.tags === 'string' ? JSON.parse(f.tags) : f.tags,
-    }));
+    const facts = factsRaw.map(f => {
+      const { embedding: _embedding, ...rest } = f as WikiFact & { embedding?: unknown };
+      return {
+        ...rest,
+        tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
+      };
+    });
     // When limited, results arrive newest-first; reverse to chronological order.
     const events = maxEvents != null ? eventsRaw.slice().reverse() : eventsRaw;
     return { facts, tasks, events };
@@ -1049,7 +1410,20 @@ export class WikiMemory {
           );
         }
       });
+      // Embed non-deleted imported facts so they are immediately searchable.
+      for (const fact of bundle.facts) {
+        if (!fact.deleted_at) {
+          await this.embedFact({
+            id: fact.id,
+            title: fact.title,
+            body: fact.body,
+            tags: Array.isArray(fact.tags) || typeof fact.tags === 'string' ? fact.tags : [],
+          });
+        }
+      }
     }
+
+    await this.rebuildMiniSearchIndex();
   }
 
   async forget(entityId: string, params: { entryId?: string; taskId?: string; sourceRef?: string; sourceHash?: string; clearAll?: boolean }): Promise<{ deleted: { entries: number; tasks: number } }> {
@@ -1111,6 +1485,7 @@ export class WikiMemory {
       if (refResult) deletedEntries += refResult.changes;
     }
 
+    await this.rebuildMiniSearchIndex(entityId);
     return { deleted: { entries: deletedEntries, tasks: deletedTasks } };
   }
 
@@ -1141,6 +1516,9 @@ export class WikiMemory {
     }
     if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
       throw new WikiBusyError('prune', entityId);
+    }
+    if (this._isReembedActive(entityId)) {
+      throw new WikiBusyError('reembed', entityId);
     }
     this.activeIngestJobs.add(jobKey);
 
@@ -1181,6 +1559,8 @@ export class WikiMemory {
       }
 
       const now = Date.now();
+      const insertedFacts: Array<{ id: string; title: string; body: string; tags: string }> = [];
+
       await this.db.withTransactionAsync(async () => {
         await this.db.runAsync(
           `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE source_ref = ? AND entity_id = ? AND deleted_at IS NULL`,
@@ -1193,8 +1573,14 @@ export class WikiMemory {
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'user_document', sourceHash, sourceRef, now, now]
           );
+          insertedFacts.push({ id, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
         }
       });
+
+      for (const fact of insertedFacts) {
+        await this.embedFact(fact);
+      }
+      await this.rebuildMiniSearchIndex(entityId);
 
       return { truncated, chunks: chunks.length };
     } finally {
