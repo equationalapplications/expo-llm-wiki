@@ -278,6 +278,7 @@ export class WikiMemory {
     },
   });
   private miniSearchEntryIdsByEntity = new Map<string, Set<string>>();
+  private vectorCache: Map<string, Map<string, Float32Array>> = new Map();
 
   private normalizeMiniSearchRow(row: {
     id: string; entity_id: string; title: string; body: string; tags: string;
@@ -723,54 +724,53 @@ export class WikiMemory {
             }
           }
 
-          // Phase 1: fetch only scoring columns to avoid loading large body/tags for all rows
+          // Phase 1: fetch scoring columns (embedding_blob + fallback TEXT) for all rows
           const scoreRows = await this.db.getAllAsync<{
             id: string;
-            embedding: string | null;
             embedding_blob: Uint8Array | null;
+            embedding: string | null;
             updated_at: number | null;
             access_count: number | null;
           }>(
-            `SELECT id, embedding, embedding_blob, updated_at, access_count FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
+            `SELECT id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
             [entityId]
           );
+
+          // Cache: reuse parsed vectors from prior full-scan reads
+          const entityCache = this.vectorCache.get(entityId) ?? new Map<string, Float32Array>();
           const scored = scoreRows.map(row => {
+            let vector = entityCache.get(row.id) ?? parseEmbedding(row.embedding_blob, row.embedding);
+            if (vector && !entityCache.has(row.id)) {
+              entityCache.set(row.id, vector);
+            }
             let score = 0;
-            // Prefer BLOB over TEXT when available
-            const vec = parseEmbedding(row.embedding_blob, row.embedding);
-            if (vec !== null && vec.length === queryVec.length) {
-              score = cosineSimilarity(queryVec, vec);
+            if (vector && vector.length === queryVec.length) {
+              score = Math.max(0, cosineSimilarity(queryVec, vector));
             }
             return { row, score };
           });
+          this.vectorCache.set(entityId, entityCache);
+
           scored.sort((a, b) => {
             const scoreDiff = b.score - a.score;
-            if (scoreDiff !== 0) {
-              return scoreDiff;
-            }
-
-            const updatedAtDiff = (b.row.updated_at ?? 0) - (a.row.updated_at ?? 0);
-            if (updatedAtDiff !== 0) {
-              return updatedAtDiff;
-            }
-
+            if (scoreDiff !== 0) return scoreDiff;
             const accessCountDiff = (b.row.access_count ?? 0) - (a.row.access_count ?? 0);
-            if (accessCountDiff !== 0) {
-              return accessCountDiff;
-            }
-
+            if (accessCountDiff !== 0) return accessCountDiff;
+            const updatedAtDiff = (b.row.updated_at ?? 0) - (a.row.updated_at ?? 0);
+            if (updatedAtDiff !== 0) return updatedAtDiff;
             return a.row.id.localeCompare(b.row.id);
           });
+
           // Phase 2: fetch full rows only for the top results
           const topIds = scored.slice(0, maxResults).map(s => s.row.id);
           if (topIds.length > 0) {
             const placeholders = topIds.map(() => '?').join(',');
-            const fullRows = await this.db.getAllAsync<WikiFact & { embedding: string | null }>(
+            const fullRows = await this.db.getAllAsync<WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null }>(
               `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
               topIds
             );
             const byId = new Map(fullRows.map(r => [r.id, r]));
-            facts = topIds.map(id => byId.get(id)).filter((f): f is WikiFact & { embedding: string | null } => f !== undefined);
+            facts = topIds.map(id => byId.get(id)).filter((f): f is WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null } => f !== undefined);
           }
           usedEmbed = true;
         } catch (err) {
@@ -1213,6 +1213,10 @@ export class WikiMemory {
       librarian: this.activeMaintenanceJobs.has(this._librarianKey(entityId)),
       heal: this.activeMaintenanceJobs.has(this._healKey(entityId)),
     };
+  }
+
+  public clearVectorCache(): void {
+    this.vectorCache.clear();
   }
 
   private async _getFullBundle(entityId: string, opts?: { maxEvents?: number }): Promise<MemoryBundle> {
