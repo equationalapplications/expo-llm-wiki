@@ -310,6 +310,10 @@ export class WikiMemory {
           `[WikiMemory] Embedding dimension mismatch: stored ${storedDim}, got ${dim}. ` +
           `Call runReembed() to rebuild embeddings with the new model.`
         );
+        await this.db.runAsync(
+          `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension', ?)`,
+          [String(dim)]
+        );
       }
     } else {
       await this.db.runAsync(
