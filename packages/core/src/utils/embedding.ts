@@ -8,7 +8,11 @@ export function parseEmbedding(
     // objects that get reused across queries, silently corrupting cached vectors.
     const copy = new ArrayBuffer(blob.byteLength);
     new Uint8Array(copy).set(blob);
-    return new Float32Array(copy);
+    const vector = new Float32Array(copy);
+    for (const value of vector) {
+      if (!Number.isFinite(value)) return null;
+    }
+    return vector;
   }
   if (text) {
     try {
