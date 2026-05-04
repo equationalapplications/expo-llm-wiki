@@ -14,6 +14,8 @@ export interface SQLiteAdapter {
 
 export interface WikiConfig {
   tablePrefix?: string;
+  maxResults?: number;
+  /** @deprecated Use maxResults */
   maxFtsResults?: number;
   pruneEventsAfter?: number;
   pruneRetainSoftDeletedFor?: number;
@@ -24,15 +26,6 @@ export interface WikiConfig {
   maxChunkLength?: number;
   chunkOverlap?: number;
   chunkConcurrency?: number;
-  /**
-   * Static caller-supplied synonym expansions applied at query time.
-   * Keys must match the same normalization pipeline used by query formatting:
-   * the query is lowercased, stripped to `[a-z0-9 ]`, split into tokens, and
-   * only tokens with length >= 3 are considered for synonym lookup.
-   * Values are appended to the FTS5 query token list (multi-word values are
-   * split into tokens), then deduped and sliced to 12.
-   */
-  synonymMap?: Record<string, string[]>;
 }
 
 export interface WikiFact {
@@ -97,11 +90,29 @@ export interface LLMProvider {
    * Expected to return the raw text response (typically a JSON string).
    */
   generateText: (params: { systemPrompt: string; userPrompt: string }) => Promise<string>;
+  /**
+   * Optional. When provided, enables semantic similarity search in `read()`.
+   * Must return a stable-dimension float array for any input text.
+   * Called once per fact on creation/update, and once per `read()` query.
+   * When absent or throws, `read()` falls back to MiniSearch.
+   */
+  embed?: (text: string) => Promise<number[]>;
 }
 
 export interface WikiOptions {
   config?: WikiConfig;
   llmProvider: LLMProvider;
+  /**
+   * Called when embedding-based retrieval is unavailable during `read()` and
+   * MiniSearch keyword search is used instead. This can happen when:
+   * - `embed()` throws (e.g. network error, model unavailable)
+   * - `embed()` returns a vector with non-finite values (NaN / Infinity)
+   * - The query vector's dimension doesn't match stored embeddings (model switch;
+   *   resolve by calling `runReembed()`)
+   *
+   * `read()` still returns keyword-search results — this is a notification, not an error path.
+   */
+  onRetrievalFallback?: (error: Error) => void;
 }
 
 export interface MemoryBundle {
@@ -141,10 +152,10 @@ export interface EntityStatus {
 }
 
 export class WikiBusyError extends Error {
-  readonly operation: 'ingest' | 'librarian' | 'heal' | 'prune';
+  readonly operation: 'ingest' | 'librarian' | 'heal' | 'prune' | 'reembed';
   readonly entityId: string;
 
-  constructor(operation: 'ingest' | 'librarian' | 'heal' | 'prune', entityId: string) {
+  constructor(operation: 'ingest' | 'librarian' | 'heal' | 'prune' | 'reembed', entityId: string) {
     super(`${operation} already running for entity ${entityId}`);
     this.name = 'WikiBusyError';
     this.operation = operation;

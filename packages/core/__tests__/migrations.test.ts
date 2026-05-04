@@ -89,7 +89,7 @@ describe('schema migrations', () => {
 
     // Should have written schema_version
     const versionWrite = db.runCalls.find(
-      c => c.sql.includes('schema_version') && c.args[0] === '1'
+      c => c.sql.includes('schema_version') && c.args[0] === '2'
     );
     expect(versionWrite).toBeDefined();
 
@@ -109,19 +109,20 @@ describe('schema migrations', () => {
 
     // Version should have been written
     const versionWrite = db.runCalls.find(
-      c => c.sql.includes('schema_version') && c.args[0] === '1'
+      c => c.sql.includes('schema_version') && c.args[0] === '2'
     );
     expect(versionWrite).toBeDefined();
   });
 
-  it('legacy install with porter → no migration runs, version written', async () => {
+  it('legacy install with porter → migration 1 skipped; migration 2 runs to drop FTS5', async () => {
     const db = makeMockDb({ hasEntries: true, hasPorter: true, metaVersion: null });
     const wiki = createWiki(db);
     await wiki.setup();
 
-    // Migration 1 (porter rebuild) should NOT run since porter is already there
-    const hasRebuild = db.execCalls.some(s => s.includes('DROP TABLE') || s.includes('DROP TRIGGER'));
-    expect(hasRebuild).toBe(false);
+    // Migration 1 (porter FTS5 rebuild) should NOT run since porter is already present
+    // and migration 1 is a no-op. The FTS5 virtual table should never be recreated.
+    const hasPorterRebuild = db.execCalls.some(s => s.includes('CREATE VIRTUAL TABLE'));
+    expect(hasPorterRebuild).toBe(false);
 
     // Version should still have been written
     const versionWrite = db.runCalls.find(c => c.sql.includes('schema_version'));
@@ -129,7 +130,7 @@ describe('schema migrations', () => {
   });
 
   it('already at current version → no migration runs', async () => {
-    const db = makeMockDb({ hasEntries: true, hasPorter: true, metaVersion: '1' });
+    const db = makeMockDb({ hasEntries: true, hasPorter: true, metaVersion: '2' });
     const wiki = createWiki(db);
     await wiki.setup();
 
