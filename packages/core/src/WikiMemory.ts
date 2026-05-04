@@ -485,6 +485,8 @@ export class WikiMemory {
   }
 
   private _pruneKey(entityId: string) { return `${this.prefix}:${entityId}:prune`; }
+  private _reembedKey(entityId: string) { return `${this.prefix}:${entityId}:reembed`; }
+  private _globalReembedKey() { return `${this.prefix}:reembed`; }
 
   private _validatePruneDuration(value: number | null | undefined, name: string): void {
     if (value !== null && value !== undefined && (typeof value !== 'number' || !isFinite(value) || value < 0)) {
@@ -508,13 +510,15 @@ export class WikiMemory {
     for (const k of this.activeIngestJobs) {
       if (k.startsWith(ingestPrefix)) { isIngestRunning = true; break; }
     }
-    let blockingOperation: 'prune' | 'librarian' | 'heal' | 'ingest' | null = null;
+    let blockingOperation: 'prune' | 'librarian' | 'heal' | 'ingest' | 'reembed' | null = null;
     if (this.activeMaintenanceJobs.has(pruneKey)) {
       blockingOperation = 'prune';
     } else if (this.activeMaintenanceJobs.has(this._librarianKey(entityId))) {
       blockingOperation = 'librarian';
     } else if (this.activeMaintenanceJobs.has(this._healKey(entityId))) {
       blockingOperation = 'heal';
+    } else if (this.activeMaintenanceJobs.has(this._reembedKey(entityId)) || this.activeMaintenanceJobs.has(this._globalReembedKey())) {
+      blockingOperation = 'reembed';
     } else if (isIngestRunning) {
       blockingOperation = 'ingest';
     }
@@ -960,9 +964,7 @@ export class WikiMemory {
     const embedFn = this.options.llmProvider.embed;
     if (!embedFn) return { embedded: 0, skipped: 0 };
 
-    const reembedKey = entityId
-      ? `${this.prefix}:${entityId}:reembed`
-      : `${this.prefix}:reembed`;
+    const reembedKey = entityId ? this._reembedKey(entityId) : this._globalReembedKey();
     if (this.activeMaintenanceJobs.has(reembedKey)) {
       throw new WikiBusyError('reembed', entityId ?? '*');
     }
@@ -1297,6 +1299,9 @@ export class WikiMemory {
     }
     if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
       throw new WikiBusyError('prune', entityId);
+    }
+    if (this.activeMaintenanceJobs.has(this._reembedKey(entityId)) || this.activeMaintenanceJobs.has(this._globalReembedKey())) {
+      throw new WikiBusyError('reembed', entityId);
     }
     this.activeIngestJobs.add(jobKey);
 
