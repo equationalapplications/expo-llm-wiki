@@ -559,6 +559,7 @@ export class WikiMemory {
         await this.db.execAsync(`VACUUM`);
       }
 
+      await this.rebuildMiniSearchIndex();
       return { entries: deletedEntries, tasks: deletedTasks, events: deletedEvents };
     } finally {
       this.activeMaintenanceJobs.delete(pruneKey);
@@ -1137,7 +1138,20 @@ export class WikiMemory {
           );
         }
       });
+      // Embed non-deleted imported facts so they are immediately searchable.
+      for (const fact of bundle.facts) {
+        if (!fact.deleted_at) {
+          await this.embedFact({
+            id: fact.id,
+            title: fact.title,
+            body: fact.body,
+            tags: Array.isArray(fact.tags) ? fact.tags : (typeof fact.tags === 'string' ? JSON.parse(fact.tags) : []),
+          });
+        }
+      }
     }
+
+    await this.rebuildMiniSearchIndex();
   }
 
   async forget(entityId: string, params: { entryId?: string; taskId?: string; sourceRef?: string; sourceHash?: string; clearAll?: boolean }): Promise<{ deleted: { entries: number; tasks: number } }> {
@@ -1199,6 +1213,7 @@ export class WikiMemory {
       if (refResult) deletedEntries += refResult.changes;
     }
 
+    await this.rebuildMiniSearchIndex();
     return { deleted: { entries: deletedEntries, tasks: deletedTasks } };
   }
 
@@ -1269,6 +1284,8 @@ export class WikiMemory {
       }
 
       const now = Date.now();
+      const insertedFacts: Array<{ id: string; title: string; body: string; tags: string }> = [];
+
       await this.db.withTransactionAsync(async () => {
         await this.db.runAsync(
           `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE source_ref = ? AND entity_id = ? AND deleted_at IS NULL`,
@@ -1281,8 +1298,14 @@ export class WikiMemory {
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'user_document', sourceHash, sourceRef, now, now]
           );
+          insertedFacts.push({ id, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
         }
       });
+
+      for (const fact of insertedFacts) {
+        await this.embedFact(fact);
+      }
+      await this.rebuildMiniSearchIndex();
 
       return { truncated, chunks: chunks.length };
     } finally {
