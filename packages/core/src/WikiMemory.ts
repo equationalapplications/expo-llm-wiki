@@ -765,15 +765,21 @@ export class WikiMemory {
               candidateRows = null; // empty pre-filter
             } else {
               const topKResults = preResults.slice(0, effectivePreFilterLimit);
-              const topKIds = topKResults.map(r => r.id);
-              const placeholders = topKIds.map(() => '?').join(',');
-              candidateRows = await this.db.getAllAsync<ScoreRow>(
-                `SELECT id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
-                topKIds
-              );
-              if (weight !== undefined && weight < 1) {
-                const maxMsScore = Math.max(1, topKResults[0]?.score ?? 1);
-                miniSearchScores = new Map(topKResults.map(r => [r.id, r.score / maxMsScore]));
+              if (topKResults.length === 0) {
+                // effectivePreFilterLimit is 0 — treat the same as no candidates
+                // (avoids constructing an invalid "WHERE id IN ()" SQL clause)
+                candidateRows = null;
+              } else {
+                const topKIds = topKResults.map(r => r.id);
+                const placeholders = topKIds.map(() => '?').join(',');
+                candidateRows = await this.db.getAllAsync<ScoreRow>(
+                  `SELECT id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+                  topKIds
+                );
+                if (weight !== undefined && weight < 1) {
+                  const maxMsScore = Math.max(1, topKResults[0]?.score ?? 1);
+                  miniSearchScores = new Map(topKResults.map(r => [r.id, r.score / maxMsScore]));
+                }
               }
             }
           } else {

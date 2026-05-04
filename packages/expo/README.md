@@ -49,7 +49,9 @@ const wiki = createWiki(db, {
     },
     embed: async (text: string) => {
       // Your embedding service (e.g., OpenAI, Cohere)
-      const response = await fetch('/api/embed', { 
+      // Use an absolute URL — React Native / Expo apps do not have a browser
+      // origin to resolve relative URLs against on device or simulator.
+      const response = await fetch('https://your-api.example.com/api/embed', { 
         method: 'POST', 
         body: JSON.stringify({ text }) 
       });

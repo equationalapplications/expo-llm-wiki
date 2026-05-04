@@ -86,6 +86,7 @@ export function useWikiMaintenance() {
     setError(null);
     pendingCount.current += 1;
     setIsPending(true);
+    setLastResult(null);
     try {
       // runReembed returns its result directly; it does not update the shared
       // MaintenanceResult/lastResult field (which only tracks librarian, heal, prune).

@@ -267,18 +267,24 @@ describe('useWikiMaintenance', () => {
     expect(result.current.lastResult).toEqual({ operation: 'prune', result: { entries: 3, tasks: 1, events: 2 } });
   });
 
-  it('runReembed returns embedded/skipped counts and does not update lastResult', async () => {
+  it('runReembed returns embedded/skipped counts and clears lastResult', async () => {
+    // First run a prune to set a non-null lastResult
+    wiki.runPrune.mockResolvedValue({ entries: 1, tasks: 0, events: 0 });
     wiki.runReembed.mockResolvedValue({ embedded: 5, skipped: 2 });
     const { result } = renderHook(() => useWikiMaintenance(), { wrapper: wrapper(wiki) });
+
+    await act(async () => { await result.current.runPrune('user-1'); });
+    expect(result.current.lastResult?.operation).toBe('prune');
 
     let reembedResult!: { embedded: number; skipped: number };
     await act(async () => { reembedResult = await result.current.runReembed('user-1'); });
 
     expect(wiki.runReembed).toHaveBeenCalledWith('user-1');
     expect(reembedResult).toEqual({ embedded: 5, skipped: 2 });
-    // runReembed is intentionally excluded from the shared MaintenanceResult union
-    // to avoid a source-breaking change for consumers that exhaustively switch on
-    // lastResult.operation. Its result is obtained directly from the return value.
+    // runReembed clears lastResult at start so stale librarian/heal/prune
+    // results do not remain visible while reembed is pending or after it completes.
+    // It is intentionally excluded from the MaintenanceResult union to avoid a
+    // source-breaking change for consumers that exhaustively switch on lastResult.operation.
     expect(result.current.lastResult).toBeNull();
     expect(result.current.isPending).toBe(false);
   });
