@@ -76,6 +76,31 @@ const fasterSearch = await wiki.read('user-123', 'activities', {
 });
 ```
 
+## Configuration
+
+All `WikiConfig` fields are optional:
+
+```typescript
+const wiki = createWiki(db, {
+  llmProvider: { /* ... */ },
+  config: {
+    tablePrefix: 'llm_wiki_',          // default: 'llm_wiki_'
+    maxResults: 10,                    // default: 10
+    autoLibrarianThreshold: 20,        // default: 20 — events before librarian auto-runs
+    autoHealThreshold: 100,            // default: 100 — events before heal auto-runs
+    maxChunkLength: 12000,             // default: 12000 (char count per ingestDocument chunk)
+    chunkOverlap: 400,                 // default: 400 (overlap between chunks in characters)
+    chunkConcurrency: 1,               // default: 1 (parallel LLM calls per ingestDocument)
+    pruneRetainSoftDeletedFor: 7,      // default: 7 (days before hard-deleting soft-deleted facts)
+    pruneEventsAfter: 30,              // default: 30 (days before hard-deleting old events)
+    orphanAfterDays: 30,               // default: 30 (days before runHeal flags sourceless facts; null to disable)
+    staleInferredAfterDays: 60,        // default: 60 (days before runHeal downgrades inferred facts; null to disable)
+    preFilterLimit: 50,                // default: undefined — MiniSearch pre-filter before cosine scan; recommended for >500 facts
+    hybridWeight: 0.7,                 // default: undefined — blend semantic (1.0) ↔ keyword (0.0); pure semantic when unset
+  },
+});
+```
+
 ## Retrieval Tuning
 
 Optimize `read()` performance and blend retrieval strategies:

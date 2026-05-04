@@ -172,14 +172,19 @@ const wiki = createWiki(db, {
   // returns non-finite values, or dimension mismatch after a model switch) — use to show "offline" UI.
   onRetrievalFallback: (error) => console.warn('Embedding unavailable, using keyword search:', error),
   config: {
-    tablePrefix: 'llm_wiki_',       // optional, default: 'llm_wiki_'
-    maxResults: 10,                 // optional, default: 10
-    autoLibrarianThreshold: 20,     // optional, default: 20
-    maxChunkLength: 12000,          // optional, default: 12000 (char count, not bytes)
-    chunkOverlap: 400,              // optional, default: 400 (overlap between chunks in characters)
-    chunkConcurrency: 1,            // optional, default: 1 (parallel LLM calls per ingestDocument)
-    pruneRetainSoftDeletedFor: 7,   // optional, default: 7  (days before hard-deleting soft-deleted rows)
-    pruneEventsAfter: 30,           // optional, default: 30 (days before hard-deleting old events)
+    tablePrefix: 'llm_wiki_',          // optional, default: 'llm_wiki_'
+    maxResults: 10,                    // optional, default: 10
+    autoLibrarianThreshold: 20,        // optional, default: 20 — events before librarian auto-runs
+    autoHealThreshold: 100,            // optional, default: 100 — events before heal auto-runs
+    maxChunkLength: 12000,             // optional, default: 12000 (char count per ingestDocument chunk)
+    chunkOverlap: 400,                 // optional, default: 400 (overlap between chunks in characters)
+    chunkConcurrency: 1,               // optional, default: 1 (parallel LLM calls per ingestDocument)
+    pruneRetainSoftDeletedFor: 7,      // optional, default: 7  (days before hard-deleting soft-deleted facts)
+    pruneEventsAfter: 30,              // optional, default: 30 (days before hard-deleting old events)
+    orphanAfterDays: 30,               // optional, default: 30 (days before runHeal flags sourceless facts; null to disable)
+    staleInferredAfterDays: 60,        // optional, default: 60 (days before runHeal downgrades inferred facts; null to disable)
+    preFilterLimit: 50,                // optional, default: undefined — MiniSearch pre-filter before cosine scan; recommended for >500 facts
+    hybridWeight: 0.7,                 // optional, default: undefined — blend semantic (1.0) ↔ keyword (0.0); pure semantic when unset
   },
 });
 
@@ -334,6 +339,14 @@ const { facts, tasks, events } = await wiki.read('entity-123', 'weekend plans');
 // facts: WikiFact[]   — ranked by vector similarity (or keyword relevance as fallback)
 // tasks: WikiTask[]   — pending and in-progress only
 // events: WikiEvent[] — 10 most recent, ascending
+
+// Per-call overrides (e.g. for a search settings dashboard):
+const { facts } = await wiki.read('entity-123', 'weekend plans', {
+  maxResults: 5,          // override WikiConfig.maxResults for this call
+  preFilterLimit: 20,     // limit cosine candidates to top-20 keyword matches
+  hybridWeight: 0.5,      // 50/50 semantic + keyword blend
+  // preFilterLimit: null — explicitly disable a config-level preFilterLimit for this call
+});
 ```
 
 Pass an empty string to skip search and return the most recently updated facts.

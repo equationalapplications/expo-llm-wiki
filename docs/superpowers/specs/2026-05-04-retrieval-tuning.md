@@ -1,7 +1,7 @@
 # Spec: Retrieval Tuning — BLOB Storage, Two-Phase SELECT, Vector Cache, Pre-Filter, Hybrid Scoring, Per-Call Overrides
 
 **Date:** 2026-05-04
-**Status:** Draft
+**Status:** Implemented
 **Follows:** `2026-05-03-embedding-retrieval.md` (PR #11)
 
 ---
