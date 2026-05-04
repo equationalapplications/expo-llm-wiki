@@ -487,6 +487,10 @@ export class WikiMemory {
   private _pruneKey(entityId: string) { return `${this.prefix}:${entityId}:prune`; }
   private _reembedKey(entityId: string) { return `${this.prefix}:${entityId}:reembed`; }
   private _globalReembedKey() { return `${this.prefix}:reembed`; }
+  private _isReembedActive(entityId: string): boolean {
+    return this.activeMaintenanceJobs.has(this._reembedKey(entityId))
+      || this.activeMaintenanceJobs.has(this._globalReembedKey());
+  }
 
   private _validatePruneDuration(value: number | null | undefined, name: string): void {
     if (value !== null && value !== undefined && (typeof value !== 'number' || !isFinite(value) || value < 0)) {
@@ -517,7 +521,7 @@ export class WikiMemory {
       blockingOperation = 'librarian';
     } else if (this.activeMaintenanceJobs.has(this._healKey(entityId))) {
       blockingOperation = 'heal';
-    } else if (this.activeMaintenanceJobs.has(this._reembedKey(entityId)) || this.activeMaintenanceJobs.has(this._globalReembedKey())) {
+    } else if (this._isReembedActive(entityId)) {
       blockingOperation = 'reembed';
     } else if (isIngestRunning) {
       blockingOperation = 'ingest';
@@ -1300,7 +1304,7 @@ export class WikiMemory {
     if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
       throw new WikiBusyError('prune', entityId);
     }
-    if (this.activeMaintenanceJobs.has(this._reembedKey(entityId)) || this.activeMaintenanceJobs.has(this._globalReembedKey())) {
+    if (this._isReembedActive(entityId)) {
       throw new WikiBusyError('reembed', entityId);
     }
     this.activeIngestJobs.add(jobKey);
