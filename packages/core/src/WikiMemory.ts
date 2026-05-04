@@ -702,7 +702,7 @@ export class WikiMemory {
     if (trimmedQuery) {
       let usedEmbed = false;
 
-      if (embedFn) {
+      if (!skipEmbed && embedFn) {
         try {
           const queryVec = await embedFn(trimmedQuery);
 
@@ -732,55 +732,100 @@ export class WikiMemory {
             }
           }
 
-          // Phase 1: fetch scoring columns (embedding_blob + fallback TEXT) for all rows
-          const scoreRows = await this.db.getAllAsync<{
-            id: string;
-            embedding_blob: Uint8Array | null;
-            embedding: string | null;
-            updated_at: number | null;
-            access_count: number | null;
-          }>(
-            `SELECT id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
-            [entityId]
-          );
+          // Determine candidate rows
+          type ScoreRow = { id: string; embedding_blob: Uint8Array | null; embedding: string | null; updated_at: number | null; access_count: number | null };
+          let candidateRows: ScoreRow[] | null; // null = pre-filter returned 0 results
+          let populateCache = true;
+          let miniSearchScores: Map<string, number> | undefined;
 
-          // Cache: reuse parsed vectors from prior full-scan reads
-          const entityCache = this.vectorCache.get(entityId) ?? new Map<string, Float32Array>();
-          const scored = scoreRows.map(row => {
-            let vector = entityCache.get(row.id) ?? parseEmbedding(row.embedding_blob, row.embedding);
-            if (vector && !entityCache.has(row.id)) {
-              entityCache.set(row.id, vector);
+          if (effectivePreFilterLimit !== undefined) {
+            populateCache = false; // partial scan — do not populate cache
+            const preResults = this.miniSearch.search(trimmedQuery, {
+              filter: (r) => (r as unknown as { entity_id: string }).entity_id === entityId,
+              combineWith: 'OR',
+            });
+            if (preResults.length === 0) {
+              candidateRows = null; // empty pre-filter
+            } else {
+              const topKResults = preResults.slice(0, effectivePreFilterLimit);
+              const topKIds = topKResults.map(r => r.id);
+              const placeholders = topKIds.map(() => '?').join(',');
+              candidateRows = await this.db.getAllAsync<ScoreRow>(
+                `SELECT id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+                topKIds
+              );
+              if (weight !== undefined) {
+                const maxMsScore = Math.max(1, topKResults[0]?.score ?? 1);
+                miniSearchScores = new Map(topKResults.map(r => [r.id, r.score / maxMsScore]));
+              }
             }
-            let score = 0;
-            if (vector && vector.length === queryVec.length) {
-              score = Math.max(0, cosineSimilarity(queryVec, vector));
-            }
-            return { row, score };
-          });
-          this.vectorCache.set(entityId, entityCache);
-
-          scored.sort((a, b) => {
-            const scoreDiff = b.score - a.score;
-            if (scoreDiff !== 0) return scoreDiff;
-            const accessCountDiff = (b.row.access_count ?? 0) - (a.row.access_count ?? 0);
-            if (accessCountDiff !== 0) return accessCountDiff;
-            const updatedAtDiff = (b.row.updated_at ?? 0) - (a.row.updated_at ?? 0);
-            if (updatedAtDiff !== 0) return updatedAtDiff;
-            return a.row.id.localeCompare(b.row.id);
-          });
-
-          // Phase 2: fetch full rows only for the top results
-          const topIds = scored.slice(0, maxResults).map(s => s.row.id);
-          if (topIds.length > 0) {
-            const placeholders = topIds.map(() => '?').join(',');
-            const fullRows = await this.db.getAllAsync<WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null }>(
-              `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
-              topIds
+          } else {
+            // Full entity scan
+            candidateRows = await this.db.getAllAsync<ScoreRow>(
+              `SELECT id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
+              [entityId]
             );
-            const byId = new Map(fullRows.map(r => [r.id, r]));
-            facts = topIds.map(id => byId.get(id)).filter((f): f is WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null } => f !== undefined);
+            // Collect MiniSearch scores for hybrid blend if weight is set
+            if (weight !== undefined) {
+              const msResults = this.miniSearch.search(trimmedQuery, {
+                filter: (r) => (r as unknown as { entity_id: string }).entity_id === entityId,
+                combineWith: 'OR',
+              });
+              const maxMsScore = Math.max(1, msResults[0]?.score ?? 1);
+              miniSearchScores = new Map(msResults.map(r => [r.id, r.score / maxMsScore]));
+            }
           }
-          usedEmbed = true;
+
+          if (candidateRows === null) {
+            // pre-filter returned 0 candidates — facts = [], skip phase 2, skip access tracking
+            usedEmbed = true;
+          } else {
+            // Cache: reuse parsed vectors from prior full-scan reads
+            const entityCache = this.vectorCache.get(entityId) ?? new Map<string, Float32Array>();
+            const scored = candidateRows.map(row => {
+              let vector = entityCache.get(row.id) ?? parseEmbedding(row.embedding_blob, row.embedding);
+              if (vector && populateCache && !entityCache.has(row.id)) {
+                entityCache.set(row.id, vector);
+              }
+              let score = 0;
+              if (vector && vector.length === queryVec.length) {
+                const cosSim = Math.max(0, cosineSimilarity(queryVec, vector));
+                if (weight !== undefined) {
+                  const kwScore = miniSearchScores?.get(row.id) ?? 0;
+                  score = weight * cosSim + (1 - weight) * kwScore;
+                } else {
+                  score = cosSim;
+                }
+              }
+              return { row, score };
+            });
+            if (populateCache) {
+              this.vectorCache.set(entityId, entityCache);
+            }
+
+            scored.sort((a, b) => {
+              const scoreDiff = b.score - a.score;
+              if (scoreDiff !== 0) return scoreDiff;
+              const accessCountDiff = (b.row.access_count ?? 0) - (a.row.access_count ?? 0);
+              if (accessCountDiff !== 0) return accessCountDiff;
+              const updatedAtDiff = (b.row.updated_at ?? 0) - (a.row.updated_at ?? 0);
+              if (updatedAtDiff !== 0) return updatedAtDiff;
+              return a.row.id.localeCompare(b.row.id);
+            });
+
+            // Phase 2: fetch full rows only for the top results
+            const topIds = scored.slice(0, maxResults).map(s => s.row.id);
+            if (topIds.length > 0) {
+              const placeholders = topIds.map(() => '?').join(',');
+              const fullRows = await this.db.getAllAsync<WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null }>(
+                `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+                topIds
+              );
+              const byId = new Map(fullRows.map(r => [r.id, r]));
+              facts = topIds.map(id => byId.get(id)).filter((f): f is WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null } => f !== undefined);
+            }
+            usedEmbed = true;
+          } // closes the candidateRows !== null else block
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
           this.options.onRetrievalFallback?.(error);
