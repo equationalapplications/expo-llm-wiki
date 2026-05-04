@@ -642,24 +642,26 @@ flowchart TD
     A["read(entityId, query)"] --> B{hybridWeight = 0?}
     B -->|Yes| C["MiniSearch only<br/>(skip embed)"]
     B -->|No| D{embed available?}
-    D -->|No| E["onRetrievalFallback"]
-    E --> C
+    D -->|No| C
     D -->|Yes| F["Embed query"]
-    F --> G{preFilterLimit<br/>active?}
-    G -->|Yes| H["MiniSearch pre-filter<br/>top K candidates"]
-    H --> I["Phase 1: Cosine score<br/>top K candidates"]
-    G -->|No| J["Phase 1: Cosine score<br/>all facts"]
-    I --> K["Cache vectors<br/>in-memory"]
-    J --> K
-    K --> L{hybridWeight = 1?}
-    L -->|Yes| M["Pure semantic<br/>ranking"]
-    L -->|No| N["Hybrid blend:<br/>semantic + keyword<br/>via MiniSearch"]
-    M --> O["Phase 2: Fetch full rows<br/>top maxResults"]
-    N --> O
-    C --> P["MiniSearch ranking"]
-    P --> O
-    O --> Q["Return MemoryBundle"]
-    Q --> R["Track access"]
+    F --> G{Embedding succeeded?}
+    G -->|No| E["onRetrievalFallback"]
+    E --> C
+    G -->|Yes| H{preFilterLimit<br/>active?}
+    H -->|Yes| I["MiniSearch pre-filter<br/>top K candidates"]
+    I --> J["Phase 1: Cosine score<br/>top K candidates"]
+    H -->|No| K["Phase 1: Cosine score<br/>all facts"]
+    J --> L["Cache vectors<br/>in-memory"]
+    K --> L
+    L --> M{hybridWeight = 1?}
+    M -->|Yes| N["Pure semantic<br/>ranking"]
+    M -->|No| O["Hybrid blend:<br/>semantic + keyword<br/>via MiniSearch"]
+    N --> P["Phase 2: Fetch full rows<br/>top maxResults"]
+    O --> P
+    C --> Q["MiniSearch ranking"]
+    Q --> P
+    P --> R["Return MemoryBundle"]
+    R --> S["Track access"]
 ```
 
 1. **Fast-path** when `hybridWeight = 0` (pure keyword, no embed cost)
