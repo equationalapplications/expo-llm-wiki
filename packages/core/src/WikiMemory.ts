@@ -1456,7 +1456,7 @@ export class WikiMemory {
       if (refResult) deletedEntries += refResult.changes;
     }
 
-    await this.rebuildMiniSearchIndex();
+    await this.rebuildMiniSearchIndex(entityId);
     return { deleted: { entries: deletedEntries, tasks: deletedTasks } };
   }
 
