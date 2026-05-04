@@ -1,9 +1,12 @@
 # expo-llm-wiki
 
 [![GitHub Tag](https://img.shields.io/github/v/tag/equationalapplications/expo-llm-wiki?label=github%20tag)](https://github.com/equationalapplications/expo-llm-wiki/tags)
-[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fexpo-llm-wiki?label=npm)](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki)
-[![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fexpo-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
+[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fexpo-llm-wiki?label=expo)](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fexpo-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki) [![bundlephobia](https://img.shields.io/bundlephobia/minzip/%40equationalapplications%2Fexpo-llm-wiki?label=gzip)](https://bundlephobia.com/package/@equationalapplications/expo-llm-wiki)<br>
+[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Freact-llm-wiki?label=react)](https://www.npmjs.com/package/@equationalapplications/react-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Freact-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/react-llm-wiki) [![bundlephobia](https://img.shields.io/bundlephobia/minzip/%40equationalapplications%2Freact-llm-wiki?label=gzip)](https://bundlephobia.com/package/@equationalapplications/react-llm-wiki)<br>
+[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fcore-llm-wiki?label=core)](https://www.npmjs.com/package/@equationalapplications/core-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fcore-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/core-llm-wiki) [![bundlephobia](https://img.shields.io/bundlephobia/minzip/%40equationalapplications%2Fcore-llm-wiki?label=gzip)](https://bundlephobia.com/package/@equationalapplications/core-llm-wiki)
 
 ## Persistent, episodic memory for AI Agents.
 
@@ -614,6 +617,80 @@ All mutation hooks follow the same pattern (`TResult` is specific per hook):
   error: Error | null;         // cleared on the next execute call
 }
 ```
+
+---
+
+## Retrieval Engine Internals
+
+How `read(entityId, query)` routes through the retrieval pipeline:
+
+```mermaid
+flowchart TD
+    A["read(entityId, query)"] --> B{hybridWeight = 0?}
+    B -->|Yes| C["MiniSearch only<br/>(skip embed)"]
+    B -->|No| D{embed available?}
+    D -->|No| E["onRetrievalFallback"]
+    E --> C
+    D -->|Yes| F["Embed query"]
+    F --> G{preFilterLimit<br/>active?}
+    G -->|Yes| H["MiniSearch pre-filter<br/>top K candidates"]
+    H --> I["Phase 1: Cosine score<br/>top K candidates"]
+    G -->|No| J["Phase 1: Cosine score<br/>all facts"]
+    I --> K["Cache vectors<br/>in-memory"]
+    J --> K
+    K --> L{hybridWeight = 1?}
+    L -->|Yes| M["Pure semantic<br/>ranking"]
+    L -->|No| N["Hybrid blend:<br/>semantic + keyword<br/>via MiniSearch"]
+    M --> O["Phase 2: Fetch full rows<br/>top maxResults"]
+    N --> O
+    C --> P["MiniSearch ranking"]
+    P --> O
+    O --> Q["Return MemoryBundle"]
+    Q --> R["Track access"]
+```
+
+1. **Fast-path** when `hybridWeight = 0` (pure keyword, no embed cost)
+2. **Fallback chain** when embed unavailable (MiniSearch via `onRetrievalFallback`)
+3. **Pre-filtering** to limit cosine scoring to top-K keyword matches (O(N) → O(K))
+4. **Two-phase SELECT**: phase 1 scores all/filtered facts with minimal columns, phase 2 fetches full rows for winners
+5. **Hybrid scoring** to blend semantic and keyword rankings
+6. **Vector caching** of parsed embeddings to avoid re-parsing on repeated reads
+
+## React Component Lifecycle
+
+How React hooks stay in sync with memory state:
+
+```mermaid
+flowchart TD
+    A["<WikiProvider wiki={wiki}>"] --> B["App Components"]
+    B --> C{"Use Hook?"}
+    C -->|"useMemoryRead(entityId, query)"| D["[Read Memory]"]
+    C -->|"useWikiWrite()"| E["[Write Memory]"]
+    C -->|"useWikiIngest()"| F["[Ingest Document]"]
+    C -->|"useWikiForget()"| G["[Delete Memory]"]
+    C -->|"useWikiMaintenance()"| H["[Run Jobs]"]
+    D --> I{"entityId or<br/>query changed?"}
+    I -->|"Yes"| J["Auto-refetch"]
+    I -->|"No"| K["Return cached data"]
+    J --> L["Trigger read()"]
+    K --> L
+    L --> M["Embed query<br/>if embed available"]
+    M --> N["Phase 1: Score facts<br/>Phase 2: Fetch winners"]
+    N --> O["Update component state"]
+    O --> P["Re-render with data"]
+    E --> Q["Execute write()"]
+    F --> Q
+    G --> Q
+    H --> Q
+    Q --> R["Invalidate cache<br/>for entityId"]
+    R --> S["useMemoryRead hooks<br/>auto-refetch"]
+    S --> O
+```
+
+1. **Wrap app** with `<WikiProvider wiki={wiki}>` — provides wiki context
+2. **Read operations** auto-refetch when `entityId` or `query` change
+3. **Write operations** (write, ingest, forget, maintenance) invalidate cache for that `entityId`
+4. **Other components'** `useMemoryRead` hooks for same `entityId` auto-refetch on invalidation
 
 ---
 

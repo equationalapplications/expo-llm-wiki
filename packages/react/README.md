@@ -299,6 +299,41 @@ flowchart TD
 5. **Other components'** `useMemoryRead` hooks for same `entityId` auto-refetch on invalidation
 6. **Re-render** with new data flowing back to UI
 
+## Retrieval Engine Internals
+
+```mermaid
+flowchart TD
+    A["read(entityId, query)"] --> B{hybridWeight = 0?}
+    B -->|Yes| C["MiniSearch only<br/>(skip embed)"]
+    B -->|No| D{embed available?}
+    D -->|No| E["onRetrievalFallback"]
+    E --> C
+    D -->|Yes| F["Embed query"]
+    F --> G{preFilterLimit<br/>active?}
+    G -->|Yes| H["MiniSearch pre-filter<br/>top K candidates"]
+    H --> I["Phase 1: Cosine score<br/>top K candidates"]
+    G -->|No| J["Phase 1: Cosine score<br/>all facts"]
+    I --> K["Cache vectors<br/>in-memory"]
+    J --> K
+    K --> L{hybridWeight = 1?}
+    L -->|Yes| M["Pure semantic<br/>ranking"]
+    L -->|No| N["Hybrid blend:<br/>semantic + keyword<br/>via MiniSearch"]
+    M --> O["Phase 2: Fetch full rows<br/>top maxResults"]
+    N --> O
+    C --> P["MiniSearch ranking"]
+    P --> O
+    O --> Q["Return MemoryBundle"]
+    Q --> R["Track access"]
+```
+
+The flowchart shows:
+1. **Fast-path** when `hybridWeight = 0` (pure keyword, no embed cost)
+2. **Fallback chain** when embed unavailable (MiniSearch via `onRetrievalFallback`)
+3. **Pre-filtering** to limit cosine scoring to top-K keyword matches (O(N) → O(K))
+4. **Two-phase SELECT**: phase 1 scores all/filtered facts with minimal columns, phase 2 fetches full rows for winners
+5. **Hybrid scoring** to blend semantic and keyword rankings
+6. **Vector caching** of parsed embeddings to avoid re-parsing on repeated reads
+
 ## License
 
 MIT

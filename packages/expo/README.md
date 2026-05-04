@@ -2,13 +2,22 @@
 
 Expo/React Native adapter for @equationalapplications/core-llm-wiki, powered by `expo-sqlite`.
 
+[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fexpo-llm-wiki?label=npm)](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki)
+[![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fexpo-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki)
+[![bundlephobia](https://img.shields.io/bundlephobia/minzip/%40equationalapplications%2Fexpo-llm-wiki?label=gzip)](https://bundlephobia.com/package/@equationalapplications/expo-llm-wiki)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 > Inspired by [Andrej Karpathy's LLM Wiki memory spec](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
 
 ## Features
 
 - **Expo-ready** — Pre-configured for React Native + Expo
 - **Built on `expo-sqlite`** — Stable, well-supported SQLite driver
+- **Semantic search** — Vector embeddings via `embed` function, with MiniSearch fallback
+- **Retrieval tuning** — Per-call overrides for search behavior (pre-filter, hybrid blend)
 - **React hooks** — `WikiProvider`, `useMemoryRead`, and all other hooks are re-exported directly from `@equationalapplications/expo-llm-wiki`
+- **Full-featured memory** — Facts, tasks, events, maintenance jobs (librarian, heal, reembed, prune)
 
 ## Installation
 
@@ -16,6 +25,86 @@ Expo/React Native adapter for @equationalapplications/core-llm-wiki, powered by 
 npx expo install expo-sqlite
 npm install @equationalapplications/expo-llm-wiki
 ```
+
+## Semantic Search
+
+Enable vector-based retrieval by providing an `embed` function:
+
+```typescript
+import { createWiki } from '@equationalapplications/expo-llm-wiki';
+import { openDatabaseSync } from 'expo-sqlite';
+
+const db = openDatabaseSync('wiki.db');
+
+const wiki = createWiki(db, {
+  config: {
+    // Optimize retrieval for large memory stores
+    preFilterLimit: 50,    // Limit cosine scoring to top-50 keyword matches
+    hybridWeight: 0.7,     // Blend semantic (0.7) + keyword (0.3)
+  },
+  llmProvider: {
+    generateText: async ({ systemPrompt, userPrompt }) => {
+      // Your LLM call — must return the model output as a string
+      return 'Model output';
+    },
+    embed: async (text: string) => {
+      // Your embedding service (e.g., OpenAI, Cohere)
+      const response = await fetch('/api/embed', { 
+        method: 'POST', 
+        body: JSON.stringify({ text }) 
+      });
+      const { embedding } = await response.json();
+      return embedding; // Float32Array or number[]
+    },
+  },
+  onRetrievalFallback: (error) => {
+    console.warn('Embedding unavailable, using keyword search:', error);
+  },
+});
+
+await wiki.setup();
+
+// Semantic query
+const memory = await wiki.read('user-123', 'what activities should I do this weekend?');
+// Matches facts like "Saturday hiking trip" even with no lexical overlap
+
+// Per-call overrides
+const fasterSearch = await wiki.read('user-123', 'activities', {
+  maxResults: 5,
+  preFilterLimit: 20,      // Tighter pre-filter for speed
+  hybridWeight: 0.5,       // More keyword weight
+});
+```
+
+## Retrieval Tuning
+
+Optimize `read()` performance and blend retrieval strategies:
+
+```typescript
+const config = {
+  // Limit cosine similarity scoring to top-K MiniSearch keyword candidates
+  preFilterLimit: 50,
+  
+  // Blend semantic and keyword scores (0.0 = pure keyword, 1.0 = pure semantic)
+  hybridWeight: 0.7,
+  
+  // Max results returned per read
+  maxResults: 10,
+};
+
+const wiki = createWiki(db, {
+  config,
+  llmProvider: { /* ... */ },
+});
+```
+
+**Hybrid scoring blends:**
+- `hybridWeight: 1.0` → pure semantic ranking (full cosine scan)
+- `hybridWeight: 0.5` → balanced semantic + keyword (50/50 blend)
+- `hybridWeight: 0.0` → pure keyword ranking, skips `embed()` entirely (no LLM API cost)
+
+**Pre-filtering optimization:**
+When `preFilterLimit: 50` is set with 1000 facts, cosine similarity is computed only for the top 50 MiniSearch keyword matches, reducing O(N) scoring to O(50).
 
 ## Usage
 
@@ -66,6 +155,82 @@ export function UserProfile({ userId }: { userId: string }) {
 }
 ```
 
+## Component Lifecycle
+
+```mermaid
+flowchart TD
+    A["<WikiProvider wiki={wiki}>"] --> B["App Components"]
+    B --> C{"Use Hook?"}
+    C -->|"useMemoryRead(entityId, query)"| D["[Read Memory]"]
+    C -->|"useWikiWrite()"| E["[Write Memory]"]
+    C -->|"useWikiIngest()"| F["[Ingest Document]"]
+    C -->|"useWikiForget()"| G["[Delete Memory]"]
+    C -->|"useWikiMaintenance()"| H["[Run Jobs]"]
+    D --> I{"entityId or<br/>query changed?"}
+    I -->|"Yes"| J["Auto-refetch"]
+    I -->|"No"| K["Return cached data"]
+    J --> L["Trigger read()"]
+    K --> L
+    L --> M["Embed query<br/>if embed available"]
+    M --> N["Phase 1: Score facts<br/>Phase 2: Fetch winners"]
+    N --> O["Update component state"]
+    O --> P["Re-render with data"]
+    E --> Q["Execute write()"]
+    F --> Q
+    G --> Q
+    H --> Q
+    Q --> R["Invalidate cache<br/>for entityId"]
+    R --> S["useMemoryRead hooks<br/>auto-refetch"]
+    S --> O
+```
+
+**Data flow:**
+1. **Wrap app** with `<WikiProvider wiki={wiki}>` — provides wiki context
+2. **Use hooks** in components — access memory reactively
+3. **Read operations** auto-refetch when `entityId` or `query` change
+4. **Write operations** (write, ingest, forget, maintenance) invalidate cache for that `entityId`
+5. **Other components'** `useMemoryRead` hooks for same `entityId` auto-refetch on invalidation
+6. **Re-render** with new data flowing back to UI
+
+## Retrieval Engine Internals
+
+```mermaid
+flowchart TD
+    A["read(entityId, query)"] --> B{hybridWeight = 0?}
+    B -->|Yes| C["MiniSearch only<br/>(skip embed)"]
+    B -->|No| D{embed available?}
+    D -->|No| E["onRetrievalFallback"]
+    E --> C
+    D -->|Yes| F["Embed query"]
+    F --> G{preFilterLimit<br/>active?}
+    G -->|Yes| H["MiniSearch pre-filter<br/>top K candidates"]
+    H --> I["Phase 1: Cosine score<br/>top K candidates"]
+    G -->|No| J["Phase 1: Cosine score<br/>all facts"]
+    I --> K["Cache vectors<br/>in-memory"]
+    J --> K
+    K --> L{hybridWeight = 1?}
+    L -->|Yes| M["Pure semantic<br/>ranking"]
+    L -->|No| N["Hybrid blend:<br/>semantic + keyword<br/>via MiniSearch"]
+    M --> O["Phase 2: Fetch full rows<br/>top maxResults"]
+    N --> O
+    C --> P["MiniSearch ranking"]
+    P --> O
+    O --> Q["Return MemoryBundle"]
+    Q --> R["Track access"]
+```
+
+The flowchart shows:
+1. **Fast-path** when `hybridWeight = 0` (pure keyword, no embed cost)
+2. **Fallback chain** when embed unavailable (MiniSearch via `onRetrievalFallback`)
+3. **Pre-filtering** to limit cosine scoring to top-K keyword matches (O(N) → O(K))
+4. **Two-phase SELECT**: phase 1 scores all/filtered facts with minimal columns, phase 2 fetches full rows for winners
+5. **Hybrid scoring** to blend semantic and keyword rankings
+6. **Vector caching** of parsed embeddings to avoid re-parsing on repeated reads
+
 ## License
 
 MIT
+
+---
+
+Made with ❤️ by Equational Applications LLC. [https://equationalapplications.com/](https://equationalapplications.com/)
