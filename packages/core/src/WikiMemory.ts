@@ -616,7 +616,24 @@ export class WikiMemory {
             }
             return { row, score };
           });
-          scored.sort((a, b) => b.score - a.score);
+          scored.sort((a, b) => {
+            const scoreDiff = b.score - a.score;
+            if (scoreDiff !== 0) {
+              return scoreDiff;
+            }
+
+            const updatedAtDiff = (b.row.updated_at ?? 0) - (a.row.updated_at ?? 0);
+            if (updatedAtDiff !== 0) {
+              return updatedAtDiff;
+            }
+
+            const accessCountDiff = (b.row.access_count ?? 0) - (a.row.access_count ?? 0);
+            if (accessCountDiff !== 0) {
+              return accessCountDiff;
+            }
+
+            return a.row.id.localeCompare(b.row.id);
+          });
           facts = scored.slice(0, maxResults).map(s => s.row);
           usedEmbed = true;
         } catch (err) {
