@@ -311,8 +311,12 @@ export class WikiMemory {
           `Call runReembed() to rebuild embeddings with the new model.`
         );
         await this.db.runAsync(
-          `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension', ?)`,
+          `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension_mismatch', ?)`,
           [String(dim)]
+        );
+      } else {
+        await this.db.runAsync(
+          `DELETE FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
         );
       }
     } else {
