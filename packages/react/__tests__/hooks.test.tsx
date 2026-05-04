@@ -168,7 +168,8 @@ describe('useMemoryRead', () => {
     // Because options are held in a ref, changing only the reference must NOT
     // trigger an extra wiki.read() call.
     rerender({ opts: { maxResults: 3 } });
-    await new Promise(r => setTimeout(r, 50));
+    // Drain any pending microtasks / state updates before asserting no extra call.
+    await act(async () => {});
     expect(wiki.read).toHaveBeenCalledTimes(1);
   });
 });

@@ -255,9 +255,7 @@ await runLibrarian('user-123');
 // Repair corrupted embeddings
 await runHeal('user-123');
 
-// Backfill BLOB embeddings or update after changing embedding model.
-// Note: runReembed() clears lastResult but does NOT set it to a new value.
-// The operation result is available only from the returned Promise.
+// Backfill BLOB embeddings or update after changing embedding model
 const { embedded, skipped } = await runReembed('user-123');
 
 // Remove stale/old facts
