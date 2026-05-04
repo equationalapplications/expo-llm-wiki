@@ -82,12 +82,12 @@ export function useWikiMaintenance() {
   );
 
   const runReembed = useCallback(async (entityId: string): Promise<{ embedded: number; skipped: number }> => {
-    if (!entityId) throw new Error('entityId is required for runReembed');
     setError(null);
     pendingCount.current += 1;
     setIsPending(true);
     setLastResult(null);
     try {
+      if (!entityId) throw new Error('entityId is required for runReembed');
       // runReembed returns its result directly; it does not update the shared
       // MaintenanceResult/lastResult field (which only tracks librarian, heal, prune).
       // Using the return value directly avoids widening the MaintenanceResult union
