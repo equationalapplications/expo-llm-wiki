@@ -231,9 +231,9 @@ flowchart TD
     G -->|Yes| H["MiniSearch pre-filter<br/>top K candidates"]
     H --> I["Phase 1: Cosine score<br/>top K candidates"]
     G -->|No| J["Phase 1: Cosine score<br/>all facts"]
-    I --> K["Cache vectors<br/>in-memory"]
-    J --> K
+    J --> K["Cache vectors<br/>in-memory<br/>(full scan only)"]
     K --> L{hybridWeight = 1?}
+    I --> L
     L -->|Yes| M["Pure semantic<br/>ranking"]
     L -->|No| N["Hybrid blend:<br/>semantic + keyword<br/>via MiniSearch"]
     M --> O["Phase 2: Fetch full rows<br/>top maxResults"]
@@ -250,7 +250,7 @@ The flowchart shows:
 3. **Pre-filtering** to limit cosine scoring to top-K keyword matches (O(N) → O(K))
 4. **Two-phase SELECT**: phase 1 scores all/filtered facts with minimal columns, phase 2 fetches full rows for winners
 5. **Hybrid scoring** to blend semantic and keyword rankings
-6. **Vector caching** of parsed embeddings to avoid re-parsing on repeated reads
+6. **Vector caching** on full scans only; reads with `preFilterLimit` active skip cache population
 
 ## License
 

@@ -1304,6 +1304,16 @@ export class WikiMemory {
       if (embedded > 0) {
         await this._reconcileEmbeddingDimension();
       }
+
+      // Invalidate again after the loop: a concurrent read() might have re-populated
+      // the cache with pre-reembed vectors while the loop was running, so flush any
+      // such stale entries to ensure subsequent reads see the freshly written data.
+      if (entityId) {
+        this.vectorCache.delete(entityId);
+      } else {
+        this.vectorCache.clear();
+      }
+
       return { embedded, skipped };
     } finally {
       this.activeMaintenanceJobs.delete(reembedKey);
