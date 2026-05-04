@@ -299,6 +299,43 @@ export class WikiMemory {
     })));
   }
 
+  private async storeEmbeddingDimension(dim: number): Promise<void> {
+    const existing = await this.db.getFirstAsync<{ value: string }>(
+      `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension'`
+    );
+    if (existing) {
+      const storedDim = parseInt(existing.value, 10);
+      if (storedDim !== dim) {
+        console.warn(
+          `[WikiMemory] Embedding dimension mismatch: stored ${storedDim}, got ${dim}. ` +
+          `Call runReembed() to rebuild embeddings with the new model.`
+        );
+      }
+    } else {
+      await this.db.runAsync(
+        `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension', ?)`,
+        [String(dim)]
+      );
+    }
+  }
+
+  private async embedFact(fact: { id: string; title: string; body: string; tags: string | string[] }): Promise<void> {
+    const embedFn = this.options.llmProvider.embed;
+    if (!embedFn) return;
+    const tags = Array.isArray(fact.tags) ? fact.tags.join(' ') : fact.tags;
+    const text = `${fact.title} ${fact.body} ${tags}`.trim();
+    try {
+      const vector = await embedFn(text);
+      await this.storeEmbeddingDimension(vector.length);
+      await this.db.runAsync(
+        `UPDATE ${this.prefix}entries SET embedding = ? WHERE id = ?`,
+        [JSON.stringify(vector), fact.id]
+      );
+    } catch (err) {
+      console.warn(`[WikiMemory] embedFact failed for ${fact.id}:`, err);
+    }
+  }
+
   private _librarianKey(entityId: string) { return `${this.prefix}:${entityId}:librarian`; }
   private _healKey(entityId: string) { return `${this.prefix}:${entityId}:heal`; }
   private _warnCrossEntityCollision(type: 'entry' | 'task', id: string, existingEntityId: string, targetEntityId: string): void {
