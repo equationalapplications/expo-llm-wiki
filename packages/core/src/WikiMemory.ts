@@ -601,7 +601,7 @@ export class WikiMemory {
       if (!usedEmbed) {
         // embed absent or threw — fall back to MiniSearch
         const results = this.miniSearch.search(trimmedQuery, {
-          filter: (r: { entity_id: string }) => r.entity_id === entityId,
+          filter: (r) => (r as unknown as { entity_id: string }).entity_id === entityId,
           combineWith: 'OR',
         });
         const topIds = new Set(results.slice(0, maxResults).map((r: { id: string }) => r.id));
