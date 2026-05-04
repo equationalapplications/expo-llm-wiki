@@ -3,7 +3,8 @@ import { useWiki } from './WikiContext';
 
 export type MaintenanceResult =
   | { operation: 'librarian' | 'heal'; result: undefined }
-  | { operation: 'prune'; result: { entries: number; tasks: number; events: number } };
+  | { operation: 'prune'; result: { entries: number; tasks: number; events: number } }
+  | { operation: 'reembed'; result: { embedded: number; skipped: number } };
 
 export function useWikiMaintenance() {
   const wiki = useWiki();
@@ -81,5 +82,24 @@ export function useWikiMaintenance() {
     []
   );
 
-  return { runLibrarian, runHeal, runPrune, lastResult, isPending, error };
+  const runReembed = useCallback(async (entityId?: string): Promise<{ embedded: number; skipped: number }> => {
+    setError(null);
+    pendingCount.current += 1;
+    setIsPending(true);
+    setLastResult(null);
+    try {
+      const result = await wikiRef.current.runReembed(entityId);
+      setLastResult({ operation: 'reembed', result });
+      return result;
+    } catch (e) {
+      const err = e instanceof Error ? e : new Error(String(e));
+      setError(err);
+      throw err;
+    } finally {
+      pendingCount.current -= 1;
+      if (pendingCount.current === 0) setIsPending(false);
+    }
+  }, []);
+
+  return { runLibrarian, runHeal, runPrune, runReembed, lastResult, isPending, error };
 }

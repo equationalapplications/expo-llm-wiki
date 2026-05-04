@@ -697,15 +697,12 @@ flowchart TD
     F --> Q
     G --> Q
     H --> Q
-    Q --> R["Invalidate cache<br/>for entityId"]
-    R --> S["useMemoryRead hooks<br/>auto-refetch"]
-    S --> O
+    Q --> R["Write completes"]
 ```
 
 1. **Wrap app** with `<WikiProvider wiki={wiki}>` — provides wiki context
-2. **Read operations** auto-refetch when `entityId` or `query` change
-3. **Write operations** (write, ingest, forget, maintenance) invalidate cache for that `entityId`
-4. **Other components'** `useMemoryRead` hooks for same `entityId` auto-refetch on invalidation
+2. **Read operations** auto-refetch when `entityId`, `query`, or `wiki` change; call `refetch()` to refresh manually
+3. **Write operations** (write, ingest, forget, maintenance) do not automatically re-trigger `useMemoryRead`; call `refetch()` after a write to refresh read results
 
 ---
 

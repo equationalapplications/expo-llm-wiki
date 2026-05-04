@@ -43,7 +43,7 @@ const wiki = createWiki(adapter, {
         body: JSON.stringify({ text }) 
       });
       const { embedding } = await res.json();
-      return embedding; // Float32Array or number[]
+      return embedding; // number[]
     },
   },
   onRetrievalFallback: (error) => {
@@ -311,18 +311,15 @@ flowchart TD
     F --> Q
     G --> Q
     H --> Q
-    Q --> R["Invalidate cache<br/>for entityId"]
-    R --> S["useMemoryRead hooks<br/>auto-refetch"]
-    S --> O
+    Q --> R["Write completes"]
 ```
 
 **Data flow:**
 1. **Wrap app** with `<WikiProvider wiki={wiki}>` — provides wiki context
 2. **Use hooks** in components — access memory reactively
-3. **Read operations** auto-refetch when `entityId` or `query` change
-4. **Write operations** (write, ingest, forget, maintenance) invalidate cache for that `entityId`
-5. **Other components'** `useMemoryRead` hooks for same `entityId` auto-refetch on invalidation
-6. **Re-render** with new data flowing back to UI
+3. **Read operations** auto-refetch when `entityId`, `query`, or `wiki` change; call `refetch()` to refresh manually
+4. **Write operations** (write, ingest, forget, maintenance) do not automatically re-trigger `useMemoryRead`; call `refetch()` after a write to refresh read results
+5. **Re-render** with new data flowing back to UI
 
 ## Retrieval Engine Internals
 
@@ -331,10 +328,11 @@ flowchart TD
     A["read(entityId, query)"] --> B{hybridWeight = 0?}
     B -->|Yes| C["MiniSearch only<br/>(skip embed)"]
     B -->|No| D{embed available?}
-    D -->|No| E["onRetrievalFallback"]
-    E --> C
+    D -->|No| C
     D -->|Yes| F["Embed query"]
-    F --> G{preFilterLimit<br/>active?}
+    F -->|throws| E["onRetrievalFallback<br/>callback"]
+    E --> C
+    F -->|succeeds| G{preFilterLimit<br/>active?}
     G -->|Yes| H["MiniSearch pre-filter<br/>top K candidates"]
     H --> I["Phase 1: Cosine score<br/>top K candidates"]
     G -->|No| J["Phase 1: Cosine score<br/>all facts"]
@@ -353,7 +351,7 @@ flowchart TD
 
 The flowchart shows:
 1. **Fast-path** when `hybridWeight = 0` (pure keyword, no embed cost)
-2. **Fallback chain** when embed unavailable (MiniSearch via `onRetrievalFallback`)
+2. **Fallback chain** when embed unavailable (MiniSearch silently) or throws (`onRetrievalFallback` callback, then MiniSearch)
 3. **Pre-filtering** to limit cosine scoring to top-K keyword matches (O(N) → O(K))
 4. **Two-phase SELECT**: phase 1 scores all/filtered facts with minimal columns, phase 2 fetches full rows for winners
 5. **Hybrid scoring** to blend semantic and keyword rankings

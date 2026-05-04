@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { MemoryBundle } from '@equationalapplications/core-llm-wiki';
+import type { MemoryBundle, ReadOptions } from '@equationalapplications/core-llm-wiki';
 import { useWiki } from './WikiContext';
 
-export function useMemoryRead(entityId: string, query: string) {
+export function useMemoryRead(entityId: string, query: string, options?: ReadOptions) {
   const wiki = useWiki();
   const [data, setData] = useState<MemoryBundle | null>(null);
   const [isPending, setIsPending] = useState(false);
@@ -10,6 +10,9 @@ export function useMemoryRead(entityId: string, query: string) {
 
   const wikiRef = useRef(wiki);
   wikiRef.current = wiki;
+
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
 
   const fetchQueue = useRef<{
     inFlight: boolean;
@@ -28,7 +31,7 @@ export function useMemoryRead(entityId: string, query: string) {
     fq.inFlight = true;
     setIsPending(true);
 
-    wikiRef.current.read(eid, q).then(
+    wikiRef.current.read(eid, q, optionsRef.current).then(
       (result) => { setData(result); setError(null); },
       (e: unknown) => { setError(e instanceof Error ? e : new Error(String(e))); }
     ).finally(() => {

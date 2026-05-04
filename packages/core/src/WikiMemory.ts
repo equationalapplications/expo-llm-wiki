@@ -761,7 +761,7 @@ export class WikiMemory {
                 `SELECT id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
                 topKIds
               );
-              if (weight !== undefined) {
+              if (weight !== undefined && weight < 1) {
                 const maxMsScore = Math.max(1, topKResults[0]?.score ?? 1);
                 miniSearchScores = new Map(topKResults.map(r => [r.id, r.score / maxMsScore]));
               }
@@ -772,8 +772,8 @@ export class WikiMemory {
               `SELECT id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
               [entityId]
             );
-            // Collect MiniSearch scores for hybrid blend if weight is set
-            if (weight !== undefined) {
+            // Collect MiniSearch scores for hybrid blend if weight is set and <1 (weight=1 means pure semantic)
+            if (weight !== undefined && weight < 1) {
               const msResults = this.miniSearch.search(trimmedQuery, {
                 filter: (r) => (r as unknown as { entity_id: string }).entity_id === entityId,
                 combineWith: 'OR',
@@ -803,6 +803,10 @@ export class WikiMemory {
                 } else {
                   score = cosSim;
                 }
+              } else if (weight !== undefined && weight < 1) {
+                // No usable embedding — still apply the keyword portion of the hybrid score
+                const kwScore = miniSearchScores?.get(row.id) ?? 0;
+                score = (1 - weight) * kwScore;
               }
               return { row, score };
             });
