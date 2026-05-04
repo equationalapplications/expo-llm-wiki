@@ -369,6 +369,27 @@ export class WikiMemory {
     }
   }
 
+  /**
+   * After a successful runReembed(), promote the pending `embedding_dimension_mismatch`
+   * value to the canonical `embedding_dimension` key and clear the mismatch flag.
+   * This ensures future read() calls use embedding-based retrieval rather than staying
+   * stuck on the MiniSearch fallback.
+   */
+  private async _reconcileEmbeddingDimension(): Promise<void> {
+    const mismatch = await this.db.getFirstAsync<{ value: string }>(
+      `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
+    );
+    if (mismatch) {
+      await this.db.runAsync(
+        `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension', ?)`,
+        [mismatch.value]
+      );
+      await this.db.runAsync(
+        `DELETE FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
+      );
+    }
+  }
+
   private async embedFact(fact: { id: string; title: string; body: string; tags: string | string[] }): Promise<boolean> {
     const embedFn = this.options.llmProvider.embed;
     if (!embedFn) return false;
@@ -1146,6 +1167,11 @@ export class WikiMemory {
         const success = await this.embedFact(row);
         if (success) embedded++;
         else skipped++;
+      }
+      // If any fact was successfully re-embedded, promote the pending dimension to
+      // canonical and clear the mismatch flag so read() uses embeddings from here on.
+      if (embedded > 0) {
+        await this._reconcileEmbeddingDimension();
       }
       return { embedded, skipped };
     } finally {
