@@ -447,6 +447,8 @@ export class WikiMemory {
         }
       }
     });
+
+    await this.rebuildMiniSearchIndex();
   }
 
   async hasChanged(entityId: string, sourceRef: string, sourceHash: string): Promise<boolean> {
@@ -773,6 +775,8 @@ export class WikiMemory {
 
     const now = Date.now();
 
+    const insertedFacts: Array<{ id: string; title: string; body: string; tags: string }> = [];
+
     await this.db.withTransactionAsync(async () => {
       for (const fact of validFacts) {
         const newTokens = titleTokens(fact.title);
@@ -796,6 +800,7 @@ export class WikiMemory {
           INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'agent_inferred', now, now]);
+        insertedFacts.push({ id, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
       }
 
       for (const task of validTasks) {
@@ -806,6 +811,11 @@ export class WikiMemory {
         `, [id, entityId, task.description, 'pending', task.priority, now, now]);
       }
     });
+
+    for (const fact of insertedFacts) {
+      await this.embedFact(fact);
+    }
+    await this.rebuildMiniSearchIndex();
   }
 
   private async _doRunHeal(entityId: string): Promise<void> {
@@ -871,6 +881,8 @@ export class WikiMemory {
     const safeDeleted = deleted.filter(id => mutableIds.has(id));
     const validNewFacts = newFacts.map(validateFact).filter((f): f is ExtractedFact => f !== null);
 
+    const insertedFacts: Array<{ id: string; title: string; body: string; tags: string }> = [];
+
     await this.db.withTransactionAsync(async () => {
       for (const id of safeDowngraded) {
         await this.db.runAsync(`UPDATE ${this.prefix}entries SET confidence = 'tentative', updated_at = ? WHERE id = ? AND entity_id = ?`, [now, id, entityId]);
@@ -884,8 +896,14 @@ export class WikiMemory {
           INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'agent_inferred', now, now]);
+        insertedFacts.push({ id, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
       }
     });
+
+    for (const fact of insertedFacts) {
+      await this.embedFact(fact);
+    }
+    await this.rebuildMiniSearchIndex();
   }
 
   async runLibrarian(entityId: string): Promise<void> {
