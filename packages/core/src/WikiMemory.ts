@@ -931,6 +931,40 @@ export class WikiMemory {
     }
   }
 
+  async runReembed(entityId?: string): Promise<{ embedded: number; skipped: number }> {
+    const embedFn = this.options.llmProvider.embed;
+    if (!embedFn) return { embedded: 0, skipped: 0 };
+
+    const reembedKey = `${this.prefix}:reembed`;
+    if (this.activeMaintenanceJobs.has(reembedKey)) {
+      throw new WikiBusyError('reembed', entityId ?? '*');
+    }
+    this.activeMaintenanceJobs.add(reembedKey);
+
+    try {
+      const where = entityId ? `entity_id = ? AND deleted_at IS NULL` : `deleted_at IS NULL`;
+      const params = entityId ? [entityId] : [];
+      const rows = await this.db.getAllAsync<WikiFact>(
+        `SELECT * FROM ${this.prefix}entries WHERE ${where}`,
+        params
+      );
+
+      let embedded = 0;
+      let skipped = 0;
+      for (const row of rows) {
+        try {
+          await this.embedFact(row);
+          embedded++;
+        } catch {
+          skipped++;
+        }
+      }
+      return { embedded, skipped };
+    } finally {
+      this.activeMaintenanceJobs.delete(reembedKey);
+    }
+  }
+
   getEntityStatus(entityId: string): EntityStatus {
     const ingestPrefix = `${this.prefix}:${entityId}:`;
     let ingesting = false;
