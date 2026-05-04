@@ -6,9 +6,12 @@ React hooks and web utilities for @equationalapplications/core-llm-wiki, designe
 
 ## Features
 
+- **Semantic search** — Vector embeddings with optional `embed` function and MiniSearch fallback
+- **Retrieval tuning** — Per-call overrides for hybrid scoring, pre-filtering, result limits
 - **Reactive reads** — Auto-refetch on `entityId` or query changes
-- **Mutation hooks** — `useWikiWrite`, `useWikiIngest`, `useWikiForget`, etc.
+- **Mutation hooks** — `useWikiWrite`, `useWikiIngest`, `useWikiForget`, `useWikiMaintenance`, etc.
 - **Shared context** — Single `WikiProvider` per app, use anywhere
+- **Full-featured memory** — Facts, tasks, events, maintenance jobs (librarian, heal, reembed, prune)
 
 ## Installation
 
@@ -16,13 +19,51 @@ React hooks and web utilities for @equationalapplications/core-llm-wiki, designe
 npm install @equationalapplications/react-llm-wiki
 ```
 
+## Semantic Search Setup
+
+Enable vector-based retrieval by providing an `embed` function in `WikiOptions`:
+
+```typescript
+import { WikiProvider, createWiki } from '@equationalapplications/react-llm-wiki';
+
+const wiki = createWiki(adapter, {
+  config: {
+    preFilterLimit: 50,    // Optimize for wikis with 500+ facts
+    hybridWeight: 0.7,     // Blend semantic (70%) + keyword (30%)
+  },
+  llmProvider: {
+    generateText: async ({ systemPrompt, userPrompt }) => {
+      // Your LLM
+      return 'Model output';
+    },
+    embed: async (text: string) => {
+      // Your embedding service
+      const res = await fetch('/api/embed', { 
+        method: 'POST', 
+        body: JSON.stringify({ text }) 
+      });
+      const { embedding } = await res.json();
+      return embedding; // Float32Array or number[]
+    },
+  },
+  onRetrievalFallback: (error) => {
+    console.warn('Embeddings unavailable, using keyword search:', error);
+  },
+});
+
+await wiki.setup();
+
+<WikiProvider wiki={wiki}>
+  <App />
+</WikiProvider>
+```
+
 ## Setup
 
 **React** (with any `SQLiteAdapter`):
 
 ```typescript
-import { WikiProvider } from '@equationalapplications/react-llm-wiki';
-import { createWiki } from '@equationalapplications/react-llm-wiki';
+import { WikiProvider, createWiki } from '@equationalapplications/react-llm-wiki';
 
 // Create wiki instance and initialize tables
 const wiki = createWiki(adapter, options);
@@ -49,54 +90,151 @@ await wiki.setup();
 </WikiProvider>
 ```
 
+## Retrieval Tuning
+
+Optimize `read()` performance and blend retrieval strategies:
+
+```typescript
+const config = {
+  // Limit cosine similarity scoring to top-K MiniSearch keyword candidates
+  preFilterLimit: 50,
+  
+  // Blend semantic and keyword scores (0.0 = pure keyword, 1.0 = pure semantic)
+  hybridWeight: 0.7,
+  
+  // Max results returned per read
+  maxResults: 10,
+};
+
+const wiki = createWiki(adapter, {
+  config,
+  llmProvider: { /* ... */ },
+});
+```
+
+**Hybrid scoring blends:**
+- `hybridWeight: 1.0` → pure semantic ranking (full cosine scan)
+- `hybridWeight: 0.5` → balanced semantic + keyword (50/50 blend)
+- `hybridWeight: 0.0` → pure keyword ranking, skips `embed()` entirely (no LLM API cost)
+
+**Per-call overrides:**
+
+```typescript
+const { data } = useMemoryRead('user-123', 'preferences', {
+  maxResults: 5,
+  preFilterLimit: 20,      // Tighter pre-filter for speed
+  hybridWeight: 0.5,       // More keyword weight
+});
+```
+
 ## Hooks
 
-### `useMemoryRead(entityId, query)`
+### `useMemoryRead(entityId, query, options?)`
 
-Fetch memory reactively.
+Fetch memory reactively. Auto-refetches when `entityId` or `query` change.
 
 ```typescript
 const { data, isPending, error, refetch } = useMemoryRead('user-123', 'preferences');
+
+if (isPending) return <div>Loading...</div>;
+if (error) return <div>Error: {error.message}</div>;
+
+return (
+  <div>
+    {data?.facts.map(fact => (
+      <div key={fact.id}>
+        <strong>{fact.title}</strong>: {fact.body}
+      </div>
+    ))}
+  </div>
+);
+```
+
+**With tuning overrides:**
+
+```typescript
+const { data } = useMemoryRead('user-123', 'preferences', {
+  maxResults: 5,
+  hybridWeight: 0.8,
+});
 ```
 
 ### `useWikiWrite()`
 
-Mutate facts.
+Record observations and events. The librarian job extracts facts from accumulated events. Invalidates cached reads for that entity.
 
 ```typescript
 const { execute, isPending, error } = useWikiWrite();
-await execute('user-123', { event_type: 'observation', summary: '...' });
+
+const handleSave = async () => {
+  try {
+    await execute('user-123', { 
+      event_type: 'observation', 
+      summary: 'User prefers async/await' 
+    });
+  } catch (e) {
+    console.error('Write failed:', e);
+  }
+};
+
+return <button onClick={handleSave} disabled={isPending}>Save</button>;
 ```
 
 ### `useWikiIngest()`
 
-Ingest documents.
+Ingest documents into memory. Parses facts and tasks from document chunks.
 
 ```typescript
 const { execute, isPending, error } = useWikiIngest();
-await execute('user-123', {
-  sourceRef: 'doc-readme',
-  sourceHash: 'a3f1b2c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2',
-  documentChunk: 'raw document text...',
-});
+
+const handleIngest = async (document: string) => {
+  const sourceHash = await calculateHash(document);
+  try {
+    await execute('user-123', {
+      sourceRef: 'doc-readme',
+      sourceHash,
+      documentChunk: document,
+    });
+  } catch (e) {
+    console.error('Ingest failed:', e);
+  }
+};
 ```
 
 ### `useWikiForget()`
 
-Forget entries.
+Delete entries from memory by ID.
 
 ```typescript
 const { execute, isPending, error } = useWikiForget();
-await execute('user-123', { entryId: 'fact-456' });
+
+const handleDelete = async (factId: string) => {
+  try {
+    await execute('user-123', { entryId: factId });
+  } catch (e) {
+    console.error('Delete failed:', e);
+  }
+};
 ```
 
 ### `useWikiMaintenance()`
 
-Run background maintenance.
+Run background maintenance jobs: librarian (deduplication/fact extraction), heal (repair corrupted embeddings), reembed (convert TEXT embeddings to BLOB / update after model change), prune (remove stale facts).
 
 ```typescript
-const { runLibrarian, runHeal, isPending, error } = useWikiMaintenance();
+const { runLibrarian, runHeal, runReembed, runPrune, isPending, error } = useWikiMaintenance();
+
+// Deduplicate and consolidate facts from events
 await runLibrarian('user-123');
+
+// Repair corrupted embeddings
+await runHeal('user-123');
+
+// Backfill BLOB embeddings or update after changing embedding model
+const { embedded, skipped } = await runReembed('user-123');
+
+// Remove stale/old facts
+await runPrune('user-123');
 ```
 
 ### `useWikiHasChanged()`
@@ -105,7 +243,13 @@ Check if a source document has changed since last ingest.
 
 ```typescript
 const { execute, lastResult, isPending, error } = useWikiHasChanged();
-const changed = await execute('user-123', 'doc-readme', 'a3f1b2c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2');
+
+const handleCheckChanges = async (sourceRef: string, sourceHash: string) => {
+  const changed = await execute('user-123', sourceRef, sourceHash);
+  if (changed) {
+    console.log('Document has been updated, re-ingest recommended');
+  }
+};
 ```
 
 ### `useWikiExport()`
@@ -118,6 +262,47 @@ await execute(['user-123']);
 // lastResult: MemoryDump | null
 ```
 
+## Component Lifecycle
+
+```mermaid
+flowchart TD
+    A["<WikiProvider wiki={wiki}>"] --> B["App Components"]
+    B --> C{"Use Hook?"}
+    C -->|"useMemoryRead(entityId, query)"| D["[Read Memory]"]
+    C -->|"useWikiWrite()"| E["[Write Memory]"]
+    C -->|"useWikiIngest()"| F["[Ingest Document]"]
+    C -->|"useWikiForget()"| G["[Delete Memory]"]
+    C -->|"useWikiMaintenance()"| H["[Run Jobs]"]
+    D --> I{"entityId or<br/>query changed?"}
+    I -->|"Yes"| J["Auto-refetch"]
+    I -->|"No"| K["Return cached data"]
+    J --> L["Trigger read()"]
+    K --> L
+    L --> M["Embed query<br/>if embed available"]
+    M --> N["Phase 1: Score facts<br/>Phase 2: Fetch winners"]
+    N --> O["Update component state"]
+    O --> P["Re-render with data"]
+    E --> Q["Execute write()"]
+    F --> Q
+    G --> Q
+    H --> Q
+    Q --> R["Invalidate cache<br/>for entityId"]
+    R --> S["useMemoryRead hooks<br/>auto-refetch"]
+    S --> O
+```
+
+**Data flow:**
+1. **Wrap app** with `<WikiProvider wiki={wiki}>` — provides wiki context
+2. **Use hooks** in components — access memory reactively
+3. **Read operations** auto-refetch when `entityId` or `query` change
+4. **Write operations** (write, ingest, forget, maintenance) invalidate cache for that `entityId`
+5. **Other components'** `useMemoryRead` hooks for same `entityId` auto-refetch on invalidation
+6. **Re-render** with new data flowing back to UI
+
 ## License
 
 MIT
+
+---
+
+Made with ❤️ by Equational Applications LLC. [https://equationalapplications.com/](https://equationalapplications.com/)
