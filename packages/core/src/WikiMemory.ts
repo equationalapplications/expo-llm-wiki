@@ -3,6 +3,8 @@ import { setupDatabase } from './db/schema';
 import { MIGRATIONS, CURRENT_SCHEMA_VERSION } from './db/migrations';
 import { WikiOptions, MemoryBundle, MemoryDump, WikiEvent, WikiFact, WikiTask, WikiCheckpoint, ExtractedFact, ExtractedTask, WikiBusyError, EntityStatus } from './types';
 import { LIBRARIAN_SYSTEM_PROMPT, HEAL_SYSTEM_PROMPT, INGEST_SYSTEM_PROMPT } from './prompts';
+import MiniSearch from 'minisearch';
+import { cosineSimilarity } from './utils/cosine';
 
 export { WikiBusyError } from './types';
 
@@ -265,6 +267,37 @@ export class WikiMemory {
   private options: WikiOptions;
   private activeMaintenanceJobs = new Set<string>();
   private activeIngestJobs = new Set<string>();
+  private miniSearch = new MiniSearch<{ id: string; entity_id: string; title: string; body: string; tags: string }>({
+    fields: ['title', 'body', 'tags'],
+    storeFields: ['entity_id'],
+    searchOptions: {
+      boost: { title: 2 },
+      fuzzy: 0.2,
+      prefix: true,
+    },
+  });
+
+  private async rebuildMiniSearchIndex(): Promise<void> {
+    const rows = await this.db.getAllAsync<{
+      id: string; entity_id: string; title: string; body: string; tags: string;
+    }>(`SELECT id, entity_id, title, body, tags FROM ${this.prefix}entries WHERE deleted_at IS NULL`);
+
+    this.miniSearch.removeAll();
+    this.miniSearch.addAll(rows.map(r => ({
+      id: r.id,
+      entity_id: r.entity_id,
+      title: r.title,
+      body: r.body,
+      tags: (() => {
+        try {
+          const parsed = JSON.parse(r.tags);
+          return Array.isArray(parsed) ? parsed.join(' ') : r.tags;
+        } catch {
+          return r.tags;
+        }
+      })(),
+    })));
+  }
 
   private _librarianKey(entityId: string) { return `${this.prefix}:${entityId}:librarian`; }
   private _healKey(entityId: string) { return `${this.prefix}:${entityId}:heal`; }
