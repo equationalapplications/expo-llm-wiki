@@ -491,6 +491,22 @@ export class WikiMemory {
     return this.activeMaintenanceJobs.has(this._reembedKey(entityId))
       || this.activeMaintenanceJobs.has(this._globalReembedKey());
   }
+  /** Returns true if any maintenance job has the given operation suffix (e.g. ':prune'). */
+  private _isAnyMaintenanceActiveWithSuffix(suffix: string): boolean {
+    const keyPrefix = `${this.prefix}:`;
+    for (const k of this.activeMaintenanceJobs) {
+      if (k.startsWith(keyPrefix) && k.endsWith(suffix)) return true;
+    }
+    return false;
+  }
+  /** Returns true if any ingest job is active for the given entity. */
+  private _isIngestActiveFor(entityId: string): boolean {
+    const prefix = `${this.prefix}:${entityId}:`;
+    for (const k of this.activeIngestJobs) {
+      if (k.startsWith(prefix)) return true;
+    }
+    return false;
+  }
 
   private _validatePruneDuration(value: number | null | undefined, name: string): void {
     if (value !== null && value !== undefined && (typeof value !== 'number' || !isFinite(value) || value < 0)) {
@@ -993,13 +1009,27 @@ export class WikiMemory {
       if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
         throw new WikiBusyError('prune', entityId);
       }
+      if (this.activeMaintenanceJobs.has(this._librarianKey(entityId))) {
+        throw new WikiBusyError('librarian', entityId);
+      }
+      if (this.activeMaintenanceJobs.has(this._healKey(entityId))) {
+        throw new WikiBusyError('heal', entityId);
+      }
+      if (this._isIngestActiveFor(entityId)) {
+        throw new WikiBusyError('ingest', entityId);
+      }
     } else {
-      const pruneKeyPrefix = this._pruneKey('');
-      const hasActivePrune = Array.from(this.activeMaintenanceJobs).some((jobKey) =>
-        jobKey === pruneKeyPrefix || jobKey.startsWith(pruneKeyPrefix)
-      );
-      if (hasActivePrune) {
+      if (this._isAnyMaintenanceActiveWithSuffix(':prune')) {
         throw new WikiBusyError('prune', '*');
+      }
+      if (this._isAnyMaintenanceActiveWithSuffix(':librarian')) {
+        throw new WikiBusyError('librarian', '*');
+      }
+      if (this._isAnyMaintenanceActiveWithSuffix(':heal')) {
+        throw new WikiBusyError('heal', '*');
+      }
+      if (this.activeIngestJobs.size > 0) {
+        throw new WikiBusyError('ingest', '*');
       }
     }
     this.activeMaintenanceJobs.add(reembedKey);
