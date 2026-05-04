@@ -1,4 +1,4 @@
-# Spec: Retrieval Tuning — BLOB Storage, Pre-Filter, Hybrid Scoring, Per-Call Overrides
+# Spec: Retrieval Tuning — BLOB Storage, Two-Phase SELECT, Vector Cache, Pre-Filter, Hybrid Scoring, Per-Call Overrides
 
 **Date:** 2026-05-04
 **Status:** Draft
@@ -8,24 +8,28 @@
 
 ## Problem
 
-PR #11 ships correct semantic retrieval but leaves three performance and accuracy gaps open:
+PR #11 ships correct semantic retrieval but leaves five performance and accuracy gaps open:
 
-1. **O(N) cosine scan with JSON parse overhead** — every `read()` call fetches all entity facts, parses each `embedding` JSON string into a JS array, then scores all N rows. At 1 536 dimensions a JSON array is ~15 KB; 1 000 facts = 15 MB parsed per query.
-2. **No scaling knob** — large wikis (500+ facts) have no way to limit the cosine candidate pool without reducing `maxResults`.
-3. **Binary retrieval mode** — embed succeeds → pure semantic; embed fails → pure keyword. No middle ground for use cases that need a blend of exact terminology and conceptual meaning.
+1. **`SELECT *` loads all columns for all N facts on every `read()`** — body, tags, and `embedding` JSON (~15 KB at 1 536 dims) are fetched for every row even though only the top `maxResults` rows are returned. PR #11 reviewer flag: *"this query loads the embedding column for all facts on every read() call… can become very heavy (I/O + parsing) as fact counts grow."*
+2. **JSON parse overhead on every read** — `JSON.parse()` called per row per query. 1 000 facts = 15 MB parsed per query even with BLOB storage on new rows (old TEXT rows still present until `runReembed()`).
+3. **No vector cache** — parsed `Float32Array` vectors are discarded after each `read()` and re-parsed from storage on the next call.
+4. **No scaling knob** — large wikis (500+ facts) have no way to limit the cosine candidate pool without reducing `maxResults`.
+5. **Binary retrieval mode** — embed succeeds → pure semantic; embed fails → pure keyword. No middle ground for use cases that need a blend of exact terminology and conceptual meaning.
 
 ---
 
 ## Requirement
 
-**Add three orthogonal retrieval improvements to `packages/core`: (1) BLOB embedding storage to eliminate JSON parse overhead, (2) `preFilterLimit` to cap the O(N) cosine scan via MiniSearch pre-filtering, (3) `hybridWeight` to blend semantic and keyword scores. Tunable at two levels: developers set defaults in `WikiConfig` at construction time; end users can override any parameter per-call via a new `ReadOptions` argument on `read()`, enabling runtime controls such as a search settings dashboard. No platform-specific code.**
+**Add five orthogonal retrieval improvements to `packages/core`: (1) BLOB embedding storage to eliminate JSON parse overhead, (2) two-phase SELECT in `read()` to avoid loading full row data for all N facts, (3) in-memory parsed vector cache to skip re-parsing on repeated reads, (4) `preFilterLimit` to cap the O(N) cosine scan via MiniSearch pre-filtering, (5) `hybridWeight` to blend semantic and keyword scores. Tunable at two levels: developers set defaults in `WikiConfig` at construction time; end users can override retrieval parameters per-call via a new `ReadOptions` argument on `read()`, enabling runtime controls such as a search settings dashboard. No platform-specific code.**
 
 ---
 
 ## Goals
 
 - `embedFact()` stores embeddings as raw `Float32Array` bytes (`BLOB`) in a new `embedding_blob` column. Existing `embedding` TEXT rows remain readable until reembedded.
-- `read()` prefers `embedding_blob`; falls back to parsing `embedding` TEXT for unconverted rows.
+- `read()` cosine path uses a two-phase SELECT: phase 1 fetches only `id, embedding_blob, embedding` for all N rows (scoring columns only); phase 2 fetches `SELECT * WHERE id IN (...)` for the top `maxResults` winners only.
+- `WikiMemory` maintains an in-memory `Map<string, Float32Array>` vector cache per entity. Cache populated on first cosine-path read, invalidated on any fact mutation (librarian, heal, ingest, importDump, forget, prune, runReembed).
+- `read()` prefers cache-hit vectors; falls back to parsing `embedding_blob` BLOB then `embedding` TEXT for misses.
 - `runReembed()` converts all TEXT rows to BLOB and nullifies the TEXT column.
 - `WikiConfig` gains two new optional fields: `preFilterLimit` and `hybridWeight`.
 - `read()` gains an optional third parameter `options?: ReadOptions` that overrides `WikiConfig` values for that call. `WikiConfig` remains the default.
@@ -187,7 +191,22 @@ await this.db.runAsync(
 
 `storeEmbeddingDimension()` unchanged — still validates dimension against stored metadata.
 
-### 7. `read()` — `WikiMemory`
+### 7. In-Memory Vector Cache — `WikiMemory`
+
+```typescript
+private vectorCache: Map<string, Map<string, Float32Array>> = new Map();
+// outer key: entityId; inner key: fact id; value: parsed Float32Array
+```
+
+**Population:** On each cosine-path `read()`, after phase 1 SELECT, populate the entity's inner map with parsed vectors for all rows returned. Rows with null/corrupt embeddings are not cached (they score 0 and can be retried cheaply).
+
+**Cache hit:** If the entity's inner map exists, use cached vectors directly — skip BLOB/TEXT parse entirely.
+
+**Invalidation:** Call `this.vectorCache.delete(entityId)` after any operation that mutates facts for that entity: `runLibrarian()`, `runHeal()`, `ingestDocument()`, `importDump()`, `forget()`, `runPrune()`, `runReembed()`. For operations that affect all entities (e.g., `importDump()` with multiple entities, global `runReembed()`), call `this.vectorCache.clear()`.
+
+**Memory bound:** Cache is scoped to the `WikiMemory` instance lifetime. No eviction policy — wikis are expected to have bounded fact counts per entity. Developers managing very large multi-entity wikis can call `runReembed()` to trigger a cache clear if needed.
+
+### 8. `read()` — two-phase SELECT and cache integration — `WikiMemory`
 
 Signature change (backwards-compatible):
 
@@ -206,22 +225,41 @@ const weight = hybridWeight !== undefined
   : undefined;
 ```
 
+**Phase 1 SELECT (scoring columns only):**
+
+```sql
+SELECT id, embedding_blob, embedding
+FROM ${prefix}entries
+WHERE entity_id = ? AND deleted_at IS NULL
+```
+
+Check vector cache first. For each row not in cache, parse via `parseEmbedding(blob, text)` and populate cache. Score all candidates. Sort descending.
+
+**Phase 2 SELECT (full row for winners only):**
+
+```sql
+SELECT * FROM ${prefix}entries
+WHERE id IN (?, ?, ...) AND deleted_at IS NULL
+```
+
+Fetch only the top `maxResults` (or `preFilterLimit`-bounded) winner IDs. Strip `embedding_blob` and `embedding` before returning.
+
 **Execution paths inside the embed branch:**
 
-| `preFilterLimit` | `hybridWeight` | Behavior |
+| `preFilterLimit` | `hybridWeight` | Phase 1 candidate source |
 |---|---|---|
-| unset | unset | Full scan → cosine sort (today's behavior) |
-| set | unset | MiniSearch top-K IDs → fetch by ID → cosine sort |
-| unset | set | Full scan + MiniSearch scores → normalize → blend |
-| set | set | MiniSearch top-K → fetch by ID → cosine + blend (single MiniSearch call) |
+| unset | unset | `SELECT id, embedding_blob, embedding WHERE entity_id = ?` |
+| set | unset | MiniSearch top-K IDs → `SELECT id, embedding_blob, embedding WHERE id IN (...)` |
+| unset | set | `SELECT id, embedding_blob, embedding WHERE entity_id = ?` + MiniSearch scores |
+| set | set | MiniSearch top-K → `SELECT id, embedding_blob, embedding WHERE id IN (...)` + scores |
 
-**MiniSearch score normalization:** divide each score by `results[0].score` (MiniSearch returns sorted descending). If `results` is empty, all keyword scores are 0. To avoid divide-by-zero, use `Math.max(1, results[0].score)` as denominator. Cosine scores clamped to `[0, 1]` via `Math.max(0, score)`.
+All four paths share the same phase 2 (`SELECT * WHERE id IN (...)`).
+
+**MiniSearch score normalization:** divide each score by `Math.max(1, results[0]?.score ?? 1)` to keep scores in `[0, 1]` and avoid divide-by-zero. Cosine scores clamped to `[0, 1]` via `Math.max(0, score)`.
 
 **When `preFilterLimit` set and `hybridWeight` set:** one MiniSearch call produces both the candidate ID list and the keyword scores for blending. No duplicate search.
 
-**When `preFilterLimit` returns 0 candidates:** `facts = []`, skip cosine scoring, skip access tracking update.
-
-**Stripping internal columns:** `embedding_blob` and `embedding` stripped from returned `WikiFact` objects before returning (same pattern as PR #11 strips `embedding`).
+**When `preFilterLimit` returns 0 candidates:** `facts = []`, skip phase 2, skip access tracking update.
 
 **MiniSearch fallback path** (embed absent or throws): unchanged from PR #11. `hybridWeight` and `preFilterLimit` have no effect on this path.
 
