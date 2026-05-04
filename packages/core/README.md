@@ -54,7 +54,7 @@ When `embed` is unavailable, `read()` silently falls back to MiniSearch keyword 
 ```typescript
 const wikiMemory = new WikiMemory(db, {
   llmProvider: {
-    generateText: async (...) => { /* ... */ },
+    generateText: async () => { /* ... */ },
     embed: undefined, // or throws on network error
   },
   onRetrievalFallback: (error) => {
