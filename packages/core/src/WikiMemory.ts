@@ -685,7 +685,10 @@ export class WikiMemory {
 
   async read(entityId: string, query: string, options?: ReadOptions): Promise<MemoryBundle> {
     const config = this.options.config;
-    const maxResults = options?.maxResults ?? config?.maxResults ?? config?.maxFtsResults ?? 10;
+    const rawMaxResults = options?.maxResults ?? config?.maxResults ?? config?.maxFtsResults ?? 10;
+    const maxResults = Number.isFinite(rawMaxResults)
+      ? Math.max(0, Math.trunc(rawMaxResults))
+      : 10;
     const rawPreFilterLimit =
       options?.preFilterLimit === null
         ? undefined
