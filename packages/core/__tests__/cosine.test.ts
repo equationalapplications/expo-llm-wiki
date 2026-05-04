@@ -57,6 +57,10 @@ describe('parseEmbedding()', () => {
     expect(parseEmbedding(null, 'not-json')).toBeNull();
   });
 
+  it('returns null for JSON array with non-numeric values', () => {
+    expect(parseEmbedding(null, '[1, "two", null]')).toBeNull();
+  });
+
   it('prefers BLOB over TEXT when both provided', () => {
     const original = new Float32Array([2.0]);
     const blob = new Uint8Array(original.buffer);

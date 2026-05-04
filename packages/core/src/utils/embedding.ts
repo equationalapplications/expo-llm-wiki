@@ -12,8 +12,9 @@ export function parseEmbedding(
   }
   if (text) {
     try {
-      const arr: number[] = JSON.parse(text);
-      return new Float32Array(arr);
+      const arr: unknown = JSON.parse(text);
+      if (!Array.isArray(arr) || !arr.every((v: unknown) => typeof v === 'number' && isFinite(v))) return null;
+      return new Float32Array(arr as number[]);
     } catch { return null; }
   }
   return null;
