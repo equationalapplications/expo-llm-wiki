@@ -407,6 +407,12 @@ export class WikiMemory {
     const text = `${fact.title} ${fact.body} ${tagsStr}`.trim();
     try {
       const vector = await embedFn(text);
+      // Validate before persisting: an empty or non-finite vector would poison
+      // embedding_dimension and write unusable data to entries.embedding.
+      if (vector.length === 0 || !vector.every(v => typeof v === 'number' && isFinite(v))) {
+        console.warn(`[WikiMemory] embedFact: embed() returned an invalid vector for ${fact.id}; skipping.`);
+        return false;
+      }
       await this.storeEmbeddingDimension(vector.length);
       await this.db.runAsync(
         `UPDATE ${this.prefix}entries SET embedding = ? WHERE id = ?`,
@@ -689,13 +695,12 @@ export class WikiMemory {
         try {
           const queryVec = await embedFn(trimmedQuery);
 
-          // Validate that the provider returned a well-formed vector. Non-finite values
-          // (NaN, Infinity) propagate through cosine arithmetic and make the sort
-          // comparator (b.score - a.score) unstable, producing unpredictable rankings.
-          if (!queryVec.every(v => typeof v === 'number' && isFinite(v))) {
+          // Validate that the provider returned a well-formed vector. An empty vector
+          // would cause all facts to score 0 (silently bypassing the fallback), and
+          // non-finite values (NaN, Infinity) make the sort comparator unstable.
+          if (queryVec.length === 0 || !queryVec.every(v => typeof v === 'number' && isFinite(v))) {
             throw new Error(
-              'embed() returned a vector containing non-finite values (NaN/Infinity). ' +
-              'Falling back to keyword search.'
+              'embed() returned an empty or non-finite vector. Falling back to keyword search.'
             );
           }
 
