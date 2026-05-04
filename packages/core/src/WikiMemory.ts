@@ -720,9 +720,17 @@ export class WikiMemory {
             let score = 0;
             if (row.embedding) {
               try {
-                score = cosineSimilarity(queryVec, JSON.parse(row.embedding));
+                const parsed: unknown = JSON.parse(row.embedding);
+                if (
+                  Array.isArray(parsed) &&
+                  parsed.length === queryVec.length &&
+                  (parsed as number[]).every(v => typeof v === 'number' && isFinite(v))
+                ) {
+                  score = cosineSimilarity(queryVec, parsed as number[]);
+                }
+                // non-array, wrong length, or non-finite values → score stays 0
               } catch {
-                // corrupt embedding — treat as score 0
+                // corrupt JSON — treat as score 0
               }
             }
             return { row, score };
@@ -1084,6 +1092,9 @@ export class WikiMemory {
     if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
       throw new WikiBusyError('prune', entityId);
     }
+    if (this._isReembedActive(entityId)) {
+      throw new WikiBusyError('reembed', entityId);
+    }
     this.activeMaintenanceJobs.add(jobKey);
     try {
       await this._doRunLibrarian(entityId);
@@ -1099,6 +1110,9 @@ export class WikiMemory {
     }
     if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
       throw new WikiBusyError('prune', entityId);
+    }
+    if (this._isReembedActive(entityId)) {
+      throw new WikiBusyError('reembed', entityId);
     }
     this.activeMaintenanceJobs.add(jobKey);
     try {
