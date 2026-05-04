@@ -982,7 +982,7 @@ export class WikiMemory {
     for (const fact of insertedFacts) {
       await this.embedFact(fact);
     }
-    await this.rebuildMiniSearchIndex();
+    await this.rebuildMiniSearchIndex(entityId);
   }
 
   private async _doRunHeal(entityId: string): Promise<void> {
