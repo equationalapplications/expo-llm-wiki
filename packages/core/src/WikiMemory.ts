@@ -493,17 +493,17 @@ export class WikiMemory {
   }
   /** Returns true if any maintenance job has the given operation suffix (e.g. ':prune'). */
   private _isAnyMaintenanceActiveWithSuffix(suffix: string): boolean {
-    const keyPrefix = `${this.prefix}:`;
+    const entityKeyPrefix = `${this.prefix}:`;
     for (const k of this.activeMaintenanceJobs) {
-      if (k.startsWith(keyPrefix) && k.endsWith(suffix)) return true;
+      if (k.startsWith(entityKeyPrefix) && k.endsWith(suffix)) return true;
     }
     return false;
   }
   /** Returns true if any ingest job is active for the given entity. */
   private _isIngestActiveFor(entityId: string): boolean {
-    const prefix = `${this.prefix}:${entityId}:`;
+    const entityKeyPrefix = `${this.prefix}:${entityId}:`;
     for (const k of this.activeIngestJobs) {
-      if (k.startsWith(prefix)) return true;
+      if (k.startsWith(entityKeyPrefix)) return true;
     }
     return false;
   }
