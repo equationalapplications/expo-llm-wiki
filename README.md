@@ -20,7 +20,7 @@ expo-llm-wiki is a cross-platform SQLite library for long-term LLM memory. It br
 - **Namespace Safe:** All tables are prefixed (default: `llm_wiki_`) — no collisions with your existing database.
 - **Multi-Entity:** Multiple independent "brains" in one database via `entityId`.
 - **Semantic Retrieval:** Supply an optional `embed()` function on `LLMProvider` to rank facts by vector cosine similarity. Falls back to MiniSearch keyword search when `embed` is absent or offline.
-- **Offline First:** Reads are fully local — no network required. Both the embedding path (stored vectors) and the MiniSearch fallback run entirely in-process.
+- **Offline First:** The MiniSearch fallback runs entirely in-process with no network required. The cosine similarity path requires `embed()` to vectorise the query (typically a cloud API call) but falls back to MiniSearch automatically when offline or when `embed` throws.
 - **Full Unicode Support:** UTF-8 and UTF-16 (including surrogate pairs for emoji) are fully supported. Chunks are split safely at sentence boundaries; surrogate pairs are never fragmented.
 - **Cross-Platform:** Choose the right package for your platform: Expo, React Native, React web, vanilla JS, or Node.js. The core logic is framework-agnostic and dependency-free.
 
@@ -69,6 +69,7 @@ flowchart TB
 
     %% Embedding on mutation
     librarian --> EmbedFn
+    heal --> EmbedFn
     ingest --> EmbedFn
     reembed --> EmbedFn
     EmbedFn --> entries
@@ -91,7 +92,7 @@ flowchart TB
 
 | Package | Platform | SQLite Adapter | Size | Dependencies |
 |---------|----------|---|---|---|
-| **`@equationalapplications/core-llm-wiki`** | Node.js, any platform | User-provided (e.g., `better-sqlite3`) | Smallest | None |
+| **`@equationalapplications/core-llm-wiki`** | Node.js, any platform | User-provided (e.g., `better-sqlite3`) | Smallest | `minisearch` |
 | **`@equationalapplications/expo-llm-wiki`** | Expo, React Native | `expo-sqlite` (built-in) | Minimal | `expo-sqlite` (peer) |
 | **`@equationalapplications/react-llm-wiki`** | Web (React) | User-provided (e.g., `sql.js`) | Small | `react` (peer) |
 
@@ -101,7 +102,7 @@ flowchart TB
 - **Vanilla JS or non-React framework?** → `@equationalapplications/core-llm-wiki` + `sql.js`
 - **Node.js backend?** → `@equationalapplications/core-llm-wiki` + `better-sqlite3`
 
-All packages share the same core API and database schema. The core library is **framework-agnostic and dependency-free**; `@equationalapplications/expo-llm-wiki` injects the Expo adapter, while `@equationalapplications/core-llm-wiki` and `@equationalapplications/react-llm-wiki` require your application to provide a SQLite adapter.
+All packages share the same core API and database schema. The core library is **framework-agnostic**; `@equationalapplications/expo-llm-wiki` injects the Expo adapter, while `@equationalapplications/core-llm-wiki` and `@equationalapplications/react-llm-wiki` require your application to provide a SQLite adapter.
 
 ## Installation
 
@@ -154,12 +155,23 @@ const wiki = createWiki(db, {
       });
       return response.choices[0].message.content ?? '{}';
     },
+    // Optional: supply embed() to enable cosine-similarity search.
+    // Without it, read() falls back to MiniSearch keyword search.
+    embed: async (text) => {
+      const response = await openai.embeddings.create({
+        model: 'text-embedding-3-small',
+        input: text,
+      });
+      return response.data[0].embedding;
+    },
   },
+  // Optional: called when embed() throws during read() — use to show "offline" UI.
+  onRetrievalFallback: (error) => console.warn('Embedding unavailable, using keyword search:', error),
   config: {
     tablePrefix: 'llm_wiki_',       // optional, default: 'llm_wiki_'
     maxResults: 10,                 // optional, default: 10
     autoLibrarianThreshold: 20,     // optional, default: 20
-    maxChunkLength: 6000,           // optional, default: 6000 (char count, not bytes)
+    maxChunkLength: 12000,          // optional, default: 12000 (char count, not bytes)
     chunkOverlap: 400,              // optional, default: 400 (overlap between chunks in characters)
     chunkConcurrency: 1,            // optional, default: 1 (parallel LLM calls per ingestDocument)
     pruneRetainSoftDeletedFor: 7,   // optional, default: 7  (days before hard-deleting soft-deleted rows)
@@ -363,6 +375,10 @@ await wiki.runLibrarian('entity-123');
 
 // Resolve contradictions, downgrade stale claims, remove obsolete facts
 await wiki.runHeal('entity-123');
+
+// Backfill embeddings after adding embed() to LLMProvider, or after changing embedding models.
+// Call with no args to reembed all entities, or pass an entityId to scope it.
+const { embedded, skipped } = await wiki.runReembed('entity-123');
 ```
 
 ### Format Context
@@ -438,7 +454,7 @@ const result = await wiki.runPrune('entity-123', {
 
 Defaults: `retainSoftDeletedFor = config.pruneRetainSoftDeletedFor ?? 7`, `retainEventsFor = config.pruneEventsAfter ?? 30`, `vacuum = false`.
 
-Throws `WikiBusyError` if librarian, heal, ingest, or another prune is in-flight for the same entity. `ingestDocument`, `runLibrarian`, and `runHeal` reciprocally throw `WikiBusyError` if a prune is in-flight.
+Throws `WikiBusyError` if librarian, heal, ingest, prune, or reembed is in-flight for the same entity. `ingestDocument`, `runLibrarian`, `runHeal`, and `runReembed` reciprocally throw `WikiBusyError` if a prune is in-flight.
 
 ---
 
