@@ -133,6 +133,36 @@ describe('read() — cosine similarity path', () => {
     expect(row?.access_count).toBe(0);
   });
 
+  it('falls back to MiniSearch and calls onRetrievalFallback when query embedding dimension mismatches stored dimension', async () => {
+    const fallbackErrors: Error[] = [];
+    const { wiki: wiki3d, db } = makeWiki(async (t) => keywordEmbed(t));
+    await wiki3d.setup();
+    await wiki3d.importDump(makeDump([
+      { id: 'fact-a', title: 'apple fruit', body: 'healthy' },
+      { id: 'fact-b', title: 'car vehicle', body: 'fast' },
+    ]));
+    // Store embedding_dimension = 3 in meta
+    await wiki3d.runReembed('user-1');
+
+    // Create a second WikiMemory on the same DB with a 2D embed (simulates model switch)
+    const wiki2d = new WikiMemory(db, {
+      llmProvider: {
+        generateText: async () => '{}',
+        embed: async (t: string) => t.includes('apple') ? [1, 0] : [0, 1],
+      },
+      onRetrievalFallback: (e) => fallbackErrors.push(e),
+    });
+    // setup() populates the MiniSearch index so the fallback has data
+    await wiki2d.setup();
+
+    const result = await wiki2d.read('user-1', 'apple');
+    expect(fallbackErrors).toHaveLength(1);
+    expect(fallbackErrors[0].message).toMatch(/dimension mismatch/i);
+    // MiniSearch fallback should still return results
+    expect(result.facts.length).toBeGreaterThan(0);
+    expect(result.facts[0].id).toBe('fact-a');
+  });
+
   it('facts without embeddings score 0 and appear after embedded facts', async () => {
     const { wiki, db } = makeWiki(async (t) => keywordEmbed(t));
     await wiki.setup();
@@ -149,3 +179,4 @@ describe('read() — cosine similarity path', () => {
     expect(result.facts[0].id).toBe('fact-a');
   });
 });
+

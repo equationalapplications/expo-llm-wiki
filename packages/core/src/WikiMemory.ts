@@ -667,6 +667,24 @@ export class WikiMemory {
       if (embedFn) {
         try {
           const queryVec = await embedFn(trimmedQuery);
+
+          // Detect embedding dimension mismatch: if stored dimension differs from the
+          // query vector, existing fact embeddings were built with a different model and
+          // cosine scoring would silently produce misleading rankings. Fall back to
+          // MiniSearch until the caller runs runReembed().
+          const storedDimRow = await this.db.getFirstAsync<{ value: string }>(
+            `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension'`
+          );
+          if (storedDimRow) {
+            const storedDim = parseInt(storedDimRow.value, 10);
+            if (storedDim !== queryVec.length) {
+              throw new Error(
+                `Embedding dimension mismatch: stored ${storedDim}, query has ${queryVec.length}. ` +
+                `Call runReembed() to rebuild embeddings with the new model.`
+              );
+            }
+          }
+
           // Phase 1: fetch only scoring columns to avoid loading large body/tags for all rows
           const scoreRows = await this.db.getAllAsync<{
             id: string;
