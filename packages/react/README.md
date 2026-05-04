@@ -47,13 +47,6 @@ await wiki.setup();
 </WikiProvider>
 ```
 
-**Bundler Support:**
-
-- **Vite** ✅ Full support (recommended for Expo web)
-- **webpack 5** ✅ With config: `experiments: { asyncWebAssembly: true }`
-- **Next.js** ✅ With config: enable asyncWebAssembly in webpack hook
-- **Expo Metro** ❌ Not supported (Metro cannot bundle module-type Workers)
-
 ## Hooks
 
 ### `useMemoryRead(entityId, query)`
