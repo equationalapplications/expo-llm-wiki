@@ -276,27 +276,69 @@ export class WikiMemory {
       prefix: true,
     },
   });
+  private miniSearchEntryIdsByEntity = new Map<string, Set<string>>();
 
-  private async rebuildMiniSearchIndex(): Promise<void> {
+  private normalizeMiniSearchRow(row: {
+    id: string; entity_id: string; title: string; body: string; tags: string;
+  }): { id: string; entity_id: string; title: string; body: string; tags: string } {
+    return {
+      id: row.id,
+      entity_id: row.entity_id,
+      title: row.title,
+      body: row.body,
+      tags: (() => {
+        try {
+          const parsed = JSON.parse(row.tags);
+          return Array.isArray(parsed) ? parsed.join(' ') : row.tags;
+        } catch {
+          return row.tags;
+        }
+      })(),
+    };
+  }
+
+  private async rebuildMiniSearchIndex(entityId?: string): Promise<void> {
+    if (entityId) {
+      const rows = await this.db.getAllAsync<{
+        id: string; entity_id: string; title: string; body: string; tags: string;
+      }>(
+        `SELECT id, entity_id, title, body, tags FROM ${this.prefix}entries WHERE deleted_at IS NULL AND entity_id = ?`,
+        [entityId],
+      );
+
+      const previousIds = this.miniSearchEntryIdsByEntity.get(entityId);
+      if (previousIds) {
+        for (const id of previousIds) {
+          this.miniSearch.discard(id);
+        }
+      }
+
+      const documents = rows.map(row => this.normalizeMiniSearchRow(row));
+      if (documents.length > 0) {
+        this.miniSearch.addAll(documents);
+      }
+
+      this.miniSearchEntryIdsByEntity.set(entityId, new Set(documents.map(document => document.id)));
+      return;
+    }
+
     const rows = await this.db.getAllAsync<{
       id: string; entity_id: string; title: string; body: string; tags: string;
     }>(`SELECT id, entity_id, title, body, tags FROM ${this.prefix}entries WHERE deleted_at IS NULL`);
 
     this.miniSearch.removeAll();
-    this.miniSearch.addAll(rows.map(r => ({
-      id: r.id,
-      entity_id: r.entity_id,
-      title: r.title,
-      body: r.body,
-      tags: (() => {
-        try {
-          const parsed = JSON.parse(r.tags);
-          return Array.isArray(parsed) ? parsed.join(' ') : r.tags;
-        } catch {
-          return r.tags;
-        }
-      })(),
-    })));
+    this.miniSearchEntryIdsByEntity.clear();
+
+    const documents = rows.map(row => this.normalizeMiniSearchRow(row));
+    if (documents.length > 0) {
+      this.miniSearch.addAll(documents);
+    }
+
+    for (const document of documents) {
+      const ids = this.miniSearchEntryIdsByEntity.get(document.entity_id) ?? new Set<string>();
+      ids.add(document.id);
+      this.miniSearchEntryIdsByEntity.set(document.entity_id, ids);
+    }
   }
 
   private async storeEmbeddingDimension(dim: number): Promise<void> {
