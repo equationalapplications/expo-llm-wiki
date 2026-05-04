@@ -155,6 +155,22 @@ describe('useMemoryRead', () => {
     // The last call should use the updated options captured via the ref
     expect(wiki.read).toHaveBeenLastCalledWith('user-1', 'q', { maxResults: 7 });
   });
+
+  it('does not re-fetch when only the options reference changes on re-render', async () => {
+    const { rerender } = renderHook(
+      ({ opts }: { opts: { maxResults: number } }) => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki), initialProps: { opts: { maxResults: 3 } } }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    // Re-render with a new options object reference but the same logical values.
+    // Because options are held in a ref, changing only the reference must NOT
+    // trigger an extra wiki.read() call.
+    rerender({ opts: { maxResults: 3 } });
+    await new Promise(r => setTimeout(r, 50));
+    expect(wiki.read).toHaveBeenCalledTimes(1);
+  });
 });
 
 // ---------------------------------------------------------------------------

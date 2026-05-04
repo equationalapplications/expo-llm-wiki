@@ -247,7 +247,7 @@ const handleDelete = async (factId: string) => {
 Run background maintenance jobs: librarian (deduplication/fact extraction), heal (repair corrupted embeddings), reembed (convert TEXT embeddings to BLOB / update after model change), prune (remove stale facts).
 
 ```typescript
-const { runLibrarian, runHeal, runReembed, runPrune, isPending, error } = useWikiMaintenance();
+const { runLibrarian, runHeal, runReembed, runPrune, isPending, error, lastResult } = useWikiMaintenance();
 
 // Deduplicate and consolidate facts from events
 await runLibrarian('user-123');
@@ -255,12 +255,16 @@ await runLibrarian('user-123');
 // Repair corrupted embeddings
 await runHeal('user-123');
 
-// Backfill BLOB embeddings or update after changing embedding model
+// Backfill BLOB embeddings or update after changing embedding model.
+// Note: runReembed() clears lastResult but does NOT set it to a new value.
+// The operation result is available only from the returned Promise.
 const { embedded, skipped } = await runReembed('user-123');
 
 // Remove stale/old facts
 await runPrune('user-123');
 ```
+
+> **`lastResult` note**: `runLibrarian`, `runHeal`, and `runPrune` each update `lastResult` on success. `runReembed` intentionally does not — it clears `lastResult` to null at start but leaves it null on completion. This avoids a source-breaking change to the `MaintenanceResult` type for consumers that exhaustively switch on `lastResult.operation`. Use the `Promise` return value to inspect reembed results.
 
 ### `useWikiHasChanged()`
 
@@ -336,9 +340,9 @@ flowchart TD
     G -->|Yes| H["MiniSearch pre-filter<br/>top K candidates"]
     H --> I["Phase 1: Cosine score<br/>top K candidates"]
     G -->|No| J["Phase 1: Cosine score<br/>all facts"]
-    I --> K["Cache vectors<br/>in-memory"]
-    J --> K
+    J --> K["Cache vectors<br/>in-memory<br/>(full scan only)"]
     K --> L{hybridWeight = 1?}
+    I --> L
     L -->|Yes| M["Pure semantic<br/>ranking"]
     L -->|No| N["Hybrid blend:<br/>semantic + keyword<br/>via MiniSearch"]
     M --> O["Phase 2: Fetch full rows<br/>top maxResults"]
@@ -355,7 +359,7 @@ The flowchart shows:
 3. **Pre-filtering** to limit cosine scoring to top-K keyword matches (O(N) → O(K))
 4. **Two-phase SELECT**: phase 1 scores all/filtered facts with minimal columns, phase 2 fetches full rows for winners
 5. **Hybrid scoring** to blend semantic and keyword rankings
-6. **Vector caching** of parsed embeddings to avoid re-parsing on repeated reads
+6. **Vector caching** on full scans only; reads with `preFilterLimit` active skip cache population
 
 ## License
 

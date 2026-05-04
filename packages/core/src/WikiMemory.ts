@@ -280,6 +280,12 @@ export class WikiMemory {
   private miniSearchEntryIdsByEntity = new Map<string, Set<string>>();
   /** Maximum number of entities whose parsed embedding vectors are held in memory. */
   private static readonly MAX_VECTOR_CACHE_ENTITIES = 100;
+  /**
+   * Maximum number of fact vectors cached per entity. Entities with more facts
+   * than this skip cache population to avoid large heap allocations on
+   * memory-constrained runtimes (e.g., mobile/Expo).
+   */
+  private static readonly MAX_VECTOR_CACHE_FACTS_PER_ENTITY = 1000;
   private vectorCache: Map<string, Map<string, Float32Array>> = new Map();
 
   private normalizeMiniSearchRow(row: {
@@ -829,14 +835,18 @@ export class WikiMemory {
               return { row, score };
             });
             if (populateCache) {
-              // Evict the oldest entity when at the per-process cap to prevent unbounded growth
-              // on long-lived instances serving many distinct entities.
-              if (!this.vectorCache.has(entityId) &&
-                  this.vectorCache.size >= WikiMemory.MAX_VECTOR_CACHE_ENTITIES) {
-                const oldestKey = this.vectorCache.keys().next().value as string | undefined;
-                if (oldestKey !== undefined) this.vectorCache.delete(oldestKey);
+              // Skip caching if the entity has too many facts; prevents a single large
+              // wiki from consuming tens of MBs of heap on memory-constrained (mobile/Expo) runtimes.
+              if (scored.length <= WikiMemory.MAX_VECTOR_CACHE_FACTS_PER_ENTITY) {
+                // Evict the oldest entity when at the per-process cap to prevent unbounded growth
+                // on long-lived instances serving many distinct entities.
+                if (!this.vectorCache.has(entityId) &&
+                    this.vectorCache.size >= WikiMemory.MAX_VECTOR_CACHE_ENTITIES) {
+                  const oldestKey = this.vectorCache.keys().next().value as string | undefined;
+                  if (oldestKey !== undefined) this.vectorCache.delete(oldestKey);
+                }
+                this.vectorCache.set(entityId, entityCache);
               }
-              this.vectorCache.set(entityId, entityCache);
             }
 
             scored.sort((a, b) => {
@@ -1274,6 +1284,14 @@ export class WikiMemory {
         params
       );
 
+      // Invalidate before the embedding loop so any concurrent read() fetches fresh
+      // vectors from the database rather than stale pre-reembed cached ones.
+      if (entityId) {
+        this.vectorCache.delete(entityId);
+      } else {
+        this.vectorCache.clear();
+      }
+
       let embedded = 0;
       let skipped = 0;
       for (const row of rows) {
@@ -1288,11 +1306,6 @@ export class WikiMemory {
       }
       return { embedded, skipped };
     } finally {
-      if (entityId) {
-        this.vectorCache.delete(entityId);
-      } else {
-        this.vectorCache.clear();
-      }
       this.activeMaintenanceJobs.delete(reembedKey);
     }
   }
