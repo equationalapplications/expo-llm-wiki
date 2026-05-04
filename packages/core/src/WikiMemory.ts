@@ -278,6 +278,8 @@ export class WikiMemory {
     },
   });
   private miniSearchEntryIdsByEntity = new Map<string, Set<string>>();
+  /** Maximum number of entities whose parsed embedding vectors are held in memory. */
+  private static readonly MAX_VECTOR_CACHE_ENTITIES = 100;
   private vectorCache: Map<string, Map<string, Float32Array>> = new Map();
 
   private normalizeMiniSearchRow(row: {
@@ -816,6 +818,13 @@ export class WikiMemory {
               return { row, score };
             });
             if (populateCache) {
+              // Evict the oldest entity when at the per-process cap to prevent unbounded growth
+              // on long-lived instances serving many distinct entities.
+              if (!this.vectorCache.has(entityId) &&
+                  this.vectorCache.size >= WikiMemory.MAX_VECTOR_CACHE_ENTITIES) {
+                const oldestKey = this.vectorCache.keys().next().value as string | undefined;
+                if (oldestKey !== undefined) this.vectorCache.delete(oldestKey);
+              }
               this.vectorCache.set(entityId, entityCache);
             }
 

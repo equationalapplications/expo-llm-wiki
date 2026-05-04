@@ -115,14 +115,15 @@ describe('vector cache — invalidation', () => {
     const { wiki, db } = makeWiki(async () => [1, 0, 0]);
     await wiki.setup();
     await insertFactWithBlob(db, 'f1', 'user-1', [1, 0, 0]);
+    await insertFactWithBlob(db, 'f2', 'user-1', [0, 1, 0]); // second fact remains after forget(f1)
     await db.runAsync(`INSERT OR REPLACE INTO llm_wiki_meta (key, value) VALUES ('embedding_dimension', '3')`);
 
-    await wiki.read('user-1', 'query'); // populate cache
-    await wiki.forget('user-1', { entryId: 'f1' });
+    await wiki.read('user-1', 'query'); // populate cache (f1 + f2)
+    await wiki.forget('user-1', { entryId: 'f1' }); // soft-deletes f1, clears cache for user-1
 
     parseSpy.mockClear();
-    await wiki.read('user-1', 'query');
-    // After forget() cache is cleared — verify no throw
+    await wiki.read('user-1', 'query'); // f2 still exists; cache was cleared → must re-parse
+    expect(parseSpy.mock.calls.length).toBeGreaterThan(0); // cache was invalidated
     parseSpy.mockRestore();
   });
 

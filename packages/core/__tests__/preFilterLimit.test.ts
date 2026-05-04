@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { WikiMemory } from '../src/WikiMemory';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 import type { WikiOptions } from '../src/types';
@@ -61,13 +61,27 @@ describe('preFilterLimit', () => {
     // Rebuild MiniSearch so all inserted facts are indexed
     await wiki.setup();
 
-    // We verify correct behavior — at most preFilterLimit=5 facts returned
+    // Spy on the DB adapter to verify the pre-filter query fetches at most 5 rows
+    const getAllSpy = vi.spyOn(db, 'getAllAsync');
+
     const result = await wiki.read('user-1', 'target');
+
+    // The phase-1 scoring query uses an IN clause with the pre-filtered IDs.
+    // Verify it was issued and contained at most preFilterLimit=5 candidate IDs.
+    const scoringCall = getAllSpy.mock.calls.find(
+      ([sql]) => (sql as string).includes('embedding_blob') && (sql as string).includes(' IN (')
+    );
+    expect(scoringCall).toBeDefined();
+    const candidateIds = scoringCall![1] as string[];
+    expect(candidateIds.length).toBeLessThanOrEqual(5);
+
+    // Also verify result correctness — all returned facts should be target facts (keyword match)
     expect(result.facts.length).toBeLessThanOrEqual(5);
-    // All returned facts should be target facts (keyword match)
     for (const fact of result.facts) {
       expect(fact.id).toMatch(/f-target/);
     }
+
+    getAllSpy.mockRestore();
   });
 
   it('pre-filter returning 0 candidates → empty facts, no access tracking update', async () => {

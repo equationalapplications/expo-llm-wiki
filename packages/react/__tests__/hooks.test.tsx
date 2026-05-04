@@ -22,6 +22,7 @@ function makeMockWiki() {
     runLibrarian: vi.fn().mockResolvedValue(undefined),
     runHeal: vi.fn().mockResolvedValue(undefined),
     runPrune: vi.fn().mockResolvedValue({ entries: 0, tasks: 0, events: 0 }),
+    runReembed: vi.fn().mockResolvedValue({ embedded: 0, skipped: 0 }),
   };
 }
 
@@ -123,6 +124,36 @@ describe('useMemoryRead', () => {
     await waitFor(() => expect(result.current.isPending).toBe(false));
 
     expect(wiki.read).toHaveBeenCalledTimes(2);
+  });
+
+  it('forwards ReadOptions to wiki.read', async () => {
+    const { result } = renderHook(
+      () => useMemoryRead('user-1', 'preferences', { maxResults: 5, preFilterLimit: 20 }),
+      { wrapper: wrapper(wiki) }
+    );
+
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+
+    expect(wiki.read).toHaveBeenCalledWith('user-1', 'preferences', { maxResults: 5, preFilterLimit: 20 });
+  });
+
+  it('uses the latest options via ref on refetch()', async () => {
+    let opts: { maxResults: number } | undefined = { maxResults: 3 };
+    const { result, rerender } = renderHook(
+      () => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki) }
+    );
+
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+
+    // Update options and trigger a rerender so the ref is updated, then refetch
+    opts = { maxResults: 7 };
+    rerender();
+    act(() => { result.current.refetch(); });
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+
+    // The last call should use the updated options captured via the ref
+    expect(wiki.read).toHaveBeenLastCalledWith('user-1', 'q', { maxResults: 7 });
   });
 });
 
@@ -234,6 +265,44 @@ describe('useWikiMaintenance', () => {
 
     expect(pruneResult).toEqual({ entries: 3, tasks: 1, events: 2 });
     expect(result.current.lastResult).toEqual({ operation: 'prune', result: { entries: 3, tasks: 1, events: 2 } });
+  });
+
+  it('runReembed returns embedded/skipped counts and sets lastResult', async () => {
+    wiki.runReembed.mockResolvedValue({ embedded: 5, skipped: 2 });
+    const { result } = renderHook(() => useWikiMaintenance(), { wrapper: wrapper(wiki) });
+
+    let reembedResult!: { embedded: number; skipped: number };
+    await act(async () => { reembedResult = await result.current.runReembed('user-1'); });
+
+    expect(wiki.runReembed).toHaveBeenCalledWith('user-1');
+    expect(reembedResult).toEqual({ embedded: 5, skipped: 2 });
+    expect(result.current.lastResult).toEqual({ operation: 'reembed', result: { embedded: 5, skipped: 2 } });
+    expect(result.current.isPending).toBe(false);
+  });
+
+  it('runReembed without entityId calls wiki.runReembed(undefined)', async () => {
+    wiki.runReembed.mockResolvedValue({ embedded: 10, skipped: 0 });
+    const { result } = renderHook(() => useWikiMaintenance(), { wrapper: wrapper(wiki) });
+
+    await act(async () => { await result.current.runReembed(); });
+
+    expect(wiki.runReembed).toHaveBeenCalledWith(undefined);
+    expect(result.current.lastResult).toEqual({ operation: 'reembed', result: { embedded: 10, skipped: 0 } });
+  });
+
+  it('sets error state and re-throws when runReembed rejects', async () => {
+    const boom = new Error('reembed failed');
+    wiki.runReembed.mockRejectedValue(boom);
+    const { result } = renderHook(() => useWikiMaintenance(), { wrapper: wrapper(wiki) });
+
+    let caught: unknown;
+    await act(async () => {
+      try { await result.current.runReembed('user-1'); } catch (e) { caught = e; }
+    });
+
+    expect(caught).toBe(boom);
+    expect(result.current.error).toBe(boom);
+    expect(result.current.isPending).toBe(false);
   });
 
   it('sets error state and re-throws when runLibrarian rejects', async () => {

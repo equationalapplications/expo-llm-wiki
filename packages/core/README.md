@@ -121,7 +121,7 @@ const memory = await wikiMemory.read('user-123', 'my preferences', {
 ```
 
 **Hybrid scoring blends:**
-- `hybridWeight: 1.0` → pure semantic ranking (full cosine scan)
+- `hybridWeight: 1.0` → pure semantic scoring among the candidates being scored; if `preFilterLimit` is set, semantic scoring is still limited to the top-K MiniSearch matches
 - `hybridWeight: 0.5` → balanced semantic + keyword (50/50 blend)
 - `hybridWeight: 0.0` → pure keyword ranking, skips `embed()` entirely (no LLM API cost)
 
@@ -249,10 +249,11 @@ flowchart TD
     A["read(entityId, query)"] --> B{hybridWeight = 0?}
     B -->|Yes| C["MiniSearch only<br/>(skip embed)"]
     B -->|No| D{embed available?}
-    D -->|No| E["onRetrievalFallback"]
-    E --> C
+    D -->|No| C
     D -->|Yes| F["Embed query"]
-    F --> G{preFilterLimit<br/>active?}
+    F -->|throws| E["onRetrievalFallback<br/>callback"]
+    E --> C
+    F -->|succeeds| G{preFilterLimit<br/>active?}
     G -->|Yes| H["MiniSearch pre-filter<br/>top K candidates"]
     H --> I["Phase 1: Cosine score<br/>top K candidates"]
     G -->|No| J["Phase 1: Cosine score<br/>all facts"]
@@ -271,7 +272,7 @@ flowchart TD
 
 The flowchart shows:
 1. **Fast-path** when `hybridWeight = 0` (pure keyword, no embed cost)
-2. **Fallback chain** when embed unavailable (MiniSearch via `onRetrievalFallback`)
+2. **Fallback chain** when embed unavailable (MiniSearch silently) or throws (`onRetrievalFallback` callback, then MiniSearch)
 3. **Pre-filtering** to limit cosine scoring to top-K keyword matches (O(N) → O(K))
 4. **Two-phase SELECT**: phase 1 scores all/filtered facts with minimal columns, phase 2 fetches full rows for winners
 5. **Hybrid scoring** to blend semantic and keyword rankings

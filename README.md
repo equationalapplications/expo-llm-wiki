@@ -341,7 +341,7 @@ const { facts, tasks, events } = await wiki.read('entity-123', 'weekend plans');
 // events: WikiEvent[] — 10 most recent, ascending
 
 // Per-call overrides (e.g. for a search settings dashboard):
-const { facts } = await wiki.read('entity-123', 'weekend plans', {
+const overrideResult = await wiki.read('entity-123', 'weekend plans', {
   maxResults: 5,          // override WikiConfig.maxResults for this call
   preFilterLimit: 20,     // limit cosine candidates to top-20 keyword matches
   hybridWeight: 0.5,      // 50/50 semantic + keyword blend

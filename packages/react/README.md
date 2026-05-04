@@ -138,7 +138,7 @@ const wiki = createWiki(adapter, {
 ```
 
 **Hybrid scoring blends:**
-- `hybridWeight: 1.0` → pure semantic ranking (full cosine scan)
+- `hybridWeight: 1.0` → pure semantic scoring among the candidates being scored; if `preFilterLimit` is set, semantic scoring is still limited to the top-K MiniSearch matches
 - `hybridWeight: 0.5` → balanced semantic + keyword (50/50 blend)
 - `hybridWeight: 0.0` → pure keyword ranking, skips `embed()` entirely (no LLM API cost)
 
