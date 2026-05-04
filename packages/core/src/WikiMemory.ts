@@ -676,6 +676,7 @@ export class WikiMemory {
       }
 
       await this.rebuildMiniSearchIndex(entityId);
+      this.vectorCache.delete(entityId);
       return { entries: deletedEntries, tasks: deletedTasks, events: deletedEvents };
     } finally {
       this.activeMaintenanceJobs.delete(pruneKey);
@@ -1052,6 +1053,7 @@ export class WikiMemory {
       await this.embedFact(fact);
     }
     await this.rebuildMiniSearchIndex(entityId);
+    this.vectorCache.delete(entityId);
   }
 
   private async _doRunHeal(entityId: string): Promise<void> {
@@ -1143,6 +1145,7 @@ export class WikiMemory {
       await this.embedFact(fact);
     }
     await this.rebuildMiniSearchIndex(entityId);
+    this.vectorCache.delete(entityId);
   }
 
   async runLibrarian(entityId: string): Promise<void> {
@@ -1250,6 +1253,11 @@ export class WikiMemory {
       }
       return { embedded, skipped };
     } finally {
+      if (entityId) {
+        this.vectorCache.delete(entityId);
+      } else {
+        this.vectorCache.clear();
+      }
       this.activeMaintenanceJobs.delete(reembedKey);
     }
   }
@@ -1474,6 +1482,7 @@ export class WikiMemory {
     }
 
     await this.rebuildMiniSearchIndex();
+    this.vectorCache.clear(); // importDump touches multiple entities
   }
 
   async forget(entityId: string, params: { entryId?: string; taskId?: string; sourceRef?: string; sourceHash?: string; clearAll?: boolean }): Promise<{ deleted: { entries: number; tasks: number } }> {
@@ -1536,6 +1545,7 @@ export class WikiMemory {
     }
 
     await this.rebuildMiniSearchIndex(entityId);
+    this.vectorCache.delete(entityId);
     return { deleted: { entries: deletedEntries, tasks: deletedTasks } };
   }
 
@@ -1631,6 +1641,7 @@ export class WikiMemory {
         await this.embedFact(fact);
       }
       await this.rebuildMiniSearchIndex(entityId);
+      this.vectorCache.delete(entityId);
 
       return { truncated, chunks: chunks.length };
     } finally {
