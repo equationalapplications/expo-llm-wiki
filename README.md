@@ -665,7 +665,7 @@ flowchart TD
 ```
 
 1. **Fast-path** when `hybridWeight = 0` (pure keyword, no embed cost)
-2. **Fallback chain** when embed unavailable (MiniSearch via `onRetrievalFallback`)
+2. **Fallback paths**: if `embed` is absent, `read()` falls back silently to MiniSearch; if an embedding attempt fails, `onRetrievalFallback` is invoked before using MiniSearch
 3. **Pre-filtering** to limit cosine scoring to top-K keyword matches (O(N) → O(K))
 4. **Two-phase SELECT**: phase 1 scores all/filtered facts with minimal columns, phase 2 fetches full rows for winners
 5. **Hybrid scoring** to blend semantic and keyword rankings
