@@ -417,8 +417,13 @@ export class WikiMemory {
         console.warn(`[WikiMemory] embedFact: embed() returned an invalid vector for ${fact.id}; skipping.`);
         return false;
       }
-      await this.storeEmbeddingDimension(vector.length);
-      const blob = new Uint8Array(new Float32Array(vector).buffer);
+      const float32Vector = new Float32Array(vector);
+      if (!Array.from(float32Vector).every(v => isFinite(v))) {
+        console.warn(`[WikiMemory] embedFact: embed() returned values that overflow float32 for ${fact.id}; skipping.`);
+        return false;
+      }
+      await this.storeEmbeddingDimension(float32Vector.length);
+      const blob = new Uint8Array(float32Vector.buffer);
       await this.db.runAsync(
         `UPDATE ${this.prefix}entries SET embedding_blob = ?, embedding = NULL WHERE id = ?`,
         [blob, fact.id]
