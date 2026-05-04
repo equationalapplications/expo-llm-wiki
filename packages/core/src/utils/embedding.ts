@@ -18,7 +18,11 @@ export function parseEmbedding(
     try {
       const arr: unknown = JSON.parse(text);
       if (!Array.isArray(arr) || !arr.every((v: unknown) => typeof v === 'number' && isFinite(v))) return null;
-      return new Float32Array(arr as number[]);
+      const vector = new Float32Array(arr as number[]);
+      for (const value of vector) {
+        if (!Number.isFinite(value)) return null;
+      }
+      return vector;
     } catch { return null; }
   }
   return null;
