@@ -686,10 +686,16 @@ export class WikiMemory {
   async read(entityId: string, query: string, options?: ReadOptions): Promise<MemoryBundle> {
     const config = this.options.config;
     const maxResults = options?.maxResults ?? config?.maxResults ?? config?.maxFtsResults ?? 10;
-    const effectivePreFilterLimit =
+    const rawPreFilterLimit =
       options?.preFilterLimit === null
         ? undefined
         : (options?.preFilterLimit ?? config?.preFilterLimit);
+    const effectivePreFilterLimit =
+      rawPreFilterLimit === undefined
+        ? undefined
+        : Number.isFinite(rawPreFilterLimit)
+          ? Math.max(0, Math.trunc(rawPreFilterLimit))
+          : undefined;
     const hybridWeight = options?.hybridWeight ?? config?.hybridWeight;
     const weight = hybridWeight !== undefined
       ? Math.max(0, Math.min(1, hybridWeight))
