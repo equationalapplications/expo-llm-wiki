@@ -114,12 +114,13 @@ describe('schema migrations', () => {
     expect(versionWrite).toBeDefined();
   });
 
-  it('legacy install with porter → no migration runs, version written', async () => {
+  it('legacy install with porter → migration 1 skipped; migration 2 runs to drop FTS5', async () => {
     const db = makeMockDb({ hasEntries: true, hasPorter: true, metaVersion: null });
     const wiki = createWiki(db);
     await wiki.setup();
 
-    // Migration 1 (porter FTS5 rebuild) should NOT run since porter is already present.
+    // Migration 1 (porter FTS5 rebuild) should NOT run since porter is already present
+    // and migration 1 is a no-op. The FTS5 virtual table should never be recreated.
     const hasPorterRebuild = db.execCalls.some(s => s.includes('CREATE VIRTUAL TABLE'));
     expect(hasPorterRebuild).toBe(false);
 

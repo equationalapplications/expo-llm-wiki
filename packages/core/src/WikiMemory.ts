@@ -319,11 +319,21 @@ export class WikiMemory {
     }
   }
 
-  private async embedFact(fact: { id: string; title: string; body: string; tags: string | string[] }): Promise<void> {
+  private async embedFact(fact: { id: string; title: string; body: string; tags: string | string[] }): Promise<boolean> {
     const embedFn = this.options.llmProvider.embed;
-    if (!embedFn) return;
-    const tags = Array.isArray(fact.tags) ? fact.tags.join(' ') : fact.tags;
-    const text = `${fact.title} ${fact.body} ${tags}`.trim();
+    if (!embedFn) return false;
+    let tagsStr: string;
+    if (Array.isArray(fact.tags)) {
+      tagsStr = fact.tags.join(' ');
+    } else {
+      try {
+        const parsed = JSON.parse(fact.tags);
+        tagsStr = Array.isArray(parsed) ? parsed.join(' ') : fact.tags;
+      } catch {
+        tagsStr = fact.tags;
+      }
+    }
+    const text = `${fact.title} ${fact.body} ${tagsStr}`.trim();
     try {
       const vector = await embedFn(text);
       await this.storeEmbeddingDimension(vector.length);
@@ -331,8 +341,10 @@ export class WikiMemory {
         `UPDATE ${this.prefix}entries SET embedding = ? WHERE id = ?`,
         [JSON.stringify(vector), fact.id]
       );
+      return true;
     } catch (err) {
       console.warn(`[WikiMemory] embedFact failed for ${fact.id}:`, err);
+      return false;
     }
   }
 
@@ -585,10 +597,17 @@ export class WikiMemory {
             `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
             [entityId]
           );
-          const scored = rows.map(row => ({
-            row,
-            score: row.embedding ? cosineSimilarity(queryVec, JSON.parse(row.embedding)) : 0,
-          }));
+          const scored = rows.map(row => {
+            let score = 0;
+            if (row.embedding) {
+              try {
+                score = cosineSimilarity(queryVec, JSON.parse(row.embedding));
+              } catch {
+                // corrupt embedding — treat as score 0
+              }
+            }
+            return { row, score };
+          });
           scored.sort((a, b) => b.score - a.score);
           facts = scored.slice(0, maxResults).map(s => s.row);
           usedEmbed = true;
@@ -604,13 +623,16 @@ export class WikiMemory {
           filter: (r) => (r as unknown as { entity_id: string }).entity_id === entityId,
           combineWith: 'OR',
         });
-        const topIds = new Set(results.slice(0, maxResults).map((r: { id: string }) => r.id));
-        const allRows = await this.db.getAllAsync<WikiFact>(
-          `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
-          [entityId]
-        );
-        const byId = new Map(allRows.map(r => [r.id, r]));
-        facts = [...topIds].map(id => byId.get(id)).filter((f): f is WikiFact => f !== undefined);
+        const topIds = results.slice(0, maxResults).map((r: { id: string }) => r.id);
+        if (topIds.length > 0) {
+          const placeholders = topIds.map(() => '?').join(',');
+          const rows = await this.db.getAllAsync<WikiFact>(
+            `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+            topIds
+          );
+          const byId = new Map(rows.map(r => [r.id, r]));
+          facts = topIds.map(id => byId.get(id)).filter((f): f is WikiFact => f !== undefined);
+        }
       }
 
       if (facts.length > 0) {
@@ -650,10 +672,13 @@ export class WikiMemory {
       ),
     ]);
 
-    const parsedFacts = facts.map(f => ({
-      ...f,
-      tags: typeof f.tags === 'string' ? JSON.parse(f.tags) : f.tags,
-    }));
+    const parsedFacts = facts.map(f => {
+      const { embedding: _embedding, ...rest } = f as WikiFact & { embedding?: unknown };
+      return {
+        ...rest,
+        tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
+      };
+    });
 
     return { facts: parsedFacts, tasks, events: events.reverse() };
   }
@@ -935,9 +960,14 @@ export class WikiMemory {
     const embedFn = this.options.llmProvider.embed;
     if (!embedFn) return { embedded: 0, skipped: 0 };
 
-    const reembedKey = `${this.prefix}:reembed`;
+    const reembedKey = entityId
+      ? `${this.prefix}:${entityId}:reembed`
+      : `${this.prefix}:reembed`;
     if (this.activeMaintenanceJobs.has(reembedKey)) {
       throw new WikiBusyError('reembed', entityId ?? '*');
+    }
+    if (entityId && this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
+      throw new WikiBusyError('prune', entityId);
     }
     this.activeMaintenanceJobs.add(reembedKey);
 
@@ -952,12 +982,9 @@ export class WikiMemory {
       let embedded = 0;
       let skipped = 0;
       for (const row of rows) {
-        try {
-          await this.embedFact(row);
-          embedded++;
-        } catch {
-          skipped++;
-        }
+        const success = await this.embedFact(row);
+        if (success) embedded++;
+        else skipped++;
       }
       return { embedded, skipped };
     } finally {
