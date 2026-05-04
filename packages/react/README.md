@@ -2,6 +2,8 @@
 
 React hooks and web utilities for @equationalapplications/core-llm-wiki, designed for web and Expo.
 
+> Inspired by [Andrej Karpathy's LLM Wiki memory spec](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
+
 ## Features
 
 - **Reactive reads** — Auto-refetch on `entityId` or query changes

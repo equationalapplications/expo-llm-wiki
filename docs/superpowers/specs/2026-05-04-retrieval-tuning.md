@@ -27,8 +27,8 @@ PR #11 ships correct semantic retrieval but leaves five performance and accuracy
 ## Goals
 
 - `embedFact()` stores embeddings as raw `Float32Array` bytes (`BLOB`) in a new `embedding_blob` column. Existing `embedding` TEXT rows remain readable until reembedded.
-- `read()` cosine path uses a two-phase SELECT: phase 1 fetches only `id, embedding_blob, embedding` for all N rows (scoring columns only); phase 2 fetches `SELECT * WHERE id IN (...)` for the top `maxResults` winners only.
-- `WikiMemory` maintains an in-memory `Map<string, Float32Array>` vector cache per entity. Cache populated on first cosine-path read, invalidated on any fact mutation (librarian, heal, ingest, importDump, forget, prune, runReembed).
+- `read()` cosine path uses a two-phase SELECT: phase 1 fetches only `id, embedding_blob, embedding, updated_at, access_count` for all N rows (scoring columns only); phase 2 fetches `SELECT * WHERE id IN (...)` for the top `maxResults` winners only.
+- `WikiMemory` maintains an in-memory `Map<string, Float32Array>` vector cache per entity. Cache populated only on full-entity-scan cosine reads (no `preFilterLimit` active); invalidated on any fact mutation (librarian, heal, ingest, importDump, forget, prune, runReembed).
 - `read()` prefers cache-hit vectors; falls back to parsing `embedding_blob` BLOB then `embedding` TEXT for misses.
 - `runReembed()` converts all TEXT rows to BLOB and nullifies the TEXT column.
 - `WikiConfig` gains two new optional fields: `preFilterLimit` and `hybridWeight`.
@@ -36,8 +36,8 @@ PR #11 ships correct semantic retrieval but leaves five performance and accuracy
 - When `preFilterLimit` is set, MiniSearch runs first and the cosine scan is limited to the top-K keyword candidates.
 - When `hybridWeight` is set, cosine and MiniSearch scores are both computed, normalized to `[0, 1]`, and blended.
 - When both are set, a single MiniSearch call serves both roles (no duplicate search).
-- `hybridWeight` ignored when `embed` is absent or throws — MiniSearch fallback path unchanged.
-- `preFilterLimit` returning zero candidates yields an empty facts array with no access tracking update.
+- `hybridWeight` ignored when `embed` is absent or throws — MiniSearch fallback path unchanged. Setting `hybridWeight: 0` explicitly also skips `embed()` entirely; no `onRetrievalFallback` is called because no embed was attempted.
+- `preFilterLimit` returning zero candidates yields an empty facts array with no access tracking update. When both `preFilterLimit` and `hybridWeight` are set and pre-filter returns zero candidates, hybrid scoring is also skipped.
 - Values of `hybridWeight` outside `[0, 1]` are clamped silently.
 - All existing retrieval behavior (empty-query recency order, access tracking, `onRetrievalFallback`) unchanged.
 
@@ -98,7 +98,8 @@ export interface WikiConfig {
 
   /**
    * Hybrid blend weight (0.0–1.0).
-   * 0.0 = pure keyword, 1.0 = pure semantic.
+   * 0.0 = pure keyword (skips embed() entirely — no LLM API call; onRetrievalFallback not called).
+   * 1.0 = pure semantic.
    * When set, cosine and MiniSearch BM25 scores are both computed,
    * normalized to [0,1], and blended:
    *   score = weight × semantic + (1 − weight) × keyword
@@ -163,19 +164,26 @@ New utility file:
 export function parseEmbedding(
   blob: Uint8Array | null | undefined,
   text: string | null | undefined
-): number[] | null {
+): Float32Array | null {
   if (blob && blob.byteLength > 0) {
     if (blob.byteLength % 4 !== 0) return null; // corrupt — not a valid Float32Array
-    return Array.from(new Float32Array(blob.buffer, blob.byteOffset, blob.byteLength / 4));
+    return new Float32Array(blob.buffer, blob.byteOffset, blob.byteLength / 4);
   }
   if (text) {
-    try { return JSON.parse(text); } catch { return null; }
+    try {
+      const arr: number[] = JSON.parse(text);
+      return new Float32Array(arr);
+    } catch { return null; }
   }
   return null;
 }
 ```
 
-Corrupt BLOB (byteLength not divisible by 4) returns null → scores 0, consistent with PR #11 behavior for corrupt JSON.
+Returns `Float32Array | null` so cached vectors are stored and consumed without intermediate conversion. Corrupt BLOB (byteLength not divisible by 4) returns null → scores 0, consistent with PR #11 behavior for corrupt JSON.
+
+`parseEmbedding()` always prefers BLOB — BLOB rows are written by the current `embedFact()` and are assumed to match the active embedding model. TEXT rows are the pre-BLOB fallback; they are served until `runReembed()` converts them. Dimension mismatch detection in `read()` (PR #11 logic) fires before `parseEmbedding()` is called, so mixed-dimension data cannot silently produce incorrect cosine rankings.
+
+`cosineSimilarity()` in `utils/cosine.ts` must accept `ArrayLike<number>` (covers both `Float32Array` and `number[]`) to avoid converting the cached `Float32Array` back to an array at the call site. Update signature: `function cosineSimilarity(a: ArrayLike<number>, b: ArrayLike<number>): number`.
 
 ### 6. `embedFact()` — `WikiMemory`
 
@@ -189,7 +197,7 @@ await this.db.runAsync(
 );
 ```
 
-`storeEmbeddingDimension()` unchanged — still validates dimension against stored metadata.
+`Float32Array → Uint8Array` conversion is bit-exact and platform-independent (IEEE 754). `storeEmbeddingDimension()` unchanged — still validates dimension against stored metadata.
 
 ### 7. In-Memory Vector Cache — `WikiMemory`
 
@@ -198,7 +206,7 @@ private vectorCache: Map<string, Map<string, Float32Array>> = new Map();
 // outer key: entityId; inner key: fact id; value: parsed Float32Array
 ```
 
-**Population:** On each cosine-path `read()`, after phase 1 SELECT, populate the entity's inner map with parsed vectors for all rows returned. Rows with null/corrupt embeddings are not cached (they score 0 and can be retried cheaply).
+**Population:** On each cosine-path `read()` without `preFilterLimit`, after phase 1 SELECT, populate the entity's inner map with parsed vectors for all rows returned. When `preFilterLimit` is active, the MiniSearch pre-filter produces a partial candidate set; cache is NOT populated from partial results to avoid incomplete cache state affecting subsequent full-scan reads. Existing cache entries are still used for cache hits. Rows with null/corrupt embeddings are not cached (they score 0 and can be retried cheaply).
 
 **Cache hit:** If the entity's inner map exists, use cached vectors directly — skip BLOB/TEXT parse entirely.
 
@@ -206,7 +214,7 @@ private vectorCache: Map<string, Map<string, Float32Array>> = new Map();
 
 **Memory bound:** Cache is scoped to the `WikiMemory` instance lifetime. No eviction policy — wikis are expected to have bounded fact counts per entity. Developers managing very large multi-entity wikis can call `runReembed()` to trigger a cache clear if needed.
 
-### 8. `read()` — two-phase SELECT and cache integration — `WikiMemory`
+### 8. `read()` Signature and Config Resolution — `WikiMemory`
 
 Signature change (backwards-compatible):
 
@@ -223,15 +231,25 @@ const hybridWeight = options?.hybridWeight ?? config?.hybridWeight;
 const weight = hybridWeight !== undefined
   ? Math.max(0, Math.min(1, hybridWeight))
   : undefined;
+
+// Fast-path: if hybridWeight is explicitly 0, skip embed() and use MiniSearch-only path
+const skipEmbed = weight === 0;
+
+// Infinity is the documented escape hatch to disable a config-level preFilterLimit per-call
+const effectivePreFilterLimit = preFilterLimit === Infinity ? undefined : preFilterLimit;
 ```
+
+### 9. `read()` Implementation — Two-Phase SELECT and Cache Integration — `WikiMemory`
 
 **Phase 1 SELECT (scoring columns only):**
 
 ```sql
-SELECT id, embedding_blob, embedding
+SELECT id, embedding_blob, embedding, updated_at, access_count
 FROM ${prefix}entries
 WHERE entity_id = ? AND deleted_at IS NULL
 ```
+
+Includes `updated_at` and `access_count` for deterministic tie-breaking when cosine scores are equal (see Phase 1 scoring logic below).
 
 Check vector cache first. For each row not in cache, parse via `parseEmbedding(blob, text)` and populate cache. Score all candidates. Sort descending.
 
@@ -246,12 +264,12 @@ Fetch only the top `maxResults` (or `preFilterLimit`-bounded) winner IDs. Strip 
 
 **Execution paths inside the embed branch:**
 
-| `preFilterLimit` | `hybridWeight` | Phase 1 candidate source |
-|---|---|---|
-| unset | unset | `SELECT id, embedding_blob, embedding WHERE entity_id = ?` |
-| set | unset | MiniSearch top-K IDs → `SELECT id, embedding_blob, embedding WHERE id IN (...)` |
-| unset | set | `SELECT id, embedding_blob, embedding WHERE entity_id = ?` + MiniSearch scores |
-| set | set | MiniSearch top-K → `SELECT id, embedding_blob, embedding WHERE id IN (...)` + scores |
+| `preFilterLimit` | `hybridWeight` | Phase 1 candidate source | Cache population |
+|---|---|---|---|
+| unset | unset | `SELECT id, embedding_blob, embedding, updated_at, access_count WHERE entity_id = ?` | Full entity scan → populate cache |
+| set | unset | MiniSearch top-K IDs → `SELECT id, embedding_blob, embedding, updated_at, access_count WHERE id IN (...)` | Partial scan → reuse cache, do not populate |
+| unset | set | `SELECT id, embedding_blob, embedding, updated_at, access_count WHERE entity_id = ?` + MiniSearch scores | Full entity scan → populate cache |
+| set | set | MiniSearch top-K → `SELECT id, embedding_blob, embedding, updated_at, access_count WHERE id IN (...)` + scores | Partial scan → reuse cache, do not populate |
 
 All four paths share the same phase 2 (`SELECT * WHERE id IN (...)`).
 
@@ -259,15 +277,21 @@ All four paths share the same phase 2 (`SELECT * WHERE id IN (...)`).
 
 **When `preFilterLimit` set and `hybridWeight` set:** one MiniSearch call produces both the candidate ID list and the keyword scores for blending. No duplicate search.
 
-**When `preFilterLimit` returns 0 candidates:** `facts = []`, skip phase 2, skip access tracking update.
+**When `preFilterLimit` returns 0 candidates:** `facts = []`, skip phase 2, skip access tracking update. When both `preFilterLimit` and `hybridWeight` are set, hybrid scoring is also skipped because there are no candidates.
+
+**MiniSearch returning 0 results** is always a valid outcome, not an error. `facts = []`, no phase 2 SELECT, no access tracking update. `onRetrievalFallback` is not called.
+
+**Access tracking** applies to all returned facts for non-empty queries, regardless of which path was used (cosine, hybrid, pre-filtered, or MiniSearch fallback). No special handling for pre-filtered results.
+
+**Fast-path: `hybridWeight: 0.0`** — Skip `embed()` call entirely and use MiniSearch-only path (same as embed absent/threw). This avoids unnecessary LLM API cost when the caller explicitly requests pure keyword retrieval.
 
 **MiniSearch fallback path** (embed absent or throws): unchanged from PR #11. `hybridWeight` and `preFilterLimit` have no effect on this path.
 
-### 8. `runReembed()` — `WikiMemory`
+### 10. `runReembed()` — `WikiMemory`
 
 After `embedFact()` succeeds (writes BLOB, clears TEXT), `runReembed()` implicitly converts all TEXT rows to BLOB as a side effect. No additional logic needed. Return type unchanged: `{ embedded: number; skipped: number }`.
 
-### 9. Retrieval Priority Summary (updated)
+### 11. Retrieval Priority Summary (updated)
 
 | Condition | Retrieval path |
 |---|---|
@@ -278,6 +302,7 @@ After `embedFact()` succeeds (writes BLOB, clears TEXT), `runReembed()` implicit
 | `query` non-empty, `embed` provided, succeeds, both set | MiniSearch pre-filter → cosine + blend |
 | `query` non-empty, `embed` provided, throws | MiniSearch + `onRetrievalFallback(error)` |
 | `query` non-empty, `embed` absent | MiniSearch (no callback) |
+| `query` non-empty, `hybridWeight: 0` | MiniSearch (embed skipped, no callback) |
 
 ---
 
@@ -339,6 +364,17 @@ None. All changes are additive:
 - Omitting `ReadOptions` entirely falls back to WikiConfig defaults
 - `ReadOptions: {}` (empty object) falls back to WikiConfig defaults
 
+### `vectorCache.test.ts`
+
+- First full-scan `read()` populates cache for the entity
+- Second `read()` reuses cached `Float32Array` vectors (mock `parseEmbedding` to assert parse count is 0 on second call)
+- `read()` with `preFilterLimit` does not populate cache; subsequent full-scan read still parses from DB
+- `forget()` invalidates entity cache; next `read()` re-parses from DB
+- `runPrune()` invalidates entity cache
+- `runReembed()` invalidates entity cache
+- Global `runReembed()` clears entire cache
+- Corrupt/null embeddings (score 0) are not stored in cache
+
 ---
 
 ## File Checklist
@@ -348,9 +384,11 @@ None. All changes are additive:
 | `packages/core/src/types.ts` | Add `ReadOptions` interface; add `preFilterLimit?` and `hybridWeight?` to `WikiConfig` |
 | `packages/core/src/db/schema.ts` | Add `embedding_blob BLOB` column to entries DDL |
 | `packages/core/src/db/migrations.ts` | Add migration v3 |
-| `packages/core/src/utils/embedding.ts` | Create `parseEmbedding()` |
-| `packages/core/src/WikiMemory.ts` | Update `embedFact()` for BLOB write; update `read()` signature and logic; update `runReembed()` SELECT to include `embedding_blob`; strip `embedding_blob` from returned facts |
+| `packages/core/src/utils/embedding.ts` | Create `parseEmbedding()` returning `Float32Array \| null` |
+| `packages/core/src/utils/cosine.ts` | Update `cosineSimilarity` signature: `(a: ArrayLike<number>, b: ArrayLike<number>): number` |
+| `packages/core/src/WikiMemory.ts` | Update `embedFact()` for BLOB write; update `read()` signature and logic with fast-path for `hybridWeight === 0`, `Infinity` pre-filter escape hatch, full-entity-scan-only cache population, and explicit access tracking for all non-empty-query paths; add vector cache initialization and per-entity invalidation in `forget()`, `runPrune()`, per-entity `runReembed()`; clear entire cache in global `runReembed()` and multi-entity `importDump()`; strip `embedding_blob` and `embedding` from returned facts in both `read()` and `_getFullBundle()`; update `runReembed()` SELECT to include `embedding_blob` |
 | `packages/core/__tests__/blobEmbeddings.test.ts` | Create |
+| `packages/core/__tests__/vectorCache.test.ts` | Create |
 | `packages/core/__tests__/preFilterLimit.test.ts` | Create |
 | `packages/core/__tests__/hybridScoring.test.ts` | Create |
 | `packages/core/__tests__/readOptions.test.ts` | Create |

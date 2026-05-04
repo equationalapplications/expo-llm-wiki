@@ -2,6 +2,8 @@
 
 Pure TypeScript business logic for LLM Wiki Memory.
 
+> Inspired by [Andrej Karpathy's LLM Wiki memory spec](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
+
 ## Features
 
 - **Platform-agnostic** — Zero runtime dependencies; works with any SQLite driver via the `SQLiteAdapter` interface

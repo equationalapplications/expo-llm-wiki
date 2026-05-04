@@ -2,6 +2,8 @@
 
 Expo/React Native adapter for @equationalapplications/core-llm-wiki, powered by `expo-sqlite`.
 
+> Inspired by [Andrej Karpathy's LLM Wiki memory spec](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
+
 ## Features
 
 - **Expo-ready** — Pre-configured for React Native + Expo
