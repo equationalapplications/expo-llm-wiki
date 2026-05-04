@@ -651,9 +651,9 @@ flowchart TD
     H -->|Yes| I["MiniSearch pre-filter<br/>top K candidates"]
     I --> J["Phase 1: Cosine score<br/>top K candidates"]
     H -->|No| K["Phase 1: Cosine score<br/>all facts"]
-    J --> L["Cache vectors<br/>in-memory"]
-    K --> L
-    L --> M{hybridWeight = 1?}
+    J --> M{hybridWeight = 1?}
+    K --> L["Cache vectors<br/>in-memory"]
+    L --> M
     M -->|Yes| N["Pure semantic<br/>ranking"]
     M -->|No| O["Hybrid blend:<br/>semantic + keyword<br/>via MiniSearch"]
     N --> P["Phase 2: Fetch full rows<br/>top maxResults"]
