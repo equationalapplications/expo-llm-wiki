@@ -72,7 +72,12 @@ describe('preFilterLimit', () => {
       ([sql]) => (sql as string).includes('embedding_blob') && (sql as string).includes(' IN (')
     );
     expect(scoringCall).toBeDefined();
-    const candidateIds = scoringCall![1] as string[];
+    // The SQLiteAdapter.getAllAsync signature is (sql, params?). For the IN-clause query,
+    // the params array holds the fact IDs being scored — its length must not exceed preFilterLimit.
+    const [scoringSQL, scoringParams] = scoringCall!;
+    expect(typeof scoringSQL).toBe('string');
+    const candidateIds = scoringParams as string[];
+    expect(Array.isArray(candidateIds)).toBe(true);
     expect(candidateIds.length).toBeLessThanOrEqual(5);
 
     // Also verify result correctness — all returned facts should be target facts (keyword match)
