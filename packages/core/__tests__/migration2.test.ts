@@ -60,7 +60,7 @@ async function makeV1Db() {
   return db;
 }
 
-describe('migration 2: remove FTS5, add embedding column', () => {
+describe('migration 2+3: remove FTS5, add embedding column, setup ends at version 3', () => {
   it('fresh install: embedding column exists, FTS5 table absent', async () => {
     const db = openTestDatabase();
     const wiki = new WikiMemory(db, stubOptions);
@@ -80,7 +80,7 @@ describe('migration 2: remove FTS5, add embedding column', () => {
     expect(meta?.value).toBe('3');
   });
 
-  it('v1 DB: FTS5 table + triggers dropped, embedding column added, version becomes 2', async () => {
+  it('v1 DB: FTS5 table + triggers dropped, embedding column added, version becomes 3', async () => {
     const db = await makeV1Db();
     const wiki = new WikiMemory(db, stubOptions);
     await wiki.setup();
