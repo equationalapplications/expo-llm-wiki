@@ -67,10 +67,10 @@ export interface ReadOptions {
   /**
    * Overrides WikiConfig.preFilterLimit for this call.
    * undefined means use WikiConfig.preFilterLimit (or no pre-filter if also unset).
-   * To disable a config-level preFilterLimit for a single call, pass a very large
-   * number (e.g. Infinity) — the MiniSearch result set is naturally bounded.
+   * Pass null to explicitly disable a config-level preFilterLimit for a single call
+   * (runs full cosine scan regardless of config).
    */
-  preFilterLimit?: number;
+  preFilterLimit?: number | null;
   /**
    * Overrides WikiConfig.hybridWeight for this call.
    * Pass undefined to use the WikiConfig default.
@@ -167,7 +167,12 @@ export function parseEmbedding(
 ): Float32Array | null {
   if (blob && blob.byteLength > 0) {
     if (blob.byteLength % 4 !== 0) return null; // corrupt — not a valid Float32Array
-    return new Float32Array(blob.buffer, blob.byteOffset, blob.byteLength / 4);
+    // Copy into a fresh ArrayBuffer — SQLite drivers (better-sqlite3, expo-sqlite) may
+    // pool/reuse the underlying Buffer, which would silently corrupt cached vectors if
+    // stored as a view. This also guarantees zero byteOffset regardless of driver.
+    const copy = new ArrayBuffer(blob.byteLength);
+    new Uint8Array(copy).set(blob);
+    return new Float32Array(copy);
   }
   if (text) {
     try {
@@ -179,11 +184,11 @@ export function parseEmbedding(
 }
 ```
 
-Returns `Float32Array | null` so cached vectors are stored and consumed without intermediate conversion. Corrupt BLOB (byteLength not divisible by 4) returns null → scores 0, consistent with PR #11 behavior for corrupt JSON.
+Returns `Float32Array | null` so cached vectors are stored and consumed without intermediate conversion. Corrupt BLOB (byteLength not divisible by 4) returns null → scores 0, consistent with PR #11 behavior for corrupt JSON. The `ArrayBuffer` copy in the BLOB path is mandatory: SQLite drivers (including `better-sqlite3`) return `Buffer` objects backed by pooled native memory that may be reused across queries. Storing a view into that buffer without copying would let a subsequent query overwrite the bytes, silently corrupting the vector cache. Spike confirmed `better-sqlite3` always returns `byteOffset === 0`, but the copy also removes that reliance on driver-specific behavior.
 
 `parseEmbedding()` always prefers BLOB — BLOB rows are written by the current `embedFact()` and are assumed to match the active embedding model. TEXT rows are the pre-BLOB fallback; they are served until `runReembed()` converts them. Dimension mismatch detection in `read()` (PR #11 logic) fires before `parseEmbedding()` is called, so mixed-dimension data cannot silently produce incorrect cosine rankings.
 
-`cosineSimilarity()` in `utils/cosine.ts` must accept `ArrayLike<number>` (covers both `Float32Array` and `number[]`) to avoid converting the cached `Float32Array` back to an array at the call site. Update signature: `function cosineSimilarity(a: ArrayLike<number>, b: ArrayLike<number>): number`.
+`cosineSimilarity()` in `utils/cosine.ts` must accept `ArrayLike<number>` (covers both `Float32Array` and `number[]`) to avoid converting the cached `Float32Array` back to an array at the call site. Update signature: `function cosineSimilarity(a: ArrayLike<number>, b: ArrayLike<number>): number`. This widening is backward-compatible — all existing `number[]` call sites continue to compile and behave identically. Add a test asserting both `Float32Array` and `number[]` inputs produce identical results for the same vector data.
 
 ### 6. `embedFact()` — `WikiMemory`
 
@@ -212,7 +217,14 @@ private vectorCache: Map<string, Map<string, Float32Array>> = new Map();
 
 **Invalidation:** Call `this.vectorCache.delete(entityId)` after any operation that mutates facts for that entity: `runLibrarian()`, `runHeal()`, `ingestDocument()`, `importDump()`, `forget()`, `runPrune()`, `runReembed()`. For operations that affect all entities (e.g., `importDump()` with multiple entities, global `runReembed()`), call `this.vectorCache.clear()`.
 
-**Memory bound:** Cache is scoped to the `WikiMemory` instance lifetime. No eviction policy — wikis are expected to have bounded fact counts per entity. Developers managing very large multi-entity wikis can call `runReembed()` to trigger a cache clear if needed.
+**Memory bound:** Cache is scoped to the `WikiMemory` instance lifetime. No eviction policy. Memory per entity ≈ `factCount × dims × 4 bytes` (e.g. 1 536-dim embeddings: 6 KB/fact; 10 000 facts = ~60 MB per entity). Applications managing very large multi-entity wikis should call `wiki.clearVectorCache()` to release memory when retrieval-heavy workloads finish (e.g. after a batch read job). `WikiMemory` exposes a public `clearVectorCache(): void` method for this purpose. LRU eviction is a future-spec concern.
+
+```typescript
+/** Releases all cached parsed vectors. Call after bulk read workloads on large wikis. */
+public clearVectorCache(): void {
+  this.vectorCache.clear();
+}
+```
 
 ### 8. `read()` Signature and Config Resolution — `WikiMemory`
 
@@ -226,7 +238,11 @@ async read(entityId: string, query: string, options?: ReadOptions): Promise<Memo
 
 ```typescript
 const maxResults = options?.maxResults ?? config?.maxResults ?? config?.maxFtsResults ?? 10;
-const preFilterLimit = options?.preFilterLimit ?? config?.preFilterLimit;
+// null = caller explicitly disabling a config-level preFilterLimit for this call
+const effectivePreFilterLimit =
+  options?.preFilterLimit === null
+    ? undefined
+    : (options?.preFilterLimit ?? config?.preFilterLimit);
 const hybridWeight = options?.hybridWeight ?? config?.hybridWeight;
 const weight = hybridWeight !== undefined
   ? Math.max(0, Math.min(1, hybridWeight))
@@ -234,9 +250,6 @@ const weight = hybridWeight !== undefined
 
 // Fast-path: if hybridWeight is explicitly 0, skip embed() and use MiniSearch-only path
 const skipEmbed = weight === 0;
-
-// Infinity is the documented escape hatch to disable a config-level preFilterLimit per-call
-const effectivePreFilterLimit = preFilterLimit === Infinity ? undefined : preFilterLimit;
 ```
 
 ### 9. `read()` Implementation — Two-Phase SELECT and Cache Integration — `WikiMemory`
@@ -249,9 +262,9 @@ FROM ${prefix}entries
 WHERE entity_id = ? AND deleted_at IS NULL
 ```
 
-Includes `updated_at` and `access_count` for deterministic tie-breaking when cosine scores are equal (see Phase 1 scoring logic below).
+Includes `updated_at` and `access_count` for deterministic tie-breaking when cosine scores are equal. Tie-break order: `score DESC, access_count DESC, updated_at DESC, id ASC`. The `id ASC` final tiebreaker ensures fully deterministic ordering even if two facts share identical score, access count, and timestamp.
 
-Check vector cache first. For each row not in cache, parse via `parseEmbedding(blob, text)` and populate cache. Score all candidates. Sort descending.
+Check vector cache first. For each row not in cache, parse via `parseEmbedding(blob, text)` and populate cache. Score all candidates. Sort by tie-break order above.
 
 **Phase 2 SELECT (full row for winners only):**
 
@@ -270,8 +283,9 @@ Fetch only the top `maxResults` (or `preFilterLimit`-bounded) winner IDs. Strip 
 | set | unset | MiniSearch top-K IDs → `SELECT id, embedding_blob, embedding, updated_at, access_count WHERE id IN (...)` | Partial scan → reuse cache, do not populate |
 | unset | set | `SELECT id, embedding_blob, embedding, updated_at, access_count WHERE entity_id = ?` + MiniSearch scores | Full entity scan → populate cache |
 | set | set | MiniSearch top-K → `SELECT id, embedding_blob, embedding, updated_at, access_count WHERE id IN (...)` + scores | Partial scan → reuse cache, do not populate |
+| any | `hybridWeight: 0` (after clamping) | MiniSearch only — embed skipped entirely; `preFilterLimit` ignored (`weight === 0` exits embed branch before pre-filter logic) | Not populated |
 
-All four paths share the same phase 2 (`SELECT * WHERE id IN (...)`).
+All four embed-branch paths share the same phase 2 (`SELECT * WHERE id IN (...)`).
 
 **MiniSearch score normalization:** divide each score by `Math.max(1, results[0]?.score ?? 1)` to keep scores in `[0, 1]` and avoid divide-by-zero. Cosine scores clamped to `[0, 1]` via `Math.max(0, score)`.
 
@@ -323,6 +337,7 @@ None. All changes are additive:
 - `WikiConfig` gains optional fields — existing configs unaffected.
 - Migration v3 is additive (new column only).
 - `embedding` TEXT column preserved — no data loss.
+- `cosineSimilarity` signature widened from `number[]` to `ArrayLike<number>` — backward-compatible at all call sites; `number[]` is a valid `ArrayLike<number>`.
 
 ---
 
@@ -335,14 +350,18 @@ None. All changes are additive:
 - `read()` falls back to JSON TEXT for rows where `embedding_blob` is null
 - Corrupt BLOB (wrong byte length) scores 0, does not abort retrieval
 - Migration v3: `embedding_blob` column present; `embedding` column still present
+- Migration v3 idempotency: running migrations twice does not error and does not add duplicate columns
 - `runReembed()` converts TEXT rows to BLOB and nullifies `embedding`
+- Buffer aliasing: mutate the underlying bytes of the `Buffer` returned by the SQLite adapter after `parseEmbedding()`, assert that the cached `Float32Array` values are unchanged (gates the copy-on-parse fix)
 
 ### `preFilterLimit.test.ts`
 
 - Facts with keyword overlap returned; semantically-similar-only facts excluded when pre-filter active
 - `preFilterLimit: 5` with 100 facts: at most 5 rows fetched from DB for cosine scoring
 - Pre-filter returning 0 candidates → empty facts, no access tracking update
+- `preFilterLimit < maxResults`: fewer than `maxResults` facts returned — by design, no error thrown
 - Per-call `ReadOptions.preFilterLimit` overrides `WikiConfig.preFilterLimit`
+- Per-call `ReadOptions.preFilterLimit: null` disables a config-level `preFilterLimit` for that call (full scan)
 - Per-call `ReadOptions.preFilterLimit: undefined` falls back to WikiConfig default
 
 ### `hybridScoring.test.ts`
@@ -353,13 +372,17 @@ None. All changes are additive:
 - `hybridWeight: 2.0` clamped to 1.0; `hybridWeight: -1.0` clamped to 0.0
 - `hybridWeight` set but `embed` absent → MiniSearch fallback, no error, no `onRetrievalFallback` call
 - `hybridWeight` + `preFilterLimit` together: single MiniSearch call (assert search called once)
+- `hybridWeight: 0` + `preFilterLimit` set: `preFilterLimit` ignored, MiniSearch-only path used
 - Per-call `ReadOptions.hybridWeight` overrides `WikiConfig.hybridWeight`
+- `cosineSimilarity` accepts both `number[]` and `Float32Array` inputs and returns identical scores for the same vector data (non-breaking widening)
 
 ### `readOptions.test.ts`
 
 - Per-call `maxResults` overrides WikiConfig
 - Per-call `hybridWeight` overrides WikiConfig
 - Per-call `preFilterLimit` overrides WikiConfig
+- Per-call `preFilterLimit: null` disables config-level `preFilterLimit`
+- Per-call `maxResults: 0` returns an empty facts array with no phase 2 SELECT
 - All three overridden simultaneously
 - Omitting `ReadOptions` entirely falls back to WikiConfig defaults
 - `ReadOptions: {}` (empty object) falls back to WikiConfig defaults
@@ -370,9 +393,13 @@ None. All changes are additive:
 - Second `read()` reuses cached `Float32Array` vectors (mock `parseEmbedding` to assert parse count is 0 on second call)
 - `read()` with `preFilterLimit` does not populate cache; subsequent full-scan read still parses from DB
 - `forget()` invalidates entity cache; next `read()` re-parses from DB
+- `runLibrarian()` invalidates entity cache
+- `runHeal()` invalidates entity cache
+- `ingestDocument()` invalidates entity cache
 - `runPrune()` invalidates entity cache
 - `runReembed()` invalidates entity cache
 - Global `runReembed()` clears entire cache
+- `clearVectorCache()` clears entire cache; subsequent `read()` re-parses from DB
 - Corrupt/null embeddings (score 0) are not stored in cache
 
 ---
@@ -381,12 +408,12 @@ None. All changes are additive:
 
 | File | Action |
 |---|---|
-| `packages/core/src/types.ts` | Add `ReadOptions` interface; add `preFilterLimit?` and `hybridWeight?` to `WikiConfig` |
+| `packages/core/src/types.ts` | Add `ReadOptions` interface (with `preFilterLimit?: number \| null`); add `preFilterLimit?` and `hybridWeight?` to `WikiConfig` |
 | `packages/core/src/db/schema.ts` | Add `embedding_blob BLOB` column to entries DDL |
 | `packages/core/src/db/migrations.ts` | Add migration v3 |
 | `packages/core/src/utils/embedding.ts` | Create `parseEmbedding()` returning `Float32Array \| null` |
 | `packages/core/src/utils/cosine.ts` | Update `cosineSimilarity` signature: `(a: ArrayLike<number>, b: ArrayLike<number>): number` |
-| `packages/core/src/WikiMemory.ts` | Update `embedFact()` for BLOB write; update `read()` signature and logic with fast-path for `hybridWeight === 0`, `Infinity` pre-filter escape hatch, full-entity-scan-only cache population, and explicit access tracking for all non-empty-query paths; add vector cache initialization and per-entity invalidation in `forget()`, `runPrune()`, per-entity `runReembed()`; clear entire cache in global `runReembed()` and multi-entity `importDump()`; strip `embedding_blob` and `embedding` from returned facts in both `read()` and `_getFullBundle()`; update `runReembed()` SELECT to include `embedding_blob` |
+| `packages/core/src/WikiMemory.ts` | Update `embedFact()` for BLOB write; update `read()` signature and logic with fast-path for `hybridWeight === 0`, `null` pre-filter escape hatch, full-entity-scan-only cache population, and explicit access tracking for all non-empty-query paths; add `clearVectorCache()` public method; add vector cache initialization and per-entity invalidation in `runLibrarian()`, `runHeal()`, `ingestDocument()`, `importDump()`, `forget()`, `runPrune()`, per-entity `runReembed()`; clear entire cache in global `runReembed()` and multi-entity `importDump()`; strip `embedding_blob` and `embedding` from returned facts in both `read()` and `_getFullBundle()`; update `runReembed()` SELECT to include `embedding_blob` |
 | `packages/core/__tests__/blobEmbeddings.test.ts` | Create |
 | `packages/core/__tests__/vectorCache.test.ts` | Create |
 | `packages/core/__tests__/preFilterLimit.test.ts` | Create |
