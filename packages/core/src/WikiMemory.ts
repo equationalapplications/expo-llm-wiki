@@ -1514,10 +1514,10 @@ export class WikiMemory {
           });
         }
       }
+      this.vectorCache.delete(entityId);
     }
 
     await this.rebuildMiniSearchIndex();
-    this.vectorCache.clear(); // importDump touches multiple entities
   }
 
   async forget(entityId: string, params: { entryId?: string; taskId?: string; sourceRef?: string; sourceHash?: string; clearAll?: boolean }): Promise<{ deleted: { entries: number; tasks: number } }> {
