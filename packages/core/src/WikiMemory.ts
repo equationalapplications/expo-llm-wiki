@@ -566,104 +566,96 @@ export class WikiMemory {
     }
   }
 
-  private formatSearchQuery(query: string): string {
-    const normalizeTokens = (value: string): string[] =>
-      value
-        .toLowerCase()
-        .replace(/[^a-z0-9\s]/g, '')
-        .split(/\s+/)
-        .filter(t => t.length >= 3);
+  async read(entityId: string, query: string): Promise<MemoryBundle> {
+    const maxResults = this.options.config?.maxResults
+      ?? this.options.config?.maxFtsResults
+      ?? 10;
+    const embedFn = this.options.llmProvider.embed;
+    const trimmedQuery = query.trim();
 
-    const baseTokens = normalizeTokens(query);
-    if (baseTokens.length === 0) return '';
+    let facts: WikiFact[] = [];
 
-    const synonymMap = this.options.config?.synonymMap;
-    const expanded: string[] = [];
-    const seen = new Set<string>();
-    const pushNormalized = (value: string): boolean => {
-      for (const token of normalizeTokens(value)) {
-        if (expanded.length >= 12) return false;
-        if (seen.has(token)) continue;
-        seen.add(token);
-        expanded.push(token);
-      }
-      return true;
-    };
+    if (trimmedQuery) {
+      let usedEmbed = false;
 
-    for (const t of baseTokens) {
-      if (!pushNormalized(t)) break;
-      if (synonymMap) {
-        const synonyms = synonymMap[t];
-        if (Array.isArray(synonyms)) {
-          for (const s of synonyms) {
-            if (typeof s === 'string') {
-              if (!pushNormalized(s)) break;
-            }
-          }
+      if (embedFn) {
+        try {
+          const queryVec = await embedFn(trimmedQuery);
+          const rows = await this.db.getAllAsync<WikiFact & { embedding: string | null }>(
+            `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
+            [entityId]
+          );
+          const scored = rows.map(row => ({
+            row,
+            score: row.embedding ? cosineSimilarity(queryVec, JSON.parse(row.embedding)) : 0,
+          }));
+          scored.sort((a, b) => b.score - a.score);
+          facts = scored.slice(0, maxResults).map(s => s.row);
+          usedEmbed = true;
+        } catch (err) {
+          const error = err instanceof Error ? err : new Error(String(err));
+          this.options.onRetrievalFallback?.(error);
         }
       }
-    }
 
-    return expanded.map(t => `"${t}"*`).join(' OR ');
-  }
+      if (!usedEmbed) {
+        // embed absent or threw — fall back to MiniSearch
+        const results = this.miniSearch.search(trimmedQuery, {
+          filter: (r: { entity_id: string }) => r.entity_id === entityId,
+          combineWith: 'OR',
+        });
+        const topIds = new Set(results.slice(0, maxResults).map((r: { id: string }) => r.id));
+        const allRows = await this.db.getAllAsync<WikiFact>(
+          `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
+          [entityId]
+        );
+        const byId = new Map(allRows.map(r => [r.id, r]));
+        facts = [...topIds].map(id => byId.get(id)).filter((f): f is WikiFact => f !== undefined);
+      }
 
-  async read(entityId: string, query: string): Promise<MemoryBundle> {
-    const ftsQuery = this.formatSearchQuery(query);
-    const maxResults = this.options.config?.maxFtsResults || 10;
-    
-    let factsPromise: Promise<WikiFact[]>;
-
-    if (ftsQuery) {
-      factsPromise = this.db.getAllAsync<WikiFact>(`
-        SELECT e.* FROM ${this.prefix}entries e
-        JOIN ${this.prefix}entries_fts fts ON e.rowid = fts.rowid
-        WHERE fts.${this.prefix}entries_fts MATCH ?
-          AND e.entity_id = ?
-          AND e.deleted_at IS NULL
-        ORDER BY e.confidence DESC, e.access_count DESC, e.updated_at DESC
-        LIMIT ?
-      `, [ftsQuery, entityId, maxResults]);
+      if (facts.length > 0) {
+        const ids = facts.map(f => f.id);
+        const placeholders = ids.map(() => '?').join(',');
+        const now = Date.now();
+        await this.db.runAsync(
+          `UPDATE ${this.prefix}entries
+           SET access_count = access_count + 1, last_accessed_at = ?
+           WHERE id IN (${placeholders})`,
+          [now, ...ids]
+        );
+      }
     } else {
-      factsPromise = this.db.getAllAsync<WikiFact>(`
-        SELECT * FROM ${this.prefix}entries
-        WHERE entity_id = ? AND deleted_at IS NULL
-        ORDER BY updated_at DESC
-        LIMIT ?
-      `, [entityId, maxResults]);
+      facts = await this.db.getAllAsync<WikiFact>(
+        `SELECT * FROM ${this.prefix}entries
+         WHERE entity_id = ? AND deleted_at IS NULL
+         ORDER BY updated_at DESC
+         LIMIT ?`,
+        [entityId, maxResults]
+      );
     }
 
-    const tasksPromise = this.db.getAllAsync<WikiTask>(`
-      SELECT * FROM ${this.prefix}tasks
-      WHERE entity_id = ? AND status IN ('pending', 'in_progress') AND deleted_at IS NULL
-      ORDER BY priority DESC, created_at ASC
-    `, [entityId]);
+    const [tasks, events] = await Promise.all([
+      this.db.getAllAsync<WikiTask>(
+        `SELECT * FROM ${this.prefix}tasks
+         WHERE entity_id = ? AND status IN ('pending', 'in_progress') AND deleted_at IS NULL
+         ORDER BY priority DESC, created_at ASC`,
+        [entityId]
+      ),
+      this.db.getAllAsync<WikiEvent>(
+        `SELECT * FROM ${this.prefix}events
+         WHERE entity_id = ?
+         ORDER BY created_at DESC
+         LIMIT 10`,
+        [entityId]
+      ),
+    ]);
 
-    const eventsPromise = this.db.getAllAsync<WikiEvent>(`
-      SELECT * FROM ${this.prefix}events
-      WHERE entity_id = ?
-      ORDER BY created_at DESC
-      LIMIT 10
-    `, [entityId]);
-
-    const [factsRaw, tasks, events] = await Promise.all([factsPromise, tasksPromise, eventsPromise]);
-
-    if (ftsQuery && factsRaw.length > 0) {
-      const ids = factsRaw.map(f => f.id);
-      const placeholders = ids.map(() => '?').join(',');
-      const now = Date.now();
-      await this.db.runAsync(`
-        UPDATE ${this.prefix}entries 
-        SET access_count = access_count + 1, last_accessed_at = ?
-        WHERE id IN (${placeholders})
-      `, [now, ...ids]);
-    }
-
-    const facts = factsRaw.map(f => ({
+    const parsedFacts = facts.map(f => ({
       ...f,
-      tags: typeof f.tags === 'string' ? JSON.parse(f.tags) : f.tags
+      tags: typeof f.tags === 'string' ? JSON.parse(f.tags) : f.tags,
     }));
 
-    return { facts, tasks, events: events.reverse() };
+    return { facts: parsedFacts, tasks, events: events.reverse() };
   }
 
   async getMemoryBundle(entityId: string): Promise<MemoryBundle> {
