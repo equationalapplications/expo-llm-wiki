@@ -18,10 +18,10 @@ function normalizeReadOptionsKey(opts?: ReadOptions): string {
   if (!opts) return '';
   const normalized: Record<string, unknown> = {};
 
-  // maxResults: undefined → omit (defer to config/default);
+  // maxResults: undefined or null → omit (defer to config/default via ??);
   // non-finite (NaN/±Infinity) → 10 (read()'s hardcoded fallback, bypasses config);
   // finite → clamp to non-negative integer.
-  if (opts.maxResults !== undefined) {
+  if (opts.maxResults !== undefined && opts.maxResults !== null) {
     normalized.maxResults = Number.isFinite(opts.maxResults)
       ? Math.max(0, Math.trunc(opts.maxResults))
       : 10;
@@ -38,10 +38,10 @@ function normalizeReadOptionsKey(opts?: ReadOptions): string {
     }
   }
 
-  // hybridWeight: undefined → omit (defer to config);
+  // hybridWeight: undefined or null → omit (defer to config via ??);
   // NaN → null (explicitly disables config hybrid weight; distinct from omitting);
   // ±Infinity and out-of-range finite → clamp to [0, 1].
-  if (opts.hybridWeight !== undefined) {
+  if (opts.hybridWeight !== undefined && opts.hybridWeight !== null) {
     normalized.hybridWeight = Number.isNaN(opts.hybridWeight)
       ? null
       : Math.max(0, Math.min(1, opts.hybridWeight));

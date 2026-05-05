@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type { MemoryDump } from '../src/types';
 import { WikiMemory, WikiBusyError } from '../src/WikiMemory';
 import { openTestDatabase } from './helpers/sqliteAdapter';
@@ -379,5 +379,59 @@ describe('importDump — busy-key protection', () => {
 
     resolveLibrarian();
     await lib;
+  });
+
+  it('forget() throws WikiBusyError(import) while importDump is in-flight', async () => {
+    const { wiki } = makeRealWiki();
+    await wiki.setup();
+
+    let resolveImport: () => void = () => {};
+    const blocker = new Promise<void>((r) => { resolveImport = r; });
+    const originalDo = (wiki as any)._doImportEntity.bind(wiki);
+    (wiki as any)._doImportEntity = async (entityId: string, bundle: any, merge: boolean) => {
+      await blocker;
+      return originalDo(entityId, bundle, merge);
+    };
+
+    const imp = wiki.importDump(simpleDump('user-1'));
+    await new Promise((r) => setTimeout(r, 0));
+
+    const err = await wiki.forget('user-1', { clearAll: true }).catch((e) => e);
+    expect(err).toBeInstanceOf(WikiBusyError);
+    expect(err.operation).toBe('import');
+
+    resolveImport();
+    await imp;
+  });
+
+  it('write() does not start background librarian while importDump is in-flight for same entity', async () => {
+    const { wiki } = makeRealWiki();
+    await wiki.setup();
+
+    // Reduce threshold so write() would normally trigger background librarian
+    (wiki as any).options.config = { autoLibrarianThreshold: 1 };
+
+    let resolveImport: () => void = () => {};
+    const blocker = new Promise<void>((r) => { resolveImport = r; });
+    const originalDo = (wiki as any)._doImportEntity.bind(wiki);
+    (wiki as any)._doImportEntity = async (entityId: string, bundle: any, merge: boolean) => {
+      await blocker;
+      return originalDo(entityId, bundle, merge);
+    };
+
+    const imp = wiki.importDump(simpleDump('user-1'));
+    await new Promise((r) => setTimeout(r, 0));
+
+    const librarianSpy = vi.spyOn(wiki as any, '_doRunLibrarian');
+
+    // write() should not start background librarian because import is active
+    await wiki.write('user-1', { event_type: 'observation', summary: 'test' });
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(librarianSpy).not.toHaveBeenCalled();
+
+    resolveImport();
+    await imp;
+    librarianSpy.mockRestore();
   });
 });

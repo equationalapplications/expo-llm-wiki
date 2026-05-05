@@ -1002,7 +1002,8 @@ export class WikiMemory {
       const jobKey = this._librarianKey(entityId);
       if (
         !this.activeMaintenanceJobs.has(jobKey) &&
-        !this.activeMaintenanceJobs.has(this._pruneKey(entityId))
+        !this.activeMaintenanceJobs.has(this._pruneKey(entityId)) &&
+        !this._isImportActiveFor(entityId)
       ) {
         this.activeMaintenanceJobs.add(jobKey);
         this.runLibrarianThenMaybeHeal(entityId, count)
@@ -1634,6 +1635,9 @@ export class WikiMemory {
   }
 
   async forget(entityId: string, params: { entryId?: string; taskId?: string; sourceRef?: string; sourceHash?: string; clearAll?: boolean }): Promise<{ deleted: { entries: number; tasks: number } }> {
+    if (this._isImportActiveFor(entityId)) {
+      throw new WikiBusyError('import', entityId);
+    }
     const now = Date.now();
     let deletedEntries = 0;
     let deletedTasks = 0;
