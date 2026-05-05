@@ -1572,11 +1572,18 @@ export class WikiMemory {
           const existing = existingFactsById.get(fact.id);
 
           // Extract a valid BLOB from the incoming fact if the dump was kept
-          // in-memory (Uint8Array / Buffer both pass instanceof Uint8Array since
-          // Buffer extends Uint8Array in Node.js; JSON round trips produce a plain
-          // object which is rejected here so we fall back to re-embed).
+          // in-memory. Preserve it only when it is a real Uint8Array/Buffer and
+          // its size is a positive multiple of 4 bytes so it can represent a
+          // sequence of float32 values. JSON round trips produce a plain object
+          // which is rejected here so we fall back to re-embed; malformed binary
+          // blobs are also rejected so they cannot poison preservedBlobDim.
           const rawBlob = (fact as WikiFact & { embedding_blob?: unknown }).embedding_blob;
-          const blobData: Uint8Array | null = rawBlob instanceof Uint8Array ? rawBlob : null;
+          const blobData: Uint8Array | null =
+            rawBlob instanceof Uint8Array &&
+            rawBlob.byteLength > 0 &&
+            rawBlob.byteLength % 4 === 0
+              ? rawBlob
+              : null;
 
           if (existing) {
             if (existing.entity_id !== entityId) {
