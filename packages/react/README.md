@@ -255,8 +255,8 @@ await runLibrarian('user-123');
 // LLM-driven fact review: remove orphaned/stale facts, repair incorrect inferences
 await runHeal('user-123');
 
-// Backfill BLOB embeddings for facts that don't have one yet
-// (e.g. after first enabling an embed provider):
+// Re-embed all facts with the current provider (e.g. after switching models or
+// enabling an embed provider for the first time):
 const { embedded, skipped } = await runReembed('user-123');
 
 // After changing the embedding model, re-embed with the new model (default, always re-embeds all):

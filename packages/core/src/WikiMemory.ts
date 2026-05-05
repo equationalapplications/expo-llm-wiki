@@ -399,11 +399,18 @@ export class WikiMemory {
     // Check whether any non-deleted fact still stores a blob with a different byte
     // length. If so, those facts haven't been re-embedded yet and the mismatch flag
     // must stay in place so read() keeps falling back to MiniSearch for them.
+    // A row blocks mismatch-flag removal if:
+    //   (a) it has a BLOB whose dimension differs from the new model, OR
+    //   (b) it has only a TEXT vector (embedding_blob IS NULL) — TEXT rows were
+    //       written by an older model and must be converted by runReembed() before
+    //       they are safe to score against the new query dimension.
     const residual = await this.db.getFirstAsync<{ cnt: number }>(
       `SELECT COUNT(*) AS cnt FROM ${this.prefix}entries
        WHERE deleted_at IS NULL
-         AND embedding_blob IS NOT NULL
-         AND (CAST(length(embedding_blob) AS INTEGER) / 4) != ?`,
+         AND (
+           (embedding_blob IS NOT NULL AND (CAST(length(embedding_blob) AS INTEGER) / 4) != ?)
+           OR (embedding_blob IS NULL AND embedding IS NOT NULL)
+         )`,
       [newDim]
     );
     // Promote the mismatch dimension to canonical regardless — this is the new model's size.
@@ -695,14 +702,14 @@ export class WikiMemory {
         const cutoff = now - retainSoftDeletedFor * 86400000;
         const entryResult = await this.db.runAsync(
           `DELETE FROM ${this.prefix}entries
-           WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ?`,
+           WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`,
           [entityId, cutoff]
         );
         deletedEntries = entryResult.changes;
 
         const taskResult = await this.db.runAsync(
           `DELETE FROM ${this.prefix}tasks
-           WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ?`,
+           WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`,
           [entityId, cutoff]
         );
         deletedTasks = taskResult.changes;
@@ -1718,6 +1725,11 @@ export class WikiMemory {
               // silently discarding valid vectors is worse than importing them;
               // storeEmbeddingDimension() and read()'s mismatch-check handle
               // the case where stored blobs disagree on size.
+              // Note: same-dimension model changes (e.g. two different providers
+              // that happen to produce 1536-dim vectors) are undetectable here —
+              // there is no model fingerprint in the blob. Callers importing from
+              // a different provider should call runReembed() after importDump()
+              // rather than relying on { skipExisting: true }.
               blobData = rawBlob;
             }
           }
