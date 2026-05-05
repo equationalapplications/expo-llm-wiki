@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { WikiMemory } from '../src/WikiMemory';
 import { openTestDatabase } from './helpers/sqliteAdapter';
-import type { WikiOptions } from '../src/types';
+import type { WikiOptions, MemoryDump } from '../src/types';
 import * as embeddingModule from '../src/utils/embedding';
 
 function makeWiki(embedFn?: (text: string) => Promise<number[]>, onFallback?: (e: Error) => void) {
@@ -287,6 +287,55 @@ describe('vector cache — boundary limits', () => {
     await wiki.read('large-entity', 'query');
     expect(parseSpy.mock.calls.length).toBeGreaterThan(0); // not cached — re-parses
 
+    parseSpy.mockRestore();
+  });
+});
+
+describe('vector cache — importDump() invalidation', () => {
+  it('importDump() invalidates entity cache; subsequent read() re-parses from DB', async () => {
+    const parseSpy = vi.spyOn(embeddingModule, 'parseEmbedding');
+
+    const { wiki, db } = makeWiki(async () => [1, 0, 0]);
+    await wiki.setup();
+    await insertFactWithBlob(db, 'f1', 'user-1', [1, 0, 0]);
+    await db.runAsync(`INSERT OR REPLACE INTO llm_wiki_meta (key, value) VALUES ('embedding_dimension', '3')`);
+
+    await wiki.read('user-1', 'query'); // populate cache
+
+    const dump: MemoryDump = {
+      generatedAt: Date.now(),
+      entities: {
+        'user-1': {
+          facts: [
+            {
+              id: 'f-imported',
+              entity_id: 'user-1',
+              title: 'imported fact',
+              body: 'new body',
+              tags: [],
+              confidence: 'certain',
+              source_type: 'user_stated',
+              source_hash: null,
+              source_ref: null,
+              created_at: 2000,
+              updated_at: 2000,
+              last_accessed_at: null,
+              access_count: 0,
+              deleted_at: null,
+            },
+          ],
+          tasks: [],
+          events: [],
+        },
+      },
+    };
+
+    await wiki.importDump(dump);
+
+    // importDump should have invalidated the cache (double-flush); re-parses from DB
+    parseSpy.mockClear();
+    await wiki.read('user-1', 'query');
+    expect(parseSpy.mock.calls.length).toBeGreaterThan(0);
     parseSpy.mockRestore();
   });
 });

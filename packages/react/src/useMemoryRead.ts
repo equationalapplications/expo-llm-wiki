@@ -2,6 +2,40 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import type { MemoryBundle, ReadOptions } from '@equationalapplications/core-llm-wiki';
 import { useWiki } from './WikiContext';
 
+/**
+ * Normalize a ReadOptions object to a canonical string suitable for use as a
+ * React effect dependency key. Normalization ensures:
+ *  - `undefined` and `{}` produce the same empty string (no spurious refetch)
+ *  - Non-serializable numbers (Infinity, -Infinity, NaN) are coerced to their
+ *    effective values before stringifying, matching how WikiMemory.read() resolves them
+ *  - Keys are sorted so insertion-order differences never cause spurious refetches
+ */
+function normalizeReadOptionsKey(opts?: ReadOptions): string {
+  if (!opts) return '';
+  const normalized: Record<string, unknown> = {};
+
+  // maxResults: omit if undefined or non-finite (WikiMemory falls back to default)
+  if (opts.maxResults !== undefined && Number.isFinite(opts.maxResults)) {
+    normalized.maxResults = Math.max(0, Math.trunc(opts.maxResults));
+  }
+
+  // preFilterLimit: null has special meaning ("disable config-level limit") — preserve it;
+  // non-finite numbers are treated the same as undefined (no pre-filter) by WikiMemory
+  if (opts.preFilterLimit === null) {
+    normalized.preFilterLimit = null;
+  } else if (opts.preFilterLimit !== undefined && Number.isFinite(opts.preFilterLimit)) {
+    normalized.preFilterLimit = Math.max(0, Math.trunc(opts.preFilterLimit));
+  }
+
+  // hybridWeight: NaN → omit; ±Infinity and out-of-range finite → clamp to [0, 1]
+  if (opts.hybridWeight !== undefined && !Number.isNaN(opts.hybridWeight)) {
+    normalized.hybridWeight = Math.max(0, Math.min(1, opts.hybridWeight));
+  }
+
+  const sortedKeys = Object.keys(normalized).sort();
+  return sortedKeys.length ? JSON.stringify(normalized, sortedKeys) : '';
+}
+
 export function useMemoryRead(entityId: string, query: string, options?: ReadOptions) {
   const wiki = useWiki();
   const [data, setData] = useState<MemoryBundle | null>(null);
@@ -13,12 +47,12 @@ export function useMemoryRead(entityId: string, query: string, options?: ReadOpt
 
   const optionsRef = useRef(options);
   optionsRef.current = options;
-  // Serialize options for a stable effect dependency: re-fetches when values change,
-  // but not when the caller passes a new object reference with the same content.
-  // Sort keys before stringifying so insertion-order differences don't cause spurious refetches.
-  const optionsStr = options
-    ? JSON.stringify(options, Object.keys(options).sort())
-    : '';
+  // Serialize a normalized form of options so:
+  //  - `undefined` and `{}` map to the same string (no spurious refetch)
+  //  - non-finite hybridWeight (±Infinity, NaN) is coerced to its effective value before
+  //    stringifying (JSON.stringify turns Infinity/NaN to `null`, losing type information)
+  //  - keys are sorted so insertion-order differences don't cause spurious refetches
+  const optionsStr = normalizeReadOptionsKey(options);
 
   const fetchQueue = useRef<{
     inFlight: boolean;
