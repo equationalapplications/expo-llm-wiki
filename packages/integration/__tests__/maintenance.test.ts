@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { WikiMemory } from '@equationalapplications/core-llm-wiki';
+import { WikiMemory, WikiBusyError } from '@equationalapplications/core-llm-wiki';
 import type { MemoryDump } from '@equationalapplications/core-llm-wiki';
 import { openTestDatabase } from '../helpers/db';
 import { stubLLM, scriptedLLM } from '../helpers/llm';
@@ -179,7 +179,9 @@ describe('maintenance — Scenario 4: prune lock blocks runLibrarian; different 
     // Inject prune lock to simulate runPrune in-flight
     (wiki as any).activeMaintenanceJobs.add('llm_wiki_:entity-a:prune');
 
-    await expect(wiki.runLibrarian('entity-a')).rejects.toThrow();
+    const err = await wiki.runLibrarian('entity-a').catch(e => e);
+    expect(err).toBeInstanceOf(WikiBusyError);
+    expect((err as WikiBusyError).operation).toBe('prune');
 
     (wiki as any).activeMaintenanceJobs.delete('llm_wiki_:entity-a:prune');
   });
