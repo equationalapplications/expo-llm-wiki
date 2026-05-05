@@ -214,29 +214,29 @@ async function embed(text: string): Promise<number[]> {
 **Scenario 1 — Synonym recall (recall@5 = 1.0)**
 
 1. Seed entity with facts: "automobile is a wheeled motor vehicle", "car is used for personal transportation", "vehicle carries passengers or cargo".
-2. `runReembed` with real embed.
-3. `read('user-1', 'transportation', { maxResults: 5 })` — assert all 3 facts appear in results.
+2. Use the real embedding-backed test setup so facts are embedded during setup/import.
+3. Configure the wiki/test with `maxResults: 5`, then call `read('user-1', 'transportation')` — assert all 3 facts appear in results.
 
 **Scenario 2 — Hybrid beats keyword-only on semantic queries**
 
 1. Same corpus as Scenario 1.
 2. Query `"motorized road travel"` — zero lexical overlap with any fact title.
-3. `read` with `hybridWeight: 0` (MiniSearch only) — record facts returned.
-4. `read` with `hybridWeight: 0.5` — assert rank-1 fact is semantically closer (verified by cosine score) than rank-1 from keyword-only.
+3. Run the query against a wiki/test configuration with `hybridWeight: 0` (MiniSearch only) — record facts returned.
+4. Run the same query against a wiki/test configuration with `hybridWeight: 0.5` — assert rank-1 fact is semantically closer (verified by cosine score) than rank-1 from keyword-only.
 
 **Scenario 3 — Domain separation (precision@3 = 1.0)**
 
 1. Seed 5 programming facts (recursion, closures, async/await, type inference, garbage collection).
 2. Seed 5 cooking facts (sauté, braising, mise en place, emulsification, reduction).
-3. `runReembed` with real embed.
-4. `read('user-1', 'recursion', { maxResults: 3 })` — assert all 3 results are programming facts.
-5. `read('user-1', 'braising', { maxResults: 3 })` — assert all 3 results are cooking facts.
+3. Use the real embedding-backed test setup so facts are embedded during setup/import.
+4. Configure the wiki/test with `maxResults: 3`, then call `read('user-1', 'recursion')` — assert all 3 results are programming facts.
+5. Call `read('user-1', 'braising')` — assert all 3 results are cooking facts.
 
 **Scenario 4 — Recall survives export/import roundtrip**
 
 1. Run Scenario 1 setup and verify recall@5 = 1.0.
-2. `exportDump` → import into fresh wiki (no `runReembed`).
-3. Repeat the same `read` query — assert recall@5 still = 1.0. Proves BLOB roundtrip preserves semantic search quality without re-embedding.
+2. `exportDump` → import into a fresh wiki using the same embedding-backed setup; do not add a separate `runReembed` step.
+3. Repeat the same `read('user-1', 'transportation')` query — assert recall@5 still = 1.0. Proves the roundtrip preserves semantic search quality under the current import/test flow.
 
 ---
 
