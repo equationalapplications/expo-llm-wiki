@@ -585,12 +585,16 @@ export class WikiMemory {
   private _reembedKey(entityId: string) { return `${this.prefix}:${entityId}:reembed`; }
   private _globalReembedKey() { return `${this.prefix}:reembed`; }
   private _importKey(entityId: string) { return `${this.prefix}:${entityId}:import`; }
+  private _forgetKey(entityId: string) { return `${this.prefix}:${entityId}:forget`; }
   private _isReembedActive(entityId: string): boolean {
     return this.activeMaintenanceJobs.has(this._reembedKey(entityId))
       || this.activeMaintenanceJobs.has(this._globalReembedKey());
   }
   private _isImportActiveFor(entityId: string): boolean {
     return this.activeMaintenanceJobs.has(this._importKey(entityId));
+  }
+  private _isForgetActiveFor(entityId: string): boolean {
+    return this.activeMaintenanceJobs.has(this._forgetKey(entityId));
   }
   /** Returns true if any maintenance job has the given operation suffix (e.g. ':prune'). */
   private _isAnyMaintenanceActiveWithSuffix(suffix: string): boolean {
@@ -1466,6 +1470,9 @@ export class WikiMemory {
       if (this._isIngestActiveFor(entityId)) {
         throw new WikiBusyError('ingest', entityId);
       }
+      if (this._isForgetActiveFor(entityId)) {
+        throw new WikiBusyError('forget', entityId);
+      }
       this.activeMaintenanceJobs.add(importKey);
       try {
         await this._doImportEntity(entityId, bundle, merge);
@@ -1641,67 +1648,76 @@ export class WikiMemory {
     if (this._isImportActiveFor(entityId)) {
       throw new WikiBusyError('import', entityId);
     }
-    const now = Date.now();
-    let deletedEntries = 0;
-    let deletedTasks = 0;
-
-    if (params.clearAll) {
-      const [entriesRes, tasksRes] = await Promise.all([
-        this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
-        this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
-      ]);
-      await this.db.runAsync(`UPDATE ${this.prefix}checkpoints SET memory_checkpoint = 0, heal_checkpoint = 0 WHERE entity_id = ?`, [entityId]);
-      deletedEntries = entriesRes.changes;
-      deletedTasks = tasksRes.changes;
-    } else {
-      const hasIdSelectors = params.entryId !== undefined || params.taskId !== undefined;
-      const hasSourceSelectors = params.sourceRef !== undefined || params.sourceHash !== undefined;
-      if (hasIdSelectors && hasSourceSelectors) {
-        throw new Error('forget() params are mutually exclusive: use entryId/taskId together, or sourceRef/sourceHash together, but not both in the same call');
-      }
-
-      const sourceRef = params.sourceRef !== undefined ? normalizeSourceRef(params.sourceRef) : null;
-      if (params.sourceRef !== undefined && !sourceRef) throw new Error('Invalid sourceRef');
-      const sourceHash = params.sourceHash !== undefined ? normalizeSourceHash(params.sourceHash) : null;
-      if (params.sourceHash !== undefined && !sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
-
-      const entryPromise = params.entryId
-        ? this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, params.entryId, entityId])
-        : null;
-
-      const taskPromise = params.taskId
-        ? this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, params.taskId, entityId])
-        : null;
-
-      let refPromise: Promise<{ changes: number; lastInsertRowId: number }> | null = null;
-      if (sourceRef || sourceHash) {
-        let q = `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`;
-        const args: any[] = [now, now, entityId];
-        if (sourceRef) {
-          q += ` AND source_ref = ?`;
-          args.push(sourceRef);
-        }
-        if (sourceHash) {
-          q += ` AND source_hash = ?`;
-          args.push(sourceHash);
-        }
-        refPromise = this.db.runAsync(q, args);
-      }
-
-      const [entryResult, taskResult, refResult] = await Promise.all([
-        entryPromise ?? Promise.resolve(null),
-        taskPromise ?? Promise.resolve(null),
-        refPromise ?? Promise.resolve(null),
-      ]);
-
-      if (entryResult) deletedEntries += entryResult.changes;
-      if (taskResult) deletedTasks += taskResult.changes;
-      if (refResult) deletedEntries += refResult.changes;
+    const forgetKey = this._forgetKey(entityId);
+    if (this.activeMaintenanceJobs.has(forgetKey)) {
+      throw new WikiBusyError('forget', entityId);
     }
+    this.activeMaintenanceJobs.add(forgetKey);
+    try {
+      const now = Date.now();
+      let deletedEntries = 0;
+      let deletedTasks = 0;
 
-    await this.rebuildMiniSearchIndex(entityId);
-    this.vectorCache.delete(entityId);
-    return { deleted: { entries: deletedEntries, tasks: deletedTasks } };
+      if (params.clearAll) {
+        const [entriesRes, tasksRes] = await Promise.all([
+          this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
+          this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
+        ]);
+        await this.db.runAsync(`UPDATE ${this.prefix}checkpoints SET memory_checkpoint = 0, heal_checkpoint = 0 WHERE entity_id = ?`, [entityId]);
+        deletedEntries = entriesRes.changes;
+        deletedTasks = tasksRes.changes;
+      } else {
+        const hasIdSelectors = params.entryId !== undefined || params.taskId !== undefined;
+        const hasSourceSelectors = params.sourceRef !== undefined || params.sourceHash !== undefined;
+        if (hasIdSelectors && hasSourceSelectors) {
+          throw new Error('forget() params are mutually exclusive: use entryId/taskId together, or sourceRef/sourceHash together, but not both in the same call');
+        }
+
+        const sourceRef = params.sourceRef !== undefined ? normalizeSourceRef(params.sourceRef) : null;
+        if (params.sourceRef !== undefined && !sourceRef) throw new Error('Invalid sourceRef');
+        const sourceHash = params.sourceHash !== undefined ? normalizeSourceHash(params.sourceHash) : null;
+        if (params.sourceHash !== undefined && !sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
+
+        const entryPromise = params.entryId
+          ? this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, params.entryId, entityId])
+          : null;
+
+        const taskPromise = params.taskId
+          ? this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, params.taskId, entityId])
+          : null;
+
+        let refPromise: Promise<{ changes: number; lastInsertRowId: number }> | null = null;
+        if (sourceRef || sourceHash) {
+          let q = `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`;
+          const args: any[] = [now, now, entityId];
+          if (sourceRef) {
+            q += ` AND source_ref = ?`;
+            args.push(sourceRef);
+          }
+          if (sourceHash) {
+            q += ` AND source_hash = ?`;
+            args.push(sourceHash);
+          }
+          refPromise = this.db.runAsync(q, args);
+        }
+
+        const [entryResult, taskResult, refResult] = await Promise.all([
+          entryPromise ?? Promise.resolve(null),
+          taskPromise ?? Promise.resolve(null),
+          refPromise ?? Promise.resolve(null),
+        ]);
+
+        if (entryResult) deletedEntries += entryResult.changes;
+        if (taskResult) deletedTasks += taskResult.changes;
+        if (refResult) deletedEntries += refResult.changes;
+      }
+
+      await this.rebuildMiniSearchIndex(entityId);
+      this.vectorCache.delete(entityId);
+      return { deleted: { entries: deletedEntries, tasks: deletedTasks } };
+    } finally {
+      this.activeMaintenanceJobs.delete(forgetKey);
+    }
   }
 
   async ingestDocument(entityId: string, params: { sourceRef: string; sourceHash: string; documentChunk: string; maxChunkLength?: number; chunkOverlap?: number; chunkConcurrency?: number }): Promise<{ truncated: boolean; chunks: number }> {

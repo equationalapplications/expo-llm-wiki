@@ -404,6 +404,30 @@ describe('importDump — busy-key protection', () => {
     await imp;
   });
 
+  it('importDump() throws WikiBusyError(forget) while forget is in-flight', async () => {
+    const { wiki } = makeRealWiki();
+    await wiki.setup();
+
+    // Patch forget to stall mid-execution so the import race is detectable
+    let resolveForget: () => void = () => {};
+    const blocker = new Promise<void>((r) => { resolveForget = r; });
+    const originalRebuild = (wiki as any).rebuildMiniSearchIndex.bind(wiki);
+    (wiki as any).rebuildMiniSearchIndex = async (entityId: string) => {
+      await blocker;
+      return originalRebuild(entityId);
+    };
+
+    const forget = wiki.forget('user-1', { clearAll: true });
+    await new Promise((r) => setTimeout(r, 0));
+
+    const err = await wiki.importDump(simpleDump('user-1')).catch((e) => e);
+    expect(err).toBeInstanceOf(WikiBusyError);
+    expect(err.operation).toBe('forget');
+
+    resolveForget();
+    await forget;
+  });
+
   it('write() does not start background librarian while importDump is in-flight for same entity', async () => {
     const { wiki } = makeRealWiki();
     await wiki.setup();
