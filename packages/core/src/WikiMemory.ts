@@ -1570,7 +1570,7 @@ export class WikiMemory {
 
           // Extract a valid BLOB from the incoming fact if the dump was kept
           // in-memory (Uint8Array / Buffer both pass instanceof Uint8Array since
-          // Buffer extends Uint8Array in Node.js; JSON round-trips produce a plain
+          // Buffer extends Uint8Array in Node.js; JSON round trips produce a plain
           // object which is rejected here so we fall back to re-embed).
           const rawBlob = (fact as WikiFact & { embedding_blob?: unknown }).embedding_blob;
           const blobData: Uint8Array | null = rawBlob instanceof Uint8Array ? rawBlob : null;

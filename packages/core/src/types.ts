@@ -181,7 +181,7 @@ export interface EntityStatus {
  *
  * @remarks **Breaking change** — the `operation` union was `'ingest' | 'librarian' |
  * 'heal' | 'prune' | 'reembed'` in v1.x. It now also includes `'import'` and
- * `'forget'`. Exhaustive `switch` statements over the previous five values will
+ * `'forget'`. Exhaustive `switch` statements over these five literal values will
  * need a default/fallthrough arm or an update to cover the new cases.
  */
 export class WikiBusyError extends Error {
