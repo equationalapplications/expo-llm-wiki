@@ -82,6 +82,22 @@ async function main() {
   fs.writeFileSync(outPath, gz);
   console.log(`Saved ${outPath} (${(gz.length / 1024 / 1024).toFixed(1)} MB)`);
 
+  // 6. Export embeddings separately (the dump strips embedding vectors for portability,
+  //    so we export them in a side-car file so the integration test can restore them
+  //    directly without re-running fastembed at test time).
+  console.log('Exporting embeddings side-car…');
+  const embRows = await db.getAllAsync<{ id: string; embedding: string | null }>(
+    `SELECT id, embedding FROM llm_wiki_entries WHERE entity_id = 'scifact-corpus' AND embedding IS NOT NULL`
+  );
+  const embMap: Record<string, number[]> = {};
+  for (const row of embRows) {
+    embMap[row.id] = JSON.parse(row.embedding!);
+  }
+  const embGz = zlib.gzipSync(Buffer.from(JSON.stringify(embMap), 'utf8'), { level: 6 });
+  const embPath = path.join(FIXTURES, 'scifact-embeddings.json.gz');
+  fs.writeFileSync(embPath, embGz);
+  console.log(`Saved ${embPath} (${(embGz.length / 1024 / 1024).toFixed(1)} MB)`);
+
   await db.closeAsync();
 }
 

@@ -32,6 +32,8 @@ beforeAll(async () => {
 
   const embedder = await FlagEmbedding.init({ model: EmbeddingModel.BGESmallENV15 });
 
+  // embed() is used only for the 300 test queries — corpus embeddings are restored
+  // directly from the pre-built sidecar fixture (see scripts/embed-scifact.ts).
   async function embed(text: string): Promise<number[]> {
     for await (const batch of embedder.embed([text])) {
       return Array.from(batch[0]);
@@ -41,12 +43,38 @@ beforeAll(async () => {
 
   const db = openTestDatabase();
   wiki = new WikiMemory(db, {
-    llmProvider: { generateText: async () => '{}', embed },
+    // No embed during import — corpus embeddings are restored from the sidecar below.
+    llmProvider: { generateText: async () => '{}' },
     config: { maxResults: 10 },
   });
   await wiki.setup();
+  // Import facts (text only; importDump skips embedFact when embed is not provided).
   await wiki.importDump(dump);
-}, 120_000);
+
+  // Restore pre-computed embeddings from the sidecar fixture in one transaction.
+  // This avoids running 5k ONNX inferences at test time (the dump strips embeddings
+  // for portability; embed-scifact.ts exports them separately).
+  const embGz = fs.readFileSync(path.join(FIXTURES, 'scifact-embeddings.json.gz'));
+  const embMap = JSON.parse(zlib.gunzipSync(embGz).toString('utf8')) as Record<string, number[]>;
+  await db.withTransactionAsync(async () => {
+    for (const [id, vec] of Object.entries(embMap)) {
+      await db.runAsync(
+        `UPDATE llm_wiki_entries SET embedding = ? WHERE id = ?`,
+        [JSON.stringify(vec), id]
+      );
+    }
+  });
+  // Store embedding dimension so read() knows to use cosine scoring.
+  const firstVec = Object.values(embMap)[0];
+  if (firstVec) {
+    await db.runAsync(
+      `INSERT OR REPLACE INTO llm_wiki_meta (key, value) VALUES ('embedding_dimension', ?)`,
+      [String(firstVec.length)]
+    );
+  }
+  // Swap in the embed fn now that embeddings are restored.
+  (wiki as any).options.llmProvider.embed = embed;
+}, 300_000);
 
 describe('SciFact BEIR benchmark', () => {
   it(
@@ -81,6 +109,6 @@ describe('SciFact BEIR benchmark', () => {
 
       expect(meanNDCG).toBeGreaterThanOrEqual(0.30);
     },
-    120_000
+    300_000
   );
 });
