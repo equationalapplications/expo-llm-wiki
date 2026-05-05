@@ -202,8 +202,12 @@ beforeAll(async () => {
 }, 30_000);
 
 async function embed(text: string): Promise<number[]> {
-  const [vec] = await embedder.embed([text]);
-  return Array.from(vec);
+  for await (const batch of embedder.embed([text])) {
+    const [vec] = batch;
+    return Array.from(vec);
+  }
+
+  throw new Error('No embedding returned');
 }
 ```
 
