@@ -72,8 +72,14 @@ beforeAll(async () => {
       [String(firstVec.length)]
     );
   }
-  // Swap in the embed fn now that embeddings are restored.
-  (wiki as any).options.llmProvider.embed = embed;
+
+  // Recreate WikiMemory against the same database with query embedding enabled,
+  // avoiding mutation of private/internal fields.
+  wiki = new WikiMemory(db, {
+    llmProvider: { generateText: async () => '{}', embed },
+    config: { maxResults: 10 },
+  });
+  await wiki.setup();
 }, 300_000);
 
 describe('SciFact BEIR benchmark', () => {
