@@ -295,12 +295,12 @@ await execute(['user-123']);
 flowchart TD
     A["<WikiProvider wiki={wiki}>"] --> B["App Components"]
     B --> C{"Use Hook?"}
-    C -->|"useMemoryRead(entityId, query)"| D["[Read Memory]"]
+    C -->|"useMemoryRead(entityId, query, options?)"| D["[Read Memory]"]
     C -->|"useWikiWrite()"| E["[Write Memory]"]
     C -->|"useWikiIngest()"| F["[Ingest Document]"]
     C -->|"useWikiForget()"| G["[Delete Memory]"]
     C -->|"useWikiMaintenance()"| H["[Run Jobs]"]
-    D --> I{"entityId, query,<br/>or ReadOptions changed?"}
+    D --> I{"entityId, query,<br/>ReadOptions, or wiki changed?"}
     I -->|"Yes"| J["Auto-refetch"]
     I -->|"No"| K["Return cached data"]
     J --> L["Trigger read()"]
