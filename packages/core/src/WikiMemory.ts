@@ -1561,21 +1561,17 @@ export class WikiMemory {
       // overwritten with the incoming fact's content.
       for (const fact of bundle.facts) {
         if (!fact.deleted_at && upsertedFactIds.has(fact.id)) {
-          const embedded = await this.embedFact({
+          await this.embedFact({
             id: fact.id,
             title: fact.title,
             body: fact.body,
             tags: Array.isArray(fact.tags) || typeof fact.tags === 'string' ? fact.tags : [],
           });
-          // If embedding failed for a fact that already existed locally, clear any
-          // stale vectors so the old embedding from before the import does not rank
-          // the updated title/body incorrectly until a separate runReembed() is run.
-          if (!embedded) {
-            await this.db.runAsync(
-              `UPDATE ${this.prefix}entries SET embedding_blob = NULL, embedding = NULL WHERE id = ?`,
-              [fact.id]
-            );
-          }
+          // Preserve any existing embedding when re-embedding is unavailable or
+          // fails here. embedFact() uses a false-y result for both actual failures
+          // and "no embed provider configured", so clearing the stored vector would
+          // incorrectly discard previously valid embeddings during offline or
+          // transiently failing imports.
         }
       }
       // Second flush: evict any cache entries a concurrent read() repopulated
