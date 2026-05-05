@@ -1546,6 +1546,9 @@ export class WikiMemory {
           });
         }
       }
+      // Second flush: evict any cache entries a concurrent read() repopulated
+      // from old DB vectors while the embedding loop was running.
+      this.vectorCache.delete(entityId);
     }
 
     await this.rebuildMiniSearchIndex();
