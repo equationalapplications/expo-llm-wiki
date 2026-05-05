@@ -133,7 +133,7 @@ When `preFilterLimit: 50` is set with 1000 facts, cosine similarity is computed 
 
 ## Vector Cache
 
-Parsed embedding vectors from full-scan `read()` calls are cached in memory, keyed by entity ID (max 16 entities, max 500 vectors per entity). This avoids redundant `Float32Array` parsing on repeated queries for the same entity. When the 16-entity limit is reached, the least-recently-used entity is evicted to make room; if an entity exceeds 500 facts, its vectors are not cached at all for that read.
+Parsed embedding vectors from full-scan `read()` calls are cached in memory, keyed by entity ID (max 16 entities, max 500 vectors per entity). This avoids redundant `Float32Array` parsing on repeated queries for the same entity. When the 16-entity limit is reached, the oldest-inserted entity is evicted to make room; if an entity exceeds 500 facts, its vectors are not cached at all for that read.
 
 After heavy read workloads or on memory-constrained runtimes, you can release the entire cache explicitly:
 
@@ -142,7 +142,7 @@ After heavy read workloads or on memory-constrained runtimes, you can release th
 wikiMemory.clearVectorCache();
 ```
 
-The cache is also automatically invalidated on any mutation (`write`, `runLibrarian`, `runHeal`, `runPrune`, `runReembed`, `ingestDocument`, `importDump`, `forget`).
+The cache is also automatically invalidated on any mutation (`runLibrarian`, `runHeal`, `runPrune`, `runReembed`, `ingestDocument`, `importDump`, `forget`).
 
 ## Usage
 

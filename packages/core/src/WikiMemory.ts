@@ -979,7 +979,7 @@ export class WikiMemory {
     ]);
 
     const parsedFacts = facts.map(f => {
-      const { embedding: _embedding, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
+      const { embedding: _embedding, embedding_blob: _blob, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
       return {
         ...rest,
         tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
@@ -1082,7 +1082,7 @@ export class WikiMemory {
     `, [entityId]);
 
     const currentFacts = currentFactsRows.map(f => {
-      const { embedding: _embedding, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
+      const { embedding: _embedding, embedding_blob: _blob, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
       return {
         ...rest,
         tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
@@ -1191,7 +1191,7 @@ export class WikiMemory {
       .map(({ id, title, source_ref }) => ({ id, title, source_ref }));
 
     const userPrompt = `Heal Candidates:\n${JSON.stringify(healCandidates.map(f => {
-      const { embedding: _embedding, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
+      const { embedding: _embedding, embedding_blob: _blob, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
       return { ...rest, tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags };
     }), null, 2)}
 \nDocument Anchors (DO NOT MODIFY OR DELETE):\n${JSON.stringify(documentAnchors, null, 2)}
@@ -1438,7 +1438,7 @@ export class WikiMemory {
       this.db.getAllAsync<WikiEvent>(eventsQuery, eventsParams),
     ]);
     const facts = factsRaw.map(f => {
-      const { embedding: _embedding, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
+      const { embedding: _embedding, embedding_blob: _blob, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
       return {
         ...rest,
         tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
@@ -1528,6 +1528,9 @@ export class WikiMemory {
       // embedFact() for them. An in-memory dump preserves the Uint8Array intact;
       // a JSON round-trip corrupts binary, so we guard via instanceof.
       const factsWithPreservedBlob = new Set<string>();
+      // Track the dimension of preserved blobs so we can record it in the meta
+      // table after the transaction, enabling model-mismatch detection on future reads.
+      let preservedBlobDim: number | null = null;
       await this.db.withTransactionAsync(async () => {
         if (!merge) {
           const now = Date.now();
@@ -1593,8 +1596,8 @@ export class WikiMemory {
                 [entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, blobData, fact.id]
               );
               factsWithPreservedBlob.add(fact.id);
+              if (preservedBlobDim === null) preservedBlobDim = blobData.byteLength / 4;
             } else {
-              // No valid BLOB — clear any stale embedding columns so a concurrent
               // read() never ranks the new title/body against the old vector;
               // the post-transaction embedding loop will re-embed.
               // If embedFact() fails (provider absent or throws), the NULL vector
@@ -1614,6 +1617,7 @@ export class WikiMemory {
                 [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, blobData]
               );
               factsWithPreservedBlob.add(fact.id);
+              if (preservedBlobDim === null) preservedBlobDim = blobData.byteLength / 4;
             } else {
               await this.db.runAsync(
                 `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1706,6 +1710,13 @@ export class WikiMemory {
             tags: Array.isArray(fact.tags) || typeof fact.tags === 'string' ? fact.tags : [],
           });
         }
+      }
+      // If any facts carried preserved BLOBs, record the vector dimension in the
+      // meta table now (embedFact() was skipped for those rows, so it didn't happen
+      // automatically). This ensures read() can detect model-dimension mismatches
+      // after importing into a fresh DB that has never seen an embedding.
+      if (preservedBlobDim !== null) {
+        await this.storeEmbeddingDimension(preservedBlobDim);
       }
       // Second flush: evict any cache entries a concurrent read() repopulated
       // from old DB vectors while the embedding loop was running.

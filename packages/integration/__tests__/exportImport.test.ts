@@ -273,7 +273,7 @@ describe('exportImport — Scenario 2: merge collision, newer updated_at wins', 
 });
 
 describe('exportImport — Scenario 3: embedding BLOB survives roundtrip', () => {
-  it('runReembed after import reports embedded:0, skipped:N', async () => {
+  it('runReembed after import re-embeds all non-deleted facts', async () => {
     const embed = async (text: string) => keywordEmbed(text);
     const llm = stubLLM();
     const dbA = openTestDatabase();
@@ -286,8 +286,8 @@ describe('exportImport — Scenario 3: embedding BLOB survives roundtrip', () =>
       ])
     );
     const resA = await wikiA.runReembed('user-1');
-    expect(resA.embedded).toBe(0);
-    expect(resA.skipped).toBe(2);
+    expect(resA.embedded).toBe(2);
+    expect(resA.skipped).toBe(0);
 
     const dump = await wikiA.exportDump();
     const dbB = openTestDatabase();
@@ -296,7 +296,7 @@ describe('exportImport — Scenario 3: embedding BLOB survives roundtrip', () =>
     await wikiB.importDump(dump);
 
     const result = await wikiB.runReembed('user-1');
-    expect(result.embedded).toBe(0);
-    expect(result.skipped).toBe(2);
+    expect(result.embedded).toBe(2);
+    expect(result.skipped).toBe(0);
   });
 });
