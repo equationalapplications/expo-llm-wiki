@@ -347,8 +347,8 @@ flowchart TD
     N --> O
     C --> P["MiniSearch ranking"]
     P --> O
-    O --> Q["Return MemoryBundle"]
-    Q --> R["Track access"]
+    O --> R["Track access"]
+    R --> Q["Return MemoryBundle"]
 ```
 
 The flowchart shows:
