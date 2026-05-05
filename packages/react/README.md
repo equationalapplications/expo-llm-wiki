@@ -258,7 +258,7 @@ await runHeal('user-123');
 // Backfill BLOB embeddings or update after changing embedding model
 const { embedded, skipped } = await runReembed('user-123');
 
-// Remove stale/old facts
+// Hard-delete soft-deleted entries/tasks after retention and prune old events
 await runPrune('user-123');
 ```
 
