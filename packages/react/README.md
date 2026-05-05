@@ -8,7 +8,7 @@ React hooks and web utilities for @equationalapplications/core-llm-wiki, designe
 
 - **Semantic search** — Vector embeddings with optional `embed` function and MiniSearch fallback
 - **Retrieval tuning** — Per-call overrides for hybrid scoring, pre-filtering, result limits
-- **Reactive reads** — Auto-refetch on `entityId` or query changes
+- **Reactive reads** — Auto-refetch on `entityId`, query, or `options` changes
 - **Mutation hooks** — `useWikiWrite`, `useWikiIngest`, `useWikiForget`, `useWikiMaintenance`, etc.
 - **Shared context** — Single `WikiProvider` per app, use anywhere
 - **Full-featured memory** — Facts, tasks, events, maintenance jobs (librarian, heal, reembed, prune)
