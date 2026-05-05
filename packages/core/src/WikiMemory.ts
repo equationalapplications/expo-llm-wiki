@@ -422,7 +422,7 @@ export class WikiMemory {
     try {
       const vector = await embedFn(text);
       // Validate before persisting: an empty or non-finite vector would poison
-      // embedding_dimension and write unusable data to entries.embedding.
+      // embedding_dimension and write unusable data to embedding_blob.
       if (vector.length === 0 || !vector.every(v => typeof v === 'number' && isFinite(v))) {
         console.warn(`[WikiMemory] embedFact: embed() returned an invalid vector for ${fact.id}; skipping.`);
         return false;
@@ -1545,12 +1545,21 @@ export class WikiMemory {
       // Embed non-deleted imported facts so they are immediately searchable.
       for (const fact of bundle.facts) {
         if (!fact.deleted_at) {
-          await this.embedFact({
+          const embedded = await this.embedFact({
             id: fact.id,
             title: fact.title,
             body: fact.body,
             tags: Array.isArray(fact.tags) || typeof fact.tags === 'string' ? fact.tags : [],
           });
+          // If embedding failed for a fact that already existed locally, clear any
+          // stale vectors so the old embedding from before the import does not rank
+          // the updated title/body incorrectly until a separate runReembed() is run.
+          if (!embedded) {
+            await this.db.runAsync(
+              `UPDATE ${this.prefix}entries SET embedding_blob = NULL, embedding = NULL WHERE id = ?`,
+              [fact.id]
+            );
+          }
         }
       }
       // Second flush: evict any cache entries a concurrent read() repopulated

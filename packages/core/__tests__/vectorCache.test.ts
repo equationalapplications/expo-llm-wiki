@@ -338,4 +338,58 @@ describe('vector cache — importDump() invalidation', () => {
     expect(parseSpy.mock.calls.length).toBeGreaterThan(0);
     parseSpy.mockRestore();
   });
+
+  it('importDump() clears stale embedding when embedFact() fails for an updated fact', async () => {
+    // Use a wiki where embed always throws so embedFact() returns false.
+    const failingEmbed = async (_text: string): Promise<number[]> => {
+      throw new Error('embed unavailable');
+    };
+    const { wiki, db } = makeWiki(failingEmbed);
+    await wiki.setup();
+
+    // Pre-insert a fact with a stale embedding vector.
+    await insertFactWithBlob(db, 'f-existing', 'user-1', [1, 0, 0], 1000);
+    await db.runAsync(`INSERT OR REPLACE INTO llm_wiki_meta (key, value) VALUES ('embedding_dimension', '3')`);
+
+    // Import a dump that updates the same fact with new title/body (newer updated_at).
+    const dump: MemoryDump = {
+      generatedAt: Date.now(),
+      entities: {
+        'user-1': {
+          facts: [
+            {
+              id: 'f-existing',
+              entity_id: 'user-1',
+              title: 'updated title',
+              body: 'updated body',
+              tags: [],
+              confidence: 'certain',
+              source_type: 'user_stated',
+              source_hash: null,
+              source_ref: null,
+              created_at: 1000,
+              updated_at: 2000, // newer — LWW winner
+              last_accessed_at: null,
+              access_count: 0,
+              deleted_at: null,
+            },
+          ],
+          tasks: [],
+          events: [],
+        },
+      },
+    };
+
+    await wiki.importDump(dump);
+
+    // The fact row should have NULL embedding_blob and NULL embedding because
+    // embedFact() failed and the stale vector was explicitly cleared.
+    const row = await db.getFirstAsync<{ embedding_blob: Uint8Array | null; embedding: string | null }>(
+      `SELECT embedding_blob, embedding FROM llm_wiki_entries WHERE id = ?`,
+      ['f-existing']
+    );
+    expect(row).not.toBeNull();
+    expect(row!.embedding_blob).toBeNull();
+    expect(row!.embedding).toBeNull();
+  });
 });
