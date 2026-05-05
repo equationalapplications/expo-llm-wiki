@@ -43,7 +43,7 @@ packages/integration/
     └── recall.test.ts
 ```
 
-`packages/integration/` is a private package that depends on `@equationalapplications/core-llm-wiki`. It is not published. CI runs it as a separate step after core tests pass.
+`packages/integration/` is a private package that depends on `@equationalapplications/core-llm-wiki`. It is not published. It is intended to run separately from the core test suite, but the current repository automation does not yet enforce this as a distinct CI step.
 
 ### Helpers
 
