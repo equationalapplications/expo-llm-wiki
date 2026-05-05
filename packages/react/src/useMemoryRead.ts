@@ -51,7 +51,6 @@ export function useMemoryRead(entityId: string, query: string, options?: ReadOpt
 
   useEffect(() => {
     scheduleFetch.current(entityId, query);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entityId, query, wiki, optionsStr]);
 
   const refetch = useCallback(() => {
