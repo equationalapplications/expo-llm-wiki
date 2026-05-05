@@ -428,7 +428,9 @@ export class WikiMemory {
         return false;
       }
       const float32Vector = new Float32Array(vector);
-      if (!Array.from(float32Vector).every(v => isFinite(v))) {
+      let hasNonFinite = false;
+      for (let i = 0; i < float32Vector.length; i++) { if (!isFinite(float32Vector[i])) { hasNonFinite = true; break; } }
+      if (hasNonFinite) {
         console.warn(`[WikiMemory] embedFact: embed() returned values that overflow float32 for ${fact.id}; skipping.`);
         return false;
       }
@@ -635,7 +637,7 @@ export class WikiMemory {
     for (const k of this.activeIngestJobs) {
       if (k.startsWith(ingestPrefix)) { isIngestRunning = true; break; }
     }
-    let blockingOperation: 'prune' | 'librarian' | 'heal' | 'ingest' | 'reembed' | 'import' | null = null;
+    let blockingOperation: 'prune' | 'librarian' | 'heal' | 'ingest' | 'reembed' | 'import' | 'forget' | null = null;
     if (this.activeMaintenanceJobs.has(pruneKey)) {
       blockingOperation = 'prune';
     } else if (this.activeMaintenanceJobs.has(this._librarianKey(entityId))) {
@@ -648,6 +650,8 @@ export class WikiMemory {
       blockingOperation = 'ingest';
     } else if (this._isImportActiveFor(entityId)) {
       blockingOperation = 'import';
+    } else if (this._isForgetActiveFor(entityId)) {
+      blockingOperation = 'forget';
     }
     if (blockingOperation !== null) {
       throw new WikiBusyError(blockingOperation, entityId);
@@ -915,26 +919,36 @@ export class WikiMemory {
         });
         const topIds = results.slice(0, maxResults).map((r: { id: string }) => r.id);
         if (topIds.length > 0) {
-          const placeholders = topIds.map(() => '?').join(',');
-          const rows = await this.db.getAllAsync<WikiFact>(
-            `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
-            topIds
-          );
-          const byId = new Map(rows.map(r => [r.id, r]));
+          const kwRows: WikiFact[] = [];
+          const kwChunkSize = 500;
+          for (let i = 0; i < topIds.length; i += kwChunkSize) {
+            const idChunk = topIds.slice(i, i + kwChunkSize);
+            const placeholders = idChunk.map(() => '?').join(',');
+            const chunkRows = await this.db.getAllAsync<WikiFact>(
+              `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+              idChunk
+            );
+            kwRows.push(...chunkRows);
+          }
+          const byId = new Map(kwRows.map(r => [r.id, r]));
           facts = topIds.map(id => byId.get(id)).filter((f): f is WikiFact => f !== undefined);
         }
       }
 
       if (facts.length > 0) {
         const ids = facts.map(f => f.id);
-        const placeholders = ids.map(() => '?').join(',');
         const now = Date.now();
-        await this.db.runAsync(
-          `UPDATE ${this.prefix}entries
-           SET access_count = access_count + 1, last_accessed_at = ?
-           WHERE id IN (${placeholders})`,
-          [now, ...ids]
-        );
+        const accessChunkSize = 500;
+        for (let i = 0; i < ids.length; i += accessChunkSize) {
+          const idChunk = ids.slice(i, i + accessChunkSize);
+          const placeholders = idChunk.map(() => '?').join(',');
+          await this.db.runAsync(
+            `UPDATE ${this.prefix}entries
+             SET access_count = access_count + 1, last_accessed_at = ?
+             WHERE id IN (${placeholders})`,
+            [now, ...idChunk]
+          );
+        }
       }
     } else {
       facts = await this.db.getAllAsync<WikiFact>(
@@ -1007,7 +1021,8 @@ export class WikiMemory {
       if (
         !this.activeMaintenanceJobs.has(jobKey) &&
         !this.activeMaintenanceJobs.has(this._pruneKey(entityId)) &&
-        !this._isImportActiveFor(entityId)
+        !this._isImportActiveFor(entityId) &&
+        !this._isForgetActiveFor(entityId)
       ) {
         this.activeMaintenanceJobs.add(jobKey);
         this.runLibrarianThenMaybeHeal(entityId, count)
@@ -1237,6 +1252,9 @@ export class WikiMemory {
     if (this._isImportActiveFor(entityId)) {
       throw new WikiBusyError('import', entityId);
     }
+    if (this._isForgetActiveFor(entityId)) {
+      throw new WikiBusyError('forget', entityId);
+    }
     this.activeMaintenanceJobs.add(jobKey);
     try {
       await this._doRunLibrarian(entityId);
@@ -1258,6 +1276,9 @@ export class WikiMemory {
     }
     if (this._isImportActiveFor(entityId)) {
       throw new WikiBusyError('import', entityId);
+    }
+    if (this._isForgetActiveFor(entityId)) {
+      throw new WikiBusyError('forget', entityId);
     }
     this.activeMaintenanceJobs.add(jobKey);
     try {
@@ -1295,6 +1316,9 @@ export class WikiMemory {
       if (this._isImportActiveFor(entityId)) {
         throw new WikiBusyError('import', entityId);
       }
+      if (this._isForgetActiveFor(entityId)) {
+        throw new WikiBusyError('forget', entityId);
+      }
     } else {
       // Cross-check: fail if any per-entity reembed is in-flight (global covers all entities)
       if (this._isAnyMaintenanceActiveWithSuffix(':reembed')) {
@@ -1314,6 +1338,9 @@ export class WikiMemory {
       }
       if (this._isAnyMaintenanceActiveWithSuffix(':import')) {
         throw new WikiBusyError('import', '*');
+      }
+      if (this._isAnyMaintenanceActiveWithSuffix(':forget')) {
+        throw new WikiBusyError('forget', '*');
       }
     }
     this.activeMaintenanceJobs.add(reembedKey);
@@ -1760,6 +1787,9 @@ export class WikiMemory {
     }
     if (this._isImportActiveFor(entityId)) {
       throw new WikiBusyError('import', entityId);
+    }
+    if (this._isForgetActiveFor(entityId)) {
+      throw new WikiBusyError('forget', entityId);
     }
     this.activeIngestJobs.add(jobKey);
 
