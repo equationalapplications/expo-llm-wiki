@@ -234,23 +234,22 @@ describe('vector cache — invalidation', () => {
 });
 
 describe('vector cache — boundary limits', () => {
-  it('evicts the oldest entity when the 101st entity is cached', async () => {
+  it('evicts the oldest entity when the 17th entity is cached (cap = 16)', async () => {
     const parseSpy = vi.spyOn(embeddingModule, 'parseEmbedding');
 
-    // Use embed = undefined so read() falls back to MiniSearch and skips cosine scoring.
-    // We just need entity reads to populate the cache; we don't need real embed vectors here.
-    // Instead, insert blobs and provide an embed fn so full-scan cosine path is taken.
+    // Insert blobs and provide an embed fn so full-scan cosine path is taken.
     const { wiki, db } = makeWiki(async () => [1, 0, 0]);
     await wiki.setup();
 
-    // Insert one fact for each of 101 entities and set dimension
-    for (let i = 0; i < 101; i++) {
+    // Insert one fact for each of 17 entities and set dimension.
+    // MAX_VECTOR_CACHE_ENTITIES = 16, so the 17th read evicts entity-0.
+    for (let i = 0; i < 17; i++) {
       await insertFactWithBlob(db, `f-e${i}`, `entity-${i}`, [1, 0, 0]);
     }
     await db.runAsync(`INSERT OR REPLACE INTO llm_wiki_meta (key, value) VALUES ('embedding_dimension', '3')`);
 
-    // Read all 101 entities to fill the cache; the 101st should evict entity-0
-    for (let i = 0; i < 101; i++) {
+    // Read all 17 entities to fill and then overflow the cache.
+    for (let i = 0; i < 17; i++) {
       parseSpy.mockClear();
       await wiki.read(`entity-${i}`, 'query');
     }
@@ -260,29 +259,29 @@ describe('vector cache — boundary limits', () => {
     await wiki.read('entity-0', 'query');
     expect(parseSpy.mock.calls.length).toBeGreaterThan(0); // evicted — re-parsed from DB
 
-    // entity-100 was the most recently inserted and should still be cached
+    // entity-16 was the most recently read and should still be cached
     parseSpy.mockClear();
-    await wiki.read('entity-100', 'query');
+    await wiki.read('entity-16', 'query');
     expect(parseSpy.mock.calls.length).toBe(0); // still in cache
 
     parseSpy.mockRestore();
   });
 
-  it('skips cache population for entities with more than 64 facts', async () => {
+  it('skips cache population for entities with more than 500 facts (cap = 500)', async () => {
     const parseSpy = vi.spyOn(embeddingModule, 'parseEmbedding');
 
     const { wiki, db } = makeWiki(async () => [1, 0, 0]);
     await wiki.setup();
 
-    // Insert 65 facts for a single entity (exceeds the 64-fact per-entity cap)
-    for (let i = 0; i < 65; i++) {
+    // Insert 501 facts for a single entity (exceeds the 500-fact per-entity cap)
+    for (let i = 0; i < 501; i++) {
       await insertFactWithBlob(db, `f-large-${i}`, 'large-entity', [1, 0, 0]);
     }
     await db.runAsync(`INSERT OR REPLACE INTO llm_wiki_meta (key, value) VALUES ('embedding_dimension', '3')`);
 
     await wiki.read('large-entity', 'query'); // first full-scan read
 
-    // Second read: because > 64 facts skip cache population, parseEmbedding
+    // Second read: because > 500 facts skip cache population, parseEmbedding
     // must be called again on the second full-scan read
     parseSpy.mockClear();
     await wiki.read('large-entity', 'query');
