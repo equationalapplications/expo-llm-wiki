@@ -1,7 +1,7 @@
 # Integration Test Suite — Design Spec
 
 **Date:** 2026-05-04
-**Branch:** feat/retrieval-tuning (PR in review)
+**Branch:** feat/integration-test-suite (PR in review)
 **Status:** Implemented
 
 ---
