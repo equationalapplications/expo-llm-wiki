@@ -244,7 +244,7 @@ const handleDelete = async (factId: string) => {
 
 ### `useWikiMaintenance()`
 
-Run background maintenance jobs: librarian (deduplication/fact extraction), heal (repair corrupted embeddings), reembed (convert TEXT embeddings to BLOB / update after model change), prune (remove stale facts).
+Run background maintenance jobs: librarian (deduplication/fact extraction), heal (LLM-driven fact review: removes orphaned facts, downgrades stale inferences, repairs incorrect facts), reembed (convert TEXT embeddings to BLOB / update after model change), prune (remove stale facts).
 
 ```typescript
 const { runLibrarian, runHeal, runReembed, runPrune, isPending, error, lastResult } = useWikiMaintenance();
@@ -252,7 +252,7 @@ const { runLibrarian, runHeal, runReembed, runPrune, isPending, error, lastResul
 // Deduplicate and consolidate facts from events
 await runLibrarian('user-123');
 
-// Repair corrupted embeddings
+// LLM-driven fact review: remove orphaned/stale facts, repair incorrect inferences
 await runHeal('user-123');
 
 // Backfill BLOB embeddings or update after changing embedding model
