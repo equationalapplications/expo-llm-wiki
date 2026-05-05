@@ -1332,24 +1332,27 @@ export class WikiMemory {
 
       let embedded = 0;
       let skipped = 0;
-      for (const row of rows) {
-        const success = await this.embedFact(row);
-        if (success) embedded++;
-        else skipped++;
-      }
-      // If any fact was successfully re-embedded, promote the pending dimension to
-      // canonical and clear the mismatch flag so read() uses embeddings from here on.
-      if (embedded > 0) {
-        await this._reconcileEmbeddingDimension();
-      }
-
-      // Invalidate again after the loop: a concurrent read() might have re-populated
-      // the cache with pre-reembed vectors while the loop was running, so flush any
-      // such stale entries to ensure subsequent reads see the freshly written data.
-      if (entityId) {
-        this.vectorCache.delete(entityId);
-      } else {
-        this.vectorCache.clear();
+      try {
+        for (const row of rows) {
+          const success = await this.embedFact(row);
+          if (success) embedded++;
+          else skipped++;
+        }
+        // If any fact was successfully re-embedded, promote the pending dimension to
+        // canonical and clear the mismatch flag so read() uses embeddings from here on.
+        if (embedded > 0) {
+          await this._reconcileEmbeddingDimension();
+        }
+      } finally {
+        // Invalidate again after the loop: a concurrent read() might have re-populated
+        // the cache with pre-reembed vectors while the loop was running, so flush any
+        // such stale entries to ensure subsequent reads see the freshly written data,
+        // even if the loop or dimension reconciliation threw.
+        if (entityId) {
+          this.vectorCache.delete(entityId);
+        } else {
+          this.vectorCache.clear();
+        }
       }
 
       return { embedded, skipped };
