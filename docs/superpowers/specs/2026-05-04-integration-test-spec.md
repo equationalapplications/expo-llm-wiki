@@ -1,8 +1,8 @@
 # Integration Test Suite — Design Spec
 
 **Date:** 2026-05-04
-**Branch:** feat/retrieval-tuning (PR in review)
-**Status:** Approved, awaiting implementation
+**Branch:** feat/integration-test-suite (PR in review)
+**Status:** Implemented
 
 ---
 
@@ -33,8 +33,8 @@ packages/integration/
 ├── package.json
 ├── vitest.config.ts
 ├── helpers/
-│   ├── db.ts          # re-exports openTestDatabase from core
-│   ├── llm.ts         # stubLLM() and scriptedLLM(script)
+│   ├── db.ts          # openTestDatabase() — in-memory better-sqlite3 adapter
+│   ├── llm.ts         # stubLLM() and scriptedLLM(responses)
 │   └── wiki.ts        # makeWiki() convenience wrapper
 └── __tests__/
     ├── exportImport.test.ts
@@ -43,12 +43,12 @@ packages/integration/
     └── recall.test.ts
 ```
 
-`packages/integration/` is a private package that depends on `@equationalapplications/core-llm-wiki`. It is not published. CI runs it as a separate step after core tests pass.
+`packages/integration/` is a private package that depends on `@equationalapplications/core-llm-wiki`. It is not published. It is intended to run separately from the core test suite, but the current repository automation does not yet enforce this as a distinct CI step.
 
 ### Helpers
 
 **`helpers/db.ts`**
-Re-exports `openTestDatabase` from `packages/core/__tests__/helpers/sqliteAdapter`. Each test gets a fresh in-memory SQLite instance — no shared state between tests.
+Implements `openTestDatabase` locally using `better-sqlite3` with an in-memory SQLite instance. Each test gets a fresh adapter — no shared state between tests.
 
 **`helpers/llm.ts`**
 
@@ -58,16 +58,16 @@ export function stubLLM(): LLMProvider {
   return { generateText: async () => '{}' };
 }
 
-// Scripted: call index → JSON string. Throws on unexpected extra calls.
+// Scripted: ordered response array. Throws on unexpected extra calls.
 export function scriptedLLM(
-  script: Map<number, string>,
+  responses: string[],
   embedFn?: (text: string) => Promise<number[]>
 ): LLMProvider {
   let callIndex = 0;
   return {
     generateText: async () => {
-      const response = script.get(callIndex++);
-      if (response === undefined) throw new Error(`Unexpected LLM call at index ${callIndex - 1}`);
+      const response = responses[callIndex++];
+      if (response === undefined) throw new Error(`Unexpected LLM call at index ${callIndex - 1} (script has ${responses.length} entries)`);
       return response;
     },
     embed: embedFn,
@@ -155,7 +155,10 @@ export function makeWiki(llm: LLMProvider, config?: WikiConfig): { wiki: WikiMem
 
 **Scenario 1 — Write → Librarian → Read**
 
-1. `write('user-1', { type: 'user_message', content: 'I prefer dark mode and use vim' })` ×3 events.
+1. Seed three events, e.g.:
+   - `write('user-1', { event_type: 'preference', summary: 'Prefers dark mode' })`
+   - `write('user-1', { event_type: 'tooling', summary: 'Uses vim as editor' })`
+   - `write('user-1', { event_type: 'workflow', summary: 'Prefers keyboard-driven workflows' })`
 2. `runLibrarian('user-1')` with scripted LLM returning:
    ```json
    { "facts": [
@@ -199,51 +202,57 @@ beforeAll(async () => {
 }, 30_000);
 
 async function embed(text: string): Promise<number[]> {
-  const [vec] = await embedder.embed([text]);
-  return Array.from(vec);
+  for await (const batch of embedder.embed([text])) {
+    const [vec] = batch;
+    return Array.from(vec);
+  }
+
+  throw new Error('No embedding returned');
 }
 ```
 
 **Scenario 1 — Synonym recall (recall@5 = 1.0)**
 
 1. Seed entity with facts: "automobile is a wheeled motor vehicle", "car is used for personal transportation", "vehicle carries passengers or cargo".
-2. `runReembed` with real embed.
-3. `read('user-1', 'transportation', { maxResults: 5 })` — assert all 3 facts appear in results.
+2. Use the real embedding-backed test setup so facts are embedded during setup/import.
+3. Configure the wiki/test with `maxResults: 5`, then call `read('user-1', 'transportation')` — assert all 3 facts appear in results.
 
 **Scenario 2 — Hybrid beats keyword-only on semantic queries**
 
 1. Same corpus as Scenario 1.
 2. Query `"motorized road travel"` — zero lexical overlap with any fact title.
-3. `read` with `hybridWeight: 0` (MiniSearch only) — record facts returned.
-4. `read` with `hybridWeight: 0.5` — assert rank-1 fact is semantically closer (verified by cosine score) than rank-1 from keyword-only.
+3. Run the query against a wiki/test configuration with `hybridWeight: 0` (MiniSearch only) — record facts returned.
+4. Run the same query against a wiki/test configuration with `hybridWeight: 0.5` — assert rank-1 fact is semantically closer (verified by cosine score) than rank-1 from keyword-only.
 
 **Scenario 3 — Domain separation (precision@3 = 1.0)**
 
 1. Seed 5 programming facts (recursion, closures, async/await, type inference, garbage collection).
 2. Seed 5 cooking facts (sauté, braising, mise en place, emulsification, reduction).
-3. `runReembed` with real embed.
-4. `read('user-1', 'recursion', { maxResults: 3 })` — assert all 3 results are programming facts.
-5. `read('user-1', 'braising', { maxResults: 3 })` — assert all 3 results are cooking facts.
+3. Use the real embedding-backed test setup so facts are embedded during setup/import.
+4. Configure the wiki/test with `maxResults: 3`, then call `read('user-1', 'recursion')` — assert all 3 results are programming facts.
+5. Call `read('user-1', 'braising')` — assert all 3 results are cooking facts.
 
 **Scenario 4 — Recall survives export/import roundtrip**
 
 1. Run Scenario 1 setup and verify recall@5 = 1.0.
-2. `exportDump` → import into fresh wiki (no `runReembed`).
-3. Repeat the same `read` query — assert recall@5 still = 1.0. Proves BLOB roundtrip preserves semantic search quality without re-embedding.
+2. `exportDump` → import into a fresh wiki using the same embedding-backed setup; do not add a separate `runReembed` step.
+3. Repeat the same `read('user-1', 'transportation')` query — assert recall@5 still = 1.0. Proves the roundtrip preserves semantic search quality under the current import/test flow.
 
 ---
 
-## CI Integration
+## Recommended CI Integration (planned)
 
-- `packages/core` tests run first (fast, no network).
-- `packages/integration` runs as a separate job.
-- `recall.test.ts` model download is cached by CI key on the ONNX model filename.
-- `recall.test.ts` has a 60s timeout per test; all others use the default vitest timeout.
+The repository does not currently define a dedicated test CI workflow. When CI coverage for this suite is added, the recommended setup is:
+
+- run `packages/core` tests first (fast, no network);
+- run `packages/integration` as a separate job;
+- cache the `recall.test.ts` fastembed/ONNX model download with a CI key derived from the model filename;
+- keep `recall.test.ts` on a 60s timeout per test, while other integration tests use the default vitest timeout unless they prove flaky in CI.
 
 ---
 
 ## What Is Not Covered Here
 
-- React hook integration (`packages/react`) — tracked separately; currently failing due to `WikiContext` import issue unrelated to retrieval.
+- React hook integration (`packages/react`) — tracked separately; currently disabled due to the documented `vitest` 4.x + React 19 + happy-dom/jsdom incompatibility, unrelated to retrieval.
 - Expo adapter (`packages/expo`) — existing `adapter.test.ts` covers the SQLite adapter contract.
 - Performance / latency benchmarks — out of scope for correctness testing.
