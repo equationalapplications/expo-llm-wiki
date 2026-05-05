@@ -56,8 +56,6 @@ describe('exportImport — Scenario 1: full roundtrip preserves facts and rankin
         { id: 'fact-car', title: 'car vehicle', body: 'fast engine' },
       ])
     );
-    // Store TEXT embeddings so ranking works
-    await wikiA.runReembed('user-1');
 
     const beforeExport = await wikiA.read('user-1', 'apple');
     expect(beforeExport.facts[0].id).toBe('fact-apple');
