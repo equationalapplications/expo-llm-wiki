@@ -33,7 +33,7 @@ async function main() {
   );
   console.log(`  ${corpus.length} docs`);
 
-  // 3. Build MemoryDump (no BLOBs yet)
+  // 3. Build MemoryDump (no embeddings yet)
   const now = Date.now();
   const dump: MemoryDump = {
     generatedAt: now,
