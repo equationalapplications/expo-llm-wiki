@@ -165,12 +165,26 @@ describe('useMemoryRead', () => {
     await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
 
     // Re-render with a new options object reference but the same logical values.
-    // Because options are held in a ref, changing only the reference must NOT
-    // trigger an extra wiki.read() call.
+    // Serialized options are unchanged so no extra wiki.read() should be triggered.
     rerender({ opts: { maxResults: 3 } });
     // Drain any pending microtasks / state updates before asserting no extra call.
     await act(async () => {});
     expect(wiki.read).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-fetches automatically when options values change', async () => {
+    const { rerender } = renderHook(
+      ({ opts }: { opts: { maxResults: number } }) => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki), initialProps: { opts: { maxResults: 3 } } }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    // Re-render with different option values — serialized options differ so an
+    // automatic refetch should fire without the caller invoking refetch() manually.
+    rerender({ opts: { maxResults: 7 } });
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(2));
+    expect(wiki.read).toHaveBeenLastCalledWith('user-1', 'q', { maxResults: 7 });
   });
 });
 

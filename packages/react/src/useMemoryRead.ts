@@ -13,10 +13,9 @@ export function useMemoryRead(entityId: string, query: string, options?: ReadOpt
 
   const optionsRef = useRef(options);
   optionsRef.current = options;
-  // options is captured via ref so the latest value is always used on the next fetch.
-  // Changes to options alone do not trigger an automatic refetch — call refetch() manually
-  // if you need to re-run the query with new option values. This avoids refetch loops
-  // when callers pass inline option objects that change reference on every render.
+  // Serialize options for a stable effect dependency: re-fetches when values change,
+  // but not when the caller passes a new object reference with the same content.
+  const optionsStr = JSON.stringify(options);
 
   const fetchQueue = useRef<{
     inFlight: boolean;
@@ -52,7 +51,8 @@ export function useMemoryRead(entityId: string, query: string, options?: ReadOpt
 
   useEffect(() => {
     scheduleFetch.current(entityId, query);
-  }, [entityId, query, wiki]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entityId, query, wiki, optionsStr]);
 
   const refetch = useCallback(() => {
     scheduleFetch.current(entityId, query);

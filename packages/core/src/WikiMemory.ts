@@ -1532,6 +1532,9 @@ export class WikiMemory {
           );
         }
       });
+      // Invalidate cache before embedding loop so concurrent reads hit DB directly
+      // and never serve pre-import vectors for fact IDs being updated.
+      this.vectorCache.delete(entityId);
       // Embed non-deleted imported facts so they are immediately searchable.
       for (const fact of bundle.facts) {
         if (!fact.deleted_at) {
@@ -1543,7 +1546,6 @@ export class WikiMemory {
           });
         }
       }
-      this.vectorCache.delete(entityId);
     }
 
     await this.rebuildMiniSearchIndex();
