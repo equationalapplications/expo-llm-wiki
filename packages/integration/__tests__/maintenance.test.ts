@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { WikiMemory, WikiBusyError } from '@equationalapplications/core-llm-wiki';
 import type { MemoryDump } from '@equationalapplications/core-llm-wiki';
 import { openTestDatabase } from '../helpers/db';
-import { stubLLM, scriptedLLM } from '../helpers/llm';
+import { stubLLM, scriptedLLM, keywordEmbed } from '../helpers/llm';
 
 function makeFact(
   id: string,
@@ -197,5 +197,88 @@ describe('maintenance — Scenario 4: prune lock blocks runLibrarian; different 
     await expect(wiki.runLibrarian('entity-b')).resolves.toBeUndefined();
 
     (wiki as any).activeMaintenanceJobs.delete('llm_wiki_:entity-a:prune');
+  });
+});
+
+describe('maintenance — Scenario 5: embed throws → onRetrievalFallback fires, MiniSearch results returned', () => {
+  it('fallback called once with the thrown error; read() returns MiniSearch results', async () => {
+    const db = openTestDatabase();
+    let fallbackError: Error | undefined;
+    const wiki = new WikiMemory(db, {
+      llmProvider: {
+        generateText: async () => '{}',
+        embed: async () => { throw new Error('model unavailable'); },
+      },
+      onRetrievalFallback: (err) => { fallbackError = err; },
+    });
+    await wiki.setup();
+
+    await wiki.importDump(makeDump('entity-1', [
+      makeFact('f-apple', 'entity-1', 'agent_inferred', 1000),
+    ]));
+
+    const result = await wiki.read('entity-1', 'apple');
+
+    expect(fallbackError).toBeDefined();
+    expect(fallbackError!.message).toBe('model unavailable');
+    expect(result.facts.length).toBeGreaterThan(0);
+  });
+});
+
+describe('maintenance — Scenario 6: embed returns NaN vector → fallback fires', () => {
+  it('fallback called; read() returns MiniSearch results despite NaN embed', async () => {
+    const db = openTestDatabase();
+    let fallbackCalled = false;
+    const wiki = new WikiMemory(db, {
+      llmProvider: {
+        generateText: async () => '{}',
+        embed: async () => [NaN, 0, 1],
+      },
+      onRetrievalFallback: () => { fallbackCalled = true; },
+    });
+    await wiki.setup();
+
+    await wiki.importDump(makeDump('entity-1', [
+      makeFact('f-title', 'entity-1', 'agent_inferred', 1000),
+    ]));
+
+    const result = await wiki.read('entity-1', 'title');
+
+    expect(fallbackCalled).toBe(true);
+    expect(result.facts.length).toBeGreaterThan(0);
+  });
+});
+
+describe('maintenance — Scenario 7: dimension mismatch → fallback fires, results returned', () => {
+  it('stored dim-3 embeddings with dim-384 query embed triggers fallback; MiniSearch results returned', async () => {
+    // Phase 1: store facts with dim-3 embeddings using keywordEmbed
+    const db = openTestDatabase();
+    const wikiDim3 = new WikiMemory(db, {
+      llmProvider: {
+        generateText: async () => '{}',
+        embed: async (text) => keywordEmbed(text),
+      },
+    });
+    await wikiDim3.setup();
+    await wikiDim3.importDump(makeDump('entity-1', [
+      makeFact('f-car', 'entity-1', 'agent_inferred', 1000),
+    ]));
+    await wikiDim3.runReembed('entity-1'); // writes dim-3 embeddings
+
+    // Phase 2: open same db with dim-384 embed — dimension mismatch on read()
+    let fallbackCalled = false;
+    const wikiDim384 = new WikiMemory(db, {
+      llmProvider: {
+        generateText: async () => '{}',
+        embed: async () => new Array(384).fill(0.1) as number[],
+      },
+      onRetrievalFallback: () => { fallbackCalled = true; },
+    });
+    await wikiDim384.setup();
+
+    const result = await wikiDim384.read('entity-1', 'car');
+
+    expect(fallbackCalled).toBe(true);
+    expect(result.facts.length).toBeGreaterThan(0);
   });
 });
