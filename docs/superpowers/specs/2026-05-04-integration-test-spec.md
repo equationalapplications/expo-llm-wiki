@@ -240,12 +240,14 @@ async function embed(text: string): Promise<number[]> {
 
 ---
 
-## CI Integration
+## Recommended CI Integration (planned)
 
-- `packages/core` tests run first (fast, no network).
-- `packages/integration` runs as a separate job.
-- `recall.test.ts` model download is cached by CI key on the ONNX model filename.
-- `recall.test.ts` has a 60s timeout per test; all others use the default vitest timeout.
+The repository does not currently define a dedicated test CI workflow. When CI coverage for this suite is added, the recommended setup is:
+
+- run `packages/core` tests first (fast, no network);
+- run `packages/integration` as a separate job;
+- cache the `recall.test.ts` fastembed/ONNX model download with a CI key derived from the model filename;
+- keep `recall.test.ts` on a 60s timeout per test, while other integration tests use the default vitest timeout unless they prove flaky in CI.
 
 ---
 
