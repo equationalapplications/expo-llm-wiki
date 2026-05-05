@@ -777,11 +777,17 @@ export class WikiMemory {
                 candidateRows = null;
               } else {
                 const topKIds = topKResults.map(r => r.id);
-                const placeholders = topKIds.map(() => '?').join(',');
-                candidateRows = await this.db.getAllAsync<ScoreRow>(
-                  `SELECT id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
-                  topKIds
-                );
+                const inClauseChunkSize = 500;
+                candidateRows = [];
+                for (let i = 0; i < topKIds.length; i += inClauseChunkSize) {
+                  const idChunk = topKIds.slice(i, i + inClauseChunkSize);
+                  const placeholders = idChunk.map(() => '?').join(',');
+                  const chunkRows = await this.db.getAllAsync<ScoreRow>(
+                    `SELECT id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+                    idChunk
+                  );
+                  candidateRows.push(...chunkRows);
+                }
                 if (weight !== undefined && weight < 1) {
                   const maxMsScore = Math.max(1, topKResults[0]?.score ?? 1);
                   miniSearchScores = new Map(topKResults.map(r => [r.id, r.score / maxMsScore]));
