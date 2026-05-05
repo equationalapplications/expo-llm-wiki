@@ -51,6 +51,7 @@ describe('recall — Scenario 1: synonym recall@5 = 1.0', () => {
     const db = openTestDatabase();
     const wiki = new WikiMemory(db, {
       llmProvider: { generateText: async () => '{}', embed },
+      config: { maxResults: 5 },
     });
     await wiki.setup();
 
@@ -63,6 +64,7 @@ describe('recall — Scenario 1: synonym recall@5 = 1.0', () => {
     );
 
     const result = await wiki.read('user-1', 'transportation');
+    expect(result.facts.length).toBeLessThanOrEqual(5);
     const ids = result.facts.map((f) => f.id);
     expect(ids).toContain('f-auto');
     expect(ids).toContain('f-car');
