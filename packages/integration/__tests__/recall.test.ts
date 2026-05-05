@@ -135,8 +135,8 @@ describe.skip('recall — Scenario 2: hybrid beats keyword-only on semantic quer
     await wiki.runReembed('user-1');
 
     const query = 'motorized road travel';
-    const keywordOnly = await wiki.read('user-1', query, { hybridWeight: 0 } as any);
-    const hybrid = await wiki.read('user-1', query, { hybridWeight: 0.5 } as any);
+    const keywordOnly = await (wiki as any).read('user-1', query, { hybridWeight: 0 });
+    const hybrid = await (wiki as any).read('user-1', query, { hybridWeight: 0.5 });
 
     // hybrid rank-1 should have equal or better semantic similarity than keyword-only rank-1
     expect(hybrid.facts.length).toBeGreaterThan(0);
