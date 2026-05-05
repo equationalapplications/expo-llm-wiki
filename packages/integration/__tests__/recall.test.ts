@@ -94,7 +94,6 @@ describe('recall — Scenario 3: domain separation, precision@3 = 1.0', () => {
         { id: 'c5', title: 'Reduction', body: 'Concentrating flavor by simmering liquid until it thickens' },
       ])
     );
-    await wiki.runReembed('user-1');
 
     const programmingIds = new Set(['p1', 'p2', 'p3', 'p4', 'p5']);
     const cookingIds = new Set(['c1', 'c2', 'c3', 'c4', 'c5']);
