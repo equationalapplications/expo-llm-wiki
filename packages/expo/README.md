@@ -188,12 +188,12 @@ export function UserProfile({ userId }: { userId: string }) {
 flowchart TD
     A["<WikiProvider wiki={wiki}>"] --> B["App Components"]
     B --> C{"Use Hook?"}
-    C -->|"useMemoryRead(entityId, query)"| D["[Read Memory]"]
+    C -->|"useMemoryRead(entityId, query, options?)"| D["[Read Memory]"]
     C -->|"useWikiWrite()"| E["[Write Memory]"]
     C -->|"useWikiIngest()"| F["[Ingest Document]"]
     C -->|"useWikiForget()"| G["[Delete Memory]"]
     C -->|"useWikiMaintenance()"| H["[Run Jobs]"]
-    D --> I{"entityId or<br/>query changed?"}
+    D --> I{"entityId, query,<br/>or ReadOptions changed?"}
     I -->|"Yes"| J["Auto-refetch"]
     I -->|"No"| K["Return cached data"]
     J --> L["Trigger read()"]
