@@ -285,12 +285,11 @@ export class WikiMemory {
    */
   private static readonly MAX_VECTOR_CACHE_ENTITIES = 16;
   /**
-   * Maximum number of fact vectors cached per entity. This is intentionally
-   * kept low because each cached entry retains a Float32Array whose size grows
-   * with embedding dimensionality; large count-only caps can otherwise retain
-   * hundreds of MB in long-lived processes.
+   * Maximum number of fact vectors cached per entity. Keep this high enough to
+   * preserve the parsed-embedding reuse optimization for common mid-sized
+   * entities while still maintaining a bounded memory footprint.
    */
-  private static readonly MAX_VECTOR_CACHE_FACTS_PER_ENTITY = 64;
+  private static readonly MAX_VECTOR_CACHE_FACTS_PER_ENTITY = 500;
   private vectorCache: Map<string, Map<string, Float32Array>> = new Map();
 
   private normalizeMiniSearchRow(row: {
