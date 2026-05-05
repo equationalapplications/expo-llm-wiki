@@ -250,8 +250,8 @@ describe('maintenance — Scenario 6: embed returns NaN vector → fallback fire
 });
 
 describe('maintenance — Scenario 7: dimension mismatch → fallback fires, results returned', () => {
-  it('stored dim-3 BLOBs with dim-384 query embed triggers fallback; MiniSearch results returned', async () => {
-    // Phase 1: store facts with dim-3 BLOBs using keywordEmbed
+  it('stored dim-3 embeddings with dim-384 query embed triggers fallback; MiniSearch results returned', async () => {
+    // Phase 1: store facts with dim-3 embeddings using keywordEmbed
     const db = openTestDatabase();
     const wikiDim3 = new WikiMemory(db, {
       llmProvider: {
@@ -263,7 +263,7 @@ describe('maintenance — Scenario 7: dimension mismatch → fallback fires, res
     await wikiDim3.importDump(makeDump('entity-1', [
       makeFact('f-car', 'entity-1', 'agent_inferred', 1000),
     ]));
-    await wikiDim3.runReembed('entity-1'); // writes dim-3 BLOBs
+    await wikiDim3.runReembed('entity-1'); // writes dim-3 embeddings
 
     // Phase 2: open same db with dim-384 embed — dimension mismatch on read()
     let fallbackCalled = false;
