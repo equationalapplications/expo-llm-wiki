@@ -1398,15 +1398,24 @@ export class WikiMemory {
       }
 
       const force = opts?.force ?? false;
+      // Auto-force when a dimension mismatch is pending: existing BLOBs were built
+      // with the old model and must be replaced. This lets callers call
+      // runReembed(entityId) after changing embedding models without needing to
+      // know about the { force: true } option — the wiki detects the stale state.
+      const mismatchRow = await this.db.getFirstAsync<{ value: string }>(
+        `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
+      );
+      const effectiveForce = force || mismatchRow !== null;
       let embedded = 0;
       let skipped = 0;
       try {
         for (const row of rows) {
           // By default skip facts that already have a valid BLOB so that a
           // round-trip import+runReembed doesn't pay the full embedding cost
-          // again. Pass { force: true } for model-switch workflows where all
-          // stored vectors need to be regenerated with the new model.
-          if (!force && (row as WikiFact & { embedding_blob?: Uint8Array | null }).embedding_blob) {
+          // again. Pass { force: true } (or rely on auto-force when a dimension
+          // mismatch is pending) for model-switch workflows where all stored
+          // vectors need to be regenerated with the new model.
+          if (!effectiveForce && (row as WikiFact & { embedding_blob?: Uint8Array | null }).embedding_blob) {
             skipped++;
             continue;
           }
@@ -1625,16 +1634,35 @@ export class WikiMemory {
           const safeUpdatedAt = Number.isFinite(fact.updated_at) ? fact.updated_at : 0;
           const existing = existingFactsById.get(fact.id);
 
-          // Extract a valid BLOB from the incoming fact if the dump was kept
-          // in-memory. Preserve it only when it is a real Uint8Array/Buffer and
-          // its size is a positive multiple of 4 bytes so it can represent a
-          // sequence of float32 values. JSON round trips produce a plain object
-          // which is rejected here so we fall back to re-embed; malformed binary
-          // blobs are also rejected so they cannot poison preservedBlobDim.
-          const rawBlob = (fact as WikiFact & { embedding_blob?: unknown }).embedding_blob;
+          // Extract a valid BLOB from the incoming fact.
+          // When the dump stays in-memory, embedding_blob is a real Uint8Array.
+          // When the dump is persisted through JSON.stringify/parse, Uint8Array
+          // is serialized as a plain numeric-keyed object {0:x,1:y,...}; we
+          // normalize that back to Uint8Array so both paths work transparently.
+          // A base64 string encoding is also accepted for explicit serialization.
+          const rawBlobRaw = (fact as WikiFact & { embedding_blob?: unknown }).embedding_blob;
+          let rawBlob: Uint8Array | null = null;
+          if (rawBlobRaw instanceof Uint8Array) {
+            rawBlob = rawBlobRaw;
+          } else if (
+            rawBlobRaw !== null &&
+            rawBlobRaw !== undefined &&
+            typeof rawBlobRaw === 'object' &&
+            !Array.isArray(rawBlobRaw)
+          ) {
+            // Plain object from JSON round-trip: reconstruct Uint8Array from
+            // numeric-keyed entries {0:byte, 1:byte, ...}.
+            const entries = Object.keys(rawBlobRaw as object);
+            if (entries.length > 0 && entries.every(k => /^\d+$/.test(k))) {
+              const obj = rawBlobRaw as Record<string, number>;
+              const len = entries.length;
+              rawBlob = new Uint8Array(len);
+              for (let i = 0; i < len; i++) rawBlob[i] = obj[String(i)] ?? 0;
+            }
+          }
           let blobData: Uint8Array | null = null;
           if (
-            rawBlob instanceof Uint8Array &&
+            rawBlob !== null &&
             rawBlob.byteLength > 0 &&
             rawBlob.byteLength % 4 === 0
           ) {
@@ -1651,7 +1679,17 @@ export class WikiMemory {
             for (let i = 0; i < floats.length; i++) {
               if (!isFinite(floats[i])) { allFinite = false; break; }
             }
-            if (allFinite) blobData = rawBlob;
+            if (allFinite) {
+              const dim = rawBlob.byteLength / 4;
+              // Reject blobs whose dimension differs from the first preserved blob in
+              // this import. Mixed-dimension imports would store inconsistent vectors:
+              // storeEmbeddingDimension() would record one size but other facts would
+              // have different-sized blobs, causing silent zero-scores in read().
+              // Force re-embed for inconsistent rows instead.
+              if (preservedBlobDim === null || dim === preservedBlobDim) {
+                blobData = rawBlob;
+              }
+            }
           }
 
           if (existing) {

@@ -81,7 +81,7 @@ export function useWikiMaintenance() {
     []
   );
 
-  const runReembed = useCallback(async (entityId?: string): Promise<{ embedded: number; skipped: number }> => {
+  const runReembed = useCallback(async (entityId?: string, opts?: { force?: boolean }): Promise<{ embedded: number; skipped: number }> => {
     setError(null);
     pendingCount.current += 1;
     setIsPending(true);
@@ -92,7 +92,7 @@ export function useWikiMaintenance() {
       // Using the return value directly avoids widening the MaintenanceResult union
       // in a way that would break existing consumers that exhaustively switch on
       // lastResult.operation.
-      return await wikiRef.current.runReembed(entityId);
+      return await wikiRef.current.runReembed(entityId, opts);
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e));
       setError(err);
