@@ -2,7 +2,8 @@
 
 **Date:** 2026-05-05
 **Branch:** feat/integration-test-coverage (or a dedicated fix branch off main)
-**Status:** Design approved, pending implementation
+**Status:** Implemented
+**Implemented in:** This PR (lockfile regenerated and root publish removed)
 
 ---
 
