@@ -778,6 +778,20 @@ export class WikiMemory {
             }
           }
 
+          // Check for a pending dimension mismatch left by importDump() when facts
+          // from a different-dimensional model were imported into this wiki. Those
+          // blobs would silently score incorrectly if we proceeded, so fall back to
+          // MiniSearch until the caller runs runReembed() to reconcile everything.
+          const importMismatchRow = await this.db.getFirstAsync<{ value: string }>(
+            `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
+          );
+          if (importMismatchRow) {
+            throw new Error(
+              `Some facts have embeddings with a mismatched dimension (${parseInt(importMismatchRow.value, 10)}). ` +
+              `Call runReembed() to rebuild all embeddings consistently.`
+            );
+          }
+
           // Determine candidate rows
           type ScoreRow = { id: string; embedding_blob: Uint8Array | null; embedding: string | null; updated_at: number | null; access_count: number | null };
           let candidateRows: ScoreRow[] | null; // null = pre-filter returned 0 results
@@ -1310,7 +1324,7 @@ export class WikiMemory {
     }
   }
 
-  async runReembed(entityId?: string): Promise<{ embedded: number; skipped: number }> {
+  async runReembed(entityId?: string, opts?: { force?: boolean }): Promise<{ embedded: number; skipped: number }> {
     const embedFn = this.options.llmProvider.embed;
     if (!embedFn) return { embedded: 0, skipped: 0 };
 
@@ -1383,13 +1397,19 @@ export class WikiMemory {
         this.vectorCache.clear();
       }
 
+      const force = opts?.force ?? false;
       let embedded = 0;
       let skipped = 0;
       try {
         for (const row of rows) {
-          // Re-embed every selected fact even when an older embedding already exists.
-          // This allows model switches to replace stale vectors and lets dimension
-          // reconciliation complete once refreshed embeddings have been written.
+          // By default skip facts that already have a valid BLOB so that a
+          // round-trip import+runReembed doesn't pay the full embedding cost
+          // again. Pass { force: true } for model-switch workflows where all
+          // stored vectors need to be regenerated with the new model.
+          if (!force && (row as WikiFact & { embedding_blob?: Uint8Array | null }).embedding_blob) {
+            skipped++;
+            continue;
+          }
           const success = await this.embedFact(row);
           if (success) embedded++;
           else skipped++;
@@ -1435,7 +1455,7 @@ export class WikiMemory {
     this.vectorCache.clear();
   }
 
-  private async _getFullBundle(entityId: string, opts?: { maxEvents?: number }): Promise<MemoryBundle> {
+  private async _getFullBundle(entityId: string, opts?: { maxEvents?: number; includeBlobs?: boolean }): Promise<MemoryBundle> {
     const maxEvents = opts?.maxEvents;
     const eventsQuery = maxEvents != null
       ? `SELECT * FROM ${this.prefix}events WHERE entity_id = ? ORDER BY created_at DESC LIMIT ?`
@@ -1454,14 +1474,18 @@ export class WikiMemory {
       this.db.getAllAsync<WikiEvent>(eventsQuery, eventsParams),
     ]);
     const facts = factsRaw.map(f => {
-      const {
-        embedding: _embedding,
-        embedding_blob: _embeddingBlob,
-        ...rest
-      } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
+      // Always strip the legacy text embedding column — never useful to callers.
+      const { embedding: _embedding, embedding_blob, ...rest } =
+        f as WikiFact & { embedding?: unknown; embedding_blob?: Uint8Array };
+      // Include the BLOB only on the export path so importDump() can round-trip
+      // embeddings without re-calling the embed provider. Strip it on the LLM
+      // prompt / formatMemoryDump paths to keep payloads small.
+      const factBase = opts?.includeBlobs && embedding_blob
+        ? { ...rest, embedding_blob }
+        : rest;
       return {
-        ...rest,
-        tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
+        ...factBase,
+        tags: typeof factBase.tags === 'string' ? JSON.parse(factBase.tags) : factBase.tags,
       };
     });
     // When limited, results arrive newest-first; reverse to chronological order.
@@ -1492,7 +1516,7 @@ export class WikiMemory {
     for (let i = 0; i < ids.length; i += BATCH) {
       const batch = ids.slice(i, i + BATCH);
       const batchResults = await Promise.all(
-        batch.map(async (id): Promise<[string, MemoryBundle]> => [id, await this._getFullBundle(id)])
+        batch.map(async (id): Promise<[string, MemoryBundle]> => [id, await this._getFullBundle(id, { includeBlobs: true })])
       );
       for (const [id, bundle] of batchResults) {
         entities[id] = bundle;
@@ -1617,7 +1641,12 @@ export class WikiMemory {
             // Also validate that every float32 value is finite: a blob with the right
             // byte length but NaN/Inf values would be preserved, skip embedFact(), and
             // then be silently dropped by read(), making the fact permanently unsearchable.
-            const floats = new Float32Array(rawBlob.buffer, rawBlob.byteOffset, rawBlob.byteLength / 4);
+            // Use slice() to get a fresh, offset-0 Uint8Array before wrapping in
+            // Float32Array: the constructor requires a 4-byte-aligned byteOffset, and
+            // sub-array views of a larger buffer can fail that check even though the
+            // underlying bytes are perfectly valid.
+            const aligned = rawBlob.slice(0);
+            const floats = new Float32Array(aligned.buffer, 0, aligned.byteLength / 4);
             let allFinite = true;
             for (let i = 0; i < floats.length; i++) {
               if (!isFinite(floats[i])) { allFinite = false; break; }

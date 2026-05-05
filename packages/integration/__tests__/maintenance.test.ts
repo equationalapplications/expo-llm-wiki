@@ -154,8 +154,10 @@ describe('maintenance — Scenario 3: runReembed writes BLOBs; read() loads from
 
     // Reset counter so we only measure embed calls made during runReembed itself,
     // not the ones importDump made for the initial (blob-less) facts.
+    // Use { force: true } so runReembed re-embeds even facts that already have
+    // BLOBs — this is the model-switch workflow that bypasses the default skip guard.
     embedCalls.length = 0;
-    await wiki.runReembed('entity-1');
+    await wiki.runReembed('entity-1', { force: true });
     const factEmbedCallCount = embedCalls.length;
     expect(factEmbedCallCount).toBe(2);
 

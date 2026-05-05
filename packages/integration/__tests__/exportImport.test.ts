@@ -273,7 +273,7 @@ describe('exportImport — Scenario 2: merge collision, newer updated_at wins', 
 });
 
 describe('exportImport — Scenario 3: embedding BLOB survives roundtrip', () => {
-  it('runReembed after import re-embeds all non-deleted facts', async () => {
+  it('runReembed after import skips facts whose BLOBs were preserved through exportDump/importDump', async () => {
     const embed = async (text: string) => keywordEmbed(text);
     const llm = stubLLM();
     const dbA = openTestDatabase();
@@ -285,18 +285,26 @@ describe('exportImport — Scenario 3: embedding BLOB survives roundtrip', () =>
         { id: 'f2', title: 'car vehicle', body: 'fast' },
       ])
     );
-    const resA = await wikiA.runReembed('user-1');
+    // runReembed writes BLOBs for f1 and f2. We use { force: true } here to
+    // explicitly overwrite the blobs that importDump already wrote via embedFact(),
+    // demonstrating that runReembed can always regenerate vectors (model-switch path).
+    const resA = await wikiA.runReembed('user-1', { force: true });
     expect(resA.embedded).toBe(2);
     expect(resA.skipped).toBe(0);
 
+    // exportDump now includes embedding_blob in each fact, so the dump carries vectors.
     const dump = await wikiA.exportDump();
     const dbB = openTestDatabase();
     const wikiB = new WikiMemory(dbB, { llmProvider: { ...llm, embed } });
     await wikiB.setup();
+    // importDump detects the BLOBs in the dump and preserves them directly,
+    // skipping embedFact() for those facts.
     await wikiB.importDump(dump);
 
+    // runReembed sees that f1 and f2 already have valid BLOBs and skips them —
+    // no embed provider call required.
     const result = await wikiB.runReembed('user-1');
-    expect(result.embedded).toBe(2);
-    expect(result.skipped).toBe(0);
+    expect(result.embedded).toBe(0);
+    expect(result.skipped).toBe(2);
   });
 });

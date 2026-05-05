@@ -178,18 +178,30 @@ export interface EntityStatus {
 }
 
 /**
- * Thrown when a background mutator is already running for the requested entity.
+ * All operations that can appear in a {@link WikiBusyError}.
  *
- * @remarks **Breaking change** — the `operation` union was `'ingest' | 'librarian' |
- * 'heal' | 'prune' | 'reembed'` in v1.x. It now also includes `'import'` and
- * `'forget'`. Exhaustive `switch` statements over these five literal values will
- * need a default/fallthrough arm or an update to cover the new cases.
+ * @remarks **Breaking change from v2.x** — the union previously only contained
+ * `'ingest' | 'librarian' | 'heal' | 'prune' | 'reembed'`. The values `'import'`
+ * and `'forget'` were added in v3.0. Exhaustive `switch` / narrowing on this type
+ * must be updated (or given a `default` arm) to compile without errors.
+ */
+export type WikiBusyOperation =
+  | 'ingest'
+  | 'librarian'
+  | 'heal'
+  | 'prune'
+  | 'reembed'
+  | 'import'
+  | 'forget';
+
+/**
+ * Thrown when a background mutator is already running for the requested entity.
  */
 export class WikiBusyError extends Error {
-  readonly operation: 'ingest' | 'librarian' | 'heal' | 'prune' | 'reembed' | 'import' | 'forget';
+  readonly operation: WikiBusyOperation;
   readonly entityId: string;
 
-  constructor(operation: 'ingest' | 'librarian' | 'heal' | 'prune' | 'reembed' | 'import' | 'forget', entityId: string) {
+  constructor(operation: WikiBusyOperation, entityId: string) {
     super(`${operation} already running for entity ${entityId}`);
     this.name = 'WikiBusyError';
     this.operation = operation;
