@@ -43,6 +43,17 @@ class MockSQLiteDatabase {
         return { changes, lastInsertRowId: 0 };
       }
 
+      if (normalized.startsWith('UPDATE') && normalized.includes('entries SET entity_id = ?') && normalized.includes('embedding_blob = ?, embedding = NULL WHERE id = ?')) {
+        // UPDATE with preserved BLOB
+        const [entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at, embedding_blob, id] = args;
+        const idx = this.entries.findIndex((e) => e.id === id);
+        if (idx >= 0) {
+          this.entries[idx] = { id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at, embedding_blob, embedding: null };
+          return { changes: 1, lastInsertRowId: 0 };
+        }
+        return { changes: 0, lastInsertRowId: 0 };
+      }
+
       if (normalized.startsWith('UPDATE') && normalized.includes('entries SET entity_id = ?') && normalized.includes('embedding_blob = NULL, embedding = NULL WHERE id = ?')) {
         const [entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at, id] = args;
         const idx = this.entries.findIndex((e) => e.id === id);
@@ -61,6 +72,12 @@ class MockSQLiteDatabase {
           return { changes: 1, lastInsertRowId: 0 };
         }
         return { changes: 0, lastInsertRowId: 0 };
+      }
+
+      if (normalized.startsWith('INSERT INTO') && normalized.includes('entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at, embedding_blob)')) {
+        const [id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at, embedding_blob] = args;
+        this.entries.push({ id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at, embedding_blob });
+        return { changes: 1, lastInsertRowId: 0 };
       }
 
       if (normalized.startsWith('INSERT INTO') && normalized.includes('entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at)')) {

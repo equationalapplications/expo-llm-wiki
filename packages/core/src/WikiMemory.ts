@@ -1233,10 +1233,17 @@ export class WikiMemory {
       }
     });
 
+    // Pre-flush: evict stale cached vectors before writing new embeddings so a
+    // concurrent read() during the embed loop doesn't rank deleted/downgraded
+    // facts from the cache. Post-flush below handles vectors repopulated during
+    // the loop.
+    this.vectorCache.delete(entityId);
     for (const fact of insertedFacts) {
       await this.embedFact(fact);
     }
     await this.rebuildMiniSearchIndex(entityId);
+    // Post-flush: evict any cache entries a concurrent read() repopulated while
+    // the embedding loop was running.
     this.vectorCache.delete(entityId);
   }
 
@@ -1367,13 +1374,6 @@ export class WikiMemory {
       let skipped = 0;
       try {
         for (const row of rows) {
-          // Skip rows that already have a BLOB — they were written by embedFact()
-          // and are already in the current format. runReembed() converts TEXT rows
-          // to BLOB; re-embedding rows with an existing BLOB would waste API calls.
-          if ((row as WikiFact & { embedding_blob?: unknown }).embedding_blob != null) {
-            skipped++;
-            continue;
-          }
           const success = await this.embedFact(row);
           if (success) embedded++;
           else skipped++;
@@ -1524,6 +1524,10 @@ export class WikiMemory {
       // re-embedded — doing so would corrupt the winning row's vector with the
       // losing fact's title/body.
       const upsertedFactIds = new Set<string>();
+      // Track which upserted facts already carry a valid BLOB so we can skip
+      // embedFact() for them. An in-memory dump preserves the Uint8Array intact;
+      // a JSON round-trip corrupts binary, so we guard via instanceof.
+      const factsWithPreservedBlob = new Set<string>();
       await this.db.withTransactionAsync(async () => {
         if (!merge) {
           const now = Date.now();
@@ -1563,6 +1567,14 @@ export class WikiMemory {
           // invalid value to the DB and ORDER BY updated_at remains meaningful.
           const safeUpdatedAt = Number.isFinite(fact.updated_at) ? fact.updated_at : 0;
           const existing = existingFactsById.get(fact.id);
+
+          // Extract a valid BLOB from the incoming fact if the dump was kept
+          // in-memory (Uint8Array / Buffer both pass instanceof Uint8Array since
+          // Buffer extends Uint8Array in Node.js; JSON round-trips produce a plain
+          // object which is rejected here so we fall back to re-embed).
+          const rawBlob = (fact as WikiFact & { embedding_blob?: unknown }).embedding_blob;
+          const blobData: Uint8Array | null = rawBlob instanceof Uint8Array ? rawBlob : null;
+
           if (existing) {
             if (existing.entity_id !== entityId) {
               this._warnCrossEntityCollision('entry', fact.id, existing.entity_id, entityId);
@@ -1573,22 +1585,41 @@ export class WikiMemory {
               // 0 (epoch) never beats a real timestamp, so invalid incoming rows are skipped.
               if (safeUpdatedAt <= existing.updated_at) continue;
             }
-            // replace mode (or merge LWW winner): update the existing row (restores if soft-deleted).
-            // Also clear any stale embedding columns so a concurrent read() never ranks the new
-            // title/body against the old vector; the post-transaction embedding loop will re-embed.
-            // If embedFact() fails (provider absent or throws), the NULL vector remains, which is
-            // correct: new content with no valid embedding falls back to keyword-only retrieval.
-            await this.db.runAsync(
-              `UPDATE ${this.prefix}entries SET entity_id = ?, title = ?, body = ?, tags = ?, confidence = ?, source_type = ?, source_hash = ?, source_ref = ?, created_at = ?, updated_at = ?, last_accessed_at = ?, access_count = ?, deleted_at = ?, embedding_blob = NULL, embedding = NULL WHERE id = ?`,
-              [entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, fact.id]
-            );
+            if (blobData != null) {
+              // Incoming fact carries a valid BLOB (in-memory dump): persist it directly
+              // and skip embedFact() — no embedding API call required.
+              await this.db.runAsync(
+                `UPDATE ${this.prefix}entries SET entity_id = ?, title = ?, body = ?, tags = ?, confidence = ?, source_type = ?, source_hash = ?, source_ref = ?, created_at = ?, updated_at = ?, last_accessed_at = ?, access_count = ?, deleted_at = ?, embedding_blob = ?, embedding = NULL WHERE id = ?`,
+                [entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, blobData, fact.id]
+              );
+              factsWithPreservedBlob.add(fact.id);
+            } else {
+              // No valid BLOB — clear any stale embedding columns so a concurrent
+              // read() never ranks the new title/body against the old vector;
+              // the post-transaction embedding loop will re-embed.
+              // If embedFact() fails (provider absent or throws), the NULL vector
+              // remains, which is correct: new content with no valid embedding
+              // falls back to keyword-only retrieval.
+              await this.db.runAsync(
+                `UPDATE ${this.prefix}entries SET entity_id = ?, title = ?, body = ?, tags = ?, confidence = ?, source_type = ?, source_hash = ?, source_ref = ?, created_at = ?, updated_at = ?, last_accessed_at = ?, access_count = ?, deleted_at = ?, embedding_blob = NULL, embedding = NULL WHERE id = ?`,
+                [entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, fact.id]
+              );
+            }
             existingFactsById.set(fact.id, { id: fact.id, entity_id: entityId, updated_at: safeUpdatedAt });
             upsertedFactIds.add(fact.id);
           } else {
-            await this.db.runAsync(
-              `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at]
-            );
+            if (blobData != null) {
+              await this.db.runAsync(
+                `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at, embedding_blob) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, blobData]
+              );
+              factsWithPreservedBlob.add(fact.id);
+            } else {
+              await this.db.runAsync(
+                `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at]
+              );
+            }
             existingFactsById.set(fact.id, { id: fact.id, entity_id: entityId, updated_at: safeUpdatedAt });
             upsertedFactIds.add(fact.id);
           }
@@ -1662,11 +1693,12 @@ export class WikiMemory {
       // Skipped rows (cross-entity collisions or merge LWW losers) must not be
       // re-embedded — they were not written and their existing row must not be
       // overwritten with the incoming fact's content.
-      // The UPDATE statement already cleared embedding_blob/embedding for each
-      // upserted row, so if embedFact() fails here the row correctly has a NULL
-      // vector rather than a stale one that no longer matches the new content.
+      // Facts with preserved BLOBs (from an in-memory dump) already have valid
+      // embeddings; skip embedFact() for those to avoid redundant API calls.
+      // For facts without a BLOB, the UPDATE/INSERT already left embedding_blob = NULL,
+      // so if embedFact() fails here the row correctly has a NULL vector.
       for (const fact of bundle.facts) {
-        if (!fact.deleted_at && upsertedFactIds.has(fact.id)) {
+        if (!fact.deleted_at && upsertedFactIds.has(fact.id) && !factsWithPreservedBlob.has(fact.id)) {
           await this.embedFact({
             id: fact.id,
             title: fact.title,

@@ -38,7 +38,7 @@ const wiki = createWiki(adapter, {
     },
     embed: async (text: string) => {
       // Your embedding service
-      const res = await fetch('/api/embed', { 
+      const res = await fetch('https://your-app.example.com/api/embed', { 
         method: 'POST', 
         body: JSON.stringify({ text }) 
       });

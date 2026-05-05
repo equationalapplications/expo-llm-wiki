@@ -176,6 +176,14 @@ export interface EntityStatus {
   heal: boolean;
 }
 
+/**
+ * Thrown when a background mutator is already running for the requested entity.
+ *
+ * @remarks **Breaking change** — the `operation` union was `'ingest' | 'librarian' |
+ * 'heal' | 'prune' | 'reembed'` in v1.x. It now also includes `'import'` and
+ * `'forget'`. Exhaustive `switch` statements over the previous five values will
+ * need a default/fallthrough arm or an update to cover the new cases.
+ */
 export class WikiBusyError extends Error {
   readonly operation: 'ingest' | 'librarian' | 'heal' | 'prune' | 'reembed' | 'import' | 'forget';
   readonly entityId: string;

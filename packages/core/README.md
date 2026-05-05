@@ -131,6 +131,19 @@ const memory = await wikiMemory.read('user-123', 'my preferences', {
 **Pre-filtering optimization:**
 When `preFilterLimit: 50` is set with 1000 facts, cosine similarity is computed only for the top 50 MiniSearch keyword matches, reducing O(N) scoring to O(50).
 
+## Vector Cache
+
+Parsed embedding vectors from full-scan `read()` calls are cached in memory, keyed by entity ID (max 16 entities, max 500 vectors per entity). This avoids redundant `Float32Array` parsing on repeated queries for the same entity.
+
+After heavy read workloads or on memory-constrained runtimes, you can release the entire cache explicitly:
+
+```typescript
+// Release all cached embedding vectors
+wikiMemory.clearVectorCache();
+```
+
+The cache is also automatically invalidated on any mutation (`write`, `runLibrarian`, `runHeal`, `runPrune`, `runReembed`, `ingestDocument`, `importDump`, `forget`).
+
 ## Usage
 
 ```typescript
