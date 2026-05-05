@@ -336,7 +336,7 @@ Semantic search over facts (cosine similarity if `embed` is provided, MiniSearch
 
 ```typescript
 const { facts, tasks, events } = await wiki.read('entity-123', 'weekend plans');
-// facts: WikiFact[]   — ranked by vector similarity (or keyword relevance as fallback)
+// facts: WikiFact[]   — ranked by vector similarity, keyword relevance, or a blend (hybridWeight)
 // tasks: WikiTask[]   — pending and in-progress only
 // events: WikiEvent[] — 10 most recent, ascending
 
@@ -679,7 +679,7 @@ How React hooks stay in sync with memory state:
 flowchart TD
     A["<WikiProvider wiki={wiki}>"] --> B["App Components"]
     B --> C{"Use Hook?"}
-    C -->|"useMemoryRead(entityId, query)"| D["[Read Memory]"]
+    C -->|"useMemoryRead(entityId, query, options?)"| D["[Read Memory]"]
     C -->|"useWikiWrite()"| E["[Write Memory]"]
     C -->|"useWikiIngest()"| F["[Ingest Document]"]
     C -->|"useWikiForget()"| G["[Delete Memory]"]

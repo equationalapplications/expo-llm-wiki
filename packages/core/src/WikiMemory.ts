@@ -717,7 +717,7 @@ export class WikiMemory {
           ? Math.max(0, Math.trunc(rawPreFilterLimit))
           : undefined;
     const hybridWeight = options?.hybridWeight ?? config?.hybridWeight;
-    const weight = hybridWeight !== undefined && Number.isFinite(hybridWeight)
+    const weight = hybridWeight !== undefined && !Number.isNaN(hybridWeight)
       ? Math.max(0, Math.min(1, hybridWeight))
       : undefined;
     const skipEmbed = weight === 0;

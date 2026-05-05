@@ -85,6 +85,23 @@ describe('hybridWeight scoring', () => {
     expect(embedFn).not.toHaveBeenCalled();
   });
 
+  it('hybridWeight: Infinity clamped to 1.0 (embed called); -Infinity clamped to 0.0 (embed skipped)', async () => {
+    const embedFn = vi.fn(async (): Promise<number[]> => [1, 0, 0]);
+    const { wiki, db } = makeWiki(embedFn);
+    await wiki.setup();
+    await db.runAsync(`INSERT OR REPLACE INTO llm_wiki_meta (key, value) VALUES ('embedding_dimension', '3')`);
+    await insertFactBlob(db, 'f1', 'user-1', 'test fact', [1, 0, 0]);
+
+    // Infinity → clamped to 1.0 → pure semantic, embed() must be called
+    await wiki.read('user-1', 'test', { hybridWeight: Infinity });
+    expect(embedFn).toHaveBeenCalled();
+
+    embedFn.mockClear();
+    // -Infinity → clamped to 0.0 → skip embed, fast-path
+    await wiki.read('user-1', 'test', { hybridWeight: -Infinity });
+    expect(embedFn).not.toHaveBeenCalled();
+  });
+
   it('hybridWeight set but embed absent → MiniSearch fallback, no error, no onRetrievalFallback', async () => {
     const fallbackErrors: Error[] = [];
     const db = openTestDatabase();
