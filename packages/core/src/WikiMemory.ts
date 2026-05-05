@@ -1438,7 +1438,7 @@ export class WikiMemory {
       this.db.getAllAsync<WikiEvent>(eventsQuery, eventsParams),
     ]);
     const facts = factsRaw.map(f => {
-      const { embedding: _embedding, embedding_blob: _blob, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
+      const { embedding: _embedding, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
       return {
         ...rest,
         tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
