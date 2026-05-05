@@ -61,7 +61,6 @@ describe('recall — Scenario 1: synonym recall@5 = 1.0', () => {
         { id: 'f-vehicle', title: 'Vehicle', body: 'Carries passengers or cargo from place to place' },
       ])
     );
-    await wiki.runReembed('user-1');
 
     const result = await wiki.read('user-1', 'transportation');
     const ids = result.facts.map((f) => f.id);
