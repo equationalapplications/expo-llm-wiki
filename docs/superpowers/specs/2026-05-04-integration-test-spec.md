@@ -33,8 +33,8 @@ packages/integration/
 ├── package.json
 ├── vitest.config.ts
 ├── helpers/
-│   ├── db.ts          # re-exports openTestDatabase from core
-│   ├── llm.ts         # stubLLM() and scriptedLLM(script)
+│   ├── db.ts          # openTestDatabase() — in-memory better-sqlite3 adapter
+│   ├── llm.ts         # stubLLM() and scriptedLLM(responses)
 │   └── wiki.ts        # makeWiki() convenience wrapper
 └── __tests__/
     ├── exportImport.test.ts
@@ -48,7 +48,7 @@ packages/integration/
 ### Helpers
 
 **`helpers/db.ts`**
-Re-exports `openTestDatabase` from `packages/core/__tests__/helpers/sqliteAdapter`. Each test gets a fresh in-memory SQLite instance — no shared state between tests.
+Implements `openTestDatabase` locally using `better-sqlite3` with an in-memory SQLite instance. Each test gets a fresh adapter — no shared state between tests.
 
 **`helpers/llm.ts`**
 
@@ -58,16 +58,16 @@ export function stubLLM(): LLMProvider {
   return { generateText: async () => '{}' };
 }
 
-// Scripted: call index → JSON string. Throws on unexpected extra calls.
+// Scripted: ordered response array. Throws on unexpected extra calls.
 export function scriptedLLM(
-  script: Map<number, string>,
+  responses: string[],
   embedFn?: (text: string) => Promise<number[]>
 ): LLMProvider {
   let callIndex = 0;
   return {
     generateText: async () => {
-      const response = script.get(callIndex++);
-      if (response === undefined) throw new Error(`Unexpected LLM call at index ${callIndex - 1}`);
+      const response = responses[callIndex++];
+      if (response === undefined) throw new Error(`Unexpected LLM call at index ${callIndex - 1} (script has ${responses.length} entries)`);
       return response;
     },
     embed: embedFn,
