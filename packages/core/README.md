@@ -34,7 +34,10 @@ const wikiMemory = new WikiMemory(db, {
     },
     embed: async (text: string) => {
       // Your embedding service (e.g., OpenAI, Cohere, local)
-      const response = await fetch('/api/embed', { method: 'POST', body: JSON.stringify({ text }) });
+      const response = await fetch('https://your-app.example.com/api/embed', {
+        method: 'POST',
+        body: JSON.stringify({ text }),
+      });
       const { embedding } = await response.json();
       return embedding; // number[]
     },
