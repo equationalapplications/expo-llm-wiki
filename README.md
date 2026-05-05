@@ -684,7 +684,7 @@ flowchart TD
     C -->|"useWikiIngest()"| F["[Ingest Document]"]
     C -->|"useWikiForget()"| G["[Delete Memory]"]
     C -->|"useWikiMaintenance()"| H["[Run Jobs]"]
-    D --> I{"entityId or<br/>query changed?"}
+    D --> I{"entityId, query,<br/>wiki, or ReadOptions<br/>changed?"}
     I -->|"Yes"| J["Auto-refetch"]
     I -->|"No"| K["Return cached data"]
     J --> L["Trigger read()"]
