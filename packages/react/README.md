@@ -260,9 +260,9 @@ await runHeal('user-123');
 const { embedded, skipped } = await runReembed('user-123');
 
 // After changing the embedding model, re-embed with the new model (default, always re-embeds all):
-const { embedded, skipped } = await runReembed('user-123');
+const { embedded: embeddedAfterModelChange, skipped: skippedAfterModelChange } = await runReembed('user-123');
 // After a round-trip export/import on the same model, skip facts that already have vectors:
-const { embedded, skipped } = await runReembed('user-123', { skipExisting: true });
+const { embedded: embeddedRoundtrip, skipped: skippedRoundtrip } = await runReembed('user-123', { skipExisting: true });
 
 // Hard-delete soft-deleted entries/tasks after retention and prune old events
 await runPrune('user-123');

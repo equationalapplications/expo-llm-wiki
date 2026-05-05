@@ -1614,12 +1614,15 @@ export class WikiMemory {
       // losing fact's title/body.
       const upsertedFactIds = new Set<string>();
       // Track which upserted facts already carry a valid BLOB so we can skip
-      // embedFact() for them. An in-memory dump preserves the Uint8Array intact;
-      // a JSON round-trip corrupts binary, so we guard via instanceof.
+      // embedFact() for them. BLOBs are reconstructed from three serialization
+      // forms: in-memory Uint8Array/Buffer, Node.js Buffer JSON shape, and
+      // numeric-keyed plain objects produced by JSON.stringify(Uint8Array).
       const factsWithPreservedBlob = new Set<string>();
-      // Track the dimension of preserved blobs so we can record it in the meta
-      // table after the transaction, enabling model-mismatch detection on future reads.
-      let preservedBlobDim: number | null = null;
+      // Track every unique dimension seen in preserved BLOBs. A dump may contain
+      // blobs from multiple models (e.g. an intermediate mixed-model migration),
+      // so we call storeEmbeddingDimension() for each unique dimension found to
+      // ensure the mismatch flag is set whenever any two stored blobs disagree.
+      const preservedBlobDims = new Set<number>();
       await this.db.withTransactionAsync(async () => {
         if (!merge) {
           const now = Date.now();
@@ -1737,7 +1740,7 @@ export class WikiMemory {
                 [entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, blobData, fact.id]
               );
               factsWithPreservedBlob.add(fact.id);
-              if (preservedBlobDim === null) preservedBlobDim = blobData.byteLength / 4;
+              preservedBlobDims.add(blobData.byteLength / 4);
             } else {
               // read() never ranks the new title/body against the old vector;
               // the post-transaction embedding loop will re-embed.
@@ -1758,7 +1761,7 @@ export class WikiMemory {
                 [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, blobData]
               );
               factsWithPreservedBlob.add(fact.id);
-              if (preservedBlobDim === null) preservedBlobDim = blobData.byteLength / 4;
+              preservedBlobDims.add(blobData.byteLength / 4);
             } else {
               await this.db.runAsync(
                 `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1857,8 +1860,8 @@ export class WikiMemory {
       // automatically). This ensures read() can detect model-dimension mismatches
       // after importing into a fresh DB that has never seen an embedding.
       try {
-        if (preservedBlobDim !== null) {
-          await this.storeEmbeddingDimension(preservedBlobDim);
+        for (const dim of preservedBlobDims) {
+          await this.storeEmbeddingDimension(dim);
         }
       } finally {
         // Second flush: evict any cache entries a concurrent read() repopulated
