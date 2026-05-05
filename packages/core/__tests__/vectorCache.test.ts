@@ -268,21 +268,21 @@ describe('vector cache — boundary limits', () => {
     parseSpy.mockRestore();
   });
 
-  it('skips cache population for entities with more than MAX_VECTOR_CACHE_FACTS_PER_ENTITY facts', async () => {
+  it('skips cache population for entities with more than 64 facts', async () => {
     const parseSpy = vi.spyOn(embeddingModule, 'parseEmbedding');
 
     const { wiki, db } = makeWiki(async () => [1, 0, 0]);
     await wiki.setup();
 
-    // Insert 1001 facts for a single entity (exceeds the 1000-fact per-entity cap)
-    for (let i = 0; i < 1001; i++) {
+    // Insert 65 facts for a single entity (exceeds the 64-fact per-entity cap)
+    for (let i = 0; i < 65; i++) {
       await insertFactWithBlob(db, `f-large-${i}`, 'large-entity', [1, 0, 0]);
     }
     await db.runAsync(`INSERT OR REPLACE INTO llm_wiki_meta (key, value) VALUES ('embedding_dimension', '3')`);
 
     await wiki.read('large-entity', 'query'); // first full-scan read
 
-    // Second read: because > 1000 facts skip cache population, parseEmbedding
+    // Second read: because > 64 facts skip cache population, parseEmbedding
     // must be called again on the second full-scan read
     parseSpy.mockClear();
     await wiki.read('large-entity', 'query');
