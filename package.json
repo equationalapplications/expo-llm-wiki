@@ -48,7 +48,13 @@
   "pnpm": {
     "overrides": {
       "react": "19.2.5",
-      "react-dom": "19.2.5"
-    }
+      "react-dom": "19.2.5",
+      "tar": "^7.5.13"
+    },
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild",
+      "onnxruntime-node"
+    ]
   }
 }
