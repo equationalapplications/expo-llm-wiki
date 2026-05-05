@@ -1556,9 +1556,10 @@ export class WikiMemory {
       // Second flush: evict any cache entries a concurrent read() repopulated
       // from old DB vectors while the embedding loop was running.
       this.vectorCache.delete(entityId);
+      // Keep the text index in sync with each imported entity so concurrent
+      // read() calls do not compute candidates from a stale miniSearch index.
+      await this.rebuildMiniSearchIndex();
     }
-
-    await this.rebuildMiniSearchIndex();
   }
 
   async forget(entityId: string, params: { entryId?: string; taskId?: string; sourceRef?: string; sourceHash?: string; clearAll?: boolean }): Promise<{ deleted: { entries: number; tasks: number } }> {
