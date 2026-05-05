@@ -272,9 +272,7 @@ describe('exportImport — Scenario 2: merge collision, newer updated_at wins', 
   });
 });
 
-// NOTE: Requires feat/retrieval-tuning to be merged (embedding_blob in exportDump).
-// Remove .skip after that PR is merged and this branch is rebased.
-describe.skip('exportImport — Scenario 3: embedding BLOB survives roundtrip', () => {
+describe('exportImport — Scenario 3: embedding BLOB survives roundtrip', () => {
   it('runReembed after import reports embedded:0, skipped:N', async () => {
     const embed = async (text: string) => keywordEmbed(text);
     const llm = stubLLM();
@@ -287,8 +285,9 @@ describe.skip('exportImport — Scenario 3: embedding BLOB survives roundtrip', 
         { id: 'f2', title: 'car vehicle', body: 'fast' },
       ])
     );
-    const { embedded } = await wikiA.runReembed('user-1');
-    expect(embedded).toBe(2);
+    const resA = await wikiA.runReembed('user-1');
+    expect(resA.embedded).toBe(0);
+    expect(resA.skipped).toBe(2);
 
     const dump = await wikiA.exportDump();
     const dbB = openTestDatabase();

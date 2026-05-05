@@ -963,7 +963,7 @@ export class WikiMemory {
     ]);
 
     const parsedFacts = facts.map(f => {
-      const { embedding: _embedding, embedding_blob: _blob, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
+      const { embedding: _embedding, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
       return {
         ...rest,
         tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
@@ -1065,7 +1065,7 @@ export class WikiMemory {
     `, [entityId]);
 
     const currentFacts = currentFactsRows.map(f => {
-      const { embedding: _embedding, embedding_blob: _blob, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
+      const { embedding: _embedding, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
       return {
         ...rest,
         tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
@@ -1174,7 +1174,7 @@ export class WikiMemory {
       .map(({ id, title, source_ref }) => ({ id, title, source_ref }));
 
     const userPrompt = `Heal Candidates:\n${JSON.stringify(healCandidates.map(f => {
-      const { embedding: _embedding, embedding_blob: _blob, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
+      const { embedding: _embedding, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
       return { ...rest, tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags };
     }), null, 2)}
 \nDocument Anchors (DO NOT MODIFY OR DELETE):\n${JSON.stringify(documentAnchors, null, 2)}
@@ -1338,6 +1338,13 @@ export class WikiMemory {
       let skipped = 0;
       try {
         for (const row of rows) {
+          // Skip rows that already have a BLOB — they were written by embedFact()
+          // and are already in the current format. runReembed() converts TEXT rows
+          // to BLOB; re-embedding rows with an existing BLOB would waste API calls.
+          if ((row as WikiFact & { embedding_blob?: unknown }).embedding_blob != null) {
+            skipped++;
+            continue;
+          }
           const success = await this.embedFact(row);
           if (success) embedded++;
           else skipped++;
@@ -1402,7 +1409,7 @@ export class WikiMemory {
       this.db.getAllAsync<WikiEvent>(eventsQuery, eventsParams),
     ]);
     const facts = factsRaw.map(f => {
-      const { embedding: _embedding, embedding_blob: _blob, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
+      const { embedding: _embedding, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
       return {
         ...rest,
         tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
