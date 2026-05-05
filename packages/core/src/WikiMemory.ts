@@ -1579,7 +1579,7 @@ export class WikiMemory {
       this.vectorCache.delete(entityId);
       // Keep the text index in sync with each imported entity so concurrent
       // read() calls do not compute candidates from a stale miniSearch index.
-      await this.rebuildMiniSearchIndex();
+      await this.rebuildMiniSearchIndex(entityId);
     }
   }
 
