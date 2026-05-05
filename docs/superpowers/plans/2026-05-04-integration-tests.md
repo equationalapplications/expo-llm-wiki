@@ -6,7 +6,7 @@
 
 **Architecture:** Scenario-driven integration tests live in a private `packages/integration/` package (not published). Helpers provide a fresh in-memory SQLite database per test, a `stubLLM()` for ops where LLM output doesn't matter, and a `scriptedLLM(responses)` for ops where the LLM's output must be controlled. A `recall.test.ts` file uses `fastembed` (ONNX, no API key) for real semantic embedding tests.
 
-**Tech Stack:** Vitest 4.1.5, better-sqlite3 (in-memory SQLite), TypeScript 5.4, fastembed 2.1.0 (recall tests only). Core package imported via path alias pointing to source — no build step required for tests.
+**Tech Stack:** Vitest 4.1.5, better-sqlite3 (in-memory SQLite), TypeScript ^5.4.0, fastembed 2.1.0 (recall tests only). Core package imported via path alias pointing to source — no build step required for tests.
 
 **Dependency note:** Tasks marked `[NEEDS: feat/retrieval-tuning]` test APIs added in that branch (`ReadOptions`, `hybridWeight`, `clearVectorCache()`, `embedding_blob` roundtrip). Implement those tests with `it.skip` now; remove the `.skip` after the PR merges and is rebased in.
 
