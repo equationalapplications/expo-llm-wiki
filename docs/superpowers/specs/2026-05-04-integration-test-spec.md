@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-04
 **Branch:** feat/retrieval-tuning (PR in review)
-**Status:** Approved, awaiting implementation
+**Status:** Implemented
 
 ---
 
