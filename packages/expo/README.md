@@ -212,7 +212,7 @@ flowchart TD
 **Data flow:**
 1. **Wrap app** with `<WikiProvider wiki={wiki}>` — provides wiki context
 2. **Use hooks** in components — access memory reactively
-3. **Read operations** auto-refetch when `entityId`, `query`, or `wiki` change; call `refetch()` to refresh manually
+3. **Read operations** auto-refetch when `entityId`, `query`, `wiki`, or `ReadOptions` values change; call `refetch()` to refresh manually
 4. **Write operations** (write, ingest, forget, maintenance) do not automatically re-trigger `useMemoryRead`; call `refetch()` after a write to refresh read results
 5. **Re-render** with new data flowing back to UI
 

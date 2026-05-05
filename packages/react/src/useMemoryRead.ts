@@ -15,7 +15,10 @@ export function useMemoryRead(entityId: string, query: string, options?: ReadOpt
   optionsRef.current = options;
   // Serialize options for a stable effect dependency: re-fetches when values change,
   // but not when the caller passes a new object reference with the same content.
-  const optionsStr = JSON.stringify(options);
+  // Sort keys before stringifying so insertion-order differences don't cause spurious refetches.
+  const optionsStr = options
+    ? JSON.stringify(options, Object.keys(options).sort())
+    : '';
 
   const fetchQueue = useRef<{
     inFlight: boolean;

@@ -9,6 +9,7 @@ import { useWikiIngest } from '../src/useWikiIngest';
 import { useWikiForget } from '../src/useWikiForget';
 import { useWikiExport } from '../src/useWikiExport';
 import { useWikiHasChanged } from '../src/useWikiHasChanged';
+import type { ReadOptions } from '@equationalapplications/core-llm-wiki';
 
 /** Minimal mock of WikiMemory — uses the real MemoryBundle shape ({ facts, tasks, events }) */
 function makeMockWiki() {
@@ -168,6 +169,25 @@ describe('useMemoryRead', () => {
     // Serialized options are unchanged so no extra wiki.read() should be triggered.
     rerender({ opts: { maxResults: 3 } });
     // Drain any pending microtasks / state updates before asserting no extra call.
+    await act(async () => {});
+    expect(wiki.read).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not re-fetch when options keys are in a different insertion order but values are identical', async () => {
+    type MultiOpts = { maxResults: number; hybridWeight: number };
+    const { rerender } = renderHook(
+      ({ opts }: { opts: MultiOpts }) => useMemoryRead('user-1', 'q', opts as ReadOptions),
+      {
+        wrapper: wrapper(wiki),
+        initialProps: { opts: { maxResults: 3, hybridWeight: 0.5 } as MultiOpts },
+      }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    // Re-render with keys in a different insertion order but same logical content.
+    // Sorted-key serialization must produce the same string → no extra refetch.
+    rerender({ opts: { hybridWeight: 0.5, maxResults: 3 } as MultiOpts });
     await act(async () => {});
     expect(wiki.read).toHaveBeenCalledTimes(1);
   });
