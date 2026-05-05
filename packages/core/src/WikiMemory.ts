@@ -875,11 +875,17 @@ export class WikiMemory {
             // Phase 2: fetch full rows only for the top results
             const topIds = scored.slice(0, maxResults).map(s => s.row.id);
             if (topIds.length > 0) {
-              const placeholders = topIds.map(() => '?').join(',');
-              const fullRows = await this.db.getAllAsync<WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null }>(
-                `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
-                topIds
-              );
+              const fullRows: Array<WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null }> = [];
+              const phase2ChunkSize = 500;
+              for (let i = 0; i < topIds.length; i += phase2ChunkSize) {
+                const idChunk = topIds.slice(i, i + phase2ChunkSize);
+                const placeholders = idChunk.map(() => '?').join(',');
+                const chunkRows = await this.db.getAllAsync<WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null }>(
+                  `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+                  idChunk
+                );
+                fullRows.push(...chunkRows);
+              }
               const byId = new Map(fullRows.map(r => [r.id, r]));
               facts = topIds.map(id => byId.get(id)).filter((f): f is WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null } => f !== undefined);
             }
