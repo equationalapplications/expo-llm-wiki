@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { WikiMemory } from '@equationalapplications/core-llm-wiki';
 import { openTestDatabase } from '../helpers/db';
-import { scriptedLLM, stubLLM } from '../helpers/llm';
+import { scriptedLLM } from '../helpers/llm';
 
 describe('pipeline — Scenario 1: write → runLibrarian → read', () => {
   it('facts extracted by LLM are returned by read() in relevance order', async () => {
