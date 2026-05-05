@@ -372,7 +372,7 @@ describe('useWikiMaintenance', () => {
     let reembedResult!: { embedded: number; skipped: number };
     await act(async () => { reembedResult = await result.current.runReembed('user-1'); });
 
-    expect(wiki.runReembed).toHaveBeenCalledWith('user-1');
+    expect(wiki.runReembed).toHaveBeenCalledWith('user-1', undefined);
     expect(reembedResult).toEqual({ embedded: 5, skipped: 2 });
     // runReembed clears lastResult at start so stale librarian/heal/prune
     // results do not remain visible while reembed is pending or after it completes.

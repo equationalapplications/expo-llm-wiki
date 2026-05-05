@@ -370,11 +370,11 @@ export class WikiMemory {
           `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension_mismatch', ?)`,
           [String(dim)]
         );
-      } else {
-        await this.db.runAsync(
-          `DELETE FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
-        );
       }
+      // Do NOT clear 'embedding_dimension_mismatch' here: other facts may still hold
+      // old-dimension blobs written during a previous model. Only _reconcileEmbeddingDimension()
+      // (called after a full runReembed) may clear the flag once it confirms all stored
+      // blobs match the new canonical dimension.
     } else {
       await this.db.runAsync(
         `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension', ?)`,
@@ -393,11 +393,26 @@ export class WikiMemory {
     const mismatch = await this.db.getFirstAsync<{ value: string }>(
       `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
     );
-    if (mismatch) {
-      await this.db.runAsync(
-        `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension', ?)`,
-        [mismatch.value]
-      );
+    if (!mismatch) return;
+
+    const newDim = parseInt(mismatch.value, 10);
+    // Check whether any non-deleted fact still stores a blob with a different byte
+    // length. If so, those facts haven't been re-embedded yet and the mismatch flag
+    // must stay in place so read() keeps falling back to MiniSearch for them.
+    const residual = await this.db.getFirstAsync<{ cnt: number }>(
+      `SELECT COUNT(*) AS cnt FROM ${this.prefix}entries
+       WHERE deleted_at IS NULL
+         AND embedding_blob IS NOT NULL
+         AND (CAST(length(embedding_blob) AS INTEGER) / 4) != ?`,
+      [newDim]
+    );
+    // Promote the mismatch dimension to canonical regardless — this is the new model's size.
+    await this.db.runAsync(
+      `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension', ?)`,
+      [mismatch.value]
+    );
+    // Only clear the mismatch flag once every stored blob uses the new dimension.
+    if (!residual || residual.cnt === 0) {
       await this.db.runAsync(
         `DELETE FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
       );
@@ -1049,6 +1064,7 @@ export class WikiMemory {
       if (
         !this.activeMaintenanceJobs.has(jobKey) &&
         !this.activeMaintenanceJobs.has(this._pruneKey(entityId)) &&
+        !this._isReembedActive(entityId) &&
         !this._isImportActiveFor(entityId) &&
         !this._isForgetActiveFor(entityId)
       ) {
@@ -1167,11 +1183,16 @@ export class WikiMemory {
       }
     });
 
+    // Rebuild the text index before the (potentially slow) embedding loop so
+    // concurrent reads using MiniSearch (preFilter, keyword fallback) see the
+    // new fact content immediately after the DB transaction commits.
+    await this.rebuildMiniSearchIndex(entityId);
     this.vectorCache.delete(entityId);
     for (const fact of insertedFacts) {
       await this.embedFact(fact);
     }
-    await this.rebuildMiniSearchIndex(entityId);
+    // Second vector cache flush: a concurrent read() may have repopulated it
+    // during the embed loop; flush so subsequent reads see the new BLOBs.
     this.vectorCache.delete(entityId);
   }
 
@@ -1398,14 +1419,38 @@ export class WikiMemory {
       }
 
       const force = opts?.force ?? false;
-      // Auto-force when a dimension mismatch is pending: existing BLOBs were built
-      // with the old model and must be replaced. This lets callers call
-      // runReembed(entityId) after changing embedding models without needing to
-      // know about the { force: true } option — the wiki detects the stale state.
-      const mismatchRow = await this.db.getFirstAsync<{ value: string }>(
-        `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
-      );
-      const effectiveForce = force || mismatchRow !== null;
+      // Auto-force when a dimension mismatch is pending OR when the stored
+      // embedding_dimension doesn't match the provider's current output size.
+      // The mismatch key is set the first time a new-model vector is written
+      // (e.g. during ingest), but on a fresh model switch before any write the
+      // key may not exist yet. Probing the provider with a tiny string detects
+      // that case so callers never need to pass { force: true } explicitly.
+      let effectiveForce = force;
+      if (!effectiveForce) {
+        const mismatchRow = await this.db.getFirstAsync<{ value: string }>(
+          `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
+        );
+        if (mismatchRow) {
+          effectiveForce = true;
+        } else {
+          // Probe the provider to detect a dimension change that hasn't produced
+          // any writes yet (model switched but no ingest/write since).
+          const storedDimRow = await this.db.getFirstAsync<{ value: string }>(
+            `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension'`
+          );
+          if (storedDimRow) {
+            try {
+              const probeVec = await embedFn('probe');
+              if (probeVec.length !== parseInt(storedDimRow.value, 10)) {
+                effectiveForce = true;
+              }
+            } catch {
+              // Probe failed (network/model error) — don't force; let the normal
+              // skip path run and let embedFact() fail gracefully per fact.
+            }
+          }
+        }
+      }
       let embedded = 0;
       let skipped = 0;
       try {
@@ -2024,10 +2069,13 @@ export class WikiMemory {
         }
       });
 
+      // Rebuild text index before embedding so concurrent reads see new content.
+      await this.rebuildMiniSearchIndex(entityId);
+      this.vectorCache.delete(entityId);
       for (const fact of insertedFacts) {
         await this.embedFact(fact);
       }
-      await this.rebuildMiniSearchIndex(entityId);
+      // Second flush after embed loop in case a concurrent read() repopulated cache.
       this.vectorCache.delete(entityId);
 
       return { truncated, chunks: chunks.length };

@@ -255,8 +255,14 @@ await runLibrarian('user-123');
 // LLM-driven fact review: remove orphaned/stale facts, repair incorrect inferences
 await runHeal('user-123');
 
-// Backfill BLOB embeddings or update after changing embedding model
+// Backfill BLOB embeddings for facts that don't have one yet
+// (e.g. after first enabling an embed provider):
 const { embedded, skipped } = await runReembed('user-123');
+
+// After changing the embedding model, force a full rebuild of all vectors:
+const { embedded, skipped } = await runReembed('user-123', { force: true });
+// Note: runReembed() also auto-detects a model change by probing the provider
+// against the stored dimension — plain runReembed() is sufficient in most cases.
 
 // Hard-delete soft-deleted entries/tasks after retention and prune old events
 await runPrune('user-123');
