@@ -46,6 +46,17 @@ describe('ReadOptions per-call overrides', () => {
     expect(result.facts).toHaveLength(0);
   });
 
+  it('per-call maxResults: 0 skips embed() entirely', async () => {
+    let embedCallCount = 0;
+    const { wiki, db } = makeWiki(async () => { embedCallCount++; return [1, 0, 0]; });
+    await wiki.setup();
+    await insertFactWithBlob(db, 'f1', 'user-1');
+    await db.runAsync(`INSERT OR REPLACE INTO llm_wiki_meta (key, value) VALUES ('embedding_dimension', '3')`);
+
+    await wiki.read('user-1', 'query', { maxResults: 0 });
+    expect(embedCallCount).toBe(0);
+  });
+
   it('omitting ReadOptions falls back to WikiConfig defaults', async () => {
     const { wiki, db } = makeWiki(async () => [1, 0, 0]);
     await wiki.setup();

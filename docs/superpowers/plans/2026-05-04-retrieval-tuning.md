@@ -1762,9 +1762,19 @@ this.vectorCache.delete(entityId);
   }
   ```
 
-**In `importDump`** — after `await this.rebuildMiniSearchIndex()` (global rebuild at end):
+**In `importDump`** — per-entity double-flush around the embedding loop:
 ```typescript
-this.vectorCache.clear(); // importDump touches multiple entities
+// First flush: evict before embedding so concurrent reads use post-transaction DB data.
+this.vectorCache.delete(entityId);
+await this.rebuildMiniSearchIndex(entityId);
+for (const fact of bundle.facts) {
+  if (!fact.deleted_at && upsertedFactIds.has(fact.id)) {
+    await this.embedFact({ id: fact.id, title: fact.title, body: fact.body, tags: fact.tags ?? [] });
+  }
+}
+// Second flush: evict any cache entries a concurrent read() repopulated from old DB
+// vectors while the embedding loop was running.
+this.vectorCache.delete(entityId);
 ```
 
 - [ ] **Step 8.4: Run vectorCache tests (all)**

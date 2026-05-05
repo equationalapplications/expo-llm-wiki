@@ -8,7 +8,7 @@ React hooks and web utilities for @equationalapplications/core-llm-wiki, designe
 
 - **Semantic search** — Vector embeddings with optional `embed` function and MiniSearch fallback
 - **Retrieval tuning** — Per-call overrides for hybrid scoring, pre-filtering, result limits
-- **Reactive reads** — Auto-refetch on `entityId` or query changes
+- **Reactive reads** — Auto-refetch on `entityId`, query, or `options` changes
 - **Mutation hooks** — `useWikiWrite`, `useWikiIngest`, `useWikiForget`, `useWikiMaintenance`, etc.
 - **Shared context** — Single `WikiProvider` per app, use anywhere
 - **Full-featured memory** — Facts, tasks, events, maintenance jobs (librarian, heal, reembed, prune)
@@ -156,7 +156,7 @@ const { data } = useMemoryRead('user-123', 'preferences', {
 
 ### `useMemoryRead(entityId, query, options?)`
 
-Fetch memory reactively. Auto-refetches when `entityId`, `query`, or `wiki` change. `options` changes (e.g. `maxResults`, `preFilterLimit`, `hybridWeight`) are picked up on the next fetch but do not trigger an automatic refetch — call `refetch()` manually when you need to re-run with new option values.
+Fetch memory reactively. Auto-refetches when `entityId`, `query`, `wiki`, or `options` change, including per-call overrides such as `maxResults`, `preFilterLimit`, and `hybridWeight`.
 
 ```typescript
 const { data, isPending, error, refetch } = useMemoryRead('user-123', 'preferences');
@@ -244,7 +244,7 @@ const handleDelete = async (factId: string) => {
 
 ### `useWikiMaintenance()`
 
-Run background maintenance jobs: librarian (deduplication/fact extraction), heal (repair corrupted embeddings), reembed (convert TEXT embeddings to BLOB / update after model change), prune (remove stale facts).
+Run background maintenance jobs: librarian (deduplication/fact extraction), heal (LLM-driven fact review: removes orphaned facts, downgrades stale inferences, repairs incorrect facts), reembed (convert TEXT embeddings to BLOB / update after model change), prune (hard-delete soft-deleted entries/tasks after the retention window and prune old events).
 
 ```typescript
 const { runLibrarian, runHeal, runReembed, runPrune, isPending, error, lastResult } = useWikiMaintenance();
@@ -252,15 +252,13 @@ const { runLibrarian, runHeal, runReembed, runPrune, isPending, error, lastResul
 // Deduplicate and consolidate facts from events
 await runLibrarian('user-123');
 
-// Repair corrupted embeddings
+// LLM-driven fact review: remove orphaned/stale facts, repair incorrect inferences
 await runHeal('user-123');
 
-// Backfill BLOB embeddings or update after changing embedding model.
-// Note: runReembed() clears lastResult but does NOT set it to a new value.
-// The operation result is available only from the returned Promise.
+// Backfill BLOB embeddings or update after changing embedding model
 const { embedded, skipped } = await runReembed('user-123');
 
-// Remove stale/old facts
+// Hard-delete soft-deleted entries/tasks after retention and prune old events
 await runPrune('user-123');
 ```
 
@@ -297,16 +295,15 @@ await execute(['user-123']);
 flowchart TD
     A["<WikiProvider wiki={wiki}>"] --> B["App Components"]
     B --> C{"Use Hook?"}
-    C -->|"useMemoryRead(entityId, query)"| D["[Read Memory]"]
+    C -->|"useMemoryRead(entityId, query, options?)"| D["[Read Memory]"]
     C -->|"useWikiWrite()"| E["[Write Memory]"]
     C -->|"useWikiIngest()"| F["[Ingest Document]"]
     C -->|"useWikiForget()"| G["[Delete Memory]"]
     C -->|"useWikiMaintenance()"| H["[Run Jobs]"]
-    D --> I{"entityId or<br/>query changed?"}
+    D --> I{"entityId, query,<br/>ReadOptions, or wiki changed?"}
     I -->|"Yes"| J["Auto-refetch"]
     I -->|"No"| K["Return cached data"]
     J --> L["Trigger read()"]
-    K --> L
     L --> M["Embed query<br/>if embed available"]
     M --> N["Phase 1: Score facts<br/>Phase 2: Fetch winners"]
     N --> O["Update component state"]
@@ -321,7 +318,7 @@ flowchart TD
 **Data flow:**
 1. **Wrap app** with `<WikiProvider wiki={wiki}>` — provides wiki context
 2. **Use hooks** in components — access memory reactively
-3. **Read operations** auto-refetch when `entityId`, `query`, or `wiki` change; call `refetch()` to refresh manually
+3. **Read operations** auto-refetch when `entityId`, `query`, `wiki`, or `ReadOptions` values change; call `refetch()` to refresh manually
 4. **Write operations** (write, ingest, forget, maintenance) do not automatically re-trigger `useMemoryRead`; call `refetch()` after a write to refresh read results
 5. **Re-render** with new data flowing back to UI
 
@@ -349,8 +346,8 @@ flowchart TD
     N --> O
     C --> P["MiniSearch ranking"]
     P --> O
-    O --> Q["Return MemoryBundle"]
-    Q --> R["Track access"]
+    O --> R["Track access"]
+    R --> Q["Return MemoryBundle"]
 ```
 
 The flowchart shows:

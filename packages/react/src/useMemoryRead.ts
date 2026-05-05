@@ -2,6 +2,55 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import type { MemoryBundle, ReadOptions } from '@equationalapplications/core-llm-wiki';
 import { useWiki } from './WikiContext';
 
+/**
+ * Normalize a ReadOptions object to a canonical string suitable for use as a
+ * React effect dependency key. Normalization ensures:
+ *  - `undefined` and `{}` produce the same empty string (no spurious refetch)
+ *  - Non-serializable numbers are coerced to their effective values before
+ *    stringifying, matching how WikiMemory.read() resolves them:
+ *      · maxResults: NaN/±Infinity → 10 (read()'s hardcoded fallback, overrides config)
+ *      · preFilterLimit: NaN/±Infinity → null (disables config-level limit, same as null)
+ *      · hybridWeight: NaN → null (explicitly disables config-level weight; distinct from
+ *        undefined which defers to config); ±Infinity → clamped to 0/1
+ *  - Keys are sorted so insertion-order differences never cause spurious refetches
+ */
+function normalizeReadOptionsKey(opts?: ReadOptions): string {
+  if (!opts) return '';
+  const normalized: Record<string, unknown> = {};
+
+  // maxResults: undefined or null → omit (defer to config/default via ??);
+  // non-finite (NaN/±Infinity) → 10 (read()'s hardcoded fallback, bypasses config);
+  // finite → clamp to non-negative integer.
+  if (opts.maxResults !== undefined && opts.maxResults !== null) {
+    normalized.maxResults = Number.isFinite(opts.maxResults)
+      ? Math.max(0, Math.trunc(opts.maxResults))
+      : 10;
+  }
+
+  // preFilterLimit: undefined → omit (defer to config);
+  // null or non-finite → null (disables config-level limit);
+  // finite → clamp to non-negative integer.
+  if (opts.preFilterLimit !== undefined) {
+    if (opts.preFilterLimit === null || !Number.isFinite(opts.preFilterLimit)) {
+      normalized.preFilterLimit = null;
+    } else {
+      normalized.preFilterLimit = Math.max(0, Math.trunc(opts.preFilterLimit));
+    }
+  }
+
+  // hybridWeight: undefined or null → omit (defer to config via ??);
+  // NaN → null (explicitly disables config hybrid weight; distinct from omitting);
+  // ±Infinity and out-of-range finite → clamp to [0, 1].
+  if (opts.hybridWeight !== undefined && opts.hybridWeight !== null) {
+    normalized.hybridWeight = Number.isNaN(opts.hybridWeight)
+      ? null
+      : Math.max(0, Math.min(1, opts.hybridWeight));
+  }
+
+  const sortedKeys = Object.keys(normalized).sort();
+  return sortedKeys.length ? JSON.stringify(normalized, sortedKeys) : '';
+}
+
 export function useMemoryRead(entityId: string, query: string, options?: ReadOptions) {
   const wiki = useWiki();
   const [data, setData] = useState<MemoryBundle | null>(null);
@@ -13,10 +62,12 @@ export function useMemoryRead(entityId: string, query: string, options?: ReadOpt
 
   const optionsRef = useRef(options);
   optionsRef.current = options;
-  // options is captured via ref so the latest value is always used on the next fetch.
-  // Changes to options alone do not trigger an automatic refetch — call refetch() manually
-  // if you need to re-run the query with new option values. This avoids refetch loops
-  // when callers pass inline option objects that change reference on every render.
+  // Serialize a normalized form of options so:
+  //  - `undefined` and `{}` map to the same string (no spurious refetch)
+  //  - non-finite hybridWeight (±Infinity, NaN) is coerced to its effective value before
+  //    stringifying (JSON.stringify turns Infinity/NaN to `null`, losing type information)
+  //  - keys are sorted so insertion-order differences don't cause spurious refetches
+  const optionsStr = normalizeReadOptionsKey(options);
 
   const fetchQueue = useRef<{
     inFlight: boolean;
@@ -52,7 +103,7 @@ export function useMemoryRead(entityId: string, query: string, options?: ReadOpt
 
   useEffect(() => {
     scheduleFetch.current(entityId, query);
-  }, [entityId, query, wiki]);
+  }, [entityId, query, wiki, optionsStr]);
 
   const refetch = useCallback(() => {
     scheduleFetch.current(entityId, query);

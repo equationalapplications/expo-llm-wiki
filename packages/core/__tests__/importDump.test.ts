@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type { MemoryDump } from '../src/types';
-import { WikiMemory } from '../src/WikiMemory';
+import { WikiMemory, WikiBusyError } from '../src/WikiMemory';
+import { openTestDatabase } from './helpers/sqliteAdapter';
 
 class MockSQLiteDatabase {
     private entries: Array<Record<string, any>> = [];
@@ -42,11 +43,11 @@ class MockSQLiteDatabase {
         return { changes, lastInsertRowId: 0 };
       }
 
-      if (normalized.startsWith('UPDATE') && normalized.includes('entries SET entity_id = ?, title = ?, body = ?, tags = ?, confidence = ?, source_type = ?, source_hash = ?, source_ref = ?, created_at = ?, updated_at = ?, last_accessed_at = ?, access_count = ?, deleted_at = ? WHERE id = ?')) {
+      if (normalized.startsWith('UPDATE') && normalized.includes('entries SET entity_id = ?') && normalized.includes('embedding_blob = NULL, embedding = NULL WHERE id = ?')) {
         const [entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at, id] = args;
         const idx = this.entries.findIndex((e) => e.id === id);
         if (idx >= 0) {
-          this.entries[idx] = { id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at };
+          this.entries[idx] = { id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at, embedding_blob: null, embedding: null };
           return { changes: 1, lastInsertRowId: 0 };
         }
         return { changes: 0, lastInsertRowId: 0 };
@@ -259,5 +260,202 @@ describe('importDump', () => {
     await wiki.importDump(makeDump('e', 'f2'), { merge: true });
     const out = await wiki.exportDump(['e']);
     expect(out.entities.e.facts.length).toBe(2);
+  });
+});
+
+describe('importDump — busy-key protection', () => {
+  function makeRealWiki() {
+    const db = openTestDatabase();
+    const wiki = new WikiMemory(db, { llmProvider: { generateText: async () => '{}' } });
+    return { wiki, db };
+  }
+
+  function simpleDump(entityId: string): MemoryDump {
+    return {
+      generatedAt: Date.now(),
+      entities: {
+        [entityId]: { facts: [], tasks: [], events: [] },
+      },
+    };
+  }
+
+  it('throws WikiBusyError(import) when called concurrently for the same entity', async () => {
+    const { wiki } = makeRealWiki();
+    await wiki.setup();
+
+    // Start an import that won't finish until we release it.
+    let resolveImport: () => void = () => {};
+    const blocker = new Promise<void>((r) => { resolveImport = r; });
+
+    const slowDump: MemoryDump = {
+      generatedAt: Date.now(),
+      entities: {
+        'user-1': {
+          facts: [{
+            id: 'f-slow',
+            entity_id: 'user-1',
+            title: 'slow',
+            body: 'body',
+            tags: [],
+            confidence: 'certain',
+            source_type: 'user_stated',
+            source_hash: null,
+            source_ref: null,
+            created_at: 1000,
+            updated_at: 1000,
+            last_accessed_at: null,
+            access_count: 0,
+            deleted_at: null,
+          }],
+          tasks: [],
+          events: [],
+        },
+      },
+    };
+
+    // Patch importDump to hang after the import key is acquired.
+    const originalDo = (wiki as any)._doImportEntity.bind(wiki);
+    (wiki as any)._doImportEntity = async (entityId: string, bundle: any, merge: boolean) => {
+      await blocker;
+      return originalDo(entityId, bundle, merge);
+    };
+
+    const firstImport = wiki.importDump(slowDump);
+
+    // Give the first import a tick to acquire the lock.
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Second import on same entity must throw immediately.
+    await expect(wiki.importDump(simpleDump('user-1'))).rejects.toBeInstanceOf(WikiBusyError);
+    const err = await wiki.importDump(simpleDump('user-1')).catch((e) => e);
+    expect(err.operation).toBe('import');
+    expect(err.entityId).toBe('user-1');
+
+    resolveImport();
+    await firstImport;
+  });
+
+  it('runLibrarian() throws WikiBusyError(import) while importDump is in-flight', async () => {
+    const { wiki } = makeRealWiki();
+    await wiki.setup();
+
+    let resolveImport: () => void = () => {};
+    const blocker = new Promise<void>((r) => { resolveImport = r; });
+    const originalDo = (wiki as any)._doImportEntity.bind(wiki);
+    (wiki as any)._doImportEntity = async (entityId: string, bundle: any, merge: boolean) => {
+      await blocker;
+      return originalDo(entityId, bundle, merge);
+    };
+
+    const imp = wiki.importDump(simpleDump('user-1'));
+    await new Promise((r) => setTimeout(r, 0));
+
+    const err = await wiki.runLibrarian('user-1').catch((e) => e);
+    expect(err).toBeInstanceOf(WikiBusyError);
+    expect(err.operation).toBe('import');
+
+    resolveImport();
+    await imp;
+  });
+
+  it('importDump() throws WikiBusyError(librarian) while runLibrarian is in-flight', async () => {
+    const { wiki } = makeRealWiki();
+    await wiki.setup();
+
+    let resolveLibrarian: () => void = () => {};
+    const blocker = new Promise<void>((r) => { resolveLibrarian = r; });
+    const originalDo = (wiki as any)._doRunLibrarian.bind(wiki);
+    (wiki as any)._doRunLibrarian = async (entityId: string) => {
+      await blocker;
+      return originalDo(entityId);
+    };
+
+    const lib = wiki.runLibrarian('user-1');
+    await new Promise((r) => setTimeout(r, 0));
+
+    const err = await wiki.importDump(simpleDump('user-1')).catch((e) => e);
+    expect(err).toBeInstanceOf(WikiBusyError);
+    expect(err.operation).toBe('librarian');
+
+    resolveLibrarian();
+    await lib;
+  });
+
+  it('forget() throws WikiBusyError(import) while importDump is in-flight', async () => {
+    const { wiki } = makeRealWiki();
+    await wiki.setup();
+
+    let resolveImport: () => void = () => {};
+    const blocker = new Promise<void>((r) => { resolveImport = r; });
+    const originalDo = (wiki as any)._doImportEntity.bind(wiki);
+    (wiki as any)._doImportEntity = async (entityId: string, bundle: any, merge: boolean) => {
+      await blocker;
+      return originalDo(entityId, bundle, merge);
+    };
+
+    const imp = wiki.importDump(simpleDump('user-1'));
+    await new Promise((r) => setTimeout(r, 0));
+
+    const err = await wiki.forget('user-1', { clearAll: true }).catch((e) => e);
+    expect(err).toBeInstanceOf(WikiBusyError);
+    expect(err.operation).toBe('import');
+
+    resolveImport();
+    await imp;
+  });
+
+  it('importDump() throws WikiBusyError(forget) while forget is in-flight', async () => {
+    const { wiki } = makeRealWiki();
+    await wiki.setup();
+
+    // Patch forget to stall mid-execution so the import race is detectable
+    let resolveForget: () => void = () => {};
+    const blocker = new Promise<void>((r) => { resolveForget = r; });
+    const originalRebuild = (wiki as any).rebuildMiniSearchIndex.bind(wiki);
+    (wiki as any).rebuildMiniSearchIndex = async (entityId: string) => {
+      await blocker;
+      return originalRebuild(entityId);
+    };
+
+    const forget = wiki.forget('user-1', { clearAll: true });
+    await new Promise((r) => setTimeout(r, 0));
+
+    const err = await wiki.importDump(simpleDump('user-1')).catch((e) => e);
+    expect(err).toBeInstanceOf(WikiBusyError);
+    expect(err.operation).toBe('forget');
+
+    resolveForget();
+    await forget;
+  });
+
+  it('write() does not start background librarian while importDump is in-flight for same entity', async () => {
+    const { wiki } = makeRealWiki();
+    await wiki.setup();
+
+    // Reduce threshold so write() would normally trigger background librarian
+    (wiki as any).options.config = { autoLibrarianThreshold: 1 };
+
+    let resolveImport: () => void = () => {};
+    const blocker = new Promise<void>((r) => { resolveImport = r; });
+    const originalDo = (wiki as any)._doImportEntity.bind(wiki);
+    (wiki as any)._doImportEntity = async (entityId: string, bundle: any, merge: boolean) => {
+      await blocker;
+      return originalDo(entityId, bundle, merge);
+    };
+
+    const imp = wiki.importDump(simpleDump('user-1'));
+    await new Promise((r) => setTimeout(r, 0));
+
+    const librarianSpy = vi.spyOn(wiki as any, '_doRunLibrarian');
+
+    // write() should not start background librarian because import is active
+    await wiki.write('user-1', { event_type: 'observation', summary: 'test' });
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(librarianSpy).not.toHaveBeenCalled();
+
+    resolveImport();
+    await imp;
+    librarianSpy.mockRestore();
   });
 });

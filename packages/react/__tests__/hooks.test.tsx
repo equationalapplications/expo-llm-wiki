@@ -9,6 +9,7 @@ import { useWikiIngest } from '../src/useWikiIngest';
 import { useWikiForget } from '../src/useWikiForget';
 import { useWikiExport } from '../src/useWikiExport';
 import { useWikiHasChanged } from '../src/useWikiHasChanged';
+import type { ReadOptions } from '@equationalapplications/core-llm-wiki';
 
 /** Minimal mock of WikiMemory — uses the real MemoryBundle shape ({ facts, tasks, events }) */
 function makeMockWiki() {
@@ -165,11 +166,87 @@ describe('useMemoryRead', () => {
     await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
 
     // Re-render with a new options object reference but the same logical values.
-    // Because options are held in a ref, changing only the reference must NOT
-    // trigger an extra wiki.read() call.
+    // Serialized options are unchanged so no extra wiki.read() should be triggered.
     rerender({ opts: { maxResults: 3 } });
-    await new Promise(r => setTimeout(r, 50));
+    // Drain any pending microtasks / state updates before asserting no extra call.
+    await act(async () => {});
     expect(wiki.read).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not re-fetch when options keys are in a different insertion order but values are identical', async () => {
+    type MultiOpts = { maxResults: number; hybridWeight: number };
+    const { rerender } = renderHook(
+      ({ opts }: { opts: MultiOpts }) => useMemoryRead('user-1', 'q', opts as ReadOptions),
+      {
+        wrapper: wrapper(wiki),
+        initialProps: { opts: { maxResults: 3, hybridWeight: 0.5 } as MultiOpts },
+      }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    // Re-render with keys in a different insertion order but same logical content.
+    // Sorted-key serialization must produce the same string → no extra refetch.
+    rerender({ opts: { hybridWeight: 0.5, maxResults: 3 } as MultiOpts });
+    await act(async () => {});
+    expect(wiki.read).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-fetches automatically when options values change', async () => {
+    const { rerender } = renderHook(
+      ({ opts }: { opts: { maxResults: number } }) => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki), initialProps: { opts: { maxResults: 3 } } }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    // Re-render with different option values — serialized options differ so an
+    // automatic refetch should fire without the caller invoking refetch() manually.
+    rerender({ opts: { maxResults: 7 } });
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(2));
+    expect(wiki.read).toHaveBeenLastCalledWith('user-1', 'q', { maxResults: 7 });
+  });
+
+  it('re-fetches when maxResults changes from finite to NaN (read() normalizes NaN to 10, not config value)', async () => {
+    const { rerender } = renderHook(
+      ({ opts }: { opts: ReadOptions }) => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki), initialProps: { opts: {} } }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    // NaN overrides config (read() hard-codes fallback to 10 for non-finite maxResults)
+    // so changing from {} to { maxResults: NaN } is a behavioral difference that must trigger a refetch.
+    rerender({ opts: { maxResults: NaN } });
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(2));
+  });
+
+  it('re-fetches when hybridWeight changes from undefined to NaN (NaN disables config-level hybrid weight)', async () => {
+    const { rerender } = renderHook(
+      ({ opts }: { opts: ReadOptions }) => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki), initialProps: { opts: {} } }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    // hybridWeight: NaN bypasses config.hybridWeight (NaN is not null/undefined so ?? doesn't fire).
+    // Changing from {} to { hybridWeight: NaN } must therefore trigger a refetch.
+    rerender({ opts: { hybridWeight: NaN } });
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(2));
+  });
+
+  it('re-fetches when preFilterLimit changes from undefined to Infinity (Infinity disables config-level limit)', async () => {
+    const { rerender } = renderHook(
+      ({ opts }: { opts: ReadOptions }) => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki), initialProps: { opts: {} } }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    // preFilterLimit: Infinity disables the config-level limit (same effective result as null)
+    // whereas undefined defers to config — these are different behaviors, must trigger refetch.
+    rerender({ opts: { preFilterLimit: Infinity } });
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(2));
   });
 });
 

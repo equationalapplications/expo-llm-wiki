@@ -211,13 +211,13 @@ private vectorCache: Map<string, Map<string, Float32Array>> = new Map();
 // outer key: entityId; inner key: fact id; value: parsed Float32Array
 ```
 
-**Population:** On each cosine-path `read()` without `preFilterLimit`, after phase 1 SELECT, populate the entity's inner map with parsed vectors for all rows returned. When `preFilterLimit` is active, the MiniSearch pre-filter produces a partial candidate set; cache is NOT populated from partial results to avoid incomplete cache state affecting subsequent full-scan reads. Existing cache entries are still used for cache hits. Rows with null/corrupt embeddings are not cached (they score 0 and can be retried cheaply).
+**Population:** On each cosine-path `read()` without `preFilterLimit`, after phase 1 SELECT, populate the entity's inner map with parsed vectors for all rows returned only when the entity has at most `MAX_VECTOR_CACHE_FACTS_PER_ENTITY` facts. This keeps very large entities from filling the cache with oversized per-entity maps. When `preFilterLimit` is active, the MiniSearch pre-filter produces a partial candidate set; cache is NOT populated from partial results to avoid incomplete cache state affecting subsequent full-scan reads. Existing cache entries are still used for cache hits. Rows with null/corrupt embeddings are not cached (they score 0 and can be retried cheaply).
 
 **Cache hit:** If the entity's inner map exists, use cached vectors directly — skip BLOB/TEXT parse entirely.
 
-**Invalidation:** Call `this.vectorCache.delete(entityId)` after any operation that mutates facts for that entity: `runLibrarian()`, `runHeal()`, `ingestDocument()`, `importDump()`, `forget()`, `runPrune()`, `runReembed()`. For operations that affect all entities (e.g., `importDump()` with multiple entities, global `runReembed()`), call `this.vectorCache.clear()`.
+**Invalidation:** Call `this.vectorCache.delete(entityId)` after any operation that mutates facts for that entity: `runLibrarian()`, `runHeal()`, `ingestDocument()`, `forget()`, `runPrune()`, and per-entity `runReembed()`. `importDump()` also invalidates per touched entity by deleting that entity's cache before/after its embedding loop rather than clearing the entire cache for multi-entity imports. For operations that truly affect all entities at once (for example, a global `runReembed()`), call `this.vectorCache.clear()`.
 
-**Memory bound:** Cache is scoped to the `WikiMemory` instance lifetime, but the outer entity cache is capped at `WikiMemory.MAX_VECTOR_CACHE_ENTITIES` (currently 100 entities). When inserting a new entity cache entry after reaching that limit, `WikiMemory` evicts the oldest cached entity before storing the new one. Memory per cached entity remains ≈ `factCount × dims × 4 bytes` (e.g. 1 536-dim embeddings: 6 KB/fact; 10 000 facts = ~60 MB per entity), so total cache use is bounded by at most 100 entity caches plus object overhead. Applications managing very large entities or wanting to release memory eagerly should still call `wiki.clearVectorCache()` after retrieval-heavy workloads finish (e.g. after a batch read job). `WikiMemory` exposes a public `clearVectorCache(): void` method for this purpose.
+**Memory bound:** Cache is scoped to the `WikiMemory` instance lifetime, but the outer entity cache is capped at `WikiMemory.MAX_VECTOR_CACHE_ENTITIES` (currently 16 entities). When inserting a new entity cache entry after reaching that limit, `WikiMemory` evicts the oldest cached entity before storing the new one. Memory per cached entity remains ≈ `factCount × dims × 4 bytes` (e.g. 1 536-dim embeddings: 6 KB/fact; 10 000 facts = ~60 MB per entity), so total cache use is bounded by at most 16 entity caches plus object overhead. Applications managing very large entities or wanting to release memory eagerly should still call `wiki.clearVectorCache()` after retrieval-heavy workloads finish (e.g. after a batch read job). `WikiMemory` exposes a public `clearVectorCache(): void` method for this purpose.
 
 ```typescript
 /** Releases all cached parsed vectors. Call after bulk read workloads on large wikis. */
@@ -325,8 +325,8 @@ After `embedFact()` succeeds (writes BLOB, clears TEXT), `runReembed()` implicit
 | Package | Change |
 |---|---|
 | `packages/core` | All changes — `types.ts`, `db/schema.ts`, `db/migrations.ts`, `WikiMemory.ts`, new `utils/embedding.ts`; no new dependencies |
-| `packages/expo` | None |
-| `packages/react` | None |
+| `packages/expo` | README updates only |
+| `packages/react` | Hook and test updates |
 
 ---
 
@@ -413,7 +413,7 @@ None. All changes are additive:
 | `packages/core/src/db/migrations.ts` | Add migration v3 |
 | `packages/core/src/utils/embedding.ts` | Create `parseEmbedding()` returning `Float32Array \| null` |
 | `packages/core/src/utils/cosine.ts` | Update `cosineSimilarity` signature: `(a: ArrayLike<number>, b: ArrayLike<number>): number` |
-| `packages/core/src/WikiMemory.ts` | Update `embedFact()` for BLOB write; update `read()` signature and logic with fast-path for `hybridWeight === 0`, `null` pre-filter escape hatch, full-entity-scan-only cache population, and explicit access tracking for all non-empty-query paths; add `clearVectorCache()` public method; add vector cache initialization and per-entity invalidation in `runLibrarian()`, `runHeal()`, `ingestDocument()`, `importDump()`, `forget()`, `runPrune()`, per-entity `runReembed()`; clear entire cache in global `runReembed()` and multi-entity `importDump()`; strip `embedding_blob` and `embedding` from returned facts in both `read()` and `_getFullBundle()`; update `runReembed()` SELECT to include `embedding_blob` |
+| `packages/core/src/WikiMemory.ts` | Update `embedFact()` for BLOB write; update `read()` signature and logic with fast-path for `hybridWeight === 0`, `null` pre-filter escape hatch, full-entity-scan-only cache population, and explicit access tracking for all non-empty-query paths; add `clearVectorCache()` public method; add vector cache initialization and per-entity invalidation in `runLibrarian()`, `runHeal()`, `ingestDocument()`, `forget()`, `runPrune()`, per-entity `runReembed()`; clear entire cache in global `runReembed()`; in `importDump()` perform a per-entity double-flush (delete before and after the embedding loop) so only the touched entity is evicted; strip `embedding_blob` and `embedding` from returned facts in both `read()` and `_getFullBundle()`; update `runReembed()` SELECT to include `embedding_blob` |
 | `packages/core/__tests__/blobEmbeddings.test.ts` | Create |
 | `packages/core/__tests__/vectorCache.test.ts` | Create |
 | `packages/core/__tests__/preFilterLimit.test.ts` | Create |

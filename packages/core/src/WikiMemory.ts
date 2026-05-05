@@ -278,14 +278,18 @@ export class WikiMemory {
     },
   });
   private miniSearchEntryIdsByEntity = new Map<string, Set<string>>();
-  /** Maximum number of entities whose parsed embedding vectors are held in memory. */
-  private static readonly MAX_VECTOR_CACHE_ENTITIES = 100;
   /**
-   * Maximum number of fact vectors cached per entity. Entities with more facts
-   * than this skip cache population to avoid large heap allocations on
-   * memory-constrained runtimes (e.g., mobile/Expo).
+   * Maximum number of entities whose parsed embedding vectors are held in
+   * memory. This cap is intentionally conservative so the cache remains safe
+   * on memory-constrained runtimes (e.g., mobile/Expo).
    */
-  private static readonly MAX_VECTOR_CACHE_FACTS_PER_ENTITY = 1000;
+  private static readonly MAX_VECTOR_CACHE_ENTITIES = 16;
+  /**
+   * Maximum number of fact vectors cached per entity. Keep this high enough to
+   * preserve the parsed-embedding reuse optimization for common mid-sized
+   * entities while still maintaining a bounded memory footprint.
+   */
+  private static readonly MAX_VECTOR_CACHE_FACTS_PER_ENTITY = 500;
   private vectorCache: Map<string, Map<string, Float32Array>> = new Map();
 
   private normalizeMiniSearchRow(row: {
@@ -418,7 +422,7 @@ export class WikiMemory {
     try {
       const vector = await embedFn(text);
       // Validate before persisting: an empty or non-finite vector would poison
-      // embedding_dimension and write unusable data to entries.embedding.
+      // embedding_dimension and write unusable data to embedding_blob.
       if (vector.length === 0 || !vector.every(v => typeof v === 'number' && isFinite(v))) {
         console.warn(`[WikiMemory] embedFact: embed() returned an invalid vector for ${fact.id}; skipping.`);
         return false;
@@ -580,9 +584,17 @@ export class WikiMemory {
   private _pruneKey(entityId: string) { return `${this.prefix}:${entityId}:prune`; }
   private _reembedKey(entityId: string) { return `${this.prefix}:${entityId}:reembed`; }
   private _globalReembedKey() { return `${this.prefix}:reembed`; }
+  private _importKey(entityId: string) { return `${this.prefix}:${entityId}:import`; }
+  private _forgetKey(entityId: string) { return `${this.prefix}:${entityId}:forget`; }
   private _isReembedActive(entityId: string): boolean {
     return this.activeMaintenanceJobs.has(this._reembedKey(entityId))
       || this.activeMaintenanceJobs.has(this._globalReembedKey());
+  }
+  private _isImportActiveFor(entityId: string): boolean {
+    return this.activeMaintenanceJobs.has(this._importKey(entityId));
+  }
+  private _isForgetActiveFor(entityId: string): boolean {
+    return this.activeMaintenanceJobs.has(this._forgetKey(entityId));
   }
   /** Returns true if any maintenance job has the given operation suffix (e.g. ':prune'). */
   private _isAnyMaintenanceActiveWithSuffix(suffix: string): boolean {
@@ -616,14 +628,14 @@ export class WikiMemory {
     }
   ): Promise<{ entries: number; tasks: number; events: number }> {
     const pruneKey = this._pruneKey(entityId);
-    // Prune must not run concurrently with librarian, heal, ingest, or another
+    // Prune must not run concurrently with librarian, heal, ingest, import, or another
     // prune for the same entity.
     const ingestPrefix = `${this.prefix}:${entityId}:`;
     let isIngestRunning = false;
     for (const k of this.activeIngestJobs) {
       if (k.startsWith(ingestPrefix)) { isIngestRunning = true; break; }
     }
-    let blockingOperation: 'prune' | 'librarian' | 'heal' | 'ingest' | 'reembed' | null = null;
+    let blockingOperation: 'prune' | 'librarian' | 'heal' | 'ingest' | 'reembed' | 'import' | null = null;
     if (this.activeMaintenanceJobs.has(pruneKey)) {
       blockingOperation = 'prune';
     } else if (this.activeMaintenanceJobs.has(this._librarianKey(entityId))) {
@@ -634,6 +646,8 @@ export class WikiMemory {
       blockingOperation = 'reembed';
     } else if (isIngestRunning) {
       blockingOperation = 'ingest';
+    } else if (this._isImportActiveFor(entityId)) {
+      blockingOperation = 'import';
     }
     if (blockingOperation !== null) {
       throw new WikiBusyError(blockingOperation, entityId);
@@ -713,7 +727,7 @@ export class WikiMemory {
           ? Math.max(0, Math.trunc(rawPreFilterLimit))
           : undefined;
     const hybridWeight = options?.hybridWeight ?? config?.hybridWeight;
-    const weight = hybridWeight !== undefined && Number.isFinite(hybridWeight)
+    const weight = hybridWeight !== undefined && !Number.isNaN(hybridWeight)
       ? Math.max(0, Math.min(1, hybridWeight))
       : undefined;
     const skipEmbed = weight === 0;
@@ -722,7 +736,10 @@ export class WikiMemory {
 
     let facts: WikiFact[] = [];
 
-    if (trimmedQuery) {
+    if (maxResults === 0) {
+      // Fast-path: a zero-capacity result window can never return any facts.
+      // Skip embed(), DB scan, and sort — fall through to tasks/events fetch below.
+    } else if (trimmedQuery) {
       let usedEmbed = false;
 
       if (!skipEmbed && embedFn) {
@@ -777,11 +794,17 @@ export class WikiMemory {
                 candidateRows = null;
               } else {
                 const topKIds = topKResults.map(r => r.id);
-                const placeholders = topKIds.map(() => '?').join(',');
-                candidateRows = await this.db.getAllAsync<ScoreRow>(
-                  `SELECT id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
-                  topKIds
-                );
+                const inClauseChunkSize = 500;
+                candidateRows = [];
+                for (let i = 0; i < topKIds.length; i += inClauseChunkSize) {
+                  const idChunk = topKIds.slice(i, i + inClauseChunkSize);
+                  const placeholders = idChunk.map(() => '?').join(',');
+                  const chunkRows = await this.db.getAllAsync<ScoreRow>(
+                    `SELECT id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+                    idChunk
+                  );
+                  candidateRows.push(...chunkRows);
+                }
                 if (weight !== undefined && weight < 1) {
                   const maxMsScore = Math.max(1, topKResults[0]?.score ?? 1);
                   miniSearchScores = new Map(topKResults.map(r => [r.id, r.score / maxMsScore]));
@@ -862,11 +885,17 @@ export class WikiMemory {
             // Phase 2: fetch full rows only for the top results
             const topIds = scored.slice(0, maxResults).map(s => s.row.id);
             if (topIds.length > 0) {
-              const placeholders = topIds.map(() => '?').join(',');
-              const fullRows = await this.db.getAllAsync<WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null }>(
-                `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
-                topIds
-              );
+              const fullRows: Array<WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null }> = [];
+              const phase2ChunkSize = 500;
+              for (let i = 0; i < topIds.length; i += phase2ChunkSize) {
+                const idChunk = topIds.slice(i, i + phase2ChunkSize);
+                const placeholders = idChunk.map(() => '?').join(',');
+                const chunkRows = await this.db.getAllAsync<WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null }>(
+                  `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+                  idChunk
+                );
+                fullRows.push(...chunkRows);
+              }
               const byId = new Map(fullRows.map(r => [r.id, r]));
               facts = topIds.map(id => byId.get(id)).filter((f): f is WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null } => f !== undefined);
             }
@@ -977,7 +1006,8 @@ export class WikiMemory {
       const jobKey = this._librarianKey(entityId);
       if (
         !this.activeMaintenanceJobs.has(jobKey) &&
-        !this.activeMaintenanceJobs.has(this._pruneKey(entityId))
+        !this.activeMaintenanceJobs.has(this._pruneKey(entityId)) &&
+        !this._isImportActiveFor(entityId)
       ) {
         this.activeMaintenanceJobs.add(jobKey);
         this.runLibrarianThenMaybeHeal(entityId, count)
@@ -1204,6 +1234,9 @@ export class WikiMemory {
     if (this._isReembedActive(entityId)) {
       throw new WikiBusyError('reembed', entityId);
     }
+    if (this._isImportActiveFor(entityId)) {
+      throw new WikiBusyError('import', entityId);
+    }
     this.activeMaintenanceJobs.add(jobKey);
     try {
       await this._doRunLibrarian(entityId);
@@ -1222,6 +1255,9 @@ export class WikiMemory {
     }
     if (this._isReembedActive(entityId)) {
       throw new WikiBusyError('reembed', entityId);
+    }
+    if (this._isImportActiveFor(entityId)) {
+      throw new WikiBusyError('import', entityId);
     }
     this.activeMaintenanceJobs.add(jobKey);
     try {
@@ -1256,6 +1292,9 @@ export class WikiMemory {
       if (this._isIngestActiveFor(entityId)) {
         throw new WikiBusyError('ingest', entityId);
       }
+      if (this._isImportActiveFor(entityId)) {
+        throw new WikiBusyError('import', entityId);
+      }
     } else {
       // Cross-check: fail if any per-entity reembed is in-flight (global covers all entities)
       if (this._isAnyMaintenanceActiveWithSuffix(':reembed')) {
@@ -1272,6 +1311,9 @@ export class WikiMemory {
       }
       if (this.activeIngestJobs.size > 0) {
         throw new WikiBusyError('ingest', '*');
+      }
+      if (this._isAnyMaintenanceActiveWithSuffix(':import')) {
+        throw new WikiBusyError('import', '*');
       }
     }
     this.activeMaintenanceJobs.add(reembedKey);
@@ -1294,16 +1336,29 @@ export class WikiMemory {
 
       let embedded = 0;
       let skipped = 0;
-      for (const row of rows) {
-        const success = await this.embedFact(row);
-        if (success) embedded++;
-        else skipped++;
+      try {
+        for (const row of rows) {
+          const success = await this.embedFact(row);
+          if (success) embedded++;
+          else skipped++;
+        }
+        // If any fact was successfully re-embedded, promote the pending dimension to
+        // canonical and clear the mismatch flag so read() uses embeddings from here on.
+        if (embedded > 0) {
+          await this._reconcileEmbeddingDimension();
+        }
+      } finally {
+        // Invalidate again after the loop: a concurrent read() might have re-populated
+        // the cache with pre-reembed vectors while the loop was running, so flush any
+        // such stale entries to ensure subsequent reads see the freshly written data,
+        // even if the loop or dimension reconciliation threw.
+        if (entityId) {
+          this.vectorCache.delete(entityId);
+        } else {
+          this.vectorCache.clear();
+        }
       }
-      // If any fact was successfully re-embedded, promote the pending dimension to
-      // canonical and clear the mismatch flag so read() uses embeddings from here on.
-      if (embedded > 0) {
-        await this._reconcileEmbeddingDimension();
-      }
+
       return { embedded, skipped };
     } finally {
       this.activeMaintenanceJobs.delete(reembedKey);
@@ -1395,6 +1450,44 @@ export class WikiMemory {
     const merge = opts?.merge ?? false;
 
     for (const [entityId, bundle] of Object.entries(dump.entities)) {
+      // Acquire per-entity import lock; fail fast if any mutator is already active.
+      const importKey = this._importKey(entityId);
+      if (this.activeMaintenanceJobs.has(importKey)) {
+        throw new WikiBusyError('import', entityId);
+      }
+      if (this.activeMaintenanceJobs.has(this._librarianKey(entityId))) {
+        throw new WikiBusyError('librarian', entityId);
+      }
+      if (this.activeMaintenanceJobs.has(this._healKey(entityId))) {
+        throw new WikiBusyError('heal', entityId);
+      }
+      if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
+        throw new WikiBusyError('prune', entityId);
+      }
+      if (this._isReembedActive(entityId)) {
+        throw new WikiBusyError('reembed', entityId);
+      }
+      if (this._isIngestActiveFor(entityId)) {
+        throw new WikiBusyError('ingest', entityId);
+      }
+      if (this._isForgetActiveFor(entityId)) {
+        throw new WikiBusyError('forget', entityId);
+      }
+      this.activeMaintenanceJobs.add(importKey);
+      try {
+        await this._doImportEntity(entityId, bundle, merge);
+      } finally {
+        this.activeMaintenanceJobs.delete(importKey);
+      }
+    }
+  }
+
+  private async _doImportEntity(entityId: string, bundle: MemoryBundle, merge: boolean): Promise<void> {
+      // Track which fact IDs were actually inserted/updated inside the transaction.
+      // Skipped rows (cross-entity collisions or merge LWW losers) must not be
+      // re-embedded — doing so would corrupt the winning row's vector with the
+      // losing fact's title/body.
+      const upsertedFactIds = new Set<string>();
       await this.db.withTransactionAsync(async () => {
         if (!merge) {
           const now = Date.now();
@@ -1444,18 +1537,24 @@ export class WikiMemory {
               // 0 (epoch) never beats a real timestamp, so invalid incoming rows are skipped.
               if (safeUpdatedAt <= existing.updated_at) continue;
             }
-            // replace mode (or merge LWW winner): update the existing row (restores if soft-deleted)
+            // replace mode (or merge LWW winner): update the existing row (restores if soft-deleted).
+            // Also clear any stale embedding columns so a concurrent read() never ranks the new
+            // title/body against the old vector; the post-transaction embedding loop will re-embed.
+            // If embedFact() fails (provider absent or throws), the NULL vector remains, which is
+            // correct: new content with no valid embedding falls back to keyword-only retrieval.
             await this.db.runAsync(
-              `UPDATE ${this.prefix}entries SET entity_id = ?, title = ?, body = ?, tags = ?, confidence = ?, source_type = ?, source_hash = ?, source_ref = ?, created_at = ?, updated_at = ?, last_accessed_at = ?, access_count = ?, deleted_at = ? WHERE id = ?`,
+              `UPDATE ${this.prefix}entries SET entity_id = ?, title = ?, body = ?, tags = ?, confidence = ?, source_type = ?, source_hash = ?, source_ref = ?, created_at = ?, updated_at = ?, last_accessed_at = ?, access_count = ?, deleted_at = ?, embedding_blob = NULL, embedding = NULL WHERE id = ?`,
               [entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, fact.id]
             );
             existingFactsById.set(fact.id, { id: fact.id, entity_id: entityId, updated_at: safeUpdatedAt });
+            upsertedFactIds.add(fact.id);
           } else {
             await this.db.runAsync(
               `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at]
             );
             existingFactsById.set(fact.id, { id: fact.id, entity_id: entityId, updated_at: safeUpdatedAt });
+            upsertedFactIds.add(fact.id);
           }
         }
 
@@ -1516,9 +1615,22 @@ export class WikiMemory {
           );
         }
       });
-      // Embed non-deleted imported facts so they are immediately searchable.
+      // Invalidate cache before rebuilding the text index so concurrent reads
+      // see consistent data: all use the post-transaction DB state.
+      this.vectorCache.delete(entityId);
+      // Rebuild the MiniSearch index immediately after the transaction commits
+      // so concurrent read() calls using preFilterLimit or hybrid scoring get
+      // the updated text rather than waiting for the (potentially slow) embedding loop.
+      await this.rebuildMiniSearchIndex(entityId);
+      // Embed only facts that were actually inserted/updated in the transaction.
+      // Skipped rows (cross-entity collisions or merge LWW losers) must not be
+      // re-embedded — they were not written and their existing row must not be
+      // overwritten with the incoming fact's content.
+      // The UPDATE statement already cleared embedding_blob/embedding for each
+      // upserted row, so if embedFact() fails here the row correctly has a NULL
+      // vector rather than a stale one that no longer matches the new content.
       for (const fact of bundle.facts) {
-        if (!fact.deleted_at) {
+        if (!fact.deleted_at && upsertedFactIds.has(fact.id)) {
           await this.embedFact({
             id: fact.id,
             title: fact.title,
@@ -1527,74 +1639,85 @@ export class WikiMemory {
           });
         }
       }
+      // Second flush: evict any cache entries a concurrent read() repopulated
+      // from old DB vectors while the embedding loop was running.
       this.vectorCache.delete(entityId);
-    }
-
-    await this.rebuildMiniSearchIndex();
   }
 
   async forget(entityId: string, params: { entryId?: string; taskId?: string; sourceRef?: string; sourceHash?: string; clearAll?: boolean }): Promise<{ deleted: { entries: number; tasks: number } }> {
-    const now = Date.now();
-    let deletedEntries = 0;
-    let deletedTasks = 0;
-
-    if (params.clearAll) {
-      const [entriesRes, tasksRes] = await Promise.all([
-        this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
-        this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
-      ]);
-      await this.db.runAsync(`UPDATE ${this.prefix}checkpoints SET memory_checkpoint = 0, heal_checkpoint = 0 WHERE entity_id = ?`, [entityId]);
-      deletedEntries = entriesRes.changes;
-      deletedTasks = tasksRes.changes;
-    } else {
-      const hasIdSelectors = params.entryId !== undefined || params.taskId !== undefined;
-      const hasSourceSelectors = params.sourceRef !== undefined || params.sourceHash !== undefined;
-      if (hasIdSelectors && hasSourceSelectors) {
-        throw new Error('forget() params are mutually exclusive: use entryId/taskId together, or sourceRef/sourceHash together, but not both in the same call');
-      }
-
-      const sourceRef = params.sourceRef !== undefined ? normalizeSourceRef(params.sourceRef) : null;
-      if (params.sourceRef !== undefined && !sourceRef) throw new Error('Invalid sourceRef');
-      const sourceHash = params.sourceHash !== undefined ? normalizeSourceHash(params.sourceHash) : null;
-      if (params.sourceHash !== undefined && !sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
-
-      const entryPromise = params.entryId
-        ? this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, params.entryId, entityId])
-        : null;
-
-      const taskPromise = params.taskId
-        ? this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, params.taskId, entityId])
-        : null;
-
-      let refPromise: Promise<{ changes: number; lastInsertRowId: number }> | null = null;
-      if (sourceRef || sourceHash) {
-        let q = `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`;
-        const args: any[] = [now, now, entityId];
-        if (sourceRef) {
-          q += ` AND source_ref = ?`;
-          args.push(sourceRef);
-        }
-        if (sourceHash) {
-          q += ` AND source_hash = ?`;
-          args.push(sourceHash);
-        }
-        refPromise = this.db.runAsync(q, args);
-      }
-
-      const [entryResult, taskResult, refResult] = await Promise.all([
-        entryPromise ?? Promise.resolve(null),
-        taskPromise ?? Promise.resolve(null),
-        refPromise ?? Promise.resolve(null),
-      ]);
-
-      if (entryResult) deletedEntries += entryResult.changes;
-      if (taskResult) deletedTasks += taskResult.changes;
-      if (refResult) deletedEntries += refResult.changes;
+    if (this._isImportActiveFor(entityId)) {
+      throw new WikiBusyError('import', entityId);
     }
+    const forgetKey = this._forgetKey(entityId);
+    if (this.activeMaintenanceJobs.has(forgetKey)) {
+      throw new WikiBusyError('forget', entityId);
+    }
+    this.activeMaintenanceJobs.add(forgetKey);
+    try {
+      const now = Date.now();
+      let deletedEntries = 0;
+      let deletedTasks = 0;
 
-    await this.rebuildMiniSearchIndex(entityId);
-    this.vectorCache.delete(entityId);
-    return { deleted: { entries: deletedEntries, tasks: deletedTasks } };
+      if (params.clearAll) {
+        const [entriesRes, tasksRes] = await Promise.all([
+          this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
+          this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
+        ]);
+        await this.db.runAsync(`UPDATE ${this.prefix}checkpoints SET memory_checkpoint = 0, heal_checkpoint = 0 WHERE entity_id = ?`, [entityId]);
+        deletedEntries = entriesRes.changes;
+        deletedTasks = tasksRes.changes;
+      } else {
+        const hasIdSelectors = params.entryId !== undefined || params.taskId !== undefined;
+        const hasSourceSelectors = params.sourceRef !== undefined || params.sourceHash !== undefined;
+        if (hasIdSelectors && hasSourceSelectors) {
+          throw new Error('forget() params are mutually exclusive: use entryId/taskId together, or sourceRef/sourceHash together, but not both in the same call');
+        }
+
+        const sourceRef = params.sourceRef !== undefined ? normalizeSourceRef(params.sourceRef) : null;
+        if (params.sourceRef !== undefined && !sourceRef) throw new Error('Invalid sourceRef');
+        const sourceHash = params.sourceHash !== undefined ? normalizeSourceHash(params.sourceHash) : null;
+        if (params.sourceHash !== undefined && !sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
+
+        const entryPromise = params.entryId
+          ? this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, params.entryId, entityId])
+          : null;
+
+        const taskPromise = params.taskId
+          ? this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, params.taskId, entityId])
+          : null;
+
+        let refPromise: Promise<{ changes: number; lastInsertRowId: number }> | null = null;
+        if (sourceRef || sourceHash) {
+          let q = `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`;
+          const args: any[] = [now, now, entityId];
+          if (sourceRef) {
+            q += ` AND source_ref = ?`;
+            args.push(sourceRef);
+          }
+          if (sourceHash) {
+            q += ` AND source_hash = ?`;
+            args.push(sourceHash);
+          }
+          refPromise = this.db.runAsync(q, args);
+        }
+
+        const [entryResult, taskResult, refResult] = await Promise.all([
+          entryPromise ?? Promise.resolve(null),
+          taskPromise ?? Promise.resolve(null),
+          refPromise ?? Promise.resolve(null),
+        ]);
+
+        if (entryResult) deletedEntries += entryResult.changes;
+        if (taskResult) deletedTasks += taskResult.changes;
+        if (refResult) deletedEntries += refResult.changes;
+      }
+
+      await this.rebuildMiniSearchIndex(entityId);
+      this.vectorCache.delete(entityId);
+      return { deleted: { entries: deletedEntries, tasks: deletedTasks } };
+    } finally {
+      this.activeMaintenanceJobs.delete(forgetKey);
+    }
   }
 
   async ingestDocument(entityId: string, params: { sourceRef: string; sourceHash: string; documentChunk: string; maxChunkLength?: number; chunkOverlap?: number; chunkConcurrency?: number }): Promise<{ truncated: boolean; chunks: number }> {
@@ -1627,6 +1750,9 @@ export class WikiMemory {
     }
     if (this._isReembedActive(entityId)) {
       throw new WikiBusyError('reembed', entityId);
+    }
+    if (this._isImportActiveFor(entityId)) {
+      throw new WikiBusyError('import', entityId);
     }
     this.activeIngestJobs.add(jobKey);
 

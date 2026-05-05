@@ -81,8 +81,7 @@ export function useWikiMaintenance() {
     []
   );
 
-  const runReembed = useCallback(async (entityId: string): Promise<{ embedded: number; skipped: number }> => {
-    if (!entityId) throw new Error('entityId is required for runReembed');
+  const runReembed = useCallback(async (entityId?: string): Promise<{ embedded: number; skipped: number }> => {
     setError(null);
     pendingCount.current += 1;
     setIsPending(true);

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { openTestDatabase } from './sqliteAdapter';
+import { parseEmbedding } from '../../src/utils/embedding';
 
 describe('sqliteAdapter', () => {
   it('runs basic SQL and returns rows', async () => {
@@ -32,5 +33,26 @@ describe('sqliteAdapter', () => {
     ).rejects.toThrow('boom');
     const rows = await db.getAllAsync<{ id: number }>(`SELECT * FROM t`);
     expect(rows.length).toBe(0);
+  });
+
+  it('round-trips a Uint8Array BLOB bind parameter (embedFact adapter contract)', async () => {
+    const db = openTestDatabase();
+    await db.execAsync(`CREATE TABLE t (id INTEGER PRIMARY KEY, data BLOB)`);
+
+    // Write a Float32Array as Uint8Array — same as embedFact does
+    const vec = new Float32Array([1.0, -0.5, 0.25]);
+    const blob = new Uint8Array(vec.buffer);
+    await db.runAsync(`INSERT INTO t (data) VALUES (?)`, [blob]);
+
+    // Read it back; the driver must return a Uint8Array (or Buffer, which IS a Uint8Array)
+    const row = await db.getFirstAsync<{ data: Uint8Array | null }>(`SELECT data FROM t WHERE id = 1`);
+    expect(row?.data).not.toBeNull();
+    expect(row!.data).toBeInstanceOf(Uint8Array);
+    expect(row!.data!.byteLength).toBe(12); // 3 × 4 bytes
+
+    // parseEmbedding must recover the original float values from the adapter output
+    const parsed = parseEmbedding(row!.data, null);
+    expect(parsed).not.toBeNull();
+    expect(Array.from(parsed!)).toEqual([1.0, -0.5, 0.25]);
   });
 });
