@@ -278,14 +278,19 @@ export class WikiMemory {
     },
   });
   private miniSearchEntryIdsByEntity = new Map<string, Set<string>>();
-  /** Maximum number of entities whose parsed embedding vectors are held in memory. */
-  private static readonly MAX_VECTOR_CACHE_ENTITIES = 100;
   /**
-   * Maximum number of fact vectors cached per entity. Entities with more facts
-   * than this skip cache population to avoid large heap allocations on
-   * memory-constrained runtimes (e.g., mobile/Expo).
+   * Maximum number of entities whose parsed embedding vectors are held in
+   * memory. This cap is intentionally conservative so the cache remains safe
+   * on memory-constrained runtimes (e.g., mobile/Expo).
    */
-  private static readonly MAX_VECTOR_CACHE_FACTS_PER_ENTITY = 1000;
+  private static readonly MAX_VECTOR_CACHE_ENTITIES = 16;
+  /**
+   * Maximum number of fact vectors cached per entity. This is intentionally
+   * kept low because each cached entry retains a Float32Array whose size grows
+   * with embedding dimensionality; large count-only caps can otherwise retain
+   * hundreds of MB in long-lived processes.
+   */
+  private static readonly MAX_VECTOR_CACHE_FACTS_PER_ENTITY = 64;
   private vectorCache: Map<string, Map<string, Float32Array>> = new Map();
 
   private normalizeMiniSearchRow(row: {
