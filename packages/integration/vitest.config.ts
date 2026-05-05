@@ -8,6 +8,9 @@ export default defineConfig({
   resolve: {
     alias: {
       '@equationalapplications/core-llm-wiki': resolve(__dirname, '../core/src/index.ts'),
+      // fastembed ESM build does `import tar from 'tar'` which fails because tar ESM v7 has no
+      // default export. Force the CJS build which uses require('tar') successfully.
+      'fastembed': resolve(__dirname, '../../node_modules/fastembed/lib/cjs/index.js'),
     },
   },
   test: {
