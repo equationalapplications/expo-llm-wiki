@@ -155,7 +155,10 @@ export function makeWiki(llm: LLMProvider, config?: WikiConfig): { wiki: WikiMem
 
 **Scenario 1 — Write → Librarian → Read**
 
-1. `write('user-1', { type: 'user_message', content: 'I prefer dark mode and use vim' })` ×3 events.
+1. Seed three events, e.g.:
+   - `write('user-1', { event_type: 'preference', summary: 'Prefers dark mode' })`
+   - `write('user-1', { event_type: 'tooling', summary: 'Uses vim as editor' })`
+   - `write('user-1', { event_type: 'workflow', summary: 'Prefers keyboard-driven workflows' })`
 2. `runLibrarian('user-1')` with scripted LLM returning:
    ```json
    { "facts": [
