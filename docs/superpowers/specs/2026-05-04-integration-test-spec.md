@@ -251,6 +251,6 @@ async function embed(text: string): Promise<number[]> {
 
 ## What Is Not Covered Here
 
-- React hook integration (`packages/react`) — tracked separately; currently failing due to `WikiContext` import issue unrelated to retrieval.
+- React hook integration (`packages/react`) — tracked separately; currently disabled due to the documented `vitest` 4.x + React 19 + happy-dom/jsdom incompatibility, unrelated to retrieval.
 - Expo adapter (`packages/expo`) — existing `adapter.test.ts` covers the SQLite adapter contract.
 - Performance / latency benchmarks — out of scope for correctness testing.
