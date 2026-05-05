@@ -325,8 +325,8 @@ After `embedFact()` succeeds (writes BLOB, clears TEXT), `runReembed()` implicit
 | Package | Change |
 |---|---|
 | `packages/core` | All changes — `types.ts`, `db/schema.ts`, `db/migrations.ts`, `WikiMemory.ts`, new `utils/embedding.ts`; no new dependencies |
-| `packages/expo` | None |
-| `packages/react` | None |
+| `packages/expo` | README updates only |
+| `packages/react` | Hook and test updates |
 
 ---
 
