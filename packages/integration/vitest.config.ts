@@ -10,7 +10,9 @@ export default defineConfig({
       '@equationalapplications/core-llm-wiki': resolve(__dirname, '../core/src/index.ts'),
       // fastembed ESM build does `import tar from 'tar'` which fails because tar ESM v7 has no
       // default export. Force the CJS build which uses require('tar') successfully.
-      'fastembed': 'fastembed/lib/cjs/index.js',
+      // Use an absolute path to bypass Vite's strict package exports map enforcement —
+      // 'fastembed/lib/cjs/index.js' is not listed as a subpath export in fastembed@2.x.
+      'fastembed': resolve(__dirname, '../../node_modules/fastembed/lib/cjs/index.js'),
     },
   },
   test: {

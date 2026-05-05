@@ -674,14 +674,14 @@ export class WikiMemory {
         const cutoff = now - retainSoftDeletedFor * 86400000;
         const entryResult = await this.db.runAsync(
           `DELETE FROM ${this.prefix}entries
-           WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`,
+           WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ?`,
           [entityId, cutoff]
         );
         deletedEntries = entryResult.changes;
 
         const taskResult = await this.db.runAsync(
           `DELETE FROM ${this.prefix}tasks
-           WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`,
+           WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ?`,
           [entityId, cutoff]
         );
         deletedTasks = taskResult.changes;
