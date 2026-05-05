@@ -429,7 +429,9 @@ export class WikiMemory {
       }
       const float32Vector = new Float32Array(vector);
       let hasNonFinite = false;
-      for (let i = 0; i < float32Vector.length; i++) { if (!isFinite(float32Vector[i])) { hasNonFinite = true; break; } }
+      for (let i = 0; i < float32Vector.length; i++) {
+        if (!isFinite(float32Vector[i])) { hasNonFinite = true; break; }
+      }
       if (hasNonFinite) {
         console.warn(`[WikiMemory] embedFact: embed() returned values that overflow float32 for ${fact.id}; skipping.`);
         return false;
