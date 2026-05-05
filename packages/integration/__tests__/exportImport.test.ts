@@ -68,8 +68,6 @@ describe('exportImport — Scenario 1: full roundtrip preserves facts and rankin
     const wikiB = new WikiMemory(dbB, { llmProvider: { ...llm, embed } });
     await wikiB.setup();
     await wikiB.importDump(dump);
-    // Re-embed because TEXT embeddings are not included in the dump on this branch
-    await wikiB.runReembed('user-1');
 
     const afterImport = await wikiB.read('user-1', 'apple');
     expect(afterImport.facts[0].id).toBe('fact-apple');
