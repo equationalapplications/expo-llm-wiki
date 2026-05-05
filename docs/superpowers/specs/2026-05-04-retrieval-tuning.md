@@ -332,12 +332,17 @@ After `embedFact()` succeeds (writes BLOB, clears TEXT), `runReembed()` implicit
 
 ## Breaking Changes
 
-None. All changes are additive:
+**Semver: major (3.0.0).** One source-breaking change:
+
+- **`WikiBusyOperation` union extended** — `'import'` and `'forget'` added. TypeScript consumers that exhaustively `switch` on `WikiBusyError.operation` without a `default` arm will get a compile error after upgrading. Add a `default` arm or handle both new values.
+
+All other changes are additive:
 - `read()` gains an optional third param — existing call sites unaffected.
 - `WikiConfig` gains optional fields — existing configs unaffected.
 - Migration v3 is additive (new column only).
 - `embedding` TEXT column preserved — no data loss.
 - `cosineSimilarity` signature widened from `number[]` to `ArrayLike<number>` — backward-compatible at all call sites; `number[]` is a valid `ArrayLike<number>`.
+- `WikiFact.embedding_blob` type widened to include JSON round-trip shapes — existing code passing `Uint8Array` is unaffected.
 
 ---
 

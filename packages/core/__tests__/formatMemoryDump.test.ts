@@ -43,6 +43,25 @@ describe('formatMemoryDump', () => {
     expect(parsed.entities).toHaveProperty('x');
   });
 
+  it('manifest strips embedding_blob from facts', () => {
+    const factWithBlob = {
+      id: 'f1', entity_id: 'e1', title: 'T', body: 'B', tags: [] as string[],
+      confidence: 'certain' as const, source_type: 'user_stated' as const,
+      source_hash: null, source_ref: null, created_at: 0, updated_at: 0,
+      last_accessed_at: null, access_count: 0, deleted_at: null,
+      embedding_blob: new Uint8Array([0, 0, 128, 63]), // 1.0f as Float32
+    };
+    const dump: MemoryDump = {
+      generatedAt: 0,
+      entities: { e1: { facts: [factWithBlob], tasks: [], events: [] } },
+    };
+    const r = formatMemoryDump(dump);
+    const parsed = JSON.parse(r.manifest);
+    expect(parsed.entities.e1.facts[0]).not.toHaveProperty('embedding_blob');
+    // Original dump must not be mutated
+    expect(dump.entities.e1.facts[0].embedding_blob).toBeDefined();
+  });
+
   it('renders done tasks with [x]', () => {
     const dump: MemoryDump = {
       generatedAt: 0,

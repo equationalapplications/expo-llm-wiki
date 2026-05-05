@@ -413,13 +413,15 @@ export class WikiMemory {
          )`,
       [newDim]
     );
-    // Promote the mismatch dimension to canonical regardless — this is the new model's size.
-    await this.db.runAsync(
-      `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension', ?)`,
-      [mismatch.value]
-    );
-    // Only clear the mismatch flag once every stored blob uses the new dimension.
+    // Only promote and clear once every stored vector uses the new dimension.
+    // Promoting before all rows are converted would leave read() in an inconsistent
+    // state: the canonical dim would point at the new model while TEXT-only or
+    // wrong-dim blobs still exist, causing those rows to score silently as 0.
     if (!residual || residual.cnt === 0) {
+      await this.db.runAsync(
+        `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension', ?)`,
+        [mismatch.value]
+      );
       await this.db.runAsync(
         `DELETE FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
       );
@@ -1522,8 +1524,14 @@ export class WikiMemory {
       // Include the BLOB only on the export path so importDump() can round-trip
       // embeddings without re-calling the embed provider. Strip it on the LLM
       // prompt / formatMemoryDump paths to keep payloads small.
-      const factBase = opts?.includeBlobs && embedding_blob
-        ? { ...rest, embedding_blob }
+      // Copy blob bytes before returning: some SQLite drivers (better-sqlite3)
+      // back Buffer objects with pooled native memory that can be reused by a
+      // subsequent query, silently corrupting the already-returned MemoryDump.
+      const safeBlobCopy = opts?.includeBlobs && embedding_blob
+        ? (() => { const c = new ArrayBuffer(embedding_blob.byteLength); new Uint8Array(c).set(embedding_blob); return new Uint8Array(c); })()
+        : undefined;
+      const factBase = safeBlobCopy
+        ? { ...rest, embedding_blob: safeBlobCopy }
         : rest;
       return {
         ...factBase,
