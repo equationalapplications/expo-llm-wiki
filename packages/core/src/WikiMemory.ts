@@ -584,9 +584,13 @@ export class WikiMemory {
   private _pruneKey(entityId: string) { return `${this.prefix}:${entityId}:prune`; }
   private _reembedKey(entityId: string) { return `${this.prefix}:${entityId}:reembed`; }
   private _globalReembedKey() { return `${this.prefix}:reembed`; }
+  private _importKey(entityId: string) { return `${this.prefix}:${entityId}:import`; }
   private _isReembedActive(entityId: string): boolean {
     return this.activeMaintenanceJobs.has(this._reembedKey(entityId))
       || this.activeMaintenanceJobs.has(this._globalReembedKey());
+  }
+  private _isImportActiveFor(entityId: string): boolean {
+    return this.activeMaintenanceJobs.has(this._importKey(entityId));
   }
   /** Returns true if any maintenance job has the given operation suffix (e.g. ':prune'). */
   private _isAnyMaintenanceActiveWithSuffix(suffix: string): boolean {
@@ -620,14 +624,14 @@ export class WikiMemory {
     }
   ): Promise<{ entries: number; tasks: number; events: number }> {
     const pruneKey = this._pruneKey(entityId);
-    // Prune must not run concurrently with librarian, heal, ingest, or another
+    // Prune must not run concurrently with librarian, heal, ingest, import, or another
     // prune for the same entity.
     const ingestPrefix = `${this.prefix}:${entityId}:`;
     let isIngestRunning = false;
     for (const k of this.activeIngestJobs) {
       if (k.startsWith(ingestPrefix)) { isIngestRunning = true; break; }
     }
-    let blockingOperation: 'prune' | 'librarian' | 'heal' | 'ingest' | 'reembed' | null = null;
+    let blockingOperation: 'prune' | 'librarian' | 'heal' | 'ingest' | 'reembed' | 'import' | null = null;
     if (this.activeMaintenanceJobs.has(pruneKey)) {
       blockingOperation = 'prune';
     } else if (this.activeMaintenanceJobs.has(this._librarianKey(entityId))) {
@@ -638,6 +642,8 @@ export class WikiMemory {
       blockingOperation = 'reembed';
     } else if (isIngestRunning) {
       blockingOperation = 'ingest';
+    } else if (this._isImportActiveFor(entityId)) {
+      blockingOperation = 'import';
     }
     if (blockingOperation !== null) {
       throw new WikiBusyError(blockingOperation, entityId);
@@ -1223,6 +1229,9 @@ export class WikiMemory {
     if (this._isReembedActive(entityId)) {
       throw new WikiBusyError('reembed', entityId);
     }
+    if (this._isImportActiveFor(entityId)) {
+      throw new WikiBusyError('import', entityId);
+    }
     this.activeMaintenanceJobs.add(jobKey);
     try {
       await this._doRunLibrarian(entityId);
@@ -1241,6 +1250,9 @@ export class WikiMemory {
     }
     if (this._isReembedActive(entityId)) {
       throw new WikiBusyError('reembed', entityId);
+    }
+    if (this._isImportActiveFor(entityId)) {
+      throw new WikiBusyError('import', entityId);
     }
     this.activeMaintenanceJobs.add(jobKey);
     try {
@@ -1275,6 +1287,9 @@ export class WikiMemory {
       if (this._isIngestActiveFor(entityId)) {
         throw new WikiBusyError('ingest', entityId);
       }
+      if (this._isImportActiveFor(entityId)) {
+        throw new WikiBusyError('import', entityId);
+      }
     } else {
       // Cross-check: fail if any per-entity reembed is in-flight (global covers all entities)
       if (this._isAnyMaintenanceActiveWithSuffix(':reembed')) {
@@ -1291,6 +1306,9 @@ export class WikiMemory {
       }
       if (this.activeIngestJobs.size > 0) {
         throw new WikiBusyError('ingest', '*');
+      }
+      if (this._isAnyMaintenanceActiveWithSuffix(':import')) {
+        throw new WikiBusyError('import', '*');
       }
     }
     this.activeMaintenanceJobs.add(reembedKey);
@@ -1424,6 +1442,36 @@ export class WikiMemory {
     const merge = opts?.merge ?? false;
 
     for (const [entityId, bundle] of Object.entries(dump.entities)) {
+      // Acquire per-entity import lock; fail fast if any mutator is already active.
+      const importKey = this._importKey(entityId);
+      if (this.activeMaintenanceJobs.has(importKey)) {
+        throw new WikiBusyError('import', entityId);
+      }
+      if (this.activeMaintenanceJobs.has(this._librarianKey(entityId))) {
+        throw new WikiBusyError('librarian', entityId);
+      }
+      if (this.activeMaintenanceJobs.has(this._healKey(entityId))) {
+        throw new WikiBusyError('heal', entityId);
+      }
+      if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
+        throw new WikiBusyError('prune', entityId);
+      }
+      if (this._isReembedActive(entityId)) {
+        throw new WikiBusyError('reembed', entityId);
+      }
+      if (this._isIngestActiveFor(entityId)) {
+        throw new WikiBusyError('ingest', entityId);
+      }
+      this.activeMaintenanceJobs.add(importKey);
+      try {
+        await this._doImportEntity(entityId, bundle, merge);
+      } finally {
+        this.activeMaintenanceJobs.delete(importKey);
+      }
+    }
+  }
+
+  private async _doImportEntity(entityId: string, bundle: MemoryBundle, merge: boolean): Promise<void> {
       // Track which fact IDs were actually inserted/updated inside the transaction.
       // Skipped rows (cross-entity collisions or merge LWW losers) must not be
       // re-embedded — doing so would corrupt the winning row's vector with the
@@ -1478,9 +1526,11 @@ export class WikiMemory {
               // 0 (epoch) never beats a real timestamp, so invalid incoming rows are skipped.
               if (safeUpdatedAt <= existing.updated_at) continue;
             }
-            // replace mode (or merge LWW winner): update the existing row (restores if soft-deleted)
+            // replace mode (or merge LWW winner): update the existing row (restores if soft-deleted).
+            // Also clear any stale embedding columns so a concurrent read() never ranks the new
+            // title/body against the old vector; the post-transaction embedding loop will re-embed.
             await this.db.runAsync(
-              `UPDATE ${this.prefix}entries SET entity_id = ?, title = ?, body = ?, tags = ?, confidence = ?, source_type = ?, source_hash = ?, source_ref = ?, created_at = ?, updated_at = ?, last_accessed_at = ?, access_count = ?, deleted_at = ? WHERE id = ?`,
+              `UPDATE ${this.prefix}entries SET entity_id = ?, title = ?, body = ?, tags = ?, confidence = ?, source_type = ?, source_hash = ?, source_ref = ?, created_at = ?, updated_at = ?, last_accessed_at = ?, access_count = ?, deleted_at = ?, embedding_blob = NULL, embedding = NULL WHERE id = ?`,
               [entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, fact.id]
             );
             existingFactsById.set(fact.id, { id: fact.id, entity_id: entityId, updated_at: safeUpdatedAt });
@@ -1552,13 +1602,20 @@ export class WikiMemory {
           );
         }
       });
-      // Invalidate cache before embedding loop so concurrent reads hit DB directly
-      // and never serve pre-import vectors for fact IDs being updated.
+      // Invalidate cache before rebuilding the text index so concurrent reads
+      // see consistent data: all use the post-transaction DB state.
       this.vectorCache.delete(entityId);
+      // Rebuild the MiniSearch index immediately after the transaction commits
+      // so concurrent read() calls using preFilterLimit or hybrid scoring get
+      // the updated text rather than waiting for the (potentially slow) embedding loop.
+      await this.rebuildMiniSearchIndex(entityId);
       // Embed only facts that were actually inserted/updated in the transaction.
       // Skipped rows (cross-entity collisions or merge LWW losers) must not be
       // re-embedded — they were not written and their existing row must not be
       // overwritten with the incoming fact's content.
+      // The UPDATE statement already cleared embedding_blob/embedding for each
+      // upserted row, so if embedFact() fails here the row correctly has a NULL
+      // vector rather than a stale one that no longer matches the new content.
       for (const fact of bundle.facts) {
         if (!fact.deleted_at && upsertedFactIds.has(fact.id)) {
           await this.embedFact({
@@ -1567,20 +1624,11 @@ export class WikiMemory {
             body: fact.body,
             tags: Array.isArray(fact.tags) || typeof fact.tags === 'string' ? fact.tags : [],
           });
-          // Preserve any existing embedding when re-embedding is unavailable or
-          // fails here. embedFact() uses a false-y result for both actual failures
-          // and "no embed provider configured", so clearing the stored vector would
-          // incorrectly discard previously valid embeddings during offline or
-          // transiently failing imports.
         }
       }
       // Second flush: evict any cache entries a concurrent read() repopulated
       // from old DB vectors while the embedding loop was running.
       this.vectorCache.delete(entityId);
-      // Keep the text index in sync with each imported entity so concurrent
-      // read() calls do not compute candidates from a stale miniSearch index.
-      await this.rebuildMiniSearchIndex(entityId);
-    }
   }
 
   async forget(entityId: string, params: { entryId?: string; taskId?: string; sourceRef?: string; sourceHash?: string; clearAll?: boolean }): Promise<{ deleted: { entries: number; tasks: number } }> {
@@ -1677,6 +1725,9 @@ export class WikiMemory {
     }
     if (this._isReembedActive(entityId)) {
       throw new WikiBusyError('reembed', entityId);
+    }
+    if (this._isImportActiveFor(entityId)) {
+      throw new WikiBusyError('import', entityId);
     }
     this.activeIngestJobs.add(jobKey);
 

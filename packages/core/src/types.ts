@@ -177,10 +177,10 @@ export interface EntityStatus {
 }
 
 export class WikiBusyError extends Error {
-  readonly operation: 'ingest' | 'librarian' | 'heal' | 'prune' | 'reembed';
+  readonly operation: 'ingest' | 'librarian' | 'heal' | 'prune' | 'reembed' | 'import';
   readonly entityId: string;
 
-  constructor(operation: 'ingest' | 'librarian' | 'heal' | 'prune' | 'reembed', entityId: string) {
+  constructor(operation: 'ingest' | 'librarian' | 'heal' | 'prune' | 'reembed' | 'import', entityId: string) {
     super(`${operation} already running for entity ${entityId}`);
     this.name = 'WikiBusyError';
     this.operation = operation;
