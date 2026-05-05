@@ -1529,6 +1529,8 @@ export class WikiMemory {
             // replace mode (or merge LWW winner): update the existing row (restores if soft-deleted).
             // Also clear any stale embedding columns so a concurrent read() never ranks the new
             // title/body against the old vector; the post-transaction embedding loop will re-embed.
+            // If embedFact() fails (provider absent or throws), the NULL vector remains, which is
+            // correct: new content with no valid embedding falls back to keyword-only retrieval.
             await this.db.runAsync(
               `UPDATE ${this.prefix}entries SET entity_id = ?, title = ?, body = ?, tags = ?, confidence = ?, source_type = ?, source_hash = ?, source_ref = ?, created_at = ?, updated_at = ?, last_accessed_at = ?, access_count = ?, deleted_at = ?, embedding_blob = NULL, embedding = NULL WHERE id = ?`,
               [entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, fact.id]

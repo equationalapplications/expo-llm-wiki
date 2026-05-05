@@ -284,7 +284,7 @@ describe('importDump — busy-key protection', () => {
     await wiki.setup();
 
     // Start an import that won't finish until we release it.
-    let resolveImport!: () => void;
+    let resolveImport: () => void = () => {};
     const blocker = new Promise<void>((r) => { resolveImport = r; });
 
     const slowDump: MemoryDump = {
@@ -339,7 +339,7 @@ describe('importDump — busy-key protection', () => {
     const { wiki } = makeRealWiki();
     await wiki.setup();
 
-    let resolveImport!: () => void;
+    let resolveImport: () => void = () => {};
     const blocker = new Promise<void>((r) => { resolveImport = r; });
     const originalDo = (wiki as any)._doImportEntity.bind(wiki);
     (wiki as any)._doImportEntity = async (entityId: string, bundle: any, merge: boolean) => {
@@ -362,7 +362,7 @@ describe('importDump — busy-key protection', () => {
     const { wiki } = makeRealWiki();
     await wiki.setup();
 
-    let resolveLibrarian!: () => void;
+    let resolveLibrarian: () => void = () => {};
     const blocker = new Promise<void>((r) => { resolveLibrarian = r; });
     const originalDo = (wiki as any)._doRunLibrarian.bind(wiki);
     (wiki as any)._doRunLibrarian = async (entityId: string) => {
