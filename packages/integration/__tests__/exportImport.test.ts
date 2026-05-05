@@ -1,0 +1,303 @@
+import { describe, it, expect } from 'vitest';
+import { WikiMemory } from '@equationalapplications/core-llm-wiki';
+import type { MemoryDump } from '@equationalapplications/core-llm-wiki';
+import { openTestDatabase } from '../helpers/db';
+import { stubLLM, keywordEmbed } from '../helpers/llm';
+
+function seedDump(
+  entityId: string,
+  facts: Array<{
+    id: string;
+    title: string;
+    body: string;
+    source_type?: 'agent_inferred' | 'user_document' | 'user_stated' | 'user_confirmed';
+    updated_at?: number;
+  }>
+): MemoryDump {
+  return {
+    generatedAt: Date.now(),
+    entities: {
+      [entityId]: {
+        facts: facts.map((f, i) => ({
+          id: f.id,
+          entity_id: entityId,
+          title: f.title,
+          body: f.body,
+          tags: [],
+          confidence: 'certain' as const,
+          source_type: f.source_type ?? 'agent_inferred',
+          source_hash: null,
+          source_ref: null,
+          created_at: (i + 1) * 1000,
+          updated_at: f.updated_at ?? (i + 1) * 1000,
+          last_accessed_at: null,
+          access_count: 0,
+          deleted_at: null,
+        })),
+        tasks: [],
+        events: [],
+      },
+    },
+  };
+}
+
+describe('exportImport — Scenario 1: full roundtrip preserves facts and ranking', () => {
+  it('read() returns same rank-1 fact after export → import into fresh wiki', async () => {
+    const llm = stubLLM();
+    const embed = async (text: string) => keywordEmbed(text);
+
+    // Original wiki
+    const dbA = openTestDatabase();
+    const wikiA = new WikiMemory(dbA, { llmProvider: { ...llm, embed } });
+    await wikiA.setup();
+    await wikiA.importDump(
+      seedDump('user-1', [
+        { id: 'fact-apple', title: 'apple fruit', body: 'red and green' },
+        { id: 'fact-car', title: 'car vehicle', body: 'fast engine' },
+      ])
+    );
+
+    const beforeExport = await wikiA.read('user-1', 'apple');
+    expect(beforeExport.facts[0].id).toBe('fact-apple');
+
+    // Export and import into fresh wiki
+    const dump = await wikiA.exportDump();
+    const dbB = openTestDatabase();
+    const wikiB = new WikiMemory(dbB, { llmProvider: { ...llm, embed } });
+    await wikiB.setup();
+    await wikiB.importDump(dump);
+
+    const afterImport = await wikiB.read('user-1', 'apple');
+    expect(afterImport.facts[0].id).toBe('fact-apple');
+  });
+
+  it('fact count and source_type are preserved after roundtrip', async () => {
+    const llm = stubLLM();
+    const dbA = openTestDatabase();
+    const wikiA = new WikiMemory(dbA, { llmProvider: llm });
+    await wikiA.setup();
+    await wikiA.importDump(
+      seedDump('user-1', [
+        { id: 'f1', title: 'Alpha', body: 'body', source_type: 'user_document' },
+        { id: 'f2', title: 'Beta', body: 'body', source_type: 'agent_inferred' },
+      ])
+    );
+
+    const dump = await wikiA.exportDump();
+    const dbB = openTestDatabase();
+    const wikiB = new WikiMemory(dbB, { llmProvider: llm });
+    await wikiB.setup();
+    await wikiB.importDump(dump);
+
+    const bundle = await wikiB.getMemoryBundle('user-1');
+    expect(bundle.facts).toHaveLength(2);
+    const sourceTypes = bundle.facts.map((f) => f.source_type).sort();
+    expect(sourceTypes).toEqual(['agent_inferred', 'user_document']);
+  });
+});
+
+describe('exportImport — Scenario 2: merge collision, newer updated_at wins', () => {
+  it('f1 body from dump B wins when updated_at is newer; f2 and f3 both survive', async () => {
+    const llm = stubLLM();
+    const dbA = openTestDatabase();
+    const wikiA = new WikiMemory(dbA, { llmProvider: llm });
+    await wikiA.setup();
+
+    const dumpA: MemoryDump = {
+      generatedAt: Date.now(),
+      entities: {
+        'user-1': {
+          facts: [
+            {
+              id: 'f1',
+              entity_id: 'user-1',
+              title: 'Shared fact',
+              body: 'body from A',
+              tags: [],
+              confidence: 'certain',
+              source_type: 'agent_inferred',
+              source_hash: null,
+              source_ref: null,
+              created_at: 1000,
+              updated_at: 1000,
+              last_accessed_at: null,
+              access_count: 0,
+              deleted_at: null,
+            },
+            {
+              id: 'f2',
+              entity_id: 'user-1',
+              title: 'Unique to A',
+              body: 'only in A',
+              tags: [],
+              confidence: 'certain',
+              source_type: 'agent_inferred',
+              source_hash: null,
+              source_ref: null,
+              created_at: 1000,
+              updated_at: 1000,
+              last_accessed_at: null,
+              access_count: 0,
+              deleted_at: null,
+            },
+          ],
+          tasks: [],
+          events: [],
+        },
+      },
+    };
+
+    await wikiA.importDump(dumpA);
+
+    const dumpB: MemoryDump = {
+      generatedAt: Date.now(),
+      entities: {
+        'user-1': {
+          facts: [
+            {
+              id: 'f1',
+              entity_id: 'user-1',
+              title: 'Shared fact',
+              body: 'body from B — newer',
+              tags: [],
+              confidence: 'certain',
+              source_type: 'agent_inferred',
+              source_hash: null,
+              source_ref: null,
+              created_at: 1000,
+              updated_at: 2000,
+              last_accessed_at: null,
+              access_count: 0,
+              deleted_at: null,
+            },
+            {
+              id: 'f3',
+              entity_id: 'user-1',
+              title: 'Unique to B',
+              body: 'only in B',
+              tags: [],
+              confidence: 'certain',
+              source_type: 'agent_inferred',
+              source_hash: null,
+              source_ref: null,
+              created_at: 1000,
+              updated_at: 1000,
+              last_accessed_at: null,
+              access_count: 0,
+              deleted_at: null,
+            },
+          ],
+          tasks: [],
+          events: [],
+        },
+      },
+    };
+
+    await wikiA.importDump(dumpB, { merge: true });
+
+    const bundle = await wikiA.getMemoryBundle('user-1');
+    const byId = Object.fromEntries(bundle.facts.map((f) => [f.id, f]));
+
+    expect(byId['f1'].body).toBe('body from B — newer');
+    expect(byId['f2']).toBeDefined();
+    expect(byId['f3']).toBeDefined();
+  });
+
+  it('older dump B updated_at does not overwrite newer fact already in wiki', async () => {
+    const llm = stubLLM();
+    const dbA = openTestDatabase();
+    const wikiA = new WikiMemory(dbA, { llmProvider: llm });
+    await wikiA.setup();
+
+    const base: MemoryDump = {
+      generatedAt: Date.now(),
+      entities: {
+        'user-1': {
+          facts: [
+            {
+              id: 'f1',
+              entity_id: 'user-1',
+              title: 'Fact',
+              body: 'current body',
+              tags: [],
+              confidence: 'certain',
+              source_type: 'agent_inferred',
+              source_hash: null,
+              source_ref: null,
+              created_at: 1000,
+              updated_at: 2000,
+              last_accessed_at: null,
+              access_count: 0,
+              deleted_at: null,
+            },
+          ],
+          tasks: [],
+          events: [],
+        },
+      },
+    };
+    await wikiA.importDump(base);
+
+    const stale: MemoryDump = {
+      generatedAt: Date.now(),
+      entities: {
+        'user-1': {
+          facts: [
+            {
+              id: 'f1',
+              entity_id: 'user-1',
+              title: 'Fact',
+              body: 'stale body — should lose',
+              tags: [],
+              confidence: 'certain',
+              source_type: 'agent_inferred',
+              source_hash: null,
+              source_ref: null,
+              created_at: 1000,
+              updated_at: 1000,
+              last_accessed_at: null,
+              access_count: 0,
+              deleted_at: null,
+            },
+          ],
+          tasks: [],
+          events: [],
+        },
+      },
+    };
+    await wikiA.importDump(stale, { merge: true });
+
+    const bundle = await wikiA.getMemoryBundle('user-1');
+    expect(bundle.facts[0].body).toBe('current body');
+  });
+});
+
+// NOTE: Requires feat/retrieval-tuning to be merged (embedding_blob in exportDump).
+// Remove .skip after that PR is merged and this branch is rebased.
+describe.skip('exportImport — Scenario 3: embedding BLOB survives roundtrip', () => {
+  it('runReembed after import reports embedded:0, skipped:N', async () => {
+    const embed = async (text: string) => keywordEmbed(text);
+    const llm = stubLLM();
+    const dbA = openTestDatabase();
+    const wikiA = new WikiMemory(dbA, { llmProvider: { ...llm, embed } });
+    await wikiA.setup();
+    await wikiA.importDump(
+      seedDump('user-1', [
+        { id: 'f1', title: 'apple fruit', body: 'red' },
+        { id: 'f2', title: 'car vehicle', body: 'fast' },
+      ])
+    );
+    const { embedded } = await wikiA.runReembed('user-1');
+    expect(embedded).toBe(2);
+
+    const dump = await wikiA.exportDump();
+    const dbB = openTestDatabase();
+    const wikiB = new WikiMemory(dbB, { llmProvider: { ...llm, embed } });
+    await wikiB.setup();
+    await wikiB.importDump(dump);
+
+    const result = await wikiB.runReembed('user-1');
+    expect(result.embedded).toBe(0);
+    expect(result.skipped).toBe(2);
+  });
+});

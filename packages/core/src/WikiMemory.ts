@@ -1424,6 +1424,11 @@ export class WikiMemory {
     const merge = opts?.merge ?? false;
 
     for (const [entityId, bundle] of Object.entries(dump.entities)) {
+      // Track which fact IDs were actually inserted/updated inside the transaction.
+      // Skipped rows (cross-entity collisions or merge LWW losers) must not be
+      // re-embedded — doing so would corrupt the winning row's vector with the
+      // losing fact's title/body.
+      const upsertedFactIds = new Set<string>();
       await this.db.withTransactionAsync(async () => {
         if (!merge) {
           const now = Date.now();
@@ -1479,12 +1484,14 @@ export class WikiMemory {
               [entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, fact.id]
             );
             existingFactsById.set(fact.id, { id: fact.id, entity_id: entityId, updated_at: safeUpdatedAt });
+            upsertedFactIds.add(fact.id);
           } else {
             await this.db.runAsync(
               `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at]
             );
             existingFactsById.set(fact.id, { id: fact.id, entity_id: entityId, updated_at: safeUpdatedAt });
+            upsertedFactIds.add(fact.id);
           }
         }
 
@@ -1548,9 +1555,12 @@ export class WikiMemory {
       // Invalidate cache before embedding loop so concurrent reads hit DB directly
       // and never serve pre-import vectors for fact IDs being updated.
       this.vectorCache.delete(entityId);
-      // Embed non-deleted imported facts so they are immediately searchable.
+      // Embed only facts that were actually inserted/updated in the transaction.
+      // Skipped rows (cross-entity collisions or merge LWW losers) must not be
+      // re-embedded — they were not written and their existing row must not be
+      // overwritten with the incoming fact's content.
       for (const fact of bundle.facts) {
-        if (!fact.deleted_at) {
+        if (!fact.deleted_at && upsertedFactIds.has(fact.id)) {
           const embedded = await this.embedFact({
             id: fact.id,
             title: fact.title,

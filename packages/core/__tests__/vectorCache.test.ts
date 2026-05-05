@@ -392,4 +392,63 @@ describe('vector cache — importDump() invalidation', () => {
     expect(row!.embedding_blob).toBeNull();
     expect(row!.embedding).toBeNull();
   });
+
+  it('importDump() does not re-embed a merge LWW loser — existing embedding is preserved', async () => {
+    // Use a wiki with a real embed function to detect unexpected embedFact() calls.
+    const embedCalls: string[] = [];
+    const embed = async (text: string): Promise<number[]> => {
+      embedCalls.push(text);
+      return [1, 0, 0];
+    };
+    const { wiki, db } = makeWiki(embed);
+    await wiki.setup();
+
+    // Pre-insert a fact with a valid embedding (updated_at = 2000).
+    await insertFactWithBlob(db, 'f-local', 'user-1', [0, 1, 0], 2000);
+    await db.runAsync(`INSERT OR REPLACE INTO llm_wiki_meta (key, value) VALUES ('embedding_dimension', '3')`);
+
+    // Import an older version of the same fact (updated_at = 1000 — LWW loser).
+    const dump: MemoryDump = {
+      generatedAt: Date.now(),
+      entities: {
+        'user-1': {
+          facts: [
+            {
+              id: 'f-local',
+              entity_id: 'user-1',
+              title: 'old title from dump',
+              body: 'old body from dump',
+              tags: [],
+              confidence: 'certain',
+              source_type: 'user_stated',
+              source_hash: null,
+              source_ref: null,
+              created_at: 1000,
+              updated_at: 1000, // older — LWW loser, should be skipped
+              last_accessed_at: null,
+              access_count: 0,
+              deleted_at: null,
+            },
+          ],
+          tasks: [],
+          events: [],
+        },
+      },
+    };
+
+    embedCalls.length = 0; // reset after setup
+    await wiki.importDump(dump, { merge: true });
+
+    // embedFact() must NOT have been called for the skipped fact.
+    expect(embedCalls).toHaveLength(0);
+
+    // The existing embedding (from the pre-insert) must still be intact.
+    const row = await db.getFirstAsync<{ embedding_blob: Uint8Array | null; title: string }>(
+      `SELECT embedding_blob, title FROM llm_wiki_entries WHERE id = ?`,
+      ['f-local']
+    );
+    expect(row).not.toBeNull();
+    expect(row!.embedding_blob).not.toBeNull(); // original embedding preserved
+    expect(row!.title).toBe('title-f-local'); // original title preserved (LWW loser skipped)
+  });
 });
