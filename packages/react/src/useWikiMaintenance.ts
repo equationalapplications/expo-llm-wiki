@@ -81,7 +81,7 @@ export function useWikiMaintenance() {
     []
   );
 
-  const runReembed = useCallback(async (entityId?: string, opts?: { force?: boolean }): Promise<{ embedded: number; skipped: number }> => {
+  const runReembed = useCallback(async (entityId?: string, opts?: { force?: boolean; skipExisting?: boolean }): Promise<{ embedded: number; skipped: number }> => {
     setError(null);
     pendingCount.current += 1;
     setIsPending(true);

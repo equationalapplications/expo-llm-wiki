@@ -259,10 +259,10 @@ await runHeal('user-123');
 // (e.g. after first enabling an embed provider):
 const { embedded, skipped } = await runReembed('user-123');
 
-// After changing the embedding model, force a full rebuild of all vectors:
-const { embedded, skipped } = await runReembed('user-123', { force: true });
-// Note: runReembed() also auto-detects a model change by probing the provider
-// against the stored dimension — plain runReembed() is sufficient in most cases.
+// After changing the embedding model, re-embed with the new model (default, always re-embeds all):
+const { embedded, skipped } = await runReembed('user-123');
+// After a round-trip export/import on the same model, skip facts that already have vectors:
+const { embedded, skipped } = await runReembed('user-123', { skipExisting: true });
 
 // Hard-delete soft-deleted entries/tasks after retention and prune old events
 await runPrune('user-123');

@@ -1345,7 +1345,7 @@ export class WikiMemory {
     }
   }
 
-  async runReembed(entityId?: string, opts?: { force?: boolean }): Promise<{ embedded: number; skipped: number }> {
+  async runReembed(entityId?: string, opts?: { force?: boolean; skipExisting?: boolean }): Promise<{ embedded: number; skipped: number }> {
     const embedFn = this.options.llmProvider.embed;
     if (!embedFn) return { embedded: 0, skipped: 0 };
 
@@ -1418,49 +1418,30 @@ export class WikiMemory {
         this.vectorCache.clear();
       }
 
-      const force = opts?.force ?? false;
-      // Auto-force when a dimension mismatch is pending OR when the stored
-      // embedding_dimension doesn't match the provider's current output size.
-      // The mismatch key is set the first time a new-model vector is written
-      // (e.g. during ingest), but on a fresh model switch before any write the
-      // key may not exist yet. Probing the provider with a tiny string detects
-      // that case so callers never need to pass { force: true } explicitly.
-      let effectiveForce = force;
-      if (!effectiveForce) {
-        const mismatchRow = await this.db.getFirstAsync<{ value: string }>(
-          `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
-        );
-        if (mismatchRow) {
-          effectiveForce = true;
-        } else {
-          // Probe the provider to detect a dimension change that hasn't produced
-          // any writes yet (model switched but no ingest/write since).
-          const storedDimRow = await this.db.getFirstAsync<{ value: string }>(
-            `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension'`
-          );
-          if (storedDimRow) {
-            try {
-              const probeVec = await embedFn('probe');
-              if (probeVec.length !== parseInt(storedDimRow.value, 10)) {
-                effectiveForce = true;
-              }
-            } catch {
-              // Probe failed (network/model error) — don't force; let the normal
-              // skip path run and let embedFact() fail gracefully per fact.
-            }
-          }
-        }
-      }
+      // skipExisting is an explicit opt-in for round-trip import scenarios where
+      // the caller knows every blob is already fresh and wants to avoid paying the
+      // full embedding cost again (e.g. after exportDump → importDump on the same
+      // model). By default runReembed() re-embeds every selected fact so that a
+      // model switch always works correctly — a dimension-only probe cannot detect
+      // same-dimension provider changes, so unconditional re-embedding is the only
+      // safe default.
+      // { force: true } is kept as a no-op alias so existing call sites that pass
+      // it explicitly continue to work without change.
+      const skipExisting = opts?.skipExisting ?? false;
+      // Never skip when a dimension mismatch is pending: blobs on disk are stale
+      // regardless of what the caller requested.
+      const mismatchRow = await this.db.getFirstAsync<{ value: string }>(
+        `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
+      );
+      const effectiveSkip = mismatchRow ? false : skipExisting;
       let embedded = 0;
       let skipped = 0;
       try {
         for (const row of rows) {
-          // By default skip facts that already have a valid BLOB so that a
-          // round-trip import+runReembed doesn't pay the full embedding cost
-          // again. Pass { force: true } (or rely on auto-force when a dimension
-          // mismatch is pending) for model-switch workflows where all stored
-          // vectors need to be regenerated with the new model.
-          if (!effectiveForce && (row as WikiFact & { embedding_blob?: Uint8Array | null }).embedding_blob) {
+          // Skip facts with existing BLOBs only when the caller opts in via
+          // { skipExisting: true } AND no dimension mismatch is active.
+          // The default always re-embeds, ensuring correctness after model switches.
+          if (effectiveSkip && (row as WikiFact & { embedding_blob?: Uint8Array | null }).embedding_blob) {
             skipped++;
             continue;
           }
@@ -1680,11 +1661,12 @@ export class WikiMemory {
           const existing = existingFactsById.get(fact.id);
 
           // Extract a valid BLOB from the incoming fact.
-          // When the dump stays in-memory, embedding_blob is a real Uint8Array.
-          // When the dump is persisted through JSON.stringify/parse, Uint8Array
-          // is serialized as a plain numeric-keyed object {0:x,1:y,...}; we
-          // normalize that back to Uint8Array so both paths work transparently.
-          // A base64 string encoding is also accepted for explicit serialization.
+          // Three serialization forms are normalised to Uint8Array:
+          //   1. Real Uint8Array / Buffer (in-memory dump)
+          //   2. Node.js Buffer JSON shape { type:'Buffer', data:[...] }
+          //      (produced by JSON.stringify(buffer))
+          //   3. Numeric-keyed plain object {0:byte, 1:byte, ...}
+          //      (produced by JSON.stringify(Uint8Array))
           const rawBlobRaw = (fact as WikiFact & { embedding_blob?: unknown }).embedding_blob;
           let rawBlob: Uint8Array | null = null;
           if (rawBlobRaw instanceof Uint8Array) {
@@ -1692,17 +1674,20 @@ export class WikiMemory {
           } else if (
             rawBlobRaw !== null &&
             rawBlobRaw !== undefined &&
-            typeof rawBlobRaw === 'object' &&
-            !Array.isArray(rawBlobRaw)
+            typeof rawBlobRaw === 'object'
           ) {
-            // Plain object from JSON round-trip: reconstruct Uint8Array from
-            // numeric-keyed entries {0:byte, 1:byte, ...}.
-            const entries = Object.keys(rawBlobRaw as object);
-            if (entries.length > 0 && entries.every(k => /^\d+$/.test(k))) {
-              const obj = rawBlobRaw as Record<string, number>;
-              const len = entries.length;
-              rawBlob = new Uint8Array(len);
-              for (let i = 0; i < len; i++) rawBlob[i] = obj[String(i)] ?? 0;
+            const obj = rawBlobRaw as Record<string, unknown>;
+            if (obj['type'] === 'Buffer' && Array.isArray(obj['data'])) {
+              // Node.js Buffer serialized via JSON.stringify(buffer)
+              rawBlob = new Uint8Array(obj['data'] as number[]);
+            } else if (!Array.isArray(rawBlobRaw)) {
+              // Numeric-keyed plain object from JSON.stringify(Uint8Array)
+              const entries = Object.keys(obj);
+              if (entries.length > 0 && entries.every(k => /^\d+$/.test(k))) {
+                const len = entries.length;
+                rawBlob = new Uint8Array(len);
+                for (let i = 0; i < len; i++) rawBlob[i] = (obj[String(i)] as number) ?? 0;
+              }
             }
           }
           let blobData: Uint8Array | null = null;
@@ -1725,15 +1710,12 @@ export class WikiMemory {
               if (!isFinite(floats[i])) { allFinite = false; break; }
             }
             if (allFinite) {
-              const dim = rawBlob.byteLength / 4;
-              // Reject blobs whose dimension differs from the first preserved blob in
-              // this import. Mixed-dimension imports would store inconsistent vectors:
-              // storeEmbeddingDimension() would record one size but other facts would
-              // have different-sized blobs, causing silent zero-scores in read().
-              // Force re-embed for inconsistent rows instead.
-              if (preservedBlobDim === null || dim === preservedBlobDim) {
-                blobData = rawBlob;
-              }
+              // Preserve this blob regardless of its dimension. Mixed-dimension
+              // blobs are a real intermediate state during model migration and
+              // silently discarding valid vectors is worse than importing them;
+              // storeEmbeddingDimension() and read()'s mismatch-check handle
+              // the case where stored blobs disagree on size.
+              blobData = rawBlob;
             }
           }
 
