@@ -206,6 +206,48 @@ describe('useMemoryRead', () => {
     await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(2));
     expect(wiki.read).toHaveBeenLastCalledWith('user-1', 'q', { maxResults: 7 });
   });
+
+  it('re-fetches when maxResults changes from finite to NaN (read() normalizes NaN to 10, not config value)', async () => {
+    const { rerender } = renderHook(
+      ({ opts }: { opts: ReadOptions }) => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki), initialProps: { opts: {} } }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    // NaN overrides config (read() hard-codes fallback to 10 for non-finite maxResults)
+    // so changing from {} to { maxResults: NaN } is a behavioral difference that must trigger a refetch.
+    rerender({ opts: { maxResults: NaN } });
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(2));
+  });
+
+  it('re-fetches when hybridWeight changes from undefined to NaN (NaN disables config-level hybrid weight)', async () => {
+    const { rerender } = renderHook(
+      ({ opts }: { opts: ReadOptions }) => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki), initialProps: { opts: {} } }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    // hybridWeight: NaN bypasses config.hybridWeight (NaN is not null/undefined so ?? doesn't fire).
+    // Changing from {} to { hybridWeight: NaN } must therefore trigger a refetch.
+    rerender({ opts: { hybridWeight: NaN } });
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(2));
+  });
+
+  it('re-fetches when preFilterLimit changes from undefined to Infinity (Infinity disables config-level limit)', async () => {
+    const { rerender } = renderHook(
+      ({ opts }: { opts: ReadOptions }) => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki), initialProps: { opts: {} } }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    // preFilterLimit: Infinity disables the config-level limit (same effective result as null)
+    // whereas undefined defers to config — these are different behaviors, must trigger refetch.
+    rerender({ opts: { preFilterLimit: Infinity } });
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(2));
+  });
 });
 
 // ---------------------------------------------------------------------------

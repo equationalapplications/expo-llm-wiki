@@ -726,7 +726,10 @@ export class WikiMemory {
 
     let facts: WikiFact[] = [];
 
-    if (trimmedQuery) {
+    if (maxResults === 0) {
+      // Fast-path: a zero-capacity result window can never return any facts.
+      // Skip embed(), DB scan, and sort — fall through to tasks/events fetch below.
+    } else if (trimmedQuery) {
       let usedEmbed = false;
 
       if (!skipEmbed && embedFn) {

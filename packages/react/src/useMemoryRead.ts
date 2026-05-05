@@ -6,30 +6,45 @@ import { useWiki } from './WikiContext';
  * Normalize a ReadOptions object to a canonical string suitable for use as a
  * React effect dependency key. Normalization ensures:
  *  - `undefined` and `{}` produce the same empty string (no spurious refetch)
- *  - Non-serializable numbers (Infinity, -Infinity, NaN) are coerced to their
- *    effective values before stringifying, matching how WikiMemory.read() resolves them
+ *  - Non-serializable numbers are coerced to their effective values before
+ *    stringifying, matching how WikiMemory.read() resolves them:
+ *      · maxResults: NaN/±Infinity → 10 (read()'s hardcoded fallback, overrides config)
+ *      · preFilterLimit: NaN/±Infinity → null (disables config-level limit, same as null)
+ *      · hybridWeight: NaN → null (explicitly disables config-level weight; distinct from
+ *        undefined which defers to config); ±Infinity → clamped to 0/1
  *  - Keys are sorted so insertion-order differences never cause spurious refetches
  */
 function normalizeReadOptionsKey(opts?: ReadOptions): string {
   if (!opts) return '';
   const normalized: Record<string, unknown> = {};
 
-  // maxResults: omit if undefined or non-finite (WikiMemory falls back to default)
-  if (opts.maxResults !== undefined && Number.isFinite(opts.maxResults)) {
-    normalized.maxResults = Math.max(0, Math.trunc(opts.maxResults));
+  // maxResults: undefined → omit (defer to config/default);
+  // non-finite (NaN/±Infinity) → 10 (read()'s hardcoded fallback, bypasses config);
+  // finite → clamp to non-negative integer.
+  if (opts.maxResults !== undefined) {
+    normalized.maxResults = Number.isFinite(opts.maxResults)
+      ? Math.max(0, Math.trunc(opts.maxResults))
+      : 10;
   }
 
-  // preFilterLimit: null has special meaning ("disable config-level limit") — preserve it;
-  // non-finite numbers are treated the same as undefined (no pre-filter) by WikiMemory
-  if (opts.preFilterLimit === null) {
-    normalized.preFilterLimit = null;
-  } else if (opts.preFilterLimit !== undefined && Number.isFinite(opts.preFilterLimit)) {
-    normalized.preFilterLimit = Math.max(0, Math.trunc(opts.preFilterLimit));
+  // preFilterLimit: undefined → omit (defer to config);
+  // null or non-finite → null (disables config-level limit);
+  // finite → clamp to non-negative integer.
+  if (opts.preFilterLimit !== undefined) {
+    if (opts.preFilterLimit === null || !Number.isFinite(opts.preFilterLimit)) {
+      normalized.preFilterLimit = null;
+    } else {
+      normalized.preFilterLimit = Math.max(0, Math.trunc(opts.preFilterLimit));
+    }
   }
 
-  // hybridWeight: NaN → omit; ±Infinity and out-of-range finite → clamp to [0, 1]
-  if (opts.hybridWeight !== undefined && !Number.isNaN(opts.hybridWeight)) {
-    normalized.hybridWeight = Math.max(0, Math.min(1, opts.hybridWeight));
+  // hybridWeight: undefined → omit (defer to config);
+  // NaN → null (explicitly disables config hybrid weight; distinct from omitting);
+  // ±Infinity and out-of-range finite → clamp to [0, 1].
+  if (opts.hybridWeight !== undefined) {
+    normalized.hybridWeight = Number.isNaN(opts.hybridWeight)
+      ? null
+      : Math.max(0, Math.min(1, opts.hybridWeight));
   }
 
   const sortedKeys = Object.keys(normalized).sort();
