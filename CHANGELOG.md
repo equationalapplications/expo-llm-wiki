@@ -1,3 +1,19 @@
+# [2.6.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v2.5.0...v2.6.0) (2026-05-05)
+
+
+### Bug Fixes
+
+* **ci:** resolve lockfile mismatch and remove private root from publish ([d21b341](https://github.com/equationalapplications/expo-llm-wiki/commit/d21b341ea98e0a6aba105a5db64dd8ff1db6ec63))
+* tighten mutex assertion to WikiBusyError + operation; override tar to >=7 ([803137c](https://github.com/equationalapplications/expo-llm-wiki/commit/803137c57d3cae7ffab2e216067d5620341b0d70))
+* update BLOB wording to dim-3 embeddings in maintenance test comments ([ceb10fe](https://github.com/equationalapplications/expo-llm-wiki/commit/ceb10fec403ea3ca5ef3e3de487377fef0a9b8b8))
+
+
+### Features
+
+* add root-level integration-test and benchmark scripts ([730aa5b](https://github.com/equationalapplications/expo-llm-wiki/commit/730aa5bfc9987d88f03beb9e3a3bc633366c7ee5))
+* **integration:** add db, llm, and wiki test helpers ([aec5ab1](https://github.com/equationalapplications/expo-llm-wiki/commit/aec5ab11ad0eefb698eadb70df7554b37dcbd67e))
+* **integration:** scaffold integration test package ([852c79d](https://github.com/equationalapplications/expo-llm-wiki/commit/852c79d0655de7b38e5834e6174bc332050b6c0e))
+
 # [2.5.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v2.4.0...v2.5.0) (2026-05-04)
 
 
