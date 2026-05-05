@@ -7,7 +7,7 @@ settings:
 overrides:
   react: 19.2.5
   react-dom: 19.2.5
-  tar: '>=7.0.0'
+  tar: 7.4.3
 
 importers:
 
