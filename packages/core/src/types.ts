@@ -65,6 +65,7 @@ export interface WikiFact {
   source_ref: string | null;
   created_at: number;
   updated_at: number;
+  embedding_blob?: Uint8Array;
   last_accessed_at: number | null;
   access_count: number;
   deleted_at: number | null;

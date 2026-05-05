@@ -550,7 +550,7 @@ export class WikiMemory {
         )
     `);
     await this.db.withTransactionAsync(async () => {
-      for (const row of rows) {
+      for (const row of rows) { console.log("runReembed row.embedding_blob:", row.embedding_blob);
         const normalized = normalizeSourceRef(row.source_ref);
         if (normalized !== row.source_ref) {
           await this.db.runAsync(
@@ -839,10 +839,19 @@ export class WikiMemory {
             usedEmbed = true;
           } else {
             // Cache: reuse parsed vectors from prior full-scan reads
-            const entityCache = this.vectorCache.get(entityId) ?? new Map<string, Float32Array>();
+            let entityCache = this.vectorCache.get(entityId);
+            const canCache = populateCache && candidateRows.length <= WikiMemory.MAX_VECTOR_CACHE_FACTS_PER_ENTITY;
+            if (!canCache && entityCache) {
+              this.vectorCache.delete(entityId);
+              entityCache = undefined;
+            }
+            if (canCache && !entityCache) {
+              entityCache = new Map<string, Float32Array>();
+            }
+
             const scored = candidateRows.map(row => {
-              let vector = entityCache.get(row.id) ?? parseEmbedding(row.embedding_blob, row.embedding);
-              if (vector && populateCache && !entityCache.has(row.id)) {
+              let vector = entityCache?.get(row.id) ?? parseEmbedding(row.embedding_blob, row.embedding);
+              if (vector && canCache && entityCache && !entityCache.has(row.id)) {
                 entityCache.set(row.id, vector);
               }
               let score = 0;
@@ -863,14 +872,12 @@ export class WikiMemory {
               }
               return { row, score };
             });
-            if (populateCache) {
-              // Skip caching if the entity has too many facts; prevents a single large
-              // wiki from consuming tens of MBs of heap on memory-constrained (mobile/Expo) runtimes.
-              if (scored.length <= WikiMemory.MAX_VECTOR_CACHE_FACTS_PER_ENTITY) {
+
+            if (canCache && entityCache) {
+              if (!this.vectorCache.has(entityId)) {
                 // Evict the oldest entity when at the per-process cap to prevent unbounded growth
                 // on long-lived instances serving many distinct entities.
-                if (!this.vectorCache.has(entityId) &&
-                    this.vectorCache.size >= WikiMemory.MAX_VECTOR_CACHE_ENTITIES) {
+                if (this.vectorCache.size >= WikiMemory.MAX_VECTOR_CACHE_ENTITIES) {
                   const oldestKey = this.vectorCache.keys().next().value as string | undefined;
                   if (oldestKey !== undefined) this.vectorCache.delete(oldestKey);
                 }
@@ -1141,6 +1148,7 @@ export class WikiMemory {
       }
     });
 
+    this.vectorCache.delete(entityId);
     for (const fact of insertedFacts) {
       await this.embedFact(fact);
     }
@@ -1374,6 +1382,10 @@ export class WikiMemory {
       let skipped = 0;
       try {
         for (const row of rows) {
+          if (row.embedding_blob) {
+            skipped++;
+            continue;
+          }
           const success = await this.embedFact(row);
           if (success) embedded++;
           else skipped++;
@@ -1440,9 +1452,8 @@ export class WikiMemory {
     const facts = factsRaw.map(f => {
       const {
         embedding: _embedding,
-        embedding_blob: _embeddingBlob,
         ...rest
-      } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
+      } = f as WikiFact & { embedding?: unknown; };
       return {
         ...rest,
         tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
@@ -1735,13 +1746,26 @@ export class WikiMemory {
   }
 
   async forget(entityId: string, params: { entryId?: string; taskId?: string; sourceRef?: string; sourceHash?: string; clearAll?: boolean }): Promise<{ deleted: { entries: number; tasks: number } }> {
-    if (this._isImportActiveFor(entityId)) {
-      throw new WikiBusyError('import', entityId);
+    let blockingOperation: "librarian" | "heal" | "prune" | "reembed" | "ingest" | "forget" | "import" | null = null;
+    if (this.activeMaintenanceJobs.has(this._librarianKey(entityId))) {
+      blockingOperation = 'librarian';
+    } else if (this.activeMaintenanceJobs.has(this._healKey(entityId))) {
+      blockingOperation = 'heal';
+    } else if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
+      blockingOperation = 'prune';
+    } else if (this._isReembedActive(entityId)) {
+      blockingOperation = 'reembed';
+    } else if (this._isIngestActiveFor(entityId)) {
+      blockingOperation = 'ingest';
+    } else if (this._isImportActiveFor(entityId)) {
+      blockingOperation = 'import';
+    } else if (this._isForgetActiveFor(entityId)) {
+      blockingOperation = 'forget';
+    }
+    if (blockingOperation !== null) {
+      throw new WikiBusyError(blockingOperation, entityId);
     }
     const forgetKey = this._forgetKey(entityId);
-    if (this.activeMaintenanceJobs.has(forgetKey)) {
-      throw new WikiBusyError('forget', entityId);
-    }
     this.activeMaintenanceJobs.add(forgetKey);
     try {
       const now = Date.now();

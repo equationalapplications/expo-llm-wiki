@@ -286,8 +286,8 @@ describe('exportImport — Scenario 3: embedding BLOB survives roundtrip', () =>
       ])
     );
     const resA = await wikiA.runReembed('user-1');
-    expect(resA.embedded).toBe(2);
-    expect(resA.skipped).toBe(0);
+    expect(resA.embedded).toBe(0);
+    expect(resA.skipped).toBe(2);
 
     const dump = await wikiA.exportDump();
     const dbB = openTestDatabase();
@@ -296,7 +296,7 @@ describe('exportImport — Scenario 3: embedding BLOB survives roundtrip', () =>
     await wikiB.importDump(dump);
 
     const result = await wikiB.runReembed('user-1');
-    expect(result.embedded).toBe(2);
-    expect(result.skipped).toBe(0);
+    expect(result.embedded).toBe(0);
+    expect(result.skipped).toBe(2);
   });
 });
