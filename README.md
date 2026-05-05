@@ -701,7 +701,7 @@ flowchart TD
 ```
 
 1. **Wrap app** with `<WikiProvider wiki={wiki}>` — provides wiki context
-2. **Read operations** auto-refetch when `entityId`, `query`, or `wiki` change; call `refetch()` to refresh manually
+2. **Read operations** auto-refetch when `entityId`, `query`, `wiki`, or `ReadOptions` values change; call `refetch()` to refresh manually
 3. **Write operations** (write, ingest, forget, maintenance) do not automatically re-trigger `useMemoryRead`; call `refetch()` after a write to refresh read results
 
 ---
