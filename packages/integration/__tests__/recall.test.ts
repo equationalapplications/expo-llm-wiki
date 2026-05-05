@@ -139,6 +139,7 @@ describe.skip('recall — Scenario 2: hybrid beats keyword-only on semantic quer
     const hybrid = await (wiki as any).read('user-1', query, { hybridWeight: 0.5 });
 
     // hybrid should surface all 3 semantically related facts (recall@3 = 1.0)
+    // Dataset has exactly 3 facts; hybrid semantic search must retrieve all of them.
     expect(hybrid.facts.length).toBe(3);
     const hybridIds = hybrid.facts.map((f: { id: string }) => f.id);
     expect(hybridIds).toContain('f-auto');
@@ -149,7 +150,9 @@ describe.skip('recall — Scenario 2: hybrid beats keyword-only on semantic quer
     const semanticRank1 = hybrid.facts[0].id;
     expect(['f-auto', 'f-car']).toContain(semanticRank1);
 
-    // keyword-only on a semantic-only query returns fewer results than hybrid
+    // keyword-only on a semantic-only query returns fewer results than hybrid.
+    // "motorized road travel" contains no exact keyword matches in any fact body/title
+    // (only "roads" ≈ "road" in f-car), so keyword-only returns ≤1 result vs hybrid's 3.
     expect(hybrid.facts.length).toBeGreaterThan(keywordOnly.facts.length);
 
     // if keyword-only has a rank-1 result, hybrid should rank it no lower
