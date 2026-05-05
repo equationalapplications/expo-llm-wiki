@@ -660,8 +660,8 @@ flowchart TD
     O --> P
     C --> Q["MiniSearch ranking"]
     Q --> P
-    P --> R["Return MemoryBundle"]
-    R --> S["Track access"]
+    P --> S["Track access"]
+    S --> R["Return MemoryBundle"]
 ```
 
 1. **Fast-path** when `hybridWeight = 0` (pure keyword, no embed cost)
