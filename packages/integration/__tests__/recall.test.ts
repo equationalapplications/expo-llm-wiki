@@ -138,9 +138,26 @@ describe.skip('recall — Scenario 2: hybrid beats keyword-only on semantic quer
     const keywordOnly = await (wiki as any).read('user-1', query, { hybridWeight: 0 });
     const hybrid = await (wiki as any).read('user-1', query, { hybridWeight: 0.5 });
 
-    // hybrid rank-1 should have equal or better semantic similarity than keyword-only rank-1
-    expect(hybrid.facts.length).toBeGreaterThan(0);
-    expect(keywordOnly.facts.length).toBeGreaterThan(0);
+    // hybrid should surface all 3 semantically related facts (recall@3 = 1.0)
+    expect(hybrid.facts.length).toBe(3);
+    const hybridIds = hybrid.facts.map((f: { id: string }) => f.id);
+    expect(hybridIds).toContain('f-auto');
+    expect(hybridIds).toContain('f-car');
+    expect(hybridIds).toContain('f-vehicle');
+
+    // hybrid rank-1 must be semantically close to "motorized road travel" (automobile or car)
+    const semanticRank1 = hybrid.facts[0].id;
+    expect(['f-auto', 'f-car']).toContain(semanticRank1);
+
+    // keyword-only on a semantic-only query returns fewer results than hybrid
+    expect(hybrid.facts.length).toBeGreaterThan(keywordOnly.facts.length);
+
+    // if keyword-only has a rank-1 result, hybrid should rank it no lower
+    if (keywordOnly.facts.length > 0) {
+      const kwRank1Id = keywordOnly.facts[0].id;
+      const kwRank1InHybridIdx = hybridIds.indexOf(kwRank1Id);
+      expect(kwRank1InHybridIdx).toBeGreaterThanOrEqual(0);
+    }
   });
 });
 
