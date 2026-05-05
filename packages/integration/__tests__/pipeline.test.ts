@@ -130,3 +130,37 @@ describe('pipeline — Scenario 3: multi-entity isolation', () => {
     expect(resultB.facts.some((f) => f.title === 'Editor tool')).toBe(false);
   });
 });
+
+const HASH_A = 'a'.repeat(64); // valid 64-char hex sourceHash
+
+describe('pipeline — Scenario 4: ingestDocument → read', () => {
+  it('facts extracted from ingested document are retrievable via read()', async () => {
+    const db = openTestDatabase();
+    const llmResponse = JSON.stringify({
+      facts: [
+        { title: 'Neural networks', body: 'Inspired by biological neurons, used in deep learning', tags: ['ml'], confidence: 'certain' },
+        { title: 'Gradient descent', body: 'Optimisation algorithm that minimises loss by iterating toward lower gradients', tags: ['ml'], confidence: 'certain' },
+      ],
+    });
+    const wiki = new WikiMemory(db, { llmProvider: scriptedLLM([llmResponse]) });
+    await wiki.setup();
+
+    const result = await wiki.ingestDocument('user-1', {
+      sourceRef: 'ml-intro',
+      sourceHash: HASH_A,
+      documentChunk: 'Machine learning uses neural networks and gradient descent to learn from data.',
+    });
+
+    expect(result.truncated).toBe(false);
+    expect(result.chunks).toBe(1);
+
+    const bundle = await wiki.getMemoryBundle('user-1');
+    expect(bundle.facts.length).toBe(2);
+    expect(bundle.facts.every((f) => f.source_type === 'user_document')).toBe(true);
+    expect(bundle.facts.every((f) => f.source_ref === 'ml-intro')).toBe(true);
+
+    const readResult = await wiki.read('user-1', 'neural networks');
+    expect(readResult.facts.length).toBeGreaterThan(0);
+    expect(readResult.facts[0].title).toBe('Neural networks');
+  });
+});
