@@ -550,7 +550,7 @@ export class WikiMemory {
         )
     `);
     await this.db.withTransactionAsync(async () => {
-      for (const row of rows) { console.log("runReembed row.embedding_blob:", row.embedding_blob);
+      for (const row of rows) {
         const normalized = normalizeSourceRef(row.source_ref);
         if (normalized !== row.source_ref) {
           await this.db.runAsync(
@@ -840,11 +840,16 @@ export class WikiMemory {
           } else {
             // Cache: reuse parsed vectors from prior full-scan reads
             let entityCache = this.vectorCache.get(entityId);
-            const canCache = populateCache && candidateRows.length <= WikiMemory.MAX_VECTOR_CACHE_FACTS_PER_ENTITY;
-            if (!canCache && entityCache) {
+            // Evict only when a full-scan read discovers the entity has grown past
+            // the size cap, so the stale oversized Map can't accumulate unbounded
+            // vectors by reference. Pre-filter reads (populateCache=false) reuse
+            // the existing cache and must not evict it.
+            const tooLarge = populateCache && candidateRows.length > WikiMemory.MAX_VECTOR_CACHE_FACTS_PER_ENTITY;
+            if (tooLarge && entityCache) {
               this.vectorCache.delete(entityId);
               entityCache = undefined;
             }
+            const canCache = populateCache && !tooLarge;
             if (canCache && !entityCache) {
               entityCache = new Map<string, Float32Array>();
             }
@@ -1382,10 +1387,9 @@ export class WikiMemory {
       let skipped = 0;
       try {
         for (const row of rows) {
-          if (row.embedding_blob) {
-            skipped++;
-            continue;
-          }
+          // Re-embed every selected fact even when an older embedding already exists.
+          // This allows model switches to replace stale vectors and lets dimension
+          // reconciliation complete once refreshed embeddings have been written.
           const success = await this.embedFact(row);
           if (success) embedded++;
           else skipped++;
@@ -1452,8 +1456,9 @@ export class WikiMemory {
     const facts = factsRaw.map(f => {
       const {
         embedding: _embedding,
+        embedding_blob: _embeddingBlob,
         ...rest
-      } = f as WikiFact & { embedding?: unknown; };
+      } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
       return {
         ...rest,
         tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
@@ -1499,11 +1504,13 @@ export class WikiMemory {
 
   async importDump(dump: MemoryDump, opts?: { merge?: boolean }): Promise<void> {
     const merge = opts?.merge ?? false;
+    const entityIds = Object.keys(dump.entities);
 
-    for (const [entityId, bundle] of Object.entries(dump.entities)) {
-      // Acquire per-entity import lock; fail fast if any mutator is already active.
-      const importKey = this._importKey(entityId);
-      if (this.activeMaintenanceJobs.has(importKey)) {
+    // Pre-validate all entity locks before writing anything. This makes the
+    // operation atomic with respect to busy-error rejection: either every entity
+    // passes the lock check and we proceed, or we reject before mutating any entity.
+    for (const entityId of entityIds) {
+      if (this.activeMaintenanceJobs.has(this._importKey(entityId))) {
         throw new WikiBusyError('import', entityId);
       }
       if (this.activeMaintenanceJobs.has(this._librarianKey(entityId))) {
@@ -1524,11 +1531,19 @@ export class WikiMemory {
       if (this._isForgetActiveFor(entityId)) {
         throw new WikiBusyError('forget', entityId);
       }
-      this.activeMaintenanceJobs.add(importKey);
-      try {
+    }
+
+    // All clear — acquire all import locks, then process each entity.
+    for (const entityId of entityIds) {
+      this.activeMaintenanceJobs.add(this._importKey(entityId));
+    }
+    try {
+      for (const [entityId, bundle] of Object.entries(dump.entities)) {
         await this._doImportEntity(entityId, bundle, merge);
-      } finally {
-        this.activeMaintenanceJobs.delete(importKey);
+      }
+    } finally {
+      for (const entityId of entityIds) {
+        this.activeMaintenanceJobs.delete(this._importKey(entityId));
       }
     }
   }
@@ -1593,12 +1608,22 @@ export class WikiMemory {
           // which is rejected here so we fall back to re-embed; malformed binary
           // blobs are also rejected so they cannot poison preservedBlobDim.
           const rawBlob = (fact as WikiFact & { embedding_blob?: unknown }).embedding_blob;
-          const blobData: Uint8Array | null =
+          let blobData: Uint8Array | null = null;
+          if (
             rawBlob instanceof Uint8Array &&
             rawBlob.byteLength > 0 &&
             rawBlob.byteLength % 4 === 0
-              ? rawBlob
-              : null;
+          ) {
+            // Also validate that every float32 value is finite: a blob with the right
+            // byte length but NaN/Inf values would be preserved, skip embedFact(), and
+            // then be silently dropped by read(), making the fact permanently unsearchable.
+            const floats = new Float32Array(rawBlob.buffer, rawBlob.byteOffset, rawBlob.byteLength / 4);
+            let allFinite = true;
+            for (let i = 0; i < floats.length; i++) {
+              if (!isFinite(floats[i])) { allFinite = false; break; }
+            }
+            if (allFinite) blobData = rawBlob;
+          }
 
           if (existing) {
             if (existing.entity_id !== entityId) {
@@ -1737,12 +1762,16 @@ export class WikiMemory {
       // meta table now (embedFact() was skipped for those rows, so it didn't happen
       // automatically). This ensures read() can detect model-dimension mismatches
       // after importing into a fresh DB that has never seen an embedding.
-      if (preservedBlobDim !== null) {
-        await this.storeEmbeddingDimension(preservedBlobDim);
+      try {
+        if (preservedBlobDim !== null) {
+          await this.storeEmbeddingDimension(preservedBlobDim);
+        }
+      } finally {
+        // Second flush: evict any cache entries a concurrent read() repopulated
+        // from old DB vectors while the embedding loop was running. Runs even if
+        // storeEmbeddingDimension() throws so stale entries cannot survive an error.
+        this.vectorCache.delete(entityId);
       }
-      // Second flush: evict any cache entries a concurrent read() repopulated
-      // from old DB vectors while the embedding loop was running.
-      this.vectorCache.delete(entityId);
   }
 
   async forget(entityId: string, params: { entryId?: string; taskId?: string; sourceRef?: string; sourceHash?: string; clearAll?: boolean }): Promise<{ deleted: { entries: number; tasks: number } }> {

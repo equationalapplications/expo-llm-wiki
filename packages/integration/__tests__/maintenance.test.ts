@@ -152,6 +152,9 @@ describe('maintenance — Scenario 3: runReembed writes BLOBs; read() loads from
       },
     });
 
+    // Reset counter so we only measure embed calls made during runReembed itself,
+    // not the ones importDump made for the initial (blob-less) facts.
+    embedCalls.length = 0;
     await wiki.runReembed('entity-1');
     const factEmbedCallCount = embedCalls.length;
     expect(factEmbedCallCount).toBe(2);
