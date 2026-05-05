@@ -688,7 +688,6 @@ flowchart TD
     I -->|"Yes"| J["Auto-refetch"]
     I -->|"No"| K["Return cached data"]
     J --> L["Trigger read()"]
-    K --> L
     L --> M["Embed query<br/>if embed available"]
     M --> N["Phase 1: Score facts<br/>Phase 2: Fetch winners"]
     N --> O["Update component state"]
