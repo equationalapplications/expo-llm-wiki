@@ -8,7 +8,7 @@ let embedder: FlagEmbedding;
 
 beforeAll(async () => {
   embedder = await FlagEmbedding.init({ model: EmbeddingModel.BGESmallENV15 });
-}, 30_000);
+}, 60_000);
 
 async function embed(text: string): Promise<number[]> {
   const gen = embedder.embed([text]);
