@@ -332,8 +332,7 @@ describe('exportImport — Scenario 1: full roundtrip preserves facts and rankin
         { id: 'fact-car', title: 'car vehicle', body: 'fast engine' },
       ])
     );
-    // Store TEXT embeddings so ranking works
-    await wikiA.runReembed('user-1');
+    // importDump() auto-embeds each fact when llmProvider.embed is provided
 
     const beforeExport = await wikiA.read('user-1', 'apple');
     expect(beforeExport.facts[0].id).toBe('fact-apple');
@@ -344,8 +343,7 @@ describe('exportImport — Scenario 1: full roundtrip preserves facts and rankin
     const wikiB = new WikiMemory(dbB, { llmProvider: { ...llm, embed } });
     await wikiB.setup();
     await wikiB.importDump(dump);
-    // Re-embed because TEXT embeddings are not included in the dump on this branch
-    await wikiB.runReembed('user-1');
+    // importDump() embeds imported facts automatically; no runReembed() needed
 
     const afterImport = await wikiB.read('user-1', 'apple');
     expect(afterImport.facts[0].id).toBe('fact-apple');
@@ -1176,7 +1174,7 @@ describe('recall — Scenario 1: synonym recall@5 = 1.0', () => {
         { id: 'f-vehicle', title: 'Vehicle', body: 'Carries passengers or cargo from place to place' },
       ])
     );
-    await wiki.runReembed('user-1');
+    // importDump() auto-embeds each fact when llmProvider.embed is provided
 
     const result = await wiki.read('user-1', 'transportation');
     const ids = result.facts.map((f) => f.id);
@@ -1209,7 +1207,7 @@ describe('recall — Scenario 3: domain separation, precision@3 = 1.0', () => {
         { id: 'c5', title: 'Reduction', body: 'Concentrating flavor by simmering liquid until it thickens' },
       ])
     );
-    await wiki.runReembed('user-1');
+    // importDump() auto-embeds each fact when llmProvider.embed is provided
 
     const programmingIds = new Set(['p1', 'p2', 'p3', 'p4', 'p5']);
     const cookingIds = new Set(['c1', 'c2', 'c3', 'c4', 'c5']);
@@ -1280,7 +1278,7 @@ describe.skip('recall — Scenario 2: hybrid beats keyword-only on semantic quer
         { id: 'f-vehicle', title: 'Vehicle', body: 'Carries passengers or cargo' },
       ])
     );
-    await wiki.runReembed('user-1');
+    // importDump() auto-embeds each fact when llmProvider.embed is provided
 
     const query = 'motorized road travel';
     const queryVec = await embed(query);
