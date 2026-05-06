@@ -395,7 +395,7 @@ await wiki.runHeal('entity-123');
 
 // Backfill embeddings after adding embed() to LLMProvider, or after changing embedding models.
 // Call with no args to reembed all entities, or pass an entityId to scope it.
-const { embedded, skipped } = await wiki.runReembed('entity-123');
+const { embedded, skipped, failed } = await wiki.runReembed('entity-123');
 ```
 
 ### Format Context

@@ -1357,7 +1357,7 @@ export class WikiMemory {
     }
   }
 
-  async runReembed(entityId?: string, opts?: { force?: boolean; skipExisting?: boolean }): Promise<{ embedded: number; skipped: number }> {
+  async runReembed(entityId?: string, opts?: { force?: boolean; skipExisting?: boolean }): Promise<{ embedded: number; skipped: number; failed: number }> {
     const embedFn = this.options.llmProvider.embed;
     if (!embedFn) return { embedded: 0, skipped: 0 };
 
@@ -1448,18 +1448,23 @@ export class WikiMemory {
       const effectiveSkip = mismatchRow ? false : skipExisting;
       let embedded = 0;
       let skipped = 0;
+      let failed = 0;
       try {
         for (const row of rows) {
           // Skip facts with existing BLOBs only when the caller opts in via
           // { skipExisting: true } AND no dimension mismatch is active.
           // The default always re-embeds, ensuring correctness after model switches.
-          if (effectiveSkip && (row as WikiFact & { embedding_blob?: Uint8Array | null }).embedding_blob) {
+          // Only skip if the BLOB is structurally valid (non-zero length, divisible
+          // by 4) — a corrupt BLOB is not usable, so let embedFact() repair it.
+          const existingBlob = (row as WikiFact & { embedding_blob?: Uint8Array | null }).embedding_blob;
+          const blobIsValid = !!existingBlob && existingBlob.byteLength > 0 && existingBlob.byteLength % 4 === 0;
+          if (effectiveSkip && blobIsValid) {
             skipped++;
             continue;
           }
           const success = await this.embedFact(row);
           if (success) embedded++;
-          else skipped++;
+          else failed++;
         }
         // If any fact was successfully re-embedded, promote the pending dimension to
         // canonical and clear the mismatch flag so read() uses embeddings from here on.
@@ -1478,7 +1483,7 @@ export class WikiMemory {
         }
       }
 
-      return { embedded, skipped };
+      return { embedded, skipped, failed };
     } finally {
       this.activeMaintenanceJobs.delete(reembedKey);
     }
@@ -1899,24 +1904,40 @@ export class WikiMemory {
 
         if (preservedBlobDims.size === 1) {
           const preservedDim = [...preservedBlobDims][0];
-          // Only store dimension if DB is fresh (no canonical) or it matches canonical.
           if (canonicalDim === null || canonicalDim === preservedDim) {
+            // Fresh DB: record the imported dimension as canonical.
+            // Matching canonical: no-op (storeEmbeddingDimension is a no-op for equal dims).
             await this.storeEmbeddingDimension(preservedDim);
+          } else {
+            // Imported blobs differ from the canonical model dimension. Set
+            // embedding_dimension_mismatch = canonicalDim so that:
+            //   (a) read() detects the mismatch and falls back to MiniSearch, and
+            //   (b) _reconcileEmbeddingDimension() can clear the flag after
+            //       runReembed() rewrites all blobs to canonicalDim.
+            // Using the imported dim as the mismatch value would deadlock:
+            // after runReembed(), all blobs have canonicalDim ≠ importedDim, so
+            // the residual count never reaches 0 and the flag is never cleared.
+            await this.db.runAsync(
+              `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension_mismatch', ?)`,
+              [String(canonicalDim)]
+            );
           }
-          // If preservedDim !== canonicalDim, skip bookkeeping. runReembed() will
-          // reconcile after the import completes.
         } else if (preservedBlobDims.size > 1) {
-          // Preserved BLOBs have mixed dimensions. Only store metadata if the DB is
-          // fresh; otherwise, skip and defer to runReembed().
           if (canonicalDim === null) {
             // Fresh import with mixed BLOBs: seed metadata with one canonical and one
             // mismatch dimension so reads fall back and instruct callers to runReembed().
             const sortedPreservedBlobDims = [...preservedBlobDims].sort((a, b) => a - b);
             await this.storeEmbeddingDimension(sortedPreservedBlobDims[0]);
             await this.storeEmbeddingDimension(sortedPreservedBlobDims[1]);
+          } else {
+            // Import into an existing wiki with mixed-dimension blobs. Set
+            // mismatch = canonicalDim so the flag clears correctly after runReembed()
+            // rewrites everything to the canonical model.
+            await this.db.runAsync(
+              `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension_mismatch', ?)`,
+              [String(canonicalDim)]
+            );
           }
-          // If canonicalDim !== null, skip bookkeeping. runReembed() will reconcile
-          // everything to the canonical dimension after the import completes.
         }
       } finally {
         // Second flush: evict any cache entries a concurrent read() repopulated

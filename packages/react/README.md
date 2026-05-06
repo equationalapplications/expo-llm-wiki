@@ -257,9 +257,9 @@ await runHeal('user-123');
 
 // Re-embed all facts with the current provider (e.g. after switching models or
 // enabling an embed provider for the first time — default always re-embeds all):
-const { embedded, skipped } = await runReembed('user-123');
+const { embedded, skipped, failed } = await runReembed('user-123');
 // After a round-trip export/import on the same model, skip facts that already have vectors:
-const { embedded: embeddedRoundtrip, skipped: skippedRoundtrip } = await runReembed('user-123', { skipExisting: true });
+const { embedded: embeddedRoundtrip, skipped: skippedRoundtrip, failed: failedRoundtrip } = await runReembed('user-123', { skipExisting: true });
 
 // Hard-delete soft-deleted entries/tasks after retention and prune old events
 await runPrune('user-123');
