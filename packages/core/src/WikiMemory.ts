@@ -916,10 +916,12 @@ export class WikiMemory {
               return { row, score };
             });
 
-            if (canCache && entityCache) {
+            if (canCache && entityCache && entityCache.size > 0) {
               if (!this.vectorCache.has(entityId)) {
                 // Evict the oldest entity when at the per-process cap to prevent unbounded growth
                 // on long-lived instances serving many distinct entities.
+                // Only store non-empty maps: caching an empty map for a zero-fact entity
+                // wastes one of the 16 entity slots and can evict a real cached entity.
                 if (this.vectorCache.size >= WikiMemory.MAX_VECTOR_CACHE_ENTITIES) {
                   const oldestKey = this.vectorCache.keys().next().value as string | undefined;
                   if (oldestKey !== undefined) this.vectorCache.delete(oldestKey);
@@ -1359,7 +1361,7 @@ export class WikiMemory {
 
   async runReembed(entityId?: string, opts?: { force?: boolean; skipExisting?: boolean }): Promise<{ embedded: number; skipped: number; failed: number }> {
     const embedFn = this.options.llmProvider.embed;
-    if (!embedFn) return { embedded: 0, skipped: 0 };
+    if (!embedFn) return { embedded: 0, skipped: 0, failed: 0 };
 
     const reembedKey = entityId ? this._reembedKey(entityId) : this._globalReembedKey();
     if (this.activeMaintenanceJobs.has(reembedKey)) {
@@ -1455,12 +1457,17 @@ export class WikiMemory {
           // { skipExisting: true } AND no dimension mismatch is active.
           // The default always re-embeds, ensuring correctness after model switches.
           // Only skip if the BLOB is structurally valid (non-zero length, divisible
-          // by 4) — a corrupt BLOB is not usable, so let embedFact() repair it.
+          // by 4) and contains entirely finite values. A BLOB full of NaN/Infinity
+          // passes the byte-length check but would silently score 0 in read() —
+          // let embedFact() repair it instead of leaving the fact permanently unsearchable.
           const existingBlob = (row as WikiFact & { embedding_blob?: Uint8Array | null }).embedding_blob;
           const blobIsValid = !!existingBlob && existingBlob.byteLength > 0 && existingBlob.byteLength % 4 === 0;
           if (effectiveSkip && blobIsValid) {
-            skipped++;
-            continue;
+            const vec = parseEmbedding(existingBlob, null);
+            if (vec !== null && vec.every(v => Number.isFinite(v))) {
+              skipped++;
+              continue;
+            }
           }
           const success = await this.embedFact(row);
           if (success) embedded++;
@@ -1768,7 +1775,10 @@ export class WikiMemory {
                 [entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, blobData, fact.id]
               );
               factsWithPreservedBlob.add(fact.id);
-              preservedBlobDims.add(blobData.byteLength / 4);
+              // Only track dimensions for live facts: read() and _reconcileEmbeddingDimension()
+              // both filter by deleted_at IS NULL, so a soft-deleted stale blob must not
+              // set embedding_dimension_mismatch and block retrieval on healthy live facts.
+              if (!fact.deleted_at) preservedBlobDims.add(blobData.byteLength / 4);
             } else {
               // read() never ranks the new title/body against the old vector;
               // the post-transaction embedding loop will re-embed.
@@ -1789,7 +1799,7 @@ export class WikiMemory {
                 [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, blobData]
               );
               factsWithPreservedBlob.add(fact.id);
-              preservedBlobDims.add(blobData.byteLength / 4);
+              if (!fact.deleted_at) preservedBlobDims.add(blobData.byteLength / 4);
             } else {
               await this.db.runAsync(
                 `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1924,11 +1934,22 @@ export class WikiMemory {
           }
         } else if (preservedBlobDims.size > 1) {
           if (canonicalDim === null) {
-            // Fresh import with mixed BLOBs: seed metadata with one canonical and one
-            // mismatch dimension so reads fall back and instruct callers to runReembed().
+            // Fresh import with mixed BLOBs: seed canonical with the smallest imported
+            // dimension, then write embedding_dimension_mismatch = that same canonical
+            // value. Seeding mismatch = canonical (not dim[1]) ensures
+            // _reconcileEmbeddingDimension() can always clear the flag:
+            //   - If runReembed() uses the same dim as canonical: storeEmbeddingDimension
+            //     is a no-op, mismatch stays = canonical, residual = 0 → clears. ✓
+            //   - If runReembed() uses a different dim: storeEmbeddingDimension overwrites
+            //     mismatch = currentDim, residual = 0 after full reembed → clears. ✓
+            // Seeding mismatch = dim[1] instead would deadlock the second case: after
+            // runReembed(), all blobs have currentDim ≠ dim[1] → residual > 0 forever.
             const sortedPreservedBlobDims = [...preservedBlobDims].sort((a, b) => a - b);
             await this.storeEmbeddingDimension(sortedPreservedBlobDims[0]);
-            await this.storeEmbeddingDimension(sortedPreservedBlobDims[1]);
+            await this.db.runAsync(
+              `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension_mismatch', ?)`,
+              [String(sortedPreservedBlobDims[0])]
+            );
           } else {
             // Import into an existing wiki with mixed-dimension blobs. Set
             // mismatch = canonicalDim so the flag clears correctly after runReembed()
