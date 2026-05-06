@@ -613,6 +613,7 @@ export class WikiMemory {
   private _reembedKey(entityId: string) { return `${this.prefix}:${entityId}:reembed`; }
   private _globalReembedKey() { return `${this.prefix}:reembed`; }
   private _importKey(entityId: string) { return `${this.prefix}:${entityId}:import`; }
+  private _globalImportKey() { return `${this.prefix}:import`; }
   private _forgetKey(entityId: string) { return `${this.prefix}:${entityId}:forget`; }
   private _isReembedActive(entityId: string): boolean {
     return this.activeMaintenanceJobs.has(this._reembedKey(entityId))
@@ -921,6 +922,11 @@ export class WikiMemory {
                 // populate it whenever weight !== undefined && weight < 1, matching this guard.
                 const kwScore = miniSearchScores?.get(row.id) ?? 0;
                 score = (1 - weight) * kwScore;
+              } else {
+                // Pure-semantic path with no usable vector. Use -2 (below the minimum
+                // valid cosine of -1) so embedded facts always rank above unembedded rows
+                // even when every cosine score is negative.
+                score = -2;
               }
               return { row, score };
             });
@@ -1610,9 +1616,10 @@ export class WikiMemory {
     const merge = opts?.merge ?? false;
     const entityIds = Object.keys(dump.entities);
 
-    // Pre-validate all entity locks before writing anything. This makes the
-    // operation atomic with respect to busy-error rejection: either every entity
-    // passes the lock check and we proceed, or we reject before mutating any entity.
+    // Pre-validate all locks before writing anything. This makes the operation
+    // atomic with respect to busy-error rejection: either every entity passes the
+    // lock check and we proceed, or we reject before mutating any entity.
+    // Per-entity checks first: surface the specific conflicting entity in the error.
     for (const entityId of entityIds) {
       if (this.activeMaintenanceJobs.has(this._importKey(entityId))) {
         throw new WikiBusyError('import', entityId);
@@ -1636,8 +1643,15 @@ export class WikiMemory {
         throw new WikiBusyError('forget', entityId);
       }
     }
+    // Global import lock check after per-entity checks: serializes concurrent
+    // importDump() calls for *different* entities so they cannot race on the shared
+    // embedding_dimension / embedding_dimension_mismatch meta keys.
+    if (this.activeMaintenanceJobs.has(this._globalImportKey())) {
+      throw new WikiBusyError('import', '*');
+    }
 
-    // All clear — acquire all import locks, then process each entity.
+    // All clear — acquire global + per-entity import locks, then process each entity.
+    this.activeMaintenanceJobs.add(this._globalImportKey());
     for (const entityId of entityIds) {
       this.activeMaintenanceJobs.add(this._importKey(entityId));
     }
@@ -1646,6 +1660,7 @@ export class WikiMemory {
         await this._doImportEntity(entityId, bundle, merge);
       }
     } finally {
+      this.activeMaintenanceJobs.delete(this._globalImportKey());
       for (const entityId of entityIds) {
         this.activeMaintenanceJobs.delete(this._importKey(entityId));
       }
