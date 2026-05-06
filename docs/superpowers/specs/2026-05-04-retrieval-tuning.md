@@ -303,7 +303,7 @@ All four embed-branch paths share the same phase 2 (`SELECT * WHERE id IN (...)`
 
 ### 10. `runReembed()` — `WikiMemory`
 
-After `embedFact()` succeeds (writes BLOB, clears TEXT), `runReembed()` implicitly converts all TEXT rows to BLOB as a side effect. No additional logic needed. Return type unchanged: `{ embedded: number; skipped: number }`.
+After `embedFact()` succeeds (writes BLOB, clears TEXT), `runReembed()` implicitly converts all TEXT rows to BLOB as a side effect. No additional logic needed. Return type: `{ embedded: number; skipped: number; failed: number }` — `failed` counts facts where `embedFact()` threw.
 
 ### 11. Retrieval Priority Summary (updated)
 

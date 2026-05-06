@@ -523,9 +523,9 @@ export default function App() {
 }
 ```
 
-### `useMemoryRead(entityId, query)`
+### `useMemoryRead(entityId, query, options?)`
 
-Reactive read. Fetches on mount and whenever `entityId` or `query` changes. In-flight results always land before a queued re-fetch starts — results are never silently discarded.
+Reactive read. Fetches on mount and re-fetches whenever `entityId`, `query`, `wiki`, or `ReadOptions` values change. Call `refetch()` to refresh manually. In-flight results always land before a queued re-fetch starts — results are never silently discarded.
 
 ```typescript
 const { data, isPending, error, refetch } = useMemoryRead('entity-123', 'weekend plans');

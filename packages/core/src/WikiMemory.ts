@@ -802,14 +802,19 @@ export class WikiMemory {
             }
           }
 
-          // Check for a pending dimension mismatch left by importDump() when facts
-          // from a different-dimensional model were imported into this wiki. Those
-          // blobs would silently score incorrectly if we proceeded, so fall back to
-          // MiniSearch until the caller runs runReembed() to reconcile everything.
-          const importMismatchRow = await this.db.getFirstAsync<{ value: string }>(
-            `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
+          // Check whether any non-deleted fact for this entity has a blob whose
+          // dimension differs from the query vector. A global meta flag would block
+          // all entities when only one was imported with a mismatched model, so we
+          // do a direct per-entity SQL count here instead.
+          const mismatchedCount = await this.db.getFirstAsync<{ cnt: number }>(
+            `SELECT COUNT(*) AS cnt FROM ${this.prefix}entries
+             WHERE entity_id = ? AND deleted_at IS NULL
+               AND embedding_blob IS NOT NULL
+               AND (CAST(length(embedding_blob) AS INTEGER) % 4 = 0)
+               AND (CAST(length(embedding_blob) AS INTEGER) / 4) != ?`,
+            [entityId, queryVec.length]
           );
-          if (importMismatchRow) {
+          if (mismatchedCount && mismatchedCount.cnt > 0) {
             throw new Error(
               `Some facts have embeddings that do not match the current model dimension. ` +
               `Call runReembed() to rebuild all embeddings consistently.`
@@ -899,10 +904,14 @@ export class WikiMemory {
               }
               let score = 0;
               if (vector && vector.length === queryVec.length) {
-                const cosSim = Math.max(0, cosineSimilarity(queryVec, vector));
+                const cosSim = cosineSimilarity(queryVec, vector);
                 if (weight !== undefined) {
+                  // Clamp to [0,1] only for hybrid blending so the weighted sum stays
+                  // in a predictable range. Pure-semantic ranking preserves the full
+                  // [-1,1] cosine range so the least-dissimilar facts always rank above
+                  // unembedded rows (which score 0) even when all scores are negative.
                   const kwScore = miniSearchScores?.get(row.id) ?? 0;
-                  score = weight * cosSim + (1 - weight) * kwScore;
+                  score = weight * Math.max(0, cosSim) + (1 - weight) * kwScore;
                 } else {
                   score = cosSim;
                 }
@@ -1441,6 +1450,12 @@ export class WikiMemory {
       // safe default.
       // { force: true } is kept as a no-op alias so existing call sites that pass
       // it explicitly continue to work without change.
+      // skipExisting skips facts that already have a structurally valid BLOB.
+      // WARNING: this is only safe when the caller can guarantee the stored BLOBs
+      // were produced by the *same* embedding model that is currently configured.
+      // It cannot detect same-dimension model/provider switches (e.g. two providers
+      // that both produce 1536-dim vectors). After any provider change, always call
+      // runReembed() without { skipExisting: true } to force full re-embedding.
       const skipExisting = opts?.skipExisting ?? false;
       // Never skip when a dimension mismatch is pending: blobs on disk are stale
       // regardless of what the caller requested.
