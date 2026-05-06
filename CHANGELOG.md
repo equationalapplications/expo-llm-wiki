@@ -1,3 +1,77 @@
+# [3.0.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v2.6.0...v3.0.0) (2026-05-06)
+
+
+### Bug Fixes
+
+* address importDump mismatch flag and runReembed accuracy issues ([0e7eb5f](https://github.com/equationalapplications/expo-llm-wiki/commit/0e7eb5f53434f07e021f4832c581f926d4dd4b6b))
+* address review — exportDump blobs, runReembed force, Float32 alignment, mismatch detection, WikiBusyOperation type ([ae04a33](https://github.com/equationalapplications/expo-llm-wiki/commit/ae04a332f5adb0f8a2c9932695fefba8e49b3713))
+* address review-4231397290 — remove debug log, fix runReembed/canCache/blob-validation/importDump atomicity ([8c8f391](https://github.com/equationalapplications/expo-llm-wiki/commit/8c8f391080c70222f7b25a9d94c3228854a48b6a))
+* apply review feedback — hybrid scoring, ReadOptions forwarding, runReembed hook, README corrections ([e7e8b84](https://github.com/equationalapplications/expo-llm-wiki/commit/e7e8b84ee8329c6f69bb01cf3c986ddb1d05c13d))
+* clarify miniSearchScores safety, document options ref pattern in useMemoryRead ([01f3287](https://github.com/equationalapplications/expo-llm-wiki/commit/01f3287d47bcfdea7d9798f6786f8d559c2f8603))
+* **core/react:** review 4228558241 — forget import guard, write() import skip, null maxResults/hybridWeight key ([1c5b0f6](https://github.com/equationalapplications/expo-llm-wiki/commit/1c5b0f668d67c4cec3e6a294c5d7aa24c18fb47e))
+* **core:** add forget busy key — importDump throws when forget is in-flight ([bd68375](https://github.com/equationalapplications/expo-llm-wiki/commit/bd683751ef87273616a2492ef22a014e538227ea))
+* **core:** add post-loop vectorCache flush in importDump to prevent stale-cache race ([4ecaa88](https://github.com/equationalapplications/expo-llm-wiki/commit/4ecaa885c353e435eeac81785fa54db6aa414b75))
+* **core:** apply review 4230242346 — runReembed, runHeal cache, importDump blob, WikiBusyError docs, fastembed alias, README URLs ([d53eb0d](https://github.com/equationalapplications/expo-llm-wiki/commit/d53eb0d332d6fea7d4bd77bf6434387fa796004e))
+* **core:** clamp non-finite hybridWeight; update README API label/comment ([f75b468](https://github.com/equationalapplications/expo-llm-wiki/commit/f75b4689e30f710965649f0d8e9beaccbe14ead5))
+* **core:** clear stale embeddings on importDump failure; fix embedFact comment ([5b93563](https://github.com/equationalapplications/expo-llm-wiki/commit/5b93563dcf7988d5a05c5f148d98879cd47a9e54))
+* **core:** runReembed() second vectorCache flush in finally so it runs on error too ([b2a2f40](https://github.com/equationalapplications/expo-llm-wiki/commit/b2a2f406025138c782ba7e072150ad244d22f2bd))
+* **core:** scope import lock check globally, per-entity mismatch skip, fix stale mismatch before reconcile ([d563588](https://github.com/equationalapplications/expo-llm-wiki/commit/d5635888ac5f3b6a5a6f3b169949a63d85e9d34e))
+* **core:** validate JSON array in parseEmbedding TEXT path; add non-numeric test ([bbbff8d](https://github.com/equationalapplications/expo-llm-wiki/commit/bbbff8d76f1fd0e6667f964231c33a56b40899d2))
+* correct blob copy, import mismatch reconciliation, and runReembed test coverage ([181319c](https://github.com/equationalapplications/expo-llm-wiki/commit/181319ce74d1b63c77593b7c75844abea9c352dd))
+* **docs:** address code review nits — JSDoc wording, hyphenation, cache eviction docs ([8190b8f](https://github.com/equationalapplications/expo-llm-wiki/commit/8190b8f67d736560ca60638a912fd6f009d6f7d7))
+* double-invalidate cache in runReembed, fix flowcharts in core/expo READMEs, add cache boundary tests ([991b954](https://github.com/equationalapplications/expo-llm-wiki/commit/991b954b0438e34306241e9149bc816f34c876b8))
+* forget busy-key for all mutators, chunk keyword-only IN queries, optimize Array.from, enable react tests ([778256f](https://github.com/equationalapplications/expo-llm-wiki/commit/778256f424c62e9360d626ce4bb1ea10f7bc6437))
+* gate dimension promotion on full reconciliation, copy export blobs, widen embedding_blob type, add manifest-strip test, update spec breaking changes ([ac93915](https://github.com/equationalapplications/expo-llm-wiki/commit/ac93915f035d093ec3b2b56ffa2d35a2e654814f))
+* global import lock for meta race, unembedded score in pure-semantic, revert version to 2.6.0 ([6cb5217](https://github.com/equationalapplications/expo-llm-wiki/commit/6cb5217f46d3bd7deef1475edcca0b74c2cabd5e))
+* **importDump:** busy-key checks, move rebuildMiniSearch before embed loop, clear stale embeddings in UPDATE SQL ([41395dd](https://github.com/equationalapplications/expo-llm-wiki/commit/41395ddb43f16657d1f91f9ba7503f8b58201630))
+* **integration:** fix prune timing bug and fastembed alias ([15aa85f](https://github.com/equationalapplications/expo-llm-wiki/commit/15aa85f3f0cc56062db33458101283d213d17338))
+* **integration:** resolve test skipping by mocking fastembed and preserving embedding blobs ([8bcd0ca](https://github.com/equationalapplications/expo-llm-wiki/commit/8bcd0ca12aa10f5f5b2614293131911a4510babd))
+* JSON-safe blob roundtrip, mixed-dim rejection, auto-force on mismatch, react force option ([acc9347](https://github.com/equationalapplications/expo-llm-wiki/commit/acc9347a6a2b093dc0bb11d92713c97a7a38721e))
+* make DB spy assertion more robust with explicit destructuring and type checks ([4ff271c](https://github.com/equationalapplications/expo-llm-wiki/commit/4ff271c45ae9e4d5c3c9d9366560dd6374df0149))
+* non-breaking MaintenanceResult, re-enable react hook tests, fix assertions ([068d53a](https://github.com/equationalapplications/expo-llm-wiki/commit/068d53aebe05a148e601dcb0b0951b0835e3addf))
+* normalizeReadOptionsKey includes non-finite overrides; maxResults=0 skips embed ([7d0dd7e](https://github.com/equationalapplications/expo-llm-wiki/commit/7d0dd7eca65542a9649fa0bd79c24ce7bade1fb4))
+* per-entity mismatch check, cosine clamp, README hook sig, spec return shape, skipExisting docs ([46c0556](https://github.com/equationalapplications/expo-llm-wiki/commit/46c055638b664dad16c258d9da74d2088a695682))
+* preserve import blob dimensions, bump core to v3.0.0, clean docs examples ([9c6089d](https://github.com/equationalapplications/expo-llm-wiki/commit/9c6089dcb8595fcd5aa8bd1d284c4da3e871dcee))
+* prevent dimension mismatch deadlock in importDump ([61f8658](https://github.com/equationalapplications/expo-llm-wiki/commit/61f8658177554380f6d49167a9dede1b9fba74fe))
+* probe-based model-switch detection, partial-reconcile safety, reembed lock in write(), MiniSearch-before-embed order ([5115ecf](https://github.com/equationalapplications/expo-llm-wiki/commit/5115ecf9ce6a7b8d47a446544c858f0f7f68c7f5))
+* re-embed all by default, Buffer JSON blobs, strip blobs from formatMemoryDump, preserve mixed-dim blobs ([f535713](https://github.com/equationalapplications/expo-llm-wiki/commit/f5357137041864e640306667690797f997dda4da))
+* **react,core:** auto-refetch on options value change; clear importDump cache before embed loop ([44c5d61](https://github.com/equationalapplications/expo-llm-wiki/commit/44c5d6114631aae7322f23e0f0378c8325114b22))
+* **react/docs:** revert react test re-enable; correct importDump() cache docs to per-entity ([ce84695](https://github.com/equationalapplications/expo-llm-wiki/commit/ce8469532d82feeac54faa6026dfe82f09037b83))
+* **react:** normalize ReadOptions before stringifying; add importDump cache-invalidation test ([7657929](https://github.com/equationalapplications/expo-llm-wiki/commit/7657929b116c8cffa674d7d1a2fa3599172956d2))
+* **react:** remove unnecessary eslint-disable from useMemoryRead effect ([b28b111](https://github.com/equationalapplications/expo-llm-wiki/commit/b28b111ecbe9232bb6a5a30050103a73e1a14807))
+* **react:** stable options serialization — sort keys before JSON.stringify; update lifecycle docs ([31d6a64](https://github.com/equationalapplications/expo-llm-wiki/commit/31d6a644000fea3e00ce4469fbf04dac3fbd0d67))
+* reconcile all stale vectors before clearing mismatch flag, restore runPrune < cutoff, clarify import blob and runReembed docs ([bc5ea70](https://github.com/equationalapplications/expo-llm-wiki/commit/bc5ea70a0895d63aba387a4bdbfea7693cda2f35))
+* runReembed clears lastResult, zero-preFilterLimit safe SQL, js read() forwrds options, Expo README absolute URL ([02d03a0](https://github.com/equationalapplications/expo-llm-wiki/commit/02d03a035d80c1e8ab925d5188fb25b83cf37006))
+* runReembed invalidates cache before loop, per-entity cache cap, no-refetch test, README flowchart/doc fixes ([6ca96ff](https://github.com/equationalapplications/expo-llm-wiki/commit/6ca96ffff2551ef2228163cf822f6aff26c8d28b))
+* six retrieval-tuning review corrections ([65eaa78](https://github.com/equationalapplications/expo-llm-wiki/commit/65eaa788d4d302e53cec1d4b9cadcb8b57b8047b))
+* skip mixed-dim storeEmbeddingDimension on import, rebuild MiniSearch before heal embed loop, deduplicate README runReembed example ([888644f](https://github.com/equationalapplications/expo-llm-wiki/commit/888644f5d9023d0af6536d1957a89b03833be4ed))
+* strip embedding_blob from public outputs, record dim on blob import, fix docs/tests ([c32f339](https://github.com/equationalapplications/expo-llm-wiki/commit/c32f339782fe5e3158f0ed239c0343ae8393c787))
+* **tests:** update vectorCache boundary tests to match actual caps, add BLOB adapter test, fix react README flowchart ([773ebef](https://github.com/equationalapplications/expo-llm-wiki/commit/773ebeffeec084a0f5d3fe2f2523904d70ad2296))
+* tighten WikiMemory locking, vector cache bounds, and export/import embedding blob handling ([8c5431b](https://github.com/equationalapplications/expo-llm-wiki/commit/8c5431b3b7e2bc3d581778437d483e3a161e56a0))
+* use act() instead of setTimeout in no-refetch test, remove duplicate README comment ([9defef1](https://github.com/equationalapplications/expo-llm-wiki/commit/9defef17e7a26adae5540354cbc487b656b0d289))
+* use logic-based comment instead of line numbers for miniSearchScores invariant ([5839b96](https://github.com/equationalapplications/expo-llm-wiki/commit/5839b965bed9a4b767f6cc9e19eca2eaed0e5758))
+* vector cache size cap, stronger tests, hybridWeight docs, README redeclaration fix ([5c08e59](https://github.com/equationalapplications/expo-llm-wiki/commit/5c08e598bfbb116ad0bd7f77e431c103e63198ee))
+
+
+### Features
+
+* **core:** add parseEmbedding utility, widen cosineSimilarity to ArrayLike ([7671dde](https://github.com/equationalapplications/expo-llm-wiki/commit/7671dde9ac7c0f6e75b160a89ac080feefa5d363))
+* **core:** add ReadOptions per-call overrides to read() ([714d80c](https://github.com/equationalapplications/expo-llm-wiki/commit/714d80c62b42eb906dd398ef1687e8ec143cca35))
+* **core:** add ReadOptions, WikiConfig.preFilterLimit/hybridWeight, embedding_blob schema and migration v3 ([21586fa](https://github.com/equationalapplications/expo-llm-wiki/commit/21586fac8dd6b263d1b9d1638420dbc3c63bf5ce))
+* **core:** add vector cache and embedding_blob parsing to read() cosine path ([a84398e](https://github.com/equationalapplications/expo-llm-wiki/commit/a84398ec200085666ae53e169764dc96f993cd46))
+* **core:** embedFact writes BLOB, clears TEXT; add blobEmbeddings tests ([dec46e2](https://github.com/equationalapplications/expo-llm-wiki/commit/dec46e230602f301d43ca1e857d3b4619b9239cb))
+* **core:** implement hybridWeight scoring and hybridWeight:0 embed skip fast-path ([6e42621](https://github.com/equationalapplications/expo-llm-wiki/commit/6e42621699e3fc08117601eeee3fb26970a69996))
+* **core:** implement preFilterLimit — MiniSearch pre-filter before cosine scan ([8d272b6](https://github.com/equationalapplications/expo-llm-wiki/commit/8d272b6346bdcd440c5f0c4cda626bf0711622a3))
+* **core:** invalidate vector cache on all fact mutations; add vectorCache invalidation tests ([64762e8](https://github.com/equationalapplications/expo-llm-wiki/commit/64762e85b5c8fc934544e0269dd57356c5a9d6cc))
+
+
+### BREAKING CHANGES
+
+* **core:** WikiBusyOperation union now includes 'import' and 'forget'. TypeScript consumers that exhaustively switch on WikiBusyError.operation without a default arm must add cases for both new values or add a default arm to compile without errors.
+* WikiBusyError.operation now includes 'import' and 'forget' in addition to the
+previous five values. TypeScript consumers with exhaustive switches must add a default arm or
+update to the new WikiBusyOperation type alias.
+
 # [2.6.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v2.5.0...v2.6.0) (2026-05-05)
 
 
