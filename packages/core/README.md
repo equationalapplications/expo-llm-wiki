@@ -2,10 +2,15 @@
 
 Pure TypeScript business logic for LLM Wiki Memory.
 
+> Inspired by [Andrej Karpathy's LLM Wiki memory spec](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
+
 ## Features
 
 - **Platform-agnostic** — Zero runtime dependencies; works with any SQLite driver via the `SQLiteAdapter` interface
-- **Full-featured memory** — Facts, tasks, events, semantic search, maintenance jobs
+- **Semantic search** — Vector embeddings via your LLM's `embed` function, ranked by cosine similarity
+- **Keyword fallback** — MiniSearch in-memory index for offline/degraded scenarios when embeddings unavailable
+- **Retrieval tuning** — Per-call overrides for `maxResults`, `preFilterLimit`, and `hybridWeight` blend
+- **Full-featured memory** — Facts, tasks, events, maintenance jobs (librarian, heal, reembed, prune)
 - **Type-safe** — Built with TypeScript, full type exports
 
 ## Installation
@@ -13,6 +18,131 @@ Pure TypeScript business logic for LLM Wiki Memory.
 ```bash
 npm install @equationalapplications/core-llm-wiki
 ```
+
+## Semantic Search with Embeddings
+
+Provide an `embed` function in `llmProvider` to enable vector-based retrieval:
+
+```typescript
+import { WikiMemory } from '@equationalapplications/core-llm-wiki';
+
+const wikiMemory = new WikiMemory(db, {
+  llmProvider: {
+    generateText: async ({ systemPrompt, userPrompt }) => {
+      // Your LLM call for extracting facts, tasks
+      return 'Model output';
+    },
+    embed: async (text: string) => {
+      // Your embedding service (e.g., OpenAI, Cohere, local)
+      const response = await fetch('https://your-app.example.com/api/embed', {
+        method: 'POST',
+        body: JSON.stringify({ text }),
+      });
+      const { embedding } = await response.json();
+      return embedding; // number[]
+    },
+  },
+});
+
+await wikiMemory.setup();
+
+// Query with semantic matching
+const memory = await wikiMemory.read('user-123', 'What should I do this weekend?');
+// Returns facts semantically similar to the query, not lexical matches
+// E.g., fact "Saturday hiking trip" ranks high even though no lexical overlap
+```
+
+When `embed` is unavailable, `read()` silently falls back to MiniSearch keyword search. If an embedding attempt throws, `read()` falls back and calls `onRetrievalFallback` if provided:
+
+```typescript
+const wikiMemory = new WikiMemory(db, {
+  llmProvider: {
+    generateText: async () => { /* ... */ },
+    embed: undefined, // or throws on network error
+  },
+  onRetrievalFallback: (error) => {
+    console.warn('Embedding retrieval unavailable, using keyword search:', error);
+  },
+});
+
+// read() returns MiniSearch results, onRetrievalFallback not called (embed absent is expected)
+// read() returns MiniSearch results, onRetrievalFallback called (embed threw)
+```
+
+## Configuration
+
+All `WikiConfig` fields are optional:
+
+```typescript
+const wikiMemory = new WikiMemory(db, {
+  llmProvider: { /* ... */ },
+  config: {
+    tablePrefix: 'llm_wiki_',          // default: 'llm_wiki_'
+    maxResults: 10,                    // default: 10
+    autoLibrarianThreshold: 20,        // default: 20 — events before librarian auto-runs
+    autoHealThreshold: 100,            // default: 100 — events before heal auto-runs
+    maxChunkLength: 12000,             // default: 12000 (char count per ingestDocument chunk)
+    chunkOverlap: 400,                 // default: 400 (overlap between chunks in characters)
+    chunkConcurrency: 1,               // default: 1 (parallel LLM calls per ingestDocument)
+    pruneRetainSoftDeletedFor: 7,      // default: 7 (days before hard-deleting soft-deleted facts)
+    pruneEventsAfter: 30,              // default: 30 (days before hard-deleting old events)
+    orphanAfterDays: 30,               // default: 30 (days before runHeal flags sourceless facts; null to disable)
+    staleInferredAfterDays: 60,        // default: 60 (days before runHeal downgrades inferred facts; null to disable)
+    preFilterLimit: 50,                // default: undefined — MiniSearch pre-filter before cosine scan; recommended for >500 facts
+    hybridWeight: 0.7,                 // default: undefined — blend semantic (1.0) ↔ keyword (0.0); pure semantic when unset
+  },
+});
+```
+
+## Retrieval Tuning
+
+Optimize `read()` performance and blend retrieval strategies:
+
+```typescript
+const config = {
+  // Limit cosine similarity scoring to top-K MiniSearch keyword candidates
+  preFilterLimit: 50,
+  
+  // Blend semantic and keyword scores (0.0 = pure keyword, 1.0 = pure semantic)
+  hybridWeight: 0.7,
+  
+  // Max results returned per read
+  maxResults: 10,
+};
+
+const wikiMemory = new WikiMemory(db, {
+  config,
+  llmProvider: { /* ... */ },
+});
+
+// Per-call overrides (runtime controls for search dashboards, etc.)
+const memory = await wikiMemory.read('user-123', 'my preferences', {
+  maxResults: 5,
+  preFilterLimit: 20,
+  hybridWeight: 0.5,
+});
+```
+
+**Hybrid scoring blends:**
+- `hybridWeight: 1.0` → pure semantic scoring among the candidates being scored; if `preFilterLimit` is set, semantic scoring is still limited to the top-K MiniSearch matches
+- `hybridWeight: 0.5` → balanced semantic + keyword (50/50 blend)
+- `hybridWeight: 0.0` → pure keyword ranking, skips `embed()` entirely (no LLM API cost)
+
+**Pre-filtering optimization:**
+When `preFilterLimit: 50` is set with 1000 facts, cosine similarity is computed only for the top 50 MiniSearch keyword matches, reducing O(N) scoring to O(50).
+
+## Vector Cache
+
+Parsed embedding vectors from full-scan `read()` calls are cached in memory, keyed by entity ID (max 16 entities, max 500 vectors per entity). This avoids redundant `Float32Array` parsing on repeated queries for the same entity. When the 16-entity limit is reached, the oldest-inserted entity is evicted to make room; if an entity exceeds 500 facts, its vectors are not cached at all for that read.
+
+After heavy read workloads or on memory-constrained runtimes, you can release the entire cache explicitly:
+
+```typescript
+// Release all cached embedding vectors
+wikiMemory.clearVectorCache();
+```
+
+The cache is also automatically invalidated on any mutation (`runLibrarian`, `runHeal`, `runPrune`, `runReembed`, `ingestDocument`, `importDump`, `forget`).
 
 ## Usage
 
@@ -128,6 +258,46 @@ const adapter: SQLiteAdapter = {
 };
 ```
 
+## How It Works
+
+```mermaid
+flowchart TD
+    A["read(entityId, query)"] --> B{hybridWeight = 0?}
+    B -->|Yes| C["MiniSearch only<br/>(skip embed)"]
+    B -->|No| D{embed available?}
+    D -->|No| C
+    D -->|Yes| F["Embed query"]
+    F -->|throws| E["onRetrievalFallback<br/>callback"]
+    E --> C
+    F -->|succeeds| G{preFilterLimit<br/>active?}
+    G -->|Yes| H["MiniSearch pre-filter<br/>top K candidates"]
+    H --> I["Phase 1: Cosine score<br/>top K candidates"]
+    G -->|No| J["Phase 1: Cosine score<br/>all facts"]
+    J --> K["Cache vectors<br/>in-memory<br/>(full scan only)"]
+    K --> L{hybridWeight = 1?}
+    I --> L
+    L -->|Yes| M["Pure semantic<br/>ranking"]
+    L -->|No| N["Hybrid blend:<br/>semantic + keyword<br/>via MiniSearch"]
+    M --> O["Phase 2: Fetch full rows<br/>top maxResults"]
+    N --> O
+    C --> P["MiniSearch ranking"]
+    P --> O
+    O --> R["Track access"]
+    R --> Q["Return MemoryBundle"]
+```
+
+The flowchart shows:
+1. **Fast-path** when `hybridWeight = 0` (pure keyword, no embed cost)
+2. **Fallback chain** when embed unavailable (MiniSearch silently) or throws (`onRetrievalFallback` callback, then MiniSearch)
+3. **Pre-filtering** to limit cosine scoring to top-K keyword matches (O(N) → O(K))
+4. **Two-phase SELECT**: phase 1 scores all/filtered facts with minimal columns, phase 2 fetches full rows for winners
+5. **Hybrid scoring** to blend semantic and keyword rankings
+6. **Vector caching** on full scans only; reads with `preFilterLimit` active skip cache population
+
 ## License
 
 MIT
+
+---
+
+Made with ❤️ by Equational Applications LLC. [https://equationalapplications.com/](https://equationalapplications.com/)

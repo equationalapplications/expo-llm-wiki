@@ -39,6 +39,20 @@ export const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 3,
+    description: 'Add embedding_blob BLOB column for Float32Array vector storage',
+    run: async (db, prefix) => {
+      const cols = await db.getAllAsync<{ name: string }>(
+        `PRAGMA table_info(${prefix}entries)`
+      );
+      if (!cols.some(c => c.name === 'embedding_blob')) {
+        await db.execAsync(
+          `ALTER TABLE ${prefix}entries ADD COLUMN embedding_blob BLOB`
+        );
+      }
+    },
+  },
 ];
 
 // Verify MIGRATIONS are in strictly ascending version order at module load time.

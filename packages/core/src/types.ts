@@ -26,6 +26,31 @@ export interface WikiConfig {
   maxChunkLength?: number;
   chunkOverlap?: number;
   chunkConcurrency?: number;
+  /**
+   * Max MiniSearch candidates passed to cosine scoring.
+   * When set, MiniSearch pre-filters before the cosine scan.
+   * Only applies when embed is provided and succeeds.
+   * Default: undefined (full scan).
+   */
+  preFilterLimit?: number;
+  /**
+   * Hybrid blend weight (0.0–1.0).
+   * 0.0 = pure keyword (skips embed() entirely).
+   * 1.0 = pure semantic.
+   * Values outside [0,1] are clamped. Ignored when embed is absent or throws.
+   * Default: undefined (pure semantic when embed provided).
+   */
+  hybridWeight?: number;
+}
+
+export interface ReadOptions {
+  maxResults?: number;
+  /**
+   * undefined → use WikiConfig.preFilterLimit (or no pre-filter if also unset).
+   * null → explicitly disable a config-level preFilterLimit for this call.
+   */
+  preFilterLimit?: number | null;
+  hybridWeight?: number;
 }
 
 export interface WikiFact {
@@ -40,6 +65,15 @@ export interface WikiFact {
   source_ref: string | null;
   created_at: number;
   updated_at: number;
+  /**
+   * Raw Float32Array bytes for the fact's embedding vector.
+   * Set when the fact was fetched via exportDump() with blob preservation.
+   * Accepted in importDump() as a real Uint8Array (in-memory round-trip),
+   * a Node.js Buffer JSON shape `{ type: 'Buffer', data: number[] }`,
+   * or a numeric-keyed plain object `{ 0: byte, 1: byte, ... }` produced
+   * by JSON.stringify(Uint8Array).
+   */
+  embedding_blob?: Uint8Array | { type: 'Buffer'; data: number[] } | Record<string, number>;
   last_accessed_at: number | null;
   access_count: number;
   deleted_at: number | null;
@@ -151,11 +185,31 @@ export interface EntityStatus {
   heal: boolean;
 }
 
+/**
+ * All operations that can appear in a {@link WikiBusyError}.
+ *
+ * @remarks **Breaking change from v2.x** — the union previously only contained
+ * `'ingest' | 'librarian' | 'heal' | 'prune' | 'reembed'`. The values `'import'`
+ * and `'forget'` were added in v3.0. Exhaustive `switch` / narrowing on this type
+ * must be updated (or given a `default` arm) to compile without errors.
+ */
+export type WikiBusyOperation =
+  | 'ingest'
+  | 'librarian'
+  | 'heal'
+  | 'prune'
+  | 'reembed'
+  | 'import'
+  | 'forget';
+
+/**
+ * Thrown when a background mutator is already running for the requested entity.
+ */
 export class WikiBusyError extends Error {
-  readonly operation: 'ingest' | 'librarian' | 'heal' | 'prune' | 'reembed';
+  readonly operation: WikiBusyOperation;
   readonly entityId: string;
 
-  constructor(operation: 'ingest' | 'librarian' | 'heal' | 'prune' | 'reembed', entityId: string) {
+  constructor(operation: WikiBusyOperation, entityId: string) {
     super(`${operation} already running for entity ${entityId}`);
     this.name = 'WikiBusyError';
     this.operation = operation;

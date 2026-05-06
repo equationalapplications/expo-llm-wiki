@@ -114,9 +114,7 @@ describe('maintenance — Scenario 2: runHeal LLM phase deletes agent_inferred, 
   });
 });
 
-// NOTE: Requires feat/retrieval-tuning (clearVectorCache + embedding_blob).
-// Remove .skip after that PR is merged and this branch is rebased.
-describe.skip('maintenance — Scenario 3: runReembed writes BLOBs; read() loads from cache, no re-embed', () => {
+describe('maintenance — Scenario 3: runReembed writes BLOBs; read() loads from cache, no re-embed', () => {
   it('embed() called N times for facts during runReembed, once for query during read()', async () => {
     const embedCalls: string[] = [];
     const embed = async (text: string): Promise<number[]> => {
@@ -154,6 +152,10 @@ describe.skip('maintenance — Scenario 3: runReembed writes BLOBs; read() loads
       },
     });
 
+    // Reset counter so we only measure embed calls made during runReembed itself,
+    // not the ones importDump made for the initial (blob-less) facts.
+    // runReembed() re-embeds all facts by default (safe for model-switch workflows).
+    embedCalls.length = 0;
     await wiki.runReembed('entity-1');
     const factEmbedCallCount = embedCalls.length;
     expect(factEmbedCallCount).toBe(2);

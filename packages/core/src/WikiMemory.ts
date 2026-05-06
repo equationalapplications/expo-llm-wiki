@@ -1,10 +1,11 @@
 import type { SQLiteAdapter } from './types';
 import { setupDatabase } from './db/schema';
 import { MIGRATIONS, CURRENT_SCHEMA_VERSION } from './db/migrations';
-import { WikiOptions, MemoryBundle, MemoryDump, WikiEvent, WikiFact, WikiTask, WikiCheckpoint, ExtractedFact, ExtractedTask, WikiBusyError, EntityStatus } from './types';
+import { WikiOptions, MemoryBundle, MemoryDump, WikiEvent, WikiFact, WikiTask, WikiCheckpoint, ExtractedFact, ExtractedTask, WikiBusyError, EntityStatus, ReadOptions } from './types';
 import { LIBRARIAN_SYSTEM_PROMPT, HEAL_SYSTEM_PROMPT, INGEST_SYSTEM_PROMPT } from './prompts';
 import MiniSearch from 'minisearch';
 import { cosineSimilarity } from './utils/cosine';
+import { parseEmbedding } from './utils/embedding';
 
 export { WikiBusyError } from './types';
 
@@ -277,6 +278,19 @@ export class WikiMemory {
     },
   });
   private miniSearchEntryIdsByEntity = new Map<string, Set<string>>();
+  /**
+   * Maximum number of entities whose parsed embedding vectors are held in
+   * memory. This cap is intentionally conservative so the cache remains safe
+   * on memory-constrained runtimes (e.g., mobile/Expo).
+   */
+  private static readonly MAX_VECTOR_CACHE_ENTITIES = 16;
+  /**
+   * Maximum number of fact vectors cached per entity. Keep this high enough to
+   * preserve the parsed-embedding reuse optimization for common mid-sized
+   * entities while still maintaining a bounded memory footprint.
+   */
+  private static readonly MAX_VECTOR_CACHE_FACTS_PER_ENTITY = 500;
+  private vectorCache: Map<string, Map<string, Float32Array>> = new Map();
 
   private normalizeMiniSearchRow(row: {
     id: string; entity_id: string; title: string; body: string; tags: string;
@@ -356,11 +370,11 @@ export class WikiMemory {
           `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension_mismatch', ?)`,
           [String(dim)]
         );
-      } else {
-        await this.db.runAsync(
-          `DELETE FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
-        );
       }
+      // Do NOT clear 'embedding_dimension_mismatch' here: other facts may still hold
+      // old-dimension blobs written during a previous model. Only _reconcileEmbeddingDimension()
+      // (called after a full runReembed) may clear the flag once it confirms all stored
+      // blobs match the new canonical dimension.
     } else {
       await this.db.runAsync(
         `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension', ?)`,
@@ -379,7 +393,31 @@ export class WikiMemory {
     const mismatch = await this.db.getFirstAsync<{ value: string }>(
       `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
     );
-    if (mismatch) {
+    if (!mismatch) return;
+
+    const newDim = parseInt(mismatch.value, 10);
+    // Check whether any non-deleted fact still stores a blob with a different byte
+    // length. If so, those facts haven't been re-embedded yet and the mismatch flag
+    // must stay in place so read() keeps falling back to MiniSearch for them.
+    // A row blocks mismatch-flag removal if:
+    //   (a) it has a BLOB whose dimension differs from the new model, OR
+    //   (b) it has only a TEXT vector (embedding_blob IS NULL) — TEXT rows were
+    //       written by an older model and must be converted by runReembed() before
+    //       they are safe to score against the new query dimension.
+    const residual = await this.db.getFirstAsync<{ cnt: number }>(
+      `SELECT COUNT(*) AS cnt FROM ${this.prefix}entries
+       WHERE deleted_at IS NULL
+         AND (
+           (embedding_blob IS NOT NULL AND (CAST(length(embedding_blob) AS INTEGER) / 4) != ?)
+           OR (embedding_blob IS NULL AND embedding IS NOT NULL)
+         )`,
+      [newDim]
+    );
+    // Only promote and clear once every stored vector uses the new dimension.
+    // Promoting before all rows are converted would leave read() in an inconsistent
+    // state: the canonical dim would point at the new model while TEXT-only or
+    // wrong-dim blobs still exist, causing those rows to score silently as 0.
+    if (!residual || residual.cnt === 0) {
       await this.db.runAsync(
         `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension', ?)`,
         [mismatch.value]
@@ -408,15 +446,25 @@ export class WikiMemory {
     try {
       const vector = await embedFn(text);
       // Validate before persisting: an empty or non-finite vector would poison
-      // embedding_dimension and write unusable data to entries.embedding.
+      // embedding_dimension and write unusable data to embedding_blob.
       if (vector.length === 0 || !vector.every(v => typeof v === 'number' && isFinite(v))) {
         console.warn(`[WikiMemory] embedFact: embed() returned an invalid vector for ${fact.id}; skipping.`);
         return false;
       }
-      await this.storeEmbeddingDimension(vector.length);
+      const float32Vector = new Float32Array(vector);
+      let hasNonFinite = false;
+      for (let i = 0; i < float32Vector.length; i++) {
+        if (!isFinite(float32Vector[i])) { hasNonFinite = true; break; }
+      }
+      if (hasNonFinite) {
+        console.warn(`[WikiMemory] embedFact: embed() returned values that overflow float32 for ${fact.id}; skipping.`);
+        return false;
+      }
+      await this.storeEmbeddingDimension(float32Vector.length);
+      const blob = new Uint8Array(float32Vector.buffer);
       await this.db.runAsync(
-        `UPDATE ${this.prefix}entries SET embedding = ? WHERE id = ?`,
-        [JSON.stringify(vector), fact.id]
+        `UPDATE ${this.prefix}entries SET embedding_blob = ?, embedding = NULL WHERE id = ?`,
+        [blob, fact.id]
       );
       return true;
     } catch (err) {
@@ -564,9 +612,19 @@ export class WikiMemory {
   private _pruneKey(entityId: string) { return `${this.prefix}:${entityId}:prune`; }
   private _reembedKey(entityId: string) { return `${this.prefix}:${entityId}:reembed`; }
   private _globalReembedKey() { return `${this.prefix}:reembed`; }
+  private _importKey(entityId: string) { return `${this.prefix}:${entityId}:import`; }
+  private _globalImportKey() { return `${this.prefix}:import`; }
+  private _forgetKey(entityId: string) { return `${this.prefix}:${entityId}:forget`; }
   private _isReembedActive(entityId: string): boolean {
     return this.activeMaintenanceJobs.has(this._reembedKey(entityId))
       || this.activeMaintenanceJobs.has(this._globalReembedKey());
+  }
+  private _isImportActiveFor(entityId: string): boolean {
+    return this.activeMaintenanceJobs.has(this._importKey(entityId))
+      || this.activeMaintenanceJobs.has(this._globalImportKey());
+  }
+  private _isForgetActiveFor(entityId: string): boolean {
+    return this.activeMaintenanceJobs.has(this._forgetKey(entityId));
   }
   /** Returns true if any maintenance job has the given operation suffix (e.g. ':prune'). */
   private _isAnyMaintenanceActiveWithSuffix(suffix: string): boolean {
@@ -600,14 +658,14 @@ export class WikiMemory {
     }
   ): Promise<{ entries: number; tasks: number; events: number }> {
     const pruneKey = this._pruneKey(entityId);
-    // Prune must not run concurrently with librarian, heal, ingest, or another
+    // Prune must not run concurrently with librarian, heal, ingest, import, or another
     // prune for the same entity.
     const ingestPrefix = `${this.prefix}:${entityId}:`;
     let isIngestRunning = false;
     for (const k of this.activeIngestJobs) {
       if (k.startsWith(ingestPrefix)) { isIngestRunning = true; break; }
     }
-    let blockingOperation: 'prune' | 'librarian' | 'heal' | 'ingest' | 'reembed' | null = null;
+    let blockingOperation: 'prune' | 'librarian' | 'heal' | 'ingest' | 'reembed' | 'import' | 'forget' | null = null;
     if (this.activeMaintenanceJobs.has(pruneKey)) {
       blockingOperation = 'prune';
     } else if (this.activeMaintenanceJobs.has(this._librarianKey(entityId))) {
@@ -618,6 +676,10 @@ export class WikiMemory {
       blockingOperation = 'reembed';
     } else if (isIngestRunning) {
       blockingOperation = 'ingest';
+    } else if (this._isImportActiveFor(entityId)) {
+      blockingOperation = 'import';
+    } else if (this._isForgetActiveFor(entityId)) {
+      blockingOperation = 'forget';
     }
     if (blockingOperation !== null) {
       throw new WikiBusyError(blockingOperation, entityId);
@@ -673,25 +735,46 @@ export class WikiMemory {
       }
 
       await this.rebuildMiniSearchIndex(entityId);
+      this.vectorCache.delete(entityId);
       return { entries: deletedEntries, tasks: deletedTasks, events: deletedEvents };
     } finally {
       this.activeMaintenanceJobs.delete(pruneKey);
     }
   }
 
-  async read(entityId: string, query: string): Promise<MemoryBundle> {
-    const maxResults = this.options.config?.maxResults
-      ?? this.options.config?.maxFtsResults
-      ?? 10;
+  async read(entityId: string, query: string, options?: ReadOptions): Promise<MemoryBundle> {
+    const config = this.options.config;
+    const rawMaxResults = options?.maxResults ?? config?.maxResults ?? config?.maxFtsResults ?? 10;
+    const maxResults = Number.isFinite(rawMaxResults)
+      ? Math.max(0, Math.trunc(rawMaxResults))
+      : 10;
+    const rawPreFilterLimit =
+      options?.preFilterLimit === null
+        ? undefined
+        : (options?.preFilterLimit ?? config?.preFilterLimit);
+    const effectivePreFilterLimit =
+      rawPreFilterLimit === undefined
+        ? undefined
+        : Number.isFinite(rawPreFilterLimit)
+          ? Math.max(0, Math.trunc(rawPreFilterLimit))
+          : undefined;
+    const hybridWeight = options?.hybridWeight ?? config?.hybridWeight;
+    const weight = hybridWeight !== undefined && !Number.isNaN(hybridWeight)
+      ? Math.max(0, Math.min(1, hybridWeight))
+      : undefined;
+    const skipEmbed = weight === 0;
     const embedFn = this.options.llmProvider.embed;
     const trimmedQuery = query.trim();
 
     let facts: WikiFact[] = [];
 
-    if (trimmedQuery) {
+    if (maxResults === 0) {
+      // Fast-path: a zero-capacity result window can never return any facts.
+      // Skip embed(), DB scan, and sort — fall through to tasks/events fetch below.
+    } else if (trimmedQuery) {
       let usedEmbed = false;
 
-      if (embedFn) {
+      if (!skipEmbed && embedFn) {
         try {
           const queryVec = await embedFn(trimmedQuery);
 
@@ -721,65 +804,177 @@ export class WikiMemory {
             }
           }
 
-          // Phase 1: fetch only scoring columns to avoid loading large body/tags for all rows
-          const scoreRows = await this.db.getAllAsync<{
-            id: string;
-            embedding: string | null;
-            updated_at: number | null;
-            access_count: number | null;
-          }>(
-            `SELECT id, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
-            [entityId]
+          // Check whether any non-deleted fact for this entity has a blob whose
+          // dimension differs from the query vector. A global meta flag would block
+          // all entities when only one was imported with a mismatched model, so we
+          // do a direct per-entity SQL count here instead.
+          const mismatchedCount = await this.db.getFirstAsync<{ cnt: number }>(
+            `SELECT COUNT(*) AS cnt FROM ${this.prefix}entries
+             WHERE entity_id = ? AND deleted_at IS NULL
+               AND embedding_blob IS NOT NULL
+               AND (CAST(length(embedding_blob) AS INTEGER) % 4 = 0)
+               AND (CAST(length(embedding_blob) AS INTEGER) / 4) != ?`,
+            [entityId, queryVec.length]
           );
-          const scored = scoreRows.map(row => {
-            let score = 0;
-            if (row.embedding) {
-              try {
-                const parsed: unknown = JSON.parse(row.embedding);
-                if (
-                  Array.isArray(parsed) &&
-                  parsed.length === queryVec.length &&
-                  (parsed as number[]).every(v => typeof v === 'number' && isFinite(v))
-                ) {
-                  score = cosineSimilarity(queryVec, parsed as number[]);
+          if (mismatchedCount && mismatchedCount.cnt > 0) {
+            throw new Error(
+              `Some facts have embeddings that do not match the current model dimension. ` +
+              `Call runReembed() to rebuild all embeddings consistently.`
+            );
+          }
+
+          // Determine candidate rows
+          type ScoreRow = { id: string; embedding_blob: Uint8Array | null; embedding: string | null; updated_at: number | null; access_count: number | null };
+          let candidateRows: ScoreRow[] | null; // null = pre-filter returned 0 results
+          let populateCache = true;
+          let miniSearchScores: Map<string, number> | undefined;
+
+          if (effectivePreFilterLimit !== undefined) {
+            populateCache = false; // partial scan — do not populate cache
+            const preResults = this.miniSearch.search(trimmedQuery, {
+              filter: (r) => (r as unknown as { entity_id: string }).entity_id === entityId,
+              combineWith: 'OR',
+            });
+            if (preResults.length === 0) {
+              candidateRows = null; // empty pre-filter
+            } else {
+              const topKResults = preResults.slice(0, effectivePreFilterLimit);
+              if (topKResults.length === 0) {
+                // effectivePreFilterLimit is 0 — treat the same as no candidates
+                // (avoids constructing an invalid "WHERE id IN ()" SQL clause)
+                candidateRows = null;
+              } else {
+                const topKIds = topKResults.map(r => r.id);
+                const inClauseChunkSize = 500;
+                candidateRows = [];
+                for (let i = 0; i < topKIds.length; i += inClauseChunkSize) {
+                  const idChunk = topKIds.slice(i, i + inClauseChunkSize);
+                  const placeholders = idChunk.map(() => '?').join(',');
+                  const chunkRows = await this.db.getAllAsync<ScoreRow>(
+                    `SELECT id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+                    idChunk
+                  );
+                  candidateRows.push(...chunkRows);
                 }
-                // non-array, wrong length, or non-finite values → score stays 0
-              } catch {
-                // corrupt JSON — treat as score 0
+                if (weight !== undefined && weight < 1) {
+                  const maxMsScore = Math.max(1, topKResults[0]?.score ?? 1);
+                  miniSearchScores = new Map(topKResults.map(r => [r.id, r.score / maxMsScore]));
+                }
               }
             }
-            return { row, score };
-          });
-          scored.sort((a, b) => {
-            const scoreDiff = b.score - a.score;
-            if (scoreDiff !== 0) {
-              return scoreDiff;
-            }
-
-            const updatedAtDiff = (b.row.updated_at ?? 0) - (a.row.updated_at ?? 0);
-            if (updatedAtDiff !== 0) {
-              return updatedAtDiff;
-            }
-
-            const accessCountDiff = (b.row.access_count ?? 0) - (a.row.access_count ?? 0);
-            if (accessCountDiff !== 0) {
-              return accessCountDiff;
-            }
-
-            return a.row.id.localeCompare(b.row.id);
-          });
-          // Phase 2: fetch full rows only for the top results
-          const topIds = scored.slice(0, maxResults).map(s => s.row.id);
-          if (topIds.length > 0) {
-            const placeholders = topIds.map(() => '?').join(',');
-            const fullRows = await this.db.getAllAsync<WikiFact & { embedding: string | null }>(
-              `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
-              topIds
+          } else {
+            // Full entity scan
+            candidateRows = await this.db.getAllAsync<ScoreRow>(
+              `SELECT id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
+              [entityId]
             );
-            const byId = new Map(fullRows.map(r => [r.id, r]));
-            facts = topIds.map(id => byId.get(id)).filter((f): f is WikiFact & { embedding: string | null } => f !== undefined);
+            // Collect MiniSearch scores for hybrid blend if weight is set and <1 (weight=1 means pure semantic)
+            if (weight !== undefined && weight < 1) {
+              const msResults = this.miniSearch.search(trimmedQuery, {
+                filter: (r) => (r as unknown as { entity_id: string }).entity_id === entityId,
+                combineWith: 'OR',
+              });
+              const maxMsScore = Math.max(1, msResults[0]?.score ?? 1);
+              miniSearchScores = new Map(msResults.map(r => [r.id, r.score / maxMsScore]));
+            }
           }
-          usedEmbed = true;
+
+          if (candidateRows === null) {
+            // pre-filter returned 0 candidates — facts = [], skip phase 2, skip access tracking
+            usedEmbed = true;
+          } else {
+            // Cache: reuse parsed vectors from prior full-scan reads
+            let entityCache = this.vectorCache.get(entityId);
+            // Evict only when a full-scan read discovers the entity has grown past
+            // the size cap, so the stale oversized Map can't accumulate unbounded
+            // vectors by reference. Pre-filter reads (populateCache=false) reuse
+            // the existing cache and must not evict it.
+            const tooLarge = populateCache && candidateRows.length > WikiMemory.MAX_VECTOR_CACHE_FACTS_PER_ENTITY;
+            if (tooLarge && entityCache) {
+              this.vectorCache.delete(entityId);
+              entityCache = undefined;
+            }
+            const canCache = populateCache && !tooLarge;
+            if (canCache && !entityCache) {
+              entityCache = new Map<string, Float32Array>();
+            }
+
+            const scored = candidateRows.map(row => {
+              let vector = entityCache?.get(row.id) ?? parseEmbedding(row.embedding_blob, row.embedding);
+              if (vector && canCache && entityCache && !entityCache.has(row.id)) {
+                entityCache.set(row.id, vector);
+              }
+              let score = 0;
+              if (vector && vector.length === queryVec.length) {
+                const cosSim = cosineSimilarity(queryVec, vector);
+                if (weight !== undefined) {
+                  // Clamp to [0,1] only for hybrid blending so the weighted sum stays
+                  // in a predictable range. Pure-semantic ranking preserves the full
+                  // [-1,1] cosine range so the least-dissimilar facts always rank above
+                  // unembedded rows (which score 0) even when all scores are negative.
+                  const kwScore = miniSearchScores?.get(row.id) ?? 0;
+                  score = weight * Math.max(0, cosSim) + (1 - weight) * kwScore;
+                } else {
+                  score = cosSim;
+                }
+              } else if (weight !== undefined && weight < 1) {
+                // No usable embedding — still apply the keyword portion of the hybrid score.
+                // miniSearchScores is always defined here because both code paths above
+                // populate it whenever weight !== undefined && weight < 1, matching this guard.
+                const kwScore = miniSearchScores?.get(row.id) ?? 0;
+                score = (1 - weight) * kwScore;
+              } else {
+                // Pure-semantic path with no usable vector. Use -2 (below the minimum
+                // valid cosine of -1) so embedded facts always rank above unembedded rows
+                // even when every cosine score is negative.
+                score = -2;
+              }
+              return { row, score };
+            });
+
+            if (canCache && entityCache && entityCache.size > 0) {
+              if (!this.vectorCache.has(entityId)) {
+                // Evict the oldest entity when at the per-process cap to prevent unbounded growth
+                // on long-lived instances serving many distinct entities.
+                // Only store non-empty maps: caching an empty map for a zero-fact entity
+                // wastes one of the 16 entity slots and can evict a real cached entity.
+                if (this.vectorCache.size >= WikiMemory.MAX_VECTOR_CACHE_ENTITIES) {
+                  const oldestKey = this.vectorCache.keys().next().value as string | undefined;
+                  if (oldestKey !== undefined) this.vectorCache.delete(oldestKey);
+                }
+                this.vectorCache.set(entityId, entityCache);
+              }
+            }
+
+            scored.sort((a, b) => {
+              const scoreDiff = b.score - a.score;
+              if (scoreDiff !== 0) return scoreDiff;
+              const accessCountDiff = (b.row.access_count ?? 0) - (a.row.access_count ?? 0);
+              if (accessCountDiff !== 0) return accessCountDiff;
+              const updatedAtDiff = (b.row.updated_at ?? 0) - (a.row.updated_at ?? 0);
+              if (updatedAtDiff !== 0) return updatedAtDiff;
+              return a.row.id.localeCompare(b.row.id);
+            });
+
+            // Phase 2: fetch full rows only for the top results
+            const topIds = scored.slice(0, maxResults).map(s => s.row.id);
+            if (topIds.length > 0) {
+              const fullRows: Array<WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null }> = [];
+              const phase2ChunkSize = 500;
+              for (let i = 0; i < topIds.length; i += phase2ChunkSize) {
+                const idChunk = topIds.slice(i, i + phase2ChunkSize);
+                const placeholders = idChunk.map(() => '?').join(',');
+                const chunkRows = await this.db.getAllAsync<WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null }>(
+                  `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+                  idChunk
+                );
+                fullRows.push(...chunkRows);
+              }
+              const byId = new Map(fullRows.map(r => [r.id, r]));
+              facts = topIds.map(id => byId.get(id)).filter((f): f is WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null } => f !== undefined);
+            }
+            usedEmbed = true;
+          } // closes the candidateRows !== null else block
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
           this.options.onRetrievalFallback?.(error);
@@ -794,26 +989,36 @@ export class WikiMemory {
         });
         const topIds = results.slice(0, maxResults).map((r: { id: string }) => r.id);
         if (topIds.length > 0) {
-          const placeholders = topIds.map(() => '?').join(',');
-          const rows = await this.db.getAllAsync<WikiFact>(
-            `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
-            topIds
-          );
-          const byId = new Map(rows.map(r => [r.id, r]));
+          const kwRows: WikiFact[] = [];
+          const kwChunkSize = 500;
+          for (let i = 0; i < topIds.length; i += kwChunkSize) {
+            const idChunk = topIds.slice(i, i + kwChunkSize);
+            const placeholders = idChunk.map(() => '?').join(',');
+            const chunkRows = await this.db.getAllAsync<WikiFact>(
+              `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+              idChunk
+            );
+            kwRows.push(...chunkRows);
+          }
+          const byId = new Map(kwRows.map(r => [r.id, r]));
           facts = topIds.map(id => byId.get(id)).filter((f): f is WikiFact => f !== undefined);
         }
       }
 
       if (facts.length > 0) {
         const ids = facts.map(f => f.id);
-        const placeholders = ids.map(() => '?').join(',');
         const now = Date.now();
-        await this.db.runAsync(
-          `UPDATE ${this.prefix}entries
-           SET access_count = access_count + 1, last_accessed_at = ?
-           WHERE id IN (${placeholders})`,
-          [now, ...ids]
-        );
+        const accessChunkSize = 500;
+        for (let i = 0; i < ids.length; i += accessChunkSize) {
+          const idChunk = ids.slice(i, i + accessChunkSize);
+          const placeholders = idChunk.map(() => '?').join(',');
+          await this.db.runAsync(
+            `UPDATE ${this.prefix}entries
+             SET access_count = access_count + 1, last_accessed_at = ?
+             WHERE id IN (${placeholders})`,
+            [now, ...idChunk]
+          );
+        }
       }
     } else {
       facts = await this.db.getAllAsync<WikiFact>(
@@ -842,7 +1047,7 @@ export class WikiMemory {
     ]);
 
     const parsedFacts = facts.map(f => {
-      const { embedding: _embedding, ...rest } = f as WikiFact & { embedding?: unknown };
+      const { embedding: _embedding, embedding_blob: _blob, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
       return {
         ...rest,
         tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
@@ -885,7 +1090,10 @@ export class WikiMemory {
       const jobKey = this._librarianKey(entityId);
       if (
         !this.activeMaintenanceJobs.has(jobKey) &&
-        !this.activeMaintenanceJobs.has(this._pruneKey(entityId))
+        !this.activeMaintenanceJobs.has(this._pruneKey(entityId)) &&
+        !this._isReembedActive(entityId) &&
+        !this._isImportActiveFor(entityId) &&
+        !this._isForgetActiveFor(entityId)
       ) {
         this.activeMaintenanceJobs.add(jobKey);
         this.runLibrarianThenMaybeHeal(entityId, count)
@@ -943,7 +1151,7 @@ export class WikiMemory {
     `, [entityId]);
 
     const currentFacts = currentFactsRows.map(f => {
-      const { embedding: _embedding, ...rest } = f as WikiFact & { embedding?: unknown };
+      const { embedding: _embedding, embedding_blob: _blob, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
       return {
         ...rest,
         tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
@@ -1002,10 +1210,17 @@ export class WikiMemory {
       }
     });
 
+    // Rebuild the text index before the (potentially slow) embedding loop so
+    // concurrent reads using MiniSearch (preFilter, keyword fallback) see the
+    // new fact content immediately after the DB transaction commits.
+    await this.rebuildMiniSearchIndex(entityId);
+    this.vectorCache.delete(entityId);
     for (const fact of insertedFacts) {
       await this.embedFact(fact);
     }
-    await this.rebuildMiniSearchIndex(entityId);
+    // Second vector cache flush: a concurrent read() may have repopulated it
+    // during the embed loop; flush so subsequent reads see the new BLOBs.
+    this.vectorCache.delete(entityId);
   }
 
   private async _doRunHeal(entityId: string): Promise<void> {
@@ -1051,7 +1266,7 @@ export class WikiMemory {
       .map(({ id, title, source_ref }) => ({ id, title, source_ref }));
 
     const userPrompt = `Heal Candidates:\n${JSON.stringify(healCandidates.map(f => {
-      const { embedding: _embedding, ...rest } = f as WikiFact & { embedding?: unknown };
+      const { embedding: _embedding, embedding_blob: _blob, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
       return { ...rest, tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags };
     }), null, 2)}
 \nDocument Anchors (DO NOT MODIFY OR DELETE):\n${JSON.stringify(documentAnchors, null, 2)}
@@ -1093,10 +1308,21 @@ export class WikiMemory {
       }
     });
 
+    // Pre-flush: evict stale cached vectors before writing new embeddings so a
+    // concurrent read() during the embed loop doesn't rank deleted/downgraded
+    // facts from the cache. Post-flush below handles vectors repopulated during
+    // the loop.
+    this.vectorCache.delete(entityId);
+    // Rebuild MiniSearch before the embedding loop so concurrent reads using
+    // preFilterLimit, hybrid scoring, or keyword fallback see the new/deleted
+    // facts immediately rather than waiting for every embed call to finish.
+    await this.rebuildMiniSearchIndex(entityId);
     for (const fact of insertedFacts) {
       await this.embedFact(fact);
     }
-    await this.rebuildMiniSearchIndex(entityId);
+    // Post-flush: evict any cache entries a concurrent read() repopulated while
+    // the embedding loop was running.
+    this.vectorCache.delete(entityId);
   }
 
   async runLibrarian(entityId: string): Promise<void> {
@@ -1109,6 +1335,12 @@ export class WikiMemory {
     }
     if (this._isReembedActive(entityId)) {
       throw new WikiBusyError('reembed', entityId);
+    }
+    if (this._isImportActiveFor(entityId)) {
+      throw new WikiBusyError('import', entityId);
+    }
+    if (this._isForgetActiveFor(entityId)) {
+      throw new WikiBusyError('forget', entityId);
     }
     this.activeMaintenanceJobs.add(jobKey);
     try {
@@ -1129,6 +1361,12 @@ export class WikiMemory {
     if (this._isReembedActive(entityId)) {
       throw new WikiBusyError('reembed', entityId);
     }
+    if (this._isImportActiveFor(entityId)) {
+      throw new WikiBusyError('import', entityId);
+    }
+    if (this._isForgetActiveFor(entityId)) {
+      throw new WikiBusyError('forget', entityId);
+    }
     this.activeMaintenanceJobs.add(jobKey);
     try {
       await this._doRunHeal(entityId);
@@ -1137,9 +1375,9 @@ export class WikiMemory {
     }
   }
 
-  async runReembed(entityId?: string): Promise<{ embedded: number; skipped: number }> {
+  async runReembed(entityId?: string, opts?: { force?: boolean; skipExisting?: boolean }): Promise<{ embedded: number; skipped: number; failed: number }> {
     const embedFn = this.options.llmProvider.embed;
-    if (!embedFn) return { embedded: 0, skipped: 0 };
+    if (!embedFn) return { embedded: 0, skipped: 0, failed: 0 };
 
     const reembedKey = entityId ? this._reembedKey(entityId) : this._globalReembedKey();
     if (this.activeMaintenanceJobs.has(reembedKey)) {
@@ -1162,6 +1400,12 @@ export class WikiMemory {
       if (this._isIngestActiveFor(entityId)) {
         throw new WikiBusyError('ingest', entityId);
       }
+      if (this._isImportActiveFor(entityId)) {
+        throw new WikiBusyError('import', entityId);
+      }
+      if (this._isForgetActiveFor(entityId)) {
+        throw new WikiBusyError('forget', entityId);
+      }
     } else {
       // Cross-check: fail if any per-entity reembed is in-flight (global covers all entities)
       if (this._isAnyMaintenanceActiveWithSuffix(':reembed')) {
@@ -1179,6 +1423,12 @@ export class WikiMemory {
       if (this.activeIngestJobs.size > 0) {
         throw new WikiBusyError('ingest', '*');
       }
+      if (this._isAnyMaintenanceActiveWithSuffix(':import')) {
+        throw new WikiBusyError('import', '*');
+      }
+      if (this._isAnyMaintenanceActiveWithSuffix(':forget')) {
+        throw new WikiBusyError('forget', '*');
+      }
     }
     this.activeMaintenanceJobs.add(reembedKey);
 
@@ -1190,19 +1440,104 @@ export class WikiMemory {
         params
       );
 
+      // Invalidate before the embedding loop so any concurrent read() fetches fresh
+      // vectors from the database rather than stale pre-reembed cached ones.
+      if (entityId) {
+        this.vectorCache.delete(entityId);
+      } else {
+        this.vectorCache.clear();
+      }
+
+      // skipExisting is an explicit opt-in for round-trip import scenarios where
+      // the caller knows every blob is already fresh and wants to avoid paying the
+      // full embedding cost again (e.g. after exportDump → importDump on the same
+      // model). By default runReembed() re-embeds every selected fact so that a
+      // model switch always works correctly — a dimension-only probe cannot detect
+      // same-dimension provider changes, so unconditional re-embedding is the only
+      // safe default.
+      // { force: true } is kept as a no-op alias so existing call sites that pass
+      // it explicitly continue to work without change.
+      // skipExisting skips facts that already have a structurally valid BLOB.
+      // WARNING: this is only safe when the caller can guarantee the stored BLOBs
+      // were produced by the *same* embedding model that is currently configured.
+      // It cannot detect same-dimension model/provider switches (e.g. two providers
+      // that both produce 1536-dim vectors). After any provider change, always call
+      // runReembed() without { skipExisting: true } to force full re-embedding.
+      const skipExisting = opts?.skipExisting ?? false;
+      // Never skip when a dimension mismatch is pending: blobs on disk are stale
+      // regardless of what the caller requested.
+      // For per-entity reembed, only disable skipExisting when THIS entity actually
+      // has stale blobs — the global mismatch flag may reflect a different entity's
+      // state and should not force unnecessary re-embedding of entity A's valid blobs.
+      let effectiveSkip = skipExisting;
+      if (skipExisting) {
+        const mismatchRow = await this.db.getFirstAsync<{ value: string }>(
+          `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
+        );
+        if (mismatchRow) {
+          if (entityId) {
+            // Per-entity: check whether this entity has any blobs at the wrong dimension
+            // (i.e., the old canonical dim, not the pending new mismatch dim) or TEXT-only rows.
+            const mismatchDim = parseInt(mismatchRow.value, 10);
+            const staleForEntity = await this.db.getFirstAsync<{ cnt: number }>(
+              `SELECT COUNT(*) AS cnt FROM ${this.prefix}entries
+               WHERE entity_id = ? AND deleted_at IS NULL
+                 AND (
+                   embedding_blob IS NULL
+                   OR (CAST(length(embedding_blob) AS INTEGER) / 4) != ?
+                 )`,
+              [entityId, mismatchDim]
+            );
+            if (staleForEntity && staleForEntity.cnt > 0) effectiveSkip = false;
+          } else {
+            // Global reembed: any pending mismatch means blobs are stale somewhere.
+            effectiveSkip = false;
+          }
+        }
+      }
       let embedded = 0;
       let skipped = 0;
-      for (const row of rows) {
-        const success = await this.embedFact(row);
-        if (success) embedded++;
-        else skipped++;
+      let failed = 0;
+      try {
+        for (const row of rows) {
+          // Skip facts with existing BLOBs only when the caller opts in via
+          // { skipExisting: true } AND no dimension mismatch is active.
+          // The default always re-embeds, ensuring correctness after model switches.
+          // Only skip if the BLOB is structurally valid (non-zero length, divisible
+          // by 4) and contains entirely finite values. A BLOB full of NaN/Infinity
+          // passes the byte-length check but would silently score 0 in read() —
+          // let embedFact() repair it instead of leaving the fact permanently unsearchable.
+          const existingBlob = (row as WikiFact & { embedding_blob?: Uint8Array | null }).embedding_blob;
+          const blobIsValid = !!existingBlob && existingBlob.byteLength > 0 && existingBlob.byteLength % 4 === 0;
+          if (effectiveSkip && blobIsValid) {
+            const vec = parseEmbedding(existingBlob, null);
+            if (vec !== null && vec.every(v => Number.isFinite(v))) {
+              skipped++;
+              continue;
+            }
+          }
+          const success = await this.embedFact(row);
+          if (success) embedded++;
+          else failed++;
+        }
+        // If any fact was successfully re-embedded, promote the pending dimension to
+        // canonical and clear the mismatch flag so read() uses embeddings from here on.
+        if (embedded > 0) {
+          await this._reconcileEmbeddingDimension();
+        }
+      } finally {
+        // Invalidate again after the loop: a concurrent read() might have re-populated
+        // the cache with pre-reembed vectors while the loop was running, so flush any
+        // such stale entries to ensure subsequent reads see the freshly written data,
+        // even if the loop or dimension reconciliation threw.
+        if (entityId) {
+          this.vectorCache.delete(entityId);
+        } else {
+          this.vectorCache.clear();
+        }
       }
-      // If any fact was successfully re-embedded, promote the pending dimension to
-      // canonical and clear the mismatch flag so read() uses embeddings from here on.
-      if (embedded > 0) {
-        await this._reconcileEmbeddingDimension();
-      }
-      return { embedded, skipped };
+
+      return { embedded, skipped, failed };
     } finally {
       this.activeMaintenanceJobs.delete(reembedKey);
     }
@@ -1222,7 +1557,11 @@ export class WikiMemory {
     };
   }
 
-  private async _getFullBundle(entityId: string, opts?: { maxEvents?: number }): Promise<MemoryBundle> {
+  public clearVectorCache(): void {
+    this.vectorCache.clear();
+  }
+
+  private async _getFullBundle(entityId: string, opts?: { maxEvents?: number; includeBlobs?: boolean }): Promise<MemoryBundle> {
     const maxEvents = opts?.maxEvents;
     const eventsQuery = maxEvents != null
       ? `SELECT * FROM ${this.prefix}events WHERE entity_id = ? ORDER BY created_at DESC LIMIT ?`
@@ -1241,10 +1580,24 @@ export class WikiMemory {
       this.db.getAllAsync<WikiEvent>(eventsQuery, eventsParams),
     ]);
     const facts = factsRaw.map(f => {
-      const { embedding: _embedding, ...rest } = f as WikiFact & { embedding?: unknown };
+      // Always strip the legacy text embedding column — never useful to callers.
+      const { embedding: _embedding, embedding_blob, ...rest } =
+        f as WikiFact & { embedding?: unknown; embedding_blob?: Uint8Array };
+      // Include the BLOB only on the export path so importDump() can round-trip
+      // embeddings without re-calling the embed provider. Strip it on the LLM
+      // prompt / formatMemoryDump paths to keep payloads small.
+      // Copy blob bytes before returning: some SQLite drivers (better-sqlite3)
+      // back Buffer objects with pooled native memory that can be reused by a
+      // subsequent query, silently corrupting the already-returned MemoryDump.
+      const safeBlobCopy = opts?.includeBlobs && embedding_blob
+        ? (() => { const c = new ArrayBuffer(embedding_blob.byteLength); new Uint8Array(c).set(embedding_blob); return new Uint8Array(c); })()
+        : undefined;
+      const factBase = safeBlobCopy
+        ? { ...rest, embedding_blob: safeBlobCopy }
+        : rest;
       return {
-        ...rest,
-        tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
+        ...factBase,
+        tags: typeof factBase.tags === 'string' ? JSON.parse(factBase.tags) : factBase.tags,
       };
     });
     // When limited, results arrive newest-first; reverse to chronological order.
@@ -1275,7 +1628,7 @@ export class WikiMemory {
     for (let i = 0; i < ids.length; i += BATCH) {
       const batch = ids.slice(i, i + BATCH);
       const batchResults = await Promise.all(
-        batch.map(async (id): Promise<[string, MemoryBundle]> => [id, await this._getFullBundle(id)])
+        batch.map(async (id): Promise<[string, MemoryBundle]> => [id, await this._getFullBundle(id, { includeBlobs: true })])
       );
       for (const [id, bundle] of batchResults) {
         entities[id] = bundle;
@@ -1287,8 +1640,75 @@ export class WikiMemory {
 
   async importDump(dump: MemoryDump, opts?: { merge?: boolean }): Promise<void> {
     const merge = opts?.merge ?? false;
+    const entityIds = Object.keys(dump.entities);
 
-    for (const [entityId, bundle] of Object.entries(dump.entities)) {
+    // Pre-validate all locks before writing anything. This makes the operation
+    // atomic with respect to busy-error rejection: either every entity passes the
+    // lock check and we proceed, or we reject before mutating any entity.
+    // Per-entity checks first: surface the specific conflicting entity in the error.
+    for (const entityId of entityIds) {
+      if (this.activeMaintenanceJobs.has(this._importKey(entityId))) {
+        throw new WikiBusyError('import', entityId);
+      }
+      if (this.activeMaintenanceJobs.has(this._librarianKey(entityId))) {
+        throw new WikiBusyError('librarian', entityId);
+      }
+      if (this.activeMaintenanceJobs.has(this._healKey(entityId))) {
+        throw new WikiBusyError('heal', entityId);
+      }
+      if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
+        throw new WikiBusyError('prune', entityId);
+      }
+      if (this._isReembedActive(entityId)) {
+        throw new WikiBusyError('reembed', entityId);
+      }
+      if (this._isIngestActiveFor(entityId)) {
+        throw new WikiBusyError('ingest', entityId);
+      }
+      if (this._isForgetActiveFor(entityId)) {
+        throw new WikiBusyError('forget', entityId);
+      }
+    }
+    // Global import lock check after per-entity checks: serializes concurrent
+    // importDump() calls for *different* entities so they cannot race on the shared
+    // embedding_dimension / embedding_dimension_mismatch meta keys.
+    if (this.activeMaintenanceJobs.has(this._globalImportKey())) {
+      throw new WikiBusyError('import', '*');
+    }
+
+    // All clear — acquire global + per-entity import locks, then process each entity.
+    this.activeMaintenanceJobs.add(this._globalImportKey());
+    for (const entityId of entityIds) {
+      this.activeMaintenanceJobs.add(this._importKey(entityId));
+    }
+    try {
+      for (const [entityId, bundle] of Object.entries(dump.entities)) {
+        await this._doImportEntity(entityId, bundle, merge);
+      }
+    } finally {
+      this.activeMaintenanceJobs.delete(this._globalImportKey());
+      for (const entityId of entityIds) {
+        this.activeMaintenanceJobs.delete(this._importKey(entityId));
+      }
+    }
+  }
+
+  private async _doImportEntity(entityId: string, bundle: MemoryBundle, merge: boolean): Promise<void> {
+      // Track which fact IDs were actually inserted/updated inside the transaction.
+      // Skipped rows (cross-entity collisions or merge LWW losers) must not be
+      // re-embedded — doing so would corrupt the winning row's vector with the
+      // losing fact's title/body.
+      const upsertedFactIds = new Set<string>();
+      // Track which upserted facts already carry a valid BLOB so we can skip
+      // embedFact() for them. BLOBs are reconstructed from three serialization
+      // forms: in-memory Uint8Array/Buffer, Node.js Buffer JSON shape, and
+      // numeric-keyed plain objects produced by JSON.stringify(Uint8Array).
+      const factsWithPreservedBlob = new Set<string>();
+      // Track every unique dimension seen in preserved BLOBs. A dump may contain
+      // blobs from multiple models (e.g. an intermediate mixed-model migration),
+      // so we call storeEmbeddingDimension() for each unique dimension found to
+      // ensure the mismatch flag is set whenever any two stored blobs disagree.
+      const preservedBlobDims = new Set<number>();
       await this.db.withTransactionAsync(async () => {
         if (!merge) {
           const now = Date.now();
@@ -1328,6 +1748,72 @@ export class WikiMemory {
           // invalid value to the DB and ORDER BY updated_at remains meaningful.
           const safeUpdatedAt = Number.isFinite(fact.updated_at) ? fact.updated_at : 0;
           const existing = existingFactsById.get(fact.id);
+
+          // Extract a valid BLOB from the incoming fact.
+          // Three serialization forms are normalised to Uint8Array:
+          //   1. Real Uint8Array / Buffer (in-memory dump)
+          //   2. Node.js Buffer JSON shape { type:'Buffer', data:[...] }
+          //      (produced by JSON.stringify(buffer))
+          //   3. Numeric-keyed plain object {0:byte, 1:byte, ...}
+          //      (produced by JSON.stringify(Uint8Array))
+          const rawBlobRaw = (fact as WikiFact & { embedding_blob?: unknown }).embedding_blob;
+          let rawBlob: Uint8Array | null = null;
+          if (rawBlobRaw instanceof Uint8Array) {
+            rawBlob = rawBlobRaw;
+          } else if (
+            rawBlobRaw !== null &&
+            rawBlobRaw !== undefined &&
+            typeof rawBlobRaw === 'object'
+          ) {
+            const obj = rawBlobRaw as Record<string, unknown>;
+            if (obj['type'] === 'Buffer' && Array.isArray(obj['data'])) {
+              // Node.js Buffer serialized via JSON.stringify(buffer)
+              rawBlob = new Uint8Array(obj['data'] as number[]);
+            } else if (!Array.isArray(rawBlobRaw)) {
+              // Numeric-keyed plain object from JSON.stringify(Uint8Array)
+              const entries = Object.keys(obj);
+              if (entries.length > 0 && entries.every(k => /^\d+$/.test(k))) {
+                const len = entries.length;
+                rawBlob = new Uint8Array(len);
+                for (let i = 0; i < len; i++) rawBlob[i] = (obj[String(i)] as number) ?? 0;
+              }
+            }
+          }
+          let blobData: Uint8Array | null = null;
+          if (
+            rawBlob !== null &&
+            rawBlob.byteLength > 0 &&
+            rawBlob.byteLength % 4 === 0
+          ) {
+            // Also validate that every float32 value is finite: a blob with the right
+            // byte length but NaN/Inf values would be preserved, skip embedFact(), and
+            // then be silently dropped by read(), making the fact permanently unsearchable.
+            // Copy into a fresh ArrayBuffer so the Float32Array view is guaranteed to
+            // start at offset 0 of its own buffer. Buffer.slice(0) in Node.js does NOT
+            // copy — it returns a view into the parent buffer, which can have a non-zero
+            // byteOffset and corrupt the Float32Array interpretation.
+            const copy = new ArrayBuffer(rawBlob.byteLength);
+            new Uint8Array(copy).set(rawBlob);
+            const floats = new Float32Array(copy, 0, rawBlob.byteLength / 4);
+            let allFinite = true;
+            for (let i = 0; i < floats.length; i++) {
+              if (!isFinite(floats[i])) { allFinite = false; break; }
+            }
+            if (allFinite) {
+              // Preserve this blob regardless of its dimension. Mixed-dimension
+              // blobs are a real intermediate state during model migration and
+              // silently discarding valid vectors is worse than importing them;
+              // storeEmbeddingDimension() and read()'s mismatch-check handle
+              // the case where stored blobs disagree on size.
+              // Note: same-dimension model changes (e.g. two different providers
+              // that happen to produce 1536-dim vectors) are undetectable here —
+              // there is no model fingerprint in the blob. Callers importing from
+              // a different provider should call runReembed() after importDump()
+              // rather than relying on { skipExisting: true }.
+              blobData = rawBlob;
+            }
+          }
+
           if (existing) {
             if (existing.entity_id !== entityId) {
               this._warnCrossEntityCollision('entry', fact.id, existing.entity_id, entityId);
@@ -1338,18 +1824,47 @@ export class WikiMemory {
               // 0 (epoch) never beats a real timestamp, so invalid incoming rows are skipped.
               if (safeUpdatedAt <= existing.updated_at) continue;
             }
-            // replace mode (or merge LWW winner): update the existing row (restores if soft-deleted)
-            await this.db.runAsync(
-              `UPDATE ${this.prefix}entries SET entity_id = ?, title = ?, body = ?, tags = ?, confidence = ?, source_type = ?, source_hash = ?, source_ref = ?, created_at = ?, updated_at = ?, last_accessed_at = ?, access_count = ?, deleted_at = ? WHERE id = ?`,
-              [entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, fact.id]
-            );
+            if (blobData != null) {
+              // Incoming fact carries a valid BLOB (in-memory dump): persist it directly
+              // and skip embedFact() — no embedding API call required.
+              await this.db.runAsync(
+                `UPDATE ${this.prefix}entries SET entity_id = ?, title = ?, body = ?, tags = ?, confidence = ?, source_type = ?, source_hash = ?, source_ref = ?, created_at = ?, updated_at = ?, last_accessed_at = ?, access_count = ?, deleted_at = ?, embedding_blob = ?, embedding = NULL WHERE id = ?`,
+                [entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, blobData, fact.id]
+              );
+              factsWithPreservedBlob.add(fact.id);
+              // Only track dimensions for live facts: read() and _reconcileEmbeddingDimension()
+              // both filter by deleted_at IS NULL, so a soft-deleted stale blob must not
+              // set embedding_dimension_mismatch and block retrieval on healthy live facts.
+              if (!fact.deleted_at) preservedBlobDims.add(blobData.byteLength / 4);
+            } else {
+              // read() never ranks the new title/body against the old vector;
+              // the post-transaction embedding loop will re-embed.
+              // If embedFact() fails (provider absent or throws), the NULL vector
+              // remains, which is correct: new content with no valid embedding
+              // falls back to keyword-only retrieval.
+              await this.db.runAsync(
+                `UPDATE ${this.prefix}entries SET entity_id = ?, title = ?, body = ?, tags = ?, confidence = ?, source_type = ?, source_hash = ?, source_ref = ?, created_at = ?, updated_at = ?, last_accessed_at = ?, access_count = ?, deleted_at = ?, embedding_blob = NULL, embedding = NULL WHERE id = ?`,
+                [entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, fact.id]
+              );
+            }
             existingFactsById.set(fact.id, { id: fact.id, entity_id: entityId, updated_at: safeUpdatedAt });
+            upsertedFactIds.add(fact.id);
           } else {
-            await this.db.runAsync(
-              `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at]
-            );
+            if (blobData != null) {
+              await this.db.runAsync(
+                `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at, embedding_blob) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, blobData]
+              );
+              factsWithPreservedBlob.add(fact.id);
+              if (!fact.deleted_at) preservedBlobDims.add(blobData.byteLength / 4);
+            } else {
+              await this.db.runAsync(
+                `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at]
+              );
+            }
             existingFactsById.set(fact.id, { id: fact.id, entity_id: entityId, updated_at: safeUpdatedAt });
+            upsertedFactIds.add(fact.id);
           }
         }
 
@@ -1410,9 +1925,23 @@ export class WikiMemory {
           );
         }
       });
-      // Embed non-deleted imported facts so they are immediately searchable.
+      // Invalidate cache before rebuilding the text index so concurrent reads
+      // see consistent data: all use the post-transaction DB state.
+      this.vectorCache.delete(entityId);
+      // Rebuild the MiniSearch index immediately after the transaction commits
+      // so concurrent read() calls using preFilterLimit or hybrid scoring get
+      // the updated text rather than waiting for the (potentially slow) embedding loop.
+      await this.rebuildMiniSearchIndex(entityId);
+      // Embed only facts that were actually inserted/updated in the transaction.
+      // Skipped rows (cross-entity collisions or merge LWW losers) must not be
+      // re-embedded — they were not written and their existing row must not be
+      // overwritten with the incoming fact's content.
+      // Facts with preserved BLOBs (from an in-memory dump) already have valid
+      // embeddings; skip embedFact() for those to avoid redundant API calls.
+      // For facts without a BLOB, the UPDATE/INSERT already left embedding_blob = NULL,
+      // so if embedFact() fails here the row correctly has a NULL vector.
       for (const fact of bundle.facts) {
-        if (!fact.deleted_at) {
+        if (!fact.deleted_at && upsertedFactIds.has(fact.id) && !factsWithPreservedBlob.has(fact.id)) {
           await this.embedFact({
             id: fact.id,
             title: fact.title,
@@ -1421,72 +1950,186 @@ export class WikiMemory {
           });
         }
       }
-    }
+      // If any facts carried preserved BLOBs, record the vector dimension in the
+      // meta table now (embedFact() was skipped for those rows, so it didn't happen
+      // automatically). This ensures read() can detect model-dimension mismatches
+      // after importing into a fresh DB that has never seen an embedding.
+      // However, if the preserved BLOBs have a *different* dimension than the
+      // current canonical dimension, skip bookkeeping entirely. Calling
+      // storeEmbeddingDimension() with the imported dimension would set
+      // embedding_dimension_mismatch, which _reconcileEmbeddingDimension() would
+      // interpret as the target dimension. After runReembed() rewrites everything
+      // to the canonical dimension, the mismatch flag would never clear (all facts
+      // now differ from the old imported dimension, so residual count > 0 forever).
+      // Instead, let runReembed() reconcile all vectors without pre-seeding metadata.
+      try {
+        // Query the current canonical embedding dimension, if any.
+        const canonicalRow = await this.db.getFirstAsync<{ value: string }>(
+          `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension'`
+        );
+        const canonicalDim = canonicalRow ? parseInt(canonicalRow.value, 10) : null;
 
-    await this.rebuildMiniSearchIndex();
+        if (preservedBlobDims.size === 1) {
+          const preservedDim = [...preservedBlobDims][0];
+          if (canonicalDim === null || canonicalDim === preservedDim) {
+            // Fresh DB: record the imported dimension as canonical.
+            // Matching canonical: storeEmbeddingDimension is a no-op for equal dims,
+            // but a stale embedding_dimension_mismatch flag may still be present from
+            // a previous import. Run reconciliation so the flag is cleared if all live
+            // facts now agree on the canonical dimension.
+            await this.storeEmbeddingDimension(preservedDim);
+            // If a stale embedding_dimension_mismatch flag exists from a prior failed
+            // model switch it may target a different dimension. _reconcileEmbeddingDimension()
+            // checks residuals against whatever value the flag holds; a wrong value keeps
+            // the flag stuck even though all imported blobs now match preservedDim.
+            // Overwrite the flag to preservedDim before reconciling so the check is correct.
+            const staleMismatch = await this.db.getFirstAsync<{ value: string }>(
+              `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
+            );
+            if (staleMismatch && parseInt(staleMismatch.value, 10) !== preservedDim) {
+              await this.db.runAsync(
+                `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension_mismatch', ?)`,
+                [String(preservedDim)]
+              );
+            }
+            await this._reconcileEmbeddingDimension();
+          } else {
+            // Imported blobs differ from the canonical model dimension. Set
+            // embedding_dimension_mismatch = canonicalDim so that:
+            //   (a) read() detects the mismatch and falls back to MiniSearch, and
+            //   (b) _reconcileEmbeddingDimension() can clear the flag after
+            //       runReembed() rewrites all blobs to canonicalDim.
+            // Using the imported dim as the mismatch value would deadlock:
+            // after runReembed(), all blobs have canonicalDim ≠ importedDim, so
+            // the residual count never reaches 0 and the flag is never cleared.
+            await this.db.runAsync(
+              `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension_mismatch', ?)`,
+              [String(canonicalDim)]
+            );
+          }
+        } else if (preservedBlobDims.size > 1) {
+          if (canonicalDim === null) {
+            // Fresh import with mixed BLOBs: seed canonical with the smallest imported
+            // dimension, then write embedding_dimension_mismatch = that same canonical
+            // value. Seeding mismatch = canonical (not dim[1]) ensures
+            // _reconcileEmbeddingDimension() can always clear the flag:
+            //   - If runReembed() uses the same dim as canonical: storeEmbeddingDimension
+            //     is a no-op, mismatch stays = canonical, residual = 0 → clears. ✓
+            //   - If runReembed() uses a different dim: storeEmbeddingDimension overwrites
+            //     mismatch = currentDim, residual = 0 after full reembed → clears. ✓
+            // Seeding mismatch = dim[1] instead would deadlock the second case: after
+            // runReembed(), all blobs have currentDim ≠ dim[1] → residual > 0 forever.
+            const sortedPreservedBlobDims = [...preservedBlobDims].sort((a, b) => a - b);
+            await this.storeEmbeddingDimension(sortedPreservedBlobDims[0]);
+            await this.db.runAsync(
+              `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension_mismatch', ?)`,
+              [String(sortedPreservedBlobDims[0])]
+            );
+          } else {
+            // Import into an existing wiki with mixed-dimension blobs. Set
+            // mismatch = canonicalDim so the flag clears correctly after runReembed()
+            // rewrites everything to the canonical model.
+            await this.db.runAsync(
+              `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension_mismatch', ?)`,
+              [String(canonicalDim)]
+            );
+          }
+        }
+      } finally {
+        // Second flush: evict any cache entries a concurrent read() repopulated
+        // from old DB vectors while the embedding loop was running. Runs even if
+        // storeEmbeddingDimension() throws so stale entries cannot survive an error.
+        this.vectorCache.delete(entityId);
+      }
   }
 
   async forget(entityId: string, params: { entryId?: string; taskId?: string; sourceRef?: string; sourceHash?: string; clearAll?: boolean }): Promise<{ deleted: { entries: number; tasks: number } }> {
-    const now = Date.now();
-    let deletedEntries = 0;
-    let deletedTasks = 0;
-
-    if (params.clearAll) {
-      const [entriesRes, tasksRes] = await Promise.all([
-        this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
-        this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
-      ]);
-      await this.db.runAsync(`UPDATE ${this.prefix}checkpoints SET memory_checkpoint = 0, heal_checkpoint = 0 WHERE entity_id = ?`, [entityId]);
-      deletedEntries = entriesRes.changes;
-      deletedTasks = tasksRes.changes;
-    } else {
-      const hasIdSelectors = params.entryId !== undefined || params.taskId !== undefined;
-      const hasSourceSelectors = params.sourceRef !== undefined || params.sourceHash !== undefined;
-      if (hasIdSelectors && hasSourceSelectors) {
-        throw new Error('forget() params are mutually exclusive: use entryId/taskId together, or sourceRef/sourceHash together, but not both in the same call');
-      }
-
-      const sourceRef = params.sourceRef !== undefined ? normalizeSourceRef(params.sourceRef) : null;
-      if (params.sourceRef !== undefined && !sourceRef) throw new Error('Invalid sourceRef');
-      const sourceHash = params.sourceHash !== undefined ? normalizeSourceHash(params.sourceHash) : null;
-      if (params.sourceHash !== undefined && !sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
-
-      const entryPromise = params.entryId
-        ? this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, params.entryId, entityId])
-        : null;
-
-      const taskPromise = params.taskId
-        ? this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, params.taskId, entityId])
-        : null;
-
-      let refPromise: Promise<{ changes: number; lastInsertRowId: number }> | null = null;
-      if (sourceRef || sourceHash) {
-        let q = `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`;
-        const args: any[] = [now, now, entityId];
-        if (sourceRef) {
-          q += ` AND source_ref = ?`;
-          args.push(sourceRef);
-        }
-        if (sourceHash) {
-          q += ` AND source_hash = ?`;
-          args.push(sourceHash);
-        }
-        refPromise = this.db.runAsync(q, args);
-      }
-
-      const [entryResult, taskResult, refResult] = await Promise.all([
-        entryPromise ?? Promise.resolve(null),
-        taskPromise ?? Promise.resolve(null),
-        refPromise ?? Promise.resolve(null),
-      ]);
-
-      if (entryResult) deletedEntries += entryResult.changes;
-      if (taskResult) deletedTasks += taskResult.changes;
-      if (refResult) deletedEntries += refResult.changes;
+    let blockingOperation: "librarian" | "heal" | "prune" | "reembed" | "ingest" | "forget" | "import" | null = null;
+    if (this.activeMaintenanceJobs.has(this._librarianKey(entityId))) {
+      blockingOperation = 'librarian';
+    } else if (this.activeMaintenanceJobs.has(this._healKey(entityId))) {
+      blockingOperation = 'heal';
+    } else if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
+      blockingOperation = 'prune';
+    } else if (this._isReembedActive(entityId)) {
+      blockingOperation = 'reembed';
+    } else if (this._isIngestActiveFor(entityId)) {
+      blockingOperation = 'ingest';
+    } else if (this._isImportActiveFor(entityId)) {
+      blockingOperation = 'import';
+    } else if (this._isForgetActiveFor(entityId)) {
+      blockingOperation = 'forget';
     }
+    if (blockingOperation !== null) {
+      throw new WikiBusyError(blockingOperation, entityId);
+    }
+    const forgetKey = this._forgetKey(entityId);
+    this.activeMaintenanceJobs.add(forgetKey);
+    try {
+      const now = Date.now();
+      let deletedEntries = 0;
+      let deletedTasks = 0;
 
-    await this.rebuildMiniSearchIndex(entityId);
-    return { deleted: { entries: deletedEntries, tasks: deletedTasks } };
+      if (params.clearAll) {
+        const [entriesRes, tasksRes] = await Promise.all([
+          this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
+          this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
+        ]);
+        await this.db.runAsync(`UPDATE ${this.prefix}checkpoints SET memory_checkpoint = 0, heal_checkpoint = 0 WHERE entity_id = ?`, [entityId]);
+        deletedEntries = entriesRes.changes;
+        deletedTasks = tasksRes.changes;
+      } else {
+        const hasIdSelectors = params.entryId !== undefined || params.taskId !== undefined;
+        const hasSourceSelectors = params.sourceRef !== undefined || params.sourceHash !== undefined;
+        if (hasIdSelectors && hasSourceSelectors) {
+          throw new Error('forget() params are mutually exclusive: use entryId/taskId together, or sourceRef/sourceHash together, but not both in the same call');
+        }
+
+        const sourceRef = params.sourceRef !== undefined ? normalizeSourceRef(params.sourceRef) : null;
+        if (params.sourceRef !== undefined && !sourceRef) throw new Error('Invalid sourceRef');
+        const sourceHash = params.sourceHash !== undefined ? normalizeSourceHash(params.sourceHash) : null;
+        if (params.sourceHash !== undefined && !sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
+
+        const entryPromise = params.entryId
+          ? this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, params.entryId, entityId])
+          : null;
+
+        const taskPromise = params.taskId
+          ? this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, params.taskId, entityId])
+          : null;
+
+        let refPromise: Promise<{ changes: number; lastInsertRowId: number }> | null = null;
+        if (sourceRef || sourceHash) {
+          let q = `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`;
+          const args: any[] = [now, now, entityId];
+          if (sourceRef) {
+            q += ` AND source_ref = ?`;
+            args.push(sourceRef);
+          }
+          if (sourceHash) {
+            q += ` AND source_hash = ?`;
+            args.push(sourceHash);
+          }
+          refPromise = this.db.runAsync(q, args);
+        }
+
+        const [entryResult, taskResult, refResult] = await Promise.all([
+          entryPromise ?? Promise.resolve(null),
+          taskPromise ?? Promise.resolve(null),
+          refPromise ?? Promise.resolve(null),
+        ]);
+
+        if (entryResult) deletedEntries += entryResult.changes;
+        if (taskResult) deletedTasks += taskResult.changes;
+        if (refResult) deletedEntries += refResult.changes;
+      }
+
+      await this.rebuildMiniSearchIndex(entityId);
+      this.vectorCache.delete(entityId);
+      return { deleted: { entries: deletedEntries, tasks: deletedTasks } };
+    } finally {
+      this.activeMaintenanceJobs.delete(forgetKey);
+    }
   }
 
   async ingestDocument(entityId: string, params: { sourceRef: string; sourceHash: string; documentChunk: string; maxChunkLength?: number; chunkOverlap?: number; chunkConcurrency?: number }): Promise<{ truncated: boolean; chunks: number }> {
@@ -1519,6 +2162,12 @@ export class WikiMemory {
     }
     if (this._isReembedActive(entityId)) {
       throw new WikiBusyError('reembed', entityId);
+    }
+    if (this._isImportActiveFor(entityId)) {
+      throw new WikiBusyError('import', entityId);
+    }
+    if (this._isForgetActiveFor(entityId)) {
+      throw new WikiBusyError('forget', entityId);
     }
     this.activeIngestJobs.add(jobKey);
 
@@ -1577,10 +2226,14 @@ export class WikiMemory {
         }
       });
 
+      // Rebuild text index before embedding so concurrent reads see new content.
+      await this.rebuildMiniSearchIndex(entityId);
+      this.vectorCache.delete(entityId);
       for (const fact of insertedFacts) {
         await this.embedFact(fact);
       }
-      await this.rebuildMiniSearchIndex(entityId);
+      // Second flush after embed loop in case a concurrent read() repopulated cache.
+      this.vectorCache.delete(entityId);
 
       return { truncated, chunks: chunks.length };
     } finally {

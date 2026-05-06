@@ -9,6 +9,7 @@ import { useWikiIngest } from '../src/useWikiIngest';
 import { useWikiForget } from '../src/useWikiForget';
 import { useWikiExport } from '../src/useWikiExport';
 import { useWikiHasChanged } from '../src/useWikiHasChanged';
+import type { ReadOptions } from '@equationalapplications/core-llm-wiki';
 
 /** Minimal mock of WikiMemory — uses the real MemoryBundle shape ({ facts, tasks, events }) */
 function makeMockWiki() {
@@ -22,6 +23,7 @@ function makeMockWiki() {
     runLibrarian: vi.fn().mockResolvedValue(undefined),
     runHeal: vi.fn().mockResolvedValue(undefined),
     runPrune: vi.fn().mockResolvedValue({ entries: 0, tasks: 0, events: 0 }),
+    runReembed: vi.fn().mockResolvedValue({ embedded: 0, skipped: 0, failed: 0 }),
   };
 }
 
@@ -74,7 +76,7 @@ describe('useMemoryRead', () => {
 
     await waitFor(() => expect(result.current.isPending).toBe(false));
 
-    expect(wiki.read).toHaveBeenCalledWith('user-1', 'preferences');
+    expect(wiki.read).toHaveBeenCalledWith('user-1', 'preferences', undefined);
     expect(result.current.data).toEqual({ facts: [], tasks: [], events: [] });
     expect(result.current.error).toBeNull();
   });
@@ -92,7 +94,7 @@ describe('useMemoryRead', () => {
     await waitFor(() => expect(result.current.isPending).toBe(false));
 
     expect(wiki.read).toHaveBeenCalledTimes(2);
-    expect(wiki.read).toHaveBeenLastCalledWith('user-2', 'q');
+    expect(wiki.read).toHaveBeenLastCalledWith('user-2', 'q', undefined);
   });
 
   it('exposes error and sets error state when wiki.read rejects', async () => {
@@ -123,6 +125,128 @@ describe('useMemoryRead', () => {
     await waitFor(() => expect(result.current.isPending).toBe(false));
 
     expect(wiki.read).toHaveBeenCalledTimes(2);
+  });
+
+  it('forwards ReadOptions to wiki.read', async () => {
+    const { result } = renderHook(
+      () => useMemoryRead('user-1', 'preferences', { maxResults: 5, preFilterLimit: 20 }),
+      { wrapper: wrapper(wiki) }
+    );
+
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+
+    expect(wiki.read).toHaveBeenCalledWith('user-1', 'preferences', { maxResults: 5, preFilterLimit: 20 });
+  });
+
+  it('uses the latest options via ref on refetch()', async () => {
+    let opts: { maxResults: number } | undefined = { maxResults: 3 };
+    const { result, rerender } = renderHook(
+      () => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki) }
+    );
+
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+
+    // Update options and trigger a rerender so the ref is updated, then refetch
+    opts = { maxResults: 7 };
+    rerender();
+    act(() => { result.current.refetch(); });
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+
+    // The last call should use the updated options captured via the ref
+    expect(wiki.read).toHaveBeenLastCalledWith('user-1', 'q', { maxResults: 7 });
+  });
+
+  it('does not re-fetch when only the options reference changes on re-render', async () => {
+    const { rerender } = renderHook(
+      ({ opts }: { opts: { maxResults: number } }) => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki), initialProps: { opts: { maxResults: 3 } } }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    // Re-render with a new options object reference but the same logical values.
+    // Serialized options are unchanged so no extra wiki.read() should be triggered.
+    rerender({ opts: { maxResults: 3 } });
+    // Drain any pending microtasks / state updates before asserting no extra call.
+    await act(async () => {});
+    expect(wiki.read).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not re-fetch when options keys are in a different insertion order but values are identical', async () => {
+    type MultiOpts = { maxResults: number; hybridWeight: number };
+    const { rerender } = renderHook(
+      ({ opts }: { opts: MultiOpts }) => useMemoryRead('user-1', 'q', opts as ReadOptions),
+      {
+        wrapper: wrapper(wiki),
+        initialProps: { opts: { maxResults: 3, hybridWeight: 0.5 } as MultiOpts },
+      }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    // Re-render with keys in a different insertion order but same logical content.
+    // Sorted-key serialization must produce the same string → no extra refetch.
+    rerender({ opts: { hybridWeight: 0.5, maxResults: 3 } as MultiOpts });
+    await act(async () => {});
+    expect(wiki.read).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-fetches automatically when options values change', async () => {
+    const { rerender } = renderHook(
+      ({ opts }: { opts: { maxResults: number } }) => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki), initialProps: { opts: { maxResults: 3 } } }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    // Re-render with different option values — serialized options differ so an
+    // automatic refetch should fire without the caller invoking refetch() manually.
+    rerender({ opts: { maxResults: 7 } });
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(2));
+    expect(wiki.read).toHaveBeenLastCalledWith('user-1', 'q', { maxResults: 7 });
+  });
+
+  it('re-fetches when maxResults changes from finite to NaN (read() normalizes NaN to 10, not config value)', async () => {
+    const { rerender } = renderHook(
+      ({ opts }: { opts: ReadOptions }) => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki), initialProps: { opts: {} } }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    // NaN overrides config (read() hard-codes fallback to 10 for non-finite maxResults)
+    // so changing from {} to { maxResults: NaN } is a behavioral difference that must trigger a refetch.
+    rerender({ opts: { maxResults: NaN } });
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(2));
+  });
+
+  it('re-fetches when hybridWeight changes from undefined to NaN (NaN disables config-level hybrid weight)', async () => {
+    const { rerender } = renderHook(
+      ({ opts }: { opts: ReadOptions }) => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki), initialProps: { opts: {} } }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    // hybridWeight: NaN bypasses config.hybridWeight (NaN is not null/undefined so ?? doesn't fire).
+    // Changing from {} to { hybridWeight: NaN } must therefore trigger a refetch.
+    rerender({ opts: { hybridWeight: NaN } });
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(2));
+  });
+
+  it('re-fetches when preFilterLimit changes from undefined to Infinity (Infinity disables config-level limit)', async () => {
+    const { rerender } = renderHook(
+      ({ opts }: { opts: ReadOptions }) => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki), initialProps: { opts: {} } }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    // preFilterLimit: Infinity disables the config-level limit (same effective result as null)
+    // whereas undefined defers to config — these are different behaviors, must trigger refetch.
+    rerender({ opts: { preFilterLimit: Infinity } });
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(2));
   });
 });
 
@@ -234,6 +358,43 @@ describe('useWikiMaintenance', () => {
 
     expect(pruneResult).toEqual({ entries: 3, tasks: 1, events: 2 });
     expect(result.current.lastResult).toEqual({ operation: 'prune', result: { entries: 3, tasks: 1, events: 2 } });
+  });
+
+  it('runReembed returns embedded/skipped counts and clears lastResult', async () => {
+    // First run a prune to set a non-null lastResult
+    wiki.runPrune.mockResolvedValue({ entries: 1, tasks: 0, events: 0 });
+    wiki.runReembed.mockResolvedValue({ embedded: 5, skipped: 2, failed: 3 });
+    const { result } = renderHook(() => useWikiMaintenance(), { wrapper: wrapper(wiki) });
+
+    await act(async () => { await result.current.runPrune('user-1'); });
+    expect(result.current.lastResult?.operation).toBe('prune');
+
+    let reembedResult!: { embedded: number; skipped: number; failed: number };
+    await act(async () => { reembedResult = await result.current.runReembed('user-1'); });
+
+    expect(wiki.runReembed).toHaveBeenCalledWith('user-1', undefined);
+    expect(reembedResult).toEqual({ embedded: 5, skipped: 2, failed: 3 });
+    // runReembed clears lastResult at start so stale librarian/heal/prune
+    // results do not remain visible while reembed is pending or after it completes.
+    // It is intentionally excluded from the MaintenanceResult union to avoid a
+    // source-breaking change for consumers that exhaustively switch on lastResult.operation.
+    expect(result.current.lastResult).toBeNull();
+    expect(result.current.isPending).toBe(false);
+  });
+
+  it('sets error state and re-throws when runReembed rejects', async () => {
+    const boom = new Error('reembed failed');
+    wiki.runReembed.mockRejectedValue(boom);
+    const { result } = renderHook(() => useWikiMaintenance(), { wrapper: wrapper(wiki) });
+
+    let caught: unknown;
+    await act(async () => {
+      try { await result.current.runReembed('user-1'); } catch (e) { caught = e; }
+    });
+
+    expect(caught).toBe(boom);
+    expect(result.current.error).toBe(boom);
+    expect(result.current.isPending).toBe(false);
   });
 
   it('sets error state and re-throws when runLibrarian rejects', async () => {

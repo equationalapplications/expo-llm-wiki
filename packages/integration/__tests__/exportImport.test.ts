@@ -272,10 +272,8 @@ describe('exportImport — Scenario 2: merge collision, newer updated_at wins', 
   });
 });
 
-// NOTE: Requires feat/retrieval-tuning to be merged (embedding_blob in exportDump).
-// Remove .skip after that PR is merged and this branch is rebased.
-describe.skip('exportImport — Scenario 3: embedding BLOB survives roundtrip', () => {
-  it('runReembed after import reports embedded:0, skipped:N', async () => {
+describe('exportImport — Scenario 3: embedding BLOB survives roundtrip', () => {
+  it('runReembed after import skips facts whose BLOBs were preserved through exportDump/importDump', async () => {
     const embed = async (text: string) => keywordEmbed(text);
     const llm = stubLLM();
     const dbA = openTestDatabase();
@@ -287,16 +285,23 @@ describe.skip('exportImport — Scenario 3: embedding BLOB survives roundtrip', 
         { id: 'f2', title: 'car vehicle', body: 'fast' },
       ])
     );
-    const { embedded } = await wikiA.runReembed('user-1');
-    expect(embedded).toBe(2);
+    // runReembed re-embeds f1 and f2 (default always re-embeds; no { force } needed).
+    const resA = await wikiA.runReembed('user-1');
+    expect(resA.embedded).toBe(2);
+    expect(resA.skipped).toBe(0);
 
+    // exportDump now includes embedding_blob in each fact, so the dump carries vectors.
     const dump = await wikiA.exportDump();
     const dbB = openTestDatabase();
     const wikiB = new WikiMemory(dbB, { llmProvider: { ...llm, embed } });
     await wikiB.setup();
+    // importDump detects the BLOBs in the dump and preserves them directly,
+    // skipping embedFact() for those facts.
     await wikiB.importDump(dump);
 
-    const result = await wikiB.runReembed('user-1');
+    // runReembed with { skipExisting: true } proves BLOBs survived the roundtrip:
+    // if the blobs were lost, this would return { embedded: 2, skipped: 0 } instead.
+    const result = await wikiB.runReembed('user-1', { skipExisting: true });
     expect(result.embedded).toBe(0);
     expect(result.skipped).toBe(2);
   });

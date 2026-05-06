@@ -9,17 +9,18 @@
  */
 export * from '@equationalapplications/core-llm-wiki';
 
-import type { WikiMemory, MemoryBundle, WikiEvent } from '@equationalapplications/core-llm-wiki';
+import type { WikiMemory, MemoryBundle, WikiEvent, ReadOptions } from '@equationalapplications/core-llm-wiki';
 
 /**
- * Standalone read helper. Equivalent to `wiki.read(entityId, query)`.
+ * Standalone read helper. Equivalent to `wiki.read(entityId, query, options)`.
  */
 export function read(
   wiki: WikiMemory,
   entityId: string,
   query: string,
+  options?: ReadOptions,
 ): Promise<MemoryBundle> {
-  return wiki.read(entityId, query);
+  return wiki.read(entityId, query, options);
 }
 
 /**

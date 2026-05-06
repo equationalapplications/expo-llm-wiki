@@ -81,5 +81,27 @@ export function useWikiMaintenance() {
     []
   );
 
-  return { runLibrarian, runHeal, runPrune, lastResult, isPending, error };
+  const runReembed = useCallback(async (entityId?: string, opts?: { force?: boolean; skipExisting?: boolean }): Promise<{ embedded: number; skipped: number; failed: number }> => {
+    setError(null);
+    pendingCount.current += 1;
+    setIsPending(true);
+    setLastResult(null);
+    try {
+      // runReembed returns its result directly; it does not update the shared
+      // MaintenanceResult/lastResult field (which only tracks librarian, heal, prune).
+      // Using the return value directly avoids widening the MaintenanceResult union
+      // in a way that would break existing consumers that exhaustively switch on
+      // lastResult.operation.
+      return await wikiRef.current.runReembed(entityId, opts);
+    } catch (e) {
+      const err = e instanceof Error ? e : new Error(String(e));
+      setError(err);
+      throw err;
+    } finally {
+      pendingCount.current -= 1;
+      if (pendingCount.current === 0) setIsPending(false);
+    }
+  }, []);
+
+  return { runLibrarian, runHeal, runPrune, runReembed, lastResult, isPending, error };
 }

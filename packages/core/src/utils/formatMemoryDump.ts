@@ -96,8 +96,29 @@ export function formatMemoryDump(dump: MemoryDump): FormattedMemoryDump {
     name: formatEntityFileName(entityId),
     content: renderEntity(entityId, bundle, dump.generatedAt),
   }));
+
+  // Strip embedding_blob from each fact before JSON-serialising the manifest.
+  // exportDump() now includes raw Uint8Array blobs for importDump() round-trips,
+  // but those binaries serve no purpose in a human-readable manifest and can
+  // massively inflate its size for non-trivial datasets.
+  const manifestDump: MemoryDump = {
+    generatedAt: dump.generatedAt,
+    entities: Object.fromEntries(
+      Object.entries(dump.entities).map(([entityId, bundle]) => [
+        entityId,
+        {
+          ...bundle,
+          facts: bundle.facts.map(f => {
+            const { embedding_blob: _blob, ...rest } = f as WikiFact & { embedding_blob?: unknown };
+            return rest as WikiFact;
+          }),
+        },
+      ])
+    ),
+  };
+
   return {
-    manifest: JSON.stringify(dump, null, 2),
+    manifest: JSON.stringify(manifestDump, null, 2),
     files,
   };
 }

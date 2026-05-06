@@ -1,9 +1,12 @@
 # expo-llm-wiki
 
 [![GitHub Tag](https://img.shields.io/github/v/tag/equationalapplications/expo-llm-wiki?label=github%20tag)](https://github.com/equationalapplications/expo-llm-wiki/tags)
-[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fexpo-llm-wiki?label=npm)](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki)
-[![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fexpo-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
+[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fexpo-llm-wiki?label=expo)](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fexpo-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki) [![bundlephobia](https://img.shields.io/bundlephobia/minzip/%40equationalapplications%2Fexpo-llm-wiki?label=gzip)](https://bundlephobia.com/package/@equationalapplications/expo-llm-wiki)<br>
+[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Freact-llm-wiki?label=react)](https://www.npmjs.com/package/@equationalapplications/react-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Freact-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/react-llm-wiki) [![bundlephobia](https://img.shields.io/bundlephobia/minzip/%40equationalapplications%2Freact-llm-wiki?label=gzip)](https://bundlephobia.com/package/@equationalapplications/react-llm-wiki)<br>
+[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fcore-llm-wiki?label=core)](https://www.npmjs.com/package/@equationalapplications/core-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fcore-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/core-llm-wiki) [![bundlephobia](https://img.shields.io/bundlephobia/minzip/%40equationalapplications%2Fcore-llm-wiki?label=gzip)](https://bundlephobia.com/package/@equationalapplications/core-llm-wiki)
 
 ## Persistent, episodic memory for AI Agents.
 
@@ -169,14 +172,19 @@ const wiki = createWiki(db, {
   // returns non-finite values, or dimension mismatch after a model switch) — use to show "offline" UI.
   onRetrievalFallback: (error) => console.warn('Embedding unavailable, using keyword search:', error),
   config: {
-    tablePrefix: 'llm_wiki_',       // optional, default: 'llm_wiki_'
-    maxResults: 10,                 // optional, default: 10
-    autoLibrarianThreshold: 20,     // optional, default: 20
-    maxChunkLength: 12000,          // optional, default: 12000 (char count, not bytes)
-    chunkOverlap: 400,              // optional, default: 400 (overlap between chunks in characters)
-    chunkConcurrency: 1,            // optional, default: 1 (parallel LLM calls per ingestDocument)
-    pruneRetainSoftDeletedFor: 7,   // optional, default: 7  (days before hard-deleting soft-deleted rows)
-    pruneEventsAfter: 30,           // optional, default: 30 (days before hard-deleting old events)
+    tablePrefix: 'llm_wiki_',          // optional, default: 'llm_wiki_'
+    maxResults: 10,                    // optional, default: 10
+    autoLibrarianThreshold: 20,        // optional, default: 20 — events before librarian auto-runs
+    autoHealThreshold: 100,            // optional, default: 100 — events before heal auto-runs
+    maxChunkLength: 12000,             // optional, default: 12000 (char count per ingestDocument chunk)
+    chunkOverlap: 400,                 // optional, default: 400 (overlap between chunks in characters)
+    chunkConcurrency: 1,               // optional, default: 1 (parallel LLM calls per ingestDocument)
+    pruneRetainSoftDeletedFor: 7,      // optional, default: 7  (days before hard-deleting soft-deleted facts)
+    pruneEventsAfter: 30,              // optional, default: 30 (days before hard-deleting old events)
+    orphanAfterDays: 30,               // optional, default: 30 (days before runHeal flags sourceless facts; null to disable)
+    staleInferredAfterDays: 60,        // optional, default: 60 (days before runHeal downgrades inferred facts; null to disable)
+    preFilterLimit: 50,                // optional, default: undefined — MiniSearch pre-filter before cosine scan; recommended for >500 facts
+    hybridWeight: 0.7,                 // optional, default: undefined — blend semantic (1.0) ↔ keyword (0.0); pure semantic when unset
   },
 });
 
@@ -328,9 +336,17 @@ Semantic search over facts (cosine similarity if `embed` is provided, MiniSearch
 
 ```typescript
 const { facts, tasks, events } = await wiki.read('entity-123', 'weekend plans');
-// facts: WikiFact[]   — ranked by vector similarity (or keyword relevance as fallback)
+// facts: WikiFact[]   — ranked by vector similarity, keyword relevance, or a blend (hybridWeight)
 // tasks: WikiTask[]   — pending and in-progress only
 // events: WikiEvent[] — 10 most recent, ascending
+
+// Per-call overrides (e.g. for a search settings dashboard):
+const overrideResult = await wiki.read('entity-123', 'weekend plans', {
+  maxResults: 5,          // override WikiConfig.maxResults for this call
+  preFilterLimit: 20,     // limit cosine candidates to top-20 keyword matches
+  hybridWeight: 0.5,      // 50/50 semantic + keyword blend
+  // preFilterLimit: null — explicitly disable a config-level preFilterLimit for this call
+});
 ```
 
 Pass an empty string to skip search and return the most recently updated facts.
@@ -379,7 +395,7 @@ await wiki.runHeal('entity-123');
 
 // Backfill embeddings after adding embed() to LLMProvider, or after changing embedding models.
 // Call with no args to reembed all entities, or pass an entityId to scope it.
-const { embedded, skipped } = await wiki.runReembed('entity-123');
+const { embedded, skipped, failed } = await wiki.runReembed('entity-123');
 ```
 
 ### Format Context
@@ -507,9 +523,9 @@ export default function App() {
 }
 ```
 
-### `useMemoryRead(entityId, query)`
+### `useMemoryRead(entityId, query, options?)`
 
-Reactive read. Fetches on mount and whenever `entityId` or `query` changes. In-flight results always land before a queued re-fetch starts — results are never silently discarded.
+Reactive read. Fetches on mount and re-fetches whenever `entityId`, `query`, `wiki`, or `ReadOptions` values change. Call `refetch()` to refresh manually. In-flight results always land before a queued re-fetch starts — results are never silently discarded.
 
 ```typescript
 const { data, isPending, error, refetch } = useMemoryRead('entity-123', 'weekend plans');
@@ -614,6 +630,78 @@ All mutation hooks follow the same pattern (`TResult` is specific per hook):
   error: Error | null;         // cleared on the next execute call
 }
 ```
+
+---
+
+## Retrieval Engine Internals
+
+How `read(entityId, query)` routes through the retrieval pipeline:
+
+```mermaid
+flowchart TD
+    A["read(entityId, query)"] --> B{hybridWeight = 0?}
+    B -->|Yes| C["MiniSearch only<br/>(skip embed)"]
+    B -->|No| D{embed available?}
+    D -->|No| C
+    D -->|Yes| F["Embed query"]
+    F --> G{Embedding succeeded?}
+    G -->|No| E["onRetrievalFallback"]
+    E --> C
+    G -->|Yes| H{preFilterLimit<br/>active?}
+    H -->|Yes| I["MiniSearch pre-filter<br/>top K candidates"]
+    I --> J["Phase 1: Cosine score<br/>top K candidates"]
+    H -->|No| K["Phase 1: Cosine score<br/>all facts"]
+    J --> M{hybridWeight = 1?}
+    K --> L["Cache vectors<br/>in-memory"]
+    L --> M
+    M -->|Yes| N["Pure semantic<br/>ranking"]
+    M -->|No| O["Hybrid blend:<br/>semantic + keyword<br/>via MiniSearch"]
+    N --> P["Phase 2: Fetch full rows<br/>top maxResults"]
+    O --> P
+    C --> Q["MiniSearch ranking"]
+    Q --> P
+    P --> S["Track access"]
+    S --> R["Return MemoryBundle"]
+```
+
+1. **Fast-path** when `hybridWeight = 0` (pure keyword, no embed cost)
+2. **Fallback paths**: if `embed` is absent, `read()` falls back silently to MiniSearch; if an embedding attempt fails, `onRetrievalFallback` is invoked before using MiniSearch
+3. **Pre-filtering** to limit cosine scoring to top-K keyword matches (O(N) → O(K))
+4. **Two-phase SELECT**: phase 1 scores all/filtered facts with minimal columns, phase 2 fetches full rows for winners
+5. **Hybrid scoring** to blend semantic and keyword rankings
+6. **Vector caching** of parsed embeddings to avoid re-parsing on repeated reads
+
+## React Component Lifecycle
+
+How React hooks stay in sync with memory state:
+
+```mermaid
+flowchart TD
+    A["<WikiProvider wiki={wiki}>"] --> B["App Components"]
+    B --> C{"Use Hook?"}
+    C -->|"useMemoryRead(entityId, query, options?)"| D["[Read Memory]"]
+    C -->|"useWikiWrite()"| E["[Write Memory]"]
+    C -->|"useWikiIngest()"| F["[Ingest Document]"]
+    C -->|"useWikiForget()"| G["[Delete Memory]"]
+    C -->|"useWikiMaintenance()"| H["[Run Jobs]"]
+    D --> I{"entityId, query,<br/>wiki, or ReadOptions<br/>changed?"}
+    I -->|"Yes"| J["Auto-refetch"]
+    I -->|"No"| K["Return cached data"]
+    J --> L["Trigger read()"]
+    L --> M["Embed query<br/>if embed available"]
+    M --> N["Phase 1: Score facts<br/>Phase 2: Fetch winners"]
+    N --> O["Update component state"]
+    O --> P["Re-render with data"]
+    E --> Q["Execute write()"]
+    F --> Q
+    G --> Q
+    H --> Q
+    Q --> R["Write completes"]
+```
+
+1. **Wrap app** with `<WikiProvider wiki={wiki}>` — provides wiki context
+2. **Read operations** auto-refetch when `entityId`, `query`, `wiki`, or `ReadOptions` values change; call `refetch()` to refresh manually
+3. **Write operations** (write, ingest, forget, maintenance) do not automatically re-trigger `useMemoryRead`; call `refetch()` after a write to refresh read results
 
 ---
 

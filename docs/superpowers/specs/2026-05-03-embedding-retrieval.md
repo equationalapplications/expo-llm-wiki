@@ -1,7 +1,7 @@
 # Spec: Embedding-Based Retrieval
 
 **Date:** 2026-05-03
-**Status:** Draft
+**Status:** Implemented
 **Supersedes:** `2026-05-02-sqlite-wasm-fts5-web-adapter.md` (infeasible), `2026-05-03-minisearch-web-fallback.md` (superseded)
 
 ---
