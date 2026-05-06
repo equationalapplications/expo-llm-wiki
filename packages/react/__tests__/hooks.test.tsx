@@ -23,7 +23,7 @@ function makeMockWiki() {
     runLibrarian: vi.fn().mockResolvedValue(undefined),
     runHeal: vi.fn().mockResolvedValue(undefined),
     runPrune: vi.fn().mockResolvedValue({ entries: 0, tasks: 0, events: 0 }),
-    runReembed: vi.fn().mockResolvedValue({ embedded: 0, skipped: 0 }),
+    runReembed: vi.fn().mockResolvedValue({ embedded: 0, skipped: 0, failed: 0 }),
   };
 }
 
@@ -363,17 +363,17 @@ describe('useWikiMaintenance', () => {
   it('runReembed returns embedded/skipped counts and clears lastResult', async () => {
     // First run a prune to set a non-null lastResult
     wiki.runPrune.mockResolvedValue({ entries: 1, tasks: 0, events: 0 });
-    wiki.runReembed.mockResolvedValue({ embedded: 5, skipped: 2 });
+    wiki.runReembed.mockResolvedValue({ embedded: 5, skipped: 2, failed: 3 });
     const { result } = renderHook(() => useWikiMaintenance(), { wrapper: wrapper(wiki) });
 
     await act(async () => { await result.current.runPrune('user-1'); });
     expect(result.current.lastResult?.operation).toBe('prune');
 
-    let reembedResult!: { embedded: number; skipped: number };
+    let reembedResult!: { embedded: number; skipped: number; failed: number };
     await act(async () => { reembedResult = await result.current.runReembed('user-1'); });
 
     expect(wiki.runReembed).toHaveBeenCalledWith('user-1', undefined);
-    expect(reembedResult).toEqual({ embedded: 5, skipped: 2 });
+    expect(reembedResult).toEqual({ embedded: 5, skipped: 2, failed: 3 });
     // runReembed clears lastResult at start so stale librarian/heal/prune
     // results do not remain visible while reembed is pending or after it completes.
     // It is intentionally excluded from the MaintenanceResult union to avoid a

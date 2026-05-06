@@ -811,7 +811,7 @@ export class WikiMemory {
           );
           if (importMismatchRow) {
             throw new Error(
-              `Some facts have embeddings with a mismatched dimension (${parseInt(importMismatchRow.value, 10)}). ` +
+              `Some facts have embeddings that do not match the current model dimension. ` +
               `Call runReembed() to rebuild all embeddings consistently.`
             );
           }
@@ -1732,12 +1732,13 @@ export class WikiMemory {
             // Also validate that every float32 value is finite: a blob with the right
             // byte length but NaN/Inf values would be preserved, skip embedFact(), and
             // then be silently dropped by read(), making the fact permanently unsearchable.
-            // Use slice() to get a fresh, offset-0 Uint8Array before wrapping in
-            // Float32Array: the constructor requires a 4-byte-aligned byteOffset, and
-            // sub-array views of a larger buffer can fail that check even though the
-            // underlying bytes are perfectly valid.
-            const aligned = rawBlob.slice(0);
-            const floats = new Float32Array(aligned.buffer, 0, aligned.byteLength / 4);
+            // Copy into a fresh ArrayBuffer so the Float32Array view is guaranteed to
+            // start at offset 0 of its own buffer. Buffer.slice(0) in Node.js does NOT
+            // copy — it returns a view into the parent buffer, which can have a non-zero
+            // byteOffset and corrupt the Float32Array interpretation.
+            const copy = new ArrayBuffer(rawBlob.byteLength);
+            new Uint8Array(copy).set(rawBlob);
+            const floats = new Float32Array(copy, 0, rawBlob.byteLength / 4);
             let allFinite = true;
             for (let i = 0; i < floats.length; i++) {
               if (!isFinite(floats[i])) { allFinite = false; break; }
@@ -1916,8 +1917,12 @@ export class WikiMemory {
           const preservedDim = [...preservedBlobDims][0];
           if (canonicalDim === null || canonicalDim === preservedDim) {
             // Fresh DB: record the imported dimension as canonical.
-            // Matching canonical: no-op (storeEmbeddingDimension is a no-op for equal dims).
+            // Matching canonical: storeEmbeddingDimension is a no-op for equal dims,
+            // but a stale embedding_dimension_mismatch flag may still be present from
+            // a previous import. Run reconciliation so the flag is cleared if all live
+            // facts now agree on the canonical dimension.
             await this.storeEmbeddingDimension(preservedDim);
+            await this._reconcileEmbeddingDimension();
           } else {
             // Imported blobs differ from the canonical model dimension. Set
             // embedding_dimension_mismatch = canonicalDim so that:

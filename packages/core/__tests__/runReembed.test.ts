@@ -29,7 +29,7 @@ describe('runReembed()', () => {
     await insertFact(db, 'f1', 'user-1');
 
     const result = await wiki.runReembed();
-    expect(result).toEqual({ embedded: 0, skipped: 0 });
+    expect(result).toEqual({ embedded: 0, skipped: 0, failed: 0 });
   });
 
   it('backfills embeddings for all non-deleted facts', async () => {
