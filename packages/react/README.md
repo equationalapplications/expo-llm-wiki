@@ -256,11 +256,8 @@ await runLibrarian('user-123');
 await runHeal('user-123');
 
 // Re-embed all facts with the current provider (e.g. after switching models or
-// enabling an embed provider for the first time):
+// enabling an embed provider for the first time — default always re-embeds all):
 const { embedded, skipped } = await runReembed('user-123');
-
-// After changing the embedding model, re-embed with the new model (default, always re-embeds all):
-const { embedded: embeddedAfterModelChange, skipped: skippedAfterModelChange } = await runReembed('user-123');
 // After a round-trip export/import on the same model, skip facts that already have vectors:
 const { embedded: embeddedRoundtrip, skipped: skippedRoundtrip } = await runReembed('user-123', { skipExisting: true });
 
