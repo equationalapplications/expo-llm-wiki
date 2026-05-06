@@ -620,7 +620,8 @@ export class WikiMemory {
       || this.activeMaintenanceJobs.has(this._globalReembedKey());
   }
   private _isImportActiveFor(entityId: string): boolean {
-    return this.activeMaintenanceJobs.has(this._importKey(entityId));
+    return this.activeMaintenanceJobs.has(this._importKey(entityId))
+      || this.activeMaintenanceJobs.has(this._globalImportKey());
   }
   private _isForgetActiveFor(entityId: string): boolean {
     return this.activeMaintenanceJobs.has(this._forgetKey(entityId));
@@ -1465,10 +1466,35 @@ export class WikiMemory {
       const skipExisting = opts?.skipExisting ?? false;
       // Never skip when a dimension mismatch is pending: blobs on disk are stale
       // regardless of what the caller requested.
-      const mismatchRow = await this.db.getFirstAsync<{ value: string }>(
-        `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
-      );
-      const effectiveSkip = mismatchRow ? false : skipExisting;
+      // For per-entity reembed, only disable skipExisting when THIS entity actually
+      // has stale blobs — the global mismatch flag may reflect a different entity's
+      // state and should not force unnecessary re-embedding of entity A's valid blobs.
+      let effectiveSkip = skipExisting;
+      if (skipExisting) {
+        const mismatchRow = await this.db.getFirstAsync<{ value: string }>(
+          `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
+        );
+        if (mismatchRow) {
+          if (entityId) {
+            // Per-entity: check whether this entity has any blobs at the wrong dimension
+            // (i.e., the old canonical dim, not the pending new mismatch dim) or TEXT-only rows.
+            const mismatchDim = parseInt(mismatchRow.value, 10);
+            const staleForEntity = await this.db.getFirstAsync<{ cnt: number }>(
+              `SELECT COUNT(*) AS cnt FROM ${this.prefix}entries
+               WHERE entity_id = ? AND deleted_at IS NULL
+                 AND (
+                   embedding_blob IS NULL
+                   OR (CAST(length(embedding_blob) AS INTEGER) / 4) != ?
+                 )`,
+              [entityId, mismatchDim]
+            );
+            if (staleForEntity && staleForEntity.cnt > 0) effectiveSkip = false;
+          } else {
+            // Global reembed: any pending mismatch means blobs are stale somewhere.
+            effectiveSkip = false;
+          }
+        }
+      }
       let embedded = 0;
       let skipped = 0;
       let failed = 0;
@@ -1952,6 +1978,20 @@ export class WikiMemory {
             // a previous import. Run reconciliation so the flag is cleared if all live
             // facts now agree on the canonical dimension.
             await this.storeEmbeddingDimension(preservedDim);
+            // If a stale embedding_dimension_mismatch flag exists from a prior failed
+            // model switch it may target a different dimension. _reconcileEmbeddingDimension()
+            // checks residuals against whatever value the flag holds; a wrong value keeps
+            // the flag stuck even though all imported blobs now match preservedDim.
+            // Overwrite the flag to preservedDim before reconciling so the check is correct.
+            const staleMismatch = await this.db.getFirstAsync<{ value: string }>(
+              `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
+            );
+            if (staleMismatch && parseInt(staleMismatch.value, 10) !== preservedDim) {
+              await this.db.runAsync(
+                `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension_mismatch', ?)`,
+                [String(preservedDim)]
+              );
+            }
             await this._reconcileEmbeddingDimension();
           } else {
             // Imported blobs differ from the canonical model dimension. Set
