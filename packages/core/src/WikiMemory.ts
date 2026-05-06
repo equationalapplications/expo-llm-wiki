@@ -1883,16 +1883,18 @@ export class WikiMemory {
       // automatically). This ensures read() can detect model-dimension mismatches
       // after importing into a fresh DB that has never seen an embedding.
       try {
-        // Only call storeEmbeddingDimension when all preserved blobs share a single
-        // dimension. If blobs have mixed dimensions (e.g. a dump bridging two model
-        // migrations), skip dimension bookkeeping entirely — runReembed() will
-        // reconcile once every fact is re-embedded with the current provider.
-        // Calling storeEmbeddingDimension for multiple different sizes would leave
-        // embedding_dimension_mismatch pointing at the last-written (non-canonical)
-        // size, causing _reconcileEmbeddingDimension() to check residuals against
-        // the wrong dimension and permanently block the fallback-path exit.
         if (preservedBlobDims.size === 1) {
           await this.storeEmbeddingDimension([...preservedBlobDims][0]);
+        } else if (preservedBlobDims.size > 1) {
+          // Fresh imports with preserved BLOBs can otherwise end up with no
+          // embedding_dimension or embedding_dimension_mismatch metadata at all,
+          // which lets read() silently score only rows whose vector length happens
+          // to match the query. Seed the metadata deterministically with one
+          // canonical dimension and one distinct mismatching dimension so reads
+          // fall back and instruct callers to runReembed().
+          const sortedPreservedBlobDims = [...preservedBlobDims].sort((a, b) => a - b);
+          await this.storeEmbeddingDimension(sortedPreservedBlobDims[0]);
+          await this.storeEmbeddingDimension(sortedPreservedBlobDims[1]);
         }
       } finally {
         // Second flush: evict any cache entries a concurrent read() repopulated
