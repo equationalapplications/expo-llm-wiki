@@ -1882,19 +1882,41 @@ export class WikiMemory {
       // meta table now (embedFact() was skipped for those rows, so it didn't happen
       // automatically). This ensures read() can detect model-dimension mismatches
       // after importing into a fresh DB that has never seen an embedding.
+      // However, if the preserved BLOBs have a *different* dimension than the
+      // current canonical dimension, skip bookkeeping entirely. Calling
+      // storeEmbeddingDimension() with the imported dimension would set
+      // embedding_dimension_mismatch, which _reconcileEmbeddingDimension() would
+      // interpret as the target dimension. After runReembed() rewrites everything
+      // to the canonical dimension, the mismatch flag would never clear (all facts
+      // now differ from the old imported dimension, so residual count > 0 forever).
+      // Instead, let runReembed() reconcile all vectors without pre-seeding metadata.
       try {
+        // Query the current canonical embedding dimension, if any.
+        const canonicalRow = await this.db.getFirstAsync<{ value: string }>(
+          `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension'`
+        );
+        const canonicalDim = canonicalRow ? parseInt(canonicalRow.value, 10) : null;
+
         if (preservedBlobDims.size === 1) {
-          await this.storeEmbeddingDimension([...preservedBlobDims][0]);
+          const preservedDim = [...preservedBlobDims][0];
+          // Only store dimension if DB is fresh (no canonical) or it matches canonical.
+          if (canonicalDim === null || canonicalDim === preservedDim) {
+            await this.storeEmbeddingDimension(preservedDim);
+          }
+          // If preservedDim !== canonicalDim, skip bookkeeping. runReembed() will
+          // reconcile after the import completes.
         } else if (preservedBlobDims.size > 1) {
-          // Fresh imports with preserved BLOBs can otherwise end up with no
-          // embedding_dimension or embedding_dimension_mismatch metadata at all,
-          // which lets read() silently score only rows whose vector length happens
-          // to match the query. Seed the metadata deterministically with one
-          // canonical dimension and one distinct mismatching dimension so reads
-          // fall back and instruct callers to runReembed().
-          const sortedPreservedBlobDims = [...preservedBlobDims].sort((a, b) => a - b);
-          await this.storeEmbeddingDimension(sortedPreservedBlobDims[0]);
-          await this.storeEmbeddingDimension(sortedPreservedBlobDims[1]);
+          // Preserved BLOBs have mixed dimensions. Only store metadata if the DB is
+          // fresh; otherwise, skip and defer to runReembed().
+          if (canonicalDim === null) {
+            // Fresh import with mixed BLOBs: seed metadata with one canonical and one
+            // mismatch dimension so reads fall back and instruct callers to runReembed().
+            const sortedPreservedBlobDims = [...preservedBlobDims].sort((a, b) => a - b);
+            await this.storeEmbeddingDimension(sortedPreservedBlobDims[0]);
+            await this.storeEmbeddingDimension(sortedPreservedBlobDims[1]);
+          }
+          // If canonicalDim !== null, skip bookkeeping. runReembed() will reconcile
+          // everything to the canonical dimension after the import completes.
         }
       } finally {
         // Second flush: evict any cache entries a concurrent read() repopulated
