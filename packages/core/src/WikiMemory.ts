@@ -1289,22 +1289,8 @@ export class WikiMemory {
       return { id: r.id, score };
     });
 
-    // Backfill omitted candidateIds — ranker may return fewer than requested
-    if (candidateIds) {
-      const rankerIdSet = new Set(rankerResults.map(r => r.id));
-      for (const id of candidateIds) {
-        if (!rankerIdSet.has(id)) {
-          // Hybrid: keyword-only portion; pure semantic: treat as no embedding (score -2)
-          const score = (weight !== undefined && weight < 1)
-            ? (1 - weight) * (miniSearchScores?.get(id) ?? 0)
-            : -2;
-          scored.push({ id, score });
-        }
-      }
-    }
-
-    this._tieBreakSort(scored);
-    return scored.slice(0, limit);
+    // Caller handles backfill, metadata attachment, tie-break sorting, and final slice
+    return scored;
   }
 
   async getMemoryBundle(entityId: string): Promise<MemoryBundle> {
