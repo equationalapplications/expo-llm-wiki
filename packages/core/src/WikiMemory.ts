@@ -466,7 +466,12 @@ export class WikiMemory {
         `UPDATE ${this.prefix}entries SET embedding_blob = ?, embedding = NULL WHERE id = ?`,
         [blob, fact.id]
       );
-      await this._notifyEmbeddingPersisted(fact.entity_id, fact.id, float32Vector);
+      // Isolate hook failure: embedding was persisted successfully even if external index sync fails
+      try {
+        await this._notifyEmbeddingPersisted(fact.entity_id, fact.id, float32Vector);
+      } catch (hookErr) {
+        console.warn(`[WikiMemory] onEmbeddingPersisted hook failed for ${fact.id}:`, hookErr);
+      }
       return true;
     } catch (err) {
       console.warn(`[WikiMemory] embedFact failed for ${fact.id}:`, err);
@@ -752,7 +757,11 @@ export class WikiMemory {
       this.vectorCache.delete(entityId);
 
       for (const factId of deletedEntryIds) {
-        await this._notifyEmbeddingPersisted(entityId, factId, null);
+        try {
+          await this._notifyEmbeddingPersisted(entityId, factId, null);
+        } catch (hookErr) {
+          console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during prune for ${factId}:`, hookErr);
+        }
       }
 
       return { entries: deletedEntries, tasks: deletedTasks, events: deletedEvents };
@@ -898,7 +907,8 @@ export class WikiMemory {
               `SELECT ${selectCols} FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
               [entityId]
             );
-            // Collect MiniSearch scores for hybrid blend if weight is set and <1 (weight=1 means pure semantic)
+            // Collect MiniSearch scores for hybrid blend if weight is set and <1
+            // (weight=1 is all-semantic with clamped scores; pure semantic [-1,1] requires weight undefined)
             if (weight !== undefined && weight < 1) {
               const msResults = this.miniSearch.search(trimmedQuery, {
                 filter: (r) => (r as unknown as { entity_id: string }).entity_id === entityId,
@@ -1002,13 +1012,14 @@ export class WikiMemory {
                     filter: (r) => (r as unknown as { entity_id: string }).entity_id === entityId,
                     combineWith: 'OR',
                   });
+                  const candidateMap = new Map(candidateRows.map(r => [r.id, { updated_at: r.updated_at, access_count: r.access_count }]));
                   scored = msResults.slice(0, maxResults).map(r => {
-                    const candidate = candidateRows.find(c => c.id === r.id);
+                    const meta = candidateMap.get(r.id);
                     return {
                       id: r.id,
                       score: r.score ?? 0,
-                      access_count: candidate?.access_count ?? null,
-                      updated_at: candidate?.updated_at ?? null,
+                      access_count: meta?.access_count ?? null,
+                      updated_at: meta?.updated_at ?? null,
                     };
                   });
                   usedEmbed = true;
@@ -1166,7 +1177,7 @@ export class WikiMemory {
 
   /**
    * Score candidate rows using in-process JS cosine similarity.
-   * Hybrid blending and tie-break sorting are applied after scores are returned.
+   * Applies hybrid blending (if weight set) and tie-break sorting before returning.
    */
   private async _rankWithJsCosine(args: {
     entityId: string;
@@ -2183,7 +2194,7 @@ export class WikiMemory {
         if (!fact.deleted_at && upsertedFactIds.has(fact.id) && !factsWithPreservedBlob.has(fact.id)) {
           await this.embedFact({
             id: fact.id,
-            entity_id: fact.entity_id,
+            entity_id: entityId,  // Use authoritative entityId from dump key, not fact.entity_id
             title: fact.title,
             body: fact.body,
             tags: Array.isArray(fact.tags) || typeof fact.tags === 'string' ? fact.tags : [],
@@ -2398,7 +2409,11 @@ export class WikiMemory {
       this.vectorCache.delete(entityId);
 
       for (const factId of deletedEntryIds) {
-        await this._notifyEmbeddingPersisted(entityId, factId, null);
+        try {
+          await this._notifyEmbeddingPersisted(entityId, factId, null);
+        } catch (hookErr) {
+          console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during forget for ${factId}:`, hookErr);
+        }
       }
 
       return { deleted: { entries: deletedEntries, tasks: deletedTasks } };
