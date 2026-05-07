@@ -133,6 +133,63 @@ export interface LLMProvider {
   embed?: (text: string) => Promise<number[]>;
 }
 
+/**
+ * Result of semantic ranking for a single fact.
+ */
+export interface VectorRankerSemanticResult {
+  id: string;
+  /** Cosine similarity in [-1, 1] when exact; implementations MAY document other monotonic scales. */
+  semanticScore: number;
+}
+
+/**
+ * Arguments passed to VectorRanker.rankBySimilarity.
+ */
+export interface VectorRankerRankArgs {
+  entityId: string;
+  queryVec: Float32Array | number[];
+  /**
+   * When set (MiniSearch pre-filter path): ranker MUST only produce results for ids in this set.
+   * When omitted (full-entity semantic path): ranker scopes by entityId per its backing store contract.
+   */
+  candidateIds?: readonly string[];
+  /**
+   * Upper bound on how many distinct fact ids should receive a semanticScore in this call.
+   * WikiMemory derives this from maxResults / candidate cardinality / documented oversampling policy.
+   */
+  limit: number;
+}
+
+/**
+ * Optional backend for semantic candidate scoring / top-k retrieval.
+ * When omitted, WikiMemory scores rows with embedding_blob / embedding TEXT in JS (cosine).
+ */
+export interface VectorRanker {
+  /**
+   * Return semantic scores for facts in scope, sorted descending by semanticScore (stable tie-breaking
+   * not required — WikiMemory reapplies existing tie-breakers after blending).
+   * Implementations SHOULD omit facts with no usable vector; callers treat missing ids like today's
+   * "no embedding" rows (pure semantic: -2; hybrid: keyword-only portion).
+   */
+  rankBySimilarity(args: VectorRankerRankArgs): Promise<VectorRankerSemanticResult[]>;
+
+  /**
+   * Called after a fact's embedding is successfully persisted to embedding_blob (or cleared).
+   * Hosts use this to keep sqlite-vec / external indexes consistent with SQLite as source of truth.
+   * Optional: if omitted, hosts MUST document "index rebuilt separately" and accept stale ANN until rebuild.
+   */
+  onEmbeddingPersisted?(event: {
+    entityId: string;
+    factId: string;
+    vector: Float32Array | null; // null = embedding removed / unusable
+  }): void | Promise<void>;
+}
+
+/**
+ * Fallback policy when rankBySimilarity rejects.
+ */
+export type VectorRankerFallback = 'js-cosine' | 'keyword' | 'empty' | 'throw';
+
 export interface WikiOptions {
   config?: WikiConfig;
   llmProvider: LLMProvider;
@@ -147,6 +204,35 @@ export interface WikiOptions {
    * `read()` still returns keyword-search results — this is a notification, not an error path.
    */
   onRetrievalFallback?: (error: Error) => void;
+
+  /**
+   * Optional backend for semantic candidate scoring / top-k retrieval.
+   * When omitted, WikiMemory scores rows with embedding_blob / embedding TEXT in JS (cosine).
+   */
+  vectorRanker?: VectorRanker;
+
+  /**
+   * When rankBySimilarity throws. Default `'js-cosine'`.
+   * Ignored when vectorRanker is undefined.
+   */
+  vectorRankerFallback?: VectorRankerFallback;
+
+  /**
+   * Called only when rankBySimilarity rejects (after embeddings path succeeded).
+   * Invoked before applying vectorRankerFallback when that policy recovers or before rejecting when policy is 'throw'.
+   */
+  onVectorRankerFallback?: (info: {
+    error: Error;
+    /** Effective policy core will apply for this read (same as WikiOptions.vectorRankerFallback, default js-cosine). */
+    policy: VectorRankerFallback;
+  }) => void;
+
+  /**
+   * When true: after rankBySimilarity failure, once the recoverable fallback has finished
+   * and read() will resolve, invoke onRetrievalFallback — after onVectorRankerFallback if set.
+   * Ignored when vectorRankerFallback is 'throw'. Default false.
+   */
+  propagateRankerFailureToRetrievalFallback?: boolean;
 }
 
 export interface MemoryBundle {
