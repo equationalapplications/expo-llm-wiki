@@ -1,3 +1,9 @@
+# [Unreleased]
+
+### Features
+
+* **core:** add `VectorRanker` interface for pluggable semantic ranking (sqlite-vec, sqlite-vss, external ANN) with fallback policies and eventual consistency hook; closes #15
+
 # [3.0.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v2.6.0...v3.0.0) (2026-05-06)
 
 

@@ -971,7 +971,7 @@ export class WikiMemory {
                   usedEmbed = true;
                 }
 
-                if (policy !== 'throw' && this.options.propagateRankerFailureToRetrievalFallback) {
+                if (this.options.propagateRankerFailureToRetrievalFallback) {
                   const mirrored = new Error('Vector ranker failed, falling back');
                   (mirrored as any).cause = rankerError;
                   this.options.onRetrievalFallback?.(mirrored);
