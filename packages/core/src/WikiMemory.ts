@@ -869,8 +869,12 @@ export class WikiMemory {
                 for (let i = 0; i < topKIds.length; i += inClauseChunkSize) {
                   const idChunk = topKIds.slice(i, i + inClauseChunkSize);
                   const placeholders = idChunk.map(() => '?').join(',');
+                  // Skip embeddings if vectorRanker is configured (only fetch for JS cosine path)
+                  const selectCols = this.options.vectorRanker
+                    ? 'id, updated_at, access_count'
+                    : 'id, embedding_blob, embedding, updated_at, access_count';
                   const chunkRows = await this.db.getAllAsync<ScoreRow>(
-                    `SELECT id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+                    `SELECT ${selectCols} FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
                     idChunk
                   );
                   candidateRows.push(...chunkRows);
@@ -883,8 +887,14 @@ export class WikiMemory {
             }
           } else {
             // Full entity scan
+            // If vectorRanker is configured, skip embedding load for now (ranker will provide ranking)
+            // Otherwise fetch embeddings for JS cosine ranking
+            const selectCols = this.options.vectorRanker
+              ? 'id, updated_at, access_count'
+              : 'id, embedding_blob, embedding, updated_at, access_count';
+
             candidateRows = await this.db.getAllAsync<ScoreRow>(
-              `SELECT id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
+              `SELECT ${selectCols} FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
               [entityId]
             );
             // Collect MiniSearch scores for hybrid blend if weight is set and <1 (weight=1 means pure semantic)
@@ -912,13 +922,15 @@ export class WikiMemory {
                 : undefined;
 
               try {
+                // Oversample 2x to preserve recall after re-ranking; caller will slice to maxResults
+                const oversampledLimit = Math.max(maxResults * 2, maxResults + 50);
                 scored = await this._rankWithVectorRanker({
                   entityId,
                   queryVec,
                   candidateIds,
                   weight,
                   miniSearchScores,
-                  limit: maxResults,
+                  limit: oversampledLimit,
                 });
 
                 // Attach tie-break metadata from candidateRows
@@ -952,10 +964,33 @@ export class WikiMemory {
                   (rankerError as any).__vectorRankerShouldThrow = true;
                   throw rankerError;
                 } else if (policy === 'js-cosine') {
+                  // If embeddings were skipped (vectorRanker was configured), fetch them now for fallback
+                  let fallbackRows = candidateRows;
+                  if (fallbackRows && fallbackRows.length > 0 && !('embedding_blob' in fallbackRows[0])) {
+                    const rowIds = fallbackRows.map(r => r.id);
+                    const embeddingsMap = new Map<string, { embedding_blob: Uint8Array | null; embedding: string | null }>();
+                    const chunkSize = 500;
+                    for (let i = 0; i < rowIds.length; i += chunkSize) {
+                      const idChunk = rowIds.slice(i, i + chunkSize);
+                      const placeholders = idChunk.map(() => '?').join(',');
+                      const embeddingRows = await this.db.getAllAsync<{ id: string; embedding_blob: Uint8Array | null; embedding: string | null }>(
+                        `SELECT id, embedding_blob, embedding FROM ${this.prefix}entries WHERE id IN (${placeholders})`,
+                        idChunk
+                      );
+                      for (const row of embeddingRows) {
+                        embeddingsMap.set(row.id, { embedding_blob: row.embedding_blob, embedding: row.embedding });
+                      }
+                    }
+                    fallbackRows = fallbackRows.map(r => ({
+                      ...r,
+                      embedding_blob: embeddingsMap.get(r.id)?.embedding_blob ?? null,
+                      embedding: embeddingsMap.get(r.id)?.embedding ?? null,
+                    }));
+                  }
                   scored = await this._rankWithJsCosine({
                     entityId,
                     queryVec,
-                    candidateRows,
+                    candidateRows: fallbackRows,
                     weight,
                     miniSearchScores,
                     populateCache,
@@ -1208,6 +1243,7 @@ export class WikiMemory {
 
   /**
    * Delegate semantic ranking to the injected VectorRanker.
+   * Caller should pass an oversampledLimit to preserve recall after re-ranking.
    * Returns scored results ready for hybrid blending and tie-break sorting.
    */
   private async _rankWithVectorRanker(args: {
@@ -1225,14 +1261,11 @@ export class WikiMemory {
       throw new Error('vectorRanker not configured');
     }
 
-    // Oversample 2x to preserve recall after hybrid re-ranking
-    const oversampledLimit = Math.max(limit * 2, limit + 50);
-
     const rankerResults = await ranker.rankBySimilarity({
       entityId,
       queryVec,
       candidateIds,
-      limit: oversampledLimit,
+      limit,
     });
 
     // Convert ranker results to scored format, applying hybrid blending if weight is set
