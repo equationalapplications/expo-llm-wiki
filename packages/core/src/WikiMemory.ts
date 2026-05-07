@@ -804,6 +804,7 @@ export class WikiMemory {
 
       if (!skipEmbed && embedFn) {
         let rankerShouldRethrow = false;
+        let pendingRankerFallbackError: Error | undefined;
         try {
           const queryVec = await embedFn(trimmedQuery);
 
@@ -1032,7 +1033,7 @@ export class WikiMemory {
                 if (this.options.propagateRankerFailureToRetrievalFallback) {
                   const mirrored = new Error('Vector ranker failed, falling back');
                   (mirrored as any).cause = rankerError;
-                  this.options.onRetrievalFallback?.(mirrored);
+                  pendingRankerFallbackError = mirrored;
                 }
               }
             } else {
@@ -1069,9 +1070,18 @@ export class WikiMemory {
                 const byId = new Map(fullRows.map(r => [r.id, r]));
                 facts = topIds.map(id => byId.get(id)).filter((f): f is WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null } => f !== undefined);
               }
+              // Phase 2 succeeded — now safe to notify that ranker fallback occurred
+              if (pendingRankerFallbackError) {
+                this.options.onRetrievalFallback?.(pendingRankerFallbackError);
+                pendingRankerFallbackError = undefined;
+              }
               usedEmbed = true;
             } else {
               // Empty scored results (ranker returned no matches)
+              if (pendingRankerFallbackError) {
+                this.options.onRetrievalFallback?.(pendingRankerFallbackError);
+                pendingRankerFallbackError = undefined;
+              }
               usedEmbed = true;
             }
           } // closes the candidateRows !== null else block
