@@ -794,6 +794,7 @@ export class WikiMemory {
       let usedEmbed = false;
 
       if (!skipEmbed && embedFn) {
+        let rankerShouldRethrow = false;
         try {
           const queryVec = await embedFn(trimmedQuery);
 
@@ -960,8 +961,7 @@ export class WikiMemory {
                 this.options.onVectorRankerFallback?.({ error: rankerError, policy });
 
                 if (policy === 'throw') {
-                  // Mark error to propagate through outer catch
-                  (rankerError as any).__vectorRankerShouldThrow = true;
+                  rankerShouldRethrow = true;
                   throw rankerError;
                 } else if (policy === 'js-cosine') {
                   // If embeddings were skipped (vectorRanker was configured), fetch them now for fallback
@@ -1066,8 +1066,7 @@ export class WikiMemory {
           } // closes the candidateRows !== null else block
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
-          // Re-throw if this is a ranker error with policy 'throw'
-          if ((error as any).__vectorRankerShouldThrow) {
+          if (rankerShouldRethrow) {
             throw error;
           }
           this.options.onRetrievalFallback?.(error);

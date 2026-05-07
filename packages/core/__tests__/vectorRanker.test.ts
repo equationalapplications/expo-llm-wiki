@@ -323,6 +323,39 @@ describe('VectorRanker integration', () => {
       });
     });
 
+    it('should correctly re-fetch embeddings for js-cosine fallback in pure-semantic mode', async () => {
+      // Pure-semantic (hybridWeight: 1) means keyword scores are irrelevant.
+      // If embedding re-fetch is broken, both facts score -2 and alphabetical id
+      // tie-break returns 'fact-a-car' first. If re-fetch works, cosine similarity
+      // returns 'fact-z-apple' first for query "apple".
+      const db = openTestDatabase();
+      const mockRanker: VectorRanker = {
+        rankBySimilarity: async () => {
+          throw new Error('Ranker service unavailable');
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: {
+          generateText: async () => '{}',
+          embed: async (t) => keywordEmbed(t),
+        },
+        vectorRanker: mockRanker,
+        hybridWeight: 1,
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-z-apple', title: 'apple fruit', body: 'red and green' },
+        { id: 'fact-a-car', title: 'car vehicle', body: 'fast engine' },
+      ]));
+
+      const result = await wiki.read('user-1', 'apple');
+
+      // Semantic match: 'fact-z-apple' must rank above 'fact-a-car' even though
+      // alphabetical id tie-break would flip the order if embeddings were missing.
+      expect(result.facts[0].id).toBe('fact-z-apple');
+    });
+
     it('should fall back to keyword-only when policy is "keyword"', async () => {
       const db = openTestDatabase();
       const onVectorRankerFallback = vi.fn();
