@@ -1953,7 +1953,8 @@ export class WikiMemory {
       // embedFact() for them. BLOBs are reconstructed from three serialization
       // forms: in-memory Uint8Array/Buffer, Node.js Buffer JSON shape, and
       // numeric-keyed plain objects produced by JSON.stringify(Uint8Array).
-      const factsWithPreservedBlob = new Set<string>();
+      // Store the blob data so we can notify the external vector index after the transaction.
+      const factsWithPreservedBlob = new Map<string, Uint8Array>();
       // Track every unique dimension seen in preserved BLOBs. A dump may contain
       // blobs from multiple models (e.g. an intermediate mixed-model migration),
       // so we call storeEmbeddingDimension() for each unique dimension found to
@@ -2081,7 +2082,7 @@ export class WikiMemory {
                 `UPDATE ${this.prefix}entries SET entity_id = ?, title = ?, body = ?, tags = ?, confidence = ?, source_type = ?, source_hash = ?, source_ref = ?, created_at = ?, updated_at = ?, last_accessed_at = ?, access_count = ?, deleted_at = ?, embedding_blob = ?, embedding = NULL WHERE id = ?`,
                 [entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, blobData, fact.id]
               );
-              factsWithPreservedBlob.add(fact.id);
+              factsWithPreservedBlob.set(fact.id, blobData);
               // Only track dimensions for live facts: read() and _reconcileEmbeddingDimension()
               // both filter by deleted_at IS NULL, so a soft-deleted stale blob must not
               // set embedding_dimension_mismatch and block retrieval on healthy live facts.
@@ -2105,7 +2106,7 @@ export class WikiMemory {
                 `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at, embedding_blob) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, blobData]
               );
-              factsWithPreservedBlob.add(fact.id);
+              factsWithPreservedBlob.set(fact.id, blobData);
               if (!fact.deleted_at) preservedBlobDims.add(blobData.byteLength / 4);
             } else {
               await this.db.runAsync(
@@ -2199,6 +2200,16 @@ export class WikiMemory {
             body: fact.body,
             tags: Array.isArray(fact.tags) || typeof fact.tags === 'string' ? fact.tags : [],
           });
+        }
+      }
+      // Notify external vector index about preserved-blob facts.
+      // These skipped embedFact(), so _notifyEmbeddingPersisted was never called.
+      for (const [factId, blobData] of factsWithPreservedBlob) {
+        try {
+          const float32Vector = new Float32Array(blobData.buffer, blobData.byteOffset, blobData.byteLength / 4);
+          await this._notifyEmbeddingPersisted(entityId, factId, float32Vector);
+        } catch (hookErr) {
+          console.warn(`[WikiMemory] onEmbeddingPersisted hook failed for preserved-blob fact ${factId}:`, hookErr);
         }
       }
       // If any facts carried preserved BLOBs, record the vector dimension in the
