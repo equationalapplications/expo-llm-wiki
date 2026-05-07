@@ -883,97 +883,71 @@ export class WikiMemory {
             // pre-filter returned 0 candidates — facts = [], skip phase 2, skip access tracking
             usedEmbed = true;
           } else {
-            // Cache: reuse parsed vectors from prior full-scan reads
-            let entityCache = this.vectorCache.get(entityId);
-            // Evict only when a full-scan read discovers the entity has grown past
-            // the size cap, so the stale oversized Map can't accumulate unbounded
-            // vectors by reference. Pre-filter reads (populateCache=false) reuse
-            // the existing cache and must not evict it.
-            const tooLarge = populateCache && candidateRows.length > WikiMemory.MAX_VECTOR_CACHE_FACTS_PER_ENTITY;
-            if (tooLarge && entityCache) {
-              this.vectorCache.delete(entityId);
-              entityCache = undefined;
-            }
-            const canCache = populateCache && !tooLarge;
-            if (canCache && !entityCache) {
-              entityCache = new Map<string, Float32Array>();
+            // Rank candidates: use vectorRanker if present, otherwise use JS cosine
+            let scored: Array<{ id: string; score: number; updated_at?: number | null; access_count?: number | null }>;
+
+            if (this.options.vectorRanker) {
+              // Use external ranker for semantic scoring
+              const candidateIds = effectivePreFilterLimit !== undefined
+                ? candidateRows.map(r => r.id)
+                : undefined;
+
+              scored = await this._rankWithVectorRanker({
+                entityId,
+                queryVec,
+                candidateIds,
+                weight,
+                miniSearchScores,
+                limit: maxResults,
+              });
+
+              // Attach tie-break metadata from candidateRows
+              if (scored.length > 0) {
+                const metaMap = new Map(candidateRows.map(r => [r.id, { updated_at: r.updated_at, access_count: r.access_count }]));
+                scored = scored.map(s => {
+                  const meta = metaMap.get(s.id);
+                  return { ...s, updated_at: meta?.updated_at ?? null, access_count: meta?.access_count ?? null };
+                });
+              }
+            } else {
+              // Use in-process JS cosine similarity
+              scored = await this._rankWithJsCosine({
+                entityId,
+                queryVec,
+                candidateRows,
+                weight,
+                miniSearchScores,
+                populateCache,
+                limit: maxResults,
+              });
             }
 
-            const scored = candidateRows.map(row => {
-              let vector = entityCache?.get(row.id) ?? parseEmbedding(row.embedding_blob, row.embedding);
-              if (vector && canCache && entityCache && !entityCache.has(row.id)) {
-                entityCache.set(row.id, vector);
-              }
-              let score = 0;
-              if (vector && vector.length === queryVec.length) {
-                const cosSim = cosineSimilarity(queryVec, vector);
-                if (weight !== undefined) {
-                  // Clamp to [0,1] only for hybrid blending so the weighted sum stays
-                  // in a predictable range. Pure-semantic ranking preserves the full
-                  // [-1,1] cosine range so the least-dissimilar facts always rank above
-                  // unembedded rows (which score 0) even when all scores are negative.
-                  const kwScore = miniSearchScores?.get(row.id) ?? 0;
-                  score = weight * Math.max(0, cosSim) + (1 - weight) * kwScore;
-                } else {
-                  score = cosSim;
+            if (scored.length > 0) {
+              // Re-apply tie-break sorting (ranker might not have stable ordering)
+              this._tieBreakSort(scored);
+
+              // Phase 2: fetch full rows only for the top results
+              const topIds = scored.slice(0, maxResults).map(s => s.id);
+              if (topIds.length > 0) {
+                const fullRows: Array<WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null }> = [];
+                const phase2ChunkSize = 500;
+                for (let i = 0; i < topIds.length; i += phase2ChunkSize) {
+                  const idChunk = topIds.slice(i, i + phase2ChunkSize);
+                  const placeholders = idChunk.map(() => '?').join(',');
+                  const chunkRows = await this.db.getAllAsync<WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null }>(
+                    `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+                    idChunk
+                  );
+                  fullRows.push(...chunkRows);
                 }
-              } else if (weight !== undefined && weight < 1) {
-                // No usable embedding — still apply the keyword portion of the hybrid score.
-                // miniSearchScores is always defined here because both code paths above
-                // populate it whenever weight !== undefined && weight < 1, matching this guard.
-                const kwScore = miniSearchScores?.get(row.id) ?? 0;
-                score = (1 - weight) * kwScore;
-              } else {
-                // Pure-semantic path with no usable vector. Use -2 (below the minimum
-                // valid cosine of -1) so embedded facts always rank above unembedded rows
-                // even when every cosine score is negative.
-                score = -2;
+                const byId = new Map(fullRows.map(r => [r.id, r]));
+                facts = topIds.map(id => byId.get(id)).filter((f): f is WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null } => f !== undefined);
               }
-              return { row, score };
-            });
-
-            if (canCache && entityCache && entityCache.size > 0) {
-              if (!this.vectorCache.has(entityId)) {
-                // Evict the oldest entity when at the per-process cap to prevent unbounded growth
-                // on long-lived instances serving many distinct entities.
-                // Only store non-empty maps: caching an empty map for a zero-fact entity
-                // wastes one of the 16 entity slots and can evict a real cached entity.
-                if (this.vectorCache.size >= WikiMemory.MAX_VECTOR_CACHE_ENTITIES) {
-                  const oldestKey = this.vectorCache.keys().next().value as string | undefined;
-                  if (oldestKey !== undefined) this.vectorCache.delete(oldestKey);
-                }
-                this.vectorCache.set(entityId, entityCache);
-              }
+              usedEmbed = true;
+            } else {
+              // Empty scored results (ranker returned no matches)
+              usedEmbed = true;
             }
-
-            scored.sort((a, b) => {
-              const scoreDiff = b.score - a.score;
-              if (scoreDiff !== 0) return scoreDiff;
-              const accessCountDiff = (b.row.access_count ?? 0) - (a.row.access_count ?? 0);
-              if (accessCountDiff !== 0) return accessCountDiff;
-              const updatedAtDiff = (b.row.updated_at ?? 0) - (a.row.updated_at ?? 0);
-              if (updatedAtDiff !== 0) return updatedAtDiff;
-              return a.row.id.localeCompare(b.row.id);
-            });
-
-            // Phase 2: fetch full rows only for the top results
-            const topIds = scored.slice(0, maxResults).map(s => s.row.id);
-            if (topIds.length > 0) {
-              const fullRows: Array<WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null }> = [];
-              const phase2ChunkSize = 500;
-              for (let i = 0; i < topIds.length; i += phase2ChunkSize) {
-                const idChunk = topIds.slice(i, i + phase2ChunkSize);
-                const placeholders = idChunk.map(() => '?').join(',');
-                const chunkRows = await this.db.getAllAsync<WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null }>(
-                  `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
-                  idChunk
-                );
-                fullRows.push(...chunkRows);
-              }
-              const byId = new Map(fullRows.map(r => [r.id, r]));
-              facts = topIds.map(id => byId.get(id)).filter((f): f is WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null } => f !== undefined);
-            }
-            usedEmbed = true;
           } // closes the candidateRows !== null else block
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
@@ -1055,6 +1029,152 @@ export class WikiMemory {
     });
 
     return { facts: parsedFacts, tasks, events: events.reverse() };
+  }
+
+  /**
+   * Stable tie-break sort: score desc → access_count desc → updated_at desc → id asc.
+   */
+  private _tieBreakSort<T extends { id: string; score: number; updated_at?: number | null; access_count?: number | null }>(items: T[]): void {
+    items.sort((a, b) => {
+      const scoreDiff = b.score - a.score;
+      if (scoreDiff !== 0) return scoreDiff;
+      const accessCountDiff = (b.access_count ?? 0) - (a.access_count ?? 0);
+      if (accessCountDiff !== 0) return accessCountDiff;
+      const updatedAtDiff = (b.updated_at ?? 0) - (a.updated_at ?? 0);
+      if (updatedAtDiff !== 0) return updatedAtDiff;
+      return a.id.localeCompare(b.id);
+    });
+  }
+
+  /**
+   * Score candidate rows using in-process JS cosine similarity.
+   * Hybrid blending and tie-break sorting are applied after scores are returned.
+   */
+  private async _rankWithJsCosine(args: {
+    entityId: string;
+    queryVec: Float32Array | number[];
+    candidateRows: Array<{ id: string; embedding_blob: Uint8Array | null; embedding: string | null; updated_at: number | null; access_count: number | null }>;
+    weight: number | undefined;
+    miniSearchScores: Map<string, number> | undefined;
+    populateCache: boolean;
+    limit: number;
+  }): Promise<Array<{ id: string; score: number; updated_at: number | null; access_count: number | null }>> {
+    const { entityId, queryVec, candidateRows, weight, miniSearchScores, populateCache, limit } = args;
+
+    // Cache: reuse parsed vectors from prior full-scan reads
+    let entityCache = this.vectorCache.get(entityId);
+    const tooLarge = populateCache && candidateRows.length > WikiMemory.MAX_VECTOR_CACHE_FACTS_PER_ENTITY;
+    if (tooLarge && entityCache) {
+      this.vectorCache.delete(entityId);
+      entityCache = undefined;
+    }
+    const canCache = populateCache && !tooLarge;
+    if (canCache && !entityCache) {
+      entityCache = new Map<string, Float32Array>();
+    }
+
+    const scored = candidateRows.map(row => {
+      let vector = entityCache?.get(row.id) ?? parseEmbedding(row.embedding_blob, row.embedding);
+      if (vector && canCache && entityCache && !entityCache.has(row.id)) {
+        entityCache.set(row.id, vector);
+      }
+      let score = 0;
+      if (vector && vector.length === queryVec.length) {
+        const cosSim = cosineSimilarity(queryVec, vector);
+        if (weight !== undefined) {
+          // Clamp to [0,1] only for hybrid blending so the weighted sum stays
+          // in a predictable range. Pure-semantic ranking preserves the full
+          // [-1,1] cosine range so the least-dissimilar facts always rank above
+          // unembedded rows (which score 0) even when all scores are negative.
+          const kwScore = miniSearchScores?.get(row.id) ?? 0;
+          score = weight * Math.max(0, cosSim) + (1 - weight) * kwScore;
+        } else {
+          score = cosSim;
+        }
+      } else if (weight !== undefined && weight < 1) {
+        // No usable embedding — still apply the keyword portion of the hybrid score.
+        const kwScore = miniSearchScores?.get(row.id) ?? 0;
+        score = (1 - weight) * kwScore;
+      } else {
+        // Pure-semantic path with no usable vector. Use -2 (below the minimum
+        // valid cosine of -1) so embedded facts always rank above unembedded rows
+        // even when every cosine score is negative.
+        score = -2;
+      }
+      return { id: row.id, score, updated_at: row.updated_at, access_count: row.access_count };
+    });
+
+    if (canCache && entityCache && entityCache.size > 0) {
+      if (!this.vectorCache.has(entityId)) {
+        // Evict the oldest entity when at the per-process cap to prevent unbounded growth
+        // on long-lived instances serving many distinct entities.
+        if (this.vectorCache.size >= WikiMemory.MAX_VECTOR_CACHE_ENTITIES) {
+          const oldestKey = this.vectorCache.keys().next().value as string | undefined;
+          if (oldestKey !== undefined) this.vectorCache.delete(oldestKey);
+        }
+        this.vectorCache.set(entityId, entityCache);
+      }
+    }
+
+    // Sort and return top results (WikiMemory will re-sort after blending for hybrid paths)
+    this._tieBreakSort(scored);
+
+    return scored.slice(0, limit);
+  }
+
+  /**
+   * Delegate semantic ranking to the injected VectorRanker.
+   * Returns scored results ready for hybrid blending and tie-break sorting.
+   */
+  private async _rankWithVectorRanker(args: {
+    entityId: string;
+    queryVec: Float32Array | number[];
+    candidateIds: readonly string[] | undefined;
+    weight: number | undefined;
+    miniSearchScores: Map<string, number> | undefined;
+    limit: number;
+  }): Promise<Array<{ id: string; score: number }>> {
+    const { entityId, queryVec, candidateIds, weight, miniSearchScores, limit } = args;
+
+    const ranker = this.options.vectorRanker;
+    if (!ranker) {
+      throw new Error('vectorRanker not configured');
+    }
+
+    // Oversample 2x to preserve recall after hybrid re-ranking
+    const oversampledLimit = Math.max(limit * 2, limit + 50);
+
+    const rankerResults = await ranker.rankBySimilarity({
+      entityId,
+      queryVec,
+      candidateIds,
+      limit: oversampledLimit,
+    });
+
+    // Convert ranker results to scored format, applying hybrid blending if weight is set
+    const scored = rankerResults.map(r => {
+      let score = r.semanticScore;
+      if (weight !== undefined) {
+        // Hybrid blending: clamp semantic score to [0,1] for predictable weighted sum
+        const kwScore = miniSearchScores?.get(r.id) ?? 0;
+        score = weight * Math.max(0, r.semanticScore) + (1 - weight) * kwScore;
+      }
+      return { id: r.id, score };
+    });
+
+    // If ranker omitted facts, apply fallback scores for missing ids when hybrid
+    if (weight !== undefined && weight < 1 && candidateIds) {
+      const rankerIdSet = new Set(rankerResults.map(r => r.id));
+      for (const id of candidateIds) {
+        if (!rankerIdSet.has(id)) {
+          // No usable embedding from ranker — still apply keyword portion
+          const kwScore = miniSearchScores?.get(id) ?? 0;
+          scored.push({ id, score: (1 - weight) * kwScore });
+        }
+      }
+    }
+
+    return scored.slice(0, limit);
   }
 
   async getMemoryBundle(entityId: string): Promise<MemoryBundle> {
