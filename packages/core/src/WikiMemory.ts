@@ -892,22 +892,71 @@ export class WikiMemory {
                 ? candidateRows.map(r => r.id)
                 : undefined;
 
-              scored = await this._rankWithVectorRanker({
-                entityId,
-                queryVec,
-                candidateIds,
-                weight,
-                miniSearchScores,
-                limit: maxResults,
-              });
-
-              // Attach tie-break metadata from candidateRows
-              if (scored.length > 0) {
-                const metaMap = new Map(candidateRows.map(r => [r.id, { updated_at: r.updated_at, access_count: r.access_count }]));
-                scored = scored.map(s => {
-                  const meta = metaMap.get(s.id);
-                  return { ...s, updated_at: meta?.updated_at ?? null, access_count: meta?.access_count ?? null };
+              try {
+                scored = await this._rankWithVectorRanker({
+                  entityId,
+                  queryVec,
+                  candidateIds,
+                  weight,
+                  miniSearchScores,
+                  limit: maxResults,
                 });
+
+                // Attach tie-break metadata from candidateRows
+                if (scored.length > 0) {
+                  const metaMap = new Map(candidateRows.map(r => [r.id, { updated_at: r.updated_at, access_count: r.access_count }]));
+                  scored = scored.map(s => {
+                    const meta = metaMap.get(s.id);
+                    return { ...s, updated_at: meta?.updated_at ?? null, access_count: meta?.access_count ?? null };
+                  });
+                }
+              } catch (rankerErr) {
+                const rankerError = rankerErr instanceof Error ? rankerErr : new Error(String(rankerErr));
+                const policy = this.options.vectorRankerFallback ?? 'js-cosine';
+
+                this.options.onVectorRankerFallback?.({ error: rankerError, policy });
+
+                if (policy === 'throw') {
+                  // Mark error to propagate through outer catch
+                  (rankerError as any).__vectorRankerShouldThrow = true;
+                  throw rankerError;
+                } else if (policy === 'js-cosine') {
+                  scored = await this._rankWithJsCosine({
+                    entityId,
+                    queryVec,
+                    candidateRows,
+                    weight,
+                    miniSearchScores,
+                    populateCache,
+                    limit: maxResults,
+                  });
+                } else if (policy === 'keyword') {
+                  // Fall back to keyword-only results from MiniSearch
+                  const msResults = this.miniSearch.search(trimmedQuery, {
+                    filter: (r) => (r as unknown as { entity_id: string }).entity_id === entityId,
+                    combineWith: 'OR',
+                  });
+                  scored = msResults.slice(0, maxResults).map(r => {
+                    const candidate = candidateRows.find(c => c.id === r.id);
+                    return {
+                      id: r.id,
+                      score: r.score ?? 0,
+                      access_count: candidate?.access_count ?? null,
+                      updated_at: candidate?.updated_at ?? null,
+                    };
+                  });
+                  usedEmbed = true;
+                } else {
+                  // policy === 'empty'
+                  scored = [];
+                  usedEmbed = true;
+                }
+
+                if (policy !== 'throw' && this.options.propagateRankerFailureToRetrievalFallback) {
+                  const mirrored = new Error('Vector ranker failed, falling back');
+                  (mirrored as any).cause = rankerError;
+                  this.options.onRetrievalFallback?.(mirrored);
+                }
               }
             } else {
               // Use in-process JS cosine similarity
@@ -951,6 +1000,10 @@ export class WikiMemory {
           } // closes the candidateRows !== null else block
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
+          // Re-throw if this is a ranker error with policy 'throw'
+          if ((error as any).__vectorRankerShouldThrow) {
+            throw error;
+          }
           this.options.onRetrievalFallback?.(error);
         }
       }

@@ -286,4 +286,209 @@ describe('VectorRanker integration', () => {
       expect(onRetrievalFallback).toHaveBeenCalled();
     });
   });
+
+  describe('VectorRanker failure policies', () => {
+    it('should fall back to js-cosine when vectorRanker throws (default policy)', async () => {
+      const db = openTestDatabase();
+      const onVectorRankerFallback = vi.fn();
+      const mockRanker: VectorRanker = {
+        rankBySimilarity: async () => {
+          throw new Error('Ranker service unavailable');
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: {
+          generateText: async () => '{}',
+          embed: async (t) => keywordEmbed(t),
+        },
+        vectorRanker: mockRanker,
+        onVectorRankerFallback,
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+        { id: 'fact-b', title: 'car vehicle', body: 'fast engine' },
+      ]));
+
+      const result = await wiki.read('user-1', 'apple');
+
+      // Should fall back to JS cosine and return correct results
+      expect(result.facts[0].id).toBe('fact-a');
+      expect(onVectorRankerFallback).toHaveBeenCalledWith({
+        error: expect.any(Error),
+        policy: 'js-cosine',
+      });
+    });
+
+    it('should fall back to keyword-only when policy is "keyword"', async () => {
+      const db = openTestDatabase();
+      const onVectorRankerFallback = vi.fn();
+      const mockRanker: VectorRanker = {
+        rankBySimilarity: async () => {
+          throw new Error('Ranker service unavailable');
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: {
+          generateText: async () => '{}',
+          embed: async (t) => keywordEmbed(t),
+        },
+        vectorRanker: mockRanker,
+        vectorRankerFallback: 'keyword',
+        onVectorRankerFallback,
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+        { id: 'fact-b', title: 'car vehicle', body: 'fast engine' },
+      ]));
+
+      const result = await wiki.read('user-1', 'apple');
+
+      // Should fall back to keyword search
+      expect(result.facts.length).toBeGreaterThan(0);
+      expect(onVectorRankerFallback).toHaveBeenCalledWith({
+        error: expect.any(Error),
+        policy: 'keyword',
+      });
+    });
+
+    it('should return empty results when policy is "empty"', async () => {
+      const db = openTestDatabase();
+      const onVectorRankerFallback = vi.fn();
+      const mockRanker: VectorRanker = {
+        rankBySimilarity: async () => {
+          throw new Error('Ranker service unavailable');
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: {
+          generateText: async () => '{}',
+          embed: async (t) => keywordEmbed(t),
+        },
+        vectorRanker: mockRanker,
+        vectorRankerFallback: 'empty',
+        onVectorRankerFallback,
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+        { id: 'fact-b', title: 'car vehicle', body: 'fast engine' },
+      ]));
+
+      const result = await wiki.read('user-1', 'apple');
+
+      // Should return empty results
+      expect(result.facts).toHaveLength(0);
+      expect(onVectorRankerFallback).toHaveBeenCalledWith({
+        error: expect.any(Error),
+        policy: 'empty',
+      });
+    });
+
+    it('should throw when policy is "throw"', async () => {
+      const db = openTestDatabase();
+      const onVectorRankerFallback = vi.fn();
+      const mockRanker: VectorRanker = {
+        rankBySimilarity: async () => {
+          throw new Error('Ranker service unavailable');
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: {
+          generateText: async () => '{}',
+          embed: async (t) => keywordEmbed(t),
+        },
+        vectorRanker: mockRanker,
+        vectorRankerFallback: 'throw',
+        onVectorRankerFallback,
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+      ]));
+
+      // Should throw the ranker error
+      await expect(wiki.read('user-1', 'apple')).rejects.toThrow('Ranker service unavailable');
+      expect(onVectorRankerFallback).toHaveBeenCalledWith({
+        error: expect.any(Error),
+        policy: 'throw',
+      });
+    });
+
+    it('should invoke onRetrievalFallback when propagateRankerFailureToRetrievalFallback is true', async () => {
+      const db = openTestDatabase();
+      const onVectorRankerFallback = vi.fn();
+      const onRetrievalFallback = vi.fn();
+      const mockRanker: VectorRanker = {
+        rankBySimilarity: async () => {
+          throw new Error('Ranker service unavailable');
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: {
+          generateText: async () => '{}',
+          embed: async (t) => keywordEmbed(t),
+        },
+        vectorRanker: mockRanker,
+        vectorRankerFallback: 'keyword',
+        propagateRankerFailureToRetrievalFallback: true,
+        onVectorRankerFallback,
+        onRetrievalFallback,
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+      ]));
+
+      await wiki.read('user-1', 'apple');
+
+      // Both callbacks should be invoked
+      expect(onVectorRankerFallback).toHaveBeenCalled();
+      expect(onRetrievalFallback).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Vector ranker failed, falling back',
+          cause: expect.any(Error),
+        })
+      );
+    });
+
+    it('should not invoke onRetrievalFallback when propagateRankerFailureToRetrievalFallback is false', async () => {
+      const db = openTestDatabase();
+      const onVectorRankerFallback = vi.fn();
+      const onRetrievalFallback = vi.fn();
+      const mockRanker: VectorRanker = {
+        rankBySimilarity: async () => {
+          throw new Error('Ranker service unavailable');
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: {
+          generateText: async () => '{}',
+          embed: async (t) => keywordEmbed(t),
+        },
+        vectorRanker: mockRanker,
+        vectorRankerFallback: 'js-cosine',
+        propagateRankerFailureToRetrievalFallback: false,
+        onVectorRankerFallback,
+        onRetrievalFallback,
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+      ]));
+
+      await wiki.read('user-1', 'apple');
+
+      // Only onVectorRankerFallback should be called
+      expect(onVectorRankerFallback).toHaveBeenCalled();
+      expect(onRetrievalFallback).not.toHaveBeenCalled();
+    });
+  });
 });
