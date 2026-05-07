@@ -756,7 +756,9 @@ export class WikiMemory {
       await this.rebuildMiniSearchIndex(entityId);
       this.vectorCache.delete(entityId);
 
-      for (const factId of deletedEntryIds) {
+      // Deduplicate to avoid redundant hook calls for the same fact
+      const uniqueDeletedIds = Array.from(new Set(deletedEntryIds));
+      for (const factId of uniqueDeletedIds) {
         try {
           await this._notifyEmbeddingPersisted(entityId, factId, null);
         } catch (hookErr) {
@@ -805,6 +807,7 @@ export class WikiMemory {
       if (!skipEmbed && embedFn) {
         let rankerShouldRethrow = false;
         let pendingRankerFallbackError: Error | undefined;
+        let usedKeywordFallback = false;
         try {
           const queryVec = await embedFn(trimmedQuery);
 
@@ -1023,11 +1026,10 @@ export class WikiMemory {
                       updated_at: meta?.updated_at ?? null,
                     };
                   });
-                  usedEmbed = true;
+                  usedKeywordFallback = true;
                 } else {
                   // policy === 'empty'
                   scored = [];
-                  usedEmbed = true;
                 }
 
                 if (this.options.propagateRankerFailureToRetrievalFallback) {
@@ -1051,7 +1053,10 @@ export class WikiMemory {
 
             if (scored.length > 0) {
               // Re-apply tie-break sorting (ranker might not have stable ordering)
-              this._tieBreakSort(scored);
+              // Skip for keyword-only fallback to preserve MiniSearch ordering
+              if (!usedKeywordFallback) {
+                this._tieBreakSort(scored);
+              }
 
               // Phase 2: fetch full rows only for the top results
               const topIds = scored.slice(0, maxResults).map(s => s.id);
@@ -1090,7 +1095,12 @@ export class WikiMemory {
           if (rankerShouldRethrow) {
             throw error;
           }
-          this.options.onRetrievalFallback?.(error);
+          // Only notify if ranker fallback hasn't been attempted (pendingRankerFallbackError not set).
+          // If pendingRankerFallbackError is set, the fallback didn't finish building the result,
+          // so we shouldn't notify per spec: "after the recoverable fallback has finished".
+          if (!pendingRankerFallbackError) {
+            this.options.onRetrievalFallback?.(error);
+          }
         }
       }
 
@@ -1292,7 +1302,7 @@ export class WikiMemory {
     const scored = rankerResults.map(r => {
       let score = r.semanticScore;
       if (weight !== undefined) {
-        // Hybrid blending: clamp semantic score to [0,1] for predictable weighted sum
+        // Hybrid blending: floor semantic score at 0 for predictable weighted sum (no upper clamp)
         const kwScore = miniSearchScores?.get(r.id) ?? 0;
         score = weight * Math.max(0, r.semanticScore) + (1 - weight) * kwScore;
       }
@@ -2415,7 +2425,9 @@ export class WikiMemory {
       await this.rebuildMiniSearchIndex(entityId);
       this.vectorCache.delete(entityId);
 
-      for (const factId of deletedEntryIds) {
+      // Deduplicate to avoid redundant hook calls for the same fact
+      const uniqueDeletedIds = Array.from(new Set(deletedEntryIds));
+      for (const factId of uniqueDeletedIds) {
         try {
           await this._notifyEmbeddingPersisted(entityId, factId, null);
         } catch (hookErr) {
