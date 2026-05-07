@@ -929,6 +929,18 @@ export class WikiMemory {
                     return { ...s, updated_at: meta?.updated_at ?? null, access_count: meta?.access_count ?? null };
                   });
                 }
+
+                // Backfill ranker-omitted rows per VectorRanker contract:
+                // treat missing ids as "no embedding" (pure semantic: -2, hybrid: keyword-only)
+                const scoredIds = new Set(scored.map(s => s.id));
+                for (const row of candidateRows) {
+                  if (!scoredIds.has(row.id)) {
+                    const score = (weight !== undefined && weight < 1)
+                      ? (1 - weight) * (miniSearchScores?.get(row.id) ?? 0)
+                      : -2;
+                    scored.push({ id: row.id, score, updated_at: row.updated_at, access_count: row.access_count });
+                  }
+                }
               } catch (rankerErr) {
                 const rankerError = rankerErr instanceof Error ? rankerErr : new Error(String(rankerErr));
                 const policy = this.options.vectorRankerFallback ?? 'js-cosine';
@@ -1234,18 +1246,21 @@ export class WikiMemory {
       return { id: r.id, score };
     });
 
-    // If ranker omitted facts, apply fallback scores for missing ids when hybrid
-    if (weight !== undefined && weight < 1 && candidateIds) {
+    // Backfill omitted candidateIds — ranker may return fewer than requested
+    if (candidateIds) {
       const rankerIdSet = new Set(rankerResults.map(r => r.id));
       for (const id of candidateIds) {
         if (!rankerIdSet.has(id)) {
-          // No usable embedding from ranker — still apply keyword portion
-          const kwScore = miniSearchScores?.get(id) ?? 0;
-          scored.push({ id, score: (1 - weight) * kwScore });
+          // Hybrid: keyword-only portion; pure semantic: treat as no embedding (score -2)
+          const score = (weight !== undefined && weight < 1)
+            ? (1 - weight) * (miniSearchScores?.get(id) ?? 0)
+            : -2;
+          scored.push({ id, score });
         }
       }
     }
 
+    this._tieBreakSort(scored);
     return scored.slice(0, limit);
   }
 

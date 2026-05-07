@@ -181,9 +181,11 @@ describe('VectorRanker integration', () => {
       ]));
 
       const result = await wiki.read('user-1', 'test');
-      // Only fact-a should be returned
-      expect(result.facts).toHaveLength(1);
+      // fact-a ranked first (ranker score 0.8), fact-b gets fallback score -2 (no embedding)
+      expect(result.facts.length).toBeGreaterThanOrEqual(2);
       expect(result.facts[0].id).toBe('fact-a');
+      const factBIdx = result.facts.findIndex(f => f.id === 'fact-b');
+      expect(factBIdx).toBeGreaterThan(0);
     });
   });
 

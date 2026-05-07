@@ -175,8 +175,10 @@ const sqliteVecRanker: VectorRanker = {
   async rankBySimilarity(args: VectorRankerRankArgs): Promise<VectorRankerSemanticResult[]> {
     const { entityId, queryVec, candidateIds, limit } = args;
 
-    // Build KNN query using sqlite-vec's distance functions
-    let sql = `SELECT id, distance AS semanticScore FROM vec_facts 
+    // Build KNN query using sqlite-vec's distance functions.
+    // sqlite-vec returns cosine distance (0 = identical, 2 = opposite) ascending.
+    // Invert to semanticScore: higher = more similar, matching VectorRanker contract.
+    let sql = `SELECT id, (1.0 - distance) AS semanticScore FROM vec_facts 
               WHERE entity_id = ? AND deleted_at IS NULL`;
     const params: any[] = [entityId];
 
@@ -191,7 +193,7 @@ const sqliteVecRanker: VectorRanker = {
     params.push(queryVec, limit);
 
     const rows = await db.getAllAsync<{ id: string; semanticScore: number }>(sql, params);
-    return rows; // sorted descending by semanticScore
+    return rows; // sorted descending by semanticScore (closest distance → highest similarity)
   },
 
   async onEmbeddingPersisted(event) {
