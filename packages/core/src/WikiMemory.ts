@@ -428,7 +428,7 @@ export class WikiMemory {
     }
   }
 
-  private async embedFact(fact: { id: string; title: string; body: string; tags: string | string[] }): Promise<boolean> {
+  private async embedFact(fact: { id: string; entity_id: string; title: string; body: string; tags: string | string[] }): Promise<boolean> {
     const embedFn = this.options.llmProvider.embed;
     if (!embedFn) return false;
     let tagsStr: string;
@@ -466,6 +466,7 @@ export class WikiMemory {
         `UPDATE ${this.prefix}entries SET embedding_blob = ?, embedding = NULL WHERE id = ?`,
         [blob, fact.id]
       );
+      await this._notifyEmbeddingPersisted(fact.entity_id, fact.id, float32Vector);
       return true;
     } catch (err) {
       console.warn(`[WikiMemory] embedFact failed for ${fact.id}:`, err);
@@ -477,6 +478,10 @@ export class WikiMemory {
   private _healKey(entityId: string) { return `${this.prefix}:${entityId}:heal`; }
   private _warnCrossEntityCollision(type: 'entry' | 'task', id: string, existingEntityId: string, targetEntityId: string): void {
     console.warn(`[WikiMemory] importDump: ${type} id "${id}" already belongs to entity "${existingEntityId}"; skipping for entity "${targetEntityId}"`);
+  }
+
+  private async _notifyEmbeddingPersisted(entityId: string, factId: string, vector: Float32Array | null): Promise<void> {
+    await this.options.vectorRanker?.onEmbeddingPersisted?.({ entityId, factId, vector });
   }
 
   constructor(db: SQLiteAdapter, options: WikiOptions) {
@@ -701,9 +706,18 @@ export class WikiMemory {
       let deletedEntries = 0;
       let deletedTasks = 0;
       let deletedEvents = 0;
+      const deletedEntryIds: string[] = [];
 
       if (retainSoftDeletedFor !== null) {
         const cutoff = now - retainSoftDeletedFor * 86400000;
+
+        const entriesToDelete = await this.db.getAllAsync<{ id: string }>(
+          `SELECT id FROM ${this.prefix}entries
+           WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`,
+          [entityId, cutoff]
+        );
+        deletedEntryIds.push(...entriesToDelete.map(e => e.id));
+
         const entryResult = await this.db.runAsync(
           `DELETE FROM ${this.prefix}entries
            WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`,
@@ -736,6 +750,11 @@ export class WikiMemory {
 
       await this.rebuildMiniSearchIndex(entityId);
       this.vectorCache.delete(entityId);
+
+      for (const factId of deletedEntryIds) {
+        await this._notifyEmbeddingPersisted(entityId, factId, null);
+      }
+
       return { entries: deletedEntries, tasks: deletedTasks, events: deletedEvents };
     } finally {
       this.activeMaintenanceJobs.delete(pruneKey);
@@ -1346,7 +1365,7 @@ export class WikiMemory {
 
     const now = Date.now();
 
-    const insertedFacts: Array<{ id: string; title: string; body: string; tags: string }> = [];
+    const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
 
     await this.db.withTransactionAsync(async () => {
       for (const fact of validFacts) {
@@ -1371,7 +1390,7 @@ export class WikiMemory {
           INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'agent_inferred', now, now]);
-        insertedFacts.push({ id, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
+        insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
       }
 
       for (const task of validTasks) {
@@ -1462,7 +1481,7 @@ export class WikiMemory {
     const safeDeleted = deleted.filter(id => mutableIds.has(id));
     const validNewFacts = newFacts.map(validateFact).filter((f): f is ExtractedFact => f !== null);
 
-    const insertedFacts: Array<{ id: string; title: string; body: string; tags: string }> = [];
+    const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
 
     await this.db.withTransactionAsync(async () => {
       for (const id of safeDowngraded) {
@@ -1477,7 +1496,7 @@ export class WikiMemory {
           INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'agent_inferred', now, now]);
-        insertedFacts.push({ id, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
+        insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
       }
     });
 
@@ -2117,6 +2136,7 @@ export class WikiMemory {
         if (!fact.deleted_at && upsertedFactIds.has(fact.id) && !factsWithPreservedBlob.has(fact.id)) {
           await this.embedFact({
             id: fact.id,
+            entity_id: fact.entity_id,
             title: fact.title,
             body: fact.body,
             tags: Array.isArray(fact.tags) || typeof fact.tags === 'string' ? fact.tags : [],
@@ -2242,8 +2262,15 @@ export class WikiMemory {
       const now = Date.now();
       let deletedEntries = 0;
       let deletedTasks = 0;
+      const deletedEntryIds: string[] = [];
 
       if (params.clearAll) {
+        const entriesToDelete = await this.db.getAllAsync<{ id: string }>(
+          `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
+          [entityId]
+        );
+        deletedEntryIds.push(...entriesToDelete.map(e => e.id));
+
         const [entriesRes, tasksRes] = await Promise.all([
           this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
           this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
@@ -2262,6 +2289,29 @@ export class WikiMemory {
         if (params.sourceRef !== undefined && !sourceRef) throw new Error('Invalid sourceRef');
         const sourceHash = params.sourceHash !== undefined ? normalizeSourceHash(params.sourceHash) : null;
         if (params.sourceHash !== undefined && !sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
+
+        if (params.entryId) {
+          const entry = await this.db.getFirstAsync<{ id: string }>(
+            `SELECT id FROM ${this.prefix}entries WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`,
+            [params.entryId, entityId]
+          );
+          if (entry) deletedEntryIds.push(entry.id);
+        }
+
+        if (sourceRef || sourceHash) {
+          let q = `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`;
+          const args: any[] = [entityId];
+          if (sourceRef) {
+            q += ` AND source_ref = ?`;
+            args.push(sourceRef);
+          }
+          if (sourceHash) {
+            q += ` AND source_hash = ?`;
+            args.push(sourceHash);
+          }
+          const entriesToDelete = await this.db.getAllAsync<{ id: string }>(q, args);
+          deletedEntryIds.push(...entriesToDelete.map(e => e.id));
+        }
 
         const entryPromise = params.entryId
           ? this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, params.entryId, entityId])
@@ -2299,6 +2349,11 @@ export class WikiMemory {
 
       await this.rebuildMiniSearchIndex(entityId);
       this.vectorCache.delete(entityId);
+
+      for (const factId of deletedEntryIds) {
+        await this._notifyEmbeddingPersisted(entityId, factId, null);
+      }
+
       return { deleted: { entries: deletedEntries, tasks: deletedTasks } };
     } finally {
       this.activeMaintenanceJobs.delete(forgetKey);
@@ -2381,7 +2436,7 @@ export class WikiMemory {
       }
 
       const now = Date.now();
-      const insertedFacts: Array<{ id: string; title: string; body: string; tags: string }> = [];
+      const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
 
       await this.db.withTransactionAsync(async () => {
         await this.db.runAsync(
@@ -2395,7 +2450,7 @@ export class WikiMemory {
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'user_document', sourceHash, sourceRef, now, now]
           );
-          insertedFacts.push({ id, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
+          insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
         }
       });
 

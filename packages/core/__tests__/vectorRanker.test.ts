@@ -491,4 +491,174 @@ describe('VectorRanker integration', () => {
       expect(onRetrievalFallback).not.toHaveBeenCalled();
     });
   });
+
+  describe('onEmbeddingPersisted hook', () => {
+    it('should call onEmbeddingPersisted when embedding is stored during importDump', async () => {
+      const db = openTestDatabase();
+      const onEmbeddingPersisted = vi.fn();
+      const mockRanker: VectorRanker = {
+        rankBySimilarity: async () => [],
+        onEmbeddingPersisted,
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: {
+          generateText: async () => '{}',
+          embed: async (t) => keywordEmbed(t),
+        },
+        vectorRanker: mockRanker,
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple', body: 'red' },
+      ]));
+
+      expect(onEmbeddingPersisted).toHaveBeenCalledWith({
+        entityId: 'user-1',
+        factId: 'fact-a',
+        vector: expect.any(Float32Array),
+      });
+    });
+
+    it('should call onEmbeddingPersisted when embedding is updated during runReembed', async () => {
+      const db = openTestDatabase();
+      const onEmbeddingPersisted = vi.fn();
+      const mockRanker: VectorRanker = {
+        rankBySimilarity: async () => [],
+        onEmbeddingPersisted,
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: {
+          generateText: async () => '{}',
+          embed: async (t) => keywordEmbed(t),
+        },
+        vectorRanker: mockRanker,
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple', body: 'red' },
+      ]));
+
+      onEmbeddingPersisted.mockClear();
+      await wiki.runReembed('user-1');
+
+      expect(onEmbeddingPersisted).toHaveBeenCalledWith({
+        entityId: 'user-1',
+        factId: 'fact-a',
+        vector: expect.any(Float32Array),
+      });
+    });
+
+    it('should call onEmbeddingPersisted with null when entry is forgotten', async () => {
+      const db = openTestDatabase();
+      const onEmbeddingPersisted = vi.fn();
+      const mockRanker: VectorRanker = {
+        rankBySimilarity: async () => [],
+        onEmbeddingPersisted,
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: {
+          generateText: async () => '{}',
+          embed: async (t) => keywordEmbed(t),
+        },
+        vectorRanker: mockRanker,
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple', body: 'red' },
+      ]));
+
+      onEmbeddingPersisted.mockClear();
+      await wiki.forget('user-1', { entryId: 'fact-a' });
+
+      expect(onEmbeddingPersisted).toHaveBeenCalledWith({
+        entityId: 'user-1',
+        factId: 'fact-a',
+        vector: null,
+      });
+    });
+
+    it('should call onEmbeddingPersisted with null when entry is pruned', async () => {
+      const db = openTestDatabase();
+      const onEmbeddingPersisted = vi.fn();
+      const mockRanker: VectorRanker = {
+        rankBySimilarity: async () => [],
+        onEmbeddingPersisted,
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: {
+          generateText: async () => '{}',
+          embed: async (t) => keywordEmbed(t),
+        },
+        vectorRanker: mockRanker,
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple', body: 'red' },
+      ]));
+
+      // First forget the entry to soft-delete it, with a past timestamp
+      await wiki.forget('user-1', { entryId: 'fact-a' });
+
+      // Manually update the deleted_at to be in the past so prune will delete it
+      const pastTimestamp = Date.now() - 100000; // 100 seconds ago
+      await db.runAsync(
+        `UPDATE llm_wiki_entries SET deleted_at = ? WHERE id = ?`,
+        [pastTimestamp, 'fact-a']
+      );
+
+      onEmbeddingPersisted.mockClear();
+      // Then prune it (hard delete) - retainSoftDeletedFor: 0 means prune anything older than now
+      await wiki.runPrune('user-1', { retainSoftDeletedFor: 0 });
+
+      expect(onEmbeddingPersisted).toHaveBeenCalledWith({
+        entityId: 'user-1',
+        factId: 'fact-a',
+        vector: null,
+      });
+    });
+
+    it('should not call onEmbeddingPersisted when hook is not provided', async () => {
+      const db = openTestDatabase();
+      const mockRanker: VectorRanker = {
+        rankBySimilarity: async () => [],
+        // onEmbeddingPersisted not provided
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: {
+          generateText: async () => '{}',
+          embed: async (t) => keywordEmbed(t),
+        },
+        vectorRanker: mockRanker,
+      });
+      await wiki.setup();
+
+      // Should not throw when hook is not provided
+      await expect(wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple', body: 'red' },
+      ]))).resolves.not.toThrow();
+    });
+
+    it('should not call onEmbeddingPersisted when vectorRanker is not provided', async () => {
+      const db = openTestDatabase();
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: {
+          generateText: async () => '{}',
+          embed: async (t) => keywordEmbed(t),
+        },
+        // vectorRanker not provided
+      });
+      await wiki.setup();
+
+      // Should not throw when vectorRanker is not provided
+      await expect(wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple', body: 'red' },
+      ]))).resolves.not.toThrow();
+    });
+  });
 });
