@@ -147,6 +147,11 @@ export interface VectorRankerSemanticResult {
  */
 export interface VectorRankerRankArgs {
   entityId: string;
+  /**
+   * Query embedding. Treat as readonly — core provides a defensive copy,
+   * but adapters MUST NOT mutate this array. Mutation can corrupt
+   * WikiMemory's internal vector cache and JS-cosine fallback path.
+   */
   queryVec: Float32Array | number[];
   /**
    * When set (MiniSearch pre-filter path): ranker MUST only produce results for ids in this set.
@@ -176,6 +181,13 @@ export interface VectorRanker {
   /**
    * Called after a fact's embedding is successfully persisted to embedding_blob (or cleared).
    * Hosts use this to keep sqlite-vec / external indexes consistent with SQLite as source of truth.
+   *
+   * On deletion paths (forget, prune, hard-delete), core awaits this hook to ensure ANN cleanup
+   * completes before the deletion call resolves (GDPR compliance). Hook failures or timeouts on
+   * those paths reject the deletion call.
+   *
+   * Treat `vector` as readonly — core provides a defensive copy, but adapters MUST NOT mutate.
+   *
    * Optional: if omitted, hosts MUST document "index rebuilt separately" and accept stale ANN until rebuild.
    */
   onEmbeddingPersisted?(event: {
@@ -236,6 +248,32 @@ export interface WikiOptions {
    * Ignored when vectorRankerFallback is 'throw'. Default false.
    */
   propagateRankerFailureToRetrievalFallback?: boolean;
+
+  /**
+   * When true (default), sanitize ranker errors before exposing via error.cause
+   * to prevent credential leakage in host telemetry. Disable only when you
+   * control the ranker implementation.
+   *
+   * Sanitization replaces error message/stack with a generic message preserving
+   * only the error type (constructor name).
+   */
+  sanitizeRankerErrors?: boolean;
+
+  /**
+   * Timeout (ms) for onEmbeddingPersisted hook on GDPR deletion paths
+   * (forget, _doPrune). Hook must complete within this window or the
+   * deletion operation rejects. Default 30000.
+   * Lower for interactive deletes; raise for slow remote ANN backends.
+   */
+  deletionHookTimeoutMs?: number;
+
+  /**
+   * Escape hatch: skip onEmbeddingPersisted on deletion paths entirely.
+   * Use ONLY when the ANN backend is permanently decommissioned. Vectors
+   * orphaned in the (unreachable) external index are accepted as a tradeoff.
+   * NOT GDPR-safe for live indexes. Default false.
+   */
+  forceDeleteIgnoreRankerHook?: boolean;
 }
 
 export interface MemoryBundle {
@@ -305,3 +343,31 @@ export class WikiBusyError extends Error {
     this.entityId = entityId;
   }
 }
+
+export class PrunePartialFailureError extends Error {
+  readonly deleted: number;
+  readonly failedAt: string;
+  readonly remaining: number;
+  readonly deletedTasks: number;
+  readonly deletedEvents: number;
+  override readonly cause: Error;
+
+  constructor(
+    deleted: number,
+    failedAt: string,
+    remaining: number,
+    cause: Error,
+    deletedTasks: number = 0,
+    deletedEvents: number = 0,
+  ) {
+    super(`Prune partially failed: deleted ${deleted}, failed at ${failedAt}, ${remaining} remaining`);
+    this.name = 'PrunePartialFailureError';
+    this.deleted = deleted;
+    this.failedAt = failedAt;
+    this.remaining = remaining;
+    this.deletedTasks = deletedTasks;
+    this.deletedEvents = deletedEvents;
+    this.cause = cause;
+  }
+}
+

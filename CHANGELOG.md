@@ -36,6 +36,21 @@
 ### Features
 
 * **core:** add `VectorRanker` interface for pluggable semantic ranking (sqlite-vec, sqlite-vss, external ANN) with fallback policies and eventual consistency hook; closes #15
+* **core:** add `sanitizeRankerErrors`, `deletionHookTimeoutMs`, `forceDeleteIgnoreRankerHook` config options for VectorRanker security and GDPR compliance
+* **core:** defensive copy of `queryVec` at ranker and JS-cosine entry points to prevent mutation of WikiMemory's internal vector cache
+* **core:** defensive copy of embedding `vector` before `onEmbeddingPersisted` hook to prevent adapter mutations
+* **core:** sanitize VectorRanker errors before mirroring via `error.cause` (credential scrubbing)
+* **core:** add `_notifyEmbeddingPersistedOrThrow` helper with configurable timeout for deletion hook reliability
+
+### BREAKING CHANGES
+
+* **core:** `forget()` now rethrows `onEmbeddingPersisted` hook failures instead of silently continuing. This ensures GDPR right-to-erasure compliance by preventing "forgotten" facts from remaining retrievable in external ANN indexes. Applications MUST handle deletion failures with retry or reconciliation queues. Set `forceDeleteIgnoreRankerHook: true` ONLY when the ANN backend is permanently decommissioned.
+* **core:** `_doPrune()` awaits deletion hook before executing DELETE. Partial failures (some rows deleted, others failed) now throw `PrunePartialFailureError` with structured properties: `deleted` (number of successfully deleted rows), `failedAt` (fact ID where failure occurred), `remaining` (number of unprocessed rows), and `cause` (sanitized underlying error). Callers should catch this error type, access the structured properties for retry logic, log/queue failed rows, then resume or abort.
+
+### Documentation
+
+* **docs:** add comprehensive `SECURITY.md` with VectorRanker adapter security guidance (SQL injection, entity isolation, credential scrubbing, resource limits) and host application security best practices
+* **docs:** add Security sections to root and core package READMEs covering input sanitization, data integrity, GDPR compliance, and VectorRanker security
 
 # [3.0.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v2.6.0...v3.0.0) (2026-05-06)
 

@@ -1,13 +1,19 @@
 import type { SQLiteAdapter } from './types';
 import { setupDatabase } from './db/schema';
 import { MIGRATIONS, CURRENT_SCHEMA_VERSION } from './db/migrations';
-import { WikiOptions, MemoryBundle, MemoryDump, WikiEvent, WikiFact, WikiTask, WikiCheckpoint, ExtractedFact, ExtractedTask, WikiBusyError, EntityStatus, ReadOptions } from './types';
+import { WikiOptions, MemoryBundle, MemoryDump, WikiEvent, WikiFact, WikiTask, WikiCheckpoint, ExtractedFact, ExtractedTask, WikiBusyError, PrunePartialFailureError, EntityStatus, ReadOptions } from './types';
 import { LIBRARIAN_SYSTEM_PROMPT, HEAL_SYSTEM_PROMPT, INGEST_SYSTEM_PROMPT } from './prompts';
 import MiniSearch from 'minisearch';
 import { cosineSimilarity } from './utils/cosine';
 import { parseEmbedding } from './utils/embedding';
 
-export { WikiBusyError } from './types';
+export { WikiBusyError, PrunePartialFailureError } from './types';
+
+/**
+ * Private symbol to mark timeout errors thrown by WikiMemory (not from ranker).
+ * Used to distinguish WikiMemory's own timeout errors from ranker errors that might contain "timed out" in message.
+ */
+const HOOK_TIMEOUT_MARKER = Symbol('WikiMemoryHookTimeout');
 
 function parseJsonResponse<T>(text: string): T {
   const firstBrace = text.indexOf('{');
@@ -485,8 +491,71 @@ export class WikiMemory {
     console.warn(`[WikiMemory] importDump: ${type} id "${id}" already belongs to entity "${existingEntityId}"; skipping for entity "${targetEntityId}"`);
   }
 
-  private async _notifyEmbeddingPersisted(entityId: string, factId: string, vector: Float32Array | null): Promise<void> {
-    await this.options.vectorRanker?.onEmbeddingPersisted?.({ entityId, factId, vector });
+  private async _notifyEmbeddingPersisted(
+    entityId: string,
+    factId: string,
+    vector: Float32Array | null,
+  ): Promise<void> {
+    if (!this.options.vectorRanker?.onEmbeddingPersisted) return;
+    // Defensive copy prevents hooks from mutating cache/fallback/persisted-blob vectors.
+    // .slice() on Float32Array allocates a fresh ArrayBuffer (not a view).
+    const vectorCopy = vector ? vector.slice() : null;
+    await this.options.vectorRanker.onEmbeddingPersisted({
+      entityId,
+      factId,
+      vector: vectorCopy,
+    });
+  }
+
+  /**
+   * GDPR-critical variant: awaits the hook with a timeout and rethrows failures.
+   * Use ONLY on deletion paths. forget() calls after soft-delete UPDATE; runPrune()
+   * calls before hard DELETE. For best-effort sync, use _notifyEmbeddingPersisted.
+   */
+  private async _notifyEmbeddingPersistedOrThrow(
+    entityId: string,
+    factId: string,
+    vector: Float32Array | null,
+  ): Promise<void> {
+    if (!this.options.vectorRanker?.onEmbeddingPersisted) return;
+    if (this.options.forceDeleteIgnoreRankerHook === true) return;
+
+    const vectorCopy = vector ? vector.slice() : null;
+    const rawTimeout = this.options.deletionHookTimeoutMs ?? 30_000;
+    if (typeof rawTimeout !== 'number' || !Number.isFinite(rawTimeout) || rawTimeout <= 0) {
+      throw new Error('Invalid deletionHookTimeoutMs: must be a positive finite number');
+    }
+    const timeoutMs = rawTimeout;
+
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(
+        () => {
+          const timeoutError = new Error(`onEmbeddingPersisted timed out after ${timeoutMs}ms`);
+          (timeoutError as any)[HOOK_TIMEOUT_MARKER] = true;
+          reject(timeoutError);
+        },
+        timeoutMs,
+      );
+    });
+
+    const hookPromise = Promise.resolve(
+      this.options.vectorRanker.onEmbeddingPersisted({
+        entityId,
+        factId,
+        vector: vectorCopy,
+      }),
+    );
+
+    try {
+      await Promise.race([hookPromise, timeoutPromise]);
+    } catch (err) {
+      // Suppress late rejections from hook if timeout won
+      hookPromise.catch(() => {});
+      throw err;
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+    }
   }
 
   constructor(db: SQLiteAdapter, options: WikiOptions) {
@@ -711,31 +780,88 @@ export class WikiMemory {
       let deletedEntries = 0;
       let deletedTasks = 0;
       let deletedEvents = 0;
-      const deletedEntryIds: string[] = [];
 
       if (retainSoftDeletedFor !== null) {
         const cutoff = now - retainSoftDeletedFor * 86400000;
 
-        const entriesToDelete = await this.db.getAllAsync<{ id: string }>(
-          `SELECT id FROM ${this.prefix}entries
+        const entriesToDelete = await this.db.getAllAsync<{ id: string; entity_id: string }>(
+          `SELECT id, entity_id FROM ${this.prefix}entries
            WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`,
           [entityId, cutoff]
         );
-        deletedEntryIds.push(...entriesToDelete.map(e => e.id));
 
-        const entryResult = await this.db.runAsync(
-          `DELETE FROM ${this.prefix}entries
-           WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`,
-          [entityId, cutoff]
-        );
-        deletedEntries = entryResult.changes;
+        // Hook-before-delete: await hook for each row, accumulate successes, commit partial on failure
+        const succeeded: Array<{ entity_id: string; id: string }> = [];
+        let failure: { factId: string; cause: unknown } | null = null;
 
+        for (const row of entriesToDelete) {
+          try {
+            await this._notifyEmbeddingPersistedOrThrow(row.entity_id, row.id, null);
+            succeeded.push({ entity_id: row.entity_id, id: row.id });
+          } catch (err) {
+            failure = { factId: row.id, cause: err };
+            break;
+          }
+        }
+
+        if (succeeded.length > 0) {
+          // Delete in chunks to avoid SQLite bind-parameter limit (typically 999)
+          const chunkSize = 500;
+          for (let i = 0; i < succeeded.length; i += chunkSize) {
+            const chunk = succeeded.slice(i, i + chunkSize);
+            const placeholders = chunk.map(() => '?').join(',');
+            const entryResult = await this.db.runAsync(
+              `DELETE FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ? AND id IN (${placeholders})`,
+              [entityId, cutoff, ...chunk.map((r) => r.id)],
+            );
+            deletedEntries += entryResult.changes;
+          }
+        }
+
+        // Delete tasks (independent of entry hook success/failure)
         const taskResult = await this.db.runAsync(
           `DELETE FROM ${this.prefix}tasks
            WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`,
           [entityId, cutoff]
         );
         deletedTasks = taskResult.changes;
+
+        if (failure) {
+          // Rebuild index and clear cache to reflect successful partial deletions
+          await this.rebuildMiniSearchIndex(entityId);
+          this.vectorCache.delete(entityId);
+
+          const remaining = entriesToDelete.length - succeeded.length - 1;
+
+          // Preserve timeout errors (thrown by WikiMemory, not the ranker)
+          const isTimeout = (failure.cause as any)?.[HOOK_TIMEOUT_MARKER] === true;
+          if (isTimeout) {
+            throw new PrunePartialFailureError(
+              succeeded.length,
+              failure.factId,
+              remaining,
+              new Error('Deletion hook timed out'),
+              deletedTasks,
+              0, // events not yet deleted at this point
+            );
+          }
+
+          // Preserve WikiMemory validation errors (not from the adapter hook)
+          const errMsg = (failure.cause as Error)?.message ?? '';
+          const isValidationError = errMsg.startsWith('Invalid deletionHookTimeoutMs');
+          const sanitizedCause = isValidationError
+            ? failure.cause as Error
+            : this._sanitizeRankerError(failure.cause);
+
+          throw new PrunePartialFailureError(
+            succeeded.length,
+            failure.factId,
+            remaining,
+            sanitizedCause,
+            deletedTasks,
+            0, // events not yet deleted at this point
+          );
+        }
       }
 
       if (retainEventsFor !== null) {
@@ -755,16 +881,6 @@ export class WikiMemory {
 
       await this.rebuildMiniSearchIndex(entityId);
       this.vectorCache.delete(entityId);
-
-      // Deduplicate to avoid redundant hook calls for the same fact
-      const uniqueDeletedIds = Array.from(new Set(deletedEntryIds));
-      for (const factId of uniqueDeletedIds) {
-        try {
-          await this._notifyEmbeddingPersisted(entityId, factId, null);
-        } catch (hookErr) {
-          console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during prune for ${factId}:`, hookErr);
-        }
-      }
 
       return { entries: deletedEntries, tasks: deletedTasks, events: deletedEvents };
     } finally {
@@ -1099,7 +1215,10 @@ export class WikiMemory {
                 const rankerError = rankerErr instanceof Error ? rankerErr : new Error(String(rankerErr));
                 const policy = this.options.vectorRankerFallback ?? 'js-cosine';
 
-                this.options.onVectorRankerFallback?.({ error: rankerError, policy });
+                this.options.onVectorRankerFallback?.({
+                  error: this._sanitizeRankerError(rankerError),
+                  policy,
+                });
 
                 if (policy === 'throw') {
                   rankerShouldRethrow = true;
@@ -1169,8 +1288,9 @@ export class WikiMemory {
                 }
 
                 if (this.options.propagateRankerFailureToRetrievalFallback) {
-                  const mirrored = new Error('Vector ranker failed, falling back');
-                  (mirrored as any).cause = rankerError;
+                  const mirrored = new Error('Vector ranker failed, falling back', {
+                    cause: this._sanitizeRankerError(rankerErr),
+                  });
                   pendingRankerFallbackError = mirrored;
                 }
               }
@@ -1362,6 +1482,34 @@ export class WikiMemory {
   }
 
   /**
+   * Strip potentially sensitive data from ranker errors before exposing to host callbacks.
+   * Preserves error type for debugging but removes message/stack that may contain credentials.
+   * Recursively sanitizes one level of .cause; deeper chains collapse to type only.
+   */
+  private _sanitizeRankerError(err: unknown): Error {
+    if (this.options.sanitizeRankerErrors === false) {
+      return err instanceof Error ? err : new Error(String(err));
+    }
+
+    const typeName =
+      err instanceof Error
+        ? (err.constructor?.name ?? 'Error')
+        : typeof err;
+
+    const innerCause =
+      err instanceof Error && err.cause !== undefined
+        ? new Error(`Caused by: ${(err.cause as Error)?.constructor?.name ?? typeof err.cause}`)
+        : undefined;
+
+    const sanitized = new Error(
+      `VectorRanker ${typeName} (message scrubbed for security)`,
+      innerCause ? { cause: innerCause } : undefined,
+    );
+    sanitized.name = typeName;
+    return sanitized;
+  }
+
+  /**
    * Score candidate rows using in-process JS cosine similarity.
    * Applies hybrid blending (if weight set) and tie-break sorting before returning.
    */
@@ -1374,7 +1522,10 @@ export class WikiMemory {
     populateCache: boolean;
     limit: number;
   }): Promise<Array<{ id: string; score: number; updated_at: number | null; access_count: number | null }>> {
-    const { entityId, queryVec, candidateRows, weight, miniSearchScores, populateCache, limit } = args;
+    const queryVec = args.queryVec instanceof Float32Array
+      ? args.queryVec.slice()
+      : Array.from(args.queryVec);
+    const { entityId, candidateRows, weight, miniSearchScores, populateCache, limit } = args;
 
     // Cache: reuse parsed vectors from prior full-scan reads
     let entityCache = this.vectorCache.get(entityId);
@@ -1450,16 +1601,20 @@ export class WikiMemory {
     miniSearchScores: Map<string, number> | undefined;
     limit: number;
   }): Promise<Array<{ id: string; score: number }>> {
-    const { entityId, queryVec, candidateIds, weight, miniSearchScores, limit } = args;
+    const { entityId, candidateIds, weight, miniSearchScores, limit } = args;
 
     const ranker = this.options.vectorRanker;
     if (!ranker) {
       throw new Error('vectorRanker not configured');
     }
 
+    const queryVecCopy = args.queryVec instanceof Float32Array
+      ? args.queryVec.slice()
+      : Array.from(args.queryVec);
+
     const rankerResults = await ranker.rankBySimilarity({
       entityId,
-      queryVec,
+      queryVec: queryVecCopy,
       candidateIds,
       limit,
     });
@@ -2563,11 +2718,16 @@ export class WikiMemory {
       const deletedEntryIds: string[] = [];
 
       if (params.clearAll) {
-        const entriesToDelete = await this.db.getAllAsync<{ id: string }>(
+        // Select both new deletions and already-soft-deleted (for hook retry on failure)
+        const newDeletions = await this.db.getAllAsync<{ id: string }>(
           `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
           [entityId]
         );
-        deletedEntryIds.push(...entriesToDelete.map(e => e.id));
+        const alreadySoftDeleted = await this.db.getAllAsync<{ id: string }>(
+          `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NOT NULL`,
+          [entityId]
+        );
+        deletedEntryIds.push(...newDeletions.map(e => e.id), ...alreadySoftDeleted.map(e => e.id));
 
         const [entriesRes, tasksRes] = await Promise.all([
           this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
@@ -2589,15 +2749,17 @@ export class WikiMemory {
         if (params.sourceHash !== undefined && !sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
 
         if (params.entryId) {
+          // Select entry regardless of deleted_at to allow hook retry on already-soft-deleted rows
           const entry = await this.db.getFirstAsync<{ id: string }>(
-            `SELECT id FROM ${this.prefix}entries WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`,
+            `SELECT id FROM ${this.prefix}entries WHERE id = ? AND entity_id = ?`,
             [params.entryId, entityId]
           );
           if (entry) deletedEntryIds.push(entry.id);
         }
 
         if (sourceRef || sourceHash) {
-          let q = `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`;
+          // Select entries regardless of deleted_at to allow hook retry on already-soft-deleted rows
+          let q = `SELECT id FROM ${this.prefix}entries WHERE entity_id = ?`;
           const args: any[] = [entityId];
           if (sourceRef) {
             q += ` AND source_ref = ?`;
@@ -2652,9 +2814,29 @@ export class WikiMemory {
       const uniqueDeletedIds = Array.from(new Set(deletedEntryIds));
       for (const factId of uniqueDeletedIds) {
         try {
-          await this._notifyEmbeddingPersisted(entityId, factId, null);
+          await this._notifyEmbeddingPersistedOrThrow(entityId, factId, null);
         } catch (hookErr) {
-          console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during forget for ${factId}:`, hookErr);
+          // Preserve timeout errors (thrown by WikiMemory, not the ranker)
+          const isTimeout = (hookErr as any)?.[HOOK_TIMEOUT_MARKER] === true;
+          if (isTimeout) {
+            throw new Error(
+              `forget(${entityId}/${factId}) failed: ${(hookErr as Error).message}`,
+            );
+          }
+          // Preserve WikiMemory validation errors (not from the adapter hook)
+          const errMsg = (hookErr as Error)?.message ?? '';
+          const isValidationError = errMsg.startsWith('Invalid deletionHookTimeoutMs');
+          if (isValidationError) {
+            throw new Error(
+              `forget(${entityId}/${factId}) failed: ${errMsg}`,
+              { cause: hookErr },
+            );
+          }
+          // Actual hook rejection - sanitize error details
+          throw new Error(
+            `forget(${entityId}/${factId}) failed: ANN cleanup hook rejected`,
+            { cause: this._sanitizeRankerError(hookErr) },
+          );
         }
       }
 

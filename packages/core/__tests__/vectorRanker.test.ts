@@ -959,4 +959,412 @@ describe('VectorRanker integration', () => {
       );
     });
   });
+
+  describe('Error sanitization', () => {
+    it('sanitizes ranker errors by default (sanitizeRankerErrors=true)', async () => {
+      const db = openTestDatabase();
+      let capturedError: Error | undefined;
+
+      const leakyRanker: VectorRanker = {
+        async rankBySimilarity() {
+          throw new Error('Connection failed: https://api.example.com?key=sk_live_secret123');
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: { generateText: async () => '{}', embed: async (t) => keywordEmbed(t) },
+        vectorRanker: leakyRanker,
+        vectorRankerFallback: 'js-cosine',
+        propagateRankerFailureToRetrievalFallback: true,
+        onRetrievalFallback: (error) => { capturedError = error; },
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+      ]));
+
+      await wiki.read('user-1', 'apple');
+
+      expect(capturedError).toBeDefined();
+      const cause = (capturedError as Error & { cause?: Error }).cause;
+      expect(cause).toBeDefined();
+      expect(cause!.message).not.toContain('sk_live_secret123');
+      expect(cause!.message).toContain('VectorRanker');
+      expect(cause!.message).toContain('scrubbed');
+      expect(cause!.name).toBe('Error');
+    });
+
+    it('sanitizes non-Error throws without crashing (sanitizer robustness)', async () => {
+      const db = openTestDatabase();
+      let capturedError: Error | undefined;
+
+      const stringThrowingRanker: VectorRanker = {
+        async rankBySimilarity() {
+          // eslint-disable-next-line no-throw-literal
+          throw 'bare string with secret api_key=abc';
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: { generateText: async () => '{}', embed: async (t) => keywordEmbed(t) },
+        vectorRanker: stringThrowingRanker,
+        vectorRankerFallback: 'js-cosine',
+        propagateRankerFailureToRetrievalFallback: true,
+        onRetrievalFallback: (error) => { capturedError = error; },
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+      ]));
+
+      await wiki.read('user-1', 'apple');
+
+      expect(capturedError).toBeDefined();
+      const cause = (capturedError as Error & { cause?: Error }).cause!;
+      expect(cause.message).not.toContain('api_key=abc');
+      expect(cause.message).toContain('VectorRanker string');
+    });
+
+    it('preserves original error when sanitizeRankerErrors=false', async () => {
+      const db = openTestDatabase();
+      let capturedError: Error | undefined;
+
+      const leakyRanker: VectorRanker = {
+        async rankBySimilarity() {
+          throw new Error('Detailed error with api_key=secret123');
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: { generateText: async () => '{}', embed: async (t) => keywordEmbed(t) },
+        vectorRanker: leakyRanker,
+        vectorRankerFallback: 'js-cosine',
+        sanitizeRankerErrors: false,
+        propagateRankerFailureToRetrievalFallback: true,
+        onRetrievalFallback: (error) => { capturedError = error; },
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+      ]));
+
+      await wiki.read('user-1', 'apple');
+
+      expect(capturedError).toBeDefined();
+      const cause = (capturedError as Error & { cause?: Error }).cause!;
+      expect(cause.message).toContain('api_key=secret123');
+    });
+  });
+
+  describe('Buffer mutation protection', () => {
+    it('protects vector from mutation by onEmbeddingPersisted hook', async () => {
+      const db = openTestDatabase();
+      let capturedVector: Float32Array | null = null;
+
+      const maliciousRanker: VectorRanker = {
+        async rankBySimilarity() { return []; },
+        async onEmbeddingPersisted(event) {
+          if (event.vector) {
+            capturedVector = event.vector;
+            event.vector[0] = -999; // Attempt corruption
+          }
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: { generateText: async () => '{}', embed: async (t) => keywordEmbed(t) },
+        vectorRanker: maliciousRanker,
+        vectorRankerFallback: 'js-cosine',
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+      ]));
+
+      // Read once to trigger embedding persistence + hook.
+      await wiki.read('user-1', 'apple');
+
+      // 1. Hook saw a Float32Array and mutated it locally.
+      expect(capturedVector).not.toBeNull();
+      expect(capturedVector![0]).toBe(-999);
+
+      // 2. Persisted blob in SQLite is NOT corrupted.
+      const row = await db.getFirstAsync<{ embedding_blob: Uint8Array | null }>(
+        `SELECT embedding_blob FROM llm_wiki_entries WHERE id = ?`,
+        ['fact-a'],
+      );
+      expect(row?.embedding_blob).toBeTruthy();
+      const persisted = new Float32Array(
+        row!.embedding_blob!.buffer,
+        row!.embedding_blob!.byteOffset,
+        row!.embedding_blob!.byteLength / 4,
+      );
+      expect(persisted[0]).not.toBe(-999);
+      expect(persisted[0]).toBe(1); // keywordEmbed('apple fruit') = [1,0,0]
+    });
+
+    it('protects queryVec from mutation by ranker (subsequent reads still work)', async () => {
+      const db = openTestDatabase();
+      let mutationAttempted = false;
+
+      const maliciousRanker: VectorRanker = {
+        async rankBySimilarity(args) {
+          mutationAttempted = true;
+          // Attempt to corrupt queryVec
+          if (args.queryVec instanceof Float32Array) {
+            args.queryVec[0] = 999;
+          } else {
+            (args.queryVec as number[])[0] = 999;
+          }
+          throw new Error('Ranker failed after mutation');
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: { generateText: async () => '{}', embed: async (t) => keywordEmbed(t) },
+        vectorRanker: maliciousRanker,
+        vectorRankerFallback: 'js-cosine',
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+        { id: 'fact-b', title: 'car vehicle', body: 'fast engine' },
+      ]));
+
+      const r1 = await wiki.read('user-1', 'apple');
+      expect(mutationAttempted).toBe(true);
+      expect(r1.facts[0].id).toBe('fact-a');
+
+      // Second read uses a fresh embedding; if the FIRST queryVec leaked into a
+      // shared cache, subsequent ranking would be corrupt.
+      const r2 = await wiki.read('user-1', 'apple');
+      expect(r2.facts[0].id).toBe('fact-a');
+    });
+  });
+
+  describe('Deletion hook ordering', () => {
+    it('aborts deletion when hook exceeds deletionHookTimeoutMs', async () => {
+      const db = openTestDatabase();
+      const slowRanker: VectorRanker = {
+        async rankBySimilarity() { return []; },
+        async onEmbeddingPersisted(event) {
+          if (event.vector === null) {
+            await new Promise((r) => setTimeout(r, 5000));
+          }
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: { generateText: async () => '{}', embed: async (t) => keywordEmbed(t) },
+        vectorRanker: slowRanker,
+        deletionHookTimeoutMs: 100,
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+      ]));
+
+      await expect(wiki.forget('user-1', { entryId: 'fact-a' })).rejects.toThrow(/timed out/);
+    });
+
+    it('throws on invalid deletionHookTimeoutMs values', async () => {
+      const db = openTestDatabase();
+      const ranker: VectorRanker = {
+        async rankBySimilarity() { return []; },
+        async onEmbeddingPersisted() {},
+      };
+
+      // NaN
+      const wikiNaN = new WikiMemory(db, {
+        llmProvider: { generateText: async () => '{}', embed: async (t) => keywordEmbed(t) },
+        vectorRanker: ranker,
+        deletionHookTimeoutMs: NaN,
+      });
+      await wikiNaN.setup();
+      await wikiNaN.importDump(makeDump([{ id: 'fact-a', title: 'test', body: 'test' }]));
+      await expect(wikiNaN.forget('user-1', { entryId: 'fact-a' })).rejects.toThrow(/Invalid deletionHookTimeoutMs/);
+
+      // Zero
+      const wikiZero = new WikiMemory(openTestDatabase(), {
+        llmProvider: { generateText: async () => '{}', embed: async (t) => keywordEmbed(t) },
+        vectorRanker: ranker,
+        deletionHookTimeoutMs: 0,
+      });
+      await wikiZero.setup();
+      await wikiZero.importDump(makeDump([{ id: 'fact-b', title: 'test', body: 'test' }]));
+      await expect(wikiZero.forget('user-1', { entryId: 'fact-b' })).rejects.toThrow(/Invalid deletionHookTimeoutMs/);
+
+      // Negative
+      const wikiNeg = new WikiMemory(openTestDatabase(), {
+        llmProvider: { generateText: async () => '{}', embed: async (t) => keywordEmbed(t) },
+        vectorRanker: ranker,
+        deletionHookTimeoutMs: -100,
+      });
+      await wikiNeg.setup();
+      await wikiNeg.importDump(makeDump([{ id: 'fact-c', title: 'test', body: 'test' }]));
+      await expect(wikiNeg.forget('user-1', { entryId: 'fact-c' })).rejects.toThrow(/Invalid deletionHookTimeoutMs/);
+    });
+
+    it('rethrows onEmbeddingPersisted failure on forget()', async () => {
+      const db = openTestDatabase();
+      const failingRanker: VectorRanker = {
+        async rankBySimilarity() { return []; },
+        async onEmbeddingPersisted(event) {
+          if (event.vector === null) throw new Error('ANN cleanup failed');
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: { generateText: async () => '{}', embed: async (t) => keywordEmbed(t) },
+        vectorRanker: failingRanker,
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+      ]));
+
+      await expect(wiki.forget('user-1', { entryId: 'fact-a' })).rejects.toThrow();
+    });
+
+    it('skips hook entirely when forceDeleteIgnoreRankerHook=true', async () => {
+      const db = openTestDatabase();
+      let hookCalled = false;
+      const ranker: VectorRanker = {
+        async rankBySimilarity() { return []; },
+        async onEmbeddingPersisted() {
+          hookCalled = true;
+          throw new Error('would have failed');
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: { generateText: async () => '{}', embed: async (t) => keywordEmbed(t) },
+        vectorRanker: ranker,
+        forceDeleteIgnoreRankerHook: true,
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+      ]));
+
+      // Reset flag after import (import uses _notifyEmbeddingPersisted which may call hook)
+      hookCalled = false;
+
+      await expect(wiki.forget('user-1', { entryId: 'fact-a' })).resolves.toBeDefined();
+      expect(hookCalled).toBe(false);
+    });
+
+    it('awaits onEmbeddingPersisted before forget() resolves', async () => {
+      const db = openTestDatabase();
+      let hookCalledAt = 0;
+      let hookCompleted = false;
+
+      const delayedRanker: VectorRanker = {
+        async rankBySimilarity() { return []; },
+        async onEmbeddingPersisted() {
+          hookCalledAt = Date.now();
+          await new Promise((r) => setTimeout(r, 100));
+          hookCompleted = true;
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: { generateText: async () => '{}', embed: async (t) => keywordEmbed(t) },
+        vectorRanker: delayedRanker,
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+      ]));
+
+      await wiki.forget('user-1', { entryId: 'fact-a' });
+      const forgetResolvedAt = Date.now();
+      expect(hookCompleted).toBe(true);
+      expect(forgetResolvedAt - hookCalledAt).toBeGreaterThanOrEqual(95);
+    });
+
+    it('awaits onEmbeddingPersisted during prune hard-delete', async () => {
+      const db = openTestDatabase();
+      let hookCallCount = 0;
+
+      const trackingRanker: VectorRanker = {
+        async rankBySimilarity() { return []; },
+        async onEmbeddingPersisted(event) {
+          if (event.vector === null) {
+            hookCallCount++;
+            await new Promise((r) => setTimeout(r, 20));
+          }
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: { generateText: async () => '{}', embed: async (t) => keywordEmbed(t) },
+        vectorRanker: trackingRanker,
+        config: { pruneRetainSoftDeletedFor: 0 },
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+        { id: 'fact-b', title: 'apple seed', body: 'small and brown' },
+      ]));
+
+      await wiki.forget('user-1', { entryId: 'fact-a' });
+      await wiki.forget('user-1', { entryId: 'fact-b' });
+
+      // Small delay to ensure deleted_at timestamps are before prune cutoff
+      await new Promise((r) => setTimeout(r, 10));
+
+      const before = hookCallCount;
+      await wiki.runPrune('user-1');
+      expect(hookCallCount).toBeGreaterThan(before);
+    });
+
+    it('commits partial prune progress and reports aggregate failure', async () => {
+      const db = openTestDatabase();
+      let callIndex = 0;
+
+      const flakyRanker: VectorRanker = {
+        async rankBySimilarity() { return []; },
+        async onEmbeddingPersisted(event) {
+          if (event.vector === null) {
+            callIndex++;
+            if (callIndex === 3) throw new Error('ANN flake on row 3');
+          }
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: { generateText: async () => '{}', embed: async (t) => keywordEmbed(t) },
+        vectorRanker: flakyRanker,
+        config: { pruneRetainSoftDeletedFor: 0 },
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-0', title: 'apple a', body: 'x' },
+        { id: 'fact-1', title: 'apple b', body: 'x' },
+        { id: 'fact-2', title: 'apple c', body: 'x' },
+        { id: 'fact-3', title: 'apple d', body: 'x' },
+        { id: 'fact-4', title: 'apple e', body: 'x' },
+      ]));
+
+      // Soft-delete via forget(); the test's flakyRanker only fails when callIndex===3,
+      // and forget() is index 1,2 (not 3) so soft-deletes succeed for all 5 rows.
+      // Reset callIndex AFTER setup so the prune phase observes index 1..N.
+      for (let i = 0; i < 5; i++) {
+        await wiki.forget('user-1', { entryId: `fact-${i}` }).catch(() => {});
+      }
+      callIndex = 0;
+
+      // Small delay to ensure deleted_at timestamps are before prune cutoff
+      await new Promise((r) => setTimeout(r, 10));
+
+      await expect(wiki.runPrune('user-1')).rejects.toThrow(/partially failed|partial/i);
+
+      // Some rows remain (the failing one + ones after it).
+      const remaining = await db.getAllAsync<{ id: string }>(
+        `SELECT id FROM llm_wiki_entries WHERE deleted_at IS NOT NULL`,
+      );
+      expect(remaining.length).toBeGreaterThan(0);
+    });
+  });
 });

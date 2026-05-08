@@ -49,8 +49,18 @@ function makeMockDb(opts: {
       pragmaAndVacuumCalls.push(sql);
     },
     async runAsync(sql: string, args: any[] = []): Promise<{ changes: number }> {
-      // Hard delete entries
-      if (sql.includes('DELETE FROM') && sql.includes('entries') && !sql.includes('fts') && !sql.includes('events') && !sql.includes('tasks')) {
+      // Hard delete entries (by ID list - new pattern for hook-before-delete)
+      if (sql.includes('DELETE FROM') && sql.includes('entries') && sql.includes('IN (') && !sql.includes('fts') && !sql.includes('events') && !sql.includes('tasks')) {
+        // Production passes [entityId, cutoff, ...ids]
+        const entityId = args[0];
+        const cutoff = args[1];
+        const idsToDelete = args.slice(2);
+        const before = entries.length;
+        entries = entries.filter(e => !(e.entity_id === entityId && e.deleted_at !== null && e.deleted_at < cutoff && idsToDelete.includes(e.id)));
+        return { changes: before - entries.length };
+      }
+      // Hard delete entries (by cutoff - old pattern)
+      if (sql.includes('DELETE FROM') && sql.includes('entries') && !sql.includes('fts') && !sql.includes('events') && !sql.includes('tasks') && !sql.includes('IN (')) {
         const entityId = args[0];
         const cutoff = args[1];
         const before = entries.length;
@@ -105,7 +115,13 @@ function makeMockDb(opts: {
       }
       return null;
     },
-    async getAllAsync<T>(_sql: string, _args: any[] = []): Promise<T[]> {
+    async getAllAsync<T>(sql: string, args: any[] = []): Promise<T[]> {
+      // Get entries to delete (for hook-before-delete pattern)
+      if (sql.includes('SELECT') && sql.includes('entries') && sql.includes('deleted_at IS NOT NULL') && sql.includes('deleted_at <')) {
+        const entityId = args[0];
+        const cutoff = args[1];
+        return entries.filter(e => e.entity_id === entityId && e.deleted_at !== null && e.deleted_at < cutoff) as any;
+      }
       return [];
     },
     async withTransactionAsync(fn: () => Promise<void>): Promise<void> {
