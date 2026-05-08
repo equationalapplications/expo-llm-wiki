@@ -1,3 +1,25 @@
+# [3.2.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v3.1.0...v3.2.0) (2026-05-08)
+
+
+### Bug Fixes
+
+* **core:** address Copilot review feedback on prune/docs ([83d0164](https://github.com/equationalapplications/expo-llm-wiki/commit/83d0164547e208ff2ab344b590c3ae45f9c985ca))
+* **core:** address Copilot review feedback on sanitization and chunking ([15090f3](https://github.com/equationalapplications/expo-llm-wiki/commit/15090f3553078358a58bd7e8fa16dbe9c021aa17))
+* **core:** address Copilot review on argument parsing, timeout validation, and docs ([6a17ed3](https://github.com/equationalapplications/expo-llm-wiki/commit/6a17ed3e392f9f0b45dc6259f154ce4db178f15c))
+* **core:** address Copilot review on DELETE race condition and version drift ([4ed0d24](https://github.com/equationalapplications/expo-llm-wiki/commit/4ed0d242584e72010fd294400eb9767c8cb2b9df))
+* **core:** address Copilot review on ES2022 Error.cause and brittle error parsing ([959b920](https://github.com/equationalapplications/expo-llm-wiki/commit/959b9208fa162964a2e03f837a376ac343a8e627))
+* **core:** address Copilot review on runPrune and forget error handling ([477a68d](https://github.com/equationalapplications/expo-llm-wiki/commit/477a68d0536a49d1e543e1260d244a23f9184d96))
+* **core:** address remaining Copilot review feedback on VectorRanker ([94e002c](https://github.com/equationalapplications/expo-llm-wiki/commit/94e002cd3e97bd4421689701a01dcf254a02ea2f))
+
+
+### Features
+
+* **core:** add _notifyEmbeddingPersistedOrThrow helper with timeout ([a8182ab](https://github.com/equationalapplications/expo-llm-wiki/commit/a8182ab248929a93a619ab4d7f04772ab48aea4b))
+* **core:** add sanitizeRankerErrors, deletionHookTimeoutMs, forceDeleteIgnoreRankerHook options ([8bba512](https://github.com/equationalapplications/expo-llm-wiki/commit/8bba512379d4f841490c9867856fd11dd5de0030))
+* **core:** defensive copy of embedding vector before onEmbeddingPersisted hook ([f22ef5b](https://github.com/equationalapplications/expo-llm-wiki/commit/f22ef5b19596c2798ac76cbcdacb670eaf043a2b))
+* **core:** defensive copy of queryVec at ranker and JS-cosine entry points ([367777c](https://github.com/equationalapplications/expo-llm-wiki/commit/367777c78331257a3aa845d5d8594e1df7f443f5))
+* **core:** sanitize VectorRanker errors before mirroring via error.cause ([91975be](https://github.com/equationalapplications/expo-llm-wiki/commit/91975be1c84c957303518813ba80bcd0938859c0))
+
 # [3.1.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v3.0.0...v3.1.0) (2026-05-08)
 
 
