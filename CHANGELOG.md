@@ -1,3 +1,36 @@
+# [3.1.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v3.0.0...v3.1.0) (2026-05-08)
+
+
+### Bug Fixes
+
+* address PR review comments ([f77aed9](https://github.com/equationalapplications/expo-llm-wiki/commit/f77aed9c3c4c6039ac2c7fe5c1101221493743c0))
+* **core:** address PR [#16](https://github.com/equationalapplications/expo-llm-wiki/issues/16) code review - type safety and performance ([0cb35a5](https://github.com/equationalapplications/expo-llm-wiki/commit/0cb35a50a367ba9a88d4e1d5872b1fa11701b996))
+* **core:** address PR [#16](https://github.com/equationalapplications/expo-llm-wiki/issues/16) code review feedback ([f0dd13d](https://github.com/equationalapplications/expo-llm-wiki/commit/f0dd13d378fdf8947f71d9c2b5df3c9ef1f2a6de))
+* **core:** address PR [#16](https://github.com/equationalapplications/expo-llm-wiki/issues/16) review - onRetrievalFallback docs and replace-mode vector cleanup ([5ac8bcf](https://github.com/equationalapplications/expo-llm-wiki/commit/5ac8bcfb5f06b31bafd7ceda2fdf47e8a189c45c))
+* **core:** address PR [#16](https://github.com/equationalapplications/expo-llm-wiki/issues/16) review comments ([756f1a1](https://github.com/equationalapplications/expo-llm-wiki/commit/756f1a13ffd7c35a7fb2737b83ea316cb24d60b9))
+* **core:** address remaining PR [#16](https://github.com/equationalapplications/expo-llm-wiki/issues/16) review comments ([e249f3c](https://github.com/equationalapplications/expo-llm-wiki/commit/e249f3c4a4f6b97ad57edf345d32cd215b014266))
+* **core:** clarify vector ranker oversampling comment ([e4d434a](https://github.com/equationalapplications/expo-llm-wiki/commit/e4d434aeb9b82a7f13fd6de518f77c519cefd61f))
+* **core:** defer onRetrievalFallback until after Phase 2 hydration ([ea6a837](https://github.com/equationalapplications/expo-llm-wiki/commit/ea6a8373295e662bac59ba0c85da2c9b84504b86)), closes [#16](https://github.com/equationalapplications/expo-llm-wiki/issues/16)
+* **core:** enable oversampling for vectorRanker and defer embedding load ([9fb4207](https://github.com/equationalapplications/expo-llm-wiki/commit/9fb42079dbb020fe9e34036b5d74ec761c4f724a))
+* **core:** hybrid backfill, fallback constraints, soft-delete notification filter ([0711968](https://github.com/equationalapplications/expo-llm-wiki/commit/0711968be3560f1483ae921c212693c115c64ae9)), closes [#16](https://github.com/equationalapplications/expo-llm-wiki/issues/16)
+* **core:** isolate hook failures, fix entity_id consistency, optimize keyword fallback ([a244082](https://github.com/equationalapplications/expo-llm-wiki/commit/a24408248de0d049953fbcb8b3f0e7e6e8fdc11c)), closes [#8](https://github.com/equationalapplications/expo-llm-wiki/issues/8)
+* **core:** notify external index for preserved-blob imports ([7206ec5](https://github.com/equationalapplications/expo-llm-wiki/commit/7206ec5b89a1cc64bcee3b67ba1c000ed89011ca))
+* **core:** optimize ranker performance and clarify onRetrievalFallback scope ([88eff32](https://github.com/equationalapplications/expo-llm-wiki/commit/88eff32e39ec53e0e53e8a5b170d96680d2c071a)), closes [#16](https://github.com/equationalapplications/expo-llm-wiki/issues/16)
+* **core:** replace sentinel with local boolean, add pure-semantic fallback test ([e653249](https://github.com/equationalapplications/expo-llm-wiki/commit/e6532493a1970f5aa9b8fa7495bd0147151157d0))
+* **core:** sort before slice in _rankWithVectorRanker, backfill omitted ids, fix README distance semantics ([416ed38](https://github.com/equationalapplications/expo-llm-wiki/commit/416ed3851d5a9c85fc486f65c3982ef340c4b103))
+* **core:** store aligned blob copy to prevent Float32Array alignment errors ([6b3b8f8](https://github.com/equationalapplications/expo-llm-wiki/commit/6b3b8f856b02f054cd0bfa002a6c106cab0e0228))
+* notify vector hook on soft deletes ([c035198](https://github.com/equationalapplications/expo-llm-wiki/commit/c03519835275776fe92df580647b965d8aa291ee))
+* optimize vector-ranker backfill and refresh lockfile ([93bfaae](https://github.com/equationalapplications/expo-llm-wiki/commit/93bfaae7516433ef8c4a17351cac33a19bb2a439))
+* **react:** resolve vitest React hooks test failures ([0ee2068](https://github.com/equationalapplications/expo-llm-wiki/commit/0ee2068201fd31ffa6253baf3cdff2c37f41bca5))
+
+
+### Features
+
+* **core:** add VectorRanker failure policies and fallback callbacks ([15554d6](https://github.com/equationalapplications/expo-llm-wiki/commit/15554d68d35fb0db562f16bf7a67a361c1742051))
+* **core:** add VectorRanker option types and fallback policy surface ([5f0c13e](https://github.com/equationalapplications/expo-llm-wiki/commit/5f0c13e12e689ea7bc19d31df6dee343841ce38d))
+* **core:** delegate semantic ranking via optional VectorRanker ([31ecbcf](https://github.com/equationalapplications/expo-llm-wiki/commit/31ecbcf8590c76b50be2c56e3ab0ed7d3b7f9a31))
+* **core:** notify VectorRanker on embedding persistence changes ([85e9975](https://github.com/equationalapplications/expo-llm-wiki/commit/85e99755e60a8d558a9c9b036861ab20794b6ed3))
+
 # [Unreleased]
 
 ### Features

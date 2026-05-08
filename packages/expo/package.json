@@ -1,6 +1,6 @@
 {
   "name": "@equationalapplications/expo-llm-wiki",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "Expo/React Native adapter for @equationalapplications/core-llm-wiki.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
