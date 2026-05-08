@@ -501,6 +501,46 @@ export class WikiMemory {
     });
   }
 
+  /**
+   * GDPR-critical variant: awaits the hook with a timeout and rethrows failures.
+   * Use ONLY on deletion paths where ANN cleanup must succeed before SQLite commit.
+   * For best-effort index sync (reembed, migration), use _notifyEmbeddingPersisted.
+   */
+  private async _notifyEmbeddingPersistedOrThrow(
+    entityId: string,
+    factId: string,
+    vector: Float32Array | null,
+  ): Promise<void> {
+    if (!this.options.vectorRanker?.onEmbeddingPersisted) return;
+    if (this.options.forceDeleteIgnoreRankerHook === true) return;
+
+    const vectorCopy = vector ? vector.slice() : null;
+    const timeoutMs = this.options.deletionHookTimeoutMs ?? 30_000;
+
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(
+        () => reject(new Error(`onEmbeddingPersisted timed out after ${timeoutMs}ms`)),
+        timeoutMs,
+      );
+    });
+
+    try {
+      await Promise.race([
+        Promise.resolve(
+          this.options.vectorRanker.onEmbeddingPersisted({
+            entityId,
+            factId,
+            vector: vectorCopy,
+          }),
+        ),
+        timeoutPromise,
+      ]);
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+    }
+  }
+
   constructor(db: SQLiteAdapter, options: WikiOptions) {
     this.db = db;
     this.options = options;

@@ -977,4 +977,30 @@ describe('VectorRanker integration', () => {
       expect(r2.facts[0].id).toBe('fact-a');
     });
   });
+
+  describe('Deletion hook ordering', () => {
+    it('aborts deletion when hook exceeds deletionHookTimeoutMs', async () => {
+      const db = openTestDatabase();
+      const slowRanker: VectorRanker = {
+        async rankBySimilarity() { return []; },
+        async onEmbeddingPersisted(event) {
+          if (event.vector === null) {
+            await new Promise((r) => setTimeout(r, 5000));
+          }
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: { generateText: async () => '{}', embed: async (t) => keywordEmbed(t) },
+        vectorRanker: slowRanker,
+        deletionHookTimeoutMs: 100,
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+      ]));
+
+      await expect(wiki.forget('user-1', { entryId: 'fact-a' })).rejects.toThrow(/timed out/);
+    });
+  });
 });
