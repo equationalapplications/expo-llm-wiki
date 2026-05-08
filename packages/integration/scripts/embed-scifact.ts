@@ -4,7 +4,8 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { EmbeddingModel, FlagEmbedding } from 'fastembed';
 import { WikiMemory } from '@equationalapplications/core-llm-wiki';
-import type { MemoryDump, WikiFact } from '@equationalapplications/core-llm-wiki';
+import type { MemoryDump } from '@equationalapplications/core-llm-wiki';
+import { parseEmbedding } from '../../core/src/utils/embedding';
 import { openTestDatabase } from '../helpers/db';
 
 /** Drop embedding_blob from facts without building markdown (formatMemoryDump is heavy for large corpora). */
@@ -16,10 +17,7 @@ function stripEmbeddingBlobsFromDump(dump: MemoryDump): MemoryDump {
         entityId,
         {
           ...bundle,
-          facts: bundle.facts.map((f) => {
-            const { embedding_blob: _blob, ...rest } = f as WikiFact & { embedding_blob?: unknown };
-            return rest as WikiFact;
-          }),
+          facts: bundle.facts.map(({ embedding_blob: _blob, ...rest }) => rest),
         },
       ])
     ),
@@ -120,14 +118,18 @@ async function main() {
   );
   const embMap: Record<string, number[]> = {};
   for (const row of embRows) {
-    if (row.embedding_blob) {
-      const buf = row.embedding_blob;
-      // Ensure 4-byte alignment when slicing into a Float32Array view.
-      const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-      embMap[row.id] = Array.from(new Float32Array(ab));
-    } else if (row.embedding) {
-      embMap[row.id] = JSON.parse(row.embedding);
+    const vec = parseEmbedding(row.embedding_blob, row.embedding);
+    if (!vec) {
+      const blobLen = row.embedding_blob?.byteLength ?? 0;
+      const blobHint =
+        row.embedding_blob && blobLen % 4 !== 0
+          ? `embedding_blob length ${blobLen} is not a multiple of 4`
+          : row.embedding_blob
+            ? 'embedding_blob could not be parsed as finite float32 values'
+            : 'legacy embedding TEXT is missing or invalid JSON';
+      throw new Error(`Invalid embedding for entry ${row.id}: ${blobHint}`);
     }
+    embMap[row.id] = Array.from(vec);
   }
   if (embRows.length === 0) {
     throw new Error('No embeddings found for scifact-corpus; sidecar would be empty.');
