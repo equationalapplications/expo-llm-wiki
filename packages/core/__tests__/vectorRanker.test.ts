@@ -1002,5 +1002,83 @@ describe('VectorRanker integration', () => {
 
       await expect(wiki.forget('user-1', { entryId: 'fact-a' })).rejects.toThrow(/timed out/);
     });
+
+    it('rethrows onEmbeddingPersisted failure on forget()', async () => {
+      const db = openTestDatabase();
+      const failingRanker: VectorRanker = {
+        async rankBySimilarity() { return []; },
+        async onEmbeddingPersisted(event) {
+          if (event.vector === null) throw new Error('ANN cleanup failed');
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: { generateText: async () => '{}', embed: async (t) => keywordEmbed(t) },
+        vectorRanker: failingRanker,
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+      ]));
+
+      await expect(wiki.forget('user-1', { entryId: 'fact-a' })).rejects.toThrow();
+    });
+
+    it('skips hook entirely when forceDeleteIgnoreRankerHook=true', async () => {
+      const db = openTestDatabase();
+      let hookCalled = false;
+      const ranker: VectorRanker = {
+        async rankBySimilarity() { return []; },
+        async onEmbeddingPersisted() {
+          hookCalled = true;
+          throw new Error('would have failed');
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: { generateText: async () => '{}', embed: async (t) => keywordEmbed(t) },
+        vectorRanker: ranker,
+        forceDeleteIgnoreRankerHook: true,
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+      ]));
+
+      // Reset flag after import (import uses _notifyEmbeddingPersisted which may call hook)
+      hookCalled = false;
+
+      await expect(wiki.forget('user-1', { entryId: 'fact-a' })).resolves.toBeDefined();
+      expect(hookCalled).toBe(false);
+    });
+
+    it('awaits onEmbeddingPersisted before forget() resolves', async () => {
+      const db = openTestDatabase();
+      let hookCalledAt = 0;
+      let hookCompleted = false;
+
+      const delayedRanker: VectorRanker = {
+        async rankBySimilarity() { return []; },
+        async onEmbeddingPersisted() {
+          hookCalledAt = Date.now();
+          await new Promise((r) => setTimeout(r, 100));
+          hookCompleted = true;
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: { generateText: async () => '{}', embed: async (t) => keywordEmbed(t) },
+        vectorRanker: delayedRanker,
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+      ]));
+
+      await wiki.forget('user-1', { entryId: 'fact-a' });
+      const forgetResolvedAt = Date.now();
+      expect(hookCompleted).toBe(true);
+      expect(forgetResolvedAt - hookCalledAt).toBeGreaterThanOrEqual(95);
+    });
   });
 });

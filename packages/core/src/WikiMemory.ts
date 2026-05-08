@@ -2586,9 +2586,19 @@ export class WikiMemory {
       const uniqueDeletedIds = Array.from(new Set(deletedEntryIds));
       for (const factId of uniqueDeletedIds) {
         try {
-          await this._notifyEmbeddingPersisted(entityId, factId, null);
+          await this._notifyEmbeddingPersistedOrThrow(entityId, factId, null);
         } catch (hookErr) {
-          console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during forget for ${factId}:`, hookErr);
+          // Preserve timeout errors (thrown by WikiMemory, not the ranker)
+          const isTimeout = hookErr instanceof Error && hookErr.message.includes('timed out');
+          if (isTimeout) {
+            throw new Error(
+              `forget(${entityId}/${factId}) failed: ${(hookErr as Error).message}`,
+            );
+          }
+          throw new Error(
+            `forget(${entityId}/${factId}) failed: ANN cleanup hook rejected`,
+            { cause: this._sanitizeRankerError(hookErr) },
+          );
         }
       }
 
