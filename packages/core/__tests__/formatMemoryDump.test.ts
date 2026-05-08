@@ -16,7 +16,7 @@ describe('formatMemoryDump', () => {
         e1: {
           facts: [{
             id: 'f1', entity_id: 'e1', title: 'Fact A', body: 'body text', tags: ['tag1'],
-            confidence: 'certain', source_type: 'user_document', source_hash: null,
+            confidence: 'certain', source_type: 'immutable_document', source_hash: null,
             source_ref: 'doc.pdf', created_at: 1000, updated_at: 1000,
             last_accessed_at: null, access_count: 0, deleted_at: null,
           }],

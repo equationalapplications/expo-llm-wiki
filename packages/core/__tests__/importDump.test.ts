@@ -214,7 +214,7 @@ function makeDump(entityId: string, factId = 'f1'): MemoryDump {
           body: 'Test body content here',
           tags: ['tag1'],
           confidence: 'certain',
-          source_type: 'user_document',
+          source_type: 'immutable_document',
           source_hash: null,
           source_ref: 'test.pdf',
           created_at: 1000,

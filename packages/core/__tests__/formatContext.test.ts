@@ -10,7 +10,7 @@ function makeFact(overrides: Partial<WikiFact> = {}): WikiFact {
     body: 'Body text',
     tags: ['tag1'],
     confidence: 'certain',
-    source_type: 'agent_inferred',
+    source_type: 'librarian_inferred',
     source_hash: null,
     source_ref: null,
     created_at: 0,
