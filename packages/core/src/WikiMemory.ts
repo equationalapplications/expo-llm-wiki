@@ -520,7 +520,7 @@ export class WikiMemory {
 
     const count = legacyCount?.count ?? 0;
     const migrationSQL = `
--- Run this SQL to migrate legacy source_type values (adjust prefix if custom tablePrefix configured):
+-- Migrate legacy source_type values (targets your WikiMemory prefix: ${this.prefix})
 UPDATE ${this.prefix}entries SET source_type = 'immutable_document' WHERE source_type = 'user_document';
 UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source_type = 'agent_inferred';
     `.trim();

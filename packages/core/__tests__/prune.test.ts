@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 
 type EntryRow = {
   id: string;
@@ -56,7 +56,7 @@ function makeMockDb(opts: {
         const cutoff = args[1];
         const idsToDelete = args.slice(2);
         const before = entries.length;
-        entries = entries.filter(e => !(e.entity_id === entityId && e.deleted_at !== null && e.deleted_at < cutoff && idsToDelete.includes(e.id)));
+        entries = entries.filter(e => !(e.entity_id === entityId && e.deleted_at !== null && e.deleted_at <= cutoff && idsToDelete.includes(e.id)));
         return { changes: before - entries.length };
       }
       // Hard delete entries (by cutoff - old pattern)
@@ -64,7 +64,7 @@ function makeMockDb(opts: {
         const entityId = args[0];
         const cutoff = args[1];
         const before = entries.length;
-        entries = entries.filter(e => !(e.entity_id === entityId && e.deleted_at !== null && e.deleted_at < cutoff));
+        entries = entries.filter(e => !(e.entity_id === entityId && e.deleted_at !== null && e.deleted_at <= cutoff));
         return { changes: before - entries.length };
       }
       // Hard delete tasks
@@ -72,7 +72,7 @@ function makeMockDb(opts: {
         const entityId = args[0];
         const cutoff = args[1];
         const before = tasks.length;
-        tasks = tasks.filter(t => !(t.entity_id === entityId && t.deleted_at !== null && t.deleted_at < cutoff));
+        tasks = tasks.filter(t => !(t.entity_id === entityId && t.deleted_at !== null && t.deleted_at <= cutoff));
         return { changes: before - tasks.length };
       }
       // Hard delete events
@@ -80,7 +80,7 @@ function makeMockDb(opts: {
         const entityId = args[0];
         const cutoff = args[1];
         const before = events.length;
-        events = events.filter(e => !(e.entity_id === entityId && e.created_at < cutoff));
+        events = events.filter(e => !(e.entity_id === entityId && e.created_at <= cutoff));
         return { changes: before - events.length };
       }
       return { changes: 0 };
@@ -96,21 +96,21 @@ function makeMockDb(opts: {
       if (sql.includes('COUNT') && sql.includes('entries') && sql.includes('deleted_at IS NOT NULL')) {
         const entityId = args[0];
         const cutoff = args[1];
-        const count = entries.filter(e => e.entity_id === entityId && e.deleted_at !== null && e.deleted_at < cutoff).length;
+        const count = entries.filter(e => e.entity_id === entityId && e.deleted_at !== null && e.deleted_at <= cutoff).length;
         return { count } as any;
       }
       // Count deleted tasks
       if (sql.includes('COUNT') && sql.includes('tasks') && sql.includes('deleted_at IS NOT NULL')) {
         const entityId = args[0];
         const cutoff = args[1];
-        const count = tasks.filter(t => t.entity_id === entityId && t.deleted_at !== null && t.deleted_at < cutoff).length;
+        const count = tasks.filter(t => t.entity_id === entityId && t.deleted_at !== null && t.deleted_at <= cutoff).length;
         return { count } as any;
       }
       // Count old events
       if (sql.includes('COUNT') && sql.includes('events')) {
         const entityId = args[0];
         const cutoff = args[1];
-        const count = events.filter(e => e.entity_id === entityId && e.created_at < cutoff).length;
+        const count = events.filter(e => e.entity_id === entityId && e.created_at <= cutoff).length;
         return { count } as any;
       }
       return null;
@@ -120,7 +120,7 @@ function makeMockDb(opts: {
       if (sql.includes('SELECT') && sql.includes('entries') && sql.includes('deleted_at IS NOT NULL') && sql.includes('deleted_at <')) {
         const entityId = args[0];
         const cutoff = args[1];
-        return entries.filter(e => e.entity_id === entityId && e.deleted_at !== null && e.deleted_at < cutoff) as any;
+        return entries.filter(e => e.entity_id === entityId && e.deleted_at !== null && e.deleted_at <= cutoff) as any;
       }
       return [];
     },
@@ -331,5 +331,97 @@ describe('WikiMemory.runPrune', () => {
     const db = makeMockDb({});
     const wiki = new WikiMemory(db as any, stubOptions);
     await expect(wiki.runPrune('ent', { retainEventsFor: NaN })).rejects.toThrow('retainEventsFor');
+  });
+
+  describe('inclusive cutoff (<=) boundaries', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    const FIXED_NOW = 1_750_000_000_000;
+    const MS_DAY = 86_400_000;
+
+    it('hard-deletes soft-deleted entries with deleted_at equal to retainSoftDeletedFor cutoff', async () => {
+      vi.spyOn(Date, 'now').mockReturnValue(FIXED_NOW);
+      const retainDays = 13;
+      const cutoff = FIXED_NOW - retainDays * MS_DAY;
+      const db = makeMockDb({
+        entries: [
+          {
+            id: 'at-cutoff',
+            entity_id: 'ent',
+            source_ref: null,
+            source_hash: null,
+            deleted_at: cutoff,
+            updated_at: cutoff,
+            title: 'Boundary',
+            body: '',
+            tags: '[]',
+          },
+          {
+            id: 'past-cutoff',
+            entity_id: 'ent',
+            source_ref: null,
+            source_hash: null,
+            deleted_at: cutoff + 1,
+            updated_at: cutoff,
+            title: 'Newer delete',
+            body: '',
+            tags: '[]',
+          },
+          {
+            id: 'active',
+            entity_id: 'ent',
+            source_ref: null,
+            source_hash: null,
+            deleted_at: null,
+            updated_at: FIXED_NOW,
+            title: 'Active',
+            body: '',
+            tags: '[]',
+          },
+        ],
+      });
+      const wiki = new WikiMemory(db as any, stubOptions);
+      await wiki.runPrune('ent', { retainSoftDeletedFor: retainDays, retainEventsFor: null });
+      const ids = db.getEntries().map(e => e.id);
+      expect(ids).not.toContain('at-cutoff');
+      expect(ids).toContain('past-cutoff');
+      expect(ids).toContain('active');
+    });
+
+    it('hard-deletes soft-deleted tasks with deleted_at equal to retainSoftDeletedFor cutoff', async () => {
+      vi.spyOn(Date, 'now').mockReturnValue(FIXED_NOW);
+      const retainDays = 5;
+      const cutoff = FIXED_NOW - retainDays * MS_DAY;
+      const db = makeMockDb({
+        tasks: [
+          { id: 'tat', entity_id: 'ent', description: 'at', deleted_at: cutoff },
+          { id: 'tnew', entity_id: 'ent', description: 'newer', deleted_at: cutoff + 1 },
+        ],
+      });
+      const wiki = new WikiMemory(db as any, stubOptions);
+      await wiki.runPrune('ent', { retainSoftDeletedFor: retainDays, retainEventsFor: null });
+      const ids = db.getTasks().map(t => t.id);
+      expect(ids).not.toContain('tat');
+      expect(ids).toContain('tnew');
+    });
+
+    it('hard-deletes events with created_at equal to retainEventsFor cutoff', async () => {
+      vi.spyOn(Date, 'now').mockReturnValue(FIXED_NOW);
+      const retainDays = 9;
+      const cutoff = FIXED_NOW - retainDays * MS_DAY;
+      const db = makeMockDb({
+        events: [
+          { id: 'ev-at', entity_id: 'ent', event_type: 'observation', summary: 'Boundary', created_at: cutoff },
+          { id: 'ev-new', entity_id: 'ent', event_type: 'observation', summary: 'Just newer', created_at: cutoff + 1 },
+        ],
+      });
+      const wiki = new WikiMemory(db as any, stubOptions);
+      await wiki.runPrune('ent', { retainSoftDeletedFor: null, retainEventsFor: retainDays });
+      const ids = db.getEvents().map(e => e.id);
+      expect(ids).not.toContain('ev-at');
+      expect(ids).toContain('ev-new');
+    });
   });
 });
