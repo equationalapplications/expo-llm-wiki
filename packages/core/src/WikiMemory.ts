@@ -859,6 +859,7 @@ export class WikiMemory {
           // Determine candidate rows
           type CandidateRowMetadata = { id: string; updated_at: number | null; access_count: number | null };
           type CandidateRowWithEmbeddings = CandidateRowMetadata & { embedding_blob: Uint8Array | null; embedding: string | null };
+          const useRanker = Boolean(this.options.vectorRanker);
           let candidateRows: CandidateRowMetadata[] | CandidateRowWithEmbeddings[] | null; // null = pre-filter returned 0 results
           let populateCache = true;
           let miniSearchScores: Map<string, number> | undefined;
@@ -880,19 +881,30 @@ export class WikiMemory {
               } else {
                 const topKIds = topKResults.map(r => r.id);
                 const inClauseChunkSize = 500;
-                candidateRows = [];
-                for (let i = 0; i < topKIds.length; i += inClauseChunkSize) {
-                  const idChunk = topKIds.slice(i, i + inClauseChunkSize);
-                  const placeholders = idChunk.map(() => '?').join(',');
-                  // Skip embeddings if vectorRanker is configured (only fetch for JS cosine path)
-                  const selectCols = this.options.vectorRanker
-                    ? 'id, updated_at, access_count'
-                    : 'id, embedding_blob, embedding, updated_at, access_count';
-                  const chunkRows = await this.db.getAllAsync<any>(
-                    `SELECT ${selectCols} FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
-                    idChunk
-                  );
-                  candidateRows.push(...chunkRows);
+                if (useRanker) {
+                  const rows: CandidateRowMetadata[] = [];
+                  for (let i = 0; i < topKIds.length; i += inClauseChunkSize) {
+                    const idChunk = topKIds.slice(i, i + inClauseChunkSize);
+                    const placeholders = idChunk.map(() => '?').join(',');
+                    const chunkRows = await this.db.getAllAsync<CandidateRowMetadata>(
+                      `SELECT id, updated_at, access_count FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+                      idChunk
+                    );
+                    rows.push(...chunkRows);
+                  }
+                  candidateRows = rows;
+                } else {
+                  const rows: CandidateRowWithEmbeddings[] = [];
+                  for (let i = 0; i < topKIds.length; i += inClauseChunkSize) {
+                    const idChunk = topKIds.slice(i, i + inClauseChunkSize);
+                    const placeholders = idChunk.map(() => '?').join(',');
+                    const chunkRows = await this.db.getAllAsync<CandidateRowWithEmbeddings>(
+                      `SELECT id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+                      idChunk
+                    );
+                    rows.push(...chunkRows);
+                  }
+                  candidateRows = rows;
                 }
                 if (weight !== undefined && weight < 1) {
                   const maxMsScore = Math.max(1, topKResults[0]?.score ?? 1);
@@ -904,14 +916,17 @@ export class WikiMemory {
             // Full entity scan
             // If vectorRanker is configured, skip embedding load for now (ranker will provide ranking)
             // Otherwise fetch embeddings for JS cosine ranking
-            const selectCols = this.options.vectorRanker
-              ? 'id, updated_at, access_count'
-              : 'id, embedding_blob, embedding, updated_at, access_count';
-
-            candidateRows = await this.db.getAllAsync<any>(
-              `SELECT ${selectCols} FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
-              [entityId]
-            );
+            if (useRanker) {
+              candidateRows = await this.db.getAllAsync<CandidateRowMetadata>(
+                `SELECT id, updated_at, access_count FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
+                [entityId]
+              );
+            } else {
+              candidateRows = await this.db.getAllAsync<CandidateRowWithEmbeddings>(
+                `SELECT id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
+                [entityId]
+              );
+            }
             // Collect MiniSearch scores for hybrid blend if weight is set and <1
             // (weight=1 is all-semantic with clamped scores; pure semantic [-1,1] requires weight undefined)
             if (weight !== undefined && weight < 1) {
@@ -931,7 +946,7 @@ export class WikiMemory {
             // Rank candidates: use vectorRanker if present, otherwise use JS cosine
             let scored: Array<{ id: string; score: number; updated_at?: number | null; access_count?: number | null }>;
 
-            if (this.options.vectorRanker) {
+            if (useRanker) {
               // Use external ranker for semantic scoring
               const candidateIds = effectivePreFilterLimit !== undefined
                 ? candidateRows.map(r => r.id)
@@ -967,22 +982,24 @@ export class WikiMemory {
                 // Backfill ranker-omitted rows per VectorRanker contract:
                 // treat missing ids as "no embedding" (pure semantic: -2, hybrid: keyword-only)
                 const scoredIds = new Set(scored.map(s => s.id));
-                const unscoredRows = candidateRows.filter(row => !scoredIds.has(row.id));
 
-                // Hybrid mode: always admit top maxResults unscored rows by keyword score so unembedded
-                // facts can compete. Pure semantic: only backfill gap to reach maxResults (avoid O(N) work).
-                const maxBackfill = (weight !== undefined && weight < 1)
-                  ? Math.min(unscoredRows.length, maxResults)
+                // Compute backfill budget up-front.
+                // Hybrid mode: allow up to maxResults keyword-only rows to compete.
+                // Pure semantic: only fill the remaining result slots.
+                const isHybrid = weight !== undefined && weight < 1;
+                const maxBackfill = isHybrid
+                  ? maxResults
                   : Math.max(0, maxResults - scored.length);
 
-                if (maxBackfill > 0 && unscoredRows.length > 0) {
-                  let rowsToBackfill: typeof unscoredRows;
-                  if (weight !== undefined && weight < 1) {
+                if (maxBackfill > 0) {
+                  if (isHybrid) {
                     // Hybrid mode: prioritize by keyword score using O(N log K) top-K selection
-                    // instead of O(N log N) full sort, since K (maxBackfill) is typically << N
-                    const topK: Array<{ row: typeof unscoredRows[number]; kwScore: number }> = [];
+                    // instead of O(N log N) full sort, since K (maxBackfill) is typically << N.
+                    type CandidateRow = typeof candidateRows[number];
+                    const topK: Array<{ row: CandidateRow; kwScore: number }> = [];
 
-                    for (const row of unscoredRows) {
+                    for (const row of candidateRows) {
+                      if (scoredIds.has(row.id)) continue;
                       const kwScore = miniSearchScores?.get(row.id) ?? 0;
 
                       if (topK.length < maxBackfill) {
@@ -1005,17 +1022,23 @@ export class WikiMemory {
                       }
                     }
 
-                    rowsToBackfill = topK.map(x => x.row);
+                    for (const { row, kwScore } of topK) {
+                      scored.push({
+                        id: row.id,
+                        score: (1 - weight) * kwScore,
+                        updated_at: row.updated_at,
+                        access_count: row.access_count,
+                      });
+                    }
                   } else {
-                    // Pure semantic: all get -2, so just take first maxBackfill
-                    rowsToBackfill = unscoredRows.slice(0, maxBackfill);
-                  }
-
-                  for (const row of rowsToBackfill) {
-                    const score = (weight !== undefined && weight < 1)
-                      ? (1 - weight) * (miniSearchScores?.get(row.id) ?? 0)
-                      : -2;
-                    scored.push({ id: row.id, score, updated_at: row.updated_at, access_count: row.access_count });
+                    // Pure semantic: all omitted rows share score -2, so stop after K misses.
+                    let filled = 0;
+                    for (const row of candidateRows) {
+                      if (filled >= maxBackfill) break;
+                      if (scoredIds.has(row.id)) continue;
+                      scored.push({ id: row.id, score: -2, updated_at: row.updated_at, access_count: row.access_count });
+                      filled++;
+                    }
                   }
                 }
               } catch (rankerErr) {
@@ -1134,12 +1157,19 @@ export class WikiMemory {
                 const byId = new Map(fullRows.map(r => [r.id, r]));
                 facts = topIds.map(id => byId.get(id)).filter((f): f is WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null } => f !== undefined);
 
-                // Detect if ranker returned IDs that don't belong to this entity or don't exist
+                // Hydration can return fewer rows than ranked IDs when rows were concurrently
+                // soft-deleted or filtered by deleted_at before phase 2 hydration completes.
                 if (facts.length < topIds.length) {
-                  const missingCount = topIds.length - facts.length;
+                  const missingIds = topIds.filter(id => !byId.has(id));
+                  const missingCount = missingIds.length;
+                  const sample = missingIds.slice(0, 5);
+                  const sampleSuffix = sample.length > 0
+                    ? ` Missing ID sample: ${sample.join(', ')}${missingIds.length > sample.length ? ', ...' : ''}.`
+                    : '';
                   const error = new Error(
-                    `Vector ranker returned ${missingCount} invalid ID(s) for entity ${entityId}. ` +
-                    `Ranker must only return existing IDs for the requested entity.`
+                    `Phase 2 fact hydration returned ${missingCount} fewer row(s) than ranked IDs for entity ${entityId}. ` +
+                    `Rows may have been concurrently soft-deleted or filtered by deleted_at during hydration.` +
+                    sampleSuffix
                   );
                   this.options.onRetrievalFallback?.(error);
                 }

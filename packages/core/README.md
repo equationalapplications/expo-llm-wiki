@@ -124,9 +124,11 @@ const memory = await wikiMemory.read('user-123', 'my preferences', {
 ```
 
 **Hybrid scoring blends:**
-- `hybridWeight: 1.0` → pure semantic scoring among the candidates being scored; if `preFilterLimit` is set, semantic scoring is still limited to the top-K MiniSearch matches
+- `hybridWeight: 1.0` → all-semantic blend with semantic scores clamped to non-negative range (no keyword component)
 - `hybridWeight: 0.5` → balanced semantic + keyword (50/50 blend)
 - `hybridWeight: 0.0` → pure keyword ranking, skips `embed()` entirely (no LLM API cost)
+
+True cosine-range pure semantic ranking (including negative cosine values) is used when `hybridWeight` is left `undefined`.
 
 **Pre-filtering optimization:**
 When `preFilterLimit: 50` is set with 1000 facts, cosine similarity is computed only for the top 50 MiniSearch keyword matches, reducing O(N) scoring to O(50).
@@ -275,6 +277,10 @@ const memory = await wikiMemory.read('user-123', 'my preferences', {
   hybridWeight: 0.5, // per-call override to 50/50 blend
 });
 ```
+
+Note on semantics:
+- Leave `hybridWeight` undefined for true pure-semantic cosine-range scoring.
+- Set `hybridWeight: 1` for an all-semantic variant that clamps negative semantic scores to 0.
 
 For details on hybrid scoring formulas and trade-offs, see [Retrieval Tuning](#retrieval-tuning) above.
 

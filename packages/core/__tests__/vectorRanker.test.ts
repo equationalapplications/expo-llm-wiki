@@ -787,10 +787,10 @@ describe('VectorRanker integration', () => {
       expect(result.facts[0].id).toBe('fact-a');
       expect(result.facts[1].id).toBe('fact-b');
 
-      // Should have notified about the 2 invalid IDs
+      // Should notify when hydration returns fewer rows than ranked IDs
       expect(onRetrievalFallback).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: expect.stringContaining('Vector ranker returned 2 invalid ID(s)'),
+          message: expect.stringContaining('Phase 2 fact hydration returned 2 fewer row(s)'),
         })
       );
     });
