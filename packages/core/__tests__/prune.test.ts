@@ -51,9 +51,12 @@ function makeMockDb(opts: {
     async runAsync(sql: string, args: any[] = []): Promise<{ changes: number }> {
       // Hard delete entries (by ID list - new pattern for hook-before-delete)
       if (sql.includes('DELETE FROM') && sql.includes('entries') && sql.includes('IN (') && !sql.includes('fts') && !sql.includes('events') && !sql.includes('tasks')) {
-        const idsToDelete = args; // args is array of IDs
+        // Production passes [entityId, cutoff, ...ids]
+        const entityId = args[0];
+        const cutoff = args[1];
+        const idsToDelete = args.slice(2);
         const before = entries.length;
-        entries = entries.filter(e => !idsToDelete.includes(e.id));
+        entries = entries.filter(e => !(e.entity_id === entityId && e.deleted_at !== null && e.deleted_at < cutoff && idsToDelete.includes(e.id)));
         return { changes: before - entries.length };
       }
       // Hard delete entries (by cutoff - old pattern)

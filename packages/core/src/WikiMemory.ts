@@ -521,7 +521,11 @@ export class WikiMemory {
     if (this.options.forceDeleteIgnoreRankerHook === true) return;
 
     const vectorCopy = vector ? vector.slice() : null;
-    const timeoutMs = this.options.deletionHookTimeoutMs ?? 30_000;
+    const rawTimeout = this.options.deletionHookTimeoutMs ?? 30_000;
+    if (typeof rawTimeout !== 'number' || !Number.isFinite(rawTimeout) || rawTimeout <= 0) {
+      throw new Error('Invalid deletionHookTimeoutMs: must be a positive finite number');
+    }
+    const timeoutMs = rawTimeout;
 
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {

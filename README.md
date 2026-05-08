@@ -677,7 +677,7 @@ expo-llm-wiki implements multiple security layers to protect against common vuln
 
 ### Input Sanitization
 
-- **SQL Injection Prevention**: All user-supplied values (`entityId`, `entryId`, `sourceRef`, `sourceHash`, query text) use parameterized queries. Never concatenated into SQL strings.
+- **SQL Injection Prevention**: All user-supplied values (`entityId`, `entryId`, `sourceRef`, `sourceHash`, query text) use parameterized queries. These values are never concatenated into SQL strings.
 - **Source Reference Normalization**: `sourceRef` allowlist restricts to `[A-Za-z0-9._\- ]` — other characters stripped. Prevents path traversal and injection attacks.
 - **Source Hash Validation**: `sourceHash` must be a 64-character hex digest. Non-conforming values rejected.
 

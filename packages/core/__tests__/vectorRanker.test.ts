@@ -1003,6 +1003,44 @@ describe('VectorRanker integration', () => {
       await expect(wiki.forget('user-1', { entryId: 'fact-a' })).rejects.toThrow(/timed out/);
     });
 
+    it('throws on invalid deletionHookTimeoutMs values', async () => {
+      const db = openTestDatabase();
+      const ranker: VectorRanker = {
+        async rankBySimilarity() { return []; },
+        async onEmbeddingPersisted() {},
+      };
+
+      // NaN
+      const wikiNaN = new WikiMemory(db, {
+        llmProvider: { generateText: async () => '{}', embed: async (t) => keywordEmbed(t) },
+        vectorRanker: ranker,
+        deletionHookTimeoutMs: NaN,
+      });
+      await wikiNaN.setup();
+      await wikiNaN.importDump(makeDump([{ id: 'fact-a', title: 'test', body: 'test' }]));
+      await expect(wikiNaN.forget('user-1', { entryId: 'fact-a' })).rejects.toThrow(/ANN cleanup hook rejected/);
+
+      // Zero
+      const wikiZero = new WikiMemory(openTestDatabase(), {
+        llmProvider: { generateText: async () => '{}', embed: async (t) => keywordEmbed(t) },
+        vectorRanker: ranker,
+        deletionHookTimeoutMs: 0,
+      });
+      await wikiZero.setup();
+      await wikiZero.importDump(makeDump([{ id: 'fact-b', title: 'test', body: 'test' }]));
+      await expect(wikiZero.forget('user-1', { entryId: 'fact-b' })).rejects.toThrow(/ANN cleanup hook rejected/);
+
+      // Negative
+      const wikiNeg = new WikiMemory(openTestDatabase(), {
+        llmProvider: { generateText: async () => '{}', embed: async (t) => keywordEmbed(t) },
+        vectorRanker: ranker,
+        deletionHookTimeoutMs: -100,
+      });
+      await wikiNeg.setup();
+      await wikiNeg.importDump(makeDump([{ id: 'fact-c', title: 'test', body: 'test' }]));
+      await expect(wikiNeg.forget('user-1', { entryId: 'fact-c' })).rejects.toThrow(/ANN cleanup hook rejected/);
+    });
+
     it('rethrows onEmbeddingPersisted failure on forget()', async () => {
       const db = openTestDatabase();
       const failingRanker: VectorRanker = {
