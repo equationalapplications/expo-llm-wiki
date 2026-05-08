@@ -747,4 +747,52 @@ describe('VectorRanker integration', () => {
       ]))).resolves.not.toThrow();
     });
   });
+
+  describe('Regression: PR #16 review issues', () => {
+    it('should detect and report when ranker returns IDs outside entity scope', async () => {
+      // Issue 2: In full-scan mode, a misbehaving ranker can return IDs from other entities.
+      // These get filtered in Phase 2, reducing result count without notification.
+      const db = openTestDatabase();
+      const onRetrievalFallback = vi.fn();
+      const mockRanker: VectorRanker = {
+        rankBySimilarity: async () => {
+          // Return mix of valid and invalid IDs
+          return [
+            { id: 'fact-a', semanticScore: 0.9 },      // valid
+            { id: 'wrong-entity-1', semanticScore: 0.8 }, // invalid (wrong entity)
+            { id: 'fact-b', semanticScore: 0.7 },      // valid
+            { id: 'nonexistent', semanticScore: 0.6 },   // invalid (doesn't exist)
+          ];
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: {
+          generateText: async () => '{}',
+          embed: async (t) => keywordEmbed(t),
+        },
+        vectorRanker: mockRanker,
+        onRetrievalFallback,
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple', body: 'red' },
+        { id: 'fact-b', title: 'car', body: 'fast' },
+      ]));
+
+      const result = await wiki.read('user-1', 'test');
+
+      // Should return only the 2 valid facts
+      expect(result.facts).toHaveLength(2);
+      expect(result.facts[0].id).toBe('fact-a');
+      expect(result.facts[1].id).toBe('fact-b');
+
+      // Should have notified about the 2 invalid IDs
+      expect(onRetrievalFallback).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining('Vector ranker returned 2 invalid ID(s)'),
+        })
+      );
+    });
+  });
 });

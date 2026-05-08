@@ -857,8 +857,9 @@ export class WikiMemory {
           }
 
           // Determine candidate rows
-          type ScoreRow = { id: string; embedding_blob?: Uint8Array | null; embedding?: string | null; updated_at: number | null; access_count: number | null };
-          let candidateRows: ScoreRow[] | null; // null = pre-filter returned 0 results
+          type CandidateRowMetadata = { id: string; updated_at: number | null; access_count: number | null };
+          type CandidateRowWithEmbeddings = CandidateRowMetadata & { embedding_blob: Uint8Array | null; embedding: string | null };
+          let candidateRows: CandidateRowMetadata[] | CandidateRowWithEmbeddings[] | null; // null = pre-filter returned 0 results
           let populateCache = true;
           let miniSearchScores: Map<string, number> | undefined;
 
@@ -887,7 +888,7 @@ export class WikiMemory {
                   const selectCols = this.options.vectorRanker
                     ? 'id, updated_at, access_count'
                     : 'id, embedding_blob, embedding, updated_at, access_count';
-                  const chunkRows = await this.db.getAllAsync<ScoreRow>(
+                  const chunkRows = await this.db.getAllAsync<any>(
                     `SELECT ${selectCols} FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
                     idChunk
                   );
@@ -907,7 +908,7 @@ export class WikiMemory {
               ? 'id, updated_at, access_count'
               : 'id, embedding_blob, embedding, updated_at, access_count';
 
-            candidateRows = await this.db.getAllAsync<ScoreRow>(
+            candidateRows = await this.db.getAllAsync<any>(
               `SELECT ${selectCols} FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
               [entityId]
             );
@@ -948,9 +949,15 @@ export class WikiMemory {
                   limit: oversampledLimit,
                 });
 
-                // Attach tie-break metadata from candidateRows
+                // Attach tie-break metadata from candidateRows (only for IDs returned by ranker)
                 if (scored.length > 0) {
-                  const metaMap = new Map(candidateRows.map(r => [r.id, { updated_at: r.updated_at, access_count: r.access_count }]));
+                  const scoredIds = new Set(scored.map(s => s.id));
+                  const metaMap = new Map<string, { updated_at: number | null; access_count: number | null }>();
+                  for (const r of candidateRows) {
+                    if (scoredIds.has(r.id)) {
+                      metaMap.set(r.id, { updated_at: r.updated_at, access_count: r.access_count });
+                    }
+                  }
                   scored = scored.map(s => {
                     const meta = metaMap.get(s.id);
                     return { ...s, updated_at: meta?.updated_at ?? null, access_count: meta?.access_count ?? null };
@@ -1021,12 +1028,12 @@ export class WikiMemory {
                       ...r,
                       embedding_blob: embeddingsMap.get(r.id)?.embedding_blob ?? null,
                       embedding: embeddingsMap.get(r.id)?.embedding ?? null,
-                    }));
+                    })) as CandidateRowWithEmbeddings[];
                   }
                   scored = await this._rankWithJsCosine({
                     entityId,
                     queryVec,
-                    candidateRows: fallbackRows,
+                    candidateRows: fallbackRows as CandidateRowWithEmbeddings[],
                     weight,
                     miniSearchScores,
                     populateCache,
@@ -1038,8 +1045,16 @@ export class WikiMemory {
                     filter: (r) => (r as unknown as { entity_id: string }).entity_id === entityId,
                     combineWith: 'OR',
                   });
-                  const candidateMap = new Map(candidateRows.map(r => [r.id, { updated_at: r.updated_at, access_count: r.access_count }]));
-                  scored = msResults.slice(0, maxResults).map(r => {
+                  const topResults = msResults.slice(0, maxResults);
+                  // Build metadata map only for returned IDs (not all candidates)
+                  const resultIds = new Set(topResults.map(r => r.id));
+                  const candidateMap = new Map<string, { updated_at: number | null; access_count: number | null }>();
+                  for (const r of candidateRows) {
+                    if (resultIds.has(r.id)) {
+                      candidateMap.set(r.id, { updated_at: r.updated_at, access_count: r.access_count });
+                    }
+                  }
+                  scored = topResults.map(r => {
                     const meta = candidateMap.get(r.id);
                     return {
                       id: r.id,
@@ -1062,10 +1077,11 @@ export class WikiMemory {
               }
             } else {
               // Use in-process JS cosine similarity
+              // At this point candidateRows must have embeddings (we fetched them because vectorRanker is not configured)
               scored = await this._rankWithJsCosine({
                 entityId,
                 queryVec,
-                candidateRows,
+                candidateRows: candidateRows as CandidateRowWithEmbeddings[],
                 weight,
                 miniSearchScores,
                 populateCache,
@@ -1096,6 +1112,16 @@ export class WikiMemory {
                 }
                 const byId = new Map(fullRows.map(r => [r.id, r]));
                 facts = topIds.map(id => byId.get(id)).filter((f): f is WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null } => f !== undefined);
+
+                // Detect if ranker returned IDs that don't belong to this entity or don't exist
+                if (facts.length < topIds.length) {
+                  const missingCount = topIds.length - facts.length;
+                  const error = new Error(
+                    `Vector ranker returned ${missingCount} invalid ID(s) for entity ${entityId}. ` +
+                    `Ranker must only return existing IDs for the requested entity.`
+                  );
+                  this.options.onRetrievalFallback?.(error);
+                }
               }
               // Phase 2 succeeded — now safe to notify that ranker fallback occurred
               if (pendingRankerFallbackError) {
@@ -1117,12 +1143,13 @@ export class WikiMemory {
           if (rankerShouldRethrow) {
             throw error;
           }
-          // Only notify if ranker fallback hasn't been attempted (pendingRankerFallbackError not set).
-          // If pendingRankerFallbackError is set, the fallback didn't finish building the result,
-          // so we shouldn't notify per spec: "after the recoverable fallback has finished".
-          if (!pendingRankerFallbackError) {
-            this.options.onRetrievalFallback?.(error);
+          // If Phase 2 failed and there's a pending ranker error, include it as cause
+          if (pendingRankerFallbackError) {
+            (error as any).cause = pendingRankerFallbackError;
+            pendingRankerFallbackError = undefined;
           }
+          // Always notify of Phase 2 errors (ranker error attached as cause if present)
+          this.options.onRetrievalFallback?.(error);
         }
       }
 
@@ -1331,8 +1358,11 @@ export class WikiMemory {
       return true;
     });
 
+    // Enforce limit to protect against buggy/malicious rankers returning huge result sets
+    const bounded = normalized.slice(0, limit);
+
     // Convert ranker results to scored format, applying hybrid blending if weight is set
-    const scored = normalized.map(r => {
+    const scored = bounded.map(r => {
       let score = r.semanticScore;
       if (weight !== undefined) {
         // Hybrid blending: floor semantic score at 0 for predictable weighted sum (no upper clamp)
