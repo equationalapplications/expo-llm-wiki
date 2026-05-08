@@ -345,14 +345,25 @@ export class PrunePartialFailureError extends Error {
   readonly deleted: number;
   readonly failedAt: string;
   readonly remaining: number;
+  readonly deletedTasks: number;
+  readonly deletedEvents: number;
   override readonly cause: Error;
 
-  constructor(deleted: number, failedAt: string, remaining: number, cause: Error) {
+  constructor(
+    deleted: number,
+    failedAt: string,
+    remaining: number,
+    cause: Error,
+    deletedTasks: number = 0,
+    deletedEvents: number = 0,
+  ) {
     super(`Prune partially failed: deleted ${deleted}, failed at ${failedAt}, ${remaining} remaining`);
     this.name = 'PrunePartialFailureError';
     this.deleted = deleted;
     this.failedAt = failedAt;
     this.remaining = remaining;
+    this.deletedTasks = deletedTasks;
+    this.deletedEvents = deletedEvents;
     this.cause = cause;
   }
 }

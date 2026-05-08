@@ -841,14 +841,25 @@ export class WikiMemory {
               failure.factId,
               remaining,
               new Error('Deletion hook timed out'),
+              deletedTasks,
+              0, // events not yet deleted at this point
             );
           }
+
+          // Preserve WikiMemory validation errors (not from the adapter hook)
+          const errMsg = (failure.cause as Error)?.message ?? '';
+          const isValidationError = errMsg.startsWith('Invalid deletionHookTimeoutMs');
+          const sanitizedCause = isValidationError
+            ? failure.cause as Error
+            : this._sanitizeRankerError(failure.cause);
 
           throw new PrunePartialFailureError(
             succeeded.length,
             failure.factId,
             remaining,
-            this._sanitizeRankerError(failure.cause),
+            sanitizedCause,
+            deletedTasks,
+            0, // events not yet deleted at this point
           );
         }
       }
@@ -2658,6 +2669,16 @@ export class WikiMemory {
               `forget(${entityId}/${factId}) failed: ${(hookErr as Error).message}`,
             );
           }
+          // Preserve WikiMemory validation errors (not from the adapter hook)
+          const errMsg = (hookErr as Error)?.message ?? '';
+          const isValidationError = errMsg.startsWith('Invalid deletionHookTimeoutMs');
+          if (isValidationError) {
+            throw new Error(
+              `forget(${entityId}/${factId}) failed: ${errMsg}`,
+              { cause: hookErr },
+            );
+          }
+          // Actual hook rejection - sanitize error details
           throw new Error(
             `forget(${entityId}/${factId}) failed: ANN cleanup hook rejected`,
             { cause: this._sanitizeRankerError(hookErr) },
