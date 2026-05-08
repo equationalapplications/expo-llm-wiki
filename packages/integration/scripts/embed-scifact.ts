@@ -3,7 +3,7 @@ import * as zlib from 'zlib';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { EmbeddingModel, FlagEmbedding } from 'fastembed';
-import { WikiMemory } from '@equationalapplications/core-llm-wiki';
+import { WikiMemory, formatMemoryDump } from '@equationalapplications/core-llm-wiki';
 import type { MemoryDump } from '@equationalapplications/core-llm-wiki';
 import { openTestDatabase } from '../helpers/db';
 
@@ -74,21 +74,22 @@ async function main() {
   const result = await wiki.runReembed('scifact-corpus');
   console.log(`  embedded: ${result.embedded}, skipped: ${result.skipped}`);
 
-  // 5. Export with BLOBs, gzip, save
+  // 5. Export dump JSON (text-only): strip embedding_blob via formatMemoryDump so the
+  //    gzip stays small; vectors are written only to the sidecar in step 6.
   console.log('Exporting…');
   const exported = await wiki.exportDump(['scifact-corpus']);
-  const gz = zlib.gzipSync(Buffer.from(JSON.stringify(exported), 'utf8'), { level: 6 });
+  const { manifest } = formatMemoryDump(exported);
+  // Minify after strip (formatMemoryDump pretty-prints; compact JSON gzips smaller).
+  const compact = JSON.stringify(JSON.parse(manifest) as MemoryDump);
+  const gz = zlib.gzipSync(Buffer.from(compact, 'utf8'), { level: 6 });
   const outPath = path.join(FIXTURES, 'scifact-dump.json.gz');
   fs.writeFileSync(outPath, gz);
   console.log(`Saved ${outPath} (${(gz.length / 1024 / 1024).toFixed(1)} MB)`);
 
-  // 6. Export embeddings separately (the dump strips embedding vectors for portability,
-  //    so we export them in a side-car file so the integration test can restore them
-  //    directly without re-running fastembed at test time).
-  //
-  //    runReembed() writes vectors to embedding_blob (Float32Array bytes) and clears
-  //    the legacy embedding TEXT column, so we read embedding_blob and also fall back
-  //    to the legacy embedding TEXT column for any rows that pre-date the blob path.
+  // 6. Export embeddings sidecar. runReembed() stores vectors in embedding_blob and
+  //    clears the legacy embedding TEXT column; we read embedding_blob (and fall back
+  //    to embedding TEXT for older rows) so integration tests can restore vectors without
+  //    re-running fastembed at test time.
   console.log('Exporting embeddings side-car…');
   const embRows = await db.getAllAsync<{
     id: string;
