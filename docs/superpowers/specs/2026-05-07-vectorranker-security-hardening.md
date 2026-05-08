@@ -1,7 +1,7 @@
 # Spec: VectorRanker Security Hardening
 
 **Date:** 2026-05-07  
-**Status:** Ready  
+**Status:** Implemented
 **Builds on:** [`2026-05-07-pluggable-vector-retrieval.md`](2026-05-07-pluggable-vector-retrieval.md)  
 **Target version:** v3.2.0 (minor — new public option)
 
