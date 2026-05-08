@@ -492,13 +492,18 @@ export class WikiMemory {
   }
 
   /** Maps pre-rename enum strings from older dumps to current source_type values. */
-  private _normalizeImportedSourceType(raw: string): WikiFact['source_type'] {
+  private _normalizeImportedSourceType(
+    raw: string,
+    ctx?: { entityId: string; factId: string },
+  ): WikiFact['source_type'] {
     if (raw === 'user_document') return 'immutable_document';
     if (raw === 'agent_inferred') return 'librarian_inferred';
     const allowed: WikiFact['source_type'][] = ['user_stated', 'librarian_inferred', 'user_confirmed', 'immutable_document'];
     if ((allowed as string[]).includes(raw)) return raw as WikiFact['source_type'];
+    const where =
+      ctx !== undefined ? ` for entity "${ctx.entityId}" fact "${ctx.factId}"` : '';
     throw new Error(
-      `importDump: invalid source_type "${raw}" (expected one of: ${allowed.join(', ')}, or legacy aliases user_document / agent_inferred)`
+      `importDump: invalid source_type "${raw}"${where} (expected one of: ${allowed.join(', ')}, or legacy aliases user_document / agent_inferred)`
     );
   }
 
@@ -2411,7 +2416,10 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
         }
 
         for (const fact of bundle.facts) {
-          const sourceType = this._normalizeImportedSourceType(String(fact.source_type));
+          const sourceType = this._normalizeImportedSourceType(String(fact.source_type), {
+            entityId,
+            factId: fact.id,
+          });
           const tagsJson = JSON.stringify(Array.isArray(fact.tags) ? fact.tags : []);
           // Normalize once: non-finite (undefined/null/NaN) → 0 so we never persist an
           // invalid value to the DB and ORDER BY updated_at remains meaningful.
