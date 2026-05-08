@@ -664,7 +664,7 @@ export class WikiMemory {
       }
     });
 
-    // BREAKING CHANGE: source_type enum renamed in v3.3.0. Fail fast if legacy values detected.
+    // BREAKING CHANGE: source_type enum renamed (immutable_document / librarian_inferred). Fail fast if legacy values detected.
     // This prevents silent corruption where old 'user_document' facts would bypass immutable guards.
     if (entriesExistedBeforeSetup) {
       const legacyCount = await this.db.getFirstAsync<{ count: number }>(
@@ -682,7 +682,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
 
         throw new Error(
           `Database contains ${legacyCount.count} entries with legacy source_type values ('user_document' or 'agent_inferred'). ` +
-          `These enum values were renamed in v3.3.0. Running without migration would allow legacy 'user_document' facts to bypass ` +
+          `These enum values were renamed in this release. Running without migration would allow legacy 'user_document' facts to bypass ` +
           `immutability guards, causing data corruption.\n\n${migrationSQL}\n\n` +
           `After running the migration SQL, restart your application.`
         );

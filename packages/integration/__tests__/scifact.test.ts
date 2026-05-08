@@ -50,6 +50,14 @@ beforeAll(async () => {
   await wiki.setup();
   // Import facts (text only; importDump skips embedFact when embed is not provided).
   await wiki.importDump(dump);
+  // Frozen dump still uses pre-rename source_type strings; migrate before the next setup()
+  // (WikiMemory.setup() fail-fast rejects legacy values on non-empty DBs).
+  await db.runAsync(
+    `UPDATE llm_wiki_entries SET source_type = 'immutable_document' WHERE source_type = 'user_document'`
+  );
+  await db.runAsync(
+    `UPDATE llm_wiki_entries SET source_type = 'librarian_inferred' WHERE source_type = 'agent_inferred'`
+  );
 
   // Restore pre-computed embeddings from the sidecar fixture in one transaction.
   // This avoids running 5k ONNX inferences at test time (the dump strips embeddings
