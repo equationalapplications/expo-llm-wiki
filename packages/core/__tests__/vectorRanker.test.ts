@@ -237,6 +237,40 @@ describe('VectorRanker integration', () => {
       // beating the 10 filler facts with semanticScore=0.1 each.
       expect(result.facts[0].id).toBe('keyword-winner');
     });
+
+    it('uses tie-break fields when selecting hybrid omitted top-K rows', async () => {
+      const db = openTestDatabase();
+      const mockRanker: VectorRanker = {
+        // Omit all IDs so hybrid backfill selection determines the winner.
+        rankBySimilarity: async () => [],
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: {
+          generateText: async () => '{}',
+          embed: async (t) => keywordEmbed(t),
+        },
+        vectorRanker: mockRanker,
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'car', body: 'same keywords' },
+        { id: 'fact-b', title: 'car', body: 'same keywords' },
+      ]));
+
+      // Make fact-b win tie-break when keyword score is equal.
+      await db.runAsync(
+        `UPDATE llm_wiki_entries SET access_count = ?, updated_at = ? WHERE id = ?`,
+        [10, 9999, 'fact-b']
+      );
+
+      const result = await wiki.read('user-1', 'car', {
+        hybridWeight: 0.5,
+        maxResults: 1,
+      });
+
+      expect(result.facts[0].id).toBe('fact-b');
+    });
   });
 
   describe('Pre-filter integration', () => {
@@ -603,6 +637,43 @@ describe('VectorRanker integration', () => {
         entityId: 'user-1',
         factId: 'fact-a',
         vector: expect.any(Float32Array),
+      });
+    });
+
+    it('should call onEmbeddingPersisted with null for re-upserted facts that remain soft-deleted in replace mode', async () => {
+      const db = openTestDatabase();
+      const onEmbeddingPersisted = vi.fn();
+      const mockRanker: VectorRanker = {
+        rankBySimilarity: async () => [],
+        onEmbeddingPersisted,
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: {
+          generateText: async () => '{}',
+          embed: async (t) => keywordEmbed(t),
+        },
+        vectorRanker: mockRanker,
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple', body: 'red' },
+      ]));
+
+      onEmbeddingPersisted.mockClear();
+
+      const deletedDump = makeDump([
+        { id: 'fact-a', title: 'apple', body: 'red' },
+      ]);
+      deletedDump.entities['user-1'].facts[0].deleted_at = Date.now();
+      deletedDump.entities['user-1'].facts[0].updated_at = Date.now();
+
+      await wiki.importDump(deletedDump);
+
+      expect(onEmbeddingPersisted).toHaveBeenCalledWith({
+        entityId: 'user-1',
+        factId: 'fact-a',
+        vector: null,
       });
     });
 
