@@ -763,7 +763,6 @@ export class WikiMemory {
       let deletedEntries = 0;
       let deletedTasks = 0;
       let deletedEvents = 0;
-      const deletedEntryIds: string[] = [];
 
       if (retainSoftDeletedFor !== null) {
         const cutoff = now - retainSoftDeletedFor * 86400000;
@@ -795,7 +794,6 @@ export class WikiMemory {
             succeeded.map((r) => r.id),
           );
           deletedEntries = entryResult.changes;
-          deletedEntryIds.push(...succeeded.map(r => r.id));
         }
 
         // Delete tasks (independent of entry hook success/failure)
@@ -807,6 +805,10 @@ export class WikiMemory {
         deletedTasks = taskResult.changes;
 
         if (failure) {
+          // Rebuild index and clear cache to reflect successful partial deletions
+          await this.rebuildMiniSearchIndex(entityId);
+          this.vectorCache.delete(entityId);
+
           const remaining = entriesToDelete.length - succeeded.length - 1;
           throw new Error(
             `Prune partially failed: deleted ${succeeded.length}, failed at ${failure.factId}, ${remaining} remaining`,
