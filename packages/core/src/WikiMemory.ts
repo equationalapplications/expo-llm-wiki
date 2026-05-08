@@ -808,6 +808,7 @@ export class WikiMemory {
         let rankerShouldRethrow = false;
         let pendingRankerFallbackError: Error | undefined;
         let usedKeywordFallback = false;
+        let scoredAlreadySortedAndLimited = false;
         try {
           const queryVec = await embedFn(trimmedQuery);
 
@@ -1031,13 +1032,16 @@ export class WikiMemory {
                       });
                     }
                   } else {
-                    // Pure semantic: all omitted rows share score -2, so stop after K misses.
-                    let filled = 0;
+                    // Pure semantic: all omitted rows share score -2.
+                    // Tie-break omitted rows deterministically before truncating.
+                    const omitted: Array<{ id: string; score: number; updated_at: number | null; access_count: number | null }> = [];
                     for (const row of candidateRows) {
-                      if (filled >= maxBackfill) break;
                       if (scoredIds.has(row.id)) continue;
-                      scored.push({ id: row.id, score: -2, updated_at: row.updated_at, access_count: row.access_count });
-                      filled++;
+                      omitted.push({ id: row.id, score: -2, updated_at: row.updated_at, access_count: row.access_count });
+                    }
+                    if (omitted.length > 0) {
+                      this._tieBreakSort(omitted);
+                      scored.push(...omitted.slice(0, maxBackfill));
                     }
                   }
                 }
@@ -1083,6 +1087,7 @@ export class WikiMemory {
                     populateCache,
                     limit: maxResults,
                   });
+                  scoredAlreadySortedAndLimited = true;
                 } else if (policy === 'keyword') {
                   // Fall back to keyword-only results from MiniSearch
                   const msResults = this.miniSearch.search(trimmedQuery, {
@@ -1131,17 +1136,18 @@ export class WikiMemory {
                 populateCache,
                 limit: maxResults,
               });
+              scoredAlreadySortedAndLimited = true;
             }
 
             if (scored.length > 0) {
               // Re-apply tie-break sorting (ranker might not have stable ordering)
               // Skip for keyword-only fallback to preserve MiniSearch ordering
-              if (!usedKeywordFallback) {
+              if (!usedKeywordFallback && !scoredAlreadySortedAndLimited) {
                 this._tieBreakSort(scored);
               }
 
               // Phase 2: fetch full rows only for the top results
-              const topIds = scored.slice(0, maxResults).map(s => s.id);
+              const topIds = (scoredAlreadySortedAndLimited ? scored : scored.slice(0, maxResults)).map(s => s.id);
               if (topIds.length > 0) {
                 const fullRows: Array<WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null }> = [];
                 const phase2ChunkSize = 500;
@@ -1168,7 +1174,8 @@ export class WikiMemory {
                     : '';
                   const error = new Error(
                     `Phase 2 fact hydration returned ${missingCount} fewer row(s) than ranked IDs for entity ${entityId}. ` +
-                    `Rows may have been concurrently soft-deleted or filtered by deleted_at during hydration.` +
+                    `Rows may have been concurrently soft-deleted or filtered by deleted_at during hydration, ` +
+                    `or vector ranker output may include IDs that do not exist for this entity.` +
                     sampleSuffix
                   );
                   this.options.onRetrievalFallback?.(error);
