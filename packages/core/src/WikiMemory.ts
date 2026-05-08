@@ -954,7 +954,8 @@ export class WikiMemory {
                 : undefined;
 
               try {
-                // Oversample 2x to preserve recall after re-ranking; caller will slice to maxResults
+                // Oversample by max(2x, +50) to preserve recall after re-ranking;
+                // caller slices final output to maxResults.
                 const oversampledLimit = Math.max(maxResults * 2, maxResults + 50);
                 scored = await this._rankWithVectorRanker({
                   entityId,
@@ -1002,24 +1003,73 @@ export class WikiMemory {
                     for (const row of candidateRows) {
                       if (scoredIds.has(row.id)) continue;
                       const kwScore = miniSearchScores?.get(row.id) ?? 0;
+                      const candidate = { row, kwScore };
 
                       if (topK.length < maxBackfill) {
                         // Array not full yet - insert in sorted position (descending order)
                         let insertIdx = topK.length;
-                        for (let i = topK.length - 1; i >= 0; i--) {
-                          if (topK[i].kwScore >= kwScore) break;
-                          insertIdx = i;
+                        for (let i = 0; i < topK.length; i++) {
+                          const cmp = this._compareScoredRows(
+                            {
+                              id: candidate.row.id,
+                              score: candidate.kwScore,
+                              updated_at: candidate.row.updated_at,
+                              access_count: candidate.row.access_count,
+                            },
+                            {
+                              id: topK[i].row.id,
+                              score: topK[i].kwScore,
+                              updated_at: topK[i].row.updated_at,
+                              access_count: topK[i].row.access_count,
+                            }
+                          );
+                          if (cmp < 0) {
+                            insertIdx = i;
+                            break;
+                          }
                         }
-                        topK.splice(insertIdx, 0, { row, kwScore });
-                      } else if (kwScore > topK[maxBackfill - 1].kwScore) {
-                        // Found better score than current worst - replace worst and re-insert
-                        let insertIdx = maxBackfill - 1;
-                        for (let i = maxBackfill - 2; i >= 0; i--) {
-                          if (topK[i].kwScore >= kwScore) break;
-                          insertIdx = i;
+                        topK.splice(insertIdx, 0, candidate);
+                      } else {
+                        const cmpWorst = this._compareScoredRows(
+                          {
+                            id: candidate.row.id,
+                            score: candidate.kwScore,
+                            updated_at: candidate.row.updated_at,
+                            access_count: candidate.row.access_count,
+                          },
+                          {
+                            id: topK[maxBackfill - 1].row.id,
+                            score: topK[maxBackfill - 1].kwScore,
+                            updated_at: topK[maxBackfill - 1].row.updated_at,
+                            access_count: topK[maxBackfill - 1].row.access_count,
+                          }
+                        );
+                        if (cmpWorst < 0) {
+                          // Found better candidate than current worst - replace worst and re-insert
+                          let insertIdx = maxBackfill - 1;
+                          for (let i = 0; i < topK.length; i++) {
+                            const cmp = this._compareScoredRows(
+                              {
+                                id: candidate.row.id,
+                                score: candidate.kwScore,
+                                updated_at: candidate.row.updated_at,
+                                access_count: candidate.row.access_count,
+                              },
+                              {
+                                id: topK[i].row.id,
+                                score: topK[i].kwScore,
+                                updated_at: topK[i].row.updated_at,
+                                access_count: topK[i].row.access_count,
+                              }
+                            );
+                            if (cmp < 0) {
+                              insertIdx = i;
+                              break;
+                            }
+                          }
+                          topK.splice(insertIdx, 0, candidate);
+                          topK.pop(); // Remove worst element
                         }
-                        topK.splice(insertIdx, 0, { row, kwScore });
-                        topK.pop(); // Remove worst element
                       }
                     }
 
@@ -1291,15 +1341,24 @@ export class WikiMemory {
    * Stable tie-break sort: score desc → access_count desc → updated_at desc → id asc.
    */
   private _tieBreakSort<T extends { id: string; score: number; updated_at?: number | null; access_count?: number | null }>(items: T[]): void {
-    items.sort((a, b) => {
-      const scoreDiff = b.score - a.score;
-      if (scoreDiff !== 0) return scoreDiff;
-      const accessCountDiff = (b.access_count ?? 0) - (a.access_count ?? 0);
-      if (accessCountDiff !== 0) return accessCountDiff;
-      const updatedAtDiff = (b.updated_at ?? 0) - (a.updated_at ?? 0);
-      if (updatedAtDiff !== 0) return updatedAtDiff;
-      return a.id.localeCompare(b.id);
-    });
+    items.sort((a, b) => this._compareScoredRows(a, b));
+  }
+
+  /**
+   * Comparator for score + deterministic tie-break fields.
+   * Negative return means "a ranks ahead of b" for descending score order.
+   */
+  private _compareScoredRows(
+    a: { id: string; score: number; updated_at?: number | null; access_count?: number | null },
+    b: { id: string; score: number; updated_at?: number | null; access_count?: number | null },
+  ): number {
+    const scoreDiff = b.score - a.score;
+    if (scoreDiff !== 0) return scoreDiff;
+    const accessCountDiff = (b.access_count ?? 0) - (a.access_count ?? 0);
+    if (accessCountDiff !== 0) return accessCountDiff;
+    const updatedAtDiff = (b.updated_at ?? 0) - (a.updated_at ?? 0);
+    if (updatedAtDiff !== 0) return updatedAtDiff;
+    return a.id.localeCompare(b.id);
   }
 
   /**
@@ -2085,6 +2144,9 @@ export class WikiMemory {
       // re-embedded — doing so would corrupt the winning row's vector with the
       // losing fact's title/body.
       const upsertedFactIds = new Set<string>();
+      // Track upserted facts whose incoming row is soft-deleted. In replace mode,
+      // these IDs still need vector=null notifications because they remain deleted.
+      const upsertedDeletedFactIds = new Set<string>();
       // Track which upserted facts already carry a valid BLOB so we can skip
       // embedFact() for them. BLOBs are reconstructed from three serialization
       // forms: in-memory Uint8Array/Buffer, Node.js Buffer JSON shape, and
@@ -2249,6 +2311,7 @@ export class WikiMemory {
             }
             existingFactsById.set(fact.id, { id: fact.id, entity_id: entityId, updated_at: safeUpdatedAt });
             upsertedFactIds.add(fact.id);
+            if (fact.deleted_at) upsertedDeletedFactIds.add(fact.id);
           } else {
             if (blobData != null) {
               await this.db.runAsync(
@@ -2265,6 +2328,7 @@ export class WikiMemory {
             }
             existingFactsById.set(fact.id, { id: fact.id, entity_id: entityId, updated_at: safeUpdatedAt });
             upsertedFactIds.add(fact.id);
+            if (fact.deleted_at) upsertedDeletedFactIds.add(fact.id);
           }
         }
 
@@ -2366,10 +2430,10 @@ export class WikiMemory {
         }
       }
       // In replace mode, notify external vector index that soft-deleted facts should be removed.
-      // Filter out fact IDs that were re-upserted during the import — those were restored from
-      // the soft-delete and should retain their vectors (new notifications already sent above).
+      // Re-upserted facts are usually restores, except when the incoming row is still
+      // soft-deleted (deleted_at set). Those must also receive vector=null.
       for (const factId of softDeletedFactIds) {
-        if (!upsertedFactIds.has(factId)) {
+        if (!upsertedFactIds.has(factId) || upsertedDeletedFactIds.has(factId)) {
           try {
             await this._notifyEmbeddingPersisted(entityId, factId, null);
           } catch (hookErr) {
