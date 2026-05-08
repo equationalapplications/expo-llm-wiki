@@ -671,6 +671,30 @@ flowchart TD
 5. **Hybrid scoring** to blend semantic and keyword rankings
 6. **Vector caching** of parsed embeddings to avoid re-parsing on repeated reads
 
+## Security
+
+expo-llm-wiki implements multiple security layers to protect against common vulnerabilities:
+
+### Input Sanitization
+
+- **SQL Injection Prevention**: All user-supplied values (`entityId`, `entryId`, `sourceRef`, `sourceHash`, query text) use parameterized queries. Never concatenated into SQL strings.
+- **Source Reference Normalization**: `sourceRef` allowlist restricts to `[A-Za-z0-9._\- ]` — other characters stripped. Prevents path traversal and injection attacks.
+- **Source Hash Validation**: `sourceHash` must be alphanumeric (hex digest). Non-conforming values rejected.
+
+### Data Integrity
+
+- **Defensive Copies**: Query vectors and embedding vectors are defensively copied before passing to VectorRanker adapters. Prevents mutation of WikiMemory's internal vector cache.
+- **Embedding Validation**: Vectors checked for finite values and correct dimensions before storage. Malformed embeddings rejected.
+- **Error Sanitization**: VectorRanker errors scrubbed of credentials/tokens before propagation (`sanitizeRankerErrors: true` by default).
+
+### GDPR Compliance
+
+- **Deletion Hook Contract**: `forget()` and `runPrune()` reject if `onEmbeddingPersisted` deletion hook fails or times out. Prevents "forgotten" facts from remaining retrievable in external ANN indexes.
+- **Timeout Configuration**: `deletionHookTimeoutMs` (default 30s) caps per-row deletion latency. Tune per deployment constraints.
+- **Force-Delete Escape Hatch**: `forceDeleteIgnoreRankerHook` bypasses hook failures (use ONLY when ANN backend permanently decommissioned).
+
+See [SECURITY.md](./SECURITY.md) for VectorRanker adapter security guidance (SQL injection, entity isolation, credential scrubbing, resource limits).
+
 ## React Component Lifecycle
 
 How React hooks stay in sync with memory state:

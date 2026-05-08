@@ -296,6 +296,39 @@ wikiMemory.clearVectorCache();
 
 The cache is also automatically invalidated on any mutation (`runLibrarian`, `runHeal`, `runPrune`, `runReembed`, `ingestDocument`, `importDump`, `forget`).
 
+## Security
+
+`@equationalapplications/core-llm-wiki` enforces multiple security layers:
+
+### VectorRanker Adapter Security
+
+If implementing a custom `VectorRanker`:
+
+- **SQL Injection**: ALWAYS use parameterized queries for `entityId`, `factId`, `candidateIds`. Never concatenate into SQL strings.
+- **Entity Isolation**: Filter by `entityId` in all queries to prevent cross-tenant data leaks.
+- **Credential Scrubbing**: Strip API keys, tokens, connection strings from thrown errors before surfacing to host.
+- **Resource Limits**: Cap `limit` and `candidateIds.length` to prevent DoS. Do NOT retain `vector` references beyond callback scope — blocks GC.
+
+See [SECURITY.md](../../SECURITY.md) for complete adapter security guidance and code examples.
+
+### Host Application Security
+
+When using `VectorRanker`:
+
+- **Error Sanitization**: `sanitizeRankerErrors: true` (default) scrubs ranker errors before mirroring via `error.cause`.
+- **Fallback Policy**: Choose `vectorRankerFallback` based on availability vs consistency requirements:
+  - `'js-cosine'` (default): Best availability
+  - `'keyword'`: Fast fallback without semantic ranking
+  - `'empty'`: Strict consistency (no facts on failure)
+  - `'throw'`: Fail-fast error propagation
+- **Deletion Hook Contract**: `forget()` / `runPrune()` reject on hook timeout/failure. Prevents GDPR violations (deleted vectors still retrievable). Handle failures with retry or queue for reconciliation.
+- **Timeout Tuning**: Set `deletionHookTimeoutMs` per deployment (default 30s). Interactive UX: 5s. Background jobs: 60s.
+
+Core WikiMemory provides:
+- **Defensive Copies**: Query/embedding vectors copied before ranker/hook calls
+- **Input Validation**: `sourceRef`/`sourceHash` normalized; embedding dimensions validated
+- **Parameterized Queries**: All SQL uses bind parameters
+
 ## Usage
 
 ```typescript
