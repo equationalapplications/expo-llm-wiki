@@ -978,13 +978,34 @@ export class WikiMemory {
                 if (maxBackfill > 0 && unscoredRows.length > 0) {
                   let rowsToBackfill: typeof unscoredRows;
                   if (weight !== undefined && weight < 1) {
-                    // Hybrid mode: prioritize by keyword score
-                    const scoredUnscored = unscoredRows.map(row => ({
-                      row,
-                      kwScore: miniSearchScores?.get(row.id) ?? 0,
-                    }));
-                    scoredUnscored.sort((a, b) => b.kwScore - a.kwScore);
-                    rowsToBackfill = scoredUnscored.slice(0, maxBackfill).map(x => x.row);
+                    // Hybrid mode: prioritize by keyword score using O(N log K) top-K selection
+                    // instead of O(N log N) full sort, since K (maxBackfill) is typically << N
+                    const topK: Array<{ row: typeof unscoredRows[number]; kwScore: number }> = [];
+
+                    for (const row of unscoredRows) {
+                      const kwScore = miniSearchScores?.get(row.id) ?? 0;
+
+                      if (topK.length < maxBackfill) {
+                        // Array not full yet - insert in sorted position (descending order)
+                        let insertIdx = topK.length;
+                        for (let i = topK.length - 1; i >= 0; i--) {
+                          if (topK[i].kwScore >= kwScore) break;
+                          insertIdx = i;
+                        }
+                        topK.splice(insertIdx, 0, { row, kwScore });
+                      } else if (kwScore > topK[maxBackfill - 1].kwScore) {
+                        // Found better score than current worst - replace worst and re-insert
+                        let insertIdx = maxBackfill - 1;
+                        for (let i = maxBackfill - 2; i >= 0; i--) {
+                          if (topK[i].kwScore >= kwScore) break;
+                          insertIdx = i;
+                        }
+                        topK.splice(insertIdx, 0, { row, kwScore });
+                        topK.pop(); // Remove worst element
+                      }
+                    }
+
+                    rowsToBackfill = topK.map(x => x.row);
                   } else {
                     // Pure semantic: all get -2, so just take first maxBackfill
                     rowsToBackfill = unscoredRows.slice(0, maxBackfill);
@@ -1348,21 +1369,22 @@ export class WikiMemory {
     });
 
     // Normalize ranker output: filter to allowed ids, drop non-finite scores, deduplicate
+    // Stop collecting once limit valid results are found to protect against huge result sets
     const allowedIds = candidateIds ? new Set(candidateIds) : undefined;
     const seen = new Set<string>();
-    const normalized = rankerResults.filter(r => {
-      if (seen.has(r.id)) return false;
-      if (allowedIds && !allowedIds.has(r.id)) return false;
-      if (!Number.isFinite(r.semanticScore)) return false;
-      seen.add(r.id);
-      return true;
-    });
+    const normalized: typeof rankerResults = [];
 
-    // Enforce limit to protect against buggy/malicious rankers returning huge result sets
-    const bounded = normalized.slice(0, limit);
+    for (const r of rankerResults) {
+      if (normalized.length >= limit) break; // Early termination once limit reached
+      if (seen.has(r.id)) continue;
+      if (allowedIds && !allowedIds.has(r.id)) continue;
+      if (!Number.isFinite(r.semanticScore)) continue;
+      seen.add(r.id);
+      normalized.push(r);
+    }
 
     // Convert ranker results to scored format, applying hybrid blending if weight is set
-    const scored = bounded.map(r => {
+    const scored = normalized.map(r => {
       let score = r.semanticScore;
       if (weight !== undefined) {
         // Hybrid blending: floor semantic score at 0 for predictable weighted sum (no upper clamp)

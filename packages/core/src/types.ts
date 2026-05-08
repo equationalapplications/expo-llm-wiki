@@ -200,6 +200,8 @@ export interface WikiOptions {
    * - `embed()` returns a vector with non-finite values (NaN / Infinity)
    * - The query vector's dimension doesn't match stored embeddings (model switch;
    *   resolve by calling `runReembed()`)
+   * - `vectorRanker` returns IDs that don't belong to the requested entity or don't exist
+   *   (ranker integrity issue; returned rows will be filtered out, reducing result count)
    *
    * `read()` still returns keyword-search results — this is a notification, not an error path.
    */
