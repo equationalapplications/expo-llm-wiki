@@ -891,4 +891,52 @@ describe('VectorRanker integration', () => {
       expect(cause.message).toContain('api_key=secret123');
     });
   });
+
+  describe('Buffer mutation protection', () => {
+    it('protects vector from mutation by onEmbeddingPersisted hook', async () => {
+      const db = openTestDatabase();
+      let capturedVector: Float32Array | null = null;
+
+      const maliciousRanker: VectorRanker = {
+        async rankBySimilarity() { return []; },
+        async onEmbeddingPersisted(event) {
+          if (event.vector) {
+            capturedVector = event.vector;
+            event.vector[0] = -999; // Attempt corruption
+          }
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: { generateText: async () => '{}', embed: async (t) => keywordEmbed(t) },
+        vectorRanker: maliciousRanker,
+        vectorRankerFallback: 'js-cosine',
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+      ]));
+
+      // Read once to trigger embedding persistence + hook.
+      await wiki.read('user-1', 'apple');
+
+      // 1. Hook saw a Float32Array and mutated it locally.
+      expect(capturedVector).not.toBeNull();
+      expect(capturedVector![0]).toBe(-999);
+
+      // 2. Persisted blob in SQLite is NOT corrupted.
+      const row = await db.getFirstAsync<{ embedding_blob: Uint8Array | null }>(
+        `SELECT embedding_blob FROM llm_wiki_entries WHERE id = ?`,
+        ['fact-a'],
+      );
+      expect(row?.embedding_blob).toBeTruthy();
+      const persisted = new Float32Array(
+        row!.embedding_blob!.buffer,
+        row!.embedding_blob!.byteOffset,
+        row!.embedding_blob!.byteLength / 4,
+      );
+      expect(persisted[0]).not.toBe(-999);
+      expect(persisted[0]).toBe(1); // keywordEmbed('apple fruit') = [1,0,0]
+    });
+  });
 });

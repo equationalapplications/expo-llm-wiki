@@ -485,8 +485,20 @@ export class WikiMemory {
     console.warn(`[WikiMemory] importDump: ${type} id "${id}" already belongs to entity "${existingEntityId}"; skipping for entity "${targetEntityId}"`);
   }
 
-  private async _notifyEmbeddingPersisted(entityId: string, factId: string, vector: Float32Array | null): Promise<void> {
-    await this.options.vectorRanker?.onEmbeddingPersisted?.({ entityId, factId, vector });
+  private async _notifyEmbeddingPersisted(
+    entityId: string,
+    factId: string,
+    vector: Float32Array | null,
+  ): Promise<void> {
+    if (!this.options.vectorRanker?.onEmbeddingPersisted) return;
+    // Defensive copy prevents hooks from mutating cache/fallback/persisted-blob vectors.
+    // .slice() on Float32Array allocates a fresh ArrayBuffer (not a view).
+    const vectorCopy = vector ? vector.slice() : null;
+    await this.options.vectorRanker.onEmbeddingPersisted({
+      entityId,
+      factId,
+      vector: vectorCopy,
+    });
   }
 
   constructor(db: SQLiteAdapter, options: WikiOptions) {
