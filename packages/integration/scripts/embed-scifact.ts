@@ -85,13 +85,33 @@ async function main() {
   // 6. Export embeddings separately (the dump strips embedding vectors for portability,
   //    so we export them in a side-car file so the integration test can restore them
   //    directly without re-running fastembed at test time).
+  //
+  //    runReembed() writes vectors to embedding_blob (Float32Array bytes) and clears
+  //    the legacy embedding TEXT column, so we read embedding_blob and also fall back
+  //    to the legacy embedding TEXT column for any rows that pre-date the blob path.
   console.log('Exporting embeddings side-car…');
-  const embRows = await db.getAllAsync<{ id: string; embedding: string | null }>(
-    `SELECT id, embedding FROM llm_wiki_entries WHERE entity_id = 'scifact-corpus' AND embedding IS NOT NULL`
+  const embRows = await db.getAllAsync<{
+    id: string;
+    embedding_blob: Uint8Array | null;
+    embedding: string | null;
+  }>(
+    `SELECT id, embedding_blob, embedding FROM llm_wiki_entries
+      WHERE entity_id = 'scifact-corpus'
+        AND (embedding_blob IS NOT NULL OR embedding IS NOT NULL)`
   );
   const embMap: Record<string, number[]> = {};
   for (const row of embRows) {
-    embMap[row.id] = JSON.parse(row.embedding!);
+    if (row.embedding_blob) {
+      const buf = row.embedding_blob;
+      // Ensure 4-byte alignment when slicing into a Float32Array view.
+      const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+      embMap[row.id] = Array.from(new Float32Array(ab));
+    } else if (row.embedding) {
+      embMap[row.id] = JSON.parse(row.embedding);
+    }
+  }
+  if (embRows.length === 0) {
+    throw new Error('No embeddings found for scifact-corpus; sidecar would be empty.');
   }
   const embGz = zlib.gzipSync(Buffer.from(JSON.stringify(embMap), 'utf8'), { level: 6 });
   const embPath = path.join(FIXTURES, 'scifact-embeddings.json.gz');
