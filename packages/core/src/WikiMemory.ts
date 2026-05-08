@@ -2051,8 +2051,19 @@ export class WikiMemory {
       // so we call storeEmbeddingDimension() for each unique dimension found to
       // ensure the mismatch flag is set whenever any two stored blobs disagree.
       const preservedBlobDims = new Set<number>();
+      // In replace mode, collect IDs of facts that will be soft-deleted so we can
+      // notify the external vector index with vector=null after the transaction.
+      // Without this, external indexes retain stale embeddings and keep returning
+      // deleted fact IDs in ranking results.
+      const softDeletedFactIds: string[] = [];
       await this.db.withTransactionAsync(async () => {
         if (!merge) {
+          // Collect IDs of live facts that will be soft-deleted
+          const toDelete = await this.db.getAllAsync<{ id: string }>(
+            `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
+            [entityId]
+          );
+          softDeletedFactIds.push(...toDelete.map(r => r.id));
           const now = Date.now();
           await this.db.runAsync(
             `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`,
@@ -2306,6 +2317,18 @@ export class WikiMemory {
             await this._notifyEmbeddingPersisted(entityId, fact.id, float32Vector);
           } catch (hookErr) {
             console.warn(`[WikiMemory] onEmbeddingPersisted hook failed for preserved-blob fact ${fact.id}:`, hookErr);
+          }
+        }
+      }
+      // In replace mode, notify external vector index that soft-deleted facts should be removed.
+      // Filter out fact IDs that were re-upserted during the import — those were restored from
+      // the soft-delete and should retain their vectors (new notifications already sent above).
+      for (const factId of softDeletedFactIds) {
+        if (!upsertedFactIds.has(factId)) {
+          try {
+            await this._notifyEmbeddingPersisted(entityId, factId, null);
+          } catch (hookErr) {
+            console.warn(`[WikiMemory] onEmbeddingPersisted(vector=null) hook failed for soft-deleted fact ${factId}:`, hookErr);
           }
         }
       }

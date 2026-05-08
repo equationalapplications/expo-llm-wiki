@@ -194,16 +194,17 @@ export interface WikiOptions {
   config?: WikiConfig;
   llmProvider: LLMProvider;
   /**
-   * Called when embedding-based retrieval is unavailable during `read()` and
-   * MiniSearch keyword search is used instead. This can happen when:
-   * - `embed()` throws (e.g. network error, model unavailable)
-   * - `embed()` returns a vector with non-finite values (NaN / Infinity)
+   * Called when embedding-based retrieval is degraded or unavailable during `read()`.
+   * This can happen when:
+   * - `embed()` throws (e.g. network error, model unavailable) → falls back to keyword search
+   * - `embed()` returns a vector with non-finite values (NaN / Infinity) → falls back to keyword search
    * - The query vector's dimension doesn't match stored embeddings (model switch;
-   *   resolve by calling `runReembed()`)
+   *   resolve by calling `runReembed()`) → falls back to keyword search
    * - `vectorRanker` returns IDs that don't belong to the requested entity or don't exist
-   *   (ranker integrity issue; returned rows will be filtered out, reducing result count)
+   *   (ranker integrity issue; returned rows will be filtered out, reducing result count) →
+   *   may still use semantic ranking, but with degraded quality
    *
-   * `read()` still returns keyword-search results — this is a notification, not an error path.
+   * `read()` returns results (keyword fallback or degraded semantic) — this is a notification, not an error path.
    */
   onRetrievalFallback?: (error: Error) => void;
 
