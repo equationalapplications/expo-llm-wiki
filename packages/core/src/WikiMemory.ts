@@ -2325,6 +2325,10 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       throw new WikiBusyError('import', '*');
     }
 
+    // Fail before any writes (and before holding import locks) so we never partially
+    // commit an import and then reject with a migration error — same probe as setup().
+    await this.assertNoLegacySourceTypes();
+
     // All clear — acquire global + per-entity import locks, then process each entity.
     this.activeMaintenanceJobs.add(this._globalImportKey());
     for (const entityId of entityIds) {
@@ -2334,7 +2338,6 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       for (const [entityId, bundle] of Object.entries(dump.entities)) {
         await this._doImportEntity(entityId, bundle, merge);
       }
-      await this.assertNoLegacySourceTypes();
     } finally {
       this.activeMaintenanceJobs.delete(this._globalImportKey());
       for (const entityId of entityIds) {

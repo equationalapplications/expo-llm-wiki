@@ -280,6 +280,28 @@ describe('importDump', () => {
   });
 });
 
+describe('importDump — legacy source_type guard', () => {
+  it('fails before any import writes when the DB already has legacy source_type rows', async () => {
+    const db = openTestDatabase();
+    const wiki = new WikiMemory(db, { llmProvider: { generateText: async () => '{}' } });
+    await wiki.setup();
+    await db.runAsync(
+      `INSERT INTO llm_wiki_entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ['legacy-row', 'e-legacy', 't', 'b', '[]', 'certain', 'user_document', 1, 1],
+    );
+
+    const entityIdNew = 'e-fresh';
+    await expect(wiki.importDump(makeDump(entityIdNew, 'f-target'))).rejects.toThrow(/legacy source_type/);
+
+    const row = await db.getFirstAsync<{ n: number }>(
+      `SELECT COUNT(*) as n FROM llm_wiki_entries WHERE entity_id = ?`,
+      [entityIdNew],
+    );
+    expect(row?.n ?? 0).toBe(0);
+  });
+});
+
 describe('importDump — busy-key protection', () => {
   function makeRealWiki() {
     const db = openTestDatabase();
