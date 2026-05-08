@@ -374,6 +374,50 @@ describe('importDump — busy-key protection', () => {
     await firstImport;
   });
 
+  it('throws WikiBusyError(import, *) when called concurrently for different entities', async () => {
+    const { wiki } = makeRealWiki();
+    await wiki.setup();
+
+    let releaseLegacyProbe: () => void = () => {};
+    const legacyProbeBlocker = new Promise<void>((r) => { releaseLegacyProbe = r; });
+    const originalAssert = (wiki as any).assertNoLegacySourceTypes.bind(wiki);
+    let assertCalls = 0;
+
+    // Hold the first import inside the legacy probe to ensure the second call
+    // races exactly at the lock-check/acquire boundary.
+    (wiki as any).assertNoLegacySourceTypes = async () => {
+      assertCalls += 1;
+      if (assertCalls === 1) {
+        await legacyProbeBlocker;
+      }
+      return originalAssert();
+    };
+
+    const firstImport = wiki.importDump(simpleDump('user-1'));
+    await new Promise((r) => setTimeout(r, 0));
+
+    let secondErr: unknown;
+    let secondSettled = false;
+    const secondImport = wiki
+      .importDump(simpleDump('user-2'))
+      .catch((e) => {
+        secondErr = e;
+      })
+      .finally(() => {
+        secondSettled = true;
+      });
+
+    await new Promise((r) => setTimeout(r, 10));
+    expect(secondSettled).toBe(true);
+    expect(secondErr).toBeInstanceOf(WikiBusyError);
+    expect((secondErr as WikiBusyError).operation).toBe('import');
+    expect((secondErr as WikiBusyError).entityId).toBe('*');
+
+    releaseLegacyProbe();
+    await firstImport;
+    await secondImport;
+  });
+
   it('runLibrarian() throws WikiBusyError(import) while importDump is in-flight', async () => {
     const { wiki } = makeRealWiki();
     await wiki.setup();
