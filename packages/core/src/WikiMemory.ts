@@ -857,7 +857,7 @@ export class WikiMemory {
           }
 
           // Determine candidate rows
-          type ScoreRow = { id: string; embedding_blob: Uint8Array | null; embedding: string | null; updated_at: number | null; access_count: number | null };
+          type ScoreRow = { id: string; embedding_blob?: Uint8Array | null; embedding?: string | null; updated_at: number | null; access_count: number | null };
           let candidateRows: ScoreRow[] | null; // null = pre-filter returned 0 results
           let populateCache = true;
           let miniSearchScores: Map<string, number> | undefined;
@@ -1316,8 +1316,19 @@ export class WikiMemory {
       limit,
     });
 
+    // Normalize ranker output: filter to allowed ids, drop non-finite scores, deduplicate
+    const allowedIds = candidateIds ? new Set(candidateIds) : undefined;
+    const seen = new Set<string>();
+    const normalized = rankerResults.filter(r => {
+      if (seen.has(r.id)) return false;
+      if (allowedIds && !allowedIds.has(r.id)) return false;
+      if (!Number.isFinite(r.semanticScore)) return false;
+      seen.add(r.id);
+      return true;
+    });
+
     // Convert ranker results to scored format, applying hybrid blending if weight is set
-    const scored = rankerResults.map(r => {
+    const scored = normalized.map(r => {
       let score = r.semanticScore;
       if (weight !== undefined) {
         // Hybrid blending: floor semantic score at 0 for predictable weighted sum (no upper clamp)

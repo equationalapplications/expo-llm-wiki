@@ -279,6 +279,7 @@ describe('VectorRanker integration', () => {
         vectorRanker: mockRanker,
         onRetrievalFallback,
       });
+      await wikiNewModel.setup();
 
       await wikiNewModel.read('user-1', 'test');
 

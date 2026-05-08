@@ -280,7 +280,7 @@ For details on hybrid scoring formulas and trade-offs, see [Retrieval Tuning](#r
 
 ### Spec and issue reference
 
-- **Full spec:** [`docs/superpowers/specs/2026-05-07-pluggable-vector-retrieval.md`](../../docs/superpowers/specs/2026-05-07-pluggable-vector-retrieval.md)
+- **Full spec:** [`docs/superpowers/specs/2026-05-07-pluggable-vector-retrieval.md`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/docs/superpowers/specs/2026-05-07-pluggable-vector-retrieval.md)
 - **GitHub issue:** [#15](https://github.com/equationalapplications/expo-llm-wiki/issues/15)
 
 ## Vector Cache
