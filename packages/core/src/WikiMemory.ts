@@ -768,26 +768,51 @@ export class WikiMemory {
       if (retainSoftDeletedFor !== null) {
         const cutoff = now - retainSoftDeletedFor * 86400000;
 
-        const entriesToDelete = await this.db.getAllAsync<{ id: string }>(
-          `SELECT id FROM ${this.prefix}entries
+        const entriesToDelete = await this.db.getAllAsync<{ id: string; entity_id: string }>(
+          `SELECT id, entity_id FROM ${this.prefix}entries
            WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`,
           [entityId, cutoff]
         );
-        deletedEntryIds.push(...entriesToDelete.map(e => e.id));
 
-        const entryResult = await this.db.runAsync(
-          `DELETE FROM ${this.prefix}entries
-           WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`,
-          [entityId, cutoff]
-        );
-        deletedEntries = entryResult.changes;
+        // Hook-before-delete: await hook for each row, accumulate successes, commit partial on failure
+        const succeeded: Array<{ entity_id: string; id: string }> = [];
+        let failure: { factId: string; cause: unknown } | null = null;
 
+        for (const row of entriesToDelete) {
+          try {
+            await this._notifyEmbeddingPersistedOrThrow(row.entity_id, row.id, null);
+            succeeded.push({ entity_id: row.entity_id, id: row.id });
+          } catch (err) {
+            failure = { factId: row.id, cause: err };
+            break;
+          }
+        }
+
+        if (succeeded.length > 0) {
+          const placeholders = succeeded.map(() => '?').join(',');
+          const entryResult = await this.db.runAsync(
+            `DELETE FROM ${this.prefix}entries WHERE id IN (${placeholders})`,
+            succeeded.map((r) => r.id),
+          );
+          deletedEntries = entryResult.changes;
+          deletedEntryIds.push(...succeeded.map(r => r.id));
+        }
+
+        // Delete tasks (independent of entry hook success/failure)
         const taskResult = await this.db.runAsync(
           `DELETE FROM ${this.prefix}tasks
            WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`,
           [entityId, cutoff]
         );
         deletedTasks = taskResult.changes;
+
+        if (failure) {
+          const remaining = entriesToDelete.length - succeeded.length - 1;
+          throw new Error(
+            `Prune partially failed: deleted ${succeeded.length}, failed at ${failure.factId}, ${remaining} remaining`,
+            { cause: this._sanitizeRankerError(failure.cause) },
+          );
+        }
       }
 
       if (retainEventsFor !== null) {
@@ -807,16 +832,6 @@ export class WikiMemory {
 
       await this.rebuildMiniSearchIndex(entityId);
       this.vectorCache.delete(entityId);
-
-      // Deduplicate to avoid redundant hook calls for the same fact
-      const uniqueDeletedIds = Array.from(new Set(deletedEntryIds));
-      for (const factId of uniqueDeletedIds) {
-        try {
-          await this._notifyEmbeddingPersisted(entityId, factId, null);
-        } catch (hookErr) {
-          console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during prune for ${factId}:`, hookErr);
-        }
-      }
 
       return { entries: deletedEntries, tasks: deletedTasks, events: deletedEvents };
     } finally {

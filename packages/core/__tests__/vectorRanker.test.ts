@@ -1080,5 +1080,89 @@ describe('VectorRanker integration', () => {
       expect(hookCompleted).toBe(true);
       expect(forgetResolvedAt - hookCalledAt).toBeGreaterThanOrEqual(95);
     });
+
+    it('awaits onEmbeddingPersisted during prune hard-delete', async () => {
+      const db = openTestDatabase();
+      let hookCallCount = 0;
+
+      const trackingRanker: VectorRanker = {
+        async rankBySimilarity() { return []; },
+        async onEmbeddingPersisted(event) {
+          if (event.vector === null) {
+            hookCallCount++;
+            await new Promise((r) => setTimeout(r, 20));
+          }
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: { generateText: async () => '{}', embed: async (t) => keywordEmbed(t) },
+        vectorRanker: trackingRanker,
+        config: { pruneRetainSoftDeletedFor: 0 },
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+        { id: 'fact-b', title: 'apple seed', body: 'small and brown' },
+      ]));
+
+      await wiki.forget('user-1', { entryId: 'fact-a' });
+      await wiki.forget('user-1', { entryId: 'fact-b' });
+
+      // Small delay to ensure deleted_at timestamps are before prune cutoff
+      await new Promise((r) => setTimeout(r, 10));
+
+      const before = hookCallCount;
+      await wiki.runPrune('user-1');
+      expect(hookCallCount).toBeGreaterThan(before);
+    });
+
+    it('commits partial prune progress and reports aggregate failure', async () => {
+      const db = openTestDatabase();
+      let callIndex = 0;
+
+      const flakyRanker: VectorRanker = {
+        async rankBySimilarity() { return []; },
+        async onEmbeddingPersisted(event) {
+          if (event.vector === null) {
+            callIndex++;
+            if (callIndex === 3) throw new Error('ANN flake on row 3');
+          }
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: { generateText: async () => '{}', embed: async (t) => keywordEmbed(t) },
+        vectorRanker: flakyRanker,
+        config: { pruneRetainSoftDeletedFor: 0 },
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-0', title: 'apple a', body: 'x' },
+        { id: 'fact-1', title: 'apple b', body: 'x' },
+        { id: 'fact-2', title: 'apple c', body: 'x' },
+        { id: 'fact-3', title: 'apple d', body: 'x' },
+        { id: 'fact-4', title: 'apple e', body: 'x' },
+      ]));
+
+      // Soft-delete via forget(); the test's flakyRanker only fails when callIndex===3,
+      // and forget() is index 1,2 (not 3) so soft-deletes succeed for all 5 rows.
+      // Reset callIndex AFTER setup so the prune phase observes index 1..N.
+      for (let i = 0; i < 5; i++) {
+        await wiki.forget('user-1', { entryId: `fact-${i}` }).catch(() => {});
+      }
+      callIndex = 0;
+
+      // Small delay to ensure deleted_at timestamps are before prune cutoff
+      await new Promise((r) => setTimeout(r, 10));
+
+      await expect(wiki.runPrune('user-1')).rejects.toThrow(/partially failed|partial/i);
+
+      // Some rows remain (the failing one + ones after it).
+      const remaining = await db.getAllAsync<{ id: string }>(
+        `SELECT id FROM llm_wiki_entries WHERE deleted_at IS NOT NULL`,
+      );
+      expect(remaining.length).toBeGreaterThan(0);
+    });
   });
 });
