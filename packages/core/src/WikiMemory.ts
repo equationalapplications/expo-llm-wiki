@@ -2068,7 +2068,8 @@ export class WikiMemory {
             // copy — it returns a view into the parent buffer, which can have a non-zero
             // byteOffset and corrupt the Float32Array interpretation.
             const copy = new ArrayBuffer(rawBlob.byteLength);
-            new Uint8Array(copy).set(rawBlob);
+            const alignedBlob = new Uint8Array(copy);
+            alignedBlob.set(rawBlob);
             const floats = new Float32Array(copy, 0, rawBlob.byteLength / 4);
             let allFinite = true;
             for (let i = 0; i < floats.length; i++) {
@@ -2085,7 +2086,8 @@ export class WikiMemory {
               // there is no model fingerprint in the blob. Callers importing from
               // a different provider should call runReembed() after importDump()
               // rather than relying on { skipExisting: true }.
-              blobData = rawBlob;
+              // Store aligned copy (not rawBlob) to avoid Float32Array alignment errors in notification.
+              blobData = alignedBlob;
             }
           }
 
