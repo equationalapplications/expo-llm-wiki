@@ -674,6 +674,12 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       }
     }
 
+    // Fail before any other mutating passes (e.g. source_ref normalization) so we never
+    // partially "repair" a DB that is still on legacy source_type strings.
+    if (entriesExistedBeforeSetup) {
+      await this.assertNoLegacySourceTypes();
+    }
+
     // Migration: normalize any existing source_ref values that were stored before the
     // allowlist rule ([^A-Za-z0-9._\- ] → strip) was introduced.  Read-then-update in
     // JS so the normalization is guaranteed to match what normalizeSourceRef() produces,
@@ -705,13 +711,6 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
         }
       }
     });
-
-    // BREAKING CHANGE: source_type enum renamed (immutable_document / librarian_inferred). Fail fast if legacy values detected.
-    // This prevents silent corruption where old 'user_document' facts would bypass immutable guards.
-    // importDump() maps legacy strings on write; this guard still protects DBs upgraded without running migrations.
-    if (entriesExistedBeforeSetup) {
-      await this.assertNoLegacySourceTypes();
-    }
 
     await this.rebuildMiniSearchIndex();
   }
