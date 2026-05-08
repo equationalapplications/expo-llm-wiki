@@ -1,7 +1,7 @@
 # Spec: Pluggable Vector Retrieval (`VectorRanker`)
 
 **Date:** 2026-05-07  
-**Status:** Draft  
+**Status:** Implemented
 **Tracks:** [GitHub issue #15](https://github.com/equationalapplications/expo-llm-wiki/issues/15)  
 **Builds on:** [`2026-05-03-embedding-retrieval.md`](2026-05-03-embedding-retrieval.md), [`2026-05-04-retrieval-tuning.md`](2026-05-04-retrieval-tuning.md)
 

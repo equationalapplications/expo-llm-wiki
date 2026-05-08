@@ -1,8 +1,9 @@
 # Spec: VectorRanker Security Hardening
 
 **Date:** 2026-05-07  
-**Status:** Draft  
-**Builds on:** [`2026-05-07-pluggable-vector-retrieval.md`](2026-05-07-pluggable-vector-retrieval.md)
+**Status:** Ready  
+**Builds on:** [`2026-05-07-pluggable-vector-retrieval.md`](2026-05-07-pluggable-vector-retrieval.md)  
+**Target version:** v3.2.0 (minor — new public option)
 
 ---
 
@@ -14,7 +15,7 @@ The VectorRanker implementation (shipped in v3.x) addresses functional requireme
 
 2. **Credential leakage via error.cause (§5):** When `vectorRankerFallback` mirrors ranker errors via `error.cause` to host telemetry callbacks, sensitive data (query text, API keys in connection strings, stack traces with environment variables) may leak into logging/monitoring systems.
 
-3. **GDPR deletion ordering (§6):** `onEmbeddingPersisted({vector: null})` on deletion paths (forget, prune, hard-delete) fires asynchronously. External ANN indexes may retain deleted vectors until eventual consistency completes, violating right-to-deletion guarantees.
+3. **GDPR deletion ordering (§6):** `onEmbeddingPersisted({vector: null})` on deletion paths (forget, prune, hard-delete) fires asynchronously, AND existing try/catch wrappers (WikiMemory.ts:473, 765, 2503) swallow hook failures via `console.warn`. Combined effect: SQLite delete commits even when ANN cleanup fails silently. External indexes retain deleted vectors indefinitely, violating right-to-deletion guarantees.
 
 4. **Adapter security guidance gap (§7):** No documentation warns adapter authors about SQL injection risks (entityId/factId from untrusted input), credential scrubbing requirements for thrown errors, or entity isolation enforcement when `candidateIds` is undefined.
 
@@ -35,18 +36,39 @@ Harden VectorRanker integration against buffer mutation, credential leakage, and
 
 ### 1. Defensive Copies (Buffer Mutation Protection)
 
-**Implementation:** WikiMemory.ts creates defensive copies before passing vectors to ranker/hooks.
+**Implementation:** WikiMemory.ts creates defensive copies at two centralized chokepoints — one for vectors flowing into the ranker, one for vectors flowing into hooks. Centralizing prevents future call sites from bypassing protection.
 
-#### Copy sites (3 locations):
+#### Chokepoint A: `_notifyEmbeddingPersisted` (WikiMemory.ts:488)
 
-**A. `_rankWithVectorRanker` (line ~1343)**
-
-Before `ranker.rankBySimilarity()` call:
+Copy inside the helper itself so all four current call sites (lines 471, 763, 2284, 2501) and any future caller are covered automatically:
 
 ```typescript
-// Defensive copy to prevent ranker from mutating queryVec buffer
-const queryVecCopy = queryVec instanceof Float32Array 
-  ? queryVec.slice() 
+private async _notifyEmbeddingPersisted(
+  entityId: string,
+  factId: string,
+  vector: Float32Array | null
+): Promise<void> {
+  if (!this.options.vectorRanker?.onEmbeddingPersisted) return;
+  // Defensive copy to prevent hook from mutating cache/fallback vectors.
+  // .slice() on Float32Array allocates a new ArrayBuffer (not a view).
+  const vectorCopy = vector ? vector.slice() : null;
+  await this.options.vectorRanker.onEmbeddingPersisted({
+    entityId,
+    factId,
+    vector: vectorCopy,
+  });
+}
+```
+
+**Audit note:** PR #16 added a 4th call site at WikiMemory.ts:2284 (preserved-blob notify path). Centralizing here covers it without per-site edits.
+
+#### Chokepoint B: `_rankWithVectorRanker` (WikiMemory.ts:1328)
+
+Copy queryVec at the single ranker entry point:
+
+```typescript
+const queryVecCopy = queryVec instanceof Float32Array
+  ? queryVec.slice()
   : Array.from(queryVec);
 
 const rankerResults = await ranker.rankBySimilarity({
@@ -57,29 +79,9 @@ const rankerResults = await ranker.rankBySimilarity({
 });
 ```
 
-**B. `_notifyEmbeddingPersisted` (line ~489)**
+#### Chokepoint C: `_rankWithJsCosine` (WikiMemory.ts:1251)
 
-Before `onEmbeddingPersisted` hook:
-
-```typescript
-private async _notifyEmbeddingPersisted(
-  entityId: string, 
-  factId: string, 
-  vector: Float32Array | null
-): Promise<void> {
-  // Defensive copy to prevent hook from mutating cache/fallback vectors
-  const vectorCopy = vector ? vector.slice() : null;
-  await this.options.vectorRanker?.onEmbeddingPersisted?.({ 
-    entityId, 
-    factId, 
-    vector: vectorCopy 
-  });
-}
-```
-
-**C. `_rankWithJsCosine` (line ~1259)**
-
-Add defensive copy at function entry to match ranker path behavior:
+Defensive copy at function entry for symmetry with ranker path (in case a future code path passes the same buffer to both):
 
 ```typescript
 private async _rankWithJsCosine(args: {
@@ -87,69 +89,163 @@ private async _rankWithJsCosine(args: {
   queryVec: Float32Array | number[];
   // ... other args
 }): Promise<Array<{ id: string; score: number; ... }>> {
-  // Defensive copy for consistency with ranker path
   const { entityId, candidateRows, weight, miniSearchScores, populateCache, limit } = args;
-  const queryVec = args.queryVec instanceof Float32Array 
-    ? args.queryVec.slice() 
+  const queryVec = args.queryVec instanceof Float32Array
+    ? args.queryVec.slice()
     : Array.from(args.queryVec);
-  
+
   // ... existing logic
 }
 ```
 
-**Performance impact:** `.slice()` on Float32Array is O(n) where n = embedding dimension (typically 384-1536). Cost is ~1-5μs per call on modern hardware, negligible compared to SQLite I/O or LLM latency.
+**Performance impact:** `.slice()` on Float32Array is O(n) where n = embedding dimension (typically 384–1536). Cost is ~1–5μs per call on modern hardware, negligible compared to SQLite I/O or LLM latency. Hook-side copy adds one allocation per persisted embedding (rare relative to read traffic).
 
-**Testing:** Mutation detection tests in `vectorRanker.test.ts` verify that mutating vectors inside ranker/hook callbacks doesn't affect core behavior.
+**Testing:** Mutation detection tests in `vectorRanker.test.ts` verify mutating vectors inside ranker/hook callbacks doesn't affect cache contents OR persisted blob bytes (read back from SQLite).
 
 ---
 
-### 2. Await Deletion Hooks (GDPR Compliance)
+### 2. Rethrow Hook Failures on Deletion (GDPR Compliance)
 
-**Problem:** Current implementation fires `onEmbeddingPersisted({vector: null})` without awaiting, allowing SQLite deletion to commit before ANN cleanup completes. Deleted facts may remain retrievable via external indexes.
+**Problem:** Two compounding issues:
 
-**Solution:** Await `_notifyEmbeddingPersisted()` on deletion paths.
+1. `onEmbeddingPersisted({vector: null})` fires without `await` on deletion paths, allowing SQLite delete to commit before ANN cleanup.
+2. Existing try/catch wrappers (WikiMemory.ts:473, 765, 2503) swallow hook errors via `console.warn`. Even with `await`, ANN failure is silently absorbed and SQLite still commits.
 
-#### Affected call sites (3 paths):
+Combined: SQLite delete completes, ANN retains vector, no error surfaces. GDPR violation goes undetected.
 
-**A. `forget()` — soft-delete path**
+**Solution:** Three coordinated changes.
 
-After clearing `embedding_blob` for forgotten facts:
+#### 2A. Await + rethrow on deletion paths
+
+Replace silent try/catch on deletion paths (WikiMemory.ts:763 prune, 2501 forget) with await + rethrow. Deletion fails loudly when ANN cleanup fails.
 
 ```typescript
-// Clear embeddings for forgotten facts
-await this.db.runAsync(`
-  UPDATE ${this.prefix}entries 
-  SET embedding_blob = NULL, embedding = NULL
-  WHERE id = ? AND entity_id = ?
-`, [factId, entityId]);
-
-// MUST await to ensure ANN cleanup before forget() resolves
-await this._notifyEmbeddingPersisted(entityId, factId, null);
+// forget() — line 2501
+await this._notifyEmbeddingPersistedOrThrow(entityId, factId, null);
+// Above throws → caller sees error, can retry. SQLite delete already committed
+// for soft-delete (UPDATE deleted_at), but hook fires AFTER blob clear so retry
+// is idempotent. For prune (hard-delete), see 2B for ordering.
 ```
 
-**B. `_doPrune()` — hard-delete path**
-
-After `DELETE FROM entries WHERE deleted_at IS NOT NULL`:
+For `_doPrune()` (line 763), reorder so hook completes BEFORE the SQLite `DELETE FROM entries` (currently hook fires after delete). This makes rethrow meaningful:
 
 ```typescript
+// _doPrune() — current order: DELETE row, then notify (silent on failure)
+// New order: notify (await + rethrow), then DELETE row
+
 for (const row of rowsToDelete) {
-  // MUST await to ensure ANN cleanup before SQLite row deletion
-  await this._notifyEmbeddingPersisted(row.entity_id, row.id, null);
+  await this._notifyEmbeddingPersistedOrThrow(row.entity_id, row.id, null);
 }
 
+// Only deletes rows whose hooks succeeded
 await this.db.runAsync(`
-  DELETE FROM ${this.prefix}entries 
-  WHERE deleted_at IS NOT NULL AND deleted_at < ?
-`, [pruneThreshold]);
+  DELETE FROM ${this.prefix}entries
+  WHERE id IN (${succeeded.map(() => '?').join(',')})
+`, succeeded);
 ```
 
-**C. Any other `embedding_blob = NULL` updates**
+**Reembed/migration paths keep silent try/catch** (WikiMemory.ts:471, 2284). Those fire `vector` (not null) and represent best-effort index sync, not GDPR deletion. Distinguish via dedicated helper.
 
-Audit WikiMemory.ts for all `UPDATE ... SET embedding_blob = NULL` and `DELETE FROM entries` queries. Add awaited hook calls where embeddings are cleared for deletion (not reembed/migration).
+#### 2B. New helper: `_notifyEmbeddingPersistedOrThrow`
 
-**Performance impact:** Adds latency to delete operations proportional to ANN cleanup time. For sqlite-vec (in-process), adds <10ms. For remote ANN, may add 100-500ms. This is acceptable for GDPR compliance — deletes are infrequent compared to reads.
+```typescript
+/**
+ * GDPR-critical variant: awaits hook and rethrows failures.
+ * Use ONLY on deletion paths where ANN cleanup must succeed before SQLite commit.
+ * For best-effort index sync (reembed, migration), use _notifyEmbeddingPersisted.
+ */
+private async _notifyEmbeddingPersistedOrThrow(
+  entityId: string,
+  factId: string,
+  vector: Float32Array | null,
+): Promise<void> {
+  if (!this.options.vectorRanker?.onEmbeddingPersisted) return;
+  if (this.options.forceDeleteIgnoreRankerHook === true) {
+    // Escape hatch: skip hook entirely (used when ANN backend permanently down)
+    return;
+  }
+  const vectorCopy = vector ? vector.slice() : null;
+  const timeoutMs = this.options.deletionHookTimeoutMs ?? 30_000;
+  const hookPromise = this.options.vectorRanker.onEmbeddingPersisted({
+    entityId, factId, vector: vectorCopy,
+  });
+  await Promise.race([
+    Promise.resolve(hookPromise),
+    new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`onEmbeddingPersisted timed out after ${timeoutMs}ms`)),
+        timeoutMs,
+      ),
+    ),
+  ]);
+}
+```
 
-**Testing:** Verify `forget()` and `_doPrune()` don't resolve until mock `onEmbeddingPersisted` completes (use 100ms delay in mock).
+#### 2C. Partial-failure contract for batch prune
+
+`_doPrune()` iterates many rows. Document the contract:
+
+- Hooks called sequentially (not parallel) for predictable ordering.
+- First hook failure aborts the batch. Rows already notified successfully ARE deleted from SQLite. Failed row + remaining rows stay soft-deleted, retryable on next prune.
+- Aggregate error contains `{ deleted: number, failedAt: string, remaining: number }` for caller visibility.
+
+```typescript
+const succeeded: Array<{ entity_id: string; id: string }> = [];
+let failure: { factId: string; cause: Error } | null = null;
+
+for (const row of rowsToDelete) {
+  try {
+    await this._notifyEmbeddingPersistedOrThrow(row.entity_id, row.id, null);
+    succeeded.push(row);
+  } catch (err) {
+    failure = { factId: row.id, cause: err as Error };
+    break;
+  }
+}
+
+if (succeeded.length > 0) {
+  await this.db.runAsync(/* DELETE WHERE id IN (succeeded) */);
+}
+
+if (failure) {
+  throw new Error(
+    `Prune partially failed: deleted ${succeeded.length}, failed at ${failure.factId}, ` +
+    `${rowsToDelete.length - succeeded.length - 1} remaining`,
+    { cause: this._sanitizeRankerError(failure.cause) },
+  );
+}
+```
+
+#### 2D. New options
+
+Add to `WikiOptions`:
+
+```typescript
+/**
+ * Timeout (ms) for onEmbeddingPersisted hook on GDPR deletion paths.
+ * Hook must complete within this window or deletion fails. Default 30000.
+ * Lower this for interactive deletes; raise for slow remote ANN backends.
+ */
+deletionHookTimeoutMs?: number;
+
+/**
+ * Escape hatch: skip onEmbeddingPersisted on deletion paths entirely.
+ * Use ONLY when the ANN backend is permanently decommissioned and you accept
+ * orphan vectors in the (unreachable) external index. NOT a GDPR-safe default.
+ * Default false.
+ */
+forceDeleteIgnoreRankerHook?: boolean;
+```
+
+**Tradeoffs documented:**
+
+- **Availability cost:** When ANN is down, `forget()` and `runPrune()` throw. Callers must implement retry. This is intentional — silent success would violate GDPR.
+- **Escape hatch (`forceDeleteIgnoreRankerHook`):** For permanently-decommissioned backends. Caller accepts that orphan vectors persist in (unreachable) external index. Document in SECURITY.md that this is NOT GDPR-safe for live indexes.
+- **Batch partial-failure:** Prune is idempotent per row; partial progress is safe. Caller sees aggregate error with counts.
+
+**Performance impact:** Per-row deletion latency now bounded by `deletionHookTimeoutMs`. Successful hook adds <10ms (sqlite-vec) to 100–500ms (remote ANN). Acceptable — deletes are infrequent vs reads.
+
+**Testing:** See §Testing — covers happy path, hook timeout, hook throw, partial-batch failure, escape hatch.
 
 ---
 
@@ -188,28 +284,44 @@ export interface WikiOptions {
 /**
  * Strip potentially sensitive data from ranker errors before exposing to host callbacks.
  * Preserves error type for debugging but removes message/stack that may contain credentials.
+ * Recursively sanitizes .cause chain to one level (deeper chains collapsed to type only).
  */
-private _sanitizeRankerError(err: Error): Error {
+private _sanitizeRankerError(err: unknown): Error {
   if (this.options.sanitizeRankerErrors === false) {
-    return err; // Host opted out of sanitization
+    // Host opted out. Coerce non-Error throws to Error for consistent surface.
+    return err instanceof Error ? err : new Error(String(err));
   }
-  
-  // Create minimal error with only type information
+
+  // Robust type extraction — err may be null/undefined/string/number (legal in JS throw).
+  const typeName =
+    err instanceof Error
+      ? (err.constructor?.name ?? 'Error')
+      : typeof err;
+
+  // Use ES2022 cause syntax. Recursively sanitize one level of .cause for chain visibility.
+  const innerCause =
+    err instanceof Error && err.cause !== undefined
+      ? new Error(`Caused by: ${(err.cause as Error)?.constructor?.name ?? typeof err.cause}`)
+      : undefined;
+
   const sanitized = new Error(
-    `VectorRanker ${err.constructor.name || 'Error'} (message scrubbed for security)`
+    `VectorRanker ${typeName} (message scrubbed for security)`,
+    innerCause ? { cause: innerCause } : undefined,
   );
-  sanitized.name = err.constructor.name || 'Error';
-  // Do NOT copy .message, .stack, or other properties that may leak credentials
+  sanitized.name = typeName;
+  // Do NOT copy .message, .stack, or other properties that may leak credentials.
   return sanitized;
 }
 ```
 
-**C. Apply at error.cause assignment (line ~1074):**
+**C. Apply at error.cause assignment (WikiMemory.ts:~1074):**
 
 ```typescript
 if (this.options.propagateRankerFailureToRetrievalFallback) {
-  const mirrored = new Error('Vector ranker failed, falling back');
-  (mirrored as any).cause = this._sanitizeRankerError(rankerError);
+  // Use ES2022 cause syntax — no `as any` cast needed.
+  const mirrored = new Error('Vector ranker failed, falling back', {
+    cause: this._sanitizeRankerError(rankerError),
+  });
   pendingRankerFallbackError = mirrored;
 }
 ```
@@ -280,6 +392,22 @@ const rows = await db.getAllAsync(sql, [entityId]);
 
 **Applies to:** Any SQL or NoSQL query construction. Use parameterized queries, prepared statements, or ORM query builders. Never string concatenation or template literals.
 
+**Bind parameter limits:** SQLite caps bind parameters at `SQLITE_MAX_VARIABLE_NUMBER` (999 prior to 3.32, 32766 after). When `candidateIds.length` is large, chunk the IN clause:
+
+```typescript
+const CHUNK = 500; // Safe across SQLite versions
+const results = [];
+for (let i = 0; i < candidateIds.length; i += CHUNK) {
+  const chunk = candidateIds.slice(i, i + CHUNK);
+  const placeholders = chunk.map(() => '?').join(',');
+  const rows = await db.getAllAsync(
+    `SELECT id, similarity FROM vec_facts WHERE entity_id = ? AND id IN (${placeholders})`,
+    [entityId, ...chunk],
+  );
+  results.push(...rows);
+}
+```
+
 ### Credential Scrubbing in Errors
 
 **Problem:** Errors thrown from `rankBySimilarity` may be logged by host applications via `onVectorRankerFallback` or `onRetrievalFallback`. Connection strings, API keys, or tokens in error messages will leak into telemetry.
@@ -349,7 +477,42 @@ async rankBySimilarity(args) {
 
 **Guidance:** Treat `queryVec` and `vector` as readonly. Do not call `.set()`, assign to indices, or pass to functions that mutate in-place.
 
-**Note:** Core provides defensive copies as of v3.x, but adapters should still treat vectors as immutable for forward compatibility.
+**Note:** Core provides defensive copies as of v3.2, but adapters should still treat vectors as immutable for forward compatibility.
+
+### Resource Limits and Retention (DoS Prevention)
+
+**Problem:** Adapter receives `limit` and `candidateIds` from core but core does not cap their size. Unbounded values from a misconfigured host can exhaust memory or CPU. Retaining `vector` references past the callback prevents GC of large embeddings.
+
+**Guidance for adapters:**
+
+- **Cap `limit`:** Reject or clamp values above a backend-appropriate maximum (e.g., 10_000 for in-memory, 1_000 for remote ANN).
+- **Cap `candidateIds.length`:** Same — chunk per the SQL injection guidance above and reject pathological inputs.
+- **Do NOT retain `vector`:** The `Float32Array` passed to `onEmbeddingPersisted` may be 1.5KB–6KB. If the adapter stores the reference (e.g., in a closure, queue, or memo cache without TTL), GC is blocked. Copy what you need, then drop the reference before returning.
+- **Cap embedding dimension:** Validate `vector.length` matches your index dimension. Reject mismatches loudly — silent acceptance corrupts the index.
+
+```typescript
+async onEmbeddingPersisted({ entityId, factId, vector }) {
+  if (vector && vector.length !== EXPECTED_DIM) {
+    throw new Error(`Vector dim mismatch: expected ${EXPECTED_DIM}, got ${vector.length}`);
+  }
+  // Copy any needed scalars; do NOT retain the typed array reference.
+  await this.index.upsert(entityId, factId, vector ? Array.from(vector) : null);
+  // vector goes out of scope here — GC eligible
+}
+```
+
+### Tenant Isolation: Timing and Existence Leaks
+
+**Problem:** `entityId` filtering in queries (above) prevents cross-tenant data return, but two side channels can still leak information:
+
+1. **Timing oracle:** If the adapter's query latency depends on cross-tenant data size (e.g., scanning a shared index), an attacker measuring response times can infer the existence of facts in other tenants.
+2. **Error existence leaks:** When `vectorRankerFallback: 'throw'` is configured, ranker errors propagate to the caller. If error messages embed counts ("0 of 50000 candidates matched") or backend-specific identifiers, they reveal cross-tenant index size.
+
+**Guidance:**
+
+- Prefer per-entity partitions / namespaces in the backing store over shared indexes with WHERE filters. Partitioned queries have constant latency relative to other tenants' data.
+- Strip counts, internal IDs, and backend metadata from thrown errors. Use generic messages like `"semantic search unavailable"`.
+- For high-sensitivity deployments, add small constant-time padding to query latency before returning.
 ```
 
 #### Section 3: Host Application Security
@@ -403,6 +566,34 @@ onRetrievalFallback: (error) => {
 ```
 
 Query text passed to `read()` may be PII. Don't log it unless you have user consent.
+
+### Deletion Policy and Hook Failures
+
+`forget()` and `runPrune()` reject when `onEmbeddingPersisted` throws or exceeds `deletionHookTimeoutMs` (default 30s). This is intentional — silent failure would leave deleted vectors retrievable in external ANN indexes, violating GDPR right-to-erasure.
+
+**Required handling:**
+
+```typescript
+try {
+  await wikiMemory.forget(entityId, factId);
+} catch (err) {
+  // ANN cleanup failed. Options:
+  // 1. Retry with backoff (transient ANN outage)
+  // 2. Queue for background reconciliation
+  // 3. Surface to user as "deletion pending"
+  // DO NOT mark deletion complete in your UI.
+  enqueueDeletionRetry(entityId, factId);
+  throw err;
+}
+```
+
+**Tuning `deletionHookTimeoutMs`:**
+
+- Interactive UX: 5000ms (fast feedback, may need user retry)
+- Background jobs: 60000ms (tolerate transient ANN slowdowns)
+- High-volume prune: 10000ms per row (matches batch SLAs)
+
+**`forceDeleteIgnoreRankerHook`:** Use ONLY when the ANN backend is permanently decommissioned and the orphaned vectors will never be queried again. Setting this on a live index breaks GDPR compliance silently — DO NOT use as a workaround for flaky backends.
 ```
 
 ---
@@ -411,15 +602,21 @@ Query text passed to `read()` may be PII. Don't log it unless you have user cons
 
 ### README.md
 
-Add subsection after "Pluggable Vector Retrieval" (after line ~258):
+Add subsection after "Pluggable Vector Retrieval" (after line ~258) in BOTH the repo-root README and `packages/core/README.md` (link path differs):
+
+**Repo root README.md:**
 
 ```markdown
 ### Security Considerations
 
-When implementing custom `VectorRanker` adapters, follow secure coding practices to prevent SQL injection, credential leakage, and tenant isolation violations. See [SECURITY.md](../../SECURITY.md) for detailed guidance.
+When implementing custom `VectorRanker` adapters, follow secure coding practices to prevent SQL injection, credential leakage, and tenant isolation violations. See [SECURITY.md](./SECURITY.md) for detailed guidance.
 
 Core provides `sanitizeRankerErrors: true` (default) to strip sensitive data from ranker errors before passing to host callbacks. Disable only when you control the ranker implementation.
 ```
+
+**`packages/core/README.md`:**
+
+Same content but link path `[SECURITY.md](../../SECURITY.md)` (verify by `ls ../../SECURITY.md` from `packages/core/`).
 
 ### types.ts JSDoc Updates
 
@@ -463,7 +660,7 @@ export interface VectorRanker {
 }
 ```
 
-**WikiOptions.sanitizeRankerErrors:**
+**WikiOptions.sanitizeRankerErrors / deletionHookTimeoutMs / forceDeleteIgnoreRankerHook:**
 
 ```typescript
 export interface WikiOptions {
@@ -473,25 +670,47 @@ export interface WikiOptions {
    * When true (default), sanitize ranker errors before exposing via error.cause
    * to prevent credential leakage in host telemetry. Disable only when you
    * control the ranker implementation.
-   * 
+   *
    * Sanitization replaces error message/stack with generic message preserving
    * only error type (constructor name).
    */
   sanitizeRankerErrors?: boolean;
+
+  /**
+   * Timeout (ms) for onEmbeddingPersisted hook on GDPR deletion paths
+   * (forget, _doPrune). Hook must complete within this window or the
+   * deletion operation rejects. Default 30000.
+   * Lower for interactive deletes; raise for slow remote ANN backends.
+   */
+  deletionHookTimeoutMs?: number;
+
+  /**
+   * Escape hatch: skip onEmbeddingPersisted on deletion paths entirely.
+   * Use ONLY when the ANN backend is permanently decommissioned. Vectors
+   * orphaned in the (unreachable) external index are accepted as a tradeoff.
+   * NOT GDPR-safe for live indexes. Default false.
+   */
+  forceDeleteIgnoreRankerHook?: boolean;
 }
 ```
 
 ### CHANGELOG.md
 
-Add patch entry under "Unreleased" or next version:
+Add **minor** entry (new public options surface) under `## [3.2.0]`:
 
 ```markdown
 ### Security
 
-* **core:** add defensive copies for VectorRanker queryVec/vector to prevent buffer mutation
-* **core:** await onEmbeddingPersisted on deletion paths for GDPR compliance
-* **core:** add sanitizeRankerErrors option (default true) to prevent credential leakage via error.cause
-* **docs:** add SECURITY.md with VectorRanker adapter security guidance (SQL injection, credential scrubbing, entity isolation)
+* **core:** centralize defensive copies for VectorRanker `queryVec` and `vector` to prevent buffer mutation by adapters/hooks
+* **core:** await + rethrow `onEmbeddingPersisted` failures on deletion paths (`forget`, `_doPrune`) for GDPR compliance — silent hook failures no longer mask ANN cleanup errors
+* **core:** add `sanitizeRankerErrors` option (default `true`) to scrub credentials from ranker errors before exposing via `error.cause`
+* **core:** add `deletionHookTimeoutMs` option (default `30000`) to bound deletion latency when ANN backend stalls
+* **core:** add `forceDeleteIgnoreRankerHook` escape hatch (default `false`) for permanently-decommissioned ANN backends
+* **docs:** add `SECURITY.md` with VectorRanker adapter security guidance (SQL injection, credential scrubbing, entity isolation, DoS prevention, timing leaks)
+
+### BREAKING (behavioral, not API)
+
+* `forget()` and `runPrune()` now reject when `onEmbeddingPersisted` throws or exceeds `deletionHookTimeoutMs`. Previously these errors were swallowed via `console.warn`. Hosts using `VectorRanker.onEmbeddingPersisted` MUST handle deletion errors or set `forceDeleteIgnoreRankerHook: true` (NOT GDPR-safe). See migration notes.
 ```
 
 ---
@@ -538,7 +757,7 @@ it('should protect queryVec from mutation by ranker', async () => {
 });
 ```
 
-**Test 2: vector mutation in onEmbeddingPersisted doesn't corrupt cache**
+**Test 2: vector mutation in onEmbeddingPersisted doesn't corrupt cache OR persisted blob**
 
 ```typescript
 it('should protect vector from mutation by onEmbeddingPersisted hook', async () => {
@@ -563,16 +782,25 @@ it('should protect vector from mutation by onEmbeddingPersisted hook', async () 
   });
 
   await wikiMemory.setup();
-  await wikiMemory.upsert('entity1', { content: 'test fact', source: 'test' });
+  const fact = await wikiMemory.upsert('entity1', { content: 'test fact', source: 'test' });
 
-  // Verify hook received a copy (mutation didn't affect cache)
+  // 1. Hook received a copy (mutation visible on the copy itself).
   expect(capturedVector).not.toBeNull();
-  expect(capturedVector![0]).toBe(-999); // Hook's mutation applied to copy
+  expect(capturedVector![0]).toBe(-999);
 
-  // Read should use uncorrupted vector from cache
+  // 2. Persisted blob in SQLite is NOT corrupted (defensive copy worked).
+  const row = await db.getFirstAsync<{ embedding_blob: ArrayBuffer }>(
+    `SELECT embedding_blob FROM entries WHERE id = ?`,
+    [fact.id],
+  );
+  const persisted = new Float32Array(row!.embedding_blob);
+  expect(persisted[0]).not.toBe(-999);
+
+  // 3. In-memory vectorCache (if hot) is NOT corrupted.
+  //    Re-read uses cached vector; if corrupt, cosine scores become nonsense.
   const result = await wikiMemory.read('entity1', 'test query');
   expect(result.facts.length).toBeGreaterThan(0);
-  // Cosine similarity with corrupted vector would produce nonsense scores
+  expect(Number.isFinite(result.facts[0].score)).toBe(true);
 });
 ```
 
@@ -648,6 +876,120 @@ it('should await onEmbeddingPersisted during prune hard-delete', async () => {
 });
 ```
 
+**Test 4b: forget() rethrows when deletion hook fails**
+
+```typescript
+it('should rethrow onEmbeddingPersisted failure on forget()', async () => {
+  const failingRanker: VectorRanker = {
+    async rankBySimilarity() { return []; },
+    async onEmbeddingPersisted(event) {
+      if (event.vector === null) throw new Error('ANN cleanup failed');
+    }
+  };
+
+  const wikiMemory = new WikiMemory(db, {
+    llmProvider: mockLLMProvider,
+    vectorRanker: failingRanker,
+  });
+
+  await wikiMemory.setup();
+  const fact = await wikiMemory.upsert('entity1', { content: 'x', source: 't' });
+
+  await expect(wikiMemory.forget('entity1', fact.id)).rejects.toThrow(/ANN cleanup failed|scrubbed/);
+});
+```
+
+**Test 4c: deletionHookTimeoutMs aborts slow hook**
+
+```typescript
+it('should abort deletion when hook exceeds deletionHookTimeoutMs', async () => {
+  const slowRanker: VectorRanker = {
+    async rankBySimilarity() { return []; },
+    async onEmbeddingPersisted(event) {
+      if (event.vector === null) {
+        await new Promise(r => setTimeout(r, 5000));
+      }
+    }
+  };
+
+  const wikiMemory = new WikiMemory(db, {
+    llmProvider: mockLLMProvider,
+    vectorRanker: slowRanker,
+    deletionHookTimeoutMs: 100,
+  });
+
+  await wikiMemory.setup();
+  const fact = await wikiMemory.upsert('entity1', { content: 'x', source: 't' });
+
+  await expect(wikiMemory.forget('entity1', fact.id)).rejects.toThrow(/timed out/);
+});
+```
+
+**Test 4d: forceDeleteIgnoreRankerHook bypasses hook entirely**
+
+```typescript
+it('should skip hook entirely when forceDeleteIgnoreRankerHook is true', async () => {
+  let hookCalled = false;
+  const ranker: VectorRanker = {
+    async rankBySimilarity() { return []; },
+    async onEmbeddingPersisted() {
+      hookCalled = true;
+      throw new Error('would have failed');
+    }
+  };
+
+  const wikiMemory = new WikiMemory(db, {
+    llmProvider: mockLLMProvider,
+    vectorRanker: ranker,
+    forceDeleteIgnoreRankerHook: true,
+  });
+
+  await wikiMemory.setup();
+  const fact = await wikiMemory.upsert('entity1', { content: 'x', source: 't' });
+
+  await expect(wikiMemory.forget('entity1', fact.id)).resolves.not.toThrow();
+  expect(hookCalled).toBe(false);
+});
+```
+
+**Test 4e: prune partial-failure deletes successful rows, surfaces aggregate error**
+
+```typescript
+it('should commit partial prune progress and report failure', async () => {
+  let callIndex = 0;
+  const flakyRanker: VectorRanker = {
+    async rankBySimilarity() { return []; },
+    async onEmbeddingPersisted(event) {
+      if (event.vector === null) {
+        callIndex++;
+        if (callIndex === 3) throw new Error('ANN flake on row 3');
+      }
+    }
+  };
+
+  const wikiMemory = new WikiMemory(db, {
+    llmProvider: mockLLMProvider,
+    vectorRanker: flakyRanker,
+    config: { pruneRetainSoftDeletedFor: 0 },
+  });
+
+  await wikiMemory.setup();
+  const facts = [];
+  for (let i = 0; i < 5; i++) {
+    facts.push(await wikiMemory.upsert('entity1', { content: `f${i}`, source: 't' }));
+  }
+  for (const f of facts) await wikiMemory.forget('entity1', f.id).catch(() => {});
+
+  // Reset flake counter for prune phase
+  callIndex = 0;
+  await expect(wikiMemory.runPrune('entity1')).rejects.toThrow(/partially failed/i);
+
+  // First 2 rows hard-deleted, remaining 3 (incl. failed row) still soft-deleted.
+  const remaining = await db.getAllAsync(`SELECT id FROM entries WHERE deleted_at IS NOT NULL`);
+  expect(remaining.length).toBeGreaterThan(0);
+});
+```
+
 ### Error Sanitization Tests
 
 **Test 5: sanitizeRankerErrors: true (default) scrubs credentials**
@@ -678,11 +1020,45 @@ it('should sanitize ranker errors by default', async () => {
 
   expect(capturedError).toBeDefined();
   expect((capturedError as any).cause).toBeDefined();
-  const causeMessage = (capturedError as any).cause.message;
-  
-  // Should NOT contain the secret key
-  expect(causeMessage).not.toContain('sk_live_secret123');
-  expect(causeMessage).toContain('VectorRanker Error');
+  const cause = (capturedError as any).cause as Error;
+
+  // Should NOT contain the secret key.
+  expect(cause.message).not.toContain('sk_live_secret123');
+  expect(cause.message).toContain('VectorRanker Error');
+  // Type preserved for triage.
+  expect(cause.name).toBe('Error');
+});
+```
+
+**Test 5b: sanitizer survives non-Error throws**
+
+```typescript
+it('should sanitize non-Error throws without crashing', async () => {
+  let capturedError: Error | undefined;
+
+  const stringThrowingRanker: VectorRanker = {
+    async rankBySimilarity() {
+      // eslint-disable-next-line no-throw-literal
+      throw 'bare string with secret api_key=abc';
+    }
+  };
+
+  const wikiMemory = new WikiMemory(db, {
+    llmProvider: mockLLMProvider,
+    vectorRanker: stringThrowingRanker,
+    vectorRankerFallback: 'js-cosine',
+    propagateRankerFailureToRetrievalFallback: true,
+    onRetrievalFallback: (error) => { capturedError = error; },
+  });
+
+  await wikiMemory.setup();
+  await wikiMemory.upsert('entity1', { content: 'test', source: 'test' });
+  await wikiMemory.read('entity1', 'test query');
+
+  expect(capturedError).toBeDefined();
+  const cause = (capturedError as any).cause as Error;
+  expect(cause.message).not.toContain('api_key=abc');
+  expect(cause.message).toContain('VectorRanker string');
 });
 ```
 
@@ -725,18 +1101,23 @@ it('should preserve original error when sanitizeRankerErrors: false', async () =
 
 ## Acceptance Criteria
 
-- [ ] Defensive copies implemented at all 3 sites (rankBySimilarity, onEmbeddingPersisted, _rankWithJsCosine)
-- [ ] Mutation detection tests pass (queryVec and vector corruption prevented)
-- [ ] Deletion hooks awaited in forget(), _doPrune(), and any other deletion paths
-- [ ] Deletion ordering tests pass (hooks complete before forget/prune resolve)
+- [ ] Defensive copies centralized at 2 chokepoints (`_notifyEmbeddingPersisted` for hook-bound vectors, `_rankWithVectorRanker` + `_rankWithJsCosine` for queryVec)
+- [ ] All 4 existing `_notifyEmbeddingPersisted` call sites (lines 471, 763, 2284, 2501) covered without per-site edits
+- [ ] Mutation detection tests pass — including persisted-blob assertion, not just hook-receipt
+- [ ] New helper `_notifyEmbeddingPersistedOrThrow` used on deletion paths (`forget`, `_doPrune`); silent variant retained for reembed/migration paths (lines 471, 2284)
+- [ ] `forget()` and `runPrune()` reject on hook failure (Test 4b)
+- [ ] `deletionHookTimeoutMs` enforced (Test 4c, default 30000)
+- [ ] `forceDeleteIgnoreRankerHook` escape hatch works (Test 4d)
+- [ ] Prune partial-failure: successful rows committed, aggregate error thrown with counts (Test 4e)
 - [ ] `WikiOptions.sanitizeRankerErrors` added with default `true`
-- [ ] Error sanitization tests pass (credentials scrubbed when enabled, preserved when disabled)
-- [ ] SECURITY.md created at project root with all 3 sections (reporting, adapter security, host security)
-- [ ] README.md security subsection added with SECURITY.md link
-- [ ] types.ts JSDoc updated for queryVec, vector, onEmbeddingPersisted, sanitizeRankerErrors
-- [ ] CHANGELOG.md security section added
+- [ ] Sanitizer handles non-Error throws (Test 5b) and one level of `.cause` chain
+- [ ] Sanitizer uses ES2022 `new Error(msg, { cause })` syntax — no `as any` casts
+- [ ] SECURITY.md created at project ROOT with all sections (reporting, adapter security incl. SQL chunking + DoS + retention + tenant timing, host security incl. new options)
+- [ ] README.md security subsection added in BOTH repo-root README and `packages/core/README.md` with correct relative paths
+- [ ] types.ts JSDoc updated for `queryVec`, `vector`, `onEmbeddingPersisted`, `sanitizeRankerErrors`, `deletionHookTimeoutMs`, `forceDeleteIgnoreRankerHook`
+- [ ] CHANGELOG.md `[3.2.0]` entry includes Security section AND BREAKING (behavioral) callout
 - [ ] All existing VectorRanker tests still pass (no regressions)
-- [ ] Performance benchmarks confirm defensive copies add <10μs overhead per read()
+- [ ] Performance benchmarks confirm defensive copies add <10μs overhead per `read()` call
 
 ---
 
@@ -744,16 +1125,18 @@ it('should preserve original error when sanitizeRankerErrors: false', async () =
 
 **For existing VectorRanker adapter authors:**
 
-- No API changes required — defensive copies transparent to adapters
-- Review SECURITY.md guidance and audit your implementation
-- Ensure thrown errors don't leak credentials (core sanitization is defense-in-depth, not primary mitigation)
-- If your adapter modifies `queryVec` or `vector` in-place (unlikely), stop doing so
+- No type-level API changes — defensive copies transparent to adapters.
+- Review SECURITY.md guidance: SQL chunking (>500 ids), credential scrubbing, vector retention, tenant timing.
+- If your `onEmbeddingPersisted` can fail on the network (remote ANN), it now gates `forget()` / `runPrune()`. Implement retries, backoff, or circuit breakers inside the hook OR document required host-side retry policy.
+- If your adapter mutates `queryVec` or `vector` in-place (unlikely), stop doing so — forward compatibility.
 
 **For host applications:**
 
-- `sanitizeRankerErrors: true` is now default — opt out only if you control ranker code
-- Deletion operations (forget, prune) may take slightly longer due to awaited hooks
-- No action required for most deployments
+- `sanitizeRankerErrors: true` is now default — opt out only if you control ranker code.
+- **BREAKING (behavioral):** `forget()` and `runPrune()` now throw when `onEmbeddingPersisted` fails or times out. Wrap in try/catch and implement retry, OR set `forceDeleteIgnoreRankerHook: true` if your ANN backend is decommissioned (NOT GDPR-safe for live indexes).
+- Tune `deletionHookTimeoutMs` based on your ANN latency profile (default 30s — generous for remote ANN, may need lowering to 5s for interactive UX).
+- `runPrune()` may now throw a partial-failure aggregate error. Inspect `.cause` for the underlying ranker error type; remaining soft-deleted rows will retry on next prune.
+- No action required for hosts that don't use `VectorRanker.onEmbeddingPersisted`.
 
 ---
 
