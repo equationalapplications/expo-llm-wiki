@@ -503,26 +503,34 @@ export class WikiMemory {
   }
 
   private async assertNoLegacySourceTypes(): Promise<void> {
+    const legacyProbe = await this.db.getFirstAsync<{ one: number }>(
+      `SELECT 1 AS one FROM ${this.prefix}entries
+       WHERE source_type IN ('user_document', 'agent_inferred')
+       LIMIT 1`,
+      []
+    );
+
+    if (!legacyProbe) return;
+
     const legacyCount = await this.db.getFirstAsync<{ count: number }>(
       `SELECT COUNT(*) as count FROM ${this.prefix}entries
        WHERE source_type IN ('user_document', 'agent_inferred')`,
       []
     );
 
-    if (legacyCount && legacyCount.count > 0) {
-      const migrationSQL = `
+    const count = legacyCount?.count ?? 0;
+    const migrationSQL = `
 -- Run this SQL to migrate legacy source_type values (adjust prefix if custom tablePrefix configured):
 UPDATE ${this.prefix}entries SET source_type = 'immutable_document' WHERE source_type = 'user_document';
 UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source_type = 'agent_inferred';
-      `.trim();
+    `.trim();
 
-      throw new Error(
-        `Database contains ${legacyCount.count} entries with legacy source_type values ('user_document' or 'agent_inferred'). ` +
-        `These enum values were renamed in this release. Running without migration would allow legacy 'user_document' facts to bypass ` +
-        `immutability guards, causing data corruption.\n\n${migrationSQL}\n\n` +
-        `After running the migration SQL, restart your application.`
-      );
-    }
+    throw new Error(
+      `Database contains ${count} entries with legacy source_type values ('user_document' or 'agent_inferred'). ` +
+      `These enum values were renamed in this release. Running without migration would allow legacy 'user_document' facts to bypass ` +
+      `immutability guards, causing data corruption.\n\n${migrationSQL}\n\n` +
+      `After running the migration SQL, restart your application.`
+    );
   }
 
   private async _notifyEmbeddingPersisted(
