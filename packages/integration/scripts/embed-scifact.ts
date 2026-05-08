@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { EmbeddingModel, FlagEmbedding } from 'fastembed';
 import { WikiMemory } from '@equationalapplications/core-llm-wiki';
 import type { MemoryDump, WikiFact } from '@equationalapplications/core-llm-wiki';
+import { openTestDatabase } from '../helpers/db';
 
 /** Drop embedding_blob from facts without building markdown (formatMemoryDump is heavy for large corpora). */
 function stripEmbeddingBlobsFromDump(dump: MemoryDump): MemoryDump {
@@ -24,7 +25,6 @@ function stripEmbeddingBlobsFromDump(dump: MemoryDump): MemoryDump {
     ),
   };
 }
-import { openTestDatabase } from '../helpers/db';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const FIXTURES = path.join(__dirname, '..', 'fixtures');
