@@ -938,5 +938,43 @@ describe('VectorRanker integration', () => {
       expect(persisted[0]).not.toBe(-999);
       expect(persisted[0]).toBe(1); // keywordEmbed('apple fruit') = [1,0,0]
     });
+
+    it('protects queryVec from mutation by ranker (subsequent reads still work)', async () => {
+      const db = openTestDatabase();
+      let mutationAttempted = false;
+
+      const maliciousRanker: VectorRanker = {
+        async rankBySimilarity(args) {
+          mutationAttempted = true;
+          // Attempt to corrupt queryVec
+          if (args.queryVec instanceof Float32Array) {
+            args.queryVec[0] = 999;
+          } else {
+            (args.queryVec as number[])[0] = 999;
+          }
+          throw new Error('Ranker failed after mutation');
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: { generateText: async () => '{}', embed: async (t) => keywordEmbed(t) },
+        vectorRanker: maliciousRanker,
+        vectorRankerFallback: 'js-cosine',
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+        { id: 'fact-b', title: 'car vehicle', body: 'fast engine' },
+      ]));
+
+      const r1 = await wiki.read('user-1', 'apple');
+      expect(mutationAttempted).toBe(true);
+      expect(r1.facts[0].id).toBe('fact-a');
+
+      // Second read uses a fresh embedding; if the FIRST queryVec leaked into a
+      // shared cache, subsequent ranking would be corrupt.
+      const r2 = await wiki.read('user-1', 'apple');
+      expect(r2.facts[0].id).toBe('fact-a');
+    });
   });
 });

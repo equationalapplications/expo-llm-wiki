@@ -1298,7 +1298,10 @@ export class WikiMemory {
     populateCache: boolean;
     limit: number;
   }): Promise<Array<{ id: string; score: number; updated_at: number | null; access_count: number | null }>> {
-    const { entityId, queryVec, candidateRows, weight, miniSearchScores, populateCache, limit } = args;
+    const queryVec = args.queryVec instanceof Float32Array
+      ? args.queryVec.slice()
+      : Array.from(args.queryVec);
+    const { entityId, candidateRows, weight, miniSearchScores, populateCache, limit } = args;
 
     // Cache: reuse parsed vectors from prior full-scan reads
     let entityCache = this.vectorCache.get(entityId);
@@ -1374,16 +1377,20 @@ export class WikiMemory {
     miniSearchScores: Map<string, number> | undefined;
     limit: number;
   }): Promise<Array<{ id: string; score: number }>> {
-    const { entityId, queryVec, candidateIds, weight, miniSearchScores, limit } = args;
+    const { entityId, candidateIds, weight, miniSearchScores, limit } = args;
 
     const ranker = this.options.vectorRanker;
     if (!ranker) {
       throw new Error('vectorRanker not configured');
     }
 
+    const queryVecCopy = args.queryVec instanceof Float32Array
+      ? args.queryVec.slice()
+      : Array.from(args.queryVec);
+
     const rankerResults = await ranker.rankBySimilarity({
       entityId,
-      queryVec,
+      queryVec: queryVecCopy,
       candidateIds,
       limit,
     });
