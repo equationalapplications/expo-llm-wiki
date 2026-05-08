@@ -10,7 +10,7 @@ function seedDump(
     id: string;
     title: string;
     body: string;
-    source_type?: 'agent_inferred' | 'user_document' | 'user_stated' | 'user_confirmed';
+    source_type?: 'librarian_inferred' | 'immutable_document' | 'user_stated' | 'user_confirmed';
     updated_at?: number;
   }>
 ): MemoryDump {
@@ -25,7 +25,7 @@ function seedDump(
           body: f.body,
           tags: [],
           confidence: 'certain' as const,
-          source_type: f.source_type ?? 'agent_inferred',
+          source_type: f.source_type ?? 'librarian_inferred',
           source_hash: null,
           source_ref: null,
           created_at: (i + 1) * 1000,
@@ -78,8 +78,8 @@ describe('exportImport — Scenario 1: full roundtrip preserves facts and rankin
     await wikiA.setup();
     await wikiA.importDump(
       seedDump('user-1', [
-        { id: 'f1', title: 'Alpha', body: 'body', source_type: 'user_document' },
-        { id: 'f2', title: 'Beta', body: 'body', source_type: 'agent_inferred' },
+        { id: 'f1', title: 'Alpha', body: 'body', source_type: 'immutable_document' },
+        { id: 'f2', title: 'Beta', body: 'body', source_type: 'librarian_inferred' },
       ])
     );
 
@@ -92,7 +92,7 @@ describe('exportImport — Scenario 1: full roundtrip preserves facts and rankin
     const bundle = await wikiB.getMemoryBundle('user-1');
     expect(bundle.facts).toHaveLength(2);
     const sourceTypes = bundle.facts.map((f) => f.source_type).sort();
-    expect(sourceTypes).toEqual(['agent_inferred', 'user_document']);
+    expect(sourceTypes).toEqual(['immutable_document', 'librarian_inferred']);
   });
 });
 
@@ -115,7 +115,7 @@ describe('exportImport — Scenario 2: merge collision, newer updated_at wins', 
               body: 'body from A',
               tags: [],
               confidence: 'certain',
-              source_type: 'agent_inferred',
+              source_type: 'librarian_inferred',
               source_hash: null,
               source_ref: null,
               created_at: 1000,
@@ -131,7 +131,7 @@ describe('exportImport — Scenario 2: merge collision, newer updated_at wins', 
               body: 'only in A',
               tags: [],
               confidence: 'certain',
-              source_type: 'agent_inferred',
+              source_type: 'librarian_inferred',
               source_hash: null,
               source_ref: null,
               created_at: 1000,
@@ -161,7 +161,7 @@ describe('exportImport — Scenario 2: merge collision, newer updated_at wins', 
               body: 'body from B — newer',
               tags: [],
               confidence: 'certain',
-              source_type: 'agent_inferred',
+              source_type: 'librarian_inferred',
               source_hash: null,
               source_ref: null,
               created_at: 1000,
@@ -177,7 +177,7 @@ describe('exportImport — Scenario 2: merge collision, newer updated_at wins', 
               body: 'only in B',
               tags: [],
               confidence: 'certain',
-              source_type: 'agent_inferred',
+              source_type: 'librarian_inferred',
               source_hash: null,
               source_ref: null,
               created_at: 1000,
@@ -221,7 +221,7 @@ describe('exportImport — Scenario 2: merge collision, newer updated_at wins', 
               body: 'current body',
               tags: [],
               confidence: 'certain',
-              source_type: 'agent_inferred',
+              source_type: 'librarian_inferred',
               source_hash: null,
               source_ref: null,
               created_at: 1000,
@@ -250,7 +250,7 @@ describe('exportImport — Scenario 2: merge collision, newer updated_at wins', 
               body: 'stale body — should lose',
               tags: [],
               confidence: 'certain',
-              source_type: 'agent_inferred',
+              source_type: 'librarian_inferred',
               source_hash: null,
               source_ref: null,
               created_at: 1000,

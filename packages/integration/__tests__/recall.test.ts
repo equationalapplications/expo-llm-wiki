@@ -41,7 +41,7 @@ function makeDump(entityId: string, items: Array<{ id: string; title: string; bo
           body: item.body,
           tags: [] as string[],
           confidence: 'certain' as const,
-          source_type: 'agent_inferred' as const,
+          source_type: 'librarian_inferred' as const,
           source_hash: null,
           source_ref: null,
           created_at: (i + 1) * 1000,

@@ -6,7 +6,7 @@ import { stubLLM, scriptedLLM } from '../helpers/llm';
 
 function makeDump(
   entityId: string,
-  facts: Array<{ id: string; source_type: 'agent_inferred' | 'user_document'; confidence?: 'certain' | 'inferred' | 'tentative' }>
+  facts: Array<{ id: string; source_type: 'librarian_inferred' | 'immutable_document'; confidence?: 'certain' | 'inferred' | 'tentative' }>
 ): MemoryDump {
   return {
     generatedAt: Date.now(),
@@ -83,7 +83,7 @@ describe('config — pruneRetainSoftDeletedFor: 0 hard-deletes immediately', () 
       config: { pruneRetainSoftDeletedFor: 0 },
     });
     await wiki.setup();
-    await wiki.importDump(makeDump('entity-1', [{ id: 'fact-x', source_type: 'agent_inferred' }]));
+    await wiki.importDump(makeDump('entity-1', [{ id: 'fact-x', source_type: 'librarian_inferred' }]));
 
     await wiki.forget('entity-1', { entryId: 'fact-x' });
     await wiki.runPrune('entity-1');
@@ -104,7 +104,7 @@ describe('config — pruneRetainSoftDeletedFor: 99999 keeps soft-deleted rows', 
       config: { pruneRetainSoftDeletedFor: 99999 },
     });
     await wiki.setup();
-    await wiki.importDump(makeDump('entity-1', [{ id: 'fact-y', source_type: 'agent_inferred' }]));
+    await wiki.importDump(makeDump('entity-1', [{ id: 'fact-y', source_type: 'librarian_inferred' }]));
 
     await wiki.forget('entity-1', { entryId: 'fact-y' });
     await wiki.runPrune('entity-1');
@@ -185,7 +185,7 @@ describe('config — autoHealThreshold', () => {
 });
 
 describe('config — staleInferredAfterDays', () => {
-  it('agent_inferred facts with confidence=inferred are downgraded to tentative; user_document untouched', async () => {
+  it('librarian_inferred facts with confidence=inferred are downgraded to tentative; immutable_document untouched', async () => {
     const db = openTestDatabase();
     const wiki = new WikiMemory(db, {
       llmProvider: scriptedLLM([
@@ -197,8 +197,8 @@ describe('config — staleInferredAfterDays', () => {
 
     await wiki.importDump(
       makeDump('entity-1', [
-        { id: 'stale-ai', source_type: 'agent_inferred', confidence: 'inferred' },
-        { id: 'fresh-doc', source_type: 'user_document', confidence: 'certain' },
+        { id: 'stale-ai', source_type: 'librarian_inferred', confidence: 'inferred' },
+        { id: 'fresh-doc', source_type: 'immutable_document', confidence: 'certain' },
       ])
     );
 
@@ -231,8 +231,8 @@ describe('config — tablePrefix isolates two wikis on the same DB', () => {
     await wikiA.setup();
     await wikiB.setup();
 
-    await wikiA.importDump(makeDump('user-1', [{ id: 'fact-a1', source_type: 'agent_inferred' }]));
-    await wikiB.importDump(makeDump('user-1', [{ id: 'fact-b1', source_type: 'agent_inferred' }]));
+    await wikiA.importDump(makeDump('user-1', [{ id: 'fact-a1', source_type: 'librarian_inferred' }]));
+    await wikiB.importDump(makeDump('user-1', [{ id: 'fact-b1', source_type: 'librarian_inferred' }]));
 
     const bundleA = await wikiA.getMemoryBundle('user-1');
     const bundleB = await wikiB.getMemoryBundle('user-1');

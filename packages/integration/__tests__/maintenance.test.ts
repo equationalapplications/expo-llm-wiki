@@ -7,7 +7,7 @@ import { stubLLM, scriptedLLM, keywordEmbed } from '../helpers/llm';
 function makeFact(
   id: string,
   entityId: string,
-  source_type: 'agent_inferred' | 'user_document',
+  source_type: 'librarian_inferred' | 'immutable_document',
   created_at = 1
 ) {
   return {
@@ -35,8 +35,8 @@ function makeDump(entityId: string, facts: ReturnType<typeof makeFact>[]): Memor
   };
 }
 
-describe('maintenance — Scenario 1: runHeal culls orphaned agent_inferred, spares user_document', () => {
-  it('soft-deletes agent_inferred fact; user_document fact remains', async () => {
+describe('maintenance — Scenario 1: runHeal culls orphaned librarian_inferred, spares immutable_document', () => {
+  it('soft-deletes librarian_inferred fact; immutable_document fact remains', async () => {
     const db = openTestDatabase();
     const wiki = new WikiMemory(db, {
       llmProvider: stubLLM(),
@@ -46,8 +46,8 @@ describe('maintenance — Scenario 1: runHeal culls orphaned agent_inferred, spa
 
     await wiki.importDump(
       makeDump('entity-1', [
-        makeFact('agent-fact', 'entity-1', 'agent_inferred', 1),
-        makeFact('doc-fact', 'entity-1', 'user_document', 1),
+        makeFact('agent-fact', 'entity-1', 'librarian_inferred', 1),
+        makeFact('doc-fact', 'entity-1', 'immutable_document', 1),
       ])
     );
 
@@ -60,8 +60,8 @@ describe('maintenance — Scenario 1: runHeal culls orphaned agent_inferred, spa
   });
 });
 
-describe('maintenance — Scenario 2: runHeal LLM phase deletes agent_inferred, user_document protected', () => {
-  it('LLM-requested delete on agent_inferred fact is honoured', async () => {
+describe('maintenance — Scenario 2: runHeal LLM phase deletes librarian_inferred, immutable_document protected', () => {
+  it('LLM-requested delete on librarian_inferred fact is honoured', async () => {
     const db = openTestDatabase();
     // orphanAfterDays: null disables the orphan auto-pass so only LLM deletion matters
     const wiki = new WikiMemory(db, {
@@ -74,8 +74,8 @@ describe('maintenance — Scenario 2: runHeal LLM phase deletes agent_inferred, 
 
     await wiki.importDump(
       makeDump('entity-1', [
-        makeFact('fact-a', 'entity-1', 'agent_inferred', 1),
-        makeFact('doc-1', 'entity-1', 'user_document', 1),
+        makeFact('fact-a', 'entity-1', 'librarian_inferred', 1),
+        makeFact('doc-1', 'entity-1', 'immutable_document', 1),
       ])
     );
 
@@ -87,10 +87,10 @@ describe('maintenance — Scenario 2: runHeal LLM phase deletes agent_inferred, 
     expect(ids).toContain('doc-1');
   });
 
-  it('LLM-requested delete on user_document fact is silently ignored', async () => {
+  it('LLM-requested delete on immutable_document fact is silently ignored', async () => {
     const db = openTestDatabase();
     const wiki = new WikiMemory(db, {
-      // LLM tries to delete both fact-a (valid) and doc-1 (user_document — should be blocked)
+      // LLM tries to delete both fact-a (valid) and doc-1 (immutable_document — should be blocked)
       llmProvider: scriptedLLM([
         JSON.stringify({ downgraded: [], deleted: ['fact-a', 'doc-1'], newFacts: [] }),
       ]),
@@ -100,8 +100,8 @@ describe('maintenance — Scenario 2: runHeal LLM phase deletes agent_inferred, 
 
     await wiki.importDump(
       makeDump('entity-1', [
-        makeFact('fact-a', 'entity-1', 'agent_inferred', 1),
-        makeFact('doc-1', 'entity-1', 'user_document', 1),
+        makeFact('fact-a', 'entity-1', 'librarian_inferred', 1),
+        makeFact('doc-1', 'entity-1', 'immutable_document', 1),
       ])
     );
 
@@ -135,13 +135,13 @@ describe('maintenance — Scenario 3: runReembed writes BLOBs; read() loads from
           facts: [
             {
               id: 'f1', entity_id: 'entity-1', title: 'apple fruit', body: 'red',
-              tags: [], confidence: 'certain', source_type: 'agent_inferred',
+              tags: [], confidence: 'certain', source_type: 'librarian_inferred',
               source_hash: null, source_ref: null, created_at: 1000, updated_at: 1000,
               last_accessed_at: null, access_count: 0, deleted_at: null,
             },
             {
               id: 'f2', entity_id: 'entity-1', title: 'car vehicle', body: 'fast',
-              tags: [], confidence: 'certain', source_type: 'agent_inferred',
+              tags: [], confidence: 'certain', source_type: 'librarian_inferred',
               source_hash: null, source_ref: null, created_at: 2000, updated_at: 2000,
               last_accessed_at: null, access_count: 0, deleted_at: null,
             },
@@ -216,7 +216,7 @@ describe('maintenance — Scenario 5: embed throws → onRetrievalFallback fires
     await wiki.setup();
 
     await wiki.importDump(makeDump('entity-1', [
-      makeFact('f-apple', 'entity-1', 'agent_inferred', 1000),
+      makeFact('f-apple', 'entity-1', 'librarian_inferred', 1000),
     ]));
 
     const result = await wiki.read('entity-1', 'apple');
@@ -241,7 +241,7 @@ describe('maintenance — Scenario 6: embed returns NaN vector → fallback fire
     await wiki.setup();
 
     await wiki.importDump(makeDump('entity-1', [
-      makeFact('f-title', 'entity-1', 'agent_inferred', 1000),
+      makeFact('f-title', 'entity-1', 'librarian_inferred', 1000),
     ]));
 
     const result = await wiki.read('entity-1', 'title');
@@ -263,7 +263,7 @@ describe('maintenance — Scenario 7: dimension mismatch → fallback fires, res
     });
     await wikiDim3.setup();
     await wikiDim3.importDump(makeDump('entity-1', [
-      makeFact('f-car', 'entity-1', 'agent_inferred', 1000),
+      makeFact('f-car', 'entity-1', 'librarian_inferred', 1000),
     ]));
     await wikiDim3.runReembed('entity-1'); // writes dim-3 embeddings
 
