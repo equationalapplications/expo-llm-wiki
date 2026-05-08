@@ -127,37 +127,29 @@ Replace:
 - Prose: Use "immutable documents" in natural language
 - Emphasis: Always clarify that immutability means "system cannot modify, only user-initiated forget/re-ingest"
 
-**CHANGELOG.md:**
+**Release notes / CHANGELOG:**
 
-Add BREAKING CHANGE entry:
+This repo uses [semantic-release](https://github.com/semantic-release/semantic-release) with the changelog plugin — **`CHANGELOG.md` is generated at release time. Do not hand-edit it.** Contributors should land a **conventional commit** whose body includes a `BREAKING CHANGE:` footer (and migration guidance). The release notes will pick that up automatically.
 
-```markdown
-## [NEXT_VERSION] - YYYY-MM-DD
+Example footer content to include in the commit message (not pasted into `CHANGELOG.md`):
 
-### BREAKING CHANGES
+```text
+BREAKING CHANGE: source_type enum strings renamed: user_document → immutable_document,
+agent_inferred → librarian_inferred. Existing DBs need manual SQL or wipe/re-ingest; see migration guide.
 
-- **source_type enum renamed for clarity**:
-  - `user_document` → `immutable_document` 
-  - `agent_inferred` → `librarian_inferred`
-  
-  **Migration:** Existing databases are incompatible. Either:
-  1. Wipe database and re-ingest, or
-  2. Run manual SQL:
-     ```sql
-     UPDATE llm_wiki_entries SET source_type = 'immutable_document' WHERE source_type = 'user_document';
-     UPDATE llm_wiki_entries SET source_type = 'librarian_inferred' WHERE source_type = 'agent_inferred';
-     ```
-     (Adjust `llm_wiki_` prefix if custom `tablePrefix` configured)
+Migration SQL (adjust table prefix to match WikiMemory tablePrefix):
+UPDATE <prefix>entries SET source_type = 'immutable_document' WHERE source_type = 'user_document';
+UPDATE <prefix>entries SET source_type = 'librarian_inferred' WHERE source_type = 'agent_inferred';
 ```
 
 ### Testing Strategy
 
-All existing tests validate immutability behavior:
+**Enum rename:** Existing tests validate immutability behavior:
 - `maintenance.test.ts` — verifies heal/librarian skip immutable documents
 - `config.test.ts` — verifies stale downgrade skips immutable documents  
 - `exportImport.test.ts` — verifies immutable documents export/import correctly
 
-No new test cases needed — behavior unchanged, only naming.
+**Retention boundaries:** Separate from the rename, prune/heal retention uses inclusive threshold comparisons (`<=`) for zero-day retention. Add or keep **boundary-focused tests** (mocked time, equality at cutoff) so inclusive cutoff behavior does not regress — this is not “no new tests”; it documents real behavior beyond the rename.
 
 **Verification:**
 1. Run full test suite after rename
@@ -172,7 +164,7 @@ No new test cases needed — behavior unchanged, only naming.
 - [ ] Update all test fixtures (10 files; check `migration2.test.ts` historical intent)
 - [ ] Update README.md documentation
 - [ ] Update 5 specification files (or document why historical specs left untouched)
-- [ ] Add BREAKING CHANGE to CHANGELOG.md
+- [ ] Ship breaking change via conventional commit + `BREAKING CHANGE:` footer (no manual `CHANGELOG.md` edit)
 - [ ] Run full test suite
 - [ ] Grep verify: `grep -rn "user_document\|agent_inferred" packages/ docs/ README.md` returns only intentional historical refs
 
@@ -217,6 +209,6 @@ SELECT DISTINCT source_type FROM llm_wiki_entries;
 
 ## Non-Goals
 
-- No backward compatibility layer (breaking change accepted)
-- No runtime migration (user must run SQL manually if needed)
+- **No automatic in-place DB migration** — the library does not rewrite existing rows on open; users with legacy `source_type` strings in SQLite must run manual SQL or wipe/re-ingest. **`setup()` / `importDump()` fail fast** if the database still contains legacy values, with copy-pastable migration SQL (prefix-aware).
+- **Dump compatibility (narrow):** `importDump()` **normalizes legacy `source_type` strings on write** so older exports do not silently violate immutability semantics. That is not a “live DB migration”; it only affects data path through import.
 - No changes to `user_stated` or `user_confirmed` enum values
