@@ -1070,8 +1070,9 @@ export class WikiMemory {
                 }
 
                 if (this.options.propagateRankerFailureToRetrievalFallback) {
-                  const mirrored = new Error('Vector ranker failed, falling back');
-                  (mirrored as any).cause = rankerError;
+                  const mirrored = new Error('Vector ranker failed, falling back', {
+                    cause: this._sanitizeRankerError(rankerErr),
+                  });
                   pendingRankerFallbackError = mirrored;
                 }
               }
@@ -1242,6 +1243,34 @@ export class WikiMemory {
       if (updatedAtDiff !== 0) return updatedAtDiff;
       return a.id.localeCompare(b.id);
     });
+  }
+
+  /**
+   * Strip potentially sensitive data from ranker errors before exposing to host callbacks.
+   * Preserves error type for debugging but removes message/stack that may contain credentials.
+   * Recursively sanitizes one level of .cause; deeper chains collapse to type only.
+   */
+  private _sanitizeRankerError(err: unknown): Error {
+    if (this.options.sanitizeRankerErrors === false) {
+      return err instanceof Error ? err : new Error(String(err));
+    }
+
+    const typeName =
+      err instanceof Error
+        ? (err.constructor?.name ?? 'Error')
+        : typeof err;
+
+    const innerCause =
+      err instanceof Error && err.cause !== undefined
+        ? new Error(`Caused by: ${(err.cause as Error)?.constructor?.name ?? typeof err.cause}`)
+        : undefined;
+
+    const sanitized = new Error(
+      `VectorRanker ${typeName} (message scrubbed for security)`,
+      innerCause ? { cause: innerCause } : undefined,
+    );
+    sanitized.name = typeName;
+    return sanitized;
   }
 
   /**

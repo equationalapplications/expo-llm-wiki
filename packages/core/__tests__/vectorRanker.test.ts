@@ -795,4 +795,100 @@ describe('VectorRanker integration', () => {
       );
     });
   });
+
+  describe('Error sanitization', () => {
+    it('sanitizes ranker errors by default (sanitizeRankerErrors=true)', async () => {
+      const db = openTestDatabase();
+      let capturedError: Error | undefined;
+
+      const leakyRanker: VectorRanker = {
+        async rankBySimilarity() {
+          throw new Error('Connection failed: https://api.example.com?key=sk_live_secret123');
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: { generateText: async () => '{}', embed: async (t) => keywordEmbed(t) },
+        vectorRanker: leakyRanker,
+        vectorRankerFallback: 'js-cosine',
+        propagateRankerFailureToRetrievalFallback: true,
+        onRetrievalFallback: (error) => { capturedError = error; },
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+      ]));
+
+      await wiki.read('user-1', 'apple');
+
+      expect(capturedError).toBeDefined();
+      const cause = (capturedError as Error & { cause?: Error }).cause;
+      expect(cause).toBeDefined();
+      expect(cause!.message).not.toContain('sk_live_secret123');
+      expect(cause!.message).toContain('VectorRanker');
+      expect(cause!.message).toContain('scrubbed');
+      expect(cause!.name).toBe('Error');
+    });
+
+    it('sanitizes non-Error throws without crashing (sanitizer robustness)', async () => {
+      const db = openTestDatabase();
+      let capturedError: Error | undefined;
+
+      const stringThrowingRanker: VectorRanker = {
+        async rankBySimilarity() {
+          // eslint-disable-next-line no-throw-literal
+          throw 'bare string with secret api_key=abc';
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: { generateText: async () => '{}', embed: async (t) => keywordEmbed(t) },
+        vectorRanker: stringThrowingRanker,
+        vectorRankerFallback: 'js-cosine',
+        propagateRankerFailureToRetrievalFallback: true,
+        onRetrievalFallback: (error) => { capturedError = error; },
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+      ]));
+
+      await wiki.read('user-1', 'apple');
+
+      expect(capturedError).toBeDefined();
+      const cause = (capturedError as Error & { cause?: Error }).cause!;
+      expect(cause.message).not.toContain('api_key=abc');
+      expect(cause.message).toContain('VectorRanker string');
+    });
+
+    it('preserves original error when sanitizeRankerErrors=false', async () => {
+      const db = openTestDatabase();
+      let capturedError: Error | undefined;
+
+      const leakyRanker: VectorRanker = {
+        async rankBySimilarity() {
+          throw new Error('Detailed error with api_key=secret123');
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: { generateText: async () => '{}', embed: async (t) => keywordEmbed(t) },
+        vectorRanker: leakyRanker,
+        vectorRankerFallback: 'js-cosine',
+        sanitizeRankerErrors: false,
+        propagateRankerFailureToRetrievalFallback: true,
+        onRetrievalFallback: (error) => { capturedError = error; },
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+      ]));
+
+      await wiki.read('user-1', 'apple');
+
+      expect(capturedError).toBeDefined();
+      const cause = (capturedError as Error & { cause?: Error }).cause!;
+      expect(cause.message).toContain('api_key=secret123');
+    });
+  });
 });
