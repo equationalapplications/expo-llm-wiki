@@ -4,7 +4,7 @@
 
 **Goal:** Rename `WikiFact.source_type` enum values `user_document` → `immutable_document` and `agent_inferred` → `librarian_inferred` for semantic clarity. Breaking change.
 
-**Architecture:** Mechanical rename across TS source, schema DEFAULT, test fixtures, scripts, and design docs. No behavior change. Existing tests cover behavior; commit per logical group; verify with grep + full test suite.
+**Architecture:** Mechanical rename across TS source, schema DEFAULT, test fixtures, scripts, and design docs. No behavior change from rename itself. Prune/heal boundary behavior changed in commit 07a2198 (separate fix): uses `<=` instead of `<` for retention threshold comparisons to handle zero-retention correctly. Existing tests cover behavior; commit per logical group; verify with grep + full test suite.
 
 **Tech Stack:** TypeScript, SQLite (op-sqlite/better-sqlite3), Vitest, semantic-release (auto-generates CHANGELOG from conventional commits — use `BREAKING CHANGE:` footer instead of manual CHANGELOG edit).
 

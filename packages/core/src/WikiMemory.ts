@@ -664,6 +664,31 @@ export class WikiMemory {
       }
     });
 
+    // BREAKING CHANGE: source_type enum renamed in v3.3.0. Fail fast if legacy values detected.
+    // This prevents silent corruption where old 'user_document' facts would bypass immutable guards.
+    if (entriesExistedBeforeSetup) {
+      const legacyCount = await this.db.getFirstAsync<{ count: number }>(
+        `SELECT COUNT(*) as count FROM ${this.prefix}entries
+         WHERE source_type IN ('user_document', 'agent_inferred')`,
+        []
+      );
+
+      if (legacyCount && legacyCount.count > 0) {
+        const migrationSQL = `
+-- Run this SQL to migrate legacy source_type values (adjust prefix if custom tablePrefix configured):
+UPDATE ${this.prefix}entries SET source_type = 'immutable_document' WHERE source_type = 'user_document';
+UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source_type = 'agent_inferred';
+        `.trim();
+
+        throw new Error(
+          `Database contains ${legacyCount.count} entries with legacy source_type values ('user_document' or 'agent_inferred'). ` +
+          `These enum values were renamed in v3.3.0. Running without migration would allow legacy 'user_document' facts to bypass ` +
+          `immutability guards, causing data corruption.\n\n${migrationSQL}\n\n` +
+          `After running the migration SQL, restart your application.`
+        );
+      }
+    }
+
     await this.rebuildMiniSearchIndex();
   }
 
@@ -1832,18 +1857,18 @@ export class WikiMemory {
       if (orphanAfterDays !== null) {
         const orphanThreshold = now - (orphanAfterDays * MS_PER_DAY);
         await this.db.runAsync(`
-          UPDATE ${this.prefix}entries 
-          SET deleted_at = ?, updated_at = ? 
-          WHERE entity_id = ? AND access_count = 0 AND created_at < ? AND source_type != 'immutable_document' AND deleted_at IS NULL
+          UPDATE ${this.prefix}entries
+          SET deleted_at = ?, updated_at = ?
+          WHERE entity_id = ? AND access_count = 0 AND created_at <= ? AND source_type != 'immutable_document' AND deleted_at IS NULL
         `, [now, now, entityId, orphanThreshold]);
       }
 
       if (staleInferredAfterDays !== null) {
         const staleThreshold = now - (staleInferredAfterDays * MS_PER_DAY);
         await this.db.runAsync(`
-          UPDATE ${this.prefix}entries 
-          SET confidence = 'tentative', updated_at = ? 
-          WHERE entity_id = ? AND confidence = 'inferred' AND (last_accessed_at < ? OR (last_accessed_at IS NULL AND created_at < ?)) AND source_type != 'immutable_document' AND deleted_at IS NULL
+          UPDATE ${this.prefix}entries
+          SET confidence = 'tentative', updated_at = ?
+          WHERE entity_id = ? AND confidence = 'inferred' AND (last_accessed_at <= ? OR (last_accessed_at IS NULL AND created_at <= ?)) AND source_type != 'immutable_document' AND deleted_at IS NULL
         `, [now, entityId, staleThreshold, staleThreshold]);
       }
     });
