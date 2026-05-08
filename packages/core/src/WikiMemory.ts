@@ -509,8 +509,8 @@ export class WikiMemory {
 
   /**
    * GDPR-critical variant: awaits the hook with a timeout and rethrows failures.
-   * Use ONLY on deletion paths where ANN cleanup must succeed before SQLite commit.
-   * For best-effort index sync (reembed, migration), use _notifyEmbeddingPersisted.
+   * Use ONLY on deletion paths. forget() calls after soft-delete UPDATE; runPrune()
+   * calls before hard DELETE. For best-effort sync, use _notifyEmbeddingPersisted.
    */
   private async _notifyEmbeddingPersistedOrThrow(
     entityId: string,
@@ -535,17 +535,20 @@ export class WikiMemory {
       );
     });
 
+    const hookPromise = Promise.resolve(
+      this.options.vectorRanker.onEmbeddingPersisted({
+        entityId,
+        factId,
+        vector: vectorCopy,
+      }),
+    );
+
     try {
-      await Promise.race([
-        Promise.resolve(
-          this.options.vectorRanker.onEmbeddingPersisted({
-            entityId,
-            factId,
-            vector: vectorCopy,
-          }),
-        ),
-        timeoutPromise,
-      ]);
+      await Promise.race([hookPromise, timeoutPromise]);
+    } catch (err) {
+      // Suppress late rejections from hook if timeout won
+      hookPromise.catch(() => {});
+      throw err;
     } finally {
       if (timeoutHandle) clearTimeout(timeoutHandle);
     }
@@ -825,6 +828,15 @@ export class WikiMemory {
           this.vectorCache.delete(entityId);
 
           const remaining = entriesToDelete.length - succeeded.length - 1;
+
+          // Preserve timeout errors (thrown by WikiMemory, not the ranker)
+          const isTimeout = (failure.cause as any)?.[HOOK_TIMEOUT_MARKER] === true;
+          if (isTimeout) {
+            throw new Error(
+              `Prune partially failed: deleted ${succeeded.length}, failed at ${failure.factId} due to timeout, ${remaining} remaining`,
+            );
+          }
+
           throw new Error(
             `Prune partially failed: deleted ${succeeded.length}, failed at ${failure.factId}, ${remaining} remaining`,
             { cause: this._sanitizeRankerError(failure.cause) },
@@ -2532,11 +2544,16 @@ export class WikiMemory {
       const deletedEntryIds: string[] = [];
 
       if (params.clearAll) {
-        const entriesToDelete = await this.db.getAllAsync<{ id: string }>(
+        // Select both new deletions and already-soft-deleted (for hook retry on failure)
+        const newDeletions = await this.db.getAllAsync<{ id: string }>(
           `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
           [entityId]
         );
-        deletedEntryIds.push(...entriesToDelete.map(e => e.id));
+        const alreadySoftDeleted = await this.db.getAllAsync<{ id: string }>(
+          `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NOT NULL`,
+          [entityId]
+        );
+        deletedEntryIds.push(...newDeletions.map(e => e.id), ...alreadySoftDeleted.map(e => e.id));
 
         const [entriesRes, tasksRes] = await Promise.all([
           this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
@@ -2558,15 +2575,17 @@ export class WikiMemory {
         if (params.sourceHash !== undefined && !sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
 
         if (params.entryId) {
+          // Select entry regardless of deleted_at to allow hook retry on already-soft-deleted rows
           const entry = await this.db.getFirstAsync<{ id: string }>(
-            `SELECT id FROM ${this.prefix}entries WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`,
+            `SELECT id FROM ${this.prefix}entries WHERE id = ? AND entity_id = ?`,
             [params.entryId, entityId]
           );
           if (entry) deletedEntryIds.push(entry.id);
         }
 
         if (sourceRef || sourceHash) {
-          let q = `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`;
+          // Select entries regardless of deleted_at to allow hook retry on already-soft-deleted rows
+          let q = `SELECT id FROM ${this.prefix}entries WHERE entity_id = ?`;
           const args: any[] = [entityId];
           if (sourceRef) {
             q += ` AND source_ref = ?`;

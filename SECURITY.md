@@ -217,17 +217,24 @@ Query text passed to `read()` may be PII. Don't log it unless you have user cons
 
 `forget()` and `runPrune()` reject when `onEmbeddingPersisted` throws or exceeds `deletionHookTimeoutMs` (default 30s). This is intentional — silent failure would leave deleted vectors retrievable in external ANN indexes, violating GDPR right-to-erasure.
 
+**Important:** When `forget()` fails due to a hook error, the entry/task is already soft-deleted in SQLite (marked with `deleted_at`), but the ANN index cleanup hook failed. Retrying the same `forget()` call will re-attempt the hook on the already-soft-deleted row.
+
 **Required handling:**
 
 ```typescript
 try {
   await wikiMemory.forget(entityId, { entryId });
 } catch (err) {
-  // ANN cleanup failed. Options:
-  // 1. Retry with backoff (transient ANN outage)
-  // 2. Queue for background reconciliation
-  // 3. Surface to user as "deletion pending"
-  // DO NOT mark deletion complete in your UI.
+  // ANN cleanup failed. Entry is already soft-deleted in SQLite,
+  // but the ANN index cleanup hook failed.
+  //
+  // Options:
+  // 1. Retry same forget() call (re-attempts hook on soft-deleted row)
+  // 2. Run runPrune(entityId, { retainSoftDeletedFor: 0 }) to force hard-delete after hook retry
+  // 3. Queue for background reconciliation
+  // 4. Surface to user as "deletion pending"
+  //
+  // DO NOT mark deletion complete in your UI until hook succeeds.
   enqueueDeletionRetry(entityId, entryId);
   throw err;
 }
