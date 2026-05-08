@@ -187,6 +187,56 @@ describe('VectorRanker integration', () => {
       const factBIdx = result.facts.findIndex(f => f.id === 'fact-b');
       expect(factBIdx).toBeGreaterThan(0);
     });
+
+    it('should allow unembedded fact to win via keyword score in hybrid mode even when ranker returns maxResults', async () => {
+      // Regression test: when ranker returns >= maxResults results, backfill logic
+      // must still admit unembedded rows in hybrid mode so they can compete via keyword weight.
+      const db = openTestDatabase();
+      const mockRanker: VectorRanker = {
+        rankBySimilarity: async ({ limit }) => {
+          // Return exactly maxResults (10) semantic results, omitting the unembedded fact.
+          // All have low semantic scores so keyword weight dominates in hybrid blend.
+          const results: VectorRankerSemanticResult[] = [];
+          for (let i = 0; i < limit; i++) {
+            results.push({ id: `filler-${i}`, semanticScore: 0.1 });
+          }
+          return results;
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: {
+          generateText: async () => '{}',
+          embed: async (t) => keywordEmbed(t),
+        },
+        vectorRanker: mockRanker,
+        config: { maxResults: 10 },
+      });
+      await wiki.setup();
+
+      // Import 10 filler facts (embeddings exist, ranker will return them) + 1 unembedded fact
+      const facts = [];
+      for (let i = 0; i < 10; i++) {
+        facts.push({ id: `filler-${i}`, title: `noise ${i}`, body: 'irrelevant' });
+      }
+      facts.push({ id: 'keyword-winner', title: 'perfect exact match keyword winner', body: 'body' });
+      await wiki.importDump(makeDump(facts));
+
+      // Delete the embedding for 'keyword-winner' to simulate unembedded fact
+      await db.runAsync(
+        "UPDATE llm_wiki_entries SET embedding_blob = NULL, embedding = NULL WHERE id = 'keyword-winner'"
+      );
+
+      // Query with strong keyword match + hybrid mode (70% keyword, 30% semantic)
+      const result = await wiki.read('user-1', 'perfect exact match keyword winner', {
+        hybridWeight: 0.3,
+        maxResults: 10,
+      });
+
+      // The unembedded 'keyword-winner' fact should rank first via (1-0.3)*kwScore,
+      // beating the 10 filler facts with semanticScore=0.1 each.
+      expect(result.facts[0].id).toBe('keyword-winner');
+    });
   });
 
   describe('Pre-filter integration', () => {

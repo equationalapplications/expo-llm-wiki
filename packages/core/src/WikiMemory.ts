@@ -962,8 +962,12 @@ export class WikiMemory {
                 const scoredIds = new Set(scored.map(s => s.id));
                 const unscoredRows = candidateRows.filter(row => !scoredIds.has(row.id));
 
-                // Only backfill enough to reach maxResults (avoid O(N) work for large entities)
-                const maxBackfill = Math.max(0, maxResults - scored.length);
+                // Hybrid mode: always admit top maxResults unscored rows by keyword score so unembedded
+                // facts can compete. Pure semantic: only backfill gap to reach maxResults (avoid O(N) work).
+                const maxBackfill = (weight !== undefined && weight < 1)
+                  ? Math.min(unscoredRows.length, maxResults)
+                  : Math.max(0, maxResults - scored.length);
+
                 if (maxBackfill > 0 && unscoredRows.length > 0) {
                   let rowsToBackfill: typeof unscoredRows;
                   if (weight !== undefined && weight < 1) {
@@ -1006,8 +1010,8 @@ export class WikiMemory {
                       const idChunk = rowIds.slice(i, i + chunkSize);
                       const placeholders = idChunk.map(() => '?').join(',');
                       const embeddingRows = await this.db.getAllAsync<{ id: string; embedding_blob: Uint8Array | null; embedding: string | null }>(
-                        `SELECT id, embedding_blob, embedding FROM ${this.prefix}entries WHERE id IN (${placeholders})`,
-                        idChunk
+                        `SELECT id, embedding_blob, embedding FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND entity_id = ? AND deleted_at IS NULL`,
+                        [...idChunk, entityId]
                       );
                       for (const row of embeddingRows) {
                         embeddingsMap.set(row.id, { embedding_blob: row.embedding_blob, embedding: row.embedding });
@@ -2241,12 +2245,16 @@ export class WikiMemory {
       }
       // Notify external vector index about preserved-blob facts.
       // These skipped embedFact(), so _notifyEmbeddingPersisted was never called.
-      for (const [factId, blobData] of factsWithPreservedBlob) {
-        try {
-          const float32Vector = new Float32Array(blobData.buffer, blobData.byteOffset, blobData.byteLength / 4);
-          await this._notifyEmbeddingPersisted(entityId, factId, float32Vector);
-        } catch (hookErr) {
-          console.warn(`[WikiMemory] onEmbeddingPersisted hook failed for preserved-blob fact ${factId}:`, hookErr);
+      // Only notify for live facts (skip soft-deleted) to avoid polluting external index.
+      for (const fact of bundle.facts) {
+        const blobData = factsWithPreservedBlob.get(fact.id);
+        if (blobData && !fact.deleted_at && upsertedFactIds.has(fact.id)) {
+          try {
+            const float32Vector = new Float32Array(blobData.buffer, blobData.byteOffset, blobData.byteLength / 4);
+            await this._notifyEmbeddingPersisted(entityId, fact.id, float32Vector);
+          } catch (hookErr) {
+            console.warn(`[WikiMemory] onEmbeddingPersisted hook failed for preserved-blob fact ${fact.id}:`, hookErr);
+          }
         }
       }
       // If any facts carried preserved BLOBs, record the vector dimension in the
