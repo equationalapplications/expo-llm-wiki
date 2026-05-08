@@ -707,6 +707,99 @@ describe('VectorRanker integration', () => {
       });
     });
 
+    it('should call onEmbeddingPersisted with null when ingestDocument replaces existing source_ref facts', async () => {
+      const db = openTestDatabase();
+      const onEmbeddingPersisted = vi.fn();
+      const mockRanker: VectorRanker = {
+        rankBySimilarity: async () => [],
+        onEmbeddingPersisted,
+      };
+
+      let ingestCall = 0;
+      const wiki = new WikiMemory(db, {
+        llmProvider: {
+          generateText: async () => {
+            ingestCall += 1;
+            return JSON.stringify({
+              facts: [{
+                title: `Doc Fact ${ingestCall}`,
+                body: `Body ${ingestCall}`,
+                tags: [],
+                confidence: 'certain',
+              }],
+            });
+          },
+          embed: async (t) => keywordEmbed(t),
+        },
+        vectorRanker: mockRanker,
+      });
+      await wiki.setup();
+
+      await wiki.ingestDocument('user-1', {
+        sourceRef: 'doc://same',
+        sourceHash: 'a'.repeat(64),
+        documentChunk: 'first version',
+        maxChunkLength: 1000,
+        chunkOverlap: 0,
+      });
+      const firstBundle = await wiki.getMemoryBundle('user-1');
+      const firstFactId = firstBundle.facts[0]?.id;
+      expect(firstFactId).toBeDefined();
+
+      onEmbeddingPersisted.mockClear();
+      await wiki.ingestDocument('user-1', {
+        sourceRef: 'doc://same',
+        sourceHash: 'b'.repeat(64),
+        documentChunk: 'second version',
+        maxChunkLength: 1000,
+        chunkOverlap: 0,
+      });
+
+      expect(onEmbeddingPersisted).toHaveBeenCalledWith({
+        entityId: 'user-1',
+        factId: firstFactId,
+        vector: null,
+      });
+    });
+
+    it('should call onEmbeddingPersisted with null when heal soft-deletes facts', async () => {
+      const db = openTestDatabase();
+      const onEmbeddingPersisted = vi.fn();
+      const mockRanker: VectorRanker = {
+        rankBySimilarity: async () => [],
+        onEmbeddingPersisted,
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: {
+          generateText: async () => JSON.stringify({
+            downgraded: [],
+            deleted: ['fact-a'],
+            newFacts: [],
+          }),
+          embed: async (t) => keywordEmbed(t),
+        },
+        vectorRanker: mockRanker,
+        config: {
+          orphanAfterDays: null,
+          staleInferredAfterDays: null,
+        },
+      });
+      await wiki.setup();
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple', body: 'red' },
+      ]));
+
+      onEmbeddingPersisted.mockClear();
+      await wiki.runHeal('user-1');
+
+      expect(onEmbeddingPersisted).toHaveBeenCalledWith({
+        entityId: 'user-1',
+        factId: 'fact-a',
+        vector: null,
+      });
+    });
+
     it('should not call onEmbeddingPersisted when hook is not provided', async () => {
       const db = openTestDatabase();
       const mockRanker: VectorRanker = {

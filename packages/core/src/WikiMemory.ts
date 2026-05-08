@@ -1668,6 +1668,7 @@ export class WikiMemory {
     const validNewFacts = newFacts.map(validateFact).filter((f): f is ExtractedFact => f !== null);
 
     const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
+    const uniqueDeletedFactIds = Array.from(new Set(safeDeleted));
 
     await this.db.withTransactionAsync(async () => {
       for (const id of safeDowngraded) {
@@ -1695,6 +1696,13 @@ export class WikiMemory {
     // preFilterLimit, hybrid scoring, or keyword fallback see the new/deleted
     // facts immediately rather than waiting for every embed call to finish.
     await this.rebuildMiniSearchIndex(entityId);
+    for (const factId of uniqueDeletedFactIds) {
+      try {
+        await this._notifyEmbeddingPersisted(entityId, factId, null);
+      } catch (hookErr) {
+        console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during heal for ${factId}:`, hookErr);
+      }
+    }
     for (const fact of insertedFacts) {
       await this.embedFact(fact);
     }
@@ -2669,8 +2677,17 @@ export class WikiMemory {
 
       const now = Date.now();
       const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
+      const deletedSourceFactIds: string[] = [];
 
       await this.db.withTransactionAsync(async () => {
+        const existingSourceFacts = await this.db.getAllAsync<{ id: string }>(
+          `SELECT id FROM ${this.prefix}entries WHERE source_ref = ? AND entity_id = ? AND deleted_at IS NULL`,
+          [sourceRef, entityId]
+        );
+        for (const row of existingSourceFacts) {
+          deletedSourceFactIds.push(row.id);
+        }
+
         await this.db.runAsync(
           `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE source_ref = ? AND entity_id = ? AND deleted_at IS NULL`,
           [now, now, sourceRef, entityId]
@@ -2689,6 +2706,14 @@ export class WikiMemory {
       // Rebuild text index before embedding so concurrent reads see new content.
       await this.rebuildMiniSearchIndex(entityId);
       this.vectorCache.delete(entityId);
+      const uniqueDeletedSourceFactIds = Array.from(new Set(deletedSourceFactIds));
+      for (const factId of uniqueDeletedSourceFactIds) {
+        try {
+          await this._notifyEmbeddingPersisted(entityId, factId, null);
+        } catch (hookErr) {
+          console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during ingest for ${factId}:`, hookErr);
+        }
+      }
       for (const fact of insertedFacts) {
         await this.embedFact(fact);
       }
