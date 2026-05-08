@@ -1,14 +1,10 @@
 import { defineConfig } from 'vitest/config';
+import react from '@vitejs/plugin-react';
 
 export default defineConfig({
+  plugins: [react()],
   test: {
     include: ['__tests__/**/*.test.{ts,tsx}'],
-    environment: 'happy-dom',
-  },
-  define: {
-    'process.env.NODE_ENV': JSON.stringify('test'),
-  },
-  resolve: {
-    dedupe: ['react', 'react-dom'],
+    environment: 'jsdom',
   },
 });

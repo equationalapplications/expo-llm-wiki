@@ -37,6 +37,9 @@
   "dependencies": {
     "@equationalapplications/core-llm-wiki": "workspace:*"
   },
+  "engines": {
+    "node": ">=20"
+  },
   "peerDependencies": {
     "react": ">=17"
   },
@@ -44,7 +47,7 @@
     "@testing-library/react": "^16.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "happy-dom": "^20.9.0",
+    "@vitejs/plugin-react": "^6.0.1",
     "jsdom": "^29.0.0",
     "react": "19.2.5",
     "react-dom": "19.2.5",

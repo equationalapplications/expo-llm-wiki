@@ -124,12 +124,170 @@ const memory = await wikiMemory.read('user-123', 'my preferences', {
 ```
 
 **Hybrid scoring blends:**
-- `hybridWeight: 1.0` → pure semantic scoring among the candidates being scored; if `preFilterLimit` is set, semantic scoring is still limited to the top-K MiniSearch matches
+- `hybridWeight: 1.0` → all-semantic blend with semantic scores clamped to non-negative range (no keyword component)
 - `hybridWeight: 0.5` → balanced semantic + keyword (50/50 blend)
 - `hybridWeight: 0.0` → pure keyword ranking, skips `embed()` entirely (no LLM API cost)
 
+True cosine-range pure semantic ranking (including negative cosine values) is used when `hybridWeight` is left `undefined`.
+
 **Pre-filtering optimization:**
 When `preFilterLimit: 50` is set with 1000 facts, cosine similarity is computed only for the top 50 MiniSearch keyword matches, reducing O(N) scoring to O(50).
+
+## Pluggable Vector Retrieval
+
+When your entity corpus grows, in-process cosine similarity scoring becomes a bottleneck. The optional **`VectorRanker`** interface lets you delegate semantic ranking to **sqlite-vec**, **sqlite-vss**, or an external vector database while `WikiMemory` handles embedding validation, hybrid scoring, and tier-2 row hydration.
+
+### `VectorRanker` purpose
+
+`VectorRanker` provides an optional injection point for approximate nearest-neighbor (ANN) ranking:
+
+```typescript
+export interface VectorRanker {
+  /**
+   * Return semantic scores for facts in scope, sorted by similarity.
+   * - `entityId`: restricts results to one entity
+   * - `queryVec`: the embedded query (Float32Array or number[])
+   * - `candidateIds` (optional): when set, rank only within this set (MiniSearch pre-filter mode)
+   * - `limit`: requested top-K count
+   */
+  rankBySimilarity(args: VectorRankerRankArgs): Promise<VectorRankerSemanticResult[]>;
+
+  /**
+   * Optional hook called after embedding persistence (upsert, reembed, delete).
+   * Implementations use this to keep external indexes (sqlite-vec, remote ANN) in sync.
+   */
+  onEmbeddingPersisted?(event: {
+    entityId: string;
+    factId: string;
+    vector: Float32Array | null; // null = embedding removed
+  }): void | Promise<void>;
+}
+```
+
+**When no ranker is configured**, `WikiMemory` uses built-in JS cosine similarity — the same behavior as today. When a ranker is supplied and embeddings preconditions are met (`embed` available, dimensions match, no mismatches), `WikiMemory` delegates scoring to the ranker and blends results with keyword scores.
+
+### Example: sqlite-vec adapter
+
+```typescript
+import { WikiMemory } from '@equationalapplications/core-llm-wiki';
+import type { VectorRanker, VectorRankerRankArgs, VectorRankerSemanticResult } from '@equationalapplications/core-llm-wiki';
+
+// Minimal sqlite-vec adapter (pseudo-code)
+const sqliteVecRanker: VectorRanker = {
+  async rankBySimilarity(args: VectorRankerRankArgs): Promise<VectorRankerSemanticResult[]> {
+    const { entityId, queryVec, candidateIds, limit } = args;
+
+    // Build KNN query using sqlite-vec's distance functions.
+    // sqlite-vec returns cosine distance (0 = identical, 2 = opposite) ascending.
+    // Invert to semanticScore: higher = more similar, matching VectorRanker contract.
+    let sql = `SELECT id, (1.0 - distance) AS semanticScore FROM vec_facts 
+              WHERE entity_id = ? AND deleted_at IS NULL`;
+    const params: any[] = [entityId];
+
+    // Apply pre-filter if provided
+    if (candidateIds) {
+      sql += ` AND id IN (${candidateIds.map(() => '?').join(',')})`;
+      params.push(...candidateIds);
+    }
+
+    // KNN search (example syntax; adjust for your sqlite-vec version)
+    sql += ` ORDER BY vec MATCH vec_neighbor(?) LIMIT ?`;
+    params.push(queryVec, limit);
+
+    const rows = await db.getAllAsync<{ id: string; semanticScore: number }>(sql, params);
+    return rows; // sorted descending by semanticScore (closest distance → highest similarity)
+  },
+
+  async onEmbeddingPersisted(event) {
+    const { entityId, factId, vector } = event;
+    if (vector) {
+      // Upsert into sqlite-vec table
+      await db.runAsync(
+        `INSERT OR REPLACE INTO vec_facts (id, entity_id, vec) VALUES (?, ?, ?)`,
+        [factId, entityId, vector]
+      );
+    } else {
+      // Delete when embedding is removed
+      await db.runAsync(`DELETE FROM vec_facts WHERE id = ?`, [factId]);
+    }
+  },
+};
+
+const wikiMemory = new WikiMemory(db, {
+  llmProvider: { /* ... */ },
+  vectorRanker: sqliteVecRanker,
+});
+
+// read() now uses sqlite-vec for scoring instead of JS cosine
+const memory = await wikiMemory.read('user-123', 'my preferences');
+```
+
+### Fallback policies
+
+When `rankBySimilarity` rejects (e.g., ANN service outage, misconfiguration), `WikiMemory` applies a recovery policy:
+
+```typescript
+export type VectorRankerFallback =
+  | 'js-cosine'  // (default) Score candidates in-process with JS cosine — same as no ranker
+  | 'keyword'    // Skip semantic ranking; return keyword-only results
+  | 'empty'      // Semantic facts list empty for this read; tasks/events still included
+  | 'throw';     // Reject read() with the ranker error
+
+const wikiMemory = new WikiMemory(db, {
+  llmProvider: { /* ... */ },
+  vectorRanker: sqliteVecRanker,
+  vectorRankerFallback: 'js-cosine', // default
+  onVectorRankerFallback: (info) => {
+    console.warn(
+      `Ranker failed (policy: ${info.policy}); error:`,
+      info.error
+    );
+  },
+});
+```
+
+- **`'js-cosine'` (default):** Seamless degradation; same behavior as if no ranker was configured.
+- **`'keyword'`:** Useful when semantic ranking is optional; keyword search proceeds normally.
+- **`'empty'`:** Return no facts for this query (but tasks/events still load); useful for strict consistency.
+- **`'throw'`:** Propagate the error and fail the read.
+
+### `onEmbeddingPersisted` eventual consistency
+
+If `vectorRanker.onEmbeddingPersisted` returns a pending Promise, the hook **may resolve asynchronously**. This supports ANN indexes that rebuild on a schedule (e.g., sqlite-vec triggers on transaction commit) or external services with eventual consistency.
+
+**Best practice:**
+- If your adapter has **synchronous guarantees** (in-process sqlite-vec, same transaction), await the promise.
+- If your adapter is **eventually consistent** (remote ANN, async rebuild), document the lag and document that queries may miss recently-added facts until the index refreshes.
+- The **SQLite blob remains the source of truth**; `WikiMemory` always writes embeddings to `embedding_blob` first before calling the hook.
+
+### Hybrid scoring with ranker
+
+When both `vectorRanker` and `hybridWeight` are configured, `WikiMemory` still applies hybrid blending after the ranker returns scores:
+
+```typescript
+const wikiMemory = new WikiMemory(db, {
+  config: {
+    hybridWeight: 0.7, // 70% semantic, 30% keyword
+  },
+  vectorRanker: sqliteVecRanker,
+});
+
+// ranker returns semanticScore; WikiMemory blends with MiniSearch keyword score
+const memory = await wikiMemory.read('user-123', 'my preferences', {
+  hybridWeight: 0.5, // per-call override to 50/50 blend
+});
+```
+
+Note on semantics:
+- Leave `hybridWeight` undefined for true pure-semantic cosine-range scoring.
+- Set `hybridWeight: 1` for an all-semantic variant that clamps negative semantic scores to 0.
+
+For details on hybrid scoring formulas and trade-offs, see [Retrieval Tuning](#retrieval-tuning) above.
+
+### Spec and issue reference
+
+- **Full spec:** [`docs/superpowers/specs/2026-05-07-pluggable-vector-retrieval.md`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/docs/superpowers/specs/2026-05-07-pluggable-vector-retrieval.md)
+- **GitHub issue:** [#15](https://github.com/equationalapplications/expo-llm-wiki/issues/15)
 
 ## Vector Cache
 

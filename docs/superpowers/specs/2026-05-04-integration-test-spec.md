@@ -253,6 +253,6 @@ The repository does not currently define a dedicated test CI workflow. When CI c
 
 ## What Is Not Covered Here
 
-- React hook integration (`packages/react`) — tracked separately; currently disabled due to the documented `vitest` 4.x + React 19 + happy-dom/jsdom incompatibility, unrelated to retrieval.
+- React hook integration (`packages/react`) — tracked separately with 37 tests covering all hooks (useMemoryRead, useWikiWrite, useWikiMaintenance, useWikiIngest, useWikiForget, useWikiExport, useWikiHasChanged).
 - Expo adapter (`packages/expo`) — existing `adapter.test.ts` covers the SQLite adapter contract.
 - Performance / latency benchmarks — out of scope for correctness testing.

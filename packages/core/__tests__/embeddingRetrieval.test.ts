@@ -180,3 +180,70 @@ describe('read() — cosine similarity path', () => {
   });
 });
 
+describe('VectorRanker parity', () => {
+  it('should produce identical ranking with and without vectorRanker when undefined', async () => {
+    // First run: no vectorRanker
+    const db1 = openTestDatabase();
+    const wiki1 = new WikiMemory(db1, {
+      llmProvider: {
+        generateText: async () => '{}',
+        embed: async (t) => keywordEmbed(t),
+      },
+    });
+    await wiki1.setup();
+    await wiki1.importDump(makeDump([
+      { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+      { id: 'fact-b', title: 'car vehicle', body: 'fast engine' },
+      { id: 'fact-c', title: 'banana fruit', body: 'yellow sweet' },
+    ]));
+
+    const result1 = await wiki1.read('user-1', 'fruit');
+    const order1 = result1.facts.map(f => f.id);
+
+    // Second run: vectorRanker explicitly set to undefined
+    const db2 = openTestDatabase();
+    const wiki2 = new WikiMemory(db2, {
+      llmProvider: {
+        generateText: async () => '{}',
+        embed: async (t) => keywordEmbed(t),
+      },
+      vectorRanker: undefined,
+    });
+    await wiki2.setup();
+    await wiki2.importDump(makeDump([
+      { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+      { id: 'fact-b', title: 'car vehicle', body: 'fast engine' },
+      { id: 'fact-c', title: 'banana fruit', body: 'yellow sweet' },
+    ]));
+
+    const result2 = await wiki2.read('user-1', 'fruit');
+    const order2 = result2.facts.map(f => f.id);
+
+    // Rankings should be identical
+    expect(order1).toEqual(order2);
+  });
+});
+
+describe('Callback regression checks', () => {
+  it('onRetrievalFallback should still fire on embed failure when vectorRanker is not set', async () => {
+    const fallbackCalls: Error[] = [];
+    const { wiki } = makeWiki(
+      async () => {
+        throw new Error('Embedding service unavailable');
+      },
+      (e) => fallbackCalls.push(e)
+    );
+    await wiki.setup();
+    await wiki.importDump(makeDump([
+      { id: 'fact-a', title: 'apple fruit', body: 'healthy' },
+    ]));
+
+    const result = await wiki.read('user-1', 'apple');
+
+    // Should have fallen back to keyword search
+    expect(result.facts.length).toBeGreaterThan(0);
+    expect(fallbackCalls).toHaveLength(1);
+    expect(fallbackCalls[0].message).toContain('Embedding service unavailable');
+  });
+});
+

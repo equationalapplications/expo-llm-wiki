@@ -428,7 +428,7 @@ export class WikiMemory {
     }
   }
 
-  private async embedFact(fact: { id: string; title: string; body: string; tags: string | string[] }): Promise<boolean> {
+  private async embedFact(fact: { id: string; entity_id: string; title: string; body: string; tags: string | string[] }): Promise<boolean> {
     const embedFn = this.options.llmProvider.embed;
     if (!embedFn) return false;
     let tagsStr: string;
@@ -466,6 +466,12 @@ export class WikiMemory {
         `UPDATE ${this.prefix}entries SET embedding_blob = ?, embedding = NULL WHERE id = ?`,
         [blob, fact.id]
       );
+      // Isolate hook failure: embedding was persisted successfully even if external index sync fails
+      try {
+        await this._notifyEmbeddingPersisted(fact.entity_id, fact.id, float32Vector);
+      } catch (hookErr) {
+        console.warn(`[WikiMemory] onEmbeddingPersisted hook failed for ${fact.id}:`, hookErr);
+      }
       return true;
     } catch (err) {
       console.warn(`[WikiMemory] embedFact failed for ${fact.id}:`, err);
@@ -477,6 +483,10 @@ export class WikiMemory {
   private _healKey(entityId: string) { return `${this.prefix}:${entityId}:heal`; }
   private _warnCrossEntityCollision(type: 'entry' | 'task', id: string, existingEntityId: string, targetEntityId: string): void {
     console.warn(`[WikiMemory] importDump: ${type} id "${id}" already belongs to entity "${existingEntityId}"; skipping for entity "${targetEntityId}"`);
+  }
+
+  private async _notifyEmbeddingPersisted(entityId: string, factId: string, vector: Float32Array | null): Promise<void> {
+    await this.options.vectorRanker?.onEmbeddingPersisted?.({ entityId, factId, vector });
   }
 
   constructor(db: SQLiteAdapter, options: WikiOptions) {
@@ -701,9 +711,18 @@ export class WikiMemory {
       let deletedEntries = 0;
       let deletedTasks = 0;
       let deletedEvents = 0;
+      const deletedEntryIds: string[] = [];
 
       if (retainSoftDeletedFor !== null) {
         const cutoff = now - retainSoftDeletedFor * 86400000;
+
+        const entriesToDelete = await this.db.getAllAsync<{ id: string }>(
+          `SELECT id FROM ${this.prefix}entries
+           WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`,
+          [entityId, cutoff]
+        );
+        deletedEntryIds.push(...entriesToDelete.map(e => e.id));
+
         const entryResult = await this.db.runAsync(
           `DELETE FROM ${this.prefix}entries
            WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`,
@@ -736,6 +755,17 @@ export class WikiMemory {
 
       await this.rebuildMiniSearchIndex(entityId);
       this.vectorCache.delete(entityId);
+
+      // Deduplicate to avoid redundant hook calls for the same fact
+      const uniqueDeletedIds = Array.from(new Set(deletedEntryIds));
+      for (const factId of uniqueDeletedIds) {
+        try {
+          await this._notifyEmbeddingPersisted(entityId, factId, null);
+        } catch (hookErr) {
+          console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during prune for ${factId}:`, hookErr);
+        }
+      }
+
       return { entries: deletedEntries, tasks: deletedTasks, events: deletedEvents };
     } finally {
       this.activeMaintenanceJobs.delete(pruneKey);
@@ -775,6 +805,10 @@ export class WikiMemory {
       let usedEmbed = false;
 
       if (!skipEmbed && embedFn) {
+        let rankerShouldRethrow = false;
+        let pendingRankerFallbackError: Error | undefined;
+        let usedKeywordFallback = false;
+        let scoredAlreadySortedAndLimited = false;
         try {
           const queryVec = await embedFn(trimmedQuery);
 
@@ -824,8 +858,10 @@ export class WikiMemory {
           }
 
           // Determine candidate rows
-          type ScoreRow = { id: string; embedding_blob: Uint8Array | null; embedding: string | null; updated_at: number | null; access_count: number | null };
-          let candidateRows: ScoreRow[] | null; // null = pre-filter returned 0 results
+          type CandidateRowMetadata = { id: string; updated_at: number | null; access_count: number | null };
+          type CandidateRowWithEmbeddings = CandidateRowMetadata & { embedding_blob: Uint8Array | null; embedding: string | null };
+          const useRanker = Boolean(this.options.vectorRanker);
+          let candidateRows: CandidateRowMetadata[] | CandidateRowWithEmbeddings[] | null; // null = pre-filter returned 0 results
           let populateCache = true;
           let miniSearchScores: Map<string, number> | undefined;
 
@@ -846,15 +882,30 @@ export class WikiMemory {
               } else {
                 const topKIds = topKResults.map(r => r.id);
                 const inClauseChunkSize = 500;
-                candidateRows = [];
-                for (let i = 0; i < topKIds.length; i += inClauseChunkSize) {
-                  const idChunk = topKIds.slice(i, i + inClauseChunkSize);
-                  const placeholders = idChunk.map(() => '?').join(',');
-                  const chunkRows = await this.db.getAllAsync<ScoreRow>(
-                    `SELECT id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
-                    idChunk
-                  );
-                  candidateRows.push(...chunkRows);
+                if (useRanker) {
+                  const rows: CandidateRowMetadata[] = [];
+                  for (let i = 0; i < topKIds.length; i += inClauseChunkSize) {
+                    const idChunk = topKIds.slice(i, i + inClauseChunkSize);
+                    const placeholders = idChunk.map(() => '?').join(',');
+                    const chunkRows = await this.db.getAllAsync<CandidateRowMetadata>(
+                      `SELECT id, updated_at, access_count FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+                      idChunk
+                    );
+                    rows.push(...chunkRows);
+                  }
+                  candidateRows = rows;
+                } else {
+                  const rows: CandidateRowWithEmbeddings[] = [];
+                  for (let i = 0; i < topKIds.length; i += inClauseChunkSize) {
+                    const idChunk = topKIds.slice(i, i + inClauseChunkSize);
+                    const placeholders = idChunk.map(() => '?').join(',');
+                    const chunkRows = await this.db.getAllAsync<CandidateRowWithEmbeddings>(
+                      `SELECT id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+                      idChunk
+                    );
+                    rows.push(...chunkRows);
+                  }
+                  candidateRows = rows;
                 }
                 if (weight !== undefined && weight < 1) {
                   const maxMsScore = Math.max(1, topKResults[0]?.score ?? 1);
@@ -864,11 +915,21 @@ export class WikiMemory {
             }
           } else {
             // Full entity scan
-            candidateRows = await this.db.getAllAsync<ScoreRow>(
-              `SELECT id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
-              [entityId]
-            );
-            // Collect MiniSearch scores for hybrid blend if weight is set and <1 (weight=1 means pure semantic)
+            // If vectorRanker is configured, skip embedding load for now (ranker will provide ranking)
+            // Otherwise fetch embeddings for JS cosine ranking
+            if (useRanker) {
+              candidateRows = await this.db.getAllAsync<CandidateRowMetadata>(
+                `SELECT id, updated_at, access_count FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
+                [entityId]
+              );
+            } else {
+              candidateRows = await this.db.getAllAsync<CandidateRowWithEmbeddings>(
+                `SELECT id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
+                [entityId]
+              );
+            }
+            // Collect MiniSearch scores for hybrid blend if weight is set and <1
+            // (weight=1 is all-semantic with clamped scores; pure semantic [-1,1] requires weight undefined)
             if (weight !== undefined && weight < 1) {
               const msResults = this.miniSearch.search(trimmedQuery, {
                 filter: (r) => (r as unknown as { entity_id: string }).entity_id === entityId,
@@ -883,100 +944,319 @@ export class WikiMemory {
             // pre-filter returned 0 candidates — facts = [], skip phase 2, skip access tracking
             usedEmbed = true;
           } else {
-            // Cache: reuse parsed vectors from prior full-scan reads
-            let entityCache = this.vectorCache.get(entityId);
-            // Evict only when a full-scan read discovers the entity has grown past
-            // the size cap, so the stale oversized Map can't accumulate unbounded
-            // vectors by reference. Pre-filter reads (populateCache=false) reuse
-            // the existing cache and must not evict it.
-            const tooLarge = populateCache && candidateRows.length > WikiMemory.MAX_VECTOR_CACHE_FACTS_PER_ENTITY;
-            if (tooLarge && entityCache) {
-              this.vectorCache.delete(entityId);
-              entityCache = undefined;
-            }
-            const canCache = populateCache && !tooLarge;
-            if (canCache && !entityCache) {
-              entityCache = new Map<string, Float32Array>();
-            }
+            // Rank candidates: use vectorRanker if present, otherwise use JS cosine
+            let scored: Array<{ id: string; score: number; updated_at?: number | null; access_count?: number | null }>;
 
-            const scored = candidateRows.map(row => {
-              let vector = entityCache?.get(row.id) ?? parseEmbedding(row.embedding_blob, row.embedding);
-              if (vector && canCache && entityCache && !entityCache.has(row.id)) {
-                entityCache.set(row.id, vector);
-              }
-              let score = 0;
-              if (vector && vector.length === queryVec.length) {
-                const cosSim = cosineSimilarity(queryVec, vector);
-                if (weight !== undefined) {
-                  // Clamp to [0,1] only for hybrid blending so the weighted sum stays
-                  // in a predictable range. Pure-semantic ranking preserves the full
-                  // [-1,1] cosine range so the least-dissimilar facts always rank above
-                  // unembedded rows (which score 0) even when all scores are negative.
-                  const kwScore = miniSearchScores?.get(row.id) ?? 0;
-                  score = weight * Math.max(0, cosSim) + (1 - weight) * kwScore;
+            if (useRanker) {
+              // Use external ranker for semantic scoring
+              const candidateIds = effectivePreFilterLimit !== undefined
+                ? candidateRows.map(r => r.id)
+                : undefined;
+
+              try {
+                // Oversample by max(2x, +50) to preserve recall after re-ranking;
+                // caller slices final output to maxResults.
+                const oversampledLimit = Math.max(maxResults * 2, maxResults + 50);
+                scored = await this._rankWithVectorRanker({
+                  entityId,
+                  queryVec,
+                  candidateIds,
+                  weight,
+                  miniSearchScores,
+                  limit: oversampledLimit,
+                });
+
+                // Attach tie-break metadata from candidateRows (only for IDs returned by ranker)
+                if (scored.length > 0) {
+                  const scoredIds = new Set(scored.map(s => s.id));
+                  const metaMap = new Map<string, { updated_at: number | null; access_count: number | null }>();
+                  for (const r of candidateRows) {
+                    if (scoredIds.has(r.id)) {
+                      metaMap.set(r.id, { updated_at: r.updated_at, access_count: r.access_count });
+                    }
+                  }
+                  scored = scored.map(s => {
+                    const meta = metaMap.get(s.id);
+                    return { ...s, updated_at: meta?.updated_at ?? null, access_count: meta?.access_count ?? null };
+                  });
+                }
+
+                // Backfill ranker-omitted rows per VectorRanker contract:
+                // treat missing ids as "no embedding" (pure semantic: -2, hybrid: keyword-only)
+                const scoredIds = new Set(scored.map(s => s.id));
+
+                // Compute backfill budget up-front.
+                // Hybrid mode: allow up to maxResults keyword-only rows to compete.
+                // Pure semantic: only fill the remaining result slots.
+                const isHybrid = weight !== undefined && weight < 1;
+                const maxBackfill = isHybrid
+                  ? maxResults
+                  : Math.max(0, maxResults - scored.length);
+
+                if (maxBackfill > 0) {
+                  if (isHybrid) {
+                    // Hybrid mode: prioritize by keyword score using O(N log K) top-K selection
+                    // instead of O(N log N) full sort, since K (maxBackfill) is typically << N.
+                    type CandidateRow = typeof candidateRows[number];
+                    const topK: Array<{ row: CandidateRow; kwScore: number }> = [];
+
+                    for (const row of candidateRows) {
+                      if (scoredIds.has(row.id)) continue;
+                      const kwScore = miniSearchScores?.get(row.id) ?? 0;
+                      const candidate = { row, kwScore };
+
+                      if (topK.length < maxBackfill) {
+                        // Array not full yet - insert in sorted position (descending order)
+                        let insertIdx = topK.length;
+                        for (let i = 0; i < topK.length; i++) {
+                          const cmp = this._compareScoredRows(
+                            {
+                              id: candidate.row.id,
+                              score: candidate.kwScore,
+                              updated_at: candidate.row.updated_at,
+                              access_count: candidate.row.access_count,
+                            },
+                            {
+                              id: topK[i].row.id,
+                              score: topK[i].kwScore,
+                              updated_at: topK[i].row.updated_at,
+                              access_count: topK[i].row.access_count,
+                            }
+                          );
+                          if (cmp < 0) {
+                            insertIdx = i;
+                            break;
+                          }
+                        }
+                        topK.splice(insertIdx, 0, candidate);
+                      } else {
+                        const cmpWorst = this._compareScoredRows(
+                          {
+                            id: candidate.row.id,
+                            score: candidate.kwScore,
+                            updated_at: candidate.row.updated_at,
+                            access_count: candidate.row.access_count,
+                          },
+                          {
+                            id: topK[maxBackfill - 1].row.id,
+                            score: topK[maxBackfill - 1].kwScore,
+                            updated_at: topK[maxBackfill - 1].row.updated_at,
+                            access_count: topK[maxBackfill - 1].row.access_count,
+                          }
+                        );
+                        if (cmpWorst < 0) {
+                          // Found better candidate than current worst - replace worst and re-insert
+                          let insertIdx = maxBackfill - 1;
+                          for (let i = 0; i < topK.length; i++) {
+                            const cmp = this._compareScoredRows(
+                              {
+                                id: candidate.row.id,
+                                score: candidate.kwScore,
+                                updated_at: candidate.row.updated_at,
+                                access_count: candidate.row.access_count,
+                              },
+                              {
+                                id: topK[i].row.id,
+                                score: topK[i].kwScore,
+                                updated_at: topK[i].row.updated_at,
+                                access_count: topK[i].row.access_count,
+                              }
+                            );
+                            if (cmp < 0) {
+                              insertIdx = i;
+                              break;
+                            }
+                          }
+                          topK.splice(insertIdx, 0, candidate);
+                          topK.pop(); // Remove worst element
+                        }
+                      }
+                    }
+
+                    for (const { row, kwScore } of topK) {
+                      scored.push({
+                        id: row.id,
+                        score: (1 - weight) * kwScore,
+                        updated_at: row.updated_at,
+                        access_count: row.access_count,
+                      });
+                    }
+                  } else {
+                    // Pure semantic: all omitted rows share score -2.
+                    // Tie-break omitted rows deterministically before truncating.
+                    const omitted: Array<{ id: string; score: number; updated_at: number | null; access_count: number | null }> = [];
+                    for (const row of candidateRows) {
+                      if (scoredIds.has(row.id)) continue;
+                      omitted.push({ id: row.id, score: -2, updated_at: row.updated_at, access_count: row.access_count });
+                    }
+                    if (omitted.length > 0) {
+                      this._tieBreakSort(omitted);
+                      scored.push(...omitted.slice(0, maxBackfill));
+                    }
+                  }
+                }
+              } catch (rankerErr) {
+                const rankerError = rankerErr instanceof Error ? rankerErr : new Error(String(rankerErr));
+                const policy = this.options.vectorRankerFallback ?? 'js-cosine';
+
+                this.options.onVectorRankerFallback?.({ error: rankerError, policy });
+
+                if (policy === 'throw') {
+                  rankerShouldRethrow = true;
+                  throw rankerError;
+                } else if (policy === 'js-cosine') {
+                  // If embeddings were skipped (vectorRanker was configured), fetch them now for fallback
+                  let fallbackRows = candidateRows;
+                  if (fallbackRows && fallbackRows.length > 0 && !('embedding_blob' in fallbackRows[0])) {
+                    const rowIds = fallbackRows.map(r => r.id);
+                    const embeddingsMap = new Map<string, { embedding_blob: Uint8Array | null; embedding: string | null }>();
+                    const chunkSize = 500;
+                    for (let i = 0; i < rowIds.length; i += chunkSize) {
+                      const idChunk = rowIds.slice(i, i + chunkSize);
+                      const placeholders = idChunk.map(() => '?').join(',');
+                      const embeddingRows = await this.db.getAllAsync<{ id: string; embedding_blob: Uint8Array | null; embedding: string | null }>(
+                        `SELECT id, embedding_blob, embedding FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND entity_id = ? AND deleted_at IS NULL`,
+                        [...idChunk, entityId]
+                      );
+                      for (const row of embeddingRows) {
+                        embeddingsMap.set(row.id, { embedding_blob: row.embedding_blob, embedding: row.embedding });
+                      }
+                    }
+                    fallbackRows = fallbackRows.map(r => ({
+                      ...r,
+                      embedding_blob: embeddingsMap.get(r.id)?.embedding_blob ?? null,
+                      embedding: embeddingsMap.get(r.id)?.embedding ?? null,
+                    })) as CandidateRowWithEmbeddings[];
+                  }
+                  scored = await this._rankWithJsCosine({
+                    entityId,
+                    queryVec,
+                    candidateRows: fallbackRows as CandidateRowWithEmbeddings[],
+                    weight,
+                    miniSearchScores,
+                    populateCache,
+                    limit: maxResults,
+                  });
+                  scoredAlreadySortedAndLimited = true;
+                } else if (policy === 'keyword') {
+                  // Fall back to keyword-only results from MiniSearch
+                  const msResults = this.miniSearch.search(trimmedQuery, {
+                    filter: (r) => (r as unknown as { entity_id: string }).entity_id === entityId,
+                    combineWith: 'OR',
+                  });
+                  const topResults = msResults.slice(0, maxResults);
+                  // Build metadata map only for returned IDs (not all candidates)
+                  const resultIds = new Set(topResults.map(r => r.id));
+                  const candidateMap = new Map<string, { updated_at: number | null; access_count: number | null }>();
+                  for (const r of candidateRows) {
+                    if (resultIds.has(r.id)) {
+                      candidateMap.set(r.id, { updated_at: r.updated_at, access_count: r.access_count });
+                    }
+                  }
+                  scored = topResults.map(r => {
+                    const meta = candidateMap.get(r.id);
+                    return {
+                      id: r.id,
+                      score: r.score ?? 0,
+                      access_count: meta?.access_count ?? null,
+                      updated_at: meta?.updated_at ?? null,
+                    };
+                  });
+                  usedKeywordFallback = true;
                 } else {
-                  score = cosSim;
+                  // policy === 'empty'
+                  scored = [];
                 }
-              } else if (weight !== undefined && weight < 1) {
-                // No usable embedding — still apply the keyword portion of the hybrid score.
-                // miniSearchScores is always defined here because both code paths above
-                // populate it whenever weight !== undefined && weight < 1, matching this guard.
-                const kwScore = miniSearchScores?.get(row.id) ?? 0;
-                score = (1 - weight) * kwScore;
-              } else {
-                // Pure-semantic path with no usable vector. Use -2 (below the minimum
-                // valid cosine of -1) so embedded facts always rank above unembedded rows
-                // even when every cosine score is negative.
-                score = -2;
-              }
-              return { row, score };
-            });
 
-            if (canCache && entityCache && entityCache.size > 0) {
-              if (!this.vectorCache.has(entityId)) {
-                // Evict the oldest entity when at the per-process cap to prevent unbounded growth
-                // on long-lived instances serving many distinct entities.
-                // Only store non-empty maps: caching an empty map for a zero-fact entity
-                // wastes one of the 16 entity slots and can evict a real cached entity.
-                if (this.vectorCache.size >= WikiMemory.MAX_VECTOR_CACHE_ENTITIES) {
-                  const oldestKey = this.vectorCache.keys().next().value as string | undefined;
-                  if (oldestKey !== undefined) this.vectorCache.delete(oldestKey);
+                if (this.options.propagateRankerFailureToRetrievalFallback) {
+                  const mirrored = new Error('Vector ranker failed, falling back');
+                  (mirrored as any).cause = rankerError;
+                  pendingRankerFallbackError = mirrored;
                 }
-                this.vectorCache.set(entityId, entityCache);
               }
+            } else {
+              // Use in-process JS cosine similarity
+              // At this point candidateRows must have embeddings (we fetched them because vectorRanker is not configured)
+              scored = await this._rankWithJsCosine({
+                entityId,
+                queryVec,
+                candidateRows: candidateRows as CandidateRowWithEmbeddings[],
+                weight,
+                miniSearchScores,
+                populateCache,
+                limit: maxResults,
+              });
+              scoredAlreadySortedAndLimited = true;
             }
 
-            scored.sort((a, b) => {
-              const scoreDiff = b.score - a.score;
-              if (scoreDiff !== 0) return scoreDiff;
-              const accessCountDiff = (b.row.access_count ?? 0) - (a.row.access_count ?? 0);
-              if (accessCountDiff !== 0) return accessCountDiff;
-              const updatedAtDiff = (b.row.updated_at ?? 0) - (a.row.updated_at ?? 0);
-              if (updatedAtDiff !== 0) return updatedAtDiff;
-              return a.row.id.localeCompare(b.row.id);
-            });
-
-            // Phase 2: fetch full rows only for the top results
-            const topIds = scored.slice(0, maxResults).map(s => s.row.id);
-            if (topIds.length > 0) {
-              const fullRows: Array<WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null }> = [];
-              const phase2ChunkSize = 500;
-              for (let i = 0; i < topIds.length; i += phase2ChunkSize) {
-                const idChunk = topIds.slice(i, i + phase2ChunkSize);
-                const placeholders = idChunk.map(() => '?').join(',');
-                const chunkRows = await this.db.getAllAsync<WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null }>(
-                  `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
-                  idChunk
-                );
-                fullRows.push(...chunkRows);
+            if (scored.length > 0) {
+              // Re-apply tie-break sorting (ranker might not have stable ordering)
+              // Skip for keyword-only fallback to preserve MiniSearch ordering
+              if (!usedKeywordFallback && !scoredAlreadySortedAndLimited) {
+                this._tieBreakSort(scored);
               }
-              const byId = new Map(fullRows.map(r => [r.id, r]));
-              facts = topIds.map(id => byId.get(id)).filter((f): f is WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null } => f !== undefined);
+
+              // Phase 2: fetch full rows only for the top results
+              const topIds = (scoredAlreadySortedAndLimited ? scored : scored.slice(0, maxResults)).map(s => s.id);
+              if (topIds.length > 0) {
+                const fullRows: Array<WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null }> = [];
+                const phase2ChunkSize = 500;
+                for (let i = 0; i < topIds.length; i += phase2ChunkSize) {
+                  const idChunk = topIds.slice(i, i + phase2ChunkSize);
+                  const placeholders = idChunk.map(() => '?').join(',');
+                  const chunkRows = await this.db.getAllAsync<WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null }>(
+                    `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND entity_id = ? AND deleted_at IS NULL`,
+                    [...idChunk, entityId]
+                  );
+                  fullRows.push(...chunkRows);
+                }
+                const byId = new Map(fullRows.map(r => [r.id, r]));
+                facts = topIds.map(id => byId.get(id)).filter((f): f is WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null } => f !== undefined);
+
+                // Hydration can return fewer rows than ranked IDs when rows were concurrently
+                // soft-deleted or filtered by deleted_at before phase 2 hydration completes.
+                if (facts.length < topIds.length) {
+                  const missingIds = topIds.filter(id => !byId.has(id));
+                  const missingCount = missingIds.length;
+                  const sample = missingIds.slice(0, 5);
+                  const sampleSuffix = sample.length > 0
+                    ? ` Missing ID sample: ${sample.join(', ')}${missingIds.length > sample.length ? ', ...' : ''}.`
+                    : '';
+                  const error = new Error(
+                    `Phase 2 fact hydration returned ${missingCount} fewer row(s) than ranked IDs for entity ${entityId}. ` +
+                    `Rows may have been concurrently soft-deleted or filtered by deleted_at during hydration, ` +
+                    `or vector ranker output may include IDs that do not exist for this entity.` +
+                    sampleSuffix
+                  );
+                  this.options.onRetrievalFallback?.(error);
+                }
+              }
+              // Phase 2 succeeded — now safe to notify that ranker fallback occurred
+              if (pendingRankerFallbackError) {
+                this.options.onRetrievalFallback?.(pendingRankerFallbackError);
+                pendingRankerFallbackError = undefined;
+              }
+              usedEmbed = true;
+            } else {
+              // Empty scored results (ranker returned no matches)
+              if (pendingRankerFallbackError) {
+                this.options.onRetrievalFallback?.(pendingRankerFallbackError);
+                pendingRankerFallbackError = undefined;
+              }
+              usedEmbed = true;
             }
-            usedEmbed = true;
           } // closes the candidateRows !== null else block
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
+          if (rankerShouldRethrow) {
+            throw error;
+          }
+          // If Phase 2 failed and there's a pending ranker error, include it as cause
+          if (pendingRankerFallbackError) {
+            (error as any).cause = pendingRankerFallbackError;
+            pendingRankerFallbackError = undefined;
+          }
+          // Always notify of Phase 2 errors (ranker error attached as cause if present)
           this.options.onRetrievalFallback?.(error);
         }
       }
@@ -995,8 +1275,8 @@ export class WikiMemory {
             const idChunk = topIds.slice(i, i + kwChunkSize);
             const placeholders = idChunk.map(() => '?').join(',');
             const chunkRows = await this.db.getAllAsync<WikiFact>(
-              `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
-              idChunk
+              `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND entity_id = ? AND deleted_at IS NULL`,
+              [...idChunk, entityId]
             );
             kwRows.push(...chunkRows);
           }
@@ -1055,6 +1335,163 @@ export class WikiMemory {
     });
 
     return { facts: parsedFacts, tasks, events: events.reverse() };
+  }
+
+  /**
+   * Stable tie-break sort: score desc → access_count desc → updated_at desc → id asc.
+   */
+  private _tieBreakSort<T extends { id: string; score: number; updated_at?: number | null; access_count?: number | null }>(items: T[]): void {
+    items.sort((a, b) => this._compareScoredRows(a, b));
+  }
+
+  /**
+   * Comparator for score + deterministic tie-break fields.
+   * Negative return means "a ranks ahead of b" for descending score order.
+   */
+  private _compareScoredRows(
+    a: { id: string; score: number; updated_at?: number | null; access_count?: number | null },
+    b: { id: string; score: number; updated_at?: number | null; access_count?: number | null },
+  ): number {
+    const scoreDiff = b.score - a.score;
+    if (scoreDiff !== 0) return scoreDiff;
+    const accessCountDiff = (b.access_count ?? 0) - (a.access_count ?? 0);
+    if (accessCountDiff !== 0) return accessCountDiff;
+    const updatedAtDiff = (b.updated_at ?? 0) - (a.updated_at ?? 0);
+    if (updatedAtDiff !== 0) return updatedAtDiff;
+    return a.id.localeCompare(b.id);
+  }
+
+  /**
+   * Score candidate rows using in-process JS cosine similarity.
+   * Applies hybrid blending (if weight set) and tie-break sorting before returning.
+   */
+  private async _rankWithJsCosine(args: {
+    entityId: string;
+    queryVec: Float32Array | number[];
+    candidateRows: Array<{ id: string; embedding_blob: Uint8Array | null; embedding: string | null; updated_at: number | null; access_count: number | null }>;
+    weight: number | undefined;
+    miniSearchScores: Map<string, number> | undefined;
+    populateCache: boolean;
+    limit: number;
+  }): Promise<Array<{ id: string; score: number; updated_at: number | null; access_count: number | null }>> {
+    const { entityId, queryVec, candidateRows, weight, miniSearchScores, populateCache, limit } = args;
+
+    // Cache: reuse parsed vectors from prior full-scan reads
+    let entityCache = this.vectorCache.get(entityId);
+    const tooLarge = populateCache && candidateRows.length > WikiMemory.MAX_VECTOR_CACHE_FACTS_PER_ENTITY;
+    if (tooLarge && entityCache) {
+      this.vectorCache.delete(entityId);
+      entityCache = undefined;
+    }
+    const canCache = populateCache && !tooLarge;
+    if (canCache && !entityCache) {
+      entityCache = new Map<string, Float32Array>();
+    }
+
+    const scored = candidateRows.map(row => {
+      let vector = entityCache?.get(row.id) ?? parseEmbedding(row.embedding_blob, row.embedding);
+      if (vector && canCache && entityCache && !entityCache.has(row.id)) {
+        entityCache.set(row.id, vector);
+      }
+      let score = 0;
+      if (vector && vector.length === queryVec.length) {
+        const cosSim = cosineSimilarity(queryVec, vector);
+        if (weight !== undefined) {
+          // Clamp to [0,1] only for hybrid blending so the weighted sum stays
+          // in a predictable range. Pure-semantic ranking preserves the full
+          // [-1,1] cosine range so the least-dissimilar facts always rank above
+          // unembedded rows (which score 0) even when all scores are negative.
+          const kwScore = miniSearchScores?.get(row.id) ?? 0;
+          score = weight * Math.max(0, cosSim) + (1 - weight) * kwScore;
+        } else {
+          score = cosSim;
+        }
+      } else if (weight !== undefined && weight < 1) {
+        // No usable embedding — still apply the keyword portion of the hybrid score.
+        const kwScore = miniSearchScores?.get(row.id) ?? 0;
+        score = (1 - weight) * kwScore;
+      } else {
+        // Pure-semantic path with no usable vector. Use -2 (below the minimum
+        // valid cosine of -1) so embedded facts always rank above unembedded rows
+        // even when every cosine score is negative.
+        score = -2;
+      }
+      return { id: row.id, score, updated_at: row.updated_at, access_count: row.access_count };
+    });
+
+    if (canCache && entityCache && entityCache.size > 0) {
+      if (!this.vectorCache.has(entityId)) {
+        // Evict the oldest entity when at the per-process cap to prevent unbounded growth
+        // on long-lived instances serving many distinct entities.
+        if (this.vectorCache.size >= WikiMemory.MAX_VECTOR_CACHE_ENTITIES) {
+          const oldestKey = this.vectorCache.keys().next().value as string | undefined;
+          if (oldestKey !== undefined) this.vectorCache.delete(oldestKey);
+        }
+        this.vectorCache.set(entityId, entityCache);
+      }
+    }
+
+    // Apply tie-break sorting to the scored results and return only the top `limit` items.
+    this._tieBreakSort(scored);
+
+    return scored.slice(0, limit);
+  }
+
+  /**
+   * Delegate semantic ranking to the injected VectorRanker.
+   * Caller should pass an oversampledLimit to preserve recall after re-ranking.
+   * Returns scored results ready for hybrid blending and tie-break sorting.
+   */
+  private async _rankWithVectorRanker(args: {
+    entityId: string;
+    queryVec: Float32Array | number[];
+    candidateIds: readonly string[] | undefined;
+    weight: number | undefined;
+    miniSearchScores: Map<string, number> | undefined;
+    limit: number;
+  }): Promise<Array<{ id: string; score: number }>> {
+    const { entityId, queryVec, candidateIds, weight, miniSearchScores, limit } = args;
+
+    const ranker = this.options.vectorRanker;
+    if (!ranker) {
+      throw new Error('vectorRanker not configured');
+    }
+
+    const rankerResults = await ranker.rankBySimilarity({
+      entityId,
+      queryVec,
+      candidateIds,
+      limit,
+    });
+
+    // Normalize ranker output: filter to allowed ids, drop non-finite scores, deduplicate
+    // Stop collecting once limit valid results are found to protect against huge result sets
+    const allowedIds = candidateIds ? new Set(candidateIds) : undefined;
+    const seen = new Set<string>();
+    const normalized: typeof rankerResults = [];
+
+    for (const r of rankerResults) {
+      if (normalized.length >= limit) break; // Early termination once limit reached
+      if (seen.has(r.id)) continue;
+      if (allowedIds && !allowedIds.has(r.id)) continue;
+      if (!Number.isFinite(r.semanticScore)) continue;
+      seen.add(r.id);
+      normalized.push(r);
+    }
+
+    // Convert ranker results to scored format, applying hybrid blending if weight is set
+    const scored = normalized.map(r => {
+      let score = r.semanticScore;
+      if (weight !== undefined) {
+        // Hybrid blending: floor semantic score at 0 for predictable weighted sum (no upper clamp)
+        const kwScore = miniSearchScores?.get(r.id) ?? 0;
+        score = weight * Math.max(0, r.semanticScore) + (1 - weight) * kwScore;
+      }
+      return { id: r.id, score };
+    });
+
+    // Caller handles backfill, metadata attachment, tie-break sorting, and final slice
+    return scored;
   }
 
   async getMemoryBundle(entityId: string): Promise<MemoryBundle> {
@@ -1173,7 +1610,7 @@ export class WikiMemory {
 
     const now = Date.now();
 
-    const insertedFacts: Array<{ id: string; title: string; body: string; tags: string }> = [];
+    const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
 
     await this.db.withTransactionAsync(async () => {
       for (const fact of validFacts) {
@@ -1198,7 +1635,7 @@ export class WikiMemory {
           INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'agent_inferred', now, now]);
-        insertedFacts.push({ id, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
+        insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
       }
 
       for (const task of validTasks) {
@@ -1289,7 +1726,8 @@ export class WikiMemory {
     const safeDeleted = deleted.filter(id => mutableIds.has(id));
     const validNewFacts = newFacts.map(validateFact).filter((f): f is ExtractedFact => f !== null);
 
-    const insertedFacts: Array<{ id: string; title: string; body: string; tags: string }> = [];
+    const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
+    const uniqueDeletedFactIds = Array.from(new Set(safeDeleted));
 
     await this.db.withTransactionAsync(async () => {
       for (const id of safeDowngraded) {
@@ -1304,7 +1742,7 @@ export class WikiMemory {
           INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'agent_inferred', now, now]);
-        insertedFacts.push({ id, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
+        insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
       }
     });
 
@@ -1317,6 +1755,13 @@ export class WikiMemory {
     // preFilterLimit, hybrid scoring, or keyword fallback see the new/deleted
     // facts immediately rather than waiting for every embed call to finish.
     await this.rebuildMiniSearchIndex(entityId);
+    for (const factId of uniqueDeletedFactIds) {
+      try {
+        await this._notifyEmbeddingPersisted(entityId, factId, null);
+      } catch (hookErr) {
+        console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during heal for ${factId}:`, hookErr);
+      }
+    }
     for (const fact of insertedFacts) {
       await this.embedFact(fact);
     }
@@ -1699,18 +2144,33 @@ export class WikiMemory {
       // re-embedded — doing so would corrupt the winning row's vector with the
       // losing fact's title/body.
       const upsertedFactIds = new Set<string>();
+      // Track upserted facts whose incoming row is soft-deleted. In replace mode,
+      // these IDs still need vector=null notifications because they remain deleted.
+      const upsertedDeletedFactIds = new Set<string>();
       // Track which upserted facts already carry a valid BLOB so we can skip
       // embedFact() for them. BLOBs are reconstructed from three serialization
       // forms: in-memory Uint8Array/Buffer, Node.js Buffer JSON shape, and
       // numeric-keyed plain objects produced by JSON.stringify(Uint8Array).
-      const factsWithPreservedBlob = new Set<string>();
+      // Store the blob data so we can notify the external vector index after the transaction.
+      const factsWithPreservedBlob = new Map<string, Uint8Array>();
       // Track every unique dimension seen in preserved BLOBs. A dump may contain
       // blobs from multiple models (e.g. an intermediate mixed-model migration),
       // so we call storeEmbeddingDimension() for each unique dimension found to
       // ensure the mismatch flag is set whenever any two stored blobs disagree.
       const preservedBlobDims = new Set<number>();
+      // In replace mode, collect IDs of facts that will be soft-deleted so we can
+      // notify the external vector index with vector=null after the transaction.
+      // Without this, external indexes retain stale embeddings and keep returning
+      // deleted fact IDs in ranking results.
+      const softDeletedFactIds: string[] = [];
       await this.db.withTransactionAsync(async () => {
         if (!merge) {
+          // Collect IDs of live facts that will be soft-deleted
+          const toDelete = await this.db.getAllAsync<{ id: string }>(
+            `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
+            [entityId]
+          );
+          softDeletedFactIds.push(...toDelete.map(r => r.id));
           const now = Date.now();
           await this.db.runAsync(
             `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`,
@@ -1793,7 +2253,8 @@ export class WikiMemory {
             // copy — it returns a view into the parent buffer, which can have a non-zero
             // byteOffset and corrupt the Float32Array interpretation.
             const copy = new ArrayBuffer(rawBlob.byteLength);
-            new Uint8Array(copy).set(rawBlob);
+            const alignedBlob = new Uint8Array(copy);
+            alignedBlob.set(rawBlob);
             const floats = new Float32Array(copy, 0, rawBlob.byteLength / 4);
             let allFinite = true;
             for (let i = 0; i < floats.length; i++) {
@@ -1810,7 +2271,8 @@ export class WikiMemory {
               // there is no model fingerprint in the blob. Callers importing from
               // a different provider should call runReembed() after importDump()
               // rather than relying on { skipExisting: true }.
-              blobData = rawBlob;
+              // Store aligned copy (not rawBlob) to avoid Float32Array alignment errors in notification.
+              blobData = alignedBlob;
             }
           }
 
@@ -1831,7 +2293,7 @@ export class WikiMemory {
                 `UPDATE ${this.prefix}entries SET entity_id = ?, title = ?, body = ?, tags = ?, confidence = ?, source_type = ?, source_hash = ?, source_ref = ?, created_at = ?, updated_at = ?, last_accessed_at = ?, access_count = ?, deleted_at = ?, embedding_blob = ?, embedding = NULL WHERE id = ?`,
                 [entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, blobData, fact.id]
               );
-              factsWithPreservedBlob.add(fact.id);
+              factsWithPreservedBlob.set(fact.id, blobData);
               // Only track dimensions for live facts: read() and _reconcileEmbeddingDimension()
               // both filter by deleted_at IS NULL, so a soft-deleted stale blob must not
               // set embedding_dimension_mismatch and block retrieval on healthy live facts.
@@ -1849,13 +2311,14 @@ export class WikiMemory {
             }
             existingFactsById.set(fact.id, { id: fact.id, entity_id: entityId, updated_at: safeUpdatedAt });
             upsertedFactIds.add(fact.id);
+            if (fact.deleted_at) upsertedDeletedFactIds.add(fact.id);
           } else {
             if (blobData != null) {
               await this.db.runAsync(
                 `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at, embedding_blob) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, blobData]
               );
-              factsWithPreservedBlob.add(fact.id);
+              factsWithPreservedBlob.set(fact.id, blobData);
               if (!fact.deleted_at) preservedBlobDims.add(blobData.byteLength / 4);
             } else {
               await this.db.runAsync(
@@ -1865,6 +2328,7 @@ export class WikiMemory {
             }
             existingFactsById.set(fact.id, { id: fact.id, entity_id: entityId, updated_at: safeUpdatedAt });
             upsertedFactIds.add(fact.id);
+            if (fact.deleted_at) upsertedDeletedFactIds.add(fact.id);
           }
         }
 
@@ -1944,10 +2408,37 @@ export class WikiMemory {
         if (!fact.deleted_at && upsertedFactIds.has(fact.id) && !factsWithPreservedBlob.has(fact.id)) {
           await this.embedFact({
             id: fact.id,
+            entity_id: entityId,  // Use authoritative entityId from dump key, not fact.entity_id
             title: fact.title,
             body: fact.body,
             tags: Array.isArray(fact.tags) || typeof fact.tags === 'string' ? fact.tags : [],
           });
+        }
+      }
+      // Notify external vector index about preserved-blob facts.
+      // These skipped embedFact(), so _notifyEmbeddingPersisted was never called.
+      // Only notify for live facts (skip soft-deleted) to avoid polluting external index.
+      for (const fact of bundle.facts) {
+        const blobData = factsWithPreservedBlob.get(fact.id);
+        if (blobData && !fact.deleted_at && upsertedFactIds.has(fact.id)) {
+          try {
+            const float32Vector = new Float32Array(blobData.buffer, blobData.byteOffset, blobData.byteLength / 4);
+            await this._notifyEmbeddingPersisted(entityId, fact.id, float32Vector);
+          } catch (hookErr) {
+            console.warn(`[WikiMemory] onEmbeddingPersisted hook failed for preserved-blob fact ${fact.id}:`, hookErr);
+          }
+        }
+      }
+      // In replace mode, notify external vector index that soft-deleted facts should be removed.
+      // Re-upserted facts are usually restores, except when the incoming row is still
+      // soft-deleted (deleted_at set). Those must also receive vector=null.
+      for (const factId of softDeletedFactIds) {
+        if (!upsertedFactIds.has(factId) || upsertedDeletedFactIds.has(factId)) {
+          try {
+            await this._notifyEmbeddingPersisted(entityId, factId, null);
+          } catch (hookErr) {
+            console.warn(`[WikiMemory] onEmbeddingPersisted(vector=null) hook failed for soft-deleted fact ${factId}:`, hookErr);
+          }
         }
       }
       // If any facts carried preserved BLOBs, record the vector dimension in the
@@ -2069,8 +2560,15 @@ export class WikiMemory {
       const now = Date.now();
       let deletedEntries = 0;
       let deletedTasks = 0;
+      const deletedEntryIds: string[] = [];
 
       if (params.clearAll) {
+        const entriesToDelete = await this.db.getAllAsync<{ id: string }>(
+          `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
+          [entityId]
+        );
+        deletedEntryIds.push(...entriesToDelete.map(e => e.id));
+
         const [entriesRes, tasksRes] = await Promise.all([
           this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
           this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
@@ -2089,6 +2587,29 @@ export class WikiMemory {
         if (params.sourceRef !== undefined && !sourceRef) throw new Error('Invalid sourceRef');
         const sourceHash = params.sourceHash !== undefined ? normalizeSourceHash(params.sourceHash) : null;
         if (params.sourceHash !== undefined && !sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
+
+        if (params.entryId) {
+          const entry = await this.db.getFirstAsync<{ id: string }>(
+            `SELECT id FROM ${this.prefix}entries WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`,
+            [params.entryId, entityId]
+          );
+          if (entry) deletedEntryIds.push(entry.id);
+        }
+
+        if (sourceRef || sourceHash) {
+          let q = `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`;
+          const args: any[] = [entityId];
+          if (sourceRef) {
+            q += ` AND source_ref = ?`;
+            args.push(sourceRef);
+          }
+          if (sourceHash) {
+            q += ` AND source_hash = ?`;
+            args.push(sourceHash);
+          }
+          const entriesToDelete = await this.db.getAllAsync<{ id: string }>(q, args);
+          deletedEntryIds.push(...entriesToDelete.map(e => e.id));
+        }
 
         const entryPromise = params.entryId
           ? this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, params.entryId, entityId])
@@ -2126,6 +2647,17 @@ export class WikiMemory {
 
       await this.rebuildMiniSearchIndex(entityId);
       this.vectorCache.delete(entityId);
+
+      // Deduplicate to avoid redundant hook calls for the same fact
+      const uniqueDeletedIds = Array.from(new Set(deletedEntryIds));
+      for (const factId of uniqueDeletedIds) {
+        try {
+          await this._notifyEmbeddingPersisted(entityId, factId, null);
+        } catch (hookErr) {
+          console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during forget for ${factId}:`, hookErr);
+        }
+      }
+
       return { deleted: { entries: deletedEntries, tasks: deletedTasks } };
     } finally {
       this.activeMaintenanceJobs.delete(forgetKey);
@@ -2208,9 +2740,18 @@ export class WikiMemory {
       }
 
       const now = Date.now();
-      const insertedFacts: Array<{ id: string; title: string; body: string; tags: string }> = [];
+      const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
+      const deletedSourceFactIds: string[] = [];
 
       await this.db.withTransactionAsync(async () => {
+        const existingSourceFacts = await this.db.getAllAsync<{ id: string }>(
+          `SELECT id FROM ${this.prefix}entries WHERE source_ref = ? AND entity_id = ? AND deleted_at IS NULL`,
+          [sourceRef, entityId]
+        );
+        for (const row of existingSourceFacts) {
+          deletedSourceFactIds.push(row.id);
+        }
+
         await this.db.runAsync(
           `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE source_ref = ? AND entity_id = ? AND deleted_at IS NULL`,
           [now, now, sourceRef, entityId]
@@ -2222,13 +2763,21 @@ export class WikiMemory {
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'user_document', sourceHash, sourceRef, now, now]
           );
-          insertedFacts.push({ id, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
+          insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
         }
       });
 
       // Rebuild text index before embedding so concurrent reads see new content.
       await this.rebuildMiniSearchIndex(entityId);
       this.vectorCache.delete(entityId);
+      const uniqueDeletedSourceFactIds = Array.from(new Set(deletedSourceFactIds));
+      for (const factId of uniqueDeletedSourceFactIds) {
+        try {
+          await this._notifyEmbeddingPersisted(entityId, factId, null);
+        } catch (hookErr) {
+          console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during ingest for ${factId}:`, hookErr);
+        }
+      }
       for (const fact of insertedFacts) {
         await this.embedFact(fact);
       }
