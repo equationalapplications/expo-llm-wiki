@@ -92,7 +92,7 @@ User prompt:
 ```
 
 **Database writes (transactional):**
-- Each fact → `INSERT INTO {prefix}entries` with `source_type = 'agent_inferred'`
+- Each fact → `INSERT INTO {prefix}entries` with `source_type = 'librarian_inferred'`
 - Each task → `INSERT INTO {prefix}tasks` with `status = 'pending'`
 - IDs and timestamps are generated internally; the LLM never sets them.
 
@@ -140,11 +140,11 @@ User prompt:
 ```
 
 **Database writes (transactional):**
-- `downgraded` IDs → `UPDATE … SET confidence = 'tentative'` — only if `source_type != 'user_document'`
-- `deleted` IDs → soft-delete (`deleted_at = now`) — only if `source_type != 'user_document'`
-- `newFacts` → `INSERT INTO {prefix}entries` with `source_type = 'agent_inferred'`
+- `downgraded` IDs → `UPDATE … SET confidence = 'tentative'` — only if `source_type != 'immutable_document'`
+- `deleted` IDs → soft-delete (`deleted_at = now`) — only if `source_type != 'immutable_document'`
+- `newFacts` → `INSERT INTO {prefix}entries` with `source_type = 'librarian_inferred'`
 
-**Invariant:** Facts with `source_type = 'user_document'` are never modified or deleted by the Heal pass. Only `ingestDocument` or `forget` touch them.
+**Invariant:** Facts with `source_type = 'immutable_document'` are never modified or deleted by the Heal pass. Only `ingestDocument` or `forget` touch them.
 
 ---
 
@@ -189,7 +189,7 @@ User prompt:
 
 **Database writes (transactional, idempotent):**
 1. Soft-delete all existing entries with `source_ref = params.sourceRef` for this entity.
-2. Insert new facts with `source_type = 'user_document'`, `source_hash`, and `source_ref` set.
+2. Insert new facts with `source_type = 'immutable_document'`, `source_hash`, and `source_ref` set.
 
 Re-calling with the same `sourceRef` and updated content replaces the prior extraction cleanly. Callers should compute `sourceHash` (e.g. SHA-256 of the chunk) to detect whether the content has changed before calling.
 

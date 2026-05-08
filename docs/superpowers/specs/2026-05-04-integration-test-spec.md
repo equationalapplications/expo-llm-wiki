@@ -121,18 +121,18 @@ export function makeWiki(llm: LLMProvider, config?: WikiConfig): { wiki: WikiMem
 
 ### `maintenance.test.ts`
 
-**Scenario 1 — `runHeal` culls orphaned `agent_inferred`, spares `user_document`**
+**Scenario 1 — `runHeal` culls orphaned `librarian_inferred`, spares `immutable_document`**
 
 `runHeal` soft-deletes facts with `access_count = 0` older than `orphanAfterDays`. `runPrune` only hard-deletes already-soft-deleted rows; it does not touch active facts.
 
 1. Create wiki with `config: { orphanAfterDays: 0 }` — threshold of 0 days means any never-accessed fact qualifies immediately.
-2. Seed entity via `importDump` with two facts: one `agent_inferred` (`created_at = 1`, `access_count = 0`) and one `user_document` (same `created_at`).
+2. Seed entity via `importDump` with two facts: one `librarian_inferred` (`created_at = 1`, `access_count = 0`) and one `immutable_document` (same `created_at`).
 3. `runHeal('entity-1')` with `stubLLM()` (LLM response `{}` — no rewrites, just the orphan pass).
-4. `getMemoryBundle('entity-1')` — assert `user_document` fact present (`deleted_at` null), `agent_inferred` fact absent (`deleted_at` non-null).
+4. `getMemoryBundle('entity-1')` — assert `immutable_document` fact present (`deleted_at` null), `librarian_inferred` fact absent (`deleted_at` non-null).
 
-**Scenario 2 — `runHeal` LLM phase deletes `agent_inferred`, spares `user_document`**
+**Scenario 2 — `runHeal` LLM phase deletes `librarian_inferred`, spares `immutable_document`**
 
-1. Seed entity with one `agent_inferred` fact (id `fact-a`) and one `user_document` fact (id `doc-1`).
+1. Seed entity with one `librarian_inferred` fact (id `fact-a`) and one `immutable_document` fact (id `doc-1`).
 2. `runHeal('entity-1')` with scripted LLM returning `{ "downgraded": [], "deleted": ["fact-a"], "newFacts": [] }`.
 3. Assert: `fact-a` is soft-deleted; `doc-1` body is unchanged. Verify the LLM cannot delete `doc-1` even if it tries — add a second scripted variant where LLM returns `{ "deleted": ["fact-a", "doc-1"] }` and assert `doc-1` survives (guarded by `mutableIds` filter).
 
