@@ -58,9 +58,10 @@ export interface VectorRankerRankArgs {
   /**
    * Upper bound on how many distinct fact ids should receive a semanticScore in this call.
    * WikiMemory derives this from maxResults / candidate cardinality / documented oversampling policy.
+   * Core enforces this bound while normalizing ranker output in `_rankWithVectorRanker`
+   * via early termination and deduplication, so malformed or over-producing rankers do not
+   * expand the retained result set beyond `limit`.
    */
-  // TODO(security): Core MUST defensively truncate ranker output to `limit` — malicious/broken ranker
-  // returning N≫limit → memory blow-up before core truncates. See security review §4.
   limit: number;
 }
 

@@ -1372,7 +1372,7 @@ export class WikiMemory {
       }
     }
 
-    // Sort and return top results (WikiMemory will re-sort after blending for hybrid paths)
+    // Apply tie-break sorting to the scored results and return only the top `limit` items.
     this._tieBreakSort(scored);
 
     return scored.slice(0, limit);

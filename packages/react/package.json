@@ -38,7 +38,7 @@
     "@equationalapplications/core-llm-wiki": "workspace:*"
   },
   "engines": {
-    "node": ">=20"
+    "node": "^20.19.0 || >=22.12.0"
   },
   "peerDependencies": {
     "react": ">=17"
