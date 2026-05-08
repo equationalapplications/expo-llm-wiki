@@ -46,7 +46,7 @@ async function main() {
           body: doc.text ?? '',
           tags: [] as string[],
           confidence: 'certain' as const,
-          source_type: 'user_document' as const,
+          source_type: 'immutable_document' as const,
           source_hash: null,
           source_ref: null,
           created_at: (i + 1) * 1000,
