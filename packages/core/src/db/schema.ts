@@ -9,7 +9,7 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
       body TEXT NOT NULL,
       tags TEXT NOT NULL DEFAULT '[]',
       confidence TEXT NOT NULL DEFAULT 'inferred',
-      source_type TEXT NOT NULL DEFAULT 'agent_inferred',
+      source_type TEXT NOT NULL DEFAULT 'librarian_inferred',
       source_hash TEXT,
       source_ref TEXT,
       created_at INTEGER NOT NULL,

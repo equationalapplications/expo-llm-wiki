@@ -1773,7 +1773,7 @@ export class WikiMemory {
         let skip = false;
         if (newTokens.size >= MIN_TOKENS_TO_QUALIFY) {
           for (const existing of currentFactsRows) {
-            if (existing.source_type !== 'agent_inferred') continue;
+            if (existing.source_type !== 'librarian_inferred') continue;
             const existingTokens = titleTokens(existing.title);
             if (existingTokens.size >= MIN_TOKENS_TO_QUALIFY) {
               if (jaccardScore(newTokens, existingTokens) >= FUZZY_THRESHOLD) {
@@ -1789,7 +1789,7 @@ export class WikiMemory {
         await this.db.runAsync(`
           INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'agent_inferred', now, now]);
+        `, [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'librarian_inferred', now, now]);
         insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
       }
 
@@ -1834,7 +1834,7 @@ export class WikiMemory {
         await this.db.runAsync(`
           UPDATE ${this.prefix}entries 
           SET deleted_at = ?, updated_at = ? 
-          WHERE entity_id = ? AND access_count = 0 AND created_at < ? AND source_type != 'user_document' AND deleted_at IS NULL
+          WHERE entity_id = ? AND access_count = 0 AND created_at < ? AND source_type != 'immutable_document' AND deleted_at IS NULL
         `, [now, now, entityId, orphanThreshold]);
       }
 
@@ -1843,7 +1843,7 @@ export class WikiMemory {
         await this.db.runAsync(`
           UPDATE ${this.prefix}entries 
           SET confidence = 'tentative', updated_at = ? 
-          WHERE entity_id = ? AND confidence = 'inferred' AND (last_accessed_at < ? OR (last_accessed_at IS NULL AND created_at < ?)) AND source_type != 'user_document' AND deleted_at IS NULL
+          WHERE entity_id = ? AND confidence = 'inferred' AND (last_accessed_at < ? OR (last_accessed_at IS NULL AND created_at < ?)) AND source_type != 'immutable_document' AND deleted_at IS NULL
         `, [now, entityId, staleThreshold, staleThreshold]);
       }
     });
@@ -1852,9 +1852,9 @@ export class WikiMemory {
     const allTasks = await this.db.getAllAsync<WikiTask>(`SELECT * FROM ${this.prefix}tasks WHERE entity_id = ? AND status IN ('pending', 'in_progress') AND deleted_at IS NULL`, [entityId]);
     const recentEvents = await this.db.getAllAsync<WikiEvent>(`SELECT * FROM ${this.prefix}events WHERE entity_id = ? ORDER BY created_at DESC LIMIT 20`, [entityId]);
 
-    const healCandidates = allFactsRows.filter(f => f.source_type !== 'user_document');
+    const healCandidates = allFactsRows.filter(f => f.source_type !== 'immutable_document');
     const documentAnchors = allFactsRows
-      .filter(f => f.source_type === 'user_document')
+      .filter(f => f.source_type === 'immutable_document')
       .map(({ id, title, source_ref }) => ({ id, title, source_ref }));
 
     const userPrompt = `Heal Candidates:\n${JSON.stringify(healCandidates.map(f => {
@@ -1896,7 +1896,7 @@ export class WikiMemory {
         await this.db.runAsync(`
           INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'agent_inferred', now, now]);
+        `, [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'librarian_inferred', now, now]);
         insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
       }
     });
@@ -2943,7 +2943,7 @@ export class WikiMemory {
           await this.db.runAsync(
             `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'user_document', sourceHash, sourceRef, now, now]
+            [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'immutable_document', sourceHash, sourceRef, now, now]
           );
           insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
         }
