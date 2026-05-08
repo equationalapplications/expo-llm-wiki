@@ -491,6 +491,40 @@ export class WikiMemory {
     console.warn(`[WikiMemory] importDump: ${type} id "${id}" already belongs to entity "${existingEntityId}"; skipping for entity "${targetEntityId}"`);
   }
 
+  /** Maps pre-rename enum strings from older dumps to current source_type values. */
+  private _normalizeImportedSourceType(raw: string): WikiFact['source_type'] {
+    if (raw === 'user_document') return 'immutable_document';
+    if (raw === 'agent_inferred') return 'librarian_inferred';
+    const allowed: WikiFact['source_type'][] = ['user_stated', 'librarian_inferred', 'user_confirmed', 'immutable_document'];
+    if ((allowed as string[]).includes(raw)) return raw as WikiFact['source_type'];
+    throw new Error(
+      `importDump: invalid source_type "${raw}" (expected one of: ${allowed.join(', ')}, or legacy aliases user_document / agent_inferred)`
+    );
+  }
+
+  private async assertNoLegacySourceTypes(): Promise<void> {
+    const legacyCount = await this.db.getFirstAsync<{ count: number }>(
+      `SELECT COUNT(*) as count FROM ${this.prefix}entries
+       WHERE source_type IN ('user_document', 'agent_inferred')`,
+      []
+    );
+
+    if (legacyCount && legacyCount.count > 0) {
+      const migrationSQL = `
+-- Run this SQL to migrate legacy source_type values (adjust prefix if custom tablePrefix configured):
+UPDATE ${this.prefix}entries SET source_type = 'immutable_document' WHERE source_type = 'user_document';
+UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source_type = 'agent_inferred';
+      `.trim();
+
+      throw new Error(
+        `Database contains ${legacyCount.count} entries with legacy source_type values ('user_document' or 'agent_inferred'). ` +
+        `These enum values were renamed in this release. Running without migration would allow legacy 'user_document' facts to bypass ` +
+        `immutability guards, causing data corruption.\n\n${migrationSQL}\n\n` +
+        `After running the migration SQL, restart your application.`
+      );
+    }
+  }
+
   private async _notifyEmbeddingPersisted(
     entityId: string,
     factId: string,
@@ -666,27 +700,9 @@ export class WikiMemory {
 
     // BREAKING CHANGE: source_type enum renamed (immutable_document / librarian_inferred). Fail fast if legacy values detected.
     // This prevents silent corruption where old 'user_document' facts would bypass immutable guards.
+    // importDump() maps legacy strings on write; this guard still protects DBs upgraded without running migrations.
     if (entriesExistedBeforeSetup) {
-      const legacyCount = await this.db.getFirstAsync<{ count: number }>(
-        `SELECT COUNT(*) as count FROM ${this.prefix}entries
-         WHERE source_type IN ('user_document', 'agent_inferred')`,
-        []
-      );
-
-      if (legacyCount && legacyCount.count > 0) {
-        const migrationSQL = `
--- Run this SQL to migrate legacy source_type values (adjust prefix if custom tablePrefix configured):
-UPDATE ${this.prefix}entries SET source_type = 'immutable_document' WHERE source_type = 'user_document';
-UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source_type = 'agent_inferred';
-        `.trim();
-
-        throw new Error(
-          `Database contains ${legacyCount.count} entries with legacy source_type values ('user_document' or 'agent_inferred'). ` +
-          `These enum values were renamed in this release. Running without migration would allow legacy 'user_document' facts to bypass ` +
-          `immutability guards, causing data corruption.\n\n${migrationSQL}\n\n` +
-          `After running the migration SQL, restart your application.`
-        );
-      }
+      await this.assertNoLegacySourceTypes();
     }
 
     await this.rebuildMiniSearchIndex();
@@ -2310,6 +2326,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       for (const [entityId, bundle] of Object.entries(dump.entities)) {
         await this._doImportEntity(entityId, bundle, merge);
       }
+      await this.assertNoLegacySourceTypes();
     } finally {
       this.activeMaintenanceJobs.delete(this._globalImportKey());
       for (const entityId of entityIds) {
@@ -2383,6 +2400,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
         }
 
         for (const fact of bundle.facts) {
+          const sourceType = this._normalizeImportedSourceType(String(fact.source_type));
           const tagsJson = JSON.stringify(Array.isArray(fact.tags) ? fact.tags : []);
           // Normalize once: non-finite (undefined/null/NaN) → 0 so we never persist an
           // invalid value to the DB and ORDER BY updated_at remains meaningful.
@@ -2471,7 +2489,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
               // and skip embedFact() — no embedding API call required.
               await this.db.runAsync(
                 `UPDATE ${this.prefix}entries SET entity_id = ?, title = ?, body = ?, tags = ?, confidence = ?, source_type = ?, source_hash = ?, source_ref = ?, created_at = ?, updated_at = ?, last_accessed_at = ?, access_count = ?, deleted_at = ?, embedding_blob = ?, embedding = NULL WHERE id = ?`,
-                [entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, blobData, fact.id]
+                [entityId, fact.title, fact.body, tagsJson, fact.confidence, sourceType, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, blobData, fact.id]
               );
               factsWithPreservedBlob.set(fact.id, blobData);
               // Only track dimensions for live facts: read() and _reconcileEmbeddingDimension()
@@ -2486,7 +2504,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
               // falls back to keyword-only retrieval.
               await this.db.runAsync(
                 `UPDATE ${this.prefix}entries SET entity_id = ?, title = ?, body = ?, tags = ?, confidence = ?, source_type = ?, source_hash = ?, source_ref = ?, created_at = ?, updated_at = ?, last_accessed_at = ?, access_count = ?, deleted_at = ?, embedding_blob = NULL, embedding = NULL WHERE id = ?`,
-                [entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, fact.id]
+                [entityId, fact.title, fact.body, tagsJson, fact.confidence, sourceType, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, fact.id]
               );
             }
             existingFactsById.set(fact.id, { id: fact.id, entity_id: entityId, updated_at: safeUpdatedAt });
@@ -2496,14 +2514,14 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
             if (blobData != null) {
               await this.db.runAsync(
                 `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at, embedding_blob) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, blobData]
+                [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, sourceType, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, blobData]
               );
               factsWithPreservedBlob.set(fact.id, blobData);
               if (!fact.deleted_at) preservedBlobDims.add(blobData.byteLength / 4);
             } else {
               await this.db.runAsync(
                 `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at]
+                [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, sourceType, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at]
               );
             }
             existingFactsById.set(fact.id, { id: fact.id, entity_id: entityId, updated_at: safeUpdatedAt });

@@ -64,7 +64,7 @@ export interface WikiFact {
    * Source type of this fact.
    * - 'immutable_document': From ingestDocument(), cannot be modified by system (librarian/heal).
    *   Only removable via forget() or replaced via re-ingest.
-   * - 'librarian_inferred': Created by runLibrarian() from events.
+   * - 'librarian_inferred': Created by runLibrarian() from events, or by runHeal() when synthesizing new inferred facts.
    * - 'user_stated': Direct user statement.
    * - 'user_confirmed': User-confirmed fact.
    */
