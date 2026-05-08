@@ -49,8 +49,6 @@ export interface VectorRankerSemanticResult {
 
 export interface VectorRankerRankArgs {
   entityId: string;
-  // TODO(security): Core SHOULD pass defensive copy to prevent malicious/buggy ranker from mutating
-  // underlying buffer → corrupting subsequent JS-cosine fallback or cache. See security review §3.
   queryVec: Float32Array | number[];
   /**
    * When set (MiniSearch pre-filter path): ranker MUST only produce results for ids in this set.
@@ -83,7 +81,6 @@ export interface VectorRanker {
   onEmbeddingPersisted?(event: {
     entityId: string;
     factId: string;
-    // TODO(security): Core SHOULD pass defensive copy to prevent mutation. See security review §3.
     vector: Float32Array | null; // null = embedding removed / unusable
   }): void | Promise<void>;
 }
@@ -144,7 +141,6 @@ Field naming (`propagateRankerFailureToRetrievalFallback`) is illustrative; impl
 - **`onRetrievalFallback`:** Remains reserved for **`read()` degradation on the query-embedding side** — missing/`embed` failure/invalid vector/dimension mismatch and the existing fallback to MiniSearch keyword search. Its meaning **MUST NOT** be overloaded to imply “vector ranker failed” unless the developer opts in via **`propagateRankerFailureToRetrievalFallback`**.
 - **`onVectorRankerFallback`:** Fires only when **`rankBySimilarity` rejects** while the embedding preconditions above already succeeded. Typical causes: sqlite-vec misconfiguration, remote ANN outage, buggy adapter — operationally distinct from **`onRetrievalFallback`**.
 - **Optional mirroring:** If **`propagateRankerFailureToRetrievalFallback === true`** and **`vectorRankerFallback` is not `'throw'`**, core **SHOULD** invoke **`onRetrievalFallback(error)`** **after** the recoverable fallback path has finished building the **`read()`** result (so the call still resolves), and **after** **`onVectorRankerFallback`** when that hook is set. If **`onVectorRankerFallback`** is unset but mirroring is on, **`onRetrievalFallback` alone** **SHOULD** still run. **MUST NOT** mirror when **`vectorRankerFallback` is `'throw'`** (those reject **`read()`**). The mirrored **`error` SHOULD** expose the original rejection via **`error.cause`** (or documented equivalent).
-  <!-- TODO(security): Mirroring ranker error via error.cause may leak sensitive data (query text, vectors, remote URLs with creds) into host telemetry. Core SHOULD NOT log error.cause by default; spec should advise adapter authors to scrub credentials from thrown errors. See security review §5, §7. -->
 
 ---
 
@@ -156,7 +152,6 @@ Field naming (`propagateRankerFailureToRetrievalFallback`) is illustrative; impl
 2. **Candidate ids**
    - If `effectivePreFilterLimit` applies: MiniSearch supplies an ordered candidate list; WikiMemory passes `candidateIds` to the ranker **in that order is not required**; set membership **is** required.
    - If full scan: `candidateIds` **MAY** be omitted; ranker **MUST** restrict results to facts for `entityId` and `deleted_at IS NULL` equivalence in its backing store, or delegate back to core by returning empty and falling through — **Normative:** prefer **explicit contract:** ranker **MUST** implement entity scoping when `candidateIds` is omitted; if a host cannot, it **MUST** pass-through by not being installed and use default JS cosine, or supply a wrapper that reads candidate ids from SQLite (out of scope for core).
-   <!-- TODO(security): Core MUST filter ranker output against expected entity scope to prevent cross-entity disclosure. Buggy/misconfigured ranker returning ids from another entity → silent data leak across tenants. When candidateIds set: intersect ranker output with candidateIds; for full-scan path: validate returned ids belong to entityId before phase-2 SELECT (phase-2 WHERE id IN (?) alone won't catch if SQLite holds multi-entity rows). See security review §1. -->
 3. **Limit / oversampling**
    - WikiMemory **MUST** request at least `maxResults` semantic rows, and **MAY** request an internal oversample (config or fixed constant) so post-hybrid reordering still approximates today’s “score all candidates then sort” behavior when hybrid keyword signal moves ordering. **Exact oversample factor** is an implementation detail; this spec **REQUIRES** documenting the chosen policy in code comment + README so ANN adopters understand recall trade-offs.
 4. **Hybrid blending**
@@ -185,7 +180,6 @@ Field naming (`propagateRankerFailureToRetrievalFallback`) is illustrative; impl
 
 - **Authoritative store:** SQLite `embedding_blob` (and migration path from `embedding` TEXT) **remains canonical**, matching issue #15.
 - **Ranker sync:** If `vectorRanker.onEmbeddingPersisted` is provided, WikiMemory **MUST** invoke it after successful writes that change stored embeddings (embed on upsert, `runReembed`, forget/prune/delete paths that clear blobs — **TBD exact call sites in implementation plan**). Implementations **MAY** async-resolve the promise as long as ordering is documented (e.g. eventual consistency for ANN).
-  <!-- TODO(security/privacy): Async onEmbeddingPersisted ordering concern — after forget/delete that clears blob, ANN may still surface stale vector → information user requested deletion lingers (GDPR-adjacent). Spec SHOULD call out deletion-path ordering separately: onEmbeddingPersisted({vector: null}) SHOULD be awaited (or documented as best-effort with retention warning). See security review §6. -->
 - **Blob-primary + async rebuild** without hooks is **unsupported as a first-class core mode**; hosts that want lazy rebuild **MAY** omit `onEmbeddingPersisted` and run external maintenance (documented only — core does not schedule rebuilds).
 
 ### Portability
@@ -196,7 +190,6 @@ Field naming (`propagateRankerFailureToRetrievalFallback`) is illustrative; impl
 
 ## Reference implementation notes (non-normative)
 
-<!-- TODO(security): Spec SHOULD explicitly warn adapter authors: entityId and factId flow from caller; adapters MUST parameterize SQL, never concatenate, to prevent SQL injection. Adapter authors MUST scrub credentials from thrown errors to prevent leakage via error.cause to host telemetry. See security review §2, §5. -->
 - **sqlite-vec / vss:** Virtual table keyed by stable fact `id`, `WHERE entity_id = ?` (or partition per entity), maintained from `onEmbeddingPersisted`. `rankBySimilarity` runs `knn` / vss query, returns ids + distances mapped to `semanticScore`.
 - **External DB:** Same interface; `rankBySimilarity` is an HTTP/gRPC client; `onEmbeddingPersisted` upserts/deletes remote rows.
 
