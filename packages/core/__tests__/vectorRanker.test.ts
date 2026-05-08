@@ -341,7 +341,7 @@ describe('VectorRanker integration', () => {
           embed: async (t) => keywordEmbed(t),
         },
         vectorRanker: mockRanker,
-        hybridWeight: 1,
+        config: { hybridWeight: 1 },
       });
       await wiki.setup();
       await wiki.importDump(makeDump([

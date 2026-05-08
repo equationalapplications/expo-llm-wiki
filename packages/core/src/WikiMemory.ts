@@ -960,8 +960,26 @@ export class WikiMemory {
                 // Backfill ranker-omitted rows per VectorRanker contract:
                 // treat missing ids as "no embedding" (pure semantic: -2, hybrid: keyword-only)
                 const scoredIds = new Set(scored.map(s => s.id));
-                for (const row of candidateRows) {
-                  if (!scoredIds.has(row.id)) {
+                const unscoredRows = candidateRows.filter(row => !scoredIds.has(row.id));
+
+                // Only backfill enough to reach maxResults (avoid O(N) work for large entities)
+                const maxBackfill = Math.max(0, maxResults - scored.length);
+                if (maxBackfill > 0 && unscoredRows.length > 0) {
+                  let rowsToBackfill: typeof unscoredRows;
+                  if (weight !== undefined && weight < 1) {
+                    // Hybrid mode: prioritize by keyword score
+                    const scoredUnscored = unscoredRows.map(row => ({
+                      row,
+                      kwScore: miniSearchScores?.get(row.id) ?? 0,
+                    }));
+                    scoredUnscored.sort((a, b) => b.kwScore - a.kwScore);
+                    rowsToBackfill = scoredUnscored.slice(0, maxBackfill).map(x => x.row);
+                  } else {
+                    // Pure semantic: all get -2, so just take first maxBackfill
+                    rowsToBackfill = unscoredRows.slice(0, maxBackfill);
+                  }
+
+                  for (const row of rowsToBackfill) {
                     const score = (weight !== undefined && weight < 1)
                       ? (1 - weight) * (miniSearchScores?.get(row.id) ?? 0)
                       : -2;
@@ -1067,8 +1085,8 @@ export class WikiMemory {
                   const idChunk = topIds.slice(i, i + phase2ChunkSize);
                   const placeholders = idChunk.map(() => '?').join(',');
                   const chunkRows = await this.db.getAllAsync<WikiFact & { embedding: string | null; embedding_blob: Uint8Array | null }>(
-                    `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
-                    idChunk
+                    `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND entity_id = ? AND deleted_at IS NULL`,
+                    [...idChunk, entityId]
                   );
                   fullRows.push(...chunkRows);
                 }
@@ -1118,8 +1136,8 @@ export class WikiMemory {
             const idChunk = topIds.slice(i, i + kwChunkSize);
             const placeholders = idChunk.map(() => '?').join(',');
             const chunkRows = await this.db.getAllAsync<WikiFact>(
-              `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
-              idChunk
+              `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND entity_id = ? AND deleted_at IS NULL`,
+              [...idChunk, entityId]
             );
             kwRows.push(...chunkRows);
           }
