@@ -3,8 +3,27 @@ import * as zlib from 'zlib';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { EmbeddingModel, FlagEmbedding } from 'fastembed';
-import { WikiMemory, formatMemoryDump } from '@equationalapplications/core-llm-wiki';
-import type { MemoryDump } from '@equationalapplications/core-llm-wiki';
+import { WikiMemory } from '@equationalapplications/core-llm-wiki';
+import type { MemoryDump, WikiFact } from '@equationalapplications/core-llm-wiki';
+
+/** Drop embedding_blob from facts without building markdown (formatMemoryDump is heavy for large corpora). */
+function stripEmbeddingBlobsFromDump(dump: MemoryDump): MemoryDump {
+  return {
+    generatedAt: dump.generatedAt,
+    entities: Object.fromEntries(
+      Object.entries(dump.entities).map(([entityId, bundle]) => [
+        entityId,
+        {
+          ...bundle,
+          facts: bundle.facts.map((f) => {
+            const { embedding_blob: _blob, ...rest } = f as WikiFact & { embedding_blob?: unknown };
+            return rest as WikiFact;
+          }),
+        },
+      ])
+    ),
+  };
+}
 import { openTestDatabase } from '../helpers/db';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -74,13 +93,12 @@ async function main() {
   const result = await wiki.runReembed('scifact-corpus');
   console.log(`  embedded: ${result.embedded}, skipped: ${result.skipped}`);
 
-  // 5. Export dump JSON (text-only): strip embedding_blob via formatMemoryDump so the
-  //    gzip stays small; vectors are written only to the sidecar in step 6.
+  // 5. Export dump JSON (text-only): strip embedding_blob so the gzip stays small;
+  //    vectors are written only to the sidecar in step 6.
   console.log('Exporting…');
   const exported = await wiki.exportDump(['scifact-corpus']);
-  const { manifest } = formatMemoryDump(exported);
-  // Minify after strip (formatMemoryDump pretty-prints; compact JSON gzips smaller).
-  const compact = JSON.stringify(JSON.parse(manifest) as MemoryDump);
+  const stripped = stripEmbeddingBlobsFromDump(exported);
+  const compact = JSON.stringify(stripped);
   const gz = zlib.gzipSync(Buffer.from(compact, 'utf8'), { level: 6 });
   const outPath = path.join(FIXTURES, 'scifact-dump.json.gz');
   fs.writeFileSync(outPath, gz);

@@ -54,16 +54,19 @@ beforeAll(async () => {
   // Legacy source_type strings in the frozen dump are normalized by importDump().
   await wiki.importDump(dump);
 
-  // Restore pre-computed embeddings from the sidecar fixture in one transaction.
-  // This avoids running 5k ONNX inferences at test time (the dump strips embeddings
-  // for portability; embed-scifact.ts exports them separately).
+  // Restore pre-computed embeddings from the sidecar fixture in one transaction
+  // into embedding_blob (same representation as runReembed), with embedding cleared.
+  // This avoids running 5k ONNX inferences at test time (the dump strips blobs
+  // for portability; embed-scifact.ts exports vectors in the sidecar).
   const embGz = fs.readFileSync(path.join(FIXTURES, 'scifact-embeddings.json.gz'));
   const embMap = JSON.parse(zlib.gunzipSync(embGz).toString('utf8')) as Record<string, number[]>;
   await db.withTransactionAsync(async () => {
     for (const [id, vec] of Object.entries(embMap)) {
+      const float32Vector = new Float32Array(vec);
+      const blob = new Uint8Array(float32Vector.buffer);
       await db.runAsync(
-        `UPDATE ${TABLE_PREFIX}entries SET embedding = ? WHERE id = ?`,
-        [JSON.stringify(vec), id]
+        `UPDATE ${TABLE_PREFIX}entries SET embedding_blob = ?, embedding = NULL WHERE id = ?`,
+        [blob, id]
       );
     }
   });
