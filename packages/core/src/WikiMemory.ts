@@ -786,7 +786,7 @@ export class WikiMemory {
 
         const entriesToDelete = await this.db.getAllAsync<{ id: string; entity_id: string }>(
           `SELECT id, entity_id FROM ${this.prefix}entries
-           WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`,
+           WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ?`,
           [entityId, cutoff]
         );
 
@@ -811,7 +811,7 @@ export class WikiMemory {
             const chunk = succeeded.slice(i, i + chunkSize);
             const placeholders = chunk.map(() => '?').join(',');
             const entryResult = await this.db.runAsync(
-              `DELETE FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ? AND id IN (${placeholders})`,
+              `DELETE FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ? AND id IN (${placeholders})`,
               [entityId, cutoff, ...chunk.map((r) => r.id)],
             );
             deletedEntries += entryResult.changes;
@@ -821,7 +821,7 @@ export class WikiMemory {
         // Delete tasks (independent of entry hook success/failure)
         const taskResult = await this.db.runAsync(
           `DELETE FROM ${this.prefix}tasks
-           WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`,
+           WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ?`,
           [entityId, cutoff]
         );
         deletedTasks = taskResult.changes;
@@ -868,7 +868,7 @@ export class WikiMemory {
         const cutoff = now - retainEventsFor * 86400000;
         const eventResult = await this.db.runAsync(
           `DELETE FROM ${this.prefix}events
-           WHERE entity_id = ? AND created_at < ?`,
+           WHERE entity_id = ? AND created_at <= ?`,
           [entityId, cutoff]
         );
         deletedEvents = eventResult.changes;
