@@ -12,7 +12,7 @@
 ### BREAKING CHANGES
 
 * **core:** `forget()` now rethrows `onEmbeddingPersisted` hook failures instead of silently continuing. This ensures GDPR right-to-erasure compliance by preventing "forgotten" facts from remaining retrievable in external ANN indexes. Applications MUST handle deletion failures with retry or reconciliation queues. Set `forceDeleteIgnoreRankerHook: true` ONLY when the ANN backend is permanently decommissioned.
-* **core:** `_doPrune()` awaits deletion hook before executing DELETE. Partial failures (some rows deleted, others failed) now throw an error with deletion counts (`deleted ${count}, failed at ${factId}, ${remaining} remaining`) embedded in the message and sanitized cause attached. Callers should catch the error, parse counts from message, log/queue failed rows for retry, then resume or abort.
+* **core:** `_doPrune()` awaits deletion hook before executing DELETE. Partial failures (some rows deleted, others failed) now throw `PrunePartialFailureError` with structured properties: `deleted` (number of successfully deleted rows), `failedAt` (fact ID where failure occurred), `remaining` (number of unprocessed rows), and `cause` (sanitized underlying error). Callers should catch this error type, access the structured properties for retry logic, log/queue failed rows, then resume or abort.
 
 ### Documentation
 

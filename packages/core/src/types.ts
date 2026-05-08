@@ -340,3 +340,20 @@ export class WikiBusyError extends Error {
     this.entityId = entityId;
   }
 }
+
+export class PrunePartialFailureError extends Error {
+  readonly deleted: number;
+  readonly failedAt: string;
+  readonly remaining: number;
+  override readonly cause: Error;
+
+  constructor(deleted: number, failedAt: string, remaining: number, cause: Error) {
+    super(`Prune partially failed: deleted ${deleted}, failed at ${failedAt}, ${remaining} remaining`);
+    this.name = 'PrunePartialFailureError';
+    this.deleted = deleted;
+    this.failedAt = failedAt;
+    this.remaining = remaining;
+    this.cause = cause;
+  }
+}
+

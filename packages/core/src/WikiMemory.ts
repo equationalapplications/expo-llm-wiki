@@ -1,13 +1,13 @@
 import type { SQLiteAdapter } from './types';
 import { setupDatabase } from './db/schema';
 import { MIGRATIONS, CURRENT_SCHEMA_VERSION } from './db/migrations';
-import { WikiOptions, MemoryBundle, MemoryDump, WikiEvent, WikiFact, WikiTask, WikiCheckpoint, ExtractedFact, ExtractedTask, WikiBusyError, EntityStatus, ReadOptions } from './types';
+import { WikiOptions, MemoryBundle, MemoryDump, WikiEvent, WikiFact, WikiTask, WikiCheckpoint, ExtractedFact, ExtractedTask, WikiBusyError, PrunePartialFailureError, EntityStatus, ReadOptions } from './types';
 import { LIBRARIAN_SYSTEM_PROMPT, HEAL_SYSTEM_PROMPT, INGEST_SYSTEM_PROMPT } from './prompts';
 import MiniSearch from 'minisearch';
 import { cosineSimilarity } from './utils/cosine';
 import { parseEmbedding } from './utils/embedding';
 
-export { WikiBusyError } from './types';
+export { WikiBusyError, PrunePartialFailureError } from './types';
 
 /**
  * Private symbol to mark timeout errors thrown by WikiMemory (not from ranker).
@@ -832,14 +832,19 @@ export class WikiMemory {
           // Preserve timeout errors (thrown by WikiMemory, not the ranker)
           const isTimeout = (failure.cause as any)?.[HOOK_TIMEOUT_MARKER] === true;
           if (isTimeout) {
-            throw new Error(
-              `Prune partially failed: deleted ${succeeded.length}, failed at ${failure.factId} due to timeout, ${remaining} remaining`,
+            throw new PrunePartialFailureError(
+              succeeded.length,
+              failure.factId,
+              remaining,
+              new Error('Deletion hook timed out'),
             );
           }
 
-          throw new Error(
-            `Prune partially failed: deleted ${succeeded.length}, failed at ${failure.factId}, ${remaining} remaining`,
-            { cause: this._sanitizeRankerError(failure.cause) },
+          throw new PrunePartialFailureError(
+            succeeded.length,
+            failure.factId,
+            remaining,
+            this._sanitizeRankerError(failure.cause),
           );
         }
       }
