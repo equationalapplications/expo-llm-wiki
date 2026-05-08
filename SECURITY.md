@@ -128,7 +128,7 @@ async rankBySimilarity(args) {
 
 **Guidance:** Treat `queryVec` and `vector` as readonly. Do not call `.set()`, assign to indices, or pass them to functions that mutate in-place.
 
-**Note:** Core provides defensive copies as of v3.2, but adapters should still treat vectors as immutable for forward compatibility.
+**Note:** Core provides defensive copies by default, but adapters should still treat vectors as immutable for forward compatibility.
 
 ### Resource Limits and Retention (DoS Prevention)
 

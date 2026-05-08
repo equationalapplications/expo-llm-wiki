@@ -807,8 +807,8 @@ export class WikiMemory {
             const chunk = succeeded.slice(i, i + chunkSize);
             const placeholders = chunk.map(() => '?').join(',');
             const entryResult = await this.db.runAsync(
-              `DELETE FROM ${this.prefix}entries WHERE id IN (${placeholders})`,
-              chunk.map((r) => r.id),
+              `DELETE FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ? AND id IN (${placeholders})`,
+              [entityId, cutoff, ...chunk.map((r) => r.id)],
             );
             deletedEntries += entryResult.changes;
           }
