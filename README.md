@@ -685,7 +685,7 @@ expo-llm-wiki implements multiple security layers to protect against common vuln
 
 - **Defensive Copies**: Query vectors and embedding vectors are defensively copied before passing to VectorRanker adapters. Prevents mutation of WikiMemory's internal vector cache.
 - **Embedding Validation**: Vectors checked for finite values. Empty or non-finite vectors skipped (not persisted). Dimension mismatches detected and retrieval falls back to keyword search until runReembed() completes.
-- **Error Sanitization**: VectorRanker errors scrubbed of credentials/tokens before propagation (`sanitizeRankerErrors: true` by default).
+- **Error Sanitization**: VectorRanker errors scrubbed of credentials/tokens before attaching to `error.cause` or passing to callbacks (`sanitizeRankerErrors: true` by default).
 
 ### GDPR Compliance
 

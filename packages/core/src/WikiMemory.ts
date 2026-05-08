@@ -9,6 +9,12 @@ import { parseEmbedding } from './utils/embedding';
 
 export { WikiBusyError } from './types';
 
+/**
+ * Private symbol to mark timeout errors thrown by WikiMemory (not from ranker).
+ * Used to distinguish WikiMemory's own timeout errors from ranker errors that might contain "timed out" in message.
+ */
+const HOOK_TIMEOUT_MARKER = Symbol('WikiMemoryHookTimeout');
+
 function parseJsonResponse<T>(text: string): T {
   const firstBrace = text.indexOf('{');
   const firstBracket = text.indexOf('[');
@@ -520,7 +526,11 @@ export class WikiMemory {
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeoutHandle = setTimeout(
-        () => reject(new Error(`onEmbeddingPersisted timed out after ${timeoutMs}ms`)),
+        () => {
+          const timeoutError = new Error(`onEmbeddingPersisted timed out after ${timeoutMs}ms`);
+          (timeoutError as any)[HOOK_TIMEOUT_MARKER] = true;
+          reject(timeoutError);
+        },
         timeoutMs,
       );
     });
@@ -788,12 +798,17 @@ export class WikiMemory {
         }
 
         if (succeeded.length > 0) {
-          const placeholders = succeeded.map(() => '?').join(',');
-          const entryResult = await this.db.runAsync(
-            `DELETE FROM ${this.prefix}entries WHERE id IN (${placeholders})`,
-            succeeded.map((r) => r.id),
-          );
-          deletedEntries = entryResult.changes;
+          // Delete in chunks to avoid SQLite bind-parameter limit (typically 999)
+          const chunkSize = 500;
+          for (let i = 0; i < succeeded.length; i += chunkSize) {
+            const chunk = succeeded.slice(i, i + chunkSize);
+            const placeholders = chunk.map(() => '?').join(',');
+            const entryResult = await this.db.runAsync(
+              `DELETE FROM ${this.prefix}entries WHERE id IN (${placeholders})`,
+              chunk.map((r) => r.id),
+            );
+            deletedEntries += entryResult.changes;
+          }
         }
 
         // Delete tasks (independent of entry hook success/failure)
@@ -1070,7 +1085,10 @@ export class WikiMemory {
                 const rankerError = rankerErr instanceof Error ? rankerErr : new Error(String(rankerErr));
                 const policy = this.options.vectorRankerFallback ?? 'js-cosine';
 
-                this.options.onVectorRankerFallback?.({ error: rankerError, policy });
+                this.options.onVectorRankerFallback?.({
+                  error: this._sanitizeRankerError(rankerError),
+                  policy,
+                });
 
                 if (policy === 'throw') {
                   rankerShouldRethrow = true;
@@ -2606,7 +2624,7 @@ export class WikiMemory {
           await this._notifyEmbeddingPersistedOrThrow(entityId, factId, null);
         } catch (hookErr) {
           // Preserve timeout errors (thrown by WikiMemory, not the ranker)
-          const isTimeout = hookErr instanceof Error && hookErr.message.includes('timed out');
+          const isTimeout = (hookErr as any)?.[HOOK_TIMEOUT_MARKER] === true;
           if (isTimeout) {
             throw new Error(
               `forget(${entityId}/${factId}) failed: ${(hookErr as Error).message}`,

@@ -183,7 +183,7 @@ export interface VectorRanker {
    * Hosts use this to keep sqlite-vec / external indexes consistent with SQLite as source of truth.
    *
    * On deletion paths (forget, prune, hard-delete), core awaits this hook to ensure ANN cleanup
-   * completes before SQLite deletion commits (GDPR compliance). Hook failures or timeouts on
+   * completes before the deletion call resolves (GDPR compliance). Hook failures or timeouts on
    * those paths reject the deletion call.
    *
    * Treat `vector` as readonly — core provides a defensive copy, but adapters MUST NOT mutate.
