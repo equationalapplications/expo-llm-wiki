@@ -3,9 +3,8 @@ import * as zlib from 'zlib';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { EmbeddingModel, FlagEmbedding } from 'fastembed';
-import { WikiMemory } from '@equationalapplications/core-llm-wiki';
+import { WikiMemory, parseEmbedding } from '@equationalapplications/core-llm-wiki';
 import type { MemoryDump } from '@equationalapplications/core-llm-wiki';
-import { parseEmbedding } from '../../core/src/utils/embedding';
 import { openTestDatabase } from '../helpers/db';
 
 /** Drop embedding_blob from facts without building markdown (formatMemoryDump is heavy for large corpora). */

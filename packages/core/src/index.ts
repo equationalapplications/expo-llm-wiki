@@ -5,6 +5,7 @@ export * from './types';
 export { WikiMemory } from './WikiMemory';
 export { formatContext } from './utils/formatContext';
 export { formatMemoryDump } from './utils/formatMemoryDump';
+export { parseEmbedding } from './utils/embedding';
 
 export function createWiki(db: SQLiteAdapter, options: WikiOptions): WikiMemory {
   return new WikiMemory(db, options);
