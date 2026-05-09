@@ -1794,6 +1794,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       const healKey = this._healKey(entityId);
       if (!this.activeMaintenanceJobs.has(healKey)) {
         this.activeMaintenanceJobs.add(healKey);
+        this._notifyStatusSubscribers(entityId);
         try {
           await this._doRunHeal(entityId);
           await this.db.runAsync(`
@@ -1803,6 +1804,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
           `, [entityId, currentEventCount, currentEventCount]);
         } finally {
           this.activeMaintenanceJobs.delete(healKey);
+          this._notifyStatusSubscribers(entityId);
         }
       }
     }

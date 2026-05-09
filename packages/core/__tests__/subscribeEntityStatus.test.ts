@@ -103,3 +103,30 @@ describe('subscribeEntityStatus — auto-librarian dispatch', () => {
     unsub();
   });
 });
+
+describe('subscribeEntityStatus — auto-heal dispatch', () => {
+  it('notifies on add and delete around the auto-heal dispatch', async () => {
+    const db = new MockSQLiteDatabase();
+    (db as any).getFirstAsync = async (sql: string) => {
+      if (sql.includes('COUNT(*)')) return { count: 1 };
+      // checkpoint reads return null so deltas always exceed thresholds
+      return null;
+    };
+    const wiki = new WikiMemory(db as any, {
+      llmProvider: slowProvider(30),
+      config: { tablePrefix: 'sub_', autoLibrarianThreshold: 1, autoHealThreshold: 1 },
+    });
+    await wiki.setup();
+
+    const calls: EntityStatus[] = [];
+    const unsub = wiki.subscribeEntityStatus('e1', (s) => calls.push({ ...s }));
+
+    await wiki.write('e1', { eventType: 'observation', summary: 'x' } as any);
+    await new Promise(r => setTimeout(r, 150));
+
+    const healFlips = calls.map(c => c.heal);
+    expect(healFlips).toContain(true);
+    expect(healFlips.at(-1)).toBe(false);
+    unsub();
+  });
+});
