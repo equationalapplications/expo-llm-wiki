@@ -3,9 +3,25 @@ import * as zlib from 'zlib';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { EmbeddingModel, FlagEmbedding } from 'fastembed';
-import { WikiMemory } from '@equationalapplications/core-llm-wiki';
+import { WikiMemory, parseEmbedding } from '@equationalapplications/core-llm-wiki';
 import type { MemoryDump } from '@equationalapplications/core-llm-wiki';
 import { openTestDatabase } from '../helpers/db';
+
+/** Drop embedding_blob from facts without building markdown (formatMemoryDump is heavy for large corpora). */
+function stripEmbeddingBlobsFromDump(dump: MemoryDump): MemoryDump {
+  return {
+    generatedAt: dump.generatedAt,
+    entities: Object.fromEntries(
+      Object.entries(dump.entities).map(([entityId, bundle]) => [
+        entityId,
+        {
+          ...bundle,
+          facts: bundle.facts.map(({ embedding_blob: _blob, ...rest }) => rest),
+        },
+      ])
+    ),
+  };
+}
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const FIXTURES = path.join(__dirname, '..', 'fixtures');
@@ -46,7 +62,7 @@ async function main() {
           body: doc.text ?? '',
           tags: [] as string[],
           confidence: 'certain' as const,
-          source_type: 'user_document' as const,
+          source_type: 'immutable_document' as const,
           source_hash: null,
           source_ref: null,
           created_at: (i + 1) * 1000,
@@ -74,24 +90,48 @@ async function main() {
   const result = await wiki.runReembed('scifact-corpus');
   console.log(`  embedded: ${result.embedded}, skipped: ${result.skipped}`);
 
-  // 5. Export with BLOBs, gzip, save
+  // 5. Export dump JSON (text-only): strip embedding_blob so the gzip stays small;
+  //    vectors are written only to the sidecar in step 6.
   console.log('Exporting…');
   const exported = await wiki.exportDump(['scifact-corpus']);
-  const gz = zlib.gzipSync(Buffer.from(JSON.stringify(exported), 'utf8'), { level: 6 });
+  const stripped = stripEmbeddingBlobsFromDump(exported);
+  const compact = JSON.stringify(stripped);
+  const gz = zlib.gzipSync(Buffer.from(compact, 'utf8'), { level: 6 });
   const outPath = path.join(FIXTURES, 'scifact-dump.json.gz');
   fs.writeFileSync(outPath, gz);
   console.log(`Saved ${outPath} (${(gz.length / 1024 / 1024).toFixed(1)} MB)`);
 
-  // 6. Export embeddings separately (the dump strips embedding vectors for portability,
-  //    so we export them in a side-car file so the integration test can restore them
-  //    directly without re-running fastembed at test time).
+  // 6. Export embeddings sidecar. runReembed() stores vectors in embedding_blob and
+  //    clears the legacy embedding TEXT column; we read embedding_blob (and fall back
+  //    to embedding TEXT for older rows) so integration tests can restore vectors without
+  //    re-running fastembed at test time.
   console.log('Exporting embeddings side-car…');
-  const embRows = await db.getAllAsync<{ id: string; embedding: string | null }>(
-    `SELECT id, embedding FROM llm_wiki_entries WHERE entity_id = 'scifact-corpus' AND embedding IS NOT NULL`
+  const embRows = await db.getAllAsync<{
+    id: string;
+    embedding_blob: Uint8Array | null;
+    embedding: string | null;
+  }>(
+    `SELECT id, embedding_blob, embedding FROM llm_wiki_entries
+      WHERE entity_id = 'scifact-corpus'
+        AND (embedding_blob IS NOT NULL OR embedding IS NOT NULL)`
   );
   const embMap: Record<string, number[]> = {};
   for (const row of embRows) {
-    embMap[row.id] = JSON.parse(row.embedding!);
+    const vec = parseEmbedding(row.embedding_blob, row.embedding);
+    if (!vec) {
+      const blobLen = row.embedding_blob?.byteLength ?? 0;
+      const blobHint =
+        row.embedding_blob && blobLen % 4 !== 0
+          ? `embedding_blob length ${blobLen} is not a multiple of 4`
+          : row.embedding_blob
+            ? 'embedding_blob could not be parsed as finite float32 values'
+            : 'legacy embedding TEXT is missing or invalid JSON';
+      throw new Error(`Invalid embedding for entry ${row.id}: ${blobHint}`);
+    }
+    embMap[row.id] = Array.from(vec);
+  }
+  if (embRows.length === 0) {
+    throw new Error('No embeddings found for scifact-corpus; sidecar would be empty.');
   }
   const embGz = zlib.gzipSync(Buffer.from(JSON.stringify(embMap), 'utf8'), { level: 6 });
   const embPath = path.join(FIXTURES, 'scifact-embeddings.json.gz');

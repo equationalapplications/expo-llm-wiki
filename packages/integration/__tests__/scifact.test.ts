@@ -12,6 +12,8 @@ import { computeNDCG } from '../helpers/ndcg';
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const FIXTURES = path.join(__dirname, '..', 'fixtures');
 const RESULTS_DIR = path.join(__dirname, '..', 'benchmark-results');
+/** Explicit prefix so raw SQL in this test tracks WikiMemory.tablePrefix / default renames. */
+const TABLE_PREFIX = 'scifact_test_';
 
 let wiki: WikiMemory;
 let queries: Record<string, string>;
@@ -45,22 +47,26 @@ beforeAll(async () => {
   wiki = new WikiMemory(db, {
     // No embed during import — corpus embeddings are restored from the sidecar below.
     llmProvider: { generateText: async () => '{}' },
-    config: { maxResults: 10 },
+    config: { maxResults: 10, tablePrefix: TABLE_PREFIX },
   });
   await wiki.setup();
   // Import facts (text only; importDump skips embedFact when embed is not provided).
+  // Legacy source_type strings in the frozen dump are normalized by importDump().
   await wiki.importDump(dump);
 
-  // Restore pre-computed embeddings from the sidecar fixture in one transaction.
-  // This avoids running 5k ONNX inferences at test time (the dump strips embeddings
-  // for portability; embed-scifact.ts exports them separately).
+  // Restore pre-computed embeddings from the sidecar fixture in one transaction
+  // into embedding_blob (same representation as runReembed), with embedding cleared.
+  // This avoids running 5k ONNX inferences at test time (the dump strips blobs
+  // for portability; embed-scifact.ts exports vectors in the sidecar).
   const embGz = fs.readFileSync(path.join(FIXTURES, 'scifact-embeddings.json.gz'));
   const embMap = JSON.parse(zlib.gunzipSync(embGz).toString('utf8')) as Record<string, number[]>;
   await db.withTransactionAsync(async () => {
     for (const [id, vec] of Object.entries(embMap)) {
+      const float32Vector = new Float32Array(vec);
+      const blob = new Uint8Array(float32Vector.buffer);
       await db.runAsync(
-        `UPDATE llm_wiki_entries SET embedding = ? WHERE id = ?`,
-        [JSON.stringify(vec), id]
+        `UPDATE ${TABLE_PREFIX}entries SET embedding_blob = ?, embedding = NULL WHERE id = ?`,
+        [blob, id]
       );
     }
   });
@@ -68,7 +74,7 @@ beforeAll(async () => {
   const firstVec = Object.values(embMap)[0];
   if (firstVec) {
     await db.runAsync(
-      `INSERT OR REPLACE INTO llm_wiki_meta (key, value) VALUES ('embedding_dimension', ?)`,
+      `INSERT OR REPLACE INTO ${TABLE_PREFIX}meta (key, value) VALUES ('embedding_dimension', ?)`,
       [String(firstVec.length)]
     );
   }
@@ -77,7 +83,7 @@ beforeAll(async () => {
   // avoiding mutation of private/internal fields.
   wiki = new WikiMemory(db, {
     llmProvider: { generateText: async () => '{}', embed },
-    config: { maxResults: 10 },
+    config: { maxResults: 10, tablePrefix: TABLE_PREFIX },
   });
   await wiki.setup();
 }, 300_000);

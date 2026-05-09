@@ -60,7 +60,15 @@ export interface WikiFact {
   body: string;
   tags: string[];
   confidence: 'certain' | 'inferred' | 'tentative';
-  source_type: 'user_stated' | 'agent_inferred' | 'user_confirmed' | 'user_document';
+  /**
+   * Source type of this fact.
+   * - 'immutable_document': From ingestDocument(), cannot be modified by system (librarian/heal).
+   *   Only removable via forget() or replaced via re-ingest.
+   * - 'librarian_inferred': Created by runLibrarian() from events, or by runHeal() when synthesizing new inferred facts.
+   * - 'user_stated': Direct user statement.
+   * - 'user_confirmed': User-confirmed fact.
+   */
+  source_type: 'user_stated' | 'librarian_inferred' | 'user_confirmed' | 'immutable_document';
   source_hash: string | null;
   source_ref: string | null;
   created_at: number;

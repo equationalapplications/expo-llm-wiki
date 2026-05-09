@@ -7,7 +7,7 @@
 
 ## Problem
 
-The current implementation makes several optimistic assumptions: LLMs return well-formed JSON inside expected bounds, the heal pass can be trusted to protect `user_document` entries, and FTS queries are always well-formed. A 45-round-reviewed production implementation of the same pattern reveals eighteen concrete failure modes and improvements worth addressing.
+The current implementation makes several optimistic assumptions: LLMs return well-formed JSON inside expected bounds, the heal pass can be trusted to protect `immutable_document` entries, and FTS queries are always well-formed. A 45-round-reviewed production implementation of the same pattern reveals eighteen concrete failure modes and improvements worth addressing.
 
 ---
 
@@ -100,16 +100,16 @@ Applies to: `runLibrarian`, `runHeal` (newFacts), `ingestDocument`.
 
 ---
 
-### 3. `user_document` Facts as Read-Only Anchors in Heal LLM Prompt
+### 3. `immutable_document` Facts as Read-Only Anchors in Heal LLM Prompt
 
-**Current:** `runHeal` sends all non-deleted facts to the LLM, including `user_document` entries. The DB update layer then skips modifying them (correct), but they consume tokens and re-expose raw document body content on every heal pass.
+**Current:** `runHeal` sends all non-deleted facts to the LLM, including `immutable_document` entries. The DB update layer then skips modifying them (correct), but they consume tokens and re-expose raw document body content on every heal pass.
 
-**Fix:** Pass `user_document` facts in a dedicated **read-only anchors** section of the heal prompt, separated from mutable candidates. Strip the `body` field from document facts (title only) to reduce token exposure while preserving their identity for contradiction detection. The DB guard against mutating `user_document` rows remains unchanged.
+**Fix:** Pass `immutable_document` facts in a dedicated **read-only anchors** section of the heal prompt, separated from mutable candidates. Strip the `body` field from document facts (title only) to reduce token exposure while preserving their identity for contradiction detection. The DB guard against mutating `immutable_document` rows remains unchanged.
 
 ```typescript
-const healCandidates = allFacts.filter(f => f.source_type !== 'user_document');
+const healCandidates = allFacts.filter(f => f.source_type !== 'immutable_document');
 const documentAnchors = allFacts
-  .filter(f => f.source_type === 'user_document')
+  .filter(f => f.source_type === 'immutable_document')
   .map(({ id, title, source_ref }) => ({ id, title, source_ref })); // body stripped
 ```
 
@@ -157,7 +157,7 @@ const tokens = query
 | `access_count = 0` AND `created_at < now - orphanAfterDays` | Soft-delete (orphan — never used) |
 | `last_accessed_at < now - staleInferredAfterDays` AND `confidence = 'inferred'` | Downgrade to `'tentative'` |
 
-Both rules skip `source_type = 'user_document'` entries (immutable anchors).
+Both rules skip `source_type = 'immutable_document'` entries (immutable anchors).
 
 The LLM heal pass then operates on the already-cleaned set, handling contradiction detection and semantic cleanup it is actually suited for.
 
@@ -190,7 +190,7 @@ const MIN_TOKENS_TO_QUALIFY = 3; // both title token sets must have size >= 3
 **Decisions:**
 - Minimum token count: both title token sets must have `size >= 3`. Two-word titles are too short for reliable matching.
 - On a match, the new fact is **skipped** (not merged). Body content is not overwritten. This prevents Jaccard from silently merging contradictions (e.g. "User likes hiking" vs "User dislikes hiking" scores ≈0.67).
-- Skip insertion only for `agent_inferred` → `agent_inferred` matches. Never suppress `user_stated` or `user_confirmed` facts.
+- Skip insertion only for `librarian_inferred` → `librarian_inferred` matches. Never suppress `user_stated` or `user_confirmed` facts.
 - This runs in `runLibrarian` only. `ingestDocument` bypasses it — document facts use `sourceRef`-based idempotency instead.
 
 ---

@@ -156,7 +156,7 @@ describe('pipeline — Scenario 4: ingestDocument → read', () => {
 
     const bundle = await wiki.getMemoryBundle('user-1');
     expect(bundle.facts.length).toBe(2);
-    expect(bundle.facts.every((f) => f.source_type === 'user_document')).toBe(true);
+    expect(bundle.facts.every((f) => f.source_type === 'immutable_document')).toBe(true);
     expect(bundle.facts.every((f) => f.source_ref === 'ml-intro')).toBe(true);
 
     const readResult = await wiki.read('user-1', 'neural networks');

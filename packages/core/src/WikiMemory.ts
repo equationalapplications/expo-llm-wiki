@@ -491,6 +491,53 @@ export class WikiMemory {
     console.warn(`[WikiMemory] importDump: ${type} id "${id}" already belongs to entity "${existingEntityId}"; skipping for entity "${targetEntityId}"`);
   }
 
+  /** Maps pre-rename enum strings from older dumps to current source_type values. */
+  private _normalizeImportedSourceType(
+    raw: string,
+    ctx?: { entityId: string; factId: string },
+  ): WikiFact['source_type'] {
+    if (raw === 'user_document') return 'immutable_document';
+    if (raw === 'agent_inferred') return 'librarian_inferred';
+    const allowed: WikiFact['source_type'][] = ['user_stated', 'librarian_inferred', 'user_confirmed', 'immutable_document'];
+    if ((allowed as string[]).includes(raw)) return raw as WikiFact['source_type'];
+    const where =
+      ctx !== undefined ? ` for entity "${ctx.entityId}" fact "${ctx.factId}"` : '';
+    throw new Error(
+      `importDump: invalid source_type "${raw}"${where} (expected one of: ${allowed.join(', ')}, or legacy aliases user_document / agent_inferred)`
+    );
+  }
+
+  private async assertNoLegacySourceTypes(): Promise<void> {
+    const legacyProbe = await this.db.getFirstAsync<{ one: number }>(
+      `SELECT 1 AS one FROM ${this.prefix}entries
+       WHERE source_type IN ('user_document', 'agent_inferred')
+       LIMIT 1`,
+      []
+    );
+
+    if (!legacyProbe) return;
+
+    const legacyCount = await this.db.getFirstAsync<{ count: number }>(
+      `SELECT COUNT(*) as count FROM ${this.prefix}entries
+       WHERE source_type IN ('user_document', 'agent_inferred')`,
+      []
+    );
+
+    const count = legacyCount?.count ?? 0;
+    const migrationSQL = `
+-- Migrate legacy source_type values (targets your WikiMemory prefix: ${this.prefix})
+UPDATE ${this.prefix}entries SET source_type = 'immutable_document' WHERE source_type = 'user_document';
+UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source_type = 'agent_inferred';
+    `.trim();
+
+    throw new Error(
+      `Database contains ${count} entries with legacy source_type values ('user_document' or 'agent_inferred'). ` +
+      `These enum values were renamed in this release. Running without migration would allow legacy 'user_document' facts to bypass ` +
+      `immutability guards, causing data corruption.\n\n${migrationSQL}\n\n` +
+      `After running the migration SQL, restart your application.`
+    );
+  }
+
   private async _notifyEmbeddingPersisted(
     entityId: string,
     factId: string,
@@ -630,6 +677,12 @@ export class WikiMemory {
           [String(currentVersion)]
         );
       }
+    }
+
+    // Fail before any other mutating passes (e.g. source_ref normalization) so we never
+    // partially "repair" a DB that is still on legacy source_type strings.
+    if (entriesExistedBeforeSetup) {
+      await this.assertNoLegacySourceTypes();
     }
 
     // Migration: normalize any existing source_ref values that were stored before the
@@ -786,7 +839,7 @@ export class WikiMemory {
 
         const entriesToDelete = await this.db.getAllAsync<{ id: string; entity_id: string }>(
           `SELECT id, entity_id FROM ${this.prefix}entries
-           WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`,
+           WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ?`,
           [entityId, cutoff]
         );
 
@@ -811,7 +864,7 @@ export class WikiMemory {
             const chunk = succeeded.slice(i, i + chunkSize);
             const placeholders = chunk.map(() => '?').join(',');
             const entryResult = await this.db.runAsync(
-              `DELETE FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ? AND id IN (${placeholders})`,
+              `DELETE FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ? AND id IN (${placeholders})`,
               [entityId, cutoff, ...chunk.map((r) => r.id)],
             );
             deletedEntries += entryResult.changes;
@@ -821,7 +874,7 @@ export class WikiMemory {
         // Delete tasks (independent of entry hook success/failure)
         const taskResult = await this.db.runAsync(
           `DELETE FROM ${this.prefix}tasks
-           WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at < ?`,
+           WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ?`,
           [entityId, cutoff]
         );
         deletedTasks = taskResult.changes;
@@ -868,7 +921,7 @@ export class WikiMemory {
         const cutoff = now - retainEventsFor * 86400000;
         const eventResult = await this.db.runAsync(
           `DELETE FROM ${this.prefix}events
-           WHERE entity_id = ? AND created_at < ?`,
+           WHERE entity_id = ? AND created_at <= ?`,
           [entityId, cutoff]
         );
         deletedEvents = eventResult.changes;
@@ -1773,7 +1826,7 @@ export class WikiMemory {
         let skip = false;
         if (newTokens.size >= MIN_TOKENS_TO_QUALIFY) {
           for (const existing of currentFactsRows) {
-            if (existing.source_type !== 'agent_inferred') continue;
+            if (existing.source_type !== 'librarian_inferred') continue;
             const existingTokens = titleTokens(existing.title);
             if (existingTokens.size >= MIN_TOKENS_TO_QUALIFY) {
               if (jaccardScore(newTokens, existingTokens) >= FUZZY_THRESHOLD) {
@@ -1789,7 +1842,7 @@ export class WikiMemory {
         await this.db.runAsync(`
           INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'agent_inferred', now, now]);
+        `, [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'librarian_inferred', now, now]);
         insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
       }
 
@@ -1832,18 +1885,18 @@ export class WikiMemory {
       if (orphanAfterDays !== null) {
         const orphanThreshold = now - (orphanAfterDays * MS_PER_DAY);
         await this.db.runAsync(`
-          UPDATE ${this.prefix}entries 
-          SET deleted_at = ?, updated_at = ? 
-          WHERE entity_id = ? AND access_count = 0 AND created_at < ? AND source_type != 'user_document' AND deleted_at IS NULL
+          UPDATE ${this.prefix}entries
+          SET deleted_at = ?, updated_at = ?
+          WHERE entity_id = ? AND access_count = 0 AND created_at <= ? AND source_type != 'immutable_document' AND deleted_at IS NULL
         `, [now, now, entityId, orphanThreshold]);
       }
 
       if (staleInferredAfterDays !== null) {
         const staleThreshold = now - (staleInferredAfterDays * MS_PER_DAY);
         await this.db.runAsync(`
-          UPDATE ${this.prefix}entries 
-          SET confidence = 'tentative', updated_at = ? 
-          WHERE entity_id = ? AND confidence = 'inferred' AND (last_accessed_at < ? OR (last_accessed_at IS NULL AND created_at < ?)) AND source_type != 'user_document' AND deleted_at IS NULL
+          UPDATE ${this.prefix}entries
+          SET confidence = 'tentative', updated_at = ?
+          WHERE entity_id = ? AND confidence = 'inferred' AND (last_accessed_at <= ? OR (last_accessed_at IS NULL AND created_at <= ?)) AND source_type != 'immutable_document' AND deleted_at IS NULL
         `, [now, entityId, staleThreshold, staleThreshold]);
       }
     });
@@ -1852,9 +1905,9 @@ export class WikiMemory {
     const allTasks = await this.db.getAllAsync<WikiTask>(`SELECT * FROM ${this.prefix}tasks WHERE entity_id = ? AND status IN ('pending', 'in_progress') AND deleted_at IS NULL`, [entityId]);
     const recentEvents = await this.db.getAllAsync<WikiEvent>(`SELECT * FROM ${this.prefix}events WHERE entity_id = ? ORDER BY created_at DESC LIMIT 20`, [entityId]);
 
-    const healCandidates = allFactsRows.filter(f => f.source_type !== 'user_document');
+    const healCandidates = allFactsRows.filter(f => f.source_type !== 'immutable_document');
     const documentAnchors = allFactsRows
-      .filter(f => f.source_type === 'user_document')
+      .filter(f => f.source_type === 'immutable_document')
       .map(({ id, title, source_ref }) => ({ id, title, source_ref }));
 
     const userPrompt = `Heal Candidates:\n${JSON.stringify(healCandidates.map(f => {
@@ -1896,7 +1949,7 @@ export class WikiMemory {
         await this.db.runAsync(`
           INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'agent_inferred', now, now]);
+        `, [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'librarian_inferred', now, now]);
         insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
       }
     });
@@ -2276,12 +2329,17 @@ export class WikiMemory {
       throw new WikiBusyError('import', '*');
     }
 
-    // All clear — acquire global + per-entity import locks, then process each entity.
+    // Acquire global + per-entity import locks before any await so the lock check and
+    // lock acquisition remain race-free across concurrent importDump() calls.
     this.activeMaintenanceJobs.add(this._globalImportKey());
     for (const entityId of entityIds) {
       this.activeMaintenanceJobs.add(this._importKey(entityId));
     }
     try {
+      // Fail before any writes so we never partially commit an import and then reject
+      // with a migration error — same probe as setup().
+      await this.assertNoLegacySourceTypes();
+
       for (const [entityId, bundle] of Object.entries(dump.entities)) {
         await this._doImportEntity(entityId, bundle, merge);
       }
@@ -2358,6 +2416,10 @@ export class WikiMemory {
         }
 
         for (const fact of bundle.facts) {
+          const sourceType = this._normalizeImportedSourceType(String(fact.source_type), {
+            entityId,
+            factId: fact.id,
+          });
           const tagsJson = JSON.stringify(Array.isArray(fact.tags) ? fact.tags : []);
           // Normalize once: non-finite (undefined/null/NaN) → 0 so we never persist an
           // invalid value to the DB and ORDER BY updated_at remains meaningful.
@@ -2446,7 +2508,7 @@ export class WikiMemory {
               // and skip embedFact() — no embedding API call required.
               await this.db.runAsync(
                 `UPDATE ${this.prefix}entries SET entity_id = ?, title = ?, body = ?, tags = ?, confidence = ?, source_type = ?, source_hash = ?, source_ref = ?, created_at = ?, updated_at = ?, last_accessed_at = ?, access_count = ?, deleted_at = ?, embedding_blob = ?, embedding = NULL WHERE id = ?`,
-                [entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, blobData, fact.id]
+                [entityId, fact.title, fact.body, tagsJson, fact.confidence, sourceType, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, blobData, fact.id]
               );
               factsWithPreservedBlob.set(fact.id, blobData);
               // Only track dimensions for live facts: read() and _reconcileEmbeddingDimension()
@@ -2461,7 +2523,7 @@ export class WikiMemory {
               // falls back to keyword-only retrieval.
               await this.db.runAsync(
                 `UPDATE ${this.prefix}entries SET entity_id = ?, title = ?, body = ?, tags = ?, confidence = ?, source_type = ?, source_hash = ?, source_ref = ?, created_at = ?, updated_at = ?, last_accessed_at = ?, access_count = ?, deleted_at = ?, embedding_blob = NULL, embedding = NULL WHERE id = ?`,
-                [entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, fact.id]
+                [entityId, fact.title, fact.body, tagsJson, fact.confidence, sourceType, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, fact.id]
               );
             }
             existingFactsById.set(fact.id, { id: fact.id, entity_id: entityId, updated_at: safeUpdatedAt });
@@ -2471,14 +2533,14 @@ export class WikiMemory {
             if (blobData != null) {
               await this.db.runAsync(
                 `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at, embedding_blob) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, blobData]
+                [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, sourceType, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, blobData]
               );
               factsWithPreservedBlob.set(fact.id, blobData);
               if (!fact.deleted_at) preservedBlobDims.add(blobData.byteLength / 4);
             } else {
               await this.db.runAsync(
                 `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, fact.source_type, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at]
+                [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, sourceType, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at]
               );
             }
             existingFactsById.set(fact.id, { id: fact.id, entity_id: entityId, updated_at: safeUpdatedAt });
@@ -2943,7 +3005,7 @@ export class WikiMemory {
           await this.db.runAsync(
             `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'user_document', sourceHash, sourceRef, now, now]
+            [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'immutable_document', sourceHash, sourceRef, now, now]
           );
           insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
         }

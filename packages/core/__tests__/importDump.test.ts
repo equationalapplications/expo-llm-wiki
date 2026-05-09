@@ -214,7 +214,7 @@ function makeDump(entityId: string, factId = 'f1'): MemoryDump {
           body: 'Test body content here',
           tags: ['tag1'],
           confidence: 'certain',
-          source_type: 'user_document',
+          source_type: 'immutable_document',
           source_hash: null,
           source_ref: 'test.pdf',
           created_at: 1000,
@@ -277,6 +277,28 @@ describe('importDump', () => {
     await wiki.importDump(makeDump('e', 'f2'), { merge: true });
     const out = await wiki.exportDump(['e']);
     expect(out.entities.e.facts.length).toBe(2);
+  });
+});
+
+describe('importDump — legacy source_type guard', () => {
+  it('fails before any import writes when the DB already has legacy source_type rows', async () => {
+    const db = openTestDatabase();
+    const wiki = new WikiMemory(db, { llmProvider: { generateText: async () => '{}' } });
+    await wiki.setup();
+    await db.runAsync(
+      `INSERT INTO llm_wiki_entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ['legacy-row', 'e-legacy', 't', 'b', '[]', 'certain', 'user_document', 1, 1],
+    );
+
+    const entityIdNew = 'e-fresh';
+    await expect(wiki.importDump(makeDump(entityIdNew, 'f-target'))).rejects.toThrow(/legacy source_type/);
+
+    const row = await db.getFirstAsync<{ n: number }>(
+      `SELECT COUNT(*) as n FROM llm_wiki_entries WHERE entity_id = ?`,
+      [entityIdNew],
+    );
+    expect(row?.n ?? 0).toBe(0);
   });
 });
 
@@ -350,6 +372,50 @@ describe('importDump — busy-key protection', () => {
 
     resolveImport();
     await firstImport;
+  });
+
+  it('throws WikiBusyError(import, *) when called concurrently for different entities', async () => {
+    const { wiki } = makeRealWiki();
+    await wiki.setup();
+
+    let releaseLegacyProbe: () => void = () => {};
+    const legacyProbeBlocker = new Promise<void>((r) => { releaseLegacyProbe = r; });
+    const originalAssert = (wiki as any).assertNoLegacySourceTypes.bind(wiki);
+    let assertCalls = 0;
+
+    // Hold the first import inside the legacy probe to ensure the second call
+    // races exactly at the lock-check/acquire boundary.
+    (wiki as any).assertNoLegacySourceTypes = async () => {
+      assertCalls += 1;
+      if (assertCalls === 1) {
+        await legacyProbeBlocker;
+      }
+      return originalAssert();
+    };
+
+    const firstImport = wiki.importDump(simpleDump('user-1'));
+    await new Promise((r) => setTimeout(r, 0));
+
+    let secondErr: unknown;
+    let secondSettled = false;
+    const secondImport = wiki
+      .importDump(simpleDump('user-2'))
+      .catch((e) => {
+        secondErr = e;
+      })
+      .finally(() => {
+        secondSettled = true;
+      });
+
+    await new Promise((r) => setTimeout(r, 10));
+    expect(secondSettled).toBe(true);
+    expect(secondErr).toBeInstanceOf(WikiBusyError);
+    expect((secondErr as WikiBusyError).operation).toBe('import');
+    expect((secondErr as WikiBusyError).entityId).toBe('*');
+
+    releaseLegacyProbe();
+    await firstImport;
+    await secondImport;
   });
 
   it('runLibrarian() throws WikiBusyError(import) while importDump is in-flight', async () => {
