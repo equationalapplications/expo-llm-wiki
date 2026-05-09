@@ -260,9 +260,11 @@ describe('subscribeEntityStatus — multi-subscriber and re-entrancy', () => {
     const wiki = await freshWiki(slowProvider(0));
     const callsLate: EntityStatus[] = [];
     let unsubLate: () => void = () => {};
+    let subscribed = false;
     const unsubA = wiki.subscribeEntityStatus('e1', (s) => {
-      // Only subscribe late during the transition emission (librarian:true), not the initial emission
-      if (s.librarian && callsLate.length === 0) {
+      // Subscribe late only on the first transition when transitioning to librarian:true
+      if (s.librarian && !subscribed) {
+        subscribed = true;
         unsubLate = wiki.subscribeEntityStatus('e1', (s) => callsLate.push({ ...s }));
       }
     });
