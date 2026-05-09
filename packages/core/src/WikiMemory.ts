@@ -278,6 +278,8 @@ export class WikiMemory {
     string,
     Set<{ callback: (s: EntityStatus) => void; last: EntityStatus }>
   >();
+  /** Re-entrancy guard: prevents nested subscribeEntityStatus initial callbacks. */
+  private _subscribeDepth = 0;
   private miniSearch = new MiniSearch<{ id: string; entity_id: string; title: string; body: string; tags: string }>({
     fields: ['title', 'body', 'tags'],
     storeFields: ['entity_id'],
@@ -785,6 +787,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     const next = this.getEntityStatus(entityId);
     // Snapshot for safe iteration if a callback unsubscribes or subscribes.
     for (const entry of Array.from(set)) {
+      if (!set.has(entry)) continue; // unsubscribed during this emission
       if (
         entry.last.ingesting === next.ingesting &&
         entry.last.librarian === next.librarian &&
@@ -2255,7 +2258,6 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     callback: (status: EntityStatus) => void
   ): () => void {
     const initial = this.getEntityStatus(entityId);
-    try { callback(initial); } catch (err) { console.error(err); }
 
     let set = this.statusSubscribers.get(entityId);
     if (!set) {
@@ -2264,6 +2266,15 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     }
     const entry = { callback, last: initial };
     set.add(entry);
+
+    // Fire initial callback only at the outermost subscribe depth.
+    // If called from within another subscriber's initial callback, suppress
+    // the immediate call so the new entry fires on the next state transition.
+    if (this._subscribeDepth === 0) {
+      this._subscribeDepth++;
+      try { callback(initial); } catch (err) { console.error(err); }
+      this._subscribeDepth--;
+    }
 
     let active = true;
     return () => {

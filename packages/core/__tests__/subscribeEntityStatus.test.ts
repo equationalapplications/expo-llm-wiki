@@ -177,3 +177,105 @@ describe('subscribeEntityStatus — suppression and unsubscribe', () => {
     expect(calls.length).toBe(1); // only the initial emission
   });
 });
+
+describe('subscribeEntityStatus — multi-subscriber and re-entrancy', () => {
+  it('multiple subscribers on the same entity each receive initial + transitions; unsubscribing one leaves the other', async () => {
+    const wiki = await freshWiki(slowProvider(0));
+    const callsA: EntityStatus[] = [];
+    const callsB: EntityStatus[] = [];
+    const unsubA = wiki.subscribeEntityStatus('e1', (s) => callsA.push({ ...s }));
+    const unsubB = wiki.subscribeEntityStatus('e1', (s) => callsB.push({ ...s }));
+    expect(callsA.length).toBe(1);
+    expect(callsB.length).toBe(1);
+
+    const key = (wiki as any)._librarianKey('e1');
+    (wiki as any).activeMaintenanceJobs.add(key);
+    (wiki as any)._notifyStatusSubscribers('e1');
+    expect(callsA.at(-1)?.librarian).toBe(true);
+    expect(callsB.at(-1)?.librarian).toBe(true);
+
+    unsubA();
+    (wiki as any).activeMaintenanceJobs.delete(key);
+    (wiki as any)._notifyStatusSubscribers('e1');
+    expect(callsA.length).toBe(2); // unchanged after unsub
+    expect(callsB.at(-1)?.librarian).toBe(false);
+    unsubB();
+  });
+
+  it('cross-entity isolation: jobs on entity "a" never notify subscribers for entity "b"', async () => {
+    const wiki = await freshWiki(slowProvider(0));
+    const calls: EntityStatus[] = [];
+    const unsub = wiki.subscribeEntityStatus('b', (s) => calls.push({ ...s }));
+    const key = (wiki as any)._librarianKey('a');
+    (wiki as any).activeMaintenanceJobs.add(key);
+    (wiki as any)._notifyStatusSubscribers('a');
+    (wiki as any).activeMaintenanceJobs.delete(key);
+    (wiki as any)._notifyStatusSubscribers('a');
+    expect(calls.length).toBe(1); // only initial for 'b'
+    unsub();
+  });
+
+  it('throwing callback does not break delivery to other subscribers and routes to console.error', async () => {
+    const wiki = await freshWiki(slowProvider(0));
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const otherCalls: EntityStatus[] = [];
+
+    const unsubBad = wiki.subscribeEntityStatus('e1', () => { throw new Error('boom'); });
+    const unsubGood = wiki.subscribeEntityStatus('e1', (s) => otherCalls.push({ ...s }));
+
+    const key = (wiki as any)._librarianKey('e1');
+    (wiki as any).activeMaintenanceJobs.add(key);
+    (wiki as any)._notifyStatusSubscribers('e1');
+
+    expect(otherCalls.at(-1)?.librarian).toBe(true);
+    expect(errSpy).toHaveBeenCalled();
+    unsubBad();
+    unsubGood();
+    errSpy.mockRestore();
+  });
+
+  it('unsubscribe during emission prevents the unsubscribed listener from being called for that transition', async () => {
+    const wiki = await freshWiki(slowProvider(0));
+    const callsB: EntityStatus[] = [];
+    let unsubB!: () => void;
+    const unsubA = wiki.subscribeEntityStatus('e1', () => {
+      // Listener A unsubscribes B during transition emission
+      if (unsubB) unsubB();
+    });
+    unsubB = wiki.subscribeEntityStatus('e1', (s) => callsB.push({ ...s }));
+    expect(callsB.length).toBe(1); // initial only
+
+    const key = (wiki as any)._librarianKey('e1');
+    (wiki as any).activeMaintenanceJobs.add(key);
+    (wiki as any)._notifyStatusSubscribers('e1');
+
+    // B was unsubscribed before the iterator reached it (snapshot still includes B,
+    // but the implementation must skip removed entries — verify via no transition delivery).
+    // Spec rule 7: B MUST NOT receive the transition.
+    expect(callsB.length).toBe(1);
+    unsubA();
+  });
+
+  it('subscribe during emission gets initial sync and is not invoked again for the same transition', async () => {
+    const wiki = await freshWiki(slowProvider(0));
+    const callsLate: EntityStatus[] = [];
+    let unsubLate: () => void = () => {};
+    const unsubA = wiki.subscribeEntityStatus('e1', (s) => {
+      // Only subscribe late during the transition emission (librarian:true), not the initial emission
+      if (s.librarian && callsLate.length === 0) {
+        unsubLate = wiki.subscribeEntityStatus('e1', (s) => callsLate.push({ ...s }));
+      }
+    });
+
+    const key = (wiki as any)._librarianKey('e1');
+    (wiki as any).activeMaintenanceJobs.add(key);
+    (wiki as any)._notifyStatusSubscribers('e1');
+
+    // Late subscriber received its synchronous initial emission and nothing else.
+    expect(callsLate.length).toBe(1);
+    expect(callsLate[0].librarian).toBe(true); // current status at subscribe time
+
+    unsubA();
+    unsubLate();
+  });
+});
