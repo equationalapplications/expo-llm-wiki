@@ -311,7 +311,7 @@ The cache is also automatically invalidated on any mutation (`runLibrarian`, `ru
 Synchronous point-in-time snapshot:
 
 ```typescript
-const status = wiki.getEntityStatus('user-42');
+const status = wikiMemory.getEntityStatus('user-42');
 // { ingesting: boolean, librarian: boolean, heal: boolean }
 ```
 
@@ -322,7 +322,7 @@ Use this when you only need the current value (e.g. inside a request handler).
 Push-based change notification — the callback fires synchronously once with the current status, then again on every transition where any of the three booleans flips. There is no polling and no duplicate snapshots.
 
 ```typescript
-const unsubscribe = wiki.subscribeEntityStatus('user-42', (status) => {
+const unsubscribe = wikiMemory.subscribeEntityStatus('user-42', (status) => {
   console.log(status); // { ingesting, librarian, heal }
 });
 

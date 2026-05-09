@@ -801,7 +801,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       try {
         entry.callback(this._copyEntityStatus(next));
       } catch (err) {
-        console.error(err);
+        console.error(`[WikiMemory.subscribeEntityStatus] callback error for entityId="${entityId}" during transition emission`, err);
       }
     }
   }
@@ -2269,7 +2269,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     try {
       callback(this._copyEntityStatus(initial));
     } catch (err) {
-      console.error(err);
+      console.error(`[WikiMemory.subscribeEntityStatus] callback error for entityId="${entityId}" during initial emission`, err);
     }
 
     let set = this.statusSubscribers.get(entityId);
