@@ -40,6 +40,20 @@ describe('subscribeEntityStatus — initial emission', () => {
     expect(calls).toEqual([{ ingesting: false, librarian: false, heal: false }]);
     unsub();
   });
+
+  it('nested subscribe from another subscriber’s initial still gets synchronous initial before outer returns', async () => {
+    const wiki = await freshWiki(slowProvider(0));
+    const inner: EntityStatus[] = [];
+    let outerReturned = false;
+    wiki.subscribeEntityStatus('e1', () => {
+      wiki.subscribeEntityStatus('e1', (s) => {
+        expect(outerReturned).toBe(false);
+        inner.push({ ...s });
+      });
+    });
+    outerReturned = true;
+    expect(inner).toEqual([{ ingesting: false, librarian: false, heal: false }]);
+  });
 });
 
 describe('subscribeEntityStatus — ingest transition', () => {
@@ -140,6 +154,19 @@ describe('subscribeEntityStatus — suppression and unsubscribe', () => {
     (wiki as any)._notifyStatusSubscribers('e1');
     (wiki as any)._notifyStatusSubscribers('e1');
     expect(calls.length).toBe(1); // only initial
+    unsub();
+  });
+
+  it('mutating the status object passed to callback does not corrupt duplicate suppression', async () => {
+    const wiki = await freshWiki(slowProvider(0));
+    const calls: EntityStatus[] = [];
+    const unsub = wiki.subscribeEntityStatus('e1', (s) => {
+      calls.push({ ...s });
+      s.librarian = true;
+    });
+    (wiki as any)._notifyStatusSubscribers('e1');
+    (wiki as any)._notifyStatusSubscribers('e1');
+    expect(calls.length).toBe(1);
     unsub();
   });
 

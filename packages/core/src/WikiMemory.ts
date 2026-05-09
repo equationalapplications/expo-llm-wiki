@@ -278,8 +278,6 @@ export class WikiMemory {
     string,
     Set<{ callback: (s: EntityStatus) => void; last: EntityStatus }>
   >();
-  /** Re-entrancy guard: prevents nested subscribeEntityStatus initial callbacks. */
-  private _subscribeDepth = 0;
   private miniSearch = new MiniSearch<{ id: string; entity_id: string; title: string; body: string; tags: string }>({
     fields: ['title', 'body', 'tags'],
     storeFields: ['entity_id'],
@@ -781,6 +779,10 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     return false;
   }
 
+  private _copyEntityStatus(s: EntityStatus): EntityStatus {
+    return { ingesting: s.ingesting, librarian: s.librarian, heal: s.heal };
+  }
+
   private _notifyStatusSubscribers(entityId: string): void {
     const set = this.statusSubscribers.get(entityId);
     if (!set || set.size === 0) return;
@@ -793,9 +795,9 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
         entry.last.librarian === next.librarian &&
         entry.last.heal === next.heal
       ) continue;
-      entry.last = next;
+      entry.last = this._copyEntityStatus(next);
       try {
-        entry.callback(next);
+        entry.callback(this._copyEntityStatus(next));
       } catch (err) {
         console.error(err);
       }
@@ -2264,16 +2266,13 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       set = new Set();
       this.statusSubscribers.set(entityId, set);
     }
-    const entry = { callback, last: initial };
+    const entry = { callback, last: this._copyEntityStatus(initial) };
     set.add(entry);
 
-    // Fire initial callback only at the outermost subscribe depth.
-    // If called from within another subscriber's initial callback, suppress
-    // the immediate call so the new entry fires on the next state transition.
-    if (this._subscribeDepth === 0) {
-      this._subscribeDepth++;
-      try { callback(initial); } catch (err) { console.error(err); }
-      this._subscribeDepth--;
+    try {
+      callback(this._copyEntityStatus(initial));
+    } catch (err) {
+      console.error(err);
     }
 
     let active = true;
