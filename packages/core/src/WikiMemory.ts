@@ -2031,10 +2031,12 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       throw new WikiBusyError('forget', entityId);
     }
     this.activeMaintenanceJobs.add(jobKey);
+    this._notifyStatusSubscribers(entityId);
     try {
       await this._doRunLibrarian(entityId);
     } finally {
       this.activeMaintenanceJobs.delete(jobKey);
+      this._notifyStatusSubscribers(entityId);
     }
   }
 
@@ -2056,10 +2058,12 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       throw new WikiBusyError('forget', entityId);
     }
     this.activeMaintenanceJobs.add(jobKey);
+    this._notifyStatusSubscribers(entityId);
     try {
       await this._doRunHeal(entityId);
     } finally {
       this.activeMaintenanceJobs.delete(jobKey);
+      this._notifyStatusSubscribers(entityId);
     }
   }
 

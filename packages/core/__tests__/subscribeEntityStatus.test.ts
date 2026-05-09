@@ -103,13 +103,20 @@ describe('subscribeEntityStatus — auto-librarian dispatch', () => {
     });
     await wiki.setup();
 
+    let sawLibrarianTrue = false;
+    let resolveLibrarianCycle!: () => void;
+    const librarianCycleDone = new Promise<void>((r) => { resolveLibrarianCycle = r; });
+
     const calls: EntityStatus[] = [];
-    const unsub = wiki.subscribeEntityStatus('e1', (s) => calls.push({ ...s }));
+    const unsub = wiki.subscribeEntityStatus('e1', (s) => {
+      calls.push({ ...s });
+      if (s.librarian) sawLibrarianTrue = true;
+      else if (sawLibrarianTrue) resolveLibrarianCycle();
+    });
     expect(calls).toEqual([{ ingesting: false, librarian: false, heal: false }]);
 
-    await wiki.write('e1', { eventType: 'observation', summary: 'something happened' } as any);
-    // librarian dispatched; wait for it to finish
-    await new Promise(r => setTimeout(r, 80));
+    await wiki.write('e1', { event_type: 'observation', summary: 'something happened' });
+    await librarianCycleDone;
 
     const flips = calls.map(c => c.librarian);
     expect(flips).toContain(true);
@@ -132,11 +139,19 @@ describe('subscribeEntityStatus — auto-heal dispatch', () => {
     });
     await wiki.setup();
 
-    const calls: EntityStatus[] = [];
-    const unsub = wiki.subscribeEntityStatus('e1', (s) => calls.push({ ...s }));
+    let sawHealTrue = false;
+    let resolveHealCycle!: () => void;
+    const healCycleDone = new Promise<void>((r) => { resolveHealCycle = r; });
 
-    await wiki.write('e1', { eventType: 'observation', summary: 'x' } as any);
-    await new Promise(r => setTimeout(r, 150));
+    const calls: EntityStatus[] = [];
+    const unsub = wiki.subscribeEntityStatus('e1', (s) => {
+      calls.push({ ...s });
+      if (s.heal) sawHealTrue = true;
+      else if (sawHealTrue) resolveHealCycle();
+    });
+
+    await wiki.write('e1', { event_type: 'observation', summary: 'x' });
+    await healCycleDone;
 
     const healFlips = calls.map(c => c.heal);
     expect(healFlips).toContain(true);
