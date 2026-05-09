@@ -73,3 +73,33 @@ describe('subscribeEntityStatus — ingest transition', () => {
     unsub();
   });
 });
+
+describe('subscribeEntityStatus — auto-librarian dispatch', () => {
+  it('notifies on add and delete around the auto-librarian dispatch in write()', async () => {
+    // Configure a low threshold so a single write() crosses it.
+    const db = new MockSQLiteDatabase();
+    // Stub event-count query to return the threshold value.
+    (db as any).getFirstAsync = async (sql: string) => {
+      if (sql.includes('COUNT(*)')) return { count: 1 };
+      return null;
+    };
+    const wiki = new WikiMemory(db as any, {
+      llmProvider: slowProvider(30),
+      config: { tablePrefix: 'sub_', autoLibrarianThreshold: 1, autoHealThreshold: 1_000_000 },
+    });
+    await wiki.setup();
+
+    const calls: EntityStatus[] = [];
+    const unsub = wiki.subscribeEntityStatus('e1', (s) => calls.push({ ...s }));
+    expect(calls).toEqual([{ ingesting: false, librarian: false, heal: false }]);
+
+    await wiki.write('e1', { eventType: 'observation', summary: 'something happened' } as any);
+    // librarian dispatched; wait for it to finish
+    await new Promise(r => setTimeout(r, 80));
+
+    const flips = calls.map(c => c.librarian);
+    expect(flips).toContain(true);
+    expect(flips.at(-1)).toBe(false);
+    unsub();
+  });
+});

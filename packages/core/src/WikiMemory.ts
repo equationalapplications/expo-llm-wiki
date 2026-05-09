@@ -1765,9 +1765,13 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
         !this._isForgetActiveFor(entityId)
       ) {
         this.activeMaintenanceJobs.add(jobKey);
+        this._notifyStatusSubscribers(entityId);
         this.runLibrarianThenMaybeHeal(entityId, count)
           .catch(console.error)
-          .finally(() => this.activeMaintenanceJobs.delete(jobKey));
+          .finally(() => {
+            this.activeMaintenanceJobs.delete(jobKey);
+            this._notifyStatusSubscribers(entityId);
+          });
       }
     }
   }
