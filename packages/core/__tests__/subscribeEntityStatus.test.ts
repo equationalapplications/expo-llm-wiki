@@ -41,3 +41,35 @@ describe('subscribeEntityStatus — initial emission', () => {
     unsub();
   });
 });
+
+describe('subscribeEntityStatus — ingest transition', () => {
+  it('emits ingesting:true on add and ingesting:false on delete, no duplicates', async () => {
+    const wiki = await freshWiki(slowProvider(50));
+    const calls: EntityStatus[] = [];
+    const unsub = wiki.subscribeEntityStatus('e1', (s) => calls.push({ ...s }));
+    // initial
+    expect(calls).toEqual([{ ingesting: false, librarian: false, heal: false }]);
+
+    const sourceHash = 'a'.repeat(64);
+    const p = wiki.ingestDocument('e1', { sourceRef: 'doc1', sourceHash, documentChunk: 'hello world' });
+    // give ingest a tick to register
+    await new Promise(r => setTimeout(r, 10));
+    expect(calls.at(-1)).toEqual({ ingesting: true, librarian: false, heal: false });
+
+    await p;
+    expect(calls.at(-1)).toEqual({ ingesting: false, librarian: false, heal: false });
+    expect(calls.length).toBe(3); // initial + true + false
+    unsub();
+  });
+
+  it('does not notify subscribers for a different entity', async () => {
+    const wiki = await freshWiki(slowProvider(50));
+    const calls: EntityStatus[] = [];
+    const unsub = wiki.subscribeEntityStatus('other', (s) => calls.push({ ...s }));
+
+    const sourceHash = 'a'.repeat(64);
+    await wiki.ingestDocument('e1', { sourceRef: 'doc1', sourceHash, documentChunk: 'hello' });
+    expect(calls.length).toBe(1); // only initial
+    unsub();
+  });
+});

@@ -779,6 +779,26 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     return false;
   }
 
+  private _notifyStatusSubscribers(entityId: string): void {
+    const set = this.statusSubscribers.get(entityId);
+    if (!set || set.size === 0) return;
+    const next = this.getEntityStatus(entityId);
+    // Snapshot for safe iteration if a callback unsubscribes or subscribes.
+    for (const entry of Array.from(set)) {
+      if (
+        entry.last.ingesting === next.ingesting &&
+        entry.last.librarian === next.librarian &&
+        entry.last.heal === next.heal
+      ) continue;
+      entry.last = next;
+      try {
+        entry.callback(next);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  }
+
   private _validatePruneDuration(value: number | null | undefined, name: string): void {
     if (value !== null && value !== undefined && (typeof value !== 'number' || !isFinite(value) || value < 0)) {
       throw new Error(`Invalid ${name}: must be a non-negative finite number or null`);
@@ -2986,6 +3006,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       throw new WikiBusyError('forget', entityId);
     }
     this.activeIngestJobs.add(jobKey);
+    this._notifyStatusSubscribers(entityId);
 
     try {
       const { chunks, truncated } = chunkText(params.documentChunk, maxChunkLength, chunkOverlap);
@@ -3071,6 +3092,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       return { truncated, chunks: chunks.length };
     } finally {
       this.activeIngestJobs.delete(jobKey);
+      this._notifyStatusSubscribers(entityId);
     }
   }
 }
