@@ -130,3 +130,50 @@ describe('subscribeEntityStatus — auto-heal dispatch', () => {
     unsub();
   });
 });
+
+describe('subscribeEntityStatus — suppression and unsubscribe', () => {
+  it('does not invoke callback when booleans are unchanged from last emission', async () => {
+    const wiki = await freshWiki(slowProvider(0));
+    const calls: EntityStatus[] = [];
+    const unsub = wiki.subscribeEntityStatus('e1', (s) => calls.push({ ...s }));
+    // Fire the notifier with no actual mutation
+    (wiki as any)._notifyStatusSubscribers('e1');
+    (wiki as any)._notifyStatusSubscribers('e1');
+    expect(calls.length).toBe(1); // only initial
+    unsub();
+  });
+
+  it('does not notify when only out-of-scope maintenance jobs flip', async () => {
+    const wiki = await freshWiki(slowProvider(0));
+    const calls: EntityStatus[] = [];
+    const unsub = wiki.subscribeEntityStatus('e1', (s) => calls.push({ ...s }));
+
+    const pruneKey = (wiki as any)._pruneKey('e1');
+    const reembedKey = (wiki as any)._reembedKey('e1');
+    const importKey = (wiki as any)._importKey('e1');
+    const forgetKey = (wiki as any)._forgetKey('e1');
+    for (const k of [pruneKey, reembedKey, importKey, forgetKey]) {
+      (wiki as any).activeMaintenanceJobs.add(k);
+      (wiki as any)._notifyStatusSubscribers('e1'); // even if production code mistakenly called it
+      (wiki as any).activeMaintenanceJobs.delete(k);
+      (wiki as any)._notifyStatusSubscribers('e1');
+    }
+    expect(calls.length).toBe(1); // only initial
+    unsub();
+  });
+
+  it('unsubscribe stops further callbacks; second call is a no-op', async () => {
+    const wiki = await freshWiki(slowProvider(0));
+    const calls: EntityStatus[] = [];
+    const unsub = wiki.subscribeEntityStatus('e1', (s) => calls.push({ ...s }));
+    unsub();
+    expect(() => unsub()).not.toThrow();
+
+    const key = (wiki as any)._librarianKey('e1');
+    (wiki as any).activeMaintenanceJobs.add(key);
+    (wiki as any)._notifyStatusSubscribers('e1');
+    (wiki as any).activeMaintenanceJobs.delete(key);
+    (wiki as any)._notifyStatusSubscribers('e1');
+    expect(calls.length).toBe(1); // only the initial emission
+  });
+});
