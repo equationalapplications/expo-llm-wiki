@@ -1,3 +1,24 @@
+# [4.1.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.0.0...v4.1.0) (2026-05-09)
+
+
+### Bug Fixes
+
+* **core:** add context to status callback errors ([0c3eb84](https://github.com/equationalapplications/expo-llm-wiki/commit/0c3eb84695d133fbec978d16effe2846ddd05c6c))
+* **core:** harden subscribeEntityStatus delivery ([5c76300](https://github.com/equationalapplications/expo-llm-wiki/commit/5c76300dd4a3a808c1c463471172a4ace4833159))
+* **core:** notify entity status on manual librarian/heal ([c03a60b](https://github.com/equationalapplications/expo-llm-wiki/commit/c03a60bf1409e1d28e0950f59052ae0649694cce))
+* **core:** preserve re-entrant status transitions in subscribeEntityStatus ([ed87a0b](https://github.com/equationalapplications/expo-llm-wiki/commit/ed87a0b79bcb4df6c84e904ad65a5c23b1c8a08d))
+* **core:** subscribeEntityStatus review — always initial, copy status ([103146c](https://github.com/equationalapplications/expo-llm-wiki/commit/103146ce2dd8a7b779e0342ffa54e53f06ff0fdb))
+* **test:** use flag instead of length check to avoid race in re-entrancy test ([e85a7dc](https://github.com/equationalapplications/expo-llm-wiki/commit/e85a7dca95823bdf85d1eb123e1ebe71e3afcdd0))
+
+
+### Features
+
+* **core:** add subscribeEntityStatus initial emission scaffold ([2ee33ae](https://github.com/equationalapplications/expo-llm-wiki/commit/2ee33ae69c5f26e80d70f6a1f101911761bc6e91))
+* **core:** isolate listener errors and re-entrant subscribe/unsubscribe ([3bb90f8](https://github.com/equationalapplications/expo-llm-wiki/commit/3bb90f83292d27e5c3fe83e8403ec4dac9c470c6))
+* **core:** notify entity-status subscribers on auto-heal transitions ([05b1325](https://github.com/equationalapplications/expo-llm-wiki/commit/05b1325de222a0781941dd2318baaf1b93266ca7))
+* **core:** notify entity-status subscribers on auto-librarian transitions ([ad9cd04](https://github.com/equationalapplications/expo-llm-wiki/commit/ad9cd04139ed41645a6f3138c45a66712ca97a01))
+* **core:** notify entity-status subscribers on ingest transitions ([9ff5a24](https://github.com/equationalapplications/expo-llm-wiki/commit/9ff5a24682f318ad40022fa9652dd240c8d69530))
+
 # [4.0.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v3.2.0...v4.0.0) (2026-05-09)
 
 
