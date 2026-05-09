@@ -1,7 +1,7 @@
 # Source Type Rename for Clarity
 
 **Date:** 2026-05-08  
-**Status:** Implemented 
+**Status:** Implemented  
 **Breaking Change:** Yes
 
 ## Overview
