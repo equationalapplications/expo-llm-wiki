@@ -302,6 +302,41 @@ wikiMemory.clearVectorCache();
 
 The cache is also automatically invalidated on any mutation (`runLibrarian`, `runHeal`, `runPrune`, `runReembed`, `ingestDocument`, `importDump`, `forget`).
 
+## Entity Status
+
+`WikiMemory` exposes the in-flight job state for a single entity through two complementary APIs.
+
+### `getEntityStatus(entityId)`
+
+Synchronous point-in-time snapshot:
+
+```typescript
+const status = wiki.getEntityStatus('user-42');
+// { ingesting: boolean, librarian: boolean, heal: boolean }
+```
+
+Use this when you only need the current value (e.g. inside a request handler).
+
+### `subscribeEntityStatus(entityId, callback)`
+
+Push-based change notification — the callback fires synchronously once with the current status, then again on every transition where any of the three booleans flips. There is no polling and no duplicate snapshots.
+
+```typescript
+const unsubscribe = wiki.subscribeEntityStatus('user-42', (status) => {
+  console.log(status); // { ingesting, librarian, heal }
+});
+
+// Later:
+unsubscribe(); // idempotent — safe to call more than once
+```
+
+Notes:
+
+- The first invocation happens **before** `subscribeEntityStatus` returns. Treat it as the initial render value.
+- Each emission may be a fresh object literal. Do not rely on referential equality between callbacks; equality of the three booleans is the contract.
+- A throwing callback is caught (logged via `console.error`) and does not block other subscribers or the underlying job.
+- Subscriptions are scoped to a single `entityId`. There is no wildcard or "all entities" form.
+
 ## Security
 
 `@equationalapplications/core-llm-wiki` enforces multiple security layers:
