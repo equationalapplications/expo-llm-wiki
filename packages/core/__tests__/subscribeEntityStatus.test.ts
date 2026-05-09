@@ -54,6 +54,31 @@ describe('subscribeEntityStatus — initial emission', () => {
     outerReturned = true;
     expect(inner).toEqual([{ ingesting: false, librarian: false, heal: false }]);
   });
+
+  it('does not miss a transition when initial callback starts ingest re-entrantly', async () => {
+    const wiki = await freshWiki(slowProvider(30));
+    const calls: EntityStatus[] = [];
+    let ingestPromise: Promise<any> | null = null;
+    let triggered = false;
+
+    const unsub = wiki.subscribeEntityStatus('e1', (s) => {
+      calls.push({ ...s });
+      if (!triggered) {
+        triggered = true;
+        ingestPromise = wiki.ingestDocument('e1', {
+          sourceRef: 'doc-from-initial',
+          sourceHash: 'b'.repeat(64),
+          documentChunk: 'hello from initial callback',
+        });
+      }
+    });
+
+    expect(calls[0]).toEqual({ ingesting: false, librarian: false, heal: false });
+    expect(calls.some((s) => s.ingesting)).toBe(true);
+    await ingestPromise;
+    expect(calls.at(-1)).toEqual({ ingesting: false, librarian: false, heal: false });
+    unsub();
+  });
 });
 
 describe('subscribeEntityStatus — ingest transition', () => {

@@ -2266,12 +2266,6 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     callback: (status: EntityStatus) => void
   ): () => void {
     const initial = this.getEntityStatus(entityId);
-    try {
-      callback(this._copyEntityStatus(initial));
-    } catch (err) {
-      console.error(`[WikiMemory.subscribeEntityStatus] callback error for entityId="${entityId}" during initial emission`, err);
-    }
-
     let set = this.statusSubscribers.get(entityId);
     if (!set) {
       set = new Set();
@@ -2279,6 +2273,12 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     }
     const entry = { callback, last: this._copyEntityStatus(initial) };
     set.add(entry);
+
+    try {
+      callback(this._copyEntityStatus(initial));
+    } catch (err) {
+      console.error(`[WikiMemory.subscribeEntityStatus] callback error for entityId="${entityId}" during initial emission`, err);
+    }
 
     let active = true;
     return () => {
