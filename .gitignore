@@ -2,3 +2,4 @@ node_modules/
 dist/
 .codegraph/
 .worktrees/
+test_output.txt
