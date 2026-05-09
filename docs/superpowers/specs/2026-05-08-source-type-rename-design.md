@@ -1,7 +1,7 @@
 # Source Type Rename for Clarity
 
 **Date:** 2026-05-08  
-**Status:** Approved (revised 2026-05-08 after PR #17 merge — line numbers refreshed, schema.ts + missed sites added)  
+**Status:** Implemented  
 **Breaking Change:** Yes
 
 ## Overview

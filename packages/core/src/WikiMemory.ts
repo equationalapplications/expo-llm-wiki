@@ -274,6 +274,10 @@ export class WikiMemory {
   private options: WikiOptions;
   private activeMaintenanceJobs = new Set<string>();
   private activeIngestJobs = new Set<string>();
+  private statusSubscribers = new Map<
+    string,
+    Set<{ callback: (s: EntityStatus) => void; last: EntityStatus }>
+  >();
   private miniSearch = new MiniSearch<{ id: string; entity_id: string; title: string; body: string; tags: string }>({
     fields: ['title', 'body', 'tags'],
     storeFields: ['entity_id'],
@@ -773,6 +777,33 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       if (k.startsWith(entityKeyPrefix)) return true;
     }
     return false;
+  }
+
+  private _copyEntityStatus(s: EntityStatus): EntityStatus {
+    return { ingesting: s.ingesting, librarian: s.librarian, heal: s.heal };
+  }
+
+  private _notifyStatusSubscribers(entityId: string): void {
+    const set = this.statusSubscribers.get(entityId);
+    if (!set || set.size === 0) return;
+    // Snapshot for safe iteration if a callback unsubscribes or subscribes.
+    // Re-read status each iteration so re-entrant mutations cannot leave stale
+    // snapshots for remaining subscribers.
+    for (const entry of Array.from(set)) {
+      if (!set.has(entry)) continue; // unsubscribed during this emission
+      const next = this.getEntityStatus(entityId);
+      if (
+        entry.last.ingesting === next.ingesting &&
+        entry.last.librarian === next.librarian &&
+        entry.last.heal === next.heal
+      ) continue;
+      entry.last = this._copyEntityStatus(next);
+      try {
+        entry.callback(this._copyEntityStatus(next));
+      } catch (err) {
+        console.error(`[WikiMemory.subscribeEntityStatus] callback error for entityId="${entityId}" during transition emission`, err);
+      }
+    }
   }
 
   private _validatePruneDuration(value: number | null | undefined, name: string): void {
@@ -1741,9 +1772,13 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
         !this._isForgetActiveFor(entityId)
       ) {
         this.activeMaintenanceJobs.add(jobKey);
+        this._notifyStatusSubscribers(entityId);
         this.runLibrarianThenMaybeHeal(entityId, count)
           .catch(console.error)
-          .finally(() => this.activeMaintenanceJobs.delete(jobKey));
+          .finally(() => {
+            this.activeMaintenanceJobs.delete(jobKey);
+            this._notifyStatusSubscribers(entityId);
+          });
       }
     }
   }
@@ -1766,6 +1801,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       const healKey = this._healKey(entityId);
       if (!this.activeMaintenanceJobs.has(healKey)) {
         this.activeMaintenanceJobs.add(healKey);
+        this._notifyStatusSubscribers(entityId);
         try {
           await this._doRunHeal(entityId);
           await this.db.runAsync(`
@@ -1775,6 +1811,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
           `, [entityId, currentEventCount, currentEventCount]);
         } finally {
           this.activeMaintenanceJobs.delete(healKey);
+          this._notifyStatusSubscribers(entityId);
         }
       }
     }
@@ -1996,10 +2033,12 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       throw new WikiBusyError('forget', entityId);
     }
     this.activeMaintenanceJobs.add(jobKey);
+    this._notifyStatusSubscribers(entityId);
     try {
       await this._doRunLibrarian(entityId);
     } finally {
       this.activeMaintenanceJobs.delete(jobKey);
+      this._notifyStatusSubscribers(entityId);
     }
   }
 
@@ -2021,10 +2060,12 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       throw new WikiBusyError('forget', entityId);
     }
     this.activeMaintenanceJobs.add(jobKey);
+    this._notifyStatusSubscribers(entityId);
     try {
       await this._doRunHeal(entityId);
     } finally {
       this.activeMaintenanceJobs.delete(jobKey);
+      this._notifyStatusSubscribers(entityId);
     }
   }
 
@@ -2207,6 +2248,46 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       ingesting,
       librarian: this.activeMaintenanceJobs.has(this._librarianKey(entityId)),
       heal: this.activeMaintenanceJobs.has(this._healKey(entityId)),
+    };
+  }
+
+  /**
+   * Subscribe to {@link EntityStatus} changes for a single entity. The callback
+   * is invoked synchronously once with the current status before this method
+   * returns, then again on every transition where any of `ingesting`,
+   * `librarian`, or `heal` flips. No polling, no duplicate snapshots.
+   *
+   * Returns an idempotent unsubscribe function.
+   *
+   * See also {@link getEntityStatus} for a synchronous point-in-time read.
+   */
+  subscribeEntityStatus(
+    entityId: string,
+    callback: (status: EntityStatus) => void
+  ): () => void {
+    const initial = this.getEntityStatus(entityId);
+    let set = this.statusSubscribers.get(entityId);
+    if (!set) {
+      set = new Set();
+      this.statusSubscribers.set(entityId, set);
+    }
+    const entry = { callback, last: this._copyEntityStatus(initial) };
+    set.add(entry);
+
+    try {
+      callback(this._copyEntityStatus(initial));
+    } catch (err) {
+      console.error(`[WikiMemory.subscribeEntityStatus] callback error for entityId="${entityId}" during initial emission`, err);
+    }
+
+    let active = true;
+    return () => {
+      if (!active) return;
+      active = false;
+      const s = this.statusSubscribers.get(entityId);
+      if (!s) return;
+      s.delete(entry);
+      if (s.size === 0) this.statusSubscribers.delete(entityId);
     };
   }
 
@@ -2946,6 +3027,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       throw new WikiBusyError('forget', entityId);
     }
     this.activeIngestJobs.add(jobKey);
+    this._notifyStatusSubscribers(entityId);
 
     try {
       const { chunks, truncated } = chunkText(params.documentChunk, maxChunkLength, chunkOverlap);
@@ -3031,6 +3113,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       return { truncated, chunks: chunks.length };
     } finally {
       this.activeIngestJobs.delete(jobKey);
+      this._notifyStatusSubscribers(entityId);
     }
   }
 }
