@@ -1,3 +1,43 @@
+# [4.0.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v3.2.0...v4.0.0) (2026-05-09)
+
+
+* refactor(core)!: rename source_type enum values for clarity ([f399091](https://github.com/equationalapplications/expo-llm-wiki/commit/f3990911eda2a7c71b63263a9a51ee4e079be2ae))
+
+
+### Bug Fixes
+
+* address PR [#18](https://github.com/equationalapplications/expo-llm-wiki/issues/18) Copilot follow-ups ([77ca0dd](https://github.com/equationalapplications/expo-llm-wiki/commit/77ca0dd3ccf9333198ec136b4413b50d5d14f289))
+* **core:** address PR [#18](https://github.com/equationalapplications/expo-llm-wiki/issues/18) review feedback ([d217b47](https://github.com/equationalapplications/expo-llm-wiki/commit/d217b47302ade993b819f19ff2c717b2ff6d3bbe))
+* **core:** close importDump lock race and align spec ([9c966df](https://github.com/equationalapplications/expo-llm-wiki/commit/9c966dffe63ba6aee85e3222030ddbba73e7aa90))
+* **core:** export parseEmbedding for public consumers ([1644c88](https://github.com/equationalapplications/expo-llm-wiki/commit/1644c881d3d243290438ff6b83115d051f85a7e0)), closes [#18](https://github.com/equationalapplications/expo-llm-wiki/issues/18)
+* **core:** handle legacy source_type in importDump ([4204bcc](https://github.com/equationalapplications/expo-llm-wiki/commit/4204bcc2023c71c3d1bc139a534ab7fc58240f95))
+* **core:** include entity and fact id in importDump source_type errors ([4bc6f30](https://github.com/equationalapplications/expo-llm-wiki/commit/4bc6f305f179dfa9d415888cd7c61301ca8fcbf2))
+* **core:** preflight legacy source_type before importDump writes ([5ae457f](https://github.com/equationalapplications/expo-llm-wiki/commit/5ae457fadd141ffb3cd2c77f03a7aebd24d16266))
+* **core:** run legacy source_type probe before source_ref pass ([4e8b6df](https://github.com/equationalapplications/expo-llm-wiki/commit/4e8b6df53990c58b335c8282bae738ad0116b535))
+* **core:** use <= instead of < for soft-delete pruning to handle zero retention ([07a2198](https://github.com/equationalapplications/expo-llm-wiki/commit/07a219898401ea87ac7d17f100d4fce08f00f71b))
+* **embed-scifact:** read embeddings from embedding_blob ([b4a3c87](https://github.com/equationalapplications/expo-llm-wiki/commit/b4a3c876b63bf44ad1da4516a7788f2d909d4d74)), closes [#18](https://github.com/equationalapplications/expo-llm-wiki/issues/18)
+* **integration:** avoid formatMemoryDump in fixture export; restore blobs in benchmark ([865193d](https://github.com/equationalapplications/expo-llm-wiki/commit/865193d7a5359aa5288d0dac49d4f6f296a90e71))
+* **integration:** strip embedding blobs in scifact fixture export ([9f1560f](https://github.com/equationalapplications/expo-llm-wiki/commit/9f1560f778eae829b6cc01ab8abc9a3aad26cf1f))
+* **integration:** tighten embed-scifact dump/strip and blob parse ([abe85c7](https://github.com/equationalapplications/expo-llm-wiki/commit/abe85c7b7b1cca92a605be71b1d6def6de0cf1bb))
+
+
+### Performance Improvements
+
+* **core:** probe legacy source_type before COUNT in setup guard ([6495553](https://github.com/equationalapplications/expo-llm-wiki/commit/6495553717c21c2da1405321917a822ac39e77cf))
+
+
+### BREAKING CHANGES
+
+* Existing databases use the old enum string values
+and are incompatible without manual SQL migration. See migration
+guide in docs/superpowers/specs/2026-05-08-source-type-rename-design.md.
+
+Run to migrate (adjust tablePrefix if customized):
+  UPDATE llm_wiki_entries SET source_type = 'immutable_document'
+    WHERE source_type = 'user_document';
+  UPDATE llm_wiki_entries SET source_type = 'librarian_inferred'
+    WHERE source_type = 'agent_inferred';
+
 # [3.2.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v3.1.0...v3.2.0) (2026-05-08)
 
 
