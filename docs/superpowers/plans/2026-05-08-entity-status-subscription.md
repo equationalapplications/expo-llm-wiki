@@ -4,7 +4,7 @@
 
 **Goal:** Add `WikiMemory.subscribeEntityStatus(entityId, callback)` that pushes `EntityStatus` changes synchronously when ingest / librarian / heal jobs start or finish, with no polling.
 
-**Architecture:** Maintain a `Map<entityId, Set<{callback, last}>>` of subscribers on `WikiMemory`. Add a private `_notifyStatusSubscribers(entityId)` helper that recomputes status via the existing `getEntityStatus` and dispatches only on change, with try/catch isolation and snapshot iteration. Wire the helper into the three add/delete pairs that actually mutate `EntityStatus`: auto-librarian dispatch in `write()`, auto-heal dispatch in `runLibrarianThenMaybeHeal()`, and ingest add/finally in `ingestDocument()`. Reuse `getEntityStatus` as the single source of truth for the boolean computation.
+**Architecture:** Maintain a `Map<entityId, Set<{callback, last}>>` of subscribers on `WikiMemory`. Add a private `_notifyStatusSubscribers(entityId)` helper that recomputes status via the existing `getEntityStatus` and dispatches only on change, with try/catch isolation and snapshot iteration. Wire the helper after every `EntityStatus`-affecting add/delete: auto-librarian in `write()`, auto-heal in `runLibrarianThenMaybeHeal()`, explicit `runLibrarian()` / `runHeal()`, and ingest add/finally in `ingestDocument()`. Reuse `getEntityStatus` as the single source of truth for the boolean computation.
 
 **Tech Stack:** TypeScript, Vitest, pnpm workspace; `packages/core` (`WikiMemory.ts`, `__tests__/jobs.test.ts`).
 
@@ -18,10 +18,11 @@
   - Add `private statusSubscribers` field next to existing `activeIngestJobs` / `activeMaintenanceJobs` (~line 275-276).
   - Add `private _notifyStatusSubscribers(entityId)` near the existing private key helpers (`_librarianKey`, `_healKey` ~line 488-489) or grouped with other private helpers.
   - Add `public subscribeEntityStatus(entityId, callback)` adjacent to `getEntityStatus` (~line 2199).
-  - Insert `_notifyStatusSubscribers` calls at three pairs of add/delete sites:
-    - auto-librarian in `write()` (~line 1743 add, ~line 1746 delete)
-    - auto-heal in `runLibrarianThenMaybeHeal()` (~line 1768 add, ~line 1777 delete)
-    - ingest in `ingestDocument()` (~line 2948 add, ~line 3033 delete)
+  - Insert `_notifyStatusSubscribers` calls at each add/delete pair that flips ingest/librarian/heal:
+    - auto-librarian in `write()`
+    - auto-heal in `runLibrarianThenMaybeHeal()`
+    - explicit `runLibrarian()` and `runHeal()`
+    - ingest in `ingestDocument()`
 - Create: `packages/core/__tests__/subscribeEntityStatus.test.ts`
   - All 12 test cases listed in the spec. Modeled on existing `jobs.test.ts` (`MockSQLiteDatabase`, `slowProvider`, `freshWiki` helpers — copy them into the new file rather than refactoring `jobs.test.ts`, per established repo pattern).
 - Modify: [packages/core/README.md](../../../packages/core/README.md)
@@ -829,10 +830,10 @@ Expected: All packages green, including the new 13 tests.
 Confirm by inspection of `packages/core/src/WikiMemory.ts`:
 
 - `subscribeEntityStatus` is exported on the public class.
-- `_notifyStatusSubscribers` is invoked at exactly six sites: `ingestDocument` add + finally, `write()` auto-librarian add + `.finally`, `runLibrarianThenMaybeHeal` auto-heal add + `finally`. Grep to verify:
+- `_notifyStatusSubscribers` is invoked at every `EntityStatus` transition site: `ingestDocument` add + finally, `write()` auto-librarian add + `.finally`, `runLibrarianThenMaybeHeal` auto-heal add + `finally`, `runLibrarian` add + `.finally`, `runHeal` add + `.finally`. Grep to verify:
 
   Run: `grep -n '_notifyStatusSubscribers' packages/core/src/WikiMemory.ts`
-  Expected: exactly six lines in source code (plus the helper definition itself).
+  Expected: one helper definition plus **10** call sites (adjust if implementation adds/removes transition sites).
 
 - `_notifyStatusSubscribers` calls `this.getEntityStatus(entityId)` rather than reimplementing the boolean logic.
 - No notifier call exists alongside `prune`, `reembed`, `import`, `forget`, or any global key add/delete.

@@ -66,8 +66,6 @@ describe('subscribeEntityStatus — ingest transition', () => {
 
     const sourceHash = 'a'.repeat(64);
     const p = wiki.ingestDocument('e1', { sourceRef: 'doc1', sourceHash, documentChunk: 'hello world' });
-    // give ingest a tick to register
-    await new Promise(r => setTimeout(r, 10));
     expect(calls.at(-1)).toEqual({ ingesting: true, librarian: false, heal: false });
 
     await p;

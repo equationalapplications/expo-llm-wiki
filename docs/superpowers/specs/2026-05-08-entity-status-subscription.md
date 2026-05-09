@@ -101,17 +101,19 @@ private statusSubscribers = new Map<
 private _notifyStatusSubscribers(entityId: string): void {
   const set = this.statusSubscribers.get(entityId);
   if (!set || set.size === 0) return;
-  const next = this.getEntityStatus(entityId);
-  // Snapshot for safe iteration if a callback unsubscribes.
+  // Snapshot for safe iteration if a callback unsubscribes. Re-read status each
+  // iteration so re-entrant mutations cannot deliver stale snapshots.
   for (const entry of Array.from(set)) {
+    if (!set.has(entry)) continue;
+    const next = this.getEntityStatus(entityId);
     if (
       entry.last.ingesting === next.ingesting &&
       entry.last.librarian === next.librarian &&
       entry.last.heal === next.heal
     ) continue;
-    entry.last = next;
+    entry.last = { ...next };
     try {
-      entry.callback(next);
+      entry.callback({ ...next });
     } catch (err) {
       console.error(err);
     }
@@ -129,14 +131,15 @@ subscribeEntityStatus(
   const initial = this.getEntityStatus(entityId);
   // Synchronous initial emission BEFORE registering, so a throwing callback
   // does not leave a stale entry in the set; any throw is also caught here.
-  try { callback(initial); } catch (err) { console.error(err); }
+  const initialCopy = { ...initial };
+  try { callback(initialCopy); } catch (err) { console.error(err); }
 
   let set = this.statusSubscribers.get(entityId);
   if (!set) {
     set = new Set();
     this.statusSubscribers.set(entityId, set);
   }
-  const entry = { callback, last: initial };
+  const entry = { callback, last: { ...initial } };
   set.add(entry);
 
   let active = true;
@@ -157,9 +160,11 @@ Every `add` / `delete` listed below **MUST** be paired with a `_notifyStatusSubs
 
 | Job | Add site (approx.) | Delete site (approx.) | Notes |
 |---|---|---|---|
-| Auto-librarian (in `write()` path) | ~1743 `activeMaintenanceJobs.add(jobKey)` | ~1746 `.finally(() => …delete(jobKey))` | `entityId` is in scope. |
-| Auto-heal (inside `runLibrarianThenMaybeHeal`) | ~1768 `activeMaintenanceJobs.add(healKey)` | ~1777 `.delete(healKey)` in `finally` | `entityId` is in scope. |
-| Ingest | ~2948 `activeIngestJobs.add(jobKey)` | ~3033 `activeIngestJobs.delete(jobKey)` in `finally` | Notify with the ingest's `entityId`. |
+| Auto-librarian (in `write()` path) | `activeMaintenanceJobs.add(jobKey)` | `.finally(() => …delete(jobKey))` | `entityId` is in scope. |
+| Auto-heal (inside `runLibrarianThenMaybeHeal`) | `activeMaintenanceJobs.add(healKey)` | `.delete(healKey)` in `finally` | `entityId` is in scope. |
+| Explicit `runLibrarian()` | `activeMaintenanceJobs.add(jobKey)` | `.finally(() => …delete(jobKey))` | Same keys as auto-librarian; public API must notify. |
+| Explicit `runHeal()` | `activeMaintenanceJobs.add(healKey)` | `.finally(() => …delete(healKey))` | Same keys as auto-heal; public API must notify. |
+| Ingest | `activeIngestJobs.add(jobKey)` | `activeIngestJobs.delete(jobKey)` in `finally` | Notify with the ingest's `entityId`. |
 
 Job sets that **do not** affect `EntityStatus` (`prune`, `reembed`, `import`, `forget`, global keys) **MUST NOT** invoke the notifier. Adding a notify call there is harmless functionally but is a spec violation that wastes work and risks future drift.
 

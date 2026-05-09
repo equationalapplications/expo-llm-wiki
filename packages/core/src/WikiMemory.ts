@@ -786,10 +786,12 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
   private _notifyStatusSubscribers(entityId: string): void {
     const set = this.statusSubscribers.get(entityId);
     if (!set || set.size === 0) return;
-    const next = this.getEntityStatus(entityId);
     // Snapshot for safe iteration if a callback unsubscribes or subscribes.
+    // Re-read status each iteration so re-entrant mutations cannot leave stale
+    // snapshots for remaining subscribers.
     for (const entry of Array.from(set)) {
       if (!set.has(entry)) continue; // unsubscribed during this emission
+      const next = this.getEntityStatus(entityId);
       if (
         entry.last.ingesting === next.ingesting &&
         entry.last.librarian === next.librarian &&
@@ -2264,6 +2266,11 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     callback: (status: EntityStatus) => void
   ): () => void {
     const initial = this.getEntityStatus(entityId);
+    try {
+      callback(this._copyEntityStatus(initial));
+    } catch (err) {
+      console.error(err);
+    }
 
     let set = this.statusSubscribers.get(entityId);
     if (!set) {
@@ -2272,12 +2279,6 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     }
     const entry = { callback, last: this._copyEntityStatus(initial) };
     set.add(entry);
-
-    try {
-      callback(this._copyEntityStatus(initial));
-    } catch (err) {
-      console.error(err);
-    }
 
     let active = true;
     return () => {
