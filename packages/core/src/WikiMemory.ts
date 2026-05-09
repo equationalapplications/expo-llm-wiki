@@ -274,6 +274,10 @@ export class WikiMemory {
   private options: WikiOptions;
   private activeMaintenanceJobs = new Set<string>();
   private activeIngestJobs = new Set<string>();
+  private statusSubscribers = new Map<
+    string,
+    Set<{ callback: (s: EntityStatus) => void; last: EntityStatus }>
+  >();
   private miniSearch = new MiniSearch<{ id: string; entity_id: string; title: string; body: string; tags: string }>({
     fields: ['title', 'body', 'tags'],
     storeFields: ['entity_id'],
@@ -2207,6 +2211,42 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       ingesting,
       librarian: this.activeMaintenanceJobs.has(this._librarianKey(entityId)),
       heal: this.activeMaintenanceJobs.has(this._healKey(entityId)),
+    };
+  }
+
+  /**
+   * Subscribe to {@link EntityStatus} changes for a single entity. The callback
+   * is invoked synchronously once with the current status before this method
+   * returns, then again on every transition where any of `ingesting`,
+   * `librarian`, or `heal` flips. No polling, no duplicate snapshots.
+   *
+   * Returns an idempotent unsubscribe function.
+   *
+   * See also {@link getEntityStatus} for a synchronous point-in-time read.
+   */
+  subscribeEntityStatus(
+    entityId: string,
+    callback: (status: EntityStatus) => void
+  ): () => void {
+    const initial = this.getEntityStatus(entityId);
+    try { callback(initial); } catch (err) { console.error(err); }
+
+    let set = this.statusSubscribers.get(entityId);
+    if (!set) {
+      set = new Set();
+      this.statusSubscribers.set(entityId, set);
+    }
+    const entry = { callback, last: initial };
+    set.add(entry);
+
+    let active = true;
+    return () => {
+      if (!active) return;
+      active = false;
+      const s = this.statusSubscribers.get(entityId);
+      if (!s) return;
+      s.delete(entry);
+      if (s.size === 0) this.statusSubscribers.delete(entityId);
     };
   }
 
