@@ -237,6 +237,6 @@ This is **explicitly not required** for this spec to be considered delivered.
 - `subscribeEntityStatus` is exported on `WikiMemory` and behaves per every **MUST** / **MUST NOT** above.
 - All twelve test cases in the Testing section are implemented under `packages/core/__tests__/` and pass with `pnpm test`.
 - `getEntityStatus` remains the single source of truth for the boolean computation; the notifier delegates to it.
-- Notifier is invoked at exactly the three add/delete site pairs listed (librarian, heal, ingest) and nowhere else.
+- Notifier is invoked at every add/delete site pair listed in the mutation table (auto-librarian, auto-heal, explicit `runLibrarian` / `runHeal`, ingest) and nowhere that only out-of-scope maintenance keys change.
 - Documentation and changelog entries land in the same PR as the implementation.
 - Issue #8 is closed when the implementing release ships.
