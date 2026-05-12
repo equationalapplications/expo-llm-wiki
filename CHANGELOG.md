@@ -1,3 +1,15 @@
+# [4.2.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.1.0...v4.2.0) (2026-05-12)
+
+
+### Bug Fixes
+
+* address PR review feedback for multi-entity contracts ([81f9599](https://github.com/equationalapplications/expo-llm-wiki/commit/81f95993b84c5b7baad2a5af8d6e1f63d19e9e0c))
+
+
+### Features
+
+* **core:** add multi-entity read contracts ([6e38474](https://github.com/equationalapplications/expo-llm-wiki/commit/6e38474b5449475610406bafb6321eaf6a421b9b))
+
 # [4.1.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.0.0...v4.1.0) (2026-05-09)
 
 
