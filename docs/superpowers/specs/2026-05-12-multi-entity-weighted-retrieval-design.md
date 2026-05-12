@@ -275,9 +275,8 @@ This lets Curated Thoughts define strict fact-checking, JSON dashboard output, m
 - Missing tier weights default to `1.0`.
 - Non-finite tier weights default to `1.0`.
 - Negative tier weights clamp to `0`.
-- `tierWeights[entity] = 0` pushes that entity's scored facts down but does not remove them.
 - `tierWeights[entity] = 0` skips that entity's scored retrieval branch by default.
-- `includeZeroWeightEntities: true` keeps zero-weight entities eligible as bottom-ranked filler context.
+- When `includeZeroWeightEntities: true`, zero-weight entities are included and their scored facts are pushed to the bottom-ranked filler context (not removed).
 - `maxResults` applies globally across all requested entities.
 - Empty query reads ignore weights, do not apply the zero-weight skip optimization, and use global recency ordering.
 - Access tracking updates only hydrated facts, using the existing ID-based update path.

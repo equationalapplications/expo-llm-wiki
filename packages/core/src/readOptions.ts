@@ -18,7 +18,7 @@ export function sanitizeTierWeights(
 ): Record<string, number> | undefined {
   if (tierWeights === undefined) return undefined;
 
-  const sanitized: Record<string, number> = {};
+  const sanitized = Object.create(null) as Record<string, number>;
   for (const entityId of entityIds) {
     const raw = tierWeights[entityId];
     if (raw === undefined || !Number.isFinite(raw)) {
