@@ -127,6 +127,8 @@ For non-empty queries, tier weighting is applied after the current semantic/keyw
 finalScore = retrievalScore * (tierWeights[entity_id] ?? 1.0)
 ```
 
+Weight `0` is special-cased: instead of multiplying by zero (which could produce a score of `0` and incorrectly outrank negative semantic scores), the implementation assigns `-Infinity` as a sentinel. This guarantees zero-weight facts sort below every finite-scored fact regardless of sign. When `factScores` is exposed to callers, the sentinel is coerced back to `0` so the returned value remains a finite number.
+
 `retrievalScore` is the score produced by the active retrieval branch:
 
 - vector ranker semantic score, optionally blended with normalized MiniSearch score via `hybridWeight`

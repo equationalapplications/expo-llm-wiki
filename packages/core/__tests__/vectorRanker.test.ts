@@ -915,10 +915,11 @@ describe('VectorRanker integration', () => {
 
   describe('Regression: PR #16 review issues', () => {
     it('should filter out ranker results outside the candidate set before hydration', async () => {
-      // candidateIds is always passed to the ranker so _rankWithVectorRanker filters
-      // out-of-scope IDs via allowedIds before Phase 2 hydration. The misbehaving ranker
-      // returning cross-entity/nonexistent IDs should not trigger the hydration mismatch
-      // warning nor cause result count to drop silently.
+      // Filtering is done via the allowedIds derived from candidateRows in
+      // _rankWithVectorRanker, which catches cross-entity or nonexistent IDs
+      // regardless of whether candidateIds was passed to the ranker. The
+      // misbehaving ranker returning such IDs should not trigger the hydration
+      // mismatch warning nor cause result count to drop silently.
       const db = openTestDatabase();
       const onRetrievalFallback = vi.fn();
       const mockRanker: VectorRanker = {

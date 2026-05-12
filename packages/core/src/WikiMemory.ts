@@ -1096,11 +1096,17 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
             );
           }
 
-          const useRanker = Boolean(this.options.vectorRanker);
-          let candidateRows: ReadCandidateRowMetadata[] | ReadCandidateRowWithEmbeddings[] | null; // null = pre-filter returned 0 results
-          // Composite cache keys (multi-entity join strings) are never invalidated by write/reembed paths.
-          let populateCache = entityIds.length === 1;
-          let miniSearchScores: Map<string, number> | undefined;
+          // Fast-path: no entities need semantic scoring (all have weight=0 and
+          // includeZeroWeightEntities is false). Skip embedding+DB work and fall
+          // through to the keyword-only path below, while still fetching tasks/events.
+          if (scoredEntityIds.length === 0) {
+            usedEmbed = true; // semantic path intentionally skipped, not failed
+          } else {
+            const useRanker = Boolean(this.options.vectorRanker);
+            let candidateRows: ReadCandidateRowMetadata[] | ReadCandidateRowWithEmbeddings[] | null; // null = pre-filter returned 0 results
+            // Composite cache keys (multi-entity join strings) are never invalidated by write/reembed paths.
+            let populateCache = entityIds.length === 1;
+            let miniSearchScores: Map<string, number> | undefined;
 
           if (effectivePreFilterLimit !== undefined) {
             populateCache = false; // partial scan — do not populate cache
@@ -1503,7 +1509,8 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
               usedEmbed = true;
             }
           } // closes the candidateRows !== null else block
-        } catch (err) {
+        } // closes the scoredEntityIds.length === 0 else block
+      } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
           if (rankerShouldRethrow) {
             throw error;
@@ -1639,7 +1646,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
   ): number {
     const scoreDiff = b.score - a.score;
     // isNaN guard: -Infinity - (-Infinity) = NaN; fall through to tie-break
-    if (!isNaN(scoreDiff) && scoreDiff !== 0) return scoreDiff;
+    if (!Number.isNaN(scoreDiff) && scoreDiff !== 0) return scoreDiff;
     const accessCountDiff = (b.access_count ?? 0) - (a.access_count ?? 0);
     if (accessCountDiff !== 0) return accessCountDiff;
     const updatedAtDiff = (b.updated_at ?? 0) - (a.updated_at ?? 0);
