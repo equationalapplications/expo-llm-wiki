@@ -1456,7 +1456,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
 
               // Capture scores for exposure in metadata
               if (exposeMetadata && trimmedQuery) {
-                scoreByFactId = new Map(selectedScored.map(s => [s.id, s.score]));
+                scoreByFactId = new Map(selectedScored.map(s => [s.id, Number.isFinite(s.score) ? s.score : 0]));
               }
 
               if (topIds.length > 0) {
@@ -1537,7 +1537,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
         if (topIds.length > 0) {
           facts = await this._hydrateFactsByIds(topIds, entityIds);
           if (exposeMetadata) {
-            scoreByFactId = new Map(topCandidates.map(c => [c.id, c.score]));
+            scoreByFactId = new Map(topCandidates.map(c => [c.id, Number.isFinite(c.score) ? c.score : 0]));
           }
         }
       }
@@ -1632,7 +1632,8 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     b: { id: string; score: number; updated_at?: number | null; access_count?: number | null },
   ): number {
     const scoreDiff = b.score - a.score;
-    if (scoreDiff !== 0) return scoreDiff;
+    // isNaN guard: -Infinity - (-Infinity) = NaN; fall through to tie-break
+    if (!isNaN(scoreDiff) && scoreDiff !== 0) return scoreDiff;
     const accessCountDiff = (b.access_count ?? 0) - (a.access_count ?? 0);
     if (accessCountDiff !== 0) return accessCountDiff;
     const updatedAtDiff = (b.updated_at ?? 0) - (a.updated_at ?? 0);

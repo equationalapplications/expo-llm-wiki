@@ -27,7 +27,7 @@ Curated Thoughts also needs the synthesis prompt to be replaceable. Different pr
 - Preserve backward compatibility for existing single-entity calls.
 - Apply tier/entity weights inside core retrieval before the final top-K slice.
 - Preserve each returned `WikiFact.entity_id` so downstream prompts can explain source provenance.
-- Expose optional `factScores` and metadata when multi-entity or weighted retrieval is used.
+- Expose optional `factScores` and `metadata` when multi-entity (array-shaped `entityId`) retrieval is used.
 - Define a Librarian `systemPrompt` override pattern that can consume weighted retrieval output through stable template variables.
 - Allow developers to tune synthesis behavior, output format, and strictness without changing core retrieval logic.
 - Keep the single-entity hot path clean: no extra metadata for plain calls.
@@ -115,7 +115,7 @@ export interface MemoryBundle {
 
 `factScores` maps fact ID to the final weighted score used for ranking. It is separate from `WikiFact` so the fact type remains a pure persisted-domain type.
 
-For non-empty scored reads, `factScores` and `metadata` are present only when the caller passed an array-shaped `entityId` or provided `tierWeights`. Plain single-string calls keep the existing minimal bundle shape.
+For non-empty scored reads, `factScores` and `metadata` are present only when the caller passed an array-shaped `entityId`. Plain single-string calls keep the existing minimal bundle shape regardless of any other options (including `tierWeights`).
 
 For empty-query recency reads, tier weights are ignored because there is no semantic or keyword score to multiply. Metadata may still echo the requested entities and weights, but `factScores` should be omitted for that path to avoid inventing a score.
 
@@ -303,7 +303,7 @@ Add or update tests in `packages/core/__tests__` to cover:
 3. Multi-entity read returns one merged `facts` array and preserves each fact's `entity_id`.
 4. Tier weights affect final top-K ordering before `maxResults` slicing.
 5. `factScores` is present for scored multi-entity reads and contains every returned fact ID.
-6. `factScores` is present for scored single-entity reads when `tierWeights` is provided.
+6. Single-entity string calls never expose `factScores` or `metadata` regardless of options.
 7. Metadata echoes `query`, normalized `entityIds`, and sanitized tier weights when applicable.
 8. Missing, non-finite, negative, and zero weights behave as specified.
 9. Empty-query multi-entity reads merge by `updated_at DESC` and ignore weights.

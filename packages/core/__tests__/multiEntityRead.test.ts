@@ -136,6 +136,30 @@ describe('read() multi-entity retrieval', () => {
     expect(result.factScores).toEqual({ 'fact-1': expect.any(Number), 'zero-1': 0 });
   });
 
+  it('zero-weight entities sort below negative-scored non-zero-weight entities', async () => {
+    // Bug: score * 0 = 0 can rank higher than a negative cosine score.
+    // query=[1,0,0], tier_neg=[-1,0,0] → cosine=-1 (weight=1 → score=-1)
+    // tier_zero=[1,0,0] → cosine=1 (weight=0 → score should be -Infinity, not 0)
+    const embedFn = vi.fn(async () => [1, 0, 0]);
+    const { wiki, db } = makeWiki(embedFn);
+    await wiki.setup();
+    await db.runAsync(`INSERT OR REPLACE INTO llm_wiki_meta (key, value) VALUES ('embedding_dimension', '3')`);
+    await insertFact(db, 'neg-1', 'tier_neg', 'apple neg', 'apple', [-1, 0, 0], 1000);
+    await insertFact(db, 'zero-2', 'tier_zero', 'apple zero2', 'apple', [1, 0, 0], 2000);
+
+    const result = await wiki.read(['tier_neg', 'tier_zero'], 'apple', {
+      maxResults: 2,
+      tierWeights: { tier_neg: 1, tier_zero: 0 },
+      includeZeroWeightEntities: true,
+    });
+
+    // neg-1 has cosine=-1 (bad match but non-zero weight); zero-2 has cosine=1 but weight=0
+    // zero-weight must always be bottom filler regardless of raw cosine
+    expect(result.facts.map(f => f.id)).toEqual(['neg-1', 'zero-2']);
+    expect(result.factScores!['neg-1']).toBeLessThan(0);
+    expect(result.factScores!['zero-2']).toBe(0);
+  });
+
   it('empty-query multi-entity reads use global recency and omit factScores', async () => {
     const { wiki, db } = makeWiki(async () => [1, 0, 0]);
     await wiki.setup();
