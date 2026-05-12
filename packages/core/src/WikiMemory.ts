@@ -1098,7 +1098,8 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
 
           const useRanker = Boolean(this.options.vectorRanker);
           let candidateRows: ReadCandidateRowMetadata[] | ReadCandidateRowWithEmbeddings[] | null; // null = pre-filter returned 0 results
-          let populateCache = true;
+          // Composite cache keys (multi-entity join strings) are never invalidated by write/reembed paths.
+          let populateCache = entityIds.length === 1;
           let miniSearchScores: Map<string, number> | undefined;
 
           if (effectivePreFilterLimit !== undefined) {
@@ -1188,10 +1189,11 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
             let scored: Array<{ id: string; entity_id: string; score: number; updated_at?: number | null; access_count?: number | null }>;
 
             if (useRanker) {
-              // Use external ranker for semantic scoring
-              // Always pass candidateIds so the ranker scopes to the SQLite candidate set.
-              // Omitting it would let the ranker scope by entityId, which is a composite
-              // join-string for multi-entity reads and may not map to a real namespace.
+              // Use external ranker for semantic scoring.
+              // Pass candidateIds for multi-entity reads (entityCacheKey is a composite join string,
+              // not a real namespace) and pre-filtered reads (results already scoped to subset).
+              // For single-entity full-scan, omit so remote rankers avoid transmitting the full
+              // candidate list and can scope by entityId instead.
               const candidateIds = candidateRows.map(r => r.id);
 
               try {
@@ -1382,6 +1384,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
                     miniSearchScores,
                     populateCache,
                     limit: fallbackRows.length,
+                    skipSort: true, // read() re-sorts after applying tier weights
                   });
                 } else if (policy === 'keyword') {
                   // Fall back to keyword-only results from MiniSearch
@@ -1437,6 +1440,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
                 // Return all candidates so tier weights can re-rank before the
                 // global slice at the merge step below.
                 limit: candidateRows.length,
+                skipSort: true, // read() re-sorts after applying tier weights
               });
             }
 
@@ -1725,11 +1729,12 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     miniSearchScores: Map<string, number> | undefined;
     populateCache: boolean;
     limit: number;
+    skipSort?: boolean;
   }): Promise<Array<{ id: string; entity_id: string; score: number; updated_at: number | null; access_count: number | null }>> {
     const queryVec = args.queryVec instanceof Float32Array
       ? args.queryVec.slice()
       : Array.from(args.queryVec);
-    const { entityId, candidateRows, weight, miniSearchScores, populateCache, limit } = args;
+    const { entityId, candidateRows, weight, miniSearchScores, populateCache, limit, skipSort } = args;
 
     // Cache: reuse parsed vectors from prior full-scan reads
     let entityCache = this.vectorCache.get(entityId);
@@ -1792,8 +1797,8 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       }
     }
 
-    // Apply tie-break sorting to the scored results and return only the top `limit` items.
-    this._tieBreakSort(scored);
+    // Apply tie-break sorting unless caller will re-sort after applying tier weights.
+    if (!skipSort) this._tieBreakSort(scored);
 
     return scored.slice(0, limit);
   }
@@ -1832,7 +1837,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
 
     // Normalize ranker output: filter to allowed ids, drop non-finite scores, deduplicate
     // Stop collecting once limit valid results are found to protect against huge result sets
-    const allowedIds = candidateIds ? new Set(candidateIds) : undefined;
+    const allowedIds = new Set(candidateRows.map(row => row.id));
     const seen = new Set<string>();
     const normalized: typeof rankerResults = [];
 
