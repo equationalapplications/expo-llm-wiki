@@ -1194,7 +1194,9 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
               // not a real namespace) and pre-filtered reads (results already scoped to subset).
               // For single-entity full-scan, omit so remote rankers avoid transmitting the full
               // candidate list and can scope by entityId instead.
-              const candidateIds = candidateRows.map(r => r.id);
+              const candidateIds = entityIds.length > 1 || effectivePreFilterLimit !== undefined
+                ? candidateRows.map(r => r.id)
+                : undefined;
 
               try {
                 // Oversample by max(2x, +50) to preserve recall after re-ranking;

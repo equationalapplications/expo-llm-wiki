@@ -330,9 +330,8 @@ describe('VectorRanker integration', () => {
 
       expect(rankBySimilarity).toHaveBeenCalled();
       const args = rankBySimilarity.mock.calls[0][0];
-      // candidateIds is always passed so the ranker is scoped to the SQLite candidate set,
-      // preventing cross-entity results when entityId is a composite key in multi-entity reads.
-      expect(args.candidateIds).toEqual(['fact-a']);
+      // Single-entity full-scan should omit candidateIds so rankers can scope by entityId.
+      expect(args.candidateIds).toBeUndefined();
     });
   });
 
