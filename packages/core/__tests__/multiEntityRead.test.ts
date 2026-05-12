@@ -156,6 +156,68 @@ describe('read() multi-entity retrieval', () => {
     });
   });
 
+  it('applies tier weights in embed-absent keyword fallback and populates factScores', async () => {
+    // No embed function — forces MiniSearch-only path
+    const { wiki } = makeWiki();
+    await wiki.setup();
+    // Use importDump so facts are indexed in MiniSearch
+    await wiki.importDump({
+      generatedAt: Date.now(),
+      entities: {
+        tier_boosted: {
+          facts: [{ id: 'boosted-weak', entity_id: 'tier_boosted', title: 'apple boosted', body: 'apple', tags: [], confidence: 'certain', source_type: 'user_stated', source_hash: null, source_ref: null, created_at: 1000, updated_at: 1000, last_accessed_at: null, access_count: 0, deleted_at: null }],
+          tasks: [], events: [],
+        },
+        tier_normal: {
+          facts: [{ id: 'normal-strong', entity_id: 'tier_normal', title: 'apple normal', body: 'apple', tags: [], confidence: 'certain', source_type: 'user_stated', source_hash: null, source_ref: null, created_at: 2000, updated_at: 2000, last_accessed_at: null, access_count: 0, deleted_at: null }],
+          tasks: [], events: [],
+        },
+      },
+    });
+
+    const result = await wiki.read(['tier_boosted', 'tier_normal'], 'apple', {
+      maxResults: 1,
+      tierWeights: { tier_boosted: 10, tier_normal: 1 },
+    });
+
+    expect(result.facts.map(f => f.id)).toEqual(['boosted-weak']);
+    expect(result.factScores?.['boosted-weak']).toBeGreaterThan(0);
+  });
+
+  it('applies tier weights in vectorRankerFallback=keyword path and populates factScores', async () => {
+    const db = openTestDatabase();
+    const options: WikiOptions = {
+      config: { maxResults: 10 },
+      llmProvider: { generateText: async () => '{}', embed: async () => [1, 0, 0] },
+      vectorRanker: { rankBySimilarity: async () => { throw new Error('ranker unavailable'); } },
+      vectorRankerFallback: 'keyword',
+    };
+    const wiki = new WikiMemory(db, options);
+    await wiki.setup();
+    await wiki.importDump({
+      generatedAt: Date.now(),
+      entities: {
+        tier_boosted: {
+          facts: [{ id: 'boosted-weak', entity_id: 'tier_boosted', title: 'apple boosted', body: 'apple', tags: [], confidence: 'certain', source_type: 'user_stated', source_hash: null, source_ref: null, created_at: 1000, updated_at: 1000, last_accessed_at: null, access_count: 0, deleted_at: null }],
+          tasks: [], events: [],
+        },
+        tier_normal: {
+          facts: [{ id: 'normal-strong', entity_id: 'tier_normal', title: 'apple normal', body: 'apple', tags: [], confidence: 'certain', source_type: 'user_stated', source_hash: null, source_ref: null, created_at: 2000, updated_at: 2000, last_accessed_at: null, access_count: 0, deleted_at: null }],
+          tasks: [], events: [],
+        },
+      },
+    });
+    await db.runAsync(`INSERT OR REPLACE INTO llm_wiki_meta (key, value) VALUES ('embedding_dimension', '3')`);
+
+    const result = await wiki.read(['tier_boosted', 'tier_normal'], 'apple', {
+      maxResults: 1,
+      tierWeights: { tier_boosted: 10, tier_normal: 1 },
+    });
+
+    expect(result.facts.map(f => f.id)).toEqual(['boosted-weak']);
+    expect(result.factScores?.['boosted-weak']).toBeGreaterThan(0);
+  });
+
   it('returns tasks and events for all requested entities in global order', async () => {
     const { wiki, db } = makeWiki();
     await wiki.setup();

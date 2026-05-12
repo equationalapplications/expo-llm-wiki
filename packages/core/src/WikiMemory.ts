@@ -1354,8 +1354,8 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
                       const idChunk = rowIds.slice(i, i + chunkSize);
                       const placeholders = idChunk.map(() => '?').join(',');
                       const embeddingRows = await this.db.getAllAsync<{ id: string; embedding_blob: Uint8Array | null; embedding: string | null }>(
-                        `SELECT id, embedding_blob, embedding FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND entity_id = ? AND deleted_at IS NULL`,
-                        [...idChunk, entityId]
+                        `SELECT id, embedding_blob, embedding FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+                        idChunk
                       );
                       for (const row of embeddingRows) {
                         embeddingsMap.set(row.id, { embedding_blob: row.embedding_blob, embedding: row.embedding });
@@ -1383,7 +1383,9 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
                     filter: (r) => scoredEntityIdSet.has((r as unknown as { entity_id: string }).entity_id),
                     combineWith: 'OR',
                   });
-                  const topResults = msResults.slice(0, maxResults);
+                  // Oversample so tier weights can re-rank before the global slice
+                  const keywordOversampledLimit = Math.max(maxResults * 2, maxResults + 50);
+                  const topResults = msResults.slice(0, keywordOversampledLimit);
                   // Build metadata map only for returned IDs (not all candidates)
                   const resultIds = new Set(topResults.map(r => r.id));
                   const candidateMap = new Map<string, { entity_id: string; updated_at: number | null; access_count: number | null }>();
@@ -1439,10 +1441,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
               }));
 
               // Re-apply tie-break sorting (ranker might not have stable ordering, and weights changed order)
-              // Skip for keyword-only fallback to preserve MiniSearch ordering
-              if (!usedKeywordFallback) {
-                this._tieBreakSort(scored);
-              }
+              this._tieBreakSort(scored);
 
               // Phase 2: fetch full rows only for the top results
               const selectedScored = scored.slice(0, maxResults);
@@ -1454,13 +1453,13 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
               }
 
               if (topIds.length > 0) {
-                const facts2 = await this._hydrateFactsByIds(topIds);
+                const facts2 = await this._hydrateFactsByIds(topIds, entityIds);
 
                 // Hydration can return fewer rows than ranked IDs when rows were concurrently
                 // soft-deleted or filtered by deleted_at before phase 2 hydration completes.
                 if (facts2.length < topIds.length) {
-                  const hydrationByteId = new Set(facts2.map(f => f.id));
-                  const missingIds = topIds.filter(id => !hydrationByteId.has(id));
+                  const hydrationById = new Set(facts2.map(f => f.id));
+                  const missingIds = topIds.filter(id => !hydrationById.has(id));
                   const missingCount = missingIds.length;
                   const sample = missingIds.slice(0, 5);
                   const sampleSuffix = sample.length > 0
@@ -1507,15 +1506,32 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       }
 
       if (!usedEmbed) {
-        // embed absent or threw — fall back to MiniSearch
-        const entityIdSet = new Set(entityIds);
+        // embed absent or threw — fall back to MiniSearch with tier weight application
+        const fallbackEntityIds = entityIds.filter(id => {
+          const w = sanitizedTierWeights?.[id] ?? 1;
+          return options?.includeZeroWeightEntities === true || w !== 0;
+        });
+        const fallbackEntityIdSet = new Set(fallbackEntityIds);
+        const fallbackOversampledLimit = Math.max(maxResults * 2, maxResults + 50);
         const results = this.miniSearch.search(trimmedQuery, {
-          filter: (r) => entityIdSet.has((r as unknown as { entity_id: string }).entity_id),
+          filter: (r) => fallbackEntityIdSet.has((r as unknown as { entity_id: string }).entity_id),
           combineWith: 'OR',
         });
-        const topIds = results.slice(0, maxResults).map((r: { id: string }) => r.id);
+        const candidates = results.slice(0, fallbackOversampledLimit).map(r => ({
+          id: r.id as string,
+          entity_id: (r as unknown as { entity_id: string }).entity_id,
+          score: applyTierWeight(r.score ?? 0, (r as unknown as { entity_id: string }).entity_id, sanitizedTierWeights),
+          updated_at: null as number | null,
+          access_count: null as number | null,
+        }));
+        this._tieBreakSort(candidates);
+        const topCandidates = candidates.slice(0, maxResults);
+        const topIds = topCandidates.map(c => c.id);
         if (topIds.length > 0) {
-          facts = await this._hydrateFactsByIds(topIds);
+          facts = await this._hydrateFactsByIds(topIds, entityIds);
+          if (exposeMetadata) {
+            scoreByFactId = new Map(topCandidates.map(c => [c.id, c.score]));
+          }
         }
       }
 
@@ -1621,14 +1637,16 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
    * Build SQL IN clause with placeholders for multiple entity IDs.
    */
   private _entityInClause(entityIds: readonly string[]): { clause: string; params: string[] } {
+    if (entityIds.length === 0) return { clause: '1=0', params: [] };
     const placeholders = entityIds.map(() => '?').join(',');
     return { clause: `entity_id IN (${placeholders})`, params: [...entityIds] };
   }
 
   /**
-   * Hydrate full facts by ID without entity_id filtering.
+   * Hydrate full facts by ID. Pass scopedEntityIds to filter out facts outside the requested
+   * namespaces (defense-in-depth against a rogue VectorRanker returning cross-entity IDs).
    */
-  private async _hydrateFactsByIds(ids: readonly string[]): Promise<WikiFact[]> {
+  private async _hydrateFactsByIds(ids: readonly string[], scopedEntityIds?: readonly string[]): Promise<WikiFact[]> {
     const fullRows: Array<WikiFact & { embedding?: unknown; embedding_blob?: unknown }> = [];
     const chunkSize = 500;
 
@@ -1643,7 +1661,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     }
 
     const byId = new Map(fullRows.map(row => [row.id, row]));
-    return ids
+    const result = ids
       .map(id => byId.get(id))
       .filter((fact): fact is WikiFact & { embedding?: unknown; embedding_blob?: unknown } => fact !== undefined)
       .map(fact => {
@@ -1653,6 +1671,12 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
           tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
         };
       });
+
+    if (scopedEntityIds && scopedEntityIds.length > 0) {
+      const scopeSet = new Set(scopedEntityIds);
+      return result.filter(f => scopeSet.has(f.entity_id));
+    }
+    return result;
   }
 
   /**
