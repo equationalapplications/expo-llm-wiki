@@ -51,6 +51,13 @@ export interface ReadOptions {
    */
   preFilterLimit?: number | null;
   hybridWeight?: number;
+  /** entity_id -> score multiplier. Missing entries default to 1.0. */
+  tierWeights?: Record<string, number>;
+  /**
+   * false/default -> skip zero-weight entities during scored retrieval.
+   * true -> retrieve zero-weight entities and let them fill only if the pool is small.
+   */
+  includeZeroWeightEntities?: boolean;
 }
 
 export interface WikiFact {
@@ -288,6 +295,12 @@ export interface MemoryBundle {
   facts: WikiFact[];
   tasks: WikiTask[];
   events: WikiEvent[];
+  factScores?: Record<string, number>;
+  metadata?: {
+    query: string;
+    entityIds: string[];
+    tierWeights?: Record<string, number>;
+  };
 }
 
 export interface MemoryDump {
