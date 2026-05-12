@@ -306,7 +306,7 @@ describe('VectorRanker integration', () => {
       expect(args.candidateIds?.length).toBeLessThanOrEqual(2);
     });
 
-    it('should pass candidateIds even when preFilterLimit is not set (full scan)', async () => {
+    it('should omit candidateIds for single-entity full-scan', async () => {
       const db = openTestDatabase();
       const rankBySimilarity = vi.fn(async (args: VectorRankerRankArgs) => {
         return [{ id: 'fact-a', semanticScore: 0.5 }];
@@ -956,11 +956,7 @@ describe('VectorRanker integration', () => {
 
       // Invalid IDs are filtered by allowedIds in _rankWithVectorRanker — hydration sees
       // exactly 2 topIds and returns 2 rows, so the mismatch warning is NOT triggered.
-      expect(onRetrievalFallback).not.toHaveBeenCalledWith(
-        expect.objectContaining({
-          message: expect.stringContaining('Phase 2 fact hydration returned'),
-        })
-      );
+      expect(onRetrievalFallback).not.toHaveBeenCalled();
     });
   });
 
