@@ -1,4 +1,4 @@
-# Multi-Entity Weighted Retrieval
+# Multi-Entity Weighted Retrieval and Librarian Prompt Overrides
 
 **Date:** 2026-05-12  
 **Status:** Draft  
@@ -6,9 +6,9 @@
 
 ## Overview
 
-Extend `WikiMemory.read()` so callers can search one or more `entity_id` namespaces in a single retrieval pass, apply per-entity score multipliers, and receive optional retrieval metadata for explainability.
+Extend `WikiMemory.read()` so callers can search one or more `entity_id` namespaces in a single retrieval pass, apply per-entity score multipliers, and receive optional retrieval metadata for explainability. Define the downstream Librarian prompt override contract that consumes this weighted `MemoryBundle` without moving application policy into the core retrieval layer.
 
-This supports applications such as Curated Thoughts, where separate tiers like `tier_wisdom`, `tier_fact`, and `tier_working` should remain namespace-isolated at ingestion time but compete together during retrieval. The goal is to select the true top-K context across tiers instead of retrieving one tier at a time and merging after the important results may already have been displaced.
+This supports applications such as Curated Thoughts, where separate tiers like `tier_wisdom`, `tier_fact`, and `tier_working` should remain namespace-isolated at ingestion time but compete together during retrieval. The goal is to select the true top-K context across tiers instead of retrieving one tier at a time and merging after the important results may already have been displaced. The same metadata then lets a Librarian synthesis layer explain provenance and lets developers swap in domain-specific prompts, such as a strict fact checker, legal researcher, or creative brainstormer.
 
 ## Motivation
 
@@ -19,6 +19,8 @@ The current `read(entityId: string, query, options)` API can only search one nam
 
 The core package already treats `entity_id` as a namespace boundary. This design keeps that model and lets the app layer own policy by passing entity IDs and weights explicitly.
 
+Curated Thoughts also needs the synthesis prompt to be replaceable. Different product surfaces may want the same weighted retrieval pass but different instructions, output formats, and strictness rules. A prompt override should therefore sit above retrieval: it receives the ranked context, tasks, and query through explicit template variables, while `WikiMemory.read()` remains responsible only for selecting and scoring memory.
+
 ## Goals
 
 - Support `entityId: string | string[]` in `WikiMemory.read()`.
@@ -26,6 +28,8 @@ The core package already treats `entity_id` as a namespace boundary. This design
 - Apply tier/entity weights inside core retrieval before the final top-K slice.
 - Preserve each returned `WikiFact.entity_id` so downstream prompts can explain source provenance.
 - Expose optional `factScores` and metadata when multi-entity or weighted retrieval is used.
+- Define a Librarian `systemPrompt` override pattern that can consume weighted retrieval output through stable template variables.
+- Allow developers to tune synthesis behavior, output format, and strictness without changing core retrieval logic.
 - Keep the single-entity hot path clean: no extra metadata for plain calls.
 - Avoid schema changes.
 
@@ -33,7 +37,8 @@ The core package already treats `entity_id` as a namespace boundary. This design
 
 - Add a separate `tier` column or schema-level tier concept.
 - Make the core package decide application policy for wisdom, facts, or working memory.
-- Implement Librarian conflict-resolution behavior. The returned `entity_id`, scores, and metadata should enable later prompt and UI work, but this spec does not change prompt synthesis.
+- Implement application-specific Librarian conflict-resolution behavior. The returned `entity_id`, scores, and metadata should enable strict or domain-specific prompts, but the core package should not decide what to do when tiers conflict.
+- Require the core retrieval package to own a particular LLM provider, chat protocol, or final response format.
 - Weight or semantically merge tasks and events.
 
 ## API Design
@@ -65,6 +70,11 @@ export interface ReadOptions {
   hybridWeight?: number;
   /** entity_id -> score multiplier. Missing entries default to 1.0. */
   tierWeights?: Record<string, number>;
+  /**
+   * false/default -> skip zero-weight entities during scored retrieval.
+   * true -> retrieve zero-weight entities and let them fill only if the pool is small.
+   */
+  includeZeroWeightEntities?: boolean;
 }
 ```
 
@@ -74,7 +84,8 @@ Weight values are sanitized before scoring:
 
 - Missing or non-finite values default to `1.0`.
 - Negative values clamp to `0`.
-- `0` does not exclude an entity; it pushes its scored facts to the bottom while still allowing them to appear if the result pool is small.
+- `0` skips that entity's scored retrieval branch by default to avoid unnecessary compute and I/O.
+- If `includeZeroWeightEntities` is `true`, `0` does not exclude an entity; it pushes its scored facts to the bottom while still allowing them to appear if the result pool is small.
 
 ### `MemoryBundle`
 
@@ -119,7 +130,7 @@ Applying the multiplier at this point preserves the existing hybrid behavior and
 The implementation should favor per-entity parallel scoring followed by a global merge:
 
 1. Normalize `entityId` to deduplicated `entityIds`.
-2. For each entity, score candidates using the existing retrieval machinery.
+2. For each entity, score candidates using the existing retrieval machinery. For non-empty scored reads, skip entities whose sanitized weight is `0` unless `includeZeroWeightEntities` is enabled.
 3. Run per-entity work in parallel with `Promise.all` where practical.
 4. Carry `entity_id` through scored intermediate rows.
 5. Apply the sanitized tier weight to each scored row.
@@ -139,6 +150,7 @@ Required changes include:
 
 - Normalize MiniSearch filters from `r.entity_id === entityId` to membership in the normalized `entityIds` set.
 - Include `entity_id` in candidate row shapes when scores need tier weighting.
+- Exclude zero-weight entities from non-empty scored candidate selection unless `includeZeroWeightEntities` is enabled.
 - In phase 2 hydration, fetch by selected IDs without a single `entity_id = ?` guard, since the IDs already came from namespace-scoped candidate selection.
 - In ranker fallback embedding fetches, fetch selected IDs without assuming one entity ID.
 - For empty-query recency reads, use `WHERE entity_id IN (...)`, order globally by `updated_at DESC`, and ignore tier weights.
@@ -166,6 +178,96 @@ For multi-entity calls:
 
 This keeps the feature focused on fact retrieval while avoiding surprising semantic behavior for operational data.
 
+## Librarian Prompt Override Contract
+
+The Librarian synthesis layer should accept an optional `systemPrompt` in its execution options. This prompt replaces the internal default system instructions while keeping the same weighted retrieval pass.
+
+```typescript
+export interface LibrarianOptions {
+  /**
+   * If provided, replaces the default Librarian system instructions.
+   * Developers are responsible for including template variables such as
+   * {{context}}, {{tasks}}, and {{query}}.
+   */
+  systemPrompt?: string;
+
+  /** entity_id -> score multiplier, forwarded to WikiMemory.read() as tierWeights. */
+  entityWeights?: Record<string, number>;
+
+  /** Forwarded to WikiMemory.read() for callers that want zero-weight filler context. */
+  includeZeroWeightEntities?: boolean;
+
+  temperature?: number;
+}
+```
+
+`entityWeights` is intentionally named for the Librarian/app-facing API, while `ReadOptions.tierWeights` remains the lower-level retrieval option. The Librarian maps `entityWeights` directly to `tierWeights` when it calls `WikiMemory.read()`.
+
+The standard prompt variables are:
+
+- `{{context}}`: The ranked fact list from the weighted retrieval pass. Each rendered fact should include its `entity_id`; when `factScores` is present, the formatter may also include the weighted score for explainability.
+- `{{tasks}}`: Pending and in-progress tasks returned in the `MemoryBundle`, preserving each task's `entity_id` for provenance.
+- `{{query}}`: The user's original intent, question, or synthesis request.
+
+The default Librarian prompt should use these same variables so the override path and default path share one hydration mechanism.
+
+### Synthesis Flow
+
+```typescript
+async synthesize(query: string, options: LibrarianOptions = {}) {
+  const memory = await this.wiki.read(this.targetEntities, query, {
+    tierWeights: options.entityWeights,
+    includeZeroWeightEntities: options.includeZeroWeightEntities,
+  });
+
+  const template = options.systemPrompt ?? DEFAULT_LIBRARIAN_PROMPT;
+  validatePromptTemplate(template, { custom: options.systemPrompt != null });
+
+  const finalPrompt = hydrate(template, {
+    context: formatFacts(memory.facts, memory.factScores),
+    tasks: formatTasks(memory.tasks),
+    query,
+  });
+
+  return this.inference.generate(finalPrompt, {
+    temperature: options.temperature,
+  });
+}
+```
+
+The override controls synthesis instructions only. It must not bypass multi-entity retrieval, weight sanitization, metadata creation, or provenance preservation.
+
+### Prompt Validation and Token Budgeting
+
+When `systemPrompt` is provided, the Librarian should warn if the template omits `{{context}}`, because that makes the model blind to the retrieved memory. It should also warn when `{{query}}` is omitted. Omitting `{{tasks}}` is allowed for prompts that do not need operational data, but the warning should make that choice visible to developers if tasks were retrieved.
+
+Custom prompts can be much longer than the default. The Librarian should calculate the remaining context budget after selecting the template and rendering fixed variables such as `{{query}}`. It should then fit facts and tasks into the remaining window in ranked order, preserving the global weighted order from `MemoryBundle.facts`. If truncation is necessary, the formatter should prefer fewer complete facts over partial fact text and should keep provenance with every included fact.
+
+### Example Override
+
+```typescript
+await librarian.synthesize('Which source should I trust?', {
+  entityWeights: {
+    tier_wisdom: 2,
+    tier_fact: 1,
+    tier_working: 0.25,
+  },
+  systemPrompt: `You are a strict fact checker.
+Use only the retrieved context. If sources conflict, prefer tier_wisdom over tier_fact over tier_working.
+
+Question:
+{{query}}
+
+Retrieved context:
+{{context}}
+
+Open tasks:
+{{tasks}}`,
+});
+```
+
+This lets Curated Thoughts define strict fact-checking, JSON dashboard output, markdown comparison tables, or creative brainstorming prompts without changing `WikiMemory.read()`.
+
 ## Edge Cases
 
 - Duplicate entity IDs are deduplicated before retrieval.
@@ -174,9 +276,14 @@ This keeps the feature focused on fact retrieval while avoiding surprising seman
 - Non-finite tier weights default to `1.0`.
 - Negative tier weights clamp to `0`.
 - `tierWeights[entity] = 0` pushes that entity's scored facts down but does not remove them.
+- `tierWeights[entity] = 0` skips that entity's scored retrieval branch by default.
+- `includeZeroWeightEntities: true` keeps zero-weight entities eligible as bottom-ranked filler context.
 - `maxResults` applies globally across all requested entities.
-- Empty query reads ignore weights and use global recency ordering.
+- Empty query reads ignore weights, do not apply the zero-weight skip optimization, and use global recency ordering.
 - Access tracking updates only hydrated facts, using the existing ID-based update path.
+- A custom Librarian `systemPrompt` that omits `{{context}}` still runs, but it should produce a developer warning because retrieved memory will not be injected.
+- A custom Librarian `systemPrompt` that omits `{{tasks}}` is valid when task context is not needed.
+- Prompt token budgeting must happen after selecting the default or custom template, because the template size determines how many ranked facts can fit.
 
 ## Testing Plan
 
@@ -196,9 +303,19 @@ Add or update tests in `packages/core/__tests__` to cover:
 12. Duplicate entity IDs are deduplicated.
 13. MiniSearch fallback applies tier weights before the final top-K slice.
 14. Ranker fallback to JS cosine preserves entity IDs and applies tier weights.
+15. Zero-weight entities are skipped by default for scored reads and included as bottom-ranked filler when `includeZeroWeightEntities` is `true`.
+
+Add Librarian synthesis-layer tests where that layer is implemented to cover:
+
+16. `systemPrompt` replaces the default prompt while still using the weighted `MemoryBundle`.
+17. `entityWeights` maps to `WikiMemory.read(..., { tierWeights })`.
+18. `includeZeroWeightEntities` is forwarded when the Librarian caller explicitly wants zero-weight filler context.
+19. `{{context}}`, `{{tasks}}`, and `{{query}}` hydrate with ranked facts, task provenance, and the original query.
+20. A custom prompt missing `{{context}}` emits a developer warning.
+21. Token budgeting trims facts after accounting for the selected custom prompt and preserves fact order and provenance.
 
 ## Future Considerations
 
-The Librarian prompt can later use `entity_id`, `metadata.tierWeights`, and `factScores` to explain source priority and detect conflicts between tiers. For example, Curated Thoughts could show when a high-weight wisdom note displaced a working-memory snippet, or ask the user to resolve a conflict between official documentation and prior personal experience.
+The Librarian prompt override can use `entity_id`, `metadata.tierWeights`, and `factScores` to explain source priority and detect conflicts between tiers. For example, Curated Thoughts could show when a high-weight wisdom note displaced a working-memory snippet, or ask the user to resolve a conflict between official documentation and prior personal experience.
 
-That behavior should live in a separate Librarian Prompt spec because it is synthesis and UX policy, not core retrieval mechanics.
+Future work can add richer template variables such as `{{scores}}`, `{{metadata}}`, or `{{events}}`, plus stricter validation modes for products that want to fail fast when required placeholders are missing. Those additions should remain synthesis and UX policy layered above the core retrieval mechanics.
