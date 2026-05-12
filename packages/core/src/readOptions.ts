@@ -40,7 +40,7 @@ export function applyTierWeight(
 
 export function shouldExposeReadMetadata(
   entityId: string | string[],
-  options: { tierWeights?: Record<string, number> } | undefined,
+  _options?: unknown,
 ): boolean {
-  return Array.isArray(entityId) || options?.tierWeights !== undefined;
+  return Array.isArray(entityId);
 }

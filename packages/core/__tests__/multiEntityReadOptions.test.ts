@@ -52,9 +52,9 @@ describe('multi-entity read option helpers', () => {
     expect(applyTierWeight(0.4, 'tier_fact', { tier_wisdom: 2 })).toBeCloseTo(0.4);
   });
 
-  it('exposes metadata for array-shaped entity ids or explicit weights only', () => {
-    expect(shouldExposeReadMetadata('tier_wisdom', {})).toBe(false);
-    expect(shouldExposeReadMetadata(['tier_wisdom'], {})).toBe(true);
-    expect(shouldExposeReadMetadata('tier_wisdom', { tierWeights: { tier_wisdom: 2 } })).toBe(true);
+  it('exposes metadata only for array-shaped entity ids', () => {
+    expect(shouldExposeReadMetadata('tier_wisdom')).toBe(false);
+    expect(shouldExposeReadMetadata(['tier_wisdom'])).toBe(true);
+    expect(shouldExposeReadMetadata('tier_wisdom', { tierWeights: { tier_wisdom: 2 } })).toBe(false);
   });
 });

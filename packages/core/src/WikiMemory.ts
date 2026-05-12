@@ -990,7 +990,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     const config = this.options.config;
     const entityIds = normalizeEntityIds(entityId);
     const sanitizedTierWeights = sanitizeTierWeights(entityIds, options?.tierWeights);
-    const exposeMetadata = shouldExposeReadMetadata(entityId, options);
+    const exposeMetadata = shouldExposeReadMetadata(entityId);
 
     if (entityIds.length === 0) {
       const empty: MemoryBundle = { facts: [], tasks: [], events: [] };
@@ -999,6 +999,11 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
         if (sanitizedTierWeights) empty.metadata.tierWeights = sanitizedTierWeights;
       }
       return empty;
+    }
+
+    const MAX_ENTITY_IDS = 100;
+    if (entityIds.length > MAX_ENTITY_IDS) {
+      throw new RangeError(`read() accepts at most ${MAX_ENTITY_IDS} entity IDs; received ${entityIds.length}`);
     }
 
     const rawMaxResults = options?.maxResults ?? config?.maxResults ?? config?.maxFtsResults ?? 10;
@@ -1398,7 +1403,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
                     const meta = candidateMap.get(r.id);
                     return {
                       id: r.id,
-                      entity_id: meta?.entity_id ?? entityCacheKey,
+                      entity_id: meta?.entity_id ?? (r as unknown as { entity_id: string }).entity_id,
                       score: r.score ?? 0,
                       access_count: meta?.access_count ?? null,
                       updated_at: meta?.updated_at ?? null,
@@ -1643,25 +1648,29 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
   }
 
   /**
-   * Hydrate full facts by ID. Pass scopedEntityIds to filter out facts outside the requested
-   * namespaces (defense-in-depth against a rogue VectorRanker returning cross-entity IDs).
+   * Hydrate full facts by ID. Pass scopedEntityIds to restrict to requested namespaces in SQL
+   * (defense-in-depth against a rogue VectorRanker returning cross-entity IDs).
    */
   private async _hydrateFactsByIds(ids: readonly string[], scopedEntityIds?: readonly string[]): Promise<WikiFact[]> {
     const fullRows: Array<WikiFact & { embedding?: unknown; embedding_blob?: unknown }> = [];
     const chunkSize = 500;
+    const entityClause = scopedEntityIds && scopedEntityIds.length > 0
+      ? ` AND entity_id IN (${scopedEntityIds.map(() => '?').join(',')})`
+      : '';
+    const entityParams = scopedEntityIds && scopedEntityIds.length > 0 ? [...scopedEntityIds] : [];
 
     for (let i = 0; i < ids.length; i += chunkSize) {
       const idChunk = ids.slice(i, i + chunkSize);
       const placeholders = idChunk.map(() => '?').join(',');
       const chunkRows = await this.db.getAllAsync<WikiFact & { embedding?: unknown; embedding_blob?: unknown }>(
-        `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
-        [...idChunk],
+        `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders})${entityClause} AND deleted_at IS NULL`,
+        [...idChunk, ...entityParams],
       );
       fullRows.push(...chunkRows);
     }
 
     const byId = new Map(fullRows.map(row => [row.id, row]));
-    const result = ids
+    return ids
       .map(id => byId.get(id))
       .filter((fact): fact is WikiFact & { embedding?: unknown; embedding_blob?: unknown } => fact !== undefined)
       .map(fact => {
@@ -1671,12 +1680,6 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
           tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
         };
       });
-
-    if (scopedEntityIds && scopedEntityIds.length > 0) {
-      const scopeSet = new Set(scopedEntityIds);
-      return result.filter(f => scopeSet.has(f.entity_id));
-    }
-    return result;
   }
 
   /**
