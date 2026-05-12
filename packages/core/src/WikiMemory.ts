@@ -1070,9 +1070,17 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
             }
           }
 
-          // Check whether any non-deleted fact for any requested entity has a blob whose
-          // dimension differs from the query vector. Fall back to keyword if any mismatch found.
-          const entityScope = this._entityInClause(entityIds);
+          // Determine which entities will actually be semantically scored (skip zero-weight unless opt-in).
+          // Computed here so the mismatch check below only scans entities that will be used.
+          const scoredEntityIds = entityIds.filter(id => {
+            const weightForEntity = sanitizedTierWeights?.[id] ?? 1;
+            return options?.includeZeroWeightEntities === true || weightForEntity !== 0;
+          });
+
+          // Check whether any non-deleted fact for any scored entity has a blob whose
+          // dimension differs from the query vector. Scoped to scoredEntityIds so a
+          // zero-weight entity's stale embeddings don't force keyword fallback.
+          const entityScope = this._entityInClause(scoredEntityIds);
           const mismatchedCount = await this.db.getFirstAsync<{ cnt: number }>(
             `SELECT COUNT(*) AS cnt FROM ${this.prefix}entries
              WHERE ${entityScope.clause} AND deleted_at IS NULL
@@ -1087,13 +1095,6 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
               `Call runReembed() to rebuild all embeddings consistently.`
             );
           }
-
-          // Determine candidate rows
-          // For multi-entity reads, compute which entities to score (skip zero-weight unless includeZeroWeightEntities)
-          const scoredEntityIds = entityIds.filter(id => {
-            const weightForEntity = sanitizedTierWeights?.[id] ?? 1;
-            return options?.includeZeroWeightEntities === true || weightForEntity !== 0;
-          });
 
           const useRanker = Boolean(this.options.vectorRanker);
           let candidateRows: ReadCandidateRowMetadata[] | ReadCandidateRowWithEmbeddings[] | null; // null = pre-filter returned 0 results
@@ -1188,9 +1189,10 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
 
             if (useRanker) {
               // Use external ranker for semantic scoring
-              const candidateIds = effectivePreFilterLimit !== undefined
-                ? candidateRows.map(r => r.id)
-                : undefined;
+              // Always pass candidateIds so the ranker scopes to the SQLite candidate set.
+              // Omitting it would let the ranker scope by entityId, which is a composite
+              // join-string for multi-entity reads and may not map to a real namespace.
+              const candidateIds = candidateRows.map(r => r.id);
 
               try {
                 // Oversample by max(2x, +50) to preserve recall after re-ranking;

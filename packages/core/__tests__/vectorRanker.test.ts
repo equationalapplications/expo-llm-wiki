@@ -306,7 +306,7 @@ describe('VectorRanker integration', () => {
       expect(args.candidateIds?.length).toBeLessThanOrEqual(2);
     });
 
-    it('should omit candidateIds when preFilterLimit is not set (full scan)', async () => {
+    it('should pass candidateIds even when preFilterLimit is not set (full scan)', async () => {
       const db = openTestDatabase();
       const rankBySimilarity = vi.fn(async (args: VectorRankerRankArgs) => {
         return [{ id: 'fact-a', semanticScore: 0.5 }];
@@ -330,7 +330,9 @@ describe('VectorRanker integration', () => {
 
       expect(rankBySimilarity).toHaveBeenCalled();
       const args = rankBySimilarity.mock.calls[0][0];
-      expect(args.candidateIds).toBeUndefined();
+      // candidateIds is always passed so the ranker is scoped to the SQLite candidate set,
+      // preventing cross-entity results when entityId is a composite key in multi-entity reads.
+      expect(args.candidateIds).toEqual(['fact-a']);
     });
   });
 
@@ -913,19 +915,21 @@ describe('VectorRanker integration', () => {
   });
 
   describe('Regression: PR #16 review issues', () => {
-    it('should detect and report when ranker returns IDs outside entity scope', async () => {
-      // Issue 2: In full-scan mode, a misbehaving ranker can return IDs from other entities.
-      // These get filtered in Phase 2, reducing result count without notification.
+    it('should filter out ranker results outside the candidate set before hydration', async () => {
+      // candidateIds is always passed to the ranker so _rankWithVectorRanker filters
+      // out-of-scope IDs via allowedIds before Phase 2 hydration. The misbehaving ranker
+      // returning cross-entity/nonexistent IDs should not trigger the hydration mismatch
+      // warning nor cause result count to drop silently.
       const db = openTestDatabase();
       const onRetrievalFallback = vi.fn();
       const mockRanker: VectorRanker = {
         rankBySimilarity: async () => {
           // Return mix of valid and invalid IDs
           return [
-            { id: 'fact-a', semanticScore: 0.9 },      // valid
-            { id: 'wrong-entity-1', semanticScore: 0.8 }, // invalid (wrong entity)
-            { id: 'fact-b', semanticScore: 0.7 },      // valid
-            { id: 'nonexistent', semanticScore: 0.6 },   // invalid (doesn't exist)
+            { id: 'fact-a', semanticScore: 0.9 },         // valid (in candidateIds)
+            { id: 'wrong-entity-1', semanticScore: 0.8 },  // filtered by allowedIds
+            { id: 'fact-b', semanticScore: 0.7 },          // valid (in candidateIds)
+            { id: 'nonexistent', semanticScore: 0.6 },     // filtered by allowedIds
           ];
         },
       };
@@ -951,10 +955,11 @@ describe('VectorRanker integration', () => {
       expect(result.facts[0].id).toBe('fact-a');
       expect(result.facts[1].id).toBe('fact-b');
 
-      // Should notify when hydration returns fewer rows than ranked IDs
-      expect(onRetrievalFallback).toHaveBeenCalledWith(
+      // Invalid IDs are filtered by allowedIds in _rankWithVectorRanker — hydration sees
+      // exactly 2 topIds and returns 2 rows, so the mismatch warning is NOT triggered.
+      expect(onRetrievalFallback).not.toHaveBeenCalledWith(
         expect.objectContaining({
-          message: expect.stringContaining('Phase 2 fact hydration returned 2 fewer row(s)'),
+          message: expect.stringContaining('Phase 2 fact hydration returned'),
         })
       );
     });
