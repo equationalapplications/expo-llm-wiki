@@ -1407,7 +1407,8 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
                   // Oversample so tier weights can re-rank before the global slice
                   const keywordOversampledLimit = Math.max(maxResults * 2, maxResults + 50);
                   const topResults = msResults.slice(0, keywordOversampledLimit);
-                  const candidateMap = new Map(candidateRows.map(row => [row.id, row]));
+                  const topResultIds = new Set(topResults.map(r => r.id));
+                  const candidateMap = new Map(candidateRows.filter(r => topResultIds.has(r.id)).map(row => [row.id, row]));
                   scored = topResults.map(result => {
                     const metadata = candidateMap.get(result.id);
                     const entityForScore = metadata?.entity_id
