@@ -310,7 +310,7 @@ Add or update tests in `packages/core/__tests__` to cover:
 8. Missing, non-finite, negative, and zero weights behave as specified.
 9. Empty-query multi-entity reads merge by `updated_at DESC` and ignore weights.
 10. Tasks and events are returned for all requested entities.
-11. A dimension mismatch in any requested entity causes the whole scored retrieval to use keyword fallback.
+11. A dimension mismatch in any **scored** entity causes the whole scored retrieval to use keyword fallback. Zero-weight entities are excluded from this check (unless `includeZeroWeightEntities` is true) so stale embeddings in skipped entities do not force fallback.
 12. Duplicate entity IDs are deduplicated.
 13. MiniSearch fallback applies tier weights before the final top-K slice.
 14. Ranker fallback to JS cosine preserves entity IDs and applies tier weights.
