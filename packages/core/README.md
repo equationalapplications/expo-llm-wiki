@@ -9,7 +9,8 @@ Pure TypeScript business logic for LLM Wiki Memory.
 - **Platform-agnostic** — Zero runtime dependencies; works with any SQLite driver via the `SQLiteAdapter` interface
 - **Semantic search** — Vector embeddings via your LLM's `embed` function, ranked by cosine similarity
 - **Keyword fallback** — MiniSearch in-memory index for offline/degraded scenarios when embeddings unavailable
-- **Retrieval tuning** — Per-call overrides for `maxResults`, `preFilterLimit`, and `hybridWeight` blend
+- **Retrieval tuning** — Per-call overrides for `maxResults`, `preFilterLimit`, `hybridWeight`, `tierWeights`, and `includeZeroWeightEntities`
+- **Multi-entity reads** — Search across multiple `entity_id` namespaces in one pass with per-entity score multipliers (`tierWeights`); optional `factScores` and `metadata` for explainability
 - **Full-featured memory** — Facts, tasks, events, maintenance jobs (librarian, heal, reembed, prune)
 - **Type-safe** — Built with TypeScript, full type exports
 
@@ -121,6 +122,19 @@ const memory = await wikiMemory.read('user-123', 'my preferences', {
   preFilterLimit: 20,
   hybridWeight: 0.5,
 });
+
+// Multi-entity with tier weights
+const multiMemory = await wikiMemory.read(['tier_wisdom', 'tier_fact', 'tier_working'], 'my preferences', {
+  maxResults: 8,
+  tierWeights: {
+    tier_wisdom: 2,      // high-confidence curated notes boosted 2×
+    tier_fact: 1,        // neutral baseline
+    tier_working: 0.25,  // recent but unvetted context downranked
+  },
+  // includeZeroWeightEntities: true — include 0-weight entities as bottom-ranked filler
+});
+// multiMemory.factScores — Record<factId, weightedScore> for all returned facts
+// multiMemory.metadata  — { query, entityIds, tierWeights }
 ```
 
 **Hybrid scoring blends:**
@@ -129,6 +143,15 @@ const memory = await wikiMemory.read('user-123', 'my preferences', {
 - `hybridWeight: 0.0` → pure keyword ranking, skips `embed()` entirely (no LLM API cost)
 
 True cosine-range pure semantic ranking (including negative cosine values) is used when `hybridWeight` is left `undefined`.
+
+**Tier weights:**
+- `tierWeights` applies a per-entity multiplier after semantic/keyword scoring: `finalScore = retrievalScore × weight`
+- Missing weights default to `1.0`. Negative weights clamp to `0`. Non-finite weights default to `1.0`.
+- `tierWeights[entity] = 0` skips that entity's scored retrieval branch (no compute cost).
+- `includeZeroWeightEntities: true` includes zero-weight entities as bottom-ranked filler instead of skipping them.
+- `factScores` and `metadata` are populated only for array-shaped `entityId` calls. Plain string calls never expose them.
+- `maxResults` applies globally across all requested entities.
+- Tasks are capped at `min(20 × entityCount, 200)`; events at `min(10 × entityCount, 100)` for multi-entity reads.
 
 **Pre-filtering optimization:**
 When `preFilterLimit: 50` is set with 1000 facts, cosine similarity is computed only for the top 50 MiniSearch keyword matches, reducing O(N) scoring to O(50).
@@ -418,7 +441,7 @@ console.log(memory.factScores);
 
 ### Librarian prompt override contract
 
-Core does not own a provider-specific synthesis API, but it exports prompt utilities for applications that synthesize answers from weighted retrieval results.
+Core exports prompt utilities for weighted retrieval-based synthesis. Use `mapLibrarianOptionsToReadOptions()` to map `entityWeights` to `tierWeights`, then hydrate a prompt with `query`, `context`, and `tasks`.
 
 ```ts
 import {
@@ -553,7 +576,7 @@ const adapter: SQLiteAdapter = {
 
 ```mermaid
 flowchart TD
-    A["read(entityId, query)"] --> B{hybridWeight = 0?}
+    A["read(entityId | entityId[], query, options?)"] --> B{hybridWeight = 0?}
     B -->|Yes| C["MiniSearch only<br/>(skip embed)"]
     B -->|No| D{embed available?}
     D -->|No| C

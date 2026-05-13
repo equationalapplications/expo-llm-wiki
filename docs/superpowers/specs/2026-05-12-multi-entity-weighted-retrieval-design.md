@@ -1,7 +1,7 @@
 # Multi-Entity Weighted Retrieval and Librarian Prompt Overrides
 
 **Date:** 2026-05-12  
-**Status:** Approved
+**Status:** Implemented
 **Breaking Change:** No
 
 ## Overview
