@@ -248,6 +248,60 @@ describe('useMemoryRead', () => {
     rerender({ opts: { preFilterLimit: Infinity } });
     await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(2));
   });
+
+  it('does not re-fetch when tierWeights changes from undefined to {} (empty object is same as undefined)', async () => {
+    const { rerender } = renderHook(
+      ({ opts }: { opts: ReadOptions }) => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki), initialProps: { opts: {} } }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    // tierWeights: {} has no entries, so all weights default to 1.0 — same as undefined.
+    rerender({ opts: { tierWeights: {} } });
+    await act(async () => {});
+    expect(wiki.read).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-fetches when tierWeights gains an entry (behavioral change from all-default weights)', async () => {
+    const { rerender } = renderHook(
+      ({ opts }: { opts: ReadOptions }) => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki), initialProps: { opts: { tierWeights: {} } } }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    rerender({ opts: { tierWeights: { tier_wisdom: 2 } } });
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(2));
+  });
+
+  it('does not re-fetch when tierWeights has non-finite values replaced by their effective 1.0 equivalent', async () => {
+    const { rerender } = renderHook(
+      ({ opts }: { opts: ReadOptions }) => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki), initialProps: { opts: { tierWeights: { tier_wisdom: NaN } } } }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    // NaN → 1.0 per spec ("non-finite values default to 1.0"), so key is unchanged.
+    rerender({ opts: { tierWeights: { tier_wisdom: 1 } } });
+    await act(async () => {});
+    expect(wiki.read).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not re-fetch when tierWeights has negative values replaced by their effective 0 equivalent', async () => {
+    const { rerender } = renderHook(
+      ({ opts }: { opts: ReadOptions }) => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki), initialProps: { opts: { tierWeights: { tier_working: -5 } } } }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    // -5 → 0 per spec ("negative values clamp to 0"), so key is unchanged.
+    rerender({ opts: { tierWeights: { tier_working: 0 } } });
+    await act(async () => {});
+    expect(wiki.read).toHaveBeenCalledTimes(1);
+  });
 });
 
 // ---------------------------------------------------------------------------

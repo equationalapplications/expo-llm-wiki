@@ -12,6 +12,8 @@ import { useWiki } from './WikiContext';
  *      · preFilterLimit: NaN/±Infinity → null (disables config-level limit, same as null)
  *      · hybridWeight: NaN → null (explicitly disables config-level weight; distinct from
  *        undefined which defers to config); ±Infinity → clamped to 0/1
+ *      · tierWeights values: non-finite → 1.0, negative → 0 (mirrors core sanitization)
+ *      · tierWeights: {} is omitted (same effective behavior as undefined; all weights 1.0)
  *  - Keys are sorted so insertion-order differences never cause spurious refetches
  */
 function normalizeReadOptionsKey(opts?: ReadOptions): string {
@@ -47,14 +49,22 @@ function normalizeReadOptionsKey(opts?: ReadOptions): string {
       : Math.max(0, Math.min(1, opts.hybridWeight));
   }
 
-  // tierWeights: serialize with sorted keys so insertion-order differences
-  // don't cause spurious refetches.
+  // tierWeights: mirror core's weight sanitization (non-finite → 1.0, negative → 0)
+  // and sort keys so insertion-order differences and logically-equivalent values
+  // (e.g. NaN vs 1, -5 vs 0) never cause spurious refetches.
+  // An empty {} is omitted entirely — behaviorally identical to undefined.
   if (opts.tierWeights !== undefined) {
     const tw = opts.tierWeights;
     const twKeys = Object.keys(tw).sort();
-    normalized.tierWeights = twKeys.length
-      ? JSON.stringify(tw, twKeys)
-      : null;
+    if (twKeys.length) {
+      const sanitized: Record<string, number> = {};
+      for (const k of twKeys) {
+        const w = tw[k];
+        sanitized[k] = !Number.isFinite(w) ? 1.0 : Math.max(0, w);
+      }
+      normalized.tierWeights = JSON.stringify(sanitized, twKeys);
+    }
+    // Empty {} → omit (all weights default to 1.0, same as undefined)
   }
 
   // includeZeroWeightEntities: only include when explicitly set.
