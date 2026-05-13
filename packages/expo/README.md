@@ -15,7 +15,8 @@ Expo/React Native adapter for @equationalapplications/core-llm-wiki, powered by 
 - **Expo-ready** — Pre-configured for React Native + Expo
 - **Built on `expo-sqlite`** — Stable, well-supported SQLite driver
 - **Semantic search** — Vector embeddings via `embed` function, with MiniSearch fallback
-- **Retrieval tuning** — Per-call overrides for search behavior (pre-filter, hybrid blend)
+- **Retrieval tuning** — Per-call overrides for search behavior (pre-filter, hybrid blend, tier weights)
+- **Multi-entity reads** — Search across multiple `entity_id` namespaces in one pass with `tierWeights`
 - **React hooks** — `WikiProvider`, `useMemoryRead`, and all other hooks are re-exported directly from `@equationalapplications/expo-llm-wiki`
 - **Full-featured memory** — Facts, tasks, events, maintenance jobs (librarian, heal, reembed, prune)
 
@@ -76,6 +77,19 @@ const fasterSearch = await wiki.read('user-123', 'activities', {
   preFilterLimit: 20,      // Tighter pre-filter for speed
   hybridWeight: 0.5,       // More keyword weight
 });
+
+// Multi-entity with tier weights
+const multiMemory = await wiki.read(['tier_wisdom', 'tier_fact', 'tier_working'], 'activities', {
+  maxResults: 8,
+  tierWeights: {
+    tier_wisdom: 2,      // boost curated notes 2×
+    tier_fact: 1,        // neutral baseline
+    tier_working: 0.25,  // downrank unvetted context
+  },
+  // includeZeroWeightEntities: true — include 0-weight entities as bottom-ranked filler
+});
+// multiMemory.factScores — Record<factId, weightedScore>
+// multiMemory.metadata  — { query, entityIds, tierWeights }
 ```
 
 ## Configuration
@@ -219,7 +233,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A["read(entityId, query)"] --> B{hybridWeight = 0?}
+    A["read(entityId | entityId[], query, options?)"] --> B{hybridWeight = 0?}
     B -->|Yes| C["MiniSearch only<br/>(skip embed)"]
     B -->|No| D{embed available?}
     D -->|No| C
@@ -250,6 +264,30 @@ The flowchart shows:
 4. **Two-phase SELECT**: phase 1 scores all/filtered facts with minimal columns, phase 2 fetches full rows for winners
 5. **Hybrid scoring** to blend semantic and keyword rankings
 6. **Vector caching** on full scans only; reads with `preFilterLimit` active skip cache population
+
+## Multi-Entity Reads
+
+`read()` accepts a single entity ID or an array to search across namespaces in one retrieval pass. Pass `tierWeights` to control per-entity ranking before the final top-K results:
+
+```typescript
+const memory = await wiki.read(
+  ['tier_wisdom', 'tier_fact', 'tier_working'],
+  'What do I know about this topic?',
+  {
+    maxResults: 8,
+    tierWeights: {
+      tier_wisdom: 2,      // boost curated notes 2×
+      tier_fact: 1,        // neutral
+      tier_working: 0.25,  // downrank unvetted context
+    },
+  }
+);
+// memory.factScores — Record<factId, weightedScore>
+// memory.metadata  — { query, entityIds, tierWeights }
+// tasks capped at min(20 × entityCount, 200); events at min(10 × entityCount, 100)
+```
+
+For Librarian prompt utilities (`hydrateLibrarianPrompt`, `validateLibrarianPromptTemplate`, etc.), see [`packages/core/README.md`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md#librarian-prompt-override-contract).
 
 ## License
 

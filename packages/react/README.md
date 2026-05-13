@@ -7,7 +7,8 @@ React hooks and web utilities for @equationalapplications/core-llm-wiki, designe
 ## Features
 
 - **Semantic search** — Vector embeddings with optional `embed` function and MiniSearch fallback
-- **Retrieval tuning** — Per-call overrides for hybrid scoring, pre-filtering, result limits
+- **Retrieval tuning** — Per-call overrides for hybrid scoring, pre-filtering, result limits, and tier weights
+- **Multi-entity reads** — Search across multiple `entity_id` namespaces in one pass with `tierWeights` and optional `includeZeroWeightEntities`
 - **Reactive reads** — Auto-refetch on `entityId`, query, or `options` changes
 - **Mutation hooks** — `useWikiWrite`, `useWikiIngest`, `useWikiForget`, `useWikiMaintenance`, etc.
 - **Shared context** — Single `WikiProvider` per app, use anywhere
@@ -150,16 +151,38 @@ const { data } = useMemoryRead('user-123', 'preferences', {
   preFilterLimit: 20,      // Tighter pre-filter for speed
   hybridWeight: 0.5,       // More keyword weight
 });
+
+// Multi-entity hook — pass array entityId + tierWeights
+const { data: multiData } = useMemoryRead(
+  ['tier_wisdom', 'tier_fact', 'tier_working'],
+  'preferences',
+  {
+    maxResults: 8,
+    tierWeights: {
+      tier_wisdom: 2,
+      tier_fact: 1,
+      tier_working: 0.25,
+    },
+    // includeZeroWeightEntities: true — include 0-weight entities as bottom-ranked filler
+  }
+);
+// multiData?.factScores — Record<factId, weightedScore>
+// multiData?.metadata  — { query, entityIds, tierWeights }
 ```
 
 ## Hooks
 
 ### `useMemoryRead(entityId, query, options?)`
 
-Fetch memory reactively. Auto-refetches when `entityId`, `query`, `wiki`, or `options` change, including per-call overrides such as `maxResults`, `preFilterLimit`, and `hybridWeight`.
+Fetch memory reactively. `entityId` accepts a string or string array for multi-entity reads. Auto-refetches when `entityId`, `query`, `wiki`, or `options` change, including per-call overrides such as `maxResults`, `preFilterLimit`, `hybridWeight`, and `tierWeights`.
 
 ```typescript
 const { data, isPending, error, refetch } = useMemoryRead('user-123', 'preferences');
+// data: MemoryBundle | null
+
+// Multi-entity
+const { data: multi } = useMemoryRead(['tier_wisdom', 'tier_fact'], 'preferences');
+// multi?.factScores, multi?.metadata available when entityId is array
 
 if (isPending) return <div>Loading...</div>;
 if (error) return <div>Error: {error.message}</div>;
@@ -292,6 +315,32 @@ await execute(['user-123']);
 // lastResult: MemoryDump | null
 ```
 
+## Multi-Entity Reads
+
+`useMemoryRead` accepts a single entity ID or an array to search across namespaces in one pass. Pass `tierWeights` to apply per-entity score multipliers before the global top-K slice:
+
+```typescript
+const { data } = useMemoryRead(
+  ['tier_wisdom', 'tier_fact', 'tier_working'],
+  'What are my preferences?',
+  {
+    maxResults: 8,
+    tierWeights: {
+      tier_wisdom: 2,      // boost curated notes 2×
+      tier_fact: 1,        // neutral
+      tier_working: 0.25,  // downrank unvetted context
+    },
+  }
+);
+
+if (data) {
+  console.log(data.facts);      // merged, globally ranked
+  console.log(data.factScores); // Record<factId, weightedScore>
+  console.log(data.metadata);   // { query, entityIds, tierWeights }
+}
+
+For Librarian prompt utilities, see [`packages/core/README.md`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md#librarian-prompt-override-contract).
+
 ## Component Lifecycle
 
 ```mermaid
@@ -329,7 +378,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A["read(entityId, query)"] --> B{hybridWeight = 0?}
+    A["read(entityId | entityId[], query, options?)"] --> B{hybridWeight = 0?}
     B -->|Yes| C["MiniSearch only<br/>(skip embed)"]
     B -->|No| D{embed available?}
     D -->|No| C
