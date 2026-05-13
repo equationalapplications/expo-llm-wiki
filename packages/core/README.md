@@ -403,7 +403,7 @@ const memory = await wikiMemory.read('user-123', 'coding style preferences');
 `read()` accepts either one entity id or an array of entity ids. Array reads merge fact candidates globally before `maxResults` is applied. Tasks and events are collected globally under shared caps (`min(20 × entity count, 200)` tasks; `min(10 × entity count, 100)` events) — individual entities are not guaranteed representation in the returned bundle.
 
 ```ts
-const memory = await wiki.read(['tier_wisdom', 'tier_fact', 'tier_working'], 'Which source should I trust?', {
+const memory = await wikiMemory.read(['tier_wisdom', 'tier_fact', 'tier_working'], 'Which source should I trust?', {
   maxResults: 8,
   tierWeights: {
     tier_wisdom: 2,
@@ -442,7 +442,9 @@ Open tasks:
 {{tasks}}`,
 };
 
-const memory = await wiki.read(['tier_wisdom', 'tier_fact', 'tier_working'], query, {
+const query = 'Which source should I trust for recent project decisions?';
+
+const memory = await wikiMemory.read(['tier_wisdom', 'tier_fact', 'tier_working'], query, {
   ...mapLibrarianOptionsToReadOptions(options),
   maxResults: 8,
 });
