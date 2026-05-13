@@ -438,7 +438,6 @@ Question:
 Retrieved context:
 {{context}}
 
-Open tasks:
 {{tasks}}`,
 };
 
