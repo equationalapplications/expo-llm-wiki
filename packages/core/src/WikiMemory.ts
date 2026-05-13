@@ -1094,8 +1094,9 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
           }
 
           // Fast-path: no entities need semantic scoring (all have weight=0 and
-          // includeZeroWeightEntities is false). Skip embedding+DB work and fall
-          // through to the keyword-only path below, while still fetching tasks/events.
+          // includeZeroWeightEntities is false). Skip embedding+DB work entirely.
+          // usedEmbed=true suppresses the !usedEmbed keyword fallback below, so
+          // zero-weight reads return an empty facts list (tasks/events still fetched).
           if (scoredEntityIds.length === 0) {
             usedEmbed = true; // semantic path intentionally skipped, not failed
           } else {
@@ -1105,197 +1106,158 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
             let populateCache = entityIds.length === 1;
             let miniSearchScores: Map<string, number> | undefined;
 
-          if (effectivePreFilterLimit !== undefined) {
-            populateCache = false; // partial scan — do not populate cache
-            const entityIdSet = new Set(scoredEntityIds);
-            const preResults = this.miniSearch.search(trimmedQuery, {
-              filter: (r) => entityIdSet.has((r as unknown as { entity_id: string }).entity_id),
-              combineWith: 'OR',
-            });
-            if (preResults.length === 0) {
-              candidateRows = null; // empty pre-filter
-            } else {
-              const topKResults = preResults.slice(0, effectivePreFilterLimit);
-              if (topKResults.length === 0) {
-                // effectivePreFilterLimit is 0 — treat the same as no candidates
-                // (avoids constructing an invalid "WHERE id IN ()" SQL clause)
-                candidateRows = null;
-              } else {
-                const topKIds = topKResults.map(r => r.id);
-                const inClauseChunkSize = 500;
-                if (useRanker) {
-                  const rows: ReadCandidateRowMetadata[] = [];
-                  for (let i = 0; i < topKIds.length; i += inClauseChunkSize) {
-                    const idChunk = topKIds.slice(i, i + inClauseChunkSize);
-                    const placeholders = idChunk.map(() => '?').join(',');
-                    const chunkRows = await this.db.getAllAsync<ReadCandidateRowMetadata>(
-                      `SELECT id, entity_id, updated_at, access_count FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
-                      idChunk
-                    );
-                    rows.push(...chunkRows);
-                  }
-                  candidateRows = rows;
-                } else {
-                  const rows: ReadCandidateRowWithEmbeddings[] = [];
-                  for (let i = 0; i < topKIds.length; i += inClauseChunkSize) {
-                    const idChunk = topKIds.slice(i, i + inClauseChunkSize);
-                    const placeholders = idChunk.map(() => '?').join(',');
-                    const chunkRows = await this.db.getAllAsync<ReadCandidateRowWithEmbeddings>(
-                      `SELECT id, entity_id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
-                      idChunk
-                    );
-                    rows.push(...chunkRows);
-                  }
-                  candidateRows = rows;
-                }
-                if (weight !== undefined && weight < 1) {
-                  const maxMsScore = Math.max(1, topKResults[0]?.score ?? 1);
-                  miniSearchScores = new Map(topKResults.map(r => [r.id, r.score / maxMsScore]));
-                }
-              }
-            }
-          } else {
-            // Full scan of scored entities
-            // If vectorRanker is configured, skip embedding load for now (ranker will provide ranking)
-            // Otherwise fetch embeddings for JS cosine ranking
-            if (useRanker) {
-              const entityScope = this._entityInClause(scoredEntityIds);
-              candidateRows = await this.db.getAllAsync<ReadCandidateRowMetadata>(
-                `SELECT id, entity_id, updated_at, access_count FROM ${this.prefix}entries WHERE ${entityScope.clause} AND deleted_at IS NULL`,
-                entityScope.params
-              );
-            } else {
-              const entityScope = this._entityInClause(scoredEntityIds);
-              candidateRows = await this.db.getAllAsync<ReadCandidateRowWithEmbeddings>(
-                `SELECT id, entity_id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE ${entityScope.clause} AND deleted_at IS NULL`,
-                entityScope.params
-              );
-            }
-            // Collect MiniSearch scores for hybrid blend if weight is set and <1
-            if (weight !== undefined && weight < 1) {
+            if (effectivePreFilterLimit !== undefined) {
+              populateCache = false; // partial scan — do not populate cache
               const entityIdSet = new Set(scoredEntityIds);
-              const msResults = this.miniSearch.search(trimmedQuery, {
+              const preResults = this.miniSearch.search(trimmedQuery, {
                 filter: (r) => entityIdSet.has((r as unknown as { entity_id: string }).entity_id),
                 combineWith: 'OR',
               });
-              const maxMsScore = Math.max(1, msResults[0]?.score ?? 1);
-              miniSearchScores = new Map(msResults.map(r => [r.id, r.score / maxMsScore]));
-            }
-          }
-
-          if (candidateRows === null) {
-            // pre-filter returned 0 candidates — facts = [], skip phase 2, skip access tracking
-            usedEmbed = true;
-          } else {
-            // Rank candidates: use vectorRanker if present, otherwise use JS cosine
-            const entityCacheKey = entityIds.length === 1 ? entityIds[0] : entityIds.join('\x00');
-            let scored: Array<{ id: string; entity_id: string; score: number; updated_at?: number | null; access_count?: number | null }>;
-
-            if (useRanker) {
-              // Use external ranker for semantic scoring.
-              // Pass candidateIds for multi-entity reads (entityCacheKey is a composite join string,
-              // not a real namespace) and pre-filtered reads (results already scoped to subset).
-              // For single-entity full-scan, omit so remote rankers avoid transmitting the full
-              // candidate list and can scope by entityId instead.
-              const candidateIds = entityIds.length > 1 || effectivePreFilterLimit !== undefined
-                ? candidateRows.map(r => r.id)
-                : undefined;
-
-              try {
-                // Oversample by max(2x, +50) to preserve recall after re-ranking;
-                // caller slices final output to maxResults.
-                const oversampledLimit = Math.max(maxResults * 2, maxResults + 50);
-                scored = await this._rankWithVectorRanker({
-                  entityId: entityCacheKey,
-                  queryVec,
-                  candidateIds,
-                  candidateRows: candidateRows as ReadCandidateRowMetadata[],
-                  weight,
-                  miniSearchScores,
-                  limit: oversampledLimit,
-                });
-
-                // Attach tie-break metadata from candidateRows (only for IDs returned by ranker)
-                if (scored.length > 0) {
-                  const scoredIds = new Set(scored.map(s => s.id));
-                  const metaMap = new Map<string, { updated_at: number | null; access_count: number | null }>();
-                  for (const r of candidateRows) {
-                    if (scoredIds.has(r.id)) {
-                      metaMap.set(r.id, { updated_at: r.updated_at, access_count: r.access_count });
+              if (preResults.length === 0) {
+                candidateRows = null; // empty pre-filter
+              } else {
+                const topKResults = preResults.slice(0, effectivePreFilterLimit);
+                if (topKResults.length === 0) {
+                  // effectivePreFilterLimit is 0 — treat the same as no candidates
+                  // (avoids constructing an invalid "WHERE id IN ()" SQL clause)
+                  candidateRows = null;
+                } else {
+                  const topKIds = topKResults.map(r => r.id);
+                  const inClauseChunkSize = 500;
+                  if (useRanker) {
+                    const rows: ReadCandidateRowMetadata[] = [];
+                    for (let i = 0; i < topKIds.length; i += inClauseChunkSize) {
+                      const idChunk = topKIds.slice(i, i + inClauseChunkSize);
+                      const placeholders = idChunk.map(() => '?').join(',');
+                      const chunkRows = await this.db.getAllAsync<ReadCandidateRowMetadata>(
+                        `SELECT id, entity_id, updated_at, access_count FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+                        idChunk
+                      );
+                      rows.push(...chunkRows);
                     }
+                    candidateRows = rows;
+                  } else {
+                    const rows: ReadCandidateRowWithEmbeddings[] = [];
+                    for (let i = 0; i < topKIds.length; i += inClauseChunkSize) {
+                      const idChunk = topKIds.slice(i, i + inClauseChunkSize);
+                      const placeholders = idChunk.map(() => '?').join(',');
+                      const chunkRows = await this.db.getAllAsync<ReadCandidateRowWithEmbeddings>(
+                        `SELECT id, entity_id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+                        idChunk
+                      );
+                      rows.push(...chunkRows);
+                    }
+                    candidateRows = rows;
                   }
-                  scored = scored.map(s => {
-                    const meta = metaMap.get(s.id);
-                    return { ...s, updated_at: meta?.updated_at ?? null, access_count: meta?.access_count ?? null };
-                  });
+                  if (weight !== undefined && weight < 1) {
+                    const maxMsScore = Math.max(1, topKResults[0]?.score ?? 1);
+                    miniSearchScores = new Map(topKResults.map(r => [r.id, r.score / maxMsScore]));
+                  }
                 }
+              }
+            } else {
+              // Full scan of scored entities
+              // If vectorRanker is configured, skip embedding load for now (ranker will provide ranking)
+              // Otherwise fetch embeddings for JS cosine ranking
+              if (useRanker) {
+                const entityScope = this._entityInClause(scoredEntityIds);
+                candidateRows = await this.db.getAllAsync<ReadCandidateRowMetadata>(
+                  `SELECT id, entity_id, updated_at, access_count FROM ${this.prefix}entries WHERE ${entityScope.clause} AND deleted_at IS NULL`,
+                  entityScope.params
+                );
+              } else {
+                const entityScope = this._entityInClause(scoredEntityIds);
+                candidateRows = await this.db.getAllAsync<ReadCandidateRowWithEmbeddings>(
+                  `SELECT id, entity_id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE ${entityScope.clause} AND deleted_at IS NULL`,
+                  entityScope.params
+                );
+              }
+              // Collect MiniSearch scores for hybrid blend if weight is set and <1
+              if (weight !== undefined && weight < 1) {
+                const entityIdSet = new Set(scoredEntityIds);
+                const msResults = this.miniSearch.search(trimmedQuery, {
+                  filter: (r) => entityIdSet.has((r as unknown as { entity_id: string }).entity_id),
+                  combineWith: 'OR',
+                });
+                const maxMsScore = Math.max(1, msResults[0]?.score ?? 1);
+                miniSearchScores = new Map(msResults.map(r => [r.id, r.score / maxMsScore]));
+              }
+            }
 
-                // Backfill ranker-omitted rows per VectorRanker contract:
-                // treat missing ids as "no embedding" (pure semantic: -2, hybrid: keyword-only)
-                const scoredIds = new Set(scored.map(s => s.id));
+            if (candidateRows === null) {
+              // pre-filter returned 0 candidates — facts = [], skip phase 2, skip access tracking
+              usedEmbed = true;
+            } else {
+              // Rank candidates: use vectorRanker if present, otherwise use JS cosine
+              const entityCacheKey = entityIds.length === 1 ? entityIds[0] : entityIds.join('\x00');
+              let scored: Array<{ id: string; entity_id: string; score: number; updated_at?: number | null; access_count?: number | null }>;
 
-                // Compute backfill budget up-front.
-                // Hybrid mode: allow up to maxResults keyword-only rows to compete.
-                // Pure semantic: only fill the remaining result slots.
-                const isHybrid = weight !== undefined && weight < 1;
-                const maxBackfill = isHybrid
-                  ? maxResults
-                  : Math.max(0, maxResults - scored.length);
+              if (useRanker) {
+                // Use external ranker for semantic scoring.
+                // Pass candidateIds for multi-entity reads (entityCacheKey is a composite join string,
+                // not a real namespace) and pre-filtered reads (results already scoped to subset).
+                // For single-entity full-scan, omit so remote rankers avoid transmitting the full
+                // candidate list and can scope by entityId instead.
+                const candidateIds = entityIds.length > 1 || effectivePreFilterLimit !== undefined
+                  ? candidateRows.map(r => r.id)
+                  : undefined;
 
-                if (maxBackfill > 0) {
-                  if (isHybrid) {
-                    // Hybrid mode: prioritize by keyword score using O(N log K) top-K selection
-                    // instead of O(N log N) full sort, since K (maxBackfill) is typically << N.
-                    type CandidateRow = typeof candidateRows[number];
-                    const topK: Array<{ row: CandidateRow; kwScore: number }> = [];
+                try {
+                  // Oversample by max(2x, +50) to preserve recall after re-ranking;
+                  // caller slices final output to maxResults.
+                  const oversampledLimit = Math.max(maxResults * 2, maxResults + 50);
+                  scored = await this._rankWithVectorRanker({
+                    entityId: entityCacheKey,
+                    queryVec,
+                    candidateIds,
+                    candidateRows: candidateRows as ReadCandidateRowMetadata[],
+                    weight,
+                    miniSearchScores,
+                    limit: oversampledLimit,
+                  });
 
-                    for (const row of candidateRows) {
-                      if (scoredIds.has(row.id)) continue;
-                      const kwScore = miniSearchScores?.get(row.id) ?? 0;
-                      const candidate = { row, kwScore };
+                  // Attach tie-break metadata from candidateRows (only for IDs returned by ranker)
+                  if (scored.length > 0) {
+                    const scoredIds = new Set(scored.map(s => s.id));
+                    const metaMap = new Map<string, { updated_at: number | null; access_count: number | null }>();
+                    for (const r of candidateRows) {
+                      if (scoredIds.has(r.id)) {
+                        metaMap.set(r.id, { updated_at: r.updated_at, access_count: r.access_count });
+                      }
+                    }
+                    scored = scored.map(s => {
+                      const meta = metaMap.get(s.id);
+                      return { ...s, updated_at: meta?.updated_at ?? null, access_count: meta?.access_count ?? null };
+                    });
+                  }
 
-                      if (topK.length < maxBackfill) {
-                        // Array not full yet - insert in sorted position (descending order)
-                        let insertIdx = topK.length;
-                        for (let i = 0; i < topK.length; i++) {
-                          const cmp = this._compareScoredRows(
-                            {
-                              id: candidate.row.id,
-                              score: candidate.kwScore,
-                              updated_at: candidate.row.updated_at,
-                              access_count: candidate.row.access_count,
-                            },
-                            {
-                              id: topK[i].row.id,
-                              score: topK[i].kwScore,
-                              updated_at: topK[i].row.updated_at,
-                              access_count: topK[i].row.access_count,
-                            }
-                          );
-                          if (cmp < 0) {
-                            insertIdx = i;
-                            break;
-                          }
-                        }
-                        topK.splice(insertIdx, 0, candidate);
-                      } else {
-                        const cmpWorst = this._compareScoredRows(
-                          {
-                            id: candidate.row.id,
-                            score: candidate.kwScore,
-                            updated_at: candidate.row.updated_at,
-                            access_count: candidate.row.access_count,
-                          },
-                          {
-                            id: topK[maxBackfill - 1].row.id,
-                            score: topK[maxBackfill - 1].kwScore,
-                            updated_at: topK[maxBackfill - 1].row.updated_at,
-                            access_count: topK[maxBackfill - 1].row.access_count,
-                          }
-                        );
-                        if (cmpWorst < 0) {
-                          // Found better candidate than current worst - replace worst and re-insert
-                          let insertIdx = maxBackfill - 1;
+                  // Backfill ranker-omitted rows per VectorRanker contract:
+                  // treat missing ids as "no embedding" (pure semantic: -2, hybrid: keyword-only)
+                  const scoredIds = new Set(scored.map(s => s.id));
+
+                  // Compute backfill budget up-front.
+                  // Hybrid mode: allow up to maxResults keyword-only rows to compete.
+                  // Pure semantic: only fill the remaining result slots.
+                  const isHybrid = weight !== undefined && weight < 1;
+                  const maxBackfill = isHybrid
+                    ? maxResults
+                    : Math.max(0, maxResults - scored.length);
+
+                  if (maxBackfill > 0) {
+                    if (isHybrid) {
+                      // Hybrid mode: prioritize by keyword score using O(N log K) top-K selection
+                      // instead of O(N log N) full sort, since K (maxBackfill) is typically << N.
+                      type CandidateRow = typeof candidateRows[number];
+                      const topK: Array<{ row: CandidateRow; kwScore: number }> = [];
+
+                      for (const row of candidateRows) {
+                        if (scoredIds.has(row.id)) continue;
+                        const kwScore = miniSearchScores?.get(row.id) ?? 0;
+                        const candidate = { row, kwScore };
+
+                        if (topK.length < maxBackfill) {
+                          // Array not full yet - insert in sorted position (descending order)
+                          let insertIdx = topK.length;
                           for (let i = 0; i < topK.length; i++) {
                             const cmp = this._compareScoredRows(
                               {
@@ -1317,196 +1279,235 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
                             }
                           }
                           topK.splice(insertIdx, 0, candidate);
-                          topK.pop(); // Remove worst element
+                        } else {
+                          const cmpWorst = this._compareScoredRows(
+                            {
+                              id: candidate.row.id,
+                              score: candidate.kwScore,
+                              updated_at: candidate.row.updated_at,
+                              access_count: candidate.row.access_count,
+                            },
+                            {
+                              id: topK[maxBackfill - 1].row.id,
+                              score: topK[maxBackfill - 1].kwScore,
+                              updated_at: topK[maxBackfill - 1].row.updated_at,
+                              access_count: topK[maxBackfill - 1].row.access_count,
+                            }
+                          );
+                          if (cmpWorst < 0) {
+                            // Found better candidate than current worst - replace worst and re-insert
+                            let insertIdx = maxBackfill - 1;
+                            for (let i = 0; i < topK.length; i++) {
+                              const cmp = this._compareScoredRows(
+                                {
+                                  id: candidate.row.id,
+                                  score: candidate.kwScore,
+                                  updated_at: candidate.row.updated_at,
+                                  access_count: candidate.row.access_count,
+                                },
+                                {
+                                  id: topK[i].row.id,
+                                  score: topK[i].kwScore,
+                                  updated_at: topK[i].row.updated_at,
+                                  access_count: topK[i].row.access_count,
+                                }
+                              );
+                              if (cmp < 0) {
+                                insertIdx = i;
+                                break;
+                              }
+                            }
+                            topK.splice(insertIdx, 0, candidate);
+                            topK.pop(); // Remove worst element
+                          }
                         }
                       }
-                    }
 
-                    for (const { row, kwScore } of topK) {
-                      scored.push({
-                        id: row.id,
-                        entity_id: row.entity_id,
-                        score: (1 - weight) * kwScore,
-                        updated_at: row.updated_at,
-                        access_count: row.access_count,
-                      });
-                    }
-                  } else {
-                    // Pure semantic: all omitted rows share score -2.
-                    // Tie-break omitted rows deterministically before truncating.
-                    const omitted: Array<{ id: string; entity_id: string; score: number; updated_at: number | null; access_count: number | null }> = [];
-                    for (const row of candidateRows) {
-                      if (scoredIds.has(row.id)) continue;
-                      omitted.push({ id: row.id, entity_id: row.entity_id, score: -2, updated_at: row.updated_at, access_count: row.access_count });
-                    }
-                    if (omitted.length > 0) {
-                      this._tieBreakSort(omitted);
-                      scored.push(...omitted.slice(0, maxBackfill));
-                    }
-                  }
-                }
-              } catch (rankerErr) {
-                const rankerError = rankerErr instanceof Error ? rankerErr : new Error(String(rankerErr));
-                const policy = this.options.vectorRankerFallback ?? 'js-cosine';
-
-                this.options.onVectorRankerFallback?.({
-                  error: this._sanitizeRankerError(rankerError),
-                  policy,
-                });
-
-                if (policy === 'throw') {
-                  rankerShouldRethrow = true;
-                  throw rankerError;
-                } else if (policy === 'js-cosine') {
-                  // If embeddings were skipped (vectorRanker was configured), fetch them now for fallback
-                  let fallbackRows = candidateRows;
-                  if (fallbackRows && fallbackRows.length > 0 && !('embedding_blob' in fallbackRows[0])) {
-                    const rowIds = fallbackRows.map(r => r.id);
-                    const embeddingsMap = new Map<string, { embedding_blob: Uint8Array | null; embedding: string | null }>();
-                    const chunkSize = 500;
-                    for (let i = 0; i < rowIds.length; i += chunkSize) {
-                      const idChunk = rowIds.slice(i, i + chunkSize);
-                      const placeholders = idChunk.map(() => '?').join(',');
-                      const embeddingRows = await this.db.getAllAsync<{ id: string; embedding_blob: Uint8Array | null; embedding: string | null }>(
-                        `SELECT id, embedding_blob, embedding FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
-                        idChunk
-                      );
-                      for (const row of embeddingRows) {
-                        embeddingsMap.set(row.id, { embedding_blob: row.embedding_blob, embedding: row.embedding });
+                      for (const { row, kwScore } of topK) {
+                        scored.push({
+                          id: row.id,
+                          entity_id: row.entity_id,
+                          score: (1 - weight) * kwScore,
+                          updated_at: row.updated_at,
+                          access_count: row.access_count,
+                        });
+                      }
+                    } else {
+                      // Pure semantic: all omitted rows share score -2.
+                      // Tie-break omitted rows deterministically before truncating.
+                      const omitted: Array<{ id: string; entity_id: string; score: number; updated_at: number | null; access_count: number | null }> = [];
+                      for (const row of candidateRows) {
+                        if (scoredIds.has(row.id)) continue;
+                        omitted.push({ id: row.id, entity_id: row.entity_id, score: -2, updated_at: row.updated_at, access_count: row.access_count });
+                      }
+                      if (omitted.length > 0) {
+                        this._tieBreakSort(omitted);
+                        scored.push(...omitted.slice(0, maxBackfill));
                       }
                     }
-                    fallbackRows = fallbackRows.map(r => ({
-                      ...r,
-                      embedding_blob: embeddingsMap.get(r.id)?.embedding_blob ?? null,
-                      embedding: embeddingsMap.get(r.id)?.embedding ?? null,
-                    })) as ReadCandidateRowWithEmbeddings[];
                   }
-                  scored = await this._rankWithJsCosine({
-                    entityId: entityCacheKey,
-                    queryVec,
-                    candidateRows: fallbackRows as ReadCandidateRowWithEmbeddings[],
-                    weight,
-                    miniSearchScores,
-                    populateCache,
-                    limit: fallbackRows.length,
-                    skipSort: true, // read() re-sorts after applying tier weights
+                } catch (rankerErr) {
+                  const rankerError = rankerErr instanceof Error ? rankerErr : new Error(String(rankerErr));
+                  const policy = this.options.vectorRankerFallback ?? 'js-cosine';
+
+                  this.options.onVectorRankerFallback?.({
+                    error: this._sanitizeRankerError(rankerError),
+                    policy,
                   });
-                } else if (policy === 'keyword') {
-                  // Fall back to keyword-only results from MiniSearch
-                  const scoredEntityIdSet = new Set(scoredEntityIds);
-                  const msResults = this.miniSearch.search(trimmedQuery, {
-                    filter: (r) => scoredEntityIdSet.has((r as unknown as { entity_id: string }).entity_id),
-                    combineWith: 'OR',
-                  });
-                  // Oversample so tier weights can re-rank before the global slice
-                  const keywordOversampledLimit = Math.max(maxResults * 2, maxResults + 50);
-                  const topResults = msResults.slice(0, keywordOversampledLimit);
-                  // Build metadata map only for returned IDs (not all candidates)
-                  const resultIds = new Set(topResults.map(r => r.id));
-                  const candidateMap = new Map<string, { entity_id: string; updated_at: number | null; access_count: number | null }>();
-                  for (const r of candidateRows) {
-                    if (resultIds.has(r.id)) {
-                      candidateMap.set(r.id, { entity_id: r.entity_id, updated_at: r.updated_at, access_count: r.access_count });
+
+                  if (policy === 'throw') {
+                    rankerShouldRethrow = true;
+                    throw rankerError;
+                  } else if (policy === 'js-cosine') {
+                    // If embeddings were skipped (vectorRanker was configured), fetch them now for fallback
+                    let fallbackRows = candidateRows;
+                    if (fallbackRows && fallbackRows.length > 0 && !('embedding_blob' in fallbackRows[0])) {
+                      const rowIds = fallbackRows.map(r => r.id);
+                      const embeddingsMap = new Map<string, { embedding_blob: Uint8Array | null; embedding: string | null }>();
+                      const chunkSize = 500;
+                      for (let i = 0; i < rowIds.length; i += chunkSize) {
+                        const idChunk = rowIds.slice(i, i + chunkSize);
+                        const placeholders = idChunk.map(() => '?').join(',');
+                        const embeddingRows = await this.db.getAllAsync<{ id: string; embedding_blob: Uint8Array | null; embedding: string | null }>(
+                          `SELECT id, embedding_blob, embedding FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+                          idChunk
+                        );
+                        for (const row of embeddingRows) {
+                          embeddingsMap.set(row.id, { embedding_blob: row.embedding_blob, embedding: row.embedding });
+                        }
+                      }
+                      fallbackRows = fallbackRows.map(r => ({
+                        ...r,
+                        embedding_blob: embeddingsMap.get(r.id)?.embedding_blob ?? null,
+                        embedding: embeddingsMap.get(r.id)?.embedding ?? null,
+                      })) as ReadCandidateRowWithEmbeddings[];
                     }
+                    scored = await this._rankWithJsCosine({
+                      entityId: entityCacheKey,
+                      queryVec,
+                      candidateRows: fallbackRows as ReadCandidateRowWithEmbeddings[],
+                      weight,
+                      miniSearchScores,
+                      populateCache,
+                      limit: fallbackRows.length,
+                      skipSort: true, // read() re-sorts after applying tier weights
+                    });
+                  } else if (policy === 'keyword') {
+                    // Fall back to keyword-only results from MiniSearch
+                    const scoredEntityIdSet = new Set(scoredEntityIds);
+                    const msResults = this.miniSearch.search(trimmedQuery, {
+                      filter: (r) => scoredEntityIdSet.has((r as unknown as { entity_id: string }).entity_id),
+                      combineWith: 'OR',
+                    });
+                    // Oversample so tier weights can re-rank before the global slice
+                    const keywordOversampledLimit = Math.max(maxResults * 2, maxResults + 50);
+                    const topResults = msResults.slice(0, keywordOversampledLimit);
+                    // Build metadata map only for returned IDs (not all candidates)
+                    const resultIds = new Set(topResults.map(r => r.id));
+                    const candidateMap = new Map<string, { entity_id: string; updated_at: number | null; access_count: number | null }>();
+                    for (const r of candidateRows) {
+                      if (resultIds.has(r.id)) {
+                        candidateMap.set(r.id, { entity_id: r.entity_id, updated_at: r.updated_at, access_count: r.access_count });
+                      }
+                    }
+                    scored = topResults.map(r => {
+                      const meta = candidateMap.get(r.id);
+                      return {
+                        id: r.id,
+                        entity_id: meta?.entity_id ?? (r as unknown as { entity_id: string }).entity_id,
+                        score: r.score ?? 0,
+                        access_count: meta?.access_count ?? null,
+                        updated_at: meta?.updated_at ?? null,
+                      };
+                    });
+                    usedKeywordFallback = true;
+                  } else {
+                    // policy === 'empty'
+                    scored = [];
                   }
-                  scored = topResults.map(r => {
-                    const meta = candidateMap.get(r.id);
-                    return {
-                      id: r.id,
-                      entity_id: meta?.entity_id ?? (r as unknown as { entity_id: string }).entity_id,
-                      score: r.score ?? 0,
-                      access_count: meta?.access_count ?? null,
-                      updated_at: meta?.updated_at ?? null,
-                    };
-                  });
-                  usedKeywordFallback = true;
-                } else {
-                  // policy === 'empty'
-                  scored = [];
+
+                  if (this.options.propagateRankerFailureToRetrievalFallback) {
+                    const mirrored = new Error('Vector ranker failed, falling back', {
+                      cause: this._sanitizeRankerError(rankerErr),
+                    });
+                    pendingRankerFallbackError = mirrored;
+                  }
+                }
+              } else {
+                // Use in-process JS cosine similarity
+                // At this point candidateRows must have embeddings (we fetched them because vectorRanker is not configured)
+                scored = await this._rankWithJsCosine({
+                  entityId: entityCacheKey,
+                  queryVec,
+                  candidateRows: candidateRows as ReadCandidateRowWithEmbeddings[],
+                  weight,
+                  miniSearchScores,
+                  populateCache,
+                  // Return all candidates so tier weights can re-rank before the
+                  // global slice at the merge step below.
+                  limit: candidateRows.length,
+                  skipSort: true, // read() re-sorts after applying tier weights
+                });
+              }
+
+              if (scored.length > 0) {
+                // Apply tier weights before global sort and slice
+                scored = scored.map(row => ({
+                  ...row,
+                  score: applyTierWeight(row.score, row.entity_id, sanitizedTierWeights),
+                }));
+
+                // Re-apply tie-break sorting (ranker might not have stable ordering, and weights changed order)
+                this._tieBreakSort(scored);
+
+                // Phase 2: fetch full rows only for the top results
+                const selectedScored = scored.slice(0, maxResults);
+                const topIds = selectedScored.map(s => s.id);
+
+                // Capture scores for exposure in metadata
+                if (exposeMetadata && trimmedQuery) {
+                  scoreByFactId = new Map(selectedScored.map(s => [s.id, Number.isFinite(s.score) ? s.score : 0]));
                 }
 
-                if (this.options.propagateRankerFailureToRetrievalFallback) {
-                  const mirrored = new Error('Vector ranker failed, falling back', {
-                    cause: this._sanitizeRankerError(rankerErr),
-                  });
-                  pendingRankerFallbackError = mirrored;
+                if (topIds.length > 0) {
+                  const facts2 = await this._hydrateFactsByIds(topIds, entityIds);
+
+                  // Hydration can return fewer rows than ranked IDs when rows were concurrently
+                  // soft-deleted or filtered by deleted_at before phase 2 hydration completes.
+                  if (facts2.length < topIds.length) {
+                    const hydrationById = new Set(facts2.map(f => f.id));
+                    const missingIds = topIds.filter(id => !hydrationById.has(id));
+                    const missingCount = missingIds.length;
+                    const sample = missingIds.slice(0, 5);
+                    const sampleSuffix = sample.length > 0
+                      ? ` Missing ID sample: ${sample.join(', ')}${missingIds.length > sample.length ? ', ...' : ''}.`
+                      : '';
+                    const error = new Error(
+                      `Phase 2 fact hydration returned ${missingCount} fewer row(s) than ranked IDs. ` +
+                      `Rows may have been concurrently soft-deleted or filtered by deleted_at during hydration, ` +
+                      `or vector ranker output may include IDs that do not exist in requested entities.` +
+                      sampleSuffix
+                    );
+                    this.options.onRetrievalFallback?.(error);
+                  }
+                  facts = facts2;
                 }
-              }
-            } else {
-              // Use in-process JS cosine similarity
-              // At this point candidateRows must have embeddings (we fetched them because vectorRanker is not configured)
-              scored = await this._rankWithJsCosine({
-                entityId: entityCacheKey,
-                queryVec,
-                candidateRows: candidateRows as ReadCandidateRowWithEmbeddings[],
-                weight,
-                miniSearchScores,
-                populateCache,
-                // Return all candidates so tier weights can re-rank before the
-                // global slice at the merge step below.
-                limit: candidateRows.length,
-                skipSort: true, // read() re-sorts after applying tier weights
-              });
-            }
-
-            if (scored.length > 0) {
-              // Apply tier weights before global sort and slice
-              scored = scored.map(row => ({
-                ...row,
-                score: applyTierWeight(row.score, row.entity_id, sanitizedTierWeights),
-              }));
-
-              // Re-apply tie-break sorting (ranker might not have stable ordering, and weights changed order)
-              this._tieBreakSort(scored);
-
-              // Phase 2: fetch full rows only for the top results
-              const selectedScored = scored.slice(0, maxResults);
-              const topIds = selectedScored.map(s => s.id);
-
-              // Capture scores for exposure in metadata
-              if (exposeMetadata && trimmedQuery) {
-                scoreByFactId = new Map(selectedScored.map(s => [s.id, Number.isFinite(s.score) ? s.score : 0]));
-              }
-
-              if (topIds.length > 0) {
-                const facts2 = await this._hydrateFactsByIds(topIds, entityIds);
-
-                // Hydration can return fewer rows than ranked IDs when rows were concurrently
-                // soft-deleted or filtered by deleted_at before phase 2 hydration completes.
-                if (facts2.length < topIds.length) {
-                  const hydrationById = new Set(facts2.map(f => f.id));
-                  const missingIds = topIds.filter(id => !hydrationById.has(id));
-                  const missingCount = missingIds.length;
-                  const sample = missingIds.slice(0, 5);
-                  const sampleSuffix = sample.length > 0
-                    ? ` Missing ID sample: ${sample.join(', ')}${missingIds.length > sample.length ? ', ...' : ''}.`
-                    : '';
-                  const error = new Error(
-                    `Phase 2 fact hydration returned ${missingCount} fewer row(s) than ranked IDs. ` +
-                    `Rows may have been concurrently soft-deleted or filtered by deleted_at during hydration, ` +
-                    `or vector ranker output may include IDs that do not exist in requested entities.` +
-                    sampleSuffix
-                  );
-                  this.options.onRetrievalFallback?.(error);
+                // Phase 2 succeeded — now safe to notify that ranker fallback occurred
+                if (pendingRankerFallbackError) {
+                  this.options.onRetrievalFallback?.(pendingRankerFallbackError);
+                  pendingRankerFallbackError = undefined;
                 }
-                facts = facts2;
+                usedEmbed = true;
+              } else {
+                // Empty scored results (ranker returned no matches)
+                if (pendingRankerFallbackError) {
+                  this.options.onRetrievalFallback?.(pendingRankerFallbackError);
+                  pendingRankerFallbackError = undefined;
+                }
+                usedEmbed = true;
               }
-              // Phase 2 succeeded — now safe to notify that ranker fallback occurred
-              if (pendingRankerFallbackError) {
-                this.options.onRetrievalFallback?.(pendingRankerFallbackError);
-                pendingRankerFallbackError = undefined;
-              }
-              usedEmbed = true;
-            } else {
-              // Empty scored results (ranker returned no matches)
-              if (pendingRankerFallbackError) {
-                this.options.onRetrievalFallback?.(pendingRankerFallbackError);
-                pendingRankerFallbackError = undefined;
-              }
-              usedEmbed = true;
-            }
-          } // closes the candidateRows !== null else block
-        } // closes the scoredEntityIds.length === 0 else block
+            } // closes the candidateRows !== null else block
+          } // closes the scoredEntityIds.length === 0 else block
       } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
           if (rankerShouldRethrow) {
@@ -1618,7 +1619,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
 
     if (exposeMetadata) {
       bundle.metadata = { query, entityIds };
-      if (sanitizedTierWeights) bundle.metadata.tierWeights = sanitizedTierWeights;
+      if (sanitizedTierWeights && Object.keys(sanitizedTierWeights).length > 0) bundle.metadata.tierWeights = sanitizedTierWeights;
       if (factScores && Object.keys(factScores).length > 0) bundle.factScores = factScores;
     }
 
