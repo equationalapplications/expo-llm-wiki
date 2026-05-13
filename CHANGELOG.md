@@ -1,3 +1,15 @@
+# [4.5.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.4.0...v4.5.0) (2026-05-13)
+
+
+### Bug Fixes
+
+* **core:** address Copilot review feedback on librarian prompt contract ([a81c014](https://github.com/equationalapplications/expo-llm-wiki/commit/a81c014c299bff23f39a48ef8d46159e97e85edc))
+
+
+### Features
+
+* **core:** add librarian prompt contract ([ed1d817](https://github.com/equationalapplications/expo-llm-wiki/commit/ed1d817ba3ba3ba5d55b62b94ea1b3886be9c9bd))
+
 # [4.4.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.3.0...v4.4.0) (2026-05-13)
 
 
