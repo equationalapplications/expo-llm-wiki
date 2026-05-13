@@ -327,6 +327,8 @@ export interface FormatContextOptions {
   maxEvents?: number;
   includeConfidence?: boolean;
   includeTags?: boolean;
+  includeEntityIds?: boolean;
+  includeFactScores?: boolean;
   factWeights?: {
     confidence?: number;
     accessCount?: number;
