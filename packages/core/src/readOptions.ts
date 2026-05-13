@@ -35,12 +35,15 @@ export function applyTierWeight(
   entityId: string,
   sanitizedTierWeights: Record<string, number> | undefined,
 ): number {
-  return score * (sanitizedTierWeights?.[entityId] ?? 1);
+  const weight = sanitizedTierWeights?.[entityId] ?? 1;
+  // Weight=0 → sentinel -Infinity so zero-weight entities always sort below any
+  // finite score, including negative cosine values from the pure-semantic path.
+  if (weight === 0) return -Infinity;
+  return score * weight;
 }
 
 export function shouldExposeReadMetadata(
   entityId: string | string[],
-  options: { tierWeights?: Record<string, number> } | undefined,
 ): boolean {
-  return Array.isArray(entityId) || options?.tierWeights !== undefined;
+  return Array.isArray(entityId);
 }
