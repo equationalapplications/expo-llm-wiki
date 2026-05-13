@@ -271,4 +271,14 @@ describe('read() multi-entity retrieval', () => {
     expect(result.tasks.map(t => t.id)).toEqual(['task-high', 'task-low']);
     expect(result.events.map(e => e.id)).toEqual(['event-old', 'event-new']);
   });
+
+  it('throws RangeError when more than 100 entity IDs are passed', async () => {
+    const { wiki } = makeWiki();
+    await wiki.setup();
+    const ids = Array.from({ length: 101 }, (_, i) => `entity_${i}`);
+    await expect(wiki.read(ids, 'query')).rejects.toThrow(RangeError);
+    await expect(wiki.read(ids, 'query')).rejects.toThrow(
+      'read() accepts at most 100 entity IDs; received 101',
+    );
+  });
 });
