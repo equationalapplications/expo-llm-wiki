@@ -282,7 +282,8 @@ const memory = await wiki.read(
     },
   }
 );
-// memory.factScores — Record<factId, weightedScore>
+// memory.factScores — Record<factId, weightedScore> | undefined
+//   attached for array-shaped reads when the query is non-empty and at least one fact is scored
 // memory.metadata  — { query, entityIds, tierWeights }
 // tasks capped at min(20 × entityCount, 200); events at min(10 × entityCount, 100)
 ```
