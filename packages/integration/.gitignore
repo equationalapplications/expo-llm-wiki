@@ -1,3 +1,4 @@
 local_cache/
 benchmark-results/
 fixtures/scifact-corpus.jsonl
+fixtures/financebench-corpus.jsonl
