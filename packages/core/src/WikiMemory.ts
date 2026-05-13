@@ -1040,7 +1040,6 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       if (!skipEmbed && embedFn) {
         let rankerShouldRethrow = false;
         let pendingRankerFallbackError: Error | undefined;
-        let usedKeywordFallback = false;
         try {
           const queryVec = await embedFn(trimmedQuery);
 
@@ -1420,7 +1419,6 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
                         updated_at: meta?.updated_at ?? null,
                       };
                     });
-                    usedKeywordFallback = true;
                   } else {
                     // policy === 'empty'
                     scored = [];
@@ -1457,7 +1455,8 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
                   score: applyTierWeight(row.score, row.entity_id, sanitizedTierWeights),
                 }));
 
-                // Re-apply tie-break sorting (ranker might not have stable ordering, and weights changed order)
+                // Re-apply tie-break sorting after tier-weight application (applies to all paths including
+                // vectorRankerFallback='keyword': applyTierWeight mutates scores so MiniSearch ordering is no longer valid)
                 this._tieBreakSort(scored);
 
                 // Phase 2: fetch full rows only for the top results
