@@ -15,7 +15,9 @@ import { useWiki } from './WikiContext';
  *      · tierWeights values: non-finite → 1.0, negative → 0 (mirrors core sanitization)
  *      · tierWeights keys: projected onto the active entityId set (mirrors core's
  *        sanitizeTierWeights which ignores weights for entities not in the request)
- *      · tierWeights: {} or fully-filtered result is omitted (same as undefined)
+ *      · tierWeights keys at default weight (1.0) are dropped — spec says missing
+ *        weights default to 1.0, so explicit 1.0 is behaviorally identical to omission
+ *      · tierWeights: {} or fully-filtered/all-default result is omitted (same as undefined)
  *      · includeZeroWeightEntities: false/undefined are equivalent (both skip zero-weight
  *        entities); only true is keyed, matching core's default behavior
  *  - Keys are sorted so insertion-order differences never cause spurious refetches
@@ -57,19 +59,26 @@ function normalizeReadOptionsKey(entityId: string | string[], opts?: ReadOptions
   // considers weights for the requested entityIds, so unrelated keys have no behavioral
   // effect and should not contribute to the dep key). Sanitize values (non-finite → 1.0,
   // negative → 0) and sort keys to avoid spurious refetches from insertion-order or
-  // logically-equivalent value differences. Omit entirely when the projected result is
-  // empty (all weights default to 1.0 — same as undefined).
+  // logically-equivalent value differences. Drop entries at the default weight (1.0)
+  // because missing weights also default to 1.0 per spec — explicit 1.0 is behaviorally
+  // identical to omission. Use Object.create(null) to match core's sanitizeTierWeights
+  // and avoid prototype-key edge cases (e.g. entityIds like __proto__). Omit entirely
+  // when the projected+filtered result is empty (same as undefined).
   if (opts.tierWeights !== undefined) {
     const activeIds = new Set(Array.isArray(entityId) ? entityId : [entityId]);
     const tw = opts.tierWeights;
     const twKeys = Object.keys(tw).filter(k => activeIds.has(k)).sort();
     if (twKeys.length) {
-      const sanitized: Record<string, number> = {};
+      const sanitized = Object.create(null) as Record<string, number>;
       for (const k of twKeys) {
         const w = tw[k];
         sanitized[k] = !Number.isFinite(w) ? 1.0 : Math.max(0, w);
       }
-      normalized.tierWeights = JSON.stringify(sanitized, twKeys);
+      // Drop default-weight entries (1.0) — spec says missing weights default to 1.0
+      const nonDefaultKeys = twKeys.filter(k => sanitized[k] !== 1.0);
+      if (nonDefaultKeys.length) {
+        normalized.tierWeights = JSON.stringify(sanitized, nonDefaultKeys);
+      }
     }
   }
 

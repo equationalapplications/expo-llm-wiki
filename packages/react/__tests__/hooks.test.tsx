@@ -249,6 +249,21 @@ describe('useMemoryRead', () => {
     await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(2));
   });
 
+  it('does not re-fetch when active entity tierWeight is explicitly set to the default (1.0 is same as omitted)', async () => {
+    const { rerender } = renderHook(
+      ({ opts }: { opts: ReadOptions }) => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki), initialProps: { opts: {} } }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    // Per spec: "Missing tier weights default to 1.0", so passing 1.0 explicitly
+    // is behaviorally identical to omission and must not trigger a refetch.
+    rerender({ opts: { tierWeights: { 'user-1': 1 } } });
+    await act(async () => {});
+    expect(wiki.read).toHaveBeenCalledTimes(1);
+  });
+
   it('does not re-fetch when tierWeights changes from undefined to {} (empty object is same as undefined)', async () => {
     const { rerender } = renderHook(
       ({ opts }: { opts: ReadOptions }) => useMemoryRead('user-1', 'q', opts),

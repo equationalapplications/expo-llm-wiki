@@ -175,7 +175,7 @@ const { data: multiData } = useMemoryRead(
 
 ### `useMemoryRead(entityId, query, options?)`
 
-Fetch memory reactively. `entityId` accepts a string or string array for multi-entity reads. Auto-refetches when `entityId`, `query`, `wiki`, or `options` change, including per-call overrides such as `maxResults`, `preFilterLimit`, `hybridWeight`, `tierWeights`, and `includeZeroWeightEntities`. Changes to `tierWeights` and `includeZeroWeightEntities` are tracked and trigger refetches.
+Fetch memory reactively. `entityId` accepts a string or string array for multi-entity reads. Auto-refetches when `entityId`, `query`, `wiki`, or `options` change on a behavioral level: `maxResults`, `preFilterLimit`, `hybridWeight`, and `tierWeights` are tracked. `tierWeights` entries at the default weight (`1.0`) are normalized to omission (passing `1.0` explicitly is spec-equivalent to omitting that key). `includeZeroWeightEntities: false` and `undefined` are equivalent in core (both skip zero-weight entities); only toggling to `true` triggers a refetch.
 
 ```typescript
 const { data, isPending, error, refetch } = useMemoryRead('user-123', 'preferences');
