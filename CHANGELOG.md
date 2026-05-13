@@ -1,3 +1,16 @@
+# [4.4.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.3.0...v4.4.0) (2026-05-13)
+
+
+### Bug Fixes
+
+* **core:** restore O(K) candidateMap in keyword fallback path ([a900f74](https://github.com/equationalapplications/expo-llm-wiki/commit/a900f74e6e43f85482c4cac0eaa1fe08a70b2076))
+* **core:** skip empty-candidate entity ranker calls; scope metadata map to scored IDs ([1509f27](https://github.com/equationalapplications/expo-llm-wiki/commit/1509f277b74ceb3b9358e30cced524ee54583842))
+
+
+### Features
+
+* **core:** support multi-entity ranker retrieval ([fb0c363](https://github.com/equationalapplications/expo-llm-wiki/commit/fb0c36328a996f47367179764c20b6304b5059e2))
+
 # [4.3.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.2.0...v4.3.0) (2026-05-13)
 
 
