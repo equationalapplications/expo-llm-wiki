@@ -989,7 +989,9 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
   async read(entityId: string | string[], query: string, options?: ReadOptions): Promise<MemoryBundle> {
     const config = this.options.config;
     const entityIds = normalizeEntityIds(entityId);
-    const sanitizedTierWeights = sanitizeTierWeights(entityIds, options?.tierWeights);
+    const sanitizedTierWeights = shouldExposeReadMetadata(entityId)
+      ? sanitizeTierWeights(entityIds, options?.tierWeights)
+      : undefined;
     const exposeMetadata = shouldExposeReadMetadata(entityId);
 
     if (entityIds.length === 0) {
@@ -1078,10 +1080,10 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
             }
           }
 
-          // Check whether any non-deleted fact for any requested entity has a blob whose
-          // dimension differs from the query vector. Uses all entityIds (not just
-          // scoredEntityIds) so a caller requesting a namespace always gets fail-safe scoring.
-          const mismatchScope = this._entityInClause(entityIds);
+          // Check whether any non-deleted fact for any scored entity has a blob whose
+          // dimension differs from the query vector. Uses scoredEntityIds so zero-weight
+          // (skipped) entities with stale embeddings do not force keyword fallback.
+          const mismatchScope = this._entityInClause(scoredEntityIds);
           const mismatchedCount = await this.db.getFirstAsync<{ cnt: number }>(
             `SELECT COUNT(*) AS cnt FROM ${this.prefix}entries
              WHERE ${mismatchScope.clause} AND deleted_at IS NULL
