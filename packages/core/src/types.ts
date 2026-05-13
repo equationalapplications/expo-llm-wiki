@@ -52,16 +52,17 @@ export interface ReadOptions {
   preFilterLimit?: number | null;
   hybridWeight?: number;
   /**
-   * (Reserved for Phase 2+ multi-entity weighted retrieval)
-   * entity_id -> score multiplier. Missing entries default to 1.0.
-   * Currently ignored by WikiMemory.read(); planned for implementation in Phase 2.
+   * Per-entity score multiplier for multi-entity reads. Missing entries default to 1.0.
+   * Entities with weight 0 are skipped during scored retrieval unless
+   * `includeZeroWeightEntities` is true; in that case they rank below all finite scores.
+   * Only meaningful when `entityId` is an array; ignored for single-string calls.
    */
   tierWeights?: Record<string, number>;
   /**
-   * (Reserved for Phase 2+ multi-entity weighted retrieval)
-   * false/default -> skip zero-weight entities during scored retrieval.
-   * true -> retrieve zero-weight entities and let them fill only if the pool is small.
-   * Currently ignored by WikiMemory.read(); planned for implementation in Phase 2.
+   * When true, entities with a tier weight of 0 are included in scored retrieval
+   * as bottom fillers (ranked below every finite-scored candidate).
+   * When false (default), zero-weight entities are skipped entirely.
+   * Only meaningful when `entityId` is an array; ignored for single-string calls.
    */
   includeZeroWeightEntities?: boolean;
 }

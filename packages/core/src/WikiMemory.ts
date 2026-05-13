@@ -996,7 +996,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       const empty: MemoryBundle = { facts: [], tasks: [], events: [] };
       if (exposeMetadata) {
         empty.metadata = { query, entityIds: [] };
-        if (sanitizedTierWeights) empty.metadata.tierWeights = sanitizedTierWeights;
+        if (sanitizedTierWeights && Object.keys(sanitizedTierWeights).length > 0) empty.metadata.tierWeights = sanitizedTierWeights;
       }
       return empty;
     }
@@ -1072,10 +1072,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
 
           // Determine which entities will actually be semantically scored (skip zero-weight unless opt-in).
           // Computed here so the mismatch check below only scans entities that will be used.
-          const scoredEntityIds = entityIds.filter(id => {
-            const weightForEntity = sanitizedTierWeights?.[id] ?? 1;
-            return options?.includeZeroWeightEntities === true || weightForEntity !== 0;
-          });
+          const scoredEntityIds = this._filterScoredEntities(entityIds, sanitizedTierWeights, options?.includeZeroWeightEntities);
 
           // Check whether any non-deleted fact for any scored entity has a blob whose
           // dimension differs from the query vector. Scoped to scoredEntityIds so a
@@ -1527,10 +1524,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
 
       if (!usedEmbed) {
         // embed absent or threw — fall back to MiniSearch with tier weight application
-        const fallbackEntityIds = entityIds.filter(id => {
-          const w = sanitizedTierWeights?.[id] ?? 1;
-          return options?.includeZeroWeightEntities === true || w !== 0;
-        });
+        const fallbackEntityIds = this._filterScoredEntities(entityIds, sanitizedTierWeights, options?.includeZeroWeightEntities);
         const fallbackEntityIdSet = new Set(fallbackEntityIds);
         const fallbackOversampledLimit = Math.max(maxResults * 2, maxResults + 50);
         const results = this.miniSearch.search(trimmedQuery, {
@@ -1571,15 +1565,23 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
         }
       }
     } else {
-      // Empty query: use global recency ordering, ignore tier weights
+      // Empty query: use global recency ordering, ignore tier weights.
+      // Raw SELECT * — normalize here since _hydrateFactsByIds is not used.
       const entityScope = this._entityInClause(entityIds);
-      facts = await this.db.getAllAsync<WikiFact>(
+      const rawFacts = await this.db.getAllAsync<WikiFact & { embedding?: unknown; embedding_blob?: unknown }>(
         `SELECT * FROM ${this.prefix}entries
          WHERE ${entityScope.clause} AND deleted_at IS NULL
          ORDER BY updated_at DESC
          LIMIT ?`,
         [...entityScope.params, maxResults]
       );
+      facts = rawFacts.map(f => {
+        const { embedding: _embedding, embedding_blob: _blob, ...rest } = f;
+        return {
+          ...rest,
+          tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
+        } as WikiFact;
+      });
     }
 
     const [tasks, events] = await Promise.all([
@@ -1594,31 +1596,25 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       })(),
       (async () => {
         const entityScope = this._entityInClause(entityIds);
+        // Scale limit so each entity can contribute up to 10 events (capped at 100).
+        const eventsLimit = Math.min(10 * entityIds.length, 100);
         return this.db.getAllAsync<WikiEvent>(
           `SELECT * FROM ${this.prefix}events
            WHERE ${entityScope.clause}
            ORDER BY created_at DESC
-           LIMIT 10`,
-          entityScope.params
+           LIMIT ?`,
+          [...entityScope.params, eventsLimit]
         );
       })(),
     ]);
 
-    const parsedFacts = facts.map(f => {
-      const { embedding: _embedding, embedding_blob: _blob, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
-      return {
-        ...rest,
-        tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
-      };
-    });
-
     // Build factScores from captured scores
     let factScores: Record<string, number> | undefined;
     if (exposeMetadata && trimmedQuery && scoreByFactId) {
-      factScores = Object.fromEntries(parsedFacts.map(fact => [fact.id, scoreByFactId!.get(fact.id) ?? 0]));
+      factScores = Object.fromEntries(facts.map(fact => [fact.id, scoreByFactId!.get(fact.id) ?? 0]));
     }
 
-    const bundle: MemoryBundle = { facts: parsedFacts, tasks, events: events.reverse() };
+    const bundle: MemoryBundle = { facts, tasks, events: events.reverse() };
 
     if (exposeMetadata) {
       bundle.metadata = { query, entityIds };
@@ -1627,6 +1623,21 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     }
 
     return bundle;
+  }
+
+  /**
+   * Returns entity IDs that will participate in scored retrieval.
+   * Excludes zero-weight entities unless includeZeroWeightEntities is true.
+   */
+  private _filterScoredEntities(
+    entityIds: readonly string[],
+    sanitizedTierWeights: Record<string, number> | undefined,
+    includeZeroWeightEntities?: boolean,
+  ): string[] {
+    return entityIds.filter(id => {
+      const w = sanitizedTierWeights?.[id] ?? 1;
+      return includeZeroWeightEntities === true || w !== 0;
+    });
   }
 
   /**
