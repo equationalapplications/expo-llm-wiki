@@ -1508,7 +1508,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
               usedEmbed = true;
             }
           } // closes the candidateRows !== null else block
-      } catch (err) {
+        } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
           if (rankerShouldRethrow) {
             throw error;
