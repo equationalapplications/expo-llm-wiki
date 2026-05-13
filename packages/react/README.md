@@ -9,6 +9,7 @@ React hooks and web utilities for @equationalapplications/core-llm-wiki, designe
 - **Semantic search** — Vector embeddings with optional `embed` function and MiniSearch fallback
 - **Retrieval tuning** — Per-call overrides for hybrid scoring, pre-filtering, result limits, and tier weights
 - **Multi-entity reads** — Search across multiple `entity_id` namespaces in one pass with `tierWeights` and optional `includeZeroWeightEntities`
+- **Source provenance** — `WikiFact.source_type` distinguishes immutable document facts (`immutable_document`) from mutable derived/user facts (`librarian_inferred`, `user_stated`, `user_confirmed`). Immutable document facts are preserved from librarian/heal rewriting and only removed by `forget()` or by re-ingesting the source.
 - **Reactive reads** — Auto-refetch on `entityId`, query, or `options` changes
 - **Mutation hooks** — `useWikiWrite`, `useWikiIngest`, `useWikiForget`, `useWikiMaintenance`, etc.
 - **Shared context** — Single `WikiProvider` per app, use anywhere

@@ -11,6 +11,7 @@ Pure TypeScript business logic for LLM Wiki Memory.
 - **Keyword fallback** — MiniSearch in-memory index for offline/degraded scenarios when embeddings unavailable
 - **Retrieval tuning** — Per-call overrides for `maxResults`, `preFilterLimit`, `hybridWeight`, `tierWeights`, and `includeZeroWeightEntities`
 - **Multi-entity reads** — Search across multiple `entity_id` namespaces in one pass with per-entity score multipliers (`tierWeights`); optional `factScores` and `metadata` for explainability
+- **Immutable vs mutable facts** — Use `WikiFact.source_type` to distinguish document-sourced facts (`immutable_document`) from derived or user-provided facts (`librarian_inferred`, `user_stated`, `user_confirmed`). Immutable document facts are not rewritten by `runLibrarian()` or `runHeal()` and can only be removed by `forget()` or re-ingesting.
 - **Full-featured memory** — Facts, tasks, events, maintenance jobs (librarian, heal, reembed, prune)
 - **Type-safe** — Built with TypeScript, full type exports
 

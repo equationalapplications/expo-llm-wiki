@@ -17,6 +17,7 @@ Expo/React Native adapter for @equationalapplications/core-llm-wiki, powered by 
 - **Semantic search** — Vector embeddings via `embed` function, with MiniSearch fallback
 - **Retrieval tuning** — Per-call overrides for search behavior (pre-filter, hybrid blend, tier weights)
 - **Multi-entity reads** — Search across multiple `entity_id` namespaces in one pass with `tierWeights`
+- **Source provenance** — `WikiFact.source_type` distinguishes immutable document facts (`immutable_document`) from mutable derived/user facts. Immutable document content is protected from librarian/heal rewriting and only changed by `forget()` or re-ingest.
 - **React hooks** — `WikiProvider`, `useMemoryRead`, and all other hooks are re-exported directly from `@equationalapplications/expo-llm-wiki`
 - **Full-featured memory** — Facts, tasks, events, maintenance jobs (librarian, heal, reembed, prune)
 
