@@ -87,7 +87,9 @@ describe('FinanceBench retrieval benchmark', () => {
       const hitAt5: number[] = [];
       const hitAt10: number[] = [];
 
-      // Fail loudly if fixtures drift and any query has no relevant docs
+      // Fail loudly if fixtures drift (wrong count or missing qrels)
+      expect(Object.keys(queries).length).toBe(150);
+      expect(Object.keys(qrels).length).toBe(150);
       const noRelevant = Object.keys(queries).filter((id) => (qrels[id] ?? []).length === 0);
       expect(noRelevant, `Queries missing qrels: [${noRelevant.join(', ')}]`).toHaveLength(0);
 
