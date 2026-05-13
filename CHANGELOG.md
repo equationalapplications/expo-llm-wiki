@@ -1,3 +1,18 @@
+# [4.6.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.5.1...v4.6.0) (2026-05-13)
+
+
+### Bug Fixes
+
+* **integration:** address Copilot review on FinanceBench benchmark ([a1e15a9](https://github.com/equationalapplications/expo-llm-wiki/commit/a1e15a9ccffd434bf215467e5385f634d1c0917f))
+* **integration:** align financebench test with tuning doc final config ([b935700](https://github.com/equationalapplications/expo-llm-wiki/commit/b935700b5c6bcedc2cce183f45f6ddd37d19c3dd))
+* **integration:** guard infinite loop and improve embedding error diagnostics ([312f763](https://github.com/equationalapplications/expo-llm-wiki/commit/312f7637a58a3be98e1b57be78f8d581a21eec36))
+
+
+### Features
+
+* **integration:** add FinanceBench retrieval benchmark scaffold ([5d5f92f](https://github.com/equationalapplications/expo-llm-wiki/commit/5d5f92f57a898560e31bf0f8474543edbe82a572))
+* update WikiMemory structural retrieval and multi-entity tests ([68bcc55](https://github.com/equationalapplications/expo-llm-wiki/commit/68bcc5506fe4d3adcb716157719f7741465ea258))
+
 ## [4.5.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.5.0...v4.5.1) (2026-05-13)
 
 
