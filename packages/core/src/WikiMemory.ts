@@ -1078,17 +1078,17 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
             }
           }
 
-          // Check whether any non-deleted fact for any scored entity has a blob whose
-          // dimension differs from the query vector. Scoped to scoredEntityIds so a
-          // zero-weight entity's stale embeddings don't force keyword fallback.
-          const entityScope = this._entityInClause(scoredEntityIds);
+          // Check whether any non-deleted fact for any requested entity has a blob whose
+          // dimension differs from the query vector. Uses all entityIds (not just
+          // scoredEntityIds) so a caller requesting a namespace always gets fail-safe scoring.
+          const mismatchScope = this._entityInClause(entityIds);
           const mismatchedCount = await this.db.getFirstAsync<{ cnt: number }>(
             `SELECT COUNT(*) AS cnt FROM ${this.prefix}entries
-             WHERE ${entityScope.clause} AND deleted_at IS NULL
+             WHERE ${mismatchScope.clause} AND deleted_at IS NULL
                AND embedding_blob IS NOT NULL
                AND (CAST(length(embedding_blob) AS INTEGER) % 4 = 0)
                AND (CAST(length(embedding_blob) AS INTEGER) / 4) != ?`,
-            [...entityScope.params, queryVec.length]
+            [...mismatchScope.params, queryVec.length]
           );
           if (mismatchedCount && mismatchedCount.cnt > 0) {
             throw new Error(
@@ -1190,43 +1190,46 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
             let scored: Array<{ id: string; entity_id: string; score: number; updated_at?: number | null; access_count?: number | null }>;
 
             if (useRanker) {
-              // Use external ranker for semantic scoring.
-              // Pass candidateIds for multi-entity reads (entityCacheKey is a composite join string,
-              // not a real namespace) and pre-filtered reads (results already scoped to subset).
-              // For single-entity full-scan, omit so remote rankers avoid transmitting the full
-              // candidate list and can scope by entityId instead.
-              const candidateIds = entityIds.length > 1 || effectivePreFilterLimit !== undefined
-                ? candidateRows.map(r => r.id)
-                : undefined;
+              // Build per-entity candidate maps so each ranker call receives one entityId.
+              const candidateRowsByEntity = new Map<string, ReadCandidateRowMetadata[]>();
+              for (const row of candidateRows as ReadCandidateRowMetadata[]) {
+                const rows = candidateRowsByEntity.get(row.entity_id) ?? [];
+                rows.push(row);
+                candidateRowsByEntity.set(row.entity_id, rows);
+              }
 
               try {
-                // Oversample by max(2x, +50) to preserve recall after re-ranking;
-                // caller slices final output to maxResults.
-                const oversampledLimit = Math.max(maxResults * 2, maxResults + 50);
-                scored = await this._rankWithVectorRanker({
-                  entityId: entityCacheKey,
-                  queryVec,
-                  candidateIds,
-                  candidateRows: candidateRows as ReadCandidateRowMetadata[],
-                  weight,
-                  miniSearchScores,
-                  limit: oversampledLimit,
-                });
+                const rankerResultsByEntity = await Promise.all(
+                  scoredEntityIds.map(async scopedEntityId => {
+                    const rowsForEntity = candidateRowsByEntity.get(scopedEntityId) ?? [];
+                    const candidateIds = effectivePreFilterLimit !== undefined
+                      ? rowsForEntity.map(row => row.id)
+                      : undefined;
+                    const ranked = await this._rankWithVectorRanker({
+                      entityId: scopedEntityId,
+                      queryVec,
+                      candidateIds,
+                      candidateRows: rowsForEntity,
+                      weight,
+                      miniSearchScores,
+                      limit: Math.max(maxResults * 2, maxResults + 50),
+                    });
+                    return ranked.map(row => ({ ...row, entity_id: scopedEntityId }));
+                  }),
+                );
 
-                // Attach tie-break metadata from candidateRows (only for IDs returned by ranker)
-                if (scored.length > 0) {
-                  const scoredIds = new Set(scored.map(s => s.id));
-                  const metaMap = new Map<string, { updated_at: number | null; access_count: number | null }>();
-                  for (const r of candidateRows) {
-                    if (scoredIds.has(r.id)) {
-                      metaMap.set(r.id, { updated_at: r.updated_at, access_count: r.access_count });
-                    }
-                  }
-                  scored = scored.map(s => {
-                    const meta = metaMap.get(s.id);
-                    return { ...s, updated_at: meta?.updated_at ?? null, access_count: meta?.access_count ?? null };
-                  });
-                }
+                scored = rankerResultsByEntity.flat();
+
+                // Attach tie-break metadata by ID from the full candidateRows pool
+                const metadataById = new Map(candidateRows.map(row => [row.id, row]));
+                scored = scored.map(row => {
+                  const metadata = metadataById.get(row.id);
+                  return {
+                    ...row,
+                    updated_at: metadata?.updated_at ?? null,
+                    access_count: metadata?.access_count ?? null,
+                  };
+                });
 
                 // Backfill ranker-omitted rows per VectorRanker contract:
                 // treat missing ids as "no embedding" (pure semantic: -2, hybrid: keyword-only)
@@ -1399,22 +1402,18 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
                   // Oversample so tier weights can re-rank before the global slice
                   const keywordOversampledLimit = Math.max(maxResults * 2, maxResults + 50);
                   const topResults = msResults.slice(0, keywordOversampledLimit);
-                  // Build metadata map only for returned IDs (not all candidates)
-                  const resultIds = new Set(topResults.map(r => r.id));
-                  const candidateMap = new Map<string, { entity_id: string; updated_at: number | null; access_count: number | null }>();
-                  for (const r of candidateRows) {
-                    if (resultIds.has(r.id)) {
-                      candidateMap.set(r.id, { entity_id: r.entity_id, updated_at: r.updated_at, access_count: r.access_count });
-                    }
-                  }
-                  scored = topResults.map(r => {
-                    const meta = candidateMap.get(r.id);
+                  const candidateMap = new Map(candidateRows.map(row => [row.id, row]));
+                  scored = topResults.map(result => {
+                    const metadata = candidateMap.get(result.id);
+                    const entityForScore = metadata?.entity_id
+                      ?? (result as unknown as { entity_id: string }).entity_id
+                      ?? '';
                     return {
-                      id: r.id,
-                      entity_id: meta?.entity_id ?? (r as unknown as { entity_id: string }).entity_id,
-                      score: r.score ?? 0,
-                      access_count: meta?.access_count ?? null,
-                      updated_at: meta?.updated_at ?? null,
+                      id: result.id,
+                      entity_id: entityForScore,
+                      score: result.score ?? 0,
+                      access_count: metadata?.access_count ?? null,
+                      updated_at: metadata?.updated_at ?? null,
                     };
                   });
                 } else {
