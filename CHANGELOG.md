@@ -1,3 +1,29 @@
+# [4.3.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.2.0...v4.3.0) (2026-05-13)
+
+
+### Bug Fixes
+
+* **core:** address Copilot review 2 feedback on multi-entity weighted read ([e82c961](https://github.com/equationalapplications/expo-llm-wiki/commit/e82c9613ee65038f0fc6be8ab76b8654a3e6f6fa))
+* **core:** address Copilot review 3 feedback on multi-entity weighted read ([3145594](https://github.com/equationalapplications/expo-llm-wiki/commit/314559477ff88389788ab16164f3c79db5bdc222))
+* **core:** address Copilot review 4 feedback on multi-entity weighted read ([fba9129](https://github.com/equationalapplications/expo-llm-wiki/commit/fba9129865c2929c3a84a84e7a3ba47d041b1506))
+* **core:** address Copilot review feedback on multi-entity weighted read ([99cdedf](https://github.com/equationalapplications/expo-llm-wiki/commit/99cdedf02c1d92bec336d5f3292328036037ff98))
+* **core:** address Copilot review threads (round 5) ([53db2c5](https://github.com/equationalapplications/expo-llm-wiki/commit/53db2c51c12d330aeaa07b507d695feeea0cf591))
+* **core:** address PR [#21](https://github.com/equationalapplications/expo-llm-wiki/issues/21) review feedback - JSDoc, empty tierWeights, events fairness, dedup filter, redundant normalization ([62c81c9](https://github.com/equationalapplications/expo-llm-wiki/commit/62c81c995fa9f6b889b3cff741aa6173502a8b2f)), closes [hi#volume](https://github.com/hi/issues/volume)
+* **core:** address PR [#21](https://github.com/equationalapplications/expo-llm-wiki/issues/21) review feedback - Number.isNaN, empty scoredEntityIds fast-path, spec factScores docs, test comment accuracy ([81dc7df](https://github.com/equationalapplications/expo-llm-wiki/commit/81dc7df15ebd93f54d0217f54a86d1749cece65d))
+* **core:** address remaining Copilot review threads ([b9a465c](https://github.com/equationalapplications/expo-llm-wiki/commit/b9a465cdce3122d73a4d80459b68b7e3fd5827db))
+* **core:** drop unused shouldExposeReadMetadata param, cap tasks LIMIT ([6d98f97](https://github.com/equationalapplications/expo-llm-wiki/commit/6d98f97b8089f68f86506b81818bd94981dd36a9))
+* **core:** limit ranker candidateIds to multi-entity and prefiltered reads ([64ec888](https://github.com/equationalapplications/expo-llm-wiki/commit/64ec888f1cb7d49527f71fe66425e83ed9e317b2))
+* **core:** preserve candidate filtering for vector ranker ([bcdee61](https://github.com/equationalapplications/expo-llm-wiki/commit/bcdee61cf316ce0132fdc681596e8fc141cb678b))
+* **core:** preserve unbounded tasks for single-entity, skip no-op tier sort ([083659c](https://github.com/equationalapplications/expo-llm-wiki/commit/083659c3908c289efdeae33572eaa2c2a6263eb0))
+* **core:** re-indent scoredEntityIds else block, fix tierWeights guard, clarify zero-weight comment ([3d4691b](https://github.com/equationalapplications/expo-llm-wiki/commit/3d4691b7955cbe75e9e44cf0186756eac4729b1c))
+* **core:** realign catch keyword indentation with try ([f3548bc](https://github.com/equationalapplications/expo-llm-wiki/commit/f3548bcd11f459cd97e9a70182aaa0bb055bc006))
+* **core:** remove dead usedKeywordFallback var, clarify tieBreakSort comment ([5b36481](https://github.com/equationalapplications/expo-llm-wiki/commit/5b364810b0725aa433e8383a392175ae8189eefc))
+
+
+### Features
+
+* **core:** read weighted multi-entity memory ([8f9a54f](https://github.com/equationalapplications/expo-llm-wiki/commit/8f9a54f7e8a44fb8a52a35e1f41a1d911e83b68b))
+
 # [4.2.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.1.0...v4.2.0) (2026-05-12)
 
 
