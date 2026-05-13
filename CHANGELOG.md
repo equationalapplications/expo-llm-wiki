@@ -1,3 +1,13 @@
+## [4.5.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.5.0...v4.5.1) (2026-05-13)
+
+
+### Bug Fixes
+
+* **react:** align normalizeReadOptionsKey dep key with core behavior ([f5bafd6](https://github.com/equationalapplications/expo-llm-wiki/commit/f5bafd6e0b68a3beca0bdb31fbb20e61af5f86b8))
+* **react:** harden tierWeights dep key - Object.create(null), drop default 1.0 weights, fix README ([762e0fb](https://github.com/equationalapplications/expo-llm-wiki/commit/762e0fbcf236fd8b5fb9b08a4c449bb981fcc313))
+* **react:** normalizeReadOptionsKey tierWeights empty-object and sanitization ([9708c16](https://github.com/equationalapplications/expo-llm-wiki/commit/9708c16d5e932e8409e224976a5885685d3a66d2))
+* **react:** stabilize entityId dep key; fix sanitization test coverage ([fb92e81](https://github.com/equationalapplications/expo-llm-wiki/commit/fb92e814ac34153ab05dd33b06c9d594c0c6258a))
+
 # [4.5.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.4.0...v4.5.0) (2026-05-13)
 
 
