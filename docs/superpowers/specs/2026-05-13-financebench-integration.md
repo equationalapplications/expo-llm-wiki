@@ -572,8 +572,7 @@ pnpm test
 To run this benchmark quickly from Google Cloud Platform, create a VM and install Node.js in the SSH terminal.
 
 1. Go to **Compute Engine** > **VM Instances** > **Create Instance**.
-2. For the machine type, choose either:
-   - `e2-micro` in `us-central1` for free tier testing.
+2. For the machine type, choose:
    - `e2-standard-4` with **Provisioning Model** set to **Spot** for better performance.
 3. Set the boot disk OS to **Ubuntu 22.04 LTS** or **24.04 LTS** with Standard Persistent Disk.
 4. Click **SSH** next to your instance.
