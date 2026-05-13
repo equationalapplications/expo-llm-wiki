@@ -248,6 +248,137 @@ describe('useMemoryRead', () => {
     rerender({ opts: { preFilterLimit: Infinity } });
     await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(2));
   });
+
+  it('does not re-fetch when active entity tierWeight is explicitly set to the default (1.0 is same as omitted)', async () => {
+    const { rerender } = renderHook(
+      ({ opts }: { opts: ReadOptions }) => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki), initialProps: { opts: {} } }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    // Per spec: "Missing tier weights default to 1.0", so passing 1.0 explicitly
+    // is behaviorally identical to omission and must not trigger a refetch.
+    rerender({ opts: { tierWeights: { 'user-1': 1 } } });
+    await act(async () => {});
+    expect(wiki.read).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not re-fetch when tierWeights changes from undefined to {} (empty object is same as undefined)', async () => {
+    const { rerender } = renderHook(
+      ({ opts }: { opts: ReadOptions }) => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki), initialProps: { opts: {} } }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    // tierWeights: {} has no entries, so all weights default to 1.0 — same as undefined.
+    rerender({ opts: { tierWeights: {} } });
+    await act(async () => {});
+    expect(wiki.read).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-fetches when tierWeights gains an entry for the active entity (behavioral change from all-default weights)', async () => {
+    const { rerender } = renderHook(
+      ({ opts }: { opts: ReadOptions }) => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki), initialProps: { opts: { tierWeights: {} } } }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    // 'user-1' matches the active entityId so the weight is included in the dep key.
+    rerender({ opts: { tierWeights: { 'user-1': 2 } } });
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(2));
+  });
+
+  it('does not re-fetch when tierWeights has non-finite values replaced by their effective 1.0 equivalent', async () => {
+    // Use entityId matching the tierWeights key so the key is in the active set
+    // and the sanitization path (NaN → 1.0) is actually exercised.
+    const { rerender } = renderHook(
+      ({ opts }: { opts: ReadOptions }) => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki), initialProps: { opts: { tierWeights: { 'user-1': NaN } } } }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    // NaN → 1.0 per spec ("non-finite values default to 1.0"), so key is unchanged.
+    rerender({ opts: { tierWeights: { 'user-1': 1 } } });
+    await act(async () => {});
+    expect(wiki.read).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not re-fetch when tierWeights has negative values replaced by their effective 0 equivalent', async () => {
+    // Use entityId matching the tierWeights key so the key is in the active set
+    // and the sanitization path (negative → 0) is actually exercised.
+    const { rerender } = renderHook(
+      ({ opts }: { opts: ReadOptions }) => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki), initialProps: { opts: { tierWeights: { 'user-1': -5 } } } }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    // -5 → 0 per spec ("negative values clamp to 0"), so key is unchanged.
+    rerender({ opts: { tierWeights: { 'user-1': 0 } } });
+    await act(async () => {});
+    expect(wiki.read).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not re-fetch when tierWeights changes only for entities outside the active entityId set', async () => {
+    // Core's sanitizeTierWeights(entityIds, tierWeights) only considers weights for
+    // the requested entity IDs — weights for other entities have no behavioral effect.
+    const { rerender } = renderHook(
+      ({ opts }: { opts: ReadOptions }) => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki), initialProps: { opts: { tierWeights: { tier_wisdom: 2 } } } }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    // 'tier_wisdom' is not 'user-1', so adding or changing it has no effect.
+    rerender({ opts: { tierWeights: { tier_wisdom: 2, unrelated_entity: 99 } } });
+    await act(async () => {});
+    expect(wiki.read).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-fetches when tierWeights changes for the active entity', async () => {
+    // Use a string entityId to avoid array reference churn; the key point is that
+    // 'user-1' is in the active set so its weight IS included in the dep key.
+    const { rerender } = renderHook(
+      ({ opts }: { opts: ReadOptions }) => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki), initialProps: { opts: { tierWeights: { 'user-1': 1 } } } }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    rerender({ opts: { tierWeights: { 'user-1': 2 } } });
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(2));
+  });
+
+  it('does not re-fetch when includeZeroWeightEntities changes from undefined to false', async () => {
+    // In core, undefined and false are equivalent (both exclude zero-weight entities
+    // from scored retrieval by default). Toggling between them must not cause a refetch.
+    const { rerender } = renderHook(
+      ({ opts }: { opts: ReadOptions }) => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki), initialProps: { opts: {} } }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    rerender({ opts: { includeZeroWeightEntities: false } });
+    await act(async () => {});
+    expect(wiki.read).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-fetches when includeZeroWeightEntities changes from false to true (behavioral change)', async () => {
+    const { rerender } = renderHook(
+      ({ opts }: { opts: ReadOptions }) => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki), initialProps: { opts: { includeZeroWeightEntities: false } } }
+    );
+
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    rerender({ opts: { includeZeroWeightEntities: true } });
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(2));
+  });
 });
 
 // ---------------------------------------------------------------------------

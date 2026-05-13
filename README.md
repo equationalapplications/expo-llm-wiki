@@ -21,10 +21,11 @@ expo-llm-wiki is a cross-platform TypeScript and SQLite library for long-term LL
 
 - **Bring Your Own Inference (BYOI):** Provide one `generateText` function. The package owns prompt construction, JSON parsing, and database writes.
 - **Namespace Safe:** All tables are prefixed (default: `llm_wiki_`) — no collisions with your existing database.
-- **Multi-Entity:** Multiple independent "brains" in one database via `entityId`.
+- **Multi-Entity:** Multiple independent "brains" in one database. `read()` accepts a single `entityId` string or an array for cross-namespace retrieval with per-entity `tierWeights`.
 - **Semantic Retrieval:** Supply an optional `embed()` function on `LLMProvider` to rank facts by vector cosine similarity. Falls back to MiniSearch keyword search when `embed` is absent or offline.
 - **Offline First:** The MiniSearch fallback runs entirely in-process with no network required. The cosine similarity path requires `embed()` to vectorise the query (typically a cloud API call) but falls back to MiniSearch automatically when offline or when `embed` throws.
 - **Full Unicode Support:** UTF-8 and UTF-16 (including surrogate pairs for emoji) are fully supported. Chunks are split safely at sentence boundaries; surrogate pairs are never fragmented.
+- **Immutable vs mutable memory:** Every fact includes `source_type`. Facts from `ingestDocument()` are stored as `immutable_document` and are preserved from librarian/heal rewriting; they can only be removed with `forget()` or replaced via re-ingest. Derived or user assertions are mutable (`librarian_inferred`, `user_stated`, `user_confirmed`) and can be updated by healer/librarian workflows.
 - **Cross-Platform:** Choose the right package for your platform: Expo, React Native, React web, vanilla JS, or Node.js. The core logic is framework-agnostic with platform-specific adapters.
 
 ## How It Works
@@ -37,7 +38,7 @@ flowchart TB
         ingest["ingestDocument()"]
         librarian["runLibrarian()"]
         heal["runHeal()"]
-        read["read(entityId, query)"]
+        read["read(entityId | entityId[], query, options?)"]
         reembed["runReembed()"]
     end
 
@@ -347,7 +348,29 @@ const overrideResult = await wiki.read('entity-123', 'weekend plans', {
   hybridWeight: 0.5,      // 50/50 semantic + keyword blend
   // preFilterLimit: null — explicitly disable a config-level preFilterLimit for this call
 });
+
+// Multi-entity read: search across namespaces in one pass
+const multiResult = await wiki.read(
+  ['tier_wisdom', 'tier_fact', 'tier_working'],
+  'weekend plans',
+  {
+    maxResults: 8,
+    tierWeights: {
+      tier_wisdom: 2,      // boost curated notes 2×
+      tier_fact: 1,        // neutral baseline
+      tier_working: 0.25,  // downrank unvetted working memory
+    },
+    // includeZeroWeightEntities: true — include 0-weight entities as bottom filler
+  }
+);
+// multiResult.factScores — Record<factId, weightedScore> | undefined (array entityId only, populated when query is non-empty and at least one fact scored)
+// multiResult.metadata  — { query, entityIds, tierWeights }
+// tasks capped at min(20 × entityCount, 200); events at min(10 × entityCount, 100)
 ```
+
+### Multi-Entity Weighted Reads
+
+`read()` also accepts `entityId` as an array, merging results across namespaces in one retrieval pass. Use `tierWeights` to boost or downrank individual entity namespaces before the final top-K slice.
 
 Pass an empty string to skip search and return the most recently updated facts.
 
@@ -414,6 +437,8 @@ const context = formatContext(bundle, {
   maxEvents: 10,             // default 10
   includeConfidence: true,   // default true — appends (certain/inferred/tentative)
   includeTags: true,         // default true — appends [tag1, tag2]
+  includeEntityIds: true,    // default false — appends [entity_id] for provenance in multi-entity reads
+  includeFactScores: true,   // default false — appends weighted score when factScores present
   factWeights: {
     confidence: 1.0,         // default 1.0
     accessCount: 0.3,        // default 0.3 — log(1 + access_count) * weight
@@ -424,6 +449,36 @@ const context = formatContext(bundle, {
 // Inject into your system prompt:
 const systemPrompt = `You are a helpful assistant.\n\n${context}`;
 ```
+
+### Librarian Prompt Utilities
+
+Core exports prompt utilities for weighted retrieval-based synthesis. Use `mapLibrarianOptionsToReadOptions()` to map `entityWeights` to `tierWeights`, then hydrate a prompt with `query`, `context`, and `tasks`.
+
+```typescript
+import {
+  DEFAULT_LIBRARIAN_SYNTHESIS_PROMPT,
+  formatContext,
+  hydrateLibrarianPrompt,
+  mapLibrarianOptionsToReadOptions,
+  validateLibrarianPromptTemplate,
+} from '@equationalapplications/core-llm-wiki';
+
+const memory = await wiki.read(['tier_wisdom', 'tier_fact'], query, {
+  ...mapLibrarianOptionsToReadOptions({
+    entityWeights: { tier_wisdom: 2, tier_fact: 1 },
+  }),
+  maxResults: 8,
+});
+
+const template = DEFAULT_LIBRARIAN_SYNTHESIS_PROMPT;
+const finalPrompt = hydrateLibrarianPrompt(template, {
+  query,
+  context: formatContext(memory, { includeEntityIds: true, includeFactScores: true }),
+  tasks: formatContext({ facts: [], tasks: memory.tasks, events: [] }, { format: 'plain' }),
+});
+```
+
+For full examples, template-warning guidance, and the override contract, see [`packages/core/README.md`](packages/core/README.md#librarian-prompt-override-contract).
 
 Facts are ranked by a weighted score combining confidence tier, access frequency, and recency. Returns an empty string for an empty bundle.
 

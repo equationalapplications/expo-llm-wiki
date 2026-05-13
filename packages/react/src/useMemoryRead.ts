@@ -12,9 +12,17 @@ import { useWiki } from './WikiContext';
  *      · preFilterLimit: NaN/±Infinity → null (disables config-level limit, same as null)
  *      · hybridWeight: NaN → null (explicitly disables config-level weight; distinct from
  *        undefined which defers to config); ±Infinity → clamped to 0/1
+ *      · tierWeights values: non-finite → 1.0, negative → 0 (mirrors core sanitization)
+ *      · tierWeights keys: projected onto the active entityId set (mirrors core's
+ *        sanitizeTierWeights which ignores weights for entities not in the request)
+ *      · tierWeights keys at default weight (1.0) are dropped — spec says missing
+ *        weights default to 1.0, so explicit 1.0 is behaviorally identical to omission
+ *      · tierWeights: {} or fully-filtered/all-default result is omitted (same as undefined)
+ *      · includeZeroWeightEntities: false/undefined are equivalent (both skip zero-weight
+ *        entities); only true is keyed, matching core's default behavior
  *  - Keys are sorted so insertion-order differences never cause spurious refetches
  */
-function normalizeReadOptionsKey(opts?: ReadOptions): string {
+function normalizeReadOptionsKey(entityId: string | string[], opts?: ReadOptions): string {
   if (!opts) return '';
   const normalized: Record<string, unknown> = {};
 
@@ -47,11 +55,45 @@ function normalizeReadOptionsKey(opts?: ReadOptions): string {
       : Math.max(0, Math.min(1, opts.hybridWeight));
   }
 
+  // tierWeights: project onto the active entity set (core's sanitizeTierWeights only
+  // considers weights for the requested entityIds, so unrelated keys have no behavioral
+  // effect and should not contribute to the dep key). Sanitize values (non-finite → 1.0,
+  // negative → 0) and sort keys to avoid spurious refetches from insertion-order or
+  // logically-equivalent value differences. Drop entries at the default weight (1.0)
+  // because missing weights also default to 1.0 per spec — explicit 1.0 is behaviorally
+  // identical to omission. Use Object.create(null) to match core's sanitizeTierWeights
+  // and avoid prototype-key edge cases (e.g. entityIds like __proto__). Omit entirely
+  // when the projected+filtered result is empty (same as undefined).
+  if (opts.tierWeights !== undefined) {
+    const activeIds = new Set(Array.isArray(entityId) ? entityId : [entityId]);
+    const tw = opts.tierWeights;
+    const twKeys = Object.keys(tw).filter(k => activeIds.has(k)).sort();
+    if (twKeys.length) {
+      const sanitized = Object.create(null) as Record<string, number>;
+      for (const k of twKeys) {
+        const w = tw[k];
+        sanitized[k] = !Number.isFinite(w) ? 1.0 : Math.max(0, w);
+      }
+      // Drop default-weight entries (1.0) — spec says missing weights default to 1.0
+      const nonDefaultKeys = twKeys.filter(k => sanitized[k] !== 1.0);
+      if (nonDefaultKeys.length) {
+        normalized.tierWeights = JSON.stringify(sanitized, nonDefaultKeys);
+      }
+    }
+  }
+
+  // includeZeroWeightEntities: false and undefined are equivalent in core (both exclude
+  // zero-weight entities from scored retrieval). Only key when true so toggling
+  // undefined → false does not cause a spurious refetch.
+  if (opts.includeZeroWeightEntities === true) {
+    normalized.includeZeroWeightEntities = true;
+  }
+
   const sortedKeys = Object.keys(normalized).sort();
   return sortedKeys.length ? JSON.stringify(normalized, sortedKeys) : '';
 }
 
-export function useMemoryRead(entityId: string, query: string, options?: ReadOptions) {
+export function useMemoryRead(entityId: string | string[], query: string, options?: ReadOptions) {
   const wiki = useWiki();
   const [data, setData] = useState<MemoryBundle | null>(null);
   const [isPending, setIsPending] = useState(false);
@@ -60,24 +102,35 @@ export function useMemoryRead(entityId: string, query: string, options?: ReadOpt
   const wikiRef = useRef(wiki);
   wikiRef.current = wiki;
 
+  const entityIdRef = useRef(entityId);
+  entityIdRef.current = entityId;
+
   const optionsRef = useRef(options);
   optionsRef.current = options;
+
+  // Stable dep key for entityId: sort+dedup so inline array literals (new reference
+  // each render) don't cause spurious refetches. The same set of entity IDs always
+  // produces the same key regardless of reference identity or insertion order.
+  const entityIdKey = Array.isArray(entityId)
+    ? [...new Set(entityId)].sort().join('\0')
+    : entityId;
+
   // Serialize a normalized form of options so:
   //  - `undefined` and `{}` map to the same string (no spurious refetch)
   //  - non-finite hybridWeight (±Infinity, NaN) is coerced to its effective value before
   //    stringifying (JSON.stringify turns Infinity/NaN to `null`, losing type information)
   //  - keys are sorted so insertion-order differences don't cause spurious refetches
-  const optionsStr = normalizeReadOptionsKey(options);
+  const optionsStr = normalizeReadOptionsKey(entityId, options);
 
   const fetchQueue = useRef<{
     inFlight: boolean;
-    pending: { entityId: string; query: string } | null;
+    pending: { entityId: string | string[]; query: string } | null;
   }>({ inFlight: false, pending: null });
 
   // Stable scheduler: refs keep it from going stale across renders.
   // In-flight results are never discarded — spec requires them to land before
   // starting the next fetch with latest args.
-  const scheduleFetch = useRef(function schedule(eid: string, q: string) {
+  const scheduleFetch = useRef(function schedule(eid: string | string[], q: string) {
     const fq = fetchQueue.current;
     if (fq.inFlight) {
       fq.pending = { entityId: eid, query: q };
@@ -102,12 +155,12 @@ export function useMemoryRead(entityId: string, query: string, options?: ReadOpt
   });
 
   useEffect(() => {
-    scheduleFetch.current(entityId, query);
-  }, [entityId, query, wiki, optionsStr]);
+    scheduleFetch.current(entityIdRef.current, query);
+  }, [entityIdKey, query, wiki, optionsStr]);
 
   const refetch = useCallback(() => {
-    scheduleFetch.current(entityId, query);
-  }, [entityId, query]);
+    scheduleFetch.current(entityIdRef.current, query);
+  }, [entityIdKey, query]);
 
   return { data, isPending, error, refetch };
 }
