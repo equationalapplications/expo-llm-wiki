@@ -281,4 +281,19 @@ describe('read() multi-entity retrieval', () => {
       'read() accepts at most 100 entity IDs; received 101',
     );
   });
+
+  it('single-string tierWeights with zero weight still returns facts', async () => {
+    const { wiki, db } = makeWiki(async () => [1, 0, 0]);
+    await wiki.setup();
+    await db.runAsync(`INSERT OR REPLACE INTO llm_wiki_meta (key, value) VALUES ('embedding_dimension', '3')`);
+    await insertFact(db, 'wisdom-1', 'tier_wisdom', 'apple wisdom', 'apple', [1, 0, 0], 1000);
+
+    const result = await wiki.read('tier_wisdom', 'apple', {
+      tierWeights: { tier_wisdom: 0 },
+    });
+
+    expect(result.facts.map(f => f.id)).toEqual(['wisdom-1']);
+    expect(result.factScores).toBeUndefined();
+    expect(result.metadata).toBeUndefined();
+  });
 });

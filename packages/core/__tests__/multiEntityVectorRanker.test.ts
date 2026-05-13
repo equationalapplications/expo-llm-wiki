@@ -111,4 +111,22 @@ describe('multi-entity vector ranker retrieval', () => {
     expect(result.facts.map(f => f.id)).toContain('wisdom-1');
     expect(result.facts.map(f => f.id)).toContain('fact-mismatch');
   });
+
+  it('stale embeddings in a zero-weight entity do not trigger dimension mismatch fallback', async () => {
+    const fallbackErrors: Error[] = [];
+    const { wiki, db } = makeWiki({ onRetrievalFallback: error => fallbackErrors.push(error) });
+    await wiki.setup();
+    await db.runAsync(`INSERT OR REPLACE INTO llm_wiki_meta (key, value) VALUES ('embedding_dimension', '3')`);
+    await insertFact(db, 'wisdom-1', 'tier_wisdom', 'apple wisdom', [1, 0, 0]);
+    // tier_stale has a 2-dim blob (mismatched) but weight=0 so it's excluded from scoring
+    await insertFact(db, 'stale-1', 'tier_stale', 'apple stale', [1, 0]);
+    await wiki.setup(); // rebuild MiniSearch after direct DB inserts
+
+    const result = await wiki.read(['tier_wisdom', 'tier_stale'], 'apple', {
+      tierWeights: { tier_wisdom: 1, tier_stale: 0 },
+    });
+
+    expect(fallbackErrors).toHaveLength(0);
+    expect(result.facts.map(f => f.id)).toEqual(['wisdom-1']);
+  });
 });
