@@ -362,7 +362,7 @@ const multiResult = await wiki.read(
     // includeZeroWeightEntities: true — include 0-weight entities as bottom filler
   }
 );
-// multiResult.factScores — Record<factId, weightedScore> (array entityId calls only)
+// multiResult.factScores — Record<factId, weightedScore> | undefined (array entityId only, populated when query is non-empty and at least one fact scored)
 // multiResult.metadata  — { query, entityIds, tierWeights }
 // tasks capped at min(20 × entityCount, 200); events at min(10 × entityCount, 100)
 ```

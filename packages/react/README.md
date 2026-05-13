@@ -166,7 +166,7 @@ const { data: multiData } = useMemoryRead(
     // includeZeroWeightEntities: true — include 0-weight entities as bottom-ranked filler
   }
 );
-// multiData?.factScores — Record<factId, weightedScore>
+// multiData?.factScores — Record<factId, weightedScore> | undefined (array entityId only, populated when query is non-empty and at least one fact scored)
 // multiData?.metadata  — { query, entityIds, tierWeights }
 ```
 
@@ -174,7 +174,7 @@ const { data: multiData } = useMemoryRead(
 
 ### `useMemoryRead(entityId, query, options?)`
 
-Fetch memory reactively. `entityId` accepts a string or string array for multi-entity reads. Auto-refetches when `entityId`, `query`, `wiki`, or `options` change, including per-call overrides such as `maxResults`, `preFilterLimit`, `hybridWeight`, and `tierWeights`.
+Fetch memory reactively. `entityId` accepts a string or string array for multi-entity reads. Auto-refetches when `entityId`, `query`, `wiki`, or `options` change, including per-call overrides such as `maxResults`, `preFilterLimit`, `hybridWeight`, `tierWeights`, and `includeZeroWeightEntities`. Changes to `tierWeights` and `includeZeroWeightEntities` are tracked and trigger refetches.
 
 ```typescript
 const { data, isPending, error, refetch } = useMemoryRead('user-123', 'preferences');

@@ -149,7 +149,7 @@ True cosine-range pure semantic ranking (including negative cosine values) is us
 - Missing weights default to `1.0`. Negative weights clamp to `0`. Non-finite weights default to `1.0`.
 - `tierWeights[entity] = 0` skips that entity's scored retrieval branch (no compute cost).
 - `includeZeroWeightEntities: true` includes zero-weight entities as bottom-ranked filler instead of skipping them.
-- `factScores` and `metadata` are populated only for array-shaped `entityId` calls. Plain string calls never expose them.
+- `factScores` is present for array-shaped `entityId` calls only when the query is non-empty and at least one fact is scored; empty-query ("recent facts") reads leave it absent even when `entityId` is an array. Plain string calls never expose it. `metadata` is present for all array-shaped calls regardless of query.
 - `maxResults` applies globally across all requested entities.
 - Tasks are capped at `min(20 × entityCount, 200)`; events at `min(10 × entityCount, 100)` for multi-entity reads.
 

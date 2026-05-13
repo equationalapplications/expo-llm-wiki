@@ -47,11 +47,26 @@ function normalizeReadOptionsKey(opts?: ReadOptions): string {
       : Math.max(0, Math.min(1, opts.hybridWeight));
   }
 
+  // tierWeights: serialize with sorted keys so insertion-order differences
+  // don't cause spurious refetches.
+  if (opts.tierWeights !== undefined) {
+    const tw = opts.tierWeights;
+    const twKeys = Object.keys(tw).sort();
+    normalized.tierWeights = twKeys.length
+      ? JSON.stringify(tw, twKeys)
+      : null;
+  }
+
+  // includeZeroWeightEntities: only include when explicitly set.
+  if (opts.includeZeroWeightEntities !== undefined) {
+    normalized.includeZeroWeightEntities = opts.includeZeroWeightEntities;
+  }
+
   const sortedKeys = Object.keys(normalized).sort();
   return sortedKeys.length ? JSON.stringify(normalized, sortedKeys) : '';
 }
 
-export function useMemoryRead(entityId: string, query: string, options?: ReadOptions) {
+export function useMemoryRead(entityId: string | string[], query: string, options?: ReadOptions) {
   const wiki = useWiki();
   const [data, setData] = useState<MemoryBundle | null>(null);
   const [isPending, setIsPending] = useState(false);
@@ -71,13 +86,13 @@ export function useMemoryRead(entityId: string, query: string, options?: ReadOpt
 
   const fetchQueue = useRef<{
     inFlight: boolean;
-    pending: { entityId: string; query: string } | null;
+    pending: { entityId: string | string[]; query: string } | null;
   }>({ inFlight: false, pending: null });
 
   // Stable scheduler: refs keep it from going stale across renders.
   // In-flight results are never discarded — spec requires them to land before
   // starting the next fetch with latest args.
-  const scheduleFetch = useRef(function schedule(eid: string, q: string) {
+  const scheduleFetch = useRef(function schedule(eid: string | string[], q: string) {
     const fq = fetchQueue.current;
     if (fq.inFlight) {
       fq.pending = { entityId: eid, query: q };
