@@ -597,8 +597,6 @@ If you use an `e2-micro` with 1 GB RAM, Node.js may need a higher heap limit dur
 node --max-old-space-size=768 index.js
 ```
 
-Free `e2-micro` VMs share CPU resources, so benchmark times may vary. If you see large runtime fluctuations, switch to a Spot instance for more stable CPU performance.
-
 ---
 
 ## Pass/Fail Threshold
