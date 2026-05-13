@@ -1200,7 +1200,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
 
               try {
                 const rankerResultsByEntity = await Promise.all(
-                  scoredEntityIds.map(async scopedEntityId => {
+                  scoredEntityIds.filter(id => (candidateRowsByEntity.get(id)?.length ?? 0) > 0).map(async scopedEntityId => {
                     const rowsForEntity = candidateRowsByEntity.get(scopedEntityId) ?? [];
                     const candidateIds = effectivePreFilterLimit !== undefined
                       ? rowsForEntity.map(row => row.id)
@@ -1220,8 +1220,14 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
 
                 scored = rankerResultsByEntity.flat();
 
-                // Attach tie-break metadata by ID from the full candidateRows pool
-                const metadataById = new Map(candidateRows.map(row => [row.id, row]));
+                // Build metadata map only for IDs returned by the ranker (not all candidates)
+                // to keep memory proportional to the oversampled result size on constrained runtimes.
+                const scoredIds = new Set(scored.map(s => s.id));
+                const metadataById = new Map(
+                  (candidateRows as ReadCandidateRowMetadata[])
+                    .filter(row => scoredIds.has(row.id))
+                    .map(row => [row.id, row])
+                );
                 scored = scored.map(row => {
                   const metadata = metadataById.get(row.id);
                   return {
@@ -1233,7 +1239,6 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
 
                 // Backfill ranker-omitted rows per VectorRanker contract:
                 // treat missing ids as "no embedding" (pure semantic: -2, hybrid: keyword-only)
-                const scoredIds = new Set(scored.map(s => s.id));
 
                 // Compute backfill budget up-front.
                 // Hybrid mode: allow up to maxResults keyword-only rows to compete.
