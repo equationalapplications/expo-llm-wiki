@@ -46,26 +46,16 @@ Curated Thoughts also needs the synthesis prompt to be replaceable. Different pr
 ### `read()` Signature
 
 ```typescript
-// Phase 1 (current): entityId is string only
 async read(
-  entityId: string,
+  entityId: string | string[],
   query: string,
   options?: ReadOptions
 ): Promise<MemoryBundle>
-
-// Phase 2+ (planned): entityId will accept string | string[]
-// async read(
-//   entityId: string | string[],
-//   query: string,
-//   options?: ReadOptions
-// ): Promise<MemoryBundle>
 ```
 
-**Phase 1 (current)**: `read(entityId: string, query, options)` operates on a single entity as today.
+`entityId` accepts a single string or an array of strings. A string behaves as it did before this feature was added. An array enables multi-entity retrieval. Internally, the implementation normalizes to a deduplicated `entityIds: string[]`.
 
-**Phase 2+ (planned)**: `entityId` will accept `string | string[]` to enable multi-entity retrieval. A string behaves as it does today. An array enables multi-entity retrieval. Internally, the implementation will normalize to a deduplicated `entityIds: string[]`.
-
-A single-element array will be behaviorally equivalent to a string, except that optional metadata may be returned because the caller explicitly used the multi-entity shape.
+A single-element array is behaviorally equivalent to a string, except that optional metadata may be returned because the caller explicitly used the multi-entity shape.
 
 ### `ReadOptions`
 

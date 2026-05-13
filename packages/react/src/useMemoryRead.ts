@@ -13,10 +13,14 @@ import { useWiki } from './WikiContext';
  *      · hybridWeight: NaN → null (explicitly disables config-level weight; distinct from
  *        undefined which defers to config); ±Infinity → clamped to 0/1
  *      · tierWeights values: non-finite → 1.0, negative → 0 (mirrors core sanitization)
- *      · tierWeights: {} is omitted (same effective behavior as undefined; all weights 1.0)
+ *      · tierWeights keys: projected onto the active entityId set (mirrors core's
+ *        sanitizeTierWeights which ignores weights for entities not in the request)
+ *      · tierWeights: {} or fully-filtered result is omitted (same as undefined)
+ *      · includeZeroWeightEntities: false/undefined are equivalent (both skip zero-weight
+ *        entities); only true is keyed, matching core's default behavior
  *  - Keys are sorted so insertion-order differences never cause spurious refetches
  */
-function normalizeReadOptionsKey(opts?: ReadOptions): string {
+function normalizeReadOptionsKey(entityId: string | string[], opts?: ReadOptions): string {
   if (!opts) return '';
   const normalized: Record<string, unknown> = {};
 
@@ -49,13 +53,16 @@ function normalizeReadOptionsKey(opts?: ReadOptions): string {
       : Math.max(0, Math.min(1, opts.hybridWeight));
   }
 
-  // tierWeights: mirror core's weight sanitization (non-finite → 1.0, negative → 0)
-  // and sort keys so insertion-order differences and logically-equivalent values
-  // (e.g. NaN vs 1, -5 vs 0) never cause spurious refetches.
-  // An empty {} is omitted entirely — behaviorally identical to undefined.
+  // tierWeights: project onto the active entity set (core's sanitizeTierWeights only
+  // considers weights for the requested entityIds, so unrelated keys have no behavioral
+  // effect and should not contribute to the dep key). Sanitize values (non-finite → 1.0,
+  // negative → 0) and sort keys to avoid spurious refetches from insertion-order or
+  // logically-equivalent value differences. Omit entirely when the projected result is
+  // empty (all weights default to 1.0 — same as undefined).
   if (opts.tierWeights !== undefined) {
+    const activeIds = new Set(Array.isArray(entityId) ? entityId : [entityId]);
     const tw = opts.tierWeights;
-    const twKeys = Object.keys(tw).sort();
+    const twKeys = Object.keys(tw).filter(k => activeIds.has(k)).sort();
     if (twKeys.length) {
       const sanitized: Record<string, number> = {};
       for (const k of twKeys) {
@@ -64,12 +71,13 @@ function normalizeReadOptionsKey(opts?: ReadOptions): string {
       }
       normalized.tierWeights = JSON.stringify(sanitized, twKeys);
     }
-    // Empty {} → omit (all weights default to 1.0, same as undefined)
   }
 
-  // includeZeroWeightEntities: only include when explicitly set.
-  if (opts.includeZeroWeightEntities !== undefined) {
-    normalized.includeZeroWeightEntities = opts.includeZeroWeightEntities;
+  // includeZeroWeightEntities: false and undefined are equivalent in core (both exclude
+  // zero-weight entities from scored retrieval). Only key when true so toggling
+  // undefined → false does not cause a spurious refetch.
+  if (opts.includeZeroWeightEntities === true) {
+    normalized.includeZeroWeightEntities = true;
   }
 
   const sortedKeys = Object.keys(normalized).sort();
@@ -92,7 +100,7 @@ export function useMemoryRead(entityId: string | string[], query: string, option
   //  - non-finite hybridWeight (±Infinity, NaN) is coerced to its effective value before
   //    stringifying (JSON.stringify turns Infinity/NaN to `null`, losing type information)
   //  - keys are sorted so insertion-order differences don't cause spurious refetches
-  const optionsStr = normalizeReadOptionsKey(options);
+  const optionsStr = normalizeReadOptionsKey(entityId, options);
 
   const fetchQueue = useRef<{
     inFlight: boolean;
