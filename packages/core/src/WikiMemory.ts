@@ -1005,6 +1005,10 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     if (entityIds.length > MAX_ENTITY_IDS) {
       throw new RangeError(`read() accepts at most ${MAX_ENTITY_IDS} entity IDs; received ${entityIds.length}`);
     }
+    const nullByteId = entityIds.find(id => id.includes('\x00'));
+    if (nullByteId !== undefined) {
+      throw new TypeError(`entity_id values must not contain the null byte (\\x00); got "${nullByteId}"`);
+    }
 
     const rawMaxResults = options?.maxResults ?? config?.maxResults ?? config?.maxFtsResults ?? 10;
     const maxResults = Number.isFinite(rawMaxResults)
@@ -1036,6 +1040,10 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       // Skip embed(), DB scan, and sort — fall through to tasks/events fetch below.
     } else if (trimmedQuery) {
       let usedEmbed = false;
+      // Hoisted before both the embed and keyword-fallback paths so the zero-weight
+      // fast path (scoredEntityIds.length === 0) is handled consistently regardless
+      // of whether embedFn is present.
+      const scoredEntityIds = this._filterScoredEntities(entityIds, sanitizedTierWeights, options?.includeZeroWeightEntities);
 
       if (!skipEmbed && embedFn) {
         let rankerShouldRethrow = false;
@@ -1068,10 +1076,6 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
               );
             }
           }
-
-          // Determine which entities will actually be semantically scored (skip zero-weight unless opt-in).
-          // Computed here so the mismatch check below only scans entities that will be used.
-          const scoredEntityIds = this._filterScoredEntities(entityIds, sanitizedTierWeights, options?.includeZeroWeightEntities);
 
           // Check whether any non-deleted fact for any scored entity has a blob whose
           // dimension differs from the query vector. Scoped to scoredEntityIds so a
@@ -1522,10 +1526,9 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
         }
       }
 
-      if (!usedEmbed) {
+      if (!usedEmbed && scoredEntityIds.length > 0) {
         // embed absent or threw — fall back to MiniSearch with tier weight application
-        const fallbackEntityIds = this._filterScoredEntities(entityIds, sanitizedTierWeights, options?.includeZeroWeightEntities);
-        const fallbackEntityIdSet = new Set(fallbackEntityIds);
+        const fallbackEntityIdSet = new Set(scoredEntityIds);
         const fallbackOversampledLimit = Math.max(maxResults * 2, maxResults + 50);
         const results = this.miniSearch.search(trimmedQuery, {
           filter: (r) => fallbackEntityIdSet.has((r as unknown as { entity_id: string }).entity_id),
@@ -1885,7 +1888,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       }
       return {
         id: r.id,
-        entity_id: entityIdByCandidateId.get(r.id) ?? entityId,
+        entity_id: entityIdByCandidateId.get(r.id) ?? (() => { throw new Error(`ranker returned id "${r.id}" outside candidate set`); })(),
         score,
       };
     });

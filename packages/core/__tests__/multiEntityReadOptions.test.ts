@@ -55,6 +55,6 @@ describe('multi-entity read option helpers', () => {
   it('exposes metadata only for array-shaped entity ids', () => {
     expect(shouldExposeReadMetadata('tier_wisdom')).toBe(false);
     expect(shouldExposeReadMetadata(['tier_wisdom'])).toBe(true);
-    expect(shouldExposeReadMetadata('tier_wisdom')).toBe(false);
+    expect(shouldExposeReadMetadata([])).toBe(true);
   });
 });
