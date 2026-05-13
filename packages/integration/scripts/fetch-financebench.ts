@@ -66,6 +66,7 @@ async function fetchAllRows(): Promise<FinanceBenchRow[]> {
 
     const data = (await res.json()) as PageResponse<FinanceBenchRow>;
     total = data.num_rows_total;
+    if (data.rows.length === 0) throw new Error(`API returned 0 rows at offset ${offset} of ${total}`);
     for (const r of data.rows) results.push(r.row);
     offset += data.rows.length;
     process.stdout.write(`\r  ${offset}/${total}  `);

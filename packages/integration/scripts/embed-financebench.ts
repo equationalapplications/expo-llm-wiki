@@ -107,7 +107,16 @@ async function main() {
   const embMap: Record<string, number[]> = {};
   for (const row of embRows) {
     const vec = parseEmbedding(row.embedding_blob, row.embedding);
-    if (!vec) throw new Error(`Invalid embedding for entry ${row.id}`);
+    if (!vec) {
+      const blobLen = row.embedding_blob?.byteLength ?? 0;
+      const blobHint =
+        row.embedding_blob && blobLen % 4 !== 0
+          ? `embedding_blob length ${blobLen} is not a multiple of 4`
+          : row.embedding_blob
+            ? 'embedding_blob could not be parsed as finite float32 values'
+            : 'legacy embedding TEXT is missing or invalid JSON';
+      throw new Error(`Invalid embedding for entry ${row.id}: ${blobHint}`);
+    }
     embMap[row.id] = Array.from(vec);
   }
   if (embRows.length === 0) throw new Error('No embeddings found; sidecar would be empty.');
