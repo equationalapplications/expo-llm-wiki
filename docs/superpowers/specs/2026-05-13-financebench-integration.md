@@ -567,6 +567,41 @@ pnpm test
 
 ---
 
+## GCP Quickstart
+
+To run this benchmark quickly from Google Cloud Platform, create a VM and install Node.js in the SSH terminal.
+
+1. Go to **Compute Engine** > **VM Instances** > **Create Instance**.
+2. For the machine type, choose either:
+   - `e2-micro` in `us-central1` for free tier testing.
+   - `e2-standard-4` with **Provisioning Model** set to **Spot** for better performance.
+3. Set the boot disk OS to **Ubuntu 22.04 LTS** or **24.04 LTS** with Standard Persistent Disk.
+4. Click **SSH** next to your instance.
+5. In the SSH terminal, run:
+
+```bash
+# Install Node.js (current LTS)
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs
+
+# Clone and run the benchmark (example)
+git clone <your-repo-url>
+cd <your-repo-folder>
+pnpm install
+```
+
+### Pro tip for 10k-row workloads
+
+If you use an `e2-micro` with 1 GB RAM, Node.js may need a higher heap limit during SQLite import:
+
+```bash
+node --max-old-space-size=768 index.js
+```
+
+Free `e2-micro` VMs share CPU resources, so benchmark times may vary. If you see large runtime fluctuations, switch to a Spot instance for more stable CPU performance.
+
+---
+
 ## Pass/Fail Threshold
 
 | Metric | Threshold | Rationale |
