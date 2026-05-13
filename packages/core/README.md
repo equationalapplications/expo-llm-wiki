@@ -133,8 +133,8 @@ const multiMemory = await wikiMemory.read(['tier_wisdom', 'tier_fact', 'tier_wor
   },
   // includeZeroWeightEntities: true — include 0-weight entities as bottom-ranked filler
 });
-// multiMemory.factScores — Record<factId, weightedScore> for all returned facts
-// multiMemory.metadata  — { query, entityIds, tierWeights }
+// multiMemory.factScores — optional Record<factId, weightedScore> for returned facts; may be absent/undefined
+// multiMemory.metadata  — optional { query, entityIds, tierWeights }; may be absent/undefined
 ```
 
 **Hybrid scoring blends:**
