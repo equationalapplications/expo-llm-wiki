@@ -400,7 +400,7 @@ const memory = await wikiMemory.read('user-123', 'coding style preferences');
 
 ### Multi-entity weighted reads
 
-`read()` accepts either one entity id or an array of entity ids. Array reads merge fact candidates globally before `maxResults` is applied, while tasks and events are returned for every requested entity.
+`read()` accepts either one entity id or an array of entity ids. Array reads merge fact candidates globally before `maxResults` is applied. Tasks and events are collected globally under shared caps (`min(20 × entity count, 200)` tasks; `min(10 × entity count, 100)` events) — individual entities are not guaranteed representation in the returned bundle.
 
 ```ts
 const memory = await wiki.read(['tier_wisdom', 'tier_fact', 'tier_working'], 'Which source should I trust?', {

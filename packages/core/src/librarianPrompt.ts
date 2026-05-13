@@ -33,10 +33,7 @@ export function hydrateLibrarianPrompt(
   template: string,
   variables: LibrarianPromptVariables,
 ): string {
-  return template
-    .replace(/\{\{context\}\}/g, variables.context)
-    .replace(/\{\{tasks\}\}/g, variables.tasks)
-    .replace(/\{\{query\}\}/g, variables.query);
+  return template.replace(/\{\{(context|tasks|query)\}\}/g, (_, key) => variables[key as keyof LibrarianPromptVariables]);
 }
 
 export function validateLibrarianPromptTemplate(
@@ -59,7 +56,7 @@ export function validateLibrarianPromptTemplate(
 }
 
 export function mapLibrarianOptionsToReadOptions(
-  options: Pick<LibrarianOptions, 'entityWeights' | 'includeZeroWeightEntities'>,
+  options: LibrarianOptions,
 ): Pick<ReadOptions, 'tierWeights' | 'includeZeroWeightEntities'> {
   const readOptions: Pick<ReadOptions, 'tierWeights' | 'includeZeroWeightEntities'> = {};
   if (options.entityWeights !== undefined) readOptions.tierWeights = options.entityWeights;
