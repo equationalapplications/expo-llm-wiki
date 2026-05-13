@@ -299,4 +299,28 @@ describe('formatContext', () => {
     expect(() => formatContext({ facts: [], tasks: [], events: [] }, { maxEvents: -1 }))
       .toThrow('Invalid maxEvents: must be a non-negative finite number');
   });
+
+  it('can include fact entity_id provenance', () => {
+    const result = formatContext({ facts: [makeFact({ entity_id: 'tier_wisdom' })], tasks: [], events: [] }, {
+      includeEntityIds: true,
+    });
+    expect(result).toContain('{entity_id=tier_wisdom}');
+  });
+
+  it('can include weighted fact scores and preserve bundle fact order', () => {
+    const bundle: MemoryBundle = {
+      facts: [
+        makeFact({ id: 'low', title: 'Low', access_count: 100 }),
+        makeFact({ id: 'high', title: 'High', access_count: 0 }),
+      ],
+      tasks: [],
+      events: [],
+      factScores: { low: 0.1, high: 2 },
+    };
+
+    const result = formatContext(bundle, { includeFactScores: true });
+    expect(result.indexOf('Low')).toBeLessThan(result.indexOf('High'));
+    expect(result).toContain('{score=0.1000}');
+    expect(result).toContain('{score=2.0000}');
+  });
 });

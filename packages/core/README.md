@@ -398,6 +398,70 @@ await wikiMemory.write('user-123', {
 const memory = await wikiMemory.read('user-123', 'coding style preferences');
 ```
 
+### Multi-entity weighted reads
+
+`read()` accepts either one entity id or an array of entity ids. Array reads merge fact candidates globally before `maxResults` is applied, while tasks and events are returned for every requested entity.
+
+```ts
+const memory = await wiki.read(['tier_wisdom', 'tier_fact', 'tier_working'], 'Which source should I trust?', {
+  maxResults: 8,
+  tierWeights: {
+    tier_wisdom: 2,
+    tier_fact: 1,
+    tier_working: 0.25,
+  },
+});
+
+console.log(memory.metadata);
+console.log(memory.factScores);
+```
+
+### Librarian prompt override contract
+
+Core does not own a provider-specific synthesis API, but it exports prompt utilities for applications that synthesize answers from weighted retrieval results.
+
+```ts
+import {
+  DEFAULT_LIBRARIAN_SYNTHESIS_PROMPT,
+  formatContext,
+  hydrateLibrarianPrompt,
+  mapLibrarianOptionsToReadOptions,
+  validateLibrarianPromptTemplate,
+} from '@equationalapplications/core-llm-wiki';
+
+const options = {
+  entityWeights: { tier_wisdom: 2, tier_fact: 1, tier_working: 0.25 },
+  systemPrompt: `You are a strict fact checker.
+Question:
+{{query}}
+
+Retrieved context:
+{{context}}
+
+Open tasks:
+{{tasks}}`,
+};
+
+const memory = await wiki.read(['tier_wisdom', 'tier_fact', 'tier_working'], query, {
+  ...mapLibrarianOptionsToReadOptions(options),
+  maxResults: 8,
+});
+
+const template = options.systemPrompt ?? DEFAULT_LIBRARIAN_SYNTHESIS_PROMPT;
+const warnings = validateLibrarianPromptTemplate(template, {
+  custom: options.systemPrompt != null,
+  taskCount: memory.tasks.length,
+});
+
+for (const warning of warnings) console.warn(warning);
+
+const finalPrompt = hydrateLibrarianPrompt(template, {
+  query,
+  context: formatContext(memory, { includeEntityIds: true, includeFactScores: true }),
+  tasks: formatContext({ facts: [], tasks: memory.tasks, events: [] }, { format: 'plain' }),
+});
+```
+
 ## Adapter Interface
 
 Implement `SQLiteAdapter` to use your platform's SQLite driver:

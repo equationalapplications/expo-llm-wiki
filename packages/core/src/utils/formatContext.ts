@@ -30,23 +30,29 @@ function scoreFactFor(
 function renderFactMarkdown(
   fact: WikiFact,
   includeConfidence: boolean,
-  includeTags: boolean
+  includeTags: boolean,
+  includeEntityIds: boolean,
+  score: number | undefined,
 ): string {
   const confPart = includeConfidence ? ` (${fact.confidence})` : '';
-  const tagPart =
-    includeTags && fact.tags.length > 0 ? ` [${fact.tags.join(', ')}]` : '';
-  return `- **${fact.title}**${confPart}${tagPart}\n  ${fact.body.replace(/\n/g, '\n  ')}`;
+  const tagPart = includeTags && fact.tags.length > 0 ? ` [${fact.tags.join(', ')}]` : '';
+  const sourcePart = includeEntityIds ? ` {entity_id=${fact.entity_id}}` : '';
+  const scorePart = score !== undefined ? ` {score=${score.toFixed(4)}}` : '';
+  return `- **${fact.title}**${confPart}${tagPart}${sourcePart}${scorePart}\n  ${fact.body.replace(/\n/g, '\n  ')}`;
 }
 
 function renderFactPlain(
   fact: WikiFact,
   includeConfidence: boolean,
-  includeTags: boolean
+  includeTags: boolean,
+  includeEntityIds: boolean,
+  score: number | undefined,
 ): string {
   const confPart = includeConfidence ? ` (${fact.confidence})` : '';
-  const tagPart =
-    includeTags && fact.tags.length > 0 ? ` [${fact.tags.join(', ')}]` : '';
-  return `${fact.title}${confPart}${tagPart}: ${fact.body}`;
+  const tagPart = includeTags && fact.tags.length > 0 ? ` [${fact.tags.join(', ')}]` : '';
+  const sourcePart = includeEntityIds ? ` {entity_id=${fact.entity_id}}` : '';
+  const scorePart = score !== undefined ? ` {score=${score.toFixed(4)}}` : '';
+  return `${fact.title}${confPart}${tagPart}${sourcePart}${scorePart}: ${fact.body}`;
 }
 
 function renderTaskMarkdown(task: WikiTask): string {
@@ -78,6 +84,8 @@ export function formatContext(
     maxEvents: options?.maxEvents ?? 10,
     includeConfidence: options?.includeConfidence ?? true,
     includeTags: options?.includeTags ?? true,
+    includeEntityIds: options?.includeEntityIds ?? false,
+    includeFactScores: options?.includeFactScores ?? false,
     factWeights: {
       confidence: options?.factWeights?.confidence ?? 1.0,
       accessCount: options?.factWeights?.accessCount ?? 0.3,
@@ -92,9 +100,11 @@ export function formatContext(
   const weights = opts.factWeights as Required<NonNullable<FormatContextOptions['factWeights']>>;
 
   const now = Date.now();
-  const sortedFacts = [...bundle.facts]
-    .sort((a, b) => scoreFactFor(b, weights, now) - scoreFactFor(a, weights, now))
-    .slice(0, opts.maxFacts);
+  const sortedFacts = bundle.factScores
+    ? [...bundle.facts].slice(0, opts.maxFacts)
+    : [...bundle.facts]
+        .sort((a, b) => scoreFactFor(b, weights, now) - scoreFactFor(a, weights, now))
+        .slice(0, opts.maxFacts);
 
   const sortedTasks = [...bundle.tasks]
     .sort((a, b) => b.priority - a.priority || a.created_at - b.created_at)
@@ -118,7 +128,7 @@ export function formatContext(
       lines.push('');
       lines.push('### Known Facts');
       for (const fact of sortedFacts) {
-        lines.push(renderFactMarkdown(fact, opts.includeConfidence, opts.includeTags));
+        lines.push(renderFactMarkdown(fact, opts.includeConfidence, opts.includeTags, opts.includeEntityIds, opts.includeFactScores ? bundle.factScores?.[fact.id] : undefined));
       }
     }
 
@@ -141,7 +151,7 @@ export function formatContext(
     if (sortedFacts.length > 0) {
       lines.push('KNOWN FACTS:');
       for (const fact of sortedFacts) {
-        lines.push(renderFactPlain(fact, opts.includeConfidence, opts.includeTags));
+        lines.push(renderFactPlain(fact, opts.includeConfidence, opts.includeTags, opts.includeEntityIds, opts.includeFactScores ? bundle.factScores?.[fact.id] : undefined));
       }
     }
     if (sortedTasks.length > 0) {
