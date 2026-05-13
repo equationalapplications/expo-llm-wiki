@@ -277,29 +277,33 @@ describe('useMemoryRead', () => {
   });
 
   it('does not re-fetch when tierWeights has non-finite values replaced by their effective 1.0 equivalent', async () => {
+    // Use entityId matching the tierWeights key so the key is in the active set
+    // and the sanitization path (NaN → 1.0) is actually exercised.
     const { rerender } = renderHook(
       ({ opts }: { opts: ReadOptions }) => useMemoryRead('user-1', 'q', opts),
-      { wrapper: wrapper(wiki), initialProps: { opts: { tierWeights: { tier_wisdom: NaN } } } }
+      { wrapper: wrapper(wiki), initialProps: { opts: { tierWeights: { 'user-1': NaN } } } }
     );
 
     await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
 
     // NaN → 1.0 per spec ("non-finite values default to 1.0"), so key is unchanged.
-    rerender({ opts: { tierWeights: { tier_wisdom: 1 } } });
+    rerender({ opts: { tierWeights: { 'user-1': 1 } } });
     await act(async () => {});
     expect(wiki.read).toHaveBeenCalledTimes(1);
   });
 
   it('does not re-fetch when tierWeights has negative values replaced by their effective 0 equivalent', async () => {
+    // Use entityId matching the tierWeights key so the key is in the active set
+    // and the sanitization path (negative → 0) is actually exercised.
     const { rerender } = renderHook(
       ({ opts }: { opts: ReadOptions }) => useMemoryRead('user-1', 'q', opts),
-      { wrapper: wrapper(wiki), initialProps: { opts: { tierWeights: { tier_working: -5 } } } }
+      { wrapper: wrapper(wiki), initialProps: { opts: { tierWeights: { 'user-1': -5 } } } }
     );
 
     await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
 
     // -5 → 0 per spec ("negative values clamp to 0"), so key is unchanged.
-    rerender({ opts: { tierWeights: { tier_working: 0 } } });
+    rerender({ opts: { tierWeights: { 'user-1': 0 } } });
     await act(async () => {});
     expect(wiki.read).toHaveBeenCalledTimes(1);
   });

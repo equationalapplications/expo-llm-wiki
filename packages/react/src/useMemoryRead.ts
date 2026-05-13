@@ -93,8 +93,19 @@ export function useMemoryRead(entityId: string | string[], query: string, option
   const wikiRef = useRef(wiki);
   wikiRef.current = wiki;
 
+  const entityIdRef = useRef(entityId);
+  entityIdRef.current = entityId;
+
   const optionsRef = useRef(options);
   optionsRef.current = options;
+
+  // Stable dep key for entityId: sort+dedup so inline array literals (new reference
+  // each render) don't cause spurious refetches. The same set of entity IDs always
+  // produces the same key regardless of reference identity or insertion order.
+  const entityIdKey = Array.isArray(entityId)
+    ? [...new Set(entityId)].sort().join('\0')
+    : entityId;
+
   // Serialize a normalized form of options so:
   //  - `undefined` and `{}` map to the same string (no spurious refetch)
   //  - non-finite hybridWeight (±Infinity, NaN) is coerced to its effective value before
@@ -135,12 +146,12 @@ export function useMemoryRead(entityId: string | string[], query: string, option
   });
 
   useEffect(() => {
-    scheduleFetch.current(entityId, query);
-  }, [entityId, query, wiki, optionsStr]);
+    scheduleFetch.current(entityIdRef.current, query);
+  }, [entityIdKey, query, wiki, optionsStr]);
 
   const refetch = useCallback(() => {
-    scheduleFetch.current(entityId, query);
-  }, [entityId, query]);
+    scheduleFetch.current(entityIdRef.current, query);
+  }, [entityIdKey, query]);
 
   return { data, isPending, error, refetch };
 }
