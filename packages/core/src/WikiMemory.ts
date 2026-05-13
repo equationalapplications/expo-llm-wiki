@@ -1432,10 +1432,11 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
             } else {
               // Use in-process JS cosine similarity
               // At this point candidateRows must have embeddings (we fetched them because vectorRanker is not configured)
-              // When tier weights are active, materialize all candidates so weights can re-rank
-              // before the global slice. Without tier weights, use limit: maxResults to keep the
-              // prior hot-path behavior and avoid O(N) materialization for large single-entity reads.
-              const jsCosineNeedsTierSort = sanitizedTierWeights !== undefined;
+              // Materialize all candidates only when tier weights will actually change ranking —
+              // i.e., at least one entity has a weight other than 1. A no-op weights object
+              // (all values === 1, or empty after sanitization) preserves the hot-path behavior.
+              const jsCosineNeedsTierSort = sanitizedTierWeights !== undefined &&
+                Object.values(sanitizedTierWeights).some(w => w !== 1);
               scored = await this._rankWithJsCosine({
                 entityId: entityCacheKey,
                 queryVec,
@@ -1587,15 +1588,14 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     const [tasks, events] = await Promise.all([
       (async () => {
         const entityScope = this._entityInClause(entityIds);
-        // Scaled global cap: 20× entity count, max 200. Not a per-entity guarantee —
-        // a single high-volume entity can fill the entire budget.
-        const tasksLimit = Math.min(20 * entityIds.length, 200);
+        // Single-entity reads preserve the pre-Phase-2 unbounded behavior.
+        // Multi-entity reads cap at 20× entity count (max 200) to bound result size.
+        const tasksLimit = entityIds.length === 1 ? undefined : Math.min(20 * entityIds.length, 200);
         return this.db.getAllAsync<WikiTask>(
           `SELECT * FROM ${this.prefix}tasks
            WHERE ${entityScope.clause} AND status IN ('pending', 'in_progress') AND deleted_at IS NULL
-           ORDER BY priority DESC, created_at ASC
-           LIMIT ?`,
-          [...entityScope.params, tasksLimit]
+           ORDER BY priority DESC, created_at ASC${tasksLimit !== undefined ? '\n           LIMIT ?' : ''}`,
+          tasksLimit !== undefined ? [...entityScope.params, tasksLimit] : entityScope.params
         );
       })(),
       (async () => {
