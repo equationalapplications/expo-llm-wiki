@@ -24,7 +24,7 @@ Corpus embeddings are **frozen** in `fixtures/financebench-embeddings.json.gz` a
 
 | Suite | Corpus | Queries | Metrics | Asserted floor |
 |-------|--------|---------|---------|----------------|
-| **FinanceBench** | 180 unique evidence texts from 150 10-K/earnings filings | 150 | MRR@10, Hit Rate@5, Hit Rate@10 | MRR@10 ≥ **0.30** |
+| **FinanceBench** | 180 unique evidence texts from 150 10-K/earnings filings | 150 | MRR@10, Hit Rate@5, Hit Rate@10 | MRR@10 ≥ **0.55** |
 
 ### Corpus construction
 
@@ -50,7 +50,7 @@ Each unique `(doc_name, evidence_text)` pair becomes one WikiMemory fact under e
 
 | Metric | Value | Threshold | Status |
 |--------|-------|-----------|--------|
-| **MRR@10** | **0.7017** | ≥ 0.30 | ✅ pass (2.3× floor) |
+| **MRR@10** | **0.7017** | ≥ 0.55 | ✅ pass (1.3× floor) |
 | **Hit Rate@5** | **0.9067** | — | observed |
 | **Hit Rate@10** | **0.9667** | — | observed |
 | **Query count** | 150 | — | — |

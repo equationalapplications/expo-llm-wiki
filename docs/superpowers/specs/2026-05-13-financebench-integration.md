@@ -15,7 +15,7 @@ Without a financial domain benchmark, regression in retrieval quality on financi
 
 ## Requirement
 
-**Add a FinanceBench retrieval benchmark to `packages/integration` that measures Hit Rate@5, Hit Rate@10, and MRR@10 across the 150-question open-source FinanceBench sample. Assert MRR@10 ≥ 0.30. Emit a benchmark-results JSON report. Follow the same fixture/script/test structure as the existing SciFact benchmark.**
+**Add a FinanceBench retrieval benchmark to `packages/integration` that measures Hit Rate@5, Hit Rate@10, and MRR@10 across the 150-question open-source FinanceBench sample. Assert MRR@10 ≥ 0.55 (semantic-32 configuration: maxResults=32). Emit a benchmark-results JSON report. Follow the same fixture/script/test structure as the existing SciFact benchmark.**
 
 ---
 
@@ -24,8 +24,8 @@ Without a financial domain benchmark, regression in retrieval quality on financi
 - Fetch the FinanceBench 150-question dataset from Hugging Face (`PatronusAI/financebench`).
 - Extract and deduplicate evidence texts as the retrieval corpus. Each unique `(doc_name, evidence_text)` pair becomes one WikiMemory fact.
 - Ingest the corpus into a `financebench-corpus` entity, embed it with BGE-small-en-v1.5, and freeze fixtures (gzipped dump + embeddings sidecar) for reproducible offline test runs.
-- Test: for each question, retrieve top 10 facts and check if any gold evidence appears. Compute Hit Rate@5, Hit Rate@10, and MRR@10.
-- Assert MRR@10 ≥ 0.30 (a regression gate; expected actual value is higher).
+- Test: for each question, retrieve top 32 facts (maxResults=32) and check if any gold evidence appears in the top 10. Compute Hit Rate@5, Hit Rate@10, and MRR@10.
+- Assert MRR@10 ≥ 0.55 (a regression gate; raised from 0.30 after tuning to the semantic-32 configuration).
 - Save a timestamped JSON report to `packages/integration/benchmark-results/`.
 - Add a `computeMRR` helper mirroring the existing `computeNDCG` in `helpers/ndcg.ts`.
 
@@ -445,7 +445,7 @@ beforeAll(async () => {
   const db = openTestDatabase();
   wiki = new WikiMemory(db, {
     llmProvider: { generateText: async () => '{}' },
-    config: { maxResults: 10, tablePrefix: TABLE_PREFIX },
+    config: { maxResults: 32, tablePrefix: TABLE_PREFIX },
   });
   await wiki.setup();
   await wiki.importDump(dump);
@@ -475,14 +475,14 @@ beforeAll(async () => {
 
   wiki = new WikiMemory(db, {
     llmProvider: { generateText: async () => '{}', embed },
-    config: { maxResults: 10, tablePrefix: TABLE_PREFIX },
+    config: { maxResults: 32, tablePrefix: TABLE_PREFIX },
   });
   await wiki.setup();
 }, 300_000);
 
 describe('FinanceBench retrieval benchmark', () => {
   it(
-    'MRR@10 ≥ 0.30 across all 150 FinanceBench questions',
+    'MRR@10 ≥ 0.55 across all 150 FinanceBench questions',
     async () => {
       const mrrScores: number[] = [];
       const hitAt5: number[] = [];
@@ -526,7 +526,7 @@ describe('FinanceBench retrieval benchmark', () => {
       console.log(`  Hit Rate@10:  ${meanHit10.toFixed(4)}`);
       console.log(`  Report: benchmark-results/${fname}`);
 
-      expect(meanMRR).toBeGreaterThanOrEqual(0.30);
+      expect(meanMRR).toBeGreaterThanOrEqual(0.55);
     },
     300_000
   );
@@ -603,7 +603,7 @@ node --max-old-space-size=768 index.js
 
 | Metric | Threshold | Rationale |
 |---|---|---|
-| MRR@10 | ≥ 0.30 | Conservative floor leaving headroom for model variation; SciFact uses NDCG@10 ≥ 0.30 by same principle |
+| MRR@10 | ≥ 0.55 | Raised from 0.30 after tuning to the semantic-32 configuration (maxResults=32); actual first-run value was 0.70 |
 
 Hit Rate@5 and Hit Rate@10 are reported for observability but are not asserted. If MRR is healthy, hit rates will be too.
 
