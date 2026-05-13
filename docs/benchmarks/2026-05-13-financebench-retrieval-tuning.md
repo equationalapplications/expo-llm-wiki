@@ -1,6 +1,6 @@
 # FinanceBench retrieval tuning — 2026-05-13
 
-Follow-up to the [initial FinanceBench benchmark](./2026-05-13-financebench-retrieval-benchmark.md). Evaluated three configurations on the same frozen fixture set to determine the effect of `hybridWeight`, `preFilterLimit`, and `maxResults`.
+Follow-up to the [initial FinanceBench benchmark](./2026-05-13-financebench-retrieval-benchmark.md). Evaluated four configurations on the same frozen fixture set to determine the effect of `hybridWeight`, `preFilterLimit`, and `maxResults`.
 
 ## Commit and environment
 

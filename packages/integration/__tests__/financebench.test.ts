@@ -44,7 +44,7 @@ beforeAll(async () => {
   const db = openTestDatabase();
   wiki = new WikiMemory(db, {
     llmProvider: { generateText: async () => '{}' },
-    config: { maxResults: 10, tablePrefix: TABLE_PREFIX },
+    config: { maxResults: 32, tablePrefix: TABLE_PREFIX },
   });
   await wiki.setup();
   await wiki.importDump(dump);
@@ -74,14 +74,14 @@ beforeAll(async () => {
 
   wiki = new WikiMemory(db, {
     llmProvider: { generateText: async () => '{}', embed },
-    config: { maxResults: 10, tablePrefix: TABLE_PREFIX },
+    config: { maxResults: 32, tablePrefix: TABLE_PREFIX },
   });
   await wiki.setup();
 }, 300_000);
 
 describe('FinanceBench retrieval benchmark', () => {
   it(
-    'MRR@10 ≥ 0.30 across all 150 FinanceBench questions',
+    'MRR@10 ≥ 0.55 across all 150 FinanceBench questions',
     async () => {
       const mrrScores: number[] = [];
       const hitAt5: number[] = [];
@@ -133,7 +133,7 @@ describe('FinanceBench retrieval benchmark', () => {
       console.log(`  Hit Rate@10:  ${meanHit10.toFixed(4)}`);
       console.log(`  Report: benchmark-results/${fname}`);
 
-      expect(meanMRR).toBeGreaterThanOrEqual(0.30);
+      expect(meanMRR).toBeGreaterThanOrEqual(0.55);
     },
     300_000
   );
