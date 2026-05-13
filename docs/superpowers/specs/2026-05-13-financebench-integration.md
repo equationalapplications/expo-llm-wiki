@@ -1,7 +1,7 @@
 # Spec: FinanceBench Retrieval Benchmark
 
 **Date:** 2026-05-13
-**Status:** Approved
+**Status:** Implemented
 
 ---
 
