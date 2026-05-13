@@ -93,7 +93,7 @@ packages/integration/
     └── financebench.test.ts         ← NEW
 ```
 
-No changes to `packages/core` or any other package.
+**Note:** This PR also modifies `packages/core/src/WikiMemory.ts` (dimension-mismatch fallback scoped to zero-weight entities) and adds `packages/core/__tests__/multiEntityVectorRanker.test.ts` and `packages/core/__tests__/multiEntityRead.test.ts` to cover the new behavior. The FinanceBench benchmark itself does not require these core changes, but they were made alongside it to fix multi-entity retrieval correctness.
 
 ---
 
@@ -546,7 +546,7 @@ npx tsx scripts/embed-financebench.ts
 ```
 
 Expected output sizes (approximate):
-- `financebench-corpus.jsonl` — ~400 KB (150 questions × ~2–3 evidence passages each, deduped)
+- `financebench-corpus.jsonl` — ~270 KB (150 questions × ~2–3 evidence passages each, deduped)
 - `financebench-dump.json.gz` — ~200 KB
 - `financebench-embeddings.json.gz` — ~800 KB (corpus_size × 384 dims × 4 bytes, gzipped)
 

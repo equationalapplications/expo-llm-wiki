@@ -87,6 +87,10 @@ describe('FinanceBench retrieval benchmark', () => {
       const hitAt5: number[] = [];
       const hitAt10: number[] = [];
 
+      // Fail loudly if fixtures drift and any query has no relevant docs
+      const noRelevant = Object.keys(queries).filter((id) => (qrels[id] ?? []).length === 0);
+      expect(noRelevant, `Queries missing qrels: [${noRelevant.join(', ')}]`).toHaveLength(0);
+
       for (const [queryId, queryText] of Object.entries(queries)) {
         const relevant = new Set(qrels[queryId] ?? []);
         if (relevant.size === 0) continue;
@@ -98,6 +102,8 @@ describe('FinanceBench retrieval benchmark', () => {
         hitAt5.push(computeHitRate(rankedIds, relevant, 5));
         hitAt10.push(computeHitRate(rankedIds, relevant, 10));
       }
+
+      expect(mrrScores).toHaveLength(Object.keys(queries).length);
 
       const mean = (arr: number[]) => arr.reduce((a, b) => a + b, 0) / arr.length;
       const meanMRR = mean(mrrScores);

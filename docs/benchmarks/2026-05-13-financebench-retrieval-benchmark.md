@@ -40,7 +40,7 @@ Each unique `(doc_name, evidence_text)` pair becomes one WikiMemory fact under e
 
 | File | Size | Contents |
 |------|------|----------|
-| `fixtures/financebench-corpus.jsonl` | ~90 KB | Raw corpus (gitignored, re-generate with fetch script) |
+| `fixtures/financebench-corpus.jsonl` | ~270 KB | Raw corpus (gitignored, re-generate with fetch script) |
 | `fixtures/financebench-queries.json` | ~30 KB | 150 question strings keyed by `financebench_id` |
 | `fixtures/financebench-qrels.json` | ~15 KB | Relevant fact IDs per query |
 | `fixtures/financebench-dump.json.gz` | 0.1 MB | WikiMemory text-only dump (no blobs) |
