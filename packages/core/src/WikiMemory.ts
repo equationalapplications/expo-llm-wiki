@@ -1587,11 +1587,14 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     const [tasks, events] = await Promise.all([
       (async () => {
         const entityScope = this._entityInClause(entityIds);
+        // Scale limit so each entity can contribute up to 20 tasks (capped at 200).
+        const tasksLimit = Math.min(20 * entityIds.length, 200);
         return this.db.getAllAsync<WikiTask>(
           `SELECT * FROM ${this.prefix}tasks
            WHERE ${entityScope.clause} AND status IN ('pending', 'in_progress') AND deleted_at IS NULL
-           ORDER BY priority DESC, created_at ASC`,
-          entityScope.params
+           ORDER BY priority DESC, created_at ASC
+           LIMIT ?`,
+          [...entityScope.params, tasksLimit]
         );
       })(),
       (async () => {

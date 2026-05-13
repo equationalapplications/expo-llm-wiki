@@ -44,7 +44,6 @@ export function applyTierWeight(
 
 export function shouldExposeReadMetadata(
   entityId: string | string[],
-  _options?: unknown,
 ): boolean {
   return Array.isArray(entityId);
 }
