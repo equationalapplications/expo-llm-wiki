@@ -1,8 +1,12 @@
 import type { SQLiteAdapter } from './types';
 import { setupDatabase } from './db/schema';
 import { MIGRATIONS, CURRENT_SCHEMA_VERSION } from './db/migrations';
-import { WikiOptions, MemoryBundle, MemoryDump, WikiEvent, WikiFact, WikiTask, WikiCheckpoint, ExtractedFact, ExtractedTask, WikiBusyError, PrunePartialFailureError, EntityStatus, ReadOptions } from './types';
+import { WikiOptions, MemoryBundle, MemoryDump, WikiEvent, WikiFact, WikiTask, ExtractedFact, ExtractedTask, WikiBusyError, PrunePartialFailureError, EntityStatus, ReadOptions } from './types';
 import { EntryRepository } from './repositories/EntryRepository';
+import { OutboxRepository } from './repositories/OutboxRepository';
+import { TaskRepository } from './repositories/TaskRepository';
+import { EventRepository } from './repositories/EventRepository';
+import { MetadataRepository } from './repositories/MetadataRepository';
 import { LIBRARIAN_SYSTEM_PROMPT, HEAL_SYSTEM_PROMPT, INGEST_SYSTEM_PROMPT } from './prompts';
 import MiniSearch from 'minisearch';
 import { cosineSimilarity } from './utils/cosine';
@@ -288,6 +292,10 @@ export class WikiMemory {
   private prefix: string;
   private options: WikiOptions;
   private entryRepo: EntryRepository;
+  private outboxRepo: OutboxRepository;
+  private taskRepo: TaskRepository;
+  private eventRepo: EventRepository;
+  private metadataRepo: MetadataRepository;
   private activeMaintenanceJobs = new Set<string>();
   private activeIngestJobs = new Set<string>();
   private statusSubscribers = new Map<
@@ -629,7 +637,11 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     this.db = db;
     this.options = options;
     this.prefix = options.config?.tablePrefix || 'llm_wiki_';
-    this.entryRepo = new EntryRepository(db, this.prefix);
+    this.outboxRepo = new OutboxRepository(db, this.prefix);
+    this.entryRepo = new EntryRepository(db, this.prefix, this.outboxRepo);
+    this.taskRepo = new TaskRepository(db, this.prefix, this.outboxRepo);
+    this.eventRepo = new EventRepository(db, this.prefix);
+    this.metadataRepo = new MetadataRepository(db, this.prefix);
   }
 
   async setup() {
@@ -1595,18 +1607,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     }
 
     const [tasks, events] = await Promise.all([
-      (async () => {
-        const entityScope = this._entityInClause(entityIds);
-        // Single-entity reads preserve the pre-Phase-2 unbounded behavior.
-        // Multi-entity reads cap at 20× entity count (max 200) to bound result size.
-        const tasksLimit = entityIds.length === 1 ? undefined : Math.min(20 * entityIds.length, 200);
-        return this.db.getAllAsync<WikiTask>(
-          `SELECT * FROM ${this.prefix}tasks
-           WHERE ${entityScope.clause} AND status IN ('pending', 'in_progress') AND deleted_at IS NULL
-           ORDER BY priority DESC, created_at ASC${tasksLimit !== undefined ? '\n           LIMIT ?' : ''}`,
-          tasksLimit !== undefined ? [...entityScope.params, tasksLimit] : entityScope.params
-        );
-      })(),
+      this.taskRepo.findAllPending(entityIds as string[], entityIds.length === 1 ? undefined : Math.min(20 * entityIds.length, 200)),
       (async () => {
         const entityScope = this._entityInClause(entityIds);
         // Scaled global cap: 10× entity count, max 100. Not a per-entity guarantee —
@@ -1891,20 +1892,16 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       eventType = 'observation';
     }
 
-    await this.db.runAsync(`
-      INSERT INTO ${this.prefix}events (id, entity_id, event_type, summary, related_entry_id, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `, [id, entityId, eventType, event.summary, event.related_entry_id || null, now]);
+    await this.eventRepo.add({ id, entity_id: entityId, event_type: eventType, summary: event.summary, related_entry_id: event.related_entry_id || null, created_at: now });
 
     const threshold = this.options.config?.autoLibrarianThreshold || 20;
     
-    const [row, cp] = await Promise.all([
-        this.db.getFirstAsync<{ count: number }>(`SELECT COUNT(*) as count FROM ${this.prefix}events WHERE entity_id = ?`, [entityId]),
-        this.db.getFirstAsync<WikiCheckpoint>(`SELECT * FROM ${this.prefix}checkpoints WHERE entity_id = ?`, [entityId])
+    const [count, cp] = await Promise.all([
+        this.eventRepo.count(entityId),
+        this.metadataRepo.getCheckpoint(entityId)
     ]);
-    
-    const count = row?.count || 0;
-    let memoryCheckpoint = cp?.memory_checkpoint || 0;
+
+    let memoryCheckpoint = cp.memory ?? 0;
     if (memoryCheckpoint > count) memoryCheckpoint = 0;
 
     if (count - memoryCheckpoint >= threshold) {
@@ -1930,16 +1927,12 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
 
   private async runLibrarianThenMaybeHeal(entityId: string, currentEventCount: number) {
     await this._doRunLibrarian(entityId);
-    
-    await this.db.runAsync(`
-      INSERT INTO ${this.prefix}checkpoints (entity_id, memory_checkpoint) 
-      VALUES (?, ?) 
-      ON CONFLICT(entity_id) DO UPDATE SET memory_checkpoint = ?
-    `, [entityId, currentEventCount, currentEventCount]);
-    
+
+    await this.metadataRepo.updateCheckpoint(entityId, { memory: currentEventCount }, this.db);
+
     const autoHealThreshold = this.options.config?.autoHealThreshold || 100;
-    const cp = await this.db.getFirstAsync<WikiCheckpoint>(`SELECT * FROM ${this.prefix}checkpoints WHERE entity_id = ?`, [entityId]);
-    let healCheckpoint = cp?.heal_checkpoint || 0;
+    const cp = await this.metadataRepo.getCheckpoint(entityId);
+    let healCheckpoint = cp.heal ?? 0;
     if (healCheckpoint > currentEventCount) healCheckpoint = 0;
     
     if (currentEventCount - healCheckpoint >= autoHealThreshold) {
@@ -1949,11 +1942,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
         this._notifyStatusSubscribers(entityId);
         try {
           await this._doRunHeal(entityId);
-          await this.db.runAsync(`
-            INSERT INTO ${this.prefix}checkpoints (entity_id, heal_checkpoint) 
-            VALUES (?, ?) 
-            ON CONFLICT(entity_id) DO UPDATE SET heal_checkpoint = ?
-          `, [entityId, currentEventCount, currentEventCount]);
+          await this.metadataRepo.updateCheckpoint(entityId, { heal: currentEventCount }, this.db);
         } finally {
           this.activeMaintenanceJobs.delete(healKey);
           this._notifyStatusSubscribers(entityId);
@@ -1963,12 +1952,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
   }
 
   private async _doRunLibrarian(entityId: string): Promise<void> {
-    const events = await this.db.getAllAsync<WikiEvent>(`
-      SELECT * FROM ${this.prefix}events
-      WHERE entity_id = ?
-      ORDER BY created_at DESC
-      LIMIT 50
-    `, [entityId]);
+    const events = await this.eventRepo.getRecent(entityId, 50);
 
     const currentFactsRows = await this.db.getAllAsync<WikiFact>(`
       SELECT * FROM ${this.prefix}entries
@@ -2021,19 +2005,30 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
         if (skip) continue;
 
         const id = generateId('fact_');
-        await this.db.runAsync(`
-          INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'librarian_inferred', now, now]);
+        const factObj: WikiFact = {
+          id,
+          entity_id: entityId,
+          title: fact.title,
+          body: fact.body,
+          tags: fact.tags,
+          confidence: fact.confidence,
+          source_type: 'librarian_inferred',
+          source_hash: null,
+          source_ref: null,
+          created_at: now,
+          updated_at: now,
+          last_accessed_at: null,
+          access_count: 0,
+          deleted_at: null,
+        };
+        await this.entryRepo.upsert(factObj, this.db);
         insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
       }
 
       for (const task of validTasks) {
         const id = generateId('task_');
-        await this.db.runAsync(`
-          INSERT INTO ${this.prefix}tasks (id, entity_id, description, status, priority, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `, [id, entityId, task.description, 'pending', task.priority, now, now]);
+        const taskObj: WikiTask = { id, entity_id: entityId, description: task.description, status: 'pending', priority: task.priority, created_at: now, updated_at: now, resolved_at: null, deleted_at: null };
+        await this.taskRepo.upsert(taskObj, this.db);
       }
     });
 
@@ -2084,8 +2079,8 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     });
 
     const allFactsRows = await this.db.getAllAsync<WikiFact>(`SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`, [entityId]);
-    const allTasks = await this.db.getAllAsync<WikiTask>(`SELECT * FROM ${this.prefix}tasks WHERE entity_id = ? AND status IN ('pending', 'in_progress') AND deleted_at IS NULL`, [entityId]);
-    const recentEvents = await this.db.getAllAsync<WikiEvent>(`SELECT * FROM ${this.prefix}events WHERE entity_id = ? ORDER BY created_at DESC LIMIT 20`, [entityId]);
+    const allTasks = await this.taskRepo.findAllPending([entityId]);
+    const recentEvents = await this.eventRepo.getRecent(entityId, 20);
 
     const healCandidates = allFactsRows.filter(f => f.source_type !== 'immutable_document');
     const documentAnchors = allFactsRows
@@ -2128,10 +2123,23 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       }
       for (const fact of validNewFacts) {
         const id = generateId('fact_');
-        await this.db.runAsync(`
-          INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'librarian_inferred', now, now]);
+        const factObj: WikiFact = {
+          id,
+          entity_id: entityId,
+          title: fact.title,
+          body: fact.body,
+          tags: fact.tags,
+          confidence: fact.confidence,
+          source_type: 'librarian_inferred',
+          source_hash: null,
+          source_ref: null,
+          created_at: now,
+          updated_at: now,
+          last_accessed_at: null,
+          access_count: 0,
+          deleted_at: null,
+        };
+        await this.entryRepo.upsert(factObj, this.db);
         insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
       }
     });
