@@ -1,8 +1,18 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { openTestDatabase } from '../helpers/sqliteAdapter';
 import { setupDatabase } from '../../src/db/schema';
+import { MIGRATIONS } from '../../src/db/migrations';
 import { EntryRepository } from '../../src/repositories/EntryRepository';
-import type { WikiFact } from '../../src/types';
+import { OutboxRepository } from '../../src/repositories/OutboxRepository';
+import type { SQLiteAdapter, WikiFact } from '../../src/types';
+
+async function setupWithOutbox(db: SQLiteAdapter, prefix: string): Promise<void> {
+  await setupDatabase(db, prefix);
+  const migration = MIGRATIONS.find(m => m.version === 4);
+  if (migration) {
+    await migration.run(db, prefix);
+  }
+}
 
 function makeFact(overrides?: Partial<WikiFact>): WikiFact {
   return {
@@ -94,5 +104,84 @@ describe('EntryRepository', () => {
     const rows = await repo.getPrunableMetadata('entity1', cutoff);
     expect(rows.length).toBe(1);
     expect(rows[0].id).toBe('old1');
+  });
+});
+
+describe('EntryRepository with OutboxRepository', () => {
+  let db: ReturnType<typeof openTestDatabase>;
+  let repo: EntryRepository;
+  let outbox: OutboxRepository;
+
+  beforeEach(async () => {
+    db = openTestDatabase();
+    await setupWithOutbox(db, 'llm_wiki_');
+    outbox = new OutboxRepository(db, 'llm_wiki_');
+    repo = new EntryRepository(db, 'llm_wiki_', outbox);
+  });
+
+  it('upsert() with tx stages outbox entry with operation=UPDATE', async () => {
+    const fact = makeFact();
+    await db.withTransactionAsync(async () => {
+      await repo.upsert(fact, db);
+    });
+    const pending = await outbox.fetchPending();
+    expect(pending.length).toBe(1);
+    expect(pending[0].operation).toBe('UPDATE');
+    expect(pending[0].record_id).toBe(fact.id);
+    expect(pending[0].table_name).toBe('entries');
+    expect(pending[0].entity_id).toBe(fact.entity_id);
+  });
+
+  it('upsert() with deleted_at stages outbox entry with operation=DELETE', async () => {
+    const fact = makeFact({ deleted_at: Date.now() });
+    await db.withTransactionAsync(async () => {
+      await repo.upsert(fact, db);
+    });
+    const pending = await outbox.fetchPending();
+    expect(pending.length).toBe(1);
+    expect(pending[0].operation).toBe('DELETE');
+  });
+
+  it('softDelete() with tx stages outbox entry with operation=DELETE', async () => {
+    const fact = makeFact();
+    await repo.upsert(fact);
+    await db.withTransactionAsync(async () => {
+      await repo.softDelete(fact.id, fact.entity_id, db);
+    });
+    const pending = await outbox.fetchPending();
+    expect(pending.length).toBe(1);
+    expect(pending[0].operation).toBe('DELETE');
+    expect(pending[0].record_id).toBe(fact.id);
+  });
+
+  it('upsert() without tx does not stage outbox entry', async () => {
+    const fact = makeFact();
+    await repo.upsert(fact);
+    const pending = await outbox.fetchPending();
+    expect(pending.length).toBe(0);
+  });
+
+  it('upsert without outbox still works (no crash)', async () => {
+    const repoNoOutbox = new EntryRepository(db, 'llm_wiki_');
+    const fact = makeFact();
+    const result = await repoNoOutbox.upsert(fact);
+    expect(result.changes).toBe(1);
+    const pending = await outbox.fetchPending();
+    expect(pending.length).toBe(0);
+  });
+
+  it('rollback of tx removes both entry and outbox row', async () => {
+    const fact = makeFact();
+    await expect(
+      db.withTransactionAsync(async () => {
+        await repo.upsert(fact, db);
+        throw new Error('simulated rollback');
+      }),
+    ).rejects.toThrow('simulated rollback');
+
+    const entries = await db.getAllAsync('SELECT * FROM llm_wiki_entries WHERE id = ?', [fact.id]);
+    expect(entries.length).toBe(0);
+    const pending = await outbox.fetchPending();
+    expect(pending.length).toBe(0);
   });
 });

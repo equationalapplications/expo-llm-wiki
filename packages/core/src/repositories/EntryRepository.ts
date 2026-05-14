@@ -1,5 +1,6 @@
 import type { SQLiteAdapter, WikiFact } from '../types';
 import { BaseRepository } from './BaseRepository';
+import { OutboxRepository } from './OutboxRepository';
 
 function mapRowToFact(row: any): WikiFact {
   const tags: string[] = (() => {
@@ -30,6 +31,10 @@ function mapRowToFact(row: any): WikiFact {
 
 export class EntryRepository extends BaseRepository {
   private chunkSize = 500;
+
+  constructor(db: SQLiteAdapter, prefix: string, private outbox?: OutboxRepository) {
+    super(db, prefix);
+  }
 
   /**
    * Fetch facts by IDs, optionally scoped to entity IDs.
@@ -86,7 +91,7 @@ export class EntryRepository extends BaseRepository {
             })()
           : undefined;
 
-    return executor.runAsync(
+    const result = await executor.runAsync(
       `INSERT INTO ${this.prefix}entries (
         id, entity_id, title, body, tags, confidence, source_type,
         source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count,
@@ -126,6 +131,16 @@ export class EntryRepository extends BaseRepository {
         null,
       ],
     );
+    if (this.outbox && tx) {
+      await this.outbox.push({
+        entityId: fact.entity_id,
+        tableName: 'entries',
+        recordId: fact.id,
+        operation: fact.deleted_at ? 'DELETE' : 'UPDATE',
+        payload: fact,
+      }, tx);
+    }
+    return result;
   }
 
   /**
@@ -134,10 +149,20 @@ export class EntryRepository extends BaseRepository {
   async softDelete(entryId: string, entityId: string, tx?: SQLiteAdapter): Promise<{ changes: number }> {
     const executor = this.getExecutor(tx);
     const now = Date.now();
-    return executor.runAsync(
+    const result = await executor.runAsync(
       `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`,
       [now, now, entryId, entityId],
     );
+    if (this.outbox && tx) {
+      await this.outbox.push({
+        entityId,
+        tableName: 'entries',
+        recordId: entryId,
+        operation: 'DELETE',
+        payload: { id: entryId, entity_id: entityId, deleted_at: now },
+      }, tx);
+    }
+    return result;
   }
 
   /**
