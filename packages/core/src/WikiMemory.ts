@@ -11,6 +11,7 @@ import { LIBRARIAN_SYSTEM_PROMPT, HEAL_SYSTEM_PROMPT, INGEST_SYSTEM_PROMPT } fro
 import MiniSearch from 'minisearch';
 import { cosineSimilarity } from './utils/cosine';
 import { parseEmbedding } from './utils/embedding';
+import { generateId } from './utils/ids';
 import { applyTierWeight, normalizeEntityIds, sanitizeTierWeights, shouldExposeReadMetadata } from './readOptions';
 
 export { WikiBusyError, PrunePartialFailureError } from './types';
@@ -75,10 +76,6 @@ function parseJsonResponse<T>(text: string): T {
 
   if (end === -1) throw new SyntaxError('No JSON object/array found in LLM response');
   return JSON.parse(text.slice(start, end + 1)) as T;
-}
-
-function generateId(prefix: string = '') {
-  return prefix + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 }
 
 function safeSlice(value: string, start: number, end?: number): string {
@@ -3013,95 +3010,97 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       let deletedTasks = 0;
       const deletedEntryIds: string[] = [];
 
-      if (params.clearAll) {
-        // Select both new deletions and already-soft-deleted (for hook retry on failure)
-        const newDeletions = await this.db.getAllAsync<{ id: string }>(
-          `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
-          [entityId]
-        );
-        const alreadySoftDeleted = await this.db.getAllAsync<{ id: string }>(
-          `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NOT NULL`,
-          [entityId]
-        );
-        deletedEntryIds.push(...newDeletions.map(e => e.id), ...alreadySoftDeleted.map(e => e.id));
-
-        const [entriesRes, tasksRes] = await Promise.all([
-          this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
-          this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
-        ]);
-        await this.db.runAsync(`UPDATE ${this.prefix}checkpoints SET memory_checkpoint = 0, heal_checkpoint = 0 WHERE entity_id = ?`, [entityId]);
-        deletedEntries = entriesRes.changes;
-        deletedTasks = tasksRes.changes;
-      } else {
-        const hasIdSelectors = params.entryId !== undefined || params.taskId !== undefined;
-        const hasSourceSelectors = params.sourceRef !== undefined || params.sourceHash !== undefined;
-        if (hasIdSelectors && hasSourceSelectors) {
-          throw new Error('forget() params are mutually exclusive: use entryId/taskId together, or sourceRef/sourceHash together, but not both in the same call');
-        }
-
-        const sourceRef = params.sourceRef !== undefined ? normalizeSourceRef(params.sourceRef) : null;
-        if (params.sourceRef !== undefined && !sourceRef) throw new Error('Invalid sourceRef');
-        const sourceHash = params.sourceHash !== undefined ? normalizeSourceHash(params.sourceHash) : null;
-        if (params.sourceHash !== undefined && !sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
-
-        if (params.entryId) {
-          // Select entry regardless of deleted_at to allow hook retry on already-soft-deleted rows
-          const entry = await this.db.getFirstAsync<{ id: string }>(
-            `SELECT id FROM ${this.prefix}entries WHERE id = ? AND entity_id = ?`,
-            [params.entryId, entityId]
+      await this.db.withTransactionAsync(async () => {
+        if (params.clearAll) {
+          // Select both new deletions and already-soft-deleted (for hook retry on failure)
+          const newDeletions = await this.db.getAllAsync<{ id: string }>(
+            `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
+            [entityId]
           );
-          if (entry) deletedEntryIds.push(entry.id);
+          const alreadySoftDeleted = await this.db.getAllAsync<{ id: string }>(
+            `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NOT NULL`,
+            [entityId]
+          );
+          deletedEntryIds.push(...newDeletions.map(e => e.id), ...alreadySoftDeleted.map(e => e.id));
+
+          const [entriesRes, tasksRes] = await Promise.all([
+            this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
+            this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
+          ]);
+          await this.db.runAsync(`UPDATE ${this.prefix}checkpoints SET memory_checkpoint = 0, heal_checkpoint = 0 WHERE entity_id = ?`, [entityId]);
+          deletedEntries = entriesRes.changes;
+          deletedTasks = tasksRes.changes;
+        } else {
+          const hasIdSelectors = params.entryId !== undefined || params.taskId !== undefined;
+          const hasSourceSelectors = params.sourceRef !== undefined || params.sourceHash !== undefined;
+          if (hasIdSelectors && hasSourceSelectors) {
+            throw new Error('forget() params are mutually exclusive: use entryId/taskId together, or sourceRef/sourceHash together, but not both in the same call');
+          }
+
+          const sourceRef = params.sourceRef !== undefined ? normalizeSourceRef(params.sourceRef) : null;
+          if (params.sourceRef !== undefined && !sourceRef) throw new Error('Invalid sourceRef');
+          const sourceHash = params.sourceHash !== undefined ? normalizeSourceHash(params.sourceHash) : null;
+          if (params.sourceHash !== undefined && !sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
+
+          if (params.entryId) {
+            // Select entry regardless of deleted_at to allow hook retry on already-soft-deleted rows
+            const entry = await this.db.getFirstAsync<{ id: string }>(
+              `SELECT id FROM ${this.prefix}entries WHERE id = ? AND entity_id = ?`,
+              [params.entryId, entityId]
+            );
+            if (entry) deletedEntryIds.push(entry.id);
+          }
+
+          if (sourceRef || sourceHash) {
+            // Select entries regardless of deleted_at to allow hook retry on already-soft-deleted rows
+            let q = `SELECT id FROM ${this.prefix}entries WHERE entity_id = ?`;
+            const args: any[] = [entityId];
+            if (sourceRef) {
+              q += ` AND source_ref = ?`;
+              args.push(sourceRef);
+            }
+            if (sourceHash) {
+              q += ` AND source_hash = ?`;
+              args.push(sourceHash);
+            }
+            const entriesToDelete = await this.db.getAllAsync<{ id: string }>(q, args);
+            deletedEntryIds.push(...entriesToDelete.map(e => e.id));
+          }
+
+          const entryPromise = params.entryId
+            ? this.entryRepo.softDelete(params.entryId, entityId, this.db)
+            : null;
+
+          const taskPromise = params.taskId
+            ? this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, params.taskId, entityId])
+            : null;
+
+          let refPromise: Promise<{ changes: number; lastInsertRowId: number }> | null = null;
+          if (sourceRef || sourceHash) {
+            let q = `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`;
+            const args: any[] = [now, now, entityId];
+            if (sourceRef) {
+              q += ` AND source_ref = ?`;
+              args.push(sourceRef);
+            }
+            if (sourceHash) {
+              q += ` AND source_hash = ?`;
+              args.push(sourceHash);
+            }
+            refPromise = this.db.runAsync(q, args);
+          }
+
+          const [entryResult, taskResult, refResult] = await Promise.all([
+            entryPromise ?? Promise.resolve(null),
+            taskPromise ?? Promise.resolve(null),
+            refPromise ?? Promise.resolve(null),
+          ]);
+
+          if (entryResult) deletedEntries += entryResult.changes;
+          if (taskResult) deletedTasks += taskResult.changes;
+          if (refResult) deletedEntries += refResult.changes;
         }
-
-        if (sourceRef || sourceHash) {
-          // Select entries regardless of deleted_at to allow hook retry on already-soft-deleted rows
-          let q = `SELECT id FROM ${this.prefix}entries WHERE entity_id = ?`;
-          const args: any[] = [entityId];
-          if (sourceRef) {
-            q += ` AND source_ref = ?`;
-            args.push(sourceRef);
-          }
-          if (sourceHash) {
-            q += ` AND source_hash = ?`;
-            args.push(sourceHash);
-          }
-          const entriesToDelete = await this.db.getAllAsync<{ id: string }>(q, args);
-          deletedEntryIds.push(...entriesToDelete.map(e => e.id));
-        }
-
-        const entryPromise = params.entryId
-          ? this.entryRepo.softDelete(params.entryId, entityId)
-          : null;
-
-        const taskPromise = params.taskId
-          ? this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, params.taskId, entityId])
-          : null;
-
-        let refPromise: Promise<{ changes: number; lastInsertRowId: number }> | null = null;
-        if (sourceRef || sourceHash) {
-          let q = `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`;
-          const args: any[] = [now, now, entityId];
-          if (sourceRef) {
-            q += ` AND source_ref = ?`;
-            args.push(sourceRef);
-          }
-          if (sourceHash) {
-            q += ` AND source_hash = ?`;
-            args.push(sourceHash);
-          }
-          refPromise = this.db.runAsync(q, args);
-        }
-
-        const [entryResult, taskResult, refResult] = await Promise.all([
-          entryPromise ?? Promise.resolve(null),
-          taskPromise ?? Promise.resolve(null),
-          refPromise ?? Promise.resolve(null),
-        ]);
-
-        if (entryResult) deletedEntries += entryResult.changes;
-        if (taskResult) deletedTasks += taskResult.changes;
-        if (refResult) deletedEntries += refResult.changes;
-      }
+      });
 
       await this.rebuildMiniSearchIndex(entityId);
       this.vectorCache.delete(entityId);

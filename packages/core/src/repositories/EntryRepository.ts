@@ -32,7 +32,7 @@ function mapRowToFact(row: any): WikiFact {
 export class EntryRepository extends BaseRepository {
   private chunkSize = 500;
 
-  constructor(db: SQLiteAdapter, prefix: string, private outbox?: OutboxRepository) {
+  constructor(db: SQLiteAdapter, prefix: string, private outbox: OutboxRepository) {
     super(db, prefix);
   }
 
@@ -72,8 +72,9 @@ export class EntryRepository extends BaseRepository {
   /**
    * Upsert a WikiFact. Nullable fields set to null when fact value is null.
    * Returns { changes, lastInsertRowId }.
+   * `tx` is REQUIRED to ensure atomic outbox staging.
    */
-  async upsert(fact: WikiFact, tx?: SQLiteAdapter): Promise<{ changes: number; lastInsertRowId: number }> {
+  async upsert(fact: WikiFact, tx: SQLiteAdapter): Promise<{ changes: number; lastInsertRowId: number }> {
     const executor = this.getExecutor(tx);
     const now = Date.now();
     const tagsJson = JSON.stringify(fact.tags);
@@ -90,6 +91,13 @@ export class EntryRepository extends BaseRepository {
               return arr;
             })()
           : undefined;
+
+    // Determine if this is an INSERT or UPDATE for the outbox
+    const existing = await executor.getFirstAsync<{ id: string }>(
+      `SELECT id FROM ${this.prefix}entries WHERE id = ?`,
+      [fact.id],
+    );
+    const operation = fact.deleted_at ? 'DELETE' : (existing ? 'UPDATE' : 'INSERT');
 
     const result = await executor.runAsync(
       `INSERT INTO ${this.prefix}entries (
@@ -131,37 +139,38 @@ export class EntryRepository extends BaseRepository {
         null,
       ],
     );
-    if (this.outbox && tx) {
-      await this.outbox.push({
-        entityId: fact.entity_id,
-        tableName: 'entries',
-        recordId: fact.id,
-        operation: fact.deleted_at ? 'DELETE' : 'UPDATE',
-        payload: fact,
-      }, tx);
-    }
+
+    await this.outbox.push({
+      entityId: fact.entity_id,
+      tableName: 'entries',
+      recordId: fact.id,
+      operation,
+      payload: fact,
+    }, tx);
+
     return result;
   }
 
   /**
    * Soft-delete a single entry by ID scoped to entityId. Sets deleted_at + updated_at.
+   * `tx` is REQUIRED to ensure atomic outbox staging.
    */
-  async softDelete(entryId: string, entityId: string, tx?: SQLiteAdapter): Promise<{ changes: number }> {
+  async softDelete(entryId: string, entityId: string, tx: SQLiteAdapter): Promise<{ changes: number }> {
     const executor = this.getExecutor(tx);
     const now = Date.now();
     const result = await executor.runAsync(
       `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`,
       [now, now, entryId, entityId],
     );
-    if (this.outbox && tx) {
-      await this.outbox.push({
-        entityId,
-        tableName: 'entries',
-        recordId: entryId,
-        operation: 'DELETE',
-        payload: { id: entryId, entity_id: entityId, deleted_at: now },
-      }, tx);
-    }
+
+    await this.outbox.push({
+      entityId,
+      tableName: 'entries',
+      recordId: entryId,
+      operation: 'DELETE',
+      payload: { id: entryId, entity_id: entityId, deleted_at: now },
+    }, tx);
+
     return result;
   }
 

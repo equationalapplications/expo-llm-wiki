@@ -148,7 +148,7 @@ describe('TaskRepository', () => {
   });
 
   describe('upsert', () => {
-    it('inserts a new task and stages an outbox entry in the same tx', async () => {
+    it('inserts a new task and stages an outbox entry with operation=INSERT in the same tx', async () => {
       const task = makeTask({ id: 'task_new' });
       await db.withTransactionAsync(async () => {
         await repo.upsert(task, db);
@@ -162,6 +162,26 @@ describe('TaskRepository', () => {
       expect(outboxRows.length).toBe(1);
       expect(outboxRows[0].record_id).toBe(task.id);
       expect(outboxRows[0].table_name).toBe('tasks');
+      expect(outboxRows[0].operation).toBe('INSERT');
+    });
+
+    it('updates existing task and stages an outbox entry with operation=UPDATE', async () => {
+      const task = makeTask({ id: 'task_existing', description: 'Original' });
+      await db.withTransactionAsync(async () => {
+        await repo.upsert(task, db);
+      });
+
+      // Clear outbox to get fresh state
+      await db.runAsync(`DELETE FROM ${PREFIX}outbox`);
+
+      // Now update
+      task.description = 'Updated';
+      await db.withTransactionAsync(async () => {
+        await repo.upsert(task, db);
+      });
+
+      const outboxRows = await db.getAllAsync<any>(`SELECT * FROM ${PREFIX}outbox`);
+      expect(outboxRows.length).toBe(1);
       expect(outboxRows[0].operation).toBe('UPDATE');
     });
 

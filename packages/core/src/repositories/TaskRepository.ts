@@ -62,6 +62,14 @@ export class TaskRepository extends BaseRepository {
   async upsert(task: WikiTask, tx: SQLiteAdapter): Promise<void> {
     const executor = this.getExecutor(tx);
     const now = Date.now();
+
+    // Determine if this is an INSERT or UPDATE for the outbox
+    const existing = await executor.getFirstAsync<{ id: string }>(
+      `SELECT id FROM ${this.prefix}tasks WHERE id = ?`,
+      [task.id],
+    );
+    const operation = task.deleted_at != null ? 'DELETE' : (existing ? 'UPDATE' : 'INSERT');
+
     await executor.runAsync(
       `INSERT INTO ${this.prefix}tasks (
         id, entity_id, description, status, priority,
@@ -87,7 +95,7 @@ export class TaskRepository extends BaseRepository {
         task.deleted_at ?? null,
       ],
     );
-    const operation = task.deleted_at != null ? 'DELETE' : 'UPDATE';
+
     await this.outbox.push(
       {
         entityId: task.entity_id,

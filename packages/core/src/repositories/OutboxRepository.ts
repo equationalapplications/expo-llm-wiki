@@ -1,5 +1,6 @@
 import { BaseRepository } from './BaseRepository';
 import type { SQLiteAdapter } from '../types';
+import { generateId } from '../utils/ids';
 
 export class OutboxRepository extends BaseRepository {
   /**
@@ -18,7 +19,7 @@ export class OutboxRepository extends BaseRepository {
     tx: SQLiteAdapter,
   ): Promise<void> {
     const executor = this.getExecutor(tx);
-    const id = 'out_' + Math.random().toString(36).substring(2, 11);
+    const id = generateId('out_');
     const now = Date.now();
     await executor.runAsync(
       `INSERT INTO ${this.prefix}outbox (id, entity_id, table_name, record_id, operation, payload, created_at)
