@@ -49,9 +49,21 @@ export class EntryRepository extends BaseRepository {
   private mapRowToFact(row: any): WikiFact {
     if (!row) return row;
     const { embedding: _embedding, embedding_blob: _blob, ...rest } = row;
+
+    let tags: string[] = [];
+    if (typeof rest.tags === 'string' && rest.tags.trim() !== '') {
+      try {
+        tags = JSON.parse(rest.tags);
+      } catch {
+        tags = [];
+      }
+    } else if (Array.isArray(rest.tags)) {
+      tags = rest.tags;
+    }
+
     return {
       ...rest,
-      tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : (rest.tags || []),
+      tags,
     };
   }
 
@@ -108,6 +120,10 @@ export class EntryRepository extends BaseRepository {
     const executor = this.getExecutor(tx);
     const now = Date.now();
 
+    // NOTE: INSERT OR REPLACE is implemented as DELETE + INSERT in SQLite.
+    // This is safe for Phase 1 because we have no foreign keys with
+    // ON DELETE CASCADE on the entries table. If such keys are introduced
+    // in Phase 3, this method must be revisited.
     await executor.runAsync(
       `INSERT OR REPLACE INTO ${this.prefix}entries (
         id, entity_id, title, body, tags, confidence, 
