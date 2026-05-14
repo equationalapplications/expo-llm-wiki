@@ -1586,7 +1586,10 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
         const { embedding: _embedding, embedding_blob: _blob, ...rest } = f;
         return {
           ...rest,
-          tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
+          tags: (() => {
+            if (Array.isArray(rest.tags)) return rest.tags;
+            try { const p = JSON.parse(rest.tags as string); return Array.isArray(p) ? p : []; } catch { return []; }
+          })(),
         } as WikiFact;
       });
     }

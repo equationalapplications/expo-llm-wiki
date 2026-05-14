@@ -35,13 +35,8 @@ describe('EntryRepository', () => {
   });
 
   it('mapRowToFact handles missing/null tags', async () => {
-    // Indirectly tested via findByIds round-trip
-    const fact = makeFact({ tags: [] });
-    // Insert raw row with bad tags
     await db.execAsync(`INSERT INTO llm_wiki_entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at, access_count)
       VALUES ('f1', 'e1', 'T', 'B', 'not-json', 'certain', 'user_stated', 1, 1, 0)`);
-    const rows = await db.getAllAsync(`SELECT * FROM llm_wiki_entries`);
-    // Access private mapRowToFact via findByIds
     const facts = await repo.findByIds(['f1']);
     expect(facts.length).toBe(1);
     expect(Array.isArray(facts[0].tags)).toBe(true);
