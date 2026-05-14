@@ -1,4 +1,4 @@
-# Spec: FinanceBench Retrieval Benchmark
+# Spec: Repository Infrastructure & Fact Migration
 
 **Date:** 2026-05-14
 **Status:** Draft
@@ -43,30 +43,43 @@ import type { WikiFact, SQLiteAdapter } from '../../types';
 
 export class EntryRepository extends BaseRepository {
   /**
-   * Centralized hydration logic. Ensures tags are parsed and 
-   * platform-specific blobs are handled correctly.
+   * Centralized hydration logic. Ensures tags are parsed and platform-specific
+   * vector columns are stripped from returned facts.
    */
   private mapRowToFact(row: any): WikiFact {
     if (!row) return row;
+    const { embedding: _embedding, embedding_blob: _blob, ...rest } = row;
     return {
-      ...row,
-      tags: typeof row.tags === 'string' ? JSON.parse(row.tags) : (row.tags || []),
-      embedding_blob: row.embedding_blob || undefined,
+      ...rest,
+      tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : (rest.tags || []),
     };
   }
 
-  async findByIds(ids: string[], tx?: SQLiteAdapter): Promise<WikiFact[]> {
+  async findByIds(ids: string[], scopedEntityIds?: string[], tx?: SQLiteAdapter): Promise<WikiFact[]> {
     if (ids.length === 0) return [];
     const executor = this.getExecutor(tx);
-    const placeholders = ids.map(() => '?').join(',');
-    
-    const rows = await executor.getAllAsync<any>(
-      `SELECT * FROM ${this.prefix}entries 
-       WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
-      ids
-    );
-    
-    return rows.map(row => this.mapRowToFact(row));
+    const chunkSize = 500;
+    const entityClause = scopedEntityIds && scopedEntityIds.length > 0
+      ? ` AND entity_id IN (${scopedEntityIds.map(() => '?').join(',')})`
+      : '';
+    const entityParams = scopedEntityIds && scopedEntityIds.length > 0 ? [...scopedEntityIds] : [];
+    const rows: any[] = [];
+
+    for (let i = 0; i < ids.length; i += chunkSize) {
+      const idChunk = ids.slice(i, i + chunkSize);
+      const placeholders = idChunk.map(() => '?').join(',');
+      const chunkRows = await executor.getAllAsync<any>(
+        `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders})${entityClause} AND deleted_at IS NULL`,
+        [...idChunk, ...entityParams]
+      );
+      rows.push(...chunkRows);
+    }
+
+    const byId = new Map(rows.map(row => [row.id, row]));
+    return ids
+      .map(id => byId.get(id))
+      .filter((row): row is any => row !== undefined)
+      .map(row => this.mapRowToFact(row));
   }
 
   /**
@@ -98,6 +111,8 @@ export class EntryRepository extends BaseRepository {
       ]
     );
     // FUTURE HOOK: Outbox record will go here in Phase 3.
+    // NOTE: In Phase 1, _doImportEntity may still need to retain its
+    // raw SQL path for blob-preserving imports and LWW merge behavior.
   }
 
   async softDelete(id: string, tx?: SQLiteAdapter): Promise<void> {
@@ -133,13 +148,16 @@ constructor(options: WikiOptions) {
 
 ### 2. Implementation Checklist
 
+**Future Alignment:** Document that _doImportEntity should be migrated to the Repository in Phase 2 or 3 once the repository supports the specific conflict-resolution and blob-handling logic required for high-fidelity imports.
 * **Replace Private Hydration:** Replace the manual SQL and JSON parsing in methods like `_hydrateFactsByIds` with `this.entryRepo.findByIds()`.
 * **Refactor `forget()`:** Swap out the manual `UPDATE` query for `this.entryRepo.softDelete(id)`.
-* **Refactor `_doImportEntity()`:** Instead of raw `INSERT` strings, map the import data to `WikiFact` objects and call `this.entryRepo.upsert()`.
+* **Preserve Import Path Semantics:** Keep `_doImportEntity()` on the raw SQL path in Phase 1, because import needs blob preservation and merge/LWW/collision guard logic not yet captured by a simple repository upsert.
 * **Standardize Metadata Queries:** Replace `SELECT id, entity_id` calls in maintenance routines with `this.entryRepo.getAllActiveMetadata()`.
 
 ---
 
 ## Why this works for the Outbox Pattern
 
-By the end of Phase 1, you have a **single bottleneck** (`EntryRepository.upsert`) for all data changes. When you are ready to sync to an external database in Phase 3, you only need to add a single call to an `OutboxRepository` inside that `upsert` method. This guarantees that your local SQLite and external sync record are updated in the same transaction.
+By the end of Phase 1, you have established the standardized write path (EntryRepository.upsert) for all core wiki operations (ingestion, librarian updates, and manual edits).
+
+While _doImportEntity remains on a specialized raw path for this phase to preserve complex LWW (Last Write Wins) and blob semantics, the vast majority of state changes are now centralized. In Phase 3, adding an OutboxRepository call to this repository ensures that all routine data changes are automatically staged for external sync within the same local transaction.
