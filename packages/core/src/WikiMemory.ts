@@ -3240,6 +3240,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
             updated_at: now,
             last_accessed_at: null,
             access_count: 0,
+            deleted_at: null,
           };
           await this.entryRepo.upsert(wikiFact);
           insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });

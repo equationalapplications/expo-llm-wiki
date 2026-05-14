@@ -18,6 +18,7 @@ function makeFact(overrides?: Partial<WikiFact>): WikiFact {
     created_at: Date.now(),
     updated_at: Date.now(),
     last_accessed_at: null,
+    deleted_at: null,
     access_count: 0,
     ...overrides,
   };
@@ -33,13 +34,13 @@ describe('EntryRepository', () => {
     repo = new EntryRepository(db, 'llm_wiki_');
   });
 
-  it('mapRowToFact handles missing/null tags', () => {
+  it('mapRowToFact handles missing/null tags', async () => {
     // Indirectly tested via findByIds round-trip
     const fact = makeFact({ tags: [] });
     // Insert raw row with bad tags
-    db.exec(`INSERT INTO llm_wiki_entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at, access_count)
+    await db.execAsync(`INSERT INTO llm_wiki_entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at, access_count)
       VALUES ('f1', 'e1', 'T', 'B', 'not-json', 'certain', 'user_stated', 1, 1, 0)`);
-    const rows = db.getAll(`SELECT * FROM llm_wiki_entries`);
+    const rows = await db.getAllAsync(`SELECT * FROM llm_wiki_entries`);
     // Access private mapRowToFact via findByIds
     const facts = await repo.findByIds(['f1']);
     expect(facts.length).toBe(1);
@@ -71,7 +72,7 @@ describe('EntryRepository', () => {
     const fact = makeFact();
     const result = await repo.upsert(fact);
     expect(result.changes).toBe(1);
-    const rows = db.getAll(`SELECT updated_at FROM llm_wiki_entries WHERE id = ?`, [fact.id]);
+    const rows = await db.getAllAsync(`SELECT updated_at FROM llm_wiki_entries WHERE id = ?`, [fact.id]);
     expect(Number(rows[0].updated_at)).toBeGreaterThanOrEqual(before);
   });
 
@@ -80,7 +81,7 @@ describe('EntryRepository', () => {
     await repo.upsert(fact);
     const result = await repo.softDelete(fact.id);
     expect(result.changes).toBe(1);
-    const rows = db.getAll(`SELECT deleted_at, updated_at FROM llm_wiki_entries WHERE id = ?`, [fact.id]);
+    const rows = await db.getAllAsync(`SELECT deleted_at, updated_at FROM llm_wiki_entries WHERE id = ?`, [fact.id]);
     expect(Number(rows[0].deleted_at)).toBeGreaterThan(0);
     expect(Number(rows[0].updated_at)).toBeGreaterThan(0);
   });
@@ -90,7 +91,7 @@ describe('EntryRepository', () => {
     await repo.upsert(oldFact);
     await repo.softDelete(oldFact.id);
     // Manually set old deleted_at
-    db.exec(`UPDATE llm_wiki_entries SET deleted_at = ${Date.now() - 10 * 86400000} WHERE id = 'old1'`);
+    await db.execAsync(`UPDATE llm_wiki_entries SET deleted_at = ${Date.now() - 10 * 86400000} WHERE id = 'old1'`);
     const recentFact = makeFact({ id: 'recent1' });
     await repo.upsert(recentFact);
     await repo.softDelete(recentFact.id);
