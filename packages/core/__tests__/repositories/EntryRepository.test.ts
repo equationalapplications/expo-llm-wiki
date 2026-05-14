@@ -89,12 +89,12 @@ describe('EntryRepository', () => {
   it('getPrunableMetadata returns only old soft-deleted rows', async () => {
     const oldFact = makeFact({ id: 'old1' });
     await repo.upsert(oldFact);
-    await repo.softDelete(oldFact.id);
+    await repo.softDelete(oldFact.id, oldFact.entity_id);
     // Manually set old deleted_at
     await db.execAsync(`UPDATE llm_wiki_entries SET deleted_at = ${Date.now() - 10 * 86400000} WHERE id = 'old1'`);
     const recentFact = makeFact({ id: 'recent1' });
     await repo.upsert(recentFact);
-    await repo.softDelete(recentFact.id);
+    await repo.softDelete(recentFact.id, recentFact.entity_id);
     const cutoff = Date.now() - 5 * 86400000;
     const rows = await repo.getPrunableMetadata('entity1', cutoff);
     expect(rows.length).toBe(1);

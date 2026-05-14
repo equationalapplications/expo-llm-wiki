@@ -76,7 +76,15 @@ export class EntryRepository extends BaseRepository {
       ? fact.embedding_blob
       : (fact.embedding_blob && typeof fact.embedding_blob === 'object' && 'type' in fact.embedding_blob)
         ? new Uint8Array((fact.embedding_blob as any).data)
-        : undefined;
+        : (fact.embedding_blob && typeof fact.embedding_blob === 'object')
+          ? (() => {
+              const obj = fact.embedding_blob as Record<string, number>;
+              const keys = Object.keys(obj).map(Number).sort((a, b) => a - b);
+              const arr = new Uint8Array(keys.length);
+              for (let i = 0; i < keys.length; i++) arr[i] = obj[String(keys[i])];
+              return arr;
+            })()
+          : undefined;
 
     return executor.runAsync(
       `INSERT INTO ${this.prefix}entries (
@@ -96,7 +104,7 @@ export class EntryRepository extends BaseRepository {
         updated_at = excluded.updated_at,
         last_accessed_at = excluded.last_accessed_at,
         access_count = excluded.access_count,
-        embedding_blob = excluded.embedding_blob,
+        embedding_blob = CASE WHEN excluded.embedding_blob IS NULL THEN embedding_blob ELSE excluded.embedding_blob END,
         embedding = NULL`,
       [
         fact.id,
