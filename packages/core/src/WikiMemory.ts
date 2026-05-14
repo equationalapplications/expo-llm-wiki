@@ -2,6 +2,7 @@ import type { SQLiteAdapter } from './types';
 import { setupDatabase } from './db/schema';
 import { MIGRATIONS, CURRENT_SCHEMA_VERSION } from './db/migrations';
 import { WikiOptions, MemoryBundle, MemoryDump, WikiEvent, WikiFact, WikiTask, WikiCheckpoint, ExtractedFact, ExtractedTask, WikiBusyError, PrunePartialFailureError, EntityStatus, ReadOptions } from './types';
+import { EntryRepository } from './repositories/EntryRepository';
 import { LIBRARIAN_SYSTEM_PROMPT, HEAL_SYSTEM_PROMPT, INGEST_SYSTEM_PROMPT } from './prompts';
 import MiniSearch from 'minisearch';
 import { cosineSimilarity } from './utils/cosine';
@@ -286,6 +287,7 @@ export class WikiMemory {
   private db: SQLiteAdapter;
   private prefix: string;
   private options: WikiOptions;
+  private entryRepo: EntryRepository;
   private activeMaintenanceJobs = new Set<string>();
   private activeIngestJobs = new Set<string>();
   private statusSubscribers = new Map<
@@ -627,6 +629,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     this.db = db;
     this.options = options;
     this.prefix = options.config?.tablePrefix || 'llm_wiki_';
+    this.entryRepo = new EntryRepository(db, this.prefix);
   }
 
   async setup() {
@@ -882,11 +885,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       if (retainSoftDeletedFor !== null) {
         const cutoff = now - retainSoftDeletedFor * 86400000;
 
-        const entriesToDelete = await this.db.getAllAsync<{ id: string; entity_id: string }>(
-          `SELECT id, entity_id FROM ${this.prefix}entries
-           WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ?`,
-          [entityId, cutoff]
-        );
+        const entriesToDelete = await this.entryRepo.getPrunableMetadata(entityId, cutoff);
 
         // Hook-before-delete: await hook for each row, accumulate successes, commit partial on failure
         const succeeded: Array<{ entity_id: string; id: string }> = [];
@@ -1690,35 +1689,8 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
    * Hydrate full facts by ID. Pass scopedEntityIds to restrict to requested namespaces in SQL
    * (defense-in-depth against a rogue VectorRanker returning cross-entity IDs).
    */
-  private async _hydrateFactsByIds(ids: readonly string[], scopedEntityIds?: readonly string[]): Promise<WikiFact[]> {
-    const fullRows: Array<WikiFact & { embedding?: unknown; embedding_blob?: unknown }> = [];
-    const chunkSize = 500;
-    const entityClause = scopedEntityIds && scopedEntityIds.length > 0
-      ? ` AND entity_id IN (${scopedEntityIds.map(() => '?').join(',')})`
-      : '';
-    const entityParams = scopedEntityIds && scopedEntityIds.length > 0 ? [...scopedEntityIds] : [];
-
-    for (let i = 0; i < ids.length; i += chunkSize) {
-      const idChunk = ids.slice(i, i + chunkSize);
-      const placeholders = idChunk.map(() => '?').join(',');
-      const chunkRows = await this.db.getAllAsync<WikiFact & { embedding?: unknown; embedding_blob?: unknown }>(
-        `SELECT * FROM ${this.prefix}entries WHERE id IN (${placeholders})${entityClause} AND deleted_at IS NULL`,
-        [...idChunk, ...entityParams],
-      );
-      fullRows.push(...chunkRows);
-    }
-
-    const byId = new Map(fullRows.map(row => [row.id, row]));
-    return ids
-      .map(id => byId.get(id))
-      .filter((fact): fact is WikiFact & { embedding?: unknown; embedding_blob?: unknown } => fact !== undefined)
-      .map(fact => {
-        const { embedding: _embedding, embedding_blob: _blob, ...rest } = fact;
-        return {
-          ...rest,
-          tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
-        };
-      });
+  private async _hydrateFactsByIds(ids: readonly string[], scopedEntityIds?: readonly string[], tx?: SQLiteAdapter): Promise<WikiFact[]> {
+    return this.entryRepo.findByIds(ids, scopedEntityIds, tx);
   }
 
   /**
@@ -3087,7 +3059,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
         }
 
         const entryPromise = params.entryId
-          ? this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, params.entryId, entityId])
+          ? this.entryRepo.softDelete(params.entryId)
           : null;
 
         const taskPromise = params.taskId
@@ -3254,11 +3226,22 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
         );
         for (const fact of allValidFacts) {
           const id = generateId('fact_');
-          await this.db.runAsync(
-            `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'immutable_document', sourceHash, sourceRef, now, now]
-          );
+          const wikiFact: WikiFact = {
+            id,
+            entity_id: entityId,
+            title: fact.title,
+            body: fact.body,
+            tags: fact.tags,
+            confidence: fact.confidence,
+            source_type: 'immutable_document',
+            source_hash: sourceHash,
+            source_ref: sourceRef,
+            created_at: now,
+            updated_at: now,
+            last_accessed_at: null,
+            access_count: 0,
+          };
+          await this.entryRepo.upsert(wikiFact);
           insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
         }
       });
