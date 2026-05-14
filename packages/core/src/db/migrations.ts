@@ -53,6 +53,25 @@ export const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 4,
+    description: 'Create outbox table for change data capture',
+    run: async (db, prefix) => {
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS ${prefix}outbox (
+          id TEXT PRIMARY KEY,
+          entity_id TEXT NOT NULL,
+          table_name TEXT NOT NULL,
+          record_id TEXT NOT NULL,
+          operation TEXT NOT NULL,
+          payload TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS ${prefix}outbox_entity_id_created_at
+          ON ${prefix}outbox (entity_id, created_at);
+      `);
+    },
+  },
 ];
 
 // Verify MIGRATIONS are in strictly ascending version order at module load time.
