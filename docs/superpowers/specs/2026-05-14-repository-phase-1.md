@@ -1,7 +1,7 @@
-# Spec: Repository Infrastructure & Fact Migration
+# Spec: Repository Infrastructure & Fact Migration - Phase 1
 
 **Date:** 2026-05-14
-**Status:** Draft
+**Status:** Approved
 **Scope:** Establish the repository layer for `WikiFact` to centralize hydration and routine writes while preserving high-fidelity raw SQL paths for complex imports.
 
 ---
