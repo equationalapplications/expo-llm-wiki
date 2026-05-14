@@ -83,15 +83,27 @@ export class EntryRepository extends BaseRepository {
   }
 
   /**
-   * Optimized metadata fetch for background jobs (Librarian/Heal).
+   * Returns metadata for entries that are soft-deleted and eligible for pruning.
+   * Specific to the pruning use-case in runPrune().
    */
-  async getAllActiveMetadata(tx?: SQLiteAdapter): Promise<Array<{ id: string; entity_id: string }>> {
+  async getPrunableMetadata(
+    entityId: string,
+    cutoff: number,
+    tx?: SQLiteAdapter
+  ): Promise<Array<{ id: string; entity_id: string }>> {
     const executor = this.getExecutor(tx);
     return await executor.getAllAsync<any>(
-      `SELECT id, entity_id FROM ${this.prefix}entries WHERE deleted_at IS NULL`
+      `SELECT id, entity_id FROM ${this.prefix}entries
+       WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ?`,
+      [entityId, cutoff]
     );
   }
 
+  /**
+   * Standard upsert for core wiki operations (ingestion, librarian updates,
+   * manual edits). NOT for high-fidelity imports — _doImportEntity retains its
+   * raw SQL path in Phase 1 to preserve LWW merge and blob-handling logic.
+   */
   async upsert(fact: WikiFact, tx?: SQLiteAdapter): Promise<void> {
     const executor = this.getExecutor(tx);
     const now = Date.now();
@@ -150,9 +162,11 @@ constructor(options: WikiOptions) {
 
 **Future Alignment:** Document that _doImportEntity should be migrated to the Repository in Phase 2 or 3 once the repository supports the specific conflict-resolution and blob-handling logic required for high-fidelity imports.
 * **Replace Private Hydration:** Replace the manual SQL and JSON parsing in methods like `_hydrateFactsByIds` with `this.entryRepo.findByIds()`.
-* **Refactor `forget()`:** Swap out the manual `UPDATE` query for `this.entryRepo.softDelete(id)`.
+* **Refactor `forget()` (Partial):** Swap out the manual `UPDATE` query for `this.entryRepo.softDelete(id)` only within the `entryId` conditional path. Bulk deletes (entity/source) remain raw SQL for Phase 1.
 * **Preserve Import Path Semantics:** Keep `_doImportEntity()` on the raw SQL path in Phase 1, because import needs blob preservation and merge/LWW/collision guard logic not yet captured by a simple repository upsert.
-* **Standardize Metadata Queries:** Replace `SELECT id, entity_id` calls in maintenance routines with `this.entryRepo.getAllActiveMetadata()`.
+* **Maintenance Migration:** Replace the pruning query in `runPrune()` with `this.entryRepo.getPrunableMetadata(entityId, cutoff)`.
+* **Scope Boundary:** `read()`, `_doRunLibrarian()`, and `_doRunHeal()` will continue to use inline SQL for hydration in Phase 1 to minimize regression risk.
+* **Internal Access:** Repositories are internal to `@equationalapplications/expo-llm-wiki/core` and will not be exported from `index.ts`.
 
 ---
 
