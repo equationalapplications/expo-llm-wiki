@@ -67,7 +67,7 @@ class MockSQLiteDatabase {
       }
 
       if (normalized.startsWith('INSERT INTO') && normalized.includes('entries') && normalized.includes('embedding_blob')) {
-        const [id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, embedding_blob] = args;
+        const [id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at, embedding_blob] = args;
         const rowid = ++this.rowidCounter;
         this.entries.push({
           rowid,
@@ -84,8 +84,8 @@ class MockSQLiteDatabase {
           updated_at,
           last_accessed_at,
           access_count,
+          deleted_at: deleted_at ?? null,
           embedding_blob,
-          deleted_at: null,
         });
         return { changes: 1, lastInsertRowId: rowid };
       }
