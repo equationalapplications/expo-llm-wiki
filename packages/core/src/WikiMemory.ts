@@ -3059,7 +3059,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
         }
 
         const entryPromise = params.entryId
-          ? this.entryRepo.softDelete(params.entryId)
+          ? this.entryRepo.softDelete(params.entryId, entityId)
           : null;
 
         const taskPromise = params.taskId

@@ -1,5 +1,5 @@
 import type { SQLiteAdapter, WikiFact } from '../types';
-import { parseEmbedding } from '../utils/embedding';
+import { BaseRepository } from './BaseRepository';
 
 function mapRowToFact(row: any): WikiFact {
   const tags: string[] = (() => {
@@ -23,11 +23,12 @@ function mapRowToFact(row: any): WikiFact {
     last_accessed_at: (row.last_accessed_at === null || row.last_accessed_at === undefined)
       ? null
       : Number(row.last_accessed_at),
+    deleted_at: row.deleted_at != null ? Number(row.deleted_at) : null,
     access_count: Number(row.access_count ?? 0),
-  } as WikiFact;
+  };
 }
 
-export class EntryRepository extends (await import('./BaseRepository')).BaseRepository {
+export class EntryRepository extends BaseRepository {
   private chunkSize = 500;
 
   /**
@@ -118,14 +119,14 @@ export class EntryRepository extends (await import('./BaseRepository')).BaseRepo
   }
 
   /**
-   * Soft-delete a single entry by ID. Sets deleted_at + updated_at.
+   * Soft-delete a single entry by ID scoped to entityId. Sets deleted_at + updated_at.
    */
-  async softDelete(entryId: string, tx?: SQLiteAdapter): Promise<{ changes: number }> {
+  async softDelete(entryId: string, entityId: string, tx?: SQLiteAdapter): Promise<{ changes: number }> {
     const executor = this.getExecutor(tx);
     const now = Date.now();
     return executor.runAsync(
-      `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
-      [now, now, entryId],
+      `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`,
+      [now, now, entryId, entityId],
     );
   }
 

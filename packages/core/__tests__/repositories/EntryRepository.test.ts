@@ -79,7 +79,7 @@ describe('EntryRepository', () => {
   it('softDelete sets deleted_at and updated_at', async () => {
     const fact = makeFact();
     await repo.upsert(fact);
-    const result = await repo.softDelete(fact.id);
+    const result = await repo.softDelete(fact.id, fact.entity_id);
     expect(result.changes).toBe(1);
     const rows = await db.getAllAsync(`SELECT deleted_at, updated_at FROM llm_wiki_entries WHERE id = ?`, [fact.id]);
     expect(Number(rows[0].deleted_at)).toBeGreaterThan(0);
