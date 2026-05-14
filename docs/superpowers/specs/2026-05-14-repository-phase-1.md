@@ -1,7 +1,7 @@
 # Spec: Repository Infrastructure & Fact Migration
 
 **Date:** 2026-05-14
-**Status:** Approved
+**Status:** Draft
 **Scope:** Establish the repository layer for `WikiFact` to centralize hydration and routine writes while preserving high-fidelity raw SQL paths for complex imports.
 
 ---
@@ -259,6 +259,30 @@ For standard prefixes (`llm_wiki_`), direct string interpolation is standard pra
 
 ---
 
-## 5. Final Verdict
+### One Minor implementation "Gotcha"
 
-**Green Light.** The spec is approved for implementation with the one amendment to `mapRowToFact` (numeric coercion for `last_accessed_at`) already applied above.
+When you implement the **`findByIds`** logic, keep an eye on the `entityClause`. Currently, it looks like this:
+
+TypeScript
+
+```
+const entityClause = scopedEntityIds && scopedEntityIds.length > 0
+  ? ` AND entity_id IN (${scopedEntityIds.map(() => '?').join(',')})`
+  : '';
+```
+
+In your loop, you are appending `entityParams` to every chunk:
+
+TypeScript
+
+```
+const chunkRows = await executor.getAllAsync<any>(
+  `...`,
+  [...idChunk, ...entityParams]
+);
+```
+
+**Important:** If `scopedEntityIds` is very large (e.g., hundreds of entities), the combined count of `idChunk.length + entityParams.length` could theoretically hit the SQLite variable limit (usually 999).
+
+- **Mitigation:** Since `WikiMemory` usually scopes to one or two entities at a time, this is likely a non-issue. If you ever expect `scopedEntityIds` to be large, you may need to reduce the `chunkSize` from 500 to something lower (like 250).
+    
