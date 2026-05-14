@@ -132,35 +132,52 @@ export class EntryRepository extends BaseRepository {
 
   /**
    * Standard upsert for routine operations (e.g., ingestDocument).
-   * NOTE: In SQLite, INSERT OR REPLACE is a DELETE + INSERT. This is safe
-   * in Phase 1 as there are no FKs with ON DELETE CASCADE on this table.
+   * Uses INSERT ... ON CONFLICT(id) DO UPDATE SET to preserve non-updated
+   * columns (e.g., embedding_blob is kept unless a new blob is provided).
    */
   async upsert(fact: WikiFact, tx?: SQLiteAdapter): Promise<void> {
     const executor = this.getExecutor(tx);
     const now = Date.now();
 
     await executor.runAsync(
-      `INSERT OR REPLACE INTO ${this.prefix}entries (
+      `INSERT INTO ${this.prefix}entries (
         id, entity_id, title, body, tags, confidence, 
         source_type, source_hash, source_ref, 
-        created_at, updated_at, last_accessed_at, access_count, deleted_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        created_at, updated_at, last_accessed_at, access_count, deleted_at,
+        embedding_blob, embedding
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        entity_id = excluded.entity_id,
+        title = excluded.title,
+        body = excluded.body,
+        tags = excluded.tags,
+        confidence = excluded.confidence,
+        source_type = excluded.source_type,
+        source_hash = excluded.source_hash,
+        source_ref = excluded.source_ref,
+        updated_at = excluded.updated_at,
+        last_accessed_at = excluded.last_accessed_at,
+        access_count = excluded.access_count,
+        deleted_at = excluded.deleted_at,
+        embedding_blob = CASE WHEN excluded.embedding_blob IS NULL THEN embedding_blob ELSE excluded.embedding_blob END,
+        embedding = NULL`,
       [
-        fact.id, fact.entity_id, fact.title, fact.body, 
+        fact.id, fact.entity_id, fact.title, fact.body,
         JSON.stringify(fact.tags), fact.confidence,
         fact.source_type, fact.source_hash, fact.source_ref,
         fact.created_at || now, now, fact.last_accessed_at || null,
-        fact.access_count || 0, fact.deleted_at || null
+        fact.access_count || 0, fact.deleted_at ?? null,
+        null, null
       ]
     );
   }
 
-  async softDelete(id: string, tx?: SQLiteAdapter): Promise<void> {
+  async softDelete(entryId: string, entityId: string, tx?: SQLiteAdapter): Promise<void> {
     const executor = this.getExecutor(tx);
     const now = Date.now();
     await executor.runAsync(
-      `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE id = ?`,
-      [now, now, id]
+      `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`,
+      [now, now, entryId, entityId]
     );
   }
 }
@@ -188,7 +205,7 @@ constructor(options: WikiOptions) {
 ### Implementation Checklist
 
 * **Hydration:** Replace manual SQL/parsing in `_hydrateFactsByIds` with `this.entryRepo.findByIds()`.
-* **Targeted `forget()`:** Swap manual `UPDATE` for `this.entryRepo.softDelete(id)` **only** inside the `entryId` path. Bulk deletes remain raw SQL.
+* **Targeted `forget()`:** Swap manual `UPDATE` for `this.entryRepo.softDelete(entryId, entityId)` **only** inside the `entryId` path. Bulk deletes remain raw SQL.
 * **Pruning:** Replace raw `SELECT id, entity_id` in `runPrune()` with `this.entryRepo.getPrunableMetadata()`.
 * **Scope Boundary:** `read()`, `_doRunLibrarian()`, and `_doRunHeal()` remain as inline SQL for Phase 1 hydration to prevent scope creep.
 * **Import Integrity:** `_doImportEntity()` remains raw SQL to preserve its complex LWW merge and blob-handling logic.
@@ -226,7 +243,7 @@ This aligns with `WikiFact.last_accessed_at: number | null`.
 
 ### 4.3 Error Handling in `upsert` — Verified ✅
 
-`INSERT OR REPLACE` delegates constraint resolution to SQLite. Non-PK constraint violations will throw from `executor.runAsync` and propagate up.
+`INSERT ... ON CONFLICT(id) DO UPDATE SET` delegates constraint resolution to SQLite. Non-PK constraint violations will throw from `executor.runAsync` and propagate up.
 
 `WikiMemory` methods (`ingestDocument`, `forget`, `runPrune`, etc.) already wrap their logic in `try/catch` or let errors bubble to the caller. `WikiBusyError` is thrown **before** any repository call, so it always takes precedence. No spec change required.
 
@@ -245,10 +262,10 @@ Recommended isolated tests for `EntryRepository`:
    - Pass 501 IDs → verify the loop executes twice (500 + 1).
 
 3. **Soft delete timestamp verification:**
-   - Call `softDelete(id)` → verify `deleted_at` and `updated_at` are set to the same timestamp.
+   - Call `softDelete(entryId, entityId)` → verify `deleted_at` and `updated_at` are set to the same timestamp.
 
 4. **`getPrunableMetadata` boundary:**
-   - Insert rows with `deleted_at` exactly at `cutoff`, one ms before, one ms after → verify only the "after" row is returned.
+   - Insert rows with `deleted_at` exactly at `cutoff`, one ms before, one ms after → verify only rows at/before the cutoff are returned (the "after" row is excluded).
 
 5. **`upsert` idempotency:**
    - Insert a fact, then upsert the same fact with modified `body` → verify the row is replaced and `updated_at` changes.

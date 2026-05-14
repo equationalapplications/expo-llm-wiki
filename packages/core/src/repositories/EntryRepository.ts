@@ -90,8 +90,8 @@ export class EntryRepository extends BaseRepository {
       `INSERT INTO ${this.prefix}entries (
         id, entity_id, title, body, tags, confidence, source_type,
         source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count,
-        embedding_blob, embedding
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        deleted_at, embedding_blob, embedding
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         entity_id = excluded.entity_id,
         title = excluded.title,
@@ -104,6 +104,7 @@ export class EntryRepository extends BaseRepository {
         updated_at = excluded.updated_at,
         last_accessed_at = excluded.last_accessed_at,
         access_count = excluded.access_count,
+        deleted_at = excluded.deleted_at,
         embedding_blob = CASE WHEN excluded.embedding_blob IS NULL THEN embedding_blob ELSE excluded.embedding_blob END,
         embedding = NULL`,
       [
@@ -120,6 +121,7 @@ export class EntryRepository extends BaseRepository {
         now, // updated_at set by repo
         fact.last_accessed_at === null ? null : fact.last_accessed_at,
         fact.access_count,
+        fact.deleted_at ?? null,
         embeddingBlob ?? null,
         null,
       ],
