@@ -1,17 +1,20 @@
 # Spec: Repository Infrastructure & Fact Migration
 
 **Date:** 2026-05-14
-**Status:** Draft
-
-**Phase 1 Spec** focuses on establishing the repository infrastructure and migrating the primary data entity (`WikiFact`) while maintaining strict compatibility with your existing transaction logic.
+**Status:** Approved
+**Scope:** Establish the repository layer for `WikiFact` to centralize hydration and routine writes while preserving high-fidelity raw SQL paths for complex imports.
 
 ---
 
-## Phase 1: Repository Infrastructure & Fact Migration
+## 1. Repository Infrastructure
 
-### 1. Base Repository (`BaseRepository.ts`)
+### Base Repository (`BaseRepository.ts`)
 
-This class provides the foundation for table prefixing and ensures that any repository can participate in a transaction (`tx`) or default to the main database instance.
+Provides the foundation for table prefixing and transactional awareness.
+
+**Convention note:** `WikiMemory` passes `this.prefix` directly (e.g. `'llm_wiki_'`).
+The existing `setupDatabase` interpolates `${prefix}entries`, producing `llm_wiki_entries`.
+Repository queries must follow the same convention and **not** inject an extra underscore.
 
 ```typescript
 import type { SQLiteAdapter } from '../../types';
@@ -24,7 +27,7 @@ export abstract class BaseRepository {
 
   /**
    * Returns the provided transaction adapter or the default db adapter.
-   * This is critical for maintaining WikiMemory's transactional integrity.
+   * Ensures repositories participate in WikiMemory's existing transactions.
    */
   protected getExecutor(tx?: SQLiteAdapter): SQLiteAdapter {
     return tx || this.db;
@@ -33,9 +36,9 @@ export abstract class BaseRepository {
 
 ```
 
-### 2. Entry Repository (`EntryRepository.ts`)
+### Entry Repository (`EntryRepository.ts`)
 
-This repository centralizes the hydration logic for `WikiFact` and provides atomic access to the `entries` table.
+Centralizes the hydration and atomic access for the `entries` table.
 
 ```typescript
 import { BaseRepository } from './BaseRepository';
@@ -43,27 +46,33 @@ import type { WikiFact, SQLiteAdapter } from '../../types';
 
 export class EntryRepository extends BaseRepository {
   /**
-   * Centralized hydration logic. Ensures tags are parsed and platform-specific
-   * vector columns are stripped from returned facts.
+   * Centralized hydration. Strips vector blobs and safely parses tags.
+   * Ensures strict type compliance with the WikiFact interface.
    */
   private mapRowToFact(row: any): WikiFact {
     if (!row) return row;
-    const { embedding: _embedding, embedding_blob: _blob, ...rest } = row;
+
+    // Destructure to handle the 'embedding' vs 'embedding_blob' logic.
+    // Core WikiFact type uses 'embedding_blob' for the raw bytes.
+    const { embedding: _textEmbed, ...rest } = row;
 
     let tags: string[] = [];
-    if (typeof rest.tags === 'string' && rest.tags.trim() !== '') {
-      try {
-        tags = JSON.parse(rest.tags);
-      } catch {
-        tags = [];
-      }
-    } else if (Array.isArray(rest.tags)) {
-      tags = rest.tags;
+    try {
+      tags = typeof rest.tags === 'string' ? JSON.parse(rest.tags) : (rest.tags || []);
+    } catch {
+      tags = [];
     }
 
     return {
       ...rest,
       tags,
+      // Ensure numeric types are actually numbers (SQLite can return 1/0 for booleans)
+      confidence: rest.confidence as WikiFact['confidence'],
+      source_type: rest.source_type as WikiFact['source_type'],
+      access_count: Number(rest.access_count || 0),
+      created_at: Number(rest.created_at),
+      updated_at: Number(rest.updated_at),
+      last_accessed_at: rest.last_accessed_at != null ? Number(rest.last_accessed_at) : null,
     };
   }
 
@@ -95,8 +104,18 @@ export class EntryRepository extends BaseRepository {
   }
 
   /**
-   * Returns metadata for entries that are soft-deleted and eligible for pruning.
-   * Specific to the pruning use-case in runPrune().
+   * Transaction Handling Safety Note:
+   * The `getExecutor(tx)` pattern ensures that when WikiMemory calls
+   * `withTransactionAsync`, the repository correctly uses the transaction handle.
+   * In `findByIds`, `executor.getAllAsync` is executed inside a loop. Since this
+   * is usually called within a transaction in WikiMemory, this is performant.
+   * If it were outside a transaction, SQLite would wrap each chunk in its own
+   * implicit transaction, which is slower. Phase 1 preserves existing
+   * transaction boundaries, so this remains safe.
+   */
+
+  /**
+   * Targeted metadata fetch for runPrune().
    */
   async getPrunableMetadata(
     entityId: string,
@@ -112,18 +131,14 @@ export class EntryRepository extends BaseRepository {
   }
 
   /**
-   * Standard upsert for core wiki operations (ingestion, librarian updates,
-   * manual edits). NOT for high-fidelity imports — _doImportEntity retains its
-   * raw SQL path in Phase 1 to preserve LWW merge and blob-handling logic.
+   * Standard upsert for routine operations (e.g., ingestDocument).
+   * NOTE: In SQLite, INSERT OR REPLACE is a DELETE + INSERT. This is safe
+   * in Phase 1 as there are no FKs with ON DELETE CASCADE on this table.
    */
   async upsert(fact: WikiFact, tx?: SQLiteAdapter): Promise<void> {
     const executor = this.getExecutor(tx);
     const now = Date.now();
 
-    // NOTE: INSERT OR REPLACE is implemented as DELETE + INSERT in SQLite.
-    // This is safe for Phase 1 because we have no foreign keys with
-    // ON DELETE CASCADE on the entries table. If such keys are introduced
-    // in Phase 3, this method must be revisited.
     await executor.runAsync(
       `INSERT OR REPLACE INTO ${this.prefix}entries (
         id, entity_id, title, body, tags, confidence, 
@@ -138,9 +153,6 @@ export class EntryRepository extends BaseRepository {
         fact.access_count || 0, fact.deleted_at || null
       ]
     );
-    // FUTURE HOOK: Outbox record will go here in Phase 3.
-    // NOTE: In Phase 1, _doImportEntity may still need to retain its
-    // raw SQL path for blob-preserving imports and LWW merge behavior.
   }
 
   async softDelete(id: string, tx?: SQLiteAdapter): Promise<void> {
@@ -157,14 +169,13 @@ export class EntryRepository extends BaseRepository {
 
 ---
 
-## PR 1 Execution Strategy
+## 2. PR 1 Execution Strategy
 
-### 1. Initialization
+### Initialization
 
-In `WikiMemory.ts`, initialize the repository in the constructor. This ensures all methods have access to it immediately.
+In `WikiMemory.ts`, initialize the repository in the constructor to ensure availability for all downstream methods.
 
 ```typescript
-// Inside WikiMemory.ts
 private entryRepo: EntryRepository;
 
 constructor(options: WikiOptions) {
@@ -174,20 +185,80 @@ constructor(options: WikiOptions) {
 
 ```
 
-### 2. Implementation Checklist
+### Implementation Checklist
 
-**Future Alignment:** Document that _doImportEntity should be migrated to the Repository in Phase 2 or 3 once the repository supports the specific conflict-resolution and blob-handling logic required for high-fidelity imports.
-* **Replace Private Hydration:** Replace the manual SQL and JSON parsing in methods like `_hydrateFactsByIds` with `this.entryRepo.findByIds()`.
-* **Refactor `forget()` (Partial):** Swap out the manual `UPDATE` query for `this.entryRepo.softDelete(id)` only within the `entryId` conditional path. Bulk deletes (entity/source) remain raw SQL for Phase 1.
-* **Preserve Import Path Semantics:** Keep `_doImportEntity()` on the raw SQL path in Phase 1, because import needs blob preservation and merge/LWW/collision guard logic not yet captured by a simple repository upsert.
-* **Maintenance Migration:** Replace the pruning query in `runPrune()` with `this.entryRepo.getPrunableMetadata(entityId, cutoff)`.
-* **Scope Boundary:** `read()`, `_doRunLibrarian()`, and `_doRunHeal()` will continue to use inline SQL for hydration in Phase 1 to minimize regression risk.
-* **Internal Access:** Repositories are internal to `@equationalapplications/expo-llm-wiki/core` and will not be exported from `index.ts`.
+* **Hydration:** Replace manual SQL/parsing in `_hydrateFactsByIds` with `this.entryRepo.findByIds()`.
+* **Targeted `forget()`:** Swap manual `UPDATE` for `this.entryRepo.softDelete(id)` **only** inside the `entryId` path. Bulk deletes remain raw SQL.
+* **Pruning:** Replace raw `SELECT id, entity_id` in `runPrune()` with `this.entryRepo.getPrunableMetadata()`.
+* **Scope Boundary:** `read()`, `_doRunLibrarian()`, and `_doRunHeal()` remain as inline SQL for Phase 1 hydration to prevent scope creep.
+* **Import Integrity:** `_doImportEntity()` remains raw SQL to preserve its complex LWW merge and blob-handling logic.
+* **Internal Access:** Repositories are internal and **not exported** from the public `index.ts`.
 
 ---
 
-## Why this works for the Outbox Pattern
+## 3. Future Alignment: The Outbox Pattern
 
-By the end of Phase 1, you have established the standardized write path (EntryRepository.upsert) for all core wiki operations (ingestion, librarian updates, and manual edits).
+Phase 1 establishes the **standardized write path** (`EntryRepository.upsert`). By centralizing routine state changes here, Phase 3 can simply inject an `OutboxRepository` call into the `upsert` method. This ensures that every fact change is staged for external synchronization automatically within the same local database transaction.
 
-While _doImportEntity remains on a specialized raw path for this phase to preserve complex LWW (Last Write Wins) and blob semantics, the vast majority of state changes are now centralized. In Phase 3, adding an OutboxRepository call to this repository ensures that all routine data changes are automatically staged for external sync within the same local transaction.
+---
+
+## 4. Review Notes & Spec Amendments
+
+### 4.1 Table Prefixing — Verified ✅
+
+`WikiMemory` sets `this.prefix = options.config?.tablePrefix || 'llm_wiki_'` (trailing underscore included).
+`setupDatabase` interpolates `${prefix}entries`, producing `llm_wiki_entries`.
+The spec's repository queries (`${this.prefix}entries`) match this convention exactly.
+No spec change required.
+
+### 4.2 `mapRowToFact` & `embedding_blob` — Minor Amendment ✅
+
+The spec's `mapRowToFact` correctly strips `embedding` and passes `embedding_blob` through `...rest`.
+However, `last_accessed_at` was missing numeric coercion. Added:
+
+```typescript
+last_accessed_at: rest.last_accessed_at != null ? Number(rest.last_accessed_at) : null,
+```
+
+This aligns with `WikiFact.last_accessed_at: number | null`.
+
+**Future note:** `findByIds` currently uses `SELECT *`. If memory profiling in React Native shows spikes during large hydration cycles, a future optimization can explicitly exclude `embedding_blob` from the `SELECT` unless the caller requests it.
+
+### 4.3 Error Handling in `upsert` — Verified ✅
+
+`INSERT OR REPLACE` delegates constraint resolution to SQLite. Non-PK constraint violations will throw from `executor.runAsync` and propagate up.
+
+`WikiMemory` methods (`ingestDocument`, `forget`, `runPrune`, etc.) already wrap their logic in `try/catch` or let errors bubble to the caller. `WikiBusyError` is thrown **before** any repository call, so it always takes precedence. No spec change required.
+
+### 4.4 Testing Strategy — Verified ✅
+
+The project already uses `better-sqlite3` via `packages/core/__tests__/helpers/sqliteAdapter.ts` for fast, in-memory unit tests.
+
+Recommended isolated tests for `EntryRepository`:
+
+1. **Tag parsing edge cases:**
+   - Empty string `''` → `[]`
+   - Malformed JSON `'{'` → `[]`
+   - Already-parsed array `['a', 'b']` → `['a', 'b']`
+
+2. **`findByIds` chunking:**
+   - Pass 501 IDs → verify the loop executes twice (500 + 1).
+
+3. **Soft delete timestamp verification:**
+   - Call `softDelete(id)` → verify `deleted_at` and `updated_at` are set to the same timestamp.
+
+4. **`getPrunableMetadata` boundary:**
+   - Insert rows with `deleted_at` exactly at `cutoff`, one ms before, one ms after → verify only the "after" row is returned.
+
+5. **`upsert` idempotency:**
+   - Insert a fact, then upsert the same fact with modified `body` → verify the row is replaced and `updated_at` changes.
+
+### 4.5 Table Name Escaping — Acknowledged ✅
+
+For standard prefixes (`llm_wiki_`), direct string interpolation is standard practice across the codebase. If dynamic or user-provided prefixes are introduced in the future, add a shared `escapeIdentifier` utility. Not required for Phase 1.
+
+---
+
+## 5. Final Verdict
+
+**Green Light.** The spec is approved for implementation with the one amendment to `mapRowToFact` (numeric coercion for `last_accessed_at`) already applied above.
