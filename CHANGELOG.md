@@ -1,3 +1,15 @@
+## [4.6.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.6.0...v4.6.1) (2026-05-14)
+
+
+### Bug Fixes
+
+* **core:** add deleted_at to upsert and align spec with implementation ([8f9eb4d](https://github.com/equationalapplications/expo-llm-wiki/commit/8f9eb4daed8c126ff94be34522c8be2d520298e3))
+* **core:** address Copilot review feedback on EntryRepository ([68797a7](https://github.com/equationalapplications/expo-llm-wiki/commit/68797a762998cdcb0327c94104e916bf18f3df88))
+* **core:** address remaining Copilot review feedback on EntryRepository ([8b2b297](https://github.com/equationalapplications/expo-llm-wiki/commit/8b2b2976bf31537e85c19ee91a0b83d55e2ce4c2))
+* **core:** align ingest mock with upsert parameter order ([6d6e4df](https://github.com/equationalapplications/expo-llm-wiki/commit/6d6e4dfef485c0d64a60301e65244995fce0e465))
+* **core:** guard JSON.parse in read() empty-query branch; drop unused test locals ([f40de42](https://github.com/equationalapplications/expo-llm-wiki/commit/f40de42565db9106ad09bbdc6417bf1b7bb0fa68))
+* **core:** resolve typecheck and test errors in EntryRepository ([8fe29bc](https://github.com/equationalapplications/expo-llm-wiki/commit/8fe29bcde4921677b7cc23544698fd2b3d9ac9d4))
+
 # [4.6.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.5.1...v4.6.0) (2026-05-13)
 
 

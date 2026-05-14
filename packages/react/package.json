@@ -1,6 +1,6 @@
 {
   "name": "@equationalapplications/react-llm-wiki",
-  "version": "4.6.0",
+  "version": "4.6.1",
   "description": "React hooks and web utilities for LLM Wiki Memory.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
