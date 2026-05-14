@@ -3253,7 +3253,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
             access_count: 0,
             deleted_at: null,
           };
-          await this.entryRepo.upsert(wikiFact);
+          await this.entryRepo.upsert(wikiFact, this.db);
           insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
         }
       });

@@ -61,5 +61,18 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS ${prefix}outbox (
+      id TEXT PRIMARY KEY,
+      entity_id TEXT NOT NULL,
+      table_name TEXT NOT NULL,
+      record_id TEXT NOT NULL,
+      operation TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS ${prefix}outbox_entity_id_created_at
+      ON ${prefix}outbox (entity_id, created_at);
   `);
 }
