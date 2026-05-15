@@ -189,8 +189,8 @@ describe('subscribeEntityStatus — suppression and unsubscribe', () => {
     const calls: EntityStatus[] = [];
     const unsub = wiki.subscribeEntityStatus('e1', (s) => calls.push({ ...s }));
     // Fire the notifier with no actual mutation
-    (wiki as any)._notifyStatusSubscribers('e1');
-    (wiki as any)._notifyStatusSubscribers('e1');
+    (wiki as any).jobManager._notifyStatusSubscribers('e1');
+    (wiki as any).jobManager._notifyStatusSubscribers('e1');
     expect(calls.length).toBe(1); // only initial
     unsub();
   });
@@ -202,8 +202,8 @@ describe('subscribeEntityStatus — suppression and unsubscribe', () => {
       calls.push({ ...s });
       s.librarian = true;
     });
-    (wiki as any)._notifyStatusSubscribers('e1');
-    (wiki as any)._notifyStatusSubscribers('e1');
+    (wiki as any).jobManager._notifyStatusSubscribers('e1');
+    (wiki as any).jobManager._notifyStatusSubscribers('e1');
     expect(calls.length).toBe(1);
     unsub();
   });
@@ -213,15 +213,15 @@ describe('subscribeEntityStatus — suppression and unsubscribe', () => {
     const calls: EntityStatus[] = [];
     const unsub = wiki.subscribeEntityStatus('e1', (s) => calls.push({ ...s }));
 
-    const pruneKey = (wiki as any)._pruneKey('e1');
-    const reembedKey = (wiki as any)._reembedKey('e1');
-    const importKey = (wiki as any)._importKey('e1');
-    const forgetKey = (wiki as any)._forgetKey('e1');
+    const pruneKey = (wiki as any).jobManager._pruneKey('e1');
+    const reembedKey = (wiki as any).jobManager._reembedKey('e1');
+    const importKey = (wiki as any).jobManager._importKey('e1');
+    const forgetKey = (wiki as any).jobManager._forgetKey('e1');
     for (const k of [pruneKey, reembedKey, importKey, forgetKey]) {
-      (wiki as any).activeMaintenanceJobs.add(k);
-      (wiki as any)._notifyStatusSubscribers('e1'); // even if production code mistakenly called it
-      (wiki as any).activeMaintenanceJobs.delete(k);
-      (wiki as any)._notifyStatusSubscribers('e1');
+      (wiki as any).jobManager.activeMaintenanceJobs.add(k);
+      (wiki as any).jobManager._notifyStatusSubscribers('e1'); // even if production code mistakenly called it
+      (wiki as any).jobManager.activeMaintenanceJobs.delete(k);
+      (wiki as any).jobManager._notifyStatusSubscribers('e1');
     }
     expect(calls.length).toBe(1); // only initial
     unsub();
@@ -234,11 +234,11 @@ describe('subscribeEntityStatus — suppression and unsubscribe', () => {
     unsub();
     expect(() => unsub()).not.toThrow();
 
-    const key = (wiki as any)._librarianKey('e1');
-    (wiki as any).activeMaintenanceJobs.add(key);
-    (wiki as any)._notifyStatusSubscribers('e1');
-    (wiki as any).activeMaintenanceJobs.delete(key);
-    (wiki as any)._notifyStatusSubscribers('e1');
+    const key = (wiki as any).jobManager._librarianKey('e1');
+    (wiki as any).jobManager.activeMaintenanceJobs.add(key);
+    (wiki as any).jobManager._notifyStatusSubscribers('e1');
+    (wiki as any).jobManager.activeMaintenanceJobs.delete(key);
+    (wiki as any).jobManager._notifyStatusSubscribers('e1');
     expect(calls.length).toBe(1); // only the initial emission
   });
 });
@@ -253,15 +253,15 @@ describe('subscribeEntityStatus — multi-subscriber and re-entrancy', () => {
     expect(callsA.length).toBe(1);
     expect(callsB.length).toBe(1);
 
-    const key = (wiki as any)._librarianKey('e1');
-    (wiki as any).activeMaintenanceJobs.add(key);
-    (wiki as any)._notifyStatusSubscribers('e1');
+    const key = (wiki as any).jobManager._librarianKey('e1');
+    (wiki as any).jobManager.activeMaintenanceJobs.add(key);
+    (wiki as any).jobManager._notifyStatusSubscribers('e1');
     expect(callsA.at(-1)?.librarian).toBe(true);
     expect(callsB.at(-1)?.librarian).toBe(true);
 
     unsubA();
-    (wiki as any).activeMaintenanceJobs.delete(key);
-    (wiki as any)._notifyStatusSubscribers('e1');
+    (wiki as any).jobManager.activeMaintenanceJobs.delete(key);
+    (wiki as any).jobManager._notifyStatusSubscribers('e1');
     expect(callsA.length).toBe(2); // unchanged after unsub
     expect(callsB.at(-1)?.librarian).toBe(false);
     unsubB();
@@ -271,11 +271,11 @@ describe('subscribeEntityStatus — multi-subscriber and re-entrancy', () => {
     const wiki = await freshWiki(slowProvider(0));
     const calls: EntityStatus[] = [];
     const unsub = wiki.subscribeEntityStatus('b', (s) => calls.push({ ...s }));
-    const key = (wiki as any)._librarianKey('a');
-    (wiki as any).activeMaintenanceJobs.add(key);
-    (wiki as any)._notifyStatusSubscribers('a');
-    (wiki as any).activeMaintenanceJobs.delete(key);
-    (wiki as any)._notifyStatusSubscribers('a');
+    const key = (wiki as any).jobManager._librarianKey('a');
+    (wiki as any).jobManager.activeMaintenanceJobs.add(key);
+    (wiki as any).jobManager._notifyStatusSubscribers('a');
+    (wiki as any).jobManager.activeMaintenanceJobs.delete(key);
+    (wiki as any).jobManager._notifyStatusSubscribers('a');
     expect(calls.length).toBe(1); // only initial for 'b'
     unsub();
   });
@@ -288,9 +288,9 @@ describe('subscribeEntityStatus — multi-subscriber and re-entrancy', () => {
     const unsubBad = wiki.subscribeEntityStatus('e1', () => { throw new Error('boom'); });
     const unsubGood = wiki.subscribeEntityStatus('e1', (s) => otherCalls.push({ ...s }));
 
-    const key = (wiki as any)._librarianKey('e1');
-    (wiki as any).activeMaintenanceJobs.add(key);
-    (wiki as any)._notifyStatusSubscribers('e1');
+    const key = (wiki as any).jobManager._librarianKey('e1');
+    (wiki as any).jobManager.activeMaintenanceJobs.add(key);
+    (wiki as any).jobManager._notifyStatusSubscribers('e1');
 
     expect(otherCalls.at(-1)?.librarian).toBe(true);
     expect(errSpy).toHaveBeenCalled();
@@ -310,9 +310,9 @@ describe('subscribeEntityStatus — multi-subscriber and re-entrancy', () => {
     unsubB = wiki.subscribeEntityStatus('e1', (s) => callsB.push({ ...s }));
     expect(callsB.length).toBe(1); // initial only
 
-    const key = (wiki as any)._librarianKey('e1');
-    (wiki as any).activeMaintenanceJobs.add(key);
-    (wiki as any)._notifyStatusSubscribers('e1');
+    const key = (wiki as any).jobManager._librarianKey('e1');
+    (wiki as any).jobManager.activeMaintenanceJobs.add(key);
+    (wiki as any).jobManager._notifyStatusSubscribers('e1');
 
     // B was unsubscribed before the iterator reached it (snapshot still includes B,
     // but the implementation must skip removed entries — verify via no transition delivery).
@@ -334,9 +334,9 @@ describe('subscribeEntityStatus — multi-subscriber and re-entrancy', () => {
       }
     });
 
-    const key = (wiki as any)._librarianKey('e1');
-    (wiki as any).activeMaintenanceJobs.add(key);
-    (wiki as any)._notifyStatusSubscribers('e1');
+    const key = (wiki as any).jobManager._librarianKey('e1');
+    (wiki as any).jobManager.activeMaintenanceJobs.add(key);
+    (wiki as any).jobManager._notifyStatusSubscribers('e1');
 
     // Late subscriber received its synchronous initial emission and nothing else.
     expect(callsLate.length).toBe(1);

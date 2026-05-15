@@ -47,7 +47,7 @@ describe('write() — librarian trigger suppression', () => {
     const { wiki } = makeWiki(1);
     await wiki.setup();
 
-    (wiki as any).activeMaintenanceJobs.add(`${PREFIX}:user-1:forget`);
+    (wiki as any).jobManager.activeMaintenanceJobs.add(`${PREFIX}:user-1:forget`);
     const librarianSpy = vi.spyOn(wiki as any, '_doRunLibrarian');
 
     await wiki.write('user-1', { event_type: 'observation', summary: 'no librarian' });
@@ -63,7 +63,7 @@ describe('write() — librarian trigger suppression', () => {
     const { wiki } = makeWiki(1);
     await wiki.setup();
 
-    (wiki as any).activeMaintenanceJobs.add(`${PREFIX}:user-1:prune`);
+    (wiki as any).jobManager.activeMaintenanceJobs.add(`${PREFIX}:user-1:prune`);
     const librarianSpy = vi.spyOn(wiki as any, '_doRunLibrarian');
 
     await wiki.write('user-1', { event_type: 'observation', summary: 'no librarian prune' });
