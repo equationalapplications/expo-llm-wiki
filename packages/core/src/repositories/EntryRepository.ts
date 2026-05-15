@@ -175,6 +175,53 @@ export class EntryRepository extends BaseRepository {
   }
 
   /**
+   * Soft-delete entries by source_ref and/or source_hash within a transaction.
+   * Stages a DELETE outbox entry for each row in the same transaction.
+   * `tx` is REQUIRED.
+   * Returns the number of rows deleted.
+   */
+  async softDeleteBySource(
+    entityId: string,
+    tx: SQLiteAdapter,
+    sourceRef?: string | null,
+    sourceHash?: string | null,
+  ): Promise<number> {
+    const executor = this.getExecutor(tx);
+    const now = Date.now();
+
+    let q = `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`;
+    const args: any[] = [now, now, entityId];
+    if (sourceRef) {
+      q += ` AND source_ref = ?`;
+      args.push(sourceRef);
+    }
+    if (sourceHash) {
+      q += ` AND source_hash = ?`;
+      args.push(sourceHash);
+    }
+
+    // Get affected IDs before updating, for outbox staging
+    const idsToDelete = await executor.getAllAsync<{ id: string }>(
+      q.replace('UPDATE', 'SELECT id FROM').replace(/SET.*WHERE/, 'WHERE'),
+      args,
+    );
+
+    const result = await executor.runAsync(q, args);
+
+    for (const row of idsToDelete) {
+      await this.outbox.push({
+        entityId,
+        tableName: 'entries',
+        recordId: row.id,
+        operation: 'DELETE',
+        payload: { id: row.id, entity_id: entityId, deleted_at: now },
+      }, tx);
+    }
+
+    return result.changes;
+  }
+
+  /**
    * Fetch IDs + entity_ids of soft-deleted rows older than cutoff for a given entity.
    * Used by runPrune().
    */

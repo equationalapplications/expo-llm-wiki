@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { openTestDatabase } from '../helpers/sqliteAdapter';
+import type { SQLiteAdapter } from '../../src/types';
 import { setupDatabase } from '../../src/db/schema';
 import { MIGRATIONS } from '../../src/db/migrations';
 import { OutboxRepository } from '../../src/repositories/OutboxRepository';

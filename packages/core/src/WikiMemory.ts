@@ -3027,37 +3027,26 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
           }
 
           const entryPromise = params.entryId
-            ? this.entryRepo.softDelete(params.entryId, entityId, this.db)
+            ? this.entryRepo.softDelete(params.entryId, entityId, this.db).then(() => true)
             : null;
 
-          const taskPromise = params.taskId
-            ? this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, params.taskId, entityId])
+          const taskDeletedPromise = params.taskId
+            ? this.taskRepo.softDeleteById(params.taskId, entityId, this.db).then(() => true)
             : null;
 
-          let refPromise: Promise<{ changes: number; lastInsertRowId: number }> | null = null;
-          if (sourceRef || sourceHash) {
-            let q = `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`;
-            const args: any[] = [now, now, entityId];
-            if (sourceRef) {
-              q += ` AND source_ref = ?`;
-              args.push(sourceRef);
-            }
-            if (sourceHash) {
-              q += ` AND source_hash = ?`;
-              args.push(sourceHash);
-            }
-            refPromise = this.db.runAsync(q, args);
-          }
+          const refPromise = (sourceRef || sourceHash)
+            ? this.entryRepo.softDeleteBySource(entityId, this.db, sourceRef, sourceHash)
+            : null;
 
           const [entryResult, taskResult, refResult] = await Promise.all([
-            entryPromise ?? Promise.resolve(null),
-            taskPromise ?? Promise.resolve(null),
-            refPromise ?? Promise.resolve(null),
+            entryPromise ?? Promise.resolve(false),
+            taskDeletedPromise ?? Promise.resolve(false),
+            refPromise ?? Promise.resolve(0),
           ]);
 
-          if (entryResult) deletedEntries += entryResult.changes;
-          if (taskResult) deletedTasks += taskResult.changes;
-          if (refResult) deletedEntries += refResult.changes;
+          if (entryResult) deletedEntries++;
+          if (taskResult) deletedTasks++;
+          deletedEntries += refResult;
         }
       });
 

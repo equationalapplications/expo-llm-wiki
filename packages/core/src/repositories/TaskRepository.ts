@@ -161,4 +161,32 @@ export class TaskRepository extends BaseRepository {
     );
     return result.changes;
   }
+
+  /**
+   * Soft-delete a task by ID within a transaction.
+   * Stages a DELETE outbox entry in the same transaction.
+   * `tx` is REQUIRED.
+   */
+  async softDeleteById(
+    id: string,
+    entityId: string,
+    tx: SQLiteAdapter,
+  ): Promise<void> {
+    const executor = this.getExecutor(tx);
+    const now = Date.now();
+    await executor.runAsync(
+      `UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`,
+      [now, now, id, entityId],
+    );
+    await this.outbox.push(
+      {
+        entityId,
+        tableName: 'tasks',
+        recordId: id,
+        operation: 'DELETE',
+        payload: { id, entity_id: entityId, deleted_at: now },
+      },
+      tx,
+    );
+  }
 }
