@@ -57,8 +57,9 @@ export class MetadataRepository extends BaseRepository {
 
   // META TABLE METHODS
 
-  async getMeta(key: string): Promise<string | null> {
-    const row = await this.db.getFirstAsync<{ value: string }>(
+  async getMeta(key: string, tx?: SQLiteAdapter): Promise<string | null> {
+    const executor = this.getExecutor(tx);
+    const row = await executor.getFirstAsync<{ value: string }>(
       `SELECT value FROM ${this.prefix}meta WHERE key = ?`,
       [key],
     );
@@ -71,6 +72,13 @@ export class MetadataRepository extends BaseRepository {
       `INSERT INTO ${this.prefix}meta (key, value) VALUES (?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
       [key, value],
+    );
+  }
+
+  async clearDimensionMismatch(tx: SQLiteAdapter): Promise<void> {
+    const executor = this.getExecutor(tx);
+    await executor.runAsync(
+      `DELETE FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`,
     );
   }
 }

@@ -387,30 +387,22 @@ export class WikiMemory {
   }
 
   private async storeEmbeddingDimension(dim: number): Promise<void> {
-    const existing = await this.db.getFirstAsync<{ value: string }>(
-      `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension'`
-    );
+    const existing = await this.metadataRepo.getMeta('embedding_dimension');
     if (existing) {
-      const storedDim = parseInt(existing.value, 10);
+      const storedDim = parseInt(existing, 10);
       if (storedDim !== dim) {
         console.warn(
           `[WikiMemory] Embedding dimension mismatch: stored ${storedDim}, got ${dim}. ` +
           `Call runReembed() to rebuild embeddings with the new model.`
         );
-        await this.db.runAsync(
-          `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension_mismatch', ?)`,
-          [String(dim)]
-        );
+        await this.metadataRepo.setMeta('embedding_dimension_mismatch', String(dim), this.db);
       }
       // Do NOT clear 'embedding_dimension_mismatch' here: other facts may still hold
       // old-dimension blobs written during a previous model. Only _reconcileEmbeddingDimension()
       // (called after a full runReembed) may clear the flag once it confirms all stored
       // blobs match the new canonical dimension.
     } else {
-      await this.db.runAsync(
-        `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension', ?)`,
-        [String(dim)]
-      );
+      await this.metadataRepo.setMeta('embedding_dimension', String(dim), this.db);
     }
   }
 
@@ -421,12 +413,10 @@ export class WikiMemory {
    * stuck on the MiniSearch fallback.
    */
   private async _reconcileEmbeddingDimension(): Promise<void> {
-    const mismatch = await this.db.getFirstAsync<{ value: string }>(
-      `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
-    );
-    if (!mismatch) return;
+    const mismatchValue = await this.metadataRepo.getMeta('embedding_dimension_mismatch');
+    if (!mismatchValue) return;
 
-    const newDim = parseInt(mismatch.value, 10);
+    const newDim = parseInt(mismatchValue, 10);
     // Check whether any non-deleted fact still stores a blob with a different byte
     // length. If so, those facts haven't been re-embedded yet and the mismatch flag
     // must stay in place so read() keeps falling back to MiniSearch for them.
@@ -449,13 +439,8 @@ export class WikiMemory {
     // state: the canonical dim would point at the new model while TEXT-only or
     // wrong-dim blobs still exist, causing those rows to score silently as 0.
     if (!residual || residual.cnt === 0) {
-      await this.db.runAsync(
-        `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension', ?)`,
-        [mismatch.value]
-      );
-      await this.db.runAsync(
-        `DELETE FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
-      );
+      await this.metadataRepo.setMeta('embedding_dimension', mismatchValue, this.db);
+      await this.metadataRepo.clearDimensionMismatch(this.db);
     }
   }
 
@@ -658,19 +643,14 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
 
     if (!entriesExistedBeforeSetup) {
       // Fresh install — all tables just created at current schema; no migrations needed.
-      await this.db.runAsync(
-        `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('schema_version', ?)`,
-        [String(CURRENT_SCHEMA_VERSION)]
-      );
+      await this.metadataRepo.setMeta('schema_version', String(CURRENT_SCHEMA_VERSION), this.db);
       currentVersion = CURRENT_SCHEMA_VERSION;
     } else {
       // Existing install — check meta for schema version.
-      const metaRow = await this.db.getFirstAsync<{ value: string }>(
-        `SELECT value FROM ${this.prefix}meta WHERE key = 'schema_version'`
-      );
+      const schemaVersionValue = await this.metadataRepo.getMeta('schema_version');
 
-      if (metaRow) {
-        currentVersion = parseInt(metaRow.value, 10);
+      if (schemaVersionValue) {
+        currentVersion = parseInt(schemaVersionValue, 10);
         if (!Number.isFinite(currentVersion)) currentVersion = 0;
       } else {
         // Legacy install without meta row — infer version from porter probe.
@@ -687,10 +667,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     for (const migration of MIGRATIONS) {
       if (migration.version > currentVersion) {
         await migration.run(this.db, this.prefix);
-        await this.db.runAsync(
-          `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('schema_version', ?)`,
-          [String(migration.version)]
-        );
+        await this.metadataRepo.setMeta('schema_version', String(migration.version), this.db);
         currentVersion = migration.version;
       }
     }
@@ -698,14 +675,9 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     // Ensure meta row exists for legacy installs already at current version
     // (porter present, no meta row) — the migration loop may not have written it.
     if (entriesExistedBeforeSetup) {
-      const metaCheck = await this.db.getFirstAsync<{ value: string }>(
-        `SELECT value FROM ${this.prefix}meta WHERE key = 'schema_version'`
-      );
-      if (!metaCheck) {
-        await this.db.runAsync(
-          `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('schema_version', ?)`,
-          [String(currentVersion)]
-        );
+      const schemaVersionCheck = await this.metadataRepo.getMeta('schema_version');
+      if (!schemaVersionCheck) {
+        await this.metadataRepo.setMeta('schema_version', String(currentVersion), this.db);
       }
     }
 
@@ -1061,11 +1033,9 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
           // query vector, existing fact embeddings were built with a different model and
           // cosine scoring would silently produce misleading rankings. Fall back to
           // MiniSearch until the caller runs runReembed().
-          const storedDimRow = await this.db.getFirstAsync<{ value: string }>(
-            `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension'`
-          );
-          if (storedDimRow) {
-            const storedDim = parseInt(storedDimRow.value, 10);
+          const storedDimValue = await this.metadataRepo.getMeta('embedding_dimension');
+          if (storedDimValue) {
+            const storedDim = parseInt(storedDimValue, 10);
             if (storedDim !== queryVec.length) {
               throw new Error(
                 `Embedding dimension mismatch: stored ${storedDim}, query has ${queryVec.length}. ` +
@@ -2297,14 +2267,12 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       // state and should not force unnecessary re-embedding of entity A's valid blobs.
       let effectiveSkip = skipExisting;
       if (skipExisting) {
-        const mismatchRow = await this.db.getFirstAsync<{ value: string }>(
-          `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
-        );
-        if (mismatchRow) {
+        const mismatchValue = await this.metadataRepo.getMeta('embedding_dimension_mismatch');
+        if (mismatchValue) {
           if (entityId) {
             // Per-entity: check whether this entity has any blobs at the wrong dimension
             // (i.e., the old canonical dim, not the pending new mismatch dim) or TEXT-only rows.
-            const mismatchDim = parseInt(mismatchRow.value, 10);
+            const mismatchDim = parseInt(mismatchValue, 10);
             const staleForEntity = await this.db.getFirstAsync<{ cnt: number }>(
               `SELECT COUNT(*) AS cnt FROM ${this.prefix}entries
                WHERE entity_id = ? AND deleted_at IS NULL
