@@ -1061,7 +1061,7 @@ export class MaintenanceService {
     \nDocument Anchors (DO NOT MODIFY OR DELETE):\n${JSON.stringify(documentAnchors, null, 2)}
     \nAll Tasks:\n${JSON.stringify(allTasks, null, 2)}
     \nRecent Events:\n${JSON.stringify(recentEvents, null, 2)}
-    \nThe following document anchors are provided for contradiction detection only. Do not include them in \`downgraded\`, \`deleted\`, or \`newFacts\`;
+    \nThe following document anchors are provided for contradiction detection only. Do not include them in \`downgraded\`, \`deleted\`, or \`newFacts\`.;
 
     const responseText = await this.options.llmProvider.generateText({
       systemPrompt: HEAL_SYSTEM_PROMPT,
