@@ -1,3 +1,30 @@
+# [4.7.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.6.1...v4.7.0) (2026-05-15)
+
+
+### Bug Fixes
+
+* address PR [#28](https://github.com/equationalapplications/expo-llm-wiki/issues/28) review comments ([842f4d0](https://github.com/equationalapplications/expo-llm-wiki/commit/842f4d0538d3f94f335b2505d3a547bb5f3058ae))
+* address PR [#28](https://github.com/equationalapplications/expo-llm-wiki/issues/28) review comments — correctness and performance ([308c16b](https://github.com/equationalapplications/expo-llm-wiki/commit/308c16ba34488dd309c52204a19ac07b8209f877))
+* address PR [#28](https://github.com/equationalapplications/expo-llm-wiki/issues/28) review threads ([416d5d2](https://github.com/equationalapplications/expo-llm-wiki/commit/416d5d21883746cd5c7889e30008ac4a3eb576e4))
+* **core:** make EventRepository.add/addIgnoreDuplicate tx optional ([76dfae7](https://github.com/equationalapplications/expo-llm-wiki/commit/76dfae7f7d94424f893fa4a1d8637af89fe033fd))
+* **core:** pass tx to withTransactionAsync callbacks; harden outbox ops ([df438c9](https://github.com/equationalapplications/expo-llm-wiki/commit/df438c9305c382226442914aaa4f89e87f99a98f))
+* **core:** stage outbox for all entry mutation paths and normalize MetadataRepository setMeta conflict handling ([d1843ed](https://github.com/equationalapplications/expo-llm-wiki/commit/d1843ed8f03c7057ca1478eef8c5e1faef913af7))
+* **core:** update migration2 tests for schema version 4 ([ea91532](https://github.com/equationalapplications/expo-llm-wiki/commit/ea915323f343149dad8aa868352c7c2cd55d96e4))
+* **repos:** enforce tx, fix INSERT/UPDATE, share generateId ([9943c2b](https://github.com/equationalapplications/expo-llm-wiki/commit/9943c2b8fd827a2546e9cc9235c68b553172cafd))
+* resolve type errors in WikiMemory.ts ([a9e32a7](https://github.com/equationalapplications/expo-llm-wiki/commit/a9e32a7deb5fecbbc9df834a91b87307289228ae))
+
+
+### Features
+
+* **core:** add EventRepository ([8d49884](https://github.com/equationalapplications/expo-llm-wiki/commit/8d498841ecd24003f95bec8ad76e3315e17bd18c))
+* **core:** add MetadataRepository for meta and checkpoints tables ([3387cf6](https://github.com/equationalapplications/expo-llm-wiki/commit/3387cf64e4bea73d6bae1580b2134004332345e8))
+* **core:** add migration v4 for outbox table ([059eac9](https://github.com/equationalapplications/expo-llm-wiki/commit/059eac9c9e1c6c5850c48d9b025a563549a4519a))
+* **core:** add OutboxRepository dual-write to EntryRepository ([0975144](https://github.com/equationalapplications/expo-llm-wiki/commit/097514479b66019dba6fd83d1b5d2f06a256265d))
+* **core:** add OutboxRepository with push/fetchPending/acknowledge ([ceb9d73](https://github.com/equationalapplications/expo-llm-wiki/commit/ceb9d73fa8936a691ec36d100f314c8727d659a7))
+* **core:** add TaskRepository with dual-write support ([aecf6b5](https://github.com/equationalapplications/expo-llm-wiki/commit/aecf6b506ea5d17416d00e70ee0afd01fb6edc07))
+* **core:** wire repositories into WikiMemory, replace raw SQL ([9d9a39c](https://github.com/equationalapplications/expo-llm-wiki/commit/9d9a39c6156ba6fea5daaef68db8dbc8badeda2d))
+* repository phase 2 ([d4b6e57](https://github.com/equationalapplications/expo-llm-wiki/commit/d4b6e57dc7f51855388fa7e39d19ba4489ff15eb))
+
 ## [4.6.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.6.0...v4.6.1) (2026-05-14)
 
 
