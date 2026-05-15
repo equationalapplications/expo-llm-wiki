@@ -32,8 +32,9 @@ export interface RankSemanticArgs {
 export class SearchService {
   /**
    * Maximum number of entities whose parsed embedding vectors are held in
-   * memory. This cap is intentionally conservative so the cache remains safe
-   * on memory-constrained runtimes (e.g., mobile/Expo).
+   * memory via FIFO-eviction `vectorCache`. This cap is intentionally
+   * conservative so the cache remains safe on memory-constrained runtimes
+   * (e.g., mobile/Expo).
    */
   private static readonly MAX_VECTOR_CACHE_ENTITIES = 16;
 

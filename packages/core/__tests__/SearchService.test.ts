@@ -45,10 +45,10 @@ function makeMiniSearchRow(
 }
 
 // ---------------------------------------------------------------------------
-// 1. LRU eviction at entity cap (16)
+// 1. FIFO eviction at entity cap (16)
 // ---------------------------------------------------------------------------
 
-describe('vector cache — LRU eviction at entity cap (16)', () => {
+describe('vector cache — FIFO eviction at entity cap (16)', () => {
   it('evicts entity-0 when 17th entity is cached; entity-16 remains cached', async () => {
     const repo = makeRepo();
     const service = new SearchService(repo);
@@ -721,6 +721,31 @@ describe('rankSemantic — hybrid blend', () => {
     });
 
     expect(results[0].score).toBeCloseTo(expectedScore, 10);
+  });
+
+  it('clamps negative cosine to 0 in hybrid blend', async () => {
+    const repo = makeRepo();
+    const svc = new SearchService(repo);
+    const queryVec = [1, 0, 0];
+    const factVec = [-1, 0, 0]; // cosine = -1.0
+    const weight = 0.7;
+    const kwScore = 0.5;
+    const miniSearchScores = new Map([['f1', kwScore]]);
+
+    const blob = new Uint8Array(new Float32Array(factVec).buffer);
+    const results = await svc.rankSemantic({
+      entityId: 'e1',
+      queryVec,
+      candidateRows: [{ id: 'f1', entity_id: 'e1', embedding_blob: blob, embedding: null, updated_at: 1000, access_count: 1 }],
+      weight,
+      miniSearchScores,
+      populateCache: false,
+      limit: 10,
+    });
+
+    // Math.max(0, -1.0) clamps to 0; expected = (1 - weight) * kwScore = 0.15
+    const expected = (1 - weight) * kwScore;
+    expect(results[0].score).toBeCloseTo(expected, 10);
   });
 });
 
