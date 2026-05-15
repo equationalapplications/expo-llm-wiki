@@ -80,11 +80,7 @@ export class EntryRepository extends BaseRepository {
     const tagsJson = JSON.stringify(fact.tags);
     const embeddingBlob = this.normalizeEmbeddingBlob(fact.embedding_blob);
 
-    const existing = await executor.getFirstAsync<{ id: string }>(
-      `SELECT id FROM ${this.prefix}entries WHERE id = ?`,
-      [fact.id],
-    );
-    const operation = fact.deleted_at ? 'DELETE' : (existing ? 'UPDATE' : 'INSERT');
+    const operation = fact.deleted_at ? 'DELETE' : 'UPSERT';
 
     const result = await executor.runAsync(
       `INSERT INTO ${this.prefix}entries (
@@ -434,27 +430,26 @@ export class EntryRepository extends BaseRepository {
   ): Promise<number> {
     const executor = this.getExecutor(tx);
     const now = Date.now();
+    const orphanedRows = await executor.getAllAsync<{ id: string }>(
+      `SELECT id FROM ${this.prefix}entries
+       WHERE entity_id = ? AND access_count = 0 AND created_at <= ? AND source_type != 'immutable_document' AND deleted_at IS NULL`,
+      [entityId, orphanThreshold],
+    );
+    if (orphanedRows.length === 0) return 0;
     const result = await executor.runAsync(
       `UPDATE ${this.prefix}entries
        SET deleted_at = ?, updated_at = ?
        WHERE entity_id = ? AND access_count = 0 AND created_at <= ? AND source_type != 'immutable_document' AND deleted_at IS NULL`,
       [now, now, entityId, orphanThreshold],
     );
-    // Stage outbox entries for orphaned records
-    if (result.changes > 0) {
-      const orphanedRows = await executor.getAllAsync<any>(
-        `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at = ? AND access_count = 0 AND created_at <= ? AND source_type != 'immutable_document'`,
-        [entityId, now, orphanThreshold],
-      );
-      for (const row of orphanedRows) {
-        await this.outbox.push({
-          entityId,
-          tableName: 'entries',
-          recordId: row.id,
-          operation: 'DELETE',
-          payload: { id: row.id, entity_id: entityId, deleted_at: now },
-        }, tx);
-      }
+    for (const row of orphanedRows) {
+      await this.outbox.push({
+        entityId,
+        tableName: 'entries',
+        recordId: row.id,
+        operation: 'DELETE',
+        payload: { id: row.id, entity_id: entityId, deleted_at: now },
+      }, tx);
     }
     return result.changes;
   }
@@ -470,27 +465,28 @@ export class EntryRepository extends BaseRepository {
   ): Promise<number> {
     const executor = this.getExecutor(tx);
     const now = Date.now();
+    const eligibleRows = await executor.getAllAsync<{ id: string }>(
+      `SELECT id FROM ${this.prefix}entries
+       WHERE entity_id = ? AND confidence = 'inferred'
+         AND (last_accessed_at <= ? OR (last_accessed_at IS NULL AND created_at <= ?))
+         AND source_type != 'immutable_document' AND deleted_at IS NULL`,
+      [entityId, staleThreshold, staleThreshold],
+    );
+    if (eligibleRows.length === 0) return 0;
     const result = await executor.runAsync(
       `UPDATE ${this.prefix}entries
        SET confidence = 'tentative', updated_at = ?
        WHERE entity_id = ? AND confidence = 'inferred' AND (last_accessed_at <= ? OR (last_accessed_at IS NULL AND created_at <= ?)) AND source_type != 'immutable_document' AND deleted_at IS NULL`,
       [now, entityId, staleThreshold, staleThreshold],
     );
-    // Stage outbox entries for downgraded records
-    if (result.changes > 0) {
-      const downgradedRows = await executor.getAllAsync<any>(
-        `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND confidence = 'tentative' AND updated_at = ? AND source_type != 'immutable_document' AND deleted_at IS NULL`,
-        [entityId, now],
-      );
-      for (const row of downgradedRows) {
-        await this.outbox.push({
-          entityId,
-          tableName: 'entries',
-          recordId: row.id,
-          operation: 'UPDATE',
-          payload: { id: row.id, entity_id: entityId, confidence: 'tentative', updated_at: now },
-        }, tx);
-      }
+    for (const row of eligibleRows) {
+      await this.outbox.push({
+        entityId,
+        tableName: 'entries',
+        recordId: row.id,
+        operation: 'UPDATE',
+        payload: { id: row.id, entity_id: entityId, confidence: 'tentative', updated_at: now },
+      }, tx);
     }
     return result.changes;
   }

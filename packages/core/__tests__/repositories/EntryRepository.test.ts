@@ -146,20 +146,20 @@ describe('EntryRepository with OutboxRepository', () => {
     repo = new EntryRepository(db, 'llm_wiki_', outbox);
   });
 
-  it('upsert() with tx stages outbox entry with operation=INSERT for new records', async () => {
+  it('upsert() with tx stages outbox entry with operation=UPSERT for new records', async () => {
     const fact = makeFact();
     await db.withTransactionAsync(async () => {
       await repo.upsert(fact, db);
     });
     const pending = await outbox.fetchPending();
     expect(pending.length).toBe(1);
-    expect(pending[0].operation).toBe('INSERT');
+    expect(pending[0].operation).toBe('UPSERT');
     expect(pending[0].record_id).toBe(fact.id);
     expect(pending[0].table_name).toBe('entries');
     expect(pending[0].entity_id).toBe(fact.entity_id);
   });
 
-  it('upsert() with tx stages outbox entry with operation=UPDATE for existing records', async () => {
+  it('upsert() with tx stages outbox entry with operation=UPSERT for existing records', async () => {
     const fact = makeFact();
     // First insert
     await db.withTransactionAsync(async () => {
@@ -174,7 +174,7 @@ describe('EntryRepository with OutboxRepository', () => {
     });
     const pending = await outbox.fetchPending();
     expect(pending.length).toBe(1);
-    expect(pending[0].operation).toBe('UPDATE');
+    expect(pending[0].operation).toBe('UPSERT');
   });
 
   it('upsert() with deleted_at stages outbox entry with operation=DELETE', async () => {

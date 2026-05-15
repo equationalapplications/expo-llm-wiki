@@ -82,12 +82,7 @@ export class TaskRepository extends BaseRepository {
     const executor = this.getExecutor(tx);
     const now = Number.isFinite(updatedAt) ? updatedAt : Date.now();
 
-    // Determine if this is an INSERT or UPDATE for the outbox
-    const existing = await executor.getFirstAsync<{ id: string }>(
-      `SELECT id FROM ${this.prefix}tasks WHERE id = ?`,
-      [task.id],
-    );
-    const operation = task.deleted_at != null ? 'DELETE' : (existing ? 'UPDATE' : 'INSERT');
+    const operation = task.deleted_at != null ? 'DELETE' : 'UPSERT';
 
     await executor.runAsync(
       `INSERT INTO ${this.prefix}tasks (
@@ -241,23 +236,26 @@ export class TaskRepository extends BaseRepository {
     id: string,
     entityId: string,
     tx: SQLiteAdapter,
-  ): Promise<void> {
+  ): Promise<{ changes: number }> {
     const executor = this.getExecutor(tx);
     const now = Date.now();
-    await executor.runAsync(
+    const result = await executor.runAsync(
       `UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`,
       [now, now, id, entityId],
     );
-    await this.outbox.push(
-      {
-        entityId,
-        tableName: 'tasks',
-        recordId: id,
-        operation: 'DELETE',
-        payload: { id, entity_id: entityId, deleted_at: now },
-      },
-      tx,
-    );
+    if (result.changes > 0) {
+      await this.outbox.push(
+        {
+          entityId,
+          tableName: 'tasks',
+          recordId: id,
+          operation: 'DELETE',
+          payload: { id, entity_id: entityId, deleted_at: now },
+        },
+        tx,
+      );
+    }
+    return result;
   }
 
   /**

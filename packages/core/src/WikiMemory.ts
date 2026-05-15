@@ -912,7 +912,9 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
 
         if (succeeded.length > 0) {
           const succeededIds = succeeded.map(r => r.id);
-          deletedEntries = await this.entryRepo.bulkDeletePruned(entityId, cutoff, succeededIds, this.db);
+          await this.db.withTransactionAsync(async () => {
+            deletedEntries = await this.entryRepo.bulkDeletePruned(entityId, cutoff, succeededIds, this.db);
+          });
         }
 
         // Delete tasks in a transaction for atomicity
@@ -1903,13 +1905,13 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
           shouldRunLibrarian = true;
           librarianCount = count;
           librarianJobKey = jobKey;
-          this.activeMaintenanceJobs.add(jobKey);
-          this._notifyStatusSubscribers(entityId);
         }
       }
     });
 
     if (shouldRunLibrarian && librarianJobKey !== null) {
+      this.activeMaintenanceJobs.add(librarianJobKey);
+      this._notifyStatusSubscribers(entityId);
       this.runLibrarianThenMaybeHeal(entityId, librarianCount)
         .catch(console.error)
         .finally(() => {
@@ -2916,11 +2918,11 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
           }
 
           const entryPromise = params.entryId
-            ? this.entryRepo.softDelete(params.entryId, entityId, this.db).then(() => true)
+            ? this.entryRepo.softDelete(params.entryId, entityId, this.db).then(r => r.changes > 0)
             : null;
 
           const taskDeletedPromise = params.taskId
-            ? this.taskRepo.softDeleteById(params.taskId, entityId, this.db).then(() => true)
+            ? this.taskRepo.softDeleteById(params.taskId, entityId, this.db).then(r => r.changes > 0)
             : null;
 
           const refPromise = (sourceRef || sourceHash)
