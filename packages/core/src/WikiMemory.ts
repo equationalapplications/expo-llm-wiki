@@ -1750,14 +1750,10 @@ export class WikiMemory {
       }
     });
 
-    // Pre-flush: evict stale cached vectors before writing new embeddings so a
-    // concurrent read() during the embed loop doesn't rank deleted/downgraded
-    // facts from the cache. Post-flush below handles vectors repopulated during
-    // the loop.
-    this.searchService.evictCache(entityId);
-    // Rebuild MiniSearch before the embedding loop so concurrent reads using
-    // preFilterLimit, hybrid scoring, or keyword fallback see the new/deleted
-    // facts immediately rather than waiting for every embed call to finish.
+    // Evict stale vectors and rebuild MiniSearch before the embedding loop so
+    // concurrent reads see the new/deleted facts immediately and don't rank
+    // deleted/downgraded facts from the cache. Post-flush below handles vectors
+    // repopulated during the loop. sync() evicts the cache before rebuilding.
     await this.searchService.sync(entityId);
     for (const factId of uniqueDeletedFactIds) {
       try {
@@ -2348,12 +2344,9 @@ export class WikiMemory {
           }, tx);
         }
       });
-      // Invalidate cache before rebuilding the text index so concurrent reads
-      // see consistent data: all use the post-transaction DB state.
-      this.searchService.evictCache(entityId);
-      // Rebuild the MiniSearch index immediately after the transaction commits
-      // so concurrent read() calls using preFilterLimit or hybrid scoring get
-      // the updated text rather than waiting for the (potentially slow) embedding loop.
+      // Evict cache and rebuild MiniSearch immediately after the transaction
+      // commits so concurrent read() calls see updated text and don't use stale
+      // vectors. sync() evicts the cache internally before rebuilding the index.
       await this.searchService.sync(entityId);
       // Embed only facts that were actually inserted/updated in the transaction.
       // Skipped rows (cross-entity collisions or merge LWW losers) must not be
