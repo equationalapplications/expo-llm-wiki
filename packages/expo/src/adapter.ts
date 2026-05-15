@@ -10,11 +10,11 @@ export function createExpoAdapter(db: SQLite.SQLiteDatabase): SQLiteAdapter {
     },
     getAllAsync: (sql, params = []) => db.getAllAsync(sql, params as any[]),
     getFirstAsync: (sql, params = []) => db.getFirstAsync(sql, params as any[]),
-    withTransactionAsync: (fn) => {
+    withTransactionAsync: <T>(fn: (tx: SQLiteAdapter) => Promise<T>): Promise<T> => {
       // expo-sqlite only accepts () => Promise<void>; capture the result to satisfy the generic interface
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let captured: any;
-      return db.withTransactionAsync(() => fn(adapter).then(v => { captured = v; })).then(() => captured);
+      return db.withTransactionAsync(() => fn(adapter).then(v => { captured = v; })).then(() => captured as T);
     },
     closeAsync: () => db.closeAsync(),
   };

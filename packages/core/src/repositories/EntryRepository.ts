@@ -386,6 +386,25 @@ export class EntryRepository extends BaseRepository {
   }
 
   /**
+   * Count non-deleted entries with stale or unconverted embeddings relative to `dim`.
+   * Used by _reconcileEmbeddingDimension() to decide when to promote the pending
+   * embedding_dimension value.
+   */
+  async countStaleEmbeddings(dim: number, tx?: SQLiteAdapter): Promise<number> {
+    const executor = this.getExecutor(tx);
+    const row = await executor.getFirstAsync<{ cnt: number }>(
+      `SELECT COUNT(*) AS cnt FROM ${this.prefix}entries
+       WHERE deleted_at IS NULL
+         AND (
+           (embedding_blob IS NOT NULL AND (CAST(length(embedding_blob) AS INTEGER) / 4) != ?)
+           OR (embedding_blob IS NULL AND embedding IS NOT NULL)
+         )`,
+      [dim],
+    );
+    return row?.cnt ?? 0;
+  }
+
+  /**
    * Bulk delete pruned entries (already soft-deleted) by IDs.
    * Used by runPrune(). Returns total number of deleted rows.
    * `tx` is REQUIRED so outbox deletion events are staged atomically.

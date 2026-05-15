@@ -425,20 +425,12 @@ export class WikiMemory {
     //   (b) it has only a TEXT vector (embedding_blob IS NULL) — TEXT rows were
     //       written by an older model and must be converted by runReembed() before
     //       they are safe to score against the new query dimension.
-    const residual = await this.db.getFirstAsync<{ cnt: number }>(
-      `SELECT COUNT(*) AS cnt FROM ${this.prefix}entries
-       WHERE deleted_at IS NULL
-         AND (
-           (embedding_blob IS NOT NULL AND (CAST(length(embedding_blob) AS INTEGER) / 4) != ?)
-           OR (embedding_blob IS NULL AND embedding IS NOT NULL)
-         )`,
-      [newDim]
-    );
+    const residualCount = await this.entryRepo.countStaleEmbeddings(newDim);
     // Only promote and clear once every stored vector uses the new dimension.
     // Promoting before all rows are converted would leave read() in an inconsistent
     // state: the canonical dim would point at the new model while TEXT-only or
     // wrong-dim blobs still exist, causing those rows to score silently as 0.
-    if (!residual || residual.cnt === 0) {
+    if (residualCount === 0) {
       await this.metadataRepo.setMeta('embedding_dimension', mismatchValue, this.db);
       await this.metadataRepo.clearDimensionMismatch(this.db);
     }
@@ -882,15 +874,11 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
           }
         }
 
-        if (succeeded.length > 0) {
-          const succeededIds = succeeded.map(r => r.id);
-          await this.db.withTransactionAsync(async (tx) => {
-            deletedEntries = await this.entryRepo.bulkDeletePruned(entityId, cutoff, succeededIds, tx);
-          });
-        }
-
-        // Delete tasks in a transaction for atomicity
+        const succeededIds = succeeded.map(r => r.id);
         await this.db.withTransactionAsync(async (tx) => {
+          if (succeededIds.length > 0) {
+            deletedEntries = await this.entryRepo.bulkDeletePruned(entityId, cutoff, succeededIds, tx);
+          }
           deletedTasks = await this.taskRepo.bulkDeletePruned(entityId, cutoff, tx);
         });
 
@@ -1875,6 +1863,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
           shouldRunLibrarian = true;
           librarianCount = count;
           librarianJobKey = jobKey;
+          await this.metadataRepo.updateCheckpoint(entityId, { memory: count }, tx);
         }
       }
     });
@@ -1896,19 +1885,12 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
 
     const autoHealThreshold = this.options.config?.autoHealThreshold || 100;
 
-    // Atomically write memory checkpoint and read heal checkpoint so the heal
-    // decision cannot observe a checkpoint reset (e.g. from a concurrent forget)
-    // that happened between the two operations.
-    let shouldRunHeal = false;
-    await this.db.withTransactionAsync(async (tx) => {
-      await this.metadataRepo.updateCheckpoint(entityId, { memory: currentEventCount }, tx);
-      const cp = await this.metadataRepo.getCheckpoint(entityId, tx);
-      let healCheckpoint = cp.heal ?? 0;
-      if (healCheckpoint > currentEventCount) healCheckpoint = 0;
-      if (currentEventCount - healCheckpoint >= autoHealThreshold) {
-        shouldRunHeal = true;
-      }
-    });
+    // Read the latest heal checkpoint after librarian work finishes so the heal
+    // decision reflects any concurrent checkpoint changes (e.g. from forget).
+    const cp = await this.metadataRepo.getCheckpoint(entityId, this.db);
+    let healCheckpoint = cp.heal ?? 0;
+    if (healCheckpoint > currentEventCount) healCheckpoint = 0;
+    const shouldRunHeal = currentEventCount - healCheckpoint >= autoHealThreshold;
 
     if (shouldRunHeal) {
       const healKey = this._healKey(entityId);
