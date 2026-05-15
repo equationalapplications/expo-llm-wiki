@@ -916,8 +916,8 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
         }
 
         // Delete tasks in a transaction for atomicity
-        await this.db.withTransactionAsync(async (tx) => {
-          deletedTasks = await this.taskRepo.bulkDeletePruned(entityId, cutoff, tx);
+        await this.db.withTransactionAsync(async () => {
+          deletedTasks = await this.taskRepo.bulkDeletePruned(entityId, cutoff, this.db);
         });
 
         if (failure) {
@@ -1878,14 +1878,14 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     let librarianCount = 0;
     let librarianJobKey: string | null = null;
 
-    await this.db.withTransactionAsync(async (tx) => {
-      await this.eventRepo.add(newEvent, tx);
+    await this.db.withTransactionAsync(async () => {
+      await this.eventRepo.add(newEvent, this.db);
 
       const threshold = this.options.config?.autoLibrarianThreshold || 20;
 
       const [count, cp] = await Promise.all([
-        this.eventRepo.count(entityId, tx),
-        this.metadataRepo.getCheckpoint(entityId, tx),
+        this.eventRepo.count(entityId, this.db),
+        this.metadataRepo.getCheckpoint(entityId, this.db),
       ]);
 
       let memoryCheckpoint = cp.memory ?? 0;
