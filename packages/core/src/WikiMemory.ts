@@ -1,29 +1,25 @@
 import type { SQLiteAdapter } from './types';
 import { setupDatabase } from './db/schema';
 import { MIGRATIONS, CURRENT_SCHEMA_VERSION } from './db/migrations';
-import { WikiOptions, MemoryBundle, MemoryDump, WikiEvent, WikiFact, WikiTask, ExtractedFact, ExtractedTask, WikiBusyError, PrunePartialFailureError, EntityStatus, ReadOptions } from './types';
+import { WikiOptions, MemoryBundle, MemoryDump, WikiEvent, WikiFact, WikiBusyError, PrunePartialFailureError, EntityStatus, ReadOptions } from './types';
 import { EntryRepository, EntryRowMetadata, EntryRowWithEmbeddings } from './repositories/EntryRepository';
 import { OutboxRepository } from './repositories/OutboxRepository';
 import { TaskRepository } from './repositories/TaskRepository';
 import { EventRepository } from './repositories/EventRepository';
 import { MetadataRepository } from './repositories/MetadataRepository';
-import { LIBRARIAN_SYSTEM_PROMPT, HEAL_SYSTEM_PROMPT, INGEST_SYSTEM_PROMPT } from './prompts';
-import { parseEmbedding } from './utils/embedding';
 import { SearchService } from './services/SearchService';
 import { JobManager } from './services/JobManager';
 import { generateId } from './utils/ids';
 import { applyTierWeight, normalizeEntityIds, sanitizeTierWeights, shouldExposeReadMetadata } from './readOptions';
-import { parseJsonResponse, chunkText, withConcurrency, clip, validateFact, validateTask, normalizeSourceRef, normalizeSourceHash, titleTokens, jaccardScore } from './utils/pure';
+import { chunkText, clip, validateFact, validateTask, normalizeSourceRef, normalizeSourceHash } from './utils/pure';
+import { IngestionService } from './services/IngestionService';
+import { MaintenanceService } from './services/MaintenanceService';
 
-export { WikiBusyError, PrunePartialFailureError } from './types';
-
-export const HOOK_TIMEOUT_MARKER = Symbol('WikiMemoryHookTimeout');
+export { WikiBusyError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER } from './types';
+import { HOOK_TIMEOUT_MARKER } from './types';
 
 type ReadCandidateRowMetadata = EntryRowMetadata;
 type ReadCandidateRowWithEmbeddings = EntryRowWithEmbeddings;
-
-const FUZZY_THRESHOLD = 0.5;
-const MIN_TOKENS_TO_QUALIFY = 3;
 
 export class WikiMemory {
   private db: SQLiteAdapter;
@@ -36,6 +32,9 @@ export class WikiMemory {
   private metadataRepo: MetadataRepository;
   private searchService: SearchService;
   private jobManager: JobManager;
+  private ingestionService: IngestionService;
+  private maintenanceService: MaintenanceService;
+
   private async storeEmbeddingDimension(dim: number): Promise<void> {
     const existing = await this.metadataRepo.getMeta('embedding_dimension');
     if (existing) {
@@ -244,6 +243,14 @@ export class WikiMemory {
     this.metadataRepo = new MetadataRepository(db, this.prefix);
     this.searchService = new SearchService(this.entryRepo);
     this.jobManager = new JobManager(this.prefix);
+    this.ingestionService = new IngestionService(
+      this.db, this.prefix, this.options, this.entryRepo, this.searchService, this.jobManager,
+      this.embedFact.bind(this), this._notifyEmbeddingPersisted.bind(this)
+    );
+    this.maintenanceService = new MaintenanceService(
+      this.db, this.prefix, this.options, this.entryRepo, this.taskRepo, this.eventRepo, this.metadataRepo, this.searchService, this.jobManager,
+      this.embedFact.bind(this), this._notifyEmbeddingPersisted.bind(this), this._notifyEmbeddingPersistedOrThrow.bind(this), this._reconcileEmbeddingDimension.bind(this)
+    );
   }
 
   async setup() {
@@ -337,12 +344,6 @@ export class WikiMemory {
     return normalizedStoredHash !== normalizedHash;
   }
 
-  private _validatePruneDuration(value: number | null | undefined, name: string): void {
-    if (value !== null && value !== undefined && (typeof value !== 'number' || !isFinite(value) || value < 0)) {
-      throw new Error(`Invalid ${name}: must be a non-negative finite number or null`);
-    }
-  }
-
   async runPrune(
     entityId: string,
     options?: {
@@ -351,104 +352,7 @@ export class WikiMemory {
       vacuum?: boolean;
     }
   ): Promise<{ entries: number; tasks: number; events: number }> {
-    this.jobManager.acquireLock('prune', entityId);
-    try {
-      const retainSoftDeletedFor = options?.retainSoftDeletedFor !== undefined
-        ? options.retainSoftDeletedFor
-        : (this.options.config?.pruneRetainSoftDeletedFor ?? 7);
-      const retainEventsFor = options?.retainEventsFor !== undefined
-        ? options.retainEventsFor
-        : (this.options.config?.pruneEventsAfter ?? 30);
-      const vacuum = options?.vacuum ?? false;
-
-      this._validatePruneDuration(retainSoftDeletedFor, 'retainSoftDeletedFor');
-      this._validatePruneDuration(retainEventsFor, 'retainEventsFor');
-
-      const now = Date.now();
-      let deletedEntries = 0;
-      let deletedTasks = 0;
-      let deletedEvents = 0;
-
-      if (retainSoftDeletedFor !== null) {
-        const cutoff = now - retainSoftDeletedFor * 86400000;
-
-        const entriesToDelete = await this.entryRepo.getPrunableMetadata(entityId, cutoff);
-
-        // Hook-before-delete: await hook for each row, accumulate successes, commit partial on failure
-        const succeeded: Array<{ entity_id: string; id: string }> = [];
-        let failure: { factId: string; cause: unknown } | null = null;
-
-        for (const row of entriesToDelete) {
-          try {
-            await this._notifyEmbeddingPersistedOrThrow(row.entity_id, row.id, null);
-            succeeded.push({ entity_id: row.entity_id, id: row.id });
-          } catch (err) {
-            failure = { factId: row.id, cause: err };
-            break;
-          }
-        }
-
-        const succeededIds = succeeded.map(r => r.id);
-        await this.db.withTransactionAsync(async (tx) => {
-          if (succeededIds.length > 0) {
-            deletedEntries = await this.entryRepo.bulkDeletePruned(entityId, cutoff, succeededIds, tx);
-          }
-          deletedTasks = await this.taskRepo.bulkDeletePruned(entityId, cutoff, tx);
-        });
-
-        if (failure) {
-          // Rebuild index and clear cache to reflect successful partial deletions
-          await this.searchService.sync(entityId);
-
-          const remaining = entriesToDelete.length - succeeded.length - 1;
-
-          // Preserve timeout errors (thrown by WikiMemory, not the ranker)
-          const isTimeout = (failure.cause as any)?.[HOOK_TIMEOUT_MARKER] === true;
-          if (isTimeout) {
-            throw new PrunePartialFailureError(
-              succeeded.length,
-              failure.factId,
-              remaining,
-              new Error('Deletion hook timed out'),
-              deletedTasks,
-              0, // events not yet deleted at this point
-            );
-          }
-
-          // Preserve WikiMemory validation errors (not from the adapter hook)
-          const errMsg = (failure.cause as Error)?.message ?? '';
-          const isValidationError = errMsg.startsWith('Invalid deletionHookTimeoutMs');
-          const sanitizedCause = isValidationError
-            ? failure.cause as Error
-            : this._sanitizeRankerError(failure.cause);
-
-          throw new PrunePartialFailureError(
-            succeeded.length,
-            failure.factId,
-            remaining,
-            sanitizedCause,
-            deletedTasks,
-            0, // events not yet deleted at this point
-          );
-        }
-      }
-
-      if (retainEventsFor !== null) {
-        const cutoff = now - retainEventsFor * 86400000;
-        const eventResult = await this.eventRepo.prune(entityId, cutoff);
-        deletedEvents = eventResult.changes;
-      }
-
-      if (vacuum) {
-        await this.metadataRepo.vacuum();
-      }
-
-      await this.searchService.sync(entityId);
-
-      return { entries: deletedEntries, tasks: deletedTasks, events: deletedEvents };
-    } finally {
-      this.jobManager.releaseLock('prune', entityId);
-    }
+    return this.maintenanceService.runPrune(entityId, options);
   }
 
   async read(entityId: string | string[], query: string, options?: ReadOptions): Promise<MemoryBundle> {
@@ -1156,6 +1060,7 @@ export class WikiMemory {
     // Wrap in transaction to ensure Event + Checkpoint logic is atomic
     let shouldRunLibrarian = false;
     let librarianCount = 0;
+    let prevMemoryCheckpoint = 0;
 
     await this.db.withTransactionAsync(async (tx) => {
       await this.eventRepo.add(newEvent, tx);
@@ -1174,6 +1079,7 @@ export class WikiMemory {
         if (!this.jobManager.isBlocked('librarian', entityId)) {
           shouldRunLibrarian = true;
           librarianCount = count;
+          prevMemoryCheckpoint = memoryCheckpoint;
           await this.metadataRepo.updateCheckpoint(entityId, { memory: count }, tx);
         }
       }
@@ -1189,13 +1095,15 @@ export class WikiMemory {
           });
       } catch (e) {
         if (!(e instanceof WikiBusyError)) throw e;
-        // Conflict detected between pre-check and acquire — skip auto-trigger
+        // Race: lock acquired between isBlocked check and acquireLock — roll back
+        // checkpoint so the next event batch can retrigger librarian.
+        await this.metadataRepo.updateCheckpoint(entityId, { memory: prevMemoryCheckpoint }, this.db);
       }
     }
   }
 
   private async runLibrarianThenMaybeHeal(entityId: string, currentEventCount: number) {
-    await this._doRunLibrarian(entityId);
+    await this.maintenanceService._doRunLibrarian(entityId);
 
     const autoHealThreshold = this.options.config?.autoHealThreshold || 100;
 
@@ -1208,7 +1116,7 @@ export class WikiMemory {
 
     if (shouldRunHeal && this.jobManager.tryAcquireAutoHealLock(entityId)) {
       try {
-        await this._doRunHeal(entityId);
+        await this.maintenanceService._doRunHeal(entityId);
         await this.metadataRepo.updateCheckpoint(entityId, { heal: currentEventCount }, this.db);
       } finally {
         this.jobManager.releaseLock('heal', entityId);
@@ -1216,317 +1124,16 @@ export class WikiMemory {
     }
   }
 
-  private async _doRunLibrarian(entityId: string): Promise<void> {
-    const events = await this.eventRepo.getRecent(entityId, 50);
-
-    const currentFactsRows = await this.entryRepo.findRecentByEntityId(entityId, 100);
-
-    const currentFacts = currentFactsRows.map(f => {
-      const { embedding: _embedding, embedding_blob: _blob, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
-      return {
-        ...rest,
-        tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
-      };
-    });
-
-    const userPrompt = `Events:\n${JSON.stringify(events.reverse(), null, 2)}\n\nCurrent Facts:\n${JSON.stringify(currentFacts, null, 2)}`;
-    
-    const responseText = await this.options.llmProvider.generateText({
-      systemPrompt: LIBRARIAN_SYSTEM_PROMPT,
-      userPrompt,
-    });
-
-    const result = parseJsonResponse<{ facts: ExtractedFact[], tasks: ExtractedTask[] }>(responseText);
-    const facts = Array.isArray(result.facts) ? result.facts : [];
-    const tasks = Array.isArray(result.tasks) ? result.tasks : [];
-    const validFacts = facts.map(validateFact).filter((f): f is ExtractedFact => f !== null);
-    const validTasks = tasks.map(validateTask).filter((t): t is ExtractedTask => t !== null);
-
-    const now = Date.now();
-
-    const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
-
-    await this.db.withTransactionAsync(async (tx) => {
-      // Re-read facts inside the transaction so duplicate detection reflects the
-      // committed state at write time, not the pre-LLM snapshot (which may be
-      // stale if heal or another operation ran during the LLM call).
-      const factsForDedupe = await this.entryRepo.findRecentByEntityId(entityId, 100, tx);
-
-      for (const fact of validFacts) {
-        const newTokens = titleTokens(fact.title);
-        let skip = false;
-        if (newTokens.size >= MIN_TOKENS_TO_QUALIFY) {
-          for (const existing of factsForDedupe) {
-            if (existing.source_type !== 'librarian_inferred') continue;
-            const existingTokens = titleTokens(existing.title);
-            if (existingTokens.size >= MIN_TOKENS_TO_QUALIFY) {
-              if (jaccardScore(newTokens, existingTokens) >= FUZZY_THRESHOLD) {
-                skip = true;
-                break;
-              }
-            }
-          }
-        }
-        if (skip) continue;
-
-        const id = generateId('fact_');
-        const factObj: WikiFact = {
-          id,
-          entity_id: entityId,
-          title: fact.title,
-          body: fact.body,
-          tags: fact.tags,
-          confidence: fact.confidence,
-          source_type: 'librarian_inferred',
-          source_hash: null,
-          source_ref: null,
-          created_at: now,
-          updated_at: now,
-          last_accessed_at: null,
-          access_count: 0,
-          deleted_at: null,
-        };
-        await this.entryRepo.upsert(factObj, tx);
-        insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
-      }
-
-      for (const task of validTasks) {
-        const id = generateId('task_');
-        const taskObj: WikiTask = { id, entity_id: entityId, description: task.description, status: 'pending', priority: task.priority, created_at: now, updated_at: now, resolved_at: null, deleted_at: null };
-        await this.taskRepo.upsert(taskObj, tx);
-      }
-    });
-
-    // Rebuild the text index before the (potentially slow) embedding loop so
-    // concurrent reads using MiniSearch (preFilter, keyword fallback) see the
-    // new fact content immediately after the DB transaction commits.
-    await this.searchService.sync(entityId);
-    for (const fact of insertedFacts) {
-      await this.embedFact(fact);
-    }
-    // Second vector cache flush: a concurrent read() may have repopulated it
-    // during the embed loop; flush so subsequent reads see the new BLOBs.
-    this.searchService.evictCache(entityId);
-  }
-
-  private async _doRunHeal(entityId: string): Promise<void> {
-    const now = Date.now();
-    const orphanAfterDays = this.options.config?.orphanAfterDays !== undefined ? this.options.config.orphanAfterDays : 30;
-    const staleInferredAfterDays = this.options.config?.staleInferredAfterDays !== undefined ? this.options.config.staleInferredAfterDays : 60;
-    const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
-    if (orphanAfterDays !== null && (typeof orphanAfterDays !== 'number' || !Number.isFinite(orphanAfterDays) || orphanAfterDays < 0)) {
-      throw new Error('Invalid orphanAfterDays: must be a finite number >= 0 or null');
-    }
-    if (staleInferredAfterDays !== null && (typeof staleInferredAfterDays !== 'number' || !Number.isFinite(staleInferredAfterDays) || staleInferredAfterDays < 0)) {
-      throw new Error('Invalid staleInferredAfterDays: must be a finite number >= 0 or null');
-    }
-
-    await this.db.withTransactionAsync(async (tx) => {
-      if (orphanAfterDays !== null) {
-        const orphanThreshold = now - (orphanAfterDays * MS_PER_DAY);
-        await this.entryRepo.markOrphaned(entityId, orphanThreshold, tx);
-      }
-
-      if (staleInferredAfterDays !== null) {
-        const staleThreshold = now - (staleInferredAfterDays * MS_PER_DAY);
-        await this.entryRepo.downgradeStaleInferred(entityId, staleThreshold, tx);
-      }
-    });
-
-    const allFactsRows = await this.entryRepo.findAllByEntityId(entityId);
-    const allTasks = await this.taskRepo.findAllPending([entityId]);
-    const recentEvents = await this.eventRepo.getRecent(entityId, 20);
-
-    const healCandidates = allFactsRows.filter(f => f.source_type !== 'immutable_document');
-    const documentAnchors = allFactsRows
-      .filter(f => f.source_type === 'immutable_document')
-      .map(({ id, title, source_ref }) => ({ id, title, source_ref }));
-
-    const userPrompt = `Heal Candidates:\n${JSON.stringify(healCandidates.map(f => {
-      const { embedding: _embedding, embedding_blob: _blob, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
-      return { ...rest, tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags };
-    }), null, 2)}
-\nDocument Anchors (DO NOT MODIFY OR DELETE):\n${JSON.stringify(documentAnchors, null, 2)}
-\nAll Tasks:\n${JSON.stringify(allTasks, null, 2)}
-\nRecent Events:\n${JSON.stringify(recentEvents, null, 2)}
-\nThe following document anchors are provided for contradiction detection only. Do not include them in \`downgraded\`, \`deleted\`, or \`newFacts\`.`;
-    
-    const responseText = await this.options.llmProvider.generateText({
-      systemPrompt: HEAL_SYSTEM_PROMPT,
-      userPrompt,
-    });
-
-    const result = parseJsonResponse<{ downgraded: string[], deleted: string[], newFacts: ExtractedFact[] }>(responseText);
-
-    const mutableIds = new Set(healCandidates.map(f => f.id));
-    const downgraded = Array.isArray(result.downgraded) ? result.downgraded : [];
-    const deleted = Array.isArray(result.deleted) ? result.deleted : [];
-    const newFacts = Array.isArray(result.newFacts) ? result.newFacts : [];
-    const safeDowngraded = downgraded.filter(id => mutableIds.has(id));
-    const safeDeleted = deleted.filter(id => mutableIds.has(id));
-    const validNewFacts = newFacts.map(validateFact).filter((f): f is ExtractedFact => f !== null);
-
-    const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
-    const uniqueDeletedFactIds = Array.from(new Set(safeDeleted));
-
-    await this.db.withTransactionAsync(async (tx) => {
-      await this.entryRepo.downgradeByIds(safeDowngraded, entityId, tx);
-      await this.entryRepo.softDeleteByIds(safeDeleted, entityId, tx);
-      for (const fact of validNewFacts) {
-        const id = generateId('fact_');
-        const factObj: WikiFact = {
-          id,
-          entity_id: entityId,
-          title: fact.title,
-          body: fact.body,
-          tags: fact.tags,
-          confidence: fact.confidence,
-          source_type: 'librarian_inferred',
-          source_hash: null,
-          source_ref: null,
-          created_at: now,
-          updated_at: now,
-          last_accessed_at: null,
-          access_count: 0,
-          deleted_at: null,
-        };
-        await this.entryRepo.upsert(factObj, tx);
-        insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
-      }
-    });
-
-    // Evict stale vectors and rebuild MiniSearch before the embedding loop so
-    // concurrent reads see the new/deleted facts immediately and don't rank
-    // deleted/downgraded facts from the cache. Post-flush below handles vectors
-    // repopulated during the loop. sync() evicts the cache before rebuilding.
-    await this.searchService.sync(entityId);
-    for (const factId of uniqueDeletedFactIds) {
-      try {
-        await this._notifyEmbeddingPersisted(entityId, factId, null);
-      } catch (hookErr) {
-        console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during heal for ${factId}:`, hookErr);
-      }
-    }
-    for (const fact of insertedFacts) {
-      await this.embedFact(fact);
-    }
-    // Post-flush: evict any cache entries a concurrent read() repopulated while
-    // the embedding loop was running.
-    this.searchService.evictCache(entityId);
-  }
-
   async runLibrarian(entityId: string): Promise<void> {
-    this.jobManager.acquireLock('librarian', entityId);
-    try {
-      await this._doRunLibrarian(entityId);
-    } finally {
-      this.jobManager.releaseLock('librarian', entityId);
-    }
+    return this.maintenanceService.runLibrarian(entityId);
   }
 
   async runHeal(entityId: string): Promise<void> {
-    this.jobManager.acquireLock('heal', entityId);
-    try {
-      await this._doRunHeal(entityId);
-    } finally {
-      this.jobManager.releaseLock('heal', entityId);
-    }
+    return this.maintenanceService.runHeal(entityId);
   }
 
   async runReembed(entityId?: string, opts?: { force?: boolean; skipExisting?: boolean }): Promise<{ embedded: number; skipped: number; failed: number }> {
-    const embedFn = this.options.llmProvider.embed;
-    if (!embedFn) return { embedded: 0, skipped: 0, failed: 0 };
-
-    const op = entityId ? 'reembed' : 'global_reembed';
-    this.jobManager.acquireLock(op, entityId ?? '*');
-
-    try {
-      const rows = await this.entryRepo.findAllForReembed(entityId);
-
-      // Invalidate before the embedding loop so any concurrent read() fetches fresh
-      // vectors from the database rather than stale pre-reembed cached ones.
-      this.searchService.evictCache(entityId);
-
-      // skipExisting is an explicit opt-in for round-trip import scenarios where
-      // the caller knows every blob is already fresh and wants to avoid paying the
-      // full embedding cost again (e.g. after exportDump → importDump on the same
-      // model). By default runReembed() re-embeds every selected fact so that a
-      // model switch always works correctly — a dimension-only probe cannot detect
-      // same-dimension provider changes, so unconditional re-embedding is the only
-      // safe default.
-      // { force: true } is kept as a no-op alias so existing call sites that pass
-      // it explicitly continue to work without change.
-      // skipExisting skips facts that already have a structurally valid BLOB.
-      // WARNING: this is only safe when the caller can guarantee the stored BLOBs
-      // were produced by the *same* embedding model that is currently configured.
-      // It cannot detect same-dimension model/provider switches (e.g. two providers
-      // that both produce 1536-dim vectors). After any provider change, always call
-      // runReembed() without { skipExisting: true } to force full re-embedding.
-      const skipExisting = opts?.skipExisting ?? false;
-      // Never skip when a dimension mismatch is pending: blobs on disk are stale
-      // regardless of what the caller requested.
-      // For per-entity reembed, only disable skipExisting when THIS entity actually
-      // has stale blobs — the global mismatch flag may reflect a different entity's
-      // state and should not force unnecessary re-embedding of entity A's valid blobs.
-      let effectiveSkip = skipExisting;
-      if (skipExisting) {
-        const mismatchValue = await this.metadataRepo.getMeta('embedding_dimension_mismatch');
-        if (mismatchValue) {
-          if (entityId) {
-            // Per-entity: check whether this entity has any blobs at the wrong dimension
-            // (i.e., the old canonical dim, not the pending new mismatch dim) or TEXT-only rows.
-            const mismatchDim = parseInt(mismatchValue, 10);
-            const staleCount = await this.entryRepo.countStaleForEntity(entityId, mismatchDim);
-            if (staleCount > 0) effectiveSkip = false;
-          } else {
-            // Global reembed: any pending mismatch means blobs are stale somewhere.
-            effectiveSkip = false;
-          }
-        }
-      }
-      let embedded = 0;
-      let skipped = 0;
-      let failed = 0;
-      try {
-        for (const row of rows) {
-          // Skip facts with existing BLOBs only when the caller opts in via
-          // { skipExisting: true } AND no dimension mismatch is active.
-          // The default always re-embeds, ensuring correctness after model switches.
-          // Only skip if the BLOB is structurally valid (non-zero length, divisible
-          // by 4) and contains entirely finite values. A BLOB full of NaN/Infinity
-          // passes the byte-length check but would silently score 0 in read() —
-          // let embedFact() repair it instead of leaving the fact permanently unsearchable.
-          const existingBlob = (row as WikiFact & { embedding_blob?: Uint8Array | null }).embedding_blob;
-          const blobIsValid = !!existingBlob && existingBlob.byteLength > 0 && existingBlob.byteLength % 4 === 0;
-          if (effectiveSkip && blobIsValid) {
-            const vec = parseEmbedding(existingBlob, null);
-            if (vec !== null && vec.every(v => Number.isFinite(v))) {
-              skipped++;
-              continue;
-            }
-          }
-          const success = await this.embedFact(row);
-          if (success) embedded++;
-          else failed++;
-        }
-        // If any fact was successfully re-embedded, promote the pending dimension to
-        // canonical and clear the mismatch flag so read() uses embeddings from here on.
-        if (embedded > 0) {
-          await this._reconcileEmbeddingDimension();
-        }
-      } finally {
-        // Invalidate again after the loop: a concurrent read() might have re-populated
-        // the cache with pre-reembed vectors while the loop was running, so flush any
-        // such stale entries to ensure subsequent reads see the freshly written data,
-        // even if the loop or dimension reconciliation threw.
-        this.searchService.evictCache(entityId);
-      }
-
-      return { embedded, skipped, failed };
-    } finally {
-      this.jobManager.releaseLock(op, entityId ?? '*');
-    }
+    return this.maintenanceService.runReembed(entityId, opts);
   }
 
   getEntityStatus(entityId: string): EntityStatus {
@@ -1927,215 +1534,15 @@ export class WikiMemory {
   }
 
   async forget(entityId: string, params: { entryId?: string; taskId?: string; sourceRef?: string; sourceHash?: string; clearAll?: boolean }): Promise<{ deleted: { entries: number; tasks: number } }> {
-    this.jobManager.acquireLock('forget', entityId);
-    try {
-      const now = Date.now();
-      let deletedEntries = 0;
-      let deletedTasks = 0;
-      const deletedEntryIds: string[] = [];
-
-      await this.db.withTransactionAsync(async (tx) => {
-        if (params.clearAll) {
-          deletedEntryIds.push(...await this.entryRepo.findIdsBySource(entityId, null, null, tx, true));
-          const entriesRes = await this.entryRepo.bulkSoftDeleteByEntityId(entityId, tx);
-          const tasksRes = await this.taskRepo.bulkSoftDeleteByEntityId(entityId, tx);
-          await this.metadataRepo.updateCheckpoint(entityId, { memory: 0, heal: 0 }, tx);
-          deletedEntries = entriesRes;
-          deletedTasks = tasksRes;
-        } else {
-          const hasIdSelectors = params.entryId !== undefined || params.taskId !== undefined;
-          const hasSourceSelectors = params.sourceRef !== undefined || params.sourceHash !== undefined;
-          if (hasIdSelectors && hasSourceSelectors) {
-            throw new Error('forget() params are mutually exclusive: use entryId/taskId together, or sourceRef/sourceHash together, but not both in the same call');
-          }
-
-          const sourceRef = params.sourceRef !== undefined ? normalizeSourceRef(params.sourceRef) : null;
-          if (params.sourceRef !== undefined && !sourceRef) throw new Error('Invalid sourceRef');
-          const sourceHash = params.sourceHash !== undefined ? normalizeSourceHash(params.sourceHash) : null;
-          if (params.sourceHash !== undefined && !sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
-
-          if (params.entryId) {
-            const entryId = await this.entryRepo.findIdById(params.entryId, entityId, tx);
-            if (entryId) deletedEntryIds.push(entryId);
-          }
-
-          if (sourceRef || sourceHash) {
-            deletedEntryIds.push(...await this.entryRepo.findIdsBySource(entityId, sourceRef, sourceHash, tx, true));
-          }
-
-          const entryPromise = params.entryId
-            ? this.entryRepo.softDelete(params.entryId, entityId, tx).then(r => r.changes > 0)
-            : null;
-
-          const taskDeletedPromise = params.taskId
-            ? this.taskRepo.softDeleteById(params.taskId, entityId, tx).then(r => r.changes > 0)
-            : null;
-
-          const refPromise = (sourceRef || sourceHash)
-            ? this.entryRepo.softDeleteBySource(entityId, tx, sourceRef, sourceHash)
-            : null;
-
-          const [entryResult, taskResult, refResult] = await Promise.all([
-            entryPromise ?? Promise.resolve(false),
-            taskDeletedPromise ?? Promise.resolve(false),
-            refPromise ?? Promise.resolve(0),
-          ]);
-
-          if (entryResult) deletedEntries++;
-          if (taskResult) deletedTasks++;
-          deletedEntries += refResult;
-        }
-      });
-
-      await this.searchService.sync(entityId);
-
-      // Deduplicate to avoid redundant hook calls for the same fact
-      const uniqueDeletedIds = Array.from(new Set(deletedEntryIds));
-      for (const factId of uniqueDeletedIds) {
-        try {
-          await this._notifyEmbeddingPersistedOrThrow(entityId, factId, null);
-        } catch (hookErr) {
-          // Preserve timeout errors (thrown by WikiMemory, not the ranker)
-          const isTimeout = (hookErr as any)?.[HOOK_TIMEOUT_MARKER] === true;
-          if (isTimeout) {
-            throw new Error(
-              `forget(${entityId}/${factId}) failed: ${(hookErr as Error).message}`,
-            );
-          }
-          // Preserve WikiMemory validation errors (not from the adapter hook)
-          const errMsg = (hookErr as Error)?.message ?? '';
-          const isValidationError = errMsg.startsWith('Invalid deletionHookTimeoutMs');
-          if (isValidationError) {
-            throw new Error(
-              `forget(${entityId}/${factId}) failed: ${errMsg}`,
-              { cause: hookErr },
-            );
-          }
-          // Actual hook rejection - sanitize error details
-          throw new Error(
-            `forget(${entityId}/${factId}) failed: ANN cleanup hook rejected`,
-            { cause: this._sanitizeRankerError(hookErr) },
-          );
-        }
-      }
-
-      return { deleted: { entries: deletedEntries, tasks: deletedTasks } };
-    } finally {
-      this.jobManager.releaseLock('forget', entityId);
-    }
+    return this.maintenanceService.forget(entityId, params);
   }
 
   async ingestDocument(entityId: string, params: { sourceRef: string; sourceHash: string; documentChunk: string; maxChunkLength?: number; chunkOverlap?: number; chunkConcurrency?: number }): Promise<{ truncated: boolean; chunks: number }> {
-    const sourceRef = normalizeSourceRef(params.sourceRef);
-    if (!sourceRef) throw new Error('Invalid sourceRef');
-    const sourceHash = normalizeSourceHash(params.sourceHash);
-    if (!sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
-
-    const maxChunkLength = params.maxChunkLength ?? this.options.config?.maxChunkLength ?? 12000;
-    const rawOverlap = params.chunkOverlap ?? this.options.config?.chunkOverlap ?? 400;
-    const chunkOverlap = Math.min(
-      Number.isFinite(rawOverlap) && rawOverlap >= 0 ? Math.floor(rawOverlap) : 400,
-      maxChunkLength - 1
-    );
-    const rawConcurrency = params.chunkConcurrency ?? this.options.config?.chunkConcurrency ?? 1;
-    const chunkConcurrency = Number.isFinite(rawConcurrency) && rawConcurrency >= 1
-      ? Math.floor(rawConcurrency)
-      : 1;
-
-    if (typeof params.documentChunk !== 'string') {
-      throw new Error(`documentChunk must be a string, received ${typeof params.documentChunk}`);
-    }
-
-    this.jobManager.acquireLock('ingest', entityId, sourceRef);
-
-    try {
-      const { chunks, truncated } = chunkText(params.documentChunk, maxChunkLength, chunkOverlap);
-
-      if (chunks.length === 0) {
-        return { truncated: false, chunks: 0 };
-      }
-
-      // Bounded-concurrency LLM calls — each chunk is independent
-      const chunkResults = await withConcurrency(
-        chunks.map((chunk) => async () => {
-          const userPrompt = `Document Chunk:\n${chunk}`;
-          const responseText = await this.options.llmProvider.generateText({
-            systemPrompt: INGEST_SYSTEM_PROMPT,
-            userPrompt,
-          });
-          const result = parseJsonResponse<{ facts: ExtractedFact[] }>(responseText);
-          return (Array.isArray(result.facts) ? result.facts : [])
-            .map(validateFact)
-            .filter((f): f is ExtractedFact => f !== null);
-        }),
-        chunkConcurrency
-      );
-
-      // Flatten in chunk order, then dedup by normalized title (first-wins)
-      const seen = new Set<string>();
-      const allValidFacts: ExtractedFact[] = [];
-      for (const facts of chunkResults) {
-        for (const fact of facts) {
-          const normalized = fact.title.trim().toLowerCase().replace(/\s+/g, ' ');
-          if (!seen.has(normalized)) {
-            seen.add(normalized);
-            allValidFacts.push(fact);
-          }
-        }
-      }
-
-      const now = Date.now();
-      const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
-      const deletedSourceFactIds: string[] = [];
-
-      await this.db.withTransactionAsync(async (tx) => {
-        deletedSourceFactIds.push(...await this.entryRepo.findIdsBySource(entityId, sourceRef, null, tx, false));
-
-        await this.entryRepo.softDeleteBySource(entityId, tx, sourceRef, null);
-        for (const fact of allValidFacts) {
-          const id = generateId('fact_');
-          const wikiFact: WikiFact = {
-            id,
-            entity_id: entityId,
-            title: fact.title,
-            body: fact.body,
-            tags: fact.tags,
-            confidence: fact.confidence,
-            source_type: 'immutable_document',
-            source_hash: sourceHash,
-            source_ref: sourceRef,
-            created_at: now,
-            updated_at: now,
-            last_accessed_at: null,
-            access_count: 0,
-            deleted_at: null,
-          };
-          await this.entryRepo.upsert(wikiFact, tx);
-          insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
-        }
-      });
-
-      // Rebuild text index before embedding so concurrent reads see new content.
-      await this.searchService.sync(entityId);
-      const uniqueDeletedSourceFactIds = Array.from(new Set(deletedSourceFactIds));
-      for (const factId of uniqueDeletedSourceFactIds) {
-        try {
-          await this._notifyEmbeddingPersisted(entityId, factId, null);
-        } catch (hookErr) {
-          console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during ingest for ${factId}:`, hookErr);
-        }
-      }
-      for (const fact of insertedFacts) {
-        await this.embedFact(fact);
-      }
-      // Second flush after embed loop in case a concurrent read() repopulated cache.
-      this.searchService.evictCache(entityId);
-
-      return { truncated, chunks: chunks.length };
-    } finally {
-      this.jobManager.releaseLock('ingest', entityId, sourceRef);
-    }
+    return this.ingestionService.ingestDocument(entityId, params);
   }
+
 }
 
+
 export const __testables = { validateFact, validateTask, clip, chunkText };
+

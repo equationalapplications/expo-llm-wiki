@@ -401,3 +401,5 @@ export class PrunePartialFailureError extends Error {
   }
 }
 
+export const HOOK_TIMEOUT_MARKER = Symbol('WikiMemoryHookTimeout');
+

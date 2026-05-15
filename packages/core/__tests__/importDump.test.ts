@@ -455,8 +455,8 @@ describe('importDump — busy-key protection', () => {
 
     let resolveLibrarian: () => void = () => {};
     const blocker = new Promise<void>((r) => { resolveLibrarian = r; });
-    const originalDo = (wiki as any)._doRunLibrarian.bind(wiki);
-    (wiki as any)._doRunLibrarian = async (entityId: string) => {
+    const originalDo = (wiki as any).maintenanceService._doRunLibrarian.bind((wiki as any).maintenanceService);
+    (wiki as any).maintenanceService._doRunLibrarian = async (entityId: string) => {
       await blocker;
       return originalDo(entityId);
     };
@@ -537,7 +537,7 @@ describe('importDump — busy-key protection', () => {
     const imp = wiki.importDump(simpleDump('user-1'));
     await new Promise((r) => setTimeout(r, 0));
 
-    const librarianSpy = vi.spyOn(wiki as any, '_doRunLibrarian');
+    const librarianSpy = vi.spyOn((wiki as any).maintenanceService, '_doRunLibrarian');
 
     // write() should not start background librarian because import is active
     await wiki.write('user-1', { event_type: 'observation', summary: 'test' });
