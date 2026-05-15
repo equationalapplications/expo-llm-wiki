@@ -1,7 +1,7 @@
 # Spec: Phase 2.5 — Decoupling Side Effects (SearchService)
 
 **Date:** May 15, 2026
-**Status:** Approved for Implementation
+**Status:** Implementated
 **Scope:** Extract in-memory indexing (`MiniSearch`) and embedding cache management (`vectorCache`) from `WikiMemory` into a dedicated `SearchService`. Execute via two parallel pull requests to separate core logic implementation from orchestration wiring.
 
 ---
