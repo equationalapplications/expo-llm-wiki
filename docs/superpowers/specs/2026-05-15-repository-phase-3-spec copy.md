@@ -42,12 +42,55 @@ export class JobManager {
 
   constructor(private prefix: string) {}
 
-  /** * Attempts to acquire a lock for a specific operation.
+  private _pruneKey(entityId: string) { return `${this.prefix}:${entityId}:prune`; }
+  private _reembedKey(entityId: string) { return `${this.prefix}:${entityId}:reembed`; }
+  private _importKey(entityId: string) { return `${this.prefix}:${entityId}:import`; }
+  private _globalReembedKey() { return `${this.prefix}:reembed`; }
+  private _globalImportKey() { return `${this.prefix}:import`; }
+
+  private _isIngestActiveFor(entityId: string): boolean {
+    const ingestPrefix = `${this.prefix}:${entityId}:`;
+    for (const k of this.activeIngestJobs) {
+      if (k.startsWith(ingestPrefix)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Attempts to acquire a lock for a specific operation.
    * Throws WikiBusyError if a conflicting job is running.
    */
-  acquireLock(operation: 'prune' | 'librarian' | 'heal' | 'ingest' | 'reembed' | 'import' | 'forget', entityId: string): void {
-    // ... logic ported from runPrune / ingestDocument etc.
-    // e.g., cross-checking reembed vs global import locks
+  acquireLock(
+    operation: 'prune' | 'librarian' | 'heal' | 'ingest' | 'reembed' | 'import' | 'forget',
+    entityId: string,
+    sourceRef?: string
+  ): void {
+    // 1. Global lock checks (e.g. global import or global reembed)
+    if (this.activeMaintenanceJobs.has(this._globalImportKey())) {
+      throw new WikiBusyError('import', '*');
+    }
+
+    // 2. Cross-entity prefix checks
+    let blockingOperation: string | null = null;
+    if (operation === 'prune') {
+      if (this._isIngestActiveFor(entityId)) blockingOperation = 'ingest';
+      else if (this.activeMaintenanceJobs.has(this._importKey(entityId))) blockingOperation = 'import';
+      // ... other explicit conflicts
+    }
+
+    if (blockingOperation) {
+      throw new WikiBusyError(blockingOperation, entityId);
+    }
+
+    // 3. Acquire the requested lock
+    if (operation === 'ingest' && sourceRef) {
+      this.activeIngestJobs.add(`${this.prefix}:${entityId}:${sourceRef}`);
+    } else {
+      // Add the standard maintenance key for the operation
+    }
+
+    // 4. Notify subscribers of status transition
+    this._notifyStatusSubscribers(entityId);
   }
 
   releaseLock(operation: string, entityId: string): void {
@@ -60,6 +103,8 @@ export class JobManager {
 }
 
 ```
+
+By internalizing prefix generation and iteration, `WikiMemory` and the new domain services can simply call `this.jobManager.acquireLock('prune', entityId);` or `this.jobManager.acquireLock('ingest', entityId, sourceRef);` without needing to know how the lock keys are composed or how cross-entity conflicts are detected.
 
 ---
 
@@ -87,7 +132,7 @@ export class IngestionService {
   ) {}
 
   async ingestDocument(entityId: string, params: IngestParams): Promise<{ truncated: boolean; chunks: number }> {
-    this.jobManager.acquireLock('ingest', entityId);
+    this.jobManager.acquireLock('ingest', entityId, params.sourceRef);
     try {
       // ... chunking logic
       // ... concurrent LLM calls
