@@ -1,4 +1,4 @@
-import { EntityStatus, WikiBusyError } from '../types';
+import { EntityStatus, WikiBusyError, WikiBusyOperation } from '../types';
 
 export type OperationType =
   | 'prune'
@@ -61,7 +61,7 @@ export class JobManager {
   }
 
   acquireLock(operation: OperationType, entityId: string, sourceRef?: string): void {
-    let blockingOperation: string | null = null;
+    let blockingOperation: WikiBusyOperation | null = null;
 
     if (operation !== 'global_import' && this.activeMaintenanceJobs.has(this._globalImportKey())) {
       throw new WikiBusyError('import', '*');
