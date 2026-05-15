@@ -59,7 +59,8 @@ export class MetadataRepository extends BaseRepository {
   async setMeta(key: string, value: string, tx?: SQLiteAdapter): Promise<void> {
     const executor = this.getExecutor(tx);
     await executor.runAsync(
-      `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES (?, ?)`,
+      `INSERT INTO ${this.prefix}meta (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
       [key, value],
     );
   }

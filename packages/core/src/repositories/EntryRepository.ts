@@ -285,6 +285,18 @@ export class EntryRepository extends BaseRepository {
         [entityId, cutoff, ...chunk],
       );
       totalChanges += result.changes;
+      // Stage outbox entries for permanently deleted records
+      if (result.changes > 0 && tx) {
+        for (const id of chunk) {
+          await this.outbox.push({
+            entityId,
+            tableName: 'entries',
+            recordId: id,
+            operation: 'DELETE',
+            payload: { id, entity_id: entityId, deleted_at: cutoff },
+          }, tx);
+        }
+      }
     }
     return totalChanges;
   }
@@ -306,6 +318,22 @@ export class EntryRepository extends BaseRepository {
        WHERE entity_id = ? AND access_count = 0 AND created_at <= ? AND source_type != 'immutable_document' AND deleted_at IS NULL`,
       [now, now, entityId, orphanThreshold],
     );
+    // Stage outbox entries for orphaned records
+    if (result.changes > 0 && tx) {
+      const orphanedRows = await executor.getAllAsync<any>(
+        `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at = ? AND access_count = 0 AND created_at <= ? AND source_type != 'immutable_document'`,
+        [entityId, now, orphanThreshold],
+      );
+      for (const row of orphanedRows) {
+        await this.outbox.push({
+          entityId,
+          tableName: 'entries',
+          recordId: row.id,
+          operation: 'DELETE',
+          payload: { id: row.id, entity_id: entityId, deleted_at: now },
+        }, tx);
+      }
+    }
     return result.changes;
   }
 
@@ -326,6 +354,22 @@ export class EntryRepository extends BaseRepository {
        WHERE entity_id = ? AND confidence = 'inferred' AND (last_accessed_at <= ? OR (last_accessed_at IS NULL AND created_at <= ?)) AND source_type != 'immutable_document' AND deleted_at IS NULL`,
       [now, entityId, staleThreshold, staleThreshold],
     );
+    // Stage outbox entries for downgraded records
+    if (result.changes > 0 && tx) {
+      const downgradedRows = await executor.getAllAsync<any>(
+        `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND confidence = 'tentative' AND updated_at = ? AND source_type != 'immutable_document' AND deleted_at IS NULL`,
+        [entityId, now],
+      );
+      for (const row of downgradedRows) {
+        await this.outbox.push({
+          entityId,
+          tableName: 'entries',
+          recordId: row.id,
+          operation: 'UPDATE',
+          payload: { id: row.id, entity_id: entityId, confidence: 'tentative', updated_at: now },
+        }, tx);
+      }
+    }
     return result.changes;
   }
 
@@ -346,6 +390,18 @@ export class EntryRepository extends BaseRepository {
       `UPDATE ${this.prefix}entries SET confidence = 'tentative', updated_at = ? WHERE id IN (${placeholders}) AND entity_id = ?`,
       [now, ...ids, entityId],
     );
+    // Stage outbox entries for downgraded records
+    if (tx) {
+      for (const id of ids) {
+        await this.outbox.push({
+          entityId,
+          tableName: 'entries',
+          recordId: id,
+          operation: 'UPDATE',
+          payload: { id, entity_id: entityId, confidence: 'tentative', updated_at: now },
+        }, tx);
+      }
+    }
   }
 
   /**
@@ -365,5 +421,17 @@ export class EntryRepository extends BaseRepository {
       `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE id IN (${placeholders}) AND entity_id = ?`,
       [now, now, ...ids, entityId],
     );
+    // Stage outbox entries for soft-deleted records
+    if (tx) {
+      for (const id of ids) {
+        await this.outbox.push({
+          entityId,
+          tableName: 'entries',
+          recordId: id,
+          operation: 'DELETE',
+          payload: { id, entity_id: entityId, deleted_at: now },
+        }, tx);
+      }
+    }
   }
 }
