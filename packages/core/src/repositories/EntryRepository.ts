@@ -200,11 +200,19 @@ export class EntryRepository extends BaseRepository {
       args.push(sourceHash);
     }
 
-    // Get affected IDs before updating, for outbox staging
-    const idsToDelete = await executor.getAllAsync<{ id: string }>(
-      q.replace('UPDATE', 'SELECT id FROM').replace(/SET.*WHERE/, 'WHERE'),
-      args,
-    );
+    // Build a separate SELECT query to get affected IDs before updating
+    let selectQ = `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`;
+    const selectArgs: any[] = [entityId];
+    if (sourceRef) {
+      selectQ += ` AND source_ref = ?`;
+      selectArgs.push(sourceRef);
+    }
+    if (sourceHash) {
+      selectQ += ` AND source_hash = ?`;
+      selectArgs.push(sourceHash);
+    }
+
+    const idsToDelete = await executor.getAllAsync<{ id: string }>(selectQ, selectArgs);
 
     const result = await executor.runAsync(q, args);
 
@@ -433,5 +441,35 @@ export class EntryRepository extends BaseRepository {
         }, tx);
       }
     }
+  }
+
+  /**
+   * Bulk soft-delete all entries for an entity.
+   * Stages DELETE outbox entries for each row in the same transaction.
+   * `tx` is REQUIRED.
+   */
+  async bulkSoftDeleteByEntityId(entityId: string, tx: SQLiteAdapter): Promise<number> {
+    const executor = this.getExecutor(tx);
+    const now = Date.now();
+    // Get IDs before updating for outbox staging
+    const idsToDelete = await executor.getAllAsync<{ id: string }>(
+      `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
+      [entityId],
+    );
+    const result = await executor.runAsync(
+      `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`,
+      [now, now, entityId],
+    );
+    // Stage outbox entries for each deleted record
+    for (const row of idsToDelete) {
+      await this.outbox.push({
+        entityId,
+        tableName: 'entries',
+        recordId: row.id,
+        operation: 'DELETE',
+        payload: { id: row.id, entity_id: entityId, deleted_at: now },
+      }, tx);
+    }
+    return result.changes;
   }
 }

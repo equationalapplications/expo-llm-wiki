@@ -117,8 +117,8 @@ export class TaskRepository extends BaseRepository {
     const executor = this.getExecutor(tx);
     const now = Date.now();
     await executor.runAsync(
-      `UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
-      [now, now, id],
+      `UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`,
+      [now, now, id, entityId],
     );
     await this.outbox.push(
       {
@@ -188,5 +188,35 @@ export class TaskRepository extends BaseRepository {
       },
       tx,
     );
+  }
+
+  /**
+   * Bulk soft-delete all tasks for an entity.
+   * Stages DELETE outbox entries for each row in the same transaction.
+   * `tx` is REQUIRED.
+   */
+  async bulkSoftDeleteByEntityId(entityId: string, tx: SQLiteAdapter): Promise<number> {
+    const executor = this.getExecutor(tx);
+    const now = Date.now();
+    // Get IDs before updating for outbox staging
+    const idsToDelete = await executor.getAllAsync<{ id: string }>(
+      `SELECT id FROM ${this.prefix}tasks WHERE entity_id = ? AND deleted_at IS NULL`,
+      [entityId],
+    );
+    const result = await executor.runAsync(
+      `UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`,
+      [now, now, entityId],
+    );
+    // Stage outbox entries for each deleted record
+    for (const row of idsToDelete) {
+      await this.outbox.push({
+        entityId,
+        tableName: 'tasks',
+        recordId: row.id,
+        operation: 'DELETE',
+        payload: { id: row.id, entity_id: entityId, deleted_at: now },
+      }, tx);
+    }
+    return result.changes;
   }
 }

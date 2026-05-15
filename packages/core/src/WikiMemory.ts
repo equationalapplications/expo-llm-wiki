@@ -2982,13 +2982,11 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
           );
           deletedEntryIds.push(...newDeletions.map(e => e.id), ...alreadySoftDeleted.map(e => e.id));
 
-          const [entriesRes, tasksRes] = await Promise.all([
-            this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
-            this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
-          ]);
+          const entriesRes = await this.entryRepo.bulkSoftDeleteByEntityId(entityId, this.db);
+          const tasksRes = await this.taskRepo.bulkSoftDeleteByEntityId(entityId, this.db);
           await this.db.runAsync(`UPDATE ${this.prefix}checkpoints SET memory_checkpoint = 0, heal_checkpoint = 0 WHERE entity_id = ?`, [entityId]);
-          deletedEntries = entriesRes.changes;
-          deletedTasks = tasksRes.changes;
+          deletedEntries = entriesRes;
+          deletedTasks = tasksRes;
         } else {
           const hasIdSelectors = params.entryId !== undefined || params.taskId !== undefined;
           const hasSourceSelectors = params.sourceRef !== undefined || params.sourceHash !== undefined;
