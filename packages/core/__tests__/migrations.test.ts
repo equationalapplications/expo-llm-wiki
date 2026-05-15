@@ -60,8 +60,8 @@ function makeMockDb(opts: {
     async getAllAsync<T>(sql: string, args: any[] = []): Promise<T[]> {
       return [];
     },
-    async withTransactionAsync(fn: () => Promise<void>): Promise<void> {
-      await fn();
+    async withTransactionAsync(fn: (tx: any) => Promise<void>): Promise<void> {
+      await fn(db);
     },
     getMetaVersion() {
       return currentMetaVersion;

@@ -707,11 +707,11 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
           OR source_ref GLOB '*[^-A-Za-z0-9._ ]*'
         )
     `);
-    await this.db.withTransactionAsync(async () => {
+    await this.db.withTransactionAsync(async (tx) => {
       for (const row of rows) {
         const normalized = normalizeSourceRef(row.source_ref);
         if (normalized !== row.source_ref) {
-          await this.db.runAsync(
+          await tx.runAsync(
             `UPDATE ${this.prefix}entries SET source_ref = ? WHERE rowid = ?`,
             [normalized, row.rowid]
           );
@@ -884,14 +884,14 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
 
         if (succeeded.length > 0) {
           const succeededIds = succeeded.map(r => r.id);
-          await this.db.withTransactionAsync(async () => {
-            deletedEntries = await this.entryRepo.bulkDeletePruned(entityId, cutoff, succeededIds, this.db);
+          await this.db.withTransactionAsync(async (tx) => {
+            deletedEntries = await this.entryRepo.bulkDeletePruned(entityId, cutoff, succeededIds, tx);
           });
         }
 
         // Delete tasks in a transaction for atomicity
-        await this.db.withTransactionAsync(async () => {
-          deletedTasks = await this.taskRepo.bulkDeletePruned(entityId, cutoff, this.db);
+        await this.db.withTransactionAsync(async (tx) => {
+          deletedTasks = await this.taskRepo.bulkDeletePruned(entityId, cutoff, tx);
         });
 
         if (failure) {
@@ -1850,14 +1850,14 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     let librarianCount = 0;
     let librarianJobKey: string | null = null;
 
-    await this.db.withTransactionAsync(async () => {
-      await this.eventRepo.add(newEvent, this.db);
+    await this.db.withTransactionAsync(async (tx) => {
+      await this.eventRepo.add(newEvent, tx);
 
       const threshold = this.options.config?.autoLibrarianThreshold || 20;
 
       const [count, cp] = await Promise.all([
-        this.eventRepo.count(entityId, this.db),
-        this.metadataRepo.getCheckpoint(entityId, this.db),
+        this.eventRepo.count(entityId, tx),
+        this.metadataRepo.getCheckpoint(entityId, tx),
       ]);
 
       let memoryCheckpoint = cp.memory ?? 0;
@@ -1894,14 +1894,23 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
   private async runLibrarianThenMaybeHeal(entityId: string, currentEventCount: number) {
     await this._doRunLibrarian(entityId);
 
-    await this.metadataRepo.updateCheckpoint(entityId, { memory: currentEventCount }, this.db);
-
     const autoHealThreshold = this.options.config?.autoHealThreshold || 100;
-    const cp = await this.metadataRepo.getCheckpoint(entityId);
-    let healCheckpoint = cp.heal ?? 0;
-    if (healCheckpoint > currentEventCount) healCheckpoint = 0;
-    
-    if (currentEventCount - healCheckpoint >= autoHealThreshold) {
+
+    // Atomically write memory checkpoint and read heal checkpoint so the heal
+    // decision cannot observe a checkpoint reset (e.g. from a concurrent forget)
+    // that happened between the two operations.
+    let shouldRunHeal = false;
+    await this.db.withTransactionAsync(async (tx) => {
+      await this.metadataRepo.updateCheckpoint(entityId, { memory: currentEventCount }, tx);
+      const cp = await this.metadataRepo.getCheckpoint(entityId, tx);
+      let healCheckpoint = cp.heal ?? 0;
+      if (healCheckpoint > currentEventCount) healCheckpoint = 0;
+      if (currentEventCount - healCheckpoint >= autoHealThreshold) {
+        shouldRunHeal = true;
+      }
+    });
+
+    if (shouldRunHeal) {
       const healKey = this._healKey(entityId);
       if (!this.activeMaintenanceJobs.has(healKey)) {
         this.activeMaintenanceJobs.add(healKey);
@@ -1947,12 +1956,17 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
 
     const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
 
-    await this.db.withTransactionAsync(async () => {
+    await this.db.withTransactionAsync(async (tx) => {
+      // Re-read facts inside the transaction so duplicate detection reflects the
+      // committed state at write time, not the pre-LLM snapshot (which may be
+      // stale if heal or another operation ran during the LLM call).
+      const factsForDedupe = await this.entryRepo.findRecentByEntityId(entityId, 100, tx);
+
       for (const fact of validFacts) {
         const newTokens = titleTokens(fact.title);
         let skip = false;
         if (newTokens.size >= MIN_TOKENS_TO_QUALIFY) {
-          for (const existing of currentFactsRows) {
+          for (const existing of factsForDedupe) {
             if (existing.source_type !== 'librarian_inferred') continue;
             const existingTokens = titleTokens(existing.title);
             if (existingTokens.size >= MIN_TOKENS_TO_QUALIFY) {
@@ -1982,14 +1996,14 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
           access_count: 0,
           deleted_at: null,
         };
-        await this.entryRepo.upsert(factObj, this.db);
+        await this.entryRepo.upsert(factObj, tx);
         insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
       }
 
       for (const task of validTasks) {
         const id = generateId('task_');
         const taskObj: WikiTask = { id, entity_id: entityId, description: task.description, status: 'pending', priority: task.priority, created_at: now, updated_at: now, resolved_at: null, deleted_at: null };
-        await this.taskRepo.upsert(taskObj, this.db);
+        await this.taskRepo.upsert(taskObj, tx);
       }
     });
 
@@ -2019,15 +2033,15 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       throw new Error('Invalid staleInferredAfterDays: must be a finite number >= 0 or null');
     }
 
-    await this.db.withTransactionAsync(async () => {
+    await this.db.withTransactionAsync(async (tx) => {
       if (orphanAfterDays !== null) {
         const orphanThreshold = now - (orphanAfterDays * MS_PER_DAY);
-        await this.entryRepo.markOrphaned(entityId, orphanThreshold, this.db);
+        await this.entryRepo.markOrphaned(entityId, orphanThreshold, tx);
       }
 
       if (staleInferredAfterDays !== null) {
         const staleThreshold = now - (staleInferredAfterDays * MS_PER_DAY);
-        await this.entryRepo.downgradeStaleInferred(entityId, staleThreshold, this.db);
+        await this.entryRepo.downgradeStaleInferred(entityId, staleThreshold, tx);
       }
     });
 
@@ -2067,9 +2081,9 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
     const uniqueDeletedFactIds = Array.from(new Set(safeDeleted));
 
-    await this.db.withTransactionAsync(async () => {
-      await this.entryRepo.downgradeByIds(safeDowngraded, entityId, this.db);
-      await this.entryRepo.softDeleteByIds(safeDeleted, entityId, this.db);
+    await this.db.withTransactionAsync(async (tx) => {
+      await this.entryRepo.downgradeByIds(safeDowngraded, entityId, tx);
+      await this.entryRepo.softDeleteByIds(safeDeleted, entityId, tx);
       for (const fact of validNewFacts) {
         const id = generateId('fact_');
         const factObj: WikiFact = {
@@ -2088,7 +2102,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
           access_count: 0,
           deleted_at: null,
         };
-        await this.entryRepo.upsert(factObj, this.db);
+        await this.entryRepo.upsert(factObj, tx);
         insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
       }
     });
@@ -2551,18 +2565,18 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       // Without this, external indexes retain stale embeddings and keep returning
       // deleted fact IDs in ranking results.
       const softDeletedFactIds: string[] = [];
-      await this.db.withTransactionAsync(async () => {
+      await this.db.withTransactionAsync(async (tx) => {
         if (!merge) {
-          const deletedLiveFactIds = await this.entryRepo.findIdsBySource(entityId, null, null, this.db, false);
+          const deletedLiveFactIds = await this.entryRepo.findIdsBySource(entityId, null, null, tx, false);
           softDeletedFactIds.push(...deletedLiveFactIds);
-          await this.entryRepo.bulkSoftDeleteByEntityId(entityId, this.db);
-          await this.taskRepo.bulkSoftDeleteByEntityId(entityId, this.db);
-          await this.metadataRepo.deleteCheckpoint(entityId, this.db);
+          await this.entryRepo.bulkSoftDeleteByEntityId(entityId, tx);
+          await this.taskRepo.bulkSoftDeleteByEntityId(entityId, tx);
+          await this.metadataRepo.deleteCheckpoint(entityId, tx);
         }
 
         const factIds = bundle.facts.map((fact) => fact.id);
         const existingFactsById = new Map<string, { id: string; entity_id: string; updated_at: number }>();
-        const existingFacts = await this.entryRepo.findExistingMetadataByIds(factIds, this.db);
+        const existingFacts = await this.entryRepo.findExistingMetadataByIds(factIds, tx);
         for (const existingFact of existingFacts) {
           existingFactsById.set(existingFact.id, existingFact);
         }
@@ -2673,7 +2687,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
             embedding_blob: blobData ?? undefined,
           };
 
-          await this.entryRepo.upsertForImport(factObj, this.db);
+          await this.entryRepo.upsertForImport(factObj, tx);
           if (blobData != null) {
             factsWithPreservedBlob.set(fact.id, blobData);
             if (!fact.deleted_at) preservedBlobDims.add(blobData.byteLength / 4);
@@ -2685,7 +2699,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
 
         const taskIds = bundle.tasks.map((task) => task.id);
         const existingTasksById = new Map<string, { id: string; entity_id: string; updated_at: number }>();
-        const existingTasks = await this.taskRepo.findExistingMetadataByIds(taskIds, this.db);
+        const existingTasks = await this.taskRepo.findExistingMetadataByIds(taskIds, tx);
         for (const existingTask of existingTasks) {
           existingTasksById.set(existingTask.id, existingTask);
         }
@@ -2715,7 +2729,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
             updated_at: safeUpdatedAt,
             resolved_at: task.resolved_at,
             deleted_at: task.deleted_at,
-          }, this.db, safeUpdatedAt);
+          }, tx, safeUpdatedAt);
           existingTasksById.set(task.id, { id: task.id, entity_id: entityId, updated_at: safeUpdatedAt });
         }
 
@@ -2727,7 +2741,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
             summary: event.summary,
             related_entry_id: event.related_entry_id ?? null,
             created_at: event.created_at,
-          }, this.db);
+          }, tx);
         }
       });
       // Invalidate cache before rebuilding the text index so concurrent reads
@@ -2856,12 +2870,12 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       let deletedTasks = 0;
       const deletedEntryIds: string[] = [];
 
-      await this.db.withTransactionAsync(async () => {
+      await this.db.withTransactionAsync(async (tx) => {
         if (params.clearAll) {
-          deletedEntryIds.push(...await this.entryRepo.findIdsBySource(entityId, null, null, this.db, true));
-          const entriesRes = await this.entryRepo.bulkSoftDeleteByEntityId(entityId, this.db);
-          const tasksRes = await this.taskRepo.bulkSoftDeleteByEntityId(entityId, this.db);
-          await this.metadataRepo.updateCheckpoint(entityId, { memory: 0, heal: 0 }, this.db);
+          deletedEntryIds.push(...await this.entryRepo.findIdsBySource(entityId, null, null, tx, true));
+          const entriesRes = await this.entryRepo.bulkSoftDeleteByEntityId(entityId, tx);
+          const tasksRes = await this.taskRepo.bulkSoftDeleteByEntityId(entityId, tx);
+          await this.metadataRepo.updateCheckpoint(entityId, { memory: 0, heal: 0 }, tx);
           deletedEntries = entriesRes;
           deletedTasks = tasksRes;
         } else {
@@ -2877,24 +2891,24 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
           if (params.sourceHash !== undefined && !sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
 
           if (params.entryId) {
-            const entryId = await this.entryRepo.findIdById(params.entryId, entityId, this.db);
+            const entryId = await this.entryRepo.findIdById(params.entryId, entityId, tx);
             if (entryId) deletedEntryIds.push(entryId);
           }
 
           if (sourceRef || sourceHash) {
-            deletedEntryIds.push(...await this.entryRepo.findIdsBySource(entityId, sourceRef, sourceHash, this.db, true));
+            deletedEntryIds.push(...await this.entryRepo.findIdsBySource(entityId, sourceRef, sourceHash, tx, true));
           }
 
           const entryPromise = params.entryId
-            ? this.entryRepo.softDelete(params.entryId, entityId, this.db).then(r => r.changes > 0)
+            ? this.entryRepo.softDelete(params.entryId, entityId, tx).then(r => r.changes > 0)
             : null;
 
           const taskDeletedPromise = params.taskId
-            ? this.taskRepo.softDeleteById(params.taskId, entityId, this.db).then(r => r.changes > 0)
+            ? this.taskRepo.softDeleteById(params.taskId, entityId, tx).then(r => r.changes > 0)
             : null;
 
           const refPromise = (sourceRef || sourceHash)
-            ? this.entryRepo.softDeleteBySource(entityId, this.db, sourceRef, sourceHash)
+            ? this.entryRepo.softDeleteBySource(entityId, tx, sourceRef, sourceHash)
             : null;
 
           const [entryResult, taskResult, refResult] = await Promise.all([
@@ -3028,10 +3042,10 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
       const deletedSourceFactIds: string[] = [];
 
-      await this.db.withTransactionAsync(async () => {
-        deletedSourceFactIds.push(...await this.entryRepo.findIdsBySource(entityId, sourceRef, null, this.db, false));
+      await this.db.withTransactionAsync(async (tx) => {
+        deletedSourceFactIds.push(...await this.entryRepo.findIdsBySource(entityId, sourceRef, null, tx, false));
 
-        await this.entryRepo.softDeleteBySource(entityId, this.db, sourceRef, null);
+        await this.entryRepo.softDeleteBySource(entityId, tx, sourceRef, null);
         for (const fact of allValidFacts) {
           const id = generateId('fact_');
           const wikiFact: WikiFact = {
@@ -3050,7 +3064,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
             access_count: 0,
             deleted_at: null,
           };
-          await this.entryRepo.upsert(wikiFact, this.db);
+          await this.entryRepo.upsert(wikiFact, tx);
           insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
         }
       });

@@ -13,7 +13,7 @@ export class OutboxRepository extends BaseRepository {
       entityId: string;
       tableName: string;
       recordId: string;
-      operation: 'INSERT' | 'UPDATE' | 'DELETE' | 'UPSERT';
+      operation: 'INSERT' | 'UPDATE' | 'DELETE';
       payload: any;
     },
     tx: SQLiteAdapter,

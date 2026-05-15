@@ -168,7 +168,7 @@ describe('Outbox totality: entry count === outbox count after ingestDocument', (
     expect(entryRows.length).toBe(2);
     expect(outboxRows.length).toBe(4);
     expect(outboxRows.some(row => row.operation === 'DELETE')).toBe(true);
-    expect(outboxRows.filter(row => row.operation === 'UPSERT').length).toBe(3);
+    expect(outboxRows.filter(row => row.operation === 'INSERT').length).toBe(3);
   });
 });
 

@@ -6,7 +6,7 @@ export class EventRepository extends BaseRepository {
    * Insert a new event row.
    * `tx` is required to ensure mutations are atomic within transactions.
    */
-  async add(event: WikiEvent, tx?: SQLiteAdapter): Promise<void> {
+  async add(event: WikiEvent, tx: SQLiteAdapter): Promise<void> {
     const executor = this.getExecutor(tx);
     await executor.runAsync(
       `INSERT INTO ${this.prefix}events (id, entity_id, event_type, summary, related_entry_id, created_at)
@@ -22,7 +22,7 @@ export class EventRepository extends BaseRepository {
     );
   }
 
-  async addIgnoreDuplicate(event: WikiEvent, tx?: SQLiteAdapter): Promise<void> {
+  async addIgnoreDuplicate(event: WikiEvent, tx: SQLiteAdapter): Promise<void> {
     const executor = this.getExecutor(tx);
     await executor.runAsync(
       `INSERT OR IGNORE INTO ${this.prefix}events (id, entity_id, event_type, summary, related_entry_id, created_at)

@@ -80,7 +80,11 @@ export class EntryRepository extends BaseRepository {
     const tagsJson = JSON.stringify(fact.tags);
     const embeddingBlob = this.normalizeEmbeddingBlob(fact.embedding_blob);
 
-    const operation = fact.deleted_at ? 'DELETE' : 'UPSERT';
+    const existingRow = await executor.getFirstAsync<{ id: string }>(
+      `SELECT id FROM ${this.prefix}entries WHERE id = ?`,
+      [fact.id],
+    );
+    const operation = fact.deleted_at ? 'DELETE' : (existingRow ? 'UPDATE' : 'INSERT');
 
     const result = await executor.runAsync(
       `INSERT INTO ${this.prefix}entries (

@@ -20,7 +20,7 @@ describe('MetadataRepository', () => {
   // ---------------------------------------------------------------------------
 
   it('getCheckpoint returns empty object when entity has no row', async () => {
-    const result = await repo.getCheckpoint('nonexistent');
+    const result = await repo.getCheckpoint('nonexistent', db);
     expect(result).toEqual({});
     expect(result.memory).toBeUndefined();
     expect(result.heal).toBeUndefined();
@@ -28,7 +28,7 @@ describe('MetadataRepository', () => {
 
   it('getCheckpoint returns correct values after updateCheckpoint with both fields', async () => {
     await repo.updateCheckpoint('entity1', { memory: 10, heal: 20 }, db);
-    const result = await repo.getCheckpoint('entity1');
+    const result = await repo.getCheckpoint('entity1', db);
     expect(result.memory).toBe(10);
     expect(result.heal).toBe(20);
   });
@@ -42,7 +42,7 @@ describe('MetadataRepository', () => {
     await repo.updateCheckpoint('entity1', { memory: 5, heal: 15 }, db);
     // update only memory
     await repo.updateCheckpoint('entity1', { memory: 99 }, db);
-    const result = await repo.getCheckpoint('entity1');
+    const result = await repo.getCheckpoint('entity1', db);
     expect(result.memory).toBe(99);
     expect(result.heal).toBe(15);
   });
@@ -52,7 +52,7 @@ describe('MetadataRepository', () => {
     await repo.updateCheckpoint('entity1', { memory: 5, heal: 15 }, db);
     // update only heal
     await repo.updateCheckpoint('entity1', { heal: 77 }, db);
-    const result = await repo.getCheckpoint('entity1');
+    const result = await repo.getCheckpoint('entity1', db);
     expect(result.memory).toBe(5);
     expect(result.heal).toBe(77);
   });
@@ -60,7 +60,7 @@ describe('MetadataRepository', () => {
   it('updateCheckpoint with both fields — both change', async () => {
     await repo.updateCheckpoint('entity1', { memory: 1, heal: 2 }, db);
     await repo.updateCheckpoint('entity1', { memory: 100, heal: 200 }, db);
-    const result = await repo.getCheckpoint('entity1');
+    const result = await repo.getCheckpoint('entity1', db);
     expect(result.memory).toBe(100);
     expect(result.heal).toBe(200);
   });
@@ -125,7 +125,7 @@ describe('MetadataRepository', () => {
       // expected
     }
 
-    const result = await repo.getCheckpoint('entity1');
+    const result = await repo.getCheckpoint('entity1', db);
     expect(result.memory).toBe(5);
     expect(result.heal).toBe(10);
   });

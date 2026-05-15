@@ -4,8 +4,8 @@ import type { SQLiteAdapter } from '../types';
 export class MetadataRepository extends BaseRepository {
   // CHECKPOINTS TABLE METHODS
 
-  async getCheckpoint(entityId: string, tx?: SQLiteAdapter): Promise<{ memory?: number; heal?: number }> {
-    const executor = tx ?? this.db;
+  async getCheckpoint(entityId: string, tx: SQLiteAdapter): Promise<{ memory?: number; heal?: number }> {
+    const executor = this.getExecutor(tx);
     const row = await executor.getFirstAsync<{
       memory_checkpoint: number | null;
       heal_checkpoint: number | null;

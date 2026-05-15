@@ -82,7 +82,11 @@ export class TaskRepository extends BaseRepository {
     const executor = this.getExecutor(tx);
     const now = Number.isFinite(updatedAt) ? updatedAt : Date.now();
 
-    const operation = task.deleted_at != null ? 'DELETE' : 'UPSERT';
+    const existingRow = await executor.getFirstAsync<{ id: string }>(
+      `SELECT id FROM ${this.prefix}tasks WHERE id = ?`,
+      [task.id],
+    );
+    const operation = task.deleted_at != null ? 'DELETE' : (existingRow ? 'UPDATE' : 'INSERT');
 
     await executor.runAsync(
       `INSERT INTO ${this.prefix}tasks (

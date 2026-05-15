@@ -20,8 +20,8 @@ export const MIGRATIONS: Migration[] = [
     description: 'Remove FTS5; add embedding column for semantic retrieval',
     run: async (db, prefix) => {
       // Drop FTS5 artifacts in a transaction.
-      await db.withTransactionAsync(async () => {
-        await db.execAsync(`
+      await db.withTransactionAsync(async (tx) => {
+        await tx.execAsync(`
           DROP TRIGGER IF EXISTS ${prefix}entries_ai;
           DROP TRIGGER IF EXISTS ${prefix}entries_ad;
           DROP TRIGGER IF EXISTS ${prefix}entries_au;

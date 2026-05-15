@@ -8,7 +8,7 @@ export interface SQLiteAdapter {
   runAsync(sql: string, params?: unknown[]): Promise<{ changes: number; lastInsertRowId: number }>;
   getAllAsync<T>(sql: string, params?: unknown[]): Promise<T[]>;
   getFirstAsync<T>(sql: string, params?: unknown[]): Promise<T | null>;
-  withTransactionAsync<T>(fn: () => Promise<T>): Promise<T>;
+  withTransactionAsync<T>(fn: (tx: SQLiteAdapter) => Promise<T>): Promise<T>;
   closeAsync(): Promise<void>;
 }
 

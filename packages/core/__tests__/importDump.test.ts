@@ -10,8 +10,8 @@ class MockSQLiteDatabase {
 
     async execAsync(_sql: string): Promise<void> {}
 
-    async withTransactionAsync<T>(fn: () => Promise<T>): Promise<T> {
-      return fn();
+    async withTransactionAsync<T>(fn: (tx: any) => Promise<T>): Promise<T> {
+      return fn(this);
     }
 
     async runAsync(sql: string, args: any[] = []): Promise<{ changes: number; lastInsertRowId: number }> {
@@ -72,6 +72,14 @@ class MockSQLiteDatabase {
           return { changes: 1, lastInsertRowId: 0 };
         }
         return { changes: 0, lastInsertRowId: 0 };
+      }
+
+      if (normalized.startsWith('INSERT INTO') && normalized.includes('entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at, embedding_blob, embedding)')) {
+        const [id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at, embedding_blob] = args;
+        const idx = this.entries.findIndex((e) => e.id === id);
+        const entry = { id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at, embedding_blob, embedding: null };
+        if (idx >= 0) { this.entries[idx] = entry; } else { this.entries.push(entry); }
+        return { changes: 1, lastInsertRowId: 0 };
       }
 
       if (normalized.startsWith('INSERT INTO') && normalized.includes('entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at, embedding_blob)')) {
@@ -196,7 +204,7 @@ class MockSQLiteDatabase {
 const noopProvider = { generateText: async (_: any) => '{"facts":[],"tasks":[]}' };
 
 async function freshWiki(prefix: string) {
-  const db = new MockSQLiteDatabase();
+  const db = openTestDatabase();
   const wiki = new WikiMemory(db, { llmProvider: noopProvider, config: { tablePrefix: prefix } });
   await wiki.setup();
   return wiki;
