@@ -113,4 +113,29 @@ describe('runReembed()', () => {
     resolveEmbed();
     await first;
   });
+
+  it('throws WikiBusyError(forget) when forget is active for entity', async () => {
+    const { wiki, db } = makeWiki(async () => [1, 0, 0]);
+    await wiki.setup();
+    await insertFact(db, 'f1', 'user-1');
+
+    (wiki as any).activeMaintenanceJobs.add('llm_wiki_:user-1:forget');
+
+    const err = await wiki.runReembed('user-1').catch(e => e);
+    expect(err).toBeInstanceOf(WikiBusyError);
+    expect(err.operation).toBe('forget');
+    expect(err.entityId).toBe('user-1');
+  });
+
+  it('throws WikiBusyError(forget) on global runReembed() when forget is active', async () => {
+    const { wiki, db } = makeWiki(async () => [1, 0, 0]);
+    await wiki.setup();
+    await insertFact(db, 'f1', 'user-1');
+
+    (wiki as any).activeMaintenanceJobs.add('llm_wiki_:user-1:forget');
+
+    const err = await wiki.runReembed().catch(e => e);
+    expect(err).toBeInstanceOf(WikiBusyError);
+    expect(err.operation).toBe('forget');
+  });
 });
