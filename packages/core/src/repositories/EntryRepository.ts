@@ -78,21 +78,8 @@ export class EntryRepository extends BaseRepository {
     const executor = this.getExecutor(tx);
     const now = Date.now();
     const tagsJson = JSON.stringify(fact.tags);
-    const embeddingBlob = fact.embedding_blob instanceof Uint8Array
-      ? fact.embedding_blob
-      : (fact.embedding_blob && typeof fact.embedding_blob === 'object' && 'type' in fact.embedding_blob)
-        ? new Uint8Array((fact.embedding_blob as any).data)
-        : (fact.embedding_blob && typeof fact.embedding_blob === 'object')
-          ? (() => {
-              const obj = fact.embedding_blob as Record<string, number>;
-              const keys = Object.keys(obj).map(Number).sort((a, b) => a - b);
-              const arr = new Uint8Array(keys.length);
-              for (let i = 0; i < keys.length; i++) arr[i] = obj[String(keys[i])];
-              return arr;
-            })()
-          : undefined;
+    const embeddingBlob = this.normalizeEmbeddingBlob(fact.embedding_blob);
 
-    // Determine if this is an INSERT or UPDATE for the outbox
     const existing = await executor.getFirstAsync<{ id: string }>(
       `SELECT id FROM ${this.prefix}entries WHERE id = ?`,
       [fact.id],
@@ -131,7 +118,7 @@ export class EntryRepository extends BaseRepository {
         fact.source_hash,
         fact.source_ref,
         fact.created_at,
-        now, // updated_at set by repo
+        now,
         fact.last_accessed_at === null ? null : fact.last_accessed_at,
         fact.access_count,
         fact.deleted_at ?? null,
@@ -147,6 +134,132 @@ export class EntryRepository extends BaseRepository {
       operation,
       payload: fact,
     }, tx);
+
+    return result;
+  }
+
+  /**
+   * Normalize an embedding blob value to Uint8Array or null.
+   */
+  private normalizeEmbeddingBlob(blob: unknown): Uint8Array | null {
+    if (blob instanceof Uint8Array) return blob;
+    if (blob !== null && blob !== undefined && typeof blob === 'object') {
+      const obj = blob as Record<string, unknown>;
+      if (obj['type'] === 'Buffer' && Array.isArray(obj['data'])) {
+        return new Uint8Array(obj['data'] as number[]);
+      }
+      const entries = Object.keys(obj);
+      if (entries.length > 0 && entries.every((k) => /^\d+$/.test(k))) {
+        const len = entries.length;
+        const arr = new Uint8Array(len);
+        for (let i = 0; i < len; i++) arr[i] = (obj[String(i)] as number) ?? 0;
+        return arr;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Fetch existing rows by IDs and return id/entity_id/updated_at for import collision resolution.
+   */
+  async findExistingMetadataByIds(
+    ids: readonly string[],
+    tx?: SQLiteAdapter,
+  ): Promise<Array<{ id: string; entity_id: string; updated_at: number }>> {
+    const executor = this.getExecutor(tx);
+    const rows: Array<{ id: string; entity_id: string; updated_at: number }> = [];
+    for (let i = 0; i < ids.length; i += this.chunkSize) {
+      const chunk = ids.slice(i, i + this.chunkSize);
+      const placeholders = chunk.map(() => '?').join(',');
+      const chunkRows = await executor.getAllAsync<any>(
+        `SELECT id, entity_id, updated_at FROM ${this.prefix}entries WHERE id IN (${placeholders})`,
+        chunk,
+      );
+      rows.push(...chunkRows.map((row) => ({ id: row.id, entity_id: row.entity_id, updated_at: Number(row.updated_at) })));
+    }
+    return rows;
+  }
+
+  async findIdById(id: string, entityId: string, tx?: SQLiteAdapter): Promise<string | null> {
+    const executor = this.getExecutor(tx);
+    const row = await executor.getFirstAsync<{ id: string }>(
+      `SELECT id FROM ${this.prefix}entries WHERE id = ? AND entity_id = ?`,
+      [id, entityId],
+    );
+    return row?.id ?? null;
+  }
+
+  async findIdsBySource(
+    entityId: string,
+    sourceRef: string | null,
+    sourceHash: string | null,
+    tx?: SQLiteAdapter,
+    includeDeleted = false,
+  ): Promise<string[]> {
+    const executor = this.getExecutor(tx);
+    let sql = `SELECT id FROM ${this.prefix}entries WHERE entity_id = ?`;
+    const args: unknown[] = [entityId];
+    if (sourceRef !== null) {
+      sql += ` AND source_ref = ?`;
+      args.push(sourceRef);
+    }
+    if (sourceHash !== null) {
+      sql += ` AND source_hash = ?`;
+      args.push(sourceHash);
+    }
+    if (!includeDeleted) {
+      sql += ` AND deleted_at IS NULL`;
+    }
+    const rows = await executor.getAllAsync<{ id: string }>(sql, args);
+    return rows.map((row) => row.id);
+  }
+
+  async upsertForImport(fact: WikiFact, tx: SQLiteAdapter): Promise<{ changes: number; lastInsertRowId: number }> {
+    const executor = this.getExecutor(tx);
+    const tagsJson = JSON.stringify(fact.tags);
+    const embeddingBlob = this.normalizeEmbeddingBlob(fact.embedding_blob);
+
+    const result = await executor.runAsync(
+      `INSERT INTO ${this.prefix}entries (
+        id, entity_id, title, body, tags, confidence, source_type,
+        source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count,
+        deleted_at, embedding_blob, embedding
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        entity_id = excluded.entity_id,
+        title = excluded.title,
+        body = excluded.body,
+        tags = excluded.tags,
+        confidence = excluded.confidence,
+        source_type = excluded.source_type,
+        source_hash = excluded.source_hash,
+        source_ref = excluded.source_ref,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at,
+        last_accessed_at = excluded.last_accessed_at,
+        access_count = excluded.access_count,
+        deleted_at = excluded.deleted_at,
+        embedding_blob = excluded.embedding_blob,
+        embedding = NULL`,
+      [
+        fact.id,
+        fact.entity_id,
+        fact.title,
+        fact.body,
+        tagsJson,
+        fact.confidence,
+        fact.source_type,
+        fact.source_hash,
+        fact.source_ref,
+        fact.created_at,
+        fact.updated_at,
+        fact.last_accessed_at === null ? null : fact.last_accessed_at,
+        fact.access_count,
+        fact.deleted_at ?? null,
+        embeddingBlob ?? null,
+        null,
+      ],
+    );
 
     return result;
   }

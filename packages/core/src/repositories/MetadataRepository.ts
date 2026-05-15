@@ -47,6 +47,14 @@ export class MetadataRepository extends BaseRepository {
     );
   }
 
+  async deleteCheckpoint(entityId: string, tx: SQLiteAdapter): Promise<void> {
+    const executor = this.getExecutor(tx);
+    await executor.runAsync(
+      `DELETE FROM ${this.prefix}checkpoints WHERE entity_id = ?`,
+      [entityId],
+    );
+  }
+
   // META TABLE METHODS
 
   async getMeta(key: string): Promise<string | null> {

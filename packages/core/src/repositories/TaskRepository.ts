@@ -53,15 +53,34 @@ export class TaskRepository extends BaseRepository {
     return rows.map(mapRowToTask);
   }
 
+  async findExistingMetadataByIds(
+    ids: readonly string[],
+    tx?: SQLiteAdapter,
+  ): Promise<Array<{ id: string; entity_id: string; updated_at: number }>> {
+    const executor = this.getExecutor(tx);
+    const rows: Array<{ id: string; entity_id: string; updated_at: number }> = [];
+    const chunkSize = 500;
+    for (let i = 0; i < ids.length; i += chunkSize) {
+      const chunk = ids.slice(i, i + chunkSize);
+      const placeholders = chunk.map(() => '?').join(',');
+      const chunkRows = await executor.getAllAsync<any>(
+        `SELECT id, entity_id, updated_at FROM ${this.prefix}tasks WHERE id IN (${placeholders})`,
+        chunk,
+      );
+      rows.push(...chunkRows.map((row) => ({ id: row.id, entity_id: row.entity_id, updated_at: Number(row.updated_at) })));
+    }
+    return rows;
+  }
+
   /**
    * Upsert a WikiTask within the provided transaction.
    * Uses ON CONFLICT(id) DO UPDATE (not INSERT OR REPLACE).
    * Stages an outbox entry in the same transaction.
    * `tx` is REQUIRED.
    */
-  async upsert(task: WikiTask, tx: SQLiteAdapter): Promise<void> {
+  async upsert(task: WikiTask, tx: SQLiteAdapter, updatedAt?: number): Promise<void> {
     const executor = this.getExecutor(tx);
-    const now = Date.now();
+    const now = Number.isFinite(updatedAt) ? updatedAt : Date.now();
 
     // Determine if this is an INSERT or UPDATE for the outbox
     const existing = await executor.getFirstAsync<{ id: string }>(
@@ -90,7 +109,7 @@ export class TaskRepository extends BaseRepository {
         task.status,
         task.priority,
         task.created_at,
-        now, // updated_at set by repo
+        now, // updated_at set by repo or import override
         task.resolved_at ?? null,
         task.deleted_at ?? null,
       ],
@@ -105,6 +124,37 @@ export class TaskRepository extends BaseRepository {
         payload: task,
       },
       tx,
+    );
+  }
+
+  async upsertForImport(task: WikiTask, tx: SQLiteAdapter, updatedAt?: number): Promise<void> {
+    const executor = this.getExecutor(tx);
+    const now = Number.isFinite(updatedAt) ? updatedAt : Date.now();
+
+    await executor.runAsync(
+      `INSERT INTO ${this.prefix}tasks (
+        id, entity_id, description, status, priority,
+        created_at, updated_at, resolved_at, deleted_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        entity_id = excluded.entity_id,
+        description = excluded.description,
+        status = excluded.status,
+        priority = excluded.priority,
+        updated_at = excluded.updated_at,
+        resolved_at = excluded.resolved_at,
+        deleted_at = excluded.deleted_at`,
+      [
+        task.id,
+        task.entity_id,
+        task.description,
+        task.status,
+        task.priority,
+        task.created_at,
+        now,
+        task.resolved_at ?? null,
+        task.deleted_at ?? null,
+      ],
     );
   }
 

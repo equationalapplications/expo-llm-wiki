@@ -22,6 +22,22 @@ export class EventRepository extends BaseRepository {
     );
   }
 
+  async addIgnoreDuplicate(event: WikiEvent, tx: SQLiteAdapter): Promise<void> {
+    const executor = this.getExecutor(tx);
+    await executor.runAsync(
+      `INSERT OR IGNORE INTO ${this.prefix}events (id, entity_id, event_type, summary, related_entry_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        event.id,
+        event.entity_id,
+        event.event_type,
+        event.summary,
+        event.related_entry_id ?? null,
+        event.created_at,
+      ],
+    );
+  }
+
   /**
    * Return the most recent events for an entity, newest first.
    * Defaults to a limit of 50.
