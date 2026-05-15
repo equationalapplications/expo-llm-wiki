@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { SearchService } from '../src/SearchService';
+import { SearchService } from '../src/services/SearchService';
 import type { EntryRepository } from '../src/repositories/EntryRepository';
 import { cosineSimilarity } from '../src/utils/cosine';
 import { parseEmbedding } from '../src/utils/embedding';
