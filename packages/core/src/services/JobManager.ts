@@ -187,14 +187,17 @@ export class JobManager {
 
     switch (operation) {
       case 'librarian':
-      case 'heal': {
-        const opKey = operation === 'librarian' ? this._librarianKey(entityId) : this._healKey(entityId);
-        return this.activeMaintenanceJobs.has(opKey) ||
+        return this.activeMaintenanceJobs.has(this._librarianKey(entityId)) ||
                this.activeMaintenanceJobs.has(this._pruneKey(entityId)) ||
                this._isReembedActive(entityId) ||
                this._isImportActiveFor(entityId) ||
                this._isForgetActiveFor(entityId);
-      }
+      case 'heal':
+        return this.activeMaintenanceJobs.has(this._healKey(entityId)) ||
+               this.activeMaintenanceJobs.has(this._pruneKey(entityId)) ||
+               this._isReembedActive(entityId) ||
+               this._isImportActiveFor(entityId) ||
+               this._isForgetActiveFor(entityId);
       case 'prune':
         return this.activeMaintenanceJobs.has(this._pruneKey(entityId)) ||
                this.activeMaintenanceJobs.has(this._librarianKey(entityId)) ||
@@ -206,6 +209,18 @@ export class JobManager {
       default:
         return false;
     }
+  }
+
+  /**
+   * Auto-heal historically only gated on the heal self-key. Keep that behavior
+   * for write() auto-trigger paths while preserving stricter checks in acquireLock().
+   */
+  tryAcquireAutoHealLock(entityId: string): boolean {
+    const healKey = this._healKey(entityId);
+    if (this.activeMaintenanceJobs.has(healKey)) return false;
+    this.activeMaintenanceJobs.add(healKey);
+    this._notifyStatusSubscribers(entityId);
+    return true;
   }
 
   /**

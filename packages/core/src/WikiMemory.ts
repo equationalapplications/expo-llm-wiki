@@ -1187,7 +1187,8 @@ export class WikiMemory {
           .finally(() => {
             this.jobManager.releaseLock('librarian', entityId);
           });
-      } catch {
+      } catch (e) {
+        if (!(e instanceof WikiBusyError)) throw e;
         // Conflict detected between pre-check and acquire — skip auto-trigger
       }
     }
@@ -1205,18 +1206,12 @@ export class WikiMemory {
     if (healCheckpoint > currentEventCount) healCheckpoint = 0;
     const shouldRunHeal = currentEventCount - healCheckpoint >= autoHealThreshold;
 
-    if (shouldRunHeal) {
+    if (shouldRunHeal && this.jobManager.tryAcquireAutoHealLock(entityId)) {
       try {
-        this.jobManager.acquireLock('heal', entityId);
-        try {
-          await this._doRunHeal(entityId);
-          await this.metadataRepo.updateCheckpoint(entityId, { heal: currentEventCount }, this.db);
-        } finally {
-          this.jobManager.releaseLock('heal', entityId);
-        }
-      } catch (e) {
-        if (!(e instanceof WikiBusyError)) throw e;
-        // Heal already running — skip auto-heal
+        await this._doRunHeal(entityId);
+        await this.metadataRepo.updateCheckpoint(entityId, { heal: currentEventCount }, this.db);
+      } finally {
+        this.jobManager.releaseLock('heal', entityId);
       }
     }
   }
@@ -2144,4 +2139,3 @@ export class WikiMemory {
 }
 
 export const __testables = { validateFact, validateTask, clip, chunkText };
-
