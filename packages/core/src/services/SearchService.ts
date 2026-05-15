@@ -1,7 +1,7 @@
 import MiniSearch, { SearchResult } from 'minisearch';
-import { EntryRepository } from './repositories/EntryRepository';
-import { cosineSimilarity } from './utils/cosine';
-import { parseEmbedding } from './utils/embedding';
+import { EntryRepository } from '../repositories/EntryRepository';
+import { cosineSimilarity } from '../utils/cosine';
+import { parseEmbedding } from '../utils/embedding';
 
 export interface ScoredRow {
   id: string;
@@ -32,9 +32,8 @@ export interface RankSemanticArgs {
 export class SearchService {
   /**
    * Maximum number of entities whose parsed embedding vectors are held in
-   * memory via FIFO-eviction `vectorCache`. This cap is intentionally
-   * conservative so the cache remains safe on memory-constrained runtimes
-   * (e.g., mobile/Expo).
+   * memory. This cap is intentionally conservative so the cache remains safe
+   * on memory-constrained runtimes (e.g., mobile/Expo).
    */
   private static readonly MAX_VECTOR_CACHE_ENTITIES = 16;
 
@@ -97,7 +96,7 @@ export class SearchService {
   searchKeyword(query: string, entityIds: string[], limit: number): SearchResult[] {
     const entityIdSet = new Set(entityIds);
     const results = this.miniSearch.search(query, {
-      filter: (r) => entityIdSet.has((r as unknown as { entity_id: string }).entity_id),
+      filter: (r) => entityIdSet.has(r.entity_id as string),
       combineWith: 'OR',
     });
     return results.slice(0, limit);
@@ -109,7 +108,7 @@ export class SearchService {
   getMiniSearchScores(query: string, entityIds: string[], preFilterLimit?: number): Map<string, number> {
     const entityIdSet = new Set(entityIds);
     let results = this.miniSearch.search(query, {
-      filter: (r) => entityIdSet.has((r as unknown as { entity_id: string }).entity_id),
+      filter: (r) => entityIdSet.has(r.entity_id as string),
       combineWith: 'OR',
     });
 

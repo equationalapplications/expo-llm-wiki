@@ -8,9 +8,8 @@ import { TaskRepository } from './repositories/TaskRepository';
 import { EventRepository } from './repositories/EventRepository';
 import { MetadataRepository } from './repositories/MetadataRepository';
 import { LIBRARIAN_SYSTEM_PROMPT, HEAL_SYSTEM_PROMPT, INGEST_SYSTEM_PROMPT } from './prompts';
-import MiniSearch from 'minisearch';
-import { cosineSimilarity } from './utils/cosine';
 import { parseEmbedding } from './utils/embedding';
+import { SearchService } from './services/SearchService';
 import { generateId } from './utils/ids';
 import { applyTierWeight, normalizeEntityIds, sanitizeTierWeights, shouldExposeReadMetadata } from './readOptions';
 
@@ -283,92 +282,13 @@ export class WikiMemory {
   private taskRepo: TaskRepository;
   private eventRepo: EventRepository;
   private metadataRepo: MetadataRepository;
+  private searchService: SearchService;
   private activeMaintenanceJobs = new Set<string>();
   private activeIngestJobs = new Set<string>();
   private statusSubscribers = new Map<
     string,
     Set<{ callback: (s: EntityStatus) => void; last: EntityStatus }>
   >();
-  private miniSearch = new MiniSearch<{ id: string; entity_id: string; title: string; body: string; tags: string }>({
-    fields: ['title', 'body', 'tags'],
-    storeFields: ['entity_id'],
-    searchOptions: {
-      boost: { title: 2 },
-      fuzzy: 0.2,
-      prefix: true,
-    },
-  });
-  private miniSearchEntryIdsByEntity = new Map<string, Set<string>>();
-  /**
-   * Maximum number of entities whose parsed embedding vectors are held in
-   * memory. This cap is intentionally conservative so the cache remains safe
-   * on memory-constrained runtimes (e.g., mobile/Expo).
-   */
-  private static readonly MAX_VECTOR_CACHE_ENTITIES = 16;
-  /**
-   * Maximum number of fact vectors cached per entity. Keep this high enough to
-   * preserve the parsed-embedding reuse optimization for common mid-sized
-   * entities while still maintaining a bounded memory footprint.
-   */
-  private static readonly MAX_VECTOR_CACHE_FACTS_PER_ENTITY = 500;
-  private vectorCache: Map<string, Map<string, Float32Array>> = new Map();
-
-  private normalizeMiniSearchRow(row: {
-    id: string; entity_id: string; title: string; body: string; tags: string;
-  }): { id: string; entity_id: string; title: string; body: string; tags: string } {
-    return {
-      id: row.id,
-      entity_id: row.entity_id,
-      title: row.title,
-      body: row.body,
-      tags: (() => {
-        try {
-          const parsed = JSON.parse(row.tags);
-          return Array.isArray(parsed) ? parsed.join(' ') : row.tags;
-        } catch {
-          return row.tags;
-        }
-      })(),
-    };
-  }
-
-  private async rebuildMiniSearchIndex(entityId?: string): Promise<void> {
-    if (entityId) {
-      const rows = await this.entryRepo.findMiniSearchRows(entityId);
-
-      const previousIds = this.miniSearchEntryIdsByEntity.get(entityId);
-      if (previousIds) {
-        for (const id of previousIds) {
-          this.miniSearch.discard(id);
-        }
-      }
-
-      const documents = rows.map(row => this.normalizeMiniSearchRow(row));
-      if (documents.length > 0) {
-        this.miniSearch.addAll(documents);
-      }
-
-      this.miniSearchEntryIdsByEntity.set(entityId, new Set(documents.map(document => document.id)));
-      return;
-    }
-
-    const rows = await this.entryRepo.findMiniSearchRows();
-
-    this.miniSearch.removeAll();
-    this.miniSearchEntryIdsByEntity.clear();
-
-    const documents = rows.map(row => this.normalizeMiniSearchRow(row));
-    if (documents.length > 0) {
-      this.miniSearch.addAll(documents);
-    }
-
-    for (const document of documents) {
-      const ids = this.miniSearchEntryIdsByEntity.get(document.entity_id) ?? new Set<string>();
-      ids.add(document.id);
-      this.miniSearchEntryIdsByEntity.set(document.entity_id, ids);
-    }
-  }
-
   private async storeEmbeddingDimension(dim: number): Promise<void> {
     const existing = await this.metadataRepo.getMeta('embedding_dimension');
     if (existing) {
@@ -577,6 +497,7 @@ export class WikiMemory {
     this.taskRepo = new TaskRepository(db, this.prefix, this.outboxRepo);
     this.eventRepo = new EventRepository(db, this.prefix);
     this.metadataRepo = new MetadataRepository(db, this.prefix);
+    this.searchService = new SearchService(this.entryRepo);
   }
 
   async setup() {
@@ -652,7 +573,7 @@ export class WikiMemory {
       }
     });
 
-    await this.rebuildMiniSearchIndex();
+    await this.searchService.sync();
   }
 
   async hasChanged(entityId: string, sourceRef: string, sourceHash: string): Promise<boolean> {
@@ -819,8 +740,7 @@ export class WikiMemory {
 
         if (failure) {
           // Rebuild index and clear cache to reflect successful partial deletions
-          await this.rebuildMiniSearchIndex(entityId);
-          this.vectorCache.delete(entityId);
+          await this.searchService.sync(entityId);
 
           const remaining = entriesToDelete.length - succeeded.length - 1;
 
@@ -865,8 +785,7 @@ export class WikiMemory {
         await this.metadataRepo.vacuum();
       }
 
-      await this.rebuildMiniSearchIndex(entityId);
-      this.vectorCache.delete(entityId);
+      await this.searchService.sync(entityId);
 
       return { entries: deletedEntries, tasks: deletedTasks, events: deletedEvents };
     } finally {
@@ -985,11 +904,7 @@ export class WikiMemory {
 
           if (effectivePreFilterLimit !== undefined) {
             populateCache = false; // partial scan — do not populate cache
-            const entityIdSet = new Set(scoredEntityIds);
-            const preResults = this.miniSearch.search(trimmedQuery, {
-              filter: (r) => entityIdSet.has((r as unknown as { entity_id: string }).entity_id),
-              combineWith: 'OR',
-            });
+            const preResults = this.searchService.searchKeyword(trimmedQuery, scoredEntityIds, Number.MAX_SAFE_INTEGER);
             if (preResults.length === 0) {
               candidateRows = null; // empty pre-filter
             } else {
@@ -1022,13 +937,7 @@ export class WikiMemory {
             }
             // Collect MiniSearch scores for hybrid blend if weight is set and <1
             if (weight !== undefined && weight < 1) {
-              const entityIdSet = new Set(scoredEntityIds);
-              const msResults = this.miniSearch.search(trimmedQuery, {
-                filter: (r) => entityIdSet.has((r as unknown as { entity_id: string }).entity_id),
-                combineWith: 'OR',
-              });
-              const maxMsScore = Math.max(1, msResults[0]?.score ?? 1);
-              miniSearchScores = new Map(msResults.map(r => [r.id, r.score / maxMsScore]));
+              miniSearchScores = this.searchService.getMiniSearchScores(trimmedQuery, scoredEntityIds);
             }
           }
 
@@ -1227,7 +1136,7 @@ export class WikiMemory {
                       embedding: embeddingsMap.get(r.id)?.embedding ?? null,
                     })) as ReadCandidateRowWithEmbeddings[];
                   }
-                  scored = await this._rankWithJsCosine({
+                  scored = await this.searchService.rankSemantic({
                     entityId: entityCacheKey,
                     queryVec,
                     candidateRows: fallbackRows as ReadCandidateRowWithEmbeddings[],
@@ -1239,14 +1148,8 @@ export class WikiMemory {
                   });
                 } else if (policy === 'keyword') {
                   // Fall back to keyword-only results from MiniSearch
-                  const scoredEntityIdSet = new Set(scoredEntityIds);
-                  const msResults = this.miniSearch.search(trimmedQuery, {
-                    filter: (r) => scoredEntityIdSet.has((r as unknown as { entity_id: string }).entity_id),
-                    combineWith: 'OR',
-                  });
-                  // Oversample so tier weights can re-rank before the global slice
                   const keywordOversampledLimit = Math.max(maxResults * 2, maxResults + 50);
-                  const topResults = msResults.slice(0, keywordOversampledLimit);
+                  const topResults = this.searchService.searchKeyword(trimmedQuery, scoredEntityIds, keywordOversampledLimit);
                   const topResultIds = new Set(topResults.map(r => r.id));
                   const candidateMap = new Map(candidateRows.filter(r => topResultIds.has(r.id)).map(row => [row.id, row]));
                   scored = topResults.map(result => {
@@ -1282,7 +1185,7 @@ export class WikiMemory {
               // (all values === 1, or empty after sanitization) preserves the hot-path behavior.
               const jsCosineNeedsTierSort = sanitizedTierWeights !== undefined &&
                 Object.values(sanitizedTierWeights).some(w => w !== 1);
-              scored = await this._rankWithJsCosine({
+              scored = await this.searchService.rankSemantic({
                 entityId: entityCacheKey,
                 queryVec,
                 candidateRows: candidateRows as ReadCandidateRowWithEmbeddings[],
@@ -1371,13 +1274,9 @@ export class WikiMemory {
 
       if (!usedEmbed && scoredEntityIds.length > 0) {
         // embed absent or threw — fall back to MiniSearch with tier weight application
-        const fallbackEntityIdSet = new Set(scoredEntityIds);
         const fallbackOversampledLimit = Math.max(maxResults * 2, maxResults + 50);
-        const results = this.miniSearch.search(trimmedQuery, {
-          filter: (r) => fallbackEntityIdSet.has((r as unknown as { entity_id: string }).entity_id),
-          combineWith: 'OR',
-        });
-        const candidates = results.slice(0, fallbackOversampledLimit).map(r => ({
+        const results = this.searchService.searchKeyword(trimmedQuery, scoredEntityIds, fallbackOversampledLimit);
+        const candidates = results.map(r => ({
           id: r.id as string,
           entity_id: (r as unknown as { entity_id: string }).entity_id,
           score: applyTierWeight(r.score ?? 0, (r as unknown as { entity_id: string }).entity_id, sanitizedTierWeights),
@@ -1504,92 +1403,6 @@ export class WikiMemory {
     );
     sanitized.name = typeName;
     return sanitized;
-  }
-
-  /**
-   * Score candidate rows using in-process JS cosine similarity.
-   * Applies hybrid blending (if weight set) and tie-break sorting before returning.
-   */
-  private async _rankWithJsCosine(args: {
-    entityId: string;
-    queryVec: Float32Array | number[];
-    candidateRows: Array<{ id: string; entity_id: string; embedding_blob: Uint8Array | null; embedding: string | null; updated_at: number | null; access_count: number | null }>;
-    weight: number | undefined;
-    miniSearchScores: Map<string, number> | undefined;
-    populateCache: boolean;
-    limit: number;
-    skipSort?: boolean;
-  }): Promise<Array<{ id: string; entity_id: string; score: number; updated_at: number | null; access_count: number | null }>> {
-    const queryVec = args.queryVec instanceof Float32Array
-      ? args.queryVec.slice()
-      : Array.from(args.queryVec);
-    const { entityId, candidateRows, weight, miniSearchScores, populateCache, limit, skipSort } = args;
-
-    // Cache: reuse parsed vectors from prior full-scan reads
-    let entityCache = this.vectorCache.get(entityId);
-    const tooLarge = populateCache && candidateRows.length > WikiMemory.MAX_VECTOR_CACHE_FACTS_PER_ENTITY;
-    if (tooLarge && entityCache) {
-      this.vectorCache.delete(entityId);
-      entityCache = undefined;
-    }
-    const canCache = populateCache && !tooLarge;
-    if (canCache && !entityCache) {
-      entityCache = new Map<string, Float32Array>();
-    }
-
-    const scored = candidateRows.map(row => {
-      let vector = entityCache?.get(row.id) ?? parseEmbedding(row.embedding_blob, row.embedding);
-      if (vector && canCache && entityCache && !entityCache.has(row.id)) {
-        entityCache.set(row.id, vector);
-      }
-      let score = 0;
-      if (vector && vector.length === queryVec.length) {
-        const cosSim = cosineSimilarity(queryVec, vector);
-        if (weight !== undefined) {
-          // Clamp to [0,1] only for hybrid blending so the weighted sum stays
-          // in a predictable range. Pure-semantic ranking preserves the full
-          // [-1,1] cosine range so the least-dissimilar facts always rank above
-          // unembedded rows (which score 0) even when all scores are negative.
-          const kwScore = miniSearchScores?.get(row.id) ?? 0;
-          score = weight * Math.max(0, cosSim) + (1 - weight) * kwScore;
-        } else {
-          score = cosSim;
-        }
-      } else if (weight !== undefined && weight < 1) {
-        // No usable embedding — still apply the keyword portion of the hybrid score.
-        const kwScore = miniSearchScores?.get(row.id) ?? 0;
-        score = (1 - weight) * kwScore;
-      } else {
-        // Pure-semantic path with no usable vector. Use -2 (below the minimum
-        // valid cosine of -1) so embedded facts always rank above unembedded rows
-        // even when every cosine score is negative.
-        score = -2;
-      }
-      return {
-        id: row.id,
-        entity_id: row.entity_id,
-        score,
-        updated_at: row.updated_at,
-        access_count: row.access_count,
-      };
-    });
-
-    if (canCache && entityCache && entityCache.size > 0) {
-      if (!this.vectorCache.has(entityId)) {
-        // Evict the oldest entity when at the per-process cap to prevent unbounded growth
-        // on long-lived instances serving many distinct entities.
-        if (this.vectorCache.size >= WikiMemory.MAX_VECTOR_CACHE_ENTITIES) {
-          const oldestKey = this.vectorCache.keys().next().value as string | undefined;
-          if (oldestKey !== undefined) this.vectorCache.delete(oldestKey);
-        }
-        this.vectorCache.set(entityId, entityCache);
-      }
-    }
-
-    // Apply tie-break sorting unless caller will re-sort after applying tier weights.
-    if (!skipSort) this._tieBreakSort(scored);
-
-    return scored.slice(0, limit);
   }
 
   /**
@@ -1841,14 +1654,13 @@ export class WikiMemory {
     // Rebuild the text index before the (potentially slow) embedding loop so
     // concurrent reads using MiniSearch (preFilter, keyword fallback) see the
     // new fact content immediately after the DB transaction commits.
-    await this.rebuildMiniSearchIndex(entityId);
-    this.vectorCache.delete(entityId);
+    await this.searchService.sync(entityId);
     for (const fact of insertedFacts) {
       await this.embedFact(fact);
     }
     // Second vector cache flush: a concurrent read() may have repopulated it
     // during the embed loop; flush so subsequent reads see the new BLOBs.
-    this.vectorCache.delete(entityId);
+    this.searchService.evictCache(entityId);
   }
 
   private async _doRunHeal(entityId: string): Promise<void> {
@@ -1938,15 +1750,11 @@ export class WikiMemory {
       }
     });
 
-    // Pre-flush: evict stale cached vectors before writing new embeddings so a
-    // concurrent read() during the embed loop doesn't rank deleted/downgraded
-    // facts from the cache. Post-flush below handles vectors repopulated during
-    // the loop.
-    this.vectorCache.delete(entityId);
-    // Rebuild MiniSearch before the embedding loop so concurrent reads using
-    // preFilterLimit, hybrid scoring, or keyword fallback see the new/deleted
-    // facts immediately rather than waiting for every embed call to finish.
-    await this.rebuildMiniSearchIndex(entityId);
+    // Evict stale vectors and rebuild MiniSearch before the embedding loop so
+    // concurrent reads see the new/deleted facts immediately and don't rank
+    // deleted/downgraded facts from the cache. Post-flush below handles vectors
+    // repopulated during the loop. sync() evicts the cache before rebuilding.
+    await this.searchService.sync(entityId);
     for (const factId of uniqueDeletedFactIds) {
       try {
         await this._notifyEmbeddingPersisted(entityId, factId, null);
@@ -1959,7 +1767,7 @@ export class WikiMemory {
     }
     // Post-flush: evict any cache entries a concurrent read() repopulated while
     // the embedding loop was running.
-    this.vectorCache.delete(entityId);
+    this.searchService.evictCache(entityId);
   }
 
   async runLibrarian(entityId: string): Promise<void> {
@@ -2078,11 +1886,7 @@ export class WikiMemory {
 
       // Invalidate before the embedding loop so any concurrent read() fetches fresh
       // vectors from the database rather than stale pre-reembed cached ones.
-      if (entityId) {
-        this.vectorCache.delete(entityId);
-      } else {
-        this.vectorCache.clear();
-      }
+      this.searchService.evictCache(entityId);
 
       // skipExisting is an explicit opt-in for round-trip import scenarios where
       // the caller knows every blob is already fresh and wants to avoid paying the
@@ -2156,11 +1960,7 @@ export class WikiMemory {
         // the cache with pre-reembed vectors while the loop was running, so flush any
         // such stale entries to ensure subsequent reads see the freshly written data,
         // even if the loop or dimension reconciliation threw.
-        if (entityId) {
-          this.vectorCache.delete(entityId);
-        } else {
-          this.vectorCache.clear();
-        }
+        this.searchService.evictCache(entityId);
       }
 
       return { embedded, skipped, failed };
@@ -2224,7 +2024,7 @@ export class WikiMemory {
   }
 
   public clearVectorCache(): void {
-    this.vectorCache.clear();
+    this.searchService.evictCache();
   }
 
   private async _getFullBundle(entityId: string, opts?: { maxEvents?: number; includeBlobs?: boolean }): Promise<MemoryBundle> {
@@ -2544,13 +2344,10 @@ export class WikiMemory {
           }, tx);
         }
       });
-      // Invalidate cache before rebuilding the text index so concurrent reads
-      // see consistent data: all use the post-transaction DB state.
-      this.vectorCache.delete(entityId);
-      // Rebuild the MiniSearch index immediately after the transaction commits
-      // so concurrent read() calls using preFilterLimit or hybrid scoring get
-      // the updated text rather than waiting for the (potentially slow) embedding loop.
-      await this.rebuildMiniSearchIndex(entityId);
+      // Evict cache and rebuild MiniSearch immediately after the transaction
+      // commits so concurrent read() calls see updated text and don't use stale
+      // vectors. sync() evicts the cache internally before rebuilding the index.
+      await this.searchService.sync(entityId);
       // Embed only facts that were actually inserted/updated in the transaction.
       // Skipped rows (cross-entity collisions or merge LWW losers) must not be
       // re-embedded — they were not written and their existing row must not be
@@ -2638,7 +2435,7 @@ export class WikiMemory {
         // Second flush: evict any cache entries a concurrent read() repopulated
         // from old DB vectors while the embedding loop was running. Runs even if
         // storeEmbeddingDimension() throws so stale entries cannot survive an error.
-        this.vectorCache.delete(entityId);
+        this.searchService.evictCache(entityId);
       }
   }
 
@@ -2723,8 +2520,7 @@ export class WikiMemory {
         }
       });
 
-      await this.rebuildMiniSearchIndex(entityId);
-      this.vectorCache.delete(entityId);
+      await this.searchService.sync(entityId);
 
       // Deduplicate to avoid redundant hook calls for the same fact
       const uniqueDeletedIds = Array.from(new Set(deletedEntryIds));
@@ -2870,8 +2666,7 @@ export class WikiMemory {
       });
 
       // Rebuild text index before embedding so concurrent reads see new content.
-      await this.rebuildMiniSearchIndex(entityId);
-      this.vectorCache.delete(entityId);
+      await this.searchService.sync(entityId);
       const uniqueDeletedSourceFactIds = Array.from(new Set(deletedSourceFactIds));
       for (const factId of uniqueDeletedSourceFactIds) {
         try {
@@ -2884,7 +2679,7 @@ export class WikiMemory {
         await this.embedFact(fact);
       }
       // Second flush after embed loop in case a concurrent read() repopulated cache.
-      this.vectorCache.delete(entityId);
+      this.searchService.evictCache(entityId);
 
       return { truncated, chunks: chunks.length };
     } finally {
