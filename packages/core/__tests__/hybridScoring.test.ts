@@ -129,12 +129,15 @@ describe('hybridWeight scoring', () => {
     await insertFactBlob(db, 'f-apple', 'user-1', 'apple fruit', [1, 0, 0]);
     await wiki.setup(); // rebuild MiniSearch
 
-    const searchSpy = vi.spyOn((wiki as any).miniSearch, 'search');
+    const kwSpy = vi.spyOn((wiki as any).searchService, 'searchKeyword');
+    const scoreSpy = vi.spyOn((wiki as any).searchService, 'getMiniSearchScores');
     await wiki.read('user-1', 'apple');
 
-    // One MiniSearch call serves both preFilter and hybridWeight score collection
-    expect(searchSpy.mock.calls.length).toBe(1);
-    searchSpy.mockRestore();
+    // One searchKeyword call serves preFilter; scores come from those results (no getMiniSearchScores call)
+    expect(kwSpy.mock.calls.length).toBe(1);
+    expect(scoreSpy.mock.calls.length).toBe(0);
+    kwSpy.mockRestore();
+    scoreSpy.mockRestore();
   });
 
   it('hybridWeight: 0 + preFilterLimit set: preFilterLimit ignored, MiniSearch-only path', async () => {

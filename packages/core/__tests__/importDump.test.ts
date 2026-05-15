@@ -502,10 +502,10 @@ describe('importDump — busy-key protection', () => {
     // Patch forget to stall mid-execution so the import race is detectable
     let resolveForget: () => void = () => {};
     const blocker = new Promise<void>((r) => { resolveForget = r; });
-    const originalRebuild = (wiki as any).rebuildMiniSearchIndex.bind(wiki);
-    (wiki as any).rebuildMiniSearchIndex = async (entityId: string) => {
+    const originalSync = (wiki as any).searchService.sync.bind((wiki as any).searchService);
+    (wiki as any).searchService.sync = async (entityId: string) => {
       await blocker;
-      return originalRebuild(entityId);
+      return originalSync(entityId);
     };
 
     const forget = wiki.forget('user-1', { clearAll: true });
