@@ -1060,6 +1060,7 @@ export class WikiMemory {
     // Wrap in transaction to ensure Event + Checkpoint logic is atomic
     let shouldRunLibrarian = false;
     let librarianCount = 0;
+    let prevMemoryCheckpoint = 0;
 
     await this.db.withTransactionAsync(async (tx) => {
       await this.eventRepo.add(newEvent, tx);
@@ -1078,6 +1079,7 @@ export class WikiMemory {
         if (!this.jobManager.isBlocked('librarian', entityId)) {
           shouldRunLibrarian = true;
           librarianCount = count;
+          prevMemoryCheckpoint = memoryCheckpoint;
           await this.metadataRepo.updateCheckpoint(entityId, { memory: count }, tx);
         }
       }
@@ -1093,7 +1095,9 @@ export class WikiMemory {
           });
       } catch (e) {
         if (!(e instanceof WikiBusyError)) throw e;
-        // Conflict detected between pre-check and acquire — skip auto-trigger
+        // Race: lock acquired between isBlocked check and acquireLock — roll back
+        // checkpoint so the next event batch can retrigger librarian.
+        await this.metadataRepo.updateCheckpoint(entityId, { memory: prevMemoryCheckpoint }, this.db);
       }
     }
   }

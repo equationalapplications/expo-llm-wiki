@@ -132,12 +132,13 @@ export class MaintenanceService {
   }
 
   async runReembed(entityId?: string, opts?: { force?: boolean; skipExisting?: boolean }): Promise<{ embedded: number; skipped: number; failed: number }> {
+    const embedFn = this.options.llmProvider.embed;
+    if (!embedFn) return { embedded: 0, skipped: 0, failed: 0 };
+
     const op = entityId ? 'reembed' : 'global_reembed';
     this.jobManager.acquireLock(op, entityId ?? '*');
 
     try {
-      const embedFn = this.options.llmProvider.embed;
-      if (!embedFn) return { embedded: 0, skipped: 0, failed: 0 };
 
       const rows = await this.entryRepo.findAllForReembed(entityId);
       this.searchService.evictCache(entityId);
