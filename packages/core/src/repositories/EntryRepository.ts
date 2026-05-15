@@ -190,4 +190,133 @@ export class EntryRepository extends BaseRepository {
       [entityId, cutoff],
     );
   }
+
+  /**
+   * Fetch all non-deleted entries for an entity, ordered by updated_at DESC.
+   * Used by _getFullBundle().
+   */
+  async findAllByEntityId(entityId: string, tx?: SQLiteAdapter): Promise<WikiFact[]> {
+    const executor = this.getExecutor(tx);
+    const rows = await executor.getAllAsync<any>(
+      `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC`,
+      [entityId],
+    );
+    return rows.map(mapRowToFact);
+  }
+
+  /**
+   * Fetch recent non-deleted entries for an entity (limited), ordered by updated_at DESC.
+   * Used by _doRunLibrarian().
+   */
+  async findRecentByEntityId(entityId: string, limit: number, tx?: SQLiteAdapter): Promise<WikiFact[]> {
+    const executor = this.getExecutor(tx);
+    const rows = await executor.getAllAsync<any>(
+      `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT ?`,
+      [entityId, limit],
+    );
+    return rows.map(mapRowToFact);
+  }
+
+  /**
+   * Bulk delete pruned entries (already soft-deleted) by IDs.
+   * Used by runPrune(). Returns total number of deleted rows.
+   */
+  async bulkDeletePruned(
+    entityId: string,
+    cutoff: number,
+    ids: string[],
+    tx?: SQLiteAdapter,
+  ): Promise<number> {
+    const executor = this.getExecutor(tx);
+    let totalChanges = 0;
+    const chunkSize = 500;
+    for (let i = 0; i < ids.length; i += chunkSize) {
+      const chunk = ids.slice(i, i + chunkSize);
+      const placeholders = chunk.map(() => '?').join(',');
+      const result = await executor.runAsync(
+        `DELETE FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ? AND id IN (${placeholders})`,
+        [entityId, cutoff, ...chunk],
+      );
+      totalChanges += result.changes;
+    }
+    return totalChanges;
+  }
+
+  /**
+   * Mark orphaned entries (never accessed, old) as deleted.
+   * Used by _doRunHeal().
+   */
+  async markOrphaned(
+    entityId: string,
+    orphanThreshold: number,
+    tx?: SQLiteAdapter,
+  ): Promise<number> {
+    const executor = this.getExecutor(tx);
+    const now = Date.now();
+    const result = await executor.runAsync(
+      `UPDATE ${this.prefix}entries
+       SET deleted_at = ?, updated_at = ?
+       WHERE entity_id = ? AND access_count = 0 AND created_at <= ? AND source_type != 'immutable_document' AND deleted_at IS NULL`,
+      [now, now, entityId, orphanThreshold],
+    );
+    return result.changes;
+  }
+
+  /**
+   * Downgrade stale inferred entries to 'tentative'.
+   * Used by _doRunHeal().
+   */
+  async downgradeStaleInferred(
+    entityId: string,
+    staleThreshold: number,
+    tx?: SQLiteAdapter,
+  ): Promise<number> {
+    const executor = this.getExecutor(tx);
+    const now = Date.now();
+    const result = await executor.runAsync(
+      `UPDATE ${this.prefix}entries
+       SET confidence = 'tentative', updated_at = ?
+       WHERE entity_id = ? AND confidence = 'inferred' AND (last_accessed_at <= ? OR (last_accessed_at IS NULL AND created_at <= ?)) AND source_type != 'immutable_document' AND deleted_at IS NULL`,
+      [now, entityId, staleThreshold, staleThreshold],
+    );
+    return result.changes;
+  }
+
+  /**
+   * Downgrade specific entries to 'tentative' by IDs.
+   * Used by _doRunHeal().
+   */
+  async downgradeByIds(
+    ids: string[],
+    entityId: string,
+    tx?: SQLiteAdapter,
+  ): Promise<void> {
+    if (ids.length === 0) return;
+    const executor = this.getExecutor(tx);
+    const now = Date.now();
+    const placeholders = ids.map(() => '?').join(',');
+    await executor.runAsync(
+      `UPDATE ${this.prefix}entries SET confidence = 'tentative', updated_at = ? WHERE id IN (${placeholders}) AND entity_id = ?`,
+      [now, ...ids, entityId],
+    );
+  }
+
+  /**
+   * Soft-delete specific entries by IDs.
+   * Used by _doRunHeal().
+   */
+  async softDeleteByIds(
+    ids: string[],
+    entityId: string,
+    tx?: SQLiteAdapter,
+  ): Promise<void> {
+    if (ids.length === 0) return;
+    const executor = this.getExecutor(tx);
+    const now = Date.now();
+    const placeholders = ids.map(() => '?').join(',');
+    await executor.runAsync(
+      `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE id IN (${placeholders}) AND entity_id = ?`,
+      [now, now, ...ids, entityId],
+    );
+  }
 }

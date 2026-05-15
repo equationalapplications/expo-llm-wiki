@@ -131,4 +131,34 @@ export class TaskRepository extends BaseRepository {
       tx,
     );
   }
+
+  /**
+   * Fetch all non-deleted tasks for an entity, ordered by priority DESC, created_at ASC.
+   * Used by _getFullBundle().
+   */
+  async findAllByEntityId(entityId: string, tx?: SQLiteAdapter): Promise<WikiTask[]> {
+    const executor = this.getExecutor(tx);
+    const rows = await executor.getAllAsync<any>(
+      `SELECT * FROM ${this.prefix}tasks WHERE entity_id = ? AND deleted_at IS NULL ORDER BY priority DESC, created_at ASC`,
+      [entityId],
+    );
+    return rows.map(mapRowToTask);
+  }
+
+  /**
+   * Bulk delete pruned tasks (already soft-deleted) by cutoff date.
+   * Used by runPrune(). Returns number of deleted rows.
+   */
+  async bulkDeletePruned(
+    entityId: string,
+    cutoff: number,
+    tx?: SQLiteAdapter,
+  ): Promise<number> {
+    const executor = this.getExecutor(tx);
+    const result = await executor.runAsync(
+      `DELETE FROM ${this.prefix}tasks WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ?`,
+      [entityId, cutoff],
+    );
+    return result.changes;
+  }
 }

@@ -911,26 +911,12 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
         }
 
         if (succeeded.length > 0) {
-          // Delete in chunks to avoid SQLite bind-parameter limit (typically 999)
-          const chunkSize = 500;
-          for (let i = 0; i < succeeded.length; i += chunkSize) {
-            const chunk = succeeded.slice(i, i + chunkSize);
-            const placeholders = chunk.map(() => '?').join(',');
-            const entryResult = await this.db.runAsync(
-              `DELETE FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ? AND id IN (${placeholders})`,
-              [entityId, cutoff, ...chunk.map((r) => r.id)],
-            );
-            deletedEntries += entryResult.changes;
-          }
+          const succeededIds = succeeded.map(r => r.id);
+          deletedEntries = await this.entryRepo.bulkDeletePruned(entityId, cutoff, succeededIds);
         }
 
         // Delete tasks (independent of entry hook success/failure)
-        const taskResult = await this.db.runAsync(
-          `DELETE FROM ${this.prefix}tasks
-           WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ?`,
-          [entityId, cutoff]
-        );
-        deletedTasks = taskResult.changes;
+        deletedTasks = await this.taskRepo.bulkDeletePruned(entityId, cutoff);
 
         if (failure) {
           // Rebuild index and clear cache to reflect successful partial deletions
@@ -972,11 +958,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
 
       if (retainEventsFor !== null) {
         const cutoff = now - retainEventsFor * 86400000;
-        const eventResult = await this.db.runAsync(
-          `DELETE FROM ${this.prefix}events
-           WHERE entity_id = ? AND created_at <= ?`,
-          [entityId, cutoff]
-        );
+        const eventResult = await this.eventRepo.prune(entityId, cutoff);
         deletedEvents = eventResult.changes;
       }
 
@@ -1951,12 +1933,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
   private async _doRunLibrarian(entityId: string): Promise<void> {
     const events = await this.eventRepo.getRecent(entityId, 50);
 
-    const currentFactsRows = await this.db.getAllAsync<WikiFact>(`
-      SELECT * FROM ${this.prefix}entries
-      WHERE entity_id = ? AND deleted_at IS NULL
-      ORDER BY updated_at DESC
-      LIMIT 100
-    `, [entityId]);
+    const currentFactsRows = await this.entryRepo.findRecentByEntityId(entityId, 100);
 
     const currentFacts = currentFactsRows.map(f => {
       const { embedding: _embedding, embedding_blob: _blob, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
@@ -2058,24 +2035,16 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     await this.db.withTransactionAsync(async () => {
       if (orphanAfterDays !== null) {
         const orphanThreshold = now - (orphanAfterDays * MS_PER_DAY);
-        await this.db.runAsync(`
-          UPDATE ${this.prefix}entries
-          SET deleted_at = ?, updated_at = ?
-          WHERE entity_id = ? AND access_count = 0 AND created_at <= ? AND source_type != 'immutable_document' AND deleted_at IS NULL
-        `, [now, now, entityId, orphanThreshold]);
+        await this.entryRepo.markOrphaned(entityId, orphanThreshold, this.db);
       }
 
       if (staleInferredAfterDays !== null) {
         const staleThreshold = now - (staleInferredAfterDays * MS_PER_DAY);
-        await this.db.runAsync(`
-          UPDATE ${this.prefix}entries
-          SET confidence = 'tentative', updated_at = ?
-          WHERE entity_id = ? AND confidence = 'inferred' AND (last_accessed_at <= ? OR (last_accessed_at IS NULL AND created_at <= ?)) AND source_type != 'immutable_document' AND deleted_at IS NULL
-        `, [now, entityId, staleThreshold, staleThreshold]);
+        await this.entryRepo.downgradeStaleInferred(entityId, staleThreshold, this.db);
       }
     });
 
-    const allFactsRows = await this.db.getAllAsync<WikiFact>(`SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`, [entityId]);
+    const allFactsRows = await this.entryRepo.findAllByEntityId(entityId);
     const allTasks = await this.taskRepo.findAllPending([entityId]);
     const recentEvents = await this.eventRepo.getRecent(entityId, 20);
 
@@ -2112,12 +2081,8 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     const uniqueDeletedFactIds = Array.from(new Set(safeDeleted));
 
     await this.db.withTransactionAsync(async () => {
-      for (const id of safeDowngraded) {
-        await this.db.runAsync(`UPDATE ${this.prefix}entries SET confidence = 'tentative', updated_at = ? WHERE id = ? AND entity_id = ?`, [now, id, entityId]);
-      }
-      for (const id of safeDeleted) {
-        await this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ?`, [now, now, id, entityId]);
-      }
+      await this.entryRepo.downgradeByIds(safeDowngraded, entityId, this.db);
+      await this.entryRepo.softDeleteByIds(safeDeleted, entityId, this.db);
       for (const fact of validNewFacts) {
         const id = generateId('fact_');
         const factObj: WikiFact = {
@@ -2453,14 +2418,8 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     const eventsParams: (string | number)[] = maxEvents != null ? [entityId, maxEvents] : [entityId];
 
     const [factsRaw, tasks, eventsRaw] = await Promise.all([
-      this.db.getAllAsync<WikiFact>(
-        `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC`,
-        [entityId]
-      ),
-      this.db.getAllAsync<WikiTask>(
-        `SELECT * FROM ${this.prefix}tasks WHERE entity_id = ? AND deleted_at IS NULL ORDER BY priority DESC, created_at ASC`,
-        [entityId]
-      ),
+      this.entryRepo.findAllByEntityId(entityId),
+      this.taskRepo.findAllByEntityId(entityId),
       this.db.getAllAsync<WikiEvent>(eventsQuery, eventsParams),
     ]);
     const facts = factsRaw.map(f => {
