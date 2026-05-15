@@ -85,4 +85,22 @@ export class EventRepository extends BaseRepository {
     );
     return row?.count ?? 0;
   }
+
+  /**
+   * Return all events for an entity in chronological (ASC) order.
+   * When limit is provided, fetches newest-first then reverses to preserve chronological order.
+   */
+  async getByEntityId(entityId: string, limit?: number): Promise<WikiEvent[]> {
+    if (limit != null) {
+      const rows = await this.db.getAllAsync<WikiEvent>(
+        `SELECT * FROM ${this.prefix}events WHERE entity_id = ? ORDER BY created_at DESC LIMIT ?`,
+        [entityId, limit],
+      );
+      return rows.slice().reverse();
+    }
+    return this.db.getAllAsync<WikiEvent>(
+      `SELECT * FROM ${this.prefix}events WHERE entity_id = ? ORDER BY created_at ASC`,
+      [entityId],
+    );
+  }
 }

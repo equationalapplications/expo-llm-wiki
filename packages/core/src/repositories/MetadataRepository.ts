@@ -81,4 +81,41 @@ export class MetadataRepository extends BaseRepository {
       `DELETE FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`,
     );
   }
+
+  async tableExists(tableName: string, tx?: SQLiteAdapter): Promise<boolean> {
+    const executor = this.getExecutor(tx);
+    const row = await executor.getFirstAsync<{ name: string }>(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name=?`,
+      [tableName],
+    );
+    return row != null;
+  }
+
+  async getTableDdl(tableName: string, tx?: SQLiteAdapter): Promise<string | null> {
+    const executor = this.getExecutor(tx);
+    const row = await executor.getFirstAsync<{ sql: string | null }>(
+      `SELECT sql FROM sqlite_master WHERE type='table' AND name=?`,
+      [tableName],
+    );
+    return row?.sql ?? null;
+  }
+
+  async vacuum(): Promise<void> {
+    await this.db.execAsync(`PRAGMA wal_checkpoint(TRUNCATE)`);
+    await this.db.execAsync(`VACUUM`);
+  }
+
+  async getDistinctEntityIds(tx?: SQLiteAdapter): Promise<string[]> {
+    const executor = this.getExecutor(tx);
+    const rows = await executor.getAllAsync<{ entity_id: string }>(
+      `SELECT DISTINCT entity_id FROM (
+         SELECT entity_id FROM ${this.prefix}entries WHERE deleted_at IS NULL
+         UNION
+         SELECT entity_id FROM ${this.prefix}tasks WHERE deleted_at IS NULL
+         UNION
+         SELECT entity_id FROM ${this.prefix}events
+       ) ORDER BY entity_id`,
+    );
+    return rows.map(r => r.entity_id);
+  }
 }
