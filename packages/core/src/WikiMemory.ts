@@ -10,265 +10,17 @@ import { MetadataRepository } from './repositories/MetadataRepository';
 import { LIBRARIAN_SYSTEM_PROMPT, HEAL_SYSTEM_PROMPT, INGEST_SYSTEM_PROMPT } from './prompts';
 import { parseEmbedding } from './utils/embedding';
 import { SearchService } from './services/SearchService';
+import { JobManager } from './services/JobManager';
 import { generateId } from './utils/ids';
 import { applyTierWeight, normalizeEntityIds, sanitizeTierWeights, shouldExposeReadMetadata } from './readOptions';
+import { parseJsonResponse, chunkText, withConcurrency, clip, validateFact, validateTask, normalizeSourceRef, normalizeSourceHash, titleTokens, jaccardScore } from './utils/pure';
 
 export { WikiBusyError, PrunePartialFailureError } from './types';
 
-/**
- * Private symbol to mark timeout errors thrown by WikiMemory (not from ranker).
- * Used to distinguish WikiMemory's own timeout errors from ranker errors that might contain "timed out" in message.
- */
-const HOOK_TIMEOUT_MARKER = Symbol('WikiMemoryHookTimeout');
+export const HOOK_TIMEOUT_MARKER = Symbol('WikiMemoryHookTimeout');
 
 type ReadCandidateRowMetadata = EntryRowMetadata;
 type ReadCandidateRowWithEmbeddings = EntryRowWithEmbeddings;
-
-function parseJsonResponse<T>(text: string): T {
-  const firstBrace = text.indexOf('{');
-  const firstBracket = text.indexOf('[');
-
-  let start: number;
-  let openChar: string;
-  let closeChar: string;
-
-  if (firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
-    start = firstBrace;
-    openChar = '{';
-    closeChar = '}';
-  } else if (firstBracket !== -1) {
-    start = firstBracket;
-    openChar = '[';
-    closeChar = ']';
-  } else {
-    throw new SyntaxError('No JSON object/array found in LLM response');
-  }
-
-  // Walk from `start`, tracking nesting depth and skipping strings/escapes,
-  // so we stop at the true matching close bracket rather than the last one.
-  let depth = 0;
-  let inString = false;
-  let escape = false;
-  let end = -1;
-  for (let i = start; i < text.length; i++) {
-    const ch = text[i];
-    if (escape) { escape = false; continue; }
-    if (ch === '\\' && inString) { escape = true; continue; }
-    if (ch === '"') { inString = !inString; continue; }
-    if (inString) continue;
-    if (ch === openChar) { depth++; continue; }
-    if (ch === closeChar) {
-      depth--;
-      if (depth === 0) { end = i; break; }
-    }
-  }
-
-  if (end === -1) throw new SyntaxError('No JSON object/array found in LLM response');
-  return JSON.parse(text.slice(start, end + 1)) as T;
-}
-
-function safeSlice(value: string, start: number, end?: number): string {
-  const length = value.length;
-  let safeStart = start < 0 ? Math.max(length + start, 0) : Math.min(start, length);
-  let safeEnd = end === undefined
-    ? length
-    : end < 0
-      ? Math.max(length + end, 0)
-      : Math.min(end, length);
-
-  if (safeStart > safeEnd) {
-    [safeStart, safeEnd] = [safeEnd, safeStart];
-  }
-
-  if (
-    safeStart > 0 &&
-    safeStart < length &&
-    value.charCodeAt(safeStart) >= 0xDC00 &&
-    value.charCodeAt(safeStart) <= 0xDFFF &&
-    value.charCodeAt(safeStart - 1) >= 0xD800 &&
-    value.charCodeAt(safeStart - 1) <= 0xDBFF
-  ) {
-    safeStart--;
-  }
-
-  if (
-    safeEnd > 0 &&
-    safeEnd < length &&
-    value.charCodeAt(safeEnd - 1) >= 0xD800 &&
-    value.charCodeAt(safeEnd - 1) <= 0xDBFF &&
-    value.charCodeAt(safeEnd) >= 0xDC00 &&
-    value.charCodeAt(safeEnd) <= 0xDFFF
-  ) {
-    safeEnd--;
-  }
-
-  return value.slice(safeStart, safeEnd);
-}
-
-function chunkText(
-  input: string,
-  maxChunkLength: number,
-  overlap: number
-): { chunks: string[]; truncated: boolean } {
-  const text = input.trim();
-  if (text.length === 0) return { chunks: [], truncated: false };
-  if (!Number.isInteger(maxChunkLength) || maxChunkLength < 2) {
-    throw new Error('maxChunkLength must be an integer >= 2');
-  }
-  if (!Number.isInteger(overlap) || overlap < 0 || overlap >= maxChunkLength) {
-    throw new Error('overlap must be a non-negative integer < maxChunkLength');
-  }
-
-  const chunks: string[] = [];
-  let truncated = false;
-  let cursor = 0;
-  const halfMax = Math.floor(maxChunkLength / 2);
-
-  while (cursor < text.length) {
-    const remaining = text.length - cursor;
-    if (remaining <= maxChunkLength) {
-      chunks.push(safeSlice(text, cursor, text.length));
-      break;
-    }
-
-    const windowEnd = cursor + maxChunkLength;
-    const minSplit = cursor + halfMax;
-
-    // 1. paragraph break
-    let splitPoint = -1;
-    const paraIdx = text.lastIndexOf('\n\n', windowEnd);
-    if (paraIdx >= minSplit && paraIdx + 2 <= windowEnd) {
-      splitPoint = paraIdx + 2;
-    }
-
-    // 2. sentence terminator (single left-to-right pass, no lookahead regex)
-    if (splitPoint === -1) {
-      let lastTerm = -1;
-      for (let i = minSplit; i < windowEnd - 1; i++) {
-        const ch = text[i];
-        if ((ch === '.' || ch === '!' || ch === '?') && /\s/.test(text[i + 1])) {
-          lastTerm = i + 2; // include the terminator + whitespace
-        }
-      }
-      if (lastTerm !== -1 && lastTerm <= windowEnd) splitPoint = lastTerm;
-    }
-
-    // 3. whitespace
-    if (splitPoint === -1) {
-      for (let i = windowEnd - 1; i >= minSplit; i--) {
-        if (/\s/.test(text[i])) {
-          splitPoint = i + 1;
-          break;
-        }
-      }
-    }
-
-    // 4. hard cut
-    if (splitPoint === -1) {
-      truncated = true;
-      splitPoint = windowEnd;
-    }
-
-    chunks.push(safeSlice(text, cursor, splitPoint));
-    const next = Math.max(splitPoint - overlap, cursor + 1);
-    cursor = next;
-  }
-
-  return { chunks, truncated };
-}
-
-async function withConcurrency<T>(tasks: Array<() => Promise<T>>, limit: number): Promise<T[]> {
-  const results: T[] = new Array(tasks.length);
-  let index = 0;
-  let failed = false;
-  let firstError: unknown;
-  async function worker() {
-    while (index < tasks.length && !failed) {
-      const i = index++;
-      try {
-        results[i] = await tasks[i]();
-      } catch (e) {
-        if (!failed) { failed = true; firstError = e; }
-        return;
-      }
-    }
-  }
-  const workerCount = tasks.length === 0 ? 0 : Math.min(Math.max(limit, 1), tasks.length);
-  await Promise.allSettled(Array.from({ length: workerCount }, worker));
-  if (failed) throw firstError;
-  return results;
-}
-
-function clip(value: string, max: number): string {
-  if (typeof value !== 'string') return '';
-  const s = value.trim();
-  return s.length <= max ? s : safeSlice(s, 0, max).trimEnd();
-}
-
-function validateTags(tags: any[]): string[] {
-  if (!Array.isArray(tags)) return [];
-  return tags
-    .filter(t => typeof t === 'string')
-    .map(t => t.trim().toLowerCase())
-    .filter(t => t.length > 0 && t.length <= 40)
-    .slice(0, 6);
-}
-
-function validateFact(fact: any): ExtractedFact | null {
-  if (typeof fact?.title !== 'string' || typeof fact?.body !== 'string') return null;
-  const title = clip(fact.title, 80);
-  const body = clip(fact.body, 800);
-  if (!title || !body) return null;
-  
-  let confidence = fact.confidence;
-  if (confidence !== 'certain' && confidence !== 'tentative') confidence = 'inferred';
-  
-  return {
-    ...fact,
-    title,
-    body,
-    confidence,
-    tags: validateTags(fact.tags)
-  };
-}
-
-function validateTask(task: any): ExtractedTask | null {
-  if (typeof task?.description !== 'string') return null;
-  const description = clip(task.description, 200);
-  if (!description) return null;
-  
-  let priority = task.priority;
-  if (typeof priority !== 'number' || !isFinite(priority)) priority = 0;
-  
-  return {
-    ...task,
-    description,
-    priority
-  };
-}
-
-function normalizeSourceRef(value: string): string | null {
-  if (typeof value !== 'string') return null;
-  const cleaned = value.replace(/[^A-Za-z0-9._\- ]/g, '').trim().slice(0, 255);
-  return cleaned.length > 0 ? cleaned : null;
-}
-
-function normalizeSourceHash(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  return /^[0-9a-f]{64}$/i.test(value) ? value.toLowerCase() : null;
-}
-
-
-function titleTokens(title: string): Set<string> {
-  return new Set(title.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(t => t.length >= 3));
-}
-
-function jaccardScore(a: Set<string>, b: Set<string>): number {
-  if (a.size === 0 && b.size === 0) return 0;
-  const intersection = new Set([...a].filter(x => b.has(x)));
-  const union = new Set([...a, ...b]);
-  return intersection.size / union.size;
-}
 
 const FUZZY_THRESHOLD = 0.5;
 const MIN_TOKENS_TO_QUALIFY = 3;
@@ -283,12 +35,7 @@ export class WikiMemory {
   private eventRepo: EventRepository;
   private metadataRepo: MetadataRepository;
   private searchService: SearchService;
-  private activeMaintenanceJobs = new Set<string>();
-  private activeIngestJobs = new Set<string>();
-  private statusSubscribers = new Map<
-    string,
-    Set<{ callback: (s: EntityStatus) => void; last: EntityStatus }>
-  >();
+  private jobManager: JobManager;
   private async storeEmbeddingDimension(dim: number): Promise<void> {
     const existing = await this.metadataRepo.getMeta('embedding_dimension');
     if (existing) {
@@ -387,8 +134,6 @@ export class WikiMemory {
     }
   }
 
-  private _librarianKey(entityId: string) { return `${this.prefix}:${entityId}:librarian`; }
-  private _healKey(entityId: string) { return `${this.prefix}:${entityId}:heal`; }
   private _warnCrossEntityCollision(type: 'entry' | 'task', id: string, existingEntityId: string, targetEntityId: string): void {
     console.warn(`[WikiMemory] importDump: ${type} id "${id}" already belongs to entity "${existingEntityId}"; skipping for entity "${targetEntityId}"`);
   }
@@ -498,6 +243,7 @@ export class WikiMemory {
     this.eventRepo = new EventRepository(db, this.prefix);
     this.metadataRepo = new MetadataRepository(db, this.prefix);
     this.searchService = new SearchService(this.entryRepo);
+    this.jobManager = new JobManager(this.prefix);
   }
 
   async setup() {
@@ -591,67 +337,6 @@ export class WikiMemory {
     return normalizedStoredHash !== normalizedHash;
   }
 
-  private _pruneKey(entityId: string) { return `${this.prefix}:${entityId}:prune`; }
-  private _reembedKey(entityId: string) { return `${this.prefix}:${entityId}:reembed`; }
-  private _globalReembedKey() { return `${this.prefix}:reembed`; }
-  private _importKey(entityId: string) { return `${this.prefix}:${entityId}:import`; }
-  private _globalImportKey() { return `${this.prefix}:import`; }
-  private _forgetKey(entityId: string) { return `${this.prefix}:${entityId}:forget`; }
-  private _isReembedActive(entityId: string): boolean {
-    return this.activeMaintenanceJobs.has(this._reembedKey(entityId))
-      || this.activeMaintenanceJobs.has(this._globalReembedKey());
-  }
-  private _isImportActiveFor(entityId: string): boolean {
-    return this.activeMaintenanceJobs.has(this._importKey(entityId))
-      || this.activeMaintenanceJobs.has(this._globalImportKey());
-  }
-  private _isForgetActiveFor(entityId: string): boolean {
-    return this.activeMaintenanceJobs.has(this._forgetKey(entityId));
-  }
-  /** Returns true if any maintenance job has the given operation suffix (e.g. ':prune'). */
-  private _isAnyMaintenanceActiveWithSuffix(suffix: string): boolean {
-    const entityKeyPrefix = `${this.prefix}:`;
-    for (const k of this.activeMaintenanceJobs) {
-      if (k.startsWith(entityKeyPrefix) && k.endsWith(suffix)) return true;
-    }
-    return false;
-  }
-  /** Returns true if any ingest job is active for the given entity. */
-  private _isIngestActiveFor(entityId: string): boolean {
-    const entityKeyPrefix = `${this.prefix}:${entityId}:`;
-    for (const k of this.activeIngestJobs) {
-      if (k.startsWith(entityKeyPrefix)) return true;
-    }
-    return false;
-  }
-
-  private _copyEntityStatus(s: EntityStatus): EntityStatus {
-    return { ingesting: s.ingesting, librarian: s.librarian, heal: s.heal };
-  }
-
-  private _notifyStatusSubscribers(entityId: string): void {
-    const set = this.statusSubscribers.get(entityId);
-    if (!set || set.size === 0) return;
-    // Snapshot for safe iteration if a callback unsubscribes or subscribes.
-    // Re-read status each iteration so re-entrant mutations cannot leave stale
-    // snapshots for remaining subscribers.
-    for (const entry of Array.from(set)) {
-      if (!set.has(entry)) continue; // unsubscribed during this emission
-      const next = this.getEntityStatus(entityId);
-      if (
-        entry.last.ingesting === next.ingesting &&
-        entry.last.librarian === next.librarian &&
-        entry.last.heal === next.heal
-      ) continue;
-      entry.last = this._copyEntityStatus(next);
-      try {
-        entry.callback(this._copyEntityStatus(next));
-      } catch (err) {
-        console.error(`[WikiMemory.subscribeEntityStatus] callback error for entityId="${entityId}" during transition emission`, err);
-      }
-    }
-  }
-
   private _validatePruneDuration(value: number | null | undefined, name: string): void {
     if (value !== null && value !== undefined && (typeof value !== 'number' || !isFinite(value) || value < 0)) {
       throw new Error(`Invalid ${name}: must be a non-negative finite number or null`);
@@ -666,34 +351,7 @@ export class WikiMemory {
       vacuum?: boolean;
     }
   ): Promise<{ entries: number; tasks: number; events: number }> {
-    const pruneKey = this._pruneKey(entityId);
-    // Prune must not run concurrently with librarian, heal, ingest, import, or another
-    // prune for the same entity.
-    const ingestPrefix = `${this.prefix}:${entityId}:`;
-    let isIngestRunning = false;
-    for (const k of this.activeIngestJobs) {
-      if (k.startsWith(ingestPrefix)) { isIngestRunning = true; break; }
-    }
-    let blockingOperation: 'prune' | 'librarian' | 'heal' | 'ingest' | 'reembed' | 'import' | 'forget' | null = null;
-    if (this.activeMaintenanceJobs.has(pruneKey)) {
-      blockingOperation = 'prune';
-    } else if (this.activeMaintenanceJobs.has(this._librarianKey(entityId))) {
-      blockingOperation = 'librarian';
-    } else if (this.activeMaintenanceJobs.has(this._healKey(entityId))) {
-      blockingOperation = 'heal';
-    } else if (this._isReembedActive(entityId)) {
-      blockingOperation = 'reembed';
-    } else if (isIngestRunning) {
-      blockingOperation = 'ingest';
-    } else if (this._isImportActiveFor(entityId)) {
-      blockingOperation = 'import';
-    } else if (this._isForgetActiveFor(entityId)) {
-      blockingOperation = 'forget';
-    }
-    if (blockingOperation !== null) {
-      throw new WikiBusyError(blockingOperation, entityId);
-    }
-    this.activeMaintenanceJobs.add(pruneKey);
+    this.jobManager.acquireLock('prune', entityId);
     try {
       const retainSoftDeletedFor = options?.retainSoftDeletedFor !== undefined
         ? options.retainSoftDeletedFor
@@ -789,7 +447,7 @@ export class WikiMemory {
 
       return { entries: deletedEntries, tasks: deletedTasks, events: deletedEvents };
     } finally {
-      this.activeMaintenanceJobs.delete(pruneKey);
+      this.jobManager.releaseLock('prune', entityId);
     }
   }
 
@@ -1498,7 +1156,6 @@ export class WikiMemory {
     // Wrap in transaction to ensure Event + Checkpoint logic is atomic
     let shouldRunLibrarian = false;
     let librarianCount = 0;
-    let librarianJobKey: string | null = null;
 
     await this.db.withTransactionAsync(async (tx) => {
       await this.eventRepo.add(newEvent, tx);
@@ -1514,31 +1171,26 @@ export class WikiMemory {
       if (memoryCheckpoint > count) memoryCheckpoint = 0;
 
       if (count - memoryCheckpoint >= threshold) {
-        const jobKey = this._librarianKey(entityId);
-        if (
-          !this.activeMaintenanceJobs.has(jobKey) &&
-          !this.activeMaintenanceJobs.has(this._pruneKey(entityId)) &&
-          !this._isReembedActive(entityId) &&
-          !this._isImportActiveFor(entityId) &&
-          !this._isForgetActiveFor(entityId)
-        ) {
+        if (!this.jobManager.isBlocked('librarian', entityId)) {
           shouldRunLibrarian = true;
           librarianCount = count;
-          librarianJobKey = jobKey;
           await this.metadataRepo.updateCheckpoint(entityId, { memory: count }, tx);
         }
       }
     });
 
-    if (shouldRunLibrarian && librarianJobKey !== null) {
-      this.activeMaintenanceJobs.add(librarianJobKey);
-      this._notifyStatusSubscribers(entityId);
-      this.runLibrarianThenMaybeHeal(entityId, librarianCount)
-        .catch(console.error)
-        .finally(() => {
-          this.activeMaintenanceJobs.delete(librarianJobKey!);
-          this._notifyStatusSubscribers(entityId);
-        });
+    if (shouldRunLibrarian) {
+      try {
+        this.jobManager.acquireLock('librarian', entityId);
+        this.runLibrarianThenMaybeHeal(entityId, librarianCount)
+          .catch(console.error)
+          .finally(() => {
+            this.jobManager.releaseLock('librarian', entityId);
+          });
+      } catch (e) {
+        if (!(e instanceof WikiBusyError)) throw e;
+        // Conflict detected between pre-check and acquire — skip auto-trigger
+      }
     }
   }
 
@@ -1554,18 +1206,12 @@ export class WikiMemory {
     if (healCheckpoint > currentEventCount) healCheckpoint = 0;
     const shouldRunHeal = currentEventCount - healCheckpoint >= autoHealThreshold;
 
-    if (shouldRunHeal) {
-      const healKey = this._healKey(entityId);
-      if (!this.activeMaintenanceJobs.has(healKey)) {
-        this.activeMaintenanceJobs.add(healKey);
-        this._notifyStatusSubscribers(entityId);
-        try {
-          await this._doRunHeal(entityId);
-          await this.metadataRepo.updateCheckpoint(entityId, { heal: currentEventCount }, this.db);
-        } finally {
-          this.activeMaintenanceJobs.delete(healKey);
-          this._notifyStatusSubscribers(entityId);
-        }
+    if (shouldRunHeal && this.jobManager.tryAcquireAutoHealLock(entityId)) {
+      try {
+        await this._doRunHeal(entityId);
+        await this.metadataRepo.updateCheckpoint(entityId, { heal: currentEventCount }, this.db);
+      } finally {
+        this.jobManager.releaseLock('heal', entityId);
       }
     }
   }
@@ -1771,56 +1417,20 @@ export class WikiMemory {
   }
 
   async runLibrarian(entityId: string): Promise<void> {
-    const jobKey = this._librarianKey(entityId);
-    if (this.activeMaintenanceJobs.has(jobKey)) {
-      throw new WikiBusyError('librarian', entityId);
-    }
-    if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
-      throw new WikiBusyError('prune', entityId);
-    }
-    if (this._isReembedActive(entityId)) {
-      throw new WikiBusyError('reembed', entityId);
-    }
-    if (this._isImportActiveFor(entityId)) {
-      throw new WikiBusyError('import', entityId);
-    }
-    if (this._isForgetActiveFor(entityId)) {
-      throw new WikiBusyError('forget', entityId);
-    }
-    this.activeMaintenanceJobs.add(jobKey);
-    this._notifyStatusSubscribers(entityId);
+    this.jobManager.acquireLock('librarian', entityId);
     try {
       await this._doRunLibrarian(entityId);
     } finally {
-      this.activeMaintenanceJobs.delete(jobKey);
-      this._notifyStatusSubscribers(entityId);
+      this.jobManager.releaseLock('librarian', entityId);
     }
   }
 
   async runHeal(entityId: string): Promise<void> {
-    const jobKey = this._healKey(entityId);
-    if (this.activeMaintenanceJobs.has(jobKey)) {
-      throw new WikiBusyError('heal', entityId);
-    }
-    if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
-      throw new WikiBusyError('prune', entityId);
-    }
-    if (this._isReembedActive(entityId)) {
-      throw new WikiBusyError('reembed', entityId);
-    }
-    if (this._isImportActiveFor(entityId)) {
-      throw new WikiBusyError('import', entityId);
-    }
-    if (this._isForgetActiveFor(entityId)) {
-      throw new WikiBusyError('forget', entityId);
-    }
-    this.activeMaintenanceJobs.add(jobKey);
-    this._notifyStatusSubscribers(entityId);
+    this.jobManager.acquireLock('heal', entityId);
     try {
       await this._doRunHeal(entityId);
     } finally {
-      this.activeMaintenanceJobs.delete(jobKey);
-      this._notifyStatusSubscribers(entityId);
+      this.jobManager.releaseLock('heal', entityId);
     }
   }
 
@@ -1828,58 +1438,8 @@ export class WikiMemory {
     const embedFn = this.options.llmProvider.embed;
     if (!embedFn) return { embedded: 0, skipped: 0, failed: 0 };
 
-    const reembedKey = entityId ? this._reembedKey(entityId) : this._globalReembedKey();
-    if (this.activeMaintenanceJobs.has(reembedKey)) {
-      throw new WikiBusyError('reembed', entityId ?? '*');
-    }
-    if (entityId) {
-      // Cross-check: fail if global reembed is in-flight (it covers this entity too)
-      if (this.activeMaintenanceJobs.has(this._globalReembedKey())) {
-        throw new WikiBusyError('reembed', entityId);
-      }
-      if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
-        throw new WikiBusyError('prune', entityId);
-      }
-      if (this.activeMaintenanceJobs.has(this._librarianKey(entityId))) {
-        throw new WikiBusyError('librarian', entityId);
-      }
-      if (this.activeMaintenanceJobs.has(this._healKey(entityId))) {
-        throw new WikiBusyError('heal', entityId);
-      }
-      if (this._isIngestActiveFor(entityId)) {
-        throw new WikiBusyError('ingest', entityId);
-      }
-      if (this._isImportActiveFor(entityId)) {
-        throw new WikiBusyError('import', entityId);
-      }
-      if (this._isForgetActiveFor(entityId)) {
-        throw new WikiBusyError('forget', entityId);
-      }
-    } else {
-      // Cross-check: fail if any per-entity reembed is in-flight (global covers all entities)
-      if (this._isAnyMaintenanceActiveWithSuffix(':reembed')) {
-        throw new WikiBusyError('reembed', '*');
-      }
-      if (this._isAnyMaintenanceActiveWithSuffix(':prune')) {
-        throw new WikiBusyError('prune', '*');
-      }
-      if (this._isAnyMaintenanceActiveWithSuffix(':librarian')) {
-        throw new WikiBusyError('librarian', '*');
-      }
-      if (this._isAnyMaintenanceActiveWithSuffix(':heal')) {
-        throw new WikiBusyError('heal', '*');
-      }
-      if (this.activeIngestJobs.size > 0) {
-        throw new WikiBusyError('ingest', '*');
-      }
-      if (this._isAnyMaintenanceActiveWithSuffix(':import')) {
-        throw new WikiBusyError('import', '*');
-      }
-      if (this._isAnyMaintenanceActiveWithSuffix(':forget')) {
-        throw new WikiBusyError('forget', '*');
-      }
-    }
-    this.activeMaintenanceJobs.add(reembedKey);
+    const op = entityId ? 'reembed' : 'global_reembed';
+    this.jobManager.acquireLock(op, entityId ?? '*');
 
     try {
       const rows = await this.entryRepo.findAllForReembed(entityId);
@@ -1965,22 +1525,12 @@ export class WikiMemory {
 
       return { embedded, skipped, failed };
     } finally {
-      this.activeMaintenanceJobs.delete(reembedKey);
+      this.jobManager.releaseLock(op, entityId ?? '*');
     }
   }
 
   getEntityStatus(entityId: string): EntityStatus {
-    const ingestPrefix = `${this.prefix}:${entityId}:`;
-    let ingesting = false;
-    for (const k of this.activeIngestJobs) {
-      if (k.startsWith(ingestPrefix)) { ingesting = true; break; }
-    }
-
-    return {
-      ingesting,
-      librarian: this.activeMaintenanceJobs.has(this._librarianKey(entityId)),
-      heal: this.activeMaintenanceJobs.has(this._healKey(entityId)),
-    };
+    return this.jobManager.getEntityStatus(entityId);
   }
 
   /**
@@ -1997,30 +1547,7 @@ export class WikiMemory {
     entityId: string,
     callback: (status: EntityStatus) => void
   ): () => void {
-    const initial = this.getEntityStatus(entityId);
-    let set = this.statusSubscribers.get(entityId);
-    if (!set) {
-      set = new Set();
-      this.statusSubscribers.set(entityId, set);
-    }
-    const entry = { callback, last: this._copyEntityStatus(initial) };
-    set.add(entry);
-
-    try {
-      callback(this._copyEntityStatus(initial));
-    } catch (err) {
-      console.error(`[WikiMemory.subscribeEntityStatus] callback error for entityId="${entityId}" during initial emission`, err);
-    }
-
-    let active = true;
-    return () => {
-      if (!active) return;
-      active = false;
-      const s = this.statusSubscribers.get(entityId);
-      if (!s) return;
-      s.delete(entry);
-      if (s.size === 0) this.statusSubscribers.delete(entityId);
-    };
+    return this.jobManager.subscribeEntityStatus(entityId, callback);
   }
 
   public clearVectorCache(): void {
@@ -2084,46 +1611,9 @@ export class WikiMemory {
     const merge = opts?.merge ?? false;
     const entityIds = Object.keys(dump.entities);
 
-    // Pre-validate all locks before writing anything. This makes the operation
-    // atomic with respect to busy-error rejection: either every entity passes the
-    // lock check and we proceed, or we reject before mutating any entity.
-    // Per-entity checks first: surface the specific conflicting entity in the error.
-    for (const entityId of entityIds) {
-      if (this.activeMaintenanceJobs.has(this._importKey(entityId))) {
-        throw new WikiBusyError('import', entityId);
-      }
-      if (this.activeMaintenanceJobs.has(this._librarianKey(entityId))) {
-        throw new WikiBusyError('librarian', entityId);
-      }
-      if (this.activeMaintenanceJobs.has(this._healKey(entityId))) {
-        throw new WikiBusyError('heal', entityId);
-      }
-      if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
-        throw new WikiBusyError('prune', entityId);
-      }
-      if (this._isReembedActive(entityId)) {
-        throw new WikiBusyError('reembed', entityId);
-      }
-      if (this._isIngestActiveFor(entityId)) {
-        throw new WikiBusyError('ingest', entityId);
-      }
-      if (this._isForgetActiveFor(entityId)) {
-        throw new WikiBusyError('forget', entityId);
-      }
-    }
-    // Global import lock check after per-entity checks: serializes concurrent
-    // importDump() calls for *different* entities so they cannot race on the shared
-    // embedding_dimension / embedding_dimension_mismatch meta keys.
-    if (this.activeMaintenanceJobs.has(this._globalImportKey())) {
-      throw new WikiBusyError('import', '*');
-    }
-
-    // Acquire global + per-entity import locks before any await so the lock check and
-    // lock acquisition remain race-free across concurrent importDump() calls.
-    this.activeMaintenanceJobs.add(this._globalImportKey());
-    for (const entityId of entityIds) {
-      this.activeMaintenanceJobs.add(this._importKey(entityId));
-    }
+    // acquireImportLocks validates all per-entity conflicts, then the global lock,
+    // then acquires global + per-entity atomically (same semantics as before).
+    this.jobManager.acquireImportLocks(entityIds);
     try {
       // Fail before any writes so we never partially commit an import and then reject
       // with a migration error — same probe as setup().
@@ -2133,10 +1623,7 @@ export class WikiMemory {
         await this._doImportEntity(entityId, bundle, merge);
       }
     } finally {
-      this.activeMaintenanceJobs.delete(this._globalImportKey());
-      for (const entityId of entityIds) {
-        this.activeMaintenanceJobs.delete(this._importKey(entityId));
-      }
+      this.jobManager.releaseImportLocks(entityIds);
     }
   }
 
@@ -2440,27 +1927,7 @@ export class WikiMemory {
   }
 
   async forget(entityId: string, params: { entryId?: string; taskId?: string; sourceRef?: string; sourceHash?: string; clearAll?: boolean }): Promise<{ deleted: { entries: number; tasks: number } }> {
-    let blockingOperation: "librarian" | "heal" | "prune" | "reembed" | "ingest" | "forget" | "import" | null = null;
-    if (this.activeMaintenanceJobs.has(this._librarianKey(entityId))) {
-      blockingOperation = 'librarian';
-    } else if (this.activeMaintenanceJobs.has(this._healKey(entityId))) {
-      blockingOperation = 'heal';
-    } else if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
-      blockingOperation = 'prune';
-    } else if (this._isReembedActive(entityId)) {
-      blockingOperation = 'reembed';
-    } else if (this._isIngestActiveFor(entityId)) {
-      blockingOperation = 'ingest';
-    } else if (this._isImportActiveFor(entityId)) {
-      blockingOperation = 'import';
-    } else if (this._isForgetActiveFor(entityId)) {
-      blockingOperation = 'forget';
-    }
-    if (blockingOperation !== null) {
-      throw new WikiBusyError(blockingOperation, entityId);
-    }
-    const forgetKey = this._forgetKey(entityId);
-    this.activeMaintenanceJobs.add(forgetKey);
+    this.jobManager.acquireLock('forget', entityId);
     try {
       const now = Date.now();
       let deletedEntries = 0;
@@ -2554,7 +2021,7 @@ export class WikiMemory {
 
       return { deleted: { entries: deletedEntries, tasks: deletedTasks } };
     } finally {
-      this.activeMaintenanceJobs.delete(forgetKey);
+      this.jobManager.releaseLock('forget', entityId);
     }
   }
 
@@ -2579,24 +2046,7 @@ export class WikiMemory {
       throw new Error(`documentChunk must be a string, received ${typeof params.documentChunk}`);
     }
 
-    const jobKey = `${this.prefix}:${entityId}:${sourceRef}`;
-    if (this.activeIngestJobs.has(jobKey)) {
-      throw new WikiBusyError('ingest', entityId);
-    }
-    if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) {
-      throw new WikiBusyError('prune', entityId);
-    }
-    if (this._isReembedActive(entityId)) {
-      throw new WikiBusyError('reembed', entityId);
-    }
-    if (this._isImportActiveFor(entityId)) {
-      throw new WikiBusyError('import', entityId);
-    }
-    if (this._isForgetActiveFor(entityId)) {
-      throw new WikiBusyError('forget', entityId);
-    }
-    this.activeIngestJobs.add(jobKey);
-    this._notifyStatusSubscribers(entityId);
+    this.jobManager.acquireLock('ingest', entityId, sourceRef);
 
     try {
       const { chunks, truncated } = chunkText(params.documentChunk, maxChunkLength, chunkOverlap);
@@ -2683,8 +2133,7 @@ export class WikiMemory {
 
       return { truncated, chunks: chunks.length };
     } finally {
-      this.activeIngestJobs.delete(jobKey);
-      this._notifyStatusSubscribers(entityId);
+      this.jobManager.releaseLock('ingest', entityId, sourceRef);
     }
   }
 }

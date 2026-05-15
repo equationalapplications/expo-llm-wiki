@@ -291,7 +291,7 @@ describe('WikiMemory.runPrune', () => {
   it('throws WikiBusyError when librarian is already running', async () => {
     const db = makeMockDb({});
     const wiki = new WikiMemory(db as any, stubOptions);
-    (wiki as any).activeMaintenanceJobs.add('llm_wiki_:ent:librarian');
+    (wiki as any).jobManager.activeMaintenanceJobs.add('llm_wiki_:ent:librarian');
     const err = await wiki.runPrune('ent').catch((e) => e);
     expect(err).toBeInstanceOf(WikiBusyError);
     expect(err.operation).toBe('librarian');
@@ -300,7 +300,7 @@ describe('WikiMemory.runPrune', () => {
   it('throws WikiBusyError when heal is already running', async () => {
     const db = makeMockDb({});
     const wiki = new WikiMemory(db as any, stubOptions);
-    (wiki as any).activeMaintenanceJobs.add('llm_wiki_:ent:heal');
+    (wiki as any).jobManager.activeMaintenanceJobs.add('llm_wiki_:ent:heal');
     const err = await wiki.runPrune('ent').catch((e) => e);
     expect(err).toBeInstanceOf(WikiBusyError);
     expect(err.operation).toBe('heal');
@@ -309,7 +309,7 @@ describe('WikiMemory.runPrune', () => {
   it('throws WikiBusyError when ingest is already running for same entity', async () => {
     const db = makeMockDb({});
     const wiki = new WikiMemory(db as any, stubOptions);
-    (wiki as any).activeIngestJobs.add('llm_wiki_:ent:doc.md');
+    (wiki as any).jobManager.activeIngestJobs.add('llm_wiki_:ent:doc.md');
     const err = await wiki.runPrune('ent').catch((e) => e);
     expect(err).toBeInstanceOf(WikiBusyError);
     expect(err.operation).toBe('ingest');

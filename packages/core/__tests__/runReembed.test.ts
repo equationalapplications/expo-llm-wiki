@@ -119,7 +119,7 @@ describe('runReembed()', () => {
     await wiki.setup();
     await insertFact(db, 'f1', 'user-1');
 
-    (wiki as any).activeMaintenanceJobs.add('llm_wiki_:user-1:forget');
+    (wiki as any).jobManager.activeMaintenanceJobs.add('llm_wiki_:user-1:forget');
 
     const err = await wiki.runReembed('user-1').catch(e => e);
     expect(err).toBeInstanceOf(WikiBusyError);
@@ -132,7 +132,7 @@ describe('runReembed()', () => {
     await wiki.setup();
     await insertFact(db, 'f1', 'user-1');
 
-    (wiki as any).activeMaintenanceJobs.add('llm_wiki_:user-1:forget');
+    (wiki as any).jobManager.activeMaintenanceJobs.add('llm_wiki_:user-1:forget');
 
     const err = await wiki.runReembed().catch(e => e);
     expect(err).toBeInstanceOf(WikiBusyError);
