@@ -131,6 +131,45 @@ describe('Outbox totality: entry count === outbox count after ingestDocument', (
     expect(entryRows.length).toBe(0);
     expect(outboxRows.length).toBe(0);
   });
+
+  it('stages delete outbox events for replaced source facts on repeated ingestDocument()', async () => {
+    const firstFacts = [
+      { title: 'First Fact', body: 'Body 1', tags: ['tag1'], confidence: 'certain' as const },
+    ];
+    const secondFacts = [
+      { title: 'Second Fact A', body: 'Body A', tags: ['tagA'], confidence: 'certain' as const },
+      { title: 'Second Fact B', body: 'Body B', tags: ['tagB'], confidence: 'certain' as const },
+    ];
+
+    const wiki = await makeWiki(db, firstFacts);
+    await wiki.ingestDocument('entity_replace', {
+      sourceRef: 'doc://replace-test',
+      sourceHash: FAKE_SOURCE_HASH,
+      documentChunk: 'First content chunk',
+    });
+
+    // Reconfigure the LLM to return a new fact set for the same sourceRef.
+    (wiki as any).options.llmProvider = makeMockLlmProvider(secondFacts);
+
+    await wiki.ingestDocument('entity_replace', {
+      sourceRef: 'doc://replace-test',
+      sourceHash: FAKE_SOURCE_HASH,
+      documentChunk: 'Second content chunk',
+    });
+
+    const entryRows = await db.getAllAsync<{ id: string }>(
+      `SELECT id FROM ${PREFIX}entries WHERE entity_id = ? AND deleted_at IS NULL`,
+      ['entity_replace'],
+    );
+    const outboxRows = await db.getAllAsync<any>(
+      `SELECT * FROM ${PREFIX}outbox ORDER BY id ASC`,
+    );
+
+    expect(entryRows.length).toBe(2);
+    expect(outboxRows.length).toBe(4);
+    expect(outboxRows.some(row => row.operation === 'DELETE')).toBe(true);
+    expect(outboxRows.filter(row => row.operation === 'INSERT').length).toBe(3);
+  });
 });
 
 // ---------------------------------------------------------------------------

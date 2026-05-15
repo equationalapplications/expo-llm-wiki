@@ -4,10 +4,9 @@ import type { WikiEvent, SQLiteAdapter } from '../types';
 export class EventRepository extends BaseRepository {
   /**
    * Insert a new event row.
-   * `tx` is optional — callers may pass an active transaction handle or omit it
-   * to write directly to the main db connection.
+   * `tx` is required to ensure mutations are atomic within transactions.
    */
-  async add(event: WikiEvent, tx?: SQLiteAdapter): Promise<void> {
+  async add(event: WikiEvent, tx: SQLiteAdapter): Promise<void> {
     const executor = this.getExecutor(tx);
     await executor.runAsync(
       `INSERT INTO ${this.prefix}events (id, entity_id, event_type, summary, related_entry_id, created_at)
@@ -35,6 +34,19 @@ export class EventRepository extends BaseRepository {
   }
 
   /**
+   * Return the most recent events for the given entity IDs, newest first.
+   * Defaults to a limit of 50.
+   */
+  async getRecentForEntities(entityIds: string[], limit = 50): Promise<WikiEvent[]> {
+    if (entityIds.length === 0) return [];
+    const placeholders = entityIds.map(() => '?').join(', ');
+    return this.db.getAllAsync<WikiEvent>(
+      `SELECT * FROM ${this.prefix}events WHERE entity_id IN (${placeholders}) ORDER BY created_at DESC LIMIT ?`,
+      [...entityIds, limit],
+    );
+  }
+
+  /**
    * Delete events for an entity that were created at or before the given cutoff timestamp.
    * Returns the number of deleted rows.
    */
@@ -47,9 +59,11 @@ export class EventRepository extends BaseRepository {
 
   /**
    * Return the total number of events stored for an entity.
+   * `tx` is optional — pass an active transaction handle for atomic reads.
    */
-  async count(entityId: string): Promise<number> {
-    const row = await this.db.getFirstAsync<{ count: number }>(
+  async count(entityId: string, tx?: SQLiteAdapter): Promise<number> {
+    const executor = tx ?? this.db;
+    const row = await executor.getFirstAsync<{ count: number }>(
       `SELECT COUNT(*) as count FROM ${this.prefix}events WHERE entity_id = ?`,
       [entityId],
     );

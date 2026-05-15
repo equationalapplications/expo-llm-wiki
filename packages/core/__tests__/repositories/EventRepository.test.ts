@@ -85,6 +85,23 @@ describe('EventRepository', () => {
     expect(events.length).toBe(50);
   });
 
+  it('getRecentForEntities() returns events across multiple entities in DESC order', async () => {
+    const base = 6_000_000;
+    await repo.add(makeEvent({ id: 'evt_e1_a', entity_id: 'entity1', created_at: base + 10 }));
+    await repo.add(makeEvent({ id: 'evt_e2_a', entity_id: 'entity2', created_at: base + 20 }));
+    await repo.add(makeEvent({ id: 'evt_e1_b', entity_id: 'entity1', created_at: base + 30 }));
+    await repo.add(makeEvent({ id: 'evt_e2_b', entity_id: 'entity2', created_at: base + 40 }));
+
+    const events = await repo.getRecentForEntities(['entity2', 'entity1'], 3);
+    expect(events.map(e => e.id)).toEqual(['evt_e2_b', 'evt_e1_b', 'evt_e2_a']);
+    expect(events.every(e => ['entity1', 'entity2'].includes(e.entity_id))).toBe(true);
+  });
+
+  it('getRecentForEntities() returns an empty array when no entity IDs are provided', async () => {
+    const events = await repo.getRecentForEntities([], 5);
+    expect(events).toEqual([]);
+  });
+
   it('prune() deletes events at or before cutoff and returns changes count', async () => {
     const base = 4_000_000;
     await repo.add(makeEvent({ id: 'evt_old1', entity_id: 'entity1', created_at: base + 1 }));

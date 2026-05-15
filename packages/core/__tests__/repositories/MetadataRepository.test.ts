@@ -84,7 +84,7 @@ describe('MetadataRepository', () => {
   });
 
   it('getMeta returns value after setMeta', async () => {
-    await repo.setMeta('myKey', 'myValue');
+    await repo.setMeta('myKey', 'myValue', db);
     const value = await repo.getMeta('myKey');
     expect(value).toBe('myValue');
   });
@@ -94,8 +94,8 @@ describe('MetadataRepository', () => {
   // ---------------------------------------------------------------------------
 
   it('setMeta inserts and overwrites', async () => {
-    await repo.setMeta('k', 'first');
-    await repo.setMeta('k', 'second');
+    await repo.setMeta('k', 'first', db);
+    await repo.setMeta('k', 'second', db);
     const value = await repo.getMeta('k');
     expect(value).toBe('second');
   });

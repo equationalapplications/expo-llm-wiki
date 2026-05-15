@@ -152,13 +152,33 @@ export class TaskRepository extends BaseRepository {
   async bulkDeletePruned(
     entityId: string,
     cutoff: number,
-    tx?: SQLiteAdapter,
+    tx: SQLiteAdapter,
   ): Promise<number> {
     const executor = this.getExecutor(tx);
+    const rowsToDelete = await executor.getAllAsync<{ id: string; deleted_at: number }>(
+      `SELECT id, deleted_at FROM ${this.prefix}tasks WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ?`,
+      [entityId, cutoff],
+    );
+    if (rowsToDelete.length === 0) return 0;
+
     const result = await executor.runAsync(
       `DELETE FROM ${this.prefix}tasks WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ?`,
       [entityId, cutoff],
     );
+
+    for (const row of rowsToDelete) {
+      await this.outbox.push(
+        {
+          entityId,
+          tableName: 'tasks',
+          recordId: row.id,
+          operation: 'DELETE',
+          payload: { id: row.id, entity_id: entityId, deleted_at: row.deleted_at },
+        },
+        tx,
+      );
+    }
+
     return result.changes;
   }
 

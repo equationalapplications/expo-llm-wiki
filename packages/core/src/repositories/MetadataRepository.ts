@@ -4,8 +4,9 @@ import type { SQLiteAdapter } from '../types';
 export class MetadataRepository extends BaseRepository {
   // CHECKPOINTS TABLE METHODS
 
-  async getCheckpoint(entityId: string): Promise<{ memory?: number; heal?: number }> {
-    const row = await this.db.getFirstAsync<{
+  async getCheckpoint(entityId: string, tx?: SQLiteAdapter): Promise<{ memory?: number; heal?: number }> {
+    const executor = tx ?? this.db;
+    const row = await executor.getFirstAsync<{
       memory_checkpoint: number | null;
       heal_checkpoint: number | null;
     }>(
@@ -56,7 +57,7 @@ export class MetadataRepository extends BaseRepository {
     return row ? row.value : null;
   }
 
-  async setMeta(key: string, value: string, tx?: SQLiteAdapter): Promise<void> {
+  async setMeta(key: string, value: string, tx: SQLiteAdapter): Promise<void> {
     const executor = this.getExecutor(tx);
     await executor.runAsync(
       `INSERT INTO ${this.prefix}meta (key, value) VALUES (?, ?)

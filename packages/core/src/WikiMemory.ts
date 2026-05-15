@@ -912,11 +912,13 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
 
         if (succeeded.length > 0) {
           const succeededIds = succeeded.map(r => r.id);
-          deletedEntries = await this.entryRepo.bulkDeletePruned(entityId, cutoff, succeededIds);
+          deletedEntries = await this.entryRepo.bulkDeletePruned(entityId, cutoff, succeededIds, this.db);
         }
 
-        // Delete tasks (independent of entry hook success/failure)
-        deletedTasks = await this.taskRepo.bulkDeletePruned(entityId, cutoff);
+        // Delete tasks in a transaction for atomicity
+        await this.db.withTransactionAsync(async (tx) => {
+          deletedTasks = await this.taskRepo.bulkDeletePruned(entityId, cutoff, tx);
+        });
 
         if (failure) {
           // Rebuild index and clear cache to reflect successful partial deletions
@@ -1585,21 +1587,12 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       });
     }
 
+    const eventsLimit = Math.min(10 * entityIds.length, 100);
     const [tasks, events] = await Promise.all([
       this.taskRepo.findAllPending(entityIds as string[], entityIds.length === 1 ? undefined : Math.min(20 * entityIds.length, 200)),
-      (async () => {
-        const entityScope = this._entityInClause(entityIds);
-        // Scaled global cap: 10× entity count, max 100. Not a per-entity guarantee —
-        // a single high-volume entity can fill the entire budget.
-        const eventsLimit = Math.min(10 * entityIds.length, 100);
-        return this.db.getAllAsync<WikiEvent>(
-          `SELECT * FROM ${this.prefix}events
-           WHERE ${entityScope.clause}
-           ORDER BY created_at DESC
-           LIMIT ?`,
-          [...entityScope.params, eventsLimit]
-        );
-      })(),
+      entityIds.length === 1
+        ? this.eventRepo.getRecent(entityIds[0], eventsLimit)
+        : this.eventRepo.getRecentForEntities(entityIds as string[], eventsLimit),
     ]);
 
     // Build factScores from captured scores
@@ -1865,42 +1858,64 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
   async write(entityId: string, event: Omit<WikiEvent, 'id' | 'entity_id' | 'created_at'>): Promise<void> {
     const id = generateId('evt_');
     const now = Date.now();
-    
+
     let eventType = event.event_type;
     if (!['observation', 'decision', 'action', 'outcome'].includes(eventType)) {
       eventType = 'observation';
     }
 
-    await this.eventRepo.add({ id, entity_id: entityId, event_type: eventType, summary: event.summary, related_entry_id: event.related_entry_id || null, created_at: now });
+    const newEvent: WikiEvent = {
+      id,
+      entity_id: entityId,
+      event_type: eventType,
+      summary: event.summary,
+      related_entry_id: event.related_entry_id || null,
+      created_at: now,
+    };
 
-    const threshold = this.options.config?.autoLibrarianThreshold || 20;
-    
-    const [count, cp] = await Promise.all([
-        this.eventRepo.count(entityId),
-        this.metadataRepo.getCheckpoint(entityId)
-    ]);
+    // Wrap in transaction to ensure Event + Checkpoint logic is atomic
+    let shouldRunLibrarian = false;
+    let librarianCount = 0;
+    let librarianJobKey: string | null = null;
 
-    let memoryCheckpoint = cp.memory ?? 0;
-    if (memoryCheckpoint > count) memoryCheckpoint = 0;
+    await this.db.withTransactionAsync(async (tx) => {
+      await this.eventRepo.add(newEvent, tx);
 
-    if (count - memoryCheckpoint >= threshold) {
-      const jobKey = this._librarianKey(entityId);
-      if (
-        !this.activeMaintenanceJobs.has(jobKey) &&
-        !this.activeMaintenanceJobs.has(this._pruneKey(entityId)) &&
-        !this._isReembedActive(entityId) &&
-        !this._isImportActiveFor(entityId) &&
-        !this._isForgetActiveFor(entityId)
-      ) {
-        this.activeMaintenanceJobs.add(jobKey);
-        this._notifyStatusSubscribers(entityId);
-        this.runLibrarianThenMaybeHeal(entityId, count)
-          .catch(console.error)
-          .finally(() => {
-            this.activeMaintenanceJobs.delete(jobKey);
-            this._notifyStatusSubscribers(entityId);
-          });
+      const threshold = this.options.config?.autoLibrarianThreshold || 20;
+
+      const [count, cp] = await Promise.all([
+        this.eventRepo.count(entityId, tx),
+        this.metadataRepo.getCheckpoint(entityId, tx),
+      ]);
+
+      let memoryCheckpoint = cp.memory ?? 0;
+      if (memoryCheckpoint > count) memoryCheckpoint = 0;
+
+      if (count - memoryCheckpoint >= threshold) {
+        const jobKey = this._librarianKey(entityId);
+        if (
+          !this.activeMaintenanceJobs.has(jobKey) &&
+          !this.activeMaintenanceJobs.has(this._pruneKey(entityId)) &&
+          !this._isReembedActive(entityId) &&
+          !this._isImportActiveFor(entityId) &&
+          !this._isForgetActiveFor(entityId)
+        ) {
+          shouldRunLibrarian = true;
+          librarianCount = count;
+          librarianJobKey = jobKey;
+          this.activeMaintenanceJobs.add(jobKey);
+          this._notifyStatusSubscribers(entityId);
+        }
       }
+    });
+
+    if (shouldRunLibrarian && librarianJobKey !== null) {
+      this.runLibrarianThenMaybeHeal(entityId, librarianCount)
+        .catch(console.error)
+        .finally(() => {
+          this.activeMaintenanceJobs.delete(librarianJobKey!);
+          this._notifyStatusSubscribers(entityId);
+        });
     }
   }
 
@@ -3176,10 +3191,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
           deletedSourceFactIds.push(row.id);
         }
 
-        await this.db.runAsync(
-          `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE source_ref = ? AND entity_id = ? AND deleted_at IS NULL`,
-          [now, now, sourceRef, entityId]
-        );
+        await this.entryRepo.softDeleteBySource(entityId, this.db, sourceRef, null);
         for (const fact of allValidFacts) {
           const id = generateId('fact_');
           const wikiFact: WikiFact = {

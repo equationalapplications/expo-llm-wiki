@@ -275,12 +275,13 @@ export class EntryRepository extends BaseRepository {
   /**
    * Bulk delete pruned entries (already soft-deleted) by IDs.
    * Used by runPrune(). Returns total number of deleted rows.
+   * `tx` is REQUIRED so outbox deletion events are staged atomically.
    */
   async bulkDeletePruned(
     entityId: string,
     cutoff: number,
     ids: string[],
-    tx?: SQLiteAdapter,
+    tx: SQLiteAdapter,
   ): Promise<number> {
     const executor = this.getExecutor(tx);
     let totalChanges = 0;
@@ -294,7 +295,7 @@ export class EntryRepository extends BaseRepository {
       );
       totalChanges += result.changes;
       // Stage outbox entries for permanently deleted records
-      if (result.changes > 0 && tx) {
+      if (result.changes > 0) {
         for (const id of chunk) {
           await this.outbox.push({
             entityId,
@@ -316,7 +317,7 @@ export class EntryRepository extends BaseRepository {
   async markOrphaned(
     entityId: string,
     orphanThreshold: number,
-    tx?: SQLiteAdapter,
+    tx: SQLiteAdapter,
   ): Promise<number> {
     const executor = this.getExecutor(tx);
     const now = Date.now();
@@ -327,7 +328,7 @@ export class EntryRepository extends BaseRepository {
       [now, now, entityId, orphanThreshold],
     );
     // Stage outbox entries for orphaned records
-    if (result.changes > 0 && tx) {
+    if (result.changes > 0) {
       const orphanedRows = await executor.getAllAsync<any>(
         `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at = ? AND access_count = 0 AND created_at <= ? AND source_type != 'immutable_document'`,
         [entityId, now, orphanThreshold],
@@ -352,7 +353,7 @@ export class EntryRepository extends BaseRepository {
   async downgradeStaleInferred(
     entityId: string,
     staleThreshold: number,
-    tx?: SQLiteAdapter,
+    tx: SQLiteAdapter,
   ): Promise<number> {
     const executor = this.getExecutor(tx);
     const now = Date.now();
@@ -363,7 +364,7 @@ export class EntryRepository extends BaseRepository {
       [now, entityId, staleThreshold, staleThreshold],
     );
     // Stage outbox entries for downgraded records
-    if (result.changes > 0 && tx) {
+    if (result.changes > 0) {
       const downgradedRows = await executor.getAllAsync<any>(
         `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND confidence = 'tentative' AND updated_at = ? AND source_type != 'immutable_document' AND deleted_at IS NULL`,
         [entityId, now],
@@ -388,7 +389,7 @@ export class EntryRepository extends BaseRepository {
   async downgradeByIds(
     ids: string[],
     entityId: string,
-    tx?: SQLiteAdapter,
+    tx: SQLiteAdapter,
   ): Promise<void> {
     if (ids.length === 0) return;
     const executor = this.getExecutor(tx);
@@ -399,16 +400,14 @@ export class EntryRepository extends BaseRepository {
       [now, ...ids, entityId],
     );
     // Stage outbox entries for downgraded records
-    if (tx) {
-      for (const id of ids) {
-        await this.outbox.push({
-          entityId,
-          tableName: 'entries',
-          recordId: id,
-          operation: 'UPDATE',
-          payload: { id, entity_id: entityId, confidence: 'tentative', updated_at: now },
-        }, tx);
-      }
+    for (const id of ids) {
+      await this.outbox.push({
+        entityId,
+        tableName: 'entries',
+        recordId: id,
+        operation: 'UPDATE',
+        payload: { id, entity_id: entityId, confidence: 'tentative', updated_at: now },
+      }, tx);
     }
   }
 
@@ -419,7 +418,7 @@ export class EntryRepository extends BaseRepository {
   async softDeleteByIds(
     ids: string[],
     entityId: string,
-    tx?: SQLiteAdapter,
+    tx: SQLiteAdapter,
   ): Promise<void> {
     if (ids.length === 0) return;
     const executor = this.getExecutor(tx);
@@ -430,16 +429,14 @@ export class EntryRepository extends BaseRepository {
       [now, now, ...ids, entityId],
     );
     // Stage outbox entries for soft-deleted records
-    if (tx) {
-      for (const id of ids) {
-        await this.outbox.push({
-          entityId,
-          tableName: 'entries',
-          recordId: id,
-          operation: 'DELETE',
-          payload: { id, entity_id: entityId, deleted_at: now },
-        }, tx);
-      }
+    for (const id of ids) {
+      await this.outbox.push({
+        entityId,
+        tableName: 'entries',
+        recordId: id,
+        operation: 'DELETE',
+        payload: { id, entity_id: entityId, deleted_at: now },
+      }, tx);
     }
   }
 

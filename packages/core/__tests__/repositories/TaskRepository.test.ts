@@ -268,6 +268,40 @@ describe('TaskRepository', () => {
     });
   });
 
+  describe('bulkDeletePruned', () => {
+    it('deletes soft-deleted tasks and stages DELETE outbox entries in the same transaction', async () => {
+      const taskA = makeTask({ id: 'task_prune_a' });
+      const taskB = makeTask({ id: 'task_prune_b' });
+
+      await db.withTransactionAsync(async () => {
+        await repo.upsert(taskA, db);
+        await repo.upsert(taskB, db);
+      });
+
+      await db.withTransactionAsync(async () => {
+        await repo.softDelete(taskA.id, taskA.entity_id, db);
+        await repo.softDelete(taskB.id, taskB.entity_id, db);
+      });
+
+      await db.runAsync(`DELETE FROM ${PREFIX}outbox`, []);
+
+      const cutoff = Date.now();
+      await db.withTransactionAsync(async () => {
+        const deleted = await repo.bulkDeletePruned(taskA.entity_id, cutoff, db);
+        expect(deleted).toBe(2);
+      });
+
+      const remainingTasks = await db.getAllAsync<any>(`SELECT * FROM ${PREFIX}tasks`);
+      expect(remainingTasks.length).toBe(0);
+
+      const outboxRows = await db.getAllAsync<any>(`SELECT * FROM ${PREFIX}outbox ORDER BY record_id`);
+      expect(outboxRows.length).toBe(2);
+      expect(outboxRows[0].operation).toBe('DELETE');
+      expect(outboxRows[1].operation).toBe('DELETE');
+      expect(outboxRows.map((row: any) => row.record_id).sort()).toEqual(['task_prune_a', 'task_prune_b']);
+    });
+  });
+
   describe('transaction isolation', () => {
     it('upsert + rollback leaves no row in tasks or outbox', async () => {
       const task = makeTask({ id: 'task_rollback' });
