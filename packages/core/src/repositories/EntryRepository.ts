@@ -1,5 +1,18 @@
 import type { SQLiteAdapter, WikiFact } from '../types';
 import { BaseRepository } from './BaseRepository';
+import { OutboxRepository } from './OutboxRepository';
+
+export type EntryRowMetadata = {
+  id: string;
+  entity_id: string;
+  updated_at: number | null;
+  access_count: number | null;
+};
+
+export type EntryRowWithEmbeddings = EntryRowMetadata & {
+  embedding_blob: Uint8Array | null;
+  embedding: string | null;
+};
 
 function mapRowToFact(row: any): WikiFact {
   const tags: string[] = (() => {
@@ -30,6 +43,10 @@ function mapRowToFact(row: any): WikiFact {
 
 export class EntryRepository extends BaseRepository {
   private chunkSize = 500;
+
+  constructor(db: SQLiteAdapter, prefix: string, private outbox: OutboxRepository) {
+    super(db, prefix);
+  }
 
   /**
    * Fetch facts by IDs, optionally scoped to entity IDs.
@@ -67,26 +84,21 @@ export class EntryRepository extends BaseRepository {
   /**
    * Upsert a WikiFact. Nullable fields set to null when fact value is null.
    * Returns { changes, lastInsertRowId }.
+   * `tx` is REQUIRED to ensure atomic outbox staging.
    */
-  async upsert(fact: WikiFact, tx?: SQLiteAdapter): Promise<{ changes: number; lastInsertRowId: number }> {
+  async upsert(fact: WikiFact, tx: SQLiteAdapter): Promise<{ changes: number; lastInsertRowId: number }> {
     const executor = this.getExecutor(tx);
     const now = Date.now();
     const tagsJson = JSON.stringify(fact.tags);
-    const embeddingBlob = fact.embedding_blob instanceof Uint8Array
-      ? fact.embedding_blob
-      : (fact.embedding_blob && typeof fact.embedding_blob === 'object' && 'type' in fact.embedding_blob)
-        ? new Uint8Array((fact.embedding_blob as any).data)
-        : (fact.embedding_blob && typeof fact.embedding_blob === 'object')
-          ? (() => {
-              const obj = fact.embedding_blob as Record<string, number>;
-              const keys = Object.keys(obj).map(Number).sort((a, b) => a - b);
-              const arr = new Uint8Array(keys.length);
-              for (let i = 0; i < keys.length; i++) arr[i] = obj[String(keys[i])];
-              return arr;
-            })()
-          : undefined;
+    const embeddingBlob = this.normalizeEmbeddingBlob(fact.embedding_blob);
 
-    return executor.runAsync(
+    const existingRow = await executor.getFirstAsync<{ id: string }>(
+      `SELECT id FROM ${this.prefix}entries WHERE id = ?`,
+      [fact.id],
+    );
+    const operation = fact.deleted_at ? 'DELETE' : (existingRow ? 'UPDATE' : 'INSERT');
+
+    const result = await executor.runAsync(
       `INSERT INTO ${this.prefix}entries (
         id, entity_id, title, body, tags, confidence, source_type,
         source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count,
@@ -118,7 +130,7 @@ export class EntryRepository extends BaseRepository {
         fact.source_hash,
         fact.source_ref,
         fact.created_at,
-        now, // updated_at set by repo
+        now,
         fact.last_accessed_at === null ? null : fact.last_accessed_at,
         fact.access_count,
         fact.deleted_at ?? null,
@@ -126,18 +138,220 @@ export class EntryRepository extends BaseRepository {
         null,
       ],
     );
+
+    await this.outbox.push({
+      entityId: fact.entity_id,
+      tableName: 'entries',
+      recordId: fact.id,
+      operation,
+      payload: fact,
+    }, tx);
+
+    return result;
+  }
+
+  /**
+   * Normalize an embedding blob value to Uint8Array or null.
+   */
+  private normalizeEmbeddingBlob(blob: unknown): Uint8Array | null {
+    if (blob instanceof Uint8Array) return blob;
+    if (blob !== null && blob !== undefined && typeof blob === 'object') {
+      const obj = blob as Record<string, unknown>;
+      if (obj['type'] === 'Buffer' && Array.isArray(obj['data'])) {
+        return new Uint8Array(obj['data'] as number[]);
+      }
+      const entries = Object.keys(obj);
+      if (entries.length > 0 && entries.every((k) => /^\d+$/.test(k))) {
+        const len = entries.length;
+        const arr = new Uint8Array(len);
+        for (let i = 0; i < len; i++) arr[i] = (obj[String(i)] as number) ?? 0;
+        return arr;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Fetch existing rows by IDs and return id/entity_id/updated_at for import collision resolution.
+   */
+  async findExistingMetadataByIds(
+    ids: readonly string[],
+    tx?: SQLiteAdapter,
+  ): Promise<Array<{ id: string; entity_id: string; updated_at: number }>> {
+    const executor = this.getExecutor(tx);
+    const rows: Array<{ id: string; entity_id: string; updated_at: number }> = [];
+    for (let i = 0; i < ids.length; i += this.chunkSize) {
+      const chunk = ids.slice(i, i + this.chunkSize);
+      const placeholders = chunk.map(() => '?').join(',');
+      const chunkRows = await executor.getAllAsync<any>(
+        `SELECT id, entity_id, updated_at FROM ${this.prefix}entries WHERE id IN (${placeholders})`,
+        chunk,
+      );
+      rows.push(...chunkRows.map((row) => ({ id: row.id, entity_id: row.entity_id, updated_at: Number(row.updated_at) })));
+    }
+    return rows;
+  }
+
+  async findIdById(id: string, entityId: string, tx?: SQLiteAdapter): Promise<string | null> {
+    const executor = this.getExecutor(tx);
+    const row = await executor.getFirstAsync<{ id: string }>(
+      `SELECT id FROM ${this.prefix}entries WHERE id = ? AND entity_id = ?`,
+      [id, entityId],
+    );
+    return row?.id ?? null;
+  }
+
+  async findIdsBySource(
+    entityId: string,
+    sourceRef: string | null,
+    sourceHash: string | null,
+    tx?: SQLiteAdapter,
+    includeDeleted = false,
+  ): Promise<string[]> {
+    const executor = this.getExecutor(tx);
+    let sql = `SELECT id FROM ${this.prefix}entries WHERE entity_id = ?`;
+    const args: unknown[] = [entityId];
+    if (sourceRef !== null) {
+      sql += ` AND source_ref = ?`;
+      args.push(sourceRef);
+    }
+    if (sourceHash !== null) {
+      sql += ` AND source_hash = ?`;
+      args.push(sourceHash);
+    }
+    if (!includeDeleted) {
+      sql += ` AND deleted_at IS NULL`;
+    }
+    const rows = await executor.getAllAsync<{ id: string }>(sql, args);
+    return rows.map((row) => row.id);
+  }
+
+  async upsertForImport(fact: WikiFact, tx: SQLiteAdapter): Promise<{ changes: number; lastInsertRowId: number }> {
+    const executor = this.getExecutor(tx);
+    const tagsJson = JSON.stringify(fact.tags);
+    const embeddingBlob = this.normalizeEmbeddingBlob(fact.embedding_blob);
+
+    const result = await executor.runAsync(
+      `INSERT INTO ${this.prefix}entries (
+        id, entity_id, title, body, tags, confidence, source_type,
+        source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count,
+        deleted_at, embedding_blob, embedding
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        entity_id = excluded.entity_id,
+        title = excluded.title,
+        body = excluded.body,
+        tags = excluded.tags,
+        confidence = excluded.confidence,
+        source_type = excluded.source_type,
+        source_hash = excluded.source_hash,
+        source_ref = excluded.source_ref,
+        created_at = excluded.created_at,
+        updated_at = excluded.updated_at,
+        last_accessed_at = excluded.last_accessed_at,
+        access_count = excluded.access_count,
+        deleted_at = excluded.deleted_at,
+        embedding_blob = excluded.embedding_blob,
+        embedding = NULL`,
+      [
+        fact.id,
+        fact.entity_id,
+        fact.title,
+        fact.body,
+        tagsJson,
+        fact.confidence,
+        fact.source_type,
+        fact.source_hash,
+        fact.source_ref,
+        fact.created_at,
+        fact.updated_at,
+        fact.last_accessed_at === null ? null : fact.last_accessed_at,
+        fact.access_count,
+        fact.deleted_at ?? null,
+        embeddingBlob ?? null,
+        null,
+      ],
+    );
+
+    return result;
   }
 
   /**
    * Soft-delete a single entry by ID scoped to entityId. Sets deleted_at + updated_at.
+   * `tx` is REQUIRED to ensure atomic outbox staging.
    */
-  async softDelete(entryId: string, entityId: string, tx?: SQLiteAdapter): Promise<{ changes: number }> {
+  async softDelete(entryId: string, entityId: string, tx: SQLiteAdapter): Promise<{ changes: number }> {
     const executor = this.getExecutor(tx);
     const now = Date.now();
-    return executor.runAsync(
+    const result = await executor.runAsync(
       `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`,
       [now, now, entryId, entityId],
     );
+
+    await this.outbox.push({
+      entityId,
+      tableName: 'entries',
+      recordId: entryId,
+      operation: 'DELETE',
+      payload: { id: entryId, entity_id: entityId, deleted_at: now },
+    }, tx);
+
+    return result;
+  }
+
+  /**
+   * Soft-delete entries by source_ref and/or source_hash within a transaction.
+   * Stages a DELETE outbox entry for each row in the same transaction.
+   * `tx` is REQUIRED.
+   * Returns the number of rows deleted.
+   */
+  async softDeleteBySource(
+    entityId: string,
+    tx: SQLiteAdapter,
+    sourceRef?: string | null,
+    sourceHash?: string | null,
+  ): Promise<number> {
+    const executor = this.getExecutor(tx);
+    const now = Date.now();
+
+    let q = `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`;
+    const args: any[] = [now, now, entityId];
+    if (sourceRef) {
+      q += ` AND source_ref = ?`;
+      args.push(sourceRef);
+    }
+    if (sourceHash) {
+      q += ` AND source_hash = ?`;
+      args.push(sourceHash);
+    }
+
+    // Build a separate SELECT query to get affected IDs before updating
+    let selectQ = `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`;
+    const selectArgs: any[] = [entityId];
+    if (sourceRef) {
+      selectQ += ` AND source_ref = ?`;
+      selectArgs.push(sourceRef);
+    }
+    if (sourceHash) {
+      selectQ += ` AND source_hash = ?`;
+      selectArgs.push(sourceHash);
+    }
+
+    const idsToDelete = await executor.getAllAsync<{ id: string }>(selectQ, selectArgs);
+
+    const result = await executor.runAsync(q, args);
+
+    for (const row of idsToDelete) {
+      await this.outbox.push({
+        entityId,
+        tableName: 'entries',
+        recordId: row.id,
+        operation: 'DELETE',
+        payload: { id: row.id, entity_id: entityId, deleted_at: now },
+      }, tx);
+    }
+
+    return result.changes;
   }
 
   /**
@@ -155,5 +369,482 @@ export class EntryRepository extends BaseRepository {
        WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ?`,
       [entityId, cutoff],
     );
+  }
+
+  /**
+   * Fetch all non-deleted entries for an entity, ordered by updated_at DESC.
+   * Used by _getFullBundle().
+   */
+  async findAllByEntityId(entityId: string, tx?: SQLiteAdapter): Promise<WikiFact[]> {
+    const executor = this.getExecutor(tx);
+    const rows = await executor.getAllAsync<any>(
+      `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC`,
+      [entityId],
+    );
+    return rows.map(mapRowToFact);
+  }
+
+  /**
+   * Fetch recent non-deleted entries for an entity (limited), ordered by updated_at DESC.
+   * Used by _doRunLibrarian().
+   */
+  async findRecentByEntityId(entityId: string, limit: number, tx?: SQLiteAdapter): Promise<WikiFact[]> {
+    const executor = this.getExecutor(tx);
+    const rows = await executor.getAllAsync<any>(
+      `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT ?`,
+      [entityId, limit],
+    );
+    return rows.map(mapRowToFact);
+  }
+
+  /**
+   * Count non-deleted entries for the given entities whose embedding_blob dimension
+   * doesn't match queryVecLength. Used by read() to detect model-switch mismatches.
+   */
+  async countDimensionMismatched(
+    entityIds: readonly string[],
+    queryVecLength: number,
+    tx?: SQLiteAdapter,
+  ): Promise<number> {
+    if (entityIds.length === 0) return 0;
+    const executor = this.getExecutor(tx);
+    const placeholders = entityIds.map(() => '?').join(',');
+    const row = await executor.getFirstAsync<{ cnt: number }>(
+      `SELECT COUNT(*) AS cnt FROM ${this.prefix}entries
+       WHERE entity_id IN (${placeholders}) AND deleted_at IS NULL
+         AND embedding_blob IS NOT NULL
+         AND (CAST(length(embedding_blob) AS INTEGER) % 4 = 0)
+         AND (CAST(length(embedding_blob) AS INTEGER) / 4) != ?`,
+      [...entityIds, queryVecLength],
+    );
+    return row?.cnt ?? 0;
+  }
+
+  /**
+   * Count non-deleted entries for entityId that are stale relative to targetDim
+   * (either no blob or wrong dimension). Used by runReembed() per-entity skip logic.
+   */
+  async countStaleForEntity(entityId: string, targetDim: number, tx?: SQLiteAdapter): Promise<number> {
+    const executor = this.getExecutor(tx);
+    const row = await executor.getFirstAsync<{ cnt: number }>(
+      `SELECT COUNT(*) AS cnt FROM ${this.prefix}entries
+       WHERE entity_id = ? AND deleted_at IS NULL
+         AND (
+           embedding_blob IS NULL
+           OR (CAST(length(embedding_blob) AS INTEGER) / 4) != ?
+         )`,
+      [entityId, targetDim],
+    );
+    return row?.cnt ?? 0;
+  }
+
+  /**
+   * Count non-deleted entries with stale or unconverted embeddings relative to `dim`.
+   * Used by _reconcileEmbeddingDimension() to decide when to promote the pending
+   * embedding_dimension value.
+   */
+  async countStaleEmbeddings(dim: number, tx?: SQLiteAdapter): Promise<number> {
+    const executor = this.getExecutor(tx);
+    const row = await executor.getFirstAsync<{ cnt: number }>(
+      `SELECT COUNT(*) AS cnt FROM ${this.prefix}entries
+       WHERE deleted_at IS NULL
+         AND (
+           (embedding_blob IS NOT NULL AND (CAST(length(embedding_blob) AS INTEGER) / 4) != ?)
+           OR (embedding_blob IS NULL AND embedding IS NOT NULL)
+         )`,
+      [dim],
+    );
+    return row?.cnt ?? 0;
+  }
+
+  /**
+   * Bulk delete pruned entries (already soft-deleted) by IDs.
+   * Used by runPrune(). Returns total number of deleted rows.
+   * `tx` is REQUIRED so outbox deletion events are staged atomically.
+   */
+  async bulkDeletePruned(
+    entityId: string,
+    cutoff: number,
+    ids: string[],
+    tx: SQLiteAdapter,
+  ): Promise<number> {
+    const executor = this.getExecutor(tx);
+    let totalChanges = 0;
+    const chunkSize = 500;
+    for (let i = 0; i < ids.length; i += chunkSize) {
+      const chunk = ids.slice(i, i + chunkSize);
+      const placeholders = chunk.map(() => '?').join(',');
+      const result = await executor.runAsync(
+        `DELETE FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ? AND id IN (${placeholders})`,
+        [entityId, cutoff, ...chunk],
+      );
+      totalChanges += result.changes;
+      // Stage outbox entries for permanently deleted records
+      if (result.changes > 0) {
+        for (const id of chunk) {
+          await this.outbox.push({
+            entityId,
+            tableName: 'entries',
+            recordId: id,
+            operation: 'DELETE',
+            payload: { id, entity_id: entityId, deleted_at: cutoff },
+          }, tx);
+        }
+      }
+    }
+    return totalChanges;
+  }
+
+  /**
+   * Mark orphaned entries (never accessed, old) as deleted.
+   * Used by _doRunHeal().
+   */
+  async markOrphaned(
+    entityId: string,
+    orphanThreshold: number,
+    tx: SQLiteAdapter,
+  ): Promise<number> {
+    const executor = this.getExecutor(tx);
+    const now = Date.now();
+    const orphanedRows = await executor.getAllAsync<{ id: string }>(
+      `SELECT id FROM ${this.prefix}entries
+       WHERE entity_id = ? AND access_count = 0 AND created_at <= ? AND source_type != 'immutable_document' AND deleted_at IS NULL`,
+      [entityId, orphanThreshold],
+    );
+    if (orphanedRows.length === 0) return 0;
+    const result = await executor.runAsync(
+      `UPDATE ${this.prefix}entries
+       SET deleted_at = ?, updated_at = ?
+       WHERE entity_id = ? AND access_count = 0 AND created_at <= ? AND source_type != 'immutable_document' AND deleted_at IS NULL`,
+      [now, now, entityId, orphanThreshold],
+    );
+    for (const row of orphanedRows) {
+      await this.outbox.push({
+        entityId,
+        tableName: 'entries',
+        recordId: row.id,
+        operation: 'DELETE',
+        payload: { id: row.id, entity_id: entityId, deleted_at: now },
+      }, tx);
+    }
+    return result.changes;
+  }
+
+  /**
+   * Downgrade stale inferred entries to 'tentative'.
+   * Used by _doRunHeal().
+   */
+  async downgradeStaleInferred(
+    entityId: string,
+    staleThreshold: number,
+    tx: SQLiteAdapter,
+  ): Promise<number> {
+    const executor = this.getExecutor(tx);
+    const now = Date.now();
+    const eligibleRows = await executor.getAllAsync<{ id: string }>(
+      `SELECT id FROM ${this.prefix}entries
+       WHERE entity_id = ? AND confidence = 'inferred'
+         AND (last_accessed_at <= ? OR (last_accessed_at IS NULL AND created_at <= ?))
+         AND source_type != 'immutable_document' AND deleted_at IS NULL`,
+      [entityId, staleThreshold, staleThreshold],
+    );
+    if (eligibleRows.length === 0) return 0;
+    const result = await executor.runAsync(
+      `UPDATE ${this.prefix}entries
+       SET confidence = 'tentative', updated_at = ?
+       WHERE entity_id = ? AND confidence = 'inferred' AND (last_accessed_at <= ? OR (last_accessed_at IS NULL AND created_at <= ?)) AND source_type != 'immutable_document' AND deleted_at IS NULL`,
+      [now, entityId, staleThreshold, staleThreshold],
+    );
+    for (const row of eligibleRows) {
+      await this.outbox.push({
+        entityId,
+        tableName: 'entries',
+        recordId: row.id,
+        operation: 'UPDATE',
+        payload: { id: row.id, entity_id: entityId, confidence: 'tentative', updated_at: now },
+      }, tx);
+    }
+    return result.changes;
+  }
+
+  /**
+   * Downgrade specific entries to 'tentative' by IDs.
+   * Used by _doRunHeal().
+   */
+  async downgradeByIds(
+    ids: string[],
+    entityId: string,
+    tx: SQLiteAdapter,
+  ): Promise<void> {
+    if (ids.length === 0) return;
+    const executor = this.getExecutor(tx);
+    const now = Date.now();
+    const placeholders = ids.map(() => '?').join(',');
+    await executor.runAsync(
+      `UPDATE ${this.prefix}entries SET confidence = 'tentative', updated_at = ? WHERE id IN (${placeholders}) AND entity_id = ?`,
+      [now, ...ids, entityId],
+    );
+    // Stage outbox entries for downgraded records
+    for (const id of ids) {
+      await this.outbox.push({
+        entityId,
+        tableName: 'entries',
+        recordId: id,
+        operation: 'UPDATE',
+        payload: { id, entity_id: entityId, confidence: 'tentative', updated_at: now },
+      }, tx);
+    }
+  }
+
+  /**
+   * Soft-delete specific entries by IDs.
+   * Used by _doRunHeal().
+   */
+  async softDeleteByIds(
+    ids: string[],
+    entityId: string,
+    tx: SQLiteAdapter,
+  ): Promise<void> {
+    if (ids.length === 0) return;
+    const executor = this.getExecutor(tx);
+    const now = Date.now();
+    const placeholders = ids.map(() => '?').join(',');
+    await executor.runAsync(
+      `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE id IN (${placeholders}) AND entity_id = ?`,
+      [now, now, ...ids, entityId],
+    );
+    // Stage outbox entries for soft-deleted records
+    for (const id of ids) {
+      await this.outbox.push({
+        entityId,
+        tableName: 'entries',
+        recordId: id,
+        operation: 'DELETE',
+        payload: { id, entity_id: entityId, deleted_at: now },
+      }, tx);
+    }
+  }
+
+  /**
+   * Bulk soft-delete all entries for an entity.
+   * Stages DELETE outbox entries for each row in the same transaction.
+   * `tx` is REQUIRED.
+   */
+  async bulkSoftDeleteByEntityId(entityId: string, tx: SQLiteAdapter): Promise<number> {
+    const executor = this.getExecutor(tx);
+    const now = Date.now();
+    // Get IDs before updating for outbox staging
+    const idsToDelete = await executor.getAllAsync<{ id: string }>(
+      `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
+      [entityId],
+    );
+    const result = await executor.runAsync(
+      `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`,
+      [now, now, entityId],
+    );
+    // Stage outbox entries for each deleted record
+    for (const row of idsToDelete) {
+      await this.outbox.push({
+        entityId,
+        tableName: 'entries',
+        recordId: row.id,
+        operation: 'DELETE',
+        payload: { id: row.id, entity_id: entityId, deleted_at: now },
+      }, tx);
+    }
+    return result.changes;
+  }
+
+  async findMiniSearchRows(
+    entityId?: string,
+    tx?: SQLiteAdapter,
+  ): Promise<Array<{ id: string; entity_id: string; title: string; body: string; tags: string }>> {
+    const executor = this.getExecutor(tx);
+    if (entityId !== undefined) {
+      return executor.getAllAsync(
+        `SELECT id, entity_id, title, body, tags FROM ${this.prefix}entries WHERE deleted_at IS NULL AND entity_id = ?`,
+        [entityId],
+      );
+    }
+    return executor.getAllAsync(
+      `SELECT id, entity_id, title, body, tags FROM ${this.prefix}entries WHERE deleted_at IS NULL`,
+    );
+  }
+
+  async updateEmbeddingBlob(id: string, blob: Uint8Array, tx?: SQLiteAdapter): Promise<void> {
+    const executor = this.getExecutor(tx);
+    await executor.runAsync(
+      `UPDATE ${this.prefix}entries SET embedding_blob = ?, embedding = NULL WHERE id = ?`,
+      [blob, id],
+    );
+  }
+
+  async hasLegacySourceTypes(tx?: SQLiteAdapter): Promise<boolean> {
+    const executor = this.getExecutor(tx);
+    const row = await executor.getFirstAsync<{ one: number }>(
+      `SELECT 1 AS one FROM ${this.prefix}entries WHERE source_type IN ('user_document', 'agent_inferred') LIMIT 1`,
+      [],
+    );
+    return row != null;
+  }
+
+  async countLegacySourceTypes(tx?: SQLiteAdapter): Promise<number> {
+    const executor = this.getExecutor(tx);
+    const row = await executor.getFirstAsync<{ count: number }>(
+      `SELECT COUNT(*) as count FROM ${this.prefix}entries WHERE source_type IN ('user_document', 'agent_inferred')`,
+      [],
+    );
+    return row?.count ?? 0;
+  }
+
+  async findAllForReembed(entityId?: string, tx?: SQLiteAdapter): Promise<Array<WikiFact & { embedding_blob?: Uint8Array | null }>> {
+    const executor = this.getExecutor(tx);
+    if (entityId !== undefined) {
+      return executor.getAllAsync(
+        `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
+        [entityId],
+      );
+    }
+    return executor.getAllAsync(
+      `SELECT * FROM ${this.prefix}entries WHERE deleted_at IS NULL`,
+    );
+  }
+
+  async findRowsForSourceRefMigration(tx?: SQLiteAdapter): Promise<Array<{ rowid: number; source_ref: string }>> {
+    const executor = this.getExecutor(tx);
+    return executor.getAllAsync(
+      `SELECT rowid, source_ref FROM ${this.prefix}entries
+       WHERE source_ref IS NOT NULL
+         AND (
+           TRIM(source_ref) != source_ref
+           OR INSTR(source_ref, '/') > 0
+           OR INSTR(source_ref, '\\') > 0
+           OR INSTR(source_ref, CHAR(0)) > 0
+           OR source_ref GLOB '*[^-A-Za-z0-9._ ]*'
+         )`,
+    );
+  }
+
+  async updateSourceRefByRowid(rowid: number, sourceRef: string | null, tx: SQLiteAdapter): Promise<void> {
+    const executor = this.getExecutor(tx);
+    await executor.runAsync(
+      `UPDATE ${this.prefix}entries SET source_ref = ? WHERE rowid = ?`,
+      [sourceRef, rowid],
+    );
+  }
+
+  async findLatestSourceHash(entityId: string, sourceRef: string, tx?: SQLiteAdapter): Promise<string | null> {
+    const executor = this.getExecutor(tx);
+    const row = await executor.getFirstAsync<{ source_hash: string | null }>(
+      `SELECT source_hash FROM ${this.prefix}entries
+       WHERE entity_id = ? AND source_ref = ? AND deleted_at IS NULL
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [entityId, sourceRef],
+    );
+    return row?.source_hash ?? null;
+  }
+
+  async findMetadataByIds(ids: readonly string[], tx?: SQLiteAdapter): Promise<EntryRowMetadata[]> {
+    if (ids.length === 0) return [];
+    const executor = this.getExecutor(tx);
+    const rows: EntryRowMetadata[] = [];
+    for (let i = 0; i < ids.length; i += this.chunkSize) {
+      const chunk = ids.slice(i, i + this.chunkSize);
+      const placeholders = chunk.map(() => '?').join(',');
+      const chunkRows = await executor.getAllAsync<EntryRowMetadata>(
+        `SELECT id, entity_id, updated_at, access_count FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+        chunk,
+      );
+      rows.push(...chunkRows);
+    }
+    return rows;
+  }
+
+  async findWithEmbeddingsByIds(ids: readonly string[], tx?: SQLiteAdapter): Promise<EntryRowWithEmbeddings[]> {
+    if (ids.length === 0) return [];
+    const executor = this.getExecutor(tx);
+    const rows: EntryRowWithEmbeddings[] = [];
+    for (let i = 0; i < ids.length; i += this.chunkSize) {
+      const chunk = ids.slice(i, i + this.chunkSize);
+      const placeholders = chunk.map(() => '?').join(',');
+      const chunkRows = await executor.getAllAsync<EntryRowWithEmbeddings>(
+        `SELECT id, entity_id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+        chunk,
+      );
+      rows.push(...chunkRows);
+    }
+    return rows;
+  }
+
+  async findMetadataByEntityIds(entityIds: readonly string[], tx?: SQLiteAdapter): Promise<EntryRowMetadata[]> {
+    if (entityIds.length === 0) return [];
+    const executor = this.getExecutor(tx);
+    const placeholders = entityIds.map(() => '?').join(',');
+    return executor.getAllAsync<EntryRowMetadata>(
+      `SELECT id, entity_id, updated_at, access_count FROM ${this.prefix}entries WHERE entity_id IN (${placeholders}) AND deleted_at IS NULL`,
+      [...entityIds],
+    );
+  }
+
+  async findWithEmbeddingsByEntityIds(entityIds: readonly string[], tx?: SQLiteAdapter): Promise<EntryRowWithEmbeddings[]> {
+    if (entityIds.length === 0) return [];
+    const executor = this.getExecutor(tx);
+    const placeholders = entityIds.map(() => '?').join(',');
+    return executor.getAllAsync<EntryRowWithEmbeddings>(
+      `SELECT id, entity_id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE entity_id IN (${placeholders}) AND deleted_at IS NULL`,
+      [...entityIds],
+    );
+  }
+
+  async findEmbeddingsByIds(
+    ids: readonly string[],
+    tx?: SQLiteAdapter,
+  ): Promise<Array<{ id: string; embedding_blob: Uint8Array | null; embedding: string | null }>> {
+    if (ids.length === 0) return [];
+    const executor = this.getExecutor(tx);
+    const rows: Array<{ id: string; embedding_blob: Uint8Array | null; embedding: string | null }> = [];
+    for (let i = 0; i < ids.length; i += this.chunkSize) {
+      const chunk = ids.slice(i, i + this.chunkSize);
+      const placeholders = chunk.map(() => '?').join(',');
+      const chunkRows = await executor.getAllAsync<{ id: string; embedding_blob: Uint8Array | null; embedding: string | null }>(
+        `SELECT id, embedding_blob, embedding FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
+        chunk,
+      );
+      rows.push(...chunkRows);
+    }
+    return rows;
+  }
+
+  async trackAccess(ids: readonly string[], now: number, tx?: SQLiteAdapter): Promise<void> {
+    if (ids.length === 0) return;
+    const executor = this.getExecutor(tx);
+    for (let i = 0; i < ids.length; i += this.chunkSize) {
+      const chunk = ids.slice(i, i + this.chunkSize);
+      const placeholders = chunk.map(() => '?').join(',');
+      await executor.runAsync(
+        `UPDATE ${this.prefix}entries SET access_count = access_count + 1, last_accessed_at = ? WHERE id IN (${placeholders})`,
+        [now, ...chunk],
+      );
+    }
+  }
+
+  getLegacyMigrationSQL(): string {
+    return [
+      `-- Migrate legacy source_type values (targets your WikiMemory prefix: ${this.prefix})`,
+      `UPDATE ${this.prefix}entries SET source_type = 'immutable_document' WHERE source_type = 'user_document';`,
+      `UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source_type = 'agent_inferred';`,
+    ].join('\n');
+  }
+
+  async findRecentByEntityIds(entityIds: readonly string[], limit: number, tx?: SQLiteAdapter): Promise<WikiFact[]> {
+    if (entityIds.length === 0) return [];
+    const executor = this.getExecutor(tx);
+    const placeholders = entityIds.map(() => '?').join(',');
+    const rows = await executor.getAllAsync<any>(
+      `SELECT * FROM ${this.prefix}entries WHERE entity_id IN (${placeholders}) AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT ?`,
+      [...entityIds, limit],
+    );
+    return rows.map(mapRowToFact);
   }
 }

@@ -122,6 +122,12 @@ function makeMockDb(opts: {
         const cutoff = args[1];
         return entries.filter(e => e.entity_id === entityId && e.deleted_at !== null && e.deleted_at <= cutoff) as any;
       }
+      // Get tasks to delete (for outbox push)
+      if (sql.includes('SELECT') && sql.includes('tasks') && sql.includes('deleted_at IS NOT NULL') && sql.includes('deleted_at <=')) {
+        const entityId = args[0];
+        const cutoff = args[1];
+        return tasks.filter(t => t.entity_id === entityId && t.deleted_at !== null && t.deleted_at <= cutoff) as any;
+      }
       return [];
     },
     async withTransactionAsync(fn: () => Promise<void>): Promise<void> {

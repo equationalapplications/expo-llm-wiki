@@ -26,9 +26,12 @@ function makeMockDb(opts: {
     },
     async runAsync(sql: string, args: any[] = []): Promise<void> {
       runCalls.push({ sql, args });
-      // Track meta version updates
-      if (sql.includes('schema_version')) {
-        currentMetaVersion = args[0];
+      // Track meta version updates — handles both literal SQL and parameterized queries
+      const isSchemaVersionWrite = sql.includes('schema_version') || args[0] === 'schema_version';
+      if (isSchemaVersionWrite) {
+        // Parameterized setMeta: args = ['schema_version', version] → version at index 1
+        // Legacy literal SQL: args = [version] → version at index 0
+        currentMetaVersion = args[0] === 'schema_version' ? args[1] : args[0];
       }
     },
     async getFirstAsync<T>(sql: string, args: any[] = []): Promise<T | null> {
@@ -45,8 +48,8 @@ function makeMockDb(opts: {
         }
         return { sql: `CREATE VIRTUAL TABLE x USING fts5(title, tokenize='unicode61')` } as any;
       }
-      // Meta version check
-      if (sql.includes('schema_version')) {
+      // Meta version check — matches both literal SQL and parameterized queries
+      if (sql.includes('schema_version') || args.includes('schema_version')) {
         if (currentMetaVersion !== null) {
           return { value: currentMetaVersion } as any;
         }
@@ -57,8 +60,8 @@ function makeMockDb(opts: {
     async getAllAsync<T>(sql: string, args: any[] = []): Promise<T[]> {
       return [];
     },
-    async withTransactionAsync(fn: () => Promise<void>): Promise<void> {
-      await fn();
+    async withTransactionAsync(fn: (tx: any) => Promise<void>): Promise<void> {
+      await fn(db);
     },
     getMetaVersion() {
       return currentMetaVersion;
@@ -89,7 +92,8 @@ describe('schema migrations', () => {
 
     // Should have written schema_version
     const versionWrite = db.runCalls.find(
-      c => c.sql.includes('schema_version') && c.args[0] === '3'
+      c => (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
+           (c.args[0] === '4' || c.args[1] === '4')
     );
     expect(versionWrite).toBeDefined();
 
@@ -109,7 +113,8 @@ describe('schema migrations', () => {
 
     // Version should have been written
     const versionWrite = db.runCalls.find(
-      c => c.sql.includes('schema_version') && c.args[0] === '3'
+      c => (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
+           (c.args[0] === '4' || c.args[1] === '4')
     );
     expect(versionWrite).toBeDefined();
   });
@@ -125,12 +130,14 @@ describe('schema migrations', () => {
     expect(hasPorterRebuild).toBe(false);
 
     // Version should still have been written
-    const versionWrite = db.runCalls.find(c => c.sql.includes('schema_version'));
+    const versionWrite = db.runCalls.find(
+      c => c.sql.includes('schema_version') || c.args[0] === 'schema_version'
+    );
     expect(versionWrite).toBeDefined();
   });
 
   it('already at current version → no migration runs', async () => {
-    const db = makeMockDb({ hasEntries: true, hasPorter: true, metaVersion: '3' });
+    const db = makeMockDb({ hasEntries: true, hasPorter: true, metaVersion: '4' });
     const wiki = createWiki(db);
     await wiki.setup();
 

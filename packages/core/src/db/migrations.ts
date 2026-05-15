@@ -20,8 +20,8 @@ export const MIGRATIONS: Migration[] = [
     description: 'Remove FTS5; add embedding column for semantic retrieval',
     run: async (db, prefix) => {
       // Drop FTS5 artifacts in a transaction.
-      await db.withTransactionAsync(async () => {
-        await db.execAsync(`
+      await db.withTransactionAsync(async (tx) => {
+        await tx.execAsync(`
           DROP TRIGGER IF EXISTS ${prefix}entries_ai;
           DROP TRIGGER IF EXISTS ${prefix}entries_ad;
           DROP TRIGGER IF EXISTS ${prefix}entries_au;
@@ -51,6 +51,25 @@ export const MIGRATIONS: Migration[] = [
           `ALTER TABLE ${prefix}entries ADD COLUMN embedding_blob BLOB`
         );
       }
+    },
+  },
+  {
+    version: 4,
+    description: 'Create outbox table for change data capture',
+    run: async (db, prefix) => {
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS ${prefix}outbox (
+          id TEXT PRIMARY KEY,
+          entity_id TEXT NOT NULL,
+          table_name TEXT NOT NULL,
+          record_id TEXT NOT NULL,
+          operation TEXT NOT NULL,
+          payload TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS ${prefix}outbox_entity_id_created_at
+          ON ${prefix}outbox (entity_id, created_at);
+      `);
     },
   },
 ];

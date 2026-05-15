@@ -4,7 +4,7 @@ import type { SQLiteAdapter } from '../../src/types';
 export function openTestDatabase(): SQLiteAdapter {
   const db = new Database(':memory:');
 
-  return {
+  const adapter: SQLiteAdapter = {
     async execAsync(sql: string): Promise<void> {
       db.exec(sql);
     },
@@ -26,10 +26,10 @@ export function openTestDatabase(): SQLiteAdapter {
       return (row ?? null) as T | null;
     },
 
-    async withTransactionAsync<T>(fn: () => Promise<T>): Promise<T> {
+    async withTransactionAsync<T>(fn: (tx: SQLiteAdapter) => Promise<T>): Promise<T> {
       db.exec('BEGIN');
       try {
-        const result = await fn();
+        const result = await fn(adapter);
         db.exec('COMMIT');
         return result;
       } catch (e) {
@@ -42,4 +42,6 @@ export function openTestDatabase(): SQLiteAdapter {
       db.close();
     },
   };
+
+  return adapter;
 }

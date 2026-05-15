@@ -1,12 +1,17 @@
 import type { SQLiteAdapter } from './types';
 import { setupDatabase } from './db/schema';
 import { MIGRATIONS, CURRENT_SCHEMA_VERSION } from './db/migrations';
-import { WikiOptions, MemoryBundle, MemoryDump, WikiEvent, WikiFact, WikiTask, WikiCheckpoint, ExtractedFact, ExtractedTask, WikiBusyError, PrunePartialFailureError, EntityStatus, ReadOptions } from './types';
-import { EntryRepository } from './repositories/EntryRepository';
+import { WikiOptions, MemoryBundle, MemoryDump, WikiEvent, WikiFact, WikiTask, ExtractedFact, ExtractedTask, WikiBusyError, PrunePartialFailureError, EntityStatus, ReadOptions } from './types';
+import { EntryRepository, EntryRowMetadata, EntryRowWithEmbeddings } from './repositories/EntryRepository';
+import { OutboxRepository } from './repositories/OutboxRepository';
+import { TaskRepository } from './repositories/TaskRepository';
+import { EventRepository } from './repositories/EventRepository';
+import { MetadataRepository } from './repositories/MetadataRepository';
 import { LIBRARIAN_SYSTEM_PROMPT, HEAL_SYSTEM_PROMPT, INGEST_SYSTEM_PROMPT } from './prompts';
 import MiniSearch from 'minisearch';
 import { cosineSimilarity } from './utils/cosine';
 import { parseEmbedding } from './utils/embedding';
+import { generateId } from './utils/ids';
 import { applyTierWeight, normalizeEntityIds, sanitizeTierWeights, shouldExposeReadMetadata } from './readOptions';
 
 export { WikiBusyError, PrunePartialFailureError } from './types';
@@ -17,18 +22,8 @@ export { WikiBusyError, PrunePartialFailureError } from './types';
  */
 const HOOK_TIMEOUT_MARKER = Symbol('WikiMemoryHookTimeout');
 
-type ReadCandidateRowMetadata = {
-  id: string;
-  entity_id: string;
-  updated_at: number | null;
-  access_count: number | null;
-};
-
-type ReadCandidateRowWithEmbeddings = ReadCandidateRowMetadata & {
-  embedding_blob: Uint8Array | null;
-  embedding: string | null;
-};
-
+type ReadCandidateRowMetadata = EntryRowMetadata;
+type ReadCandidateRowWithEmbeddings = EntryRowWithEmbeddings;
 
 function parseJsonResponse<T>(text: string): T {
   const firstBrace = text.indexOf('{');
@@ -71,10 +66,6 @@ function parseJsonResponse<T>(text: string): T {
 
   if (end === -1) throw new SyntaxError('No JSON object/array found in LLM response');
   return JSON.parse(text.slice(start, end + 1)) as T;
-}
-
-function generateId(prefix: string = '') {
-  return prefix + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 }
 
 function safeSlice(value: string, start: number, end?: number): string {
@@ -288,6 +279,10 @@ export class WikiMemory {
   private prefix: string;
   private options: WikiOptions;
   private entryRepo: EntryRepository;
+  private outboxRepo: OutboxRepository;
+  private taskRepo: TaskRepository;
+  private eventRepo: EventRepository;
+  private metadataRepo: MetadataRepository;
   private activeMaintenanceJobs = new Set<string>();
   private activeIngestJobs = new Set<string>();
   private statusSubscribers = new Map<
@@ -339,12 +334,7 @@ export class WikiMemory {
 
   private async rebuildMiniSearchIndex(entityId?: string): Promise<void> {
     if (entityId) {
-      const rows = await this.db.getAllAsync<{
-        id: string; entity_id: string; title: string; body: string; tags: string;
-      }>(
-        `SELECT id, entity_id, title, body, tags FROM ${this.prefix}entries WHERE deleted_at IS NULL AND entity_id = ?`,
-        [entityId],
-      );
+      const rows = await this.entryRepo.findMiniSearchRows(entityId);
 
       const previousIds = this.miniSearchEntryIdsByEntity.get(entityId);
       if (previousIds) {
@@ -362,9 +352,7 @@ export class WikiMemory {
       return;
     }
 
-    const rows = await this.db.getAllAsync<{
-      id: string; entity_id: string; title: string; body: string; tags: string;
-    }>(`SELECT id, entity_id, title, body, tags FROM ${this.prefix}entries WHERE deleted_at IS NULL`);
+    const rows = await this.entryRepo.findMiniSearchRows();
 
     this.miniSearch.removeAll();
     this.miniSearchEntryIdsByEntity.clear();
@@ -382,30 +370,22 @@ export class WikiMemory {
   }
 
   private async storeEmbeddingDimension(dim: number): Promise<void> {
-    const existing = await this.db.getFirstAsync<{ value: string }>(
-      `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension'`
-    );
+    const existing = await this.metadataRepo.getMeta('embedding_dimension');
     if (existing) {
-      const storedDim = parseInt(existing.value, 10);
+      const storedDim = parseInt(existing, 10);
       if (storedDim !== dim) {
         console.warn(
           `[WikiMemory] Embedding dimension mismatch: stored ${storedDim}, got ${dim}. ` +
           `Call runReembed() to rebuild embeddings with the new model.`
         );
-        await this.db.runAsync(
-          `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension_mismatch', ?)`,
-          [String(dim)]
-        );
+        await this.metadataRepo.setMeta('embedding_dimension_mismatch', String(dim), this.db);
       }
       // Do NOT clear 'embedding_dimension_mismatch' here: other facts may still hold
       // old-dimension blobs written during a previous model. Only _reconcileEmbeddingDimension()
       // (called after a full runReembed) may clear the flag once it confirms all stored
       // blobs match the new canonical dimension.
     } else {
-      await this.db.runAsync(
-        `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension', ?)`,
-        [String(dim)]
-      );
+      await this.metadataRepo.setMeta('embedding_dimension', String(dim), this.db);
     }
   }
 
@@ -416,12 +396,10 @@ export class WikiMemory {
    * stuck on the MiniSearch fallback.
    */
   private async _reconcileEmbeddingDimension(): Promise<void> {
-    const mismatch = await this.db.getFirstAsync<{ value: string }>(
-      `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
-    );
-    if (!mismatch) return;
+    const mismatchValue = await this.metadataRepo.getMeta('embedding_dimension_mismatch');
+    if (!mismatchValue) return;
 
-    const newDim = parseInt(mismatch.value, 10);
+    const newDim = parseInt(mismatchValue, 10);
     // Check whether any non-deleted fact still stores a blob with a different byte
     // length. If so, those facts haven't been re-embedded yet and the mismatch flag
     // must stay in place so read() keeps falling back to MiniSearch for them.
@@ -430,27 +408,14 @@ export class WikiMemory {
     //   (b) it has only a TEXT vector (embedding_blob IS NULL) — TEXT rows were
     //       written by an older model and must be converted by runReembed() before
     //       they are safe to score against the new query dimension.
-    const residual = await this.db.getFirstAsync<{ cnt: number }>(
-      `SELECT COUNT(*) AS cnt FROM ${this.prefix}entries
-       WHERE deleted_at IS NULL
-         AND (
-           (embedding_blob IS NOT NULL AND (CAST(length(embedding_blob) AS INTEGER) / 4) != ?)
-           OR (embedding_blob IS NULL AND embedding IS NOT NULL)
-         )`,
-      [newDim]
-    );
+    const residualCount = await this.entryRepo.countStaleEmbeddings(newDim);
     // Only promote and clear once every stored vector uses the new dimension.
     // Promoting before all rows are converted would leave read() in an inconsistent
     // state: the canonical dim would point at the new model while TEXT-only or
     // wrong-dim blobs still exist, causing those rows to score silently as 0.
-    if (!residual || residual.cnt === 0) {
-      await this.db.runAsync(
-        `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension', ?)`,
-        [mismatch.value]
-      );
-      await this.db.runAsync(
-        `DELETE FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
-      );
+    if (residualCount === 0) {
+      await this.metadataRepo.setMeta('embedding_dimension', mismatchValue, this.db);
+      await this.metadataRepo.clearDimensionMismatch(this.db);
     }
   }
 
@@ -488,10 +453,7 @@ export class WikiMemory {
       }
       await this.storeEmbeddingDimension(float32Vector.length);
       const blob = new Uint8Array(float32Vector.buffer);
-      await this.db.runAsync(
-        `UPDATE ${this.prefix}entries SET embedding_blob = ?, embedding = NULL WHERE id = ?`,
-        [blob, fact.id]
-      );
+      await this.entryRepo.updateEmbeddingBlob(fact.id, blob);
       // Isolate hook failure: embedding was persisted successfully even if external index sync fails
       try {
         await this._notifyEmbeddingPersisted(fact.entity_id, fact.id, float32Vector);
@@ -528,32 +490,13 @@ export class WikiMemory {
   }
 
   private async assertNoLegacySourceTypes(): Promise<void> {
-    const legacyProbe = await this.db.getFirstAsync<{ one: number }>(
-      `SELECT 1 AS one FROM ${this.prefix}entries
-       WHERE source_type IN ('user_document', 'agent_inferred')
-       LIMIT 1`,
-      []
-    );
+    if (!(await this.entryRepo.hasLegacySourceTypes())) return;
 
-    if (!legacyProbe) return;
-
-    const legacyCount = await this.db.getFirstAsync<{ count: number }>(
-      `SELECT COUNT(*) as count FROM ${this.prefix}entries
-       WHERE source_type IN ('user_document', 'agent_inferred')`,
-      []
-    );
-
-    const count = legacyCount?.count ?? 0;
-    const migrationSQL = `
--- Migrate legacy source_type values (targets your WikiMemory prefix: ${this.prefix})
-UPDATE ${this.prefix}entries SET source_type = 'immutable_document' WHERE source_type = 'user_document';
-UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source_type = 'agent_inferred';
-    `.trim();
-
+    const count = await this.entryRepo.countLegacySourceTypes();
     throw new Error(
       `Database contains ${count} entries with legacy source_type values ('user_document' or 'agent_inferred'). ` +
       `These enum values were renamed in this release. Running without migration would allow legacy 'user_document' facts to bypass ` +
-      `immutability guards, causing data corruption.\n\n${migrationSQL}\n\n` +
+      `immutability guards, causing data corruption.\n\n${this.entryRepo.getLegacyMigrationSQL()}\n\n` +
       `After running the migration SQL, restart your application.`
     );
   }
@@ -629,7 +572,11 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     this.db = db;
     this.options = options;
     this.prefix = options.config?.tablePrefix || 'llm_wiki_';
-    this.entryRepo = new EntryRepository(db, this.prefix);
+    this.outboxRepo = new OutboxRepository(db, this.prefix);
+    this.entryRepo = new EntryRepository(db, this.prefix, this.outboxRepo);
+    this.taskRepo = new TaskRepository(db, this.prefix, this.outboxRepo);
+    this.eventRepo = new EventRepository(db, this.prefix);
+    this.metadataRepo = new MetadataRepository(db, this.prefix);
   }
 
   async setup() {
@@ -638,10 +585,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     // exists and the fresh-install branch would be unreachable.  Future migrations
     // that ALTER TABLE would also fail if run against a schema already at the
     // target version but inferred as legacy because the probe ran too late.
-    const entriesExistedBeforeSetup = await this.db.getFirstAsync<{ name: string }>(
-      `SELECT name FROM sqlite_master WHERE type='table' AND name=?`,
-      [`${this.prefix}entries`]
-    );
+    const entriesExistedBeforeSetup = await this.metadataRepo.tableExists(`${this.prefix}entries`);
 
     await setupDatabase(this.db, this.prefix);
 
@@ -649,27 +593,19 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
 
     if (!entriesExistedBeforeSetup) {
       // Fresh install — all tables just created at current schema; no migrations needed.
-      await this.db.runAsync(
-        `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('schema_version', ?)`,
-        [String(CURRENT_SCHEMA_VERSION)]
-      );
+      await this.metadataRepo.setMeta('schema_version', String(CURRENT_SCHEMA_VERSION), this.db);
       currentVersion = CURRENT_SCHEMA_VERSION;
     } else {
       // Existing install — check meta for schema version.
-      const metaRow = await this.db.getFirstAsync<{ value: string }>(
-        `SELECT value FROM ${this.prefix}meta WHERE key = 'schema_version'`
-      );
+      const schemaVersionValue = await this.metadataRepo.getMeta('schema_version');
 
-      if (metaRow) {
-        currentVersion = parseInt(metaRow.value, 10);
+      if (schemaVersionValue) {
+        currentVersion = parseInt(schemaVersionValue, 10);
         if (!Number.isFinite(currentVersion)) currentVersion = 0;
       } else {
         // Legacy install without meta row — infer version from porter probe.
-        const ftsMeta = await this.db.getFirstAsync<{ sql: string | null }>(
-          `SELECT sql FROM sqlite_master WHERE type='table' AND name=?`,
-          [`${this.prefix}entries_fts`]
-        );
-        const hasPorter = /tokenize\s*=\s*['"]porter\s+unicode61['"]/i.test(ftsMeta?.sql ?? '');
+        const ftsDdl = await this.metadataRepo.getTableDdl(`${this.prefix}entries_fts`);
+        const hasPorter = /tokenize\s*=\s*['"]porter\s+unicode61['"]/i.test(ftsDdl ?? '');
         currentVersion = hasPorter ? 1 : 0;
       }
     }
@@ -678,10 +614,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     for (const migration of MIGRATIONS) {
       if (migration.version > currentVersion) {
         await migration.run(this.db, this.prefix);
-        await this.db.runAsync(
-          `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('schema_version', ?)`,
-          [String(migration.version)]
-        );
+        await this.metadataRepo.setMeta('schema_version', String(migration.version), this.db);
         currentVersion = migration.version;
       }
     }
@@ -689,14 +622,9 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     // Ensure meta row exists for legacy installs already at current version
     // (porter present, no meta row) — the migration loop may not have written it.
     if (entriesExistedBeforeSetup) {
-      const metaCheck = await this.db.getFirstAsync<{ value: string }>(
-        `SELECT value FROM ${this.prefix}meta WHERE key = 'schema_version'`
-      );
-      if (!metaCheck) {
-        await this.db.runAsync(
-          `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('schema_version', ?)`,
-          [String(currentVersion)]
-        );
+      const schemaVersionCheck = await this.metadataRepo.getMeta('schema_version');
+      if (!schemaVersionCheck) {
+        await this.metadataRepo.setMeta('schema_version', String(currentVersion), this.db);
       }
     }
 
@@ -714,26 +642,12 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     // allowlist (checking leading/trailing whitespace, slashes, backslashes, NUL, and
     // the full ASCII non-allowlist range via GLOB) so that already-normalized
     // rows are never fetched.  Idempotent: after the first run no rows match the filter.
-    type Row = { rowid: number; source_ref: string };
-    const rows = await this.db.getAllAsync<Row>(`
-      SELECT rowid, source_ref FROM ${this.prefix}entries
-      WHERE source_ref IS NOT NULL
-        AND (
-          TRIM(source_ref) != source_ref
-          OR INSTR(source_ref, '/') > 0
-          OR INSTR(source_ref, '\\') > 0
-          OR INSTR(source_ref, CHAR(0)) > 0
-          OR source_ref GLOB '*[^-A-Za-z0-9._ ]*'
-        )
-    `);
-    await this.db.withTransactionAsync(async () => {
+    const rows = await this.entryRepo.findRowsForSourceRefMigration();
+    await this.db.withTransactionAsync(async (tx) => {
       for (const row of rows) {
         const normalized = normalizeSourceRef(row.source_ref);
         if (normalized !== row.source_ref) {
-          await this.db.runAsync(
-            `UPDATE ${this.prefix}entries SET source_ref = ? WHERE rowid = ?`,
-            [normalized, row.rowid]
-          );
+          await this.entryRepo.updateSourceRefByRowid(row.rowid, normalized, tx);
         }
       }
     });
@@ -750,15 +664,9 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     if (!normalizedHash) {
       throw new Error(`Invalid sourceHash: must be a 64-character hex string (normalized to lowercase)`);
     }
-    const row = await this.db.getFirstAsync<{ source_hash: string | null }>(
-      `SELECT source_hash FROM ${this.prefix}entries
-       WHERE entity_id = ? AND source_ref = ? AND deleted_at IS NULL
-       ORDER BY updated_at DESC
-       LIMIT 1`,
-      [entityId, normalizedRef]
-    );
-    if (!row) return true;
-    const normalizedStoredHash = row.source_hash ? normalizeSourceHash(row.source_hash) : null;
+    const storedHash = await this.entryRepo.findLatestSourceHash(entityId, normalizedRef);
+    if (storedHash === null) return true;
+    const normalizedStoredHash = normalizeSourceHash(storedHash);
     return normalizedStoredHash !== normalizedHash;
   }
 
@@ -901,27 +809,13 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
           }
         }
 
-        if (succeeded.length > 0) {
-          // Delete in chunks to avoid SQLite bind-parameter limit (typically 999)
-          const chunkSize = 500;
-          for (let i = 0; i < succeeded.length; i += chunkSize) {
-            const chunk = succeeded.slice(i, i + chunkSize);
-            const placeholders = chunk.map(() => '?').join(',');
-            const entryResult = await this.db.runAsync(
-              `DELETE FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ? AND id IN (${placeholders})`,
-              [entityId, cutoff, ...chunk.map((r) => r.id)],
-            );
-            deletedEntries += entryResult.changes;
+        const succeededIds = succeeded.map(r => r.id);
+        await this.db.withTransactionAsync(async (tx) => {
+          if (succeededIds.length > 0) {
+            deletedEntries = await this.entryRepo.bulkDeletePruned(entityId, cutoff, succeededIds, tx);
           }
-        }
-
-        // Delete tasks (independent of entry hook success/failure)
-        const taskResult = await this.db.runAsync(
-          `DELETE FROM ${this.prefix}tasks
-           WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ?`,
-          [entityId, cutoff]
-        );
-        deletedTasks = taskResult.changes;
+          deletedTasks = await this.taskRepo.bulkDeletePruned(entityId, cutoff, tx);
+        });
 
         if (failure) {
           // Rebuild index and clear cache to reflect successful partial deletions
@@ -963,17 +857,12 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
 
       if (retainEventsFor !== null) {
         const cutoff = now - retainEventsFor * 86400000;
-        const eventResult = await this.db.runAsync(
-          `DELETE FROM ${this.prefix}events
-           WHERE entity_id = ? AND created_at <= ?`,
-          [entityId, cutoff]
-        );
+        const eventResult = await this.eventRepo.prune(entityId, cutoff);
         deletedEvents = eventResult.changes;
       }
 
       if (vacuum) {
-        await this.db.execAsync(`PRAGMA wal_checkpoint(TRUNCATE)`);
-        await this.db.execAsync(`VACUUM`);
+        await this.metadataRepo.vacuum();
       }
 
       await this.rebuildMiniSearchIndex(entityId);
@@ -1066,11 +955,9 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
           // query vector, existing fact embeddings were built with a different model and
           // cosine scoring would silently produce misleading rankings. Fall back to
           // MiniSearch until the caller runs runReembed().
-          const storedDimRow = await this.db.getFirstAsync<{ value: string }>(
-            `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension'`
-          );
-          if (storedDimRow) {
-            const storedDim = parseInt(storedDimRow.value, 10);
+          const storedDimValue = await this.metadataRepo.getMeta('embedding_dimension');
+          if (storedDimValue) {
+            const storedDim = parseInt(storedDimValue, 10);
             if (storedDim !== queryVec.length) {
               throw new Error(
                 `Embedding dimension mismatch: stored ${storedDim}, query has ${queryVec.length}. ` +
@@ -1082,16 +969,8 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
           // Check whether any non-deleted fact for any scored entity has a blob whose
           // dimension differs from the query vector. Uses scoredEntityIds so zero-weight
           // (skipped) entities with stale embeddings do not force keyword fallback.
-          const mismatchScope = this._entityInClause(scoredEntityIds);
-          const mismatchedCount = await this.db.getFirstAsync<{ cnt: number }>(
-            `SELECT COUNT(*) AS cnt FROM ${this.prefix}entries
-             WHERE ${mismatchScope.clause} AND deleted_at IS NULL
-               AND embedding_blob IS NOT NULL
-               AND (CAST(length(embedding_blob) AS INTEGER) % 4 = 0)
-               AND (CAST(length(embedding_blob) AS INTEGER) / 4) != ?`,
-            [...mismatchScope.params, queryVec.length]
-          );
-          if (mismatchedCount && mismatchedCount.cnt > 0) {
+          const mismatchedCount = await this.entryRepo.countDimensionMismatched(scoredEntityIds, queryVec.length);
+          if (mismatchedCount > 0) {
             throw new Error(
               `Some facts have embeddings that do not match the current model dimension. ` +
               `Call runReembed() to rebuild all embeddings consistently.`
@@ -1121,31 +1000,10 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
                 candidateRows = null;
               } else {
                 const topKIds = topKResults.map(r => r.id);
-                const inClauseChunkSize = 500;
                 if (useRanker) {
-                  const rows: ReadCandidateRowMetadata[] = [];
-                  for (let i = 0; i < topKIds.length; i += inClauseChunkSize) {
-                    const idChunk = topKIds.slice(i, i + inClauseChunkSize);
-                    const placeholders = idChunk.map(() => '?').join(',');
-                    const chunkRows = await this.db.getAllAsync<ReadCandidateRowMetadata>(
-                      `SELECT id, entity_id, updated_at, access_count FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
-                      idChunk
-                    );
-                    rows.push(...chunkRows);
-                  }
-                  candidateRows = rows;
+                  candidateRows = await this.entryRepo.findMetadataByIds(topKIds);
                 } else {
-                  const rows: ReadCandidateRowWithEmbeddings[] = [];
-                  for (let i = 0; i < topKIds.length; i += inClauseChunkSize) {
-                    const idChunk = topKIds.slice(i, i + inClauseChunkSize);
-                    const placeholders = idChunk.map(() => '?').join(',');
-                    const chunkRows = await this.db.getAllAsync<ReadCandidateRowWithEmbeddings>(
-                      `SELECT id, entity_id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
-                      idChunk
-                    );
-                    rows.push(...chunkRows);
-                  }
-                  candidateRows = rows;
+                  candidateRows = await this.entryRepo.findWithEmbeddingsByIds(topKIds);
                 }
                 if (weight !== undefined && weight < 1) {
                   const maxMsScore = Math.max(1, topKResults[0]?.score ?? 1);
@@ -1158,17 +1016,9 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
             // If vectorRanker is configured, skip embedding load for now (ranker will provide ranking)
             // Otherwise fetch embeddings for JS cosine ranking
             if (useRanker) {
-              const entityScope = this._entityInClause(scoredEntityIds);
-              candidateRows = await this.db.getAllAsync<ReadCandidateRowMetadata>(
-                `SELECT id, entity_id, updated_at, access_count FROM ${this.prefix}entries WHERE ${entityScope.clause} AND deleted_at IS NULL`,
-                entityScope.params
-              );
+              candidateRows = await this.entryRepo.findMetadataByEntityIds(scoredEntityIds);
             } else {
-              const entityScope = this._entityInClause(scoredEntityIds);
-              candidateRows = await this.db.getAllAsync<ReadCandidateRowWithEmbeddings>(
-                `SELECT id, entity_id, embedding_blob, embedding, updated_at, access_count FROM ${this.prefix}entries WHERE ${entityScope.clause} AND deleted_at IS NULL`,
-                entityScope.params
-              );
+              candidateRows = await this.entryRepo.findWithEmbeddingsByEntityIds(scoredEntityIds);
             }
             // Collect MiniSearch scores for hybrid blend if weight is set and <1
             if (weight !== undefined && weight < 1) {
@@ -1369,19 +1219,8 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
                   let fallbackRows = candidateRows;
                   if (fallbackRows && fallbackRows.length > 0 && !('embedding_blob' in fallbackRows[0])) {
                     const rowIds = fallbackRows.map(r => r.id);
-                    const embeddingsMap = new Map<string, { embedding_blob: Uint8Array | null; embedding: string | null }>();
-                    const chunkSize = 500;
-                    for (let i = 0; i < rowIds.length; i += chunkSize) {
-                      const idChunk = rowIds.slice(i, i + chunkSize);
-                      const placeholders = idChunk.map(() => '?').join(',');
-                      const embeddingRows = await this.db.getAllAsync<{ id: string; embedding_blob: Uint8Array | null; embedding: string | null }>(
-                        `SELECT id, embedding_blob, embedding FROM ${this.prefix}entries WHERE id IN (${placeholders}) AND deleted_at IS NULL`,
-                        idChunk
-                      );
-                      for (const row of embeddingRows) {
-                        embeddingsMap.set(row.id, { embedding_blob: row.embedding_blob, embedding: row.embedding });
-                      }
-                    }
+                    const embeddingRows = await this.entryRepo.findEmbeddingsByIds(rowIds);
+                    const embeddingsMap = new Map(embeddingRows.map(row => [row.id, row]));
                     fallbackRows = fallbackRows.map(r => ({
                       ...r,
                       embedding_blob: embeddingsMap.get(r.id)?.embedding_blob ?? null,
@@ -1559,67 +1398,19 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       if (facts.length > 0) {
         const ids = facts.map(f => f.id);
         const now = Date.now();
-        const accessChunkSize = 500;
-        for (let i = 0; i < ids.length; i += accessChunkSize) {
-          const idChunk = ids.slice(i, i + accessChunkSize);
-          const placeholders = idChunk.map(() => '?').join(',');
-          await this.db.runAsync(
-            `UPDATE ${this.prefix}entries
-             SET access_count = access_count + 1, last_accessed_at = ?
-             WHERE id IN (${placeholders})`,
-            [now, ...idChunk]
-          );
-        }
+        await this.entryRepo.trackAccess(ids, now);
       }
     } else {
       // Empty query: use global recency ordering, ignore tier weights.
-      // Raw SELECT * — normalize here since _hydrateFactsByIds is not used.
-      const entityScope = this._entityInClause(entityIds);
-      const rawFacts = await this.db.getAllAsync<WikiFact & { embedding?: unknown; embedding_blob?: unknown }>(
-        `SELECT * FROM ${this.prefix}entries
-         WHERE ${entityScope.clause} AND deleted_at IS NULL
-         ORDER BY updated_at DESC
-         LIMIT ?`,
-        [...entityScope.params, maxResults]
-      );
-      facts = rawFacts.map(f => {
-        const { embedding: _embedding, embedding_blob: _blob, ...rest } = f;
-        return {
-          ...rest,
-          tags: (() => {
-            if (Array.isArray(rest.tags)) return rest.tags;
-            try { const p = JSON.parse(rest.tags as string); return Array.isArray(p) ? p : []; } catch { return []; }
-          })(),
-        } as WikiFact;
-      });
+      facts = await this.entryRepo.findRecentByEntityIds(entityIds, maxResults);
     }
 
+    const eventsLimit = Math.min(10 * entityIds.length, 100);
     const [tasks, events] = await Promise.all([
-      (async () => {
-        const entityScope = this._entityInClause(entityIds);
-        // Single-entity reads preserve the pre-Phase-2 unbounded behavior.
-        // Multi-entity reads cap at 20× entity count (max 200) to bound result size.
-        const tasksLimit = entityIds.length === 1 ? undefined : Math.min(20 * entityIds.length, 200);
-        return this.db.getAllAsync<WikiTask>(
-          `SELECT * FROM ${this.prefix}tasks
-           WHERE ${entityScope.clause} AND status IN ('pending', 'in_progress') AND deleted_at IS NULL
-           ORDER BY priority DESC, created_at ASC${tasksLimit !== undefined ? '\n           LIMIT ?' : ''}`,
-          tasksLimit !== undefined ? [...entityScope.params, tasksLimit] : entityScope.params
-        );
-      })(),
-      (async () => {
-        const entityScope = this._entityInClause(entityIds);
-        // Scaled global cap: 10× entity count, max 100. Not a per-entity guarantee —
-        // a single high-volume entity can fill the entire budget.
-        const eventsLimit = Math.min(10 * entityIds.length, 100);
-        return this.db.getAllAsync<WikiEvent>(
-          `SELECT * FROM ${this.prefix}events
-           WHERE ${entityScope.clause}
-           ORDER BY created_at DESC
-           LIMIT ?`,
-          [...entityScope.params, eventsLimit]
-        );
-      })(),
+      this.taskRepo.findAllPending(entityIds as string[], entityIds.length === 1 ? undefined : Math.min(20 * entityIds.length, 200)),
+      entityIds.length === 1
+        ? this.eventRepo.getRecent(entityIds[0], eventsLimit)
+        : this.eventRepo.getRecentForEntities(entityIds as string[], eventsLimit),
     ]);
 
     // Build factScores from captured scores
@@ -1677,15 +1468,6 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     const updatedAtDiff = (b.updated_at ?? 0) - (a.updated_at ?? 0);
     if (updatedAtDiff !== 0) return updatedAtDiff;
     return a.id.localeCompare(b.id);
-  }
-
-  /**
-   * Build SQL IN clause with placeholders for multiple entity IDs.
-   */
-  private _entityInClause(entityIds: readonly string[]): { clause: string; params: string[] } {
-    if (entityIds.length === 0) return { clause: '1=0', params: [] };
-    const placeholders = entityIds.map(() => '?').join(',');
-    return { clause: `entity_id IN (${placeholders})`, params: [...entityIds] };
   }
 
   /**
@@ -1885,75 +1667,88 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
   async write(entityId: string, event: Omit<WikiEvent, 'id' | 'entity_id' | 'created_at'>): Promise<void> {
     const id = generateId('evt_');
     const now = Date.now();
-    
+
     let eventType = event.event_type;
     if (!['observation', 'decision', 'action', 'outcome'].includes(eventType)) {
       eventType = 'observation';
     }
 
-    await this.db.runAsync(`
-      INSERT INTO ${this.prefix}events (id, entity_id, event_type, summary, related_entry_id, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `, [id, entityId, eventType, event.summary, event.related_entry_id || null, now]);
+    const newEvent: WikiEvent = {
+      id,
+      entity_id: entityId,
+      event_type: eventType,
+      summary: event.summary,
+      related_entry_id: event.related_entry_id || null,
+      created_at: now,
+    };
 
-    const threshold = this.options.config?.autoLibrarianThreshold || 20;
-    
-    const [row, cp] = await Promise.all([
-        this.db.getFirstAsync<{ count: number }>(`SELECT COUNT(*) as count FROM ${this.prefix}events WHERE entity_id = ?`, [entityId]),
-        this.db.getFirstAsync<WikiCheckpoint>(`SELECT * FROM ${this.prefix}checkpoints WHERE entity_id = ?`, [entityId])
-    ]);
-    
-    const count = row?.count || 0;
-    let memoryCheckpoint = cp?.memory_checkpoint || 0;
-    if (memoryCheckpoint > count) memoryCheckpoint = 0;
+    // Wrap in transaction to ensure Event + Checkpoint logic is atomic
+    let shouldRunLibrarian = false;
+    let librarianCount = 0;
+    let librarianJobKey: string | null = null;
 
-    if (count - memoryCheckpoint >= threshold) {
-      const jobKey = this._librarianKey(entityId);
-      if (
-        !this.activeMaintenanceJobs.has(jobKey) &&
-        !this.activeMaintenanceJobs.has(this._pruneKey(entityId)) &&
-        !this._isReembedActive(entityId) &&
-        !this._isImportActiveFor(entityId) &&
-        !this._isForgetActiveFor(entityId)
-      ) {
-        this.activeMaintenanceJobs.add(jobKey);
-        this._notifyStatusSubscribers(entityId);
-        this.runLibrarianThenMaybeHeal(entityId, count)
-          .catch(console.error)
-          .finally(() => {
-            this.activeMaintenanceJobs.delete(jobKey);
-            this._notifyStatusSubscribers(entityId);
-          });
+    await this.db.withTransactionAsync(async (tx) => {
+      await this.eventRepo.add(newEvent, tx);
+
+      const threshold = this.options.config?.autoLibrarianThreshold || 20;
+
+      const [count, cp] = await Promise.all([
+        this.eventRepo.count(entityId, tx),
+        this.metadataRepo.getCheckpoint(entityId, tx),
+      ]);
+
+      let memoryCheckpoint = cp.memory ?? 0;
+      if (memoryCheckpoint > count) memoryCheckpoint = 0;
+
+      if (count - memoryCheckpoint >= threshold) {
+        const jobKey = this._librarianKey(entityId);
+        if (
+          !this.activeMaintenanceJobs.has(jobKey) &&
+          !this.activeMaintenanceJobs.has(this._pruneKey(entityId)) &&
+          !this._isReembedActive(entityId) &&
+          !this._isImportActiveFor(entityId) &&
+          !this._isForgetActiveFor(entityId)
+        ) {
+          shouldRunLibrarian = true;
+          librarianCount = count;
+          librarianJobKey = jobKey;
+          await this.metadataRepo.updateCheckpoint(entityId, { memory: count }, tx);
+        }
       }
+    });
+
+    if (shouldRunLibrarian && librarianJobKey !== null) {
+      this.activeMaintenanceJobs.add(librarianJobKey);
+      this._notifyStatusSubscribers(entityId);
+      this.runLibrarianThenMaybeHeal(entityId, librarianCount)
+        .catch(console.error)
+        .finally(() => {
+          this.activeMaintenanceJobs.delete(librarianJobKey!);
+          this._notifyStatusSubscribers(entityId);
+        });
     }
   }
 
   private async runLibrarianThenMaybeHeal(entityId: string, currentEventCount: number) {
     await this._doRunLibrarian(entityId);
-    
-    await this.db.runAsync(`
-      INSERT INTO ${this.prefix}checkpoints (entity_id, memory_checkpoint) 
-      VALUES (?, ?) 
-      ON CONFLICT(entity_id) DO UPDATE SET memory_checkpoint = ?
-    `, [entityId, currentEventCount, currentEventCount]);
-    
+
     const autoHealThreshold = this.options.config?.autoHealThreshold || 100;
-    const cp = await this.db.getFirstAsync<WikiCheckpoint>(`SELECT * FROM ${this.prefix}checkpoints WHERE entity_id = ?`, [entityId]);
-    let healCheckpoint = cp?.heal_checkpoint || 0;
+
+    // Read the latest heal checkpoint after librarian work finishes so the heal
+    // decision reflects any concurrent checkpoint changes (e.g. from forget).
+    const cp = await this.metadataRepo.getCheckpoint(entityId, this.db);
+    let healCheckpoint = cp.heal ?? 0;
     if (healCheckpoint > currentEventCount) healCheckpoint = 0;
-    
-    if (currentEventCount - healCheckpoint >= autoHealThreshold) {
+    const shouldRunHeal = currentEventCount - healCheckpoint >= autoHealThreshold;
+
+    if (shouldRunHeal) {
       const healKey = this._healKey(entityId);
       if (!this.activeMaintenanceJobs.has(healKey)) {
         this.activeMaintenanceJobs.add(healKey);
         this._notifyStatusSubscribers(entityId);
         try {
           await this._doRunHeal(entityId);
-          await this.db.runAsync(`
-            INSERT INTO ${this.prefix}checkpoints (entity_id, heal_checkpoint) 
-            VALUES (?, ?) 
-            ON CONFLICT(entity_id) DO UPDATE SET heal_checkpoint = ?
-          `, [entityId, currentEventCount, currentEventCount]);
+          await this.metadataRepo.updateCheckpoint(entityId, { heal: currentEventCount }, this.db);
         } finally {
           this.activeMaintenanceJobs.delete(healKey);
           this._notifyStatusSubscribers(entityId);
@@ -1963,19 +1758,9 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
   }
 
   private async _doRunLibrarian(entityId: string): Promise<void> {
-    const events = await this.db.getAllAsync<WikiEvent>(`
-      SELECT * FROM ${this.prefix}events
-      WHERE entity_id = ?
-      ORDER BY created_at DESC
-      LIMIT 50
-    `, [entityId]);
+    const events = await this.eventRepo.getRecent(entityId, 50);
 
-    const currentFactsRows = await this.db.getAllAsync<WikiFact>(`
-      SELECT * FROM ${this.prefix}entries
-      WHERE entity_id = ? AND deleted_at IS NULL
-      ORDER BY updated_at DESC
-      LIMIT 100
-    `, [entityId]);
+    const currentFactsRows = await this.entryRepo.findRecentByEntityId(entityId, 100);
 
     const currentFacts = currentFactsRows.map(f => {
       const { embedding: _embedding, embedding_blob: _blob, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
@@ -2002,12 +1787,17 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
 
     const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
 
-    await this.db.withTransactionAsync(async () => {
+    await this.db.withTransactionAsync(async (tx) => {
+      // Re-read facts inside the transaction so duplicate detection reflects the
+      // committed state at write time, not the pre-LLM snapshot (which may be
+      // stale if heal or another operation ran during the LLM call).
+      const factsForDedupe = await this.entryRepo.findRecentByEntityId(entityId, 100, tx);
+
       for (const fact of validFacts) {
         const newTokens = titleTokens(fact.title);
         let skip = false;
         if (newTokens.size >= MIN_TOKENS_TO_QUALIFY) {
-          for (const existing of currentFactsRows) {
+          for (const existing of factsForDedupe) {
             if (existing.source_type !== 'librarian_inferred') continue;
             const existingTokens = titleTokens(existing.title);
             if (existingTokens.size >= MIN_TOKENS_TO_QUALIFY) {
@@ -2021,19 +1811,30 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
         if (skip) continue;
 
         const id = generateId('fact_');
-        await this.db.runAsync(`
-          INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'librarian_inferred', now, now]);
+        const factObj: WikiFact = {
+          id,
+          entity_id: entityId,
+          title: fact.title,
+          body: fact.body,
+          tags: fact.tags,
+          confidence: fact.confidence,
+          source_type: 'librarian_inferred',
+          source_hash: null,
+          source_ref: null,
+          created_at: now,
+          updated_at: now,
+          last_accessed_at: null,
+          access_count: 0,
+          deleted_at: null,
+        };
+        await this.entryRepo.upsert(factObj, tx);
         insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
       }
 
       for (const task of validTasks) {
         const id = generateId('task_');
-        await this.db.runAsync(`
-          INSERT INTO ${this.prefix}tasks (id, entity_id, description, status, priority, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `, [id, entityId, task.description, 'pending', task.priority, now, now]);
+        const taskObj: WikiTask = { id, entity_id: entityId, description: task.description, status: 'pending', priority: task.priority, created_at: now, updated_at: now, resolved_at: null, deleted_at: null };
+        await this.taskRepo.upsert(taskObj, tx);
       }
     });
 
@@ -2063,29 +1864,21 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       throw new Error('Invalid staleInferredAfterDays: must be a finite number >= 0 or null');
     }
 
-    await this.db.withTransactionAsync(async () => {
+    await this.db.withTransactionAsync(async (tx) => {
       if (orphanAfterDays !== null) {
         const orphanThreshold = now - (orphanAfterDays * MS_PER_DAY);
-        await this.db.runAsync(`
-          UPDATE ${this.prefix}entries
-          SET deleted_at = ?, updated_at = ?
-          WHERE entity_id = ? AND access_count = 0 AND created_at <= ? AND source_type != 'immutable_document' AND deleted_at IS NULL
-        `, [now, now, entityId, orphanThreshold]);
+        await this.entryRepo.markOrphaned(entityId, orphanThreshold, tx);
       }
 
       if (staleInferredAfterDays !== null) {
         const staleThreshold = now - (staleInferredAfterDays * MS_PER_DAY);
-        await this.db.runAsync(`
-          UPDATE ${this.prefix}entries
-          SET confidence = 'tentative', updated_at = ?
-          WHERE entity_id = ? AND confidence = 'inferred' AND (last_accessed_at <= ? OR (last_accessed_at IS NULL AND created_at <= ?)) AND source_type != 'immutable_document' AND deleted_at IS NULL
-        `, [now, entityId, staleThreshold, staleThreshold]);
+        await this.entryRepo.downgradeStaleInferred(entityId, staleThreshold, tx);
       }
     });
 
-    const allFactsRows = await this.db.getAllAsync<WikiFact>(`SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`, [entityId]);
-    const allTasks = await this.db.getAllAsync<WikiTask>(`SELECT * FROM ${this.prefix}tasks WHERE entity_id = ? AND status IN ('pending', 'in_progress') AND deleted_at IS NULL`, [entityId]);
-    const recentEvents = await this.db.getAllAsync<WikiEvent>(`SELECT * FROM ${this.prefix}events WHERE entity_id = ? ORDER BY created_at DESC LIMIT 20`, [entityId]);
+    const allFactsRows = await this.entryRepo.findAllByEntityId(entityId);
+    const allTasks = await this.taskRepo.findAllPending([entityId]);
+    const recentEvents = await this.eventRepo.getRecent(entityId, 20);
 
     const healCandidates = allFactsRows.filter(f => f.source_type !== 'immutable_document');
     const documentAnchors = allFactsRows
@@ -2119,19 +1912,28 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
     const uniqueDeletedFactIds = Array.from(new Set(safeDeleted));
 
-    await this.db.withTransactionAsync(async () => {
-      for (const id of safeDowngraded) {
-        await this.db.runAsync(`UPDATE ${this.prefix}entries SET confidence = 'tentative', updated_at = ? WHERE id = ? AND entity_id = ?`, [now, id, entityId]);
-      }
-      for (const id of safeDeleted) {
-        await this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ?`, [now, now, id, entityId]);
-      }
+    await this.db.withTransactionAsync(async (tx) => {
+      await this.entryRepo.downgradeByIds(safeDowngraded, entityId, tx);
+      await this.entryRepo.softDeleteByIds(safeDeleted, entityId, tx);
       for (const fact of validNewFacts) {
         const id = generateId('fact_');
-        await this.db.runAsync(`
-          INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, [id, entityId, fact.title, fact.body, JSON.stringify(fact.tags), fact.confidence, 'librarian_inferred', now, now]);
+        const factObj: WikiFact = {
+          id,
+          entity_id: entityId,
+          title: fact.title,
+          body: fact.body,
+          tags: fact.tags,
+          confidence: fact.confidence,
+          source_type: 'librarian_inferred',
+          source_hash: null,
+          source_ref: null,
+          created_at: now,
+          updated_at: now,
+          last_accessed_at: null,
+          access_count: 0,
+          deleted_at: null,
+        };
+        await this.entryRepo.upsert(factObj, tx);
         insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
       }
     });
@@ -2272,12 +2074,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     this.activeMaintenanceJobs.add(reembedKey);
 
     try {
-      const where = entityId ? `entity_id = ? AND deleted_at IS NULL` : `deleted_at IS NULL`;
-      const params = entityId ? [entityId] : [];
-      const rows = await this.db.getAllAsync<WikiFact>(
-        `SELECT * FROM ${this.prefix}entries WHERE ${where}`,
-        params
-      );
+      const rows = await this.entryRepo.findAllForReembed(entityId);
 
       // Invalidate before the embedding loop so any concurrent read() fetches fresh
       // vectors from the database rather than stale pre-reembed cached ones.
@@ -2310,24 +2107,14 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       // state and should not force unnecessary re-embedding of entity A's valid blobs.
       let effectiveSkip = skipExisting;
       if (skipExisting) {
-        const mismatchRow = await this.db.getFirstAsync<{ value: string }>(
-          `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
-        );
-        if (mismatchRow) {
+        const mismatchValue = await this.metadataRepo.getMeta('embedding_dimension_mismatch');
+        if (mismatchValue) {
           if (entityId) {
             // Per-entity: check whether this entity has any blobs at the wrong dimension
             // (i.e., the old canonical dim, not the pending new mismatch dim) or TEXT-only rows.
-            const mismatchDim = parseInt(mismatchRow.value, 10);
-            const staleForEntity = await this.db.getFirstAsync<{ cnt: number }>(
-              `SELECT COUNT(*) AS cnt FROM ${this.prefix}entries
-               WHERE entity_id = ? AND deleted_at IS NULL
-                 AND (
-                   embedding_blob IS NULL
-                   OR (CAST(length(embedding_blob) AS INTEGER) / 4) != ?
-                 )`,
-              [entityId, mismatchDim]
-            );
-            if (staleForEntity && staleForEntity.cnt > 0) effectiveSkip = false;
+            const mismatchDim = parseInt(mismatchValue, 10);
+            const staleCount = await this.entryRepo.countStaleForEntity(entityId, mismatchDim);
+            if (staleCount > 0) effectiveSkip = false;
           } else {
             // Global reembed: any pending mismatch means blobs are stale somewhere.
             effectiveSkip = false;
@@ -2441,22 +2228,10 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
   }
 
   private async _getFullBundle(entityId: string, opts?: { maxEvents?: number; includeBlobs?: boolean }): Promise<MemoryBundle> {
-    const maxEvents = opts?.maxEvents;
-    const eventsQuery = maxEvents != null
-      ? `SELECT * FROM ${this.prefix}events WHERE entity_id = ? ORDER BY created_at DESC LIMIT ?`
-      : `SELECT * FROM ${this.prefix}events WHERE entity_id = ? ORDER BY created_at ASC`;
-    const eventsParams: (string | number)[] = maxEvents != null ? [entityId, maxEvents] : [entityId];
-
-    const [factsRaw, tasks, eventsRaw] = await Promise.all([
-      this.db.getAllAsync<WikiFact>(
-        `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC`,
-        [entityId]
-      ),
-      this.db.getAllAsync<WikiTask>(
-        `SELECT * FROM ${this.prefix}tasks WHERE entity_id = ? AND deleted_at IS NULL ORDER BY priority DESC, created_at ASC`,
-        [entityId]
-      ),
-      this.db.getAllAsync<WikiEvent>(eventsQuery, eventsParams),
+    const [factsRaw, tasks, events] = await Promise.all([
+      this.entryRepo.findAllByEntityId(entityId),
+      this.taskRepo.findAllByEntityId(entityId),
+      this.eventRepo.getByEntityId(entityId, opts?.maxEvents),
     ]);
     const facts = factsRaw.map(f => {
       // Always strip the legacy text embedding column — never useful to callers.
@@ -2479,8 +2254,6 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
         tags: typeof factBase.tags === 'string' ? JSON.parse(factBase.tags) : factBase.tags,
       };
     });
-    // When limited, results arrive newest-first; reverse to chronological order.
-    const events = maxEvents != null ? eventsRaw.slice().reverse() : eventsRaw;
     return { facts, tasks, events };
   }
 
@@ -2489,17 +2262,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
     if (entityIds && entityIds.length > 0) {
       ids = Array.from(new Set(entityIds));
     } else {
-      // Collect all distinct entity_ids across entries, tasks, events
-      const rows = await this.db.getAllAsync<{ entity_id: string }>(`
-        SELECT DISTINCT entity_id FROM (
-          SELECT entity_id FROM ${this.prefix}entries WHERE deleted_at IS NULL
-          UNION
-          SELECT entity_id FROM ${this.prefix}tasks WHERE deleted_at IS NULL
-          UNION
-          SELECT entity_id FROM ${this.prefix}events
-        ) ORDER BY entity_id
-      `);
-      ids = rows.map(r => r.entity_id);
+      ids = await this.metadataRepo.getDistinctEntityIds();
     }
 
     const entities: Record<string, MemoryBundle> = {};
@@ -2602,43 +2365,20 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       // Without this, external indexes retain stale embeddings and keep returning
       // deleted fact IDs in ranking results.
       const softDeletedFactIds: string[] = [];
-      await this.db.withTransactionAsync(async () => {
+      await this.db.withTransactionAsync(async (tx) => {
         if (!merge) {
-          // Collect IDs of live facts that will be soft-deleted
-          const toDelete = await this.db.getAllAsync<{ id: string }>(
-            `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
-            [entityId]
-          );
-          softDeletedFactIds.push(...toDelete.map(r => r.id));
-          const now = Date.now();
-          await this.db.runAsync(
-            `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`,
-            [now, now, entityId]
-          );
-          await this.db.runAsync(
-            `UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`,
-            [now, now, entityId]
-          );
-          await this.db.runAsync(
-            `DELETE FROM ${this.prefix}checkpoints WHERE entity_id = ?`,
-            [entityId]
-          );
+          const deletedLiveFactIds = await this.entryRepo.findIdsBySource(entityId, null, null, tx, false);
+          softDeletedFactIds.push(...deletedLiveFactIds);
+          await this.entryRepo.bulkSoftDeleteByEntityId(entityId, tx);
+          await this.taskRepo.bulkSoftDeleteByEntityId(entityId, tx);
+          await this.metadataRepo.deleteCheckpoint(entityId, tx);
         }
 
         const factIds = bundle.facts.map((fact) => fact.id);
         const existingFactsById = new Map<string, { id: string; entity_id: string; updated_at: number }>();
-        const factLookupChunkSize = 500;
-        for (let i = 0; i < factIds.length; i += factLookupChunkSize) {
-          const factIdChunk = factIds.slice(i, i + factLookupChunkSize);
-          if (factIdChunk.length === 0) continue;
-          const placeholders = factIdChunk.map(() => '?').join(', ');
-          const existingFacts = await this.db.getAllAsync<{ id: string; entity_id: string; updated_at: number }>(
-            `SELECT id, entity_id, updated_at FROM ${this.prefix}entries WHERE id IN (${placeholders})`,
-            factIdChunk
-          );
-          for (const existingFact of existingFacts) {
-            existingFactsById.set(existingFact.id, existingFact);
-          }
+        const existingFacts = await this.entryRepo.findExistingMetadataByIds(factIds, tx);
+        for (const existingFact of existingFacts) {
+          existingFactsById.set(existingFact.id, existingFact);
         }
 
         for (const fact of bundle.facts) {
@@ -2725,73 +2465,43 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
               continue;
             }
             if (merge) {
-              // LWW: incoming wins only if its updated_at is strictly newer than local.
-              // 0 (epoch) never beats a real timestamp, so invalid incoming rows are skipped.
               if (safeUpdatedAt <= existing.updated_at) continue;
             }
-            if (blobData != null) {
-              // Incoming fact carries a valid BLOB (in-memory dump): persist it directly
-              // and skip embedFact() — no embedding API call required.
-              await this.db.runAsync(
-                `UPDATE ${this.prefix}entries SET entity_id = ?, title = ?, body = ?, tags = ?, confidence = ?, source_type = ?, source_hash = ?, source_ref = ?, created_at = ?, updated_at = ?, last_accessed_at = ?, access_count = ?, deleted_at = ?, embedding_blob = ?, embedding = NULL WHERE id = ?`,
-                [entityId, fact.title, fact.body, tagsJson, fact.confidence, sourceType, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, blobData, fact.id]
-              );
-              factsWithPreservedBlob.set(fact.id, blobData);
-              // Only track dimensions for live facts: read() and _reconcileEmbeddingDimension()
-              // both filter by deleted_at IS NULL, so a soft-deleted stale blob must not
-              // set embedding_dimension_mismatch and block retrieval on healthy live facts.
-              if (!fact.deleted_at) preservedBlobDims.add(blobData.byteLength / 4);
-            } else {
-              // read() never ranks the new title/body against the old vector;
-              // the post-transaction embedding loop will re-embed.
-              // If embedFact() fails (provider absent or throws), the NULL vector
-              // remains, which is correct: new content with no valid embedding
-              // falls back to keyword-only retrieval.
-              await this.db.runAsync(
-                `UPDATE ${this.prefix}entries SET entity_id = ?, title = ?, body = ?, tags = ?, confidence = ?, source_type = ?, source_hash = ?, source_ref = ?, created_at = ?, updated_at = ?, last_accessed_at = ?, access_count = ?, deleted_at = ?, embedding_blob = NULL, embedding = NULL WHERE id = ?`,
-                [entityId, fact.title, fact.body, tagsJson, fact.confidence, sourceType, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, fact.id]
-              );
-            }
-            existingFactsById.set(fact.id, { id: fact.id, entity_id: entityId, updated_at: safeUpdatedAt });
-            upsertedFactIds.add(fact.id);
-            if (fact.deleted_at) upsertedDeletedFactIds.add(fact.id);
-          } else {
-            if (blobData != null) {
-              await this.db.runAsync(
-                `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at, embedding_blob) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, sourceType, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at, blobData]
-              );
-              factsWithPreservedBlob.set(fact.id, blobData);
-              if (!fact.deleted_at) preservedBlobDims.add(blobData.byteLength / 4);
-            } else {
-              await this.db.runAsync(
-                `INSERT INTO ${this.prefix}entries (id, entity_id, title, body, tags, confidence, source_type, source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [fact.id, entityId, fact.title, fact.body, tagsJson, fact.confidence, sourceType, fact.source_hash, fact.source_ref, fact.created_at, safeUpdatedAt, fact.last_accessed_at, fact.access_count, fact.deleted_at]
-              );
-            }
-            existingFactsById.set(fact.id, { id: fact.id, entity_id: entityId, updated_at: safeUpdatedAt });
-            upsertedFactIds.add(fact.id);
-            if (fact.deleted_at) upsertedDeletedFactIds.add(fact.id);
           }
+
+          const factObj: WikiFact = {
+            id: fact.id,
+            entity_id: entityId,
+            title: fact.title,
+            body: fact.body,
+            tags: Array.isArray(fact.tags) ? fact.tags : [],
+            confidence: fact.confidence,
+            source_type: sourceType,
+            source_hash: fact.source_hash,
+            source_ref: fact.source_ref,
+            created_at: fact.created_at,
+            updated_at: safeUpdatedAt,
+            last_accessed_at: fact.last_accessed_at,
+            access_count: fact.access_count,
+            deleted_at: fact.deleted_at,
+            embedding_blob: blobData ?? undefined,
+          };
+
+          await this.entryRepo.upsertForImport(factObj, tx);
+          if (blobData != null) {
+            factsWithPreservedBlob.set(fact.id, blobData);
+            if (!fact.deleted_at) preservedBlobDims.add(blobData.byteLength / 4);
+          }
+          existingFactsById.set(fact.id, { id: fact.id, entity_id: entityId, updated_at: safeUpdatedAt });
+          upsertedFactIds.add(fact.id);
+          if (fact.deleted_at) upsertedDeletedFactIds.add(fact.id);
         }
 
         const taskIds = bundle.tasks.map((task) => task.id);
         const existingTasksById = new Map<string, { id: string; entity_id: string; updated_at: number }>();
-        const taskLookupChunkSize = 500;
-
-        for (let i = 0; i < taskIds.length; i += taskLookupChunkSize) {
-          const taskIdChunk = taskIds.slice(i, i + taskLookupChunkSize);
-          if (taskIdChunk.length === 0) continue;
-
-          const placeholders = taskIdChunk.map(() => '?').join(', ');
-          const existingTasks = await this.db.getAllAsync<{ id: string; entity_id: string; updated_at: number }>(
-            `SELECT id, entity_id, updated_at FROM ${this.prefix}tasks WHERE id IN (${placeholders})`,
-            taskIdChunk
-          );
-
-          for (const existingTask of existingTasks) {
-            existingTasksById.set(existingTask.id, existingTask);
-          }
+        const existingTasks = await this.taskRepo.findExistingMetadataByIds(taskIds, tx);
+        for (const existingTask of existingTasks) {
+          existingTasksById.set(existingTask.id, existingTask);
         }
 
         for (const task of bundle.tasks) {
@@ -2805,31 +2515,33 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
               continue;
             }
             if (merge) {
-              // LWW: incoming wins only if its updated_at is strictly newer than local.
-              // 0 (epoch) never beats a real timestamp, so invalid incoming rows are skipped.
               if (safeUpdatedAt <= existing.updated_at) continue;
             }
-            // replace mode (or merge LWW winner): update the existing row (restores if soft-deleted)
-            await this.db.runAsync(
-              `UPDATE ${this.prefix}tasks SET entity_id = ?, description = ?, status = ?, priority = ?, created_at = ?, updated_at = ?, resolved_at = ?, deleted_at = ? WHERE id = ?`,
-              [entityId, task.description, task.status, task.priority, task.created_at, safeUpdatedAt, task.resolved_at, task.deleted_at, task.id]
-            );
-            existingTasksById.set(task.id, { id: task.id, entity_id: entityId, updated_at: safeUpdatedAt });
-          } else {
-            await this.db.runAsync(
-              `INSERT INTO ${this.prefix}tasks (id, entity_id, description, status, priority, created_at, updated_at, resolved_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [task.id, entityId, task.description, task.status, task.priority, task.created_at, safeUpdatedAt, task.resolved_at, task.deleted_at]
-            );
-            existingTasksById.set(task.id, { id: task.id, entity_id: entityId, updated_at: safeUpdatedAt });
           }
+
+          await this.taskRepo.upsertForImport({
+            id: task.id,
+            entity_id: entityId,
+            description: task.description,
+            status: task.status,
+            priority: task.priority,
+            created_at: task.created_at,
+            updated_at: safeUpdatedAt,
+            resolved_at: task.resolved_at,
+            deleted_at: task.deleted_at,
+          }, tx, safeUpdatedAt);
+          existingTasksById.set(task.id, { id: task.id, entity_id: entityId, updated_at: safeUpdatedAt });
         }
 
         for (const event of bundle.events) {
-          await this.db.runAsync(
-            `INSERT OR IGNORE INTO ${this.prefix}events (id, entity_id, event_type, summary, related_entry_id, created_at)
-             VALUES (?, ?, ?, ?, ?, ?)`,
-            [event.id, entityId, event.event_type, event.summary, event.related_entry_id ?? null, event.created_at]
-          );
+          await this.eventRepo.addIgnoreDuplicate({
+            id: event.id,
+            entity_id: entityId,
+            event_type: event.event_type,
+            summary: event.summary,
+            related_entry_id: event.related_entry_id ?? null,
+            created_at: event.created_at,
+          }, tx);
         }
       });
       // Invalidate cache before rebuilding the text index so concurrent reads
@@ -2898,75 +2610,28 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       // Instead, let runReembed() reconcile all vectors without pre-seeding metadata.
       try {
         // Query the current canonical embedding dimension, if any.
-        const canonicalRow = await this.db.getFirstAsync<{ value: string }>(
-          `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension'`
-        );
-        const canonicalDim = canonicalRow ? parseInt(canonicalRow.value, 10) : null;
+        const canonicalDimValue = await this.metadataRepo.getMeta('embedding_dimension');
+        const canonicalDim = canonicalDimValue ? parseInt(canonicalDimValue, 10) : null;
 
         if (preservedBlobDims.size === 1) {
           const preservedDim = [...preservedBlobDims][0];
           if (canonicalDim === null || canonicalDim === preservedDim) {
-            // Fresh DB: record the imported dimension as canonical.
-            // Matching canonical: storeEmbeddingDimension is a no-op for equal dims,
-            // but a stale embedding_dimension_mismatch flag may still be present from
-            // a previous import. Run reconciliation so the flag is cleared if all live
-            // facts now agree on the canonical dimension.
             await this.storeEmbeddingDimension(preservedDim);
-            // If a stale embedding_dimension_mismatch flag exists from a prior failed
-            // model switch it may target a different dimension. _reconcileEmbeddingDimension()
-            // checks residuals against whatever value the flag holds; a wrong value keeps
-            // the flag stuck even though all imported blobs now match preservedDim.
-            // Overwrite the flag to preservedDim before reconciling so the check is correct.
-            const staleMismatch = await this.db.getFirstAsync<{ value: string }>(
-              `SELECT value FROM ${this.prefix}meta WHERE key = 'embedding_dimension_mismatch'`
-            );
-            if (staleMismatch && parseInt(staleMismatch.value, 10) !== preservedDim) {
-              await this.db.runAsync(
-                `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension_mismatch', ?)`,
-                [String(preservedDim)]
-              );
+            const staleMismatchValue = await this.metadataRepo.getMeta('embedding_dimension_mismatch');
+            if (staleMismatchValue && parseInt(staleMismatchValue, 10) !== preservedDim) {
+              await this.metadataRepo.setMeta('embedding_dimension_mismatch', String(preservedDim), this.db);
             }
             await this._reconcileEmbeddingDimension();
           } else {
-            // Imported blobs differ from the canonical model dimension. Set
-            // embedding_dimension_mismatch = canonicalDim so that:
-            //   (a) read() detects the mismatch and falls back to MiniSearch, and
-            //   (b) _reconcileEmbeddingDimension() can clear the flag after
-            //       runReembed() rewrites all blobs to canonicalDim.
-            // Using the imported dim as the mismatch value would deadlock:
-            // after runReembed(), all blobs have canonicalDim ≠ importedDim, so
-            // the residual count never reaches 0 and the flag is never cleared.
-            await this.db.runAsync(
-              `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension_mismatch', ?)`,
-              [String(canonicalDim)]
-            );
+            await this.metadataRepo.setMeta('embedding_dimension_mismatch', String(canonicalDim), this.db);
           }
         } else if (preservedBlobDims.size > 1) {
           if (canonicalDim === null) {
-            // Fresh import with mixed BLOBs: seed canonical with the smallest imported
-            // dimension, then write embedding_dimension_mismatch = that same canonical
-            // value. Seeding mismatch = canonical (not dim[1]) ensures
-            // _reconcileEmbeddingDimension() can always clear the flag:
-            //   - If runReembed() uses the same dim as canonical: storeEmbeddingDimension
-            //     is a no-op, mismatch stays = canonical, residual = 0 → clears. ✓
-            //   - If runReembed() uses a different dim: storeEmbeddingDimension overwrites
-            //     mismatch = currentDim, residual = 0 after full reembed → clears. ✓
-            // Seeding mismatch = dim[1] instead would deadlock the second case: after
-            // runReembed(), all blobs have currentDim ≠ dim[1] → residual > 0 forever.
             const sortedPreservedBlobDims = [...preservedBlobDims].sort((a, b) => a - b);
             await this.storeEmbeddingDimension(sortedPreservedBlobDims[0]);
-            await this.db.runAsync(
-              `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension_mismatch', ?)`,
-              [String(sortedPreservedBlobDims[0])]
-            );
+            await this.metadataRepo.setMeta('embedding_dimension_mismatch', String(sortedPreservedBlobDims[0]), this.db);
           } else {
-            // Import into an existing wiki with mixed-dimension blobs. Set
-            // mismatch = canonicalDim so the flag clears correctly after runReembed()
-            // rewrites everything to the canonical model.
-            await this.db.runAsync(
-              `INSERT OR REPLACE INTO ${this.prefix}meta (key, value) VALUES ('embedding_dimension_mismatch', ?)`,
-              [String(canonicalDim)]
-            );
+            await this.metadataRepo.setMeta('embedding_dimension_mismatch', String(canonicalDim), this.db);
           }
         }
       } finally {
@@ -3005,95 +2670,58 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       let deletedTasks = 0;
       const deletedEntryIds: string[] = [];
 
-      if (params.clearAll) {
-        // Select both new deletions and already-soft-deleted (for hook retry on failure)
-        const newDeletions = await this.db.getAllAsync<{ id: string }>(
-          `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
-          [entityId]
-        );
-        const alreadySoftDeleted = await this.db.getAllAsync<{ id: string }>(
-          `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NOT NULL`,
-          [entityId]
-        );
-        deletedEntryIds.push(...newDeletions.map(e => e.id), ...alreadySoftDeleted.map(e => e.id));
-
-        const [entriesRes, tasksRes] = await Promise.all([
-          this.db.runAsync(`UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
-          this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`, [now, now, entityId]),
-        ]);
-        await this.db.runAsync(`UPDATE ${this.prefix}checkpoints SET memory_checkpoint = 0, heal_checkpoint = 0 WHERE entity_id = ?`, [entityId]);
-        deletedEntries = entriesRes.changes;
-        deletedTasks = tasksRes.changes;
-      } else {
-        const hasIdSelectors = params.entryId !== undefined || params.taskId !== undefined;
-        const hasSourceSelectors = params.sourceRef !== undefined || params.sourceHash !== undefined;
-        if (hasIdSelectors && hasSourceSelectors) {
-          throw new Error('forget() params are mutually exclusive: use entryId/taskId together, or sourceRef/sourceHash together, but not both in the same call');
-        }
-
-        const sourceRef = params.sourceRef !== undefined ? normalizeSourceRef(params.sourceRef) : null;
-        if (params.sourceRef !== undefined && !sourceRef) throw new Error('Invalid sourceRef');
-        const sourceHash = params.sourceHash !== undefined ? normalizeSourceHash(params.sourceHash) : null;
-        if (params.sourceHash !== undefined && !sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
-
-        if (params.entryId) {
-          // Select entry regardless of deleted_at to allow hook retry on already-soft-deleted rows
-          const entry = await this.db.getFirstAsync<{ id: string }>(
-            `SELECT id FROM ${this.prefix}entries WHERE id = ? AND entity_id = ?`,
-            [params.entryId, entityId]
-          );
-          if (entry) deletedEntryIds.push(entry.id);
-        }
-
-        if (sourceRef || sourceHash) {
-          // Select entries regardless of deleted_at to allow hook retry on already-soft-deleted rows
-          let q = `SELECT id FROM ${this.prefix}entries WHERE entity_id = ?`;
-          const args: any[] = [entityId];
-          if (sourceRef) {
-            q += ` AND source_ref = ?`;
-            args.push(sourceRef);
+      await this.db.withTransactionAsync(async (tx) => {
+        if (params.clearAll) {
+          deletedEntryIds.push(...await this.entryRepo.findIdsBySource(entityId, null, null, tx, true));
+          const entriesRes = await this.entryRepo.bulkSoftDeleteByEntityId(entityId, tx);
+          const tasksRes = await this.taskRepo.bulkSoftDeleteByEntityId(entityId, tx);
+          await this.metadataRepo.updateCheckpoint(entityId, { memory: 0, heal: 0 }, tx);
+          deletedEntries = entriesRes;
+          deletedTasks = tasksRes;
+        } else {
+          const hasIdSelectors = params.entryId !== undefined || params.taskId !== undefined;
+          const hasSourceSelectors = params.sourceRef !== undefined || params.sourceHash !== undefined;
+          if (hasIdSelectors && hasSourceSelectors) {
+            throw new Error('forget() params are mutually exclusive: use entryId/taskId together, or sourceRef/sourceHash together, but not both in the same call');
           }
-          if (sourceHash) {
-            q += ` AND source_hash = ?`;
-            args.push(sourceHash);
+
+          const sourceRef = params.sourceRef !== undefined ? normalizeSourceRef(params.sourceRef) : null;
+          if (params.sourceRef !== undefined && !sourceRef) throw new Error('Invalid sourceRef');
+          const sourceHash = params.sourceHash !== undefined ? normalizeSourceHash(params.sourceHash) : null;
+          if (params.sourceHash !== undefined && !sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
+
+          if (params.entryId) {
+            const entryId = await this.entryRepo.findIdById(params.entryId, entityId, tx);
+            if (entryId) deletedEntryIds.push(entryId);
           }
-          const entriesToDelete = await this.db.getAllAsync<{ id: string }>(q, args);
-          deletedEntryIds.push(...entriesToDelete.map(e => e.id));
+
+          if (sourceRef || sourceHash) {
+            deletedEntryIds.push(...await this.entryRepo.findIdsBySource(entityId, sourceRef, sourceHash, tx, true));
+          }
+
+          const entryPromise = params.entryId
+            ? this.entryRepo.softDelete(params.entryId, entityId, tx).then(r => r.changes > 0)
+            : null;
+
+          const taskDeletedPromise = params.taskId
+            ? this.taskRepo.softDeleteById(params.taskId, entityId, tx).then(r => r.changes > 0)
+            : null;
+
+          const refPromise = (sourceRef || sourceHash)
+            ? this.entryRepo.softDeleteBySource(entityId, tx, sourceRef, sourceHash)
+            : null;
+
+          const [entryResult, taskResult, refResult] = await Promise.all([
+            entryPromise ?? Promise.resolve(false),
+            taskDeletedPromise ?? Promise.resolve(false),
+            refPromise ?? Promise.resolve(0),
+          ]);
+
+          if (entryResult) deletedEntries++;
+          if (taskResult) deletedTasks++;
+          deletedEntries += refResult;
         }
-
-        const entryPromise = params.entryId
-          ? this.entryRepo.softDelete(params.entryId, entityId)
-          : null;
-
-        const taskPromise = params.taskId
-          ? this.db.runAsync(`UPDATE ${this.prefix}tasks SET deleted_at = ?, updated_at = ? WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`, [now, now, params.taskId, entityId])
-          : null;
-
-        let refPromise: Promise<{ changes: number; lastInsertRowId: number }> | null = null;
-        if (sourceRef || sourceHash) {
-          let q = `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL`;
-          const args: any[] = [now, now, entityId];
-          if (sourceRef) {
-            q += ` AND source_ref = ?`;
-            args.push(sourceRef);
-          }
-          if (sourceHash) {
-            q += ` AND source_hash = ?`;
-            args.push(sourceHash);
-          }
-          refPromise = this.db.runAsync(q, args);
-        }
-
-        const [entryResult, taskResult, refResult] = await Promise.all([
-          entryPromise ?? Promise.resolve(null),
-          taskPromise ?? Promise.resolve(null),
-          refPromise ?? Promise.resolve(null),
-        ]);
-
-        if (entryResult) deletedEntries += entryResult.changes;
-        if (taskResult) deletedTasks += taskResult.changes;
-        if (refResult) deletedEntries += refResult.changes;
-      }
+      });
 
       await this.rebuildMiniSearchIndex(entityId);
       this.vectorCache.delete(entityId);
@@ -3214,19 +2842,10 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
       const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
       const deletedSourceFactIds: string[] = [];
 
-      await this.db.withTransactionAsync(async () => {
-        const existingSourceFacts = await this.db.getAllAsync<{ id: string }>(
-          `SELECT id FROM ${this.prefix}entries WHERE source_ref = ? AND entity_id = ? AND deleted_at IS NULL`,
-          [sourceRef, entityId]
-        );
-        for (const row of existingSourceFacts) {
-          deletedSourceFactIds.push(row.id);
-        }
+      await this.db.withTransactionAsync(async (tx) => {
+        deletedSourceFactIds.push(...await this.entryRepo.findIdsBySource(entityId, sourceRef, null, tx, false));
 
-        await this.db.runAsync(
-          `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE source_ref = ? AND entity_id = ? AND deleted_at IS NULL`,
-          [now, now, sourceRef, entityId]
-        );
+        await this.entryRepo.softDeleteBySource(entityId, tx, sourceRef, null);
         for (const fact of allValidFacts) {
           const id = generateId('fact_');
           const wikiFact: WikiFact = {
@@ -3245,7 +2864,7 @@ UPDATE ${this.prefix}entries SET source_type = 'librarian_inferred' WHERE source
             access_count: 0,
             deleted_at: null,
           };
-          await this.entryRepo.upsert(wikiFact);
+          await this.entryRepo.upsert(wikiFact, tx);
           insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
         }
       });
