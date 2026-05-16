@@ -185,6 +185,8 @@ const wiki = createWiki(db, {
 
     // Global prompt overrides — librarianSystemPrompt and healSystemPrompt apply to write() auto-runs;
     // ingestSystemPrompt applies only to explicit ingestDocument() calls.
+    // ⚠ Overrides replace the entire default prompt, including the JSON output contract.
+    // Your prompt must instruct the LLM to return the required JSON shape — see packages/core/README.md#prompt-management--overrides.
     prompts: {
       ingestSystemPrompt: `Extract core facts from this document: {{documentChunk}}`,
       librarianSystemPrompt: `Synthesize these thoughts into insights:\n{{events}}`,
@@ -405,7 +407,8 @@ const result = await wiki.ingestDocument('entity-123', {
   maxChunkLength: 12000,              // optional, character count
   chunkOverlap: 400,                  // optional, overlap in characters
   chunkConcurrency: 1,                // optional, parallel LLM calls per ingest (default: 1)
-  // Optional: runtime override for this call only (does not affect write() auto-runs)
+  // Optional: runtime override for this call only (does not affect write() auto-runs).
+  // Must include the JSON output contract — overrides replace the entire default prompt.
   promptOverride: `Extract strict technical requirements: {{documentChunk}}`,
 });
 // result: { truncated: boolean; chunks: number }
@@ -419,7 +422,8 @@ const result = await wiki.ingestDocument('entity-123', {
 // Consolidate recent events into durable facts (auto-triggered by write, or call manually)
 await wiki.runLibrarian('entity-123');
 
-// Run a manual synthesis with a one-off runtime override (does not affect write() auto-runs)
+// Run a manual synthesis with a one-off runtime override (does not affect write() auto-runs).
+// Must include the JSON output contract — overrides replace the entire default prompt.
 await wiki.runLibrarian('entity-123', {
   promptOverride: `One-off extraction task:\n{{events}}`,
 });

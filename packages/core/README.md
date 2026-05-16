@@ -95,6 +95,8 @@ const wikiMemory = new WikiMemory(db, {
 
     // Global prompt overrides — librarianSystemPrompt and healSystemPrompt apply to write() auto-runs;
     // ingestSystemPrompt applies only to explicit ingestDocument() calls.
+    // ⚠ Overrides replace the entire default prompt, including the JSON output contract.
+    // See "JSON Output Contracts" in the Prompt Management & Overrides section below.
     prompts: {
       ingestSystemPrompt: `Extract core facts from this document: {{documentChunk}}`,
       librarianSystemPrompt: `You are an expert curator. Synthesize these thoughts:\n{{events}}\n\nCurrent Facts:\n{{currentFacts}}`,
@@ -108,6 +110,14 @@ const wikiMemory = new WikiMemory(db, {
 
 Core maintenance tasks (`ingestDocument`, `runLibrarian`, `runHeal`) use system prompts to instruct the LLM. You can customize these prompts using `{{mustache}}` style variables to inject context dynamically.
 
+> **JSON Output Contracts:** Prompt overrides replace the *entire* default system prompt, including the JSON response schema the parser depends on. Your override **must** instruct the LLM to return raw JSON — no markdown. Required shapes:
+>
+> | Operation | Required JSON shape |
+> |-----------|-------------------|
+> | `ingestDocument` | `{ "facts": [{ "title": "string", "body": "string", "tags": ["string"], "confidence": "certain\|inferred\|tentative" }] }` |
+> | `runLibrarian` | `{ "facts": [...], "tasks": [{ "description": "string", "priority": 0-10 }] }` |
+> | `runHeal` | `{ "downgraded": ["factId"], "deleted": ["factId"], "newFacts": [...] }` |
+
 ### Global Overrides (Auto-Runs)
 
 If your application relies on `write()` to automatically maintain the memory graph in the background (via `autoLibrarianThreshold` and `autoHealThreshold`), configure custom prompts globally at instantiation. This ensures the internal `WriteService` uses your domain-specific instructions when it triggers an auto-run.
@@ -117,7 +127,8 @@ const wikiMemory = new WikiMemory(db, {
   llmProvider,
   config: {
     prompts: {
-      librarianSystemPrompt: `You are an expert curator. Synthesize these thoughts:\n{{events}}\n\nCurrent Facts:\n{{currentFacts}}`,
+      // Override must include the JSON output contract — it replaces the entire default prompt.
+      librarianSystemPrompt: `You are an expert curator. Synthesize these thoughts:\n{{events}}\n\nCurrent Facts:\n{{currentFacts}}\n\nReturn ONLY a valid JSON object: { "facts": [{ "title": "string", "body": "string", "tags": ["string"], "confidence": "certain|inferred|tentative" }], "tasks": [{ "description": "string", "priority": 0 }] }. No markdown.`,
     },
   },
 });
@@ -141,20 +152,21 @@ When a template contains `{{variable}}` tags, the matching data is hydrated dire
 Pass `promptOverride` per-call for one-off instructions. **Runtime overrides apply only to that single call — they do not persist for future auto-runs triggered by `write()`.**
 
 ```typescript
-// Override the base default AND global config for this single execution
+// Override the base default AND global config for this single execution.
+// Each override must include the JSON output contract (replaces the entire default prompt).
 await wikiMemory.runLibrarian('user-123', {
-  promptOverride: `One-off extraction task:\n{{events}}`,
+  promptOverride: `One-off extraction task:\n{{events}}\n\nReturn ONLY valid JSON: { "facts": [{ "title": "string", "body": "string", "tags": ["string"], "confidence": "certain|inferred|tentative" }], "tasks": [{ "description": "string", "priority": 0 }] }. No markdown.`,
 });
 
 await wikiMemory.runHeal('user-123', {
-  promptOverride: `Domain-specific healing: {{healCandidates}}`,
+  promptOverride: `Domain-specific healing: {{healCandidates}}\n\nReturn ONLY valid JSON: { "downgraded": ["factId"], "deleted": ["factId"], "newFacts": [{ "title": "string", "body": "string", "tags": ["string"], "confidence": "certain|inferred|tentative" }] }. No markdown.`,
 });
 
 await wikiMemory.ingestDocument('user-123', {
   sourceRef: 'doc-1',
   sourceHash: sha256(content),
   documentChunk: content,
-  promptOverride: `Strict technical extraction: {{documentChunk}}`,
+  promptOverride: `Strict technical extraction: {{documentChunk}}\n\nReturn ONLY valid JSON: { "facts": [{ "title": "string", "body": "string", "tags": ["string"], "confidence": "certain|inferred|tentative" }] }. No markdown.`,
 });
 ```
 

@@ -116,6 +116,8 @@ const wiki = createWiki(adapter, {
 
     // Global prompt overrides — librarianSystemPrompt and healSystemPrompt apply to write() auto-runs;
     // ingestSystemPrompt applies only to explicit ingestDocument() calls.
+    // ⚠ Overrides replace the entire default prompt, including the JSON output contract.
+    // Your prompt must instruct the LLM to return the required JSON shape — see packages/core/README.md#prompt-management--overrides.
     prompts: {
       ingestSystemPrompt: `Extract core facts from this document: {{documentChunk}}`,
       librarianSystemPrompt: `Synthesize these thoughts into insights:\n{{events}}`,
@@ -251,7 +253,8 @@ const handleIngest = async (document: string) => {
       sourceRef: 'doc-readme',
       sourceHash,
       documentChunk: document,
-      // Optional: runtime override for this specific ingest call only
+      // Optional: runtime override for this specific ingest call only.
+      // Must include the JSON output contract — overrides replace the entire default prompt.
       promptOverride: `Strict technical extraction. Focus on APIs: {{documentChunk}}`,
     });
   } catch (e) {
@@ -286,7 +289,8 @@ const { runLibrarian, runHeal, runReembed, runPrune, isPending, error, lastResul
 // Deduplicate and consolidate facts from events
 await runLibrarian('user-123');
 
-// Run with a one-off runtime override (applies only to this call, not future auto-runs)
+// Run with a one-off runtime override (applies only to this call, not future auto-runs).
+// Must include the JSON output contract — overrides replace the entire default prompt.
 await runLibrarian('user-123', {
   promptOverride: `One-off extraction task:\n{{events}}`,
 });

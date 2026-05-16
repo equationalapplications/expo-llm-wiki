@@ -117,6 +117,8 @@ const wiki = createWiki(db, {
 
     // Global prompt overrides — librarianSystemPrompt and healSystemPrompt apply to write() auto-runs;
     // ingestSystemPrompt applies only to explicit ingestDocument() calls.
+    // ⚠ Overrides replace the entire default prompt, including the JSON output contract.
+    // Your prompt must instruct the LLM to return the required JSON shape — see packages/core/README.md#prompt-management--overrides.
     prompts: {
       ingestSystemPrompt: `Extract core facts from this document: {{documentChunk}}`,
       librarianSystemPrompt: `Synthesize these thoughts into insights:\n{{events}}`,
@@ -179,7 +181,8 @@ await wiki.setup();
 // Auto-runs: uses config.prompts for background librarian/heal triggers
 await wiki.write('user-123', { event_type: 'observation', summary: '...' });
 
-// Manual executions: runtime promptOverride applies only to this single call
+// Manual executions: runtime promptOverride applies only to this single call.
+// Must include the JSON output contract — overrides replace the entire default prompt.
 await wiki.runLibrarian('user-123', {
   promptOverride: `Strict domain extraction task:\n{{events}}`,
 });
