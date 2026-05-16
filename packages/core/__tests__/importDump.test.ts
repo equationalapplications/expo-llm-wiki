@@ -361,8 +361,9 @@ describe('importDump — busy-key protection', () => {
     };
 
     // Patch importDump to hang after the import key is acquired.
-    const originalDo = (wiki as any)._doImportEntity.bind(wiki);
-    (wiki as any)._doImportEntity = async (entityId: string, bundle: any, merge: boolean) => {
+    const ie = wiki.__testAccess.importExportService;
+    const originalDo = ie.doImportEntity.bind(ie);
+    ie.doImportEntity = async (entityId: string, bundle: any, merge: boolean) => {
       await blocker;
       return originalDo(entityId, bundle, merge);
     };
@@ -388,12 +389,13 @@ describe('importDump — busy-key protection', () => {
 
     let releaseLegacyProbe: () => void = () => {};
     const legacyProbeBlocker = new Promise<void>((r) => { releaseLegacyProbe = r; });
-    const originalAssert = (wiki as any).assertNoLegacySourceTypes.bind(wiki);
+    const ie = wiki.__testAccess.importExportService;
+    const originalAssert = ie.assertNoLegacySourceTypes.bind(ie);
     let assertCalls = 0;
 
     // Hold the first import inside the legacy probe to ensure the second call
     // races exactly at the lock-check/acquire boundary.
-    (wiki as any).assertNoLegacySourceTypes = async () => {
+    ie.assertNoLegacySourceTypes = async () => {
       assertCalls += 1;
       if (assertCalls === 1) {
         await legacyProbeBlocker;
@@ -432,8 +434,9 @@ describe('importDump — busy-key protection', () => {
 
     let resolveImport: () => void = () => {};
     const blocker = new Promise<void>((r) => { resolveImport = r; });
-    const originalDo = (wiki as any)._doImportEntity.bind(wiki);
-    (wiki as any)._doImportEntity = async (entityId: string, bundle: any, merge: boolean) => {
+    const ie = wiki.__testAccess.importExportService;
+    const originalDo = ie.doImportEntity.bind(ie);
+    ie.doImportEntity = async (entityId: string, bundle: any, merge: boolean) => {
       await blocker;
       return originalDo(entityId, bundle, merge);
     };
@@ -455,8 +458,9 @@ describe('importDump — busy-key protection', () => {
 
     let resolveLibrarian: () => void = () => {};
     const blocker = new Promise<void>((r) => { resolveLibrarian = r; });
-    const originalDo = (wiki as any).maintenanceService._doRunLibrarian.bind((wiki as any).maintenanceService);
-    (wiki as any).maintenanceService._doRunLibrarian = async (entityId: string) => {
+    const ms = wiki.__testAccess.maintenanceService;
+    const originalDo = ms.doRunLibrarian.bind(ms);
+    ms.doRunLibrarian = async (entityId: string) => {
       await blocker;
       return originalDo(entityId);
     };
@@ -478,8 +482,9 @@ describe('importDump — busy-key protection', () => {
 
     let resolveImport: () => void = () => {};
     const blocker = new Promise<void>((r) => { resolveImport = r; });
-    const originalDo = (wiki as any)._doImportEntity.bind(wiki);
-    (wiki as any)._doImportEntity = async (entityId: string, bundle: any, merge: boolean) => {
+    const ie = wiki.__testAccess.importExportService;
+    const originalDo = ie.doImportEntity.bind(ie);
+    ie.doImportEntity = async (entityId: string, bundle: any, merge: boolean) => {
       await blocker;
       return originalDo(entityId, bundle, merge);
     };
@@ -528,8 +533,9 @@ describe('importDump — busy-key protection', () => {
 
     let resolveImport: () => void = () => {};
     const blocker = new Promise<void>((r) => { resolveImport = r; });
-    const originalDo = (wiki as any)._doImportEntity.bind(wiki);
-    (wiki as any)._doImportEntity = async (entityId: string, bundle: any, merge: boolean) => {
+    const ie = wiki.__testAccess.importExportService;
+    const originalDo = ie.doImportEntity.bind(ie);
+    ie.doImportEntity = async (entityId: string, bundle: any, merge: boolean) => {
       await blocker;
       return originalDo(entityId, bundle, merge);
     };
@@ -537,7 +543,7 @@ describe('importDump — busy-key protection', () => {
     const imp = wiki.importDump(simpleDump('user-1'));
     await new Promise((r) => setTimeout(r, 0));
 
-    const librarianSpy = vi.spyOn((wiki as any).maintenanceService, '_doRunLibrarian');
+    const librarianSpy = vi.spyOn(wiki.__testAccess.maintenanceService, 'doRunLibrarian');
 
     // write() should not start background librarian because import is active
     await wiki.write('user-1', { event_type: 'observation', summary: 'test' });

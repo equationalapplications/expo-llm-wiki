@@ -6,6 +6,7 @@ import type { SQLiteAdapter } from '../types';
 import type { EntryRepository } from '../repositories/EntryRepository';
 import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
+import type { EmbeddingService } from './EmbeddingService';
 
 export class IngestionService {
   constructor(
@@ -15,8 +16,7 @@ export class IngestionService {
     private entryRepo: EntryRepository,
     private searchService: SearchService,
     private jobManager: JobManager,
-    private embedFactFn: (fact: { id: string; entity_id: string; title: string; body: string; tags: string | string[] }) => Promise<boolean>,
-    private notifyPersistedFn: (entityId: string, factId: string, vector: Float32Array | null) => Promise<void>
+    private embeddingService: EmbeddingService,
   ) {}
 
   async ingestDocument(
@@ -108,14 +108,14 @@ export class IngestionService {
       const uniqueDeletedSourceFactIds = Array.from(new Set(deletedSourceFactIds));
       for (const factId of uniqueDeletedSourceFactIds) {
         try {
-          await this.notifyPersistedFn(entityId, factId, null);
+          await this.embeddingService.notifyEmbeddingPersisted(entityId, factId, null);
         } catch (hookErr) {
           console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during ingest for ${factId}:`, hookErr);
         }
       }
 
       for (const fact of insertedFacts) {
-        await this.embedFactFn(fact);
+        await this.embeddingService.embedFact(fact);
       }
 
       this.searchService.evictCache(entityId);

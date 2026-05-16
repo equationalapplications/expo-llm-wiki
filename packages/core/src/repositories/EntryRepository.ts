@@ -386,7 +386,7 @@ export class EntryRepository extends BaseRepository {
 
   /**
    * Fetch recent non-deleted entries for an entity (limited), ordered by updated_at DESC.
-   * Used by _doRunLibrarian().
+   * Used by MaintenanceService.doRunLibrarian().
    */
   async findRecentByEntityId(entityId: string, limit: number, tx?: SQLiteAdapter): Promise<WikiFact[]> {
     const executor = this.getExecutor(tx);
@@ -497,7 +497,7 @@ export class EntryRepository extends BaseRepository {
 
   /**
    * Mark orphaned entries (never accessed, old) as deleted.
-   * Used by _doRunHeal().
+   * Used by MaintenanceService.doRunHeal().
    */
   async markOrphaned(
     entityId: string,
@@ -532,7 +532,7 @@ export class EntryRepository extends BaseRepository {
 
   /**
    * Downgrade stale inferred entries to 'tentative'.
-   * Used by _doRunHeal().
+   * Used by MaintenanceService.doRunHeal().
    */
   async downgradeStaleInferred(
     entityId: string,
@@ -569,7 +569,7 @@ export class EntryRepository extends BaseRepository {
 
   /**
    * Downgrade specific entries to 'tentative' by IDs.
-   * Used by _doRunHeal().
+   * Used by MaintenanceService.doRunHeal().
    */
   async downgradeByIds(
     ids: string[],
@@ -598,7 +598,7 @@ export class EntryRepository extends BaseRepository {
 
   /**
    * Soft-delete specific entries by IDs.
-   * Used by _doRunHeal().
+   * Used by MaintenanceService.doRunHeal().
    */
   async softDeleteByIds(
     ids: string[],
