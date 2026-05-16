@@ -21,7 +21,7 @@ export class IngestionService {
     private embeddingService: EmbeddingService,
     promptService?: PromptService,
   ) {
-    this.promptService = promptService ?? new PromptService();
+    this.promptService = promptService ?? new PromptService(this.options.config?.prompts);
   }
 
   async ingestDocument(

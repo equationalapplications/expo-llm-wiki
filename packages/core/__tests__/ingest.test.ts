@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { WikiMemory } from '../src/WikiMemory';
 import { IngestionService } from '../src/services/IngestionService';
 import { PromptService } from '../src/services/PromptService';
+import { INGEST_SYSTEM_PROMPT } from '../src/prompts';
 
 describe('IngestionService — PromptService injection', () => {
   const fakeLlmResponse = JSON.stringify({ facts: [{ title: 'T', body: 'B', tags: [], confidence: 'certain' }] });
@@ -52,7 +53,7 @@ describe('IngestionService — PromptService injection', () => {
 
     expect(mockOptions.llmProvider.generateText).toHaveBeenCalledWith(
       expect.objectContaining({
-        systemPrompt: expect.any(String),
+        systemPrompt: INGEST_SYSTEM_PROMPT,
         userPrompt: expect.stringContaining('hello world'),
       })
     );
