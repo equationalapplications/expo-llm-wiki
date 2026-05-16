@@ -1,4 +1,4 @@
-import { parseJsonResponse, validateFact, validateTask, titleTokens, jaccardScore, normalizeSourceRef, normalizeSourceHash } from '../utils/pure';
+import { parseJsonResponse, validateFact, validateTask, titleTokens, jaccardScore, normalizeSourceRef, normalizeSourceHash, sanitizeRankerError } from '../utils/pure';
 import { PromptService } from './PromptService';
 import { generateId } from '../utils/ids';
 import { parseEmbedding } from '../utils/embedding';
@@ -431,8 +431,8 @@ export class MaintenanceService {
     const deleted = Array.isArray(result.deleted) ? result.deleted : [];
     const newFacts = Array.isArray(result.newFacts) ? result.newFacts : [];
 
-    const safeDowngraded = downgraded.filter(id => mutableIds.has(id));
-    const safeDeleted = deleted.filter(id => mutableIds.has(id));
+    const safeDowngraded = Array.from(new Set(downgraded.filter(id => mutableIds.has(id))));
+    const safeDeleted = Array.from(new Set(deleted.filter(id => mutableIds.has(id))));
     const validNewFacts = newFacts.map(validateFact).filter((f): f is ExtractedFact => f !== null);
 
     const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
@@ -500,19 +500,6 @@ export class MaintenanceService {
   }
 
   private _sanitizeRankerError(err: unknown): Error {
-    if (this.options.sanitizeRankerErrors === false) {
-      return err instanceof Error ? err : new Error(String(err));
-    }
-    const typeName = err instanceof Error ? (err.constructor?.name ?? 'Error') : typeof err;
-    const innerCause = err instanceof Error && err.cause !== undefined
-      ? new Error(`Caused by: ${(err.cause as Error)?.constructor?.name ?? typeof err.cause}`)
-      : undefined;
-
-    const sanitized = new Error(
-      `VectorRanker ${typeName} (message scrubbed for security)`,
-      innerCause ? { cause: innerCause } : undefined,
-    );
-    sanitized.name = typeName;
-    return sanitized;
+    return sanitizeRankerError(err, this.options.sanitizeRankerErrors);
   }
 }

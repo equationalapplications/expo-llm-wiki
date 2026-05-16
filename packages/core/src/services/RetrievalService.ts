@@ -6,6 +6,7 @@ import type { EventRepository } from '../repositories/EventRepository';
 import type { MetadataRepository } from '../repositories/MetadataRepository';
 import type { SearchService } from './SearchService';
 import { applyTierWeight, normalizeEntityIds, sanitizeTierWeights, shouldExposeReadMetadata } from '../readOptions';
+import { sanitizeRankerError } from '../utils/pure';
 
 type ReadCandidateRowMetadata = EntryRowMetadata;
 type ReadCandidateRowWithEmbeddings = EntryRowWithEmbeddings;
@@ -604,32 +605,8 @@ export class RetrievalService {
     return this.entryRepo.findByIds(ids, scopedEntityIds, tx);
   }
 
-  /**
-   * Strip potentially sensitive data from ranker errors before exposing to host callbacks.
-   * Preserves error type for debugging but removes message/stack that may contain credentials.
-   * Recursively sanitizes one level of .cause; deeper chains collapse to type only.
-   */
   private _sanitizeRankerError(err: unknown): Error {
-    if (this.options.sanitizeRankerErrors === false) {
-      return err instanceof Error ? err : new Error(String(err));
-    }
-
-    const typeName =
-      err instanceof Error
-        ? (err.constructor?.name ?? 'Error')
-        : typeof err;
-
-    const innerCause =
-      err instanceof Error && err.cause !== undefined
-        ? new Error(`Caused by: ${(err.cause as Error)?.constructor?.name ?? typeof err.cause}`)
-        : undefined;
-
-    const sanitized = new Error(
-      `VectorRanker ${typeName} (message scrubbed for security)`,
-      innerCause ? { cause: innerCause } : undefined,
-    );
-    sanitized.name = typeName;
-    return sanitized;
+    return sanitizeRankerError(err, this.options.sanitizeRankerErrors);
   }
 
   /**

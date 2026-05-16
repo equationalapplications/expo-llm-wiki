@@ -8,7 +8,10 @@ export function parseJsonResponse<T>(text: string): T {
   let openChar: string;
   let closeChar: string;
 
-  if (firstBrace !== -1) {
+  const useBrace =
+    firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket);
+
+  if (useBrace) {
     start = firstBrace;
     openChar = '{';
     closeChar = '}';
@@ -39,6 +42,23 @@ export function parseJsonResponse<T>(text: string): T {
 
   if (end === -1) throw new SyntaxError('No JSON object/array found in LLM response');
   return JSON.parse(text.slice(start, end + 1)) as T;
+}
+
+export function sanitizeRankerError(err: unknown, sanitizeRankerErrors: boolean | undefined): Error {
+  if (sanitizeRankerErrors === false) {
+    return err instanceof Error ? err : new Error(String(err));
+  }
+  const typeName = err instanceof Error ? (err.constructor?.name ?? 'Error') : typeof err;
+  const innerCause =
+    err instanceof Error && err.cause !== undefined
+      ? new Error(`Caused by: ${(err.cause as Error)?.constructor?.name ?? typeof err.cause}`)
+      : undefined;
+  const sanitized = new Error(
+    `VectorRanker ${typeName} (message scrubbed for security)`,
+    innerCause ? { cause: innerCause } : undefined,
+  );
+  sanitized.name = typeName;
+  return sanitized;
 }
 
 export function safeSlice(value: string, start: number, end?: number): string {

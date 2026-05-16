@@ -531,19 +531,14 @@ export class EntryRepository extends BaseRepository {
   ): Promise<string[]> {
     const executor = this.getExecutor(tx);
     const now = Date.now();
-    const orphanedRows = await executor.getAllAsync<{ id: string }>(
-      `SELECT id FROM ${this.prefix}entries
-       WHERE entity_id = ? AND access_count = 0 AND created_at <= ? AND source_type != 'immutable_document' AND deleted_at IS NULL`,
-      [entityId, orphanThreshold],
-    );
-    if (orphanedRows.length === 0) return [];
-    await executor.runAsync(
+    const updatedRows = await executor.getAllAsync<{ id: string }>(
       `UPDATE ${this.prefix}entries
        SET deleted_at = ?, updated_at = ?
-       WHERE entity_id = ? AND access_count = 0 AND created_at <= ? AND source_type != 'immutable_document' AND deleted_at IS NULL`,
+       WHERE entity_id = ? AND access_count = 0 AND created_at <= ? AND source_type != 'immutable_document' AND deleted_at IS NULL
+       RETURNING id`,
       [now, now, entityId, orphanThreshold],
     );
-    for (const row of orphanedRows) {
+    for (const row of updatedRows) {
       await this.outbox.push({
         entityId,
         tableName: 'entries',
@@ -552,7 +547,7 @@ export class EntryRepository extends BaseRepository {
         payload: { id: row.id, entity_id: entityId, deleted_at: now },
       }, tx);
     }
-    return orphanedRows.map(r => r.id);
+    return updatedRows.map(r => r.id);
   }
 
   /**
