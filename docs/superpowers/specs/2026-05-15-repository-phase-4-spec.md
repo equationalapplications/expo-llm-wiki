@@ -432,65 +432,7 @@ This ordering reduces churn in the facade layer and keeps the integration step f
 
 Earlier drafts of this spec included tool-specific assistant prompts used during implementation planning. Those operational instructions are omitted here because this document is intended to remain a durable repository reference describing the design, sequencing constraints, and expected code changes.
 
-```
-You are executing PR 2 of our Prompt Management Refactor. 
-Your scope is strictly limited to `packages/core/src/services/IngestionService.ts` and its corresponding test file.
-
-Assume `PromptService` already exists and is exported from `../services/PromptService` (or equivalent types file). It has the following method:
-`buildIngestPrompt(documentChunk: string, runtimeOverride?: string): { systemPrompt: string; userPrompt: string }`
-
-Execute the following changes:
-1. Update the `IngestionService` constructor to accept `private promptService: PromptService`.
-2. Update the `ingestDocument` method signature so the `params` object accepts an optional `promptOverride?: string`.
-3. Inside `ingestDocument`, locate the LLM generation step inside the `chunks.map` loop.
-4. Remove the manual construction of `userPrompt` (`const userPrompt = 'Document Chunk:\n' + chunk;`) and the direct usage of `INGEST_SYSTEM_PROMPT`.
-5. Call `const { systemPrompt, userPrompt } = this.promptService.buildIngestPrompt(chunk, params.promptOverride);`
-6. Pass those returned values into `this.options.llmProvider.generateText({ systemPrompt, userPrompt })`.
-7. Remove the import for `INGEST_SYSTEM_PROMPT` at the top of the file if it is no longer used.
-
-CRITICAL CONSTRAINTS:
-- Do NOT alter any `JobManager` lock acquisition or release logic.
-- Do NOT alter the chunking math or concurrency loops.
-- Do NOT alter any database transaction, upsert, or `searchService.sync()` logic.
-- Only output the exact modifications requested.
-```
-
----
-
-### Prompt for Agent 3 (PR 3: Maintenance Overhaul)
-
-**Copy and paste this into the agent working on `MaintenanceService`:**
-
-Plaintext
-
-```
-You are executing PR 3 of our Prompt Management Refactor. 
-Your scope is strictly limited to `packages/core/src/services/MaintenanceService.ts` and its corresponding test file.
-
-Assume `PromptService` already exists and is exported from `../services/PromptService`. It has the following methods:
-- `buildLibrarianPrompt(events: any[], currentFacts: any[], runtimeOverride?: string): { systemPrompt: string; userPrompt: string }`
-- `buildHealPrompt(healCandidates: any[], documentAnchors: any[], allTasks: any[], recentEvents: any[], runtimeOverride?: string): { systemPrompt: string; userPrompt: string }`
-
-Execute the following changes:
-1. Update the `MaintenanceService` constructor to accept `private promptService: PromptService`.
-2. Update the public `runLibrarian(entityId: string, options?: { promptOverride?: string })` and `runHeal(entityId: string, options?: { promptOverride?: string })` methods to accept the new options object, and pass the override down to `doRunLibrarian` and `doRunHeal`.
-3. Update `doRunLibrarian(entityId: string, promptOverride?: string)`:
-   - Remove the manual `userPrompt` stringification (`Events:\n${JSON.stringify(...)}`).
-   - Call `const { systemPrompt, userPrompt } = this.promptService.buildLibrarianPrompt(events, currentFacts, promptOverride);`.
-   - Pass these into `this.options.llmProvider.generateText`.
-4. Update `doRunHeal(entityId: string, promptOverride?: string)`:
-   - Remove the massive manual `userPrompt` stringification block.
-   - Call `const { systemPrompt, userPrompt } = this.promptService.buildHealPrompt(healCandidates, documentAnchors, allTasks, recentEvents, promptOverride);`.
-   - Pass these into `this.options.llmProvider.generateText`.
-5. Remove the imports for `LIBRARIAN_SYSTEM_PROMPT` and `HEAL_SYSTEM_PROMPT` if they are no longer used.
-
-CRITICAL CONSTRAINTS:
-- Do NOT alter any `JobManager` lock acquisition or release logic.
-- Do NOT alter the database threshold logic (orphan/stale checks).
-- Do NOT alter the database upsert, downgrade, or transaction logic.
-- Only output the exact modifications requested.
-```
-
+> Note: This durable spec intentionally excludes tool-specific agent prompts. It documents the expected design and sequencing, not operational prompt instructions.
 ---
 
 With PR 1 acting as the anchor, these agents will safely gut the formatting logic out of your core services in parallel.
