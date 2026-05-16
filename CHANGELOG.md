@@ -1,3 +1,47 @@
+# [4.8.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.7.0...v4.8.0) (2026-05-16)
+
+
+### Bug Fixes
+
+* **core:** address Copilot review — narrow prompts JSDoc and fix invalid JSON in docs ([4b059c3](https://github.com/equationalapplications/expo-llm-wiki/commit/4b059c39a3766047840753f7476a45253d5b12bd))
+* **core:** address Copilot review — PromptService correctness and docs accuracy ([aef9b78](https://github.com/equationalapplications/expo-llm-wiki/commit/aef9b787cb6da9116113193b4a17526f94105306))
+* **core:** address PR review — test access, setup inline, heal timing ([73d3538](https://github.com/equationalapplications/expo-llm-wiki/commit/73d353886917535ff9a7b0573598a5ce00ff981b))
+* **core:** align ImportExportService style and clarify async tick in tests ([d76c85c](https://github.com/equationalapplications/expo-llm-wiki/commit/d76c85c3c7c5293d069a03588e13a148cb37caf5)), closes [#33](https://github.com/equationalapplications/expo-llm-wiki/issues/33)
+* **core:** avoid ingest lock collisions for colon-containing entity IDs ([641ab2f](https://github.com/equationalapplications/expo-llm-wiki/commit/641ab2f5842743767afe723bfcc27732952b4c33))
+* **core:** correct FIFO cache naming and add negative-cosine clamp test ([21d3b81](https://github.com/equationalapplications/expo-llm-wiki/commit/21d3b81e59381fc09fac0f86389758667b386c90))
+* **core:** correct ingest lock matching and robust embedding hook handling ([af45f76](https://github.com/equationalapplications/expo-llm-wiki/commit/af45f764ae2cca80096adcc1baa6829bee701e7f))
+* **core:** fix heal template detection for all variables, export PromptService from index ([43a430a](https://github.com/equationalapplications/expo-llm-wiki/commit/43a430ac6f6aa945cdaa423a7cdbf33da1781d0a))
+* **core:** hoist embedFn guard before lock; rollback checkpoint on lock race ([bfdba50](https://github.com/equationalapplications/expo-llm-wiki/commit/bfdba504f7a73c654ce6c6627edc443c9a095f68))
+* **core:** make promptService optional with config fallback, restore heal anchor protection sentence ([426e7a3](https://github.com/equationalapplications/expo-llm-wiki/commit/426e7a30e1717ab961d066bc9b60888e5834336b))
+* **core:** narrow blockingOperation type; fix spec typo ([364800e](https://github.com/equationalapplications/expo-llm-wiki/commit/364800ea358b170071ccdcc90a1737833289e3a4))
+* **core:** remove duplicate SearchService from src root; canonical path is services/ ([4b449e5](https://github.com/equationalapplications/expo-llm-wiki/commit/4b449e5c4573ef628df46ee1345844cf450acd55))
+* **core:** remove redundant evictCache() calls preceding sync() ([043f93c](https://github.com/equationalapplications/expo-llm-wiki/commit/043f93c1cb2e7071910cdcf3b033995b79954211))
+* **core:** restore auto-trigger lock semantics in JobManager wiring ([50435ae](https://github.com/equationalapplications/expo-llm-wiki/commit/50435ae824513634d78016ede6f4137ea51ec748))
+* **core:** restore task import cache updates for in-bundle LWW ([28a9202](https://github.com/equationalapplications/expo-llm-wiki/commit/28a920249d99c8a33d02537520f64cfa885a3ca6))
+* **core:** tighten WikiMemory review follow-ups ([d7886c1](https://github.com/equationalapplications/expo-llm-wiki/commit/d7886c104d0e08e6a27b11686f47b925eb822bbd))
+* **core:** use config.prompts in PromptService fallback, strengthen ingest test assertion ([d42862d](https://github.com/equationalapplications/expo-llm-wiki/commit/d42862dfc01f30b527d093f83e463e453295a2c7))
+* **pr-35:** address final copilot review issues ([6eadd2f](https://github.com/equationalapplications/expo-llm-wiki/commit/6eadd2f32d911224eb438796166b9d06db840752))
+* **pr-35:** address final review issues ([67b51aa](https://github.com/equationalapplications/expo-llm-wiki/commit/67b51aa21fb2cddab550dc58f38c0a2a7ec3126d))
+* **pr-35:** address review feedback ([e2f8b4f](https://github.com/equationalapplications/expo-llm-wiki/commit/e2f8b4f513d4c305724b2f966c14ad9b9c81982e)), closes [#35](https://github.com/equationalapplications/expo-llm-wiki/issues/35)
+* **pr-35:** address review issues ([d3822f3](https://github.com/equationalapplications/expo-llm-wiki/commit/d3822f3523f53a53a24c490b91bacafe50f04297))
+* **pr:** trim Phase 3.5 spec and add core testing exports ([4a0fe17](https://github.com/equationalapplications/expo-llm-wiki/commit/4a0fe1702084d9cc485dda6c4c9ca356f5bc70aa))
+* **react,core:** guard options forwarding in useWikiMaintenance; add write-triggered prompt test ([4f33d19](https://github.com/equationalapplications/expo-llm-wiki/commit/4f33d199052994a8c1de22b126b7b0caf9fee43a))
+* resolve PR [#35](https://github.com/equationalapplications/expo-llm-wiki/issues/35) review issues ([76d1146](https://github.com/equationalapplications/expo-llm-wiki/commit/76d1146208ae9cc32db9fbe99788299bc02b21a3))
+* **spec:** close template literal in phase 3 heal prompt example ([9974bb7](https://github.com/equationalapplications/expo-llm-wiki/commit/9974bb7d413241ad53abbcd7c83f5f44668fe473))
+
+
+### Features
+
+* **core:** add PromptService with mustache hydration and PromptOverrides type ([944bf8a](https://github.com/equationalapplications/expo-llm-wiki/commit/944bf8abd95c1b9d28826ad833dd0fe5fa4c15bb))
+* **core:** add SearchService with keyword/vector/cache logic (PR 1) ([0985880](https://github.com/equationalapplications/expo-llm-wiki/commit/0985880bdad0ee4d37d7951592942a5c23516a76))
+* **core:** extract IngestionService and MaintenanceService (phase-3 PR2) ([89aecdf](https://github.com/equationalapplications/expo-llm-wiki/commit/89aecdf8fa826524a241c1ca0038ebe425d4ffcb))
+* **core:** extract pure utilities and JobManager (phase-3 PR1) ([35f422f](https://github.com/equationalapplications/expo-llm-wiki/commit/35f422f2c1569ba9f53d965fd0c63587f3d4c526))
+* **core:** extract WikiMemory services and test __testAccess ([1a21a0c](https://github.com/equationalapplications/expo-llm-wiki/commit/1a21a0c68b5017385711a72b87f7d35b859f0e21))
+* **core:** wire PromptService in WikiMemory facade, expose promptOverride on public API ([db470a0](https://github.com/equationalapplications/expo-llm-wiki/commit/db470a04e9f4f9d280fa067daa94f59bb9842137))
+* **core:** wire PromptService into IngestionService with promptOverride support ([046e978](https://github.com/equationalapplications/expo-llm-wiki/commit/046e978ef0ed051e74a6693904c376503265484a))
+* **core:** wire PromptService into MaintenanceService with promptOverride on runLibrarian/runHeal ([01a2dc3](https://github.com/equationalapplications/expo-llm-wiki/commit/01a2dc3f6c50fe045a56f89f0f7d7e58151a9fa9))
+* **core:** wire SearchService into WikiMemory (Phase 2.5 PR 2) ([4a6964a](https://github.com/equationalapplications/expo-llm-wiki/commit/4a6964abca8b134a44675b1a02004171fa7d8c19))
+
 # [4.7.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.6.1...v4.7.0) (2026-05-15)
 
 
