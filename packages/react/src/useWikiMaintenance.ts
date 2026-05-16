@@ -16,13 +16,13 @@ export function useWikiMaintenance() {
   // Counter so any overlapping maintenance operation keeps isPending=true until all complete
   const pendingCount = useRef(0);
 
-  const runLibrarian = useCallback(async (entityId: string): Promise<void> => {
+  const runLibrarian = useCallback(async (entityId: string, options?: { promptOverride?: string }): Promise<void> => {
     setError(null);
     pendingCount.current += 1;
     setIsPending(true);
     setLastResult(null);
     try {
-      await wikiRef.current.runLibrarian(entityId);
+      await (options ? wikiRef.current.runLibrarian(entityId, options) : wikiRef.current.runLibrarian(entityId));
       setLastResult({ operation: 'librarian', result: undefined });
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e));
@@ -34,13 +34,13 @@ export function useWikiMaintenance() {
     }
   }, []);
 
-  const runHeal = useCallback(async (entityId: string): Promise<void> => {
+  const runHeal = useCallback(async (entityId: string, options?: { promptOverride?: string }): Promise<void> => {
     setError(null);
     pendingCount.current += 1;
     setIsPending(true);
     setLastResult(null);
     try {
-      await wikiRef.current.runHeal(entityId);
+      await (options ? wikiRef.current.runHeal(entityId, options) : wikiRef.current.runHeal(entityId));
       setLastResult({ operation: 'heal', result: undefined });
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e));

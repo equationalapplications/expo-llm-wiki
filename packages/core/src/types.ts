@@ -12,6 +12,12 @@ export interface SQLiteAdapter {
   closeAsync(): Promise<void>;
 }
 
+export interface PromptOverrides {
+  ingestSystemPrompt?: string;
+  librarianSystemPrompt?: string;
+  healSystemPrompt?: string;
+}
+
 export interface WikiConfig {
   tablePrefix?: string;
   maxResults?: number;
@@ -41,6 +47,8 @@ export interface WikiConfig {
    * Default: undefined (pure semantic when embed provided).
    */
   hybridWeight?: number;
+  /** Global prompt overrides for text generation calls (`ingestDocument`, `runLibrarian`, `runHeal`). Does not affect embedding generation. Runtime overrides on individual method calls take precedence. */
+  prompts?: PromptOverrides;
 }
 
 export interface ReadOptions {
@@ -95,7 +103,7 @@ export interface WikiFact {
    * or a numeric-keyed plain object `{ 0: byte, 1: byte, ... }` produced
    * by JSON.stringify(Uint8Array).
    */
-  embedding_blob?: Uint8Array | { type: 'Buffer'; data: number[] } | Record<string, number>;
+  embedding_blob?: Uint8Array | { type: 'Buffer'; data: number[] } | Record<string, number> | null;
   last_accessed_at: number | null;
   access_count: number;
   deleted_at: number | null;
@@ -400,4 +408,6 @@ export class PrunePartialFailureError extends Error {
     this.cause = cause;
   }
 }
+
+export const HOOK_TIMEOUT_MARKER = Symbol('WikiMemoryHookTimeout');
 

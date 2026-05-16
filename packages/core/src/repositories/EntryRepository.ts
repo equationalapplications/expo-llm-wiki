@@ -41,6 +41,32 @@ function mapRowToFact(row: any): WikiFact {
   };
 }
 
+function normalizeEmbeddingBlobValue(blob: unknown): Uint8Array | null {
+  if (blob instanceof Uint8Array) return blob;
+  if (blob !== null && blob !== undefined && typeof blob === 'object') {
+    const obj = blob as Record<string, unknown>;
+    if (obj['type'] === 'Buffer' && Array.isArray(obj['data'])) {
+      return new Uint8Array(obj['data'] as number[]);
+    }
+    const entries = Object.keys(obj);
+    if (entries.length > 0 && entries.every((k) => /^\d+$/.test(k))) {
+      const len = entries.length;
+      const arr = new Uint8Array(len);
+      for (let i = 0; i < len; i++) arr[i] = (obj[String(i)] as number) ?? 0;
+      return arr;
+    }
+  }
+  return null;
+}
+
+/** Mapper that preserves embedding_blob for export/import round-tripping. */
+function mapRowToFactWithBlobs(row: any): WikiFact {
+  const base = mapRowToFact(row);
+  const embeddingBlob = normalizeEmbeddingBlobValue(row.embedding_blob);
+  return embeddingBlob ? { ...base, embedding_blob: embeddingBlob } : base;
+}
+
+
 export class EntryRepository extends BaseRepository {
   private chunkSize = 500;
 
@@ -154,21 +180,7 @@ export class EntryRepository extends BaseRepository {
    * Normalize an embedding blob value to Uint8Array or null.
    */
   private normalizeEmbeddingBlob(blob: unknown): Uint8Array | null {
-    if (blob instanceof Uint8Array) return blob;
-    if (blob !== null && blob !== undefined && typeof blob === 'object') {
-      const obj = blob as Record<string, unknown>;
-      if (obj['type'] === 'Buffer' && Array.isArray(obj['data'])) {
-        return new Uint8Array(obj['data'] as number[]);
-      }
-      const entries = Object.keys(obj);
-      if (entries.length > 0 && entries.every((k) => /^\d+$/.test(k))) {
-        const len = entries.length;
-        const arr = new Uint8Array(len);
-        for (let i = 0; i < len; i++) arr[i] = (obj[String(i)] as number) ?? 0;
-        return arr;
-      }
-    }
-    return null;
+    return normalizeEmbeddingBlobValue(blob);
   }
 
   /**
@@ -386,7 +398,7 @@ export class EntryRepository extends BaseRepository {
 
   /**
    * Fetch recent non-deleted entries for an entity (limited), ordered by updated_at DESC.
-   * Used by _doRunLibrarian().
+   * Used by MaintenanceService.doRunLibrarian().
    */
   async findRecentByEntityId(entityId: string, limit: number, tx?: SQLiteAdapter): Promise<WikiFact[]> {
     const executor = this.getExecutor(tx);
@@ -395,6 +407,19 @@ export class EntryRepository extends BaseRepository {
       [entityId, limit],
     );
     return rows.map(mapRowToFact);
+  }
+
+  /**
+   * Fetch all non-deleted entries for an entity with embedding blobs preserved.
+   * Used by ImportExportService for export/import round-tripping.
+   */
+  async findAllByEntityIdWithBlobs(entityId: string, tx?: SQLiteAdapter): Promise<WikiFact[]> {
+    const executor = this.getExecutor(tx);
+    const rows = await executor.getAllAsync<any>(
+      `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC`,
+      [entityId],
+    );
+    return rows.map(mapRowToFactWithBlobs);
   }
 
   /**
@@ -497,28 +522,23 @@ export class EntryRepository extends BaseRepository {
 
   /**
    * Mark orphaned entries (never accessed, old) as deleted.
-   * Used by _doRunHeal().
+   * Used by MaintenanceService.doRunHeal().
    */
   async markOrphaned(
     entityId: string,
     orphanThreshold: number,
     tx: SQLiteAdapter,
-  ): Promise<number> {
+  ): Promise<string[]> {
     const executor = this.getExecutor(tx);
     const now = Date.now();
-    const orphanedRows = await executor.getAllAsync<{ id: string }>(
-      `SELECT id FROM ${this.prefix}entries
-       WHERE entity_id = ? AND access_count = 0 AND created_at <= ? AND source_type != 'immutable_document' AND deleted_at IS NULL`,
-      [entityId, orphanThreshold],
-    );
-    if (orphanedRows.length === 0) return 0;
-    const result = await executor.runAsync(
+    const updatedRows = await executor.getAllAsync<{ id: string }>(
       `UPDATE ${this.prefix}entries
        SET deleted_at = ?, updated_at = ?
-       WHERE entity_id = ? AND access_count = 0 AND created_at <= ? AND source_type != 'immutable_document' AND deleted_at IS NULL`,
+       WHERE entity_id = ? AND access_count = 0 AND created_at <= ? AND source_type != 'immutable_document' AND deleted_at IS NULL
+       RETURNING id`,
       [now, now, entityId, orphanThreshold],
     );
-    for (const row of orphanedRows) {
+    for (const row of updatedRows) {
       await this.outbox.push({
         entityId,
         tableName: 'entries',
@@ -527,12 +547,12 @@ export class EntryRepository extends BaseRepository {
         payload: { id: row.id, entity_id: entityId, deleted_at: now },
       }, tx);
     }
-    return result.changes;
+    return updatedRows.map(r => r.id);
   }
 
   /**
    * Downgrade stale inferred entries to 'tentative'.
-   * Used by _doRunHeal().
+   * Used by MaintenanceService.doRunHeal().
    */
   async downgradeStaleInferred(
     entityId: string,
@@ -569,7 +589,7 @@ export class EntryRepository extends BaseRepository {
 
   /**
    * Downgrade specific entries to 'tentative' by IDs.
-   * Used by _doRunHeal().
+   * Used by MaintenanceService.doRunHeal().
    */
   async downgradeByIds(
     ids: string[],
@@ -598,7 +618,7 @@ export class EntryRepository extends BaseRepository {
 
   /**
    * Soft-delete specific entries by IDs.
-   * Used by _doRunHeal().
+   * Used by MaintenanceService.doRunHeal().
    */
   async softDeleteByIds(
     ids: string[],

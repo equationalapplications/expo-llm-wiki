@@ -114,6 +114,16 @@ const wiki = createWiki(db, {
     staleInferredAfterDays: 60,        // default: 60 (days before runHeal downgrades inferred facts; null to disable)
     preFilterLimit: 50,                // default: undefined — MiniSearch pre-filter before cosine scan; recommended for >500 facts
     hybridWeight: 0.7,                 // default: undefined — blend semantic (1.0) ↔ keyword (0.0); pure semantic when unset
+
+    // Global prompt overrides — librarianSystemPrompt and healSystemPrompt apply to write() auto-runs;
+    // ingestSystemPrompt applies only to explicit ingestDocument() calls.
+    // ⚠ Overrides replace the entire default prompt, including the JSON output contract.
+    // Your prompt must instruct the LLM to return the required JSON shape — see packages/core/README.md#prompt-management--overrides.
+    prompts: {
+      ingestSystemPrompt: `Extract core facts from this document: {{documentChunk}}\n\nReturn ONLY valid JSON: { "facts": [{ "title": "string", "body": "string", "tags": ["string"], "confidence": "certain|inferred|tentative" }] }. No markdown.`,
+      librarianSystemPrompt: `Synthesize these thoughts into insights:\n{{events}}\n\nReturn ONLY valid JSON: { "facts": [{ "title": "string", "body": "string", "tags": ["string"], "confidence": "certain|inferred|tentative" }], "tasks": [{ "description": "string", "priority": 0 }] }. No markdown.`,
+      healSystemPrompt: `Fix the memory graph based on these candidates: {{healCandidates}}\n\nReturn ONLY valid JSON: { "downgraded": ["factId"], "deleted": ["factId"], "newFacts": [{ "title": "string", "body": "string", "tags": ["string"], "confidence": "certain|inferred|tentative" }] }. No markdown.`,
+    },
   },
 });
 ```
@@ -168,8 +178,21 @@ const wiki = createWiki(db, {
 // Initialize tables (call once on app startup)
 await wiki.setup();
 
-// Use wiki instance
+// Auto-runs: uses config.prompts for background librarian/heal triggers
 await wiki.write('user-123', { event_type: 'observation', summary: '...' });
+
+// Manual executions: runtime promptOverride applies only to this single call.
+// Must include the JSON output contract — overrides replace the entire default prompt.
+await wiki.runLibrarian('user-123', {
+  promptOverride: `Strict domain extraction task:\n{{events}}\n\nReturn ONLY valid JSON: { "facts": [{ "title": "string", "body": "string", "tags": ["string"], "confidence": "certain|inferred|tentative" }], "tasks": [{ "description": "string", "priority": 0 }] }. No markdown.`,
+});
+
+await wiki.ingestDocument('user-123', {
+  sourceRef: 'doc-1',
+  sourceHash: sha256(content),
+  documentChunk: content,
+  promptOverride: `Focus strictly on technical APIs: {{documentChunk}}\n\nReturn ONLY valid JSON: { "facts": [{ "title": "string", "body": "string", "tags": ["string"], "confidence": "certain|inferred|tentative" }] }. No markdown.`,
+});
 ```
 
 ## With React
@@ -289,7 +312,7 @@ const memory = await wiki.read(
 // tasks capped at min(20 × entityCount, 200); events at min(10 × entityCount, 100)
 ```
 
-For Librarian prompt utilities (`hydrateLibrarianPrompt`, `validateLibrarianPromptTemplate`, etc.), see [`packages/core/README.md`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md#librarian-prompt-override-contract).
+For full details on `{{mustache}}` prompt templating and the strict distinction between global auto-runs and runtime overrides, see [Prompt Management & Overrides](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md#prompt-management--overrides) in `@equationalapplications/core-llm-wiki`.
 
 ## License
 

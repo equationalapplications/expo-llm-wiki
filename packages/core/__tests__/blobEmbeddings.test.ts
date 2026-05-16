@@ -37,19 +37,19 @@ describe('BLOB embedding storage', () => {
     expect(row!.embedding_blob!.byteLength).toBe(12); // 3 × 4 bytes
   });
 
-  it('read() round-trips BLOB vector correctly', async () => {
+  it('getFullBundle() round-trips BLOB vector correctly', async () => {
     const embedVec = [0.5, 0.5, 0.5];
     const { wiki, db } = makeWiki(async () => embedVec);
     await wiki.setup();
     await insertFact(db, 'f1', 'user-1');
     await wiki.runReembed('user-1');
 
-    // read() should not crash, should return the fact
-    const result = await wiki.read('user-1', 'anything');
+    // getFullBundle with includeBlobs should return the fact with embedding_blob
+    const result = await wiki.__testAccess.importExportService.getFullBundle('user-1', { includeBlobs: true });
     expect(result.facts).toHaveLength(1);
     expect(result.facts[0].id).toBe('f1');
-    // embedding_blob must not appear on returned facts
-    expect((result.facts[0] as any).embedding_blob).toBeUndefined();
+    // embedding_blob is preserved on returned facts for export/import round-tripping
+    expect((result.facts[0] as any).embedding_blob).toBeDefined();
     expect((result.facts[0] as any).embedding).toBeUndefined();
   });
 

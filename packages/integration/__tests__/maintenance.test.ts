@@ -179,13 +179,13 @@ describe('maintenance — Scenario 4: prune lock blocks runLibrarian; different 
     await wiki.setup();
 
     // Inject prune lock to simulate runPrune in-flight
-    (wiki as any).activeMaintenanceJobs.add('llm_wiki_:entity-a:prune');
+    wiki.__testAccess.jobManager.acquireLock('prune', 'entity-a');
 
     const err = await wiki.runLibrarian('entity-a').catch(e => e);
     expect(err).toBeInstanceOf(WikiBusyError);
     expect((err as WikiBusyError).operation).toBe('prune');
 
-    (wiki as any).activeMaintenanceJobs.delete('llm_wiki_:entity-a:prune');
+    wiki.__testAccess.jobManager.releaseLock('prune', 'entity-a');
   });
 
   it('runLibrarian on entity-b proceeds normally while entity-a prune lock is held', async () => {
@@ -193,12 +193,12 @@ describe('maintenance — Scenario 4: prune lock blocks runLibrarian; different 
     const wiki = new WikiMemory(db, { llmProvider: stubLLM() });
     await wiki.setup();
 
-    (wiki as any).activeMaintenanceJobs.add('llm_wiki_:entity-a:prune');
+    wiki.__testAccess.jobManager.acquireLock('prune', 'entity-a');
 
     // entity-b has no lock — resolves without error
     await expect(wiki.runLibrarian('entity-b')).resolves.toBeUndefined();
 
-    (wiki as any).activeMaintenanceJobs.delete('llm_wiki_:entity-a:prune');
+    wiki.__testAccess.jobManager.releaseLock('prune', 'entity-a');
   });
 });
 

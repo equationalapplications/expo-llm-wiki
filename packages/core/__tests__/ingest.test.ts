@@ -1,5 +1,81 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { WikiMemory } from '../src/WikiMemory';
+import { IngestionService } from '../src/services/IngestionService';
+import { PromptService } from '../src/services/PromptService';
+import { INGEST_SYSTEM_PROMPT } from '../src/prompts';
+
+describe('IngestionService — PromptService injection', () => {
+  const fakeLlmResponse = JSON.stringify({ facts: [{ title: 'T', body: 'B', tags: [], confidence: 'certain' }] });
+  let mockDb: any;
+  let mockOptions: any;
+  let mockEntryRepo: any;
+  let mockSearchService: any;
+  let mockJobManager: any;
+  let mockEmbeddingService: any;
+
+  beforeEach(() => {
+    mockDb = {
+      withTransactionAsync: vi.fn(async (fn: (tx: any) => Promise<void>) => fn(mockDb)),
+      runAsync: vi.fn().mockResolvedValue({ changes: 0, lastInsertRowId: 0 }),
+      getAllAsync: vi.fn().mockResolvedValue([]),
+      getFirstAsync: vi.fn().mockResolvedValue(null),
+    };
+    mockOptions = { llmProvider: { generateText: vi.fn().mockResolvedValue(fakeLlmResponse) } };
+    mockEntryRepo = {
+      findIdsBySource: vi.fn().mockResolvedValue([]),
+      softDeleteBySource: vi.fn().mockResolvedValue(undefined),
+      upsert: vi.fn().mockResolvedValue(undefined),
+    };
+    mockSearchService = {
+      sync: vi.fn().mockResolvedValue(undefined),
+      evictCache: vi.fn(),
+    };
+    mockJobManager = {
+      acquireLock: vi.fn(),
+      releaseLock: vi.fn(),
+    };
+    mockEmbeddingService = {
+      embedFact: vi.fn().mockResolvedValue(true),
+      notifyEmbeddingPersisted: vi.fn().mockResolvedValue(undefined),
+    };
+  });
+
+  it('passes systemPrompt and userPrompt from PromptService to llmProvider', async () => {
+    const promptService = new PromptService();
+    const svc = new IngestionService(mockDb, 'llm_wiki_', mockOptions, mockEntryRepo, mockSearchService, mockJobManager, mockEmbeddingService, promptService);
+
+    const sourceHash = 'a'.repeat(64);
+    await svc.ingestDocument('entity1', {
+      sourceRef: 'doc://test',
+      sourceHash,
+      documentChunk: 'hello world',
+    });
+
+    expect(mockOptions.llmProvider.generateText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        systemPrompt: INGEST_SYSTEM_PROMPT,
+        userPrompt: expect.stringContaining('hello world'),
+      })
+    );
+  });
+
+  it('applies runtime promptOverride via PromptService', async () => {
+    const promptService = new PromptService();
+    const svc = new IngestionService(mockDb, 'llm_wiki_', mockOptions, mockEntryRepo, mockSearchService, mockJobManager, mockEmbeddingService, promptService);
+
+    const sourceHash = 'b'.repeat(64);
+    await svc.ingestDocument('entity1', {
+      sourceRef: 'doc://test2',
+      sourceHash,
+      documentChunk: 'chunk text',
+      promptOverride: 'custom system prompt',
+    });
+
+    expect(mockOptions.llmProvider.generateText).toHaveBeenCalledWith(
+      expect.objectContaining({ systemPrompt: 'custom system prompt' })
+    );
+  });
+});
 
 type Row = Record<string, any>;
 

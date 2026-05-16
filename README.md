@@ -4,10 +4,6 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fexpo-llm-wiki?label=expo)](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fexpo-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki) [![bundlephobia](https://img.shields.io/bundlephobia/minzip/%40equationalapplications%2Fexpo-llm-wiki?label=gzip)](https://bundlephobia.com/package/@equationalapplications/expo-llm-wiki)<br>
-[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Freact-llm-wiki?label=react)](https://www.npmjs.com/package/@equationalapplications/react-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Freact-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/react-llm-wiki) [![bundlephobia](https://img.shields.io/bundlephobia/minzip/%40equationalapplications%2Freact-llm-wiki?label=gzip)](https://bundlephobia.com/package/@equationalapplications/react-llm-wiki)<br>
-[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fcore-llm-wiki?label=core)](https://www.npmjs.com/package/@equationalapplications/core-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fcore-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/core-llm-wiki) [![bundlephobia](https://img.shields.io/bundlephobia/minzip/%40equationalapplications%2Fcore-llm-wiki?label=gzip)](https://bundlephobia.com/package/@equationalapplications/core-llm-wiki)
-
 ## Persistent, episodic memory for AI Agents.
 
 expo-llm-wiki is a cross-platform TypeScript and SQLite library for long-term LLM memory. It bridges the gap between raw conversation logs and a structured knowledge base, supporting background fact extraction, semantic embedding search, and memory pruning.
@@ -94,11 +90,11 @@ flowchart TB
 
 `expo-llm-wiki` is organized as a monorepo with three packages, each optimized for different platforms:
 
-| Package | Platform | SQLite Adapter | Size | Dependencies |
-|---------|----------|---|---|---|
-| **`@equationalapplications/core-llm-wiki`** | Node.js, any platform | User-provided (e.g., `better-sqlite3`) | Smallest | `minisearch` |
-| **`@equationalapplications/expo-llm-wiki`** | Expo, React Native | `expo-sqlite` (built-in) | Minimal | `expo-sqlite` (peer) |
-| **`@equationalapplications/react-llm-wiki`** | Web (React) | User-provided (e.g., `sql.js`) | Small | `react` (peer) |
+| Package | Platform | SQLite Adapter | Size (Minzipped) |
+|---------|----------|---|---|
+| **`@equationalapplications/core-llm-wiki`** | Node.js, any platform | User-provided (e.g., `better-sqlite3`) | ~23 kB |
+| **`@equationalapplications/expo-llm-wiki`** | Expo, React Native | `expo-sqlite` (built-in) | ~24 kB |
+| **`@equationalapplications/react-llm-wiki`** | Web (React) | User-provided (e.g., `sql.js`) | ~25 kB |
 
 **Choose your package:**
 - **Expo/React Native app?** → `@equationalapplications/expo-llm-wiki`
@@ -186,6 +182,16 @@ const wiki = createWiki(db, {
     staleInferredAfterDays: 60,        // optional, default: 60 (days before runHeal downgrades inferred facts; null to disable)
     preFilterLimit: 50,                // optional, default: undefined — MiniSearch pre-filter before cosine scan; recommended for >500 facts
     hybridWeight: 0.7,                 // optional, default: undefined — blend semantic (1.0) ↔ keyword (0.0); pure semantic when unset
+
+    // Global prompt overrides — librarianSystemPrompt and healSystemPrompt apply to write() auto-runs;
+    // ingestSystemPrompt applies only to explicit ingestDocument() calls.
+    // ⚠ Overrides replace the entire default prompt, including the JSON output contract.
+    // Your prompt must instruct the LLM to return the required JSON shape — see packages/core/README.md#prompt-management--overrides.
+    prompts: {
+      ingestSystemPrompt: `Extract core facts from this document: {{documentChunk}}\n\nReturn ONLY valid JSON: { "facts": [{ "title": "string", "body": "string", "tags": ["string"], "confidence": "certain|inferred|tentative" }] }. No markdown.`,
+      librarianSystemPrompt: `Synthesize these thoughts into insights:\n{{events}}\n\nReturn ONLY valid JSON: { "facts": [{ "title": "string", "body": "string", "tags": ["string"], "confidence": "certain|inferred|tentative" }], "tasks": [{ "description": "string", "priority": 0 }] }. No markdown.`,
+      healSystemPrompt: `Fix the memory graph based on these candidates: {{healCandidates}}\n\nReturn ONLY valid JSON: { "downgraded": ["factId"], "deleted": ["factId"], "newFacts": [{ "title": "string", "body": "string", "tags": ["string"], "confidence": "certain|inferred|tentative" }] }. No markdown.`,
+    },
   },
 });
 
@@ -401,6 +407,11 @@ const result = await wiki.ingestDocument('entity-123', {
   maxChunkLength: 12000,              // optional, character count
   chunkOverlap: 400,                  // optional, overlap in characters
   chunkConcurrency: 1,                // optional, parallel LLM calls per ingest (default: 1)
+  // Optional: runtime override for this call only (does not affect write() auto-runs).
+  // Must include the JSON output contract — overrides replace the entire default prompt.
+  promptOverride: `Extract strict technical requirements: {{documentChunk}}
+
+Return JSON: {"facts": [{"title": "...", "body": "...", "tags": ["..."], "confidence": "certain|tentative|inferred"}]}`,
 });
 // result: { truncated: boolean; chunks: number }
 // truncated: true if at least one hard-split was required (no sentence boundary)
@@ -412,6 +423,14 @@ const result = await wiki.ingestDocument('entity-123', {
 ```typescript
 // Consolidate recent events into durable facts (auto-triggered by write, or call manually)
 await wiki.runLibrarian('entity-123');
+
+// Run a manual synthesis with a one-off runtime override (does not affect write() auto-runs).
+// Must include the JSON output contract — overrides replace the entire default prompt.
+await wiki.runLibrarian('entity-123', {
+  promptOverride: `One-off extraction task:\n{{events}}
+
+Return JSON: {"facts": [{"title": "...", "body": "...", "tags": ["..."], "confidence": "certain|tentative|inferred"}], "tasks": [{"description": "...", "priority": 5}]}`,
+});
 
 // Resolve contradictions, downgrade stale claims, remove obsolete facts
 await wiki.runHeal('entity-123');
@@ -478,7 +497,7 @@ const finalPrompt = hydrateLibrarianPrompt(template, {
 });
 ```
 
-For full examples, template-warning guidance, and the override contract, see [`packages/core/README.md`](packages/core/README.md#librarian-prompt-override-contract).
+Advanced Prompting: For full details on `{{mustache}}` prompt templating, hydration utilities, and the strict distinction between global auto-runs and runtime overrides, see [Prompt Management & Overrides](packages/core/README.md#prompt-management--overrides) in `packages/core/README.md`.
 
 Facts are ranked by a weighted score combining confidence tier, access frequency, and recency. Returns an empty string for an empty bundle.
 
