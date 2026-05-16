@@ -1,5 +1,5 @@
 import { parseJsonResponse, validateFact, validateTask, titleTokens, jaccardScore, normalizeSourceRef, normalizeSourceHash } from '../utils/pure';
-import type { PromptService } from './PromptService';
+import { PromptService } from './PromptService';
 import { generateId } from '../utils/ids';
 import { parseEmbedding } from '../utils/embedding';
 import { PrunePartialFailureError } from '../types';
@@ -18,6 +18,8 @@ const FUZZY_THRESHOLD = 0.5;
 const MIN_TOKENS_TO_QUALIFY = 3;
 
 export class MaintenanceService {
+  private promptService: PromptService;
+
   constructor(
     private db: SQLiteAdapter,
     private prefix: string,
@@ -29,8 +31,10 @@ export class MaintenanceService {
     private searchService: SearchService,
     private jobManager: JobManager,
     private embeddingService: EmbeddingService,
-    private promptService: PromptService,
-  ) {}
+    promptService?: PromptService,
+  ) {
+    this.promptService = promptService ?? new PromptService(this.options.config?.prompts);
+  }
 
   async runPrune(entityId: string, options?: { retainSoftDeletedFor?: number | null; retainEventsFor?: number | null; vacuum?: boolean }): Promise<{ entries: number; tasks: number; events: number }> {
     this.jobManager.acquireLock('prune', entityId);
