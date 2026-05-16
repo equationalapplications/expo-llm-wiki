@@ -12,6 +12,7 @@ import type { EventRepository } from '../repositories/EventRepository';
 import type { MetadataRepository } from '../repositories/MetadataRepository';
 import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
+import type { EmbeddingService } from './EmbeddingService';
 
 const FUZZY_THRESHOLD = 0.5;
 const MIN_TOKENS_TO_QUALIFY = 3;
@@ -27,10 +28,7 @@ export class MaintenanceService {
     private metadataRepo: MetadataRepository,
     private searchService: SearchService,
     private jobManager: JobManager,
-    private embedFactFn: (fact: { id: string; entity_id: string; title: string; body: string; tags: string | string[] }) => Promise<boolean>,
-    private notifyPersistedFn: (entityId: string, factId: string, vector: Float32Array | null) => Promise<void>,
-    private notifyPersistedOrThrowFn: (entityId: string, factId: string, vector: Float32Array | null) => Promise<void>,
-    private reconcileEmbeddingDimensionFn: () => Promise<void>
+    private embeddingService: EmbeddingService,
   ) {}
 
   async runPrune(entityId: string, options?: { retainSoftDeletedFor?: number | null; retainEventsFor?: number | null; vacuum?: boolean }): Promise<{ entries: number; tasks: number; events: number }> {
@@ -58,7 +56,7 @@ export class MaintenanceService {
 
         for (const row of entriesToDelete) {
           try {
-            await this.notifyPersistedOrThrowFn(row.entity_id, row.id, null);
+            await this.embeddingService.notifyEmbeddingPersistedOrThrow(row.entity_id, row.id, null);
             succeeded.push({ entity_id: row.entity_id, id: row.id });
           } catch (err) {
             failure = { factId: row.id, cause: err };
@@ -116,7 +114,7 @@ export class MaintenanceService {
   async runLibrarian(entityId: string): Promise<void> {
     this.jobManager.acquireLock('librarian', entityId);
     try {
-      await this._doRunLibrarian(entityId);
+      await this.doRunLibrarian(entityId);
     } finally {
       this.jobManager.releaseLock('librarian', entityId);
     }
@@ -125,7 +123,7 @@ export class MaintenanceService {
   async runHeal(entityId: string): Promise<void> {
     this.jobManager.acquireLock('heal', entityId);
     try {
-      await this._doRunHeal(entityId);
+      await this.doRunHeal(entityId);
     } finally {
       this.jobManager.releaseLock('heal', entityId);
     }
@@ -176,13 +174,13 @@ export class MaintenanceService {
             }
           }
 
-          const success = await this.embedFactFn(row);
+          const success = await this.embeddingService.embedFact(row);
           if (success) embedded++;
           else failed++;
         }
 
         if (embedded > 0) {
-          await this.reconcileEmbeddingDimensionFn();
+          await this.embeddingService.reconcileEmbeddingDimension();
         }
       } finally {
         this.searchService.evictCache(entityId);
@@ -253,7 +251,7 @@ export class MaintenanceService {
       const uniqueDeletedIds = Array.from(new Set(deletedEntryIds));
       for (const factId of uniqueDeletedIds) {
         try {
-          await this.notifyPersistedOrThrowFn(entityId, factId, null);
+          await this.embeddingService.notifyEmbeddingPersistedOrThrow(entityId, factId, null);
         } catch (hookErr) {
           const isTimeout = (hookErr as any)?.[HOOK_TIMEOUT_MARKER] === true;
           if (isTimeout) {
@@ -273,7 +271,8 @@ export class MaintenanceService {
     }
   }
 
-  async _doRunLibrarian(entityId: string): Promise<void> {
+  /** Core librarian pass (locks handled by {@link runLibrarian}). Package-internal orchestration hook. */
+  async doRunLibrarian(entityId: string): Promise<void> {
     const events = await this.eventRepo.getRecent(entityId, 50);
     const currentFactsRows = await this.entryRepo.findRecentByEntityId(entityId, 100);
 
@@ -348,13 +347,14 @@ export class MaintenanceService {
     await this.searchService.sync(entityId);
 
     for (const fact of insertedFacts) {
-      await this.embedFactFn(fact);
+      await this.embeddingService.embedFact(fact);
     }
 
     this.searchService.evictCache(entityId);
   }
 
-  async _doRunHeal(entityId: string): Promise<void> {
+  /** Core heal pass (locks handled by {@link runHeal}). Package-internal orchestration hook. */
+  async doRunHeal(entityId: string): Promise<void> {
     const now = Date.now();
     const orphanAfterDays = this.options.config?.orphanAfterDays !== undefined ? this.options.config?.orphanAfterDays : 30;
     const staleInferredAfterDays = this.options.config?.staleInferredAfterDays !== undefined ? this.options.config?.staleInferredAfterDays : 60;
@@ -436,14 +436,14 @@ export class MaintenanceService {
 
     for (const factId of uniqueDeletedFactIds) {
       try {
-        await this.notifyPersistedFn(entityId, factId, null);
+        await this.embeddingService.notifyEmbeddingPersisted(entityId, factId, null);
       } catch (hookErr) {
         console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during heal for ${factId}:`, hookErr);
       }
     }
 
     for (const fact of insertedFacts) {
-      await this.embedFactFn(fact);
+      await this.embeddingService.embedFact(fact);
     }
 
     this.searchService.evictCache(entityId);

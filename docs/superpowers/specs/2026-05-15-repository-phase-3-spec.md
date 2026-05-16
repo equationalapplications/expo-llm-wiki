@@ -1,7 +1,7 @@
 # Spec: Phase 3 — Service Layer Extraction & Concurrency Decoupling
 
 **Date:** May 15, 2026
-**Status:** Approved
+**Status:** Implemented
 **Scope:** Extract the remaining business logic—LLM orchestration, maintenance workflows, and concurrency locking—out of `WikiMemory` into dedicated domain services (`IngestionService`, `MaintenanceService`) and a `JobManager`.
 
 ---
