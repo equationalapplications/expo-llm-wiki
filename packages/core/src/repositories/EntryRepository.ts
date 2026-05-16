@@ -41,14 +41,16 @@ function mapRowToFact(row: any): WikiFact {
   };
 }
 
-/** Mapper for export/import round-tripping that preserves embedding_blob. */
+/** Mapper that preserves embedding_blob for export/import round-tripping. */
 function mapRowToFactWithBlobs(row: any): WikiFact {
   const base = mapRowToFact(row);
-  const embedding_blob = row.embedding_blob instanceof Uint8Array
-    ? row.embedding_blob
-    : null;
-  return { ...base, embedding_blob };
+  if (row.embedding_blob instanceof Uint8Array) {
+    return { ...base, embedding_blob: row.embedding_blob };
+  }
+  return base;
 }
+
+
 
 export class EntryRepository extends BaseRepository {
   private chunkSize = 500;

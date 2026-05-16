@@ -65,7 +65,7 @@ export class WriteService {
     if (shouldRunLibrarian) {
       try {
         this.jobManager.acquireLock('librarian', entityId);
-        this.runLibrarianThenMaybeHeal(entityId, librarianCount)
+        this.runLibrarianThenMaybeHeal(entityId, librarianCount, prevMemoryCheckpoint)
           .catch(console.error)
           .finally(() => {
             this.jobManager.releaseLock('librarian', entityId);
@@ -77,8 +77,16 @@ export class WriteService {
     }
   }
 
-  private async runLibrarianThenMaybeHeal(entityId: string, currentEventCount: number): Promise<void> {
-    await this.maintenanceService.doRunLibrarian(entityId);
+  private async runLibrarianThenMaybeHeal(entityId: string, currentEventCount: number, prevCheckpoint: number): Promise<void> {
+    try {
+      await this.maintenanceService.doRunLibrarian(entityId);
+      // Only advance checkpoint after successful librarian run
+      await this.metadataRepo.updateCheckpoint(entityId, { memory: currentEventCount }, this.db);
+    } catch (e) {
+      // Rollback checkpoint on failure so events can be retried
+      await this.metadataRepo.updateCheckpoint(entityId, { memory: prevCheckpoint }, this.db);
+      throw e;
+    }
 
     const autoHealThreshold = this.options.config?.autoHealThreshold || 100;
 

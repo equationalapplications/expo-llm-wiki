@@ -53,9 +53,9 @@ export class JobManager {
   }
 
   private _isIngestActiveFor(entityId: string): boolean {
-    const entityKeyPrefix = `${this.prefix}:${entityId}:`;
+    const entityKey = `${this.prefix}:${entityId}:`;
     for (const k of this.activeIngestJobs) {
-      if (k.startsWith(entityKeyPrefix)) return true;
+      if (k.startsWith(entityKey) && k.split(':')[1] === entityId) return true;
     }
     return false;
   }
