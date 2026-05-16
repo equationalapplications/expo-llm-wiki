@@ -8,4 +8,6 @@ export { ImportExportService } from './services/ImportExportService';
 export { IngestionService } from './services/IngestionService';
 export { MaintenanceService } from './services/MaintenanceService';
 export { RetrievalService } from './services/RetrievalService';
+export { SearchService } from './services/SearchService';
+export { JobManager } from './services/JobManager';
 export { WriteService } from './services/WriteService';

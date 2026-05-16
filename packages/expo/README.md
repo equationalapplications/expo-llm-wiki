@@ -120,9 +120,9 @@ const wiki = createWiki(db, {
     // ⚠ Overrides replace the entire default prompt, including the JSON output contract.
     // Your prompt must instruct the LLM to return the required JSON shape — see packages/core/README.md#prompt-management--overrides.
     prompts: {
-      ingestSystemPrompt: `Extract core facts from this document: {{documentChunk}}`,
-      librarianSystemPrompt: `Synthesize these thoughts into insights:\n{{events}}`,
-      healSystemPrompt: `Fix the memory graph based on these candidates: {{healCandidates}}`,
+      ingestSystemPrompt: `Extract core facts from this document: {{documentChunk}}\n\nReturn ONLY valid JSON: { "facts": [{ "title": "string", "body": "string", "tags": ["string"], "confidence": "certain|inferred|tentative" }] }. No markdown.`,
+      librarianSystemPrompt: `Synthesize these thoughts into insights:\n{{events}}\n\nReturn ONLY valid JSON: { "facts": [{ "title": "string", "body": "string", "tags": ["string"], "confidence": "certain|inferred|tentative" }], "tasks": [{ "description": "string", "priority": 0 }] }. No markdown.`,
+      healSystemPrompt: `Fix the memory graph based on these candidates: {{healCandidates}}\n\nReturn ONLY valid JSON: { "downgraded": ["factId"], "deleted": ["factId"], "newFacts": [{ "title": "string", "body": "string", "tags": ["string"], "confidence": "certain|inferred|tentative" }] }. No markdown.`,
     },
   },
 });
@@ -184,14 +184,14 @@ await wiki.write('user-123', { event_type: 'observation', summary: '...' });
 // Manual executions: runtime promptOverride applies only to this single call.
 // Must include the JSON output contract — overrides replace the entire default prompt.
 await wiki.runLibrarian('user-123', {
-  promptOverride: `Strict domain extraction task:\n{{events}}`,
+  promptOverride: `Strict domain extraction task:\n{{events}}\n\nReturn ONLY valid JSON: { "facts": [{ "title": "string", "body": "string", "tags": ["string"], "confidence": "certain|inferred|tentative" }], "tasks": [{ "description": "string", "priority": 0 }] }. No markdown.`,
 });
 
 await wiki.ingestDocument('user-123', {
   sourceRef: 'doc-1',
   sourceHash: sha256(content),
   documentChunk: content,
-  promptOverride: `Focus strictly on technical APIs: {{documentChunk}}`,
+  promptOverride: `Focus strictly on technical APIs: {{documentChunk}}\n\nReturn ONLY valid JSON: { "facts": [{ "title": "string", "body": "string", "tags": ["string"], "confidence": "certain|inferred|tentative" }] }. No markdown.`,
 });
 ```
 

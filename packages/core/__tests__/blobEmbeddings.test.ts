@@ -48,8 +48,8 @@ describe('BLOB embedding storage', () => {
     const result = await wiki.read('user-1', 'anything');
     expect(result.facts).toHaveLength(1);
     expect(result.facts[0].id).toBe('f1');
-    // embedding_blob must not appear on returned facts
-    expect((result.facts[0] as any).embedding_blob).toBeUndefined();
+    // embedding_blob is now preserved on returned facts for export/import round-tripping
+    expect((result.facts[0] as any).embedding_blob).toBeDefined();
     expect((result.facts[0] as any).embedding).toBeUndefined();
   });
 

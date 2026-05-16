@@ -21,6 +21,11 @@ function mapRowToFact(row: any): WikiFact {
     return [];
   })();
 
+  // Preserve embedding_blob for export/import round-tripping
+  const embedding_blob = row.embedding_blob instanceof Uint8Array
+    ? row.embedding_blob
+    : null;
+
   return {
     id: row.id,
     entity_id: row.entity_id,
@@ -38,6 +43,7 @@ function mapRowToFact(row: any): WikiFact {
       : Number(row.last_accessed_at),
     deleted_at: row.deleted_at != null ? Number(row.deleted_at) : null,
     access_count: Number(row.access_count ?? 0),
+    embedding_blob,
   };
 }
 

@@ -119,9 +119,9 @@ const wiki = createWiki(adapter, {
     // ⚠ Overrides replace the entire default prompt, including the JSON output contract.
     // Your prompt must instruct the LLM to return the required JSON shape — see packages/core/README.md#prompt-management--overrides.
     prompts: {
-      ingestSystemPrompt: `Extract core facts from this document: {{documentChunk}}`,
-      librarianSystemPrompt: `Synthesize these thoughts into insights:\n{{events}}`,
-      healSystemPrompt: `Fix the memory graph based on these candidates: {{healCandidates}}`,
+      ingestSystemPrompt: `Extract core facts from this document: {{documentChunk}}\n\nReturn ONLY valid JSON: { "facts": [{ "title": "string", "body": "string", "tags": ["string"], "confidence": "certain|inferred|tentative" }] }. No markdown.`,
+      librarianSystemPrompt: `Synthesize these thoughts into insights:\n{{events}}\n\nReturn ONLY valid JSON: { "facts": [{ "title": "string", "body": "string", "tags": ["string"], "confidence": "certain|inferred|tentative" }], "tasks": [{ "description": "string", "priority": 0 }] }. No markdown.`,
+      healSystemPrompt: `Fix the memory graph based on these candidates: {{healCandidates}}\n\nReturn ONLY valid JSON: { "downgraded": ["factId"], "deleted": ["factId"], "newFacts": [{ "title": "string", "body": "string", "tags": ["string"], "confidence": "certain|inferred|tentative" }] }. No markdown.`,
     },
   },
 });
@@ -255,7 +255,7 @@ const handleIngest = async (document: string) => {
       documentChunk: document,
       // Optional: runtime override for this specific ingest call only.
       // Must include the JSON output contract — overrides replace the entire default prompt.
-      promptOverride: `Strict technical extraction. Focus on APIs: {{documentChunk}}`,
+      promptOverride: `Strict technical extraction. Focus on APIs: {{documentChunk}}\n\nReturn ONLY valid JSON: { "facts": [{ "title": "string", "body": "string", "tags": ["string"], "confidence": "certain|inferred|tentative" }] }. No markdown.`,
     });
   } catch (e) {
     console.error('Ingest failed:', e);

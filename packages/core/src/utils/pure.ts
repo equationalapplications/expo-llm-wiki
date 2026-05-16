@@ -213,6 +213,8 @@ export function validateTask(task: any): ExtractedTask | null {
 
   let priority = task.priority;
   if (typeof priority !== 'number' || !isFinite(priority)) priority = 0;
+  // Clamp priority to valid range 0-10 as documented in the prompt contract
+  priority = Math.max(0, Math.min(10, Math.round(priority)));
 
   return {
     ...task,
