@@ -55,8 +55,18 @@ describe('EmbeddingService', () => {
       expect(mockOptions.vectorRanker!.onEmbeddingPersisted).toHaveBeenCalled();
     });
 
-    it('rejects and returns false if the vector contains NaN or Infinity', async () => {
+    it('rejects and returns false if the vector contains NaN', async () => {
       mockOptions.llmProvider.embed!.mockResolvedValue([0.1, NaN, 0.5]);
+      const fact = { id: 'f1', entity_id: 'e1', title: 'T', body: 'B', tags: [] };
+
+      const result = await embeddingService.embedFact(fact);
+
+      expect(result).toBe(false);
+      expect(mockEntryRepo.updateEmbeddingBlob).not.toHaveBeenCalled();
+    });
+
+    it('rejects and returns false if the vector contains Infinity', async () => {
+      mockOptions.llmProvider.embed!.mockResolvedValue([0.1, Infinity, 0.5]);
       const fact = { id: 'f1', entity_id: 'e1', title: 'T', body: 'B', tags: [] };
 
       const result = await embeddingService.embedFact(fact);
