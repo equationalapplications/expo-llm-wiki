@@ -221,4 +221,35 @@ describe('WikiMemory — prompt override API', () => {
     const libCall = localCalls.find(c => c.systemPrompt === 'auto-run global prompt');
     expect(libCall).toBeDefined();
   });
+
+  it('global heal prompt reaches LLM when write() auto-triggers heal', async () => {
+    const db3 = createMockDb();
+    const localCalls: Array<{ systemPrompt: string; userPrompt: string }> = [];
+    const wikiWithGlobalHeal = new WikiMemory(db3, {
+      llmProvider: {
+        generateText: vi.fn(async (params: { systemPrompt: string; userPrompt: string }) => {
+          localCalls.push(params);
+          return JSON.stringify({ facts: [], tasks: [] });
+        }),
+      },
+      config: {
+        autoLibrarianThreshold: 1,
+        autoHealThreshold: 1,
+        prompts: {
+          librarianSystemPrompt: 'auto-run global librarian prompt',
+          healSystemPrompt: 'auto-run global heal prompt',
+        },
+      },
+    });
+    await wikiWithGlobalHeal.setup();
+
+    vi.spyOn((wikiWithGlobalHeal as any).eventRepo, 'count').mockResolvedValue(1);
+    vi.spyOn(wikiWithGlobalHeal.__testAccess.metadataRepo, 'getCheckpoint').mockResolvedValue({ memory: 0, heal: 0 });
+
+    await wikiWithGlobalHeal.write('e4', { event_type: 'observation', summary: 'trigger heal' });
+    await new Promise<void>((r) => setImmediate(r));
+
+    const healCall = localCalls.find(c => c.systemPrompt === 'auto-run global heal prompt');
+    expect(healCall).toBeDefined();
+  });
 });

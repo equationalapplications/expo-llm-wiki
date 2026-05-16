@@ -480,6 +480,26 @@ describe('useWikiMaintenance', () => {
     expect(result.current.lastResult).toEqual({ operation: 'heal', result: undefined });
   });
 
+  it('runLibrarian forwards promptOverride to wiki.runLibrarian', async () => {
+    const { result } = renderHook(() => useWikiMaintenance(), { wrapper: wrapper(wiki) });
+
+    await act(async () => {
+      await result.current.runLibrarian('user-1', { promptOverride: 'custom lib prompt' });
+    });
+
+    expect(wiki.runLibrarian).toHaveBeenCalledWith('user-1', { promptOverride: 'custom lib prompt' });
+  });
+
+  it('runHeal forwards promptOverride to wiki.runHeal', async () => {
+    const { result } = renderHook(() => useWikiMaintenance(), { wrapper: wrapper(wiki) });
+
+    await act(async () => {
+      await result.current.runHeal('user-1', { promptOverride: 'custom heal prompt' });
+    });
+
+    expect(wiki.runHeal).toHaveBeenCalledWith('user-1', { promptOverride: 'custom heal prompt' });
+  });
+
   it('runPrune returns pruned counts and sets lastResult', async () => {
     wiki.runPrune.mockResolvedValue({ entries: 3, tasks: 1, events: 2 });
     const { result } = renderHook(() => useWikiMaintenance(), { wrapper: wrapper(wiki) });
@@ -576,6 +596,27 @@ describe('useWikiIngest', () => {
     expect(ingestResult).toEqual({ truncated: false, chunks: 3 });
     expect(result.current.lastResult).toEqual({ truncated: false, chunks: 3 });
     expect(result.current.isPending).toBe(false);
+  });
+
+  it('forwards promptOverride to wiki.ingestDocument', async () => {
+    wiki.ingestDocument.mockResolvedValue({ truncated: false, chunks: 3 });
+    const { result } = renderHook(() => useWikiIngest(), { wrapper: wrapper(wiki) });
+
+    await act(async () => {
+      await result.current.execute('user-1', {
+        sourceRef: 'doc1',
+        sourceHash: 'abc',
+        documentChunk: 'hello world',
+        promptOverride: 'custom ingest prompt',
+      });
+    });
+
+    expect(wiki.ingestDocument).toHaveBeenCalledWith('user-1', {
+      sourceRef: 'doc1',
+      sourceHash: 'abc',
+      documentChunk: 'hello world',
+      promptOverride: 'custom ingest prompt',
+    });
   });
 
   it('sets error state and re-throws when ingestDocument rejects', async () => {
