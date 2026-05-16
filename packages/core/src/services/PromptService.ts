@@ -7,7 +7,7 @@ export class PromptService {
   private hydrate(template: string, variables: Record<string, unknown>): string {
     return template.replace(/\{\{\s*(\w+)\s*\}\}/g, (_match, key) => {
       const value = variables[key];
-      if (value === undefined) return `{{${key}}}`;
+      if (value === undefined) return _match;
       return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
     });
   }
@@ -17,7 +17,7 @@ export class PromptService {
     runtimeOverride?: string,
   ): { systemPrompt: string; userPrompt: string } {
     const template = runtimeOverride ?? this.globalOverrides?.ingestSystemPrompt ?? INGEST_SYSTEM_PROMPT;
-    if (template.includes('{{documentChunk}}')) {
+    if (/\{\{\s*documentChunk\s*\}\}/.test(template)) {
       return {
         systemPrompt: this.hydrate(template, { documentChunk }),
         userPrompt: 'Please extract the facts.',
@@ -35,7 +35,7 @@ export class PromptService {
     runtimeOverride?: string,
   ): { systemPrompt: string; userPrompt: string } {
     const template = runtimeOverride ?? this.globalOverrides?.librarianSystemPrompt ?? LIBRARIAN_SYSTEM_PROMPT;
-    if (template.includes('{{events}}') || template.includes('{{currentFacts}}')) {
+    if (/\{\{\s*events\s*\}\}/.test(template) || /\{\{\s*currentFacts\s*\}\}/.test(template)) {
       return {
         systemPrompt: this.hydrate(template, { events, currentFacts }),
         userPrompt: 'Please synthesize the context.',
@@ -56,10 +56,10 @@ export class PromptService {
   ): { systemPrompt: string; userPrompt: string } {
     const template = runtimeOverride ?? this.globalOverrides?.healSystemPrompt ?? HEAL_SYSTEM_PROMPT;
     if (
-      template.includes('{{healCandidates}}') ||
-      template.includes('{{documentAnchors}}') ||
-      template.includes('{{allTasks}}') ||
-      template.includes('{{recentEvents}}')
+      /\{\{\s*healCandidates\s*\}\}/.test(template) ||
+      /\{\{\s*documentAnchors\s*\}\}/.test(template) ||
+      /\{\{\s*allTasks\s*\}\}/.test(template) ||
+      /\{\{\s*recentEvents\s*\}\}/.test(template)
     ) {
       return {
         systemPrompt: this.hydrate(template, { healCandidates, documentAnchors, allTasks, recentEvents }),

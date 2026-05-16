@@ -137,7 +137,8 @@ export class WikiMemory {
       : undefined;
 
     if (
-      processEnv?.NODE_ENV !== 'test' &&
+      processEnv !== undefined &&
+      processEnv.NODE_ENV !== 'test' &&
       !this.#testAccessNonTestEnvWarned
     ) {
       this.#testAccessNonTestEnvWarned = true;

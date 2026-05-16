@@ -1,6 +1,8 @@
 ## Phase 4: Prompt & Context Management Extraction.
 
-### Current implementation state
+> **Note:** This spec was written pre-implementation and describes the state of the codebase _before_ Phase 4 was applied. The "Current implementation state" section below is historical context. All items listed as missing have been implemented in this branch.
+
+### Current implementation state (pre-implementation snapshot)
 
 The current code base does not yet implement this Phase 4 design. Core services still rely on static prompt constants and manual prompt construction, so the planned prompt abstraction layer is currently absent.
 

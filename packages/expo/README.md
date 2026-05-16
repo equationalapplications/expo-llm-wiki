@@ -115,7 +115,8 @@ const wiki = createWiki(db, {
     preFilterLimit: 50,                // default: undefined — MiniSearch pre-filter before cosine scan; recommended for >500 facts
     hybridWeight: 0.7,                 // default: undefined — blend semantic (1.0) ↔ keyword (0.0); pure semantic when unset
 
-    // Global prompt overrides — applied to all background auto-runs triggered by write()
+    // Global prompt overrides — librarianSystemPrompt and healSystemPrompt apply to write() auto-runs;
+    // ingestSystemPrompt applies only to explicit ingestDocument() calls.
     prompts: {
       ingestSystemPrompt: `Extract core facts from this document: {{documentChunk}}`,
       librarianSystemPrompt: `Synthesize these thoughts into insights:\n{{events}}`,
@@ -185,7 +186,7 @@ await wiki.runLibrarian('user-123', {
 
 await wiki.ingestDocument('user-123', {
   sourceRef: 'doc-1',
-  sourceHash: 'abc...',
+  sourceHash: sha256(content),
   documentChunk: content,
   promptOverride: `Focus strictly on technical APIs: {{documentChunk}}`,
 });
