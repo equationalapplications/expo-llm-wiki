@@ -190,6 +190,43 @@ describe('ImportExportService', () => {
 
       consoleWarnSpy.mockRestore();
     });
+
+    it('applies LWW consistently for duplicate task ids in the same bundle (merge)', async () => {
+      mockDump.entities['user_1'].facts = [];
+      mockDump.entities['user_1'].tasks = [
+        {
+          id: 'task_1',
+          entity_id: 'user_1',
+          description: 'Newer',
+          status: 'pending',
+          priority: 1,
+          created_at: 1,
+          updated_at: 200,
+          resolved_at: null,
+          deleted_at: null,
+        },
+        {
+          id: 'task_1',
+          entity_id: 'user_1',
+          description: 'Older duplicate in bundle',
+          status: 'done',
+          priority: 2,
+          created_at: 2,
+          updated_at: 100,
+          resolved_at: null,
+          deleted_at: null,
+        },
+      ];
+
+      await importExportService.importDump(mockDump, { merge: true });
+
+      expect(mockTaskRepo.upsertForImport).toHaveBeenCalledTimes(1);
+      expect(mockTaskRepo.upsertForImport).toHaveBeenCalledWith(
+        expect.objectContaining({ description: 'Newer', updated_at: 200 }),
+        mockDb,
+        200,
+      );
+    });
   });
 
   describe('Importing: Blobs and Vectors', () => {

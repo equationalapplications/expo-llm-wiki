@@ -302,6 +302,12 @@ export class ImportExportService {
           tx,
           safeUpdatedAt,
         );
+
+        existingTasksById.set(task.id, {
+          id: task.id,
+          entity_id: entityId,
+          updated_at: safeUpdatedAt,
+        });
       }
 
       for (const event of bundle.events) {
