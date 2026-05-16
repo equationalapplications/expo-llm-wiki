@@ -4,10 +4,6 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fexpo-llm-wiki?label=expo)](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fexpo-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki) [![bundlephobia](https://img.shields.io/bundlephobia/minzip/%40equationalapplications%2Fexpo-llm-wiki?label=gzip)](https://bundlephobia.com/package/@equationalapplications/expo-llm-wiki)<br>
-[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Freact-llm-wiki?label=react)](https://www.npmjs.com/package/@equationalapplications/react-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Freact-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/react-llm-wiki) [![bundlephobia](https://img.shields.io/bundlephobia/minzip/%40equationalapplications%2Freact-llm-wiki?label=gzip)](https://bundlephobia.com/package/@equationalapplications/react-llm-wiki)<br>
-[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fcore-llm-wiki?label=core)](https://www.npmjs.com/package/@equationalapplications/core-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fcore-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/core-llm-wiki) [![bundlephobia](https://img.shields.io/bundlephobia/minzip/%40equationalapplications%2Fcore-llm-wiki?label=gzip)](https://bundlephobia.com/package/@equationalapplications/core-llm-wiki)
-
 ## Persistent, episodic memory for AI Agents.
 
 expo-llm-wiki is a cross-platform TypeScript and SQLite library for long-term LLM memory. It bridges the gap between raw conversation logs and a structured knowledge base, supporting background fact extraction, semantic embedding search, and memory pruning.
@@ -94,11 +90,11 @@ flowchart TB
 
 `expo-llm-wiki` is organized as a monorepo with three packages, each optimized for different platforms:
 
-| Package | Platform | SQLite Adapter | Size | Dependencies |
-|---------|----------|---|---|---|
-| **`@equationalapplications/core-llm-wiki`** | Node.js, any platform | User-provided (e.g., `better-sqlite3`) | Smallest | `minisearch` |
-| **`@equationalapplications/expo-llm-wiki`** | Expo, React Native | `expo-sqlite` (built-in) | Minimal | `expo-sqlite` (peer) |
-| **`@equationalapplications/react-llm-wiki`** | Web (React) | User-provided (e.g., `sql.js`) | Small | `react` (peer) |
+| Package | Platform | SQLite Adapter | Size (Minzipped) |
+|---------|----------|---|---|
+| **`@equationalapplications/core-llm-wiki`** | Node.js, any platform | User-provided (e.g., `better-sqlite3`) | ~23 kB |
+| **`@equationalapplications/expo-llm-wiki`** | Expo, React Native | `expo-sqlite` (built-in) | ~24 kB |
+| **`@equationalapplications/react-llm-wiki`** | Web (React) | User-provided (e.g., `sql.js`) | ~25 kB |
 
 **Choose your package:**
 - **Expo/React Native app?** → `@equationalapplications/expo-llm-wiki`
