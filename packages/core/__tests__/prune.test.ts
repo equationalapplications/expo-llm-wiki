@@ -309,7 +309,8 @@ describe('WikiMemory.runPrune', () => {
   it('throws WikiBusyError when ingest is already running for same entity', async () => {
     const db = makeMockDb({});
     const wiki = new WikiMemory(db as any, stubOptions);
-    (wiki as any).jobManager.activeIngestJobs.add('llm_wiki_:ent:doc.md');
+    const jobManager = (wiki as any).jobManager;
+    jobManager._addIngestJob('ent', 'doc.md');
     const err = await wiki.runPrune('ent').catch((e) => e);
     expect(err).toBeInstanceOf(WikiBusyError);
     expect(err.operation).toBe('ingest');

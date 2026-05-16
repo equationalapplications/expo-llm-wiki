@@ -111,6 +111,13 @@ describe('job mutex', () => {
     await expect(wiki.ingestDocument('a', { sourceRef: 'doc2', sourceHash, documentChunk: 'content two' })).resolves.toBeTruthy();
     await first;
   });
+
+  it('prune does not treat entity IDs with colon prefixes as the same ingest entity', async () => {
+    const wiki = await freshWiki(slowProvider(0));
+    const jobManager = (wiki as any).jobManager;
+    jobManager._addIngestJob('a:b', 'doc1');
+    expect(() => jobManager.acquireLock('prune', 'a')).not.toThrow();
+  });
 });
 
 describe('getEntityStatus', () => {

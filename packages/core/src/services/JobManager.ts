@@ -13,7 +13,7 @@ export type OperationType =
 
 export class JobManager {
   private activeMaintenanceJobs = new Set<string>();
-  private activeIngestJobs = new Set<string>();
+  private activeIngestJobs = new Map<string, Set<string>>();
   private statusSubscribers = new Map<
     string,
     Set<{ callback: (s: EntityStatus) => void; last: EntityStatus }>
@@ -52,12 +52,32 @@ export class JobManager {
     return false;
   }
 
-  private _isIngestActiveFor(entityId: string): boolean {
-    const entityKey = `${this.prefix}:${entityId}:`;
-    for (const k of this.activeIngestJobs) {
-      if (k.startsWith(entityKey)) return true;
+  private _hasIngestJob(entityId: string, sourceRef?: string): boolean {
+    return this.activeIngestJobs.get(entityId)?.has(sourceRef ?? '') ?? false;
+  }
+
+  private _addIngestJob(entityId: string, sourceRef?: string): void {
+    const sourceKey = sourceRef ?? '';
+    let refs = this.activeIngestJobs.get(entityId);
+    if (!refs) {
+      refs = new Set<string>();
+      this.activeIngestJobs.set(entityId, refs);
     }
-    return false;
+    refs.add(sourceKey);
+  }
+
+  private _removeIngestJob(entityId: string, sourceRef?: string): void {
+    const sourceKey = sourceRef ?? '';
+    const refs = this.activeIngestJobs.get(entityId);
+    if (!refs) return;
+    refs.delete(sourceKey);
+    if (refs.size === 0) {
+      this.activeIngestJobs.delete(entityId);
+    }
+  }
+
+  private _isIngestActiveFor(entityId: string): boolean {
+    return this.activeIngestJobs.has(entityId);
   }
 
   acquireLock(operation: OperationType, entityId: string, sourceRef?: string): void {
@@ -130,8 +150,8 @@ export class JobManager {
         break;
 
       case 'ingest': {
-        const ingestJobKey = `${this.prefix}:${entityId}:${sourceRef}`;
-        if (this.activeIngestJobs.has(ingestJobKey)) blockingOperation = 'ingest';
+        const sourceKey = sourceRef ?? '';
+        if (this._hasIngestJob(entityId, sourceKey)) blockingOperation = 'ingest';
         else if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) blockingOperation = 'prune';
         else if (this._isReembedActive(entityId)) blockingOperation = 'reembed';
         else if (this._isImportActiveFor(entityId)) blockingOperation = 'import';
@@ -148,7 +168,7 @@ export class JobManager {
     }
 
     if (operation === 'ingest') {
-      this.activeIngestJobs.add(`${this.prefix}:${entityId}:${sourceRef}`);
+      this._addIngestJob(entityId, sourceRef);
     } else if (operation === 'global_reembed') {
       this.activeMaintenanceJobs.add(this._globalReembedKey());
     } else if (operation === 'global_import') {
@@ -164,7 +184,7 @@ export class JobManager {
 
   releaseLock(operation: OperationType, entityId: string, sourceRef?: string): void {
     if (operation === 'ingest') {
-      this.activeIngestJobs.delete(`${this.prefix}:${entityId}:${sourceRef}`);
+      this._removeIngestJob(entityId, sourceRef);
     } else if (operation === 'global_reembed') {
       this.activeMaintenanceJobs.delete(this._globalReembedKey());
     } else if (operation === 'global_import') {
