@@ -416,23 +416,21 @@ Once PRs 2 and 3 are merged, the final step is to connect the new pipes to the p
 
 ---
 
-By isolating `WikiMemory.ts` to the very last step, your agents can run PRs 2 and 3 concurrently without locking up your repository.
+By isolating `WikiMemory.ts` to the very last step, PRs 2 and 3 can be implemented concurrently with minimal overlap, and the public API can then be updated once the underlying services have stabilized.
 
-The following section provides exact system prompts for Agents 2 and 3 that can be copied into Cursor, GitHub Copilot Workspace, or a similar AI agent workflow.
+### Implementation sequencing note
 
----
+The intended rollout order for this phase was:
 
-Here are the exact system prompts you can feed into Cursor, GitHub Copilot Workspace, or your AI agent of choice.
+1. Introduce the shared prompt abstraction and supporting types.
+2. Refactor ingestion and maintenance flows to consume that abstraction.
+3. Wire `WikiMemory.ts` to instantiate and pass the shared prompt service, then expose the new optional runtime override arguments on the public API.
 
-These prompts are designed to be **highly restrictive**—they give the agent exactly the context it needs while explicitly forbidding it from touching unrelated logic like database transactions or concurrency locks.
+This ordering reduces churn in the facade layer and keeps the integration step focused on wiring already-defined service contracts rather than redesigning them in parallel.
 
----
+### Historical coordination note
 
-### Prompt for Agent 2 (PR 2: Ingestion Overhaul)
-
-**Copy and paste this into the agent working on `IngestionService`:**
-
-Plaintext
+Earlier drafts of this spec included tool-specific assistant prompts used during implementation planning. Those operational instructions are omitted here because this document is intended to remain a durable repository reference describing the design, sequencing constraints, and expected code changes.
 
 ```
 You are executing PR 2 of our Prompt Management Refactor. 
