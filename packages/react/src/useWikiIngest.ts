@@ -6,6 +6,7 @@ interface IngestParams {
   sourceHash: string;
   documentChunk: string;
   maxChunkLength?: number;
+  promptOverride?: string;
 }
 
 type IngestResult = { truncated: boolean; chunks: number };
