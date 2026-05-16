@@ -161,15 +161,15 @@ export class WikiMemory {
 
 ---
 
-By isolating this into a `PromptService`, you also create a perfect testing boundary for prompt generation and leave the door open for future features, like dynamically calculating token limits before sending the prompt off.
+By isolating this into a `PromptService`, the design creates a clear testing boundary for prompt generation and leaves room for future enhancements such as dynamically calculating token limits before sending prompts.
 
-To ensure this aligns with your vision for apps like Curated Thoughts: do you want these prompts to remain static strings that the LLM reads alongside a JSON payload, or should the `PromptService` also take over the responsibility of injecting variables directly into the prompt templates (like `{{context}}` or `{{tasks}}`) before sending them to the LLM?
+For consistency with existing prompt hydration patterns, `PromptService` should own both responsibilities: injecting variables into prompt templates (for example `{{context}}` and `{{tasks}}`) and serializing structured payloads into the final prompt text sent to the LLM.
 
-This is the perfect approach for an SDK. By moving the JSON serialization and template hydration into the `PromptService`, your domain services (`IngestionService`, `MaintenanceService`) become completely ignorant of _how_ the LLM is instructed. They just hand over the raw data arrays, and the `PromptService` handles the formatting.
+This keeps domain services such as `IngestionService` and `MaintenanceService` independent of prompt-formatting details. They should provide raw domain data, while `PromptService` is responsible for template hydration, JSON serialization, and final prompt assembly.
 
-Since you already export `hydrateLibrarianPrompt` on the read-side (as seen in your [README.md](https://github.com/equationalapplications/expo-llm-wiki/blob/staging/packages/core/README.md)), utilizing the same `{{variable}}` syntax for background tasks creates a beautifully consistent developer experience.
+This approach also aligns background-task prompt construction with the existing `hydrateLibrarianPrompt` read-side pattern, preserving a consistent `{{variable}}` template convention across the SDK.
 
-Here is the exact implementation plan to build this out.
+The implementation plan below reflects this design.
 
 ---
 
