@@ -28,13 +28,18 @@ export { WikiBusyError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER } from './
 
 /** Typed escape hatch for tests — not part of the supported consumer API. */
 export interface WikiMemoryTestAccess {
+  embeddingService: EmbeddingService;
   importExportService: ImportExportService;
+  ingestionService: IngestionService;
   maintenanceService: MaintenanceService;
-  writeService: WriteService;
   retrievalService: RetrievalService;
+  writeService: WriteService;
 }
 
 export class WikiMemory {
+  /** Emits `__testAccess` console warning at most once per instance when NODE_ENV ≠ "test". */
+  #testAccessNonTestEnvWarned = false;
+
   private db: SQLiteAdapter;
   private prefix: string;
   private options: WikiOptions;
@@ -115,17 +120,24 @@ export class WikiMemory {
 
   /**
    * Explicit escape hatch for test suites: typed access to composed services for mocks/spies.
-   * Emits a console warning when `NODE_ENV` is not `"test"` (skipped when `process` is undefined).
+   * If `NODE_ENV` is not `"test"`, emits a single `console.warn` per instance (skipped when `process` is undefined).
    */
   get __testAccess(): WikiMemoryTestAccess {
-    if (typeof process !== 'undefined' && process.env.NODE_ENV !== 'test') {
+    if (
+      typeof process !== 'undefined' &&
+      process.env.NODE_ENV !== 'test' &&
+      !this.#testAccessNonTestEnvWarned
+    ) {
+      this.#testAccessNonTestEnvWarned = true;
       console.warn('Warning: WikiMemory.__testAccess is intended for tests (NODE_ENV !== "test").');
     }
     return {
+      embeddingService: this.embeddingService,
       importExportService: this.importExportService,
+      ingestionService: this.ingestionService,
       maintenanceService: this.maintenanceService,
-      writeService: this.writeService,
       retrievalService: this.retrievalService,
+      writeService: this.writeService,
     };
   }
 

@@ -1192,7 +1192,7 @@ export class WriteService {
     }
 
     private async runLibrarianThenMaybeHeal(entityId: string, currentEventCount: number): Promise<void> {
-        await this.maintenanceService._doRunLibrarian(entityId);
+        await this.maintenanceService.doRunLibrarian(entityId);
 
         const autoHealThreshold = this.options.config?.autoHealThreshold || 100;
 
@@ -1206,7 +1206,7 @@ export class WriteService {
 
         if (shouldRunHeal && this.jobManager.tryAcquireAutoHealLock(entityId)) {
             try {
-                await this.maintenanceService._doRunHeal(entityId);
+                await this.maintenanceService.doRunHeal(entityId);
                 await this.metadataRepo.updateCheckpoint(entityId, { heal: currentEventCount }, this.db);
             } finally {
                 this.jobManager.releaseLock('heal', entityId);
