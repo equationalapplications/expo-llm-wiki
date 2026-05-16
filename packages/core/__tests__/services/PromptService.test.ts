@@ -74,6 +74,13 @@ describe('PromptService', () => {
       expect(systemPrompt).toContain('"fact one"');
       expect(userPrompt).toBe('Please synthesize the context.');
     });
+
+    it('leaves un-hydrated {{unknown}} tags intact', () => {
+      const svc = new PromptService();
+      const template = 'Events: {{events}} Extra: {{unknown}}';
+      const { systemPrompt } = svc.buildLibrarianPrompt([{ id: 'e1' }], [], template);
+      expect(systemPrompt).toContain('{{unknown}}');
+    });
   });
 
   describe('buildHealPrompt', () => {
@@ -103,6 +110,13 @@ describe('PromptService', () => {
       const { systemPrompt, userPrompt } = svc.buildHealPrompt(candidates, [], [], [], template);
       expect(systemPrompt).toContain('"stale fact"');
       expect(userPrompt).toBe('Please heal the memory graph.');
+    });
+
+    it('leaves un-hydrated {{unknown}} tags intact', () => {
+      const svc = new PromptService();
+      const template = 'Candidates: {{healCandidates}} Extra: {{unknown}}';
+      const { systemPrompt } = svc.buildHealPrompt([{ id: 'f1' }], [], [], [], template);
+      expect(systemPrompt).toContain('{{unknown}}');
     });
   });
 });
