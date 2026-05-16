@@ -27,7 +27,7 @@ describe('MaintenanceService — PromptService injection', () => {
       findRecentByEntityId: vi.fn().mockResolvedValue([]),
       findAllByEntityId: vi.fn().mockResolvedValue([]),
       upsert: vi.fn().mockResolvedValue(undefined),
-      markOrphaned: vi.fn().mockResolvedValue(undefined),
+      markOrphaned: vi.fn().mockResolvedValue([]),
       downgradeStaleInferred: vi.fn().mockResolvedValue(undefined),
       downgradeByIds: vi.fn().mockResolvedValue(undefined),
       softDeleteByIds: vi.fn().mockResolvedValue(undefined),

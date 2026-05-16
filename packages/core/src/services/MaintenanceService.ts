@@ -199,6 +199,10 @@ export class MaintenanceService {
   }
 
   async forget(entityId: string, params: { entryId?: string; taskId?: string; sourceRef?: string; sourceHash?: string; clearAll?: boolean }): Promise<{ deleted: { entries: number; tasks: number } }> {
+    if (params.clearAll && (params.entryId !== undefined || params.taskId !== undefined || params.sourceRef !== undefined || params.sourceHash !== undefined)) {
+      throw new Error('forget() clearAll is mutually exclusive with entryId, taskId, sourceRef, and sourceHash');
+    }
+
     this.jobManager.acquireLock('forget', entityId);
 
     try {
@@ -339,6 +343,7 @@ export class MaintenanceService {
 
         await this.entryRepo.upsert(factObj, tx);
         insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
+        factsForDedupe.push(factObj);
       }
 
       for (const task of validTasks) {
@@ -374,16 +379,26 @@ export class MaintenanceService {
       throw new Error('Invalid staleInferredAfterDays: must be a finite number >= 0 or null');
     }
 
+    const orphanedIds: string[] = [];
+
     await this.db.withTransactionAsync(async (tx) => {
       if (orphanAfterDays !== null) {
         const orphanThreshold = now - (orphanAfterDays * MS_PER_DAY);
-        await this.entryRepo.markOrphaned(entityId, orphanThreshold, tx);
+        orphanedIds.push(...await this.entryRepo.markOrphaned(entityId, orphanThreshold, tx));
       }
       if (staleInferredAfterDays !== null) {
         const staleThreshold = now - (staleInferredAfterDays * MS_PER_DAY);
         await this.entryRepo.downgradeStaleInferred(entityId, staleThreshold, tx);
       }
     });
+
+    for (const factId of orphanedIds) {
+      try {
+        await this.embeddingService.notifyEmbeddingPersisted(entityId, factId, null);
+      } catch (hookErr) {
+        console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during heal orphan pass for ${factId}:`, hookErr);
+      }
+    }
 
     const allFactsRows = await this.entryRepo.findAllByEntityId(entityId);
     const allTasks = await this.taskRepo.findAllPending([entityId]);
@@ -423,11 +438,31 @@ export class MaintenanceService {
     const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
     const uniqueDeletedFactIds = Array.from(new Set(safeDeleted));
 
+    const healFactsForDedupe = [...healCandidates];
+
     await this.db.withTransactionAsync(async (tx) => {
       await this.entryRepo.downgradeByIds(safeDowngraded, entityId, tx);
       await this.entryRepo.softDeleteByIds(safeDeleted, entityId, tx);
 
       for (const fact of validNewFacts) {
+        const newTokens = titleTokens(fact.title);
+        let skip = false;
+
+        if (newTokens.size >= MIN_TOKENS_TO_QUALIFY) {
+          for (const existing of healFactsForDedupe) {
+            if (existing.source_type !== 'librarian_inferred') continue;
+            const existingTokens = titleTokens(existing.title);
+            if (existingTokens.size >= MIN_TOKENS_TO_QUALIFY) {
+              if (jaccardScore(newTokens, existingTokens) >= FUZZY_THRESHOLD) {
+                skip = true;
+                break;
+              }
+            }
+          }
+        }
+
+        if (skip) continue;
+
         const id = generateId('fact_');
         const factObj: WikiFact = {
           id, entity_id: entityId, title: fact.title, body: fact.body, tags: fact.tags, confidence: fact.confidence,
@@ -437,6 +472,7 @@ export class MaintenanceService {
 
         await this.entryRepo.upsert(factObj, tx);
         insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
+        healFactsForDedupe.push(factObj);
       }
     });
 

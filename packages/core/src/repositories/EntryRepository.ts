@@ -528,7 +528,7 @@ export class EntryRepository extends BaseRepository {
     entityId: string,
     orphanThreshold: number,
     tx: SQLiteAdapter,
-  ): Promise<number> {
+  ): Promise<string[]> {
     const executor = this.getExecutor(tx);
     const now = Date.now();
     const orphanedRows = await executor.getAllAsync<{ id: string }>(
@@ -536,8 +536,8 @@ export class EntryRepository extends BaseRepository {
        WHERE entity_id = ? AND access_count = 0 AND created_at <= ? AND source_type != 'immutable_document' AND deleted_at IS NULL`,
       [entityId, orphanThreshold],
     );
-    if (orphanedRows.length === 0) return 0;
-    const result = await executor.runAsync(
+    if (orphanedRows.length === 0) return [];
+    await executor.runAsync(
       `UPDATE ${this.prefix}entries
        SET deleted_at = ?, updated_at = ?
        WHERE entity_id = ? AND access_count = 0 AND created_at <= ? AND source_type != 'immutable_document' AND deleted_at IS NULL`,
@@ -552,7 +552,7 @@ export class EntryRepository extends BaseRepository {
         payload: { id: row.id, entity_id: entityId, deleted_at: now },
       }, tx);
     }
-    return result.changes;
+    return orphanedRows.map(r => r.id);
   }
 
   /**

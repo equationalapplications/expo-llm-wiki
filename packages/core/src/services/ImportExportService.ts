@@ -335,7 +335,7 @@ export class ImportExportService {
         upsertedFactIds.has(fact.id) &&
         !factsWithPreservedBlob.has(fact.id)
       ) {
-        await this.embeddingService.embedFact({
+        const embedded = await this.embeddingService.embedFact({
           id: fact.id,
           entity_id: entityId,
           title: fact.title,
@@ -345,6 +345,9 @@ export class ImportExportService {
               ? fact.tags
               : [],
         });
+        if (!embedded) {
+          await this.embeddingService.notifyEmbeddingPersisted(entityId, fact.id, null);
+        }
       }
     }
 

@@ -8,7 +8,7 @@ export function parseJsonResponse<T>(text: string): T {
   let openChar: string;
   let closeChar: string;
 
-  if (firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
+  if (firstBrace !== -1) {
     start = firstBrace;
     openChar = '{';
     closeChar = '}';
