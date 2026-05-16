@@ -21,6 +21,7 @@ export class IngestionService {
     private embeddingService: EmbeddingService,
     promptService?: PromptService,
   ) {
+    // Fallback for direct instantiation outside WikiMemory facade (e.g. isolated tests).
     this.promptService = promptService ?? new PromptService(this.options.config?.prompts);
   }
 
