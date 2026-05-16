@@ -1,5 +1,5 @@
 import { parseJsonResponse, validateFact, validateTask, titleTokens, jaccardScore, normalizeSourceRef, normalizeSourceHash } from '../utils/pure';
-import { LIBRARIAN_SYSTEM_PROMPT, HEAL_SYSTEM_PROMPT } from '../prompts';
+import type { PromptService } from './PromptService';
 import { generateId } from '../utils/ids';
 import { parseEmbedding } from '../utils/embedding';
 import { PrunePartialFailureError } from '../types';
@@ -29,6 +29,7 @@ export class MaintenanceService {
     private searchService: SearchService,
     private jobManager: JobManager,
     private embeddingService: EmbeddingService,
+    private promptService: PromptService,
   ) {}
 
   async runPrune(entityId: string, options?: { retainSoftDeletedFor?: number | null; retainEventsFor?: number | null; vacuum?: boolean }): Promise<{ entries: number; tasks: number; events: number }> {
@@ -111,19 +112,19 @@ export class MaintenanceService {
     }
   }
 
-  async runLibrarian(entityId: string): Promise<void> {
+  async runLibrarian(entityId: string, options?: { promptOverride?: string }): Promise<void> {
     this.jobManager.acquireLock('librarian', entityId);
     try {
-      await this.doRunLibrarian(entityId);
+      await this.doRunLibrarian(entityId, options?.promptOverride);
     } finally {
       this.jobManager.releaseLock('librarian', entityId);
     }
   }
 
-  async runHeal(entityId: string): Promise<void> {
+  async runHeal(entityId: string, options?: { promptOverride?: string }): Promise<void> {
     this.jobManager.acquireLock('heal', entityId);
     try {
-      await this.doRunHeal(entityId);
+      await this.doRunHeal(entityId, options?.promptOverride);
     } finally {
       this.jobManager.releaseLock('heal', entityId);
     }
@@ -272,7 +273,7 @@ export class MaintenanceService {
   }
 
   /** Core librarian pass (locks handled by {@link runLibrarian}). Package-internal orchestration hook. */
-  async doRunLibrarian(entityId: string): Promise<void> {
+  async doRunLibrarian(entityId: string, promptOverride?: string): Promise<void> {
     const events = await this.eventRepo.getRecent(entityId, 50);
     const currentFactsRows = await this.entryRepo.findRecentByEntityId(entityId, 100);
 
@@ -284,12 +285,13 @@ export class MaintenanceService {
       };
     });
 
-    const userPrompt = `Events:\n${JSON.stringify(events.reverse(), null, 2)}\n\nCurrent Facts:\n${JSON.stringify(currentFacts, null, 2)}`;
+    const { systemPrompt, userPrompt } = this.promptService.buildLibrarianPrompt(
+      events.reverse(),
+      currentFacts,
+      promptOverride,
+    );
 
-    const responseText = await this.options.llmProvider.generateText({
-      systemPrompt: LIBRARIAN_SYSTEM_PROMPT,
-      userPrompt,
-    });
+    const responseText = await this.options.llmProvider.generateText({ systemPrompt, userPrompt });
 
     const result = parseJsonResponse<{ facts: ExtractedFact[], tasks: ExtractedTask[] }>(responseText);
     const facts = Array.isArray(result.facts) ? result.facts : [];
@@ -354,7 +356,7 @@ export class MaintenanceService {
   }
 
   /** Core heal pass (locks handled by {@link runHeal}). Package-internal orchestration hook. */
-  async doRunHeal(entityId: string): Promise<void> {
+  async doRunHeal(entityId: string, promptOverride?: string): Promise<void> {
     const now = Date.now();
     const orphanAfterDays = this.options.config?.orphanAfterDays !== undefined ? this.options.config?.orphanAfterDays : 30;
     const staleInferredAfterDays = this.options.config?.staleInferredAfterDays !== undefined ? this.options.config?.staleInferredAfterDays : 60;
@@ -387,19 +389,20 @@ export class MaintenanceService {
       .filter(f => f.source_type === 'immutable_document')
       .map(({ id, title, source_ref }) => ({ id, title, source_ref }));
 
-    const userPrompt = `Heal Candidates:\n${JSON.stringify(healCandidates.map(f => {
+    const healCandidatesForPrompt = healCandidates.map(f => {
       const { embedding: _embedding, embedding_blob: _blob, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
       return { ...rest, tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags };
-    }), null, 2)}
-\nDocument Anchors (DO NOT MODIFY OR DELETE):\n${JSON.stringify(documentAnchors, null, 2)}
-\nAll Tasks:\n${JSON.stringify(allTasks, null, 2)}
-\nRecent Events:\n${JSON.stringify(recentEvents, null, 2)}
-\nThe following document anchors are provided for contradiction detection only. Do not include them in \`downgraded\`, \`deleted\`, or \`newFacts\`.`;
-
-    const responseText = await this.options.llmProvider.generateText({
-      systemPrompt: HEAL_SYSTEM_PROMPT,
-      userPrompt,
     });
+
+    const { systemPrompt, userPrompt } = this.promptService.buildHealPrompt(
+      healCandidatesForPrompt,
+      documentAnchors,
+      allTasks,
+      recentEvents,
+      promptOverride,
+    );
+
+    const responseText = await this.options.llmProvider.generateText({ systemPrompt, userPrompt });
 
     const result = parseJsonResponse<{ downgraded: string[], deleted: string[], newFacts: ExtractedFact[] }>(responseText);
 
