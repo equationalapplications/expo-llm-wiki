@@ -115,7 +115,7 @@ Core maintenance tasks (`ingestDocument`, `runLibrarian`, `runHeal`) use system 
 > | Operation | Required JSON shape |
 > |-----------|-------------------|
 > | `ingestDocument` | `{ "facts": [{ "title": "string", "body": "string", "tags": ["string"], "confidence": "certain\|inferred\|tentative" }] }` |
-> | `runLibrarian` | `{ "facts": [...], "tasks": [{ "description": "string", "priority": 0-10 }] }` |
+> | `runLibrarian` | `{ "facts": [...], "tasks": [{ "description": "string", "priority": 5 }] }` — `priority` is an integer 0–10 |
 > | `runHeal` | `{ "downgraded": ["factId"], "deleted": ["factId"], "newFacts": [...] }` |
 
 ### Global Overrides (Auto-Runs)

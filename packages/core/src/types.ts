@@ -47,7 +47,7 @@ export interface WikiConfig {
    * Default: undefined (pure semantic when embed provided).
    */
   hybridWeight?: number;
-  /** Global prompt overrides applied to all LLM calls. Runtime overrides on individual method calls take precedence. */
+  /** Global prompt overrides for text generation calls (`ingestDocument`, `runLibrarian`, `runHeal`). Does not affect embedding generation. Runtime overrides on individual method calls take precedence. */
   prompts?: PromptOverrides;
 }
 
