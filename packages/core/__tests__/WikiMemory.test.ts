@@ -89,8 +89,8 @@ describe('WikiMemory (Facade Layer)', () => {
 
   describe('Setup and Migrations', () => {
     it('detects fresh install and sets initial schema version without running upgrade migrations', async () => {
-      const tableExistsSpy = vi.spyOn((wiki as any).metadataRepo, 'tableExists').mockResolvedValue(false);
-      const setMetaSpy = vi.spyOn((wiki as any).metadataRepo, 'setMeta').mockResolvedValue(undefined);
+      const tableExistsSpy = vi.spyOn(wiki.__testAccess.metadataRepo, 'tableExists').mockResolvedValue(false);
+      const setMetaSpy = vi.spyOn(wiki.__testAccess.metadataRepo, 'setMeta').mockResolvedValue(undefined);
 
       await wiki.setup();
 
@@ -103,12 +103,12 @@ describe('WikiMemory (Facade Layer)', () => {
     });
 
     it('throws an error if legacy source types are detected on an existing database', async () => {
-      vi.spyOn((wiki as any).metadataRepo, 'tableExists').mockResolvedValue(true);
-      vi.spyOn((wiki as any).metadataRepo, 'getMeta').mockImplementation(async (key: string) =>
+      vi.spyOn(wiki.__testAccess.metadataRepo, 'tableExists').mockResolvedValue(true);
+      vi.spyOn(wiki.__testAccess.metadataRepo, 'getMeta').mockImplementation(async (key: string) =>
         key === 'schema_version' ? String(CURRENT_SCHEMA_VERSION) : null,
       );
-      vi.spyOn((wiki as any).entryRepo, 'hasLegacySourceTypes').mockResolvedValue(true);
-      vi.spyOn((wiki as any).entryRepo, 'countLegacySourceTypes').mockResolvedValue(42);
+      vi.spyOn(wiki.__testAccess.entryRepo, 'hasLegacySourceTypes').mockResolvedValue(true);
+      vi.spyOn(wiki.__testAccess.entryRepo, 'countLegacySourceTypes').mockResolvedValue(42);
 
       await expect(wiki.setup()).rejects.toThrowError(/Database contains 42 entries with legacy source_type values/);
     });

@@ -126,8 +126,8 @@ describe('WriteService', () => {
 
       await writeService.write('user_1', { summary: 'test', event_type: 'observation' });
 
-      // We must wait a tick because the background promise resolves asynchronously
-      await new Promise<void>((r) => process.nextTick(r));
+      // Drain microtasks from runLibrarianThenMaybeHeal; nextTick can run before those in Node.
+      await new Promise<void>((r) => setImmediate(r));
 
       expect(mockMaintenanceService.doRunLibrarian).toHaveBeenCalled();
       expect(mockJobManager.tryAcquireAutoHealLock).toHaveBeenCalledWith('user_1');

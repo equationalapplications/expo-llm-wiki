@@ -34,6 +34,8 @@ export interface WikiMemoryTestAccess {
   maintenanceService: MaintenanceService;
   retrievalService: RetrievalService;
   writeService: WriteService;
+  entryRepo: EntryRepository;
+  metadataRepo: MetadataRepository;
 }
 
 export class WikiMemory {
@@ -138,11 +140,9 @@ export class WikiMemory {
       maintenanceService: this.maintenanceService,
       retrievalService: this.retrievalService,
       writeService: this.writeService,
+      entryRepo: this.entryRepo,
+      metadataRepo: this.metadataRepo,
     };
-  }
-
-  private async assertNoLegacySourceTypes(): Promise<void> {
-    return this.importExportService.assertNoLegacySourceTypes();
   }
 
   async setup() {
@@ -184,7 +184,7 @@ export class WikiMemory {
     }
 
     if (entriesExistedBeforeSetup) {
-      await this.assertNoLegacySourceTypes();
+      await this.importExportService.assertNoLegacySourceTypes();
     }
 
     const rows = await this.entryRepo.findRowsForSourceRefMigration();
