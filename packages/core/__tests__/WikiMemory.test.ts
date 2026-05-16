@@ -114,3 +114,81 @@ describe('WikiMemory (Facade Layer)', () => {
     });
   });
 });
+
+describe('WikiMemory — prompt override API', () => {
+  let wiki: WikiMemory;
+  let capturedCalls: Array<{ systemPrompt: string; userPrompt: string }>;
+
+  beforeEach(async () => {
+    capturedCalls = [];
+    const db = createMockDb();
+    wiki = new WikiMemory(db, {
+      llmProvider: {
+        generateText: vi.fn(async (params: { systemPrompt: string; userPrompt: string }) => {
+          capturedCalls.push(params);
+          return JSON.stringify({ facts: [], tasks: [] });
+        }),
+      },
+    });
+    await wiki.setup();
+  });
+
+  it('runLibrarian accepts promptOverride and routes it to llmProvider', async () => {
+    await wiki.write('e1', { event_type: 'observation', summary: 'test event' });
+    await wiki.runLibrarian('e1', { promptOverride: 'custom lib prompt' });
+    const libCall = capturedCalls.find(c => c.systemPrompt === 'custom lib prompt');
+    expect(libCall).toBeDefined();
+  });
+
+  it('runHeal accepts promptOverride and routes it to llmProvider', async () => {
+    const healResponse = JSON.stringify({ downgraded: [], deleted: [], newFacts: [] });
+    (wiki as any).options.llmProvider.generateText = vi.fn(async (params: { systemPrompt: string; userPrompt: string }) => {
+      capturedCalls.push(params);
+      return healResponse;
+    });
+    await wiki.runHeal('e1', { promptOverride: 'custom heal prompt' });
+    const healCall = capturedCalls.find(c => c.systemPrompt === 'custom heal prompt');
+    expect(healCall).toBeDefined();
+  });
+
+  it('ingestDocument accepts promptOverride and routes it to llmProvider', async () => {
+    const ingestResponse = JSON.stringify({ facts: [] });
+    (wiki as any).options.llmProvider.generateText = vi.fn(async (params: { systemPrompt: string; userPrompt: string }) => {
+      capturedCalls.push(params);
+      return ingestResponse;
+    });
+    await wiki.ingestDocument('e1', {
+      sourceRef: 'doc://test',
+      sourceHash: 'c'.repeat(64),
+      documentChunk: 'some text',
+      promptOverride: 'custom ingest prompt',
+    });
+    expect(capturedCalls[0]?.systemPrompt).toBe('custom ingest prompt');
+  });
+
+  it('__testAccess exposes promptService', () => {
+    const access = wiki.__testAccess;
+    expect(access.promptService).toBeDefined();
+    expect(typeof access.promptService.buildLibrarianPrompt).toBe('function');
+  });
+
+  it('global config.prompts flows into PromptService', async () => {
+    const db2 = createMockDb();
+    const wikiWithGlobal = new WikiMemory(db2, {
+      llmProvider: {
+        generateText: vi.fn(async (params: { systemPrompt: string; userPrompt: string }) => {
+          capturedCalls.push(params);
+          return JSON.stringify({ facts: [], tasks: [] });
+        }),
+      },
+      config: {
+        prompts: { librarianSystemPrompt: 'global lib from config' },
+      },
+    });
+    await wikiWithGlobal.setup();
+    await wikiWithGlobal.write('e2', { event_type: 'observation', summary: 'x' });
+    await wikiWithGlobal.runLibrarian('e2');
+    const libCall = capturedCalls.find(c => c.systemPrompt === 'global lib from config');
+    expect(libCall).toBeDefined();
+  });
+});

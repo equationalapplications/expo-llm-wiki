@@ -23,6 +23,7 @@ import { ImportExportService } from './services/ImportExportService';
 import { EmbeddingService } from './services/EmbeddingService';
 import { RetrievalService } from './services/RetrievalService';
 import { WriteService } from './services/WriteService';
+import { PromptService } from './services/PromptService';
 
 export { WikiBusyError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER } from './types';
 
@@ -34,6 +35,7 @@ export interface WikiMemoryTestAccess {
   maintenanceService: MaintenanceService;
   retrievalService: RetrievalService;
   writeService: WriteService;
+  promptService: PromptService;
   entryRepo: EntryRepository;
   metadataRepo: MetadataRepository;
   jobManager: JobManager;
@@ -59,6 +61,7 @@ export class WikiMemory {
   private importExportService: ImportExportService;
   private retrievalService: RetrievalService;
   private writeService: WriteService;
+  private promptService: PromptService;
 
   constructor(db: SQLiteAdapter, options: WikiOptions) {
     this.db = db;
@@ -72,6 +75,7 @@ export class WikiMemory {
     this.embeddingService = new EmbeddingService(this.db, this.options, this.entryRepo, this.metadataRepo);
     this.searchService = new SearchService(this.entryRepo);
     this.jobManager = new JobManager(this.prefix);
+    this.promptService = new PromptService(options.config?.prompts);
     this.ingestionService = new IngestionService(
       this.db,
       this.prefix,
@@ -80,6 +84,7 @@ export class WikiMemory {
       this.searchService,
       this.jobManager,
       this.embeddingService,
+      this.promptService,
     );
     this.maintenanceService = new MaintenanceService(
       this.db,
@@ -92,6 +97,7 @@ export class WikiMemory {
       this.searchService,
       this.jobManager,
       this.embeddingService,
+      this.promptService,
     );
     this.importExportService = new ImportExportService(
       this.db,
@@ -144,6 +150,7 @@ export class WikiMemory {
       maintenanceService: this.maintenanceService,
       retrievalService: this.retrievalService,
       writeService: this.writeService,
+      promptService: this.promptService,
       entryRepo: this.entryRepo,
       metadataRepo: this.metadataRepo,
       jobManager: this.jobManager,
@@ -243,12 +250,22 @@ export class WikiMemory {
     return this.writeService.write(entityId, event);
   }
 
-  async runLibrarian(entityId: string): Promise<void> {
-    return this.maintenanceService.runLibrarian(entityId);
+  /**
+   * @param options.promptOverride - Applies only to this manual call. Does NOT affect
+   * WriteService-triggered auto-runs. For persistent prompt customization across auto-runs,
+   * set `options.config.prompts.librarianSystemPrompt` at WikiMemory construction time.
+   */
+  async runLibrarian(entityId: string, options?: { promptOverride?: string }): Promise<void> {
+    return this.maintenanceService.runLibrarian(entityId, options);
   }
 
-  async runHeal(entityId: string): Promise<void> {
-    return this.maintenanceService.runHeal(entityId);
+  /**
+   * @param options.promptOverride - Applies only to this manual call. Does NOT affect
+   * WriteService-triggered auto-runs. For persistent prompt customization across auto-runs,
+   * set `options.config.prompts.healSystemPrompt` at WikiMemory construction time.
+   */
+  async runHeal(entityId: string, options?: { promptOverride?: string }): Promise<void> {
+    return this.maintenanceService.runHeal(entityId, options);
   }
 
   async runReembed(entityId?: string, opts?: { force?: boolean; skipExisting?: boolean }): Promise<{ embedded: number; skipped: number; failed: number }> {
@@ -282,7 +299,23 @@ export class WikiMemory {
     return this.maintenanceService.forget(entityId, params);
   }
 
-  async ingestDocument(entityId: string, params: { sourceRef: string; sourceHash: string; documentChunk: string; maxChunkLength?: number; chunkOverlap?: number; chunkConcurrency?: number }): Promise<{ truncated: boolean; chunks: number }> {
+  /**
+   * @param params.promptOverride - Overrides the system prompt for this ingest call only.
+   * For persistent customization, set `options.config.prompts.ingestSystemPrompt` at
+   * WikiMemory construction time.
+   */
+  async ingestDocument(
+    entityId: string,
+    params: {
+      sourceRef: string;
+      sourceHash: string;
+      documentChunk: string;
+      maxChunkLength?: number;
+      chunkOverlap?: number;
+      chunkConcurrency?: number;
+      promptOverride?: string;
+    }
+  ): Promise<{ truncated: boolean; chunks: number }> {
     return this.ingestionService.ingestDocument(entityId, params);
   }
 }
