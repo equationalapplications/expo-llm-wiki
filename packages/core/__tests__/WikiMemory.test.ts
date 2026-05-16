@@ -191,4 +191,34 @@ describe('WikiMemory — prompt override API', () => {
     const libCall = capturedCalls.find(c => c.systemPrompt === 'global lib from config');
     expect(libCall).toBeDefined();
   });
+
+  it('global config.prompts reaches LLM when write() triggers auto-run', async () => {
+    const db2 = createMockDb();
+    const localCalls: Array<{ systemPrompt: string; userPrompt: string }> = [];
+    const wikiWithGlobal = new WikiMemory(db2, {
+      llmProvider: {
+        generateText: vi.fn(async (params: { systemPrompt: string; userPrompt: string }) => {
+          localCalls.push(params);
+          return JSON.stringify({ facts: [], tasks: [] });
+        }),
+      },
+      config: {
+        autoLibrarianThreshold: 1,
+        prompts: { librarianSystemPrompt: 'auto-run global prompt' },
+      },
+    });
+    await wikiWithGlobal.setup();
+
+    // Make eventRepo.count return 1 so write() crosses the threshold
+    vi.spyOn((wikiWithGlobal as any).eventRepo, 'count').mockResolvedValue(1);
+    vi.spyOn(wikiWithGlobal.__testAccess.metadataRepo, 'getCheckpoint').mockResolvedValue({ memory: 0 });
+
+    await wikiWithGlobal.write('e3', { event_type: 'observation', summary: 'trigger' });
+
+    // Drain the fire-and-forget maintenance task
+    await new Promise<void>((r) => setImmediate(r));
+
+    const libCall = localCalls.find(c => c.systemPrompt === 'auto-run global prompt');
+    expect(libCall).toBeDefined();
+  });
 });

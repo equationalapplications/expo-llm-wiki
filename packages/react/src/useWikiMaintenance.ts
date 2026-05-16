@@ -22,7 +22,7 @@ export function useWikiMaintenance() {
     setIsPending(true);
     setLastResult(null);
     try {
-      await wikiRef.current.runLibrarian(entityId, options);
+      await (options ? wikiRef.current.runLibrarian(entityId, options) : wikiRef.current.runLibrarian(entityId));
       setLastResult({ operation: 'librarian', result: undefined });
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e));
@@ -40,7 +40,7 @@ export function useWikiMaintenance() {
     setIsPending(true);
     setLastResult(null);
     try {
-      await wikiRef.current.runHeal(entityId, options);
+      await (options ? wikiRef.current.runHeal(entityId, options) : wikiRef.current.runHeal(entityId));
       setLastResult({ operation: 'heal', result: undefined });
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e));
