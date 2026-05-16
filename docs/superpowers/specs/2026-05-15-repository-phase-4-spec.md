@@ -497,17 +497,11 @@ CRITICAL CONSTRAINTS:
 
 With PR 1 acting as the anchor, these agents will safely gut the formatting logic out of your core services in parallel.
 
-Once they complete PRs 2 and 3, would you like me to draft the final implementation for PR 4 (the `WikiMemory` facade wiring) so you can close out the Phase 4 refactor entirely?
+---
 
---- 
+## Post-Phase 4 Roadmap
 
-That is a phenomenal wrap-up to the core refactoring. Implementing the `__testAccess` pattern with strict typing (`WikiMemoryTestAccess`) gives you the exact best of both worlds: a pristine, dummy-proof public API for consumers, and a fully transparent playground for your test suites. Seeing 406 tests pass on an architecture change this massive is a testament to how well you laid out the test coverage beforehand.
-
-You are exactly right about the roadmap. Phase 1 through 3.5 were all about **building the engine**: getting the schemas right, abstracting the SQLite layer, handling dual-writes, and finally decoupling the God Object into cohesive domain services.
-
-The core engine is now built, tuned, and tested. For **Phase 4**, we move from building the engine to _installing it in the car_. Since this is the `expo-llm-wiki` repository, the natural progression is to move up the stack towards developer experience (DX) and integration.
-
-Here are the most logical tracks for Phase 4. Which of these aligns best with your immediate goals for the project?
+With the core engine built and tested (Phases 1–4), the natural next tracks are developer experience (DX) and integration.
 
 ### Track A: The React / Expo Integration Layer (Hooks & Context)
 
