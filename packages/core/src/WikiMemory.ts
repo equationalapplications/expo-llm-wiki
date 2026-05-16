@@ -36,6 +36,7 @@ export interface WikiMemoryTestAccess {
   writeService: WriteService;
   entryRepo: EntryRepository;
   metadataRepo: MetadataRepository;
+  jobManager: JobManager;
 }
 
 export class WikiMemory {
@@ -125,9 +126,12 @@ export class WikiMemory {
    * If `NODE_ENV` is not `"test"`, emits a single `console.warn` per instance (skipped when `process` is undefined).
    */
   get __testAccess(): WikiMemoryTestAccess {
+    const processEnv = typeof globalThis !== 'undefined'
+      ? (globalThis as any).process?.env
+      : undefined;
+
     if (
-      typeof process !== 'undefined' &&
-      process.env.NODE_ENV !== 'test' &&
+      processEnv?.NODE_ENV !== 'test' &&
       !this.#testAccessNonTestEnvWarned
     ) {
       this.#testAccessNonTestEnvWarned = true;
@@ -142,6 +146,7 @@ export class WikiMemory {
       writeService: this.writeService,
       entryRepo: this.entryRepo,
       metadataRepo: this.metadataRepo,
+      jobManager: this.jobManager,
     };
   }
 
