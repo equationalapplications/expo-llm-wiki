@@ -409,7 +409,9 @@ const result = await wiki.ingestDocument('entity-123', {
   chunkConcurrency: 1,                // optional, parallel LLM calls per ingest (default: 1)
   // Optional: runtime override for this call only (does not affect write() auto-runs).
   // Must include the JSON output contract — overrides replace the entire default prompt.
-  promptOverride: `Extract strict technical requirements: {{documentChunk}}`,
+  promptOverride: `Extract strict technical requirements: {{documentChunk}}
+
+Return JSON: {"facts": [{"title": "...", "body": "...", "tags": ["..."], "confidence": "certain|tentative|inferred"}]}`,
 });
 // result: { truncated: boolean; chunks: number }
 // truncated: true if at least one hard-split was required (no sentence boundary)
@@ -425,7 +427,9 @@ await wiki.runLibrarian('entity-123');
 // Run a manual synthesis with a one-off runtime override (does not affect write() auto-runs).
 // Must include the JSON output contract — overrides replace the entire default prompt.
 await wiki.runLibrarian('entity-123', {
-  promptOverride: `One-off extraction task:\n{{events}}`,
+  promptOverride: `One-off extraction task:\n{{events}}
+
+Return JSON: {"facts": [{"title": "...", "body": "...", "tags": ["..."], "confidence": "certain|tentative|inferred"}], "tasks": [{"description": "...", "priority": 5}]}`,
 });
 
 // Resolve contradictions, downgrade stale claims, remove obsolete facts

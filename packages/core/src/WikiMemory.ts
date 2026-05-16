@@ -34,6 +34,7 @@ export interface WikiMemoryTestAccess {
   ingestionService: IngestionService;
   maintenanceService: MaintenanceService;
   retrievalService: RetrievalService;
+  searchService: SearchService;
   writeService: WriteService;
   promptService: PromptService;
   entryRepo: EntryRepository;
@@ -150,6 +151,7 @@ export class WikiMemory {
       ingestionService: this.ingestionService,
       maintenanceService: this.maintenanceService,
       retrievalService: this.retrievalService,
+      searchService: this.searchService,
       writeService: this.writeService,
       promptService: this.promptService,
       entryRepo: this.entryRepo,

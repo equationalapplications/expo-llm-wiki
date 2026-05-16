@@ -103,7 +103,7 @@ export interface WikiFact {
    * or a numeric-keyed plain object `{ 0: byte, 1: byte, ... }` produced
    * by JSON.stringify(Uint8Array).
    */
-  embedding_blob?: Uint8Array | { type: 'Buffer'; data: number[] } | Record<string, number>;
+  embedding_blob?: Uint8Array | { type: 'Buffer'; data: number[] } | Record<string, number> | null;
   last_accessed_at: number | null;
   access_count: number;
   deleted_at: number | null;

@@ -292,7 +292,7 @@ await runLibrarian('user-123');
 // Run with a one-off runtime override (applies only to this call, not future auto-runs).
 // Must include the JSON output contract — overrides replace the entire default prompt.
 await runLibrarian('user-123', {
-  promptOverride: `One-off extraction task:\n{{events}}`,
+  promptOverride: `One-off extraction task:\n{{events}}\n\nReturn ONLY valid JSON: { "facts": [{ "title": "string", "body": "string", "tags": ["string"], "confidence": "certain|inferred|tentative" }], "tasks": [{ "description": "string", "priority": 0 }] }. No markdown.`,
 });
 
 // LLM-driven fact review: remove orphaned/stale facts, repair incorrect inferences

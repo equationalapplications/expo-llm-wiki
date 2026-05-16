@@ -21,6 +21,7 @@ describe('ImportExportService', () => {
 
     mockEntryRepo = {
       findAllByEntityId: vi.fn().mockResolvedValue([]),
+      findAllByEntityIdWithBlobs: vi.fn().mockResolvedValue([]),
       findIdsBySource: vi.fn().mockResolvedValue([]),
       bulkSoftDeleteByEntityId: vi.fn().mockResolvedValue(undefined),
       findExistingMetadataByIds: vi.fn().mockResolvedValue([]),
@@ -84,7 +85,7 @@ describe('ImportExportService', () => {
   describe('Exporting', () => {
     it('exports dumps with safe blob copies when requested', async () => {
       const mockBlob = new Uint8Array([0, 0, 128, 63]);
-      mockEntryRepo.findAllByEntityId.mockResolvedValue([
+      mockEntryRepo.findAllByEntityIdWithBlobs.mockResolvedValue([
         { id: 'fact_1', entity_id: 'user_1', embedding_blob: mockBlob },
       ]);
 
@@ -102,8 +103,8 @@ describe('ImportExportService', () => {
       await importExportService.exportDump();
 
       expect(mockMetadataRepo.getDistinctEntityIds).toHaveBeenCalledTimes(1);
-      expect(mockEntryRepo.findAllByEntityId).toHaveBeenCalledWith('user_1');
-      expect(mockEntryRepo.findAllByEntityId).toHaveBeenCalledWith('user_2');
+      expect(mockEntryRepo.findAllByEntityIdWithBlobs).toHaveBeenCalledWith('user_1');
+      expect(mockEntryRepo.findAllByEntityIdWithBlobs).toHaveBeenCalledWith('user_2');
     });
   });
 

@@ -21,11 +21,6 @@ function mapRowToFact(row: any): WikiFact {
     return [];
   })();
 
-  // Preserve embedding_blob for export/import round-tripping
-  const embedding_blob = row.embedding_blob instanceof Uint8Array
-    ? row.embedding_blob
-    : null;
-
   return {
     id: row.id,
     entity_id: row.entity_id,
@@ -43,8 +38,16 @@ function mapRowToFact(row: any): WikiFact {
       : Number(row.last_accessed_at),
     deleted_at: row.deleted_at != null ? Number(row.deleted_at) : null,
     access_count: Number(row.access_count ?? 0),
-    embedding_blob,
   };
+}
+
+/** Mapper for export/import round-tripping that preserves embedding_blob. */
+function mapRowToFactWithBlobs(row: any): WikiFact {
+  const base = mapRowToFact(row);
+  const embedding_blob = row.embedding_blob instanceof Uint8Array
+    ? row.embedding_blob
+    : null;
+  return { ...base, embedding_blob };
 }
 
 export class EntryRepository extends BaseRepository {
@@ -401,6 +404,19 @@ export class EntryRepository extends BaseRepository {
       [entityId, limit],
     );
     return rows.map(mapRowToFact);
+  }
+
+  /**
+   * Fetch all non-deleted entries for an entity with embedding blobs preserved.
+   * Used by ImportExportService for export/import round-tripping.
+   */
+  async findAllByEntityIdWithBlobs(entityId: string, tx?: SQLiteAdapter): Promise<WikiFact[]> {
+    const executor = this.getExecutor(tx);
+    const rows = await executor.getAllAsync<any>(
+      `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC`,
+      [entityId],
+    );
+    return rows.map(mapRowToFactWithBlobs);
   }
 
   /**

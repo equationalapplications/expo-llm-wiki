@@ -70,7 +70,9 @@ export class ImportExportService {
     opts?: { maxEvents?: number; includeBlobs?: boolean },
   ): Promise<MemoryBundle> {
     const [factsRaw, tasks, events] = await Promise.all([
-      this.entryRepo.findAllByEntityId(entityId),
+      opts?.includeBlobs
+        ? this.entryRepo.findAllByEntityIdWithBlobs(entityId)
+        : this.entryRepo.findAllByEntityId(entityId),
       this.taskRepo.findAllByEntityId(entityId),
       this.eventRepo.getByEntityId(entityId, opts?.maxEvents),
     ]);
