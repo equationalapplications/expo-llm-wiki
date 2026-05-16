@@ -12,6 +12,12 @@ export interface SQLiteAdapter {
   closeAsync(): Promise<void>;
 }
 
+export interface PromptOverrides {
+  ingestSystemPrompt?: string;
+  librarianSystemPrompt?: string;
+  healSystemPrompt?: string;
+}
+
 export interface WikiConfig {
   tablePrefix?: string;
   maxResults?: number;
@@ -41,6 +47,8 @@ export interface WikiConfig {
    * Default: undefined (pure semantic when embed provided).
    */
   hybridWeight?: number;
+  /** Global prompt overrides applied to all LLM calls. Runtime overrides on individual method calls take precedence. */
+  prompts?: PromptOverrides;
 }
 
 export interface ReadOptions {
