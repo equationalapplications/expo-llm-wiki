@@ -113,6 +113,13 @@ const wiki = createWiki(adapter, {
     staleInferredAfterDays: 60,        // default: 60 (days before runHeal downgrades inferred facts; null to disable)
     preFilterLimit: 50,                // default: undefined — MiniSearch pre-filter before cosine scan; recommended for >500 facts
     hybridWeight: 0.7,                 // default: undefined — blend semantic (1.0) ↔ keyword (0.0); pure semantic when unset
+
+    // Global prompt overrides — applied to all background auto-runs triggered by write()
+    prompts: {
+      ingestSystemPrompt: `Extract core facts from this document: {{documentChunk}}`,
+      librarianSystemPrompt: `Synthesize these thoughts into insights:\n{{events}}`,
+      healSystemPrompt: `Fix the memory graph based on these candidates: {{healCandidates}}`,
+    },
   },
 });
 ```
@@ -243,6 +250,8 @@ const handleIngest = async (document: string) => {
       sourceRef: 'doc-readme',
       sourceHash,
       documentChunk: document,
+      // Optional: runtime override for this specific ingest call only
+      promptOverride: `Strict technical extraction. Focus on APIs: {{documentChunk}}`,
     });
   } catch (e) {
     console.error('Ingest failed:', e);
@@ -275,6 +284,11 @@ const { runLibrarian, runHeal, runReembed, runPrune, isPending, error, lastResul
 
 // Deduplicate and consolidate facts from events
 await runLibrarian('user-123');
+
+// Run with a one-off runtime override (applies only to this call, not future auto-runs)
+await runLibrarian('user-123', {
+  promptOverride: `One-off extraction task:\n{{events}}`,
+});
 
 // LLM-driven fact review: remove orphaned/stale facts, repair incorrect inferences
 await runHeal('user-123');
@@ -340,7 +354,7 @@ if (data) {
   console.log(data.metadata);   // { query, entityIds, tierWeights }
 }
 
-For Librarian prompt utilities, see [`packages/core/README.md`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md#librarian-prompt-override-contract).
+For full details on `{{mustache}}` prompt templating and the strict distinction between global auto-runs and runtime overrides, see [Prompt Management & Overrides](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md#prompt-management--overrides) in `@equationalapplications/core-llm-wiki`.
 
 ## Component Lifecycle
 

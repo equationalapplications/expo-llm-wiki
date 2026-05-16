@@ -92,9 +92,72 @@ const wikiMemory = new WikiMemory(db, {
     staleInferredAfterDays: 60,        // default: 60 (days before runHeal downgrades inferred facts; null to disable)
     preFilterLimit: 50,                // default: undefined — MiniSearch pre-filter before cosine scan; recommended for >500 facts
     hybridWeight: 0.7,                 // default: undefined — blend semantic (1.0) ↔ keyword (0.0); pure semantic when unset
+
+    // Global prompt overrides — applied to all background auto-runs triggered by write()
+    prompts: {
+      ingestSystemPrompt: `Extract core facts from this document: {{documentChunk}}`,
+      librarianSystemPrompt: `You are an expert curator. Synthesize these thoughts:\n{{events}}\n\nCurrent Facts:\n{{currentFacts}}`,
+      healSystemPrompt: `Fix the memory graph based on these candidates: {{healCandidates}}`,
+    },
   },
 });
 ```
+
+## Prompt Management & Overrides
+
+Core maintenance tasks (`ingestDocument`, `runLibrarian`, `runHeal`) use system prompts to instruct the LLM. You can customize these prompts using `{{mustache}}` style variables to inject context dynamically.
+
+### Global Overrides (Auto-Runs)
+
+If your application relies on `write()` to automatically maintain the memory graph in the background (via `autoLibrarianThreshold` and `autoHealThreshold`), configure custom prompts globally at instantiation. This ensures the internal `WriteService` uses your domain-specific instructions when it triggers an auto-run.
+
+```typescript
+const wikiMemory = new WikiMemory(db, {
+  llmProvider,
+  config: {
+    prompts: {
+      librarianSystemPrompt: `You are an expert curator. Synthesize these thoughts:\n{{events}}\n\nCurrent Facts:\n{{currentFacts}}`,
+    },
+  },
+});
+
+// WriteService uses the global prompt whenever autoLibrarianThreshold is hit
+await wikiMemory.write('user-123', { event_type: 'observation', summary: '...' });
+```
+
+Available `{{variables}}` per prompt type:
+
+| Prompt | Variables |
+|--------|-----------|
+| `ingestSystemPrompt` | `{{documentChunk}}` |
+| `librarianSystemPrompt` | `{{events}}`, `{{currentFacts}}` |
+| `healSystemPrompt` | `{{healCandidates}}`, `{{documentAnchors}}`, `{{allTasks}}`, `{{recentEvents}}` |
+
+When a template contains `{{variable}}` tags, the matching data is hydrated directly into `systemPrompt` and a short fixed string is used as `userPrompt`. When a template has no `{{}}` tags, the raw data is appended as `userPrompt` — backward compatible with plain-string overrides.
+
+### Runtime Overrides (Manual Execution)
+
+Pass `promptOverride` per-call for one-off instructions. **Runtime overrides apply only to that single call — they do not persist for future auto-runs triggered by `write()`.**
+
+```typescript
+// Override the base default AND global config for this single execution
+await wikiMemory.runLibrarian('user-123', {
+  promptOverride: `One-off extraction task:\n{{events}}`,
+});
+
+await wikiMemory.runHeal('user-123', {
+  promptOverride: `Domain-specific healing: {{healCandidates}}`,
+});
+
+await wikiMemory.ingestDocument('user-123', {
+  sourceRef: 'doc-1',
+  sourceHash: 'abc...',
+  documentChunk: content,
+  promptOverride: `Strict technical extraction: {{documentChunk}}`,
+});
+```
+
+> **Important:** If your app relies on `write()` auto-runs and needs custom prompts for those runs, use `config.prompts` at construction time. Runtime `promptOverride` values are never forwarded to `WriteService`-triggered internal runs.
 
 ## Retrieval Tuning
 

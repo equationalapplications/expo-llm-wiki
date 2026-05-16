@@ -186,6 +186,13 @@ const wiki = createWiki(db, {
     staleInferredAfterDays: 60,        // optional, default: 60 (days before runHeal downgrades inferred facts; null to disable)
     preFilterLimit: 50,                // optional, default: undefined — MiniSearch pre-filter before cosine scan; recommended for >500 facts
     hybridWeight: 0.7,                 // optional, default: undefined — blend semantic (1.0) ↔ keyword (0.0); pure semantic when unset
+
+    // Global prompt overrides — applied to all background auto-runs triggered by write()
+    prompts: {
+      ingestSystemPrompt: `Extract core facts from this document: {{documentChunk}}`,
+      librarianSystemPrompt: `Synthesize these thoughts into insights:\n{{events}}`,
+      healSystemPrompt: `Fix the memory graph based on these candidates: {{healCandidates}}`,
+    },
   },
 });
 
@@ -401,6 +408,8 @@ const result = await wiki.ingestDocument('entity-123', {
   maxChunkLength: 12000,              // optional, character count
   chunkOverlap: 400,                  // optional, overlap in characters
   chunkConcurrency: 1,                // optional, parallel LLM calls per ingest (default: 1)
+  // Optional: runtime override for this call only (does not affect write() auto-runs)
+  promptOverride: `Extract strict technical requirements: {{documentChunk}}`,
 });
 // result: { truncated: boolean; chunks: number }
 // truncated: true if at least one hard-split was required (no sentence boundary)
@@ -412,6 +421,11 @@ const result = await wiki.ingestDocument('entity-123', {
 ```typescript
 // Consolidate recent events into durable facts (auto-triggered by write, or call manually)
 await wiki.runLibrarian('entity-123');
+
+// Run a manual synthesis with a one-off runtime override (does not affect write() auto-runs)
+await wiki.runLibrarian('entity-123', {
+  promptOverride: `One-off extraction task:\n{{events}}`,
+});
 
 // Resolve contradictions, downgrade stale claims, remove obsolete facts
 await wiki.runHeal('entity-123');
@@ -478,7 +492,7 @@ const finalPrompt = hydrateLibrarianPrompt(template, {
 });
 ```
 
-For full examples, template-warning guidance, and the override contract, see [`packages/core/README.md`](packages/core/README.md#librarian-prompt-override-contract).
+Advanced Prompting: For full details on `{{mustache}}` prompt templating, hydration utilities, and the strict distinction between global auto-runs and runtime overrides, see [Prompt Management & Overrides](packages/core/README.md#prompt-management--overrides) in `packages/core/README.md`.
 
 Facts are ranked by a weighted score combining confidence tier, access frequency, and recency. Returns an empty string for an empty bundle.
 

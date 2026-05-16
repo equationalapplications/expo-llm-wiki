@@ -114,6 +114,13 @@ const wiki = createWiki(db, {
     staleInferredAfterDays: 60,        // default: 60 (days before runHeal downgrades inferred facts; null to disable)
     preFilterLimit: 50,                // default: undefined — MiniSearch pre-filter before cosine scan; recommended for >500 facts
     hybridWeight: 0.7,                 // default: undefined — blend semantic (1.0) ↔ keyword (0.0); pure semantic when unset
+
+    // Global prompt overrides — applied to all background auto-runs triggered by write()
+    prompts: {
+      ingestSystemPrompt: `Extract core facts from this document: {{documentChunk}}`,
+      librarianSystemPrompt: `Synthesize these thoughts into insights:\n{{events}}`,
+      healSystemPrompt: `Fix the memory graph based on these candidates: {{healCandidates}}`,
+    },
   },
 });
 ```
@@ -168,8 +175,20 @@ const wiki = createWiki(db, {
 // Initialize tables (call once on app startup)
 await wiki.setup();
 
-// Use wiki instance
+// Auto-runs: uses config.prompts for background librarian/heal triggers
 await wiki.write('user-123', { event_type: 'observation', summary: '...' });
+
+// Manual executions: runtime promptOverride applies only to this single call
+await wiki.runLibrarian('user-123', {
+  promptOverride: `Strict domain extraction task:\n{{events}}`,
+});
+
+await wiki.ingestDocument('user-123', {
+  sourceRef: 'doc-1',
+  sourceHash: 'abc...',
+  documentChunk: content,
+  promptOverride: `Focus strictly on technical APIs: {{documentChunk}}`,
+});
 ```
 
 ## With React
@@ -289,7 +308,7 @@ const memory = await wiki.read(
 // tasks capped at min(20 × entityCount, 200); events at min(10 × entityCount, 100)
 ```
 
-For Librarian prompt utilities (`hydrateLibrarianPrompt`, `validateLibrarianPromptTemplate`, etc.), see [`packages/core/README.md`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md#librarian-prompt-override-contract).
+For full details on `{{mustache}}` prompt templating and the strict distinction between global auto-runs and runtime overrides, see [Prompt Management & Overrides](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md#prompt-management--overrides) in `@equationalapplications/core-llm-wiki`.
 
 ## License
 
