@@ -57,7 +57,9 @@ export class PromptService {
     const template = runtimeOverride ?? this.globalOverrides?.healSystemPrompt ?? HEAL_SYSTEM_PROMPT;
     if (
       template.includes('{{healCandidates}}') ||
-      template.includes('{{documentAnchors}}')
+      template.includes('{{documentAnchors}}') ||
+      template.includes('{{allTasks}}') ||
+      template.includes('{{recentEvents}}')
     ) {
       return {
         systemPrompt: this.hydrate(template, { healCandidates, documentAnchors, allTasks, recentEvents }),

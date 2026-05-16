@@ -118,5 +118,14 @@ describe('PromptService', () => {
       const { systemPrompt } = svc.buildHealPrompt([{ id: 'f1' }], [], [], [], template);
       expect(systemPrompt).toContain('{{unknown}}');
     });
+
+    it('hydrates {{recentEvents}} even without primary heal variables', () => {
+      const svc = new PromptService();
+      const events = [{ id: 'ev1', summary: 'recent thing' }];
+      const template = 'Recent: {{recentEvents}}';
+      const { systemPrompt, userPrompt } = svc.buildHealPrompt([], [], [], events, template);
+      expect(systemPrompt).toContain('"recent thing"');
+      expect(userPrompt).toBe('Please heal the memory graph.');
+    });
   });
 });
