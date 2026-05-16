@@ -1,5 +1,4 @@
 import { chunkText, withConcurrency, validateFact, parseJsonResponse, normalizeSourceRef, normalizeSourceHash } from '../utils/pure';
-import { INGEST_SYSTEM_PROMPT } from '../prompts';
 import { generateId } from '../utils/ids';
 import type { WikiOptions, ExtractedFact, WikiFact } from '../types';
 import type { SQLiteAdapter } from '../types';
@@ -7,8 +6,11 @@ import type { EntryRepository } from '../repositories/EntryRepository';
 import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
+import { PromptService } from './PromptService';
 
 export class IngestionService {
+  private promptService: PromptService;
+
   constructor(
     private db: SQLiteAdapter,
     private prefix: string,
@@ -17,7 +19,10 @@ export class IngestionService {
     private searchService: SearchService,
     private jobManager: JobManager,
     private embeddingService: EmbeddingService,
-  ) {}
+    promptService?: PromptService,
+  ) {
+    this.promptService = promptService ?? new PromptService();
+  }
 
   async ingestDocument(
     entityId: string,
@@ -28,6 +33,7 @@ export class IngestionService {
       maxChunkLength?: number;
       chunkOverlap?: number;
       chunkConcurrency?: number;
+      promptOverride?: string;
     }
   ): Promise<{ truncated: boolean; chunks: number }> {
     const sourceRef = normalizeSourceRef(params.sourceRef);
@@ -58,11 +64,8 @@ export class IngestionService {
 
       const chunkResults = await withConcurrency(
         chunks.map((chunk) => async () => {
-          const userPrompt = `Document Chunk:\n${chunk}`;
-          const responseText = await this.options.llmProvider.generateText({
-            systemPrompt: INGEST_SYSTEM_PROMPT,
-            userPrompt,
-          });
+          const { systemPrompt, userPrompt } = this.promptService.buildIngestPrompt(chunk, params.promptOverride);
+          const responseText = await this.options.llmProvider.generateText({ systemPrompt, userPrompt });
           const result = parseJsonResponse<{ facts: ExtractedFact[] }>(responseText);
           return (Array.isArray(result.facts) ? result.facts : [])
             .map(validateFact)
