@@ -418,7 +418,7 @@ Once PRs 2 and 3 are merged, the final step is to connect the new pipes to the p
 
 By isolating `WikiMemory.ts` to the very last step, your agents can run PRs 2 and 3 concurrently without locking up your repository.
 
-Do you want me to write the exact system prompts you can copy-paste into Cursor/GitHub Copilot for Agents 2 and 3 to ensure they execute their specific PRs flawlessly?
+The following section provides exact system prompts for Agents 2 and 3 that can be copied into Cursor, GitHub Copilot Workspace, or a similar AI agent workflow.
 
 ---
 
