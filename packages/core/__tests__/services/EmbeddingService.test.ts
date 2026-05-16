@@ -145,6 +145,16 @@ describe('EmbeddingService', () => {
       2000,
     );
 
+    it('captures synchronous hook throws without leaving an unhandled timeout promise', async () => {
+      mockOptions.vectorRanker!.onEmbeddingPersisted!.mockImplementation(() => {
+        throw new Error('sync hook failure');
+      });
+
+      await expect(
+        embeddingService.notifyEmbeddingPersistedOrThrow('e1', 'f1', new Float32Array([0.1]))
+      ).rejects.toThrow('sync hook failure');
+    });
+
     it('bypasses the hook if forceDeleteIgnoreRankerHook is true', async () => {
       mockOptions.forceDeleteIgnoreRankerHook = true;
 

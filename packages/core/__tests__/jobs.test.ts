@@ -103,6 +103,14 @@ describe('job mutex', () => {
     const second = wiki.ingestDocument('e1', { sourceRef: 'doc2', sourceHash, documentChunk: 'content two' });
     await expect(Promise.all([first, second])).resolves.toBeDefined();
   });
+
+  it('ingestDocument treats entity IDs with colons distinctly', async () => {
+    const wiki = await freshWiki(slowProvider(50));
+    const sourceHash = 'a'.repeat(64);
+    const first = wiki.ingestDocument('a:b', { sourceRef: 'doc1', sourceHash, documentChunk: 'content one' });
+    await expect(wiki.ingestDocument('a', { sourceRef: 'doc2', sourceHash, documentChunk: 'content two' })).resolves.toBeTruthy();
+    await first;
+  });
 });
 
 describe('getEntityStatus', () => {

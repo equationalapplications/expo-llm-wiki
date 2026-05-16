@@ -130,8 +130,8 @@ export class EmbeddingService {
       }, timeoutMs);
     });
 
-    const hookPromise = Promise.resolve(
-      this.options.vectorRanker.onEmbeddingPersisted({
+    const hookPromise = Promise.resolve().then(() =>
+      this.options.vectorRanker!.onEmbeddingPersisted!({
         entityId,
         factId,
         vector: vectorCopy,

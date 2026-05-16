@@ -41,15 +41,30 @@ function mapRowToFact(row: any): WikiFact {
   };
 }
 
+function normalizeEmbeddingBlobValue(blob: unknown): Uint8Array | null {
+  if (blob instanceof Uint8Array) return blob;
+  if (blob !== null && blob !== undefined && typeof blob === 'object') {
+    const obj = blob as Record<string, unknown>;
+    if (obj['type'] === 'Buffer' && Array.isArray(obj['data'])) {
+      return new Uint8Array(obj['data'] as number[]);
+    }
+    const entries = Object.keys(obj);
+    if (entries.length > 0 && entries.every((k) => /^\d+$/.test(k))) {
+      const len = entries.length;
+      const arr = new Uint8Array(len);
+      for (let i = 0; i < len; i++) arr[i] = (obj[String(i)] as number) ?? 0;
+      return arr;
+    }
+  }
+  return null;
+}
+
 /** Mapper that preserves embedding_blob for export/import round-tripping. */
 function mapRowToFactWithBlobs(row: any): WikiFact {
   const base = mapRowToFact(row);
-  if (row.embedding_blob instanceof Uint8Array) {
-    return { ...base, embedding_blob: row.embedding_blob };
-  }
-  return base;
+  const embeddingBlob = normalizeEmbeddingBlobValue(row.embedding_blob);
+  return embeddingBlob ? { ...base, embedding_blob: embeddingBlob } : base;
 }
-
 
 
 export class EntryRepository extends BaseRepository {
@@ -165,21 +180,7 @@ export class EntryRepository extends BaseRepository {
    * Normalize an embedding blob value to Uint8Array or null.
    */
   private normalizeEmbeddingBlob(blob: unknown): Uint8Array | null {
-    if (blob instanceof Uint8Array) return blob;
-    if (blob !== null && blob !== undefined && typeof blob === 'object') {
-      const obj = blob as Record<string, unknown>;
-      if (obj['type'] === 'Buffer' && Array.isArray(obj['data'])) {
-        return new Uint8Array(obj['data'] as number[]);
-      }
-      const entries = Object.keys(obj);
-      if (entries.length > 0 && entries.every((k) => /^\d+$/.test(k))) {
-        const len = entries.length;
-        const arr = new Uint8Array(len);
-        for (let i = 0; i < len; i++) arr[i] = (obj[String(i)] as number) ?? 0;
-        return arr;
-      }
-    }
-    return null;
+    return normalizeEmbeddingBlobValue(blob);
   }
 
   /**
