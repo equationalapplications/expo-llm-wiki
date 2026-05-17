@@ -73,6 +73,7 @@ worker.stop();
 | `batchSize` | `number` | `100` | Max events fetched per cycle. |
 | `pollIntervalMs` | `number` | `5000` | Milliseconds between poll cycles. |
 | `onError` | `(err, event) => boolean \| undefined` | — | Return `true` to skip a failing event; `false`/`undefined` to halt. |
+| `onWorkerError` | `(err: Error) => void` | — | Called for worker-level errors (SQLite read/ack failures) not delivered to `onError`. |
 
 ## How it works
 

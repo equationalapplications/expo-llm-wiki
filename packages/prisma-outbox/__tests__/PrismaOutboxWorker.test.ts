@@ -174,6 +174,25 @@ describe('PrismaOutboxWorker', () => {
       expect(config.wikiMemory.markOutboxEventsProcessed).toHaveBeenCalledWith(['id1', 'id2']);
     });
 
+    it('passes event and tx client into mapEvent via $transaction callback', async () => {
+      const event = makeEvent('id1');
+      const fakeTx = { model: 'fake' } as any;
+      const mapEvent = vi.fn().mockResolvedValue(undefined);
+      const transaction = vi.fn().mockImplementation((cb: (tx: unknown) => Promise<void>) => cb(fakeTx));
+      const config = makeConfig({
+        wikiMemory: {
+          getUnprocessedOutboxEvents: vi.fn().mockResolvedValue([event]),
+          markOutboxEventsProcessed: vi.fn().mockResolvedValue(undefined),
+        } as any,
+        prisma: { $transaction: transaction } as any,
+        mapEvent,
+      });
+      const worker = new PrismaOutboxWorker(config);
+      await worker.syncBatch();
+
+      expect(mapEvent).toHaveBeenCalledWith(event, fakeTx);
+    });
+
     it('passes batchSize to getUnprocessedOutboxEvents', async () => {
       const getEvents = vi.fn().mockResolvedValue([]);
       const config = makeConfig({
