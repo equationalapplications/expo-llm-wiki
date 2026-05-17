@@ -39,7 +39,7 @@ The outbox table lives in the same SQLite database as `facts`, `tasks`, and `eve
 
 - **100% atomicity:** if the domain write rolls back, the outbox event is aborted with it — no divergence possible
 - **Zero new dependencies:** no message broker, no network, no additional processes
-- **Strict total ordering:** a single SQLite table guarantees sequential event IDs and `created_at` timestamps
+- **Strict total ordering:** events are fetched `ORDER BY created_at ASC, rowid ASC`; `created_at` is millisecond-resolution and IDs are random (`out_<uuid>`), so rowid is the deterministic tie-breaker for same-millisecond writes
 
 ### Opt-in via `WikiConfig.enableOutbox` (implemented)
 

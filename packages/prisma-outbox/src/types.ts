@@ -6,6 +6,15 @@ export interface PrismaLike<TTx> {
 }
 
 export interface PrismaOutboxConfig<TTx = unknown> {
+  /**
+   * The WikiMemory instance to poll for outbox events.
+   *
+   * **Singleton requirement:** run at most one `PrismaOutboxWorker` per SQLite database
+   * at a time. The in-process `running` guard prevents overlapping calls within a single
+   * worker, but two workers (or two processes) sharing the same database can fetch and
+   * process the same unclaimed rows concurrently, producing duplicate Prisma writes.
+   * If you need multi-process fan-out, add a claim/lease column to the outbox table.
+   */
   wikiMemory: WikiMemory;
   prisma: PrismaLike<TTx>;
   /**

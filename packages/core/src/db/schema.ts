@@ -74,5 +74,8 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
 
     CREATE INDEX IF NOT EXISTS ${prefix}outbox_entity_id_created_at
       ON ${prefix}outbox (entity_id, created_at);
+
+    CREATE INDEX IF NOT EXISTS ${prefix}outbox_created_at
+      ON ${prefix}outbox (created_at);
   `);
 }
