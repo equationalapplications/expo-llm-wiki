@@ -47,7 +47,7 @@ The feature is off by default. The gate lives in `OutboxRepository.push()` — i
 
 `WikiMemory` passes `!!options.config?.enableOutbox` into `OutboxRepository`'s constructor. `EntryRepository` and `TaskRepository` call sites are unchanged.
 
-### Schema always created, writes conditional (after gating is added)
+### Schema always created, writes conditional
 
 `setup()` always runs `CREATE TABLE IF NOT EXISTS llm_wiki_outbox`. An empty SQLite table costs ~bytes. Toggling `enableOutbox: true` after initial deployment requires no migration — the table is already present.
 
