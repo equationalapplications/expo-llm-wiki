@@ -9,9 +9,11 @@ export class PrismaOutboxWorker<TTx = unknown> {
 
   start(): void {
     if (this.timer) return;
+    const rawInterval = this.config.pollIntervalMs ?? 5000;
+    const pollIntervalMs = Number.isFinite(rawInterval) && rawInterval >= 1 ? Math.trunc(rawInterval) : 5000;
     this.timer = setInterval(
       () => { this.syncBatch().catch(err => this.#workerError(err)); },
-      this.config.pollIntervalMs ?? 5000
+      pollIntervalMs
     );
   }
 

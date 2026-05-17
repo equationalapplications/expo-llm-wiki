@@ -367,13 +367,16 @@ const worker = new PrismaOutboxWorker({
     if (event.table_name.endsWith('entries')) {
       switch (event.operation) {
         case 'INSERT':
-          await tx.myFact.create({
-            data: {
+          // mapEvent must be idempotent; use upsert so retries after ack failure are safe.
+          await tx.myFact.upsert({
+            where: { id: event.record_id },
+            create: {
               id: event.record_id,
               ownerId: event.entity_id,
               title: event.payload.title,
               body: event.payload.body,
             },
+            update: { title: event.payload.title, body: event.payload.body },
           });
           break;
         case 'UPDATE':

@@ -35,8 +35,14 @@ const worker = new PrismaOutboxWorker({
   wikiMemory: wiki,
   prisma,
   mapEvent: async (event, tx) => {
+    // mapEvent must be idempotent: at-least-once delivery means the same event
+    // can be retried if acknowledgement fails after the Prisma transaction commits.
     if (event.operation === 'INSERT' && event.table_name.includes('entries')) {
-      await tx.wikiEntry.create({ data: { id: event.record_id, ...(event.payload as Record<string, unknown>) } });
+      await tx.wikiEntry.upsert({
+        where: { id: event.record_id },
+        create: { id: event.record_id, ...(event.payload as Record<string, unknown>) },
+        update: {},
+      });
     }
   },
   pollIntervalMs: 5000,
