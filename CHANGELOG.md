@@ -1,3 +1,31 @@
+# [4.9.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.8.0...v4.9.0) (2026-05-17)
+
+
+### Bug Fixes
+
+* **core:** narrow enableOutbox doc; add rowid tie-breaker to fetchPending ([7a9ad96](https://github.com/equationalapplications/expo-llm-wiki/commit/7a9ad9667ea994b3ff16b65585967f563f543a85))
+* **core:** pass enableOutbox: true in outbox-related tests ([bc86fbb](https://github.com/equationalapplications/expo-llm-wiki/commit/bc86fbbd8b90ed885d3b8bcf68909865c3ea759a))
+* normalize batchSize; guard non-positive limit; add missing index to spec ([64a002b](https://github.com/equationalapplications/expo-llm-wiki/commit/64a002b10d31154bb24c79b230df6f491bc8560d))
+* **prisma-outbox:** add composite true to tsconfig for project references ([f01acdb](https://github.com/equationalapplications/expo-llm-wiki/commit/f01acdb96cb2266d5e4001408f387903b279875c))
+* **prisma-outbox:** add tsconfig, concurrency guard, root references ([06602ca](https://github.com/equationalapplications/expo-llm-wiki/commit/06602caa044faddb1eab58e88514bb682280e110))
+* **prisma-outbox:** address final Copilot review — index, singleton doc, spec ordering ([aa1efc3](https://github.com/equationalapplications/expo-llm-wiki/commit/aa1efc33385385e970c1b0a7804ea65361e62775))
+* **prisma-outbox:** address final Copilot review — LICENSE, generic types, spec table_name ([b79648a](https://github.com/equationalapplications/expo-llm-wiki/commit/b79648a1bf4d9b6e0429d7eeb20630c1fc6cef0f))
+* **prisma-outbox:** address PR [#36](https://github.com/equationalapplications/expo-llm-wiki/issues/36) review — tests, poison-pill, lockfile, release ([c0fef25](https://github.com/equationalapplications/expo-llm-wiki/commit/c0fef25c63a13a4757a09552aebd8953e286e208))
+* **prisma-outbox:** address PR [#36](https://github.com/equationalapplications/expo-llm-wiki/issues/36) review — tests, poison-pill, lockfile, release ([a9219eb](https://github.com/equationalapplications/expo-llm-wiki/commit/a9219eb6b4b0990575ac34c848be1d8c73ea5887))
+* **prisma-outbox:** catch syncBatch rejections to prevent unhandled promise rejections ([544625d](https://github.com/equationalapplications/expo-llm-wiki/commit/544625d5c08d41c545c49425b86d7fdcdcf0e5e7))
+* **prisma-outbox:** clear stale backlog handle before scheduling; chunk acknowledge IDs ([5ef3360](https://github.com/equationalapplications/expo-llm-wiki/commit/5ef33606b3bddc126ad1ad28d530b08208ee3f24))
+* **prisma-outbox:** guard onError throws; fix OutboxRepository comment ([4be514e](https://github.com/equationalapplications/expo-llm-wiki/commit/4be514e96aa956f69b3b785c0937545e899ff9db))
+* **prisma-outbox:** normalize pollIntervalMs; use idempotent upsert in examples ([3535a79](https://github.com/equationalapplications/expo-llm-wiki/commit/3535a7986c859376a29cec2d407fb116ce34b6f7))
+* **prisma-outbox:** remove composite from tsconfig to restore DTS build ([545864d](https://github.com/equationalapplications/expo-llm-wiki/commit/545864d8fefdda550e16f1e26c34c0e26e71c294))
+* **prisma-outbox:** route worker-level errors to onWorkerError callback ([0e97885](https://github.com/equationalapplications/expo-llm-wiki/commit/0e97885b62577f4310ec2d583ce31b217d3d7f54))
+* release workflow by adding files array to root tsconfig ([0a9a5cd](https://github.com/equationalapplications/expo-llm-wiki/commit/0a9a5cdb4f77ba626e28e2f8f24f0da08c382542))
+
+
+### Features
+
+* **core:** add transactional outbox consumer API ([b150aee](https://github.com/equationalapplications/expo-llm-wiki/commit/b150aee18a2dcba609303b836a4b39880b0a919d))
+* **prisma-outbox:** add new @equationalapplications/prisma-outbox package ([1aa123d](https://github.com/equationalapplications/expo-llm-wiki/commit/1aa123d2f5da6de19231ca1c72e3fd0a3d034f7c))
+
 # [4.8.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.7.0...v4.8.0) (2026-05-16)
 
 
