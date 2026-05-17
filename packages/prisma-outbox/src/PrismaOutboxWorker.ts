@@ -10,9 +10,14 @@ export class PrismaOutboxWorker<TTx = unknown> {
   start(): void {
     if (this.timer) return;
     this.timer = setInterval(
-      () => { this.syncBatch().catch(() => {}); },
+      () => { this.syncBatch().catch(err => this.#workerError(err)); },
       this.config.pollIntervalMs ?? 5000
     );
+  }
+
+  #workerError(err: unknown): void {
+    const error = err instanceof Error ? err : new Error(String(err));
+    this.config.onWorkerError?.(error);
   }
 
   stop(): void {
@@ -62,7 +67,7 @@ export class PrismaOutboxWorker<TTx = unknown> {
       // Only schedule when worker is still running (stop() not called) to avoid post-stop leaks.
       // Use setTimeout(0) instead of setImmediate for React Native / Hermes compatibility.
       if (!halted && events.length === batchSize && this.timer !== undefined) {
-        this.backlogTimer = setTimeout(() => { this.syncBatch().catch(() => {}); }, 0);
+        this.backlogTimer = setTimeout(() => { this.syncBatch().catch(err => this.#workerError(err)); }, 0);
       }
     } finally {
       this.running = false;

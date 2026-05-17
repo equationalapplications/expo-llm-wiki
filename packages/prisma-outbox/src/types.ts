@@ -28,4 +28,6 @@ export interface PrismaOutboxConfig<TTx = unknown> {
   pollIntervalMs?: number;
   /** Called when an event fails; return true to skip and continue, false/undefined to halt. */
   onError?: (error: Error, event: WikiOutboxEvent) => boolean | undefined;
+  /** Called when a worker-level error occurs (e.g. SQLite read/ack failure). Not called for per-event errors handled by onError. */
+  onWorkerError?: (error: Error) => void;
 }
