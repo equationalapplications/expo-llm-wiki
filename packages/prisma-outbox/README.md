@@ -36,7 +36,7 @@ const worker = new PrismaOutboxWorker({
   prisma,
   mapEvent: async (event, tx) => {
     if (event.operation === 'INSERT' && event.table_name.includes('entries')) {
-      await tx.wikiEntry.create({ data: { id: event.record_id, ...event.payload } });
+      await tx.wikiEntry.create({ data: { id: event.record_id, ...(event.payload as Record<string, unknown>) } });
     }
   },
   pollIntervalMs: 5000,
@@ -68,8 +68,8 @@ worker.stop();
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `wikiMemory` | `WikiMemory` | required | The `WikiMemory` instance to poll. |
-| `prisma` | `PrismaClient` | required | The Prisma client. |
-| `mapEvent` | `(event, tx) => Promise<void>` | required | Maps one outbox event to Prisma operations inside a transaction. |
+| `prisma` | `PrismaLike<TTx>` | required | Any Prisma client with a `$transaction` method (your generated `PrismaClient` satisfies this). |
+| `mapEvent` | `(event, tx: TTx) => Promise<void>` | required | Maps one outbox event to Prisma operations inside a transaction. `tx` is inferred from your `PrismaClient`. |
 | `batchSize` | `number` | `100` | Max events fetched per cycle. |
 | `pollIntervalMs` | `number` | `5000` | Milliseconds between poll cycles. |
 | `onError` | `(err, event) => boolean \| undefined` | — | Return `true` to skip a failing event; `false`/`undefined` to halt. |

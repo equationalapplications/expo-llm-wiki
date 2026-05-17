@@ -1,11 +1,11 @@
 import type { PrismaOutboxConfig } from './types';
 
-export class PrismaOutboxWorker {
+export class PrismaOutboxWorker<TTx = unknown> {
   private timer?: ReturnType<typeof setInterval>;
   private backlogTimer?: ReturnType<typeof setTimeout>;
   private running = false;
 
-  constructor(private config: PrismaOutboxConfig) {}
+  constructor(private config: PrismaOutboxConfig<TTx>) {}
 
   start(): void {
     if (this.timer) return;

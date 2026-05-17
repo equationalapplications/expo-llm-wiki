@@ -1,2 +1,2 @@
 export { PrismaOutboxWorker } from './PrismaOutboxWorker';
-export type { PrismaOutboxConfig } from './types';
+export type { PrismaOutboxConfig, PrismaLike } from './types';

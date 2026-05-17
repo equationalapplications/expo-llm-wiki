@@ -77,7 +77,7 @@ The actual SQLite outbox table schema (defined in `packages/core/src/db/schema.t
 CREATE TABLE IF NOT EXISTS ${prefix}outbox (
   id         TEXT    PRIMARY KEY,
   entity_id  TEXT    NOT NULL,
-  table_name TEXT    NOT NULL,   -- e.g. 'llm_wiki_entries', 'llm_wiki_tasks'
+  table_name TEXT    NOT NULL,   -- e.g. 'entries', 'tasks'
   record_id  TEXT    NOT NULL,   -- primary key of the mutated row
   operation  TEXT    NOT NULL,   -- 'INSERT' | 'UPDATE' | 'DELETE'
   payload    TEXT    NOT NULL,   -- JSON-serialized domain object
