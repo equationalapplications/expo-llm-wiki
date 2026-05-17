@@ -11,6 +11,7 @@
   "references": [
     { "path": "./packages/core" },
     { "path": "./packages/expo" },
-    { "path": "./packages/react" }
+    { "path": "./packages/react" },
+    { "path": "./packages/prisma-outbox" }
   ]
 }
