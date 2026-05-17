@@ -87,3 +87,7 @@ worker.stop();
 2. `PrismaOutboxWorker` polls `getUnprocessedOutboxEvents()` and calls `mapEvent` inside a Prisma transaction for each event.
 3. Successfully processed event IDs are passed to `markOutboxEventsProcessed()`, which deletes them from SQLite.
 4. If a full batch is consumed without error, an immediate follow-up cycle runs (backlog optimization) to drain queues faster than the poll interval.
+
+## Limitations
+
+- **Single-instance only.** The worker does not use row-level locking or leases. Running two `PrismaOutboxWorker` instances against the same SQLite file will cause duplicate Prisma writes. Run exactly one worker per SQLite database. `mapEvent` must still be idempotent to tolerate at-least-once delivery (acknowledgement can fail after a successful Prisma commit).
