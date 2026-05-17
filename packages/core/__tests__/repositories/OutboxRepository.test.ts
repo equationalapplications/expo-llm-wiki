@@ -104,6 +104,25 @@ describe('OutboxRepository', () => {
     expect(empty.length).toBe(0);
   });
 
+  it('acknowledge() deletes more than 500 IDs by chunking', async () => {
+    const count = 502;
+    const ids: string[] = [];
+    const now = Date.now();
+    for (let i = 0; i < count; i++) {
+      const id = `out_bulk_${i}`;
+      ids.push(id);
+      await db.runAsync(
+        `INSERT INTO ${PREFIX}outbox (id, entity_id, table_name, record_id, operation, payload, created_at) VALUES (?, 'e1', 't', 'r', 'INSERT', '{}', ?)`,
+        [id, now + i],
+      );
+    }
+
+    await repo.acknowledge(ids);
+
+    const remaining = await db.getAllAsync<any>(`SELECT id FROM ${PREFIX}outbox`);
+    expect(remaining.length).toBe(0);
+  });
+
   it('push() is a no-op when enableOutbox is false', async () => {
     const disabledRepo = new OutboxRepository(db, PREFIX, false);
     await db.withTransactionAsync(async () => {

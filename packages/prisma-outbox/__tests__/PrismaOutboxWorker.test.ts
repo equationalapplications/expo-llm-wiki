@@ -256,6 +256,34 @@ describe('PrismaOutboxWorker', () => {
       worker.stop();
     });
 
+    it('double syncBatch() calls clear the earlier backlog handle so stop() cancels both', async () => {
+      vi.useFakeTimers();
+      const events = [makeEvent('id1'), makeEvent('id2')];
+      const getEvents = vi.fn()
+        .mockResolvedValueOnce(events)
+        .mockResolvedValueOnce(events)
+        .mockResolvedValue([]);
+      const config = makeConfig({
+        wikiMemory: {
+          getUnprocessedOutboxEvents: getEvents,
+          markOutboxEventsProcessed: vi.fn().mockResolvedValue(undefined),
+        } as any,
+        batchSize: 2,
+      });
+      const worker = new PrismaOutboxWorker(config);
+      worker.start();
+
+      // Two manual full-batch calls each schedule a backlog timeout.
+      // With the fix, the second clears the first so there is at most one pending.
+      await worker.syncBatch();
+      await worker.syncBatch();
+      worker.stop(); // cancels the single remaining backlog handle
+      await vi.advanceTimersByTimeAsync(0); // would fire any uncancelled handle
+
+      // Only the 2 explicit syncBatch calls — no backlog drain after stop().
+      expect(getEvents).toHaveBeenCalledTimes(2);
+    });
+
     it('stop() cancels a pending backlog setTimeout', async () => {
       vi.useFakeTimers();
       const events = [makeEvent('id1'), makeEvent('id2')];

@@ -67,6 +67,7 @@ export class PrismaOutboxWorker<TTx = unknown> {
       // Only schedule when worker is still running (stop() not called) to avoid post-stop leaks.
       // Use setTimeout(0) instead of setImmediate for React Native / Hermes compatibility.
       if (!halted && events.length === batchSize && this.timer !== undefined) {
+        clearTimeout(this.backlogTimer);
         this.backlogTimer = setTimeout(() => { this.syncBatch().catch(err => this.#workerError(err)); }, 0);
       }
     } finally {

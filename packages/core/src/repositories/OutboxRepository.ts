@@ -55,10 +55,14 @@ export class OutboxRepository extends BaseRepository {
    */
   async acknowledge(ids: string[]): Promise<void> {
     if (ids.length === 0) return;
-    const placeholders = ids.map(() => '?').join(', ');
-    await this.db.runAsync(
-      `DELETE FROM ${this.prefix}outbox WHERE id IN (${placeholders})`,
-      ids,
-    );
+    const chunkSize = 500;
+    for (let i = 0; i < ids.length; i += chunkSize) {
+      const chunk = ids.slice(i, i + chunkSize);
+      const placeholders = chunk.map(() => '?').join(', ');
+      await this.db.runAsync(
+        `DELETE FROM ${this.prefix}outbox WHERE id IN (${placeholders})`,
+        chunk,
+      );
+    }
   }
 }
