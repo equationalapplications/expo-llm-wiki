@@ -188,5 +188,76 @@ describe('PrismaOutboxWorker', () => {
 
       expect(getEvents).toHaveBeenCalledWith(25);
     });
+
+    it('backlog optimization triggers another syncBatch when full batch processed without halt', async () => {
+      vi.useFakeTimers();
+      const events = [makeEvent('id1'), makeEvent('id2')];
+      const getEvents = vi.fn()
+        .mockResolvedValueOnce(events)
+        .mockResolvedValue([]);
+      const config = makeConfig({
+        wikiMemory: {
+          getUnprocessedOutboxEvents: getEvents,
+          markOutboxEventsProcessed: vi.fn().mockResolvedValue(undefined),
+        } as any,
+        batchSize: 2,
+      });
+      const worker = new PrismaOutboxWorker(config);
+      worker.start(); // ensures this.timer !== undefined
+
+      await worker.syncBatch(); // processes full batch; schedules setTimeout(0)
+      await vi.advanceTimersByTimeAsync(0); // fires the backlog setTimeout; second syncBatch runs
+
+      expect(getEvents).toHaveBeenCalledTimes(2);
+      worker.stop();
+    });
+
+    it('backlog optimization does NOT trigger when batch halted', async () => {
+      vi.useFakeTimers();
+      const events = [makeEvent('id1'), makeEvent('id2')];
+      const transaction = vi.fn().mockRejectedValueOnce(new Error('fail'));
+      const getEvents = vi.fn().mockResolvedValue(events);
+      const config = makeConfig({
+        wikiMemory: {
+          getUnprocessedOutboxEvents: getEvents,
+          markOutboxEventsProcessed: vi.fn().mockResolvedValue(undefined),
+        } as any,
+        prisma: { $transaction: transaction } as any,
+        onError: () => false,
+        batchSize: 2,
+      });
+      const worker = new PrismaOutboxWorker(config);
+      worker.start();
+
+      await worker.syncBatch(); // halts on id1 failure — should NOT schedule backlog
+      await vi.advanceTimersByTimeAsync(0); // if backlog wrongly scheduled, fires it
+
+      // Only the one explicit syncBatch call
+      expect(getEvents).toHaveBeenCalledTimes(1);
+      worker.stop();
+    });
+
+    it('stop() cancels a pending backlog setTimeout', async () => {
+      vi.useFakeTimers();
+      const events = [makeEvent('id1'), makeEvent('id2')];
+      const getEvents = vi.fn()
+        .mockResolvedValueOnce(events)
+        .mockResolvedValue([]);
+      const config = makeConfig({
+        wikiMemory: {
+          getUnprocessedOutboxEvents: getEvents,
+          markOutboxEventsProcessed: vi.fn().mockResolvedValue(undefined),
+        } as any,
+        batchSize: 2,
+      });
+      const worker = new PrismaOutboxWorker(config);
+      worker.start();
+
+      await worker.syncBatch(); // schedules backlog setTimeout(0)
+      worker.stop(); // cancels the backlog
+      await vi.advanceTimersByTimeAsync(0); // would fire backlog if not cancelled
+
+      expect(getEvents).toHaveBeenCalledTimes(1);
+    });
   });
 });

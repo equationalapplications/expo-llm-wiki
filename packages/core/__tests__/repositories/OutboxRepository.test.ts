@@ -104,6 +104,24 @@ describe('OutboxRepository', () => {
     expect(empty.length).toBe(0);
   });
 
+  it('push() is a no-op when enableOutbox is false', async () => {
+    const disabledRepo = new OutboxRepository(db, PREFIX, false);
+    await db.withTransactionAsync(async () => {
+      await disabledRepo.push(
+        {
+          entityId: 'entity_disabled',
+          tableName: 'entries',
+          recordId: 'rec_disabled',
+          operation: 'INSERT',
+          payload: { should: 'not appear' },
+        },
+        db,
+      );
+    });
+    const rows = await db.getAllAsync<any>(`SELECT * FROM ${PREFIX}outbox`);
+    expect(rows.length).toBe(0);
+  });
+
   it('push() uses the provided tx — rollback prevents row from being persisted', async () => {
     const sentinel = new Error('intentional rollback');
 

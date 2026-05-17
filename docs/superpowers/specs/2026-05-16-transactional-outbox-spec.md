@@ -118,10 +118,6 @@ export interface WikiConfig {
    * When true, every mutation appends an event to the internal outbox table.
    * The table is always created; this flag only controls whether writes occur.
    *
-   * NOTE: the current implementation writes unconditionally. Adding this flag
-   * requires adding guards at OutboxRepository.push() call sites in
-   * EntryRepository and TaskRepository.
-   *
    * @default false
    */
   enableOutbox?: boolean;
@@ -161,7 +157,7 @@ await this.db.withTransactionAsync(async (tx) => {
 
 ## Consumer API on `WikiMemory`
 
-**Implementation gap:** `WikiMemory` does not currently expose these methods. They must be added as thin delegations to `OutboxRepository`.
+`WikiMemory` exposes these methods as thin delegations to `OutboxRepository`.
 
 ```typescript
 export interface WikiMemory {

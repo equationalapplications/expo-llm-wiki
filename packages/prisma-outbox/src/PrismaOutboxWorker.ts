@@ -2,6 +2,7 @@ import type { PrismaOutboxConfig } from './types';
 
 export class PrismaOutboxWorker {
   private timer?: ReturnType<typeof setInterval>;
+  private backlogTimer?: ReturnType<typeof setTimeout>;
   private running = false;
 
   constructor(private config: PrismaOutboxConfig) {}
@@ -17,6 +18,8 @@ export class PrismaOutboxWorker {
   stop(): void {
     clearInterval(this.timer);
     this.timer = undefined;
+    clearTimeout(this.backlogTimer);
+    this.backlogTimer = undefined;
   }
 
   async syncBatch(): Promise<void> {
@@ -28,6 +31,7 @@ export class PrismaOutboxWorker {
       if (events.length === 0) return;
 
       const processedIds: string[] = [];
+      let halted = false;
 
       for (const event of events) {
         try {
@@ -39,6 +43,7 @@ export class PrismaOutboxWorker {
           if (skip) {
             processedIds.push(event.id); // acknowledge so the event isn't re-fetched
           } else {
+            halted = true;
             break; // halt to preserve ordering
           }
         }
@@ -46,10 +51,11 @@ export class PrismaOutboxWorker {
 
       await this.config.wikiMemory.markOutboxEventsProcessed(processedIds);
 
-      // Backlog optimization: full batch means more events likely waiting — skip the interval delay.
+      // Backlog optimization: full batch without halt means more events likely waiting.
+      // Only schedule when worker is still running (stop() not called) to avoid post-stop leaks.
       // Use setTimeout(0) instead of setImmediate for React Native / Hermes compatibility.
-      if (events.length === batchSize) {
-        setTimeout(() => void this.syncBatch(), 0);
+      if (!halted && events.length === batchSize && this.timer !== undefined) {
+        this.backlogTimer = setTimeout(() => void this.syncBatch(), 0);
       }
     } finally {
       this.running = false;
