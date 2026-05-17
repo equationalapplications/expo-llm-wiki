@@ -50,7 +50,7 @@ export interface WikiConfig {
   /** Global prompt overrides for text generation calls (`ingestDocument`, `runLibrarian`, `runHeal`). Does not affect embedding generation. Runtime overrides on individual method calls take precedence. */
   prompts?: PromptOverrides;
   /**
-   * When true, every mutation appends an event to the internal outbox table.
+   * When true, entry and task mutations append an event to the internal outbox table.
    * The table is always created; this flag only controls whether writes occur.
    * @default false
    */
