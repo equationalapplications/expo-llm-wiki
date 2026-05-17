@@ -36,7 +36,11 @@ export class PrismaOutboxWorker {
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
           const skip = this.config.onError?.(error, event);
-          if (!skip) break; // halt to preserve ordering
+          if (skip) {
+            processedIds.push(event.id); // acknowledge so the event isn't re-fetched
+          } else {
+            break; // halt to preserve ordering
+          }
         }
       }
 

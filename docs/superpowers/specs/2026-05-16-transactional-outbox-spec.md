@@ -1,7 +1,7 @@
 # Spec: Transactional Outbox Pattern
 
 **Date:** 2026-05-16
-**Status:** Core implemented; prisma-outbox package pending
+**Status:** Fully implemented
 
 ---
 
@@ -25,9 +25,9 @@ Implement a Transactional Outbox pattern inside the core library. Every mutation
 - `fetchPending(limit)` — reads pending rows ordered by `created_at ASC`
 - `acknowledge(ids)` — deletes processed rows by ID
 
-`EntryRepository` and `TaskRepository` both instantiate `OutboxRepository` and call `outboxRepo.push()` unconditionally on every mutation. **There is no `enableOutbox` flag today** — writes are always-on.
+`EntryRepository` and `TaskRepository` instantiate `OutboxRepository` and call `outboxRepo.push()` on every mutation; the `enableOutbox` flag in `OutboxRepository`'s constructor gates those writes.
 
-`WikiMemory` does not yet expose `getUnprocessedOutboxEvents` or `markOutboxEventsProcessed`. Exposing them is an explicit implementation gap (see [Consumer API](#consumer-api-on-wikimemory) below).
+`WikiMemory` exposes `getUnprocessedOutboxEvents` and `markOutboxEventsProcessed` as thin delegations to `OutboxRepository`.
 
 ---
 
@@ -402,11 +402,11 @@ worker.start();
 | `core` | `src/repositories/OutboxRepository.ts` | Modify — accept `enableOutbox` flag in constructor; `push()` returns early when false | Done |
 | `core` | `src/WikiMemory.ts` | Modify — pass `enableOutbox` to `OutboxRepository`; add `getUnprocessedOutboxEvents`, `markOutboxEventsProcessed` | Done |
 | `core` | `src/index.ts` | Modify — export `WikiOutboxEvent` | Done |
-| `prisma-outbox` | `packages/prisma-outbox/src/types.ts` | Create | Pending |
-| `prisma-outbox` | `packages/prisma-outbox/src/PrismaOutboxWorker.ts` | Create | Pending |
-| `prisma-outbox` | `packages/prisma-outbox/src/index.ts` | Create | Pending |
-| `prisma-outbox` | `packages/prisma-outbox/package.json` | Create | Pending |
-| `prisma-outbox` | `packages/prisma-outbox/tsup.config.ts` | Create | Pending |
+| `prisma-outbox` | `packages/prisma-outbox/src/types.ts` | Create | Done |
+| `prisma-outbox` | `packages/prisma-outbox/src/PrismaOutboxWorker.ts` | Create | Done |
+| `prisma-outbox` | `packages/prisma-outbox/src/index.ts` | Create | Done |
+| `prisma-outbox` | `packages/prisma-outbox/package.json` | Create | Done |
+| `prisma-outbox` | `packages/prisma-outbox/tsup.config.ts` | Create | Done |
 
 ---
 

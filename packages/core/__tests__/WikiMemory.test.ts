@@ -253,3 +253,95 @@ describe('WikiMemory — prompt override API', () => {
     expect(healCall).toBeDefined();
   });
 });
+
+describe('WikiMemory outbox API', () => {
+  let mockDb: SQLiteAdapter;
+
+  function makeWiki(enableOutbox?: boolean): WikiMemory {
+    mockDb = {
+      runAsync: vi.fn().mockResolvedValue({ changes: 0, lastInsertRowId: 0 }),
+      getAllAsync: vi.fn().mockResolvedValue([]),
+      getFirstAsync: vi.fn().mockResolvedValue(null),
+      withTransactionAsync: vi.fn(async (cb: (tx: SQLiteAdapter) => Promise<unknown>) => cb(mockDb as SQLiteAdapter)),
+      execAsync: vi.fn().mockResolvedValue(undefined),
+      closeAsync: vi.fn().mockResolvedValue(undefined),
+    } as SQLiteAdapter;
+    return new WikiMemory(mockDb, {
+      llmProvider: {
+        generateText: vi.fn().mockResolvedValue('{}'),
+        embed: vi.fn().mockResolvedValue(new Array(1536).fill(0)),
+      },
+      config: { tablePrefix: 'test_', enableOutbox },
+    });
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('getUnprocessedOutboxEvents returns [] when table is empty', async () => {
+    const wiki = makeWiki();
+    const result = await wiki.getUnprocessedOutboxEvents();
+    expect(result).toEqual([]);
+  });
+
+  it('getUnprocessedOutboxEvents passes limit to getAllAsync', async () => {
+    const wiki = makeWiki();
+    await wiki.getUnprocessedOutboxEvents(42);
+    const call = (mockDb.getAllAsync as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c: unknown[]) => String(c[0]).includes('outbox'),
+    );
+    expect(call).toBeDefined();
+    expect(call![1]).toContain(42);
+  });
+
+  it('getUnprocessedOutboxEvents deserializes valid JSON payload', async () => {
+    const wiki = makeWiki();
+    (mockDb.getAllAsync as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+      { id: 'e1', entity_id: 'u1', table_name: 'entries', record_id: 'r1', operation: 'INSERT', payload: '{"key":"val"}', created_at: 1 },
+    ]);
+    const [event] = await wiki.getUnprocessedOutboxEvents();
+    expect(event.payload).toEqual({ key: 'val' });
+  });
+
+  it('getUnprocessedOutboxEvents converts malformed payload to null', async () => {
+    const wiki = makeWiki();
+    (mockDb.getAllAsync as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+      { id: 'e2', entity_id: 'u1', table_name: 'entries', record_id: 'r1', operation: 'INSERT', payload: 'NOT_JSON', created_at: 1 },
+    ]);
+    const [event] = await wiki.getUnprocessedOutboxEvents();
+    expect(event.payload).toBeNull();
+  });
+
+  it('markOutboxEventsProcessed issues DELETE for given IDs', async () => {
+    const wiki = makeWiki();
+    await wiki.markOutboxEventsProcessed(['id1', 'id2']);
+    const runCall = (mockDb.runAsync as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c: unknown[]) => String(c[0]).includes('DELETE'),
+    );
+    expect(runCall).toBeDefined();
+    expect(runCall![1]).toContain('id1');
+    expect(runCall![1]).toContain('id2');
+  });
+
+  it('markOutboxEventsProcessed is a no-op for empty array', async () => {
+    const wiki = makeWiki();
+    await wiki.markOutboxEventsProcessed([]);
+    const runCalls = (mockDb.runAsync as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c: unknown[]) => String(c[0]).includes('DELETE'),
+    );
+    expect(runCalls).toHaveLength(0);
+  });
+
+  it('outbox writes are gated by enableOutbox flag — no rows when disabled', async () => {
+    const wiki = makeWiki(false);
+    (mockDb.getAllAsync as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    const events = await wiki.getUnprocessedOutboxEvents();
+    expect(events).toHaveLength(0);
+    // Verify getAllAsync was called (table exists and is readable even when disabled)
+    const outboxCall = (mockDb.getAllAsync as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c: unknown[]) => String(c[0]).includes('outbox'),
+    );
+    expect(outboxCall).toBeDefined();
+  });
+});

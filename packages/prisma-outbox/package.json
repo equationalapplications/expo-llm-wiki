@@ -15,6 +15,8 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
   "files": [
@@ -39,6 +41,7 @@
     "@prisma/client": "^5.0.0",
     "prisma": "^5.0.0",
     "tsup": "^8.0.0",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "vitest": "4.1.5"
   }
 }
