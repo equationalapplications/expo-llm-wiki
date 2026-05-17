@@ -1,4 +1,5 @@
 import type { SQLiteAdapter } from './types';
+import type { WikiOutboxEvent } from './outbox/types';
 import { setupDatabase } from './db/schema';
 import { MIGRATIONS, CURRENT_SCHEMA_VERSION } from './db/migrations';
 import {
@@ -68,7 +69,7 @@ export class WikiMemory {
     this.db = db;
     this.options = options;
     this.prefix = options.config?.tablePrefix || 'llm_wiki_';
-    this.outboxRepo = new OutboxRepository(db, this.prefix);
+    this.outboxRepo = new OutboxRepository(db, this.prefix, !!options.config?.enableOutbox);
     this.entryRepo = new EntryRepository(db, this.prefix, this.outboxRepo);
     this.taskRepo = new TaskRepository(db, this.prefix, this.outboxRepo);
     this.eventRepo = new EventRepository(db, this.prefix);
@@ -320,6 +321,33 @@ export class WikiMemory {
     }
   ): Promise<{ truncated: boolean; chunks: number }> {
     return this.ingestionService.ingestDocument(entityId, params);
+  }
+
+  /**
+   * Returns up to `limit` unprocessed outbox events, oldest first.
+   * Works regardless of enableOutbox value — allows draining after disabling.
+   */
+  async getUnprocessedOutboxEvents(limit = 100): Promise<WikiOutboxEvent[]> {
+    if (Number.isFinite(limit) && limit <= 0) return [];
+    const safeLimit = Number.isFinite(limit) && limit >= 1 ? Math.trunc(limit) : 100;
+    const rows = await this.outboxRepo.fetchPending(safeLimit);
+    return rows.map(row => {
+      let payload: unknown = null;
+      try {
+        payload = JSON.parse(row.payload);
+      } catch {
+        // corrupted row — surface null payload rather than poisoning the batch
+      }
+      return { ...row, payload } as WikiOutboxEvent;
+    });
+  }
+
+  /**
+   * Deletes the given event IDs from the outbox table.
+   * Call after successfully committing events to the external system.
+   */
+  async markOutboxEventsProcessed(eventIds: string[]): Promise<void> {
+    await this.outboxRepo.acknowledge(eventIds);
   }
 }
 

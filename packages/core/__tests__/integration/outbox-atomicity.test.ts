@@ -46,7 +46,7 @@ async function makeWiki(
 ): Promise<WikiMemory> {
   const wiki = new WikiMemory(db, {
     llmProvider: makeMockLlmProvider(facts),
-    config: { tablePrefix: PREFIX },
+    config: { tablePrefix: PREFIX, enableOutbox: true },
   });
   await wiki.setup();
   return wiki;
@@ -184,7 +184,7 @@ describe('Transaction integrity: entry and outbox writes are atomic', () => {
   beforeEach(async () => {
     db = openTestDatabase();
     await setupWithOutbox(db, PREFIX);
-    outboxRepo = new OutboxRepository(db, PREFIX);
+    outboxRepo = new OutboxRepository(db, PREFIX, true);
     entryRepo = new EntryRepository(db, PREFIX, outboxRepo);
   });
 

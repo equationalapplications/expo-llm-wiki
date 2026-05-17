@@ -40,7 +40,7 @@ describe('TaskRepository', () => {
   beforeEach(async () => {
     db = openTestDatabase();
     await setupTaskDatabase(db);
-    outbox = new OutboxRepository(db, PREFIX);
+    outbox = new OutboxRepository(db, PREFIX, true);
     repo = new TaskRepository(db, PREFIX, outbox);
   });
 

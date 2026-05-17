@@ -23,7 +23,7 @@ describe('OutboxRepository', () => {
   beforeEach(async () => {
     db = openTestDatabase();
     await setupOutboxDatabase(db);
-    repo = new OutboxRepository(db, PREFIX);
+    repo = new OutboxRepository(db, PREFIX, true);
   });
 
   it('push() inserts a row with correct columns', async () => {
@@ -102,6 +102,43 @@ describe('OutboxRepository', () => {
 
     const empty = await db.getAllAsync<any>(`SELECT id FROM ${PREFIX}outbox`);
     expect(empty.length).toBe(0);
+  });
+
+  it('acknowledge() deletes more than 500 IDs by chunking', async () => {
+    const count = 502;
+    const ids: string[] = [];
+    const now = Date.now();
+    for (let i = 0; i < count; i++) {
+      const id = `out_bulk_${i}`;
+      ids.push(id);
+      await db.runAsync(
+        `INSERT INTO ${PREFIX}outbox (id, entity_id, table_name, record_id, operation, payload, created_at) VALUES (?, 'e1', 't', 'r', 'INSERT', '{}', ?)`,
+        [id, now + i],
+      );
+    }
+
+    await repo.acknowledge(ids);
+
+    const remaining = await db.getAllAsync<any>(`SELECT id FROM ${PREFIX}outbox`);
+    expect(remaining.length).toBe(0);
+  });
+
+  it('push() is a no-op when enableOutbox is false', async () => {
+    const disabledRepo = new OutboxRepository(db, PREFIX, false);
+    await db.withTransactionAsync(async () => {
+      await disabledRepo.push(
+        {
+          entityId: 'entity_disabled',
+          tableName: 'entries',
+          recordId: 'rec_disabled',
+          operation: 'INSERT',
+          payload: { should: 'not appear' },
+        },
+        db,
+      );
+    });
+    const rows = await db.getAllAsync<any>(`SELECT * FROM ${PREFIX}outbox`);
+    expect(rows.length).toBe(0);
   });
 
   it('push() uses the provided tx — rollback prevents row from being persisted', async () => {

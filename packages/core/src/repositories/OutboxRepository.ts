@@ -3,8 +3,16 @@ import type { SQLiteAdapter } from '../types';
 import { generateId } from '../utils/ids';
 
 export class OutboxRepository extends BaseRepository {
+  private enableOutbox: boolean;
+
+  constructor(db: SQLiteAdapter, prefix: string, enableOutbox = false) {
+    super(db, prefix);
+    this.enableOutbox = enableOutbox;
+  }
+
   /**
    * Insert a new outbox event within the provided transaction.
+   * No-op when enableOutbox is false.
    * `tx` is required — callers must always pass the active transaction
    * so the write is atomic with the main table mutation.
    */
@@ -18,6 +26,7 @@ export class OutboxRepository extends BaseRepository {
     },
     tx: SQLiteAdapter,
   ): Promise<void> {
+    if (!this.enableOutbox) return;
     const executor = this.getExecutor(tx);
     const id = generateId('out_');
     const now = Date.now();
@@ -29,12 +38,12 @@ export class OutboxRepository extends BaseRepository {
   }
 
   /**
-   * Fetch pending outbox rows ordered by created_at ASC.
+   * Fetch pending outbox rows ordered by created_at ASC, rowid ASC.
    * Reads directly from `this.db` (not a transaction).
    */
   async fetchPending(limit = 50): Promise<any[]> {
     return this.db.getAllAsync<any>(
-      `SELECT * FROM ${this.prefix}outbox ORDER BY created_at ASC LIMIT ?`,
+      `SELECT * FROM ${this.prefix}outbox ORDER BY created_at ASC, rowid ASC LIMIT ?`,
       [limit],
     );
   }
@@ -46,10 +55,14 @@ export class OutboxRepository extends BaseRepository {
    */
   async acknowledge(ids: string[]): Promise<void> {
     if (ids.length === 0) return;
-    const placeholders = ids.map(() => '?').join(', ');
-    await this.db.runAsync(
-      `DELETE FROM ${this.prefix}outbox WHERE id IN (${placeholders})`,
-      ids,
-    );
+    const chunkSize = 500;
+    for (let i = 0; i < ids.length; i += chunkSize) {
+      const chunk = ids.slice(i, i + chunkSize);
+      const placeholders = chunk.map(() => '?').join(', ');
+      await this.db.runAsync(
+        `DELETE FROM ${this.prefix}outbox WHERE id IN (${placeholders})`,
+        chunk,
+      );
+    }
   }
 }

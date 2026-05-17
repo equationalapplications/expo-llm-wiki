@@ -2,6 +2,7 @@ import { WikiMemory } from './WikiMemory';
 import type { SQLiteAdapter, WikiOptions } from './types';
 
 export * from './types';
+export type { WikiOutboxEvent } from './outbox/types';
 export { WikiMemory } from './WikiMemory';
 export type { WikiMemoryTestAccess } from './WikiMemory';
 export { formatContext } from './utils/formatContext';
