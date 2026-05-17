@@ -47,7 +47,7 @@ describe('EntryRepository', () => {
     if (migration) {
       await migration.run(db, 'llm_wiki_');
     }
-    outbox = new OutboxRepository(db, 'llm_wiki_');
+    outbox = new OutboxRepository(db, 'llm_wiki_', true);
     repo = new EntryRepository(db, 'llm_wiki_', outbox);
   });
 
@@ -142,7 +142,7 @@ describe('EntryRepository with OutboxRepository', () => {
   beforeEach(async () => {
     db = openTestDatabase();
     await setupWithOutbox(db, 'llm_wiki_');
-    outbox = new OutboxRepository(db, 'llm_wiki_');
+    outbox = new OutboxRepository(db, 'llm_wiki_', true);
     repo = new EntryRepository(db, 'llm_wiki_', outbox);
   });
 

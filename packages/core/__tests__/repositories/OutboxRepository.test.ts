@@ -23,7 +23,7 @@ describe('OutboxRepository', () => {
   beforeEach(async () => {
     db = openTestDatabase();
     await setupOutboxDatabase(db);
-    repo = new OutboxRepository(db, PREFIX);
+    repo = new OutboxRepository(db, PREFIX, true);
   });
 
   it('push() inserts a row with correct columns', async () => {
