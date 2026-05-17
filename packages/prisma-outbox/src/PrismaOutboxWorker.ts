@@ -31,7 +31,8 @@ export class PrismaOutboxWorker<TTx = unknown> {
     if (this.running) return;
     this.running = true;
     try {
-      const batchSize = this.config.batchSize ?? 100;
+      const rawSize = this.config.batchSize ?? 100;
+      const batchSize = Number.isFinite(rawSize) && rawSize >= 1 ? Math.trunc(rawSize) : 100;
       const events = await this.config.wikiMemory.getUnprocessedOutboxEvents(batchSize);
       if (events.length === 0) return;
 

@@ -328,6 +328,7 @@ export class WikiMemory {
    * Works regardless of enableOutbox value — allows draining after disabling.
    */
   async getUnprocessedOutboxEvents(limit = 100): Promise<WikiOutboxEvent[]> {
+    if (Number.isFinite(limit) && limit <= 0) return [];
     const safeLimit = Number.isFinite(limit) && limit >= 1 ? Math.trunc(limit) : 100;
     const rows = await this.outboxRepo.fetchPending(safeLimit);
     return rows.map(row => {

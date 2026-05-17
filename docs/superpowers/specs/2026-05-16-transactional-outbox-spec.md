@@ -86,6 +86,9 @@ CREATE TABLE IF NOT EXISTS ${prefix}outbox (
 
 CREATE INDEX IF NOT EXISTS ${prefix}outbox_entity_id_created_at
   ON ${prefix}outbox (entity_id, created_at);
+
+CREATE INDEX IF NOT EXISTS ${prefix}outbox_created_at
+  ON ${prefix}outbox (created_at);
 ```
 
 Note: `processed_at` column is **not** included — rows are deleted on processing.
