@@ -3,8 +3,16 @@ import type { SQLiteAdapter } from '../types';
 import { generateId } from '../utils/ids';
 
 export class OutboxRepository extends BaseRepository {
+  private enableOutbox: boolean;
+
+  constructor(db: SQLiteAdapter, prefix: string, enableOutbox = false) {
+    super(db, prefix);
+    this.enableOutbox = enableOutbox;
+  }
+
   /**
    * Insert a new outbox event within the provided transaction.
+   * No-op when enableOutbox is false.
    * `tx` is required — callers must always pass the active transaction
    * so the write is atomic with the main table mutation.
    */
@@ -18,6 +26,7 @@ export class OutboxRepository extends BaseRepository {
     },
     tx: SQLiteAdapter,
   ): Promise<void> {
+    if (!this.enableOutbox) return;
     const executor = this.getExecutor(tx);
     const id = generateId('out_');
     const now = Date.now();
