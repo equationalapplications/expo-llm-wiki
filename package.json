@@ -23,7 +23,7 @@
     "build:core": "pnpm --filter @equationalapplications/core-llm-wiki build",
     "build:expo": "pnpm --filter @equationalapplications/expo-llm-wiki build",
     "build:react": "pnpm --filter @equationalapplications/react-llm-wiki build",
-    "test": "pnpm -r --filter=!@equationalapplications/integration-llm-wiki test",
+    "test": "pnpm -r --filter=!@equationalapplications/integration-llm-wiki test && pnpm run integration-test",
     "typecheck": "pnpm -r typecheck",
     "dev:workspace": "pnpm -r --parallel dev",
     "dev:root": "tsup src/index.ts src/react/index.ts --format cjs,esm --dts --external react --external expo-sqlite --external @equationalapplications/core-llm-wiki --external @equationalapplications/expo-llm-wiki --external @equationalapplications/react-llm-wiki --out-dir dist --watch",
