@@ -246,38 +246,45 @@ expo-llm-wiki/
 // packages/prisma-outbox/src/types.ts
 
 import type { WikiMemory, WikiOutboxEvent } from '@equationalapplications/core-llm-wiki';
-import type { PrismaClient, Prisma } from '@prisma/client';
 
-export interface PrismaOutboxConfig {
+/** Minimal Prisma client shape required by the worker — avoids depending on generated types. */
+export interface PrismaLike<TTx> {
+  $transaction: (fn: (tx: TTx) => Promise<void>) => Promise<unknown>;
+}
+
+export interface PrismaOutboxConfig<TTx = unknown> {
   wikiMemory: WikiMemory;
-  prisma: PrismaClient;
+  prisma: PrismaLike<TTx>;
   /**
    * Maps one outbox event to Prisma operations executed inside a Prisma transaction.
-   * Uses Prisma.TransactionClient — safer than the manual Omit<PrismaClient, ...> form
-   * and automatically tracks new non-transactional properties added by Prisma.
+   * `tx` is the Prisma transaction client passed by `prisma.$transaction`.
    */
-  mapEvent: (event: WikiOutboxEvent, tx: Prisma.TransactionClient) => Promise<void>;
+  mapEvent: (event: WikiOutboxEvent, tx: TTx) => Promise<void>;
   /** Max events fetched per poll cycle. Default: 100 */
   batchSize?: number;
   /** Milliseconds between poll cycles. Default: 5000 */
   pollIntervalMs?: number;
   /** Called when an event fails; return true to skip and continue, false/undefined to halt. */
   onError?: (error: Error, event: WikiOutboxEvent) => boolean | undefined;
+  /** Called when a worker-level error occurs (e.g. SQLite read/ack failure). Not called for per-event errors handled by onError. */
+  onWorkerError?: (error: Error) => void;
 }
 ```
 
 ```typescript
 // packages/prisma-outbox/src/PrismaOutboxWorker.ts
 
-export class PrismaOutboxWorker {
+export class PrismaOutboxWorker<TTx = unknown> {
   private timer?: ReturnType<typeof setInterval>;
+  private backlogTimer?: ReturnType<typeof setTimeout>;
+  private running = false;
 
-  constructor(private config: PrismaOutboxConfig) {}
+  constructor(private config: PrismaOutboxConfig<TTx>) {}
 
   start(): void {
     if (this.timer) return;
     this.timer = setInterval(
-      () => void this.syncBatch(),
+      () => { this.syncBatch().catch(err => this.#workerError(err)); },
       this.config.pollIntervalMs ?? 5000
     );
   }
@@ -285,32 +292,53 @@ export class PrismaOutboxWorker {
   stop(): void {
     clearInterval(this.timer);
     this.timer = undefined;
+    clearTimeout(this.backlogTimer);
+    this.backlogTimer = undefined;
   }
 
   async syncBatch(): Promise<void> {
-    const batchSize = this.config.batchSize ?? 100;
-    const events = await this.config.wikiMemory.getUnprocessedOutboxEvents(batchSize);
-    if (events.length === 0) return;
+    if (this.running) return;
+    this.running = true;
+    try {
+      const batchSize = this.config.batchSize ?? 100;
+      const events = await this.config.wikiMemory.getUnprocessedOutboxEvents(batchSize);
+      if (events.length === 0) return;
 
-    const processedIds: string[] = [];
+      const processedIds: string[] = [];
+      let halted = false;
 
-    for (const event of events) {
-      try {
-        await this.config.prisma.$transaction(tx => this.config.mapEvent(event, tx));
-        processedIds.push(event.id);
-      } catch (err) {
-        const error = err instanceof Error ? err : new Error(String(err));
-        const skip = this.config.onError?.(error, event);
-        if (!skip) break; // halt to preserve ordering
+      for (const event of events) {
+        try {
+          await this.config.prisma.$transaction(tx => this.config.mapEvent(event, tx));
+          processedIds.push(event.id);
+        } catch (err) {
+          const error = err instanceof Error ? err : new Error(String(err));
+          let skip = false;
+          try {
+            skip = this.config.onError?.(error, event) ?? false;
+          } catch {
+            halted = true;
+            break;
+          }
+          if (skip) {
+            processedIds.push(event.id);
+          } else {
+            halted = true;
+            break; // halt to preserve ordering
+          }
+        }
       }
-    }
 
-    await this.config.wikiMemory.markOutboxEventsProcessed(processedIds);
+      await this.config.wikiMemory.markOutboxEventsProcessed(processedIds);
 
-    // Backlog optimization: full batch means more events likely waiting — skip the interval delay.
-    // Use setTimeout(0) instead of setImmediate for React Native / Hermes compatibility.
-    if (events.length === batchSize) {
-      setTimeout(() => void this.syncBatch(), 0);
+      // Backlog optimization: full batch without halt means more events likely waiting.
+      // Only schedule when worker is still running (stop() not called) to avoid post-stop leaks.
+      if (!halted && events.length === batchSize && this.timer !== undefined) {
+        clearTimeout(this.backlogTimer);
+        this.backlogTimer = setTimeout(() => { this.syncBatch().catch(err => this.#workerError(err)); }, 0);
+      }
+    } finally {
+      this.running = false;
     }
   }
 }
