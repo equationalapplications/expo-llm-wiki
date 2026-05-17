@@ -39,7 +39,14 @@ export class PrismaOutboxWorker<TTx = unknown> {
           processedIds.push(event.id);
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
-          const skip = this.config.onError?.(error, event);
+          let skip = false;
+          try {
+            skip = this.config.onError?.(error, event) ?? false;
+          } catch {
+            // thrown handler treated as halt; processedIds acknowledged below
+            halted = true;
+            break;
+          }
           if (skip) {
             processedIds.push(event.id); // acknowledge so the event isn't re-fetched
           } else {

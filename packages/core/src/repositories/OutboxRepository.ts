@@ -38,7 +38,7 @@ export class OutboxRepository extends BaseRepository {
   }
 
   /**
-   * Fetch pending outbox rows ordered by created_at ASC, id ASC.
+   * Fetch pending outbox rows ordered by created_at ASC, rowid ASC.
    * Reads directly from `this.db` (not a transaction).
    */
   async fetchPending(limit = 50): Promise<any[]> {
