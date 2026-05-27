@@ -19,15 +19,16 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173) and enter your Anthropic API key.
+Open [http://localhost:5173](http://localhost:5173) and configure your LLM provider — either Anthropic or an OpenAI-compatible endpoint.
 
 ## Architecture
 
 ```
 src/
   lib/
-    sqlJsAdapter.ts      # sql.js → SQLiteAdapter bridge
-    anthropicProvider.ts # Claude Haiku LLM provider
+    sqlJsAdapter.ts        # sql.js → SQLiteAdapter bridge
+    anthropicProvider.ts   # Anthropic (Claude) LLM provider
+    openaiCompatProvider.ts # OpenAI-compatible LLM provider
   components/
     ReadTab.tsx          # useMemoryRead demo
     WriteTab.tsx         # useWikiWrite demo
@@ -40,5 +41,8 @@ src/
 
 ## Getting an API Key
 
-Get an Anthropic API key at [console.anthropic.com](https://console.anthropic.com).
-The key is used only for LLM calls (Librarian/Heal/Ingest) and stored in localStorage.
+**Anthropic:** Get a key at [console.anthropic.com](https://console.anthropic.com).
+
+**OpenAI-compatible:** Use your provider's base URL (e.g. `https://api.openai.com`) and API key. The base URL should be the host root without a trailing `/v1`.
+
+API keys are used only for LLM calls (Librarian/Heal/Ingest) and stored in localStorage.
