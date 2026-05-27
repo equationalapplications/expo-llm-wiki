@@ -502,7 +502,7 @@ a:hover { text-decoration: underline; }
   transition: border-color 0.15s, color 0.15s;
 }
 .provider-tab:hover { border-color: var(--accent); color: var(--text); }
-.provider-tab.active { border-color: var(--accent); color: var(--accent); background: var(--surface-1); }
+.provider-tab.active { border-color: var(--accent); color: var(--accent); background: var(--accent-glow); }
 
 .result-card {
   background: var(--surface-2);

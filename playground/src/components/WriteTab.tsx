@@ -5,7 +5,7 @@ import { CodeBlock } from './CodeBlock'
 const CODE = `const { execute, isPending, error } = useWikiWrite()
 
 await execute('user-1', {
-  event_type: 'observation',
+  event_type: 'observation',  // 'observation' | 'decision' | 'action' | 'outcome'
   summary: 'User prefers TypeScript over JavaScript',
 })
 
@@ -13,12 +13,12 @@ await execute('user-1', {
 // config.autoLibrarianThreshold (default: 20) events
 // to synthesize them into WikiFacts.`
 
-const EVENT_TYPES = ['observation', 'correction', 'user_stated', 'conversation'] as const
+const EVENT_TYPES = ['observation', 'decision', 'action', 'outcome'] as const
 
 export function WriteTab() {
   const [entityId, setEntityId] = useState('user-1')
   const [summary, setSummary] = useState('')
-  const [eventType, setEventType] = useState<string>('observation')
+  const [eventType, setEventType] = useState<(typeof EVENT_TYPES)[number]>(EVENT_TYPES[0])
   const [log, setLog] = useState<Array<{ ts: string; msg: string; ok: boolean }>>([])
 
   const { execute, isPending, error } = useWikiWrite()
@@ -27,7 +27,7 @@ export function WriteTab() {
     if (!summary.trim()) return
     try {
       await execute(entityId, {
-        event_type: eventType as any,
+        event_type: eventType,
         summary,
       })
       setLog(l => [{ ts: new Date().toLocaleTimeString(), msg: summary, ok: true }, ...l.slice(0, 9)])

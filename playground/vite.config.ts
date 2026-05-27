@@ -9,10 +9,8 @@ const sqlWasmPlugin = () => ({
   buildStart() {
     const src = resolve('./node_modules/sql.js/dist/sql-wasm.wasm')
     const dest = resolve('./public/sql-wasm.wasm')
-    if (!fs.existsSync(dest)) {
-      fs.mkdirSync('./public', { recursive: true })
-      fs.copyFileSync(src, dest)
-    }
+    fs.mkdirSync('./public', { recursive: true })
+    fs.copyFileSync(src, dest)
   },
 })
 

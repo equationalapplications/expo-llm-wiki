@@ -1,6 +1,6 @@
 import type { LLMProvider } from '@equationalapplications/react-llm-wiki'
 
-export function createAnthropicProvider(apiKey: string): LLMProvider {
+export function createAnthropicProvider(apiKey: string, model: string): LLMProvider {
   return {
     generateText: async ({ systemPrompt, userPrompt }) => {
       const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -12,7 +12,7 @@ export function createAnthropicProvider(apiKey: string): LLMProvider {
           'anthropic-dangerous-direct-browser-access': 'true',
         },
         body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001',
+          model,
           max_tokens: 4096,
           system: systemPrompt,
           messages: [{ role: 'user', content: userPrompt }],

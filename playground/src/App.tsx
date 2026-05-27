@@ -24,6 +24,7 @@ const TABS: Array<{ id: Tab; label: string; icon: string }> = [
 interface StoredConfig {
   providerType: ProviderType
   anthropicKey: string
+  anthropicModel: string
   openaiBaseUrl: string
   openaiApiKey: string
   openaiChatModel: string
@@ -33,6 +34,7 @@ interface StoredConfig {
 const DEFAULTS: StoredConfig = {
   providerType: 'anthropic',
   anthropicKey: '',
+  anthropicModel: 'claude-haiku-4-5-20251001',
   openaiBaseUrl: 'https://api.openai.com',
   openaiApiKey: '',
   openaiChatModel: 'gpt-4o-mini',
@@ -75,7 +77,7 @@ function SetupScreen({ onReady }: { onReady: (wiki: WikiMemory) => void }) {
       const adapter = await createSqlJsAdapter()
       const llmProvider =
         cfg.providerType === 'anthropic'
-          ? createAnthropicProvider(cfg.anthropicKey)
+          ? createAnthropicProvider(cfg.anthropicKey, cfg.anthropicModel)
           : createOpenAICompatProvider({
               baseUrl: cfg.openaiBaseUrl,
               apiKey: cfg.openaiApiKey,
@@ -161,8 +163,19 @@ function SetupScreen({ onReady }: { onReady: (wiki: WikiMemory) => void }) {
                 placeholder="sk-ant-..."
                 onKeyDown={e => e.key === 'Enter' && handleStart()}
               />
+              <p className="hint" style={{ color: 'var(--yellow)' }}>
+                ⚠ API key is saved in browser localStorage (plaintext). Use a browser profile you trust and avoid shared machines.
+              </p>
+              <label>Model</label>
+              <input
+                type="text"
+                value={cfg.anthropicModel}
+                onChange={e => set({ anthropicModel: e.target.value })}
+                placeholder="claude-haiku-4-5-20251001"
+                onKeyDown={e => e.key === 'Enter' && handleStart()}
+              />
               <p className="hint">
-                Used for Librarian/Heal/Ingest jobs (Claude Haiku). No embed support — falls back to keyword search.
+                Used for Librarian/Heal/Ingest jobs. No embed support — falls back to keyword search.
                 Get a key at <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a>.
               </p>
             </>

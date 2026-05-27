@@ -28,6 +28,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          # playground is a standalone app outside the root pnpm workspace; npm is intentional
           cache: npm
           cache-dependency-path: playground/package-lock.json
 

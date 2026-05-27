@@ -27,13 +27,16 @@ class SqlJsAdapter implements SQLiteAdapter {
 
   async getAllAsync<T>(sql: string, params: unknown[] = []): Promise<T[]> {
     const stmt = this.db.prepare(sql)
-    stmt.bind(params as any)
-    const rows: T[] = []
-    while (stmt.step()) {
-      rows.push(stmt.getAsObject() as T)
+    try {
+      stmt.bind(params as any)
+      const rows: T[] = []
+      while (stmt.step()) {
+        rows.push(stmt.getAsObject() as T)
+      }
+      return rows
+    } finally {
+      stmt.free()
     }
-    stmt.free()
-    return rows
   }
 
   async getFirstAsync<T>(sql: string, params: unknown[] = []): Promise<T | null> {
