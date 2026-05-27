@@ -44,7 +44,22 @@ const DEFAULTS: StoredConfig = {
 function loadConfig(): StoredConfig {
   try {
     const raw = localStorage.getItem('llm-config')
-    if (raw) return { ...DEFAULTS, ...JSON.parse(raw) }
+    if (raw) {
+      const parsed: unknown = JSON.parse(raw)
+      if (typeof parsed === 'object' && parsed !== null) {
+        const p = parsed as Record<string, unknown>
+        const merged: StoredConfig = { ...DEFAULTS }
+        for (const key of Object.keys(DEFAULTS) as Array<keyof StoredConfig>) {
+          if (typeof p[key] === typeof DEFAULTS[key]) {
+            (merged as unknown as Record<string, unknown>)[key] = p[key]
+          }
+        }
+        if (merged.providerType !== 'anthropic' && merged.providerType !== 'openai-compat') {
+          merged.providerType = DEFAULTS.providerType
+        }
+        return merged
+      }
+    }
     // migrate legacy key
     const legacy = localStorage.getItem('anthropic-key')
     if (legacy) return { ...DEFAULTS, anthropicKey: legacy }
@@ -75,7 +90,7 @@ function SetupScreen({ onReady }: { onReady: (wiki: WikiMemory) => void }) {
       : cfg.openaiBaseUrl.trim().length > 0 && cfg.openaiChatModel.trim().length > 0
 
   const handleStart = async () => {
-    if (!canStart) return
+    if (!canStart || loading) return
     setLoading(true)
     setError('')
     try {

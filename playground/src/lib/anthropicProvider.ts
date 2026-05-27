@@ -23,7 +23,9 @@ export function createAnthropicProvider(apiKey: string, model: string): LLMProvi
         throw new Error(`Anthropic API error ${response.status}: ${err}`)
       }
       const data = await response.json()
-      return data.content?.[0]?.text ?? ''
+      const text = data.content?.[0]?.text
+      if (typeof text !== 'string') throw new Error('Anthropic API error: unexpected response shape (missing content[0].text)')
+      return text
     },
   }
 }

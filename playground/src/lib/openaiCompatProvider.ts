@@ -34,7 +34,9 @@ export function createOpenAICompatProvider(config: OpenAICompatConfig): LLMProvi
         throw new Error(`LLM API error ${response.status}: ${err}`)
       }
       const data = await response.json()
-      return data.choices?.[0]?.message?.content ?? ''
+      const content = data.choices?.[0]?.message?.content
+      if (typeof content !== 'string') throw new Error('LLM API error: unexpected response shape (missing choices[0].message.content)')
+      return content
     },
 
     embed: embedModel

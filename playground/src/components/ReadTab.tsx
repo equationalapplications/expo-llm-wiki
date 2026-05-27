@@ -20,12 +20,12 @@ export function ReadTab() {
   const [query, setQuery] = useState('')
   const [maxResults, setMaxResults] = useState(10)
   const [hybridWeight, setHybridWeight] = useState(0.7)
-  const [committed, setCommitted] = useState({ entityId: 'user-1', query: '' })
+  const [committed, setCommitted] = useState({ entityId: 'user-1', query: '', maxResults: 10, hybridWeight: 0.7 })
 
   const { data, isPending, error, refetch } = useMemoryRead(
     committed.entityId,
     committed.query,
-    { maxResults, hybridWeight }
+    { maxResults: committed.maxResults, hybridWeight: committed.hybridWeight }
   )
 
   return (
@@ -74,7 +74,7 @@ export function ReadTab() {
           </div>
           <button
             className="btn-primary"
-            onClick={() => setCommitted({ entityId, query })}
+            onClick={() => setCommitted({ entityId, query, maxResults, hybridWeight })}
           >
             Apply & Read
           </button>
