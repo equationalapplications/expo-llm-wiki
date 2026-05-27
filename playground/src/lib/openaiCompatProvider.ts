@@ -9,7 +9,7 @@ export interface OpenAICompatConfig {
 
 export function createOpenAICompatProvider(config: OpenAICompatConfig): LLMProvider {
   const { baseUrl, apiKey, chatModel, embedModel } = config
-  const base = baseUrl.replace(/\/$/, '')
+  const base = baseUrl.replace(/\/+$/, '').replace(/\/v1$/i, '')
   const headers = {
     'Content-Type': 'application/json',
     ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
