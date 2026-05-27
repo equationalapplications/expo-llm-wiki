@@ -48,8 +48,19 @@ export function createOpenAICompatProvider(config: OpenAICompatConfig): LLMProvi
             const err = await response.text()
             throw new Error(`Embed API error ${response.status}: ${err}`)
           }
-          const data = await response.json()
-          return data.data?.[0]?.embedding as number[]
+          const data = (await response.json()) as {
+            data?: Array<{ embedding?: unknown }>
+          }
+          const embedding = data.data?.[0]?.embedding
+          if (
+            !Array.isArray(embedding) ||
+            !embedding.every((value) => typeof value === 'number')
+          ) {
+            throw new Error(
+              'Embed API error: missing or invalid embedding array in response',
+            )
+          }
+          return embedding
         }
       : undefined,
   }
