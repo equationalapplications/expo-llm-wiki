@@ -170,7 +170,7 @@ function SetupScreen({ onReady }: { onReady: (wiki: WikiMemory) => void }) {
                 onKeyDown={e => e.key === 'Enter' && handleStart()}
               />
               <p className="hint" style={{ color: 'var(--yellow)' }}>
-                ⚠ API key is saved in browser localStorage (plaintext). Use a browser profile you trust and avoid shared machines.
+                ⚠ API key is saved in browser localStorage (plaintext) and sent directly from your browser to Anthropic. Use a browser profile you trust, avoid shared machines, and do not use a key with broad permissions.
               </p>
               <label>Model</label>
               <input
@@ -210,6 +210,11 @@ function SetupScreen({ onReady }: { onReady: (wiki: WikiMemory) => void }) {
                 onChange={e => set({ openaiApiKey: e.target.value })}
                 placeholder="sk-..."
               />
+              {cfg.openaiApiKey && (
+                <p className="hint" style={{ color: 'var(--yellow)' }}>
+                  ⚠ API key is saved in browser localStorage (plaintext). Use a browser profile you trust and avoid shared machines.
+                </p>
+              )}
 
               <label>Chat Model</label>
               <input
