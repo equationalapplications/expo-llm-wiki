@@ -53,7 +53,13 @@ function loadConfig(): StoredConfig {
 }
 
 function saveConfig(cfg: StoredConfig) {
-  localStorage.setItem('llm-config', JSON.stringify(cfg))
+  try {
+    localStorage.setItem('llm-config', JSON.stringify(cfg))
+  } catch {
+    throw new Error(
+      'Unable to save your configuration in this browser. Storage may be disabled or full. Please check your browser settings and try again.',
+    )
+  }
 }
 
 function SetupScreen({ onReady }: { onReady: (wiki: WikiMemory) => void }) {
