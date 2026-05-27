@@ -10,8 +10,8 @@ await execute('user-1', {
 })
 
 // Events accumulate; librarian auto-runs after
-// config.autoLibrarianThreshold (default: 20) events
-// to synthesize them into WikiFacts.`
+// config.autoLibrarianThreshold events (default: 20).
+// In this playground, it's set to 5, so synthesis happens sooner into WikiFacts.`
 
 const EVENT_TYPES = ['observation', 'decision', 'action', 'outcome'] as const
 
