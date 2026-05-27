@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'playground/**'
+      - '.github/workflows/deploy-playground.yml'
   workflow_dispatch:
 
 permissions:

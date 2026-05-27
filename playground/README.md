@@ -34,7 +34,7 @@ src/
     IngestTab.tsx        # useWikiIngest demo
     MaintenanceTab.tsx   # useWikiMaintenance + useWikiForget demo
     ExportTab.tsx        # useWikiExport demo
-    CodeBlock.tsx        # Syntax-highlighted code snippets
+    CodeBlock.tsx        # Code snippet display with copy-to-clipboard
   App.tsx                # Setup screen + WikiProvider + tab routing
 ```
 

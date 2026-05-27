@@ -19,7 +19,7 @@ export function WriteTab() {
   const [entityId, setEntityId] = useState('user-1')
   const [summary, setSummary] = useState('')
   const [eventType, setEventType] = useState<(typeof EVENT_TYPES)[number]>(EVENT_TYPES[0])
-  const [log, setLog] = useState<Array<{ ts: string; msg: string; ok: boolean }>>([])
+  const [log, setLog] = useState<Array<{ id: number; ts: string; msg: string; ok: boolean }>>([])
 
   const { execute, isPending, error } = useWikiWrite()
 
@@ -30,10 +30,10 @@ export function WriteTab() {
         event_type: eventType,
         summary,
       })
-      setLog(l => [{ ts: new Date().toLocaleTimeString(), msg: summary, ok: true }, ...l.slice(0, 9)])
+      setLog(l => [{ id: Date.now(), ts: new Date().toLocaleTimeString(), msg: summary, ok: true }, ...l.slice(0, 9)])
       setSummary('')
     } catch (e) {
-      setLog(l => [{ ts: new Date().toLocaleTimeString(), msg: `Error: ${(e as Error).message}`, ok: false }, ...l.slice(0, 9)])
+      setLog(l => [{ id: Date.now(), ts: new Date().toLocaleTimeString(), msg: `Error: ${(e as Error).message}`, ok: false }, ...l.slice(0, 9)])
     }
   }
 
@@ -98,8 +98,8 @@ export function WriteTab() {
           <h3>Write Log</h3>
           {log.length === 0 && <div className="empty">No writes yet.</div>}
           <div className="log-list">
-            {log.map((entry, i) => (
-              <div key={i} className={`log-entry ${entry.ok ? 'ok' : 'err'}`}>
+            {log.map((entry) => (
+              <div key={entry.id} className={`log-entry ${entry.ok ? 'ok' : 'err'}`}>
                 <span className="log-time">{entry.ts}</span>
                 <span className="log-msg">{entry.msg}</span>
               </div>

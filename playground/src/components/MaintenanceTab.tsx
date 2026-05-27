@@ -31,13 +31,13 @@ export function MaintenanceTab() {
   const [entityId, setEntityId] = useState('user-1')
   const [forgetMode, setForgetMode] = useState<'entryId' | 'sourceRef' | 'clearAll'>('clearAll')
   const [forgetValue, setForgetValue] = useState('')
-  const [log, setLog] = useState<Array<{ ts: string; msg: string; ok: boolean }>>([])
+  const [log, setLog] = useState<Array<{ id: number; ts: string; msg: string; ok: boolean }>>([])
 
   const { runLibrarian, runHeal, runPrune, isPending, error } = useWikiMaintenance()
   const forget = useWikiForget()
 
   const addLog = (msg: string, ok: boolean) =>
-    setLog(l => [{ ts: new Date().toLocaleTimeString(), msg, ok }, ...l.slice(0, 14)])
+    setLog(l => [{ id: Date.now(), ts: new Date().toLocaleTimeString(), msg, ok }, ...l.slice(0, 14)])
 
   const run = async (label: string, fn: () => Promise<any>) => {
     try {
@@ -173,8 +173,8 @@ export function MaintenanceTab() {
           <h3>Operation Log</h3>
           {log.length === 0 && <div className="empty">No operations yet.</div>}
           <div className="log-list">
-            {log.map((entry, i) => (
-              <div key={i} className={`log-entry ${entry.ok ? 'ok' : 'err'}`}>
+            {log.map((entry) => (
+              <div key={entry.id} className={`log-entry ${entry.ok ? 'ok' : 'err'}`}>
                 <span className="log-time">{entry.ts}</span>
                 <span className="log-msg">{entry.msg}</span>
               </div>

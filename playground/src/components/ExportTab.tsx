@@ -12,7 +12,7 @@ const dump = await execute()
 const dump = await execute(['user-1', 'user-2'])
 
 // dump.entities: Record<string, MemoryBundle>
-// dump.generatedAt: number (unix timestamp)
+// dump.generatedAt: number (milliseconds since epoch, i.e. Date.now())
 
 // Formatted output (manifest + per-entity markdown files)
 const formatted = formatMemoryDump(dump)
@@ -88,6 +88,7 @@ export function ExportTab() {
                   a.href = url
                   a.download = 'wiki-dump.json'
                   a.click()
+                  URL.revokeObjectURL(url)
                 }}
               >
                 ↓ Download JSON
@@ -123,8 +124,8 @@ export function ExportTab() {
                     {b.facts && b.facts.length > 0 && (
                       <div className="dump-section">
                         <strong>Facts ({b.facts.length})</strong>
-                        {b.facts.map((f, i) => (
-                          <div key={i} className="dump-fact">
+                        {b.facts.map((f) => (
+                          <div key={f.id} className="dump-fact">
                             <span className={`confidence ${f.confidence}`}>{f.confidence}</span>
                             <span className="dump-fact-title">{f.title}</span>
                           </div>
@@ -134,8 +135,8 @@ export function ExportTab() {
                     {b.tasks && b.tasks.length > 0 && (
                       <div className="dump-section">
                         <strong>Tasks ({b.tasks.length})</strong>
-                        {b.tasks.map((t, i) => (
-                          <div key={i} className="dump-task">{t.description}</div>
+                        {b.tasks.map((t) => (
+                          <div key={t.id} className="dump-task">{t.description}</div>
                         ))}
                       </div>
                     )}
@@ -151,8 +152,8 @@ export function ExportTab() {
                 <div className="dump-entity-header">manifest.md</div>
                 <pre className="json-view" style={{ margin: 8 }}>{formatted.manifest}</pre>
               </div>
-              {formatted.files.map((f, i) => (
-                <div key={i} className="dump-entity">
+              {formatted.files.map((f) => (
+                <div key={f.name} className="dump-entity">
                   <div className="dump-entity-header">{f.name}</div>
                   <pre className="json-view" style={{ margin: 8 }}>{f.content}</pre>
                 </div>
