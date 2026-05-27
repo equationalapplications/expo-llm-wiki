@@ -48,7 +48,7 @@ function loadConfig(): StoredConfig {
     // migrate legacy key
     const legacy = localStorage.getItem('anthropic-key')
     if (legacy) return { ...DEFAULTS, anthropicKey: legacy }
-  } catch {}
+  } catch { /* ignore JSON.parse errors */ }
   return { ...DEFAULTS }
 }
 

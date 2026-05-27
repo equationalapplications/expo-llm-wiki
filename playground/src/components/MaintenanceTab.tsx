@@ -39,7 +39,7 @@ export function MaintenanceTab() {
   const addLog = (msg: string, ok: boolean) =>
     setLog(l => [{ id: Date.now(), ts: new Date().toLocaleTimeString(), msg, ok }, ...l.slice(0, 14)])
 
-  const run = async (label: string, fn: () => Promise<any>) => {
+  const run = async (label: string, fn: () => Promise<unknown>) => {
     try {
       const result = await fn()
       addLog(`${label} completed${result ? `: ${JSON.stringify(result)}` : ''}`, true)
@@ -49,9 +49,9 @@ export function MaintenanceTab() {
   }
 
   const handleForget = async () => {
-    const params: any =
+    const params =
       forgetMode === 'clearAll'
-        ? { clearAll: true }
+        ? { clearAll: true as const }
         : forgetMode === 'entryId'
         ? { entryId: forgetValue }
         : { sourceRef: forgetValue }

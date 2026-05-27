@@ -18,6 +18,7 @@ class SqlJsAdapter implements SQLiteAdapter {
   }
 
   async runAsync(sql: string, params: unknown[] = []): Promise<{ changes: number; lastInsertRowId: number }> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.db.run(sql, params as any)
     return {
       changes: this.db.getRowsModified(),
@@ -28,6 +29,7 @@ class SqlJsAdapter implements SQLiteAdapter {
   async getAllAsync<T>(sql: string, params: unknown[] = []): Promise<T[]> {
     const stmt = this.db.prepare(sql)
     try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       stmt.bind(params as any)
       const rows: T[] = []
       while (stmt.step()) {
