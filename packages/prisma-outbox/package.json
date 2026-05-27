@@ -1,6 +1,6 @@
 {
   "name": "@equationalapplications/prisma-outbox",
-  "version": "4.9.0",
+  "version": "4.9.1",
   "description": "Prisma adapter for the expo-llm-wiki transactional outbox pattern.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",

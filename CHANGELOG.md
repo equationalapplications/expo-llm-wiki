@@ -1,3 +1,15 @@
+## [4.9.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.9.0...v4.9.1) (2026-05-27)
+
+
+### Bug Fixes
+
+* **playground:** add security warnings for both providers ([7323cdf](https://github.com/equationalapplications/expo-llm-wiki/commit/7323cdf2e576a142620b4c84dd5c5fc33d03767c))
+* **playground:** address Copilot review — provider error handling, race guard, config validation ([2464287](https://github.com/equationalapplications/expo-llm-wiki/commit/24642877f450a7fdd14fd5aae8256fbf0169fc33))
+* **playground:** address Copilot review findings ([dad8cf0](https://github.com/equationalapplications/expo-llm-wiki/commit/dad8cf09594398ec74a2bceaede2c22fba86de0b))
+* **playground:** address Copilot review findings ([9fafea1](https://github.com/equationalapplications/expo-llm-wiki/commit/9fafea1c415c5f6404f7b09eb522875ca5d24aad))
+* **playground:** address Copilot review findings from PR [#38](https://github.com/equationalapplications/expo-llm-wiki/issues/38) ([5b6b0e6](https://github.com/equationalapplications/expo-llm-wiki/commit/5b6b0e6f2ceec5eea4a06fc62f0de40860c5dee1))
+* **playground:** resolve lint errors from Copilot review ([b5c455e](https://github.com/equationalapplications/expo-llm-wiki/commit/b5c455eb02f17b448d330044759dfb61dc9b9606))
+
 # [4.9.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.8.0...v4.9.0) (2026-05-17)
 
 
