@@ -92,7 +92,7 @@ export function ExportTab() {
                   a.href = url
                   a.download = 'wiki-dump.json'
                   a.click()
-                  URL.revokeObjectURL(url)
+                  setTimeout(() => URL.revokeObjectURL(url), 1000)
                 }}
               >
                 ↓ Download JSON
