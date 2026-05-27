@@ -27,7 +27,11 @@ export function ExportTab() {
 
   const handleExport = async () => {
     const ids = entityIds.trim() ? entityIds.split(',').map(s => s.trim()).filter(Boolean) : undefined
-    await execute(ids)
+    try {
+      await execute(ids)
+    } catch {
+      // error displayed via hook's error state
+    }
   }
 
   const formatted = lastResult ? formatMemoryDump(lastResult) : null

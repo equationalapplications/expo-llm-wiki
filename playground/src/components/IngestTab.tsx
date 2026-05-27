@@ -76,7 +76,11 @@ export function IngestTab() {
 
   const handleIngest = async () => {
     const sourceHash = await simpleHash(docText)
-    await execute(entityId, { sourceRef, sourceHash, documentChunk: docText })
+    try {
+      await execute(entityId, { sourceRef, sourceHash, documentChunk: docText })
+    } catch {
+      // error displayed via hook's error state
+    }
   }
 
   const loadSample = (name: string) => {

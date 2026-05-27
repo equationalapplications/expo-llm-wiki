@@ -14,8 +14,10 @@ const sqlWasmPlugin = () => ({
   },
 })
 
+const repoName = process.env.GITHUB_REPOSITORY?.split('/')[1] ?? 'expo-llm-wiki'
+
 export default defineConfig({
-  base: process.env.GITHUB_ACTIONS ? '/expo-llm-wiki/playground/' : '/',
+  base: process.env.GITHUB_ACTIONS ? `/${repoName}/playground/` : '/',
   plugins: [react(), sqlWasmPlugin()],
   optimizeDeps: {
     include: ['sql.js'],

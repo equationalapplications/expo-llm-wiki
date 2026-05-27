@@ -49,8 +49,8 @@ export function WriteTab() {
         <div className="panel">
           <h3>Write an Event</h3>
           <div className="field-group">
-            <label>Entity ID</label>
-            <input value={entityId} onChange={e => setEntityId(e.target.value)} />
+            <label htmlFor="write-entity-id">Entity ID</label>
+            <input id="write-entity-id" value={entityId} onChange={e => setEntityId(e.target.value)} />
           </div>
           <div className="field-group">
             <label>Event Type</label>
@@ -65,8 +65,9 @@ export function WriteTab() {
             </div>
           </div>
           <div className="field-group">
-            <label>Summary</label>
+            <label htmlFor="write-summary">Summary</label>
             <textarea
+              id="write-summary"
               rows={3}
               value={summary}
               onChange={e => setSummary(e.target.value)}

@@ -2,7 +2,7 @@ import type { LLMProvider } from '@equationalapplications/react-llm-wiki'
 
 export interface OpenAICompatConfig {
   baseUrl: string
-  apiKey: string
+  apiKey?: string
   chatModel: string
   embedModel?: string
 }

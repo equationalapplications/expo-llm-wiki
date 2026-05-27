@@ -72,7 +72,7 @@ let _adapter: SqlJsAdapter | null = null
 
 export async function createSqlJsAdapter(): Promise<SQLiteAdapter> {
   if (_adapter) return _adapter
-  const SQL = await initSqlJs({ locateFile: () => `${import.meta.env.BASE_URL}sql-wasm.wasm` })
+  const SQL = await initSqlJs({ locateFile: (file) => `${import.meta.env.BASE_URL}${file}` })
   const db = new SQL.Database()
   _adapter = new SqlJsAdapter(db)
   return _adapter
