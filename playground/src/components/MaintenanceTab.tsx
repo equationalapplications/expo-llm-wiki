@@ -84,7 +84,7 @@ export function MaintenanceTab() {
             <div className="job-card">
               <div className="job-info">
                 <strong>Librarian</strong>
-                <p>Synthesizes accumulated events into structured facts. Auto-runs after 20 events.</p>
+                <p>Synthesizes accumulated events into structured facts. Auto-runs after 5 events.</p>
               </div>
               <button
                 className="btn-job"
