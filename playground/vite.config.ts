@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
-import fs from 'fs'
+import * as fs from 'fs'
 
 // Copy sql-wasm.wasm to public on startup
 const sqlWasmPlugin = () => ({
