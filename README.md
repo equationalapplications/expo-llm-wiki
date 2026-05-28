@@ -114,7 +114,7 @@ flowchart TB
 
 The wiki packages share the same core API and database schema. The core library is **framework-agnostic**; `@equationalapplications/expo-llm-wiki` injects the Expo adapter, while `@equationalapplications/core-llm-wiki` and `@equationalapplications/react-llm-wiki` require your application to provide a SQLite adapter.
 
-`@equationalapplications/core-llm-tools` is a standalone, zero-dependency package — it has no SQLite or framework dependencies and can be used independently of the wiki packages. See [packages/core-llm-tools/README.md](packages/core-llm-tools/README.md) for full documentation.
+`@equationalapplications/core-llm-tools` is a standalone, zero-dependency package — it has no SQLite or framework dependencies and can be used independently of the wiki packages. See [packages/core-llm-tools/README.md](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core-llm-tools/README.md) for full documentation.
 
 ## Installation
 

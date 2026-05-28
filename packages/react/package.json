@@ -1,7 +1,7 @@
 {
   "name": "@equationalapplications/react-llm-wiki",
   "version": "4.10.0",
-  "description": "In-browser LLM memory for React web apps. Wraps the core engine with sql.js WebAssembly SQLite for a complete, zero-server RAG experience.",
+  "description": "In-browser LLM memory for React web apps. Bring your own SQLite adapter (e.g., sql.js WebAssembly) for a complete, zero-server RAG experience.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",

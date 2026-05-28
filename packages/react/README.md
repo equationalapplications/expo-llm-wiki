@@ -1,6 +1,6 @@
 # @equationalapplications/react-llm-wiki
 
-In-browser LLM memory for React web apps. Wraps the core engine with [`sql.js`](https://github.com/sql-js/sql.js) WebAssembly SQLite for a complete, zero-server RAG experience.
+In-browser LLM memory for React web apps. Bring your own SQLite adapter (e.g., [`sql.js`](https://github.com/sql-js/sql.js) WebAssembly) for a complete, zero-server RAG experience.
 
 [![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Freact-llm-wiki?label=react)](https://www.npmjs.com/package/@equationalapplications/react-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Freact-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/react-llm-wiki)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
