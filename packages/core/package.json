@@ -30,7 +30,19 @@
     "README.md"
   ],
   "license": "MIT",
-  "keywords": ["llm-memory", "ai-memory", "rag", "sqlite", "vector-search", "episodic-memory", "semantic-memory", "multi-agent", "typescript", "gemini", "openai"],
+  "keywords": [
+    "llm-memory",
+    "ai-memory",
+    "rag",
+    "sqlite",
+    "vector-search",
+    "episodic-memory",
+    "semantic-memory",
+    "multi-agent",
+    "typescript",
+    "gemini",
+    "openai"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/equationalapplications/expo-llm-wiki.git",

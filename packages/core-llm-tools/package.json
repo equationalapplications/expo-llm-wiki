@@ -25,7 +25,16 @@
     "README.md"
   ],
   "license": "MIT",
-  "keywords": ["gemini", "function-calling", "tool-schemas", "llm-tools", "capability-scopes", "react-native", "edge-ai", "typescript"],
+  "keywords": [
+    "gemini",
+    "function-calling",
+    "tool-schemas",
+    "llm-tools",
+    "capability-scopes",
+    "react-native",
+    "edge-ai",
+    "typescript"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/equationalapplications/expo-llm-wiki.git",

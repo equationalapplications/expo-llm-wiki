@@ -25,7 +25,14 @@
     "README.md"
   ],
   "license": "MIT",
-  "keywords": ["prisma", "outbox-pattern", "transactional-outbox", "event-sync", "sqlite-sync", "at-least-once"],
+  "keywords": [
+    "prisma",
+    "outbox-pattern",
+    "transactional-outbox",
+    "event-sync",
+    "sqlite-sync",
+    "at-least-once"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/equationalapplications/expo-llm-wiki.git",

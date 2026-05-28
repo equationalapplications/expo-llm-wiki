@@ -779,7 +779,7 @@ expo-llm-wiki implements multiple security layers to protect against common vuln
 - **Timeout Configuration**: `deletionHookTimeoutMs` (default 30s) caps per-row deletion latency. Tune per deployment constraints.
 - **Force-Delete Escape Hatch**: `forceDeleteIgnoreRankerHook` bypasses hook failures (use ONLY when ANN backend permanently decommissioned).
 
-See [SECURITY.md](./SECURITY.md) for VectorRanker adapter security guidance (SQL injection, entity isolation, credential scrubbing, resource limits).
+See [SECURITY.md](https://github.com/equationalapplications/expo-llm-wiki/blob/main/SECURITY.md) for VectorRanker adapter security guidance (SQL injection, entity isolation, credential scrubbing, resource limits).
 
 ## React Component Lifecycle
 
