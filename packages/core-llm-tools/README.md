@@ -37,7 +37,7 @@ pnpm add @equationalapplications/core-llm-tools
 Tools are defined by wrapping a standard Gemini JSON schema with a required security scope.
 
 ```typescript
-import { AgentToolManifest } from '@equationalapplications/core-llm-tools';
+import type { AgentToolManifest } from '@equationalapplications/core-llm-tools';
 
 export const getCalendarEventsManifest: AgentToolManifest = {
   name: 'get_calendar_events',
