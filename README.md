@@ -95,7 +95,7 @@ flowchart TB
 
 ## Monorepo Packages
 
-`expo-llm-wiki` is organized as a monorepo with four packages:
+`expo-llm-wiki` is organized as a monorepo with five packages:
 
 | Package | Purpose | Platform |
 |---------|---------|----------|
@@ -103,6 +103,7 @@ flowchart TB
 | **`@equationalapplications/expo-llm-wiki`** | Persistent episodic memory | Expo, React Native |
 | **`@equationalapplications/react-llm-wiki`** | Persistent episodic memory | Web (React) |
 | **`@equationalapplications/core-llm-tools`** | Platform-agnostic Gemini tool schemas and capability-based scope injector | Node.js, browser, React Native |
+| **`@equationalapplications/prisma-outbox`** | Sync SQLite outbox events to Prisma-backed database (transactional outbox pattern) | Node.js |
 
 **Choose your package:**
 - **Expo/React Native app?** → `@equationalapplications/expo-llm-wiki`
