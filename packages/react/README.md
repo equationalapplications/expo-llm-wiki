@@ -1,10 +1,12 @@
 # @equationalapplications/react-llm-wiki
 
-React hooks and web utilities for @equationalapplications/core-llm-wiki, designed for web and Expo.
+In-browser LLM memory for React web apps. Wraps the core engine with [`sql.js`](https://github.com/sql-js/sql.js) WebAssembly SQLite for a complete, zero-server RAG experience.
 
 [![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Freact-llm-wiki?label=react)](https://www.npmjs.com/package/@equationalapplications/react-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Freact-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/react-llm-wiki)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/react/LICENSE)
+
+**[GitHub](https://github.com/equationalapplications/expo-llm-wiki)** · **[Playground](https://equationalapplications.github.io/expo-llm-wiki/playground/)** · **[Changelog](https://github.com/equationalapplications/expo-llm-wiki/blob/main/CHANGELOG.md)** · **[Issues](https://github.com/equationalapplications/expo-llm-wiki/issues)**
 
 > Inspired by [Andrej Karpathy's LLM Wiki memory spec](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
 
@@ -433,6 +435,16 @@ The flowchart shows:
 4. **Two-phase SELECT**: phase 1 scores all/filtered facts with minimal columns, phase 2 fetches full rows for winners
 5. **Hybrid scoring** to blend semantic and keyword rankings
 6. **Vector caching** on full scans only; reads with `preFilterLimit` active skip cache population
+
+## Monorepo Ecosystem
+
+| Package | Description |
+|---------|-------------|
+| [`@equationalapplications/core-llm-wiki`](https://www.npmjs.com/package/@equationalapplications/core-llm-wiki) | Pure TypeScript core — DB-agnostic, bring your own SQLite adapter |
+| [`@equationalapplications/expo-llm-wiki`](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki) | Expo / React Native adapter with `expo-sqlite` |
+| **`@equationalapplications/react-llm-wiki`** | React hooks + web adapter with `sql.js` |
+| [`@equationalapplications/prisma-outbox`](https://www.npmjs.com/package/@equationalapplications/prisma-outbox) | Sync SQLite outbox events to Prisma in a transaction |
+| [`@equationalapplications/core-llm-tools`](https://www.npmjs.com/package/@equationalapplications/core-llm-tools) | Platform-agnostic Gemini tool schemas + capability scope injector |
 
 ## License
 

@@ -1,7 +1,7 @@
 {
   "name": "@equationalapplications/react-llm-wiki",
   "version": "4.10.0",
-  "description": "React hooks and web utilities for LLM Wiki Memory.",
+  "description": "In-browser LLM memory for React web apps. Wraps the core engine with sql.js WebAssembly SQLite for a complete, zero-server RAG experience.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -23,6 +23,16 @@
     "README.md"
   ],
   "license": "MIT",
+  "keywords": ["llm-memory", "ai-memory", "rag", "sqlite", "vector-search", "episodic-memory", "semantic-memory", "multi-agent", "typescript", "gemini", "openai", "react", "react-hooks", "web-ai", "sql.js", "wasm", "in-browser"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/equationalapplications/expo-llm-wiki.git",
+    "directory": "packages/react"
+  },
+  "bugs": {
+    "url": "https://github.com/equationalapplications/expo-llm-wiki/issues"
+  },
+  "homepage": "https://github.com/equationalapplications/expo-llm-wiki/tree/main/packages/react#readme",
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org"
