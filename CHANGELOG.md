@@ -1,3 +1,10 @@
+## [4.10.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.10.0...v4.10.1) (2026-05-28)
+
+
+### Bug Fixes
+
+* **docs:** address Copilot review — absolute link and BYO adapter wording ([6612579](https://github.com/equationalapplications/expo-llm-wiki/commit/661257961bfde43e2004d0b906456efeb8377cc9))
+
 # [4.10.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.9.0...v4.10.0) (2026-05-28)
 
 
