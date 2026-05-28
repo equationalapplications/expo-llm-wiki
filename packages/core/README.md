@@ -1,10 +1,12 @@
 # @equationalapplications/core-llm-wiki
 
-Pure TypeScript business logic for LLM Wiki Memory.
+Platform-agnostic TypeScript engine for hybrid LLM memory. Features episodic fact extraction, semantic vector search, and multi-agent architectures over SQLite. Bring your own adapter.
 
 [![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fcore-llm-wiki?label=core)](https://www.npmjs.com/package/@equationalapplications/core-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fcore-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/core-llm-wiki)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/LICENSE)
+
+**[GitHub](https://github.com/equationalapplications/expo-llm-wiki)** · **[Playground](https://equationalapplications.github.io/expo-llm-wiki/playground/)** · **[Changelog](https://github.com/equationalapplications/expo-llm-wiki/blob/main/CHANGELOG.md)** · **[Issues](https://github.com/equationalapplications/expo-llm-wiki/issues)**
 
 > Inspired by [Andrej Karpathy's LLM Wiki memory spec](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
 
@@ -12,7 +14,7 @@ Pure TypeScript business logic for LLM Wiki Memory.
 
 - **Platform-agnostic** — Zero runtime dependencies; works with any SQLite driver via the `SQLiteAdapter` interface
 - **Semantic search** — Vector embeddings via your LLM's `embed` function, ranked by cosine similarity
-- **Keyword fallback** — MiniSearch in-memory index for offline/degraded scenarios when embeddings unavailable
+- **Keyword fallback** — [MiniSearch](https://github.com/lucaong/minisearch) in-memory index for offline/degraded scenarios when embeddings unavailable
 - **Retrieval tuning** — Per-call overrides for `maxResults`, `preFilterLimit`, `hybridWeight`, `tierWeights`, and `includeZeroWeightEntities`
 - **Multi-entity reads** — Search across multiple `entity_id` namespaces in one pass with per-entity score multipliers (`tierWeights`); optional `factScores` and `metadata` for explainability
 - **Immutable vs mutable facts** — Use `WikiFact.source_type` to distinguish document-sourced facts (`immutable_document`) from derived or user-provided facts (`librarian_inferred`, `user_stated`, `user_confirmed`). Immutable document facts are not rewritten by `runLibrarian()` or `runHeal()` and can only be removed by `forget()` or re-ingesting.
@@ -240,7 +242,7 @@ When `preFilterLimit: 50` is set with 1000 facts, cosine similarity is computed 
 
 ## Pluggable Vector Retrieval
 
-When your entity corpus grows, in-process cosine similarity scoring becomes a bottleneck. The optional **`VectorRanker`** interface lets you delegate semantic ranking to **sqlite-vec**, **sqlite-vss**, or an external vector database while `WikiMemory` handles embedding validation, hybrid scoring, and tier-2 row hydration.
+When your entity corpus grows, in-process cosine similarity scoring becomes a bottleneck. The optional **`VectorRanker`** interface lets you delegate semantic ranking to [**sqlite-vec**](https://github.com/asg017/sqlite-vec), [**sqlite-vss**](https://github.com/asg017/sqlite-vss), or an external vector database while `WikiMemory` handles embedding validation, hybrid scoring, and tier-2 row hydration.
 
 ### `VectorRanker` purpose
 
@@ -455,7 +457,7 @@ If implementing a custom `VectorRanker`:
 - **Credential Scrubbing**: Strip API keys, tokens, connection strings from thrown errors before surfacing to host.
 - **Resource Limits**: Cap `limit` and `candidateIds.length` to prevent DoS. Do NOT retain `vector` references beyond callback scope — blocks GC.
 
-See [SECURITY.md](../../SECURITY.md) for complete adapter security guidance and code examples.
+See [SECURITY.md](https://github.com/equationalapplications/expo-llm-wiki/blob/main/SECURITY.md) for complete adapter security guidance and code examples.
 
 ### Host Application Security
 
@@ -585,7 +587,7 @@ export interface SQLiteAdapter {
 
 `@equationalapplications/expo-llm-wiki` provides a pre-built adapter for Expo/React Native. For web and Node.js, implement the interface yourself — examples below.
 
-**Browser (sql.js):**
+**Browser ([sql.js](https://github.com/sql-js/sql.js)):**
 
 ```typescript
 import initSqlJs from 'sql.js';
@@ -625,7 +627,7 @@ const adapter: SQLiteAdapter = {
 };
 ```
 
-**Node.js (better-sqlite3):**
+**Node.js ([better-sqlite3](https://github.com/WiseLibs/better-sqlite3)):**
 
 ```typescript
 import Database from 'better-sqlite3';
@@ -689,6 +691,16 @@ The flowchart shows:
 4. **Two-phase SELECT**: phase 1 scores all/filtered facts with minimal columns, phase 2 fetches full rows for winners
 5. **Hybrid scoring** to blend semantic and keyword rankings
 6. **Vector caching** on full scans only; reads with `preFilterLimit` active skip cache population
+
+## Monorepo Ecosystem
+
+| Package | Description |
+|---------|-------------|
+| **`@equationalapplications/core-llm-wiki`** | Pure TypeScript core — DB-agnostic, bring your own SQLite adapter |
+| [`@equationalapplications/expo-llm-wiki`](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki) | Expo / React Native adapter with `expo-sqlite` |
+| [`@equationalapplications/react-llm-wiki`](https://www.npmjs.com/package/@equationalapplications/react-llm-wiki) | React hooks + web adapter with `sql.js` |
+| [`@equationalapplications/prisma-outbox`](https://www.npmjs.com/package/@equationalapplications/prisma-outbox) | Sync SQLite outbox events to Prisma in a transaction |
+| [`@equationalapplications/core-llm-tools`](https://www.npmjs.com/package/@equationalapplications/core-llm-tools) | Platform-agnostic Gemini tool schemas + capability scope injector |
 
 ## License
 
