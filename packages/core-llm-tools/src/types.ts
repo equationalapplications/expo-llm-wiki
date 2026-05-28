@@ -11,7 +11,7 @@ export interface AgentToolSchema {
   name: string;
   description: string;
   parameters?: {
-    type: 'object' | 'string' | 'number' | 'boolean' | 'array';
+    type: 'object';
     properties: Record<string, unknown>;
     required?: string[];
   };
