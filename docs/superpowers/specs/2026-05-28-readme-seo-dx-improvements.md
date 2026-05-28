@@ -44,15 +44,18 @@ Add to all 5 package `package.json` files:
 "bugs": {
   "url": "https://github.com/equationalapplications/expo-llm-wiki/issues"
 },
-"homepage": "https://github.com/equationalapplications/expo-llm-wiki#readme"
+"homepage": "https://github.com/equationalapplications/expo-llm-wiki/tree/main/packages/<name>#readme"
 ```
 
-`directory` values:
-- `core-llm-wiki` → `packages/core`
-- `expo-llm-wiki` → `packages/expo`
-- `react-llm-wiki` → `packages/react`
-- `prisma-outbox` → `packages/prisma-outbox`
-- `core-llm-tools` → `packages/core-llm-tools`
+`directory` and `homepage` values per package:
+
+| Package | `directory` | `homepage` |
+|---------|------------|-----------|
+| `core-llm-wiki` | `packages/core` | `.../tree/main/packages/core#readme` |
+| `expo-llm-wiki` | `packages/expo` | `.../tree/main/packages/expo#readme` |
+| `react-llm-wiki` | `packages/react` | `.../tree/main/packages/react#readme` |
+| `prisma-outbox` | `packages/prisma-outbox` | `.../tree/main/packages/prisma-outbox#readme` |
+| `core-llm-tools` | `packages/core-llm-tools` | `.../tree/main/packages/core-llm-tools#readme` |
 
 ### description improvements
 
