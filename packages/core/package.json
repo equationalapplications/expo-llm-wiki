@@ -1,6 +1,6 @@
 {
   "name": "@equationalapplications/core-llm-wiki",
-  "version": "4.9.1",
+  "version": "4.10.0",
   "description": "DB-agnostic core logic for LLM Wiki Memory.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",

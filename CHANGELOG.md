@@ -1,3 +1,25 @@
+# [4.10.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.9.0...v4.10.0) (2026-05-28)
+
+
+### Bug Fixes
+
+* **core-llm-tools:** add LICENSE, wire into release pipeline ([dd195c3](https://github.com/equationalapplications/expo-llm-wiki/commit/dd195c394135a0a39180705aefbe82128a37cc4c))
+* **core-llm-tools:** narrow AgentToolSchema parameters type to object ([ed19b22](https://github.com/equationalapplications/expo-llm-wiki/commit/ed19b22184af33b57371d503482a17433bbcc04a))
+* **playground:** add security warnings for both providers ([7323cdf](https://github.com/equationalapplications/expo-llm-wiki/commit/7323cdf2e576a142620b4c84dd5c5fc33d03767c))
+* **playground:** address Copilot review — provider error handling, race guard, config validation ([2464287](https://github.com/equationalapplications/expo-llm-wiki/commit/24642877f450a7fdd14fd5aae8256fbf0169fc33))
+* **playground:** address Copilot review findings ([dad8cf0](https://github.com/equationalapplications/expo-llm-wiki/commit/dad8cf09594398ec74a2bceaede2c22fba86de0b))
+* **playground:** address Copilot review findings ([9fafea1](https://github.com/equationalapplications/expo-llm-wiki/commit/9fafea1c415c5f6404f7b09eb522875ca5d24aad))
+* **playground:** address Copilot review findings from PR [#38](https://github.com/equationalapplications/expo-llm-wiki/issues/38) ([5b6b0e6](https://github.com/equationalapplications/expo-llm-wiki/commit/5b6b0e6f2ceec5eea4a06fc62f0de40860c5dee1))
+* **playground:** resolve lint errors from Copilot review ([b5c455e](https://github.com/equationalapplications/expo-llm-wiki/commit/b5c455eb02f17b448d330044759dfb61dc9b9606))
+
+
+### Features
+
+* **core-llm-tools:** add AgentScope and AgentToolManifest types ([6383070](https://github.com/equationalapplications/expo-llm-wiki/commit/6383070ecc1284720eb388fc08c044f426e04aa2))
+* **core-llm-tools:** add buildAuthorizedSchemaArray injector ([04586af](https://github.com/equationalapplications/expo-llm-wiki/commit/04586afec799c3de06f0233067c58f1938eb1a1c))
+* **core-llm-tools:** add Core-tier tool manifests ([f7ea7ec](https://github.com/equationalapplications/expo-llm-wiki/commit/f7ea7ecdb1c66a913d6e6340cc1668600ee0bb00))
+* **core-llm-tools:** wire public exports, root tsconfig reference, and vitest ([affcdee](https://github.com/equationalapplications/expo-llm-wiki/commit/affcdeee376f1595467f245988a70ab2a0545805))
+
 ## [4.9.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.9.0...v4.9.1) (2026-05-27)
 
 
