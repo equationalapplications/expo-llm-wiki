@@ -2,12 +2,14 @@
 
 [![GitHub Tag](https://img.shields.io/github/v/tag/equationalapplications/expo-llm-wiki?label=github%20tag)](https://github.com/equationalapplications/expo-llm-wiki/tags)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/equationalapplications/expo-llm-wiki/blob/main/LICENSE)
 
 [![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fexpo-llm-wiki?label=@equationalapplications/expo-llm-wiki)](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fexpo-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki)<br>
 [![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Freact-llm-wiki?label=@equationalapplications/react-llm-wiki)](https://www.npmjs.com/package/@equationalapplications/react-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Freact-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/react-llm-wiki)<br>
 [![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fcore-llm-wiki?label=@equationalapplications/core-llm-wiki)](https://www.npmjs.com/package/@equationalapplications/core-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fcore-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/core-llm-wiki)<br>
 [![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fcore-llm-tools?label=@equationalapplications/core-llm-tools)](https://www.npmjs.com/package/@equationalapplications/core-llm-tools) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fcore-llm-tools?label=downloads)](https://www.npmjs.com/package/@equationalapplications/core-llm-tools)
+
+**[GitHub](https://github.com/equationalapplications/expo-llm-wiki)** · **[Playground](https://equationalapplications.github.io/expo-llm-wiki/playground/)** · **[Changelog](https://github.com/equationalapplications/expo-llm-wiki/blob/main/CHANGELOG.md)** · **[Issues](https://github.com/equationalapplications/expo-llm-wiki/issues)**
 
 ## Persistent, episodic memory for AI Agents.
 
