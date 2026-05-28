@@ -1,11 +1,13 @@
 # @equationalapplications/core-llm-tools
 
-Platform-agnostic Gemini tool schemas and a capability-based scope injector.
+Zero-dependency Gemini function-calling schemas and capability-scoped tool injection for edge AI agents. Works in Node.js, browser, and React Native (Hermes).
 
 [![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fcore-llm-tools?label=core-llm-tools)](https://www.npmjs.com/package/@equationalapplications/core-llm-tools)
 [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fcore-llm-tools?label=downloads)](https://www.npmjs.com/package/@equationalapplications/core-llm-tools)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core-llm-tools/LICENSE)
+
+**[GitHub](https://github.com/equationalapplications/expo-llm-wiki)** · **[Changelog](https://github.com/equationalapplications/expo-llm-wiki/blob/main/CHANGELOG.md)** · **[Issues](https://github.com/equationalapplications/expo-llm-wiki/issues)**
 
 > A universal registry bridging the gap between Edge AI (Expo/React Native) and Cloud Agents (Cloud Run).
 
@@ -85,3 +87,17 @@ const response = await ai.models.generateContent({
 - [JSON Schema Specification](https://json-schema.org/understanding-json-schema/) — Structural foundation for `AgentToolSchema.parameters`.
 - [OAuth 2.0 Scope Concepts](https://oauth.net/2/scope/) — Inspiration behind the capability-based `AgentScope` permission hierarchy.
 - [@google/adk (Agent Development Kit)](https://github.com/google/adk-python) — Server-side framework used by Cloud Run backends to wrap and execute the schemas defined in this package.
+
+## Monorepo Ecosystem
+
+| Package | Description |
+|---------|-------------|
+| [`@equationalapplications/core-llm-wiki`](https://www.npmjs.com/package/@equationalapplications/core-llm-wiki) | Pure TypeScript core — DB-agnostic, bring your own SQLite adapter |
+| [`@equationalapplications/expo-llm-wiki`](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki) | Expo / React Native adapter with `expo-sqlite` |
+| [`@equationalapplications/react-llm-wiki`](https://www.npmjs.com/package/@equationalapplications/react-llm-wiki) | React hooks + web adapter with `sql.js` |
+| [`@equationalapplications/prisma-outbox`](https://www.npmjs.com/package/@equationalapplications/prisma-outbox) | Sync SQLite outbox events to Prisma in a transaction |
+| **`@equationalapplications/core-llm-tools`** | Platform-agnostic Gemini tool schemas + capability scope injector |
+
+---
+
+Made with ❤️ by Equational Applications LLC. [https://equationalapplications.com/](https://equationalapplications.com/)
