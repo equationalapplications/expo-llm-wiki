@@ -5,6 +5,7 @@ export default defineConfig({
     include: [
       'packages/core/__tests__/**/*.test.ts',
       'packages/expo/__tests__/**/*.test.ts',
+      'packages/core-llm-tools/__tests__/**/*.test.ts',
     ],
     environment: 'node',
   },
