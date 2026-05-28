@@ -1,10 +1,12 @@
 # @equationalapplications/prisma-outbox
 
-Prisma adapter for the [expo-llm-wiki](https://github.com/equationalapplications/expo-llm-wiki) transactional outbox pattern.
+Sync [`@equationalapplications/core-llm-wiki`](https://www.npmjs.com/package/@equationalapplications/core-llm-wiki) SQLite outbox events to your Prisma-backed database using the transactional outbox pattern — at-least-once delivery with ordering guarantees.
 
 [![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fprisma-outbox?label=prisma-outbox)](https://www.npmjs.com/package/@equationalapplications/prisma-outbox)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/prisma-outbox/LICENSE)
+
+**[GitHub](https://github.com/equationalapplications/expo-llm-wiki)** · **[Playground](https://equationalapplications.github.io/expo-llm-wiki/playground/)** · **[Changelog](https://github.com/equationalapplications/expo-llm-wiki/blob/main/CHANGELOG.md)** · **[Issues](https://github.com/equationalapplications/expo-llm-wiki/issues)**
 
 Polls the SQLite outbox table written by `@equationalapplications/core-llm-wiki` and syncs events to your Prisma-backed system inside a Prisma transaction, with configurable batch size, poll interval, error handling, and a concurrency guard.
 
@@ -91,3 +93,17 @@ worker.stop();
 ## Limitations
 
 - **Single-instance only.** The worker does not use row-level locking or leases. Running two `PrismaOutboxWorker` instances against the same SQLite file will cause duplicate Prisma writes. Run exactly one worker per SQLite database. `mapEvent` must still be idempotent to tolerate at-least-once delivery (acknowledgement can fail after a successful Prisma commit).
+
+## Monorepo Ecosystem
+
+| Package | Description |
+|---------|-------------|
+| [`@equationalapplications/core-llm-wiki`](https://www.npmjs.com/package/@equationalapplications/core-llm-wiki) | Pure TypeScript core — DB-agnostic, bring your own SQLite adapter |
+| [`@equationalapplications/expo-llm-wiki`](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki) | Expo / React Native adapter with `expo-sqlite` |
+| [`@equationalapplications/react-llm-wiki`](https://www.npmjs.com/package/@equationalapplications/react-llm-wiki) | React hooks + web adapter with `sql.js` |
+| **`@equationalapplications/prisma-outbox`** | Sync SQLite outbox events to Prisma in a transaction |
+| [`@equationalapplications/core-llm-tools`](https://www.npmjs.com/package/@equationalapplications/core-llm-tools) | Platform-agnostic Gemini tool schemas + capability scope injector |
+
+---
+
+Made with ❤️ by Equational Applications LLC. [https://equationalapplications.com/](https://equationalapplications.com/)

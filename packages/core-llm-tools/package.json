@@ -1,7 +1,7 @@
 {
   "name": "@equationalapplications/core-llm-tools",
   "version": "4.10.0",
-  "description": "Platform-agnostic Gemini tool schemas and capability-based scope injector.",
+  "description": "Zero-dependency Gemini function-calling schemas and capability-scoped tool injection for edge AI agents. Works in Node.js, browser, and React Native (Hermes).",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -25,6 +25,25 @@
     "README.md"
   ],
   "license": "MIT",
+  "keywords": [
+    "gemini",
+    "function-calling",
+    "tool-schemas",
+    "llm-tools",
+    "capability-scopes",
+    "react-native",
+    "edge-ai",
+    "typescript"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/equationalapplications/expo-llm-wiki.git",
+    "directory": "packages/core-llm-tools"
+  },
+  "bugs": {
+    "url": "https://github.com/equationalapplications/expo-llm-wiki/issues"
+  },
+  "homepage": "https://github.com/equationalapplications/expo-llm-wiki/tree/main/packages/core-llm-tools#readme",
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org"

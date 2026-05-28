@@ -2,11 +2,14 @@
 
 [![GitHub Tag](https://img.shields.io/github/v/tag/equationalapplications/expo-llm-wiki?label=github%20tag)](https://github.com/equationalapplications/expo-llm-wiki/tags)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/equationalapplications/expo-llm-wiki/blob/main/LICENSE)
 
-[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fexpo-llm-wiki?label=expo)](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fexpo-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki)<br>
-[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Freact-llm-wiki?label=react)](https://www.npmjs.com/package/@equationalapplications/react-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Freact-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/react-llm-wiki)<br>
-[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fcore-llm-wiki?label=core)](https://www.npmjs.com/package/@equationalapplications/core-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fcore-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/core-llm-wiki)
+[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fexpo-llm-wiki?label=@equationalapplications/expo-llm-wiki)](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fexpo-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki)<br>
+[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Freact-llm-wiki?label=@equationalapplications/react-llm-wiki)](https://www.npmjs.com/package/@equationalapplications/react-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Freact-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/react-llm-wiki)<br>
+[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fcore-llm-wiki?label=@equationalapplications/core-llm-wiki)](https://www.npmjs.com/package/@equationalapplications/core-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fcore-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/core-llm-wiki)<br>
+[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fcore-llm-tools?label=@equationalapplications/core-llm-tools)](https://www.npmjs.com/package/@equationalapplications/core-llm-tools) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fcore-llm-tools?label=downloads)](https://www.npmjs.com/package/@equationalapplications/core-llm-tools)
+
+**[GitHub](https://github.com/equationalapplications/expo-llm-wiki)** · **[Playground](https://equationalapplications.github.io/expo-llm-wiki/playground/)** · **[Changelog](https://github.com/equationalapplications/expo-llm-wiki/blob/main/CHANGELOG.md)** · **[Issues](https://github.com/equationalapplications/expo-llm-wiki/issues)**
 
 ## Persistent, episodic memory for AI Agents.
 
@@ -92,21 +95,26 @@ flowchart TB
 
 ## Monorepo Packages
 
-`expo-llm-wiki` is organized as a monorepo with three packages, each optimized for different platforms:
+`expo-llm-wiki` is organized as a monorepo with five packages:
 
-| Package | Platform | SQLite Adapter | Size (Minzipped) |
-|---------|----------|---|---|
-| **`@equationalapplications/core-llm-wiki`** | Node.js, any platform | User-provided (e.g., `better-sqlite3`) | ~23 kB |
-| **`@equationalapplications/expo-llm-wiki`** | Expo, React Native | `expo-sqlite` (built-in) | ~24 kB |
-| **`@equationalapplications/react-llm-wiki`** | Web (React) | User-provided (e.g., `sql.js`) | ~25 kB |
+| Package | Purpose | Platform |
+|---------|---------|----------|
+| **`@equationalapplications/core-llm-wiki`** | Persistent episodic memory | Node.js, any platform |
+| **`@equationalapplications/expo-llm-wiki`** | Persistent episodic memory | Expo, React Native |
+| **`@equationalapplications/react-llm-wiki`** | Persistent episodic memory | Web (React) |
+| **`@equationalapplications/core-llm-tools`** | Platform-agnostic Gemini tool schemas and capability-based scope injector | Node.js, browser, React Native |
+| **`@equationalapplications/prisma-outbox`** | Sync SQLite outbox events to Prisma-backed database (transactional outbox pattern) | Node.js |
 
 **Choose your package:**
 - **Expo/React Native app?** → `@equationalapplications/expo-llm-wiki`
 - **React web app (CRA, Vite + React, Next.js client)?** → `@equationalapplications/react-llm-wiki` + `sql.js`
 - **Vanilla JS or non-React framework?** → `@equationalapplications/core-llm-wiki` + `sql.js`
 - **Node.js backend?** → `@equationalapplications/core-llm-wiki` + `better-sqlite3`
+- **Gemini tool schemas + capability-scoped injection?** → `@equationalapplications/core-llm-tools`
 
-All packages share the same core API and database schema. The core library is **framework-agnostic**; `@equationalapplications/expo-llm-wiki` injects the Expo adapter, while `@equationalapplications/core-llm-wiki` and `@equationalapplications/react-llm-wiki` require your application to provide a SQLite adapter.
+The wiki packages share the same core API and database schema. The core library is **framework-agnostic**; `@equationalapplications/expo-llm-wiki` injects the Expo adapter, while `@equationalapplications/core-llm-wiki` and `@equationalapplications/react-llm-wiki` require your application to provide a SQLite adapter.
+
+`@equationalapplications/core-llm-tools` is a standalone, zero-dependency package — it has no SQLite or framework dependencies and can be used independently of the wiki packages. See [packages/core-llm-tools/README.md](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core-llm-tools/README.md) for full documentation.
 
 ## Installation
 
@@ -771,7 +779,7 @@ expo-llm-wiki implements multiple security layers to protect against common vuln
 - **Timeout Configuration**: `deletionHookTimeoutMs` (default 30s) caps per-row deletion latency. Tune per deployment constraints.
 - **Force-Delete Escape Hatch**: `forceDeleteIgnoreRankerHook` bypasses hook failures (use ONLY when ANN backend permanently decommissioned).
 
-See [SECURITY.md](./SECURITY.md) for VectorRanker adapter security guidance (SQL injection, entity isolation, credential scrubbing, resource limits).
+See [SECURITY.md](https://github.com/equationalapplications/expo-llm-wiki/blob/main/SECURITY.md) for VectorRanker adapter security guidance (SQL injection, entity isolation, credential scrubbing, resource limits).
 
 ## React Component Lifecycle
 
