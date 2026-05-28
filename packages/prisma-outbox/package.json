@@ -1,7 +1,7 @@
 {
   "name": "@equationalapplications/prisma-outbox",
   "version": "4.10.0",
-  "description": "Prisma adapter for the expo-llm-wiki transactional outbox pattern.",
+  "description": "Sync core-llm-wiki SQLite outbox events to your Prisma-backed database using the transactional outbox pattern — at-least-once delivery with ordering guarantees.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -25,6 +25,16 @@
     "README.md"
   ],
   "license": "MIT",
+  "keywords": ["prisma", "outbox-pattern", "transactional-outbox", "event-sync", "sqlite-sync", "at-least-once"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/equationalapplications/expo-llm-wiki.git",
+    "directory": "packages/prisma-outbox"
+  },
+  "bugs": {
+    "url": "https://github.com/equationalapplications/expo-llm-wiki/issues"
+  },
+  "homepage": "https://github.com/equationalapplications/expo-llm-wiki/tree/main/packages/prisma-outbox#readme",
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org"
