@@ -1,0 +1,127 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  background-color: #0f172a;
+  color: #e2e8f0;
+  line-height: 1.5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  appearance: none;
+  border: none;
+  background: #2563eb;
+  color: #f8fafc;
+  padding: 0.875rem 1rem;
+  border-radius: 0.75rem;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+input,
+textarea {
+  width: 100%;
+  border: 1px solid #334155;
+  border-radius: 0.75rem;
+  background: #020617;
+  color: #e2e8f0;
+  padding: 0.85rem 1rem;
+  margin-top: 0.5rem;
+}
+
+textarea {
+  resize: vertical;
+}
+
+.app-shell {
+  min-height: 100vh;
+  padding: 2rem;
+}
+
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-end;
+  margin-bottom: 2rem;
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: clamp(2rem, 3vw, 2.75rem);
+}
+
+.topbar p {
+  margin: 0.5rem 0 0;
+  color: #94a3b8;
+}
+
+.status-bar {
+  font-size: 0.95rem;
+  color: #cbd5e1;
+}
+
+.grid {
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+
+.panel {
+  background: #102a43;
+  border: 1px solid #1e293b;
+  border-radius: 1rem;
+  padding: 1.5rem;
+}
+
+h2 {
+  margin-top: 0;
+}
+
+label {
+  display: block;
+  margin-bottom: 1rem;
+  font-weight: 600;
+}
+
+.hint {
+  margin-top: 1rem;
+  color: #94a3b8;
+  font-size: 0.95rem;
+}
+
+.response-box {
+  margin-top: 1.25rem;
+  background: #020617;
+  border: 1px solid #334155;
+  border-radius: 0.75rem;
+  padding: 1rem;
+}
+
+.response-box pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tool-toggle {
+  margin-top: 1rem;
+}
