@@ -18,8 +18,10 @@ const sqlWasmPlugin = () => ({
   },
 })
 
+const appBase = process.env.GITHUB_ACTIONS ? `/${repoName}/scopelab/` : '/';
+
 export default defineConfig({
-  base: process.env.GITHUB_ACTIONS ? `/${repoName}/scopelab/` : '/',
+  base: appBase,
   plugins: [
     react(),
     sqlWasmPlugin(),
@@ -35,7 +37,7 @@ export default defineConfig({
         display: 'standalone',
         icons: [
           {
-            src: '/favicon.svg',
+            src: `${appBase}favicon.svg`,
             sizes: 'any',
             type: 'image/svg+xml'
           }
