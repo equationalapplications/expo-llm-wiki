@@ -1,3 +1,23 @@
+# [4.11.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.10.1...v4.11.0) (2026-06-05)
+
+
+### Bug Fixes
+
+* **ci:** address CodeRabbit review comments ([6436f08](https://github.com/equationalapplications/expo-llm-wiki/commit/6436f08d1d86fca9fca319023a020ce6851e70b6))
+* **ci:** address CodeRabbit review comments in deploy workflows ([faf8fd9](https://github.com/equationalapplications/expo-llm-wiki/commit/faf8fd9d6e86ae28bbca5d530460c8975ffcf8ae))
+* pnpm caching and sql-wasm path resolution ([f615ccb](https://github.com/equationalapplications/expo-llm-wiki/commit/f615ccbff4b4d2f26f641b24b3093c1547463695))
+* replace broken playground deploy with scopelab and wiki-demo workflows ([d7c5ca8](https://github.com/equationalapplications/expo-llm-wiki/commit/d7c5ca84302731e5494a33761aabde67bc5fec5d))
+* **scopelab:** address PR 41 findings ([50897bf](https://github.com/equationalapplications/expo-llm-wiki/commit/50897bfac7f8cb49f85a155e9465842409177c3e)), closes [#41](https://github.com/equationalapplications/expo-llm-wiki/issues/41)
+* **scopelab:** make PWA manifest icon path base-aware ([47d5b48](https://github.com/equationalapplications/expo-llm-wiki/commit/47d5b48f5c1e1b6779765aa93f28cdd25b06d6d5))
+* **scopelab:** prevent WASM stmt leaks, handle API HTTP errors ([7ae0421](https://github.com/equationalapplications/expo-llm-wiki/commit/7ae0421365bbb155f916ffe330b0d5282df18f23))
+* update actions/cache from deprecated commit hash to v4 ([bee4d0c](https://github.com/equationalapplications/expo-llm-wiki/commit/bee4d0cb8f4db21816a0c2f8dbcb873c2c772c45))
+
+
+### Features
+
+* add support for Expo SDK 56 ([a41ba66](https://github.com/equationalapplications/expo-llm-wiki/commit/a41ba66e2bfc8205f7c48ddf9f8e3cd0f367bf6e))
+* **scopelab:** scaffold new Vite app and move existing playground into apps/wiki-demo ([c92f9a9](https://github.com/equationalapplications/expo-llm-wiki/commit/c92f9a965593ac3a0d2311929e53a2dcccb45a2f))
+
 ## [4.10.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.10.0...v4.10.1) (2026-05-28)
 
 
