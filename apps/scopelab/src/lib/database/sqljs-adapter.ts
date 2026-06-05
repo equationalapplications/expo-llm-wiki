@@ -30,29 +30,37 @@ export class SqlJsAdapter implements SQLiteAdapter {
 
   async runAsync(sql: string, params: unknown[] = []): Promise<{ changes: number; lastInsertRowId: number }> {
     const stmt = this.db.prepare(sql)
-    stmt.bind(params as any[])
-    stmt.step()
-    stmt.free()
+    try {
+      stmt.bind(params as any[])
+      stmt.step()
+    } finally {
+      stmt.free()
+    }
     return { changes: this.db.getRowsModified(), lastInsertRowId: 0 }
   }
 
   async getAllAsync<T>(sql: string, params: unknown[] = []): Promise<T[]> {
     const stmt = this.db.prepare(sql)
-    stmt.bind(params as any[])
-    const rows: T[] = []
-    while (stmt.step()) {
-      rows.push(stmt.getAsObject() as T)
+    try {
+      stmt.bind(params as any[])
+      const rows: T[] = []
+      while (stmt.step()) {
+        rows.push(stmt.getAsObject() as T)
+      }
+      return rows
+    } finally {
+      stmt.free()
     }
-    stmt.free()
-    return rows
   }
 
   async getFirstAsync<T>(sql: string, params: unknown[] = []): Promise<T | null> {
     const stmt = this.db.prepare(sql)
-    stmt.bind(params as any[])
-    const row = stmt.step() ? (stmt.getAsObject() as T) : null
-    stmt.free()
-    return row
+    try {
+      stmt.bind(params as any[])
+      return stmt.step() ? (stmt.getAsObject() as T) : null
+    } finally {
+      stmt.free()
+    }
   }
 
   async withTransactionAsync<T>(fn: () => Promise<T>): Promise<T> {

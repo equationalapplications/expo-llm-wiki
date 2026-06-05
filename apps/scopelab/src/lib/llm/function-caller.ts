@@ -41,6 +41,11 @@ export async function chatWithMemory({
     },
   )
 
+  if (!response.ok) {
+    const errorText = await response.text()
+    throw new Error(`Gemini API error: ${response.status} ${response.statusText} — ${errorText.slice(0, 500)}`)
+  }
+
   const data = await response.json()
   const candidate = data.candidates?.[0]
   const functionCall = candidate?.content?.parts?.[0]?.functionCall
@@ -68,6 +73,12 @@ export async function chatWithMemory({
           }),
         },
       )
+
+      if (!followup.ok) {
+        const errorText = await followup.text()
+        throw new Error(`Gemini API follow-up error: ${followup.status} ${followup.statusText} — ${errorText.slice(0, 500)}`)
+      }
+
       const finalData = await followup.json()
       const finalText = finalData.candidates?.[0]?.content?.parts?.[0]?.text || 'Tool executed.'
       await wiki.remember(`Tool call: ${functionCall.name}(${JSON.stringify(functionCall.args)}) → ${JSON.stringify(result).slice(0, 200)}`, {
