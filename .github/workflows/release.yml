@@ -2,7 +2,7 @@ name: Release
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
 
 permissions:
   contents: write # create GitHub release, push release commit
@@ -20,14 +20,27 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
-      - uses: pnpm/action-setup@v4
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - uses: actions/cache@v4
+        name: Setup pnpm cache
         with:
-          version: 9.12.0
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
 
       - run: pnpm install --frozen-lockfile
 
@@ -35,7 +48,8 @@ jobs:
 
       - name: Get current version
         id: pre_version
-        run: node -p "require('./package.json').version" | xargs -I{} echo "version={}"
+        run:
+          node -p "require('./package.json').version" | xargs -I{} echo "version={}"
           >> $GITHUB_OUTPUT
 
       - run: npx semantic-release
