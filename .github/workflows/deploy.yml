@@ -79,7 +79,7 @@ jobs:
           EOF
 
       - name: Deploy to gh-pages
-        uses: peaceiris/actions-gh-pages@4f9cc6602d3f66b9c108549d231e62369c1b3a6a
+        uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./pages-dist
