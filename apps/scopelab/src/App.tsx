@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { SqlJsAdapter } from './lib/database/sqljs-adapter'
 import { WikiService } from './lib/memory/wiki-service'
 import { chatWithMemory } from './lib/llm/function-caller'
+import { setToolWiki } from './lib/llm/tool-executor'
 import { ScopeToggle } from './components/Tools/ScopeToggle'
 
 const DEFAULT_SCOPES = ['tools:search', 'tools:memory']
@@ -41,6 +42,7 @@ export default function App() {
       const service = new WikiService(adapter)
       await service.init()
       setWiki(service)
+      setToolWiki(service)
       setInitialized(true)
       setStatus('ScopeLab ready. Ask a question or open the memory panel.')
     } catch (error) {

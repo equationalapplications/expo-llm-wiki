@@ -17,7 +17,9 @@ export class SqlJsAdapter implements SQLiteAdapter {
   }
 
   static async create(): Promise<SqlJsAdapter> {
-    const SQL = await initSqlJs({ locateFile: file => `/sql-wasm.wasm` })
+    const base = import.meta.env.BASE_URL ?? '/'
+    const wasmUrl = `${base}sql-wasm.wasm`
+    const SQL = await initSqlJs({ locateFile: () => wasmUrl })
     const db = new SQL.Database()
     return new SqlJsAdapter(db)
   }

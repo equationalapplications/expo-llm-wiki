@@ -20,7 +20,7 @@ export async function chatWithMemory({
 }): Promise<{ response: string; toolCalls?: any[] }> {
   await wiki.remember(userMessage, { timestamp: Date.now() })
   const memoryContext = await wiki.getContext(userMessage)
-  const toolSchemas = buildAuthorizedSchemaArray(tools, enabledScopes)
+  const authorizedScopes = buildAuthorizedSchemaArray(tools, enabledScopes)
   const systemPrompt = `You are a helpful assistant with access to tools.\n${memoryContext}${memoryContext ? '\n' : ''}Only use tools whose scopes are enabled.`
   const messages = [
     { role: 'system', content: systemPrompt },
@@ -35,7 +35,7 @@ export async function chatWithMemory({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: messages.map(m => ({ role: m.role === 'system' ? 'user' : m.role, parts: [{ text: m.content }] })),
-        tools: toolSchemas.length ? [{ functionDeclarations: toolSchemas }] : undefined,
+        tools: authorizedScopes.length ? [{ functionDeclarations: authorizedScopes }] : undefined,
         tool_config: { function_calling_config: { mode: 'AUTO' } },
       }),
     },
@@ -46,7 +46,12 @@ export async function chatWithMemory({
   const functionCall = candidate?.content?.parts?.[0]?.functionCall
 
   if (functionCall) {
-    const tool = tools.find(t => t.name === functionCall.name && enabledScopes.includes(t.scope))
+    const tool = tools.find(t => {
+      if (t.name !== functionCall.name) return false
+      // buildAuthorizedSchemaArray includes 'core' scope unconditionally;
+      // also accept tools whose scope is in the authorized scopes list
+      return t.scope === 'core' || enabledScopes.includes(t.scope)
+    })
     if (tool) {
       const result = await executeTool(tool, functionCall.args || {})
       const followup = await fetch(

@@ -84,8 +84,17 @@ scopelab/
 
 ### 1. `src/lib/database/sqljs-adapter.ts` — Browser SQLite Adapter
 ```typescript
-import type { SQLiteAdapter } from '@equationalapplications/core-llm-wiki';
 import initSqlJs, { Database } from 'sql.js';
+
+// SQLiteAdapter interface is defined locally in sqljs-adapter.ts
+export interface SQLiteAdapter {
+  execAsync(sql: string): Promise<void>;
+  runAsync(sql: string, params?: unknown[]): Promise<{ changes: number; lastInsertRowId: number }>;
+  getAllAsync<T>(sql: string, params?: unknown[]): Promise<T[]>;
+  getFirstAsync<T>(sql: string, params?: unknown[]): Promise<T | null>;
+  withTransactionAsync<T>(fn: () => Promise<T>): Promise<T>;
+  closeAsync(): Promise<void>;
+}
 
 export class SqlJsAdapter implements SQLiteAdapter {
   private db: Database;
@@ -96,8 +105,12 @@ export class SqlJsAdapter implements SQLiteAdapter {
 
   static async create(): Promise<SqlJsAdapter> {
     const SQL = await initSqlJs({ 
-      locateFile: (file) => `/wasm/${file}` // Served from public/wasm/
+      locateFile: (file) => `/sql-wasm.wasm` // Copied to public/ at build time
     });
+    // Try load from IndexedDB, or create new
+    const db = new SQL.Database(); // Or load persisted bytes
+    return new SqlJsAdapter(db);
+  }
     // Try load from IndexedDB, or create new
     const db = new SQL.Database(); // Or load persisted bytes
     return new SqlJsAdapter(db);
@@ -164,7 +177,7 @@ export class SqlJsAdapter implements SQLiteAdapter {
 ### 2. `src/lib/memory/wiki-service.ts` — Memory Layer for Chat
 ```typescript
 import { WikiMemory } from '@equationalapplications/core-llm-wiki';
-import type { SQLiteAdapter } from '@equationalapplications/core-llm-wiki';
+import type { SQLiteAdapter } from '../database/sqljs-adapter';
 import { SqlJsAdapter } from '../database/sqljs-adapter';
 
 export class WikiService {
@@ -597,40 +610,29 @@ Your app will be live at: `https://<username>.github.io/scopelab/` ✨
 
 ## 🔐 Security Checklist for "Bring Your Own Key"
 
+> **⚠️ CRITICAL: Never store secrets client-side.** XOR + base64 obfuscation (using `passphrase`, `btoa`/`atob`, XOR `String.fromCharCode` on the key, etc.) is **not encryption** — it can be trivially reversed by anyone with browser access. The browser's developer tools, extensions, and any script on the page can read localStorage.
+>
+> **Secure alternatives:**
+> - Use **short-lived tokens** or **OAuth flows** that never expose the raw key to client code
+> - Store secrets in a **server-side key management service / vault** and fetch them via an authenticated, rate-limited endpoint
+> - For BYOK (Bring Your Own Key) patterns, ask the user to type the key each session and **never persist it**
+> - If persistence is required, use the **Web Crypto API** with a user-provided passphrase (`crypto.subtle.encrypt`) — this is still client-side but cryptographically sound
+
 ```typescript
 // src/lib/storage/key-manager.ts
 export const KeyManager = {
-  // Store with optional encryption
-  save: (key: string, passphrase?: string) => {
-    if (passphrase) {
-      // Simple client-side XOR + base64 (not crypto-grade, but deters casual viewing)
-      const encrypted = btoa(key.split('').map((c, i) => 
-        String.fromCharCode(c.charCodeAt(0) ^ passphrase.charCodeAt(i % passphrase.length))
-      ).join(''));
-      localStorage.setItem('gemini_key_enc', encrypted);
-      localStorage.setItem('gemini_key_hint', passphrase[0] + '•••');
-    } else {
-      localStorage.setItem('gemini_api_key', key);
-    }
+  save: (key: string) => {
+    // Store the raw key for the current session
+    sessionStorage.setItem('gemini_api_key', key);
   },
   
-  get: (passphrase?: string): string | null => {
-    const enc = localStorage.getItem('gemini_key_enc');
-    if (enc && passphrase) {
-      try {
-        const decrypted = atob(enc).split('').map((c, i) => 
-          String.fromCharCode(c.charCodeAt(0) ^ passphrase.charCodeAt(i % passphrase.length))
-        ).join('');
-        return decrypted;
-      } catch { return null; }
-    }
-    return localStorage.getItem('gemini_api_key');
+  get: (): string | null => {
+    return sessionStorage.getItem('gemini_api_key');
   },
   
   // Clear all key storage
   clear: () => {
-    localStorage.removeItem('gemini_api_key');
-    localStorage.removeItem('gemini_key_enc');
+    sessionStorage.removeItem('gemini_api_key');
     localStorage.removeItem('gemini_key_hint');
   },
 };

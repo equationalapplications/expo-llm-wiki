@@ -44,6 +44,10 @@ export class WikiService {
   }
 
   async persist(): Promise<Uint8Array> {
-    return (this.wiki as any).adapter?.export?.() ?? new Uint8Array()
+    const adapter = (this.wiki as any).adapter
+    if (!adapter || typeof adapter.export !== 'function') {
+      throw new Error('Persistence adapter/export unavailable for WikiService.persist')
+    }
+    return adapter.export()
   }
 }
