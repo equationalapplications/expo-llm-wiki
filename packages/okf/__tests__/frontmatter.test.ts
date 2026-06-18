@@ -81,4 +81,28 @@ describe('serializeFrontmatter', () => {
     const result = serializeFrontmatter({ type: 'fact', resource: undefined, title: 'T' });
     expect(result).toBe('---\ntype: fact\ntitle: T\n---\n');
   });
+
+  it('quotes a string value containing a newline', () => {
+    const result = serializeFrontmatter({ type: 'fact', description: 'line one\nline two' });
+    expect(result).toBe('---\ntype: fact\ndescription: "line one\\nline two"\n---\n');
+  });
+
+  it('quotes a string value containing a tab', () => {
+    const result = serializeFrontmatter({ type: 'fact', title: 'a\tb' });
+    expect(result).toBe('---\ntype: fact\ntitle: "a\\tb"\n---\n');
+  });
+
+  it('quotes custom keys containing spaces or colons', () => {
+    const result = serializeFrontmatter({
+      type: 'fact',
+      'custom key': 'v',
+      'meta:field': 'w',
+    } as any);
+    expect(result).toBe('---\ntype: fact\n"custom key": v\n"meta:field": w\n---\n');
+  });
+
+  it('quotes custom keys that would parse as YAML literals', () => {
+    const result = serializeFrontmatter({ '123': 'n', type: 'fact', true: 'b' } as any);
+    expect(result).toBe('---\n"123": n\ntype: fact\n"true": b\n---\n');
+  });
 });

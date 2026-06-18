@@ -12,6 +12,7 @@ function isIso8601Timestamp(value: string): boolean {
 
 function needsQuoting(value: string): boolean {
   if (value !== value.trim()) return true;
+  if (/[\n\r\t]/.test(value)) return true;
   if (isIso8601Timestamp(value)) return false;
   if (value.includes(':') || value.includes('#')) return true;
   if (RESERVED_LITERALS.has(value.toLowerCase())) return true;
@@ -20,12 +21,24 @@ function needsQuoting(value: string): boolean {
 }
 
 function quoteString(value: string): string {
-  const escaped = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const escaped = value
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\t/g, '\\t');
   return `"${escaped}"`;
 }
 
 function serializeScalarString(value: string): string {
   return needsQuoting(value) ? quoteString(value) : value;
+}
+
+function serializeKey(key: string): string {
+  if (/\s/.test(key) || needsQuoting(key)) {
+    return quoteString(key);
+  }
+  return key;
 }
 
 function serializeValue(value: unknown): string {
@@ -42,9 +55,9 @@ export function serializeFrontmatter(fm: OkfFrontmatter): string {
     if (value === undefined) continue;
     if (Array.isArray(value)) {
       if (value.length === 0) {
-        lines.push(`${key}: []`);
+        lines.push(`${serializeKey(key)}: []`);
       } else {
-        lines.push(`${key}:`);
+        lines.push(`${serializeKey(key)}:`);
         for (const item of value as unknown[]) {
           if (typeof item === 'string') {
             lines.push(`  - ${serializeScalarString(item)}`);
@@ -54,7 +67,7 @@ export function serializeFrontmatter(fm: OkfFrontmatter): string {
         }
       }
     } else {
-      lines.push(`${key}: ${serializeValue(value)}`);
+      lines.push(`${serializeKey(key)}: ${serializeValue(value)}`);
     }
   }
   lines.push('---');
