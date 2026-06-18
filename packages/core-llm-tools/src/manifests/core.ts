@@ -1,4 +1,4 @@
-import type { AgentToolManifest } from '../types';
+import type { AgentToolManifest, BuiltInToolManifest } from '../types';
 
 export const getCurrentTimeManifest: AgentToolManifest = {
   name: 'get_current_time',
@@ -20,4 +20,11 @@ export const escalateToCloudManifest: AgentToolManifest = {
       'Use this tool when the user asks to schedule a reminder, perform deep memory searches, or execute a complex workflow that requires cloud resources.',
     parameters: { type: 'object', properties: {} },
   },
+};
+
+export const googleSearchManifest: BuiltInToolManifest = {
+  name: 'google_search',
+  scope: 'core',
+  kind: 'built_in',
+  builtIn: 'google_search',
 };

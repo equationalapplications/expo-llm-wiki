@@ -81,6 +81,41 @@ const response = await ai.models.generateContent({
 });
 ```
 
+### 3. Built-In Tools (Grounding)
+
+Some Gemini capabilities, like [Google Search grounding](https://ai.google.dev/gemini-api/docs/google-search),
+are built-in tools executed server-side by Google rather than function declarations your code
+implements. These are declared with `kind: 'built_in'` and flow through the same
+capability-scope model as function tools, via `buildAuthorizedToolsArray`.
+Use `AnyAgentToolManifest` when mixing function and built-in manifests;
+`AgentToolManifest` remains the function-only type for existing callers:
+
+```typescript
+import type { AnyAgentToolManifest } from '@equationalapplications/core-llm-tools';
+import { buildAuthorizedToolsArray, googleSearchManifest, escalateToCloudManifest } from '@equationalapplications/core-llm-tools';
+
+const allAppTools: AnyAgentToolManifest[] = [escalateToCloudManifest, googleSearchManifest];
+const userGrantedScopes: string[] = [];
+
+// Returns the full Gemini tools[] array: a functionDeclarations group (if any
+// function tools are authorized) plus one entry per authorized built-in tool.
+const tools = buildAuthorizedToolsArray(allAppTools, userGrantedScopes);
+// => [{ functionDeclarations: [...] }, { google_search: {} }]
+
+const response = await ai.models.generateContent({
+  model: 'gemini-2.5-flash',
+  contents: userInput,
+  tools,
+});
+```
+
+> **Note:** When the model uses `google_search`, Gemini returns a `groundingMetadata` object
+> (search queries, source citations, etc.) on the response. Parsing that metadata is the
+> caller's responsibility — this package only handles the request-side tool declaration.
+
+`buildAuthorizedSchemaArray` is still available for callers that only ever use function tools,
+but is deprecated in favor of `buildAuthorizedToolsArray`.
+
 ## Helpful Resources & Links
 
 - [Google Gen AI: Function Calling Tutorial](https://ai.google.dev/gemini-api/docs/function-calling) — Official docs on how the JSON schemas in this package interact with Gemini models.
