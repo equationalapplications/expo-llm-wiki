@@ -2,9 +2,19 @@ import { serializeScalarString } from './frontmatter';
 import type { OkfIndexEntry, OkfIndexSection } from './types';
 
 function renderEntry(entry: OkfIndexEntry): string {
-  return entry.description
-    ? `* [${entry.title}](${entry.path}) - ${entry.description}`
-    : `* [${entry.title}](${entry.path})`;
+  const esc = (s: string) =>
+    s
+      .replace(/\\/g, '\\\\')
+      .replace(/\[/g, '\\[')
+      .replace(/\]/g, '\\]')
+      .replace(/\r?\n/g, ' ');
+
+  const title = esc(entry.title);
+  const description = entry.description ? esc(entry.description) : undefined;
+
+  return description
+    ? `* [${title}](${entry.path}) - ${description}`
+    : `* [${title}](${entry.path})`;
 }
 
 function renderSections(sections: OkfIndexSection[]): string {
