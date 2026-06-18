@@ -1,3 +1,20 @@
+# [4.13.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.12.0...v4.13.0) (2026-06-18)
+
+
+### Bug Fixes
+
+* address CodeRabbit review on OKF export PR ([6c932eb](https://github.com/equationalapplications/expo-llm-wiki/commit/6c932eb712978716e20ed03754f397b3326ebf15))
+* **core:** append hash suffix at end of sanitizeForFilename ([01c454d](https://github.com/equationalapplications/expo-llm-wiki/commit/01c454dd9960a8a4c54625bc772d5de8ffe50304))
+* **okf:** align types, path docs, and release versioning ([89046a2](https://github.com/equationalapplications/expo-llm-wiki/commit/89046a23e8a7798bba7af28a723d8afb5792b99e))
+* **okf:** harden frontmatter YAML quoting for keys and control chars ([aecdf4e](https://github.com/equationalapplications/expo-llm-wiki/commit/aecdf4e4f30d8c1d8552ed19a26d3c32e35c2c91))
+* **okf:** harden root index YAML and Windows filename sanitization ([73fe71a](https://github.com/equationalapplications/expo-llm-wiki/commit/73fe71abccc5a31244ee01899e82a6bfce34a521))
+* **okf:** sanitize concept ids and add carriage-return test ([7964f65](https://github.com/equationalapplications/expo-llm-wiki/commit/7964f6540e92907e0d512bad8584ebc97c6f9327))
+
+
+### Features
+
+* add OKF v0.1 export via core-okf package ([8bf6671](https://github.com/equationalapplications/expo-llm-wiki/commit/8bf66712a787d5e2eca2b5dbbd8d5c67dc3dfe03))
+
 # [4.12.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.11.0...v4.12.0) (2026-06-18)
 
 
