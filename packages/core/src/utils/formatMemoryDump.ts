@@ -1,4 +1,5 @@
 import type { MemoryDump, FormattedMemoryDump, MemoryBundle, WikiFact, WikiTask, WikiEvent } from '../types';
+import { sanitizeForFilename } from './sanitizeForFilename';
 
 function renderFact(f: WikiFact): string {
   const tags = (f.tags || []).join(', ');
@@ -58,37 +59,8 @@ function renderEntity(entityId: string, bundle: MemoryBundle, generatedAt: numbe
   return lines.join('\n');
 }
 
-function shortHash(value: string): string {
-  let h1 = 5381;
-  let h2 = 52711;
-  for (let i = 0; i < value.length; i += 1) {
-    const c = value.charCodeAt(i);
-    h1 = Math.imul(h1, 33) ^ c;
-    h2 = Math.imul(h2, 31) ^ c;
-  }
-  return (h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0');
-}
-
 function formatEntityFileName(entityId: string): string {
-  const normalized = entityId.normalize('NFKC');
-  const sanitized = normalized
-    .replace(/[^A-Za-z0-9._-]+/g, '_')
-    .replace(/^\.+/, '_')
-    .replace(/_+/g, '_')
-    .replace(/^[_-]+|[_-]+$/g, '');
-
-  // Enforce a max base-name length so the final filename stays within typical
-  // filesystem limits (~255 bytes). Reserve ~20 chars for `-<16hexchars>.md`.
-  const MAX_BASE = 200;
-  const trimmed = sanitized.length > MAX_BASE ? sanitized.slice(0, MAX_BASE) : sanitized;
-
-  const baseName = trimmed && trimmed !== '.' && trimmed !== '..'
-    ? trimmed
-    : 'entity';
-  const needsSuffix = baseName !== entityId || sanitized.length > MAX_BASE;
-  const uniqueBaseName = needsSuffix ? `${baseName}-${shortHash(entityId)}` : baseName;
-
-  return `${uniqueBaseName}.md`;
+  return `${sanitizeForFilename(entityId)}.md`;
 }
 
 export function formatMemoryDump(dump: MemoryDump): FormattedMemoryDump {
