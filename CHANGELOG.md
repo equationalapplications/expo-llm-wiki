@@ -1,3 +1,15 @@
+# [4.12.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.11.0...v4.12.0) (2026-06-18)
+
+
+### Bug Fixes
+
+* **core-llm-tools:** preserve AgentToolManifest as function-only type ([3e597de](https://github.com/equationalapplications/expo-llm-wiki/commit/3e597de43dba61c7a0616563096e1e209bc73e76))
+
+
+### Features
+
+* **core-llm-tools:** add google_search built-in tool support ([d950454](https://github.com/equationalapplications/expo-llm-wiki/commit/d95045496426fae8c617a62a428ef990f875aa7c))
+
 # [4.11.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.10.1...v4.11.0) (2026-06-05)
 
 
