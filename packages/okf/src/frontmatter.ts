@@ -14,6 +14,11 @@ function needsQuoting(value: string): boolean {
   if (value !== value.trim()) return true;
   if (/[\n\r\t]/.test(value)) return true;
   if (isIso8601Timestamp(value)) return false;
+
+  // Quote strings that YAML could otherwise parse as collections/indicators.
+  if (/^[-?:]\s/.test(value)) return true;
+  if (/^[\[\]{}&,*%!|>'"@`]/.test(value)) return true;
+
   if (value.includes(':') || value.includes('#')) return true;
   if (RESERVED_LITERALS.has(value.toLowerCase())) return true;
   if (looksLikeNumber(value)) return true;
