@@ -39,7 +39,7 @@ describe('sanitizeForFilename', () => {
 
   it('remaps Windows reserved device names with a hash suffix', () => {
     expect(sanitizeForFilename('con')).toMatch(/^con-[0-9a-f]{16}$/);
-    expect(sanitizeForFilename('con.txt')).toMatch(/^con\.txt-[0-9a-f]{16}$/);
+    expect(sanitizeForFilename('con.txt')).toMatch(/^con-[0-9a-f]{16}\.txt$/);
     expect(sanitizeForFilename('PRN')).toMatch(/^PRN-[0-9a-f]{16}$/);
     expect(sanitizeForFilename('com1')).toMatch(/^com1-[0-9a-f]{16}$/);
     expect(sanitizeForFilename('LPT9')).toMatch(/^LPT9-[0-9a-f]{16}$/);
