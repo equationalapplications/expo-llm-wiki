@@ -70,10 +70,7 @@ export function sanitizeForFilename(value: string): string {
   if (!needsSuffix) return baseName;
 
   const suffix = `-${shortHash(value)}`;
-  const dotIndex = baseName.indexOf('.');
-  return dotIndex === -1
-    ? `${baseName}${suffix}`
-    : `${baseName.slice(0, dotIndex)}${suffix}${baseName.slice(dotIndex)}`;
+  return `${baseName}${suffix}`;
 }
 
 /** Sanitize a fact/task id for use as a concept filename (without .md). */
