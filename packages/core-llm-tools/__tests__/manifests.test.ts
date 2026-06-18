@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getCurrentTimeManifest, escalateToCloudManifest } from '../src/manifests/core';
+import { getCurrentTimeManifest, escalateToCloudManifest, googleSearchManifest } from '../src/manifests/core';
 
 describe('getCurrentTimeManifest', () => {
   it('has name get_current_time', () => {
@@ -38,5 +38,23 @@ describe('escalateToCloudManifest', () => {
 
   it('schema has a description', () => {
     expect(escalateToCloudManifest.schema.description.length).toBeGreaterThan(0);
+  });
+});
+
+describe('googleSearchManifest', () => {
+  it('has name google_search', () => {
+    expect(googleSearchManifest.name).toBe('google_search');
+  });
+
+  it('scope is core', () => {
+    expect(googleSearchManifest.scope).toBe('core');
+  });
+
+  it('kind is built_in', () => {
+    expect(googleSearchManifest.kind).toBe('built_in');
+  });
+
+  it('builtIn is google_search', () => {
+    expect(googleSearchManifest.builtIn).toBe('google_search');
   });
 });
