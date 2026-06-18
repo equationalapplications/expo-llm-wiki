@@ -56,9 +56,15 @@ function buildEventLogEntries(
 ): OkfLogEntry[] {
   return events.map(e => {
     const factFilename = e.related_entry_id ? factIdToFilename.get(e.related_entry_id) : undefined;
+    const summary = e.summary
+      .replace(/\\/g, '\\\\')
+      .replace(/\[/g, '\\[')
+      .replace(/\]/g, '\\]')
+      .replace(/\r?\n/g, ' ');
+
     const text = factFilename
-      ? `(${e.event_type}) [${e.summary}](./facts/${factFilename}.md)`
-      : `(${e.event_type}) ${e.summary}`;
+      ? `(${e.event_type}) [${summary}](./facts/${factFilename}.md)`
+      : `(${e.event_type}) ${summary}`;
     return { date: formatLogDate(e.created_at), text };
   });
 }
