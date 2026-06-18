@@ -37,7 +37,8 @@ const WINDOWS_RESERVED_NAMES = new Set([
 ]);
 
 function isWindowsReservedName(name: string): boolean {
-  return WINDOWS_RESERVED_NAMES.has(name.toLowerCase());
+  const base = name.split('.')[0];
+  return WINDOWS_RESERVED_NAMES.has(base.toLowerCase());
 }
 
 export function sanitizeForFilename(value: string): string {
