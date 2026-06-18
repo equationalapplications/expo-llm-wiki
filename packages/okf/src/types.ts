@@ -1,3 +1,6 @@
+export type OkfFrontmatterScalar = string | number | boolean | null;
+export type OkfFrontmatterValue = OkfFrontmatterScalar | OkfFrontmatterScalar[];
+
 export interface OkfFrontmatter {
   type: string;
   title?: string;
@@ -5,11 +8,11 @@ export interface OkfFrontmatter {
   resource?: string;
   tags?: string[];
   timestamp?: string; // ISO 8601
-  [key: string]: unknown; // producers may add custom keys; consumers must preserve them
+  [key: string]: OkfFrontmatterValue | undefined; // custom keys; values must be serializable scalars or scalar arrays
 }
 
 export interface OkfIndexEntry {
-  path: string; // bundle-relative, e.g. 'entities/alice/facts/fact_123.md'
+  path: string; // relative to the index.md that contains the link, e.g. 'facts/fact_123.md'
   title: string;
   description?: string;
 }
