@@ -66,7 +66,14 @@ export function sanitizeForFilename(value: string): string {
   const windowsReserved = isWindowsReservedName(baseName);
   const needsSuffix =
     baseName !== value || sanitized.length > MAX_BASE || hadTrailingDotSpace || windowsReserved;
-  return needsSuffix ? `${baseName}-${shortHash(value)}` : baseName;
+
+  if (!needsSuffix) return baseName;
+
+  const suffix = `-${shortHash(value)}`;
+  const dotIndex = baseName.indexOf('.');
+  return dotIndex === -1
+    ? `${baseName}${suffix}`
+    : `${baseName.slice(0, dotIndex)}${suffix}${baseName.slice(dotIndex)}`;
 }
 
 /** Sanitize a fact/task id for use as a concept filename (without .md). */
