@@ -115,7 +115,7 @@ describe('formatOkfBundle', () => {
     };
     const { files } = formatOkfBundle(dump);
     const logFile = files.find(f => f.path === 'entities/alice/log.md')!;
-    expect(logFile.content).toContain('[Confirmed coffee preference](../facts/fact_aaa.md)');
+    expect(logFile.content).toContain('[Confirmed coffee preference](./facts/fact_aaa.md)');
   });
 
   it('renders a plain summary when related_entry_id does not match an exported fact', () => {

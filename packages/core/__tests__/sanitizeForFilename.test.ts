@@ -2,6 +2,15 @@ import { describe, it, expect } from 'vitest';
 import { sanitizeForFilename } from '../src/utils/sanitizeForFilename';
 
 describe('sanitizeForFilename', () => {
+  it('guards dot-only inputs', () => {
+    expect(sanitizeForFilename('.')).toMatch(/^entity-[0-9a-f]{16}$/);
+    expect(sanitizeForFilename('..')).toMatch(/^entity-[0-9a-f]{16}$/);
+  });
+
+  it('rewrites leading-dot names', () => {
+    expect(sanitizeForFilename('.git')).toMatch(/^git-[0-9a-f]{16}$/);
+  });
+
   it('returns an already-safe value unchanged', () => {
     expect(sanitizeForFilename('alice')).toBe('alice');
   });

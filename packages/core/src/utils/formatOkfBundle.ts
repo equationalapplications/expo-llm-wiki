@@ -53,7 +53,7 @@ function formatLogDate(timestampMs: number): string {
 function buildEventLogEntries(events: WikiEvent[], factIds: Set<string>): OkfLogEntry[] {
   return events.map(e => {
     const text = e.related_entry_id && factIds.has(e.related_entry_id)
-      ? `(${e.event_type}) [${e.summary}](../facts/${e.related_entry_id}.md)`
+      ? `(${e.event_type}) [${e.summary}](./facts/${e.related_entry_id}.md)`
       : `(${e.event_type}) ${e.summary}`;
     return { date: formatLogDate(e.created_at), text };
   });

@@ -7,7 +7,7 @@ function looksLikeNumber(value: string): boolean {
 }
 
 function isIso8601Timestamp(value: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(value);
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2}|[+-]\d{4}|[+-]\d{2})$/.test(value);
 }
 
 function needsQuoting(value: string): boolean {
@@ -46,7 +46,11 @@ export function serializeFrontmatter(fm: OkfFrontmatter): string {
       } else {
         lines.push(`${key}:`);
         for (const item of value as unknown[]) {
-          lines.push(`  - ${serializeScalarString(item as string)}`);
+          if (typeof item === 'string') {
+            lines.push(`  - ${serializeScalarString(item)}`);
+          } else {
+            lines.push(`  - ${serializeValue(item)}`);
+          }
         }
       }
     } else {

@@ -21,6 +21,22 @@ describe('serializeFrontmatter', () => {
     expect(result).toBe('---\ntype: fact\ntags:\n  - a\n  - b\n---\n');
   });
 
+  it('serializes an array with mixed scalar types', () => {
+    const result = serializeFrontmatter({
+      type: 'fact',
+      values: [1, true, null, 'text'],
+    } as any);
+    expect(result).toBe('---\ntype: fact\nvalues:\n  - 1\n  - true\n  - null\n  - text\n---\n');
+  });
+
+  it('does not quote ISO 8601 timestamps with timezone offsets', () => {
+    const result = serializeFrontmatter({
+      type: 'fact',
+      timestamp: '2026-05-28T14:30:00+05:00',
+    });
+    expect(result).toBe('---\ntype: fact\ntimestamp: 2026-05-28T14:30:00+05:00\n---\n');
+  });
+
   it('renders an empty array as []', () => {
     const result = serializeFrontmatter({ type: 'fact', tags: [] });
     expect(result).toBe('---\ntype: fact\ntags: []\n---\n');
