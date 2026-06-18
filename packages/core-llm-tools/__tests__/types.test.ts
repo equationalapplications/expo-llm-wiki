@@ -2,6 +2,7 @@ import { describe, it, expectTypeOf } from 'vitest';
 import type {
   AgentScope,
   AgentToolManifest,
+  AnyAgentToolManifest,
   FunctionToolManifest,
   BuiltInToolManifest,
   BuiltInToolName,
@@ -64,11 +65,32 @@ describe('BuiltInToolManifest', () => {
   it('builtIn is constrained to BuiltInToolName', () => {
     expectTypeOf<BuiltInToolManifest['builtIn']>().toEqualTypeOf<BuiltInToolName>();
   });
+
+  it('name matches builtIn (both BuiltInToolName)', () => {
+    expectTypeOf<BuiltInToolManifest['name']>().toEqualTypeOf<BuiltInToolName>();
+  });
 });
 
 describe('AgentToolManifest', () => {
+  it('is an alias for FunctionToolManifest', () => {
+    expectTypeOf<AgentToolManifest>().toEqualTypeOf<FunctionToolManifest>();
+  });
+
+  it('allows direct schema access without narrowing', () => {
+    const manifest: AgentToolManifest = {
+      name: 'legacy_tool',
+      scope: 'core',
+      schema: { name: 'legacy_tool', description: 'stable contract' },
+    };
+    expectTypeOf(manifest.schema).toMatchTypeOf<FunctionToolManifest['schema']>();
+  });
+});
+
+describe('AnyAgentToolManifest', () => {
   it('is the union of FunctionToolManifest and BuiltInToolManifest', () => {
-    expectTypeOf<AgentToolManifest>().toEqualTypeOf<FunctionToolManifest | BuiltInToolManifest>();
+    expectTypeOf<AnyAgentToolManifest>().toEqualTypeOf<
+      FunctionToolManifest | BuiltInToolManifest
+    >();
   });
 });
 

@@ -31,10 +31,14 @@ export interface FunctionToolManifest {
 
 /** A Gemini built-in tool (e.g. google_search) — no client handler, no parameters. */
 export interface BuiltInToolManifest {
-  name: string;
+  name: BuiltInToolName;
   scope: AgentScope;
   kind: 'built_in';
   builtIn: BuiltInToolName;
 }
 
-export type AgentToolManifest = FunctionToolManifest | BuiltInToolManifest;
+/** Function-calling tool manifest (stable public contract for downstream callers). */
+export type AgentToolManifest = FunctionToolManifest;
+
+/** Union of function and built-in manifests for mixed tool arrays. */
+export type AnyAgentToolManifest = FunctionToolManifest | BuiltInToolManifest;

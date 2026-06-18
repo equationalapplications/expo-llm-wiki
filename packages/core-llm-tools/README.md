@@ -86,12 +86,15 @@ const response = await ai.models.generateContent({
 Some Gemini capabilities, like [Google Search grounding](https://ai.google.dev/gemini-api/docs/google-search),
 are built-in tools executed server-side by Google rather than function declarations your code
 implements. These are declared with `kind: 'built_in'` and flow through the same
-capability-scope model as function tools, via `buildAuthorizedToolsArray`:
+capability-scope model as function tools, via `buildAuthorizedToolsArray`.
+Use `AnyAgentToolManifest` when mixing function and built-in manifests;
+`AgentToolManifest` remains the function-only type for existing callers:
 
 ```typescript
+import type { AnyAgentToolManifest } from '@equationalapplications/core-llm-tools';
 import { buildAuthorizedToolsArray, googleSearchManifest, escalateToCloudManifest } from '@equationalapplications/core-llm-tools';
 
-const allAppTools = [escalateToCloudManifest, googleSearchManifest];
+const allAppTools: AnyAgentToolManifest[] = [escalateToCloudManifest, googleSearchManifest];
 const userGrantedScopes: string[] = [];
 
 // Returns the full Gemini tools[] array: a functionDeclarations group (if any

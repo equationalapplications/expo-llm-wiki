@@ -2,6 +2,7 @@ export type {
   AgentScope,
   AgentToolManifest,
   AgentToolSchema,
+  AnyAgentToolManifest,
   FunctionToolManifest,
   BuiltInToolManifest,
   BuiltInToolName,

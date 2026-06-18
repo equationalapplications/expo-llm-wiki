@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildAuthorizedSchemaArray, buildAuthorizedToolsArray } from '../src/injector';
-import type { AgentToolManifest, BuiltInToolManifest } from '../src/types';
+import type { AgentToolManifest, AnyAgentToolManifest, BuiltInToolManifest } from '../src/types';
 
 const coreTool: AgentToolManifest = {
   name: 'get_current_time',
@@ -79,16 +79,19 @@ describe('buildAuthorizedSchemaArray', () => {
     expect(result).toHaveLength(3);
   });
 
-  it('ignores built-in manifests (deprecated — use buildAuthorizedToolsArray)', () => {
-    const result = buildAuthorizedSchemaArray([coreTool, googleSearchTool], []);
+  it('ignores built-in manifests at runtime when callers bypass types', () => {
+    const mixedTools = [coreTool, googleSearchTool] as unknown as AgentToolManifest[];
+    const result = buildAuthorizedSchemaArray(mixedTools, []);
     expect(result).toHaveLength(1);
     expect(result[0]).toEqual(coreTool.schema);
   });
 });
 
 describe('buildAuthorizedToolsArray', () => {
+  const mixedTools: AnyAgentToolManifest[] = [coreTool, googleSearchTool];
+
   it('returns a functionDeclarations entry plus one entry per authorized built-in tool', () => {
-    const result = buildAuthorizedToolsArray([coreTool, googleSearchTool], []);
+    const result = buildAuthorizedToolsArray(mixedTools, []);
     expect(result).toHaveLength(2);
     expect(result).toContainEqual({ functionDeclarations: [coreTool.schema] });
     expect(result).toContainEqual({ google_search: {} });
@@ -113,7 +116,7 @@ describe('buildAuthorizedToolsArray', () => {
 
   it('excludes a non-core built-in tool scope mismatch and a non-core function tool together', () => {
     const result = buildAuthorizedToolsArray(
-      [calendarReadTool, googleSearchTool],
+      [calendarReadTool, googleSearchTool] satisfies AnyAgentToolManifest[],
       []
     );
     expect(result).toHaveLength(1);

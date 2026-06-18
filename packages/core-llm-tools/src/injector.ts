@@ -1,6 +1,7 @@
 import type {
   AgentToolManifest,
   AgentToolSchema,
+  AnyAgentToolManifest,
   BuiltInToolName,
   FunctionToolManifest,
 } from './types';
@@ -20,7 +21,7 @@ export function buildAuthorizedSchemaArray(
         manifest.scope === 'core' || userGrantedScopes.includes(manifest.scope)
     )
     .filter(
-      (manifest): manifest is FunctionToolManifest => manifest.kind !== 'built_in'
+      (manifest): manifest is FunctionToolManifest => 'schema' in manifest
     )
     .map((manifest) => manifest.schema);
 }
@@ -36,7 +37,7 @@ export type GeminiToolEntry =
  * group, plus one entry per authorized built-in tool.
  */
 export function buildAuthorizedToolsArray(
-  availableManifests: AgentToolManifest[],
+  availableManifests: AnyAgentToolManifest[],
   userGrantedScopes: string[]
 ): GeminiToolEntry[] {
   const authorized = availableManifests.filter(
