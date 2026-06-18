@@ -40,7 +40,9 @@ export function serializeScalarString(value: string): string {
 }
 
 function serializeKey(key: string): string {
-  if (/\s/.test(key) || needsQuoting(key)) {
+  // needsQuoting() intentionally exempts ISO 8601 timestamps for *values*.
+  // For keys, quote timestamp-like scalars to avoid YAML timestamp coercion in some parsers.
+  if (/\s/.test(key) || needsQuoting(key) || isIso8601Timestamp(key)) {
     return quoteString(key);
   }
   return key;
