@@ -14,6 +14,7 @@
     { "path": "./packages/expo" },
     { "path": "./packages/react" },
     { "path": "./packages/prisma-outbox" },
-    { "path": "./packages/core-llm-tools" }
+    { "path": "./packages/core-llm-tools" },
+    { "path": "./packages/okf" }
   ]
 }

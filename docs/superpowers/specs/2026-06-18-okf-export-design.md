@@ -1,6 +1,6 @@
 # Design: Open Knowledge Format (OKF) Export
 
-**Status:** Approved (design phase) — implementation plan pending
+**Status:** Implemented
 **Packages:** new `@equationalapplications/core-okf` (`packages/okf`); `packages/core` adapter
 **Date:** 2026-06-18
 **Spec reference:** Open Knowledge Format v0.1, https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md
@@ -149,8 +149,10 @@ entities/<dir>/index.md
 index.md                              (bundle root)
 ```
 
-Fact/task `id` values (`fact_<24hex>` / `task_<24hex>`, from `generateId()`) are already
-filesystem-safe and used directly as filenames — no sanitization needed there.
+Fact/task `id` values are passed through `sanitizeConceptId()` before use as filenames. This
+reuses the same character/length sanitization as entity directories and additionally remaps OKF-
+reserved concept names (`index`, `log`) to a hash-suffixed variant so concept files never
+collide with structural `index.md` / `log.md` files.
 
 **Fact → concept doc** (`entities/<dir>/facts/<fact.id>.md`, `type: 'fact'`):
 - `title`: `fact.title`
@@ -173,7 +175,7 @@ filesystem-safe and used directly as filenames — no sanitization needed there.
 formatted as `YYYY-MM-DD`; `text` is `` (event.event_type) <summary> ``, where `<summary>` is
 `event.summary` unless `event.related_entry_id` matches an exported fact's `id` for that entity,
 in which case it's wrapped as a markdown link to that fact's relative path
-(`[summary](../facts/<id>.md)`) — this is what realizes OKF's "a link asserts a relationship"
+(`[summary](./facts/<id>.md)`) — this is what realizes OKF's "a link asserts a relationship"
 convention for this bundle.
 
 **Entity `index.md`** (`entities/<dir>/index.md`): two sections, "Facts" and "Tasks", each entry
@@ -218,9 +220,8 @@ Unit tests only, `vitest run`, no I/O — same style as `core-llm-tools`.
   correct file paths, frontmatter field mapping per fact/task, `embedding_blob` exclusion,
   `related_entry_id` → markdown-link resolution in `log.md` (including the case where the
   referenced fact isn't in the export and the link is omitted), root + entity `index.md` link
-  correctness, reserved-filename collision (an entity/fact/task whose sanitized id would be
-  `index` or `log` — confirm the existing hash-suffix collision logic in
-  `sanitizeForFilename` still produces a non-colliding name).
+  correctness, reserved-filename avoidance (fact/task ids `index` or `log` must not produce
+  concept files named `index.md` or `log.md`; unsafe ids with path separators are sanitized).
 - `sanitizeForFilename.test.ts` — extracted from the existing inline logic; same assertions
   `formatMemoryDump.test.ts` already implicitly relies on, now testable directly.
 
