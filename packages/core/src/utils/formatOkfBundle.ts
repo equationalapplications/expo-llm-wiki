@@ -106,7 +106,7 @@ export function formatOkfBundle(dump: MemoryDump): { files: OkfFile[] } {
     ];
     files.push({
       path: `entities/${dir}/index.md`,
-      content: `${buildIndexMd(entityIndexSections)}\n[Event log](./log.md)\n`,
+      content: `${buildIndexMd(entityIndexSections)}[Event log](./log.md)\n`,
     });
 
     rootEntries.push({ path: `entities/${dir}/index.md`, title: entityId });
