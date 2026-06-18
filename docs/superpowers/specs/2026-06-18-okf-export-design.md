@@ -1,6 +1,6 @@
 # Design: Open Knowledge Format (OKF) Export
 
-**Status:** Approved (design phase) — implementation plan pending
+**Status:** Implemented
 **Packages:** new `@equationalapplications/core-okf` (`packages/okf`); `packages/core` adapter
 **Date:** 2026-06-18
 **Spec reference:** Open Knowledge Format v0.1, https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md
