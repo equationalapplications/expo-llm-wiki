@@ -1,6 +1,6 @@
 # Design: `google_search` Built-In Tool Support in `core-llm-tools`
 
-**Status:** Approved (design phase) — implementation plan pending
+**Status:** Implemented
 **Package:** `@equationalapplications/core-llm-tools`
 **Date:** 2026-06-18
 
