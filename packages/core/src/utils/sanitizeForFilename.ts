@@ -9,6 +9,8 @@ function shortHash(value: string): string {
   return (h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0');
 }
 
+const OKF_RESERVED_CONCEPT_NAMES = new Set(['index', 'log']);
+
 export function sanitizeForFilename(value: string): string {
   const normalized = value.normalize('NFKC');
   const sanitized = normalized
@@ -25,4 +27,13 @@ export function sanitizeForFilename(value: string): string {
   const baseName = trimmed && trimmed !== '.' && trimmed !== '..' ? trimmed : 'entity';
   const needsSuffix = baseName !== value || sanitized.length > MAX_BASE;
   return needsSuffix ? `${baseName}-${shortHash(value)}` : baseName;
+}
+
+/** Sanitize a fact/task id for use as a concept filename (without .md). */
+export function sanitizeConceptId(id: string): string {
+  const sanitized = sanitizeForFilename(id);
+  if (OKF_RESERVED_CONCEPT_NAMES.has(sanitized.toLowerCase())) {
+    return `${sanitized}-${shortHash(id)}`;
+  }
+  return sanitized;
 }

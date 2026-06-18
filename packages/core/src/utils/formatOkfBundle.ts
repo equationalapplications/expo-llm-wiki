@@ -10,7 +10,7 @@ import {
   type OkfIndexSection,
   type OkfLogEntry,
 } from '@equationalapplications/core-okf';
-import { sanitizeForFilename } from './sanitizeForFilename';
+import { sanitizeConceptId, sanitizeForFilename } from './sanitizeForFilename';
 
 function factFrontmatter(f: WikiFact): OkfFrontmatter {
   return {
@@ -50,10 +50,14 @@ function formatLogDate(timestampMs: number): string {
   return new Date(timestampMs).toISOString().slice(0, 10);
 }
 
-function buildEventLogEntries(events: WikiEvent[], factIds: Set<string>): OkfLogEntry[] {
+function buildEventLogEntries(
+  events: WikiEvent[],
+  factIdToFilename: Map<string, string>,
+): OkfLogEntry[] {
   return events.map(e => {
-    const text = e.related_entry_id && factIds.has(e.related_entry_id)
-      ? `(${e.event_type}) [${e.summary}](./facts/${e.related_entry_id}.md)`
+    const factFilename = e.related_entry_id ? factIdToFilename.get(e.related_entry_id) : undefined;
+    const text = factFilename
+      ? `(${e.event_type}) [${e.summary}](./facts/${factFilename}.md)`
       : `(${e.event_type}) ${e.summary}`;
     return { date: formatLogDate(e.created_at), text };
   });
@@ -65,33 +69,35 @@ export function formatOkfBundle(dump: MemoryDump): { files: OkfFile[] } {
 
   for (const [entityId, bundle] of Object.entries(dump.entities)) {
     const dir = sanitizeForFilename(entityId);
-    const factIds = new Set(bundle.facts.map(f => f.id));
+    const factIdToFilename = new Map(
+      bundle.facts.map(f => [f.id, sanitizeConceptId(f.id)] as const),
+    );
 
     const factEntries: OkfIndexEntry[] = bundle.facts.map(f => ({
-      path: `facts/${f.id}.md`,
+      path: `facts/${factIdToFilename.get(f.id)!}.md`,
       title: f.title,
     }));
     for (const f of bundle.facts) {
       files.push({
-        path: `entities/${dir}/facts/${f.id}.md`,
+        path: `entities/${dir}/facts/${factIdToFilename.get(f.id)!}.md`,
         content: buildConceptDocument(factFrontmatter(f), f.body),
       });
     }
 
     const taskEntries: OkfIndexEntry[] = bundle.tasks.map(t => ({
-      path: `tasks/${t.id}.md`,
+      path: `tasks/${sanitizeConceptId(t.id)}.md`,
       title: t.description,
     }));
     for (const t of bundle.tasks) {
       files.push({
-        path: `entities/${dir}/tasks/${t.id}.md`,
+        path: `entities/${dir}/tasks/${sanitizeConceptId(t.id)}.md`,
         content: buildConceptDocument(taskFrontmatter(t), ''),
       });
     }
 
     files.push({
       path: `entities/${dir}/log.md`,
-      content: buildLogMd(buildEventLogEntries(bundle.events, factIds)),
+      content: buildLogMd(buildEventLogEntries(bundle.events, factIdToFilename)),
     });
 
     const entityIndexSections: OkfIndexSection[] = [

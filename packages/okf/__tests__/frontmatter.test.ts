@@ -92,6 +92,11 @@ describe('serializeFrontmatter', () => {
     expect(result).toBe('---\ntype: fact\ntitle: "a\\tb"\n---\n');
   });
 
+  it('quotes a string value containing a carriage return', () => {
+    const result = serializeFrontmatter({ type: 'fact', description: 'line one\rline two' });
+    expect(result).toBe('---\ntype: fact\ndescription: "line one\\rline two"\n---\n');
+  });
+
   it('quotes custom keys containing spaces or colons', () => {
     const result = serializeFrontmatter({
       type: 'fact',

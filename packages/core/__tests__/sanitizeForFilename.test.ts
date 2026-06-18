@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sanitizeForFilename } from '../src/utils/sanitizeForFilename';
+import { sanitizeConceptId, sanitizeForFilename } from '../src/utils/sanitizeForFilename';
 
 describe('sanitizeForFilename', () => {
   it('guards dot-only inputs', () => {
@@ -35,5 +35,20 @@ describe('sanitizeForFilename', () => {
 
   it('produces the same output for the same input (deterministic)', () => {
     expect(sanitizeForFilename('a/b/c')).toBe(sanitizeForFilename('a/b/c'));
+  });
+});
+
+describe('sanitizeConceptId', () => {
+  it('remaps OKF-reserved concept names with a hash suffix', () => {
+    expect(sanitizeConceptId('index')).toMatch(/^index-[0-9a-f]{16}$/);
+    expect(sanitizeConceptId('log')).toMatch(/^log-[0-9a-f]{16}$/);
+  });
+
+  it('returns an already-safe value unchanged', () => {
+    expect(sanitizeConceptId('fact_aaa')).toBe('fact_aaa');
+  });
+
+  it('sanitizes path separators like sanitizeForFilename', () => {
+    expect(sanitizeConceptId('../escape')).toMatch(/^escape-[0-9a-f]{16}$/);
   });
 });

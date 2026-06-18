@@ -163,7 +163,7 @@ describe('formatOkfBundle', () => {
     expect(rootIndex.content).toContain('* [bob](entities/bob/index.md)');
   });
 
-  it('does not collide when an entity, fact, or task id sanitizes to a reserved name', () => {
+  it('avoids reserved concept filenames and sanitizes unsafe fact/task ids', () => {
     const dump: MemoryDump = {
       generatedAt: 0,
       entities: {
@@ -176,11 +176,30 @@ describe('formatOkfBundle', () => {
     };
     const { files } = formatOkfBundle(dump);
     const paths = files.map(f => f.path);
-    expect(paths).toContain('entities/index/facts/index.md');
-    expect(paths).toContain('entities/index/tasks/log.md');
+    const conceptPaths = paths.filter(p => p.includes('/facts/') || p.includes('/tasks/'));
+    expect(conceptPaths.every(p => !p.endsWith('/facts/index.md') && !p.endsWith('/tasks/log.md'))).toBe(true);
+    expect(conceptPaths.some(p => /\/facts\/index-[0-9a-f]{16}\.md$/.test(p))).toBe(true);
+    expect(conceptPaths.some(p => /\/tasks\/log-[0-9a-f]{16}\.md$/.test(p))).toBe(true);
     expect(paths).toContain('entities/index/index.md');
     expect(paths).toContain('entities/index/log.md');
     expect(paths).toContain('index.md');
     expect(new Set(paths).size).toBe(paths.length);
+  });
+
+  it('sanitizes fact ids containing path separators', () => {
+    const dump: MemoryDump = {
+      generatedAt: 0,
+      entities: {
+        alice: {
+          facts: [makeFact({ id: '../escape', entity_id: 'alice' })],
+          tasks: [],
+          events: [],
+        },
+      },
+    };
+    const { files } = formatOkfBundle(dump);
+    const factFile = files.find(f => f.path.startsWith('entities/alice/facts/'))!;
+    expect(factFile.path).toMatch(/^entities\/alice\/facts\/escape-[0-9a-f]{16}\.md$/);
+    expect(factFile.path).not.toContain('..');
   });
 });
