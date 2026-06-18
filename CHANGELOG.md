@@ -1,3 +1,10 @@
+## [4.13.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.13.0...v4.13.1) (2026-06-18)
+
+
+### Bug Fixes
+
+* **ci:** add okf to hardcoded publish list in release workflow ([608cfe0](https://github.com/equationalapplications/expo-llm-wiki/commit/608cfe08f5ee0f74c0b963463e007b406ed9c28d))
+
 # [4.13.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.12.0...v4.13.0) (2026-06-18)
 
 
