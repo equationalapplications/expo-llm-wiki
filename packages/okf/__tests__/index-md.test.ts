@@ -32,4 +32,9 @@ describe('buildRootIndexMd', () => {
       '---\nokf_version: "0.1"\n---\n\n## Entities\n\n* [alice](entities/alice/index.md)\n'
     );
   });
+
+  it('escapes special characters in okf_version for valid YAML', () => {
+    const result = buildRootIndexMd('0.1"\\evil\n', []);
+    expect(result).toBe('---\nokf_version: "0.1\\"\\\\evil\\n"\n---\n\n');
+  });
 });

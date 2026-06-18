@@ -1,3 +1,4 @@
+import { serializeScalarString } from './frontmatter';
 import type { OkfIndexEntry, OkfIndexSection } from './types';
 
 function renderEntry(entry: OkfIndexEntry): string {
@@ -25,6 +26,6 @@ export function buildIndexMd(sections: OkfIndexSection[]): string {
 }
 
 export function buildRootIndexMd(okfVersion: string, sections: OkfIndexSection[]): string {
-  const frontmatter = `---\nokf_version: "${okfVersion}"\n---\n`;
+  const frontmatter = `---\nokf_version: ${serializeScalarString(okfVersion)}\n---\n`;
   return `${frontmatter}\n${renderSections(sections)}`;
 }

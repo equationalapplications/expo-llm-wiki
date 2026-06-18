@@ -36,6 +36,18 @@ describe('sanitizeForFilename', () => {
   it('produces the same output for the same input (deterministic)', () => {
     expect(sanitizeForFilename('a/b/c')).toBe(sanitizeForFilename('a/b/c'));
   });
+
+  it('remaps Windows reserved device names with a hash suffix', () => {
+    expect(sanitizeForFilename('con')).toMatch(/^con-[0-9a-f]{16}$/);
+    expect(sanitizeForFilename('PRN')).toMatch(/^PRN-[0-9a-f]{16}$/);
+    expect(sanitizeForFilename('com1')).toMatch(/^com1-[0-9a-f]{16}$/);
+    expect(sanitizeForFilename('LPT9')).toMatch(/^LPT9-[0-9a-f]{16}$/);
+  });
+
+  it('strips trailing dots and spaces and appends a hash suffix', () => {
+    expect(sanitizeForFilename('alice.')).toMatch(/^alice-[0-9a-f]{16}$/);
+    expect(sanitizeForFilename('bob ')).toMatch(/^bob-[0-9a-f]{16}$/);
+  });
 });
 
 describe('sanitizeConceptId', () => {

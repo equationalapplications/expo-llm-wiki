@@ -30,7 +30,7 @@ function quoteString(value: string): string {
   return `"${escaped}"`;
 }
 
-function serializeScalarString(value: string): string {
+export function serializeScalarString(value: string): string {
   return needsQuoting(value) ? quoteString(value) : value;
 }
 
