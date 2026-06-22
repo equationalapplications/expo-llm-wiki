@@ -31,7 +31,7 @@ describe('WriteService', () => {
 
     // 3. Setup Repositories
     mockEntryRepo = {
-      findIdById: vi.fn().mockResolvedValue(null),
+      findByIds: vi.fn().mockResolvedValue([]),
     };
 
     mockEventRepo = {
@@ -196,7 +196,7 @@ describe('WriteService', () => {
     });
 
     it('drops related_entry_id when it does not reference an existing fact for the entity', async () => {
-      mockEntryRepo.findIdById.mockResolvedValue(null);
+      mockEntryRepo.findByIds.mockResolvedValue([]);
 
       await writeService.write('user_1', {
         summary: 'ok',
@@ -204,13 +204,13 @@ describe('WriteService', () => {
         related_entry_id: 'nonexistent_fact',
       });
 
-      expect(mockEntryRepo.findIdById).toHaveBeenCalledWith('nonexistent_fact', 'user_1');
+      expect(mockEntryRepo.findByIds).toHaveBeenCalledWith(['nonexistent_fact'], ['user_1']);
       const stored = mockEventRepo.add.mock.calls[0][0];
       expect(stored.related_entry_id).toBeNull();
     });
 
     it('keeps related_entry_id when it references an existing fact for the entity', async () => {
-      mockEntryRepo.findIdById.mockResolvedValue('fact_1');
+      mockEntryRepo.findByIds.mockResolvedValue([{ id: 'fact_1' }]);
 
       await writeService.write('user_1', {
         summary: 'ok',
@@ -220,6 +220,39 @@ describe('WriteService', () => {
 
       const stored = mockEventRepo.add.mock.calls[0][0];
       expect(stored.related_entry_id).toBe('fact_1');
+    });
+
+    it('drops related_entry_id when it is not a string', async () => {
+      await writeService.write('user_1', {
+        summary: 'ok',
+        event_type: 'observation',
+        // @ts-expect-error - intentionally testing runtime guard against non-string input
+        related_entry_id: 123,
+      });
+
+      expect(mockEntryRepo.findByIds).not.toHaveBeenCalled();
+      const stored = mockEventRepo.add.mock.calls[0][0];
+      expect(stored.related_entry_id).toBeNull();
+    });
+
+    it('drops related_entry_id when it contains a null byte or exceeds 200 chars', async () => {
+      await writeService.write('user_1', {
+        summary: 'ok',
+        event_type: 'observation',
+        related_entry_id: 'bad\0id',
+      });
+      expect(mockEntryRepo.findByIds).not.toHaveBeenCalled();
+      expect(mockEventRepo.add.mock.calls[0][0].related_entry_id).toBeNull();
+
+      mockEventRepo.add.mockClear();
+
+      await writeService.write('user_1', {
+        summary: 'ok',
+        event_type: 'observation',
+        related_entry_id: 'x'.repeat(201),
+      });
+      expect(mockEntryRepo.findByIds).not.toHaveBeenCalled();
+      expect(mockEventRepo.add.mock.calls[0][0].related_entry_id).toBeNull();
     });
   });
 });

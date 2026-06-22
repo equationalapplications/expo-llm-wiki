@@ -34,10 +34,19 @@ export class WriteService {
     }
     const summary = clip(event.summary, 4000);
 
-    let relatedEntryId = event.related_entry_id || null;
-    if (relatedEntryId !== null) {
-      const existing = await this.entryRepo.findIdById(relatedEntryId, entityId);
-      if (existing === null) relatedEntryId = null;
+    let relatedEntryId: string | null = null;
+    const rawRelatedEntryId = event.related_entry_id;
+    if (rawRelatedEntryId != null && rawRelatedEntryId !== '') {
+      if (
+        typeof rawRelatedEntryId !== 'string' ||
+        rawRelatedEntryId.length > 200 ||
+        rawRelatedEntryId.includes('\0')
+      ) {
+        relatedEntryId = null;
+      } else {
+        const existing = await this.entryRepo.findByIds([rawRelatedEntryId], [entityId]);
+        relatedEntryId = existing.length > 0 ? rawRelatedEntryId : null;
+      }
     }
 
     const id = generateId('evt_');
