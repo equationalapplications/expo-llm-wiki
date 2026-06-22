@@ -1,3 +1,12 @@
+## [4.14.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.14.0...v4.14.1) (2026-06-22)
+
+
+### Bug Fixes
+
+* **core:** address PR review feedback on hardening phase 2 ([e195e17](https://github.com/equationalapplications/expo-llm-wiki/commit/e195e177c543e16305825ede7644c122101f5397))
+* **core:** harden related_entry_id validation and align tablePrefix docs ([0f28da5](https://github.com/equationalapplications/expo-llm-wiki/commit/0f28da5e1d175e275f553b19ff4a9b30f5544893))
+* **core:** security hardening phase 2 ([5e04bad](https://github.com/equationalapplications/expo-llm-wiki/commit/5e04bad5ff69096e915c47c8810a202d532a8e47))
+
 # [4.14.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.13.1...v4.14.0) (2026-06-22)
 
 
