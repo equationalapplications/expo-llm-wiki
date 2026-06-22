@@ -255,9 +255,11 @@ In `acquireLock`/`releaseLock`, the `else` branch (everything except `ingest`/`g
 
 Add §5's "Prompt-Injection Trust Boundary" subsection to both files' Security sections.
 
-### CHANGELOG.md
+### Release notes (semantic-release)
 
-Add under `## [4.14.1]`:
+`CHANGELOG.md` is generated automatically on merge to `main` by `@semantic-release/changelog` (see `.releaserc.json`). Do **not** hand-edit `CHANGELOG.md` in this PR. Use Conventional Commits (`fix(core): …`) so semantic-release produces a patch bump and appends release notes.
+
+Expected content in the generated entry (for reviewer/release verification):
 
 ```markdown
 ### Security
@@ -322,7 +324,7 @@ Add to `packages/core/__tests__/`:
 - [ ] `WikiMemory.hasChanged` and `ImportExportService._warnCrossEntityCollision` escape user-supplied values before interpolating into errors/logs
 - [ ] `generateId` throws when no `crypto` random source is available; `Math.random()` fallback removed
 - [ ] `JobManager.acquireLock`/`releaseLock` use a typed `Record` lookup instead of `` `_${operation}Key` `` computed property access; all existing lock tests pass unchanged
-- [ ] CHANGELOG.md `[4.14.1]` entry includes Security section and BREAKING (behavioral) callout for `tablePrefix`
+- [ ] On merge to `main`, semantic-release generates `CHANGELOG.md` with Security fixes and a BREAKING (behavioral) callout for `tablePrefix` (from `fix(core):` conventional commits; no manual changelog edit in the PR)
 - [ ] All existing tests pass (no regressions)
 
 ---

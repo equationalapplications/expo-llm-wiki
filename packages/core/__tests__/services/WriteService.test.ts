@@ -181,6 +181,11 @@ describe('WriteService', () => {
         // @ts-expect-error - intentionally testing runtime guard against null input
         writeService.write('user_1', null),
       ).rejects.toThrow(/Invalid event/);
+
+      await expect(
+        // @ts-expect-error - intentionally testing runtime guard against array input
+        writeService.write('user_1', []),
+      ).rejects.toThrow(/Invalid event/);
     });
 
     it('throws for an entityId containing a null byte', async () => {
@@ -192,6 +197,18 @@ describe('WriteService', () => {
     it('throws for an empty entityId', async () => {
       await expect(
         writeService.write('', { summary: 'ok', event_type: 'observation' }),
+      ).rejects.toThrow(/Invalid entityId/);
+    });
+
+    it('accepts entityId of exactly 200 chars', async () => {
+      await expect(
+        writeService.write('x'.repeat(200), { summary: 'ok', event_type: 'observation' }),
+      ).resolves.toBeUndefined();
+    });
+
+    it('throws for entityId longer than 200 chars', async () => {
+      await expect(
+        writeService.write('x'.repeat(201), { summary: 'ok', event_type: 'observation' }),
       ).rejects.toThrow(/Invalid entityId/);
     });
 
