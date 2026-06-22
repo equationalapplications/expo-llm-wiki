@@ -14,7 +14,7 @@ import { sanitizeConceptId, sanitizeForFilename } from './sanitizeForFilename';
 
 function factFrontmatter(f: WikiFact): OkfFrontmatter {
   return {
-    type: f.okf_type || 'fact',
+    type: f.okf_type ?? 'fact',
     title: f.title,
     tags: f.tags,
     timestamp: new Date(f.updated_at).toISOString(),
