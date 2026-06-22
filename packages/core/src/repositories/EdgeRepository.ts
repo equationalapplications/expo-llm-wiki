@@ -14,10 +14,18 @@ export class EdgeRepository extends BaseRepository {
 
   async getByEntityId(entityId: string, tx?: SQLiteAdapter): Promise<WikiEdge[]> {
     const executor = this.getExecutor(tx);
-    return executor.getAllAsync<WikiEdge>(
+    const rows = await executor.getAllAsync<any>(
       `SELECT * FROM ${this.prefix}edges WHERE entity_id = ? ORDER BY created_at ASC`,
       [entityId],
     );
+    return rows.map((row) => ({
+      id: String(row.id),
+      entity_id: String(row.entity_id),
+      source_id: String(row.source_id),
+      target_id: String(row.target_id),
+      edge_type: String(row.edge_type),
+      created_at: Number(row.created_at),
+    }));
   }
 
   /** Hard delete — edges have no soft-delete concept, only presence/absence. `tx` is REQUIRED. */
