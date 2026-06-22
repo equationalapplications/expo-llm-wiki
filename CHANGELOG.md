@@ -1,3 +1,15 @@
+# [4.14.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.13.1...v4.14.0) (2026-06-22)
+
+
+### Bug Fixes
+
+* **react:** avoid stale entity status on entityId change ([3731a9c](https://github.com/equationalapplications/expo-llm-wiki/commit/3731a9c0cbcac8dc58230479d89592c109188f19))
+
+
+### Features
+
+* **react:** add useEntityStatus hook ([605fa13](https://github.com/equationalapplications/expo-llm-wiki/commit/605fa1395a87f022910b3f0a8be6c82837c08eaa))
+
 ## [4.13.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.13.0...v4.13.1) (2026-06-18)
 
 
