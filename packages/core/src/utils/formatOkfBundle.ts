@@ -33,7 +33,7 @@ function factFrontmatter(f: WikiFact): OkfFrontmatter {
 
 function taskFrontmatter(t: WikiTask): OkfFrontmatter {
   return {
-    type: t.okf_type || 'task',
+    type: t.okf_type ?? 'task',
     title: t.description,
     timestamp: new Date(t.updated_at).toISOString(),
     id: t.id,
