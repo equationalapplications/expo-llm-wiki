@@ -220,6 +220,18 @@ export function UserProfile({ userId }: { userId: string }) {
 }
 ```
 
+For live background-job status (e.g. a loading spinner while a document ingests or the librarian runs):
+
+```typescript
+import { useEntityStatus } from '@equationalapplications/expo-llm-wiki';
+
+export function EntityLoadingSpinner({ entityId }: { entityId: string }) {
+  const { ingesting, librarian, heal } = useEntityStatus(entityId);
+  if (!ingesting && !librarian && !heal) return null;
+  return <Spinner label={ingesting ? 'Ingesting…' : librarian ? 'Organizing…' : 'Healing…'} />;
+}
+```
+
 ## Component Lifecycle
 
 ```mermaid
