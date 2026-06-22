@@ -98,36 +98,6 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
-  {
-    version: 6,
-    description: 'Scope edges uniqueness to entity_id (fix cross-entity dedup)',
-    run: async (db, prefix) => {
-      const table = await db.getFirstAsync<{ name: string }>(
-        `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`,
-        [`${prefix}edges`],
-      );
-      if (!table) return;
-
-      await db.withTransactionAsync(async (tx) => {
-        await tx.execAsync(`
-          CREATE TABLE ${prefix}edges_v6 (
-            id TEXT PRIMARY KEY,
-            entity_id TEXT NOT NULL,
-            source_id TEXT NOT NULL,
-            target_id TEXT NOT NULL,
-            edge_type TEXT NOT NULL,
-            created_at INTEGER NOT NULL,
-            UNIQUE(entity_id, source_id, target_id, edge_type)
-          );
-          INSERT OR IGNORE INTO ${prefix}edges_v6
-            SELECT id, entity_id, source_id, target_id, edge_type, created_at FROM ${prefix}edges;
-          DROP TABLE ${prefix}edges;
-          ALTER TABLE ${prefix}edges_v6 RENAME TO ${prefix}edges;
-          CREATE INDEX IF NOT EXISTS ${prefix}edges_entity_idx ON ${prefix}edges (entity_id);
-        `);
-      });
-    },
-  },
 ];
 
 // Verify MIGRATIONS are in strictly ascending version order at module load time.

@@ -279,13 +279,16 @@ export function parseOkfBundle(
           related_entry_id = lookupResolvedId(pathToResolvedId, targetPath) ?? null;
         }
       }
+      const created_at = new Date(`${entry.date}T00:00:00.000Z`).getTime();
+      if (!Number.isFinite(created_at)) continue;
+
       events.push({
         id: generateId('evt_'),
         entity_id: entityId,
         event_type: parsed.event_type,
         summary: parsed.summary,
         related_entry_id,
-        created_at: new Date(`${entry.date}T00:00:00.000Z`).getTime(),
+        created_at,
       });
     }
   }

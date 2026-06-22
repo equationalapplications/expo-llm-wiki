@@ -98,19 +98,30 @@ function unescapeFrontmatterString(escaped: string): string {
   return result;
 }
 
-function parseKey(raw: string): string {
+function unescapeSingleQuotedString(escaped: string): string {
+  return escaped.replace(/''/g, "'");
+}
+
+function parseQuotedScalar(raw: string): string | null {
   const trimmed = raw.trim();
-  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+  if (trimmed.length < 2) return null;
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
     return unescapeFrontmatterString(trimmed.slice(1, -1));
   }
-  return trimmed;
+  if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
+    return unescapeSingleQuotedString(trimmed.slice(1, -1));
+  }
+  return null;
+}
+
+function parseKey(raw: string): string {
+  return parseQuotedScalar(raw) ?? raw.trim();
 }
 
 function parseScalarValue(raw: string): OkfFrontmatterScalar {
+  const quoted = parseQuotedScalar(raw);
+  if (quoted !== null) return quoted;
   const trimmed = raw.trim();
-  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
-    return unescapeFrontmatterString(trimmed.slice(1, -1));
-  }
   if (trimmed === 'null') return null;
   if (trimmed === 'true') return true;
   if (trimmed === 'false') return false;

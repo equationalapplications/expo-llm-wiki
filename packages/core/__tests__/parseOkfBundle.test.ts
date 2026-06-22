@@ -344,6 +344,16 @@ describe('parseOkfBundle — log and round-trip', () => {
     });
   });
 
+  it('skips log entries with invalid dates', () => {
+    const files: OkfFile[] = [
+      {
+        path: 'entities/alice/log.md',
+        content: '## 2026-99-99\n\n- (observation) Bad date entry\n',
+      },
+    ];
+    expect(parseOkfBundle('alice', files).entities.alice.events).toEqual([]);
+  });
+
   it('parses plain (unlinked) log entries', () => {
     const files: OkfFile[] = [
       {

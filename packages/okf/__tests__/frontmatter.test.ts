@@ -165,6 +165,12 @@ describe('parseFrontmatter', () => {
     expect(frontmatter['custom key']).toBe('v');
   });
 
+  it('unquotes single-quoted keys and scalar values', () => {
+    const { frontmatter } = parseFrontmatter("---\n'type': 'fact'\ntitle: 'It''s fine'\n---\n");
+    expect(frontmatter.type).toBe('fact');
+    expect(frontmatter.title).toBe("It's fine");
+  });
+
   it('unquotes a quoted custom key containing a colon', () => {
     const { frontmatter } = parseFrontmatter('---\ntype: fact\n"meta:field": w\n---\n');
     expect(frontmatter['meta:field']).toBe('w');

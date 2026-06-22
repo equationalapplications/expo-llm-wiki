@@ -101,7 +101,7 @@ describe('schema migrations', () => {
     // Should have written schema_version
     const versionWrite = db.runCalls.find(
       c => (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
-           (c.args[0] === '6' || c.args[1] === '6')
+           (c.args[0] === '5' || c.args[1] === '5')
     );
     expect(versionWrite).toBeDefined();
 
@@ -122,7 +122,7 @@ describe('schema migrations', () => {
     // Version should have been written
     const versionWrite = db.runCalls.find(
       c => (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
-           (c.args[0] === '6' || c.args[1] === '6')
+           (c.args[0] === '5' || c.args[1] === '5')
     );
     expect(versionWrite).toBeDefined();
   });
@@ -145,7 +145,7 @@ describe('schema migrations', () => {
   });
 
   it('already at current version → no migration runs', async () => {
-    const db = makeMockDb({ hasEntries: true, hasPorter: true, metaVersion: '6' });
+    const db = makeMockDb({ hasEntries: true, hasPorter: true, metaVersion: '5' });
     const wiki = createWiki(db);
     await wiki.setup();
 
@@ -170,27 +170,11 @@ describe('schema migrations', () => {
 
     const versionWrite = db.runCalls.find(
       c => (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
-           (c.args[0] === '6' || c.args[1] === '6')
+           (c.args[0] === '5' || c.args[1] === '5')
     );
     expect(versionWrite).toBeDefined();
   });
 
-  it('existing install at version 5 → migration 6 scopes edges uniqueness to entity_id', async () => {
-    const db = makeMockDb({ hasEntries: true, hasPorter: true, metaVersion: '5' });
-    const wiki = createWiki(db);
-    await wiki.setup();
-
-    const hasEdgesRecreate = db.execCalls.some(
-      s => s.includes('edges_v6') || (s.includes('DROP TABLE') && s.includes('edges')),
-    );
-    expect(hasEdgesRecreate).toBe(true);
-
-    const versionWrite = db.runCalls.find(
-      c => (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
-           (c.args[0] === '6' || c.args[1] === '6')
-    );
-    expect(versionWrite).toBeDefined();
-  });
 });
 
 // Helper that mirrors the module-level assertion in migrations.ts so we can test
