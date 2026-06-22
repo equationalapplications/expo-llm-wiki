@@ -1,7 +1,7 @@
 /**
  * Generate a random ID with an optional prefix.
- * Uses crypto.randomUUID() when available, falling back to Math.random() for compatibility.
- * Provides cryptographically secure random values when available.
+ * Uses crypto.randomUUID() when available, falling back to crypto.getRandomValues().
+ * Throws if neither is available — record IDs must always be cryptographically random.
  */
 export function generateId(prefix: string = ''): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -13,6 +13,8 @@ export function generateId(prefix: string = ''): string {
     crypto.getRandomValues(bytes);
     return prefix + Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('').substring(0, 24);
   }
-  // Fallback to Math.random (lower entropy, ~92 bits combined)
-  return prefix + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+  throw new Error(
+    'generateId: no cryptographically secure random source available ' +
+      '(crypto.randomUUID and crypto.getRandomValues are both missing).',
+  );
 }

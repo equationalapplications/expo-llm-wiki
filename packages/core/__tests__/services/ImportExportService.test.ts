@@ -228,6 +228,41 @@ describe('ImportExportService', () => {
         200,
       );
     });
+
+    it('escapes control characters in cross-entity collision warnings', async () => {
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      mockDump.entities['user_1'].facts[0].entity_id = 'user_1\nINJECTED';
+      mockEntryRepo.findExistingMetadataByIds.mockResolvedValue([
+        { id: 'fact_1', entity_id: 'user_2\nINJECTED LOG LINE', updated_at: 50 },
+      ]);
+
+      await importExportService.importDump(mockDump, { merge: true });
+
+      const message = consoleWarnSpy.mock.calls[0][0] as string;
+      expect(message).not.toContain('\nINJECTED');
+      expect(message).toContain('\\nINJECTED');
+
+      consoleWarnSpy.mockRestore();
+    });
+
+    it('clips oversized title/body on import, and embeds the clipped text', async () => {
+      mockDump.entities['user_1'].facts[0].title = 'T'.repeat(600);
+      mockDump.entities['user_1'].facts[0].body = 'B'.repeat(9000);
+
+      await importExportService.importDump(mockDump);
+
+      const upserted = mockEntryRepo.upsertForImport.mock.calls[0][0];
+      expect(upserted.title.length).toBe(500);
+      expect(upserted.body.length).toBe(8000);
+
+      expect(mockEmbeddingService.embedFact).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'T'.repeat(500),
+          body: 'B'.repeat(8000),
+        }),
+      );
+    });
   });
 
   describe('Importing: Blobs and Vectors', () => {
@@ -271,6 +306,41 @@ describe('ImportExportService', () => {
       );
 
       expect(mockEmbeddingService.storeEmbeddingDimension).toHaveBeenCalledWith(2);
+    });
+
+    it('drops oversized embedding_blob data and still imports the fact', async () => {
+      // 32KB cap = 8192 floats = 32768 bytes. One byte over the cap.
+      const oversizedData = new Array(32769).fill(0);
+
+      const dumpWithOversizedBlob: MemoryDump = {
+        generatedAt: Date.now(),
+        entities: {
+          user_1: {
+            facts: [
+              {
+                id: 'fact_big',
+                entity_id: 'user_1',
+                title: 'Big Blob',
+                body: 'Text',
+                source_type: 'user_stated',
+                updated_at: 100,
+                embedding_blob: { type: 'Buffer', data: oversizedData },
+              } as unknown as WikiFact,
+            ],
+            tasks: [],
+            events: [],
+          },
+        },
+      };
+
+      await importExportService.importDump(dumpWithOversizedBlob);
+
+      expect(mockEntryRepo.upsertForImport).toHaveBeenCalledTimes(1);
+      const upserted = mockEntryRepo.upsertForImport.mock.calls[0][0];
+      // Oversized blob is dropped, not stored.
+      expect(upserted.embedding_blob).toBeUndefined();
+      // Fact still imports and falls through to re-embed (no preserved blob).
+      expect(mockEmbeddingService.embedFact).toHaveBeenCalled();
     });
   });
 });

@@ -140,4 +140,21 @@ describe('WikiMemory.hasChanged', () => {
     const wiki = new WikiMemory(db as any, stubOptions);
     await expect(wiki.hasChanged('entity-1', 'doc.md', 'not-a-hash')).rejects.toThrow();
   });
+
+  it('escapes control characters in the rejected sourceRef before throwing', async () => {
+    const db = makeMockDb([]);
+    const wiki = new WikiMemory(db as any, stubOptions);
+    let caught: Error | undefined;
+    try {
+      await wiki.hasChanged('entity-1', '!!!\n\x1b', VALID_HASH);
+    } catch (e) {
+      caught = e as Error;
+    }
+    expect(caught).toBeDefined();
+    // A raw newline or raw ESC byte in the message would let the value forge a fake log line.
+    expect(caught!.message).not.toContain('\n');
+    expect(caught!.message).not.toContain('\x1b');
+    // The escaped value (as a JSON string literal) is still present for debugging.
+    expect(caught!.message).toContain('\\n');
+  });
 });
