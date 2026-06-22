@@ -1,7 +1,7 @@
 # Spec: `useEntityStatus(entityId)` React hook
 
 **Date:** 2026-06-22
-**Status:** Draft
+**Status:** Implemented
 **Follow-up to:** [2026-05-08-entity-status-subscription.md](./2026-05-08-entity-status-subscription.md) (§"React consumer (out of scope, follow-up)")
 **Package:** `@equationalapplications/expo-llm-wiki-react` (`packages/react`)
 
