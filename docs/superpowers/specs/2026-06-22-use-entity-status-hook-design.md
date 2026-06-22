@@ -3,13 +3,13 @@
 **Date:** 2026-06-22
 **Status:** Implemented
 **Follow-up to:** [2026-05-08-entity-status-subscription.md](./2026-05-08-entity-status-subscription.md) (§"React consumer (out of scope, follow-up)")
-**Package:** `@equationalapplications/expo-llm-wiki-react` (`packages/react`)
+**Package:** `@equationalapplications/react-llm-wiki` (`packages/react`)
 
 ---
 
 ## Problem
 
-`WikiMemory.getEntityStatus(entityId)` and `WikiMemory.subscribeEntityStatus(entityId, callback)` are fully implemented and shipped in `packages/core` (`packages/core/src/WikiMemory.ts:279-288`, delegating to `JobManager.ts:275-309`). There is no React binding. Developers building loading UI for background ingest/librarian/heal work must wire `useEffect` + `useState` + manual subscribe/unsubscribe themselves in every component.
+`WikiMemory.getEntityStatus(entityId)` and `WikiMemory.subscribeEntityStatus(entityId, callback)` are fully implemented and shipped in `packages/core` (`packages/core/src/WikiMemory.ts:279-288`, delegating to `packages/core/src/services/JobManager.ts:275-309`). There is no React binding. Developers building loading UI for background ingest/librarian/heal work must wire `useEffect` + `useState` + manual subscribe/unsubscribe themselves in every component.
 
 `packages/react` already has seven hooks in this style (`useWikiHasChanged`, `useWikiIngest`, etc.) and a `useWiki()` context accessor (`packages/react/src/WikiContext.tsx`). No subscription-based hook exists yet in this package — all existing hooks are action/promise-based (`execute()` + `isPending`/`error`/`lastResult`).
 
@@ -38,23 +38,30 @@ import type { EntityStatus } from '@equationalapplications/core-llm-wiki';
 
 export function useEntityStatus(entityId: string): EntityStatus {
   const wiki = useWiki();
-  const [status, setStatus] = useState<EntityStatus>(() => wiki.getEntityStatus(entityId));
+  const [snapshot, setSnapshot] = useState<{ entityId: string; status: EntityStatus }>(() => ({
+    entityId,
+    status: wiki.getEntityStatus(entityId),
+  }));
 
   useEffect(() => {
-    setStatus(wiki.getEntityStatus(entityId));
-    return wiki.subscribeEntityStatus(entityId, setStatus);
+    setSnapshot({ entityId, status: wiki.getEntityStatus(entityId) });
+    return wiki.subscribeEntityStatus(entityId, (status) => {
+      setSnapshot({ entityId, status });
+    });
   }, [wiki, entityId]);
 
-  return status;
+  return snapshot.entityId === entityId
+    ? snapshot.status
+    : wiki.getEntityStatus(entityId);
 }
 ```
 
 ### Design decisions (resolved during brainstorming)
 
 1. **`useEffect`, not `useSyncExternalStore`.** `packages/react/package.json` declares `peerDependencies: { react: ">=17" }`; `useSyncExternalStore` requires React 18+. Adopting it would require a shim dependency (`use-sync-external-store`) not used anywhere else in this repo, for a "quick win" hook. Rejected — stay on the `useEffect` pattern used by every other hook in this package.
-2. **Redundant initial fetch is intentional, not a bug.** Per `JobManager.ts:283-298` (and the binding spec, rule 1), `subscribeEntityStatus` synchronously invokes its callback once with the current snapshot immediately on subscribe. The effect therefore calls `getEntityStatus` once for the synchronous initial render value, then `subscribeEntityStatus` immediately re-delivers the same value via its mandatory initial emission. This is a harmless extra `setState` call with an identical value — not optimized away, because removing the initial `getEntityStatus` call would leave the hook's first-paint value stale/unset until the effect mounts (worse for SSR and first render).
+2. **Redundant initial fetch is intentional, not a bug.** Per `packages/core/src/services/JobManager.ts:283-298` (and the binding spec, rule 1), `subscribeEntityStatus` synchronously invokes its callback once with the current snapshot immediately on subscribe. The effect therefore calls `getEntityStatus` once for the synchronous initial render value, then `subscribeEntityStatus` immediately re-delivers the same value via its mandatory initial emission. This is a harmless extra `setState` call with an identical value — not optimized away, because removing the initial `getEntityStatus` call would leave the hook's first-paint value stale/unset until the effect mounts (worse for SSR and first render).
 3. **No `entityId` validation.** No other hook in `packages/react` validates its `entityId`/string arguments; `WikiMemory.getEntityStatus`/`subscribeEntityStatus` already accept any string with no normalization (per the binding spec, §"API"). Validation, if ever needed, belongs in core, not this thin wrapper.
-4. **`entityId` changes are supported.** Changing `entityId` across renders re-runs the effect: old subscription is torn down (idempotent unsubscribe per binding spec rule 7-adjacent guarantee), new subscription created, state reset to the new entity's current status via the same initial-fetch-then-subscribe sequence.
+4. **`entityId` changes are supported without stale UI.** The hook stores `{ entityId, status }` and returns `snapshot.status` only when `snapshot.entityId` matches the current `entityId`; otherwise it synchronously reads `wiki.getEntityStatus(entityId)`. That avoids a one-render flash of the previous entity's status (and ignores late callbacks from a torn-down subscription) while the effect re-subscribes.
 
 ---
 

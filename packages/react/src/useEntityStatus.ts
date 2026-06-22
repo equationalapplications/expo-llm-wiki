@@ -4,12 +4,19 @@ import type { EntityStatus } from '@equationalapplications/core-llm-wiki';
 
 export function useEntityStatus(entityId: string): EntityStatus {
   const wiki = useWiki();
-  const [status, setStatus] = useState<EntityStatus>(() => wiki.getEntityStatus(entityId));
+  const [snapshot, setSnapshot] = useState<{ entityId: string; status: EntityStatus }>(() => ({
+    entityId,
+    status: wiki.getEntityStatus(entityId),
+  }));
 
   useEffect(() => {
-    setStatus(wiki.getEntityStatus(entityId));
-    return wiki.subscribeEntityStatus(entityId, setStatus);
+    setSnapshot({ entityId, status: wiki.getEntityStatus(entityId) });
+    return wiki.subscribeEntityStatus(entityId, (status) => {
+      setSnapshot({ entityId, status });
+    });
   }, [wiki, entityId]);
 
-  return status;
+  return snapshot.entityId === entityId
+    ? snapshot.status
+    : wiki.getEntityStatus(entityId);
 }

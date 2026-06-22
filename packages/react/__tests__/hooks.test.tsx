@@ -837,17 +837,28 @@ describe('useEntityStatus', () => {
 
   it('resubscribes when entityId changes', () => {
     const wiki = makeMockWiki();
-    const { rerender } = renderHook(({ entityId }) => useEntityStatus(entityId), {
+    const { rerender, result } = renderHook(({ entityId }) => useEntityStatus(entityId), {
       wrapper: wrapper(wiki),
       initialProps: { entityId: 'e1' },
     });
 
     const firstUnsubscribe = wiki.subscribeEntityStatus.mock.results[0].value as () => void;
 
+    wiki.getEntityStatus.mockImplementation((id: string) =>
+      id === 'e2'
+        ? { ingesting: true, librarian: false, heal: false }
+        : { ingesting: false, librarian: false, heal: false },
+    );
+    wiki.subscribeEntityStatus.mockImplementation((id: string, cb: (s: EntityStatus) => void) => {
+      cb(wiki.getEntityStatus(id));
+      return vi.fn();
+    });
+
     rerender({ entityId: 'e2' });
 
     expect(firstUnsubscribe).toHaveBeenCalledTimes(1);
     expect(wiki.subscribeEntityStatus).toHaveBeenCalledTimes(2);
     expect(wiki.subscribeEntityStatus.mock.calls[1][0]).toBe('e2');
+    expect(result.current).toEqual({ ingesting: true, librarian: false, heal: false });
   });
 });
