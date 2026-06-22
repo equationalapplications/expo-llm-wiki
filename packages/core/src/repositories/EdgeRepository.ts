@@ -2,13 +2,12 @@ import { BaseRepository } from './BaseRepository';
 import type { WikiEdge, SQLiteAdapter } from '../types';
 
 export class EdgeRepository extends BaseRepository {
-  /** Insert an edge, silently skipping if (source_id, target_id, edge_type) already exists. */
+  /** Insert an edge, silently skipping on primary-key or uniqueness conflicts. */
   async addIgnoreDuplicate(edge: WikiEdge, tx?: SQLiteAdapter): Promise<void> {
     const executor = this.getExecutor(tx);
     await executor.runAsync(
-      `INSERT INTO ${this.prefix}edges (id, entity_id, source_id, target_id, edge_type, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(source_id, target_id, edge_type) DO NOTHING`,
+      `INSERT OR IGNORE INTO ${this.prefix}edges (id, entity_id, source_id, target_id, edge_type, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
       [edge.id, edge.entity_id, edge.source_id, edge.target_id, edge.edge_type, edge.created_at],
     );
   }

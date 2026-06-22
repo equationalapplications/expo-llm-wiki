@@ -48,6 +48,14 @@ function makeMockDb(opts: {
         }
         return { sql: `CREATE VIRTUAL TABLE x USING fts5(title, tokenize='unicode61')` } as any;
       }
+      // Edges table existence check (created in migration v5)
+      if (sql.includes('sqlite_master') && args[0]?.endsWith('edges')) {
+        const version = currentMetaVersion !== null ? parseInt(currentMetaVersion, 10) : 0;
+        if (hasEntries && version >= 5) {
+          return { name: args[0] } as any;
+        }
+        return null;
+      }
       // Meta version check — matches both literal SQL and parameterized queries
       if (sql.includes('schema_version') || args.includes('schema_version')) {
         if (currentMetaVersion !== null) {
@@ -93,7 +101,7 @@ describe('schema migrations', () => {
     // Should have written schema_version
     const versionWrite = db.runCalls.find(
       c => (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
-           (c.args[0] === '5' || c.args[1] === '5')
+           (c.args[0] === '6' || c.args[1] === '6')
     );
     expect(versionWrite).toBeDefined();
 
@@ -114,7 +122,7 @@ describe('schema migrations', () => {
     // Version should have been written
     const versionWrite = db.runCalls.find(
       c => (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
-           (c.args[0] === '5' || c.args[1] === '5')
+           (c.args[0] === '6' || c.args[1] === '6')
     );
     expect(versionWrite).toBeDefined();
   });
@@ -137,7 +145,7 @@ describe('schema migrations', () => {
   });
 
   it('already at current version → no migration runs', async () => {
-    const db = makeMockDb({ hasEntries: true, hasPorter: true, metaVersion: '5' });
+    const db = makeMockDb({ hasEntries: true, hasPorter: true, metaVersion: '6' });
     const wiki = createWiki(db);
     await wiki.setup();
 
@@ -162,7 +170,24 @@ describe('schema migrations', () => {
 
     const versionWrite = db.runCalls.find(
       c => (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
-           (c.args[0] === '5' || c.args[1] === '5')
+           (c.args[0] === '6' || c.args[1] === '6')
+    );
+    expect(versionWrite).toBeDefined();
+  });
+
+  it('existing install at version 5 → migration 6 scopes edges uniqueness to entity_id', async () => {
+    const db = makeMockDb({ hasEntries: true, hasPorter: true, metaVersion: '5' });
+    const wiki = createWiki(db);
+    await wiki.setup();
+
+    const hasEdgesRecreate = db.execCalls.some(
+      s => s.includes('edges_v6') || (s.includes('DROP TABLE') && s.includes('edges')),
+    );
+    expect(hasEdgesRecreate).toBe(true);
+
+    const versionWrite = db.runCalls.find(
+      c => (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
+           (c.args[0] === '6' || c.args[1] === '6')
     );
     expect(versionWrite).toBeDefined();
   });

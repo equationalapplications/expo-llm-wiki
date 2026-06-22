@@ -49,6 +49,23 @@ describe('EdgeRepository', () => {
     expect(rows.length).toBe(1);
   });
 
+  it('addIgnoreDuplicate() is idempotent on the same primary key id', async () => {
+    const edge = makeEdge({ id: 'edge_same', source_id: 'a', target_id: 'b', edge_type: 'mentions' });
+    await repo.addIgnoreDuplicate(edge);
+    await repo.addIgnoreDuplicate(edge);
+
+    const rows = await db.getAllAsync<any>(`SELECT * FROM ${PREFIX}edges WHERE id = 'edge_same'`);
+    expect(rows.length).toBe(1);
+  });
+
+  it('addIgnoreDuplicate() allows the same source/target/type across different entities', async () => {
+    await repo.addIgnoreDuplicate(makeEdge({ id: 'edge_e1', entity_id: 'entity1', source_id: 'a', target_id: 'b', edge_type: 'mentions' }));
+    await repo.addIgnoreDuplicate(makeEdge({ id: 'edge_e2', entity_id: 'entity2', source_id: 'a', target_id: 'b', edge_type: 'mentions' }));
+
+    const rows = await db.getAllAsync<any>(`SELECT * FROM ${PREFIX}edges`);
+    expect(rows.length).toBe(2);
+  });
+
   it('addIgnoreDuplicate() allows distinct edge_type between the same source/target', async () => {
     await repo.addIgnoreDuplicate(makeEdge({ id: 'edge_1', source_id: 'a', target_id: 'b', edge_type: 'mentions' }));
     await repo.addIgnoreDuplicate(makeEdge({ id: 'edge_2', source_id: 'a', target_id: 'b', edge_type: 'reports_to' }));

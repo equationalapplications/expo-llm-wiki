@@ -175,7 +175,7 @@ Output: `{ generatedAt: Date.now(), entities: { [entityId]: { facts, tasks, even
         target_id TEXT NOT NULL,
         edge_type TEXT NOT NULL,
         created_at INTEGER NOT NULL,
-        UNIQUE(source_id, target_id, edge_type)
+        UNIQUE(entity_id, source_id, target_id, edge_type)
       );
       CREATE INDEX IF NOT EXISTS ${prefix}edges_entity_idx ON ${prefix}edges (entity_id);
     `);
@@ -184,7 +184,7 @@ Output: `{ generatedAt: Date.now(), entities: { [entityId]: { facts, tasks, even
 ```
 
 `okf_type` is nullable; existing rows (pre-migration, or never touched by OKF import) stay
-`NULL`. The `UNIQUE(source_id, target_id, edge_type)` constraint makes re-importing the same
+`NULL`. The `UNIQUE(entity_id, source_id, target_id, edge_type)` constraint makes re-importing the same
 bundle idempotent without needing LWW semantics for edges — there's no "edit an edge", only
 presence/absence.
 

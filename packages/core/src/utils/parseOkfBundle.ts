@@ -217,6 +217,8 @@ export function parseOkfBundle(
   for (const file of files) {
     if (!isConceptFile(file.path)) continue;
     const { frontmatter } = parseConcept(file.content);
+    const route = resolveRoute(file.path, frontmatter.type ?? '', options);
+    if (route === 'ignore') continue;
     const resolvedId =
       typeof frontmatter.id === 'string' && frontmatter.id ? frontmatter.id : basenameMd(file.path);
     addPathAliases(pathToResolvedId, file.path, resolvedId);

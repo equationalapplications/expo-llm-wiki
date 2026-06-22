@@ -127,6 +127,19 @@ describe('parseOkfBundle', () => {
       expect(dump.entities.alice.facts.map(f => f.id)).toEqual(['fact_keep']);
     });
 
+    it('does not resolve edges to concepts routed to ignore', () => {
+      const files: OkfFile[] = [
+        conceptFile(
+          'entities/alice/facts/keep.md',
+          { type: 'fact', title: 'K', id: 'fact_keep' },
+          'See [noise](./skip.md).',
+        ),
+        conceptFile('entities/alice/facts/skip.md', { type: 'noise', title: 'S', id: 'fact_skip' }),
+      ];
+      const dump = parseOkfBundle('alice', files, { typeMapping: { noise: 'ignore' } });
+      expect(dump.entities.alice.edges).toEqual([]);
+    });
+
     it('does not treat inherited object keys as typeMapping entries', () => {
       const files: OkfFile[] = [
         conceptFile('entities/alice/concepts/x.md', { type: 'toString', title: 'C', id: 'concept_x' }),
