@@ -2,6 +2,7 @@ import type { OkfMarkdownLink } from './types';
 
 const LINK_PATTERN = /\[([^\]]*)\]\(([^)\s]+)\)/g;
 const EXCLUDED_SCHEME = /^(https?:|mailto:)/i;
+const FENCED_CODE_BLOCK_PATTERN = /```[\s\S]*?```/g;
 
 /**
  * Extracts inline markdown links (`[text](path)`) from a concept body.
@@ -11,9 +12,11 @@ const EXCLUDED_SCHEME = /^(https?:|mailto:)/i;
  * are candidates for graph edges.
  */
 export function extractMarkdownLinks(body: string): OkfMarkdownLink[] {
+  const searchableBody = body.replace(FENCED_CODE_BLOCK_PATTERN, '');
   const links: OkfMarkdownLink[] = [];
   let match: RegExpExecArray | null;
-  while ((match = LINK_PATTERN.exec(body)) !== null) {
+  LINK_PATTERN.lastIndex = 0;
+  while ((match = LINK_PATTERN.exec(searchableBody)) !== null) {
     const [, text, path] = match;
     if (EXCLUDED_SCHEME.test(path)) continue;
     links.push({ text, path });

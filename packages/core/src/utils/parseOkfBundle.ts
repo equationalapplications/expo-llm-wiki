@@ -118,11 +118,11 @@ function parseLogEntryText(text: string): {
 
 function frontmatterToFact(
   entityId: string,
+  id: string,
   frontmatter: OkfFrontmatter,
   body: string,
   now: number,
 ): WikiFact {
-  const id = typeof frontmatter.id === 'string' && frontmatter.id ? frontmatter.id : generateId();
   const created_at = parseFrontmatterTimestamp(frontmatter.created_at, now);
   const updated_at = parseFrontmatterTimestamp(
     frontmatter.timestamp,
@@ -158,8 +158,12 @@ function frontmatterToFact(
   };
 }
 
-function frontmatterToTask(entityId: string, frontmatter: OkfFrontmatter, now: number): WikiTask {
-  const id = typeof frontmatter.id === 'string' && frontmatter.id ? frontmatter.id : generateId();
+function frontmatterToTask(
+  entityId: string,
+  id: string,
+  frontmatter: OkfFrontmatter,
+  now: number,
+): WikiTask {
   const created_at = parseFrontmatterTimestamp(frontmatter.created_at, now);
   const updated_at = parseFrontmatterTimestamp(
     frontmatter.timestamp,
@@ -227,9 +231,9 @@ export function parseOkfBundle(
       typeof frontmatter.id === 'string' && frontmatter.id ? frontmatter.id : basenameMd(file.path);
 
     if (route === 'fact') {
-      facts.push(frontmatterToFact(entityId, frontmatter, body, now));
+      facts.push(frontmatterToFact(entityId, resolvedId, frontmatter, body, now));
     } else {
-      tasks.push(frontmatterToTask(entityId, frontmatter, now));
+      tasks.push(frontmatterToTask(entityId, resolvedId, frontmatter, now));
     }
 
     for (const link of extractMarkdownLinks(body)) {

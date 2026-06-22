@@ -66,8 +66,8 @@ export function parseFrontmatter(content: string): { frontmatter: OkfFrontmatter
 Reads the `---\n...\n---\n` block. Supports scalar string/number/boolean/null, quoted strings
 (matching `serializeFrontmatter`'s quoting rules in reverse), and block string-lists (`  - item`
 lines under a `key:` line). Constructs it doesn't recognize (flow collections `[...]`/`{...}`,
-multi-line block scalars `|`/`>`, anchors/aliases, nested maps) are kept as the raw string value
-rather than causing a parse failure — this is a deliberate narrow subset, not a YAML 1.2 parser.
+multi-line block scalars `|`/`>`, anchors/aliases, nested maps) are silently skipped rather than
+causing a parse failure — this is a deliberate narrow subset, not a YAML 1.2 parser.
 
 **`src/concept.ts`** (add)
 
@@ -174,7 +174,7 @@ Output: `{ generatedAt: Date.now(), entities: { [entityId]: { facts, tasks, even
         created_at INTEGER NOT NULL,
         UNIQUE(source_id, target_id, edge_type)
       );
-      CREATE INDEX IF NOT EXISTS ${prefix}edges_entity_id ON ${prefix}edges (entity_id);
+      CREATE INDEX IF NOT EXISTS ${prefix}edges_entity_idx ON ${prefix}edges (entity_id);
     `);
   },
 },

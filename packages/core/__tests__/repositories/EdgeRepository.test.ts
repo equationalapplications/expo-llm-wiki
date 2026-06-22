@@ -82,9 +82,9 @@ describe('EdgeRepository', () => {
     const sentinel = new Error('intentional rollback');
 
     await expect(
-      db.withTransactionAsync(async () => {
-        await repo.addIgnoreDuplicate(makeEdge({ id: 'edge_tx' }), db);
-        const inTx = await db.getAllAsync<any>(`SELECT id FROM ${PREFIX}edges WHERE id = 'edge_tx'`);
+      db.withTransactionAsync(async (tx) => {
+        await repo.addIgnoreDuplicate(makeEdge({ id: 'edge_tx' }), tx);
+        const inTx = await tx.getAllAsync<any>(`SELECT id FROM ${PREFIX}edges WHERE id = 'edge_tx'`);
         expect(inTx.length).toBe(1);
         throw sentinel;
       }),

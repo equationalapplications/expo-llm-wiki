@@ -216,12 +216,12 @@ describe('parseOkfBundle — field mapping', () => {
     expect(task.priority).toBe(2);
   });
 
-  it('generates an id and uses Date.now() when frontmatter omits id and timestamps', () => {
+  it('uses filename basename as id and Date.now() when frontmatter omits id and timestamps', () => {
     const files: OkfFile[] = [
       conceptFile('entities/alice/facts/foreign.md', { type: 'note', title: 'T' }),
     ];
     const fact = parseOkfBundle('alice', files).entities.alice.facts[0];
-    expect(fact.id).toBe('generated');
+    expect(fact.id).toBe('foreign');
     expect(fact.created_at).toBe(FIXED_NOW);
     expect(fact.updated_at).toBe(FIXED_NOW);
   });
@@ -231,7 +231,7 @@ describe('parseOkfBundle — field mapping', () => {
       conceptFile('entities/alice/facts/foreign_slug.md', { type: 'fact', title: 'T' }),
     ];
     const fact = parseOkfBundle('alice', files).entities.alice.facts[0];
-    expect(fact.id).toBe('generated');
+    expect(fact.id).toBe('foreign_slug');
   });
 });
 

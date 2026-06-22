@@ -31,4 +31,9 @@ describe('extractMarkdownLinks', () => {
   it('handles an empty link text', () => {
     expect(extractMarkdownLinks('[](./facts/x.md)')).toEqual([{ text: '', path: './facts/x.md' }]);
   });
+
+  it('ignores links inside fenced code blocks', () => {
+    const body = 'Real [link](./facts/x.md)\n\n```\n[fake](./facts/y.md)\n```';
+    expect(extractMarkdownLinks(body)).toEqual([{ text: 'link', path: './facts/x.md' }]);
+  });
 });

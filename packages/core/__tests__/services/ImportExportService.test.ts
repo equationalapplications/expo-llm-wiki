@@ -396,7 +396,7 @@ describe('ImportExportService', () => {
             tasks: [],
             events: [],
             edges: [
-              { id: 'edge_1', entity_id: 'user_1', source_id: 'a', target_id: 'b', edge_type: 'mentions', created_at: 100 },
+              { id: 'edge_1', entity_id: 'spoofed_entity', source_id: 'a', target_id: 'b', edge_type: 'mentions', created_at: 100 },
               { id: 'edge_2', entity_id: 'user_1', source_id: 'b', target_id: 'c', edge_type: 'reports_to', created_at: 200 },
             ],
           },
@@ -407,7 +407,7 @@ describe('ImportExportService', () => {
 
       expect(mockEdgeRepo.addIgnoreDuplicate).toHaveBeenCalledTimes(2);
       expect(mockEdgeRepo.addIgnoreDuplicate).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 'edge_1', edge_type: 'mentions' }),
+        expect.objectContaining({ id: 'edge_1', edge_type: 'mentions', entity_id: 'user_1' }),
         mockDb,
       );
     });
