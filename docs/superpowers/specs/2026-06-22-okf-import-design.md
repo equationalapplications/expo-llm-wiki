@@ -133,19 +133,22 @@ A result of `'ignore'` at any step skips the file.
    for both our own exports (which always set the `id` custom key) and foreign bundles (which
    likely don't, per OKF's "only `type` is required" rule).
 2. **Per concept file:** `parseConcept` → frontmatter + body.
-   - Missing `id` → `generateId()`. Missing `created_at`/`updated_at` → `Date.now()`.
+   - Missing `id` → `basename(path)` (filename without `.md`), matching the path map from step 1 so
+     edges and `related_entry_id` resolve consistently. Missing `created_at`/`updated_at` →
+     `Date.now()`.
    - Remaining known frontmatter keys map back onto `WikiFact`/`WikiTask` fields, reversing
      `factFrontmatter`/`taskFrontmatter` from `formatOkfBundle.ts` (`title`, `tags`, `confidence`,
      `source_type`, `source_hash`, `source_ref`, `status`, `priority`, `resolved_at`,
      `deleted_at`, etc., per destination table).
    - `okf_type` field on the resulting `WikiFact`/`WikiTask` = `frontmatter.type` verbatim.
-   - `extractMarkdownLinks(body)`, resolve each `path` via the map from step 1; skip links that
-     don't resolve, or that resolve to `index.md`/`log.md` (structural navigation, not a
+   - `extractMarkdownLinks(body)`, resolve each `path` (after stripping `#…` / `?…` suffixes) via the
+     map from step 1; skip links that don't resolve, or that resolve to `index.md`/`log.md` (structural navigation, not a
      relationship). Emit `WikiEdge { id: generateId(), entity_id, source_id: <this concept's
      resolved id>, target_id: <resolved>, edge_type: text, created_at: Date.now() }`.
 3. **`log.md`** (if present): `parseLogMd` → events. Relative-link targets inside log entries
-   resolve via the same map to hydrate `related_entry_id` — this is the existing event-to-fact
-   relationship, unchanged in kind, just now read instead of only written.
+   resolve via the same map to hydrate `related_entry_id`, but only for paths under `/facts/`
+   (events link to facts on export; task targets are ignored). Fragment (`#…`) and query (`?…`)
+   suffixes are stripped before lookup.
 
 Output: `{ generatedAt: Date.now(), entities: { [entityId]: { facts, tasks, events, edges } } }`.
 

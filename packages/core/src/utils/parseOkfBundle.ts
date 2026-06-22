@@ -77,6 +77,15 @@ function lookupResolvedId(map: Map<string, string>, path: string): string | unde
   return map.get(path) ?? map.get(normalized) ?? map.get(`./${normalized}`);
 }
 
+function stripLinkSuffix(linkPath: string): string {
+  const hashIdx = linkPath.indexOf('#');
+  const queryIdx = linkPath.indexOf('?');
+  if (hashIdx === -1 && queryIdx === -1) return linkPath;
+  const cut =
+    hashIdx === -1 ? queryIdx : queryIdx === -1 ? hashIdx : Math.min(hashIdx, queryIdx);
+  return linkPath.slice(0, cut);
+}
+
 function resolveRoute(filePath: string, frontmatterType: string, options?: OkfImportOptions): Route {
   if (options?.typeMapping && frontmatterType in options.typeMapping) {
     return options.typeMapping[frontmatterType]!;
@@ -237,7 +246,7 @@ export function parseOkfBundle(
     }
 
     for (const link of extractMarkdownLinks(body)) {
-      const targetPath = resolveRelativePath(file.path, link.path);
+      const targetPath = resolveRelativePath(file.path, stripLinkSuffix(link.path));
       if (isStructuralPath(targetPath)) continue;
       const targetId = lookupResolvedId(pathToResolvedId, targetPath);
       if (!targetId) continue;
@@ -260,8 +269,8 @@ export function parseOkfBundle(
       if (!parsed) continue;
       let related_entry_id: string | null = null;
       if (parsed.linkPath) {
-        const targetPath = resolveRelativePath(logPath, parsed.linkPath);
-        if (!isStructuralPath(targetPath)) {
+        const targetPath = resolveRelativePath(logPath, stripLinkSuffix(parsed.linkPath));
+        if (!isStructuralPath(targetPath) && targetPath.includes('/facts/')) {
           related_entry_id = lookupResolvedId(pathToResolvedId, targetPath) ?? null;
         }
       }

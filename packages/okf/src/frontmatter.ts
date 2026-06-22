@@ -164,7 +164,7 @@ export function parseFrontmatter(content: string): { frontmatter: OkfFrontmatter
       frontmatter[key] = items;
       continue;
     }
-    const kvMatch = /^([^:]+):\s(.*)$/.exec(line);
+    const kvMatch = /^([^:]+):\s*(.*)$/.exec(line);
     if (kvMatch) {
       frontmatter[parseKey(kvMatch[1])] = parseScalarValue(kvMatch[2]);
     }
