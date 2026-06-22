@@ -9,7 +9,8 @@ import { useWikiIngest } from '../src/useWikiIngest';
 import { useWikiForget } from '../src/useWikiForget';
 import { useWikiExport } from '../src/useWikiExport';
 import { useWikiHasChanged } from '../src/useWikiHasChanged';
-import type { ReadOptions } from '@equationalapplications/core-llm-wiki';
+import { useEntityStatus } from '../src/useEntityStatus';
+import type { ReadOptions, EntityStatus } from '@equationalapplications/core-llm-wiki';
 
 /** Minimal mock of WikiMemory — uses the real MemoryBundle shape ({ facts, tasks, events }) */
 function makeMockWiki() {
@@ -24,6 +25,11 @@ function makeMockWiki() {
     runHeal: vi.fn().mockResolvedValue(undefined),
     runPrune: vi.fn().mockResolvedValue({ entries: 0, tasks: 0, events: 0 }),
     runReembed: vi.fn().mockResolvedValue({ embedded: 0, skipped: 0, failed: 0 }),
+    getEntityStatus: vi.fn().mockReturnValue({ ingesting: false, librarian: false, heal: false }),
+    subscribeEntityStatus: vi.fn((_entityId: string, cb: (s: EntityStatus) => void) => {
+      cb({ ingesting: false, librarian: false, heal: false });
+      return vi.fn();
+    }),
   };
 }
 
@@ -785,5 +791,74 @@ describe('useWikiHasChanged', () => {
 
     expect(caught).toBe(boom);
     expect(result.current.error).toBe(boom);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// useEntityStatus
+// ---------------------------------------------------------------------------
+
+describe('useEntityStatus', () => {
+  it('returns the initial snapshot from getEntityStatus', () => {
+    const wiki = makeMockWiki();
+    wiki.getEntityStatus.mockReturnValue({ ingesting: true, librarian: false, heal: false });
+    wiki.subscribeEntityStatus.mockImplementation((_entityId: string, cb: (s: EntityStatus) => void) => {
+      cb({ ingesting: true, librarian: false, heal: false });
+      return vi.fn();
+    });
+
+    const { result } = renderHook(() => useEntityStatus('e1'), { wrapper: wrapper(wiki) });
+
+    expect(result.current).toEqual({ ingesting: true, librarian: false, heal: false });
+    expect(wiki.getEntityStatus).toHaveBeenCalledWith('e1');
+  });
+
+  it('updates when the subscription callback fires a transition', () => {
+    const wiki = makeMockWiki();
+    const { result } = renderHook(() => useEntityStatus('e1'), { wrapper: wrapper(wiki) });
+
+    const cb = wiki.subscribeEntityStatus.mock.calls[0][1] as (s: EntityStatus) => void;
+    act(() => {
+      cb({ ingesting: true, librarian: false, heal: false });
+    });
+
+    expect(result.current).toEqual({ ingesting: true, librarian: false, heal: false });
+  });
+
+  it('unsubscribes on unmount', () => {
+    const wiki = makeMockWiki();
+    const { unmount } = renderHook(() => useEntityStatus('e1'), { wrapper: wrapper(wiki) });
+
+    const unsubscribe = wiki.subscribeEntityStatus.mock.results[0].value as () => void;
+    unmount();
+
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('resubscribes when entityId changes', () => {
+    const wiki = makeMockWiki();
+    const { rerender, result } = renderHook(({ entityId }) => useEntityStatus(entityId), {
+      wrapper: wrapper(wiki),
+      initialProps: { entityId: 'e1' },
+    });
+
+    const firstUnsubscribe = wiki.subscribeEntityStatus.mock.results[0].value as () => void;
+
+    wiki.getEntityStatus.mockImplementation((id: string) =>
+      id === 'e2'
+        ? { ingesting: true, librarian: false, heal: false }
+        : { ingesting: false, librarian: false, heal: false },
+    );
+    wiki.subscribeEntityStatus.mockImplementation((id: string, cb: (s: EntityStatus) => void) => {
+      cb(wiki.getEntityStatus(id));
+      return vi.fn();
+    });
+
+    rerender({ entityId: 'e2' });
+
+    expect(firstUnsubscribe).toHaveBeenCalledTimes(1);
+    expect(wiki.subscribeEntityStatus).toHaveBeenCalledTimes(2);
+    expect(wiki.subscribeEntityStatus.mock.calls[1][0]).toBe('e2');
+    expect(result.current).toEqual({ ingesting: true, librarian: false, heal: false });
   });
 });

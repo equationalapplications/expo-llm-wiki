@@ -341,6 +341,18 @@ await execute(['user-123']);
 // lastResult: MemoryDump | null
 ```
 
+### `useEntityStatus(entityId)`
+
+Live status for an entity's background jobs (ingest, librarian, heal). Updates whenever a transition occurs — no polling.
+
+```typescript
+const { ingesting, librarian, heal } = useEntityStatus('user-123');
+
+if (ingesting || librarian || heal) {
+  return <Spinner label={ingesting ? 'Ingesting…' : librarian ? 'Organizing…' : 'Healing…'} />;
+}
+```
+
 ## Multi-Entity Reads
 
 `useMemoryRead` accepts a single entity ID or an array to search across namespaces in one pass. Pass `tierWeights` to apply per-entity score multipliers before the global top-K slice:
