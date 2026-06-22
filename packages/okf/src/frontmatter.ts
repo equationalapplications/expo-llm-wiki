@@ -118,13 +118,24 @@ function parseScalarValue(raw: string): OkfFrontmatterScalar {
   return trimmed;
 }
 
+function matchFrontmatterKeyValue(
+  line: string,
+): { key: string; value: string; hasValue: boolean } | null {
+  const keyMatch = /^(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^:]+)/.exec(line);
+  if (!keyMatch) return null;
+  const key = keyMatch[0];
+  if (line[key.length] !== ':') return null;
+  const tail = line.slice(key.length + 1);
+  return { key, value: tail.trimStart(), hasValue: tail.trim().length > 0 };
+}
+
 /**
  * Parses the subset of YAML frontmatter that {@link serializeFrontmatter} produces:
  * scalar string/number/boolean/null values, quoted strings, and block string-lists.
  * NOT a general YAML parser — flow collections (`[...]`/`{...}`), multi-line block
  * scalars (`|`/`>`), anchors, and aliases are not recognized. Lines that don't match
- * a recognized shape (including quoted keys/values containing an embedded, unescaped
- * colon) are silently skipped rather than throwing, so a foreign bundle never crashes
+ * a recognized shape are silently skipped rather than throwing, so a foreign bundle
+ * never crashes
  * the import — it just loses fidelity on the unrecognized line.
  */
 export function parseFrontmatter(content: string): { frontmatter: OkfFrontmatter; rest: string } {
@@ -146,15 +157,18 @@ export function parseFrontmatter(content: string): { frontmatter: OkfFrontmatter
   let i = 1;
   while (i < closingIndex) {
     const line = lines[i];
-    const emptyArrayMatch = /^([^:]+):\s*\[\]\s*$/.exec(line);
-    if (emptyArrayMatch) {
-      frontmatter[parseKey(emptyArrayMatch[1])] = [];
+    const kv = matchFrontmatterKeyValue(line);
+    if (!kv) {
       i++;
       continue;
     }
-    const arrayHeaderMatch = /^([^:]+):\s*$/.exec(line);
-    if (arrayHeaderMatch) {
-      const key = parseKey(arrayHeaderMatch[1]);
+    if (kv.value.trim() === '[]') {
+      frontmatter[parseKey(kv.key)] = [];
+      i++;
+      continue;
+    }
+    if (!kv.hasValue) {
+      const key = parseKey(kv.key);
       const items: OkfFrontmatterScalar[] = [];
       i++;
       while (i < closingIndex && /^\s*-\s/.test(lines[i])) {
@@ -164,10 +178,7 @@ export function parseFrontmatter(content: string): { frontmatter: OkfFrontmatter
       frontmatter[key] = items;
       continue;
     }
-    const kvMatch = /^([^:]+):\s*(.*)$/.exec(line);
-    if (kvMatch) {
-      frontmatter[parseKey(kvMatch[1])] = parseScalarValue(kvMatch[2]);
-    }
+    frontmatter[parseKey(kv.key)] = parseScalarValue(kv.value);
     i++;
   }
 

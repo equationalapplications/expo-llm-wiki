@@ -1,6 +1,5 @@
 import type { OkfMarkdownLink } from './types';
 
-const LINK_PATTERN = /\[([^\]]*)\]\(([^)\s]+)\)/g;
 const EXCLUDED_SCHEME = /^(https?:|mailto:)/i;
 const FENCED_CODE_BLOCK_PATTERN = /```[\s\S]*?```/g;
 
@@ -13,10 +12,10 @@ const FENCED_CODE_BLOCK_PATTERN = /```[\s\S]*?```/g;
  */
 export function extractMarkdownLinks(body: string): OkfMarkdownLink[] {
   const searchableBody = body.replace(FENCED_CODE_BLOCK_PATTERN, '');
+  const linkPattern = /\[([^\]]*)\]\(([^)\s]+)\)/g;
   const links: OkfMarkdownLink[] = [];
   let match: RegExpExecArray | null;
-  LINK_PATTERN.lastIndex = 0;
-  while ((match = LINK_PATTERN.exec(searchableBody)) !== null) {
+  while ((match = linkPattern.exec(searchableBody)) !== null) {
     const [, text, path] = match;
     if (EXCLUDED_SCHEME.test(path)) continue;
     links.push({ text, path });

@@ -127,6 +127,15 @@ describe('parseOkfBundle', () => {
       expect(dump.entities.alice.facts.map(f => f.id)).toEqual(['fact_keep']);
     });
 
+    it('does not treat inherited object keys as typeMapping entries', () => {
+      const files: OkfFile[] = [
+        conceptFile('entities/alice/concepts/x.md', { type: 'toString', title: 'C', id: 'concept_x' }),
+      ];
+      const dump = parseOkfBundle('alice', files, { typeMapping: {} });
+      expect(dump.entities.alice.facts).toHaveLength(1);
+      expect(dump.entities.alice.tasks).toHaveLength(0);
+    });
+
     it('ignores index.md and log.md during concept parsing', () => {
       const files: OkfFile[] = [
         { path: 'entities/alice/index.md', content: '# Index\n' },

@@ -165,6 +165,21 @@ describe('parseFrontmatter', () => {
     expect(frontmatter['custom key']).toBe('v');
   });
 
+  it('unquotes a quoted custom key containing a colon', () => {
+    const { frontmatter } = parseFrontmatter('---\ntype: fact\n"meta:field": w\n---\n');
+    expect(frontmatter['meta:field']).toBe('w');
+  });
+
+  it('round-trips quoted keys containing colons', () => {
+    const serialized = serializeFrontmatter({
+      type: 'fact',
+      'meta:field': 'w',
+      'a:b': 'v',
+    } as any);
+    const { frontmatter } = parseFrontmatter(serialized);
+    expect(frontmatter).toEqual({ type: 'fact', 'meta:field': 'w', 'a:b': 'v' });
+  });
+
   it('returns the body after the closing delimiter as rest', () => {
     const { rest } = parseFrontmatter('---\ntype: fact\n---\n\nBody text\nline two');
     expect(rest).toBe('\nBody text\nline two');

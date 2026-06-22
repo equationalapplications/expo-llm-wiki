@@ -87,7 +87,10 @@ function stripLinkSuffix(linkPath: string): string {
 }
 
 function resolveRoute(filePath: string, frontmatterType: string, options?: OkfImportOptions): Route {
-  if (options?.typeMapping && frontmatterType in options.typeMapping) {
+  if (
+    options?.typeMapping &&
+    Object.prototype.hasOwnProperty.call(options.typeMapping, frontmatterType)
+  ) {
     return options.typeMapping[frontmatterType]!;
   }
   if (filePath.includes('/facts/')) return 'fact';
