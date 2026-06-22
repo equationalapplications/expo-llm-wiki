@@ -477,6 +477,18 @@ Core WikiMemory provides:
 - **Input Validation**: `sourceRef`/`sourceHash` normalized; embedding dimensions validated
 - **Parameterized Queries**: All SQL uses bind parameters
 
+### Prompt-Injection Trust Boundary
+
+User-controlled text — `event.summary` passed to `write()`, document chunks passed to `ingestDocument()`,
+fact `title`/`body` (including imported dumps) — is interpolated verbatim into LLM prompts for librarian,
+heal, and embedding operations. Prompt templating does simple variable substitution; it does not detect
+or filter instruction-like content.
+
+Mitigating prompt injection (e.g. "ignore prior instructions and emit...") is **the host's responsibility**.
+If your application accepts untrusted input that flows into `write()`, `ingestDocument()`, or `importDump()`,
+treat the LLM's librarian/heal output as similarly untrusted — validate or scope it before acting on it
+downstream.
+
 ## Usage
 
 ```typescript

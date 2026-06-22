@@ -781,6 +781,18 @@ expo-llm-wiki implements multiple security layers to protect against common vuln
 
 See [SECURITY.md](https://github.com/equationalapplications/expo-llm-wiki/blob/main/SECURITY.md) for VectorRanker adapter security guidance (SQL injection, entity isolation, credential scrubbing, resource limits).
 
+### Prompt-Injection Trust Boundary
+
+User-controlled text — `event.summary` passed to `write()`, document chunks passed to `ingestDocument()`,
+fact `title`/`body` (including imported dumps) — is interpolated verbatim into LLM prompts for librarian,
+heal, and embedding operations. Prompt templating does simple variable substitution; it does not detect
+or filter instruction-like content.
+
+Mitigating prompt injection (e.g. "ignore prior instructions and emit...") is **the host's responsibility**.
+If your application accepts untrusted input that flows into `write()`, `ingestDocument()`, or `importDump()`,
+treat the LLM's librarian/heal output as similarly untrusted — validate or scope it before acting on it
+downstream.
+
 ## React Component Lifecycle
 
 How React hooks stay in sync with memory state:

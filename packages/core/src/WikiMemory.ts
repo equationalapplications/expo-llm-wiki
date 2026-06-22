@@ -28,6 +28,8 @@ import { PromptService } from './services/PromptService';
 
 export { WikiBusyError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER } from './types';
 
+const TABLE_PREFIX_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,30}_$/;
+
 /** Typed escape hatch for tests — not part of the supported consumer API. */
 export interface WikiMemoryTestAccess {
   embeddingService: EmbeddingService;
@@ -68,7 +70,13 @@ export class WikiMemory {
   constructor(db: SQLiteAdapter, options: WikiOptions) {
     this.db = db;
     this.options = options;
-    this.prefix = options.config?.tablePrefix || 'llm_wiki_';
+    this.prefix = options.config?.tablePrefix ?? 'llm_wiki_';
+    if (!TABLE_PREFIX_PATTERN.test(this.prefix)) {
+      throw new Error(
+        `Invalid tablePrefix: ${JSON.stringify(this.prefix)}. ` +
+          `Must match ${TABLE_PREFIX_PATTERN} (letter, then alphanumeric/underscore, ending in "_", max 32 chars total).`,
+      );
+    }
     this.outboxRepo = new OutboxRepository(db, this.prefix, !!options.config?.enableOutbox);
     this.entryRepo = new EntryRepository(db, this.prefix, this.outboxRepo);
     this.taskRepo = new TaskRepository(db, this.prefix, this.outboxRepo);
@@ -122,6 +130,7 @@ export class WikiMemory {
     this.writeService = new WriteService(
       this.db,
       this.options,
+      this.entryRepo,
       this.eventRepo,
       this.metadataRepo,
       this.jobManager,
@@ -219,7 +228,7 @@ export class WikiMemory {
   async hasChanged(entityId: string, sourceRef: string, sourceHash: string): Promise<boolean> {
     const normalizedRef = normalizeSourceRef(sourceRef);
     if (!normalizedRef) {
-      throw new Error(`Invalid sourceRef: "${sourceRef}"`);
+      throw new Error(`Invalid sourceRef: ${JSON.stringify(sourceRef)}`);
     }
     const normalizedHash = normalizeSourceHash(sourceHash);
     if (!normalizedHash) {

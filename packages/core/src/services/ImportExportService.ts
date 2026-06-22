@@ -6,6 +6,11 @@ import type { MetadataRepository } from '../repositories/MetadataRepository';
 import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
+import { clip } from '../utils/pure';
+
+const MAX_EMBEDDING_BLOB_BYTES = 32 * 1024; // 8192-dim float32 ceiling
+const IMPORT_TITLE_MAX = 500;
+const IMPORT_BODY_MAX = 8000;
 
 export class ImportExportService {
   constructor(
@@ -118,6 +123,7 @@ export class ImportExportService {
     const factsWithPreservedBlob = new Map<string, Uint8Array>();
     const preservedBlobDims = new Set<number>();
     const softDeletedFactIds: string[] = [];
+    const clippedTextByFactId = new Map<string, { title: string; body: string }>();
 
     await this.db.withTransactionAsync(async (tx) => {
       if (!merge) {
@@ -166,7 +172,9 @@ export class ImportExportService {
         let rawBlob: Uint8Array | null = null;
 
         if (rawBlobRaw instanceof Uint8Array) {
-          rawBlob = rawBlobRaw;
+          if (rawBlobRaw.byteLength <= MAX_EMBEDDING_BLOB_BYTES) {
+            rawBlob = rawBlobRaw;
+          }
         } else if (
           rawBlobRaw !== null &&
           rawBlobRaw !== undefined &&
@@ -174,16 +182,26 @@ export class ImportExportService {
         ) {
           const obj = rawBlobRaw as Record<string, unknown>;
           if (obj['type'] === 'Buffer' && Array.isArray(obj['data'])) {
-            rawBlob = new Uint8Array(obj['data'] as number[]);
+            const data = obj['data'] as number[];
+            if (data.length <= MAX_EMBEDDING_BLOB_BYTES) {
+              rawBlob = new Uint8Array(data);
+            }
           } else if (!Array.isArray(rawBlobRaw)) {
             const entries = Object.keys(obj);
             if (entries.length > 0 && entries.every((k) => /^\d+$/.test(k))) {
               const len = entries.length;
-              rawBlob = new Uint8Array(len);
-              for (let i = 0; i < len; i++)
-                rawBlob[i] = (obj[String(i)] as number) ?? 0;
+              if (len <= MAX_EMBEDDING_BLOB_BYTES) {
+                rawBlob = new Uint8Array(len);
+                for (let i = 0; i < len; i++) {
+                  rawBlob[i] = (obj[String(i)] as number) ?? 0;
+                }
+              }
             }
           }
+        }
+
+        if (rawBlob !== null && rawBlob.byteLength > MAX_EMBEDDING_BLOB_BYTES) {
+          rawBlob = null; // Oversized blob — drop and let the fact re-embed normally.
         }
 
         let blobData: Uint8Array | null = null;
@@ -222,11 +240,15 @@ export class ImportExportService {
           if (merge && safeUpdatedAt <= existing.updated_at) continue;
         }
 
+        const safeTitle = clip(String(fact.title ?? ''), IMPORT_TITLE_MAX);
+        const safeBody = clip(String(fact.body ?? ''), IMPORT_BODY_MAX);
+        clippedTextByFactId.set(fact.id, { title: safeTitle, body: safeBody });
+
         const factObj: WikiFact = {
           id: fact.id,
           entity_id: entityId,
-          title: fact.title,
-          body: fact.body,
+          title: safeTitle,
+          body: safeBody,
           tags: Array.isArray(fact.tags) ? fact.tags : [],
           confidence: fact.confidence,
           source_type: sourceType,
@@ -335,11 +357,12 @@ export class ImportExportService {
         upsertedFactIds.has(fact.id) &&
         !factsWithPreservedBlob.has(fact.id)
       ) {
+        const clipped = clippedTextByFactId.get(fact.id);
         const embedded = await this.embeddingService.embedFact({
           id: fact.id,
           entity_id: entityId,
-          title: fact.title,
-          body: fact.body,
+          title: clipped?.title ?? fact.title,
+          body: clipped?.body ?? fact.body,
           tags:
             Array.isArray(fact.tags) || typeof fact.tags === 'string'
               ? fact.tags
@@ -457,7 +480,8 @@ export class ImportExportService {
     targetEntityId: string,
   ): void {
     console.warn(
-      `[WikiMemory] importDump: ${type} id "${id}" already belongs to entity "${existingEntityId}"; skipping for entity "${targetEntityId}"`,
+      `[WikiMemory] importDump: ${type} id ${JSON.stringify(id)} already belongs to entity ` +
+        `${JSON.stringify(existingEntityId)}; skipping for entity ${JSON.stringify(targetEntityId)}`,
     );
   }
 

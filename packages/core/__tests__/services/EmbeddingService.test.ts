@@ -80,6 +80,15 @@ describe('EmbeddingService', () => {
       const result = await embeddingService.embedFact({ id: 'f1', entity_id: 'e1', title: 'T', body: 'B', tags: [] });
       expect(result).toBe(false);
     });
+
+    it('clips the assembled text to 16,000 chars before calling embedFn', async () => {
+      const fact = { id: 'f1', entity_id: 'e1', title: 'T'.repeat(20_000), body: '', tags: [] };
+
+      await embeddingService.embedFact(fact);
+
+      const calledWith = (mockOptions.llmProvider.embed as any).mock.calls[0][0] as string;
+      expect(calledWith.length).toBeLessThanOrEqual(16_000);
+    });
   });
 
   describe('Dimension Tracking', () => {

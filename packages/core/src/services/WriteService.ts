@@ -1,16 +1,19 @@
 import type { SQLiteAdapter } from '../types';
 import type { WikiOptions, WikiEvent } from '../types';
 import { WikiBusyError } from '../types';
+import type { EntryRepository } from '../repositories/EntryRepository';
 import type { EventRepository } from '../repositories/EventRepository';
 import type { MetadataRepository } from '../repositories/MetadataRepository';
 import type { JobManager } from './JobManager';
 import type { MaintenanceService } from './MaintenanceService';
 import { generateId } from '../utils/ids';
+import { clip } from '../utils/pure';
 
 export class WriteService {
   constructor(
     private db: SQLiteAdapter,
     private options: WikiOptions,
+    private entryRepo: EntryRepository,
     private eventRepo: EventRepository,
     private metadataRepo: MetadataRepository,
     private jobManager: JobManager,
@@ -18,6 +21,34 @@ export class WriteService {
   ) {}
 
   async write(entityId: string, event: Omit<WikiEvent, 'id' | 'entity_id' | 'created_at'>): Promise<void> {
+    if (typeof entityId !== 'string' || entityId.length === 0 || entityId.length > 200 || entityId.includes('\0')) {
+      throw new TypeError(
+        `Invalid entityId: must be a non-empty string at most 200 chars with no null bytes; got ${JSON.stringify(entityId)}.`,
+      );
+    }
+    if (event === null || typeof event !== 'object' || Array.isArray(event)) {
+      throw new TypeError('Invalid event: must be a non-null object.');
+    }
+    if (typeof event.summary !== 'string') {
+      throw new TypeError('Invalid event.summary: must be a string.');
+    }
+    const summary = clip(event.summary, 4000);
+
+    let relatedEntryId: string | null = null;
+    const rawRelatedEntryId = event.related_entry_id;
+    if (rawRelatedEntryId != null && rawRelatedEntryId !== '') {
+      if (
+        typeof rawRelatedEntryId !== 'string' ||
+        rawRelatedEntryId.length > 200 ||
+        rawRelatedEntryId.includes('\0')
+      ) {
+        relatedEntryId = null;
+      } else {
+        const existing = await this.entryRepo.findByIds([rawRelatedEntryId], [entityId]);
+        relatedEntryId = existing.length > 0 ? rawRelatedEntryId : null;
+      }
+    }
+
     const id = generateId('evt_');
     const now = Date.now();
 
@@ -30,8 +61,8 @@ export class WriteService {
       id,
       entity_id: entityId,
       event_type: eventType,
-      summary: event.summary,
-      related_entry_id: event.related_entry_id || null,
+      summary,
+      related_entry_id: relatedEntryId,
       created_at: now,
     };
 

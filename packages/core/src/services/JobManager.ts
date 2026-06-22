@@ -30,6 +30,24 @@ export class JobManager {
   private _librarianKey(entityId: string) { return `${this.prefix}:${entityId}:librarian`; }
   private _healKey(entityId: string) { return `${this.prefix}:${entityId}:heal`; }
 
+  /**
+   * Lookup table for acquireLock/releaseLock's dynamic-dispatch branch.
+   * Excludes 'ingest' | 'global_reembed' | 'global_import', which those
+   * methods already handle via explicit if/else branches before reaching
+   * this table.
+   */
+  private readonly lockKeyFns: Record<
+    Exclude<OperationType, 'ingest' | 'global_reembed' | 'global_import'>,
+    (entityId: string) => string
+  > = {
+    prune: (id) => this._pruneKey(id),
+    librarian: (id) => this._librarianKey(id),
+    heal: (id) => this._healKey(id),
+    reembed: (id) => this._reembedKey(id),
+    import: (id) => this._importKey(id),
+    forget: (id) => this._forgetKey(id),
+  };
+
   private _isReembedActive(entityId: string): boolean {
     return this.activeMaintenanceJobs.has(this._reembedKey(entityId)) ||
            this.activeMaintenanceJobs.has(this._globalReembedKey());
@@ -174,9 +192,7 @@ export class JobManager {
     } else if (operation === 'global_import') {
       this.activeMaintenanceJobs.add(this._globalImportKey());
     } else {
-      const keyFnName = `_${operation}Key` as keyof this;
-      const keyFn = this[keyFnName] as (id: string) => string;
-      this.activeMaintenanceJobs.add(keyFn.call(this, entityId));
+      this.activeMaintenanceJobs.add(this.lockKeyFns[operation as Exclude<OperationType, 'ingest' | 'global_reembed' | 'global_import'>](entityId));
     }
 
     this._notifyStatusSubscribers(entityId);
@@ -190,9 +206,7 @@ export class JobManager {
     } else if (operation === 'global_import') {
       this.activeMaintenanceJobs.delete(this._globalImportKey());
     } else {
-      const keyFnName = `_${operation}Key` as keyof this;
-      const keyFn = this[keyFnName] as (id: string) => string;
-      this.activeMaintenanceJobs.delete(keyFn.call(this, entityId));
+      this.activeMaintenanceJobs.delete(this.lockKeyFns[operation as Exclude<OperationType, 'ingest' | 'global_reembed' | 'global_import'>](entityId));
     }
 
     this._notifyStatusSubscribers(entityId);

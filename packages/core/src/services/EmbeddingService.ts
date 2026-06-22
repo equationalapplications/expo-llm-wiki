@@ -2,6 +2,7 @@ import type { SQLiteAdapter, WikiOptions } from '../types';
 import { HOOK_TIMEOUT_MARKER } from '../types';
 import type { EntryRepository } from '../repositories/EntryRepository';
 import type { MetadataRepository } from '../repositories/MetadataRepository';
+import { clip } from '../utils/pure';
 
 export class EmbeddingService {
   constructor(
@@ -62,7 +63,7 @@ export class EmbeddingService {
         tagsStr = fact.tags;
       }
     }
-    const text = `${fact.title} ${fact.body} ${tagsStr}`.trim();
+    const text = clip(`${fact.title} ${fact.body} ${tagsStr}`.trim(), 16_000);
     try {
       const vector = await embedFn(text);
       if (vector.length === 0 || !vector.every(v => typeof v === 'number' && isFinite(v))) {
