@@ -26,7 +26,7 @@ describe('WikiMemory tablePrefix validation', () => {
     '123_',
     'no_trailing_underscore',
     "' OR 1=1 --",
-    'A' + 'b'.repeat(31) + '_', // 33 chars, exceeds the 31-char cap
+    'A' + 'b'.repeat(31) + '_', // 33 chars, exceeds the 32-char cap
     '',
   ])('rejects invalid prefix %j', (prefix) => {
     expect(() => new WikiMemory({} as any, stubOptions(prefix))).toThrow(/Invalid tablePrefix/);

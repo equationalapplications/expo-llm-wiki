@@ -74,7 +74,7 @@ export class WikiMemory {
     if (!TABLE_PREFIX_PATTERN.test(this.prefix)) {
       throw new Error(
         `Invalid tablePrefix: ${JSON.stringify(this.prefix)}. ` +
-          `Must match ${TABLE_PREFIX_PATTERN} (letter, then alphanumeric/underscore, ending in "_", max 31 chars).`,
+          `Must match ${TABLE_PREFIX_PATTERN} (letter, then alphanumeric/underscore, ending in "_", max 32 chars total).`,
       );
     }
     this.outboxRepo = new OutboxRepository(db, this.prefix, !!options.config?.enableOutbox);

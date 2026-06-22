@@ -22,7 +22,7 @@ export interface WikiConfig {
   /**
    * Prefix applied to every SQL table/index/trigger name. Must match
    * `^[A-Za-z][A-Za-z0-9_]{0,30}_$` (letter, then alphanumeric/underscore,
-   * ending in `_`, max 31 chars) — enforced in the `WikiMemory` constructor.
+   * ending in `_`, max 32 chars total) — enforced in the `WikiMemory` constructor.
    * Default: `'llm_wiki_'`.
    */
   tablePrefix?: string;

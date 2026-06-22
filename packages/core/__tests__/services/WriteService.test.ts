@@ -176,6 +176,13 @@ describe('WriteService', () => {
       ).rejects.toThrow(/Invalid event\.summary/);
     });
 
+    it('throws if event is null or not an object', async () => {
+      await expect(
+        // @ts-expect-error - intentionally testing runtime guard against null input
+        writeService.write('user_1', null),
+      ).rejects.toThrow(/Invalid event/);
+    });
+
     it('throws for an entityId containing a null byte', async () => {
       await expect(
         writeService.write('bad\0id', { summary: 'ok', event_type: 'observation' }),

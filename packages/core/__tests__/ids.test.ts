@@ -7,8 +7,16 @@ describe('generateId', () => {
   });
 
   it('uses crypto.randomUUID when available', () => {
+    const realCrypto = globalThis.crypto;
+    const randomUUID = vi.fn(() => '12345678-1234-1234-1234-1234567890ab');
+    vi.stubGlobal('crypto', {
+      ...realCrypto,
+      randomUUID,
+    });
+
     const id = generateId('evt_');
     expect(id).toMatch(/^evt_[0-9a-f]{24}$/);
+    expect(randomUUID).toHaveBeenCalledTimes(1);
   });
 
   it('falls back to crypto.getRandomValues when randomUUID is unavailable', () => {

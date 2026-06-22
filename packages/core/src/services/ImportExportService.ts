@@ -172,7 +172,9 @@ export class ImportExportService {
         let rawBlob: Uint8Array | null = null;
 
         if (rawBlobRaw instanceof Uint8Array) {
-          rawBlob = rawBlobRaw;
+          if (rawBlobRaw.byteLength <= MAX_EMBEDDING_BLOB_BYTES) {
+            rawBlob = rawBlobRaw;
+          }
         } else if (
           rawBlobRaw !== null &&
           rawBlobRaw !== undefined &&
@@ -180,14 +182,20 @@ export class ImportExportService {
         ) {
           const obj = rawBlobRaw as Record<string, unknown>;
           if (obj['type'] === 'Buffer' && Array.isArray(obj['data'])) {
-            rawBlob = new Uint8Array(obj['data'] as number[]);
+            const data = obj['data'] as number[];
+            if (data.length <= MAX_EMBEDDING_BLOB_BYTES) {
+              rawBlob = new Uint8Array(data);
+            }
           } else if (!Array.isArray(rawBlobRaw)) {
             const entries = Object.keys(obj);
             if (entries.length > 0 && entries.every((k) => /^\d+$/.test(k))) {
               const len = entries.length;
-              rawBlob = new Uint8Array(len);
-              for (let i = 0; i < len; i++)
-                rawBlob[i] = (obj[String(i)] as number) ?? 0;
+              if (len <= MAX_EMBEDDING_BLOB_BYTES) {
+                rawBlob = new Uint8Array(len);
+                for (let i = 0; i < len; i++) {
+                  rawBlob[i] = (obj[String(i)] as number) ?? 0;
+                }
+              }
             }
           }
         }

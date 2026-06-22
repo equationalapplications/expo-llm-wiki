@@ -23,8 +23,11 @@ export class WriteService {
   async write(entityId: string, event: Omit<WikiEvent, 'id' | 'entity_id' | 'created_at'>): Promise<void> {
     if (typeof entityId !== 'string' || entityId.length === 0 || entityId.length > 200 || entityId.includes('\0')) {
       throw new TypeError(
-        `Invalid entityId: must be a non-empty string under 200 chars with no null bytes; got ${JSON.stringify(entityId)}.`,
+        `Invalid entityId: must be a non-empty string at most 200 chars with no null bytes; got ${JSON.stringify(entityId)}.`,
       );
+    }
+    if (event === null || typeof event !== 'object' || Array.isArray(event)) {
+      throw new TypeError('Invalid event: must be a non-null object.');
     }
     if (typeof event.summary !== 'string') {
       throw new TypeError('Invalid event.summary: must be a string.');
