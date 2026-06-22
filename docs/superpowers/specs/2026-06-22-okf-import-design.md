@@ -1,6 +1,6 @@
 # Design: Open Knowledge Format (OKF) Import
 
-**Status:** Draft
+**Status:** Implemented
 **Packages:** `@equationalapplications/core-okf` (`packages/okf`); `packages/core` adapter + schema
 **Date:** 2026-06-22
 **Depends on:** `2026-06-18-okf-export-design.md` (export-only; explicitly deferred import)

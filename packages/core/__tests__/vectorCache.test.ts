@@ -325,7 +325,7 @@ describe('vector cache — importDump() invalidation', () => {
             },
           ],
           tasks: [],
-          events: [],
+          events: [], edges: [],
         },
       },
     };
@@ -375,7 +375,7 @@ describe('vector cache — importDump() invalidation', () => {
             },
           ],
           tasks: [],
-          events: [],
+          events: [], edges: [],
         },
       },
     };
@@ -431,7 +431,7 @@ describe('vector cache — importDump() invalidation', () => {
             },
           ],
           tasks: [],
-          events: [],
+          events: [], edges: [],
         },
       },
     };

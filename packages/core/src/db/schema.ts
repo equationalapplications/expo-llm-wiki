@@ -18,7 +18,8 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
       access_count INTEGER NOT NULL DEFAULT 0,
       deleted_at INTEGER,
       embedding TEXT,
-      embedding_blob BLOB
+      embedding_blob BLOB,
+      okf_type TEXT
     );
 
     CREATE INDEX IF NOT EXISTS ${prefix}entries_entity_idx ON ${prefix}entries(entity_id);
@@ -35,10 +36,23 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       resolved_at INTEGER,
-      deleted_at INTEGER
+      deleted_at INTEGER,
+      okf_type TEXT
     );
 
     CREATE INDEX IF NOT EXISTS ${prefix}tasks_entity_idx ON ${prefix}tasks(entity_id, status);
+
+    CREATE TABLE IF NOT EXISTS ${prefix}edges (
+      id TEXT PRIMARY KEY,
+      entity_id TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      edge_type TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      UNIQUE(source_id, target_id, edge_type)
+    );
+
+    CREATE INDEX IF NOT EXISTS ${prefix}edges_entity_idx ON ${prefix}edges(entity_id);
 
     CREATE TABLE IF NOT EXISTS ${prefix}events (
       id TEXT PRIMARY KEY,

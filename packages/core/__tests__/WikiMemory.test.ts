@@ -38,7 +38,7 @@ describe('WikiMemory (Facade Layer)', () => {
 
   describe('Service Delegation', () => {
     it('delegates read() to RetrievalService', async () => {
-      const mockBundle: MemoryBundle = { facts: [], tasks: [], events: [] };
+      const mockBundle: MemoryBundle = { facts: [], tasks: [], events: [], edges: [] };
       const readSpy = vi
         .spyOn(wiki.__testAccess.retrievalService, 'read')
         .mockResolvedValue(mockBundle);

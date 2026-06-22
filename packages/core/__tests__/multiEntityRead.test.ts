@@ -98,7 +98,7 @@ describe('read() multi-entity retrieval', () => {
     expect(result).toEqual({
       facts: [],
       tasks: [],
-      events: [],
+      events: [], edges: [],
       metadata: { query: 'apple', entityIds: [] },
     });
   });
@@ -190,11 +190,11 @@ describe('read() multi-entity retrieval', () => {
       entities: {
         tier_boosted: {
           facts: [{ id: 'boosted-weak', entity_id: 'tier_boosted', title: 'apple boosted', body: 'apple', tags: [], confidence: 'certain', source_type: 'user_stated', source_hash: null, source_ref: null, created_at: 1000, updated_at: 1000, last_accessed_at: null, access_count: 0, deleted_at: null }],
-          tasks: [], events: [],
+          tasks: [], events: [], edges: [],
         },
         tier_normal: {
           facts: [{ id: 'normal-strong', entity_id: 'tier_normal', title: 'apple normal', body: 'apple', tags: [], confidence: 'certain', source_type: 'user_stated', source_hash: null, source_ref: null, created_at: 2000, updated_at: 2000, last_accessed_at: null, access_count: 0, deleted_at: null }],
-          tasks: [], events: [],
+          tasks: [], events: [], edges: [],
         },
       },
     });
@@ -223,11 +223,11 @@ describe('read() multi-entity retrieval', () => {
       entities: {
         tier_boosted: {
           facts: [{ id: 'boosted-weak', entity_id: 'tier_boosted', title: 'apple boosted', body: 'apple', tags: [], confidence: 'certain', source_type: 'user_stated', source_hash: null, source_ref: null, created_at: 1000, updated_at: 1000, last_accessed_at: null, access_count: 0, deleted_at: null }],
-          tasks: [], events: [],
+          tasks: [], events: [], edges: [],
         },
         tier_normal: {
           facts: [{ id: 'normal-strong', entity_id: 'tier_normal', title: 'apple normal', body: 'apple', tags: [], confidence: 'certain', source_type: 'user_stated', source_hash: null, source_ref: null, created_at: 2000, updated_at: 2000, last_accessed_at: null, access_count: 0, deleted_at: null }],
-          tasks: [], events: [],
+          tasks: [], events: [], edges: [],
         },
       },
     });

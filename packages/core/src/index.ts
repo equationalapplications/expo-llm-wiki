@@ -8,6 +8,7 @@ export type { WikiMemoryTestAccess } from './WikiMemory';
 export { formatContext } from './utils/formatContext';
 export { formatMemoryDump } from './utils/formatMemoryDump';
 export { formatOkfBundle } from './utils/formatOkfBundle';
+export { parseOkfBundle, type OkfImportOptions } from './utils/parseOkfBundle';
 export { parseEmbedding } from './utils/embedding';
 export * from './librarianPrompt';
 export { PromptService } from './services/PromptService';

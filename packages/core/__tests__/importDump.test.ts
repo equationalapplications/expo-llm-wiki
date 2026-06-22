@@ -249,6 +249,7 @@ function makeDump(entityId: string, factId = 'f1'): MemoryDump {
           summary: 'test event',
           created_at: 1000,
         }],
+        edges: [],
       },
     },
   };
@@ -321,7 +322,7 @@ describe('importDump — busy-key protection', () => {
     return {
       generatedAt: Date.now(),
       entities: {
-        [entityId]: { facts: [], tasks: [], events: [] },
+        [entityId]: { facts: [], tasks: [], events: [], edges: [] },
       },
     };
   }
@@ -355,7 +356,7 @@ describe('importDump — busy-key protection', () => {
             deleted_at: null,
           }],
           tasks: [],
-          events: [],
+          events: [], edges: [],
         },
       },
     };

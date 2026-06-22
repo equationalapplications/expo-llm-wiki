@@ -67,12 +67,12 @@ describe('importDump LWW — facts', () => {
     const oldTs = 1000;
     await wiki.importDump({
       generatedAt: oldTs,
-      entities: { 'user-1': { facts: [makeFact({ id: 'f1', body: 'old', updated_at: oldTs })], tasks: [], events: [] } },
+      entities: { 'user-1': { facts: [makeFact({ id: 'f1', body: 'old', updated_at: oldTs })], tasks: [], events: [], edges: [] } },
     });
 
     const newTs = 2000;
     await wiki.importDump(
-      { generatedAt: newTs, entities: { 'user-1': { facts: [makeFact({ id: 'f1', body: 'new', updated_at: newTs })], tasks: [], events: [] } } },
+      { generatedAt: newTs, entities: { 'user-1': { facts: [makeFact({ id: 'f1', body: 'new', updated_at: newTs })], tasks: [], events: [], edges: [] } } },
       { merge: true }
     );
 
@@ -86,11 +86,11 @@ describe('importDump LWW — facts', () => {
     const { wiki } = await open();
     await wiki.importDump({
       generatedAt: 5000,
-      entities: { 'user-1': { facts: [makeFact({ id: 'f1', body: 'local-new', updated_at: 5000 })], tasks: [], events: [] } },
+      entities: { 'user-1': { facts: [makeFact({ id: 'f1', body: 'local-new', updated_at: 5000 })], tasks: [], events: [], edges: [] } },
     });
 
     await wiki.importDump(
-      { generatedAt: 1000, entities: { 'user-1': { facts: [makeFact({ id: 'f1', body: 'remote-old', updated_at: 1000 })], tasks: [], events: [] } } },
+      { generatedAt: 1000, entities: { 'user-1': { facts: [makeFact({ id: 'f1', body: 'remote-old', updated_at: 1000 })], tasks: [], events: [], edges: [] } } },
       { merge: true }
     );
 
@@ -104,11 +104,11 @@ describe('importDump LWW — facts', () => {
     const { wiki } = await open();
     await wiki.importDump({
       generatedAt: 1000,
-      entities: { 'user-1': { facts: [makeFact({ id: 'f1', updated_at: 1000 })], tasks: [], events: [] } },
+      entities: { 'user-1': { facts: [makeFact({ id: 'f1', updated_at: 1000 })], tasks: [], events: [], edges: [] } },
     });
 
     await wiki.importDump(
-      { generatedAt: 2000, entities: { 'user-1': { facts: [makeFact({ id: 'f2', updated_at: 2000, body: 'novel' })], tasks: [], events: [] } } },
+      { generatedAt: 2000, entities: { 'user-1': { facts: [makeFact({ id: 'f2', updated_at: 2000, body: 'novel' })], tasks: [], events: [], edges: [] } } },
       { merge: true }
     );
 
@@ -123,11 +123,11 @@ describe('importDump LWW — tasks', () => {
     const { wiki } = await open();
     await wiki.importDump({
       generatedAt: 1000,
-      entities: { 'user-1': { facts: [], tasks: [makeTask({ id: 't1', description: 'old', updated_at: 1000 })], events: [] } },
+      entities: { 'user-1': { facts: [], tasks: [makeTask({ id: 't1', description: 'old', updated_at: 1000 })], events: [], edges: [] } },
     });
 
     await wiki.importDump(
-      { generatedAt: 2000, entities: { 'user-1': { facts: [], tasks: [makeTask({ id: 't1', description: 'new', updated_at: 2000 })], events: [] } } },
+      { generatedAt: 2000, entities: { 'user-1': { facts: [], tasks: [makeTask({ id: 't1', description: 'new', updated_at: 2000 })], events: [], edges: [] } } },
       { merge: true }
     );
 
@@ -139,11 +139,11 @@ describe('importDump LWW — tasks', () => {
     const { wiki } = await open();
     await wiki.importDump({
       generatedAt: 5000,
-      entities: { 'user-1': { facts: [], tasks: [makeTask({ id: 't1', description: 'local-new', updated_at: 5000 })], events: [] } },
+      entities: { 'user-1': { facts: [], tasks: [makeTask({ id: 't1', description: 'local-new', updated_at: 5000 })], events: [], edges: [] } },
     });
 
     await wiki.importDump(
-      { generatedAt: 1000, entities: { 'user-1': { facts: [], tasks: [makeTask({ id: 't1', description: 'remote-old', updated_at: 1000 })], events: [] } } },
+      { generatedAt: 1000, entities: { 'user-1': { facts: [], tasks: [makeTask({ id: 't1', description: 'remote-old', updated_at: 1000 })], events: [], edges: [] } } },
       { merge: true }
     );
 
@@ -155,11 +155,11 @@ describe('importDump LWW — tasks', () => {
     const { wiki } = await open();
     await wiki.importDump({
       generatedAt: 1000,
-      entities: { 'user-1': { facts: [], tasks: [makeTask({ id: 't1', updated_at: 1000 })], events: [] } },
+      entities: { 'user-1': { facts: [], tasks: [makeTask({ id: 't1', updated_at: 1000 })], events: [], edges: [] } },
     });
 
     await wiki.importDump(
-      { generatedAt: 2000, entities: { 'user-1': { facts: [], tasks: [makeTask({ id: 't2', description: 'novel task', updated_at: 2000 })], events: [] } } },
+      { generatedAt: 2000, entities: { 'user-1': { facts: [], tasks: [makeTask({ id: 't2', description: 'novel task', updated_at: 2000 })], events: [], edges: [] } } },
       { merge: true }
     );
 
@@ -174,13 +174,13 @@ describe('importDump non-merge — replace mode', () => {
     const { wiki } = await open();
     await wiki.importDump({
       generatedAt: 1000,
-      entities: { 'user-1': { facts: [makeFact({ id: 'f1', body: 'old fact', updated_at: 1000 })], tasks: [], events: [] } },
+      entities: { 'user-1': { facts: [makeFact({ id: 'f1', body: 'old fact', updated_at: 1000 })], tasks: [], events: [], edges: [] } },
     });
 
     // Non-merge import with different id — old fact should be soft-deleted
     await wiki.importDump({
       generatedAt: 2000,
-      entities: { 'user-1': { facts: [makeFact({ id: 'f2', body: 'replacement', updated_at: 2000 })], tasks: [], events: [] } },
+      entities: { 'user-1': { facts: [makeFact({ id: 'f2', body: 'replacement', updated_at: 2000 })], tasks: [], events: [], edges: [] } },
     });
 
     const bundle = await wiki.read('user-1', '');
@@ -194,7 +194,7 @@ describe('importDump LWW — invalid updated_at guard', () => {
     const { wiki } = await open();
     await wiki.importDump({
       generatedAt: 5000,
-      entities: { 'user-1': { facts: [makeFact({ id: 'f1', body: 'local-valid', updated_at: 5000 })], tasks: [], events: [] } },
+      entities: { 'user-1': { facts: [makeFact({ id: 'f1', body: 'local-valid', updated_at: 5000 })], tasks: [], events: [], edges: [] } },
     });
 
     await wiki.importDump(
@@ -204,7 +204,7 @@ describe('importDump LWW — invalid updated_at guard', () => {
           'user-1': {
             facts: [makeFact({ id: 'f1', body: 'incoming-nan', updated_at: NaN as unknown as number })],
             tasks: [],
-            events: [],
+            events: [], edges: [],
           },
         },
       },
@@ -219,7 +219,7 @@ describe('importDump LWW — invalid updated_at guard', () => {
     const { wiki } = await open();
     await wiki.importDump({
       generatedAt: 5000,
-      entities: { 'user-1': { facts: [], tasks: [makeTask({ id: 't1', description: 'local-valid', updated_at: 5000 })], events: [] } },
+      entities: { 'user-1': { facts: [], tasks: [makeTask({ id: 't1', description: 'local-valid', updated_at: 5000 })], events: [], edges: [] } },
     });
 
     await wiki.importDump(
@@ -229,7 +229,7 @@ describe('importDump LWW — invalid updated_at guard', () => {
           'user-1': {
             facts: [],
             tasks: [makeTask({ id: 't1', description: 'incoming-nan', updated_at: NaN as unknown as number })],
-            events: [],
+            events: [], edges: [],
           },
         },
       },
@@ -249,7 +249,7 @@ describe('importDump LWW — invalid updated_at guard', () => {
         'user-1': {
           facts: [makeFact({ id: 'f-nan', body: 'new-nan', updated_at: NaN as unknown as number })],
           tasks: [],
-          events: [],
+          events: [], edges: [],
         },
       },
     });
@@ -272,7 +272,7 @@ describe('importDump LWW — invalid updated_at guard', () => {
         'user-1': {
           facts: [],
           tasks: [makeTask({ id: 't-nan', description: 'new-nan', updated_at: NaN as unknown as number })],
-          events: [],
+          events: [], edges: [],
         },
       },
     });
@@ -295,7 +295,7 @@ describe('importDump LWW — events append-only', () => {
 
     await wiki.importDump({
       generatedAt: ts,
-      entities: { 'user-1': { facts: [], tasks: [], events: [makeEvent({ id: 'e1', summary: 'original' })] } },
+      entities: { 'user-1': { facts: [], tasks: [], events: [makeEvent({ id: 'e1', summary: 'original' })], edges: [] } },
     });
 
     await wiki.importDump(
@@ -309,6 +309,7 @@ describe('importDump LWW — events append-only', () => {
               makeEvent({ id: 'e1', summary: 'should be ignored' }),
               makeEvent({ id: 'e2', summary: 'novel' }),
             ],
+            edges: [],
           },
         },
       },

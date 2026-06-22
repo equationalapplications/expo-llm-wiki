@@ -61,7 +61,7 @@ describe('formatOkfBundle', () => {
   it('writes one concept file per fact with correct path and excludes embedding_blob', () => {
     const dump: MemoryDump = {
       generatedAt: 0,
-      entities: { alice: { facts: [makeFact()], tasks: [], events: [] } },
+      entities: { alice: { facts: [makeFact()], tasks: [], events: [], edges: [] } },
     };
     const { files } = formatOkfBundle(dump);
     const factFile = files.find(f => f.path === 'entities/alice/facts/fact_aaa.md');
@@ -82,7 +82,7 @@ describe('formatOkfBundle', () => {
   it('omits the resource key when source_ref is null', () => {
     const dump: MemoryDump = {
       generatedAt: 0,
-      entities: { alice: { facts: [makeFact({ source_ref: null })], tasks: [], events: [] } },
+      entities: { alice: { facts: [makeFact({ source_ref: null })], tasks: [], events: [], edges: [] } },
     };
     const { files } = formatOkfBundle(dump);
     const factFile = files.find(f => f.path === 'entities/alice/facts/fact_aaa.md')!;
@@ -92,7 +92,7 @@ describe('formatOkfBundle', () => {
   it('writes one concept file per task with description as title and empty body', () => {
     const dump: MemoryDump = {
       generatedAt: 0,
-      entities: { alice: { facts: [], tasks: [makeTask()], events: [] } },
+      entities: { alice: { facts: [], tasks: [makeTask()], events: [], edges: [] } },
     };
     const { files } = formatOkfBundle(dump);
     const taskFile = files.find(f => f.path === 'entities/alice/tasks/task_bbb.md');
@@ -110,6 +110,7 @@ describe('formatOkfBundle', () => {
           facts: [makeFact()],
           tasks: [],
           events: [makeEvent({ related_entry_id: 'fact_aaa', summary: 'Confirmed coffee preference' })],
+          edges: [],
         },
       },
     };
@@ -126,6 +127,7 @@ describe('formatOkfBundle', () => {
           facts: [],
           tasks: [],
           events: [makeEvent({ related_entry_id: 'fact_missing', summary: 'Unlinked event' })],
+          edges: [],
         },
       },
     };
@@ -138,7 +140,7 @@ describe('formatOkfBundle', () => {
   it('builds an entity index.md linking to facts, tasks, and the log', () => {
     const dump: MemoryDump = {
       generatedAt: 0,
-      entities: { alice: { facts: [makeFact()], tasks: [makeTask()], events: [] } },
+      entities: { alice: { facts: [makeFact()], tasks: [makeTask()], events: [], edges: [] } },
     };
     const { files } = formatOkfBundle(dump);
     const entityIndex = files.find(f => f.path === 'entities/alice/index.md')!;
@@ -153,8 +155,8 @@ describe('formatOkfBundle', () => {
     const dump: MemoryDump = {
       generatedAt: 0,
       entities: {
-        alice: { facts: [], tasks: [], events: [] },
-        bob: { facts: [], tasks: [], events: [] },
+        alice: { facts: [], tasks: [], events: [], edges: [] },
+        bob: { facts: [], tasks: [], events: [], edges: [] },
       },
     };
     const { files } = formatOkfBundle(dump);
@@ -170,7 +172,7 @@ describe('formatOkfBundle', () => {
         index: {
           facts: [makeFact({ id: 'index', entity_id: 'index' })],
           tasks: [makeTask({ id: 'log', entity_id: 'index' })],
-          events: [],
+          events: [], edges: [],
         },
       },
     };
@@ -193,7 +195,7 @@ describe('formatOkfBundle', () => {
         alice: {
           facts: [makeFact({ id: '../escape', entity_id: 'alice' })],
           tasks: [],
-          events: [],
+          events: [], edges: [],
         },
       },
     };
@@ -201,5 +203,46 @@ describe('formatOkfBundle', () => {
     const factFile = files.find(f => f.path.startsWith('entities/alice/facts/'))!;
     expect(factFile.path).toMatch(/^entities\/alice\/facts\/escape-[0-9a-f]{16}\.md$/);
     expect(factFile.path).not.toContain('..');
+  });
+
+  it('preserves a fact\'s okf_type instead of hardcoding "fact"', () => {
+    const dump: MemoryDump = {
+      generatedAt: 0,
+      entities: { alice: { facts: [makeFact({ okf_type: 'meeting_note' })], tasks: [], events: [], edges: [] } },
+    };
+    const { files } = formatOkfBundle(dump);
+    const factFile = files.find(f => f.path === 'entities/alice/facts/fact_aaa.md')!;
+    expect(factFile.content).toContain('type: meeting_note');
+    expect(factFile.content).not.toContain('type: fact');
+  });
+
+  it('falls back to "fact" type when okf_type is absent', () => {
+    const dump: MemoryDump = {
+      generatedAt: 0,
+      entities: { alice: { facts: [makeFact()], tasks: [], events: [], edges: [] } },
+    };
+    const { files } = formatOkfBundle(dump);
+    const factFile = files.find(f => f.path === 'entities/alice/facts/fact_aaa.md')!;
+    expect(factFile.content).toContain('type: fact');
+  });
+
+  it('preserves a task\'s okf_type instead of hardcoding "task"', () => {
+    const dump: MemoryDump = {
+      generatedAt: 0,
+      entities: { alice: { facts: [], tasks: [makeTask({ okf_type: 'todo_item' })], events: [], edges: [] } },
+    };
+    const { files } = formatOkfBundle(dump);
+    const taskFile = files.find(f => f.path === 'entities/alice/tasks/task_bbb.md')!;
+    expect(taskFile.content).toContain('type: todo_item');
+  });
+
+  it('falls back to "task" type when okf_type is absent', () => {
+    const dump: MemoryDump = {
+      generatedAt: 0,
+      entities: { alice: { facts: [], tasks: [makeTask()], events: [], edges: [] } },
+    };
+    const { files } = formatOkfBundle(dump);
+    const taskFile = files.find(f => f.path === 'entities/alice/tasks/task_bbb.md')!;
+    expect(taskFile.content).toContain('type: task');
   });
 });

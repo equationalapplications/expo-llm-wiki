@@ -13,6 +13,7 @@ function mapRowToTask(row: any): WikiTask {
     updated_at: Number(row.updated_at),
     resolved_at: row.resolved_at != null ? Number(row.resolved_at) : null,
     deleted_at: row.deleted_at != null ? Number(row.deleted_at) : null,
+    okf_type: row.okf_type ?? null,
   };
 }
 
@@ -133,8 +134,8 @@ export class TaskRepository extends BaseRepository {
     await executor.runAsync(
       `INSERT INTO ${this.prefix}tasks (
         id, entity_id, description, status, priority,
-        created_at, updated_at, resolved_at, deleted_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        created_at, updated_at, resolved_at, deleted_at, okf_type
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         entity_id = excluded.entity_id,
         description = excluded.description,
@@ -142,7 +143,8 @@ export class TaskRepository extends BaseRepository {
         priority = excluded.priority,
         updated_at = excluded.updated_at,
         resolved_at = excluded.resolved_at,
-        deleted_at = excluded.deleted_at`,
+        deleted_at = excluded.deleted_at,
+        okf_type = excluded.okf_type`,
       [
         task.id,
         task.entity_id,
@@ -153,6 +155,7 @@ export class TaskRepository extends BaseRepository {
         now,
         task.resolved_at ?? null,
         task.deleted_at ?? null,
+        task.okf_type ?? null,
       ],
     );
   }

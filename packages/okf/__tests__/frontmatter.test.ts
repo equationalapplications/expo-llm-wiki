@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { serializeFrontmatter } from '../src/frontmatter';
+import { serializeFrontmatter, parseFrontmatter } from '../src/frontmatter';
 
 describe('serializeFrontmatter', () => {
   it('serializes a minimal type-only frontmatter block', () => {
@@ -109,5 +109,81 @@ describe('serializeFrontmatter', () => {
   it('quotes custom keys that would parse as YAML literals', () => {
     const result = serializeFrontmatter({ '123': 'n', type: 'fact', true: 'b' } as any);
     expect(result).toBe('---\n"123": n\ntype: fact\n"true": b\n---\n');
+  });
+});
+
+describe('parseFrontmatter', () => {
+  it('parses a minimal type-only frontmatter block', () => {
+    const { frontmatter, rest } = parseFrontmatter('---\ntype: fact\n---\n');
+    expect(frontmatter).toEqual({ type: 'fact' });
+    expect(rest).toBe('');
+  });
+
+  it('parses string, number, boolean, and null scalars', () => {
+    const { frontmatter } = parseFrontmatter(
+      '---\ntype: fact\npriority: 5\nactive: true\nresolved_at: null\n---\n',
+    );
+    expect(frontmatter).toEqual({ type: 'fact', priority: 5, active: true, resolved_at: null });
+  });
+
+  it('parses a YAML block list back into a string array', () => {
+    const { frontmatter } = parseFrontmatter('---\ntype: fact\ntags:\n  - a\n  - b\n---\n');
+    expect(frontmatter.tags).toEqual(['a', 'b']);
+  });
+
+  it('parses an empty array', () => {
+    const { frontmatter } = parseFrontmatter('---\ntype: fact\ntags: []\n---\n');
+    expect(frontmatter.tags).toEqual([]);
+  });
+
+  it('does not unquote ISO 8601 timestamps (none are quoted by the serializer)', () => {
+    const { frontmatter } = parseFrontmatter(
+      '---\ntype: fact\ntimestamp: 2026-05-28T14:30:00+05:00\n---\n',
+    );
+    expect(frontmatter.timestamp).toBe('2026-05-28T14:30:00+05:00');
+  });
+
+  it('unquotes a value containing a colon', () => {
+    const { frontmatter } = parseFrontmatter('---\ntype: fact\ntitle: "Note: important"\n---\n');
+    expect(frontmatter.title).toBe('Note: important');
+  });
+
+  it('unquotes a value that looks like a YAML boolean/null/number literal', () => {
+    const { frontmatter } = parseFrontmatter('---\ntype: fact\ntags:\n  - "true"\n---\n');
+    expect(frontmatter.tags).toEqual(['true']);
+  });
+
+  it('unquotes escaped newline, tab, and carriage return sequences', () => {
+    const { frontmatter } = parseFrontmatter(
+      '---\ntype: fact\ndescription: "line one\\nline two"\n---\n',
+    );
+    expect(frontmatter.description).toBe('line one\nline two');
+  });
+
+  it('unquotes a quoted custom key', () => {
+    const { frontmatter } = parseFrontmatter('---\ntype: fact\n"custom key": v\n---\n');
+    expect(frontmatter['custom key']).toBe('v');
+  });
+
+  it('returns the body after the closing delimiter as rest', () => {
+    const { rest } = parseFrontmatter('---\ntype: fact\n---\n\nBody text\nline two');
+    expect(rest).toBe('\nBody text\nline two');
+  });
+
+  it('falls back to type: "" when no frontmatter block is present', () => {
+    const { frontmatter, rest } = parseFrontmatter('Just plain text, no frontmatter.');
+    expect(frontmatter).toEqual({ type: '' });
+    expect(rest).toBe('Just plain text, no frontmatter.');
+  });
+
+  it('falls back to type: "" when the closing delimiter is missing', () => {
+    const { frontmatter } = parseFrontmatter('---\ntype: fact\ntitle: T\n');
+    expect(frontmatter).toEqual({ type: '' });
+  });
+
+  it('defaults type to "" when the frontmatter block omits it', () => {
+    const { frontmatter } = parseFrontmatter('---\ntitle: T\n---\n');
+    expect(frontmatter.type).toBe('');
+    expect(frontmatter.title).toBe('T');
   });
 });

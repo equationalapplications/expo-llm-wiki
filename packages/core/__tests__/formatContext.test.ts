@@ -49,7 +49,7 @@ function makeEvent(overrides: Partial<WikiEvent> = {}): WikiEvent {
   };
 }
 
-const emptyBundle: MemoryBundle = { facts: [], tasks: [], events: [] };
+const emptyBundle: MemoryBundle = { facts: [], tasks: [], events: [], edges: [] };
 
 describe('formatContext', () => {
   it('returns empty string for empty bundle', () => {
@@ -61,7 +61,7 @@ describe('formatContext', () => {
     const bundle: MemoryBundle = {
       facts: [makeFact()],
       tasks: [],
-      events: [],
+      events: [], edges: [],
     };
     const result = formatContext(bundle);
     expect(result).toContain('##');
@@ -86,7 +86,7 @@ describe('formatContext', () => {
     const bundle: MemoryBundle = {
       facts: [makeFact({ title: 'My Fact', body: 'My body' })],
       tasks: [],
-      events: [],
+      events: [], edges: [],
     };
     const result = formatContext(bundle, { format: 'plain' });
     expect(result).toContain('My Fact');
@@ -101,7 +101,7 @@ describe('formatContext', () => {
         makeFact({ id: 'f3', title: 'Fact 3' }),
       ],
       tasks: [],
-      events: [],
+      events: [], edges: [],
     };
     const result = formatContext(bundle, { maxFacts: 2 });
     const matches = (result.match(/Fact \d/g) || []).length;
@@ -116,7 +116,7 @@ describe('formatContext', () => {
         makeTask({ id: 't2', description: 'Task 2' }),
         makeTask({ id: 't3', description: 'Task 3' }),
       ],
-      events: [],
+      events: [], edges: [],
     };
     const result = formatContext(bundle, { maxTasks: 1 });
     const matches = (result.match(/Task \d/g) || []).length;
@@ -142,7 +142,7 @@ describe('formatContext', () => {
     const bundle: MemoryBundle = {
       facts: [makeFact({ confidence: 'tentative' })],
       tasks: [],
-      events: [],
+      events: [], edges: [],
     };
     const withConf = formatContext(bundle, { includeConfidence: true });
     const withoutConf = formatContext(bundle, { includeConfidence: false });
@@ -154,7 +154,7 @@ describe('formatContext', () => {
     const bundle: MemoryBundle = {
       facts: [makeFact({ tags: ['alpha', 'beta'] })],
       tasks: [],
-      events: [],
+      events: [], edges: [],
     };
     const withTags = formatContext(bundle, { includeTags: true });
     const withoutTags = formatContext(bundle, { includeTags: false });
@@ -171,7 +171,7 @@ describe('formatContext', () => {
         makeFact({ id: 'f3', title: 'Inferred fact', confidence: 'inferred', updated_at: now, access_count: 0 }),
       ],
       tasks: [],
-      events: [],
+      events: [], edges: [],
     };
     const result = formatContext(bundle);
     const certIdx = result.indexOf('Certain fact');
@@ -189,7 +189,7 @@ describe('formatContext', () => {
         makeFact({ id: 'f2', title: 'Fresh fact', confidence: 'certain', updated_at: now, access_count: 0 }),
       ],
       tasks: [],
-      events: [],
+      events: [], edges: [],
     };
     const result = formatContext(bundle);
     expect(result.indexOf('Fresh fact')).toBeLessThan(result.indexOf('Stale fact'));
@@ -216,7 +216,7 @@ describe('formatContext', () => {
         makeTask({ id: 't2', description: 'High priority', priority: 10, created_at: 200 }),
         makeTask({ id: 't3', description: 'High priority early', priority: 10, created_at: 100 }),
       ],
-      events: [],
+      events: [], edges: [],
     };
     const result = formatContext(bundle);
     const hp1 = result.indexOf('High priority early');
@@ -230,7 +230,7 @@ describe('formatContext', () => {
     const bundle: MemoryBundle = {
       facts: [makeFact({ body: 'Line one\nLine two\nLine three' })],
       tasks: [],
-      events: [],
+      events: [], edges: [],
     };
     const result = formatContext(bundle);
     expect(result).toContain('  Line two');
@@ -242,7 +242,7 @@ describe('formatContext', () => {
     const bundle: MemoryBundle = {
       facts: [],
       tasks: [makeTask({ description: 'Do this\nAnd also this' })],
-      events: [],
+      events: [], edges: [],
     };
     const result = formatContext(bundle);
     expect(result).toContain('  And also this');
@@ -269,39 +269,39 @@ describe('formatContext', () => {
         makeFact({ id: 'f2', title: 'Inferred high-access', confidence: 'inferred', access_count: 100, updated_at: now }),
       ],
       tasks: [],
-      events: [],
+      events: [], edges: [],
     };
     const result = formatContext(bundle, { factWeights: { confidence: 1.0, accessCount: 10, recency: 0.5 } });
     expect(result.indexOf('Inferred high-access')).toBeLessThan(result.indexOf('Certain low-access'));
   });
 
   it('throws for negative maxFacts', () => {
-    expect(() => formatContext({ facts: [], tasks: [], events: [] }, { maxFacts: -1 }))
+    expect(() => formatContext({ facts: [], tasks: [], events: [], edges: [] }, { maxFacts: -1 }))
       .toThrow('Invalid maxFacts: must be a non-negative finite number');
   });
 
   it('throws for non-finite maxFacts (Infinity)', () => {
-    expect(() => formatContext({ facts: [], tasks: [], events: [] }, { maxFacts: Infinity }))
+    expect(() => formatContext({ facts: [], tasks: [], events: [], edges: [] }, { maxFacts: Infinity }))
       .toThrow('Invalid maxFacts: must be a non-negative finite number');
   });
 
   it('throws for non-finite maxFacts (NaN)', () => {
-    expect(() => formatContext({ facts: [], tasks: [], events: [] }, { maxFacts: NaN }))
+    expect(() => formatContext({ facts: [], tasks: [], events: [], edges: [] }, { maxFacts: NaN }))
       .toThrow('Invalid maxFacts: must be a non-negative finite number');
   });
 
   it('throws for negative maxTasks', () => {
-    expect(() => formatContext({ facts: [], tasks: [], events: [] }, { maxTasks: -5 }))
+    expect(() => formatContext({ facts: [], tasks: [], events: [], edges: [] }, { maxTasks: -5 }))
       .toThrow('Invalid maxTasks: must be a non-negative finite number');
   });
 
   it('throws for negative maxEvents', () => {
-    expect(() => formatContext({ facts: [], tasks: [], events: [] }, { maxEvents: -1 }))
+    expect(() => formatContext({ facts: [], tasks: [], events: [], edges: [] }, { maxEvents: -1 }))
       .toThrow('Invalid maxEvents: must be a non-negative finite number');
   });
 
   it('can include fact entity_id provenance', () => {
-    const result = formatContext({ facts: [makeFact({ entity_id: 'tier_wisdom' })], tasks: [], events: [] }, {
+    const result = formatContext({ facts: [makeFact({ entity_id: 'tier_wisdom' })], tasks: [], events: [], edges: [] }, {
       includeEntityIds: true,
     });
     expect(result).toContain('{entity_id=tier_wisdom}');
@@ -314,7 +314,7 @@ describe('formatContext', () => {
         makeFact({ id: 'high', title: 'High', access_count: 0 }),
       ],
       tasks: [],
-      events: [],
+      events: [], edges: [],
       factScores: { low: 0.1, high: 2 },
     };
 

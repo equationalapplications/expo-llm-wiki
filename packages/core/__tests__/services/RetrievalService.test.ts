@@ -87,7 +87,7 @@ describe('RetrievalService', () => {
       expect(result).toEqual({
         facts: [],
         tasks: [],
-        events: [],
+        events: [], edges: [],
         metadata: { query: 'query', entityIds: [] },
       });
       expect(mockOptions.llmProvider.embed).not.toHaveBeenCalled();

@@ -24,9 +24,9 @@ describe('formatMemoryDump', () => {
             id: 't1', entity_id: 'e1', description: 'do x', status: 'pending',
             priority: 5, created_at: 1000, updated_at: 1000, resolved_at: null, deleted_at: null,
           }],
-          events: [],
+          events: [], edges: [],
         },
-        e2: { facts: [], tasks: [], events: [] },
+        e2: { facts: [], tasks: [], events: [], edges: [] },
       },
     };
     const r = formatMemoryDump(dump);
@@ -37,7 +37,7 @@ describe('formatMemoryDump', () => {
   });
 
   it('manifest is valid JSON with entities', () => {
-    const dump: MemoryDump = { generatedAt: 0, entities: { x: { facts: [], tasks: [], events: [] } } };
+    const dump: MemoryDump = { generatedAt: 0, entities: { x: { facts: [], tasks: [], events: [], edges: [] } } };
     const r = formatMemoryDump(dump);
     const parsed = JSON.parse(r.manifest);
     expect(parsed.entities).toHaveProperty('x');
@@ -53,7 +53,7 @@ describe('formatMemoryDump', () => {
     };
     const dump: MemoryDump = {
       generatedAt: 0,
-      entities: { e1: { facts: [factWithBlob], tasks: [], events: [] } },
+      entities: { e1: { facts: [factWithBlob], tasks: [], events: [], edges: [] } },
     };
     const r = formatMemoryDump(dump);
     const parsed = JSON.parse(r.manifest);
@@ -69,7 +69,7 @@ describe('formatMemoryDump', () => {
         e: {
           facts: [],
           tasks: [{ id: 't', entity_id: 'e', description: 'done task', status: 'done', priority: 0, created_at: 0, updated_at: 0, resolved_at: null, deleted_at: null }],
-          events: [],
+          events: [], edges: [],
         },
       },
     };

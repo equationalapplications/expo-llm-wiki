@@ -30,7 +30,7 @@ export class RetrievalService {
     const exposeMetadata = shouldExposeReadMetadata(entityId);
 
     if (entityIds.length === 0) {
-      const empty: MemoryBundle = { facts: [], tasks: [], events: [] };
+      const empty: MemoryBundle = { facts: [], tasks: [], events: [], edges: [] };
       if (exposeMetadata) {
         empty.metadata = { query, entityIds: [] };
         if (sanitizedTierWeights && Object.keys(sanitizedTierWeights).length > 0) empty.metadata.tierWeights = sanitizedTierWeights;
@@ -546,7 +546,7 @@ export class RetrievalService {
       factScores = Object.fromEntries(facts.map(fact => [fact.id, scoreByFactId!.get(fact.id) ?? 0]));
     }
 
-    const bundle: MemoryBundle = { facts, tasks, events: events.reverse() };
+    const bundle: MemoryBundle = { facts, tasks, events: events.reverse(), edges: [] };
 
     if (exposeMetadata) {
       bundle.metadata = { query, entityIds };

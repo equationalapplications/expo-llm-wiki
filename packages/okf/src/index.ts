@@ -1,5 +1,6 @@
-export type { OkfFrontmatter, OkfIndexEntry, OkfIndexSection, OkfLogEntry, OkfFile } from './types';
-export { serializeFrontmatter } from './frontmatter';
-export { buildConceptDocument } from './concept';
+export type { OkfFrontmatter, OkfFrontmatterScalar, OkfFrontmatterValue, OkfIndexEntry, OkfIndexSection, OkfLogEntry, OkfFile, OkfMarkdownLink } from './types';
+export { serializeFrontmatter, parseFrontmatter } from './frontmatter';
+export { buildConceptDocument, parseConcept } from './concept';
 export { buildIndexMd, buildRootIndexMd } from './index-md';
-export { buildLogMd } from './log-md';
+export { buildLogMd, parseLogMd } from './log-md';
+export { extractMarkdownLinks } from './markdown-links';
