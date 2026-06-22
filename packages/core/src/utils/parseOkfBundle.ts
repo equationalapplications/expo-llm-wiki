@@ -250,11 +250,15 @@ export function parseOkfBundle(
       tasks.push(frontmatterToTask(entityId, resolvedId, frontmatter, now));
     }
 
+    const seenEdges = new Set<string>();
     for (const link of extractMarkdownLinks(body)) {
       const targetPath = resolveRelativePath(file.path, stripLinkSuffix(link.path));
       if (isStructuralPath(targetPath)) continue;
       const targetId = lookupResolvedId(pathToResolvedId, targetPath);
       if (!targetId) continue;
+      const edgeKey = `${resolvedId}\u0000${targetId}\u0000${link.text}`;
+      if (seenEdges.has(edgeKey)) continue;
+      seenEdges.add(edgeKey);
       edges.push({
         id: generateId(),
         entity_id: entityId,
