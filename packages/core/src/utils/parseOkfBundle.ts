@@ -166,7 +166,7 @@ function frontmatterToFact(
     access_count: typeof frontmatter.access_count === 'number' ? frontmatter.access_count : 0,
     deleted_at:
       frontmatter.deleted_at != null ? parseFrontmatterTimestamp(frontmatter.deleted_at, 0) : null,
-    okf_type: frontmatter.type,
+    okf_type: frontmatter.type || null,
   };
 }
 
