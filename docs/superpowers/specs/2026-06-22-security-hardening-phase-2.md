@@ -1,7 +1,7 @@
 # Spec: Security Hardening Phase 2 (Opus 4.7 Review Fixes)
 
 **Date:** 2026-06-22
-**Status:** Draft
+**Status:** Approved
 **Builds on:** [`2026-05-07-vectorranker-security-hardening.md`](2026-05-07-vectorranker-security-hardening.md)
 **Target version:** v4.14.1 (patch — no new public API surface)
 
