@@ -1,3 +1,10 @@
+## [4.15.3](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.15.2...v4.15.3) (2026-06-23)
+
+
+### Bug Fixes
+
+* **docs:** link ecosystem rows and add OKF to expo/react READMEs ([6f5b500](https://github.com/equationalapplications/expo-llm-wiki/commit/6f5b500270707ba649e23a60e2c64056d4aec37d))
+
 ## [4.15.2](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.15.1...v4.15.2) (2026-06-23)
 
 
