@@ -119,8 +119,7 @@ changes — OKF is consumed through `core`, not directly from these packages.
 
 - Every "Monorepo Ecosystem" table lists the same 6 packages in the same order: `core-llm-wiki`,
   `expo-llm-wiki`, `react-llm-wiki`, `prisma-outbox`, `core-llm-tools`, `core-okf`.
-- Exactly one row is bolded (unlinked) per file: the package that README belongs to. All others
-  are npm-linked.
+- Exactly one row is bolded (unlinked) per file: the package that README belongs to. All others are linked via absolute GitHub URLs to the sibling package READMEs (so links work from npm as well).
 - `core-okf`'s description across all tables: "Zero-dependency Open Knowledge Format (OKF) v0.1
   primitives — parse and produce interoperable knowledge bundles."
 
