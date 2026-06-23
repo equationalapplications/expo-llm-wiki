@@ -27,7 +27,8 @@ import { RetrievalService } from './services/RetrievalService';
 import { WriteService } from './services/WriteService';
 import { PromptService } from './services/PromptService';
 import { OntologyService } from './services/OntologyService';
-import type { OntologyManifest, OntologyMode } from './types';
+import { GraphTraversalService } from './services/GraphTraversalService';
+import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighborhood } from './types';
 
 export { WikiBusyError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER } from './types';
 
@@ -43,6 +44,7 @@ export interface WikiMemoryTestAccess {
   searchService: SearchService;
   writeService: WriteService;
   promptService: PromptService;
+  graphTraversalService: GraphTraversalService;
   entryRepo: EntryRepository;
   metadataRepo: MetadataRepository;
   jobManager: JobManager;
@@ -71,6 +73,7 @@ export class WikiMemory {
   private writeService: WriteService;
   private promptService: PromptService;
   private ontologyService: OntologyService;
+  private graphTraversalService: GraphTraversalService;
 
   constructor(db: SQLiteAdapter, options: WikiOptions) {
     this.db = db;
@@ -150,6 +153,11 @@ export class WikiMemory {
       this.jobManager,
       this.maintenanceService,
     );
+    this.graphTraversalService = new GraphTraversalService(
+      this.edgeRepo,
+      this.entryRepo,
+      this.options.config ?? {},
+    );
   }
 
   /**
@@ -178,6 +186,7 @@ export class WikiMemory {
       searchService: this.searchService,
       writeService: this.writeService,
       promptService: this.promptService,
+      graphTraversalService: this.graphTraversalService,
       entryRepo: this.entryRepo,
       metadataRepo: this.metadataRepo,
       jobManager: this.jobManager,
@@ -267,6 +276,10 @@ export class WikiMemory {
 
   async read(entityId: string | string[], query: string, options?: ReadOptions): Promise<MemoryBundle> {
     return this.retrievalService.read(entityId, query, options);
+  }
+
+  async traverseGraph(entityId: string, options: GraphTraversalOptions): Promise<GraphNeighborhood> {
+    return this.graphTraversalService.traverseGraph(entityId, options);
   }
 
   async getMemoryBundle(entityId: string): Promise<MemoryBundle> {

@@ -118,6 +118,14 @@ export interface WikiConfig {
    */
   enableOutbox?: boolean;
   ontology?: OntologyConfig;
+  /** Default node cap for traverseGraph(), unless overridden per-call. Default 20. */
+  maxTraversalNodes?: number;
+  /** Default minimum confidence tier for discovered traversal nodes. Default 'tentative'. */
+  minTraversalConfidence?: 'certain' | 'inferred' | 'tentative';
+  /** Default traversal direction. Default 'both'. */
+  traversalDirection?: 'inbound' | 'outbound' | 'both';
+  /** Default source_type dead-end list for discovered traversal nodes. Default []. */
+  excludeSourceTypes?: Array<WikiFact['source_type']>;
 }
 
 export interface ReadOptions {
@@ -214,6 +222,32 @@ export interface WikiEdge {
   target_id: string;
   edge_type: string;
   created_at: number;
+}
+
+export interface GraphTraversalOptions {
+  sourceId: string;
+  /** Hop count. Default 1. Clamped to [1, 3] regardless of input. */
+  maxDepth?: number;
+  /** Default 'both'. Falls back to WikiConfig.traversalDirection, then 'both'. */
+  direction?: 'inbound' | 'outbound' | 'both';
+  /**
+   * Allowed edge types. `undefined` = no filter (all types).
+   * `[]` (explicit empty array) = match nothing — distinct from `undefined`.
+   */
+  edgeTypes?: string[];
+  /** Total node cap (anchor + neighbors). Default 20 via WikiConfig.maxTraversalNodes. */
+  maxTraversalNodes?: number;
+  /** Minimum confidence tier for *discovered* nodes. Does not gate the anchor. Default 'tentative'. */
+  minTraversalConfidence?: 'certain' | 'inferred' | 'tentative';
+  /** source_type values to dead-end on for *discovered* nodes. Does not gate the anchor. Default []. */
+  excludeSourceTypes?: Array<WikiFact['source_type']>;
+}
+
+export interface GraphNeighborhood {
+  /** Anchor node first, then discovered neighbors ordered by depth ASC, then updated_at DESC. */
+  nodes: WikiFact[];
+  /** Only edges where both endpoints are present in `nodes`. */
+  edges: WikiEdge[];
 }
 
 export interface WikiCheckpoint {

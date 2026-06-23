@@ -19,7 +19,7 @@ Local-first LLM memory for Expo and React Native. Combines the core semantic sea
 - **Multi-entity reads** — Search across multiple `entity_id` namespaces in one pass with `tierWeights`
 - **Source provenance** — `WikiFact.source_type` distinguishes immutable document facts (`immutable_document`) from mutable derived/user facts. Immutable document content is protected from librarian/heal rewriting and only changed by `forget()` or re-ingest.
 - **Seeded ontologies** — Enforce strict taxonomies or allow emergent graph relationship extraction (`useOntologyManifest`, `useSetOntologyManifest`; Strict, Emergent, or Off; defaults to Off).
-- **React hooks** — `WikiProvider`, `useMemoryRead`, `useOntologyManifest`, `useSetOntologyManifest`, and all other hooks re-exported from `@equationalapplications/expo-llm-wiki`
+- **React hooks** — `WikiProvider`, `useMemoryRead`, `useOntologyManifest`, `useSetOntologyManifest`, `useWikiTraversal`, and all other hooks re-exported from `@equationalapplications/expo-llm-wiki`
 - **Full-featured memory** — Facts, tasks, events, maintenance jobs (librarian, heal, reembed, prune)
 - **Interoperability:** Supports [Open Knowledge Format (OKF) v0.1](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) import and export.
 
@@ -279,6 +279,27 @@ export function OntologySettings({ entityId }: { entityId: string }) {
 Global defaults and `seedManifests` bootstrap are configured at construction time via `createWiki(..., { config: { ontology: ... } })`. See the [core package README § Per-Entity Seeded Ontology](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md#per-entity-seeded-ontology) for mode semantics and manifest schema.
 
 `useSetOntologyManifest` does not automatically refresh `useOntologyManifest` — call `refetch()` after a successful `execute()`, same as `useWikiWrite` + `useMemoryRead`.
+
+### `useWikiTraversal(entityId, options)`
+
+Reactive read — fetches on mount and whenever `entityId` or `options` change. Walks the knowledge graph N hops outward from a fact (`options.sourceId`) using edges written by `runLibrarian()`/`ingestDocument()`'s Seeded Ontology extraction pass:
+
+```typescript
+import { useWikiTraversal, formatGraphContext } from '@equationalapplications/expo-llm-wiki';
+
+const { nodes, edges, isPending, error, refetch } = useWikiTraversal('user-123', {
+  sourceId: 'fact_42',
+  maxDepth: 2,
+  direction: 'both',
+});
+
+const promptContext = formatGraphContext({ nodes, edges });
+```
+
+- `maxDepth` is clamped to `[1, 3]` regardless of input.
+- `edgeTypes: []` (explicit empty array) matches nothing; omitting it matches all edge types.
+- Defaults (`maxTraversalNodes`, `minTraversalConfidence`, `traversalDirection`, `excludeSourceTypes`) can be set globally via `createWiki(..., { config: { maxTraversalNodes: 20, ... } })` and overridden per-call.
+- `formatGraphContext()` is a pure function — call it with the hook's `{ nodes, edges }` to get a dense text block suitable for prompt injection.
 
 ## Component Lifecycle
 

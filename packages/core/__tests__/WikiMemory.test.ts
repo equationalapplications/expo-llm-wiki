@@ -85,6 +85,19 @@ describe('WikiMemory (Facade Layer)', () => {
       expect(pruneSpy).toHaveBeenCalledWith('user_123', { vacuum: true });
       expect(result).toEqual({ entries: 1, tasks: 0, events: 5 });
     });
+
+    it('delegates traverseGraph() to GraphTraversalService', async () => {
+      const mockNeighborhood = { nodes: [], edges: [] };
+      const traverseSpy = vi
+        .spyOn(wiki.__testAccess.graphTraversalService, 'traverseGraph')
+        .mockResolvedValue(mockNeighborhood);
+
+      const result = await wiki.traverseGraph('user_123', { sourceId: 'fact_1', maxDepth: 2 });
+
+      expect(traverseSpy).toHaveBeenCalledTimes(1);
+      expect(traverseSpy).toHaveBeenCalledWith('user_123', { sourceId: 'fact_1', maxDepth: 2 });
+      expect(result).toBe(mockNeighborhood);
+    });
   });
 
   describe('Setup and Migrations', () => {
