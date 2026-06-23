@@ -198,7 +198,7 @@ function frontmatterToTask(
         : null,
     deleted_at:
       frontmatter.deleted_at != null ? parseFrontmatterTimestamp(frontmatter.deleted_at, 0) : null,
-    okf_type: frontmatter.type || null,
+    okf_type: frontmatter.type,
   };
 }
 
