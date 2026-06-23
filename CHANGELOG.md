@@ -1,3 +1,20 @@
+# [4.15.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.14.1...v4.15.0) (2026-06-23)
+
+
+### Bug Fixes
+
+* address Copilot review on OKF import edge cases ([991b316](https://github.com/equationalapplications/expo-llm-wiki/commit/991b3168084eb523cb3414eec09fba7652eee64b))
+* address PR review feedback for OKF import ([acb45db](https://github.com/equationalapplications/expo-llm-wiki/commit/acb45db3beb542f9346551510a915b4ab25f0b33))
+* address PR review feedback on OKF parsing ([d5aedc1](https://github.com/equationalapplications/expo-llm-wiki/commit/d5aedc1a83a6c2926701832bdab30c7eec4917ae))
+* align migration test labels and cover OKF edge review fixes ([8097cf0](https://github.com/equationalapplications/expo-llm-wiki/commit/8097cf024500c448c1dc424fa987155dcc4edb59))
+* scope edge uniqueness per entity and harden OKF import ([1fc0ee3](https://github.com/equationalapplications/expo-llm-wiki/commit/1fc0ee3504de33ed49260fd8267be92ad17426ef))
+* skip invalid log dates, remove no-op migration v6, unquote single-quoted frontmatter ([7016267](https://github.com/equationalapplications/expo-llm-wiki/commit/7016267e86f1b2e1d29e47891a53a7a1ec97c23a))
+
+
+### Features
+
+* add OKF import path with parseOkfBundle and graph edges ([092c518](https://github.com/equationalapplications/expo-llm-wiki/commit/092c518ae058ec2f245f9eff2b50b9e5cea3ab41))
+
 ## [4.14.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.14.0...v4.14.1) (2026-06-22)
 
 

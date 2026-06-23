@@ -1,6 +1,6 @@
 {
   "name": "@equationalapplications/core-llm-wiki",
-  "version": "4.14.1",
+  "version": "4.15.0",
   "description": "Platform-agnostic TypeScript engine for hybrid LLM memory. Features episodic fact extraction, semantic vector search, and multi-agent architectures over SQLite. Bring your own adapter.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
