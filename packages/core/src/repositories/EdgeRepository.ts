@@ -157,10 +157,14 @@ export class EdgeRepository extends BaseRepository {
     const nodeIds = rows.map((r) => r.node_id);
     if (nodeIds.length === 0) return { nodeIds: [], edges: [] };
 
-    const idPlaceholders = nodeIds.map(() => '?').join(',');
+    const valueRows = nodeIds.map(() => '(?)').join(', ');
     const edgeRows = await executor.getAllAsync<any>(
-      `SELECT * FROM ${this.prefix}edges WHERE entity_id = ? AND source_id IN (${idPlaceholders}) AND target_id IN (${idPlaceholders})`,
-      [entityId, ...nodeIds, ...nodeIds],
+      `WITH neighborhood(node_id) AS (VALUES ${valueRows})
+       SELECT e.* FROM ${this.prefix}edges e
+       JOIN neighborhood ns ON e.source_id = ns.node_id
+       JOIN neighborhood nt ON e.target_id = nt.node_id
+       WHERE e.entity_id = ?`,
+      [...nodeIds, entityId],
     );
 
     return { nodeIds, edges: edgeRows.map(mapRowToEdge) };

@@ -26,7 +26,13 @@ function normalizeTraversalOptionsKey(options: GraphTraversalOptions): string {
   if (options.excludeSourceTypes !== undefined) normalized.excludeSourceTypes = [...options.excludeSourceTypes].sort();
 
   const sortedKeys = Object.keys(normalized).sort();
-  return JSON.stringify(normalized, sortedKeys);
+  const sorted: Record<string, unknown> = {};
+  for (const k of sortedKeys) {
+    sorted[k] = normalized[k];
+  }
+  // Do not pass sortedKeys as a JSON.stringify replacer — array values would lose
+  // their elements because replacer keys must be object property names, not indices.
+  return JSON.stringify(sorted);
 }
 
 /**

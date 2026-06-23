@@ -1136,6 +1136,21 @@ describe('useWikiTraversal', () => {
     expect(wiki.traverseGraph).toHaveBeenCalledTimes(2);
   });
 
+  it('re-fetches when edgeTypes array changes', async () => {
+    const { result, rerender } = renderHook(
+      ({ edgeTypes }: { edgeTypes: string[] }) => useWikiTraversal('e1', { sourceId: 'a', edgeTypes }),
+      { initialProps: { edgeTypes: ['mentions'] }, wrapper: wrapper(wiki) },
+    );
+
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(wiki.traverseGraph).toHaveBeenCalledTimes(1);
+
+    rerender({ edgeTypes: ['reports_to'] });
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(wiki.traverseGraph).toHaveBeenCalledTimes(2);
+    expect(wiki.traverseGraph).toHaveBeenLastCalledWith('e1', { sourceId: 'a', edgeTypes: ['reports_to'] });
+  });
+
   it('sets error when traverseGraph rejects', async () => {
     const boom = new Error('traversal db error');
     wiki.traverseGraph.mockRejectedValue(boom);

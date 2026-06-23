@@ -14,7 +14,12 @@ export class GraphTraversalService {
   ) {}
 
   async traverseGraph(entityId: string, options: GraphTraversalOptions): Promise<GraphNeighborhood> {
-    const defaultMaxNodes = this.config.maxTraversalNodes ?? 20;
+    const fallbackMaxNodes = 20;
+    const rawConfigDefault = this.config.maxTraversalNodes ?? fallbackMaxNodes;
+    const defaultMaxNodes =
+      Number.isFinite(rawConfigDefault) && rawConfigDefault >= 1
+        ? Math.floor(rawConfigDefault)
+        : fallbackMaxNodes;
     const rawMaxNodes = options.maxTraversalNodes ?? defaultMaxNodes;
     const maxNodes =
       Number.isFinite(rawMaxNodes) && rawMaxNodes >= 1 ? Math.floor(rawMaxNodes) : defaultMaxNodes;
