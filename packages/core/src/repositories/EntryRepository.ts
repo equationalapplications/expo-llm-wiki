@@ -38,6 +38,7 @@ function mapRowToFact(row: any): WikiFact {
       : Number(row.last_accessed_at),
     deleted_at: row.deleted_at != null ? Number(row.deleted_at) : null,
     access_count: Number(row.access_count ?? 0),
+    okf_type: row.okf_type ?? null,
   };
 }
 
@@ -247,8 +248,8 @@ export class EntryRepository extends BaseRepository {
       `INSERT INTO ${this.prefix}entries (
         id, entity_id, title, body, tags, confidence, source_type,
         source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count,
-        deleted_at, embedding_blob, embedding
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        deleted_at, embedding_blob, embedding, okf_type
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         entity_id = excluded.entity_id,
         title = excluded.title,
@@ -264,7 +265,8 @@ export class EntryRepository extends BaseRepository {
         access_count = excluded.access_count,
         deleted_at = excluded.deleted_at,
         embedding_blob = excluded.embedding_blob,
-        embedding = NULL`,
+        embedding = NULL,
+        okf_type = excluded.okf_type`,
       [
         fact.id,
         fact.entity_id,
@@ -282,6 +284,7 @@ export class EntryRepository extends BaseRepository {
         fact.deleted_at ?? null,
         embeddingBlob ?? null,
         null,
+        fact.okf_type ?? null,
       ],
     );
 

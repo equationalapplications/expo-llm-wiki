@@ -7,6 +7,7 @@ describe('ImportExportService', () => {
   let mockEntryRepo: any;
   let mockTaskRepo: any;
   let mockEventRepo: any;
+  let mockEdgeRepo: any;
   let mockMetadataRepo: any;
   let mockSearchService: any;
   let mockJobManager: any;
@@ -42,6 +43,12 @@ describe('ImportExportService', () => {
       addIgnoreDuplicate: vi.fn().mockResolvedValue(undefined),
     };
 
+    mockEdgeRepo = {
+      getByEntityId: vi.fn().mockResolvedValue([]),
+      addIgnoreDuplicate: vi.fn().mockResolvedValue(undefined),
+      bulkDeleteByEntityId: vi.fn().mockResolvedValue(undefined),
+    };
+
     mockMetadataRepo = {
       getDistinctEntityIds: vi.fn().mockResolvedValue(['user_1', 'user_2']),
       deleteCheckpoint: vi.fn().mockResolvedValue(undefined),
@@ -71,6 +78,7 @@ describe('ImportExportService', () => {
       mockEntryRepo,
       mockTaskRepo,
       mockEventRepo,
+      mockEdgeRepo,
       mockMetadataRepo,
       mockSearchService,
       mockJobManager,
@@ -127,7 +135,7 @@ describe('ImportExportService', () => {
               } as WikiFact,
             ],
             tasks: [],
-            events: [],
+            events: [], edges: [],
           },
         },
       };
@@ -285,7 +293,7 @@ describe('ImportExportService', () => {
               } as unknown as WikiFact,
             ],
             tasks: [],
-            events: [],
+            events: [], edges: [],
           },
         },
       };
@@ -328,7 +336,7 @@ describe('ImportExportService', () => {
               } as unknown as WikiFact,
             ],
             tasks: [],
-            events: [],
+            events: [], edges: [],
           },
         },
       };
@@ -341,6 +349,67 @@ describe('ImportExportService', () => {
       expect(upserted.embedding_blob).toBeUndefined();
       // Fact still imports and falls through to re-embed (no preserved blob).
       expect(mockEmbeddingService.embedFact).toHaveBeenCalled();
+    });
+  });
+
+  describe('Importing: Edges', () => {
+    it('fetches edges via getFullBundle', async () => {
+      mockEdgeRepo.getByEntityId.mockResolvedValue([
+        { id: 'edge_1', entity_id: 'user_1', source_id: 'fact_1', target_id: 'fact_2', edge_type: 'mentions', created_at: 100 },
+      ]);
+
+      const bundle = await importExportService.getFullBundle('user_1');
+
+      expect(mockEdgeRepo.getByEntityId).toHaveBeenCalledWith('user_1');
+      expect(bundle.edges).toHaveLength(1);
+      expect(bundle.edges[0].edge_type).toBe('mentions');
+    });
+
+    it('wipes existing edges in replace mode (merge: false)', async () => {
+      const dump = {
+        generatedAt: Date.now(),
+        entities: { user_1: { facts: [], tasks: [], events: [], edges: [] } },
+      };
+
+      await importExportService.importDump(dump, { merge: false });
+
+      expect(mockEdgeRepo.bulkDeleteByEntityId).toHaveBeenCalledWith('user_1', mockDb);
+    });
+
+    it('does not wipe edges in merge mode (merge: true)', async () => {
+      const dump = {
+        generatedAt: Date.now(),
+        entities: { user_1: { facts: [], tasks: [], events: [], edges: [] } },
+      };
+
+      await importExportService.importDump(dump, { merge: true });
+
+      expect(mockEdgeRepo.bulkDeleteByEntityId).not.toHaveBeenCalled();
+    });
+
+    it('inserts each edge via addIgnoreDuplicate', async () => {
+      const dump = {
+        generatedAt: Date.now(),
+        entities: {
+          user_1: {
+            facts: [],
+            tasks: [],
+            events: [],
+            edges: [
+              { id: 'edge_1', entity_id: 'spoofed_entity', source_id: 'a', target_id: 'b', edge_type: 'mentions', created_at: 100 },
+              { id: 'edge_2', entity_id: 'user_1', source_id: 'b', target_id: 'c', edge_type: 'reports_to', created_at: 200 },
+            ],
+          },
+        },
+      };
+
+      await importExportService.importDump(dump, { merge: true });
+
+      expect(mockEdgeRepo.addIgnoreDuplicate).toHaveBeenCalledTimes(2);
+      expect(mockEdgeRepo.addIgnoreDuplicate).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'edge_1', edge_type: 'mentions', entity_id: 'user_1' }),
+        mockDb,
+      );
     });
   });
 });

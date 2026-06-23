@@ -31,3 +31,8 @@ export interface OkfFile {
   path: string;
   content: string;
 }
+
+export interface OkfMarkdownLink {
+  text: string;
+  path: string;
+}

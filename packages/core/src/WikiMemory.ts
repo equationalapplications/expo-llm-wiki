@@ -14,6 +14,7 @@ import { EntryRepository } from './repositories/EntryRepository';
 import { OutboxRepository } from './repositories/OutboxRepository';
 import { TaskRepository } from './repositories/TaskRepository';
 import { EventRepository } from './repositories/EventRepository';
+import { EdgeRepository } from './repositories/EdgeRepository';
 import { MetadataRepository } from './repositories/MetadataRepository';
 import { SearchService } from './services/SearchService';
 import { JobManager } from './services/JobManager';
@@ -56,6 +57,7 @@ export class WikiMemory {
   private outboxRepo: OutboxRepository;
   private taskRepo: TaskRepository;
   private eventRepo: EventRepository;
+  private edgeRepo: EdgeRepository;
   private metadataRepo: MetadataRepository;
   private embeddingService: EmbeddingService;
   private searchService: SearchService;
@@ -81,6 +83,7 @@ export class WikiMemory {
     this.entryRepo = new EntryRepository(db, this.prefix, this.outboxRepo);
     this.taskRepo = new TaskRepository(db, this.prefix, this.outboxRepo);
     this.eventRepo = new EventRepository(db, this.prefix);
+    this.edgeRepo = new EdgeRepository(db, this.prefix);
     this.metadataRepo = new MetadataRepository(db, this.prefix);
     this.embeddingService = new EmbeddingService(this.db, this.options, this.entryRepo, this.metadataRepo);
     this.searchService = new SearchService(this.entryRepo);
@@ -114,6 +117,7 @@ export class WikiMemory {
       this.entryRepo,
       this.taskRepo,
       this.eventRepo,
+      this.edgeRepo,
       this.metadataRepo,
       this.searchService,
       this.jobManager,

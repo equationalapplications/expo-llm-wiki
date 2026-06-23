@@ -48,6 +48,14 @@ function makeMockDb(opts: {
         }
         return { sql: `CREATE VIRTUAL TABLE x USING fts5(title, tokenize='unicode61')` } as any;
       }
+      // Edges table existence check (created in migration v5)
+      if (sql.includes('sqlite_master') && args[0]?.endsWith('edges')) {
+        const version = currentMetaVersion !== null ? parseInt(currentMetaVersion, 10) : 0;
+        if (hasEntries && version >= 5) {
+          return { name: args[0] } as any;
+        }
+        return null;
+      }
       // Meta version check — matches both literal SQL and parameterized queries
       if (sql.includes('schema_version') || args.includes('schema_version')) {
         if (currentMetaVersion !== null) {
@@ -93,7 +101,7 @@ describe('schema migrations', () => {
     // Should have written schema_version
     const versionWrite = db.runCalls.find(
       c => (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
-           (c.args[0] === '4' || c.args[1] === '4')
+           (c.args[0] === '5' || c.args[1] === '5')
     );
     expect(versionWrite).toBeDefined();
 
@@ -114,7 +122,7 @@ describe('schema migrations', () => {
     // Version should have been written
     const versionWrite = db.runCalls.find(
       c => (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
-           (c.args[0] === '4' || c.args[1] === '4')
+           (c.args[0] === '5' || c.args[1] === '5')
     );
     expect(versionWrite).toBeDefined();
   });
@@ -137,13 +145,36 @@ describe('schema migrations', () => {
   });
 
   it('already at current version → no migration runs', async () => {
-    const db = makeMockDb({ hasEntries: true, hasPorter: true, metaVersion: '4' });
+    const db = makeMockDb({ hasEntries: true, hasPorter: true, metaVersion: '5' });
     const wiki = createWiki(db);
     await wiki.setup();
 
     const hasRebuild = db.execCalls.some(s => s.includes('DROP TABLE') || s.includes('DROP TRIGGER'));
     expect(hasRebuild).toBe(false);
   });
+
+  it('existing install at version 4 → migration 5 adds okf_type columns and creates edges table', async () => {
+    const db = makeMockDb({ hasEntries: true, hasPorter: true, metaVersion: '4' });
+    const wiki = createWiki(db);
+    await wiki.setup();
+
+    const hasOkfTypeAlter = db.execCalls.some(
+      s => s.includes('ALTER TABLE') && s.includes('okf_type'),
+    );
+    expect(hasOkfTypeAlter).toBe(true);
+
+    const hasEdgesTable = db.execCalls.some(
+      s => s.includes('CREATE TABLE') && s.includes('edges'),
+    );
+    expect(hasEdgesTable).toBe(true);
+
+    const versionWrite = db.runCalls.find(
+      c => (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
+           (c.args[0] === '5' || c.args[1] === '5')
+    );
+    expect(versionWrite).toBeDefined();
+  });
+
 });
 
 // Helper that mirrors the module-level assertion in migrations.ts so we can test

@@ -72,6 +72,32 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 5,
+    description: 'Add okf_type to entries/tasks for OKF type fidelity; create edges table for OKF graph import',
+    run: async (db, prefix) => {
+      for (const table of ['entries', 'tasks'] as const) {
+        const cols = await db.getAllAsync<{ name: string }>(
+          `PRAGMA table_info(${prefix}${table})`
+        );
+        if (!cols.some(c => c.name === 'okf_type')) {
+          await db.execAsync(`ALTER TABLE ${prefix}${table} ADD COLUMN okf_type TEXT`);
+        }
+      }
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS ${prefix}edges (
+          id TEXT PRIMARY KEY,
+          entity_id TEXT NOT NULL,
+          source_id TEXT NOT NULL,
+          target_id TEXT NOT NULL,
+          edge_type TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          UNIQUE(entity_id, source_id, target_id, edge_type)
+        );
+        CREATE INDEX IF NOT EXISTS ${prefix}edges_entity_idx ON ${prefix}edges (entity_id);
+      `);
+    },
+  },
 ];
 
 // Verify MIGRATIONS are in strictly ascending version order at module load time.

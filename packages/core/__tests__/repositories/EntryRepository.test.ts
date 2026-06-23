@@ -225,4 +225,25 @@ describe('EntryRepository with OutboxRepository', () => {
     const pending = await outbox.fetchPending();
     expect(pending.length).toBe(0);
   });
+
+  it('upsertForImport persists and round-trips okf_type', async () => {
+    const fact = makeFact({ id: 'fact_okf', okf_type: 'meeting_note' });
+    await db.withTransactionAsync(async (tx) => {
+      await repo.upsertForImport(fact, tx);
+    });
+
+    const [found] = await repo.findAllByEntityId('entity1');
+    expect(found.okf_type).toBe('meeting_note');
+  });
+
+  it('upsertForImport defaults okf_type to null when absent', async () => {
+    const fact = makeFact({ id: 'fact_no_okf' });
+    delete (fact as any).okf_type;
+    await db.withTransactionAsync(async (tx) => {
+      await repo.upsertForImport(fact, tx);
+    });
+
+    const [found] = await repo.findAllByEntityId('entity1');
+    expect(found.okf_type).toBeNull();
+  });
 });

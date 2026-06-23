@@ -60,7 +60,7 @@ async function makeV1Db() {
   return db;
 }
 
-describe('migration 2+3: remove FTS5, add embedding column, setup ends at version 3', () => {
+describe('migrations v2–v5: FTS removal, embeddings, outbox, okf edges; setup ends at version 5', () => {
   it('fresh install: embedding column exists, FTS5 table absent', async () => {
     const db = openTestDatabase();
     const wiki = new WikiMemory(db, stubOptions);
@@ -77,10 +77,10 @@ describe('migration 2+3: remove FTS5, add embedding column, setup ends at versio
     const meta = await db.getFirstAsync<{ value: string }>(
       `SELECT value FROM llm_wiki_meta WHERE key = 'schema_version'`
     );
-    expect(meta?.value).toBe('4');
+    expect(meta?.value).toBe('5');
   });
 
-  it('v1 DB: FTS5 table + triggers dropped, embedding column added, version becomes 4', async () => {
+  it('v1 DB: FTS5 table + triggers dropped, embedding column added, version becomes 5', async () => {
     const db = await makeV1Db();
     const wiki = new WikiMemory(db, stubOptions);
     await wiki.setup();
@@ -101,7 +101,7 @@ describe('migration 2+3: remove FTS5, add embedding column, setup ends at versio
     const meta = await db.getFirstAsync<{ value: string }>(
       `SELECT value FROM llm_wiki_meta WHERE key = 'schema_version'`
     );
-    expect(meta?.value).toBe('4');
+    expect(meta?.value).toBe('5');
   });
 
   it('running setup() twice is idempotent: embedding column appears once', async () => {

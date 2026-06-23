@@ -331,4 +331,27 @@ describe('TaskRepository', () => {
       expect(outboxRows.length).toBe(0);
     });
   });
+
+  describe('upsertForImport', () => {
+    it('persists and round-trips okf_type', async () => {
+      const task = makeTask({ id: 'task_okf', okf_type: 'todo_item' });
+      await db.withTransactionAsync(async (tx) => {
+        await repo.upsertForImport(task, tx);
+      });
+
+      const found = await repo.findById('task_okf');
+      expect(found?.okf_type).toBe('todo_item');
+    });
+
+    it('defaults okf_type to null when absent', async () => {
+      const task = makeTask({ id: 'task_no_okf' });
+      delete (task as any).okf_type;
+      await db.withTransactionAsync(async (tx) => {
+        await repo.upsertForImport(task, tx);
+      });
+
+      const found = await repo.findById('task_no_okf');
+      expect(found?.okf_type).toBeNull();
+    });
+  });
 });

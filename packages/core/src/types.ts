@@ -119,6 +119,12 @@ export interface WikiFact {
   last_accessed_at: number | null;
   access_count: number;
   deleted_at: number | null;
+  /**
+   * Verbatim OKF `type:` frontmatter value when this fact originated from (or was
+   * re-imported via) an OKF bundle. `null`/`undefined` for facts never touched by
+   * OKF import. Distinct from `source_type`, which governs immutability rules.
+   */
+  okf_type?: string | null;
 }
 
 export interface WikiTask {
@@ -131,6 +137,8 @@ export interface WikiTask {
   updated_at: number;
   resolved_at: number | null;
   deleted_at: number | null;
+  /** Verbatim OKF `type:` frontmatter value when this task originated from an OKF bundle. */
+  okf_type?: string | null;
 }
 
 export interface WikiEvent {
@@ -139,6 +147,15 @@ export interface WikiEvent {
   event_type: 'observation' | 'decision' | 'action' | 'outcome';
   summary: string;
   related_entry_id?: string | null;
+  created_at: number;
+}
+
+export interface WikiEdge {
+  id: string;
+  entity_id: string;
+  source_id: string;
+  target_id: string;
+  edge_type: string;
   created_at: number;
 }
 
@@ -322,6 +339,7 @@ export interface MemoryBundle {
   facts: WikiFact[];
   tasks: WikiTask[];
   events: WikiEvent[];
+  edges?: WikiEdge[];
   factScores?: Record<string, number>;
   metadata?: {
     query: string;

@@ -25,7 +25,7 @@ function makeDump(facts: Array<{ id: string; title: string; body: string }>): Me
           deleted_at: null,
         })),
         tasks: [],
-        events: [],
+        events: [], edges: [],
       },
     },
   };
