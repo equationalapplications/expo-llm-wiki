@@ -7,24 +7,24 @@
 
 ## Problem
 
-Four specs shipped code without matching doc updates:
+At the time this spec was written, four shipped features lacked matching doc updates:
 
 - **OKF export** (`2026-06-18-okf-export-design.md`) and **OKF import**
   (`2026-06-22-okf-import-design.md`) — fully implemented (`packages/okf` has all 8 primitives;
   `packages/core` has `formatOkfBundle`, `parseOkfBundle`, `WikiEdge`, `EdgeRepository`,
-  `okf_type` column) but almost entirely undocumented. `packages/okf/README.md` is 3 lines,
-  describes export-only. No README mentions import, `parseOkfBundle`, `WikiEdge`, or `okf_type`.
-  The root README's package table lists "five packages" and omits `okf` (now a 6th published
+  `okf_type` column) but almost entirely undocumented. `packages/okf/README.md` was 3 lines,
+  described export-only. No README mentioned import, `parseOkfBundle`, `WikiEdge`, or `okf_type`.
+  The root README's package table listed five packages and omitted `core-okf` (the 6th published
   package) entirely.
 - **`useEntityStatus` hook** (`2026-06-22-use-entity-status-hook-design.md`) and **Security
   Hardening Phase 2** (`2026-06-22-security-hardening-phase-2.md`) — verified already documented
   correctly (react/expo READMEs have the hook; root/core READMEs have the Prompt-Injection Trust
   Boundary section). **Out of scope for this spec** — no changes needed.
 
-Separately, every package README has a "Monorepo Ecosystem" table (own package bolded, others
-linked) so a developer landing on one package's npm page can find the sibling package that fits
-their platform. The root README has an equivalent table under a differently-named heading
-("Monorepo Packages") and, like every other table in the repo, is missing the `core-okf` row.
+Separately, every package README had a "Monorepo Ecosystem" table (own package bolded, others
+linked) so a developer landing on one package's npm page could find the sibling package that fits
+their platform. The root README had an equivalent table under a differently-named heading
+("Monorepo Packages") and, like every other table in the repo, was missing the `core-okf` row.
 
 ## Goals
 
@@ -134,7 +134,8 @@ Documentation-only change; "testing" is a manual review pass, not automated:
       re-verify if source has changed since).
 - [ ] All 7 files (root + 6 packages) have a table titled exactly `## Monorepo Ecosystem` with
       identical 6-row package sets and exactly one bolded row each.
-- [ ] No internal link 404s (relative paths to `packages/*/README.md`, anchors within README.md).
+- [ ] No broken links in npm-published READMEs (absolute GitHub URLs to `packages/*/README.md`,
+      anchors within README.md).
 - [ ] No "new"/"now supported"/"recently added" framing anywhere referring to OKF, the hook, or
       security hardening — all stated as plain present-tense facts.
 - [ ] Root README's npm badge block has 5 version+downloads pairs (expo, react, core,

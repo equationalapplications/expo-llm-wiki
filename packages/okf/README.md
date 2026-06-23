@@ -6,7 +6,7 @@
 
 A zero-dependency library for parsing and producing [Open Knowledge Format (OKF) v0.1](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) bundles. This package provides the raw primitives to work with OKF frontmatter, concept documents, and index/log files, completely decoupled from any specific database or data model.
 
-For a ready-made `MemoryDump` ⇄ OKF bundle adapter, see the [OKF Import/Export section in `@equationalapplications/core-llm-wiki`](../core/README.md#okf-importexport).
+For a ready-made `MemoryDump` ⇄ OKF bundle adapter, see the [OKF Import/Export section in `@equationalapplications/core-llm-wiki`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md#okf-importexport).
 
 ## Installation
 
@@ -59,16 +59,16 @@ Parses relative markdown cross-links to map knowledge graph edges.
 
 ```typescript
 const links = extractMarkdownLinks('See [preferences](facts/fact_abc.md) for more.');
-// links: [{ text: 'preferences', path: 'facts/fact_abc.md }]
+// links: [{ text: 'preferences', path: 'facts/fact_abc.md' }]
 ```
 
 ## Monorepo Ecosystem
 
 | Package | Purpose |
 | --- | --- |
-| [@equationalapplications/core-llm-wiki](../core/README.md) | Persistent episodic memory |
-| [@equationalapplications/expo-llm-wiki](../expo/README.md) | Persistent episodic memory for Expo/React Native |
-| [@equationalapplications/react-llm-wiki](../react/README.md) | Persistent episodic memory for Web |
-| [@equationalapplications/prisma-outbox](../prisma-outbox/README.md) | Sync SQLite outbox events to Prisma |
-| [@equationalapplications/core-llm-tools](../core-llm-tools/README.md) | Gemini tool schemas and capability injector |
+| [@equationalapplications/core-llm-wiki](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md) | Persistent episodic memory |
+| [@equationalapplications/expo-llm-wiki](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/expo/README.md) | Persistent episodic memory for Expo/React Native |
+| [@equationalapplications/react-llm-wiki](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/react/README.md) | Persistent episodic memory for Web |
+| [@equationalapplications/prisma-outbox](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/prisma-outbox/README.md) | Sync SQLite outbox events to Prisma |
+| [@equationalapplications/core-llm-tools](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core-llm-tools/README.md) | Gemini tool schemas and capability injector |
 | **@equationalapplications/core-okf** | Zero-dependency Open Knowledge Format (OKF) v0.1 primitives — parse and produce interoperable knowledge bundles. |

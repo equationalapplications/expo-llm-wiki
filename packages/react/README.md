@@ -452,12 +452,12 @@ The flowchart shows:
 
 | Package | Purpose |
 | ----- | ----- |
-| [@equationalapplications/core-llm-wiki](../core/README.md) | Persistent episodic memory |
-| [@equationalapplications/expo-llm-wiki](../expo/README.md) | Persistent episodic memory for Expo/React Native |
+| [@equationalapplications/core-llm-wiki](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md) | Persistent episodic memory |
+| [@equationalapplications/expo-llm-wiki](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/expo/README.md) | Persistent episodic memory for Expo/React Native |
 | **@equationalapplications/react-llm-wiki** | Persistent episodic memory for Web |
-| [@equationalapplications/prisma-outbox](../prisma-outbox/README.md) | Sync SQLite outbox events to Prisma |
-| [@equationalapplications/core-llm-tools](../core-llm-tools/README.md) | Gemini tool schemas and capability injector |
-| [@equationalapplications/core-okf](../okf/README.md) | Zero-dependency Open Knowledge Format (OKF) v0.1 primitives — parse and produce interoperable knowledge bundles. |
+| [@equationalapplications/prisma-outbox](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/prisma-outbox/README.md) | Sync SQLite outbox events to Prisma |
+| [@equationalapplications/core-llm-tools](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core-llm-tools/README.md) | Gemini tool schemas and capability injector |
+| [@equationalapplications/core-okf](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/okf/README.md) | Zero-dependency Open Knowledge Format (OKF) v0.1 primitives — parse and produce interoperable knowledge bundles. |
 
 ## License
 
