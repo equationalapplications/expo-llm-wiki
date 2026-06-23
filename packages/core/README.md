@@ -470,7 +470,7 @@ Parse raw OKF files back into a `MemoryDump` that the wiki can ingest:
 ```typescript
 import { parseOkfBundle } from '@equationalapplications/core-llm-wiki';
 
-// Assuming you read OKF files from disk/zip into OkfFile[] shape
+// Assuming you read OKF files for this entity (e.g. under `entities/entity-123/`) from disk/zip into OkfFile[] shape
 const dump = parseOkfBundle('entity-123', files, {
   defaultSchema: 'fact',
   typeMapping: {
