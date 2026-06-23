@@ -46,21 +46,5 @@
     "tsup": "^8.0.0",
     "typescript": "^5.4.0",
     "vitest": "4.1.5"
-  },
-  "pnpm": {
-    "overrides": {
-      "@ungap/structured-clone": "^1.3.1",
-      "react": "19.2.0",
-      "react-dom": "19.2.0",
-      "tar": "^7.5.13"
-    },
-    "onlyBuiltDependencies": [
-      "@prisma/client",
-      "@prisma/engines",
-      "better-sqlite3",
-      "esbuild",
-      "onnxruntime-node",
-      "prisma"
-    ]
   }
 }
