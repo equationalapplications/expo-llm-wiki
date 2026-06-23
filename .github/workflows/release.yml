@@ -22,7 +22,7 @@ jobs:
 
       - uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d # v4.0.0
         with:
-          version: 9.12.0
+          version: 11.5.0
 
       - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
@@ -54,8 +54,6 @@ jobs:
       - run: npx semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish all packages
         run: |
@@ -112,6 +110,3 @@ jobs:
           publish_if_needed "./packages/expo/package.json" pnpm --filter "./packages/expo" publish --no-git-checks --access public
           publish_if_needed "./packages/prisma-outbox/package.json" pnpm --filter "./packages/prisma-outbox" publish --no-git-checks --access public
           publish_if_needed "./packages/okf/package.json" pnpm --filter "./packages/okf" publish --no-git-checks --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
