@@ -158,7 +158,7 @@ ORDER BY depth ASC, (SELECT updated_at FROM entries WHERE id = node_id) DESC
 LIMIT ?maxNodes;
 ```
 
-`?edgeTypes` and `?excludeSourceTypes` are expanded to `(?, ?, ...)` placeholder lists at call time, same pattern as `EntryRepository.findByIds()`'s chunked `IN (...)` construction. When `excludeSourceTypes` is empty, the clause becomes `NOT IN ()`, which SQLite evaluates as always-true (no exclusion) — verify this with a unit test rather than special-casing it.
+`?edgeTypes` and `?excludeSourceTypes` are not single bind params — SQLite has no array binding. `getNeighborhood()` must build the `(?, ?, ...)` placeholder string dynamically (one `?` per array element, joined with `,`) and splice it into the SQL text *before* execution, then pass the flattened values as part of the single positional-params array handed to `SQLiteAdapter`. Same pattern as `EntryRepository.findByIds()`'s chunked `IN (...)` construction — do not attempt to bind the array directly as one parameter. When `excludeSourceTypes` is empty, the clause becomes `NOT IN ()`, which SQLite evaluates as always-true (no exclusion) — verify this with a unit test rather than special-casing it.
 
 ---
 
