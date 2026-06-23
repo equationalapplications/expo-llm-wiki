@@ -491,7 +491,7 @@ await wiki.importDump(dump, { merge: true });
 ### WikiEdge and Markdown Links
 
 A `WikiEdge` represents a markdown cross-link found inside a concept body, resolved to a `source_id` and `target_id`.
-Edges automatically round-trip during OKF import and export. Because the markdown body is the source of truth for edges in the OKF spec, edges are dynamically extracted and preserved via the `EdgeRepository` — there is no separate edge export step required. The `edges` array is automatically populated when reading a full `MemoryBundle`.
+Edges automatically round-trip during OKF import and export. Because the markdown body is the source of truth for edges in the OKF spec, edges are extracted during `parseOkfBundle()` and persisted via the `EdgeRepository` on `importDump()` — there is no separate edge export step required. The `edges` array is included in bundles returned by `getMemoryBundle()` / `exportDump()` (not by `read()`).
 
 ### The `okf_type` Field
 
