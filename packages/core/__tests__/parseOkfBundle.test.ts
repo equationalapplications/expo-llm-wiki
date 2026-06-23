@@ -299,6 +299,24 @@ describe('parseOkfBundle — edge extraction', () => {
     expect(parseOkfBundle('alice', files).entities.alice.edges).toEqual([]);
   });
 
+  it('resolves entity-root-relative link targets from nested concept paths', () => {
+    const files: OkfFile[] = [
+      conceptFile('entities/alice/facts/target.md', { type: 'fact', title: 'T', id: 'fact_tgt' }),
+      conceptFile(
+        'entities/alice/concepts/source.md',
+        { type: 'fact', title: 'S', id: 'fact_src' },
+        'See [mentions](facts/target.md).',
+      ),
+    ];
+    const edges = parseOkfBundle('alice', files).entities.alice.edges;
+    expect(edges).toHaveLength(1);
+    expect(edges[0]).toMatchObject({
+      source_id: 'fact_src',
+      target_id: 'fact_tgt',
+      edge_type: 'mentions',
+    });
+  });
+
   it('skips structural navigation links to index.md and log.md', () => {
     const files: OkfFile[] = [
       conceptFile(

@@ -66,6 +66,24 @@ describe('EdgeRepository', () => {
     expect(rows.length).toBe(2);
   });
 
+  it('addIgnoreDuplicate() throws when id collides with a different edge tuple', async () => {
+    await repo.addIgnoreDuplicate(makeEdge({
+      id: 'edge_collision',
+      source_id: 'a',
+      target_id: 'b',
+      edge_type: 'mentions',
+    }));
+
+    await expect(
+      repo.addIgnoreDuplicate(makeEdge({
+        id: 'edge_collision',
+        source_id: 'c',
+        target_id: 'd',
+        edge_type: 'reports_to',
+      })),
+    ).rejects.toThrow(/Edge id collision/);
+  });
+
   it('addIgnoreDuplicate() allows distinct edge_type between the same source/target', async () => {
     await repo.addIgnoreDuplicate(makeEdge({ id: 'edge_1', source_id: 'a', target_id: 'b', edge_type: 'mentions' }));
     await repo.addIgnoreDuplicate(makeEdge({ id: 'edge_2', source_id: 'a', target_id: 'b', edge_type: 'reports_to' }));
