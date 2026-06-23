@@ -252,9 +252,11 @@ export function parseOkfBundle(
 
     const seenEdges = new Set<string>();
     for (const link of extractMarkdownLinks(body)) {
-      const targetPath = resolveRelativePath(file.path, stripLinkSuffix(link.path));
-      if (isStructuralPath(targetPath)) continue;
-      const targetId = lookupResolvedId(pathToResolvedId, targetPath);
+      const strippedPath = stripLinkSuffix(link.path);
+      const directTargetId = lookupResolvedId(pathToResolvedId, strippedPath);
+      const resolvedTargetPath = resolveRelativePath(file.path, strippedPath);
+      if (isStructuralPath(strippedPath) || isStructuralPath(resolvedTargetPath)) continue;
+      const targetId = directTargetId ?? lookupResolvedId(pathToResolvedId, resolvedTargetPath);
       if (!targetId) continue;
       const edgeKey = `${resolvedId}\u0000${targetId}\u0000${link.text}`;
       if (seenEdges.has(edgeKey)) continue;
