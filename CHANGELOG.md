@@ -1,3 +1,18 @@
+# [4.16.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.15.3...v4.16.0) (2026-06-23)
+
+
+### Bug Fixes
+
+* address CodeRabbit review on ontology hooks and prompts ([6d69b8b](https://github.com/equationalapplications/expo-llm-wiki/commit/6d69b8b87550ad6b11c583c117ba522c09f19809))
+* **core:** address Copilot review on ontology cache and edge matching ([5fd4e63](https://github.com/equationalapplications/expo-llm-wiki/commit/5fd4e6309fc19cde813733c600c3a7cf32a851b4))
+* **core:** address PR review feedback on ontology governance ([2dfba16](https://github.com/equationalapplications/expo-llm-wiki/commit/2dfba167e4cf5fd542d770679a9f60a2a70d614d))
+
+
+### Features
+
+* **core:** add per-entity seeded ontology for typed LLM extraction ([5212553](https://github.com/equationalapplications/expo-llm-wiki/commit/5212553fa9d769c9164384528ca472399124b4c1))
+* **react:** add ontology manifest hooks ([ebf3ced](https://github.com/equationalapplications/expo-llm-wiki/commit/ebf3cedc211ac24aea60fba593fdfa6878fa4f41))
+
 ## [4.15.3](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.15.2...v4.15.3) (2026-06-23)
 
 
