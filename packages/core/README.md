@@ -460,7 +460,7 @@ const dump = await wiki.exportDump(['entity-123']);
 const { files } = formatOkfBundle(dump);
 
 // files: Array<{ path: string; content: string }>
-// e.g., [{ path: 'facts/fact_abc.md', content: '---\n...' }]
+// e.g., [{ path: 'entities/entity-123/facts/fact_abc.md', content: '---\n...' }]
 ```
 
 ### Importing an OKF Bundle
