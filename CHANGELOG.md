@@ -1,3 +1,12 @@
+## [4.15.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.15.0...v4.15.1) (2026-06-23)
+
+
+### Bug Fixes
+
+* **ci:** migrate pnpm overrides to pnpm-workspace.yaml for pnpm 11 ([089290a](https://github.com/equationalapplications/expo-llm-wiki/commit/089290af88632c401e9ba3ceb040b6786f3f6883))
+* **docs:** use absolute links in ecosystem tables for npm ([414fa25](https://github.com/equationalapplications/expo-llm-wiki/commit/414fa25c82159c8d702a6175ae9c0fe0386eef12))
+* **release:** bump pnpm to 11.5.0 and drop npm token env for OIDC trusted publishing ([f7a3c24](https://github.com/equationalapplications/expo-llm-wiki/commit/f7a3c2404bbd09edd08545083ed23295feb7f9b8))
+
 # [4.15.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.14.1...v4.15.0) (2026-06-23)
 
 
