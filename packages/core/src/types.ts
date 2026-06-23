@@ -18,6 +18,48 @@ export interface PromptOverrides {
   healSystemPrompt?: string;
 }
 
+export type OntologyMode = 'strict' | 'emergent' | 'off';
+
+export interface OntologyNodeType {
+  type: string;
+  description: string;
+}
+
+export interface OntologyEdgeType {
+  type: string;
+  source_type: string;
+  target_type: string;
+  description: string;
+}
+
+export interface OntologyManifest {
+  node_types: OntologyNodeType[];
+  edge_types: OntologyEdgeType[];
+}
+
+export interface OntologyConfig {
+  mode?: OntologyMode;
+  seedManifests?: Record<string, {
+    manifest: OntologyManifest;
+    mode?: OntologyMode;
+  }>;
+}
+
+export interface ExtractedFactEdge {
+  edge_type: string;
+  target_title: string;
+}
+
+export interface OntologyUpdates {
+  node_types?: OntologyNodeType[];
+  edge_types?: OntologyEdgeType[];
+}
+
+export interface OntologyPromptContext {
+  ontologyManifest: string;
+  ontologyModeInstructions: string;
+}
+
 export interface WikiConfig {
   /**
    * Prefix applied to every SQL table/index/trigger name. Must match
@@ -61,6 +103,7 @@ export interface WikiConfig {
    * @default false
    */
   enableOutbox?: boolean;
+  ontology?: OntologyConfig;
 }
 
 export interface ReadOptions {
@@ -170,6 +213,11 @@ export interface ExtractedFact {
   body: string;
   tags: string[];
   confidence: 'certain' | 'inferred' | 'tentative';
+}
+
+export interface ExtractedFactWithOntology extends ExtractedFact {
+  okf_type?: string;
+  edges?: ExtractedFactEdge[];
 }
 
 export interface ExtractedTask {

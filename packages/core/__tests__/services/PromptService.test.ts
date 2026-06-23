@@ -41,6 +41,23 @@ describe('PromptService', () => {
       const { systemPrompt } = svc.buildIngestPrompt('val', template);
       expect(systemPrompt).toBe('Data: val Extra: {{unknown}}');
     });
+
+    it('appends ontology instructions when context provided', () => {
+      const svc = new PromptService();
+      const ctx = {
+        ontologyManifest: '{"node_types":[]}',
+        ontologyModeInstructions: '## Ontology constraints\nSTRICT',
+      };
+      const { systemPrompt } = svc.buildIngestPrompt('chunk', undefined, ctx);
+      expect(systemPrompt).toContain(INGEST_SYSTEM_PROMPT);
+      expect(systemPrompt).toContain('## Ontology constraints');
+    });
+
+    it('leaves base prompt byte-identical when context is null', () => {
+      const svc = new PromptService();
+      const { systemPrompt } = svc.buildIngestPrompt('chunk', undefined, null);
+      expect(systemPrompt).toBe(INGEST_SYSTEM_PROMPT);
+    });
   });
 
   describe('buildLibrarianPrompt', () => {

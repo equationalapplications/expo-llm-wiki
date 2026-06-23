@@ -98,6 +98,20 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 6,
+    description: 'Add entity_manifests table for per-entity ontology state',
+    run: async (db, prefix) => {
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS ${prefix}entity_manifests (
+          entity_id TEXT PRIMARY KEY,
+          mode TEXT NOT NULL DEFAULT 'off',
+          manifest_json TEXT NOT NULL DEFAULT '{"node_types":[],"edge_types":[]}',
+          updated_at INTEGER NOT NULL
+        );
+      `);
+    },
+  },
 ];
 
 // Verify MIGRATIONS are in strictly ascending version order at module load time.

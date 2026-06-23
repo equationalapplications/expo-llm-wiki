@@ -26,6 +26,8 @@ import { EmbeddingService } from './services/EmbeddingService';
 import { RetrievalService } from './services/RetrievalService';
 import { WriteService } from './services/WriteService';
 import { PromptService } from './services/PromptService';
+import { OntologyService } from './services/OntologyService';
+import type { OntologyManifest, OntologyMode } from './types';
 
 export { WikiBusyError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER } from './types';
 
@@ -68,6 +70,7 @@ export class WikiMemory {
   private retrievalService: RetrievalService;
   private writeService: WriteService;
   private promptService: PromptService;
+  private ontologyService: OntologyService;
 
   constructor(db: SQLiteAdapter, options: WikiOptions) {
     this.db = db;
@@ -85,6 +88,11 @@ export class WikiMemory {
     this.eventRepo = new EventRepository(db, this.prefix);
     this.edgeRepo = new EdgeRepository(db, this.prefix);
     this.metadataRepo = new MetadataRepository(db, this.prefix);
+    this.ontologyService = new OntologyService(
+      this.metadataRepo,
+      this.edgeRepo,
+      options.config?.ontology,
+    );
     this.embeddingService = new EmbeddingService(this.db, this.options, this.entryRepo, this.metadataRepo);
     this.searchService = new SearchService(this.entryRepo);
     this.jobManager = new JobManager(this.prefix);
@@ -98,6 +106,7 @@ export class WikiMemory {
       this.jobManager,
       this.embeddingService,
       this.promptService,
+      this.ontologyService,
     );
     this.maintenanceService = new MaintenanceService(
       this.db,
@@ -111,6 +120,7 @@ export class WikiMemory {
       this.jobManager,
       this.embeddingService,
       this.promptService,
+      this.ontologyService,
     );
     this.importExportService = new ImportExportService(
       this.db,
@@ -361,6 +371,34 @@ export class WikiMemory {
    */
   async markOutboxEventsProcessed(eventIds: string[]): Promise<void> {
     await this.outboxRepo.acknowledge(eventIds);
+  }
+
+  async getOntologyManifest(entityId: string): Promise<{
+    mode: OntologyMode;
+    manifest: OntologyManifest;
+  } | null> {
+    const row = await this.metadataRepo.getManifest(entityId);
+    if (row) return { mode: this.ontologyService.resolveMode(row.mode), manifest: row.manifest };
+    const seed = this.options.config?.ontology?.seedManifests?.[entityId];
+    if (seed) {
+      return {
+        mode: this.ontologyService.resolveMode(seed.mode),
+        manifest: seed.manifest,
+      };
+    }
+    return null;
+  }
+
+  async setOntologyManifest(
+    entityId: string,
+    manifest: OntologyManifest,
+    options?: { mode?: OntologyMode },
+  ): Promise<void> {
+    const mode = options?.mode ?? this.ontologyService.resolveMode();
+    await this.db.withTransactionAsync(tx =>
+      this.metadataRepo.setManifest(entityId, { mode, manifest }, tx),
+    );
+    this.ontologyService.invalidateCache(entityId);
   }
 }
 

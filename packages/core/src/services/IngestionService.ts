@@ -1,11 +1,13 @@
 import { chunkText, withConcurrency, validateFact, parseJsonResponse, normalizeSourceRef, normalizeSourceHash } from '../utils/pure';
+import { normalizeTitleKey } from '../utils/ontology';
 import { generateId } from '../utils/ids';
-import type { WikiOptions, ExtractedFact, WikiFact } from '../types';
+import type { WikiOptions, ExtractedFact, ExtractedFactWithOntology, WikiFact, OntologyUpdates } from '../types';
 import type { SQLiteAdapter } from '../types';
 import type { EntryRepository } from '../repositories/EntryRepository';
 import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
+import type { OntologyService, TitleIndexEntry } from './OntologyService';
 import { PromptService } from './PromptService';
 
 export class IngestionService {
@@ -20,6 +22,7 @@ export class IngestionService {
     private jobManager: JobManager,
     private embeddingService: EmbeddingService,
     promptService?: PromptService,
+    private ontologyService?: OntologyService,
   ) {
     // Fallback for direct instantiation outside WikiMemory facade (e.g. isolated tests).
     this.promptService = promptService ?? new PromptService(this.options.config?.prompts);
@@ -65,26 +68,36 @@ export class IngestionService {
 
       const chunkResults = await withConcurrency(
         chunks.map((chunk) => async () => {
-          const { systemPrompt, userPrompt } = this.promptService.buildIngestPrompt(chunk, params.promptOverride);
+          const ontologyContext = await this.ontologyService?.buildPromptContext(entityId) ?? null;
+          const { systemPrompt, userPrompt } = this.promptService.buildIngestPrompt(
+            chunk,
+            params.promptOverride,
+            ontologyContext,
+          );
           const responseText = await this.options.llmProvider.generateText({ systemPrompt, userPrompt });
-          const result = parseJsonResponse<{ facts: ExtractedFact[] }>(responseText);
-          return (Array.isArray(result.facts) ? result.facts : [])
-            .map(validateFact)
-            .filter((f): f is ExtractedFact => f !== null);
+          const result = parseJsonResponse<{ facts: ExtractedFact[]; ontology_updates?: OntologyUpdates }>(responseText);
+          return {
+            facts: (Array.isArray(result.facts) ? result.facts : [])
+              .map(validateFact)
+              .filter((f): f is ExtractedFact => f !== null),
+            ontology_updates: result.ontology_updates,
+          };
         }),
         chunkConcurrency
       );
 
       const seen = new Set<string>();
-      const allValidFacts: ExtractedFact[] = [];
-      for (const facts of chunkResults) {
-        for (const fact of facts) {
-          const normalized = fact.title.trim().toLowerCase().replace(/\s+/g, ' ');
-          if (!seen.has(normalized)) {
-            seen.add(normalized);
-            allValidFacts.push(fact);
+      const orderedChunkFacts: Array<{ facts: ExtractedFact[]; ontology_updates?: OntologyUpdates }> = [];
+      for (const chunkResult of chunkResults) {
+        const dedupedFacts: ExtractedFact[] = [];
+        for (const fact of chunkResult.facts) {
+          const normalizedTitle = fact.title.trim().toLowerCase().replace(/\s+/g, ' ');
+          if (!seen.has(normalizedTitle)) {
+            seen.add(normalizedTitle);
+            dedupedFacts.push(fact);
           }
         }
+        orderedChunkFacts.push({ facts: dedupedFacts, ontology_updates: chunkResult.ontology_updates });
       }
 
       const now = Date.now();
@@ -95,15 +108,41 @@ export class IngestionService {
         deletedSourceFactIds.push(...(await this.entryRepo.findIdsBySource(entityId, sourceRef, null, tx, false)));
         await this.entryRepo.softDeleteBySource(entityId, tx, sourceRef, null);
 
-        for (const fact of allValidFacts) {
-          const id = generateId('fact_');
-          const wikiFact: WikiFact = {
-            id, entity_id: entityId, title: fact.title, body: fact.body, tags: fact.tags, confidence: fact.confidence,
-            source_type: 'immutable_document', source_hash: sourceHash, source_ref: sourceRef,
-            created_at: now, updated_at: now, last_accessed_at: null, access_count: 0, deleted_at: null,
-          };
-          await this.entryRepo.upsert(wikiFact, tx);
-          insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
+        const titleIndex = new Map<string, TitleIndexEntry>();
+        let ontologyState = await this.ontologyService?.getEffectiveState(entityId, tx)
+          ?? { mode: 'off' as const, manifest: { node_types: [], edge_types: [] } };
+        let { mode, manifest } = ontologyState;
+
+        for (const { facts, ontology_updates } of orderedChunkFacts) {
+          if (mode === 'emergent' && ontology_updates && this.ontologyService) {
+            manifest = await this.ontologyService.mergeEmergentUpdates(entityId, ontology_updates, tx);
+            ontologyState = await this.ontologyService.getEffectiveState(entityId, tx);
+            mode = ontologyState.mode;
+          }
+
+          for (const fact of facts) {
+            const ontologyFact = fact as ExtractedFactWithOntology;
+            const normalized = this.ontologyService?.validateAndNormalizeFact(ontologyFact, manifest)
+              ?? { okf_type: null, edges: [] };
+
+            const id = generateId('fact_');
+            const wikiFact: WikiFact = {
+              id, entity_id: entityId, title: fact.title, body: fact.body, tags: fact.tags, confidence: fact.confidence,
+              source_type: 'immutable_document', source_hash: sourceHash, source_ref: sourceRef,
+              created_at: now, updated_at: now, last_accessed_at: null, access_count: 0, deleted_at: null,
+              okf_type: normalized.okf_type,
+            };
+            await this.entryRepo.upsert(wikiFact, tx);
+            insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
+
+            titleIndex.set(normalizeTitleKey(fact.title), { id, okf_type: normalized.okf_type });
+
+            if (this.ontologyService && normalized.edges.length > 0) {
+              await this.ontologyService.resolveAndPersistEdges(
+                entityId, id, normalized.okf_type, normalized.edges, manifest, titleIndex, tx, now,
+              );
+            }
+          }
         }
       });
 

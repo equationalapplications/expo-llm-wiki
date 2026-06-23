@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MaintenanceService } from '../../src/services/MaintenanceService';
 import { PromptService } from '../../src/services/PromptService';
+import { OntologyService } from '../../src/services/OntologyService';
+import { MetadataRepository } from '../../src/repositories/MetadataRepository';
+import { EdgeRepository } from '../../src/repositories/EdgeRepository';
+import { openTestDatabase } from '../helpers/sqliteAdapter';
+import { setupDatabase } from '../../src/db/schema';
 import { LIBRARIAN_SYSTEM_PROMPT, HEAL_SYSTEM_PROMPT } from '../../src/prompts';
 
 describe('MaintenanceService — PromptService injection', () => {
@@ -54,12 +59,13 @@ describe('MaintenanceService — PromptService injection', () => {
     };
   });
 
-  function makeService(promptService: PromptService) {
+  function makeService(promptService: PromptService, ontologyService?: OntologyService) {
     return new MaintenanceService(
       mockDb, 'llm_wiki_', mockOptions,
       mockEntryRepo, mockTaskRepo, mockEventRepo, mockMetadataRepo,
       mockSearchService, mockJobManager, mockEmbeddingService,
       promptService,
+      ontologyService,
     );
   }
 
@@ -141,5 +147,70 @@ describe('MaintenanceService — PromptService injection', () => {
         expect.objectContaining({ systemPrompt: 'custom heal override' })
       );
     });
+  });
+});
+
+describe('MaintenanceService — ontology integration', () => {
+  const PREFIX = 'llm_wiki_';
+
+  it('persists normalized okf_type from LLM response under strict manifest', async () => {
+    const db = openTestDatabase();
+    await setupDatabase(db, PREFIX);
+    const metadataRepo = new MetadataRepository(db, PREFIX);
+    const edgeRepo = new EdgeRepository(db, PREFIX);
+    const ontologyService = new OntologyService(metadataRepo, edgeRepo, { mode: 'strict' });
+
+    await db.withTransactionAsync(async (tx) => {
+      await metadataRepo.setManifest('entity1', {
+        mode: 'strict',
+        manifest: {
+          node_types: [{ type: 'person', description: 'An individual.' }],
+          edge_types: [],
+        },
+      }, tx);
+    });
+
+    const librarianResponse = JSON.stringify({
+      facts: [{
+        title: 'Jane leads team',
+        body: 'Jane is the team lead.',
+        tags: [],
+        confidence: 'inferred',
+        okf_type: 'Person',
+        edges: [],
+      }],
+      tasks: [],
+    });
+
+    const mockEntryRepo = {
+      findRecentByEntityId: vi.fn().mockResolvedValue([]),
+      upsert: vi.fn().mockResolvedValue(undefined),
+    };
+    const mockTaskRepo = { upsert: vi.fn().mockResolvedValue(undefined) };
+    const mockEventRepo = { getRecent: vi.fn().mockResolvedValue([]) };
+    const mockSearchService = { sync: vi.fn(), evictCache: vi.fn() };
+    const mockJobManager = { acquireLock: vi.fn(), releaseLock: vi.fn() };
+    const mockEmbeddingService = { embedFact: vi.fn().mockResolvedValue(true) };
+
+    const svc = new MaintenanceService(
+      db, PREFIX,
+      { llmProvider: { generateText: vi.fn().mockResolvedValue(librarianResponse) } },
+      mockEntryRepo as any,
+      mockTaskRepo as any,
+      mockEventRepo as any,
+      metadataRepo,
+      mockSearchService as any,
+      mockJobManager as any,
+      mockEmbeddingService as any,
+      new PromptService(),
+      ontologyService,
+    );
+
+    await svc.doRunLibrarian('entity1');
+
+    expect(mockEntryRepo.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ okf_type: 'person' }),
+      expect.anything(),
+    );
   });
 });

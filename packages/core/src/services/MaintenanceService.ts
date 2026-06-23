@@ -1,10 +1,12 @@
 import { parseJsonResponse, validateFact, validateTask, titleTokens, jaccardScore, normalizeSourceRef, normalizeSourceHash, sanitizeRankerError } from '../utils/pure';
+import { normalizeTitleKey } from '../utils/ontology';
 import { PromptService } from './PromptService';
+import type { OntologyService, TitleIndexEntry } from './OntologyService';
 import { generateId } from '../utils/ids';
 import { parseEmbedding } from '../utils/embedding';
 import { PrunePartialFailureError } from '../types';
 import { HOOK_TIMEOUT_MARKER } from '../types';
-import type { WikiOptions, ExtractedFact, ExtractedTask, WikiFact, WikiTask } from '../types';
+import type { WikiOptions, ExtractedFact, ExtractedTask, ExtractedFactWithOntology, WikiFact, WikiTask, OntologyUpdates } from '../types';
 import type { SQLiteAdapter } from '../types';
 import type { EntryRepository } from '../repositories/EntryRepository';
 import type { TaskRepository } from '../repositories/TaskRepository';
@@ -32,6 +34,7 @@ export class MaintenanceService {
     private jobManager: JobManager,
     private embeddingService: EmbeddingService,
     promptService?: PromptService,
+    private ontologyService?: OntologyService,
   ) {
     // Fallback for direct instantiation outside WikiMemory facade (e.g. isolated tests).
     this.promptService = promptService ?? new PromptService(this.options.config?.prompts);
@@ -294,17 +297,25 @@ export class MaintenanceService {
       };
     });
 
+    const ontologyContext = await this.ontologyService?.buildPromptContext(entityId) ?? null;
+
     const { systemPrompt, userPrompt } = this.promptService.buildLibrarianPrompt(
       events.reverse(),
       currentFacts,
       promptOverride,
+      ontologyContext,
     );
 
     const responseText = await this.options.llmProvider.generateText({ systemPrompt, userPrompt });
 
-    const result = parseJsonResponse<{ facts: ExtractedFact[], tasks: ExtractedTask[] }>(responseText);
+    const result = parseJsonResponse<{
+      facts: ExtractedFact[];
+      tasks: ExtractedTask[];
+      ontology_updates?: OntologyUpdates;
+    }>(responseText);
     const facts = Array.isArray(result.facts) ? result.facts : [];
     const tasks = Array.isArray(result.tasks) ? result.tasks : [];
+    const ontologyUpdates = result.ontology_updates;
 
     const validFacts = facts.map(validateFact).filter((f): f is ExtractedFact => f !== null);
     const validTasks = tasks.map(validateTask).filter((t): t is ExtractedTask => t !== null);
@@ -313,6 +324,21 @@ export class MaintenanceService {
     const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
 
     await this.db.withTransactionAsync(async (tx) => {
+      let { mode, manifest } = await this.ontologyService?.getEffectiveState(entityId, tx)
+        ?? { mode: 'off' as const, manifest: { node_types: [], edge_types: [] } };
+
+      if (mode === 'emergent' && ontologyUpdates && this.ontologyService) {
+        manifest = await this.ontologyService.mergeEmergentUpdates(entityId, ontologyUpdates, tx);
+      }
+
+      const titleIndex = new Map<string, TitleIndexEntry>();
+      for (const existing of currentFactsRows) {
+        titleIndex.set(normalizeTitleKey(existing.title), {
+          id: existing.id,
+          okf_type: existing.okf_type ?? null,
+        });
+      }
+
       const factsForDedupe = await this.entryRepo.findRecentByEntityId(entityId, 100, tx);
 
       for (const fact of validFacts) {
@@ -334,16 +360,29 @@ export class MaintenanceService {
 
         if (skip) continue;
 
+        const ontologyFact = fact as ExtractedFactWithOntology;
+        const normalized = this.ontologyService?.validateAndNormalizeFact(ontologyFact, manifest)
+          ?? { okf_type: null, edges: [] };
+
         const id = generateId('fact_');
         const factObj: WikiFact = {
           id, entity_id: entityId, title: fact.title, body: fact.body, tags: fact.tags, confidence: fact.confidence,
           source_type: 'librarian_inferred', source_hash: null, source_ref: null,
           created_at: now, updated_at: now, last_accessed_at: null, access_count: 0, deleted_at: null,
+          okf_type: normalized.okf_type,
         };
 
         await this.entryRepo.upsert(factObj, tx);
         insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
         factsForDedupe.push(factObj);
+
+        titleIndex.set(normalizeTitleKey(fact.title), { id, okf_type: normalized.okf_type });
+
+        if (this.ontologyService && normalized.edges.length > 0) {
+          await this.ontologyService.resolveAndPersistEdges(
+            entityId, id, normalized.okf_type, normalized.edges, manifest, titleIndex, tx, now,
+          );
+        }
       }
 
       for (const task of validTasks) {

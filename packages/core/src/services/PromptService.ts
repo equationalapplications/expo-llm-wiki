@@ -1,5 +1,5 @@
 import { INGEST_SYSTEM_PROMPT, LIBRARIAN_SYSTEM_PROMPT, HEAL_SYSTEM_PROMPT } from '../prompts';
-import type { PromptOverrides } from '../types';
+import type { PromptOverrides, OntologyPromptContext } from '../types';
 
 export class PromptService {
   constructor(private globalOverrides?: PromptOverrides) {}
@@ -12,19 +12,28 @@ export class PromptService {
     });
   }
 
+  private appendOntology(systemPrompt: string, ctx: OntologyPromptContext | null | undefined): string {
+    if (!ctx) return systemPrompt;
+    return `${systemPrompt}\n\n${ctx.ontologyModeInstructions}`;
+  }
+
   buildIngestPrompt(
     documentChunk: string,
     runtimeOverride?: string,
+    ontologyContext?: OntologyPromptContext | null,
   ): { systemPrompt: string; userPrompt: string } {
     const template = runtimeOverride ?? this.globalOverrides?.ingestSystemPrompt ?? INGEST_SYSTEM_PROMPT;
     if (/\{\{\s*documentChunk\s*\}\}/.test(template)) {
       return {
-        systemPrompt: this.hydrate(template, { documentChunk }),
+        systemPrompt: this.appendOntology(
+          this.hydrate(template, { documentChunk, ...ontologyContext ?? {} }),
+          ontologyContext,
+        ),
         userPrompt: 'Please extract the facts.',
       };
     }
     return {
-      systemPrompt: template,
+      systemPrompt: this.appendOntology(template, ontologyContext),
       userPrompt: `Document Chunk:\n${documentChunk}`,
     };
   }
@@ -33,16 +42,20 @@ export class PromptService {
     events: unknown[],
     currentFacts: unknown[],
     runtimeOverride?: string,
+    ontologyContext?: OntologyPromptContext | null,
   ): { systemPrompt: string; userPrompt: string } {
     const template = runtimeOverride ?? this.globalOverrides?.librarianSystemPrompt ?? LIBRARIAN_SYSTEM_PROMPT;
     if (/\{\{\s*events\s*\}\}/.test(template) || /\{\{\s*currentFacts\s*\}\}/.test(template)) {
       return {
-        systemPrompt: this.hydrate(template, { events, currentFacts }),
+        systemPrompt: this.appendOntology(
+          this.hydrate(template, { events, currentFacts, ...ontologyContext ?? {} }),
+          ontologyContext,
+        ),
         userPrompt: 'Please synthesize the context.',
       };
     }
     return {
-      systemPrompt: template,
+      systemPrompt: this.appendOntology(template, ontologyContext),
       userPrompt: `Events:\n${JSON.stringify(events, null, 2)}\n\nCurrent Facts:\n${JSON.stringify(currentFacts, null, 2)}`,
     };
   }

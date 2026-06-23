@@ -1,5 +1,6 @@
 import { BaseRepository } from './BaseRepository';
-import type { SQLiteAdapter } from '../types';
+import type { SQLiteAdapter, OntologyManifest, OntologyMode, OntologyUpdates } from '../types';
+import { emptyManifest, mergeOntologyUpdates, validateManifest } from '../utils/ontology';
 
 export class MetadataRepository extends BaseRepository {
   // CHECKPOINTS TABLE METHODS
@@ -117,5 +118,50 @@ export class MetadataRepository extends BaseRepository {
        ) ORDER BY entity_id`,
     );
     return rows.map(r => r.entity_id);
+  }
+
+  async getManifest(entityId: string, tx?: SQLiteAdapter): Promise<{
+    mode: OntologyMode;
+    manifest: OntologyManifest;
+  } | null> {
+    const executor = this.getExecutor(tx);
+    const row = await executor.getFirstAsync<{
+      mode: string;
+      manifest_json: string;
+    }>(`SELECT mode, manifest_json FROM ${this.prefix}entity_manifests WHERE entity_id = ?`, [entityId]);
+    if (!row) return null;
+    return {
+      mode: row.mode as OntologyMode,
+      manifest: JSON.parse(row.manifest_json) as OntologyManifest,
+    };
+  }
+
+  async setManifest(
+    entityId: string,
+    data: { mode: OntologyMode; manifest: OntologyManifest },
+    tx: SQLiteAdapter,
+  ): Promise<void> {
+    validateManifest(data.manifest);
+    const executor = this.getExecutor(tx);
+    await executor.runAsync(
+      `INSERT INTO ${this.prefix}entity_manifests (entity_id, mode, manifest_json, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(entity_id) DO UPDATE SET mode = excluded.mode, manifest_json = excluded.manifest_json, updated_at = excluded.updated_at`,
+      [entityId, data.mode, JSON.stringify(data.manifest), Date.now()],
+    );
+  }
+
+  async mergeManifestUpdates(
+    entityId: string,
+    updates: OntologyUpdates,
+    tx: SQLiteAdapter,
+  ): Promise<OntologyManifest> {
+    const current = (await this.getManifest(entityId, tx)) ?? {
+      mode: 'emergent' as OntologyMode,
+      manifest: emptyManifest(),
+    };
+    const merged = mergeOntologyUpdates(current.manifest, updates);
+    await this.setManifest(entityId, { mode: current.mode, manifest: merged }, tx);
+    return merged;
   }
 }
