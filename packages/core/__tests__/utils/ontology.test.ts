@@ -5,6 +5,7 @@ import {
   resolveNodeType,
   validateManifest,
   mergeOntologyUpdates,
+  validateInlineEdges,
 } from '../../src/utils/ontology';
 import type { OntologyManifest } from '../../src/types';
 
@@ -66,5 +67,24 @@ describe('ontology utils', () => {
 
   it('emptyManifest returns empty arrays', () => {
     expect(emptyManifest()).toEqual({ node_types: [], edge_types: [] });
+  });
+
+  it('validateInlineEdges matches edge definitions case-insensitively', () => {
+    const mixedCaseManifest: OntologyManifest = {
+      node_types: [
+        { type: 'Person', description: 'An individual.' },
+        { type: 'project', description: 'A project.' },
+      ],
+      edge_types: [
+        { type: 'Reports_To', source_type: 'person', target_type: 'Person', description: 'Hierarchy.' },
+      ],
+    };
+    const edges = validateInlineEdges(
+      'Person',
+      null,
+      [{ edge_type: 'reports_to', target_title: 'Bob Smith' }],
+      mixedCaseManifest,
+    );
+    expect(edges).toEqual([{ edge_type: 'Reports_To', target_title: 'Bob Smith' }]);
   });
 });

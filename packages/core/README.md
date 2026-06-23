@@ -455,10 +455,10 @@ Control how librarian and ingest passes classify facts and extract graph relatio
 | Mode | Behavior |
 |------|----------|
 | **`off`** (default) | No ontology guidance. LLM output and persistence match pre-ontology behavior: `okf_type` stays `null` on LLM-created facts; maintenance passes do not create edges. OKF import still populates `okf_type` and edges independently. |
-| **`strict`** | The LLM must use only `node_types` and `edge_types` from the entity manifest. Invalid `okf_type` or edges fall back to an untyped fact with no edges for that row. |
+| **`strict`** | The LLM must use only `node_types` and `edge_types` from the entity manifest. Invalid `okf_type` falls back to an untyped fact with no edges; invalid individual edges are dropped while a valid `okf_type` and matching edges are kept. |
 | **`emergent`** | Same validation as Strict, plus the LLM may return `ontology_updates` with new node/edge types. Updates are append-only (deduped by `type` string) and take effect before facts from the same response are validated. |
 
-Mode resolution per entity: persisted DB row → `WikiConfig.ontology.mode` → `'off'`.
+Mode resolution per entity: persisted DB row `mode` (when present) → `seedManifests[entityId].mode` (when no row but a seed exists) → `WikiConfig.ontology.mode` → `'off'`.
 
 ### WikiConfig
 
@@ -537,7 +537,7 @@ In **Strict** and **Emergent** modes, librarian and ingest JSON may include type
 
 - `okf_type` maps to a `node_types[].type` entry (case-insensitive lookup; canonical manifest casing is persisted).
 - `edges` are resolved by `target_title` within the same maintenance transaction and persisted via `EdgeRepository`.
-- Invalid types or edges for a fact fall back to `okf_type: null` with no edges for that fact.
+- Invalid `okf_type` falls back to `null` with no edges for that fact. Invalid individual edges are dropped; valid `okf_type` and matching edges are still persisted.
 
 See the design spec: [`docs/superpowers/specs/2026-06-23-per-entity-seeded-ontology-design.md`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/docs/superpowers/specs/2026-06-23-per-entity-seeded-ontology-design.md).
 

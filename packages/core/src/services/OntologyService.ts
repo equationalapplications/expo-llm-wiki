@@ -16,6 +16,7 @@ import {
   emptyManifest,
   normalizeTitleKey,
   resolveNodeType,
+  resolveEdgeDefinition,
   validateInlineEdges,
 } from '../utils/ontology';
 import { generateId } from '../utils/ids';
@@ -67,6 +68,7 @@ export class OntologyService {
       };
       if (tx) {
         await this.metadataRepo.setManifest(entityId, state, tx);
+      } else {
         this.cache.set(entityId, state);
       }
       return state;
@@ -116,21 +118,21 @@ export class OntologyService {
     if (!sourceType || edges.length === 0) return;
 
     for (const edge of edges) {
-      const def = manifest.edge_types.find(e => e.type === edge.edge_type);
-      if (!def || def.source_type !== sourceType) continue;
+      const def = resolveEdgeDefinition(edge.edge_type, manifest);
+      if (!def || def.source_type.toLowerCase() !== sourceType.toLowerCase()) continue;
 
       const targetKey = normalizeTitleKey(edge.target_title);
       const target = titleIndex.get(targetKey);
       if (!target) continue;
 
-      if (def.target_type !== target.okf_type) continue;
+      if (def.target_type.toLowerCase() !== (target.okf_type ?? '').toLowerCase()) continue;
 
       const wikiEdge: WikiEdge = {
         id: generateId(),
         entity_id: entityId,
         source_id: sourceId,
         target_id: target.id,
-        edge_type: edge.edge_type,
+        edge_type: def.type,
         created_at: now,
       };
       await this.edgeRepo.addIgnoreDuplicate(wikiEdge, tx);

@@ -9,6 +9,16 @@ const manifest: OntologyManifest = {
   edge_types: [],
 };
 
+const edgeManifest: OntologyManifest = {
+  node_types: [
+    { type: 'Person', description: 'An individual.' },
+    { type: 'project', description: 'A project.' },
+  ],
+  edge_types: [
+    { type: 'Reports_To', source_type: 'person', target_type: 'Person', description: 'Hierarchy.' },
+  ],
+};
+
 function makeMocks() {
   const metadataRepo = {
     getManifest: vi.fn(),
@@ -82,6 +92,17 @@ describe('OntologyService', () => {
       expect(persisted).toEqual({ mode: 'strict', manifest });
       expect(metadataRepo.setManifest).toHaveBeenCalledWith('entity1', { mode: 'strict', manifest }, tx);
     });
+
+    it('caches seed state on non-transactional reads', async () => {
+      const { metadataRepo, edgeRepo } = makeMocks();
+      vi.mocked(metadataRepo.getManifest).mockResolvedValue(null);
+      const svc = new OntologyService(metadataRepo, edgeRepo, {
+        seedManifests: { entity1: { manifest, mode: 'strict' } },
+      });
+      await svc.getEffectiveState('entity1');
+      await svc.getEffectiveState('entity1');
+      expect(metadataRepo.getManifest).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('buildPromptContext', () => {
@@ -121,6 +142,54 @@ describe('OntologyService', () => {
         manifest,
       );
       expect(result).toEqual({ okf_type: null, edges: [] });
+    });
+
+    it('keeps valid okf_type while dropping invalid edges', () => {
+      const { metadataRepo, edgeRepo } = makeMocks();
+      const svc = new OntologyService(metadataRepo, edgeRepo);
+      const result = svc.validateAndNormalizeFact(
+        {
+          title: 'T',
+          body: 'B',
+          tags: [],
+          confidence: 'certain',
+          okf_type: 'person',
+          edges: [{ edge_type: 'unknown_edge', target_title: 'Bob' }],
+        },
+        edgeManifest,
+      );
+      expect(result).toEqual({ okf_type: 'Person', edges: [] });
+    });
+  });
+
+  describe('resolveAndPersistEdges', () => {
+    it('persists canonical edge types with case-insensitive manifest matching', async () => {
+      const { metadataRepo, edgeRepo } = makeMocks();
+      const svc = new OntologyService(metadataRepo, edgeRepo);
+      const titleIndex = new Map([
+        ['bob smith', { id: 'fact_bob', okf_type: 'person' }],
+      ]);
+      const tx = {} as any;
+
+      await svc.resolveAndPersistEdges(
+        'entity1',
+        'fact_alice',
+        'Person',
+        [{ edge_type: 'reports_to', target_title: 'Bob Smith' }],
+        edgeManifest,
+        titleIndex,
+        tx,
+        1,
+      );
+
+      expect(edgeRepo.addIgnoreDuplicate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source_id: 'fact_alice',
+          target_id: 'fact_bob',
+          edge_type: 'Reports_To',
+        }),
+        tx,
+      );
     });
   });
 

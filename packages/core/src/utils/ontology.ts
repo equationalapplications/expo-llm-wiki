@@ -19,6 +19,15 @@ export function resolveNodeType(raw: string, manifest: OntologyManifest): string
   return hit?.type ?? null;
 }
 
+export function resolveEdgeDefinition(
+  rawEdgeType: string,
+  manifest: OntologyManifest,
+): OntologyManifest['edge_types'][number] | null {
+  const slug = rawEdgeType.trim();
+  if (!slug) return null;
+  return manifest.edge_types.find(e => e.type.toLowerCase() === slug.toLowerCase()) ?? null;
+}
+
 export function validateManifest(manifest: OntologyManifest): void {
   const nodeSlugs = new Set<string>();
   for (const node of manifest.node_types ?? []) {
@@ -89,10 +98,10 @@ export function validateInlineEdges(
   const valid: ExtractedFactEdge[] = [];
   for (const edge of edges) {
     if (typeof edge?.edge_type !== 'string' || typeof edge?.target_title !== 'string') continue;
-    const def = manifest.edge_types.find(e => e.type === edge.edge_type);
+    const def = resolveEdgeDefinition(edge.edge_type, manifest);
     if (!def) continue;
-    if (def.source_type !== sourceType) continue;
-    valid.push({ edge_type: edge.edge_type, target_title: edge.target_title });
+    if (def.source_type.toLowerCase() !== sourceType.toLowerCase()) continue;
+    valid.push({ edge_type: def.type, target_title: edge.target_title });
   }
   return valid;
 }
