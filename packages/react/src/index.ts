@@ -12,3 +12,5 @@ export { useEntityStatus } from './useEntityStatus';
 export { useOntologyManifest } from './useOntologyManifest';
 export type { OntologyManifestState } from './useOntologyManifest';
 export { useSetOntologyManifest } from './useSetOntologyManifest';
+export { useWikiTraversal } from './useWikiTraversal';
+export type { WikiTraversalState } from './useWikiTraversal';

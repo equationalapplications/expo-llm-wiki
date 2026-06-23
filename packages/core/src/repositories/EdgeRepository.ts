@@ -1,6 +1,21 @@
 import { BaseRepository } from './BaseRepository';
 import type { WikiEdge, SQLiteAdapter } from '../types';
 
+export interface NeighborhoodQueryOptions {
+  maxDepth: number; // already clamped to [1,3] by the caller (GraphTraversalService)
+  direction: 'inbound' | 'outbound' | 'both';
+  edgeTypes?: string[]; // undefined = no filter; [] = match nothing (short-circuits)
+  minConfidence: 'certain' | 'inferred' | 'tentative';
+  excludeSourceTypes: string[];
+  maxNodes: number;
+}
+
+const CONFIDENCE_RANK: Record<'tentative' | 'inferred' | 'certain', number> = {
+  tentative: 0,
+  inferred: 1,
+  certain: 2,
+};
+
 export class EdgeRepository extends BaseRepository {
   /**
    * Insert an edge, silently skipping on primary-key or uniqueness conflicts.
@@ -46,14 +61,7 @@ export class EdgeRepository extends BaseRepository {
       `SELECT * FROM ${this.prefix}edges WHERE entity_id = ? ORDER BY created_at ASC`,
       [entityId],
     );
-    return rows.map((row) => ({
-      id: String(row.id),
-      entity_id: String(row.entity_id),
-      source_id: String(row.source_id),
-      target_id: String(row.target_id),
-      edge_type: String(row.edge_type),
-      created_at: Number(row.created_at),
-    }));
+    return rows.map(mapRowToEdge);
   }
 
   /** Hard delete — edges have no soft-delete concept, only presence/absence. `tx` is REQUIRED. */
@@ -61,4 +69,104 @@ export class EdgeRepository extends BaseRepository {
     const executor = this.getExecutor(tx);
     await executor.runAsync(`DELETE FROM ${this.prefix}edges WHERE entity_id = ?`, [entityId]);
   }
+
+  /**
+   * Multi-hop traversal from `sourceId` via SQLite `WITH RECURSIVE`. All filtering,
+   * dead-ending, cycle-guarding, capping, and ordering happens in this one query.
+   * The anchor is validated (exists, right entity, not soft-deleted) but never gated
+   * by confidence/source_type — only nodes discovered beyond it are.
+   */
+  async getNeighborhood(
+    entityId: string,
+    sourceId: string,
+    opts: NeighborhoodQueryOptions,
+    tx?: SQLiteAdapter,
+  ): Promise<{ nodeIds: string[]; edges: WikiEdge[] }> {
+    const executor = this.getExecutor(tx);
+
+    if (opts.edgeTypes && opts.edgeTypes.length === 0) {
+      const anchor = await executor.getFirstAsync<{ id: string }>(
+        `SELECT id FROM ${this.prefix}entries WHERE id = ? AND entity_id = ? AND deleted_at IS NULL`,
+        [sourceId, entityId],
+      );
+      return { nodeIds: anchor ? [anchor.id] : [], edges: [] };
+    }
+
+    const edgeTypesClause = opts.edgeTypes
+      ? `e.edge_type IN (${opts.edgeTypes.map(() => '?').join(',')})`
+      : '1=1';
+    const excludeSourceTypesPlaceholders = opts.excludeSourceTypes.map(() => '?').join(',');
+    const minConfidenceRank = CONFIDENCE_RANK[opts.minConfidence];
+
+    const sql = `
+      WITH RECURSIVE walk(node_id, depth, visited) AS (
+        SELECT id, 0, ',' || id || ','
+        FROM ${this.prefix}entries
+        WHERE id = ? AND entity_id = ? AND deleted_at IS NULL
+
+        UNION
+
+        SELECT
+          CASE WHEN e.source_id = w.node_id THEN e.target_id ELSE e.source_id END,
+          w.depth + 1,
+          w.visited || (CASE WHEN e.source_id = w.node_id THEN e.target_id ELSE e.source_id END) || ','
+        FROM walk w
+        JOIN ${this.prefix}edges e
+          ON e.entity_id = ?
+          AND (
+            (? != 'inbound'  AND e.source_id = w.node_id) OR
+            (? != 'outbound' AND e.target_id = w.node_id)
+          )
+          AND (${edgeTypesClause})
+        JOIN ${this.prefix}entries n
+          ON n.id = (CASE WHEN e.source_id = w.node_id THEN e.target_id ELSE e.source_id END)
+          AND n.entity_id = ?
+          AND n.deleted_at IS NULL
+          AND (CASE n.confidence WHEN 'tentative' THEN 0 WHEN 'inferred' THEN 1 ELSE 2 END) >= ?
+          AND n.source_type NOT IN (${excludeSourceTypesPlaceholders})
+        WHERE w.depth < ?
+          AND instr(w.visited, ',' || (CASE WHEN e.source_id = w.node_id THEN e.target_id ELSE e.source_id END) || ',') = 0
+      )
+      SELECT node_id, MIN(depth) AS depth
+      FROM walk
+      GROUP BY node_id
+      ORDER BY depth ASC, (SELECT updated_at FROM ${this.prefix}entries WHERE id = node_id) DESC
+      LIMIT ?
+    `;
+
+    const params: unknown[] = [
+      sourceId, entityId,
+      entityId,
+      opts.direction, opts.direction,
+      ...(opts.edgeTypes ?? []),
+      entityId,
+      minConfidenceRank,
+      ...opts.excludeSourceTypes,
+      opts.maxDepth,
+      opts.maxNodes,
+    ];
+
+    const rows = await executor.getAllAsync<{ node_id: string; depth: number }>(sql, params);
+    const nodeIds = rows.map((r) => r.node_id);
+    if (nodeIds.length === 0) return { nodeIds: [], edges: [] };
+
+    const idPlaceholders = nodeIds.map(() => '?').join(',');
+    const edgeRows = await executor.getAllAsync<any>(
+      `SELECT * FROM ${this.prefix}edges WHERE entity_id = ? AND source_id IN (${idPlaceholders}) AND target_id IN (${idPlaceholders})`,
+      [entityId, ...nodeIds, ...nodeIds],
+    );
+
+    return { nodeIds, edges: edgeRows.map(mapRowToEdge) };
+  }
+}
+
+function mapRowToEdge(row: any): WikiEdge {
+  return {
+    id: String(row.id),
+    entity_id: String(row.entity_id),
+    source_id: String(row.source_id),
+    target_id: String(row.target_id),
+    edge_type: String(row.edge_type),
+    created_at: Number(row.created_at),
+  };
 }

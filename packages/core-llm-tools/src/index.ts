@@ -17,3 +17,7 @@ export {
   escalateToCloudManifest,
   googleSearchManifest,
 } from './manifests/core';
+export {
+  wikiGetOntologyManifest,
+  wikiTraverseGraphManifest,
+} from './manifests/graph';

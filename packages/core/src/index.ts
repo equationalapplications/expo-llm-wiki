@@ -6,6 +6,7 @@ export type { WikiOutboxEvent } from './outbox/types';
 export { WikiMemory } from './WikiMemory';
 export type { WikiMemoryTestAccess } from './WikiMemory';
 export { formatContext } from './utils/formatContext';
+export { formatGraphContext } from './utils/formatGraphContext';
 export { formatMemoryDump } from './utils/formatMemoryDump';
 export { formatOkfBundle } from './utils/formatOkfBundle';
 export { parseOkfBundle, type OkfImportOptions } from './utils/parseOkfBundle';

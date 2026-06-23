@@ -1,0 +1,34 @@
+import type { EdgeRepository, NeighborhoodQueryOptions } from '../repositories/EdgeRepository';
+import type { EntryRepository } from '../repositories/EntryRepository';
+import type { GraphTraversalOptions, GraphNeighborhood, WikiConfig } from '../types';
+
+/**
+ * Pure orchestrator — no SQL. Merges WikiConfig defaults with per-call options,
+ * delegates the recursive walk to EdgeRepository, then hydrates node IDs into facts.
+ */
+export class GraphTraversalService {
+  constructor(
+    private edgeRepo: EdgeRepository,
+    private entryRepo: EntryRepository,
+    private config: WikiConfig,
+  ) {}
+
+  async traverseGraph(entityId: string, options: GraphTraversalOptions): Promise<GraphNeighborhood> {
+    const opts: NeighborhoodQueryOptions = {
+      maxDepth: Math.max(1, Math.min(options.maxDepth ?? 1, 3)),
+      direction: options.direction ?? this.config.traversalDirection ?? 'both',
+      edgeTypes: options.edgeTypes,
+      minConfidence: options.minTraversalConfidence ?? this.config.minTraversalConfidence ?? 'tentative',
+      excludeSourceTypes: options.excludeSourceTypes ?? this.config.excludeSourceTypes ?? [],
+      maxNodes: options.maxTraversalNodes ?? this.config.maxTraversalNodes ?? 20,
+    };
+
+    const { nodeIds, edges } = await this.edgeRepo.getNeighborhood(entityId, options.sourceId, opts);
+    if (nodeIds.length === 0) return { nodes: [], edges: [] };
+
+    // findByIds() returns facts in input-ID order (Map-based lookup,
+    // see packages/core/src/repositories/EntryRepository.ts:104-108) — no re-sort needed.
+    const nodes = await this.entryRepo.findByIds(nodeIds, [entityId]);
+    return { nodes, edges };
+  }
+}

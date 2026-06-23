@@ -1,7 +1,7 @@
 # Spec: Knowledge Graph Traversal API
 
 **Date:** 2026-06-23
-**Status:** Draft
+**Status:** Approved
 **Builds on:** [2026-06-22-okf-import-design.md](./2026-06-22-okf-import-design.md) (`llm_wiki_edges` table), [2026-06-23-per-entity-seeded-ontology-design.md](./2026-06-23-per-entity-seeded-ontology-design.md) (ontology manifest, `okf_type`)
 **Packages:** `@equationalapplications/core-llm-wiki` (`packages/core`), `@equationalapplications/react-llm-wiki` (`packages/react`), `@equationalapplications/core-llm-tools` (`packages/core-llm-tools`)
 

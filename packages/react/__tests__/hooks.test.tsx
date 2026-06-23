@@ -12,6 +12,7 @@ import { useWikiHasChanged } from '../src/useWikiHasChanged';
 import { useEntityStatus } from '../src/useEntityStatus';
 import { useOntologyManifest } from '../src/useOntologyManifest';
 import { useSetOntologyManifest } from '../src/useSetOntologyManifest';
+import { useWikiTraversal } from '../src/useWikiTraversal';
 import type { ReadOptions, EntityStatus, OntologyManifest } from '@equationalapplications/core-llm-wiki';
 
 /** Minimal mock of WikiMemory — uses the real MemoryBundle shape ({ facts, tasks, events }) */
@@ -34,6 +35,7 @@ function makeMockWiki() {
     }),
     getOntologyManifest: vi.fn().mockResolvedValue(null),
     setOntologyManifest: vi.fn().mockResolvedValue(undefined),
+    traverseGraph: vi.fn().mockResolvedValue({ nodes: [], edges: [] }),
   };
 }
 
@@ -1065,5 +1067,127 @@ describe('useEntityStatus', () => {
     expect(wiki.subscribeEntityStatus).toHaveBeenCalledTimes(2);
     expect(wiki.subscribeEntityStatus.mock.calls[1][0]).toBe('e2');
     expect(result.current).toEqual({ ingesting: true, librarian: false, heal: false });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// useWikiTraversal
+// ---------------------------------------------------------------------------
+
+describe('useWikiTraversal', () => {
+  let wiki: MockWiki;
+
+  beforeEach(() => {
+    wiki = makeMockWiki();
+  });
+
+  it('starts with isPending=true and calls traverseGraph on mount', async () => {
+    const sampleResult = { nodes: [{ id: 'a' }] as any, edges: [{ id: 'e1' }] as any };
+    wiki.traverseGraph.mockResolvedValue(sampleResult);
+
+    const { result } = renderHook(
+      () => useWikiTraversal('e1', { sourceId: 'a' }),
+      { wrapper: wrapper(wiki) },
+    );
+
+    expect(result.current.isPending).toBe(true);
+
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+
+    expect(wiki.traverseGraph).toHaveBeenCalledWith('e1', { sourceId: 'a' });
+    expect(result.current.nodes).toEqual(sampleResult.nodes);
+    expect(result.current.edges).toEqual(sampleResult.edges);
+    expect(result.current.error).toBeNull();
+  });
+
+  it('re-fetches when entityId changes', async () => {
+    const { result, rerender } = renderHook(
+      ({ eid }: { eid: string }) => useWikiTraversal(eid, { sourceId: 'a' }),
+      { initialProps: { eid: 'e1' }, wrapper: wrapper(wiki) },
+    );
+
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(wiki.traverseGraph).toHaveBeenCalledTimes(1);
+
+    rerender({ eid: 'e2' });
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+
+    expect(wiki.traverseGraph).toHaveBeenCalledTimes(2);
+    expect(wiki.traverseGraph).toHaveBeenLastCalledWith('e2', { sourceId: 'a' });
+  });
+
+  it('re-fetches when options change in value but not on equivalent re-renders', async () => {
+    const { result, rerender } = renderHook(
+      ({ sourceId }: { sourceId: string }) => useWikiTraversal('e1', { sourceId, maxDepth: 1 }),
+      { initialProps: { sourceId: 'a' }, wrapper: wrapper(wiki) },
+    );
+
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(wiki.traverseGraph).toHaveBeenCalledTimes(1);
+
+    // Same sourceId, new object reference — should NOT refetch.
+    rerender({ sourceId: 'a' });
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(wiki.traverseGraph).toHaveBeenCalledTimes(1);
+
+    // Different sourceId — should refetch.
+    rerender({ sourceId: 'b' });
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(wiki.traverseGraph).toHaveBeenCalledTimes(2);
+  });
+
+  it('sets error when traverseGraph rejects', async () => {
+    const boom = new Error('traversal db error');
+    wiki.traverseGraph.mockRejectedValue(boom);
+
+    const { result } = renderHook(
+      () => useWikiTraversal('e1', { sourceId: 'a' }),
+      { wrapper: wrapper(wiki) },
+    );
+
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+
+    expect(result.current.error).toBe(boom);
+    expect(result.current.nodes).toEqual([]);
+    expect(result.current.edges).toEqual([]);
+  });
+
+  it('refetch() triggers another traverseGraph call', async () => {
+    const { result } = renderHook(
+      () => useWikiTraversal('e1', { sourceId: 'a' }),
+      { wrapper: wrapper(wiki) },
+    );
+
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(wiki.traverseGraph).toHaveBeenCalledTimes(1);
+
+    act(() => { result.current.refetch(); });
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+
+    expect(wiki.traverseGraph).toHaveBeenCalledTimes(2);
+  });
+
+  it('queues a fetch when entityId changes while first fetch is in flight', async () => {
+    let resolveFirst!: (value: { nodes: any[]; edges: any[] }) => void;
+    wiki.traverseGraph
+      .mockReturnValueOnce(new Promise(resolve => { resolveFirst = resolve; }))
+      .mockResolvedValueOnce({ nodes: [{ id: 'z' }], edges: [] });
+
+    const { result, rerender } = renderHook(
+      ({ eid }: { eid: string }) => useWikiTraversal(eid, { sourceId: 'a' }),
+      { initialProps: { eid: 'e1' }, wrapper: wrapper(wiki) },
+    );
+
+    expect(result.current.isPending).toBe(true);
+
+    rerender({ eid: 'e2' });
+
+    await act(async () => { resolveFirst({ nodes: [], edges: [] }); });
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+
+    expect(wiki.traverseGraph).toHaveBeenCalledTimes(2);
+    expect(wiki.traverseGraph).toHaveBeenNthCalledWith(1, 'e1', { sourceId: 'a' });
+    expect(wiki.traverseGraph).toHaveBeenNthCalledWith(2, 'e2', { sourceId: 'a' });
+    expect(result.current.nodes).toEqual([{ id: 'z' }]);
   });
 });
