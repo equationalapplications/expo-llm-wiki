@@ -21,6 +21,7 @@ Platform-agnostic TypeScript engine for hybrid LLM memory. Features episodic fac
 - **Full-featured memory** — Facts, tasks, events, maintenance jobs (librarian, heal, reembed, prune)
 - **Type-safe** — Built with TypeScript, full type exports
 - **Interoperability:** Supports [Open Knowledge Format (OKF) v0.1](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) import and export.
+- **Per-entity seeded ontology** — Optional Strict, Emergent, or Off modes govern LLM graph extraction; seed taxonomies per entity and persist typed facts with inline edges.
 
 ## Installation
 
@@ -444,6 +445,101 @@ Notes:
 - Each emission may be a fresh object literal. Do not rely on referential equality between callbacks; equality of the three booleans is the contract.
 - A throwing callback is caught (logged via `console.error`) and does not block other subscribers or the underlying job.
 - Subscriptions are scoped to a single `entityId`. There is no wildcard or "all entities" form.
+
+## Per-Entity Seeded Ontology
+
+Control how librarian and ingest passes classify facts and extract graph relationships. The system defaults to **`off`** so existing deployments behave unchanged.
+
+### The Three Modes
+
+| Mode | Behavior |
+|------|----------|
+| **`off`** (default) | No ontology guidance. LLM output and persistence match pre-ontology behavior: `okf_type` stays `null` on LLM-created facts; maintenance passes do not create edges. OKF import still populates `okf_type` and edges independently. |
+| **`strict`** | The LLM must use only `node_types` and `edge_types` from the entity manifest. Invalid `okf_type` falls back to an untyped fact with no edges; invalid individual edges are dropped while a valid `okf_type` and matching edges are kept. |
+| **`emergent`** | Same validation as Strict, plus the LLM may return `ontology_updates` with new node/edge types. Updates are append-only (deduped by `type` string) and take effect before facts from the same response are validated. |
+
+Mode resolution per entity: persisted DB row `mode` (when present) → `seedManifests[entityId].mode` (when no row but a seed exists) → `WikiConfig.ontology.mode` → `'off'`.
+
+### WikiConfig
+
+Set a global default mode and bootstrap manifests for known entities at construction time:
+
+```typescript
+const wikiMemory = new WikiMemory(db, {
+  llmProvider,
+  config: {
+    ontology: {
+      mode: 'strict', // global default when an entity has no per-entity override
+      seedManifests: {
+        'team-alpha': {
+          mode: 'emergent', // optional per-entity override
+          manifest: {
+            node_types: [
+              { type: 'person', description: 'An individual or user.' },
+              { type: 'project', description: 'An ongoing initiative.' },
+            ],
+            edge_types: [
+              {
+                type: 'contributes_to',
+                source_type: 'person',
+                target_type: 'project',
+                description: 'Person working on a project.',
+              },
+            ],
+          },
+        },
+      },
+    },
+  },
+});
+```
+
+`seedManifests` entries are written to SQLite on first access when no row exists for that entity.
+
+### Public API
+
+Read or seed an entity's ontology at runtime:
+
+```typescript
+// Read effective mode + manifest (DB row, then seedManifests fallback)
+const ontology = await wikiMemory.getOntologyManifest('team-alpha');
+// { mode: 'emergent', manifest: { node_types: [...], edge_types: [...] } }
+// null when no row and no seed entry
+
+// Seed or replace manifest; optional per-entity mode override
+await wikiMemory.setOntologyManifest('team-alpha', {
+  node_types: [{ type: 'person', description: 'An individual.' }],
+  edge_types: [{
+    type: 'reports_to',
+    source_type: 'person',
+    target_type: 'person',
+    description: 'Reporting hierarchy.',
+  }],
+}, { mode: 'strict' });
+```
+
+### Fact Shape Extensions
+
+In **Strict** and **Emergent** modes, librarian and ingest JSON may include typed facts with inline edges:
+
+```json
+{
+  "facts": [{
+    "title": "Jane reports to Bob",
+    "body": "Jane reports to Bob Smith.",
+    "tags": [],
+    "confidence": "certain",
+    "okf_type": "person",
+    "edges": [{ "edge_type": "reports_to", "target_title": "Bob Smith" }]
+  }]
+}
+```
+
+- `okf_type` maps to a `node_types[].type` entry (case-insensitive lookup; canonical manifest casing is persisted).
+- `edges` are resolved by `target_title` within the same maintenance transaction and persisted via `EdgeRepository`.
+- Invalid `okf_type` falls back to `null` with no edges for that fact. Invalid individual edges are dropped; valid `okf_type` and matching edges are still persisted.
+
+See the design spec: [`docs/superpowers/specs/2026-06-23-per-entity-seeded-ontology-design.md`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/docs/superpowers/specs/2026-06-23-per-entity-seeded-ontology-design.md).
 
 ## OKF Import/Export
 

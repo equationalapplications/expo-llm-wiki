@@ -1,5 +1,6 @@
 import { BaseRepository } from './BaseRepository';
-import type { SQLiteAdapter } from '../types';
+import type { SQLiteAdapter, OntologyManifest, OntologyMode, OntologyUpdates } from '../types';
+import { emptyManifest, mergeOntologyUpdates, validateManifest } from '../utils/ontology';
 
 export class MetadataRepository extends BaseRepository {
   // CHECKPOINTS TABLE METHODS
@@ -117,5 +118,60 @@ export class MetadataRepository extends BaseRepository {
        ) ORDER BY entity_id`,
     );
     return rows.map(r => r.entity_id);
+  }
+
+  async getManifest(entityId: string, tx?: SQLiteAdapter): Promise<{
+    mode: OntologyMode;
+    manifest: OntologyManifest;
+  } | null> {
+    const executor = this.getExecutor(tx);
+    const row = await executor.getFirstAsync<{
+      mode: string;
+      manifest_json: string;
+    }>(`SELECT mode, manifest_json FROM ${this.prefix}entity_manifests WHERE entity_id = ?`, [entityId]);
+    if (!row) return null;
+    if (row.mode !== 'off' && row.mode !== 'strict' && row.mode !== 'emergent') {
+      throw new Error(`Invalid ontology mode for entity ${entityId}: ${JSON.stringify(row.mode)}`);
+    }
+    let manifest: OntologyManifest;
+    try {
+      manifest = JSON.parse(row.manifest_json) as OntologyManifest;
+    } catch (error) {
+      throw new Error(`Invalid manifest_json for entity ${entityId}: ${(error as Error).message}`);
+    }
+    validateManifest(manifest);
+    return {
+      mode: row.mode,
+      manifest,
+    };
+  }
+
+  async setManifest(
+    entityId: string,
+    data: { mode: OntologyMode; manifest: OntologyManifest },
+    tx: SQLiteAdapter,
+  ): Promise<void> {
+    validateManifest(data.manifest);
+    const executor = this.getExecutor(tx);
+    await executor.runAsync(
+      `INSERT INTO ${this.prefix}entity_manifests (entity_id, mode, manifest_json, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(entity_id) DO UPDATE SET mode = excluded.mode, manifest_json = excluded.manifest_json, updated_at = excluded.updated_at`,
+      [entityId, data.mode, JSON.stringify(data.manifest), Date.now()],
+    );
+  }
+
+  async mergeManifestUpdates(
+    entityId: string,
+    updates: OntologyUpdates,
+    tx: SQLiteAdapter,
+  ): Promise<OntologyManifest> {
+    const current = (await this.getManifest(entityId, tx)) ?? {
+      mode: 'emergent' as OntologyMode,
+      manifest: emptyManifest(),
+    };
+    const merged = mergeOntologyUpdates(current.manifest, updates);
+    await this.setManifest(entityId, { mode: current.mode, manifest: merged }, tx);
+    return merged;
   }
 }

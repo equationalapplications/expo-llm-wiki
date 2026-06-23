@@ -71,6 +71,13 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
       memory_checkpoint INTEGER NOT NULL DEFAULT 0
     );
 
+    CREATE TABLE IF NOT EXISTS ${prefix}entity_manifests (
+      entity_id TEXT PRIMARY KEY,
+      mode TEXT NOT NULL DEFAULT 'off',
+      manifest_json TEXT NOT NULL DEFAULT '{"node_types":[],"edge_types":[]}',
+      updated_at INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS ${prefix}meta (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL

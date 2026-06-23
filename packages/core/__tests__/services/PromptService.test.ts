@@ -41,6 +41,43 @@ describe('PromptService', () => {
       const { systemPrompt } = svc.buildIngestPrompt('val', template);
       expect(systemPrompt).toBe('Data: val Extra: {{unknown}}');
     });
+
+    it('appends ontology instructions when context provided', () => {
+      const svc = new PromptService();
+      const ctx = {
+        ontologyManifest: '{"node_types":[]}',
+        ontologyModeInstructions: '## Ontology constraints\nSTRICT',
+      };
+      const { systemPrompt } = svc.buildIngestPrompt('chunk', undefined, ctx);
+      expect(systemPrompt).toContain(INGEST_SYSTEM_PROMPT);
+      expect(systemPrompt).toContain('## Ontology constraints');
+    });
+
+    it('leaves base prompt byte-identical when context is null', () => {
+      const svc = new PromptService();
+      const { systemPrompt } = svc.buildIngestPrompt('chunk', undefined, null);
+      expect(systemPrompt).toBe(INGEST_SYSTEM_PROMPT);
+    });
+
+    it('hydrates {{ontologyModeInstructions}} without duplicate append', () => {
+      const svc = new PromptService();
+      const ctx = {
+        ontologyManifest: '{"node_types":[]}',
+        ontologyModeInstructions: '## Ontology constraints\nSTRICT',
+      };
+      const template = 'Custom: {{ontologyModeInstructions}}';
+      const { systemPrompt } = svc.buildIngestPrompt('chunk', template, ctx);
+      expect(systemPrompt).toBe('Custom: ## Ontology constraints\nSTRICT');
+      expect(systemPrompt.match(/## Ontology constraints/g)?.length).toBe(1);
+    });
+
+    it('strips ontology placeholders when context is absent', () => {
+      const svc = new PromptService();
+      const template = 'Custom: {{ontologyModeInstructions}} {{ontologyManifest}}';
+      const { systemPrompt } = svc.buildIngestPrompt('chunk', template, null);
+      expect(systemPrompt).toBe('Custom:  ');
+      expect(systemPrompt).not.toMatch(/\{\{/);
+    });
   });
 
   describe('buildLibrarianPrompt', () => {

@@ -18,6 +18,62 @@ export interface PromptOverrides {
   healSystemPrompt?: string;
 }
 
+export type OntologyMode = 'strict' | 'emergent' | 'off';
+
+export interface OntologyNodeType {
+  type: string;
+  description: string;
+}
+
+export interface OntologyEdgeType {
+  type: string;
+  source_type: string;
+  target_type: string;
+  description: string;
+}
+
+/**
+ * Allowed node and edge types for an entity's ontology graph.
+ * Persisted per entity and injected into librarian/ingest prompts when mode ≠ `off`.
+ */
+export interface OntologyManifest {
+  node_types: OntologyNodeType[];
+  edge_types: OntologyEdgeType[];
+}
+
+/**
+ * Global ontology defaults and bootstrap manifests for known entities.
+ * Per-entity mode and manifest overrides are stored in SQLite and managed via
+ * `WikiMemory.getOntologyManifest` / `setOntologyManifest`.
+ */
+export interface OntologyConfig {
+  /** Global default mode. Default: `'off'` (backward compatible — no typed extraction). */
+  mode?: OntologyMode;
+  /**
+   * Bootstrap manifests for known entities at construction time.
+   * Written to the database on first access if no row exists for that entity.
+   */
+  seedManifests?: Record<string, {
+    manifest: OntologyManifest;
+    mode?: OntologyMode;
+  }>;
+}
+
+export interface ExtractedFactEdge {
+  edge_type: string;
+  target_title: string;
+}
+
+export interface OntologyUpdates {
+  node_types?: OntologyNodeType[];
+  edge_types?: OntologyEdgeType[];
+}
+
+export interface OntologyPromptContext {
+  ontologyManifest: string;
+  ontologyModeInstructions: string;
+}
+
 export interface WikiConfig {
   /**
    * Prefix applied to every SQL table/index/trigger name. Must match
@@ -61,6 +117,7 @@ export interface WikiConfig {
    * @default false
    */
   enableOutbox?: boolean;
+  ontology?: OntologyConfig;
 }
 
 export interface ReadOptions {
@@ -170,6 +227,11 @@ export interface ExtractedFact {
   body: string;
   tags: string[];
   confidence: 'certain' | 'inferred' | 'tentative';
+}
+
+export interface ExtractedFactWithOntology extends ExtractedFact {
+  okf_type?: string;
+  edges?: ExtractedFactEdge[];
 }
 
 export interface ExtractedTask {
