@@ -1,3 +1,10 @@
+## [4.15.2](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.15.1...v4.15.2) (2026-06-23)
+
+
+### Bug Fixes
+
+* **ci:** add workflow_dispatch to republish missing package versions ([f381783](https://github.com/equationalapplications/expo-llm-wiki/commit/f381783f4e24a5fb04489453ab4d2c230f97c56d))
+
 ## [4.15.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.15.0...v4.15.1) (2026-06-23)
 
 
