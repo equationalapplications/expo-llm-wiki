@@ -22,17 +22,23 @@ export function resolveNodeType(raw: string, manifest: OntologyManifest): string
 export function validateManifest(manifest: OntologyManifest): void {
   const nodeSlugs = new Set<string>();
   for (const node of manifest.node_types ?? []) {
-    if (!node.type?.trim()) throw new Error('Ontology node type slug must be non-empty');
-    if (nodeSlugs.has(node.type)) throw new Error(`Duplicate node type: ${node.type}`);
-    nodeSlugs.add(node.type);
+    const type = node.type?.trim();
+    if (!type) throw new Error('Ontology node type slug must be non-empty');
+    const key = type.toLowerCase();
+    if (nodeSlugs.has(key)) throw new Error(`Duplicate node type: ${type}`);
+    nodeSlugs.add(key);
   }
   const edgeSlugs = new Set<string>();
   for (const edge of manifest.edge_types ?? []) {
-    if (!edge.type?.trim()) throw new Error('Ontology edge type slug must be non-empty');
-    if (edgeSlugs.has(edge.type)) throw new Error(`Duplicate edge type: ${edge.type}`);
-    edgeSlugs.add(edge.type);
-    if (!nodeSlugs.has(edge.source_type) || !nodeSlugs.has(edge.target_type)) {
-      throw new Error(`Edge type ${edge.type} references unknown node type`);
+    const edgeType = edge.type?.trim();
+    const sourceType = edge.source_type?.trim();
+    const targetType = edge.target_type?.trim();
+    if (!edgeType) throw new Error('Ontology edge type slug must be non-empty');
+    const edgeKey = edgeType.toLowerCase();
+    if (edgeSlugs.has(edgeKey)) throw new Error(`Duplicate edge type: ${edgeType}`);
+    edgeSlugs.add(edgeKey);
+    if (!sourceType || !targetType || !nodeSlugs.has(sourceType.toLowerCase()) || !nodeSlugs.has(targetType.toLowerCase())) {
+      throw new Error(`Edge type ${edgeType} references unknown node type`);
     }
   }
 }
@@ -43,24 +49,32 @@ export function mergeOntologyUpdates(
 ): OntologyManifest {
   const node_types = [...current.node_types];
   const edge_types = [...current.edge_types];
-  const nodeSlugs = new Set(node_types.map(n => n.type));
-  const edgeSlugs = new Set(edge_types.map(e => e.type));
+  const nodeSlugs = new Set(node_types.map(n => n.type.trim().toLowerCase()));
+  const edgeSlugs = new Set(edge_types.map(e => e.type.trim().toLowerCase()));
 
   for (const node of updates.node_types ?? []) {
-    if (!node?.type?.trim() || nodeSlugs.has(node.type)) continue;
-    node_types.push({ type: node.type, description: String(node.description ?? '') });
-    nodeSlugs.add(node.type);
+    const type = node?.type?.trim();
+    if (!type) continue;
+    const key = type.toLowerCase();
+    if (nodeSlugs.has(key)) continue;
+    node_types.push({ type, description: String(node.description ?? '') });
+    nodeSlugs.add(key);
   }
   for (const edge of updates.edge_types ?? []) {
-    if (!edge?.type?.trim() || edgeSlugs.has(edge.type)) continue;
-    if (!nodeSlugs.has(edge.source_type) || !nodeSlugs.has(edge.target_type)) continue;
+    const edgeType = edge?.type?.trim();
+    const sourceType = edge?.source_type?.trim();
+    const targetType = edge?.target_type?.trim();
+    if (!edgeType || !sourceType || !targetType) continue;
+    const edgeKey = edgeType.toLowerCase();
+    if (edgeSlugs.has(edgeKey)) continue;
+    if (!nodeSlugs.has(sourceType.toLowerCase()) || !nodeSlugs.has(targetType.toLowerCase())) continue;
     edge_types.push({
-      type: edge.type,
-      source_type: edge.source_type,
-      target_type: edge.target_type,
+      type: edgeType,
+      source_type: sourceType,
+      target_type: targetType,
       description: String(edge.description ?? ''),
     });
-    edgeSlugs.add(edge.type);
+    edgeSlugs.add(edgeKey);
   }
   return { node_types, edge_types };
 }

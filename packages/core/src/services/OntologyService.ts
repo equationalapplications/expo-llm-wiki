@@ -47,13 +47,15 @@ export class OntologyService {
     mode: OntologyMode;
     manifest: OntologyManifest;
   }> {
-    const cached = this.cache.get(entityId);
-    if (cached) return cached;
+    if (!tx) {
+      const cached = this.cache.get(entityId);
+      if (cached) return cached;
+    }
 
     const row = await this.metadataRepo.getManifest(entityId, tx);
     if (row) {
       const state = { mode: this.resolveMode(row.mode), manifest: row.manifest };
-      this.cache.set(entityId, state);
+      if (!tx) this.cache.set(entityId, state);
       return state;
     }
 
@@ -65,8 +67,8 @@ export class OntologyService {
       };
       if (tx) {
         await this.metadataRepo.setManifest(entityId, state, tx);
+        this.cache.set(entityId, state);
       }
-      this.cache.set(entityId, state);
       return state;
     }
 
@@ -86,9 +88,7 @@ export class OntologyService {
     tx: SQLiteAdapter,
   ): Promise<OntologyManifest> {
     const merged = await this.metadataRepo.mergeManifestUpdates(entityId, updates, tx);
-    const row = await this.metadataRepo.getManifest(entityId, tx);
-    const mode = this.resolveMode(row?.mode);
-    this.cache.set(entityId, { mode, manifest: merged });
+    this.invalidateCache(entityId);
     return merged;
   }
 

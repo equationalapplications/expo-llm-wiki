@@ -58,6 +58,18 @@ describe('PromptService', () => {
       const { systemPrompt } = svc.buildIngestPrompt('chunk', undefined, null);
       expect(systemPrompt).toBe(INGEST_SYSTEM_PROMPT);
     });
+
+    it('hydrates {{ontologyModeInstructions}} without duplicate append', () => {
+      const svc = new PromptService();
+      const ctx = {
+        ontologyManifest: '{"node_types":[]}',
+        ontologyModeInstructions: '## Ontology constraints\nSTRICT',
+      };
+      const template = 'Custom: {{ontologyModeInstructions}}';
+      const { systemPrompt } = svc.buildIngestPrompt('chunk', template, ctx);
+      expect(systemPrompt).toBe('Custom: ## Ontology constraints\nSTRICT');
+      expect(systemPrompt.match(/## Ontology constraints/g)?.length).toBe(1);
+    });
   });
 
   describe('buildLibrarianPrompt', () => {

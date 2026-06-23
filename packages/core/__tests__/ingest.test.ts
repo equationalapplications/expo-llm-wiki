@@ -26,6 +26,7 @@ describe('IngestionService — PromptService injection', () => {
     mockEntryRepo = {
       findIdsBySource: vi.fn().mockResolvedValue([]),
       softDeleteBySource: vi.fn().mockResolvedValue(undefined),
+      findRecentByEntityId: vi.fn().mockResolvedValue([]),
       upsert: vi.fn().mockResolvedValue(undefined),
     };
     mockSearchService = {
@@ -401,6 +402,70 @@ describe('ingestDocument — ontology', () => {
     });
 
     const bundle = await wiki.getMemoryBundle('entity_ont');
+    const jane = bundle.facts.find(f => f.title === 'Jane reports to Bob');
+    const bob = bundle.facts.find(f => f.title === 'Bob Smith');
+    expect(jane?.okf_type).toBe('person');
+    expect(bob?.okf_type).toBe('person');
+    expect(bundle.edges?.length).toBe(1);
+    expect(bundle.edges?.[0].edge_type).toBe('reports_to');
+    expect(bundle.edges?.[0].source_id).toBe(jane?.id);
+    expect(bundle.edges?.[0].target_id).toBe(bob?.id);
+  });
+
+  it('persists edge when source fact appears before target across ingest calls', async () => {
+    const db = openTestDatabase();
+    await setupDatabase(db, PREFIX);
+
+    const bobResponse = JSON.stringify({
+      facts: [{
+        title: 'Bob Smith',
+        body: 'Bob is a manager.',
+        tags: [],
+        confidence: 'certain',
+        okf_type: 'person',
+      }],
+    });
+    const janeResponse = JSON.stringify({
+      facts: [{
+        title: 'Jane reports to Bob',
+        body: 'Jane reports to Bob Smith.',
+        tags: [],
+        confidence: 'certain',
+        okf_type: 'person',
+        edges: [{ edge_type: 'reports_to', target_title: 'Bob Smith' }],
+      }],
+    });
+
+    let callCount = 0;
+    const wiki = new WikiMemory(db, {
+      llmProvider: {
+        generateText: async () => (callCount++ === 0 ? bobResponse : janeResponse),
+      },
+      config: { tablePrefix: PREFIX, ontology: { mode: 'strict' } },
+    });
+    await wiki.setup();
+    await wiki.setOntologyManifest('entity_ont_rev', {
+      node_types: [{ type: 'person', description: 'An individual.' }],
+      edge_types: [{
+        type: 'reports_to',
+        source_type: 'person',
+        target_type: 'person',
+        description: 'Hierarchy.',
+      }],
+    }, { mode: 'strict' });
+
+    await wiki.ingestDocument('entity_ont_rev', {
+      sourceRef: 'doc://bob',
+      sourceHash: 'a'.repeat(64),
+      documentChunk: 'Bob Smith is a manager.',
+    });
+    await wiki.ingestDocument('entity_ont_rev', {
+      sourceRef: 'doc://jane',
+      sourceHash: 'b'.repeat(64),
+      documentChunk: 'Jane reports to Bob Smith.',
+    });
+
+    const bundle = await wiki.getMemoryBundle('entity_ont_rev');
     const jane = bundle.facts.find(f => f.title === 'Jane reports to Bob');
     const bob = bundle.facts.find(f => f.title === 'Bob Smith');
     expect(jane?.okf_type).toBe('person');

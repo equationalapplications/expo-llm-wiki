@@ -65,6 +65,23 @@ describe('OntologyService', () => {
       expect(state).toEqual({ mode: 'strict', manifest });
       expect(metadataRepo.setManifest).toHaveBeenCalledWith('entity1', { mode: 'strict', manifest }, tx);
     });
+
+    it('persists seed on transactional read after non-transactional preview', async () => {
+      const { metadataRepo, edgeRepo } = makeMocks();
+      vi.mocked(metadataRepo.getManifest).mockResolvedValue(null);
+      const svc = new OntologyService(metadataRepo, edgeRepo, {
+        mode: 'strict',
+        seedManifests: { entity1: { manifest, mode: 'strict' } },
+      });
+      const preview = await svc.getEffectiveState('entity1');
+      expect(preview).toEqual({ mode: 'strict', manifest });
+      expect(metadataRepo.setManifest).not.toHaveBeenCalled();
+
+      const tx = {} as any;
+      const persisted = await svc.getEffectiveState('entity1', tx);
+      expect(persisted).toEqual({ mode: 'strict', manifest });
+      expect(metadataRepo.setManifest).toHaveBeenCalledWith('entity1', { mode: 'strict', manifest }, tx);
+    });
   });
 
   describe('buildPromptContext', () => {
@@ -108,20 +125,24 @@ describe('OntologyService', () => {
   });
 
   describe('mergeEmergentUpdates', () => {
-    it('updates cache after merge', async () => {
+    it('invalidates cache so post-rollback reads reflect DB state', async () => {
       const { metadataRepo, edgeRepo } = makeMocks();
+      const original = { mode: 'emergent' as const, manifest };
       const merged = {
         node_types: [...manifest.node_types, { type: 'vendor', description: 'V' }],
         edge_types: [],
       };
-      vi.mocked(metadataRepo.mergeManifestUpdates).mockResolvedValue(merged);
-      vi.mocked(metadataRepo.getManifest).mockResolvedValue({ mode: 'emergent', manifest: merged });
+      vi.mocked(metadataRepo.getManifest).mockResolvedValue(original);
       const svc = new OntologyService(metadataRepo, edgeRepo);
+      await svc.getEffectiveState('entity1');
+
+      vi.mocked(metadataRepo.mergeManifestUpdates).mockResolvedValue(merged);
       const tx = {} as any;
-      const result = await svc.mergeEmergentUpdates('entity1', { node_types: [{ type: 'vendor', description: 'V' }] }, tx);
-      expect(result).toEqual(merged);
-      const cached = await svc.getEffectiveState('entity1');
-      expect(cached.manifest).toEqual(merged);
+      await svc.mergeEmergentUpdates('entity1', { node_types: [{ type: 'vendor', description: 'V' }] }, tx);
+
+      vi.mocked(metadataRepo.getManifest).mockResolvedValue(original);
+      const state = await svc.getEffectiveState('entity1');
+      expect(state.manifest).toEqual(manifest);
     });
   });
 

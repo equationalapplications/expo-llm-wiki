@@ -91,7 +91,7 @@ export class IngestionService {
       for (const chunkResult of chunkResults) {
         const dedupedFacts: ExtractedFact[] = [];
         for (const fact of chunkResult.facts) {
-          const normalizedTitle = fact.title.trim().toLowerCase().replace(/\s+/g, ' ');
+          const normalizedTitle = normalizeTitleKey(fact.title);
           if (!seen.has(normalizedTitle)) {
             seen.add(normalizedTitle);
             dedupedFacts.push(fact);
@@ -109,6 +109,20 @@ export class IngestionService {
         await this.entryRepo.softDeleteBySource(entityId, tx, sourceRef, null);
 
         const titleIndex = new Map<string, TitleIndexEntry>();
+        const pendingEdges: Array<{
+          sourceId: string;
+          sourceType: string | null;
+          edges: ExtractedFactWithOntology['edges'];
+        }> = [];
+
+        const existingFacts = await this.entryRepo.findRecentByEntityId(entityId, 500, tx);
+        for (const existing of existingFacts) {
+          titleIndex.set(normalizeTitleKey(existing.title), {
+            id: existing.id,
+            okf_type: existing.okf_type ?? null,
+          });
+        }
+
         let ontologyState = await this.ontologyService?.getEffectiveState(entityId, tx)
           ?? { mode: 'off' as const, manifest: { node_types: [], edge_types: [] } };
         let { mode, manifest } = ontologyState;
@@ -137,12 +151,16 @@ export class IngestionService {
 
             titleIndex.set(normalizeTitleKey(fact.title), { id, okf_type: normalized.okf_type });
 
-            if (this.ontologyService && normalized.edges.length > 0) {
-              await this.ontologyService.resolveAndPersistEdges(
-                entityId, id, normalized.okf_type, normalized.edges, manifest, titleIndex, tx, now,
-              );
+            if (normalized.edges.length > 0) {
+              pendingEdges.push({ sourceId: id, sourceType: normalized.okf_type, edges: normalized.edges });
             }
           }
+        }
+
+        for (const item of pendingEdges) {
+          await this.ontologyService?.resolveAndPersistEdges(
+            entityId, item.sourceId, item.sourceType, item.edges ?? [], manifest, titleIndex, tx, now,
+          );
         }
       });
 

@@ -341,6 +341,12 @@ export class MaintenanceService {
 
       const factsForDedupe = await this.entryRepo.findRecentByEntityId(entityId, 100, tx);
 
+      const pendingEdges: Array<{
+        sourceId: string;
+        sourceType: string | null;
+        edges: ExtractedFactWithOntology['edges'];
+      }> = [];
+
       for (const fact of validFacts) {
         const newTokens = titleTokens(fact.title);
         let skip = false;
@@ -378,11 +384,15 @@ export class MaintenanceService {
 
         titleIndex.set(normalizeTitleKey(fact.title), { id, okf_type: normalized.okf_type });
 
-        if (this.ontologyService && normalized.edges.length > 0) {
-          await this.ontologyService.resolveAndPersistEdges(
-            entityId, id, normalized.okf_type, normalized.edges, manifest, titleIndex, tx, now,
-          );
+        if (normalized.edges.length > 0) {
+          pendingEdges.push({ sourceId: id, sourceType: normalized.okf_type, edges: normalized.edges });
         }
+      }
+
+      for (const item of pendingEdges) {
+        await this.ontologyService?.resolveAndPersistEdges(
+          entityId, item.sourceId, item.sourceType, item.edges ?? [], manifest, titleIndex, tx, now,
+        );
       }
 
       for (const task of validTasks) {

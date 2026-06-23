@@ -130,9 +130,19 @@ export class MetadataRepository extends BaseRepository {
       manifest_json: string;
     }>(`SELECT mode, manifest_json FROM ${this.prefix}entity_manifests WHERE entity_id = ?`, [entityId]);
     if (!row) return null;
+    if (row.mode !== 'off' && row.mode !== 'strict' && row.mode !== 'emergent') {
+      throw new Error(`Invalid ontology mode for entity ${entityId}: ${JSON.stringify(row.mode)}`);
+    }
+    let manifest: OntologyManifest;
+    try {
+      manifest = JSON.parse(row.manifest_json) as OntologyManifest;
+    } catch (error) {
+      throw new Error(`Invalid manifest_json for entity ${entityId}: ${(error as Error).message}`);
+    }
+    validateManifest(manifest);
     return {
-      mode: row.mode as OntologyMode,
-      manifest: JSON.parse(row.manifest_json) as OntologyManifest,
+      mode: row.mode,
+      manifest,
     };
   }
 

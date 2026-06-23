@@ -4,6 +4,9 @@ import { PromptService } from '../../src/services/PromptService';
 import { OntologyService } from '../../src/services/OntologyService';
 import { MetadataRepository } from '../../src/repositories/MetadataRepository';
 import { EdgeRepository } from '../../src/repositories/EdgeRepository';
+import { EntryRepository } from '../../src/repositories/EntryRepository';
+import { OutboxRepository } from '../../src/repositories/OutboxRepository';
+import { MIGRATIONS } from '../../src/db/migrations';
 import { openTestDatabase } from '../helpers/sqliteAdapter';
 import { setupDatabase } from '../../src/db/schema';
 import { LIBRARIAN_SYSTEM_PROMPT, HEAL_SYSTEM_PROMPT } from '../../src/prompts';
@@ -156,8 +159,12 @@ describe('MaintenanceService — ontology integration', () => {
   it('persists normalized okf_type from LLM response under strict manifest', async () => {
     const db = openTestDatabase();
     await setupDatabase(db, PREFIX);
+    const outboxMigration = MIGRATIONS.find(m => m.version === 4);
+    if (outboxMigration) await outboxMigration.run(db, PREFIX);
     const metadataRepo = new MetadataRepository(db, PREFIX);
     const edgeRepo = new EdgeRepository(db, PREFIX);
+    const outboxRepo = new OutboxRepository(db, PREFIX, true);
+    const entryRepo = new EntryRepository(db, PREFIX, outboxRepo);
     const ontologyService = new OntologyService(metadataRepo, edgeRepo, { mode: 'strict' });
 
     await db.withTransactionAsync(async (tx) => {
@@ -182,10 +189,6 @@ describe('MaintenanceService — ontology integration', () => {
       tasks: [],
     });
 
-    const mockEntryRepo = {
-      findRecentByEntityId: vi.fn().mockResolvedValue([]),
-      upsert: vi.fn().mockResolvedValue(undefined),
-    };
     const mockTaskRepo = { upsert: vi.fn().mockResolvedValue(undefined) };
     const mockEventRepo = { getRecent: vi.fn().mockResolvedValue([]) };
     const mockSearchService = { sync: vi.fn(), evictCache: vi.fn() };
@@ -195,7 +198,7 @@ describe('MaintenanceService — ontology integration', () => {
     const svc = new MaintenanceService(
       db, PREFIX,
       { llmProvider: { generateText: vi.fn().mockResolvedValue(librarianResponse) } },
-      mockEntryRepo as any,
+      entryRepo,
       mockTaskRepo as any,
       mockEventRepo as any,
       metadataRepo,
@@ -208,9 +211,8 @@ describe('MaintenanceService — ontology integration', () => {
 
     await svc.doRunLibrarian('entity1');
 
-    expect(mockEntryRepo.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({ okf_type: 'person' }),
-      expect.anything(),
-    );
+    const facts = await entryRepo.findRecentByEntityId('entity1', 10);
+    expect(facts).toHaveLength(1);
+    expect(facts[0].okf_type).toBe('person');
   });
 });

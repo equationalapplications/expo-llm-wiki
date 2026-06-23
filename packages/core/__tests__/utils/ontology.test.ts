@@ -35,6 +35,23 @@ describe('ontology utils', () => {
     })).toThrow();
   });
 
+  it('validateManifest rejects case-insensitive duplicate node types', () => {
+    expect(() => validateManifest({
+      node_types: [
+        { type: 'person', description: 'a' },
+        { type: 'Person', description: 'b' },
+      ],
+      edge_types: [],
+    })).toThrow(/Duplicate node type/);
+  });
+
+  it('mergeOntologyUpdates treats types case-insensitively', () => {
+    const merged = mergeOntologyUpdates(manifest, {
+      node_types: [{ type: 'Person', description: 'ignored duplicate' }],
+    });
+    expect(merged.node_types).toHaveLength(2);
+  });
+
   it('mergeOntologyUpdates is append-only by type slug', () => {
     const merged = mergeOntologyUpdates(manifest, {
       node_types: [

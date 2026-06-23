@@ -12,6 +12,28 @@ export class PromptService {
     });
   }
 
+  private hasOntologyPlaceholders(template: string): boolean {
+    return /\{\{\s*ontology(?:Manifest|ModeInstructions)\s*\}\}/.test(template);
+  }
+
+  private buildSystemPrompt(
+    template: string,
+    variables: Record<string, unknown>,
+    ontologyContext: OntologyPromptContext | null | undefined,
+  ): string {
+    const shouldHydrate = Object.keys(variables).some((key) =>
+      new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`).test(template),
+    ) || (ontologyContext != null && this.hasOntologyPlaceholders(template));
+
+    const hydrated = shouldHydrate
+      ? this.hydrate(template, { ...variables, ...(ontologyContext ?? {}) })
+      : template;
+
+    return this.hasOntologyPlaceholders(template)
+      ? hydrated
+      : this.appendOntology(hydrated, ontologyContext);
+  }
+
   private appendOntology(systemPrompt: string, ctx: OntologyPromptContext | null | undefined): string {
     if (!ctx) return systemPrompt;
     return `${systemPrompt}\n\n${ctx.ontologyModeInstructions}`;
@@ -23,13 +45,11 @@ export class PromptService {
     ontologyContext?: OntologyPromptContext | null,
   ): { systemPrompt: string; userPrompt: string } {
     const template = runtimeOverride ?? this.globalOverrides?.ingestSystemPrompt ?? INGEST_SYSTEM_PROMPT;
-    if (/\{\{\s*documentChunk\s*\}\}/.test(template)) {
+    const hasDocumentChunk = /\{\{\s*documentChunk\s*\}\}/.test(template);
+    if (hasDocumentChunk || this.hasOntologyPlaceholders(template)) {
       return {
-        systemPrompt: this.appendOntology(
-          this.hydrate(template, { documentChunk, ...ontologyContext ?? {} }),
-          ontologyContext,
-        ),
-        userPrompt: 'Please extract the facts.',
+        systemPrompt: this.buildSystemPrompt(template, { documentChunk }, ontologyContext),
+        userPrompt: hasDocumentChunk ? 'Please extract the facts.' : `Document Chunk:\n${documentChunk}`,
       };
     }
     return {
@@ -45,13 +65,14 @@ export class PromptService {
     ontologyContext?: OntologyPromptContext | null,
   ): { systemPrompt: string; userPrompt: string } {
     const template = runtimeOverride ?? this.globalOverrides?.librarianSystemPrompt ?? LIBRARIAN_SYSTEM_PROMPT;
-    if (/\{\{\s*events\s*\}\}/.test(template) || /\{\{\s*currentFacts\s*\}\}/.test(template)) {
+    const hasEvents = /\{\{\s*events\s*\}\}/.test(template);
+    const hasCurrentFacts = /\{\{\s*currentFacts\s*\}\}/.test(template);
+    if (hasEvents || hasCurrentFacts || this.hasOntologyPlaceholders(template)) {
       return {
-        systemPrompt: this.appendOntology(
-          this.hydrate(template, { events, currentFacts, ...ontologyContext ?? {} }),
-          ontologyContext,
-        ),
-        userPrompt: 'Please synthesize the context.',
+        systemPrompt: this.buildSystemPrompt(template, { events, currentFacts }, ontologyContext),
+        userPrompt: (hasEvents || hasCurrentFacts)
+          ? 'Please synthesize the context.'
+          : `Events:\n${JSON.stringify(events, null, 2)}\n\nCurrent Facts:\n${JSON.stringify(currentFacts, null, 2)}`,
       };
     }
     return {
