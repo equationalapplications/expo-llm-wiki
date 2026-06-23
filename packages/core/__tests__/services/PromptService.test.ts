@@ -70,6 +70,14 @@ describe('PromptService', () => {
       expect(systemPrompt).toBe('Custom: ## Ontology constraints\nSTRICT');
       expect(systemPrompt.match(/## Ontology constraints/g)?.length).toBe(1);
     });
+
+    it('strips ontology placeholders when context is absent', () => {
+      const svc = new PromptService();
+      const template = 'Custom: {{ontologyModeInstructions}} {{ontologyManifest}}';
+      const { systemPrompt } = svc.buildIngestPrompt('chunk', template, null);
+      expect(systemPrompt).toBe('Custom:  ');
+      expect(systemPrompt).not.toMatch(/\{\{/);
+    });
   });
 
   describe('buildLibrarianPrompt', () => {

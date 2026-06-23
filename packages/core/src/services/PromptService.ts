@@ -30,7 +30,9 @@ export class PromptService {
       : template;
 
     return this.hasOntologyPlaceholders(template)
-      ? hydrated
+      ? (ontologyContext != null
+          ? hydrated
+          : hydrated.replace(/\{\{\s*ontology(?:Manifest|ModeInstructions)\s*\}\}/g, ''))
       : this.appendOntology(hydrated, ontologyContext);
   }
 

@@ -24,7 +24,7 @@ export function useOntologyManifest(entityId: string): OntologyManifestState {
   const wiki = useWiki();
   const [manifest, setManifest] = useState<OntologyManifest | null>(null);
   const [mode, setMode] = useState<OntologyMode | null>(null);
-  const [isPending, setIsPending] = useState(false);
+  const [isPending, setIsPending] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
   const wikiRef = useRef(wiki);
@@ -65,7 +65,7 @@ export function useOntologyManifest(entityId: string): OntologyManifestState {
       fq.inFlight = false;
       const next = fq.pending;
       fq.pending = null;
-      if (next) {
+      if (next !== null) {
         scheduleFetch.current(next);
       } else {
         setIsPending(false);

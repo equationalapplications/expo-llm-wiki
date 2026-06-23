@@ -236,7 +236,7 @@ export function EntityLoadingSpinner({ entityId }: { entityId: string }) {
 
 ### `useOntologyManifest(entityId)`
 
-Reactive read — fetches on mount and when `entityId` changes:
+Reactive read — fetches on mount and when `entityId` or `wiki` changes:
 
 ```typescript
 import { useOntologyManifest } from '@equationalapplications/expo-llm-wiki';
