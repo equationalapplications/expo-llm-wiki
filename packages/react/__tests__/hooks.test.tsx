@@ -10,7 +10,9 @@ import { useWikiForget } from '../src/useWikiForget';
 import { useWikiExport } from '../src/useWikiExport';
 import { useWikiHasChanged } from '../src/useWikiHasChanged';
 import { useEntityStatus } from '../src/useEntityStatus';
-import type { ReadOptions, EntityStatus } from '@equationalapplications/core-llm-wiki';
+import { useOntologyManifest } from '../src/useOntologyManifest';
+import { useSetOntologyManifest } from '../src/useSetOntologyManifest';
+import type { ReadOptions, EntityStatus, OntologyManifest } from '@equationalapplications/core-llm-wiki';
 
 /** Minimal mock of WikiMemory — uses the real MemoryBundle shape ({ facts, tasks, events }) */
 function makeMockWiki() {
@@ -30,6 +32,8 @@ function makeMockWiki() {
       cb({ ingesting: false, librarian: false, heal: false });
       return vi.fn();
     }),
+    getOntologyManifest: vi.fn().mockResolvedValue(null),
+    setOntologyManifest: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -384,6 +388,207 @@ describe('useMemoryRead', () => {
 
     rerender({ opts: { includeZeroWeightEntities: true } });
     await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(2));
+  });
+});
+
+const sampleOntologyManifest: OntologyManifest = {
+  node_types: [{ type: 'person', description: 'An individual.' }],
+  edge_types: [{
+    type: 'reports_to',
+    source_type: 'person',
+    target_type: 'person',
+    description: 'Reporting hierarchy.',
+  }],
+};
+
+// ---------------------------------------------------------------------------
+// useOntologyManifest
+// ---------------------------------------------------------------------------
+
+describe('useOntologyManifest', () => {
+  let wiki: MockWiki;
+
+  beforeEach(() => {
+    wiki = makeMockWiki();
+  });
+
+  it('starts with isPending=true and calls getOntologyManifest on mount', async () => {
+    wiki.getOntologyManifest.mockResolvedValue({
+      mode: 'strict',
+      manifest: sampleOntologyManifest,
+    });
+
+    const { result } = renderHook(
+      () => useOntologyManifest('e1'),
+      { wrapper: wrapper(wiki) },
+    );
+
+    expect(result.current.isPending).toBe(true);
+
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+
+    expect(wiki.getOntologyManifest).toHaveBeenCalledWith('e1');
+    expect(result.current.manifest).toEqual(sampleOntologyManifest);
+    expect(result.current.mode).toBe('strict');
+    expect(result.current.error).toBeNull();
+  });
+
+  it('maps null core response to manifest=null and mode=null', async () => {
+    wiki.getOntologyManifest.mockResolvedValue(null);
+
+    const { result } = renderHook(
+      () => useOntologyManifest('e1'),
+      { wrapper: wrapper(wiki) },
+    );
+
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+
+    expect(result.current.manifest).toBeNull();
+    expect(result.current.mode).toBeNull();
+    expect(result.current.error).toBeNull();
+  });
+
+  it('re-fetches when entityId changes', async () => {
+    const { result, rerender } = renderHook(
+      ({ eid }: { eid: string }) => useOntologyManifest(eid),
+      { initialProps: { eid: 'e1' }, wrapper: wrapper(wiki) },
+    );
+
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(wiki.getOntologyManifest).toHaveBeenCalledTimes(1);
+
+    rerender({ eid: 'e2' });
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+
+    expect(wiki.getOntologyManifest).toHaveBeenCalledTimes(2);
+    expect(wiki.getOntologyManifest).toHaveBeenLastCalledWith('e2');
+  });
+
+  it('sets error when getOntologyManifest rejects', async () => {
+    const boom = new Error('ontology db error');
+    wiki.getOntologyManifest.mockRejectedValue(boom);
+
+    const { result } = renderHook(
+      () => useOntologyManifest('e1'),
+      { wrapper: wrapper(wiki) },
+    );
+
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+
+    expect(result.current.error).toBe(boom);
+    expect(result.current.manifest).toBeNull();
+    expect(result.current.mode).toBeNull();
+  });
+
+  it('refetch() triggers another getOntologyManifest call', async () => {
+    const { result } = renderHook(
+      () => useOntologyManifest('e1'),
+      { wrapper: wrapper(wiki) },
+    );
+
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(wiki.getOntologyManifest).toHaveBeenCalledTimes(1);
+
+    act(() => { result.current.refetch(); });
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+
+    expect(wiki.getOntologyManifest).toHaveBeenCalledTimes(2);
+    expect(wiki.getOntologyManifest).toHaveBeenLastCalledWith('e1');
+  });
+
+  it('queues a fetch when entityId changes while first fetch is in flight', async () => {
+    let resolveFirst!: (value: null) => void;
+    wiki.getOntologyManifest
+      .mockReturnValueOnce(new Promise<null>(resolve => { resolveFirst = resolve; }))
+      .mockResolvedValueOnce({ mode: 'emergent', manifest: sampleOntologyManifest });
+
+    const { result, rerender } = renderHook(
+      ({ eid }: { eid: string }) => useOntologyManifest(eid),
+      { initialProps: { eid: 'e1' }, wrapper: wrapper(wiki) },
+    );
+
+    expect(result.current.isPending).toBe(true);
+
+    rerender({ eid: 'e2' });
+
+    await act(async () => { resolveFirst(null); });
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+
+    expect(wiki.getOntologyManifest).toHaveBeenCalledTimes(2);
+    expect(wiki.getOntologyManifest).toHaveBeenNthCalledWith(1, 'e1');
+    expect(wiki.getOntologyManifest).toHaveBeenNthCalledWith(2, 'e2');
+    expect(result.current.mode).toBe('emergent');
+    expect(result.current.manifest).toEqual(sampleOntologyManifest);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// useSetOntologyManifest
+// ---------------------------------------------------------------------------
+
+describe('useSetOntologyManifest', () => {
+  let wiki: MockWiki;
+
+  beforeEach(() => {
+    wiki = makeMockWiki();
+  });
+
+  it('starts in idle state', () => {
+    const { result } = renderHook(() => useSetOntologyManifest(), { wrapper: wrapper(wiki) });
+    expect(result.current.isPending).toBe(false);
+    expect(result.current.error).toBeNull();
+    expect(result.current.lastResult).toBeNull();
+  });
+
+  it('calls setOntologyManifest with args and toggles isPending', async () => {
+    let resolve!: () => void;
+    wiki.setOntologyManifest.mockReturnValue(new Promise<void>(r => { resolve = r; }));
+
+    const { result } = renderHook(() => useSetOntologyManifest(), { wrapper: wrapper(wiki) });
+
+    let executePromise!: Promise<void>;
+    await act(async () => {
+      executePromise = result.current.execute('e1', sampleOntologyManifest, { mode: 'strict' });
+    });
+
+    expect(result.current.isPending).toBe(true);
+    expect(wiki.setOntologyManifest).toHaveBeenCalledWith('e1', sampleOntologyManifest, { mode: 'strict' });
+
+    await act(async () => {
+      resolve();
+      await executePromise;
+    });
+
+    expect(result.current.isPending).toBe(false);
+    expect(result.current.lastResult).toBeUndefined();
+    expect(result.current.error).toBeNull();
+  });
+
+  it('sets error and re-throws when setOntologyManifest rejects', async () => {
+    const boom = new Error('set failed');
+    wiki.setOntologyManifest.mockRejectedValue(boom);
+
+    const { result } = renderHook(() => useSetOntologyManifest(), { wrapper: wrapper(wiki) });
+
+    let caught: unknown;
+    await act(async () => {
+      try {
+        await result.current.execute('e1', sampleOntologyManifest);
+      } catch (e) {
+        caught = e;
+      }
+    });
+
+    expect(caught).toBe(boom);
+    expect(result.current.error).toBe(boom);
+    expect(result.current.isPending).toBe(false);
+  });
+
+  it('returns a stable execute reference across re-renders', () => {
+    const { result, rerender } = renderHook(() => useSetOntologyManifest(), { wrapper: wrapper(wiki) });
+    const first = result.current.execute;
+    rerender();
+    expect(result.current.execute).toBe(first);
   });
 });
 

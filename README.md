@@ -32,6 +32,7 @@ Supports [Open Knowledge Format (OKF) v0.1](https://github.com/GoogleCloudPlatfo
 - **Offline First:** The MiniSearch fallback runs entirely in-process with no network required. The cosine similarity path requires `embed()` to vectorise the query (typically a cloud API call) but falls back to MiniSearch automatically when offline or when `embed` throws.
 - **Full Unicode Support:** UTF-8 and UTF-16 (including surrogate pairs for emoji) are fully supported. Chunks are split safely at sentence boundaries; surrogate pairs are never fragmented.
 - **Immutable vs mutable memory:** Every fact includes `source_type`. Facts from `ingestDocument()` are stored as `immutable_document` and are preserved from librarian/heal rewriting; they can only be removed with `forget()` or replaced via re-ingest. Derived or user assertions are mutable (`librarian_inferred`, `user_stated`, `user_confirmed`) and can be updated by healer/librarian workflows.
+- **Seeded ontology & graph extraction:** Optional per-entity taxonomies (Strict, Emergent, or Off) guide librarian and ingest passes to classify facts with `okf_type` and persist structured graph edges alongside semantic and episodic memory.
 - **Cross-Platform:** Choose the right package for your platform: Expo, React Native, React web, vanilla JS, or Node.js. The core logic is framework-agnostic with platform-specific adapters.
 
 ## How It Works

@@ -18,7 +18,8 @@ Local-first LLM memory for Expo and React Native. Combines the core semantic sea
 - **Retrieval tuning** — Per-call overrides for search behavior (pre-filter, hybrid blend, tier weights)
 - **Multi-entity reads** — Search across multiple `entity_id` namespaces in one pass with `tierWeights`
 - **Source provenance** — `WikiFact.source_type` distinguishes immutable document facts (`immutable_document`) from mutable derived/user facts. Immutable document content is protected from librarian/heal rewriting and only changed by `forget()` or re-ingest.
-- **React hooks** — `WikiProvider`, `useMemoryRead`, and all other hooks are re-exported directly from `@equationalapplications/expo-llm-wiki`
+- **Seeded ontologies** — Enforce strict taxonomies or allow emergent graph relationship extraction (`useOntologyManifest`, `useSetOntologyManifest`; Strict, Emergent, or Off; defaults to Off).
+- **React hooks** — `WikiProvider`, `useMemoryRead`, `useOntologyManifest`, `useSetOntologyManifest`, and all other hooks re-exported from `@equationalapplications/expo-llm-wiki`
 - **Full-featured memory** — Facts, tasks, events, maintenance jobs (librarian, heal, reembed, prune)
 - **Interoperability:** Supports [Open Knowledge Format (OKF) v0.1](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) import and export.
 
@@ -233,6 +234,52 @@ export function EntityLoadingSpinner({ entityId }: { entityId: string }) {
 }
 ```
 
+### `useOntologyManifest(entityId)`
+
+Reactive read — fetches on mount and when `entityId` changes:
+
+```typescript
+import { useOntologyManifest } from '@equationalapplications/expo-llm-wiki';
+
+const { manifest, mode, isPending, error, refetch } = useOntologyManifest('user-123');
+// manifest: OntologyManifest | null
+// mode: OntologyMode | null ('strict' | 'emergent' | 'off' when present)
+```
+
+Note: `manifest` and `mode` are `null` when the entity has no persisted or seeded manifest (`getOntologyManifest` returned `null`). Call `refetch()` after mutations to refresh.
+
+### `useSetOntologyManifest()`
+
+Mutation — same `{ execute, isPending, error, lastResult }` contract as `useWikiWrite`:
+
+```typescript
+import { useOntologyManifest, useSetOntologyManifest } from '@equationalapplications/expo-llm-wiki';
+
+export function OntologySettings({ entityId }: { entityId: string }) {
+  const { manifest, mode, refetch } = useOntologyManifest(entityId);
+  const { execute, isPending, error } = useSetOntologyManifest();
+
+  const handleSave = async () => {
+    await execute(entityId, {
+      node_types: [{ type: 'person', description: 'An individual.' }],
+      edge_types: [{
+        type: 'reports_to',
+        source_type: 'person',
+        target_type: 'person',
+        description: 'Reporting hierarchy.',
+      }],
+    }, { mode: 'strict' });
+    refetch();
+  };
+
+  // render manifest/mode; wire handleSave to a save button
+}
+```
+
+Global defaults and `seedManifests` bootstrap are configured at construction time via `createWiki(..., { config: { ontology: ... } })`. See the [core package README § Per-Entity Seeded Ontology](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md#per-entity-seeded-ontology) for mode semantics and manifest schema.
+
+`useSetOntologyManifest` does not automatically refresh `useOntologyManifest` — call `refetch()` after a successful `execute()`, same as `useWikiWrite` + `useMemoryRead`.
+
 ## Component Lifecycle
 
 ```mermaid
@@ -244,6 +291,8 @@ flowchart TD
     C -->|"useWikiIngest()"| F["[Ingest Document]"]
     C -->|"useWikiForget()"| G["[Delete Memory]"]
     C -->|"useWikiMaintenance()"| H["[Run Jobs]"]
+    C -->|"useOntologyManifest(entityId)"| S["[Read Ontology]"]
+    C -->|"useSetOntologyManifest()"| T["[Update Ontology]"]
     D --> I{"entityId, query, wiki,<br/>or ReadOptions changed?"}
     I -->|"Yes"| J["Auto-refetch"]
     I -->|"No"| K["Return cached data"]
@@ -252,10 +301,17 @@ flowchart TD
     M --> N["Phase 1: Score facts<br/>Phase 2: Fetch winners"]
     N --> O["Update component state"]
     O --> P["Re-render with data"]
+    S --> I2{"entityId or wiki changed?"}
+    I2 -->|"Yes"| J2["Auto-refetch"]
+    I2 -->|"No"| K2["Return cached manifest/mode"]
+    J2 --> L2["Trigger getOntologyManifest()"]
+    L2 --> O2["Update component state"]
+    O2 --> P2["Re-render with manifest/mode"]
     E --> Q["Execute write()"]
     F --> Q
     G --> Q
     H --> Q
+    T --> Q
     Q --> R["Write completes"]
 ```
 
@@ -263,8 +319,10 @@ flowchart TD
 1. **Wrap app** with `<WikiProvider wiki={wiki}>` — provides wiki context
 2. **Use hooks** in components — access memory reactively
 3. **Read operations** auto-refetch when `entityId`, `query`, `wiki`, or `ReadOptions` values change; call `refetch()` to refresh manually
-4. **Write operations** (write, ingest, forget, maintenance) do not automatically re-trigger `useMemoryRead`; call `refetch()` after a write to refresh read results
-5. **Re-render** with new data flowing back to UI
+4. **Ontology reads** auto-refetch when `entityId` or `wiki` changes; call `refetch()` manually after ontology mutations
+5. **Write operations** (write, ingest, forget, maintenance) do not automatically re-trigger `useMemoryRead`; call `refetch()` after a write to refresh read results
+6. **Ontology writes** (`useSetOntologyManifest`) do not automatically re-trigger `useOntologyManifest` in the same component unless `refetch()` is called after `execute()` succeeds
+7. **Re-render** with new data flowing back to UI
 
 ## Retrieval Engine Internals
 

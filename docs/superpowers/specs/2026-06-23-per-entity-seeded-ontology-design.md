@@ -50,8 +50,9 @@ for heal is explicitly deferred to a follow-up spec (see Non-Goals).
   are silently ignored.
 - **No JSON Schema validation library.** Manifest and LLM output are validated with lightweight
   TypeScript guards, consistent with existing `validateFact` / `parseJsonResponse` patterns.
-
-## Design Decisions (Brainstorming Resolutions)
+- **No React hooks in core v1.** Hosts use `WikiMemory.getOntologyManifest` / `setOntologyManifest`
+  directly (or via `useWiki()`). First-class bindings are specified in
+  [2026-06-23-ontology-react-hooks-design.md](./2026-06-23-ontology-react-hooks-design.md).
 
 | Decision | Resolution |
 | :--- | :--- |
@@ -453,6 +454,6 @@ None — resolved during brainstorming.
 
 ## Next Step
 
-Once this specification is approved, invoke the implementation plan (`writing-plans` skill) to
-draft exact modifications to `LIBRARIAN_SYSTEM_PROMPT` and `INGEST_SYSTEM_PROMPT`, plus the
-`OntologyService` validation guards and migration v6.
+Implement core ontology per this spec, then implement React hooks per
+[2026-06-23-ontology-react-hooks-design.md](./2026-06-23-ontology-react-hooks-design.md).
+Both may ship in a single PR when ready.

@@ -32,13 +32,27 @@ export interface OntologyEdgeType {
   description: string;
 }
 
+/**
+ * Allowed node and edge types for an entity's ontology graph.
+ * Persisted per entity and injected into librarian/ingest prompts when mode ≠ `off`.
+ */
 export interface OntologyManifest {
   node_types: OntologyNodeType[];
   edge_types: OntologyEdgeType[];
 }
 
+/**
+ * Global ontology defaults and bootstrap manifests for known entities.
+ * Per-entity mode and manifest overrides are stored in SQLite and managed via
+ * `WikiMemory.getOntologyManifest` / `setOntologyManifest`.
+ */
 export interface OntologyConfig {
+  /** Global default mode. Default: `'off'` (backward compatible — no typed extraction). */
   mode?: OntologyMode;
+  /**
+   * Bootstrap manifests for known entities at construction time.
+   * Written to the database on first access if no row exists for that entity.
+   */
   seedManifests?: Record<string, {
     manifest: OntologyManifest;
     mode?: OntologyMode;

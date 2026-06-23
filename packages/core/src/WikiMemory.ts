@@ -373,6 +373,10 @@ export class WikiMemory {
     await this.outboxRepo.acknowledge(eventIds);
   }
 
+  /**
+   * Returns the effective ontology mode and manifest for an entity.
+   * Resolution order: persisted DB row → `WikiConfig.ontology.seedManifests[entityId]` → `null`.
+   */
   async getOntologyManifest(entityId: string): Promise<{
     mode: OntologyMode;
     manifest: OntologyManifest;
@@ -389,6 +393,11 @@ export class WikiMemory {
     return null;
   }
 
+  /**
+   * Seeds or replaces an entity's ontology manifest and optional mode override.
+   * Validates manifest invariants (unique type slugs, edge endpoints reference node types).
+   * Invalidates the in-memory ontology cache for this entity.
+   */
   async setOntologyManifest(
     entityId: string,
     manifest: OntologyManifest,

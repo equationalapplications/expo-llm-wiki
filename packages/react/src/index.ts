@@ -9,3 +9,6 @@ export { useWikiForget } from './useWikiForget';
 export { useWikiExport } from './useWikiExport';
 export { useWikiHasChanged } from './useWikiHasChanged';
 export { useEntityStatus } from './useEntityStatus';
+export { useOntologyManifest } from './useOntologyManifest';
+export type { OntologyManifestState } from './useOntologyManifest';
+export { useSetOntologyManifest } from './useSetOntologyManifest';
