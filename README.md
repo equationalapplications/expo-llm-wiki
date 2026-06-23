@@ -7,7 +7,8 @@
 [![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fexpo-llm-wiki?label=@equationalapplications/expo-llm-wiki)](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fexpo-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki)<br>
 [![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Freact-llm-wiki?label=@equationalapplications/react-llm-wiki)](https://www.npmjs.com/package/@equationalapplications/react-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Freact-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/react-llm-wiki)<br>
 [![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fcore-llm-wiki?label=@equationalapplications/core-llm-wiki)](https://www.npmjs.com/package/@equationalapplications/core-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fcore-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/core-llm-wiki)<br>
-[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fcore-llm-tools?label=@equationalapplications/core-llm-tools)](https://www.npmjs.com/package/@equationalapplications/core-llm-tools) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fcore-llm-tools?label=downloads)](https://www.npmjs.com/package/@equationalapplications/core-llm-tools)
+[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fcore-llm-tools?label=@equationalapplications/core-llm-tools)](https://www.npmjs.com/package/@equationalapplications/core-llm-tools) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fcore-llm-tools?label=downloads)](https://www.npmjs.com/package/@equationalapplications/core-llm-tools)<br>
+[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fcore-okf?label=@equationalapplications/core-okf)](https://www.npmjs.com/package/@equationalapplications/core-okf) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fcore-okf?label=downloads)](https://www.npmjs.com/package/@equationalapplications/core-okf)
 
 **[GitHub](https://github.com/equationalapplications/expo-llm-wiki)** · **[ScopeLab](https://equationalapplications.github.io/expo-llm-wiki/scopelab/)** · **[WikiDemo](https://equationalapplications.github.io/expo-llm-wiki/wiki-demo/)** · **[Changelog](https://github.com/equationalapplications/expo-llm-wiki/blob/main/CHANGELOG.md)** · **[Issues](https://github.com/equationalapplications/expo-llm-wiki/issues)**
 
@@ -16,6 +17,8 @@
 expo-llm-wiki is a cross-platform TypeScript and SQLite library for long-term LLM memory. It bridges the gap between raw conversation logs and a structured knowledge base, supporting background fact extraction, semantic embedding search, and memory pruning.
 
 > Inspired by [Andrej Karpathy's LLM Wiki memory spec](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
+
+Supports [Open Knowledge Format (OKF) v0.1](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) import and export for interoperable knowledge bases.
 
 - **Universal Support:** Expo • React • Vite • Vue • Svelte • Node.js
 - **Core Engine:** Pure TypeScript logic with platform-specific adapters.
@@ -93,17 +96,18 @@ flowchart TB
     events --> Bundle
 ```
 
-## Monorepo Packages
+## Monorepo Ecosystem
 
-`expo-llm-wiki` is organized as a monorepo with five packages:
+`expo-llm-wiki` is organized as a monorepo with six packages:
 
 | Package | Purpose | Platform |
 |---------|---------|----------|
 | **`@equationalapplications/core-llm-wiki`** | Persistent episodic memory | Node.js, any platform |
 | **`@equationalapplications/expo-llm-wiki`** | Persistent episodic memory | Expo, React Native |
 | **`@equationalapplications/react-llm-wiki`** | Persistent episodic memory | Web (React) |
-| **`@equationalapplications/core-llm-tools`** | Platform-agnostic Gemini tool schemas and capability-based scope injector | Node.js, browser, React Native |
 | **`@equationalapplications/prisma-outbox`** | Sync SQLite outbox events to Prisma-backed database (transactional outbox pattern) | Node.js |
+| **`@equationalapplications/core-llm-tools`** | Platform-agnostic Gemini tool schemas and capability-based scope injector | Node.js, browser, React Native |
+| **`@equationalapplications/core-okf`** | Zero-dependency Open Knowledge Format (OKF) v0.1 primitives — parse and produce interoperable knowledge bundles. | Node.js, browser, React Native |
 
 **Choose your package:**
 - **Expo/React Native app?** → `@equationalapplications/expo-llm-wiki`
@@ -346,6 +350,12 @@ const wiki = createWiki(adapter, {
 
 await wiki.setup();
 ```
+
+## OKF Import/Export
+
+This library provides full interoperability with [OKF v0.1](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf). You can parse and produce OKF bundles using the zero-dependency `@equationalapplications/core-okf` primitives, or use the built-in wiki adapters to convert directly between `MemoryDump` and OKF bundles.
+
+See the full [OKF Import/Export documentation in packages/core](packages/core/README.md#okf-importexport) or view the [core-okf API reference](packages/okf/README.md).
 
 ## Core API
 

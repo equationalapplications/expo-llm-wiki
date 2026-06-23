@@ -1,6 +1,6 @@
 # Design: Monorepo Documentation Update (OKF + Ecosystem Tables)
 
-**Status:** Draft
+**Status:** Implemented
 **Packages:** `README.md` (root); `packages/{core,okf,expo,react,prisma-outbox,core-llm-tools}/README.md`
 **Date:** 2026-06-23
 **Depends on:** `2026-06-18-okf-export-design.md`, `2026-06-22-okf-import-design.md` (both Implemented, undocumented)

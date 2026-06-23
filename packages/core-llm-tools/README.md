@@ -125,13 +125,14 @@ but is deprecated in favor of `buildAuthorizedToolsArray`.
 
 ## Monorepo Ecosystem
 
-| Package | Description |
-|---------|-------------|
-| [`@equationalapplications/core-llm-wiki`](https://www.npmjs.com/package/@equationalapplications/core-llm-wiki) | Pure TypeScript core — DB-agnostic, bring your own SQLite adapter |
-| [`@equationalapplications/expo-llm-wiki`](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki) | Expo / React Native adapter with `expo-sqlite` |
-| [`@equationalapplications/react-llm-wiki`](https://www.npmjs.com/package/@equationalapplications/react-llm-wiki) | React hooks + web adapter with `sql.js` |
-| [`@equationalapplications/prisma-outbox`](https://www.npmjs.com/package/@equationalapplications/prisma-outbox) | Sync SQLite outbox events to Prisma in a transaction |
-| **`@equationalapplications/core-llm-tools`** | Platform-agnostic Gemini tool schemas + capability scope injector |
+| Package | Purpose |
+| ----- | ----- |
+| [@equationalapplications/core-llm-wiki](../core/README.md) | Persistent episodic memory |
+| [@equationalapplications/expo-llm-wiki](../expo/README.md) | Persistent episodic memory for Expo/React Native |
+| [@equationalapplications/react-llm-wiki](../react/README.md) | Persistent episodic memory for Web |
+| [@equationalapplications/prisma-outbox](../prisma-outbox/README.md) | Sync SQLite outbox events to Prisma |
+| **@equationalapplications/core-llm-tools** | Gemini tool schemas and capability injector |
+| [@equationalapplications/core-okf](../okf/README.md) | Zero-dependency Open Knowledge Format (OKF) v0.1 primitives — parse and produce interoperable knowledge bundles. |
 
 ---
 

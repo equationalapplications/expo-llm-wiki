@@ -20,6 +20,7 @@ Platform-agnostic TypeScript engine for hybrid LLM memory. Features episodic fac
 - **Immutable vs mutable facts** — Use `WikiFact.source_type` to distinguish document-sourced facts (`immutable_document`) from derived or user-provided facts (`librarian_inferred`, `user_stated`, `user_confirmed`). Immutable document facts are not rewritten by `runLibrarian()` or `runHeal()` and can only be removed by `forget()` or re-ingesting.
 - **Full-featured memory** — Facts, tasks, events, maintenance jobs (librarian, heal, reembed, prune)
 - **Type-safe** — Built with TypeScript, full type exports
+- **Interoperability:** Supports [Open Knowledge Format (OKF) v0.1](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) import and export.
 
 ## Installation
 
@@ -444,6 +445,58 @@ Notes:
 - A throwing callback is caught (logged via `console.error`) and does not block other subscribers or the underlying job.
 - Subscriptions are scoped to a single `entityId`. There is no wildcard or "all entities" form.
 
+## OKF Import/Export
+
+The core package integrates with `@equationalapplications/core-okf` to seamlessly adapt wiki data dumps to and from Open Knowledge Format (OKF) v0.1 bundles.
+
+### Exporting an OKF Bundle
+
+Convert an existing wiki dump into a flat array of OKF files, ready to be written to disk or zipped:
+
+```typescript
+import { formatOkfBundle } from '@equationalapplications/core-llm-wiki';
+
+const dump = await wiki.exportDump(['entity-123']);
+const { files } = formatOkfBundle(dump);
+
+// files: Array<{ path: string; content: string }>
+// e.g., [{ path: 'facts/fact_abc.md', content: '---\n...' }]
+```
+
+### Importing an OKF Bundle
+
+Parse raw OKF files back into a `MemoryDump` that the wiki can ingest:
+
+```typescript
+import { parseOkfBundle } from '@equationalapplications/core-llm-wiki';
+
+// Assuming you read OKF files from disk/zip into OkfFile[] shape
+const dump = parseOkfBundle('entity-123', files, {
+  defaultSchema: 'fact',
+  typeMapping: {
+    'custom_type': 'fact',
+    'archived': 'ignore', // Skips these concepts
+  },
+});
+
+await wiki.importDump(dump, { merge: true });
+```
+
+**Routing Precedence:** Concepts are routed into either the `entries` (facts) or `tasks` tables based on a three-step fallback:
+
+1. `OkfImportOptions.typeMapping` explicitly mapping an OKF `type` to `'fact'`, `'task'`, or `'ignore'`.
+2. Directory convention (e.g., files in `/facts/` become facts, `/tasks/` become tasks).
+3. The `OkfImportOptions.defaultSchema` (defaults to `'fact'`).
+
+### WikiEdge and Markdown Links
+
+A `WikiEdge` represents a markdown cross-link found inside a concept body, resolved to a `source_id` and `target_id`.
+Edges automatically round-trip during OKF import and export. Because the markdown body is the source of truth for edges in the OKF spec, edges are dynamically extracted and preserved via the `EdgeRepository` — there is no separate edge export step required. The `edges` array is automatically populated when reading a full `MemoryBundle`.
+
+### The `okf_type` Field
+
+Facts and tasks include a nullable `okf_type` column. This preserves the literal OKF `type` string from an imported bundle frontmatter, independent of whether the item was routed to the `entries` or `tasks` table. When `formatOkfBundle` runs, it restores this specific string, falling back to `'fact'` or `'task'` if the field is null (ensuring non-imported rows export cleanly).
+
 ## Security
 
 `@equationalapplications/core-llm-wiki` enforces multiple security layers:
@@ -706,13 +759,14 @@ The flowchart shows:
 
 ## Monorepo Ecosystem
 
-| Package | Description |
-|---------|-------------|
-| **`@equationalapplications/core-llm-wiki`** | Pure TypeScript core — DB-agnostic, bring your own SQLite adapter |
-| [`@equationalapplications/expo-llm-wiki`](https://www.npmjs.com/package/@equationalapplications/expo-llm-wiki) | Expo / React Native adapter with `expo-sqlite` |
-| [`@equationalapplications/react-llm-wiki`](https://www.npmjs.com/package/@equationalapplications/react-llm-wiki) | React hooks + web adapter with `sql.js` |
-| [`@equationalapplications/prisma-outbox`](https://www.npmjs.com/package/@equationalapplications/prisma-outbox) | Sync SQLite outbox events to Prisma in a transaction |
-| [`@equationalapplications/core-llm-tools`](https://www.npmjs.com/package/@equationalapplications/core-llm-tools) | Platform-agnostic Gemini tool schemas + capability scope injector |
+| Package | Purpose |
+| ----- | ----- |
+| **@equationalapplications/core-llm-wiki** | Persistent episodic memory |
+| [@equationalapplications/expo-llm-wiki](../expo/README.md) | Persistent episodic memory for Expo/React Native |
+| [@equationalapplications/react-llm-wiki](../react/README.md) | Persistent episodic memory for Web |
+| [@equationalapplications/prisma-outbox](../prisma-outbox/README.md) | Sync SQLite outbox events to Prisma |
+| [@equationalapplications/core-llm-tools](../core-llm-tools/README.md) | Gemini tool schemas and capability injector |
+| [@equationalapplications/core-okf](../okf/README.md) | Zero-dependency Open Knowledge Format (OKF) v0.1 primitives — parse and produce interoperable knowledge bundles. |
 
 ## License
 
