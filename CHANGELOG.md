@@ -1,3 +1,16 @@
+# [4.17.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.16.0...v4.17.0) (2026-06-23)
+
+
+### Bug Fixes
+
+* address Copilot review on graph traversal PR [#52](https://github.com/equationalapplications/expo-llm-wiki/issues/52) ([0876529](https://github.com/equationalapplications/expo-llm-wiki/commit/0876529de7b77098c8bc4cff6951cbd7f7dc0a41))
+* harden graph traversal review feedback for PR [#52](https://github.com/equationalapplications/expo-llm-wiki/issues/52) ([fc2a86e](https://github.com/equationalapplications/expo-llm-wiki/commit/fc2a86e6654cc0d447b1a052611594e79c16a1f6))
+
+
+### Features
+
+* add knowledge graph traversal API ([bd5f2ee](https://github.com/equationalapplications/expo-llm-wiki/commit/bd5f2ee642d8f7b52cd6969dd4d8450303ea05be))
+
 # [4.16.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.15.3...v4.16.0) (2026-06-23)
 
 
