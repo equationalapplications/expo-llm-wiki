@@ -339,7 +339,7 @@ export interface MemoryBundle {
   facts: WikiFact[];
   tasks: WikiTask[];
   events: WikiEvent[];
-  edges: WikiEdge[];
+  edges?: WikiEdge[];
   factScores?: Record<string, number>;
   metadata?: {
     query: string;
