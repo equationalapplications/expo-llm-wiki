@@ -122,7 +122,14 @@ export class EdgeRepository extends BaseRepository {
           ON n.id = (CASE WHEN e.source_id = w.node_id THEN e.target_id ELSE e.source_id END)
           AND n.entity_id = ?
           AND n.deleted_at IS NULL
-          AND (CASE n.confidence WHEN 'tentative' THEN 0 WHEN 'inferred' THEN 1 ELSE 2 END) >= ?
+          AND (
+            CASE n.confidence
+              WHEN 'tentative' THEN 0
+              WHEN 'inferred' THEN 1
+              WHEN 'certain' THEN 2
+              ELSE -1
+            END
+          ) >= ?
           AND n.source_type NOT IN (${excludeSourceTypesPlaceholders})
         WHERE w.depth < ?
           AND instr(w.visited, ',' || (CASE WHEN e.source_id = w.node_id THEN e.target_id ELSE e.source_id END) || ',') = 0

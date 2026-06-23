@@ -29,7 +29,12 @@ export const wikiTraverseGraphManifest: AgentToolManifest = {
       properties: {
         entityId: { type: 'string', description: 'The namespace/entity ID to traverse.' },
         sourceId: { type: 'string', description: 'The exact ID of the starting fact node (obtained from a previous wiki_read call).' },
-        maxDepth: { type: 'integer', description: 'How many relationship hops to traverse. Maximum allowed is 3.' },
+        maxDepth: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 3,
+          description: 'How many relationship hops to traverse. Maximum allowed is 3.',
+        },
         direction: { type: 'string', enum: ['inbound', 'outbound', 'both'], description: "The direction of relationships to follow. Default 'both'." },
         edgeTypes: { type: 'array', items: { type: 'string' }, description: 'Optional filter. If provided, traversal only follows these edge types (e.g. ["reports_to", "depends_on"]).' },
       },

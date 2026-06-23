@@ -44,11 +44,14 @@ function edgesByDirection(
       const otherId = e[otherEndpoint];
       const selfIdx = nodeIndex.get(nodeId)!;
       const otherIdx = nodeIndex.get(otherId);
-      return otherIdx === undefined || selfIdx < otherIdx;
+      return otherIdx !== undefined && selfIdx < otherIdx;
     })
     .map((edge) => ({ edge, other: nodeById.get(edge[otherEndpoint])! }))
     .sort(
       (a, b) =>
-        a.edge.edge_type.localeCompare(b.edge.edge_type) || a.other.title.localeCompare(b.other.title),
+        a.edge.edge_type.localeCompare(b.edge.edge_type) ||
+        a.other.title.localeCompare(b.other.title) ||
+        a.other.id.localeCompare(b.other.id) ||
+        a.edge.id.localeCompare(b.edge.id),
     );
 }

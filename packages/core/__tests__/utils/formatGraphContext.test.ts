@@ -109,4 +109,27 @@ describe('formatGraphContext', () => {
 
     expect(formatGraphContext(build())).toBe(formatGraphContext(build()));
   });
+
+  it('is deterministic when edge_type and connected title tie', () => {
+    const n1 = makeFact({ id: '1', title: 'Root', okf_type: 'x' });
+    const n2 = makeFact({ id: '2', title: 'Same', okf_type: 'x' });
+    const n3 = makeFact({ id: '3', title: 'Same', okf_type: 'x' });
+
+    const a: GraphNeighborhood = {
+      nodes: [n1, n2, n3],
+      edges: [
+        makeEdge({ id: 'e1', source_id: '1', target_id: '2', edge_type: 'rel' }),
+        makeEdge({ id: 'e2', source_id: '1', target_id: '3', edge_type: 'rel' }),
+      ],
+    };
+    const b: GraphNeighborhood = {
+      nodes: [n1, n2, n3],
+      edges: [
+        makeEdge({ id: 'e2', source_id: '1', target_id: '3', edge_type: 'rel' }),
+        makeEdge({ id: 'e1', source_id: '1', target_id: '2', edge_type: 'rel' }),
+      ],
+    };
+
+    expect(formatGraphContext(a)).toBe(formatGraphContext(b));
+  });
 });

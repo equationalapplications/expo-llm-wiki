@@ -37,9 +37,11 @@ describe('wikiTraverseGraphManifest', () => {
   });
 
   it('declares maxDepth, direction, and edgeTypes as optional parameters', () => {
-    const props = wikiTraverseGraphManifest.schema.parameters?.properties as Record<string, unknown>;
+    const props = wikiTraverseGraphManifest.schema.parameters?.properties as Record<string, any>;
     expect(props).toHaveProperty('maxDepth');
     expect(props).toHaveProperty('direction');
     expect(props).toHaveProperty('edgeTypes');
+    expect(props.maxDepth).toMatchObject({ type: 'integer', minimum: 1, maximum: 3 });
+    expect(props.direction).toMatchObject({ type: 'string', enum: ['inbound', 'outbound', 'both'] });
   });
 });

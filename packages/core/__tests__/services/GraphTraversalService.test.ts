@@ -168,7 +168,7 @@ describe('GraphTraversalService', () => {
     expect(entryRepo.findByIds).not.toHaveBeenCalled();
   });
 
-  it('hydrates node IDs into facts scoped to entityId, passing edges through unchanged', async () => {
+  it('hydrates node IDs into facts scoped to entityId and drops dangling edges', async () => {
     const { edgeRepo, entryRepo } = makeMocks();
     vi.mocked(edgeRepo.getNeighborhood).mockResolvedValue({ nodeIds: ['a', 'b'], edges: [sampleEdge] });
     vi.mocked(entryRepo.findByIds).mockResolvedValue([sampleFact]);
@@ -177,6 +177,28 @@ describe('GraphTraversalService', () => {
     const result = await svc.traverseGraph('entity1', { sourceId: 'a' });
 
     expect(entryRepo.findByIds).toHaveBeenCalledWith(['a', 'b'], ['entity1']);
-    expect(result).toEqual({ nodes: [sampleFact], edges: [sampleEdge] });
+    expect(result).toEqual({ nodes: [sampleFact], edges: [] });
+  });
+
+  it.each([
+    [0, 20],
+    [-1, 20],
+    [NaN, 20],
+    [Infinity, 20],
+    [1.9, 1],
+    [5, 5],
+  ])('sanitizes maxTraversalNodes=%s to %s', async (input, expected) => {
+    const { edgeRepo, entryRepo } = makeMocks();
+    vi.mocked(edgeRepo.getNeighborhood).mockResolvedValue({ nodeIds: ['a'], edges: [] });
+    vi.mocked(entryRepo.findByIds).mockResolvedValue([sampleFact]);
+
+    const svc = new GraphTraversalService(edgeRepo, entryRepo, {});
+    await svc.traverseGraph('entity1', { sourceId: 'a', maxTraversalNodes: input });
+
+    expect(edgeRepo.getNeighborhood).toHaveBeenCalledWith(
+      'entity1',
+      'a',
+      expect.objectContaining({ maxNodes: expected }),
+    );
   });
 });

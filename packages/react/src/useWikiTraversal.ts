@@ -75,6 +75,8 @@ export function useWikiTraversal(entityId: string, options: GraphTraversalOption
         setError(null);
       },
       (e: unknown) => {
+        setNodes([]);
+        setEdges([]);
         setError(e instanceof Error ? e : new Error(String(e)));
       },
     ).finally(() => {
