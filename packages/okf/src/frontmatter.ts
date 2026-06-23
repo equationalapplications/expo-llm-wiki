@@ -132,7 +132,7 @@ function parseScalarValue(raw: string): OkfFrontmatterScalar {
 function matchFrontmatterKeyValue(
   line: string,
 ): { key: string; value: string; hasValue: boolean } | null {
-  const keyMatch = /^(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^:]+)/.exec(line);
+  const keyMatch = /^(?:"(?:\\.|[^"\\])*"|'(?:''|[^'])*'|[^:]+)/.exec(line);
   if (!keyMatch) return null;
   const key = keyMatch[0];
   if (line[key.length] !== ':') return null;
