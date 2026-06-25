@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { generateId } from '../src/utils/ids';
+import { configureRandomSource, generateId } from '../src/utils/ids';
 
 describe('generateId', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    configureRandomSource(null);
   });
 
   it('uses crypto.randomUUID when available', () => {
@@ -27,6 +28,16 @@ describe('generateId', () => {
 
     const id = generateId('evt_');
     expect(id).toMatch(/^evt_[0-9a-f]{24}$/);
+  });
+
+  it('uses configureRandomSource when global crypto is absent', () => {
+    vi.stubGlobal('crypto', undefined);
+    configureRandomSource((bytes) => {
+      bytes.fill(0xab);
+      return bytes;
+    });
+
+    expect(generateId('evt_')).toBe('evt_' + 'ab'.repeat(12));
   });
 
   it('throws when no cryptographically secure random source is available', () => {

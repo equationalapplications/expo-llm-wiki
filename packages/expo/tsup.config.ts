@@ -6,5 +6,11 @@ export default defineConfig({
   dts: true,
   clean: true,
   sourcemap: true,
-  external: ['react', 'expo-sqlite', '@equationalapplications/core-llm-wiki', '@equationalapplications/react-llm-wiki'],
+  external: [
+    'react',
+    'expo-crypto',
+    'expo-sqlite',
+    '@equationalapplications/core-llm-wiki',
+    '@equationalapplications/react-llm-wiki',
+  ],
 });
