@@ -1,4 +1,4 @@
-type GetRandomValues = (bytes: Uint8Array) => Uint8Array;
+type GetRandomValues = (bytes: Uint8Array) => void;
 
 let _injectedGetRandomValues: GetRandomValues | null = null;
 
