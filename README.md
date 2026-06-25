@@ -117,7 +117,7 @@ flowchart TB
 - **Node.js backend?** → `@equationalapplications/core-llm-wiki` + `better-sqlite3`
 - **Gemini tool schemas + capability-scoped injection?** → `@equationalapplications/core-llm-tools`
 
-The wiki packages share the same core API and database schema. The core library is **framework-agnostic**; `@equationalapplications/expo-llm-wiki` injects the Expo adapter, while `@equationalapplications/core-llm-wiki` and `@equationalapplications/react-llm-wiki` require your application to provide a SQLite adapter.
+The wiki packages share the same core API and database schema. The core library is **framework-agnostic**; `@equationalapplications/expo-llm-wiki` injects the Expo SQLite adapter and wires `expo-crypto` for secure ID generation on Hermes/React Native, while `@equationalapplications/core-llm-wiki` and `@equationalapplications/react-llm-wiki` require your application to provide a SQLite adapter.
 
 `@equationalapplications/core-llm-tools` is a standalone, zero-dependency package — it has no SQLite or framework dependencies and can be used independently of the wiki packages. See [packages/core-llm-tools/README.md](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core-llm-tools/README.md) for full documentation.
 
@@ -127,7 +127,7 @@ Choose the package for your platform:
 
 ### Expo / React Native
 ```bash
-npx expo install expo-sqlite
+npx expo install expo-sqlite expo-crypto
 npm install @equationalapplications/expo-llm-wiki
 ```
 
@@ -146,7 +146,7 @@ npm install @equationalapplications/core-llm-wiki sql.js
 npm install @equationalapplications/core-llm-wiki better-sqlite3
 ```
 
-**Note:** Use `npx expo install` for `expo-sqlite` so Expo's version resolver picks the correct native build for your SDK version.
+**Note:** Use `npx expo install` for `expo-sqlite` and `expo-crypto` so Expo's version resolver picks the correct native builds for your SDK version. `@equationalapplications/expo-llm-wiki` wires `expo-crypto` automatically — no manual `globalThis.crypto` polyfill is needed.
 
 ## Setup
 
