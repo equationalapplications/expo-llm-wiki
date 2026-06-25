@@ -66,10 +66,12 @@
     "@equationalapplications/react-llm-wiki": "workspace:*"
   },
   "peerDependencies": {
+    "expo-crypto": ">=12",
     "expo-sqlite": "^14.0.0 || ^15.0.0 || ^55.0.0 || ^56.0.0",
     "react": ">=17"
   },
   "devDependencies": {
+    "expo-crypto": "^56.0.4",
     "tsup": "^8.0.0",
     "typescript": "^5.4.0",
     "vitest": "4.1.5"

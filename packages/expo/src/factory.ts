@@ -1,6 +1,7 @@
 import type * as SQLite from 'expo-sqlite';
 import { WikiMemory, type WikiOptions } from '@equationalapplications/core-llm-wiki';
 import { createExpoAdapter } from './adapter';
+import './initRandomSource';
 
 /**
  * Create a WikiMemory instance from an expo-sqlite SQLiteDatabase.

@@ -86,7 +86,7 @@ await wiki.setup();
 </WikiProvider>
 ```
 
-**Expo / React Native** (`@equationalapplications/expo-llm-wiki` re-exports both `createWiki` and `WikiProvider`):
+**Expo / React Native** (`@equationalapplications/expo-llm-wiki` re-exports both `createWiki` and `WikiProvider`). See [`packages/expo/README.md`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/expo/README.md) for peer dependencies (`expo-sqlite`, `expo-crypto`).
 
 ```typescript
 import { createWiki, WikiProvider } from '@equationalapplications/expo-llm-wiki';

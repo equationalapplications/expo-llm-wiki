@@ -731,6 +731,26 @@ const finalPrompt = hydrateLibrarianPrompt(template, {
 });
 ```
 
+## Platform Random Source
+
+Wiki record IDs must be cryptographically random. The core engine resolves a random source in this order:
+
+1. `crypto.randomUUID()` (Web / Node 19+)
+2. `crypto.getRandomValues()` (Web / Node / polyfilled global)
+3. A source injected via `configureRandomSource()` (e.g. `expo-crypto` on Hermes/React Native)
+
+Web and Node are unchanged — global `crypto` wins when present. React Native / Hermes typically has no `crypto` global; use a platform package or inject your own implementation:
+
+```typescript
+import { configureRandomSource } from '@equationalapplications/core-llm-wiki';
+import { getRandomValues } from 'expo-crypto';
+
+// Call once at module load, before any wiki writes
+configureRandomSource(getRandomValues);
+```
+
+`@equationalapplications/expo-llm-wiki` does this automatically on import (main entry and `/factory` subpath). If you use `@equationalapplications/core-llm-wiki` directly on React Native without the expo package, you must call `configureRandomSource()` yourself or polyfill `globalThis.crypto.getRandomValues`.
+
 ## Adapter Interface
 
 Implement `SQLiteAdapter` to use your platform's SQLite driver:

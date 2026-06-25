@@ -14,6 +14,7 @@ Local-first LLM memory for Expo and React Native. Combines the core semantic sea
 
 - **Expo-ready** — Pre-configured for React Native + Expo
 - **Built on `expo-sqlite`** — Stable, well-supported SQLite driver
+- **Hermes-ready** — Secure record ID generation via [`expo-crypto`](https://docs.expo.dev/versions/latest/sdk/crypto/); wired automatically at import (no manual `crypto` polyfill)
 - **Semantic search** — Vector embeddings via `embed` function, with MiniSearch fallback
 - **Retrieval tuning** — Per-call overrides for search behavior (pre-filter, hybrid blend, tier weights)
 - **Multi-entity reads** — Search across multiple `entity_id` namespaces in one pass with `tierWeights`
@@ -26,9 +27,11 @@ Local-first LLM memory for Expo and React Native. Combines the core semantic sea
 ## Installation
 
 ```bash
-npx expo install expo-sqlite
+npx expo install expo-sqlite expo-crypto
 npm install @equationalapplications/expo-llm-wiki
 ```
+
+`expo-crypto` is a peer dependency. The package wires its `getRandomValues` into the core engine at module load — Hermes and React Native lack the Web `crypto` global, and wiki writes need a cryptographically secure random source for record IDs. No extra setup is required after install; importing `@equationalapplications/expo-llm-wiki` (or the `/factory` subpath) activates it before any `createWiki()` call.
 
 ## Semantic Search
 
