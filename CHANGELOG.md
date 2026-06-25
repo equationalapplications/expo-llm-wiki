@@ -1,3 +1,11 @@
+## [4.17.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.17.0...v4.17.1) (2026-06-25)
+
+
+### Bug Fixes
+
+* **core:** widen configureRandomSource return type to void ([3b93574](https://github.com/equationalapplications/expo-llm-wiki/commit/3b93574bab70a8880520603ba9061f203d69e1aa))
+* **expo:** inject expo-crypto random source for Hermes/RN ([a2431a5](https://github.com/equationalapplications/expo-llm-wiki/commit/a2431a5e2cd84ced3e22766ddf330ddc72ea1e0f))
+
 # [4.17.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.16.0...v4.17.0) (2026-06-23)
 
 
