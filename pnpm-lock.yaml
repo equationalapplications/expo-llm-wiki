@@ -49,8 +49,8 @@ importers:
         specifier: ^12.9.0
         version: 12.9.0
       expo-sqlite:
-        specifier: ^56.0.4
-        version: 56.0.4(expo@55.0.19)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0)
+        specifier: ^57.0.0
+        version: 57.0.0(expo@55.0.19)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0)
       react:
         specifier: 19.2.0
         version: 19.2.0
@@ -208,15 +208,15 @@ importers:
         specifier: workspace:*
         version: link:../react
       expo-sqlite:
-        specifier: ^14.0.0 || ^15.0.0 || ^55.0.0 || ^56.0.0
-        version: 56.0.4(expo@55.0.19)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0)
+        specifier: ^14.0.0 || ^15.0.0 || ^55.0.0 || ^56.0.0 || ^57.0.0
+        version: 57.0.0(expo@55.0.19)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0)
       react:
         specifier: 19.2.0
         version: 19.2.0
     devDependencies:
       expo-crypto:
-        specifier: ^56.0.4
-        version: 56.0.4(expo@55.0.19)
+        specifier: ^57.0.0
+        version: 57.0.0(expo@55.0.19)
       tsup:
         specifier: ^8.0.0
         version: 8.5.1(postcss@8.5.15)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.4)
@@ -3272,8 +3272,8 @@ packages:
       expo: '*'
       react-native: '*'
 
-  expo-crypto@56.0.4:
-    resolution: {integrity: sha512-fRNEhoXRXgAWBpe3/hq5X+KXTit3OZqdiAGts1YvNEUHQb+H5591mpPac0Yw+sZg9pXcrjRnzo5AxvZaENpc7g==}
+  expo-crypto@57.0.0:
+    resolution: {integrity: sha512-vd0kdUO14h9CgPcgzcR8nmy/wgz3zSOhQmucnbDdyn/z9eAeR2IB5BKaDvPbg/lrIT+KweGAV5IlrK5PZFqUSQ==}
     peerDependencies:
       expo: '*'
 
@@ -3314,8 +3314,8 @@ packages:
     resolution: {integrity: sha512-AoV5TKuO4biSzrhe/OVLyInfTT0pV9/OOc/g/oVq5vmCjL8SaSYTkES8PLt+67Tm7VqX+Dn0+kSx1nQcjEKaPw==}
     engines: {node: '>=20.16.0'}
 
-  expo-sqlite@56.0.4:
-    resolution: {integrity: sha512-Ak8TUyrvK7C/J4BHBfcb8BacFrH8I+b+zqeSTKg5B02Z13lxljvuqI8UvKbRNa5BKprlxrqabZickGwacRkM9g==}
+  expo-sqlite@57.0.0:
+    resolution: {integrity: sha512-BYTaLjO9+CMaEYIp5fdrO0RGTkaumZrNuDSQgFkeZe1MfKeDjiS1myg66jxJviWaqpycLq7QnRT11+bdO23JHQ==}
     peerDependencies:
       expo: '*'
       react: 19.2.0
@@ -8494,7 +8494,7 @@ snapshots:
       obug: 2.1.1
       std-env: 4.1.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.5(@types/node@24.12.4)(@vitest/coverage-v8@4.1.5)(happy-dom@20.9.0)(jsdom@29.1.1)(vite@8.0.14(@types/node@24.12.4)(esbuild@0.27.7)(terser@5.46.2)(tsx@4.21.0)(yaml@2.8.4))
+      vitest: 4.1.5(@types/node@20.19.39)(@vitest/coverage-v8@4.1.5)(happy-dom@20.9.0)(jsdom@29.1.1)(vite@8.0.14(@types/node@20.19.39)(esbuild@0.27.7)(terser@5.46.2)(tsx@4.21.0)(yaml@2.8.4))
 
   '@vitest/expect@4.1.5':
     dependencies:
@@ -9576,7 +9576,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  expo-crypto@56.0.4(expo@55.0.19):
+  expo-crypto@57.0.0(expo@55.0.19):
     dependencies:
       expo: 55.0.19(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(react-dom@19.2.0(react@19.2.0))(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0)(typescript@5.9.3)
 
@@ -9615,7 +9615,7 @@ snapshots:
 
   expo-server@55.0.8: {}
 
-  expo-sqlite@56.0.4(expo@55.0.19)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0):
+  expo-sqlite@57.0.0(expo@55.0.19)(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0):
     dependencies:
       await-lock: 2.2.2
       expo: 55.0.19(@babel/core@7.29.0)(@expo/dom-webview@55.0.5)(react-dom@19.2.0(react@19.2.0))(react-native@0.83.6(@babel/core@7.29.0)(@types/react@19.2.14)(react@19.2.0))(react@19.2.0)(typescript@5.9.3)
