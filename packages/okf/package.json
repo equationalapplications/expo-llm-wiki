@@ -1,6 +1,6 @@
 {
   "name": "@equationalapplications/core-okf",
-  "version": "4.17.2",
+  "version": "4.17.3",
   "description": "Zero-dependency Open Knowledge Format (OKF) v0.1 primitives: frontmatter serialization, concept documents, index.md and log.md builders.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",

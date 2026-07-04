@@ -1,3 +1,10 @@
+## [4.17.3](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.17.2...v4.17.3) (2026-07-04)
+
+
+### Bug Fixes
+
+* **deps:** update esbuild lockfiles ([d60f9b7](https://github.com/equationalapplications/expo-llm-wiki/commit/d60f9b79a7b1905d25da885472683dd7d21f1bda))
+
 ## [4.17.2](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.17.1...v4.17.2) (2026-07-04)
 
 
