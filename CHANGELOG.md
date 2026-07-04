@@ -1,3 +1,10 @@
+## [4.17.2](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.17.1...v4.17.2) (2026-07-04)
+
+
+### Bug Fixes
+
+* remediate dependency advisories ([3cf6b59](https://github.com/equationalapplications/expo-llm-wiki/commit/3cf6b5918dccae822e4fa41b6eca8a8de46ffc2c))
+
 ## [4.17.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.17.0...v4.17.1) (2026-06-25)
 
 
