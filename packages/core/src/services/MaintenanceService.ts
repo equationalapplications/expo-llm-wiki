@@ -11,7 +11,7 @@ import type { SQLiteAdapter } from '../types';
 import type { EntryRepository } from '../repositories/EntryRepository';
 import type { TaskRepository } from '../repositories/TaskRepository';
 import type { EventRepository } from '../repositories/EventRepository';
-import type { MetadataRepository } from '../repositories/MetadataRepository';
+import { entitySummaryMetaKey, type MetadataRepository } from '../repositories/MetadataRepository';
 import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
@@ -220,6 +220,7 @@ export class MaintenanceService {
           deletedEntries = await this.entryRepo.bulkSoftDeleteByEntityId(entityId, tx);
           deletedTasks = await this.taskRepo.bulkSoftDeleteByEntityId(entityId, tx);
           await this.metadataRepo.updateCheckpoint(entityId, { memory: 0, heal: 0 }, tx);
+          await this.metadataRepo.deleteMeta(entitySummaryMetaKey(entityId), tx);
         } else {
           const hasIdSelectors = params.entryId !== undefined || params.taskId !== undefined;
           const hasSourceSelectors = params.sourceRef !== undefined || params.sourceHash !== undefined;

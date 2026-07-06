@@ -3,7 +3,7 @@ import type { EntryRepository } from '../repositories/EntryRepository';
 import type { TaskRepository } from '../repositories/TaskRepository';
 import type { EventRepository } from '../repositories/EventRepository';
 import type { EdgeRepository } from '../repositories/EdgeRepository';
-import type { MetadataRepository } from '../repositories/MetadataRepository';
+import { entitySummaryMetaKey, type MetadataRepository } from '../repositories/MetadataRepository';
 import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
@@ -76,13 +76,14 @@ export class ImportExportService {
     entityId: string,
     opts?: { maxEvents?: number; includeBlobs?: boolean },
   ): Promise<MemoryBundle> {
-    const [factsRaw, tasks, events, edges] = await Promise.all([
+    const [factsRaw, tasks, events, edges, summaryValue] = await Promise.all([
       opts?.includeBlobs
         ? this.entryRepo.findAllByEntityIdWithBlobs(entityId)
         : this.entryRepo.findAllByEntityId(entityId),
       this.taskRepo.findAllByEntityId(entityId),
       this.eventRepo.getByEntityId(entityId, opts?.maxEvents),
       this.edgeRepo.getByEntityId(entityId),
+      this.metadataRepo.getMeta(entitySummaryMetaKey(entityId)),
     ]);
 
     const facts = factsRaw.map((f) => {
@@ -112,7 +113,13 @@ export class ImportExportService {
       };
     });
 
-    return { facts, tasks, events, edges };
+    return {
+      facts,
+      tasks,
+      events,
+      edges,
+      ...(summaryValue != null ? { summary: summaryValue } : {}),
+    };
   }
 
   /** Single-entity import transaction + post-processing; package-internal hook for tests. */
@@ -142,6 +149,12 @@ export class ImportExportService {
         await this.taskRepo.bulkSoftDeleteByEntityId(entityId, tx);
         await this.edgeRepo.bulkDeleteByEntityId(entityId, tx);
         await this.metadataRepo.deleteCheckpoint(entityId, tx);
+      }
+
+      if (bundle.summary !== undefined) {
+        await this.metadataRepo.setMeta(entitySummaryMetaKey(entityId), bundle.summary, tx);
+      } else if (!merge) {
+        await this.metadataRepo.deleteMeta(entitySummaryMetaKey(entityId), tx);
       }
 
       const factIds = bundle.facts.map((fact) => fact.id);

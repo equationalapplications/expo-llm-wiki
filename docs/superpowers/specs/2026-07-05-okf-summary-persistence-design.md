@@ -1,7 +1,7 @@
 # Spec: OKF Entity Summary Persistence in WikiMemory
 
 **Date:** 2026-07-05
-**Status:** Approved
+**Status:** Implemented
 **Related:** `docs/okf-profile.md` (§4 summary prose), `docs/superpowers/specs/2026-07-05-okf-profile-design.md`, Clanker `2026-07-05-okf-profile-v1-adoption-design.md`
 
 ## Problem

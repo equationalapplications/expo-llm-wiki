@@ -15,7 +15,7 @@ import { OutboxRepository } from './repositories/OutboxRepository';
 import { TaskRepository } from './repositories/TaskRepository';
 import { EventRepository } from './repositories/EventRepository';
 import { EdgeRepository } from './repositories/EdgeRepository';
-import { MetadataRepository } from './repositories/MetadataRepository';
+import { MetadataRepository, entitySummaryMetaKey } from './repositories/MetadataRepository';
 import { SearchService } from './services/SearchService';
 import { JobManager } from './services/JobManager';
 import { normalizeSourceRef, normalizeSourceHash, validateFact, validateTask, clip, chunkText } from './utils/pure';
@@ -329,6 +329,11 @@ export class WikiMemory {
 
   async exportDump(entityIds?: string[]): Promise<MemoryDump> {
     return this.importExportService.exportDump(entityIds);
+  }
+
+  /** Entity summary prose persisted from an OKF profile ≥ 1 import; null when none stored. */
+  async getEntitySummary(entityId: string): Promise<string | null> {
+    return this.metadataRepo.getMeta(entitySummaryMetaKey(entityId));
   }
 
   async importDump(dump: MemoryDump, opts?: { merge?: boolean }): Promise<void> {
