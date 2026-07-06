@@ -27,6 +27,7 @@ export function buildLogMd(entries: OkfLogEntry[]): string {
 const EVENT_ID_COMMENT = /\s*<!--\s*id:\s*(\S+)\s*-->\s*$/;
 
 export function appendEventIdComment(text: string, eventId: string): string {
+  if (!/^[A-Za-z0-9._-]+$/.test(eventId)) return text;
   return `${text} <!-- id: ${eventId} -->`;
 }
 
