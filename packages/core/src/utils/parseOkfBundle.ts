@@ -268,7 +268,7 @@ export function parseOkfBundle(
 
   let entitySummary: string | undefined;
   const entityIndex = allowedFiles.find(f => f.path === `entities/${entityId}/index.md`);
-  if (entityIndex) {
+  if (isProfile1 && entityIndex) {
     const summary = parseEntityIndexMd(entityIndex.content).summary;
     entitySummary = summary || undefined;
   }
