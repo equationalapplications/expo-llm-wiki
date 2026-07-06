@@ -33,7 +33,10 @@ export function appendEventIdComment(text: string, eventId: string): string {
 export function parseEventIdComment(text: string): { text: string; eventId?: string } {
   const match = EVENT_ID_COMMENT.exec(text);
   if (!match) return { text };
-  return { text: text.slice(0, match.index).trimEnd(), eventId: match[1] };
+  const eventId = match[1];
+  const stripped = text.slice(0, match.index).trimEnd();
+  if (!/^[A-Za-z0-9._-]+$/.test(eventId)) return { text: stripped };
+  return { text: stripped, eventId };
 }
 
 const DATE_HEADING = /^##\s+(\d{4}-\d{2}-\d{2})\s*$/;
