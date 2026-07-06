@@ -115,7 +115,8 @@ export function formatOkfBundle(dump: MemoryDump): { files: OkfFile[] } {
           if (!targetPath) return null;
           return { edge_type: edge.edge_type, path: conceptRelativePath(sourcePath, targetPath) };
         })
-        .filter((link): link is { edge_type: string; path: string } => link != null);
+        .filter((link): link is { edge_type: string; path: string } => link != null)
+        .sort((a, b) => a.edge_type.localeCompare(b.edge_type) || a.path.localeCompare(b.path));
     }
 
     const factEntries: OkfIndexEntry[] = bundle.facts.map(f => ({
