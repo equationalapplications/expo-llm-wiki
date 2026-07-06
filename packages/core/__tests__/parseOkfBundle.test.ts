@@ -390,6 +390,7 @@ describe('parseOkfBundle — profile 1', () => {
 
   it('parses entity summary from index.md', () => {
     const files: OkfFile[] = [
+      { path: 'index.md', content: buildRootIndexMd('0.1', [], { profile: 'llm-wiki/1' }) },
       {
         path: 'entities/alice/index.md',
         content: 'Alice summary.\n\n## Facts\n\n[Event log](./log.md)\n',
