@@ -1,3 +1,21 @@
+# [4.18.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.17.3...v4.18.0) (2026-07-06)
+
+
+### Bug Fixes
+
+* **okf:** address PR review for profile-1 conformance ([33e30c5](https://github.com/equationalapplications/expo-llm-wiki/commit/33e30c58c46000348ec80cbfb3b9f49513d06105))
+
+
+### Features
+
+* **core:** add optional entity summary to MemoryBundle for OKF profile ([919430e](https://github.com/equationalapplications/expo-llm-wiki/commit/919430eea5f968aae688873ef9623fece1a236ca))
+* **core:** emit and parse profile-1 OKF bundle features ([6630675](https://github.com/equationalapplications/expo-llm-wiki/commit/6630675c3758112bf4f076063379e1979be26368))
+* **okf:** add ## Related section append and split helpers ([c748087](https://github.com/equationalapplications/expo-llm-wiki/commit/c748087820d78ade1c6070c544c55aaecb1c877a))
+* **okf:** add entity index summary block builder and parser ([147303d](https://github.com/equationalapplications/expo-llm-wiki/commit/147303d3413743023fa61f2e7527bb894b64dd0f))
+* **okf:** add event id comment helpers for log.md lines ([e524423](https://github.com/equationalapplications/expo-llm-wiki/commit/e524423b6f760c1ccffc7a20e1aeb664f287c45d))
+* **okf:** add profile §1 path allow-list helper ([ba11edc](https://github.com/equationalapplications/expo-llm-wiki/commit/ba11edcb70d9c43e1d371627bcb547da6721bcbe))
+* **okf:** add profile key to root index builder and parser ([43bd5c5](https://github.com/equationalapplications/expo-llm-wiki/commit/43bd5c5a3679e5ee0bbe99e905338e3f0672416e))
+
 ## [4.17.3](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.17.2...v4.17.3) (2026-07-04)
 
 
