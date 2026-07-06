@@ -2,6 +2,11 @@ import { BaseRepository } from './BaseRepository';
 import type { SQLiteAdapter, OntologyManifest, OntologyMode, OntologyUpdates } from '../types';
 import { emptyManifest, mergeOntologyUpdates, validateManifest } from '../utils/ontology';
 
+/** Meta-table key for an entity's OKF summary prose (profile v1 round-trip). */
+export function entitySummaryMetaKey(entityId: string): string {
+  return `entity_summary:${entityId}`;
+}
+
 export class MetadataRepository extends BaseRepository {
   // CHECKPOINTS TABLE METHODS
 
@@ -73,6 +78,14 @@ export class MetadataRepository extends BaseRepository {
       `INSERT INTO ${this.prefix}meta (key, value) VALUES (?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
       [key, value],
+    );
+  }
+
+  async deleteMeta(key: string, tx?: SQLiteAdapter): Promise<void> {
+    const executor = this.getExecutor(tx);
+    await executor.runAsync(
+      `DELETE FROM ${this.prefix}meta WHERE key = ?`,
+      [key],
     );
   }
 

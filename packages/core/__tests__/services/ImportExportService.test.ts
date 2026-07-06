@@ -54,6 +54,7 @@ describe('ImportExportService', () => {
       deleteCheckpoint: vi.fn().mockResolvedValue(undefined),
       getMeta: vi.fn().mockResolvedValue(null),
       setMeta: vi.fn().mockResolvedValue(undefined),
+      deleteMeta: vi.fn().mockResolvedValue(undefined),
     };
 
     mockSearchService = {

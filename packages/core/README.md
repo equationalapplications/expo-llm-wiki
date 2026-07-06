@@ -590,6 +590,14 @@ A `WikiEdge` represents a directed link between two concepts (`source_id`, `targ
 
 See [`docs/okf-profile.md`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/docs/okf-profile.md) for the full normative spec and [`packages/okf/fixtures/`](https://github.com/equationalapplications/expo-llm-wiki/tree/main/packages/okf/fixtures) for conformance bundles.
 
+`importDump` persists an imported entity summary (profile ≥ 1 bundles) and
+`exportDump` re-emits it, so the profile §4 round-trip holds across storage.
+Read it directly with `wiki.getEntitySummary(entityId)`. The value lives in the
+`{prefix}meta` table under `entity_summary:{entity_id}` and is removed by
+`forget(entityId, { clearAll: true })`. See the
+[design spec](../../docs/superpowers/specs/2026-07-05-okf-summary-persistence-design.md)
+for import/merge semantics and wipe-path cleanup.
+
 ### The `okf_type` Field
 
 Facts and tasks include a nullable `okf_type` column. This preserves the literal OKF `type` string from an imported bundle frontmatter, independent of whether the item was routed to the `entries` or `tasks` table. When `formatOkfBundle` runs, it restores this specific string, falling back to `'fact'` or `'task'` if the field is null (ensuring non-imported rows export cleanly).
