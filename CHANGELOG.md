@@ -1,3 +1,10 @@
+## [4.18.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.18.0...v4.18.1) (2026-07-06)
+
+
+### Bug Fixes
+
+* **core:** preserve OKF edge order and align summary test with profile 1 ([8da82b9](https://github.com/equationalapplications/expo-llm-wiki/commit/8da82b978933bc28856f89bfa08f5172803db455))
+
 # [4.18.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.17.3...v4.18.0) (2026-07-06)
 
 
