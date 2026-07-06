@@ -43,12 +43,17 @@ export function splitRelatedSection(body: string): { body: string; relatedLinks:
   for (const line of relatedBlock.split(/\r?\n/)) {
     const bullet = /^-\s+(.*)$/.exec(line);
     if (!bullet) continue;
-    relatedLinks.push(
-      ...extractMarkdownLinks(bullet[1]).map(l => ({
-        ...l,
-        text: l.text.replace(/\\\]/g, ']').replace(/\\\[/g, '[').replace(/\\\\/g, '\\'),
-      })),
-    );
+
+    const linkPattern = /\[((?:\\.|[^\]])*)\]\(([^)\s]+)\)/g;
+    let match: RegExpExecArray | null;
+    while ((match = linkPattern.exec(bullet[1])) !== null) {
+      const linkPath = match[2];
+      if (/^(https?:|mailto:)/i.test(linkPath)) continue;
+      relatedLinks.push({
+        text: match[1].replace(/\\\]/g, ']').replace(/\\\[/g, '[').replace(/\\\\/g, '\\'),
+        path: linkPath,
+      });
+    }
   }
   const normalizedBody = contentBody.length > 0 ? `${contentBody.replace(/\s+$/, '')}\n` : '';
   return { body: normalizedBody, relatedLinks };
