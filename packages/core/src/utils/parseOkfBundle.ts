@@ -267,12 +267,10 @@ export function parseOkfBundle(
   const isProfile1 = profileMeta.profile === 'llm-wiki/1';
 
   let entitySummary: string | undefined;
-  for (const file of allowedFiles) {
-    if (file.path.endsWith('/index.md') && file.path !== 'index.md') {
-      const summary = parseEntityIndexMd(file.content).summary;
-      entitySummary = summary || undefined;
-      break;
-    }
+  const entityIndex = allowedFiles.find(f => f.path === `entities/${entityId}/index.md`);
+  if (entityIndex) {
+    const summary = parseEntityIndexMd(entityIndex.content).summary;
+    entitySummary = summary || undefined;
   }
 
   const pathToResolvedId = new Map<string, string>();
