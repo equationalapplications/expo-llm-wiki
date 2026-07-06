@@ -183,7 +183,7 @@ Line grammar: `- ({event_type}) {summary}` with two optional parts — the summa
 | access_count / last_accessed_at | Carried, consumer MAY ignore |
 | Ontology / entity manifests | Not serialized in profile 1 |
 
-**Golden fixtures.** The canonical conformance bundles live at `packages/okf/fixtures/golden-v1/` (profile 1: one entity, facts with intra- and cross-type edges, tasks, events with id comments, summary prose) and `packages/okf/fixtures/legacy-profile-0/` (no profile key, no edges, no ids, no summary). A conforming implementation round-trips `golden-v1` losslessly per the table above and imports `legacy-profile-0` using every fallback path. Non-TypeScript implementations (Curated Thoughts' Rust backend) vendor checksummed copies of these fixtures.
+**Golden fixtures.** The canonical conformance bundles live at `packages/okf/fixtures/golden-v1/` (profile 1: one entity, facts with intra- and cross-type edges, tasks, events with id comments, summary prose) and `packages/okf/fixtures/legacy-profile-0/` (no profile key, no `## Related` sections, no event id comments, no summary prose). A conforming implementation round-trips `golden-v1` losslessly per the table above and imports `legacy-profile-0` using every fallback path. Non-TypeScript implementations (Curated Thoughts' Rust backend) vendor checksummed copies of these fixtures.
 
 ## 10. Known Limitations and Deferred Work
 
