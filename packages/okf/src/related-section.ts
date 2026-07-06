@@ -42,7 +42,12 @@ export function splitRelatedSection(body: string): { body: string; relatedLinks:
   for (const line of relatedBlock.split(/\r?\n/)) {
     const bullet = /^-\s+(.*)$/.exec(line);
     if (!bullet) continue;
-    relatedLinks.push(...extractMarkdownLinks(bullet[1]));
+    relatedLinks.push(
+      ...extractMarkdownLinks(bullet[1]).map(l => ({
+        ...l,
+        text: l.text.replace(/\\\]/g, ']').replace(/\\\[/g, '[').replace(/\\\\/g, '\\'),
+      })),
+    );
   }
   const normalizedBody = contentBody.length > 0 ? `${contentBody.replace(/\s+$/, '')}\n` : '';
   return { body: normalizedBody, relatedLinks };
