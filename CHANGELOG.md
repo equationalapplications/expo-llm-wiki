@@ -1,3 +1,10 @@
+## [4.18.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.17.3...v4.18.0) (2026-07-05)
+
+
+### Features
+
+* **okf:** llm-wiki/1 profile — `profile` root key, entity summary, `## Related` edges, event id comments, golden fixtures ([docs/okf-profile.md](docs/okf-profile.md))
+
 ## [4.17.3](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.17.2...v4.17.3) (2026-07-04)
 
 
