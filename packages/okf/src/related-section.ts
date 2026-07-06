@@ -5,7 +5,8 @@ function escapeLinkLabel(label: string): string {
   return label
     .replace(/\\/g, '\\\\')
     .replace(/\[/g, '\\[')
-    .replace(/\]/g, '\\]');
+    .replace(/\]/g, '\\]')
+    .replace(/\r?\n/g, ' ');
 }
 
 export function appendRelatedSection(
