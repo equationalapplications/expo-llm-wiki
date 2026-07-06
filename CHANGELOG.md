@@ -1,3 +1,10 @@
+# [4.19.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.18.1...v4.19.0) (2026-07-06)
+
+
+### Features
+
+* **core:** persist OKF entity summary through import/export ([4278043](https://github.com/equationalapplications/expo-llm-wiki/commit/427804369c3d74f5b321e8ca7706886ced9e8f7c))
+
 ## [4.18.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.18.0...v4.18.1) (2026-07-06)
 
 
