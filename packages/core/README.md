@@ -20,7 +20,7 @@ Platform-agnostic TypeScript engine for hybrid LLM memory. Features episodic fac
 - **Immutable vs mutable facts** — Use `WikiFact.source_type` to distinguish document-sourced facts (`immutable_document`) from derived or user-provided facts (`librarian_inferred`, `user_stated`, `user_confirmed`). Immutable document facts are not rewritten by `runLibrarian()` or `runHeal()` and can only be removed by `forget()` or re-ingesting.
 - **Full-featured memory** — Facts, tasks, events, maintenance jobs (librarian, heal, reembed, prune)
 - **Type-safe** — Built with TypeScript, full type exports
-- **Interoperability:** Supports [Open Knowledge Format (OKF) v0.1](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) import and export.
+- **Interoperability:** Supports [Open Knowledge Format (OKF) v0.1](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) import and export via the [llm-wiki OKF profile (llm-wiki/1)](https://github.com/equationalapplications/expo-llm-wiki/blob/main/docs/okf-profile.md).
 - **Per-entity seeded ontology** — Optional Strict, Emergent, or Off modes govern LLM graph extraction; seed taxonomies per entity and persist typed facts with inline edges.
 
 ## Installation
@@ -584,10 +584,11 @@ await wiki.importDump(dump, { merge: true });
 2. Directory convention (e.g., files in `/facts/` become facts, `/tasks/` become tasks).
 3. The `OkfImportOptions.defaultSchema` (defaults to `'fact'`).
 
-### WikiEdge and Markdown Links
+### WikiEdge and the `## Related` Section
 
-A `WikiEdge` represents a markdown cross-link found inside a concept body, resolved to a `source_id` and `target_id`.
-Edges automatically round-trip during OKF import and export. Because the markdown body is the source of truth for edges in the OKF spec, edges are extracted during `parseOkfBundle()` and persisted via the `EdgeRepository` on `importDump()` — there is no separate edge export step required. The `edges` array is included in bundles returned by `getMemoryBundle()` / `exportDump()` (not by `read()`).
+A `WikiEdge` represents a directed link between two concepts (`source_id`, `target_id`, `edge_type`). In profile llm-wiki/1, edges are serialized in a trailing `## Related` section on each concept file. `parseOkfBundle()` extracts them into `WikiEdge` rows and strips the section from stored bodies; `formatOkfBundle()` emits the section from the `edges` array in the dump.
+
+See [`docs/okf-profile.md`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/docs/okf-profile.md) for the full normative spec and [`packages/okf/fixtures/`](https://github.com/equationalapplications/expo-llm-wiki/tree/main/packages/okf/fixtures) for conformance bundles.
 
 ### The `okf_type` Field
 

@@ -8,6 +8,8 @@ A zero-dependency library for parsing and producing [Open Knowledge Format (OKF)
 
 For a ready-made `MemoryDump` ⇄ OKF bundle adapter, see the [OKF Import/Export section in `@equationalapplications/core-llm-wiki`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md#okf-importexport).
 
+For the llm-wiki interoperability profile (llm-wiki/1), see [`docs/okf-profile.md`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/docs/okf-profile.md). Conformance fixtures live in [`fixtures/`](./fixtures/).
+
 ## Installation
 
 ```bash

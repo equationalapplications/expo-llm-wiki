@@ -1,4 +1,4 @@
-import { serializeScalarString } from './frontmatter';
+import { parseFrontmatter, serializeScalarString } from './frontmatter';
 import type { OkfIndexEntry, OkfIndexSection } from './types';
 
 function renderEntry(entry: OkfIndexEntry): string {
@@ -35,7 +35,25 @@ export function buildIndexMd(sections: OkfIndexSection[]): string {
   return renderSections(sections);
 }
 
-export function buildRootIndexMd(okfVersion: string, sections: OkfIndexSection[]): string {
-  const frontmatter = `---\nokf_version: ${serializeScalarString(okfVersion)}\n---\n`;
-  return `${frontmatter}\n${renderSections(sections)}`;
+export function buildRootIndexMd(
+  okfVersion: string,
+  sections: OkfIndexSection[],
+  options?: { profile?: string },
+): string {
+  const lines = ['---', `okf_version: ${serializeScalarString(okfVersion)}`];
+  if (options?.profile) {
+    lines.push(`profile: ${serializeScalarString(options.profile)}`);
+  }
+  lines.push('---', '');
+  return `${lines.join('\n')}\n${renderSections(sections)}`;
+}
+
+export function parseRootIndexMd(content: string): { okf_version?: string; profile?: string } {
+  const { frontmatter } = parseFrontmatter(content);
+  const okf = frontmatter.okf_version;
+  return {
+    okf_version:
+      typeof okf === 'string' ? okf : typeof okf === 'number' && Number.isFinite(okf) ? String(okf) : undefined,
+    profile: typeof frontmatter.profile === 'string' ? frontmatter.profile : undefined,
+  };
 }

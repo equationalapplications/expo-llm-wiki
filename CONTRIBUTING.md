@@ -126,6 +126,20 @@ Update all callers before upgrading.
 
 ---
 
+## Releases
+
+Version bumps and `CHANGELOG.md` are managed by [semantic-release](https://github.com/semantic-release/semantic-release) on merge to `main` (see `.releaserc.json` and `.github/workflows/release.yml`).
+
+**Do not edit in PRs:**
+- `CHANGELOG.md`
+- `"version"` in root or workspace `package.json` files (`packages/*/package.json`)
+
+Use conventional commits instead. semantic-release analyzes squash-merge commits on `main`, bumps versions, writes release notes, publishes to npm, and commits the updated files back with `[skip ci]`.
+
+For breaking changes, include a `BREAKING CHANGE:` footer in the commit message — release notes are generated from that automatically.
+
+---
+
 ## Pull Requests
 
 **Before opening:**
@@ -134,6 +148,7 @@ Update all callers before upgrading.
 - [ ] `npx tsc --noEmit` passes with zero errors
 - [ ] Commits follow conventional commit format
 - [ ] PR title is a valid conventional commit subject line
+- [ ] No manual edits to `CHANGELOG.md` or `package.json` versions (semantic-release handles these on merge)
 
 The PR title becomes the squash merge commit message on `main`:
 ```

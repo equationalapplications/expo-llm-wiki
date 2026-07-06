@@ -436,6 +436,8 @@ export interface MemoryBundle {
   tasks: WikiTask[];
   events: WikiEvent[];
   edges?: WikiEdge[];
+  /** Entity summary prose for OKF profile ≥ 1 round-trip. Omitted = no summary (Clanker default). */
+  summary?: string;
   factScores?: Record<string, number>;
   metadata?: {
     query: string;

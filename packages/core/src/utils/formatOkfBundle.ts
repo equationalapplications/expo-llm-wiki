@@ -1,7 +1,9 @@
-import type { MemoryDump, WikiFact, WikiTask, WikiEvent } from '../types';
+import type { MemoryDump, WikiEdge, WikiFact, WikiTask, WikiEvent } from '../types';
 import {
+  appendEventIdComment,
+  appendRelatedSection,
   buildConceptDocument,
-  buildIndexMd,
+  buildEntityIndexMd,
   buildRootIndexMd,
   buildLogMd,
   type OkfFile,
@@ -11,6 +13,8 @@ import {
   type OkfLogEntry,
 } from '@equationalapplications/core-okf';
 import { sanitizeConceptId, sanitizeForFilename } from './sanitizeForFilename';
+
+const LLM_WIKI_PROFILE = 'llm-wiki/1';
 
 function factFrontmatter(f: WikiFact): OkfFrontmatter {
   return {
@@ -50,6 +54,16 @@ function formatLogDate(timestampMs: number): string {
   return new Date(timestampMs).toISOString().slice(0, 10);
 }
 
+function conceptRelativePath(sourceFilePath: string, targetFilePath: string): string {
+  const sourceDir = sourceFilePath.slice(0, sourceFilePath.lastIndexOf('/'));
+  const targetDir = targetFilePath.slice(0, targetFilePath.lastIndexOf('/'));
+  const targetName = targetFilePath.slice(targetFilePath.lastIndexOf('/') + 1);
+  if (sourceDir === targetDir) return `./${targetName}`;
+  if (sourceDir.endsWith('/facts') && targetDir.endsWith('/tasks')) return `../tasks/${targetName}`;
+  if (sourceDir.endsWith('/tasks') && targetDir.endsWith('/facts')) return `../facts/${targetName}`;
+  return targetFilePath.replace(/^entities\/[^/]+\//, '');
+}
+
 function buildEventLogEntries(
   events: WikiEvent[],
   factIdToFilename: Map<string, string>,
@@ -65,7 +79,7 @@ function buildEventLogEntries(
     const text = factFilename
       ? `(${e.event_type}) [${summary}](./facts/${factFilename}.md)`
       : `(${e.event_type}) ${summary}`;
-    return { date: formatLogDate(e.created_at), text };
+    return { date: formatLogDate(e.created_at), text: appendEventIdComment(text, e.id) };
   });
 }
 
@@ -79,14 +93,42 @@ export function formatOkfBundle(dump: MemoryDump): { files: OkfFile[] } {
       bundle.facts.map(f => [f.id, sanitizeConceptId(f.id)] as const),
     );
 
+    const idToConceptPath = new Map<string, string>();
+    for (const f of bundle.facts) {
+      idToConceptPath.set(f.id, `entities/${dir}/facts/${factIdToFilename.get(f.id)!}.md`);
+    }
+    for (const t of bundle.tasks) {
+      idToConceptPath.set(t.id, `entities/${dir}/tasks/${sanitizeConceptId(t.id)}.md`);
+    }
+
+    const edgesBySource = new Map<string, WikiEdge[]>();
+    for (const edge of bundle.edges ?? []) {
+      const group = edgesBySource.get(edge.source_id) ?? [];
+      group.push(edge);
+      edgesBySource.set(edge.source_id, group);
+    }
+
+    function relatedLinksFor(sourcePath: string, sourceId: string) {
+      return (edgesBySource.get(sourceId) ?? [])
+        .map(edge => {
+          const targetPath = idToConceptPath.get(edge.target_id);
+          if (!targetPath) return null;
+          return { edge_type: edge.edge_type, path: conceptRelativePath(sourcePath, targetPath) };
+        })
+        .filter((link): link is { edge_type: string; path: string } => link != null)
+        .sort((a, b) => a.edge_type.localeCompare(b.edge_type) || a.path.localeCompare(b.path));
+    }
+
     const factEntries: OkfIndexEntry[] = bundle.facts.map(f => ({
       path: `facts/${factIdToFilename.get(f.id)!}.md`,
       title: f.title,
     }));
     for (const f of bundle.facts) {
+      const factPath = `entities/${dir}/facts/${factIdToFilename.get(f.id)!}.md`;
+      const factBody = appendRelatedSection(f.body, relatedLinksFor(factPath, f.id));
       files.push({
-        path: `entities/${dir}/facts/${factIdToFilename.get(f.id)!}.md`,
-        content: buildConceptDocument(factFrontmatter(f), f.body),
+        path: factPath,
+        content: buildConceptDocument(factFrontmatter(f), factBody),
       });
     }
 
@@ -95,9 +137,11 @@ export function formatOkfBundle(dump: MemoryDump): { files: OkfFile[] } {
       title: t.description,
     }));
     for (const t of bundle.tasks) {
+      const taskPath = `entities/${dir}/tasks/${sanitizeConceptId(t.id)}.md`;
+      const taskBody = appendRelatedSection('', relatedLinksFor(taskPath, t.id));
       files.push({
-        path: `entities/${dir}/tasks/${sanitizeConceptId(t.id)}.md`,
-        content: buildConceptDocument(taskFrontmatter(t), ''),
+        path: taskPath,
+        content: buildConceptDocument(taskFrontmatter(t), taskBody),
       });
     }
 
@@ -112,7 +156,10 @@ export function formatOkfBundle(dump: MemoryDump): { files: OkfFile[] } {
     ];
     files.push({
       path: `entities/${dir}/index.md`,
-      content: `${buildIndexMd(entityIndexSections)}[Event log](./log.md)\n`,
+      content: buildEntityIndexMd({
+        summary: bundle.summary,
+        sections: entityIndexSections,
+      }),
     });
 
     rootEntries.push({ path: `entities/${dir}/index.md`, title: entityId });
@@ -123,6 +170,7 @@ export function formatOkfBundle(dump: MemoryDump): { files: OkfFile[] } {
     content: buildRootIndexMd(
       '0.1',
       rootEntries.length > 0 ? [{ heading: 'Entities', entries: rootEntries }] : [],
+      { profile: LLM_WIKI_PROFILE },
     ),
   });
 
