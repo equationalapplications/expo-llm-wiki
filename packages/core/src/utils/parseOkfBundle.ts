@@ -1,6 +1,15 @@
 import type { MemoryDump, WikiFact, WikiTask, WikiEvent, WikiEdge } from '../types';
 import type { OkfFile, OkfFrontmatter, OkfFrontmatterValue } from '@equationalapplications/core-okf';
-import { parseConcept, parseLogMd, extractMarkdownLinks } from '@equationalapplications/core-okf';
+import {
+  parseConcept,
+  parseLogMd,
+  parseRootIndexMd,
+  parseEntityIndexMd,
+  parseEventIdComment,
+  splitRelatedSection,
+  isAllowedOkfPath,
+  extractMarkdownLinks,
+} from '@equationalapplications/core-okf';
 import { generateId } from './ids';
 
 export interface OkfImportOptions {
@@ -59,6 +68,15 @@ function resolveRelativePath(fromFile: string, linkPath: string): string {
     resolved.push(seg);
   }
   return resolved.join('/');
+}
+
+function decodeLinkPath(path: string): string {
+  if (!path.includes('%')) return path;
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
 }
 
 function addPathAliases(map: Map<string, string>, filePath: string, resolvedId: string): void {
@@ -206,15 +224,60 @@ function findLogMdPath(files: OkfFile[]): string | undefined {
   return files.find(f => f.path.endsWith('/log.md') || f.path === 'log.md')?.path;
 }
 
+function extractEdgesFromLinks(
+  filePath: string,
+  resolvedId: string,
+  links: Array<{ text: string; path: string }>,
+  pathToResolvedId: Map<string, string>,
+  entityId: string,
+  now: number,
+  seenEdges: Set<string>,
+  edges: WikiEdge[],
+): void {
+  for (const link of links) {
+    const strippedPath = decodeLinkPath(stripLinkSuffix(link.path));
+    const directTargetId = lookupResolvedId(pathToResolvedId, strippedPath);
+    const resolvedTargetPath = resolveRelativePath(filePath, strippedPath);
+    if (isStructuralPath(strippedPath) || isStructuralPath(resolvedTargetPath)) continue;
+    const targetId = directTargetId ?? lookupResolvedId(pathToResolvedId, resolvedTargetPath);
+    if (!targetId) continue;
+    const edgeKey = `${resolvedId}\u0000${targetId}\u0000${link.text}`;
+    if (seenEdges.has(edgeKey)) continue;
+    seenEdges.add(edgeKey);
+    edges.push({
+      id: generateId(),
+      entity_id: entityId,
+      source_id: resolvedId,
+      target_id: targetId,
+      edge_type: link.text,
+      created_at: now,
+    });
+  }
+}
+
 export function parseOkfBundle(
   entityId: string,
   files: OkfFile[],
   options?: OkfImportOptions,
 ): MemoryDump {
   const now = Date.now();
+  const allowedFiles = files.filter(f => isAllowedOkfPath(f.path));
+  const rootIndex = allowedFiles.find(f => f.path === 'index.md');
+  const profileMeta = rootIndex ? parseRootIndexMd(rootIndex.content) : {};
+  const isProfile1 = profileMeta.profile === 'llm-wiki/1';
+
+  let entitySummary: string | undefined;
+  for (const file of allowedFiles) {
+    if (file.path.endsWith('/index.md') && file.path !== 'index.md') {
+      const summary = parseEntityIndexMd(file.content).summary;
+      entitySummary = summary || undefined;
+      break;
+    }
+  }
+
   const pathToResolvedId = new Map<string, string>();
 
-  for (const file of files) {
+  for (const file of allowedFiles) {
     if (!isConceptFile(file.path)) continue;
     const { frontmatter } = parseConcept(file.content);
     const route = resolveRoute(file.path, frontmatter.type ?? '', options);
@@ -228,9 +291,9 @@ export function parseOkfBundle(
   const tasks: WikiTask[] = [];
   const edges: WikiEdge[] = [];
   let logContent: string | null = null;
-  const logMdPath = findLogMdPath(files);
+  const logMdPath = findLogMdPath(allowedFiles);
 
-  for (const file of files) {
+  for (const file of allowedFiles) {
     if (file.path.endsWith('/log.md') || file.path === 'log.md') {
       logContent = file.content;
       continue;
@@ -244,43 +307,43 @@ export function parseOkfBundle(
     const resolvedId =
       typeof frontmatter.id === 'string' && frontmatter.id ? frontmatter.id : basenameMd(file.path);
 
+    const { body: storedBody, relatedLinks } = splitRelatedSection(body);
+    const edgeLinks = isProfile1
+      ? relatedLinks
+      : [...relatedLinks, ...extractMarkdownLinks(storedBody)];
+
     if (route === 'fact') {
-      facts.push(frontmatterToFact(entityId, resolvedId, frontmatter, body, now));
+      facts.push(frontmatterToFact(entityId, resolvedId, frontmatter, storedBody, now));
     } else {
       tasks.push(frontmatterToTask(entityId, resolvedId, frontmatter, now));
     }
 
     const seenEdges = new Set<string>();
-    for (const link of extractMarkdownLinks(body)) {
-      const strippedPath = stripLinkSuffix(link.path);
-      const directTargetId = lookupResolvedId(pathToResolvedId, strippedPath);
-      const resolvedTargetPath = resolveRelativePath(file.path, strippedPath);
-      if (isStructuralPath(strippedPath) || isStructuralPath(resolvedTargetPath)) continue;
-      const targetId = directTargetId ?? lookupResolvedId(pathToResolvedId, resolvedTargetPath);
-      if (!targetId) continue;
-      const edgeKey = `${resolvedId}\u0000${targetId}\u0000${link.text}`;
-      if (seenEdges.has(edgeKey)) continue;
-      seenEdges.add(edgeKey);
-      edges.push({
-        id: generateId(),
-        entity_id: entityId,
-        source_id: resolvedId,
-        target_id: targetId,
-        edge_type: link.text,
-        created_at: now,
-      });
-    }
+    extractEdgesFromLinks(
+      file.path,
+      resolvedId,
+      edgeLinks,
+      pathToResolvedId,
+      entityId,
+      now,
+      seenEdges,
+      edges,
+    );
   }
 
   const events: WikiEvent[] = [];
   if (logContent != null) {
     const logPath = logMdPath ?? `entities/${entityId}/log.md`;
     for (const entry of parseLogMd(logContent)) {
-      const parsed = parseLogEntryText(entry.text);
+      const { text, eventId } = parseEventIdComment(entry.text);
+      const parsed = parseLogEntryText(text);
       if (!parsed) continue;
       let related_entry_id: string | null = null;
       if (parsed.linkPath) {
-        const targetPath = resolveRelativePath(logPath, stripLinkSuffix(parsed.linkPath));
+        const targetPath = resolveRelativePath(
+          logPath,
+          decodeLinkPath(stripLinkSuffix(parsed.linkPath)),
+        );
         if (!isStructuralPath(targetPath) && targetPath.includes('/facts/')) {
           related_entry_id = lookupResolvedId(pathToResolvedId, targetPath) ?? null;
         }
@@ -289,7 +352,7 @@ export function parseOkfBundle(
       if (!Number.isFinite(created_at)) continue;
 
       events.push({
-        id: generateId('evt_'),
+        id: eventId ?? generateId('evt_'),
         entity_id: entityId,
         event_type: parsed.event_type,
         summary: parsed.summary,
@@ -302,7 +365,7 @@ export function parseOkfBundle(
   return {
     generatedAt: now,
     entities: {
-      [entityId]: { facts, tasks, events, edges },
+      [entityId]: { facts, tasks, events, edges, summary: entitySummary },
     },
   };
 }

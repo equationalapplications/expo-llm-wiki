@@ -55,7 +55,7 @@ describe('formatOkfBundle', () => {
     const { files } = formatOkfBundle({ generatedAt: 0, entities: {} });
     expect(files).toHaveLength(1);
     expect(files[0].path).toBe('index.md');
-    expect(files[0].content).toBe('---\nokf_version: "0.1"\n---\n\n');
+    expect(files[0].content).toBe('---\nokf_version: "0.1"\nprofile: llm-wiki/1\n---\n\n');
   });
 
   it('writes one concept file per fact with correct path and excludes embedding_blob', () => {
@@ -244,5 +244,76 @@ describe('formatOkfBundle', () => {
     const { files } = formatOkfBundle(dump);
     const taskFile = files.find(f => f.path === 'entities/alice/tasks/task_bbb.md')!;
     expect(taskFile.content).toContain('type: task');
+  });
+
+  it('emits profile: llm-wiki/1 on root index.md', () => {
+    const { files } = formatOkfBundle({ generatedAt: 0, entities: {} });
+    expect(files[0].content).toContain('profile: llm-wiki/1');
+  });
+
+  it('emits entity summary prose in entity index.md', () => {
+    const dump: MemoryDump = {
+      generatedAt: 0,
+      entities: {
+        alice: { summary: 'Alice loves coffee.', facts: [], tasks: [], events: [], edges: [] },
+      },
+    };
+    const entityIndex = formatOkfBundle(dump).files.find(f => f.path === 'entities/alice/index.md')!;
+    expect(entityIndex.content.startsWith('Alice loves coffee.\n\n')).toBe(true);
+  });
+
+  it('emits ## Related from edges array, not inline body links', () => {
+    const dump: MemoryDump = {
+      generatedAt: 0,
+      entities: {
+        alice: {
+          facts: [
+            makeFact({ id: 'fact_a', body: 'Plain body without links.' }),
+            makeFact({ id: 'fact_b', title: 'Target', body: 'Target body.' }),
+          ],
+          tasks: [makeTask({ id: 'task_c' })],
+          events: [],
+          edges: [
+            {
+              id: 'edge_1',
+              entity_id: 'alice',
+              source_id: 'fact_a',
+              target_id: 'fact_b',
+              edge_type: 'mentions',
+              created_at: 0,
+            },
+            {
+              id: 'edge_2',
+              entity_id: 'alice',
+              source_id: 'fact_a',
+              target_id: 'task_c',
+              edge_type: 'blocks',
+              created_at: 0,
+            },
+          ],
+        },
+      },
+    };
+    const factA = formatOkfBundle(dump).files.find(f => f.path === 'entities/alice/facts/fact_a.md')!;
+    expect(factA.content).toContain('Plain body without links.');
+    expect(factA.content).toContain('## Related');
+    expect(factA.content).toContain('- [mentions](./fact_b.md)');
+    expect(factA.content).toContain('- [blocks](../tasks/task_c.md)');
+  });
+
+  it('appends event id comments to log lines', () => {
+    const dump: MemoryDump = {
+      generatedAt: 0,
+      entities: {
+        alice: {
+          facts: [makeFact()],
+          tasks: [],
+          events: [makeEvent({ id: 'evt_ccc', related_entry_id: 'fact_aaa' })],
+          edges: [],
+        },
+      },
+    };
+    const logFile = formatOkfBundle(dump).files.find(f => f.path === 'entities/alice/log.md')!;
+    expect(logFile.content).toContain('<!-- id: evt_ccc -->');
   });
 });

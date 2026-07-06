@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { buildConceptDocument, buildLogMd } from '@equationalapplications/core-okf';
+import { buildConceptDocument, buildLogMd, buildRootIndexMd } from '@equationalapplications/core-okf';
 import type { OkfFile, OkfFrontmatter } from '@equationalapplications/core-okf';
 import { parseOkfBundle } from '../src/utils/parseOkfBundle';
 import { formatOkfBundle } from '../src/utils/formatOkfBundle';
@@ -101,18 +101,18 @@ describe('parseOkfBundle', () => {
       expect(dump.entities.alice.facts).toHaveLength(0);
     });
 
-    it('falls back to defaultSchema when neither typeMapping nor directory applies', () => {
+    it('rejects concept files outside facts/ and tasks/ via path allow-list', () => {
       const files: OkfFile[] = [
         conceptFile('entities/alice/concepts/x.md', { type: 'note', title: 'C', id: 'concept_x' }),
       ];
       const dump = parseOkfBundle('alice', files, { defaultSchema: 'task' });
-      expect(dump.entities.alice.tasks).toHaveLength(1);
       expect(dump.entities.alice.facts).toHaveLength(0);
+      expect(dump.entities.alice.tasks).toHaveLength(0);
     });
 
     it('defaults to fact when no mapping, directory, or defaultSchema is set', () => {
       const files: OkfFile[] = [
-        conceptFile('entities/alice/concepts/x.md', { type: 'note', title: 'C', id: 'concept_x' }),
+        conceptFile('entities/alice/facts/x.md', { type: 'note', title: 'C', id: 'concept_x' }),
       ];
       const dump = parseOkfBundle('alice', files);
       expect(dump.entities.alice.facts).toHaveLength(1);
@@ -142,7 +142,7 @@ describe('parseOkfBundle', () => {
 
     it('does not treat inherited object keys as typeMapping entries', () => {
       const files: OkfFile[] = [
-        conceptFile('entities/alice/concepts/x.md', { type: 'toString', title: 'C', id: 'concept_x' }),
+        conceptFile('entities/alice/facts/x.md', { type: 'toString', title: 'C', id: 'concept_x' }),
       ];
       const dump = parseOkfBundle('alice', files, { typeMapping: {} });
       expect(dump.entities.alice.facts).toHaveLength(1);
@@ -303,9 +303,9 @@ describe('parseOkfBundle — edge extraction', () => {
     const files: OkfFile[] = [
       conceptFile('entities/alice/facts/target.md', { type: 'fact', title: 'T', id: 'fact_tgt' }),
       conceptFile(
-        'entities/alice/concepts/source.md',
+        'entities/alice/facts/source.md',
         { type: 'fact', title: 'S', id: 'fact_src' },
-        'See [mentions](facts/target.md).',
+        'See [mentions](./target.md).',
       ),
     ];
     const edges = parseOkfBundle('alice', files).entities.alice.edges;
@@ -328,6 +328,84 @@ describe('parseOkfBundle — edge extraction', () => {
       { path: 'entities/alice/index.md', content: '# Index\n' },
     ];
     expect(parseOkfBundle('alice', files).entities.alice.edges).toEqual([]);
+  });
+});
+
+describe('parseOkfBundle — profile 1', () => {
+  beforeEach(() => {
+    vi.spyOn(Date, 'now').mockReturnValue(FIXED_NOW);
+    vi.spyOn(ids, 'generateId').mockImplementation((prefix = '') => `${prefix}generated`);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('ignores bundle-root README.md via path allow-list', () => {
+    const files: OkfFile[] = [
+      {
+        path: 'README.md',
+        content: buildConceptDocument({ type: 'fact', title: 'Trap', id: 'bad' }, 'x'),
+      },
+      conceptFile('entities/alice/facts/keep.md', { type: 'fact', title: 'K', id: 'fact_keep' }),
+    ];
+    expect(parseOkfBundle('alice', files).entities.alice.facts.map(f => f.id)).toEqual(['fact_keep']);
+  });
+
+  it('parses ## Related into edges and strips from fact body', () => {
+    const files: OkfFile[] = [
+      conceptFile('entities/alice/facts/target.md', { type: 'fact', title: 'T', id: 'fact_tgt' }),
+      conceptFile(
+        'entities/alice/facts/source.md',
+        { type: 'fact', title: 'S', id: 'fact_src' },
+        'Body only.\n\n## Related\n\n- [mentions](./target.md)\n',
+      ),
+    ];
+    const bundle = parseOkfBundle('alice', files).entities.alice;
+    expect(bundle.facts.find(f => f.id === 'fact_src')!.body).toBe('Body only.\n');
+    expect(bundle.edges).toHaveLength(1);
+    expect(bundle.edges[0]).toMatchObject({
+      source_id: 'fact_src',
+      target_id: 'fact_tgt',
+      edge_type: 'mentions',
+    });
+  });
+
+  it('preserves event id from log comment', () => {
+    const files: OkfFile[] = [
+      conceptFile('entities/alice/facts/fact_aaa.md', { type: 'fact', title: 'A', id: 'fact_aaa' }),
+      {
+        path: 'entities/alice/log.md',
+        content: buildLogMd([
+          {
+            date: '2023-11-14',
+            text: '(observation) [Noted](./facts/fact_aaa.md) <!-- id: evt_persisted -->',
+          },
+        ]),
+      },
+    ];
+    const events = parseOkfBundle('alice', files).entities.alice.events;
+    expect(events[0].id).toBe('evt_persisted');
+  });
+
+  it('parses entity summary from index.md', () => {
+    const files: OkfFile[] = [
+      {
+        path: 'entities/alice/index.md',
+        content: 'Alice summary.\n\n## Facts\n\n[Event log](./log.md)\n',
+      },
+      conceptFile('entities/alice/facts/x.md', { type: 'fact', title: 'X', id: 'fact_x' }),
+    ];
+    expect(parseOkfBundle('alice', files).entities.alice.summary).toBe('Alice summary.');
+  });
+
+  it('detects profile 0 when root index lacks profile key', () => {
+    const files: OkfFile[] = [
+      { path: 'index.md', content: buildRootIndexMd('0.1', []) },
+      conceptFile('entities/alice/facts/x.md', { type: 'fact', title: 'X', id: 'fact_x' }),
+    ];
+    const dump = parseOkfBundle('alice', files);
+    expect(dump.entities.alice.facts).toHaveLength(1);
   });
 });
 
@@ -416,8 +494,7 @@ describe('parseOkfBundle — log and round-trip', () => {
     };
 
     const { files } = formatOkfBundle(original);
-    const entityFiles = files.filter(f => f.path.startsWith('entities/alice/'));
-    const parsed = parseOkfBundle('alice', entityFiles);
+    const parsed = parseOkfBundle('alice', files);
 
     const orig = original.entities.alice;
     const round = parsed.entities.alice;
@@ -428,7 +505,7 @@ describe('parseOkfBundle — log and round-trip', () => {
     for (const fact of orig.facts) {
       const found = round.facts.find(f => f.id === fact.id)!;
       expect(found.title).toBe(fact.title);
-      expect(found.body).toBe(fact.body);
+      expect(found.body.trimEnd()).toBe(fact.body.trimEnd());
       expect(found.okf_type).toBe(fact.okf_type);
       expect(found.tags).toEqual(fact.tags);
       expect(found.confidence).toBe(fact.confidence);
@@ -447,6 +524,7 @@ describe('parseOkfBundle — log and round-trip', () => {
 
     expect(round.events).toHaveLength(orig.events.length);
     for (let i = 0; i < orig.events.length; i++) {
+      expect(round.events[i].id).toBe(orig.events[i].id);
       expect(round.events[i].event_type).toBe(orig.events[i].event_type);
       expect(round.events[i].summary).toBe(orig.events[i].summary);
       expect(round.events[i].related_entry_id).toBe(orig.events[i].related_entry_id);
