@@ -111,7 +111,7 @@ A concept document is YAML frontmatter (§8 grammar) followed by a markdown body
 | `created_at` | number | REQUIRED | Epoch ms |
 | `resolved_at` / `deleted_at` | number \| null | OPTIONAL | Epoch ms |
 
-**Body:** empty in profile 1 (aside from `## Related`, §6). Consumers MUST tolerate non-empty task bodies from future or foreign producers and preserve them.
+**Body:** empty in profile 1 (aside from `## Related`, §6). Consumers MUST tolerate non-empty task bodies from future or foreign producers; consumers that model task bodies SHOULD preserve them on round-trip, but consumers without a task-body field MAY drop them.
 
 Unknown frontmatter keys in either file type MUST be preserved on round-trip where the consumer re-exports, and MUST NOT cause a parse failure.
 
