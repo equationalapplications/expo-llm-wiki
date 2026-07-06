@@ -262,6 +262,47 @@ describe('formatOkfBundle', () => {
     expect(entityIndex.content.startsWith('Alice loves coffee.\n\n')).toBe(true);
   });
 
+  it('preserves edges array order in ## Related bullets for a single source concept', () => {
+    const dump: MemoryDump = {
+      generatedAt: 0,
+      entities: {
+        alice: {
+          facts: [
+            makeFact({ id: 'fact_a', body: 'Source fact.' }),
+            makeFact({ id: 'fact_b', title: 'Beta', body: 'Beta body.' }),
+          ],
+          tasks: [makeTask({ id: 'task_c' })],
+          events: [],
+          edges: [
+            {
+              id: 'edge_1',
+              entity_id: 'alice',
+              source_id: 'fact_a',
+              target_id: 'fact_b',
+              edge_type: 'references',
+              created_at: 0,
+            },
+            {
+              id: 'edge_2',
+              entity_id: 'alice',
+              source_id: 'fact_a',
+              target_id: 'task_c',
+              edge_type: 'blocks',
+              created_at: 0,
+            },
+          ],
+        },
+      },
+    };
+    const factA = formatOkfBundle(dump).files.find(f => f.path === 'entities/alice/facts/fact_a.md')!;
+    const relatedSection = factA.content.slice(factA.content.indexOf('## Related'));
+    const referencesIdx = relatedSection.indexOf('- [references]');
+    const blocksIdx = relatedSection.indexOf('- [blocks]');
+    expect(referencesIdx).toBeGreaterThan(-1);
+    expect(blocksIdx).toBeGreaterThan(-1);
+    expect(referencesIdx).toBeLessThan(blocksIdx);
+  });
+
   it('emits ## Related from edges array, not inline body links', () => {
     const dump: MemoryDump = {
       generatedAt: 0,
