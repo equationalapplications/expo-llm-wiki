@@ -2,6 +2,7 @@ import type { OkfIndexSection } from './types';
 import { buildIndexMd } from './index-md';
 
 const EVENT_LOG_LINK = /^\[Event log\]\(\.\/log\.md\)\s*$/;
+const TOP_LEVEL_H1 = /^#\s+.+\s*$/;
 const SECTION_HEADING = /^##\s+(.+)\s*$/;
 const INDEX_ENTRY = /^\*\s+\[((?:\\.|[^\]])*)\]\(([^)]+)\)(?:\s+-\s+(.*))?$/;
 
@@ -34,7 +35,14 @@ export function parseEntityIndexMd(content: string): {
   const firstSectionIdx = lines.findIndex(line => SECTION_HEADING.test(line));
   const summaryEnd = firstSectionIdx === -1 ? lines.length : firstSectionIdx;
   const summaryLines = lines.slice(0, summaryEnd).filter(line => !EVENT_LOG_LINK.test(line.trim()));
-  const summary = summaryLines.join('\n').trim();
+  let summaryStart = 0;
+  while (summaryStart < summaryLines.length && summaryLines[summaryStart].trim() === '') {
+    summaryStart += 1;
+  }
+  if (summaryStart < summaryLines.length && TOP_LEVEL_H1.test(summaryLines[summaryStart].trim())) {
+    summaryStart += 1;
+  }
+  const summary = summaryLines.slice(summaryStart).join('\n').trim();
 
   const sections: OkfIndexSection[] = [];
   let current: OkfIndexSection | null = null;

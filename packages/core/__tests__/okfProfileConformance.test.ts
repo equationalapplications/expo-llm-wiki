@@ -55,8 +55,18 @@ describe('OKF profile conformance', () => {
       a.facts.map(f => ({ id: f.id, body: f.body.trimEnd(), title: f.title })),
     );
     expect(
-      b.edges.map(e => [e.source_id, e.target_id, e.edge_type].sort().join('|')).sort(),
-    ).toEqual(a.edges.map(e => [e.source_id, e.target_id, e.edge_type].sort().join('|')).sort());
+      b.edges.map(e => ({
+        source_id: e.source_id,
+        target_id: e.target_id,
+        edge_type: e.edge_type,
+      })),
+    ).toEqual(
+      a.edges.map(e => ({
+        source_id: e.source_id,
+        target_id: e.target_id,
+        edge_type: e.edge_type,
+      })),
+    );
     expect(b.events.map(e => ({ id: e.id, summary: e.summary, event_type: e.event_type }))).toEqual(
       a.events.map(e => ({ id: e.id, summary: e.summary, event_type: e.event_type })),
     );

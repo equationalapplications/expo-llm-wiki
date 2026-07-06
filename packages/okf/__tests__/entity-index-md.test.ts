@@ -35,4 +35,9 @@ describe('entity index md', () => {
     const content = 'Only summary.\n\n[Event log](./log.md)\n';
     expect(parseEntityIndexMd(content).summary).toBe('Only summary.');
   });
+
+  it('excludes a leading H1 title from summary', () => {
+    const content = '# Alice\n\nSummary line.\n\n## Facts\n\n* [A](facts/a.md)\n';
+    expect(parseEntityIndexMd(content).summary).toBe('Summary line.');
+  });
 });

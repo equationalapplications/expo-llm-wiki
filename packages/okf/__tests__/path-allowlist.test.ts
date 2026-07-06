@@ -19,4 +19,9 @@ describe('isAllowedOkfPath', () => {
   it('normalizes leading ./', () => {
     expect(isAllowedOkfPath('./entities/alice/facts/a.md')).toBe(true);
   });
+
+  it('rejects path traversal segments', () => {
+    expect(isAllowedOkfPath('entities/../index.md')).toBe(false);
+    expect(isAllowedOkfPath('entities/../log.md')).toBe(false);
+  });
 });
