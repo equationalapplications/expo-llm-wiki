@@ -55,23 +55,29 @@ export function parseEntityIndexMd(content: string): {
   const summary = summaryLines.slice(summaryStart).join('\n').trim();
 
   const sections: OkfIndexSection[] = [];
+  if (firstSectionIdx === -1) return { summary, sections };
+
   let current: OkfIndexSection | null = null;
   for (let i = Math.max(firstSectionIdx, start); i < lines.length; i += 1) {
     const line = lines[i];
     if (EVENT_LOG_LINK.test(line.trim())) continue;
+
     const headingMatch = SECTION_HEADING.exec(line);
     if (headingMatch) {
       current = { heading: headingMatch[1], entries: [] };
       sections.push(current);
       continue;
     }
+
+    if (!current) continue;
     const entryMatch = INDEX_ENTRY.exec(line);
-      current.entries.push({
-        title: unescapeIndexTitle(entryMatch[1]),
-        path: entryMatch[2],
-        description: entryMatch[3] ? unescapeIndexTitle(entryMatch[3]) : undefined,
-      });
-    }
+    if (!entryMatch) continue;
+
+    current.entries.push({
+      title: unescapeIndexTitle(entryMatch[1]),
+      path: entryMatch[2],
+      description: entryMatch[3] ? unescapeIndexTitle(entryMatch[3]) : undefined,
+    });
   }
   return { summary, sections };
 }
