@@ -263,10 +263,25 @@ export function parseOkfBundle(
   const now = Date.now();
   const normalizeOkfPath = (p: string) => p.replace(/^\.\//, '').replace(/\\/g, '/');
 
-  const allowedFiles = files
-    .map(f => ({ ...f, path: normalizeOkfPath(f.path) }))
-    .filter(f => isAllowedOkfPath(f.path));
+  const normalizedFiles = files.map(f => ({ ...f, path: normalizeOkfPath(f.path) }));
 
+  const allowlistedFiles = normalizedFiles.filter(f => isAllowedOkfPath(f.path));
+
+  const entityPrefix = `entities/${entityId}/`;
+  const otherEntityDirs = new Set(
+    allowlistedFiles
+      .map(f => /^entities\/([^/]+)\//.exec(f.path)?.[1])
+      .filter((dir): dir is string => !!dir && dir !== entityId),
+  );
+  if (otherEntityDirs.size > 0) {
+    throw new Error(
+      `parseOkfBundle: expected a single-entity bundle for "${entityId}", found additional entities: ${Array.from(otherEntityDirs).join(', ')}`,
+    );
+  }
+
+  const allowedFiles = allowlistedFiles.filter(
+    f => f.path === 'index.md' || f.path.startsWith(entityPrefix),
+  );
   const rootIndex = allowedFiles.find(f => f.path === 'index.md');
   const profileMeta = rootIndex ? parseRootIndexMd(rootIndex.content) : {};
   const isProfile1 = profileMeta.profile === 'llm-wiki/1';
