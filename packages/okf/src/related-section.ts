@@ -1,5 +1,4 @@
 import type { OkfMarkdownLink } from './types';
-import { extractMarkdownLinks } from './markdown-links';
 
 function escapeLinkLabel(label: string): string {
   return label
