@@ -235,7 +235,7 @@ function extractEdgesFromLinks(
   edges: WikiEdge[],
 ): void {
   for (const link of links) {
-    const strippedPath = decodeLinkPath(stripLinkSuffix(link.path));
+    const strippedPath = stripLinkSuffix(decodeLinkPath(link.path));
     const directTargetId = lookupResolvedId(pathToResolvedId, strippedPath);
     const resolvedTargetPath = resolveRelativePath(filePath, strippedPath);
     if (isStructuralPath(strippedPath) || isStructuralPath(resolvedTargetPath)) continue;
