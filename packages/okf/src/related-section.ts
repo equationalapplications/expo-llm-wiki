@@ -14,8 +14,14 @@ export function appendRelatedSection(
   links: Array<{ edge_type: string; path: string }>,
 ): string {
   if (links.length === 0) return body;
-  const trimmed = body.replace(/\s+$/, '');
-  const prefix = trimmed.length > 0 ? `${trimmed}\n\n` : '';
+  const prefix =
+    body.length === 0
+      ? ''
+      : body.endsWith('\n\n')
+        ? body
+        : body.endsWith('\n')
+          ? `${body}\n`
+          : `${body}\n\n`;
   const lines = ['## Related', ''];
   for (const link of links) {
     lines.push(`- [${escapeLinkLabel(link.edge_type)}](${link.path})`);
