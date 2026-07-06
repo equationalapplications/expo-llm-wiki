@@ -342,7 +342,7 @@ export function parseOkfBundle(
       if (parsed.linkPath) {
         const targetPath = resolveRelativePath(
           logPath,
-          decodeLinkPath(stripLinkSuffix(parsed.linkPath)),
+          stripLinkSuffix(decodeLinkPath(parsed.linkPath)),
         );
         if (!isStructuralPath(targetPath) && targetPath.includes('/facts/')) {
           related_entry_id = lookupResolvedId(pathToResolvedId, targetPath) ?? null;
