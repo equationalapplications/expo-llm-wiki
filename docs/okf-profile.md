@@ -168,7 +168,7 @@ Line grammar: `- ({event_type}) {summary}` with two optional parts — the summa
 
 **Producer checklist:** emits only §1 paths (plus optional root README) · filenames in §2 grammar · root index with `okf_version` + `profile` · raw ids in frontmatter · required fields of §5 · `## Related` per edge with dangling-skip · event lines with id comments · summary prose only in the §4 position · no YAML constructs outside the §8 subset.
 
-**Consumer checklist:** path allow-list before parsing · ids from frontmatter, never filenames · unknown keys preserved, unknown lines skipped · `## Related` parsed into edges and stripped from body · event id dedup with tuple fallback · summary block parsed or carried through, using the first-`##`-or-EOF boundary · profile-0 fallbacks when the root `profile` key is absent · subset-safe YAML handling.
+**Consumer checklist:** path allow-list before parsing · ids from frontmatter, never filenames · unknown keys preserved, unknown lines skipped · `## Related` parsed into edges and stripped from body · event id dedup with tuple fallback · summary block parsed or carried through, using the first-`##`-or-EOF boundary · profile-0 fallbacks when the root `profile` key is absent · link paths percent-decoded defensively before resolution · subset-safe YAML handling.
 
 **Round-trip fidelity table:**
 
