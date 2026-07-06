@@ -66,11 +66,10 @@ export function parseEntityIndexMd(content: string): {
       continue;
     }
     const entryMatch = INDEX_ENTRY.exec(line);
-    if (entryMatch && current) {
       current.entries.push({
         title: unescapeIndexTitle(entryMatch[1]),
         path: entryMatch[2],
-        description: entryMatch[3],
+        description: entryMatch[3] ? unescapeIndexTitle(entryMatch[3]) : undefined,
       });
     }
   }
