@@ -1,7 +1,7 @@
 # Spec: llm-wiki OKF Profile — Design Record
 
 **Date:** 2026-07-05
-**Status:** Approved
+**Status:** Implemented
 **Deliverable:** `docs/okf-profile.md` (the normative profile document)
 **Related:** Clanker `2026-07-03-okf-export-design.md` and `2026-07-04-okf-import-support-design.md`; Curated Thoughts `2026-07-05-okf-backend-migration-design.md` and `2026-07-05-ux-vision-okf-native-design.md`
 
