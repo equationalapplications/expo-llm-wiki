@@ -29,6 +29,8 @@ entity_summary:{entity_id}
 
 No schema migration. The raw `entity_id` (not sanitized) is the key suffix — consistent with every other place ids are authoritative.
 
+Scoping note: the table prefix is per-`WikiMemory` **instance** (`options.config?.tablePrefix ?? 'llm_wiki_'`), not per entity — every entity in a database shares the same `{prefix}meta` table, so the `entity_id` suffix in the key is the sole per-entity scoping and is load-bearing. The key MUST be constructed from the `entityId` parameter of the enclosing call, never from instance-level or global state, and the entity id appears in the key exactly once.
+
 Rejected alternative: a dedicated `entity_summaries` table or a column on `{prefix}checkpoints`. Both need migrations for a single nullable string per entity; the kv table is exactly this shape already. Revisit only if summary grows structure (profile 2 territory).
 
 ### Import semantics (`doImportEntity`)
@@ -48,7 +50,12 @@ This also means an application's existing cloud-sync path (any flow that round-t
 
 ### Entity deletion
 
-Wherever entity data is wiped wholesale (the entity-forget/wipe path that clears facts/tasks/edges/events for an entity), the `entity_summary:{id}` key is deleted too. Implementation locates the existing wipe path and adds the delete — an orphaned summary key must not survive its entity.
+The per-entity wipe path is `MaintenanceService.forget(entityId, { clearAll: true })`, which bulk-soft-deletes entries and tasks inside a transaction. The summary key does not cascade — `{prefix}meta` is a bare kv table with no foreign keys to any entity-scoped table — so the wipe MUST explicitly delete `entity_summary:{entityId}` inside that same transaction, before it commits.
+
+Two implementation facts this depends on:
+
+- `MetadataRepository` currently has **no generic key-delete method** (the only delete is hard-coded to the `embedding_dimension_mismatch` key). Add `deleteMeta(key: string, tx?: SQLiteAdapter): Promise<void>` alongside `getMeta`/`setMeta`; both the `forget(clearAll)` path and the replace-mode-import clear (Import semantics table above) use it.
+- `forget(clearAll)` *soft*-deletes entries/tasks; the summary delete is hard (kv has no soft-delete concept). Acceptable asymmetry — a summary is re-importable prose, not user-authored memory rows — but stated here so it isn't rediscovered as a surprise.
 
 ### Types and API surface
 
@@ -74,7 +81,7 @@ Thin wrapper over `metadataRepo.getMeta('entity_summary:' + entityId)`. No write
 - **Replace clears:** import a bundle with a summary, then replace-import a bundle without one → `getFullBundle().summary` is `undefined`.
 - **Merge preserves:** import a bundle with a summary, then merge-import a bundle without one → summary unchanged.
 - **Merge overwrites:** merge-import a bundle with a different summary → incoming wins.
-- **Wipe cleans up:** entity wipe removes the meta key.
+- **Wipe cleans up:** `forget(entityId, { clearAll: true })` removes the meta key; a second entity's summary key in the same database survives the first entity's wipe (scoping regression).
 - **Legacy no-op:** importing `legacy-profile-0/` writes no summary key.
 - **Accessor:** `getEntitySummary` returns the stored value after import, `null` before any import and after replace-clear.
 
