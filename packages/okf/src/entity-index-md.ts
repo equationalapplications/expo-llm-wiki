@@ -32,9 +32,19 @@ export function parseEntityIndexMd(content: string): {
   sections: OkfIndexSection[];
 } {
   const lines = content.split(/\r?\n/);
-  const firstSectionIdx = lines.findIndex(line => SECTION_HEADING.test(line));
+
+  // Optional frontmatter block (--- ... ---) per profile.
+  let start = 0;
+  if (lines[0]?.trim() === '---') {
+    const closing = lines.findIndex((line, idx) => idx > 0 && line.trim() === '---');
+    if (closing !== -1) start = closing + 1;
+  }
+
+  const firstSectionIdx = lines.findIndex((line, idx) => idx >= start && SECTION_HEADING.test(line));
   const summaryEnd = firstSectionIdx === -1 ? lines.length : firstSectionIdx;
-  const summaryLines = lines.slice(0, summaryEnd).filter(line => !EVENT_LOG_LINK.test(line.trim()));
+  const summaryLines = lines
+    .slice(start, summaryEnd)
+    .filter(line => !EVENT_LOG_LINK.test(line.trim()));
   let summaryStart = 0;
   while (summaryStart < summaryLines.length && summaryLines[summaryStart].trim() === '') {
     summaryStart += 1;
@@ -46,7 +56,7 @@ export function parseEntityIndexMd(content: string): {
 
   const sections: OkfIndexSection[] = [];
   let current: OkfIndexSection | null = null;
-  for (let i = Math.max(firstSectionIdx, 0); i < lines.length; i += 1) {
+  for (let i = Math.max(firstSectionIdx, start); i < lines.length; i += 1) {
     const line = lines[i];
     if (EVENT_LOG_LINK.test(line.trim())) continue;
     const headingMatch = SECTION_HEADING.exec(line);
