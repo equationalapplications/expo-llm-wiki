@@ -61,6 +61,7 @@ export function splitRelatedSection(body: string): { body: string; relatedLinks:
       });
     }
   }
-  const normalizedBody = contentBody.length > 0 ? `${contentBody.replace(/\s+$/, '')}\n` : '';
+  const normalizedBody =
+    contentBody.length === 0 ? '' : contentBody.endsWith('\n') ? contentBody : `${contentBody}\n`;
   return { body: normalizedBody, relatedLinks };
 }
