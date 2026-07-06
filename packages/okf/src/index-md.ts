@@ -50,8 +50,10 @@ export function buildRootIndexMd(
 
 export function parseRootIndexMd(content: string): { okf_version?: string; profile?: string } {
   const { frontmatter } = parseFrontmatter(content);
+  const okf = frontmatter.okf_version;
   return {
-    okf_version: typeof frontmatter.okf_version === 'string' ? frontmatter.okf_version : undefined,
+    okf_version:
+      typeof okf === 'string' ? okf : typeof okf === 'number' && Number.isFinite(okf) ? String(okf) : undefined,
     profile: typeof frontmatter.profile === 'string' ? frontmatter.profile : undefined,
   };
 }
