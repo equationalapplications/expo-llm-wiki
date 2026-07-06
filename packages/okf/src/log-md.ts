@@ -24,6 +24,18 @@ export function buildLogMd(entries: OkfLogEntry[]): string {
   return lines.join('\n').trimEnd() + '\n';
 }
 
+const EVENT_ID_COMMENT = /\s*<!--\s*id:\s*(\S+)\s*-->\s*$/;
+
+export function appendEventIdComment(text: string, eventId: string): string {
+  return `${text} <!-- id: ${eventId} -->`;
+}
+
+export function parseEventIdComment(text: string): { text: string; eventId?: string } {
+  const match = EVENT_ID_COMMENT.exec(text);
+  if (!match) return { text };
+  return { text: text.slice(0, match.index).trimEnd(), eventId: match[1] };
+}
+
 const DATE_HEADING = /^##\s+(\d{4}-\d{2}-\d{2})\s*$/;
 const BULLET = /^-\s+(.*)$/;
 
