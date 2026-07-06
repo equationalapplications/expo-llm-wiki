@@ -261,7 +261,12 @@ export function parseOkfBundle(
   options?: OkfImportOptions,
 ): MemoryDump {
   const now = Date.now();
-  const allowedFiles = files.filter(f => isAllowedOkfPath(f.path));
+  const normalizeOkfPath = (p: string) => p.replace(/^\.\//, '').replace(/\\/g, '/');
+
+  const allowedFiles = files
+    .map(f => ({ ...f, path: normalizeOkfPath(f.path) }))
+    .filter(f => isAllowedOkfPath(f.path));
+
   const rootIndex = allowedFiles.find(f => f.path === 'index.md');
   const profileMeta = rootIndex ? parseRootIndexMd(rootIndex.content) : {};
   const isProfile1 = profileMeta.profile === 'llm-wiki/1';
