@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { extractSqliteCode, isDriverError } from '../src/db/serializedAdapter';
 import { WikiTransactionError } from '../src/types';
-import { guardReentrancy } from '../src/db/serializedAdapter';
+import { guardReentrancy, withSerializedTransactions } from '../src/db/serializedAdapter';
 import type { SQLiteAdapter } from '../src/types';
 
 function fakeAdapter(): SQLiteAdapter {
@@ -66,5 +66,74 @@ describe('guardReentrancy', () => {
   it('leaves non-transactional methods intact', async () => {
     const guarded = guardReentrancy(fakeAdapter());
     await expect(guarded.getAllAsync('SELECT 1')).resolves.toEqual([]);
+  });
+});
+
+/** Adapter that tracks open-transaction depth and runs callbacks with a real BEGIN counter. */
+function instrumentedAdapter() {
+  const state = { depth: 0, maxDepth: 0 };
+  const adapter: SQLiteAdapter = {
+    execAsync: async () => {},
+    runAsync: async () => ({ changes: 0, lastInsertRowId: 0 }),
+    getAllAsync: async () => [],
+    getFirstAsync: async () => null,
+    async withTransactionAsync(fn) {
+      state.depth += 1;
+      state.maxDepth = Math.max(state.maxDepth, state.depth);
+      try {
+        // Yield so overlapping callers would interleave if not serialized.
+        await new Promise((r) => setTimeout(r, 5));
+        return await fn(adapter);
+      } finally {
+        state.depth -= 1;
+      }
+    },
+    closeAsync: async () => {},
+  };
+  return { adapter, state };
+}
+
+describe('withSerializedTransactions', () => {
+  it('never opens two transactions concurrently (depth never exceeds 1)', async () => {
+    const { adapter, state } = instrumentedAdapter();
+    const db = withSerializedTransactions(adapter);
+    await Promise.all([
+      db.withTransactionAsync(async () => 'a'),
+      db.withTransactionAsync(async () => 'b'),
+      db.withTransactionAsync(async () => 'c'),
+    ]);
+    expect(state.maxDepth).toBe(1);
+  });
+
+  it('isolates failures: a rejected transaction does not poison the queue', async () => {
+    const { adapter } = instrumentedAdapter();
+    const db = withSerializedTransactions(adapter);
+    const results = await Promise.allSettled([
+      db.withTransactionAsync(async () => 'A'),
+      db.withTransactionAsync(async () => { throw { code: 'SQLITE_BUSY', message: 'busy' }; }),
+      db.withTransactionAsync(async () => 'C'),
+    ]);
+    expect(results[0]).toEqual({ status: 'fulfilled', value: 'A' });
+    expect(results[1].status).toBe('rejected');
+    expect((results[1] as PromiseRejectedResult).reason.name).toBe('WikiTransactionError');
+    expect((results[1] as PromiseRejectedResult).reason.sqliteErrorCode).toBe('SQLITE_BUSY');
+    expect(results[2]).toEqual({ status: 'fulfilled', value: 'C' });
+  });
+
+  it('passes domain (non-driver) errors through unwrapped', async () => {
+    const { adapter } = instrumentedAdapter();
+    const db = withSerializedTransactions(adapter);
+    class DomainError extends Error {}
+    await expect(db.withTransactionAsync(async () => { throw new DomainError('nope'); }))
+      .rejects.toBeInstanceOf(DomainError);
+    // Queue still advances:
+    await expect(db.withTransactionAsync(async () => 'after')).resolves.toBe('after');
+  });
+
+  it('throws the reentrancy error when the callback opens a nested transaction', async () => {
+    const { adapter } = instrumentedAdapter();
+    const db = withSerializedTransactions(adapter);
+    await expect(db.withTransactionAsync(async (tx) => tx.withTransactionAsync(async () => 1)))
+      .rejects.toThrow(/Nested withTransactionAsync is not supported/);
   });
 });
