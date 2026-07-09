@@ -510,6 +510,35 @@ export class WikiBusyError extends Error {
   }
 }
 
+/**
+ * Thrown by the serialized transaction wrapper when a SQLite driver error
+ * escapes a transaction callback (nested BEGIN, SQLITE_BUSY, constraint
+ * violation). Domain errors thrown from callback logic pass through unwrapped.
+ * Stable `instanceof` target for observability, mirroring {@link WikiBusyError}.
+ */
+export class WikiTransactionError extends Error {
+  /** Best-effort SQLite code lifted from the driver error, e.g. 'SQLITE_BUSY'. */
+  readonly sqliteErrorCode?: string;
+
+  constructor(message: string, options: { cause: unknown }) {
+    super(message, options);
+    this.name = 'WikiTransactionError';
+    this.sqliteErrorCode = extractSqliteCodeForError(options.cause);
+  }
+}
+
+/** Local copy of the driver-code extractor to keep types.ts free of a circular import. */
+function extractSqliteCodeForError(err: unknown): string | undefined {
+  if (typeof err !== 'object' || err === null) return undefined;
+  const { code, message } = err as { code?: unknown; message?: unknown };
+  if (typeof code === 'string' && code.startsWith('SQLITE_')) return code;
+  if (typeof message === 'string') {
+    const m = /^Error code (\d+):/.exec(message);
+    if (m) return `SQLITE_${m[1]}`;
+  }
+  return undefined;
+}
+
 export class PrunePartialFailureError extends Error {
   readonly deleted: number;
   readonly failedAt: string;

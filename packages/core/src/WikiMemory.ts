@@ -30,7 +30,7 @@ import { OntologyService } from './services/OntologyService';
 import { GraphTraversalService } from './services/GraphTraversalService';
 import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighborhood } from './types';
 
-export { WikiBusyError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER } from './types';
+export { WikiBusyError, WikiTransactionError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER } from './types';
 
 const TABLE_PREFIX_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,30}_$/;
 
