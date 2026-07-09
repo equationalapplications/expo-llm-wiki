@@ -1,6 +1,19 @@
 import { describe, it, expect } from 'vitest';
 import { extractSqliteCode, isDriverError } from '../src/db/serializedAdapter';
 import { WikiTransactionError } from '../src/types';
+import { guardReentrancy } from '../src/db/serializedAdapter';
+import type { SQLiteAdapter } from '../src/types';
+
+function fakeAdapter(): SQLiteAdapter {
+  return {
+    execAsync: async () => {},
+    runAsync: async () => ({ changes: 0, lastInsertRowId: 0 }),
+    getAllAsync: async () => [],
+    getFirstAsync: async () => null,
+    withTransactionAsync: async (fn) => fn(fakeAdapter()),
+    closeAsync: async () => {},
+  };
+}
 
 describe('extractSqliteCode', () => {
   it('reads the string SQLITE_ code from better-sqlite3 / node:sqlite errors', () => {
@@ -40,5 +53,18 @@ describe('WikiTransactionError', () => {
   it('leaves sqliteErrorCode undefined when the code cannot be parsed', () => {
     const err = new WikiTransactionError('Transaction failed', { cause: new Error('opaque') });
     expect(err.sqliteErrorCode).toBeUndefined();
+  });
+});
+
+describe('guardReentrancy', () => {
+  it('throws synchronously when withTransactionAsync is called on the guarded handle', () => {
+    const guarded = guardReentrancy(fakeAdapter());
+    expect(() => guarded.withTransactionAsync(async () => 1))
+      .toThrow(/Nested withTransactionAsync is not supported/);
+  });
+
+  it('leaves non-transactional methods intact', async () => {
+    const guarded = guardReentrancy(fakeAdapter());
+    await expect(guarded.getAllAsync('SELECT 1')).resolves.toEqual([]);
   });
 });
