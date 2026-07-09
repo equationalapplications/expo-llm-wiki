@@ -11,7 +11,7 @@
 Production incident (host app, web, 2026-07-09): concurrent wiki operations on a single
 shared SQLite connection produced:
 
-```
+```text
 Error code 1: cannot start a transaction within a transaction
 Error code 1: cannot rollback - no transaction is active
 ```
@@ -135,12 +135,10 @@ function guardReentrancy(tx: SQLiteAdapter): SQLiteAdapter {
 The queue holds a single promise chain; each resolved link is dropped as the
 tail advances, so V8/JSC reclaims settled transactions over a long-running app.
 
-> **Adapter contract — plain objects only.** The wrapper (and `guardReentrancy`)
-> use object spread (`{ ...db }`), which copies **own enumerable** properties only.
-> The expo adapter and the core test helper are plain object literals, so this is
-> correct. A future adapter authored as a **class instance** would lose its
-> prototype methods and `this` binding through the spread — adapters MUST be plain
-> objects, or the wrapper must be rewritten to delegate each method explicitly.
+> **Adapter contract.** The wrapper (and `guardReentrancy`) use prototype
+> delegation (`Object.create(...)`), not object spread, so inherited methods and
+> `this` binding are preserved — a class-instance adapter keeps its prototype
+> methods through the wrap.
 >
 > **Expo `tx` aliasing.** `packages/expo/src/adapter.ts` passes the outer adapter
 > object itself as the `tx` argument (it wraps `expo-sqlite`'s own
@@ -180,7 +178,7 @@ mutex — strictly worse. Therefore core re-wraps the `tx` handed to callbacks
 > that lived only in the adapter layer would be absent there; injecting it in core
 > covers every adapter uniformly.
 
-```
+```text
 Nested withTransactionAsync is not supported: you are already inside a
 transaction. Pass the current `tx` down instead of opening a new transaction.
 ```

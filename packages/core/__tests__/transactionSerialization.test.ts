@@ -20,9 +20,13 @@ describe('extractSqliteCode', () => {
     expect(extractSqliteCode({ code: 'SQLITE_BUSY' })).toBe('SQLITE_BUSY');
   });
 
-  it('parses the numeric code from an expo-sqlite message', () => {
+  it('parses the numeric code from an expo-sqlite message and normalizes it to a symbolic name', () => {
     expect(extractSqliteCode({ message: 'Error code 1: cannot start a transaction within a transaction' }))
-      .toBe('SQLITE_1');
+      .toBe('SQLITE_ERROR');
+    expect(extractSqliteCode({ message: 'Error code 5: database is locked' }))
+      .toBe('SQLITE_BUSY');
+    expect(extractSqliteCode({ message: 'Error code 9999: unknown code' }))
+      .toBe('SQLITE_9999');
   });
 
   it('returns undefined for a non-driver error', () => {
@@ -188,11 +192,15 @@ describe('rollback guard', () => {
       closeAsync: async () => { db.close(); },
     };
 
-    await expect(adapter.withTransactionAsync(async () => 1))
-      .rejects.toThrow(/within a transaction/);
+    let caught: unknown;
+    try {
+      await adapter.withTransactionAsync(async () => 1);
+    } catch (e) {
+      caught = e;
+    }
+    expect((caught as Error).message).toMatch(/within a transaction/);
     // The masking error must NOT surface:
-    await expect(adapter.withTransactionAsync(async () => 1))
-      .rejects.not.toThrow(/cannot rollback/);
+    expect((caught as Error).message).not.toMatch(/cannot rollback/);
   });
 });
 
