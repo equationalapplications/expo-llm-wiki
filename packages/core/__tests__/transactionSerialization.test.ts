@@ -162,3 +162,36 @@ describe('WikiMemory concurrent writes (production repro)', () => {
     expect(manifest?.manifest.node_types.map((n) => n.type)).toContain('Person');
   });
 });
+
+describe('rollback guard', () => {
+  it('surfaces the BEGIN failure, not "cannot rollback - no transaction is active"', async () => {
+    const Database = (await import('better-sqlite3')).default;
+    const db = new Database(':memory:');
+    db.exec('BEGIN'); // leave a transaction already open so the next BEGIN fails
+
+    const adapter: SQLiteAdapter = {
+      execAsync: async (sql) => { db.exec(sql); },
+      runAsync: async () => ({ changes: 0, lastInsertRowId: 0 }),
+      getAllAsync: async () => [],
+      getFirstAsync: async () => null,
+      async withTransactionAsync(fn) {
+        db.exec('BEGIN'); // throws: cannot start a transaction within a transaction
+        try {
+          const r = await fn(adapter);
+          db.exec('COMMIT');
+          return r;
+        } catch (e) {
+          try { db.exec('ROLLBACK'); } catch { /* never mask the original */ }
+          throw e;
+        }
+      },
+      closeAsync: async () => { db.close(); },
+    };
+
+    await expect(adapter.withTransactionAsync(async () => 1))
+      .rejects.toThrow(/within a transaction/);
+    // The masking error must NOT surface:
+    await expect(adapter.withTransactionAsync(async () => 1))
+      .rejects.not.toThrow(/cannot rollback/);
+  });
+});
