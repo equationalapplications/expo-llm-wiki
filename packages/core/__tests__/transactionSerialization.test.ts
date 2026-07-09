@@ -137,3 +137,28 @@ describe('withSerializedTransactions', () => {
       .rejects.toThrow(/Nested withTransactionAsync is not supported/);
   });
 });
+
+describe('WikiMemory concurrent writes (production repro)', () => {
+  it('resolves overlapping write / setOntologyManifest / write without SQLite error 1', async () => {
+    const { WikiMemory } = await import('../src/WikiMemory');
+    const { openTestDatabase } = await import('./helpers/sqliteAdapter');
+    const wiki = new WikiMemory(openTestDatabase(), {
+      llmProvider: { generateText: async () => '{}' },
+    });
+    await wiki.setup();
+
+    // Overlapping write paths that each open their own transaction.
+    await expect(Promise.all([
+      wiki.write('alice', { event_type: 'observation', summary: 'Alice likes tea' }),
+      wiki.setOntologyManifest('alice', {
+        node_types: [{ type: 'Person', description: 'a person' }],
+        edge_types: [],
+      }),
+      wiki.write('bob', { event_type: 'observation', summary: 'Bob likes coffee' }),
+    ])).resolves.toBeDefined();
+
+    // Post-conditions hold.
+    const manifest = await wiki.getOntologyManifest('alice');
+    expect(manifest?.manifest.node_types.map((n) => n.type)).toContain('Person');
+  });
+});
