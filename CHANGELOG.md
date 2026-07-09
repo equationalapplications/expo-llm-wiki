@@ -1,3 +1,21 @@
+# [4.20.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.19.0...v4.20.0) (2026-07-09)
+
+
+### Bug Fixes
+
+* **core:** address CodeRabbit review on PR [#60](https://github.com/equationalapplications/expo-llm-wiki/issues/60) ([fc8dddb](https://github.com/equationalapplications/expo-llm-wiki/commit/fc8dddb677c430f56e61d10fc637ff7a106d5a81))
+* **core:** address Copilot review on PR [#60](https://github.com/equationalapplications/expo-llm-wiki/issues/60) ([0a02f9a](https://github.com/equationalapplications/expo-llm-wiki/commit/0a02f9ac3a5e382e67fe6cffe0ac2415782160c7)), closes [#private](https://github.com/equationalapplications/expo-llm-wiki/issues/private)
+* **core:** guard rollback so a failed BEGIN never masks the original error ([2cd7fe1](https://github.com/equationalapplications/expo-llm-wiki/commit/2cd7fe1b36e5654efb0fd906d87adf9db5094714))
+* **core:** serialize transactions on the shared connection ([aa14bfe](https://github.com/equationalapplications/expo-llm-wiki/commit/aa14bfe6e51210aed86d2d239d293139fd07ad79))
+
+
+### Features
+
+* **core:** add reentrancy guard for nested transactions ([3df1fce](https://github.com/equationalapplications/expo-llm-wiki/commit/3df1fcedc1f0343618b782988d35997c782b796f))
+* **core:** add SQLite driver-error classification helpers ([572c1a9](https://github.com/equationalapplications/expo-llm-wiki/commit/572c1a9bca08172239bda3019248ad88343832d7))
+* **core:** add WikiTransactionError with lifted sqliteErrorCode ([dbe9042](https://github.com/equationalapplications/expo-llm-wiki/commit/dbe9042b0dd423662d4d664dab8f03401bcbf809))
+* **core:** serialize transactions with a promise-chain mutex ([ca86ef6](https://github.com/equationalapplications/expo-llm-wiki/commit/ca86ef69f98d7f87bd28b99b147dc8df8212a8b6))
+
 # [4.19.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.18.1...v4.19.0) (2026-07-06)
 
 
