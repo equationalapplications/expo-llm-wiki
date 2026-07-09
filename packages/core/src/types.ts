@@ -8,6 +8,12 @@ export interface SQLiteAdapter {
   runAsync(sql: string, params?: unknown[]): Promise<{ changes: number; lastInsertRowId: number }>;
   getAllAsync<T>(sql: string, params?: unknown[]): Promise<T[]>;
   getFirstAsync<T>(sql: string, params?: unknown[]): Promise<T | null>;
+  /**
+   * Runs `fn` inside a serialized transaction. Inside the callback, use ONLY the
+   * provided `tx` handle — never the outer database handle (captured via closure or
+   * `this.db`). Calling the outer handle deadlocks against the transaction mutex;
+   * calling `tx.withTransactionAsync` throws (nested transactions are unsupported).
+   */
   withTransactionAsync<T>(fn: (tx: SQLiteAdapter) => Promise<T>): Promise<T>;
   closeAsync(): Promise<void>;
 }
