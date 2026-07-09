@@ -846,6 +846,31 @@ const adapter: SQLiteAdapter = {
 };
 ```
 
+## Concurrency
+
+All write APIs are safe to call from concurrent async contexts. Transactions are
+serialized internally on the single database connection — you never need to know that
+SQLite forbids nested `BEGIN`, and you never need to throttle callers yourself.
+
+- One connection per database file per process is the supported topology.
+- Non-transactional reads are **not** serialized, so read latency is unaffected.
+- Inside a transaction callback, use only the provided `tx` handle — never the outer
+  database handle. Using the outer handle deadlocks; opening a nested transaction throws.
+
+### `WikiTransactionError`
+
+Thrown when a SQLite driver error escapes a transaction (nested `BEGIN`,
+`SQLITE_BUSY`, constraint violation). Stable `instanceof` target for observability:
+
+- `error.cause` — the original driver error (the chain bottoms out here, not at a
+  rollback red herring).
+- `error.sqliteErrorCode` — best-effort SQLite code (e.g. `'SQLITE_BUSY'`), present
+  when it can be parsed. Group on this in Sentry/Datadog instead of inspecting
+  `error.cause` recursively.
+
+Domain errors thrown from your own callback logic (validation, `WikiBusyError`)
+pass through unwrapped with their original type intact.
+
 ## How It Works
 
 ```mermaid

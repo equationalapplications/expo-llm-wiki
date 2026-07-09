@@ -409,6 +409,20 @@ const memory = await wiki.read(
 
 For full details on `{{mustache}}` prompt templating and the strict distinction between global auto-runs and runtime overrides, see [Prompt Management & Overrides](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md#prompt-management--overrides) in `@equationalapplications/core-llm-wiki`.
 
+## Concurrency
+
+All write APIs are safe to call from concurrent async contexts. Transactions are
+serialized internally on the single database connection — you never need to know that
+SQLite forbids nested `BEGIN`, and you never need to throttle callers yourself.
+
+- One connection per database file per process is the supported topology.
+- Non-transactional reads are **not** serialized, so read latency is unaffected.
+- Inside a transaction callback, use only the provided `tx` handle — never the outer
+  database handle. Using the outer handle deadlocks; opening a nested transaction throws.
+
+Driver errors that escape a transaction surface as `WikiTransactionError` (re-exported
+from `@equationalapplications/core-llm-wiki`) with a top-level `sqliteErrorCode`.
+
 ## Monorepo Ecosystem
 
 | Package | Purpose |
