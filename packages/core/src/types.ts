@@ -1,3 +1,5 @@
+import { extractSqliteCode } from './db/sqliteCodes';
+
 /**
  * Platform-agnostic SQLite driver interface.
  * Each platform package (wiki-expo, wiki-react) provides an adapter
@@ -9,7 +11,10 @@ export interface SQLiteAdapter {
   getAllAsync<T>(sql: string, params?: unknown[]): Promise<T[]>;
   getFirstAsync<T>(sql: string, params?: unknown[]): Promise<T | null>;
   /**
-   * Runs `fn` inside a serialized transaction. Inside the callback, use ONLY the
+   * Runs `fn` inside a transaction. A bare adapter implementation is not required to
+   * serialize concurrent calls itself — `WikiMemory` wraps every adapter it's given in
+   * `withSerializedTransactions` (see `db/serializedAdapter.ts`), which is what makes
+   * transactions serialize in practice. Once wrapped, inside the callback use ONLY the
    * provided `tx` handle — never the outer database handle (captured via closure or
    * `this.db`). Calling the outer handle deadlocks against the transaction mutex;
    * calling `tx.withTransactionAsync` throws (nested transactions are unsupported).
@@ -529,37 +534,8 @@ export class WikiTransactionError extends Error {
   constructor(message: string, options: { cause: unknown }) {
     super(message, options);
     this.name = 'WikiTransactionError';
-    this.sqliteErrorCode = extractSqliteCodeForError(options.cause);
+    this.sqliteErrorCode = extractSqliteCode(options.cause);
   }
-}
-
-/**
- * SQLite primary result codes → symbolic name (https://sqlite.org/rescode.html), kept
- * in sync with `SQLITE_RESULT_CODE_NAMES` in db/serializedAdapter.ts so a numeric
- * expo-sqlite code normalizes to the same shape as the string codes better-sqlite3 /
- * node:sqlite already report (e.g. both become 'SQLITE_BUSY').
- */
-const SQLITE_RESULT_CODE_NAMES: Record<number, string> = {
-  1: 'SQLITE_ERROR', 2: 'SQLITE_INTERNAL', 3: 'SQLITE_PERM', 4: 'SQLITE_ABORT',
-  5: 'SQLITE_BUSY', 6: 'SQLITE_LOCKED', 7: 'SQLITE_NOMEM', 8: 'SQLITE_READONLY',
-  9: 'SQLITE_INTERRUPT', 10: 'SQLITE_IOERR', 11: 'SQLITE_CORRUPT', 12: 'SQLITE_NOTFOUND',
-  13: 'SQLITE_FULL', 14: 'SQLITE_CANTOPEN', 15: 'SQLITE_PROTOCOL', 16: 'SQLITE_EMPTY',
-  17: 'SQLITE_SCHEMA', 18: 'SQLITE_TOOBIG', 19: 'SQLITE_CONSTRAINT', 20: 'SQLITE_MISMATCH',
-  21: 'SQLITE_MISUSE', 22: 'SQLITE_NOLFS', 23: 'SQLITE_AUTH', 24: 'SQLITE_FORMAT',
-  25: 'SQLITE_RANGE', 26: 'SQLITE_NOTADB', 27: 'SQLITE_NOTICE', 28: 'SQLITE_WARNING',
-  100: 'SQLITE_ROW', 101: 'SQLITE_DONE',
-};
-
-/** Local copy of the driver-code extractor to keep types.ts free of a circular import. */
-function extractSqliteCodeForError(err: unknown): string | undefined {
-  if (typeof err !== 'object' || err === null) return undefined;
-  const { code, message } = err as { code?: unknown; message?: unknown };
-  if (typeof code === 'string' && code.startsWith('SQLITE_')) return code;
-  if (typeof message === 'string') {
-    const m = /^Error code (\d+):/.exec(message);
-    if (m) return SQLITE_RESULT_CODE_NAMES[Number(m[1])] ?? `SQLITE_${m[1]}`;
-  }
-  return undefined;
 }
 
 export class PrunePartialFailureError extends Error {
