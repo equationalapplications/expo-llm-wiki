@@ -195,3 +195,29 @@ describe('rollback guard', () => {
       .rejects.not.toThrow(/cannot rollback/);
   });
 });
+
+describe('reads are not serialized', () => {
+  it('a getAllAsync outside a transaction resolves before a long-held transaction settles', async () => {
+    const order: string[] = [];
+    const base: SQLiteAdapter = {
+      execAsync: async () => {},
+      runAsync: async () => ({ changes: 0, lastInsertRowId: 0 }),
+      getAllAsync: async () => { order.push('read'); return []; },
+      getFirstAsync: async () => null,
+      async withTransactionAsync(fn) { return fn(base); },
+      closeAsync: async () => {},
+    };
+    const db = withSerializedTransactions(base);
+
+    // Long-running transaction gated by a ≥50ms timeout (comfortable margin vs CI jitter).
+    const txDone = db.withTransactionAsync(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+      order.push('tx');
+    });
+    // Concurrent read outside any transaction.
+    await db.getAllAsync('SELECT 1');
+
+    await txDone;
+    expect(order).toEqual(['read', 'tx']);
+  });
+});
