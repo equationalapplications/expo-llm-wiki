@@ -33,7 +33,12 @@ export function openTestDatabase(): SQLiteAdapter {
         db.exec('COMMIT');
         return result;
       } catch (e) {
-        db.exec('ROLLBACK');
+        try {
+          db.exec('ROLLBACK');
+        } catch {
+          // Connection may have no active transaction (BEGIN itself failed, or SQLite
+          // auto-rolled-back). Never mask the original error with a rollback error.
+        }
         throw e;
       }
     },

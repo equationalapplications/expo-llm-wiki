@@ -1,3 +1,5 @@
+import { extractSqliteCode } from './db/sqliteCodes';
+
 /**
  * Platform-agnostic SQLite driver interface.
  * Each platform package (wiki-expo, wiki-react) provides an adapter
@@ -8,6 +10,15 @@ export interface SQLiteAdapter {
   runAsync(sql: string, params?: unknown[]): Promise<{ changes: number; lastInsertRowId: number }>;
   getAllAsync<T>(sql: string, params?: unknown[]): Promise<T[]>;
   getFirstAsync<T>(sql: string, params?: unknown[]): Promise<T | null>;
+  /**
+   * Runs `fn` inside a transaction. A bare adapter implementation is not required to
+   * serialize concurrent calls itself — `WikiMemory` wraps every adapter it's given in
+   * `withSerializedTransactions` (see `db/serializedAdapter.ts`), which is what makes
+   * transactions serialize in practice. Once wrapped, inside the callback use ONLY the
+   * provided `tx` handle — never the outer database handle (captured via closure or
+   * `this.db`). Calling the outer handle deadlocks against the transaction mutex;
+   * calling `tx.withTransactionAsync` throws (nested transactions are unsupported).
+   */
   withTransactionAsync<T>(fn: (tx: SQLiteAdapter) => Promise<T>): Promise<T>;
   closeAsync(): Promise<void>;
 }
@@ -507,6 +518,23 @@ export class WikiBusyError extends Error {
     this.name = 'WikiBusyError';
     this.operation = operation;
     this.entityId = entityId;
+  }
+}
+
+/**
+ * Thrown by the serialized transaction wrapper when a SQLite driver error
+ * escapes a transaction callback (nested BEGIN, SQLITE_BUSY, constraint
+ * violation). Domain errors thrown from callback logic pass through unwrapped.
+ * Stable `instanceof` target for observability, mirroring {@link WikiBusyError}.
+ */
+export class WikiTransactionError extends Error {
+  /** Best-effort SQLite code lifted from the driver error, e.g. 'SQLITE_BUSY'. */
+  readonly sqliteErrorCode?: string;
+
+  constructor(message: string, options: { cause: unknown }) {
+    super(message, options);
+    this.name = 'WikiTransactionError';
+    this.sqliteErrorCode = extractSqliteCode(options.cause);
   }
 }
 

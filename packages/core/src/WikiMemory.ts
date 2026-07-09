@@ -1,6 +1,7 @@
 import type { SQLiteAdapter } from './types';
 import type { WikiOutboxEvent } from './outbox/types';
 import { setupDatabase } from './db/schema';
+import { withSerializedTransactions } from './db/serializedAdapter';
 import { MIGRATIONS, CURRENT_SCHEMA_VERSION } from './db/migrations';
 import {
   WikiOptions,
@@ -30,7 +31,7 @@ import { OntologyService } from './services/OntologyService';
 import { GraphTraversalService } from './services/GraphTraversalService';
 import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighborhood } from './types';
 
-export { WikiBusyError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER } from './types';
+export { WikiBusyError, WikiTransactionError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER } from './types';
 
 const TABLE_PREFIX_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,30}_$/;
 
@@ -76,7 +77,9 @@ export class WikiMemory {
   private graphTraversalService: GraphTraversalService;
 
   constructor(db: SQLiteAdapter, options: WikiOptions) {
-    this.db = db;
+    // Serialize transactions on the single shared connection before the adapter
+    // reaches any repository or service. See docs/superpowers/specs/2026-07-09-transaction-serialization-spec.md.
+    this.db = withSerializedTransactions(db);
     this.options = options;
     this.prefix = options.config?.tablePrefix ?? 'llm_wiki_';
     if (!TABLE_PREFIX_PATTERN.test(this.prefix)) {
@@ -85,12 +88,12 @@ export class WikiMemory {
           `Must match ${TABLE_PREFIX_PATTERN} (letter, then alphanumeric/underscore, ending in "_", max 32 chars total).`,
       );
     }
-    this.outboxRepo = new OutboxRepository(db, this.prefix, !!options.config?.enableOutbox);
-    this.entryRepo = new EntryRepository(db, this.prefix, this.outboxRepo);
-    this.taskRepo = new TaskRepository(db, this.prefix, this.outboxRepo);
-    this.eventRepo = new EventRepository(db, this.prefix);
-    this.edgeRepo = new EdgeRepository(db, this.prefix);
-    this.metadataRepo = new MetadataRepository(db, this.prefix);
+    this.outboxRepo = new OutboxRepository(this.db, this.prefix, !!options.config?.enableOutbox);
+    this.entryRepo = new EntryRepository(this.db, this.prefix, this.outboxRepo);
+    this.taskRepo = new TaskRepository(this.db, this.prefix, this.outboxRepo);
+    this.eventRepo = new EventRepository(this.db, this.prefix);
+    this.edgeRepo = new EdgeRepository(this.db, this.prefix);
+    this.metadataRepo = new MetadataRepository(this.db, this.prefix);
     this.ontologyService = new OntologyService(
       this.metadataRepo,
       this.edgeRepo,

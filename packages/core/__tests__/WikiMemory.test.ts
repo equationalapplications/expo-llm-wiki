@@ -108,10 +108,11 @@ describe('WikiMemory (Facade Layer)', () => {
       await wiki.setup();
 
       expect(tableExistsSpy).toHaveBeenCalledWith('test_entries');
+      // this.db is the serialized wrapper (Object.create(mockDb)), not raw mockDb.
       expect(setMetaSpy).toHaveBeenCalledWith(
         'schema_version',
         String(CURRENT_SCHEMA_VERSION),
-        mockDb,
+        (wiki as unknown as { db: SQLiteAdapter }).db,
       );
     });
 
