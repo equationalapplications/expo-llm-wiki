@@ -27,21 +27,20 @@ export function isDriverError(err: unknown): boolean {
  * by the serialized wrapper onto the `tx` handed to every callback so a *nested*
  * transaction fails loudly instead of deadlocking against the mutex.
  *
- * Object-spread copies own enumerable properties only — adapters MUST be plain
- * object literals (the expo adapter and the core test helper are). A class-instance
- * adapter would lose its prototype methods here.
+ * Uses prototype delegation (`Object.create`) rather than object-spread so the
+ * override sits on a thin child object and every other method — own OR inherited
+ * from a class prototype — still resolves through the chain to the original adapter.
  */
 export function guardReentrancy(tx: SQLiteAdapter): SQLiteAdapter {
-  return {
-    ...tx,
-    withTransactionAsync() {
-      throw new Error(
-        'Nested withTransactionAsync is not supported: you are already ' +
-        'inside a transaction. Pass the current `tx` down instead of ' +
-        'opening a new transaction.'
-      );
-    },
+  const guarded = Object.create(tx) as SQLiteAdapter;
+  guarded.withTransactionAsync = function () {
+    throw new Error(
+      'Nested withTransactionAsync is not supported: you are already ' +
+      'inside a transaction. Pass the current `tx` down instead of ' +
+      'opening a new transaction.'
+    );
   };
+  return guarded;
 }
 
 const DEADLOCK_WARN_MS = 10_000;
@@ -54,9 +53,11 @@ const DEADLOCK_WARN_MS = 10_000;
  */
 export function withSerializedTransactions(db: SQLiteAdapter): SQLiteAdapter {
   let queue: Promise<unknown> = Promise.resolve();
-  return {
-    ...db,
-    withTransactionAsync<T>(fn: (tx: SQLiteAdapter) => Promise<T>): Promise<T> {
+  // Prototype delegation keeps every non-overridden method (own or inherited from a
+  // class prototype) resolving through to the original adapter — object-spread would
+  // silently drop a class-instance adapter's prototype methods.
+  const wrapped = Object.create(db) as SQLiteAdapter;
+  wrapped.withTransactionAsync = function <T>(fn: (tx: SQLiteAdapter) => Promise<T>): Promise<T> {
       // Warns if a call waits >10s for the lock — the signature of the closure-capture
       // deadlock (calling the outer `db` instead of `tx` inside a callback). Cleared the
       // instant the lock is acquired, so it measures queue wait only.
@@ -73,7 +74,9 @@ export function withSerializedTransactions(db: SQLiteAdapter): SQLiteAdapter {
         .then(() => {
           clearTimeout(warn);
           // Re-wrap the tx so a nested withTransactionAsync throws synchronously.
-          return db.withTransactionAsync((tx) => fn(guardReentrancy(tx)));
+          // Some adapters invoke the callback with no tx handle; fall back to the
+          // outer db (same connection). The guard still blocks nested transactions.
+          return db.withTransactionAsync((tx) => fn(guardReentrancy(tx ?? db)));
         })
         .catch((e) => {
           // Wrap only driver errors; domain errors reach the caller with instanceof intact.
@@ -84,6 +87,6 @@ export function withSerializedTransactions(db: SQLiteAdapter): SQLiteAdapter {
 
       queue = run; // advance the tail; next caller's leading .catch() absorbs this rejection
       return run as Promise<T>;
-    },
   };
+  return wrapped;
 }
