@@ -284,7 +284,7 @@ describe('runOntologyBackfill', () => {
   });
 
   // Spec test 7
-  it('payload guard: truncates below batchSize; single oversized fact still sent alone', async () => {
+  it('payload guard: truncates below batchSize; documented exception — a single oversized fact is still sent alone', async () => {
     const { db, wiki, generateText } = await makeWiki('strict');
     const big = 'x'.repeat(ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS - 100);
     await seedEntry(db, { id: 'fact_big1', body: big, updatedAt: 100 });
@@ -293,11 +293,47 @@ describe('runOntologyBackfill', () => {
     const r1 = await wiki.runOntologyBackfill('e1');
     expect(r1.scanned).toBe(1); // second fact would blow the char budget
     expect(r1.remaining).toBe(1);
+    // The documented exception: a fact whose prompt alone exceeds the cap is
+    // sent anyway rather than starved (deferring would re-defer forever).
+    const call1 = generateText.mock.calls[0][0];
+    expect(call1.systemPrompt.length + call1.userPrompt.length)
+      .toBeGreaterThan(ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS);
     // second run: the remaining oversized fact is sent alone, never starved
     generateText.mockResolvedValue(llmJson({ classifications: [{ id: 'fact_big2', okf_type: 'person' }] }));
     const r2 = await wiki.runOntologyBackfill('e1');
     expect(r2.scanned).toBe(1);
     expect(r2.typed).toBe(1);
+  });
+
+  it('payload guard measures the full serialized prompt, not just title+body', async () => {
+    const { db, wiki, generateText } = await makeWiki('strict');
+    // Each fact's title+body sums to just under half the cap, so a title+body-only
+    // guard would batch both; the full prompt (manifest, ids, tags, JSON syntax)
+    // pushes two facts over the cap.
+    const half = 'x'.repeat(ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS / 2 - 60);
+    await seedEntry(db, { id: 'fact_half1', body: half, updatedAt: 100 });
+    await seedEntry(db, { id: 'fact_half2', body: half, updatedAt: 200 });
+    generateText.mockResolvedValue(llmJson({ classifications: [{ id: 'fact_half1', okf_type: 'person' }] }));
+    const r1 = await wiki.runOntologyBackfill('e1');
+    expect(r1.scanned).toBe(1);
+    const call1 = generateText.mock.calls[0][0];
+    expect(call1.systemPrompt.length + call1.userPrompt.length)
+      .toBeLessThanOrEqual(ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS);
+  });
+
+  it('aborts without writes when ontology is disabled mid-flight (during the LLM call)', async () => {
+    const { db, wiki, generateText } = await makeWiki('strict');
+    await seedEntry(db, { id: 'fact_flip' });
+    generateText.mockImplementation(async () => {
+      // setOntologyManifest is not under the backfill job lock
+      await wiki.setOntologyManifest('e1', MANIFEST, { mode: 'off' });
+      return llmJson({ classifications: [{ id: 'fact_flip', okf_type: 'person' }] });
+    });
+    const r = await wiki.runOntologyBackfill('e1');
+    expect(r).toEqual({ scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0, remaining: 0, deferred: 0 });
+    const row = await getFactRow(db, 'fact_flip');
+    expect(row!.okf_type).toBeNull();
+    expect(row!.ontology_checked_at).toBeNull(); // abort must not stamp the cooldown
   });
 
   // Spec test 8
@@ -419,13 +455,16 @@ describe('runOntologyBackfill — lock discipline (WikiMemory)', () => {
 
     let releaseLlm!: () => void;
     const gate = new Promise<void>(resolve => { releaseLlm = resolve; });
+    let signalLlmEntered!: () => void;
+    const llmEntered = new Promise<void>(resolve => { signalLlmEntered = resolve; });
     generateText.mockImplementation(async () => {
+      signalLlmEntered();
       await gate;
       return llmJson({ classifications: [{ id: 'fact_lock', okf_type: 'person' }] });
     });
 
     const first = wiki.runOntologyBackfill('e1');
-    await new Promise(r => setTimeout(r, 10)); // let first acquire the lock
+    await llmEntered; // first run inside generateText → lock is held
     await expect(wiki.runOntologyBackfill('e1')).rejects.toThrow(WikiBusyError);
 
     releaseLlm();

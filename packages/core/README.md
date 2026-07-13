@@ -559,7 +559,9 @@ const result = await wiki.runOntologyBackfill(entityId);
   swallow; the next trigger retries.
 - **Cost model:** one LLM call only when eligible untyped facts exist; otherwise
   one SELECT. Each run scans at most 25 facts (override via
-  `options.batchSize`), oldest first, capped at 40k prompt chars.
+  `options.batchSize`), oldest first, with the full serialized prompt
+  (system + user) capped at 40k chars. One exception: a single fact whose
+  prompt alone exceeds the cap is still sent by itself so it is never starved.
 - **Convergence:** loop `while (result.remaining > 0)` to drain a backlog.
   `remaining` counts only *eligible* untyped facts, so the loop terminates even
   when unclassifiable facts exist; those are cooldown-stamped and retried after

@@ -229,13 +229,9 @@ export class JobManager {
 
     switch (operation) {
       case 'librarian':
-        return this.activeMaintenanceJobs.has(this._librarianKey(entityId)) ||
-               this.activeMaintenanceJobs.has(this._pruneKey(entityId)) ||
-               this._isReembedActive(entityId) ||
-               this._isImportActiveFor(entityId) ||
-               this._isForgetActiveFor(entityId);
       case 'heal':
-        return this.activeMaintenanceJobs.has(this._healKey(entityId)) ||
+      case 'ontologyBackfill':
+        return this.activeMaintenanceJobs.has(this.lockKeyFns[operation](entityId)) ||
                this.activeMaintenanceJobs.has(this._pruneKey(entityId)) ||
                this._isReembedActive(entityId) ||
                this._isImportActiveFor(entityId) ||
@@ -244,6 +240,7 @@ export class JobManager {
         return this.activeMaintenanceJobs.has(this._pruneKey(entityId)) ||
                this.activeMaintenanceJobs.has(this._librarianKey(entityId)) ||
                this.activeMaintenanceJobs.has(this._healKey(entityId)) ||
+               this.activeMaintenanceJobs.has(this._ontologyBackfillKey(entityId)) ||
                this._isReembedActive(entityId) ||
                this._isIngestActiveFor(entityId) ||
                this._isImportActiveFor(entityId) ||

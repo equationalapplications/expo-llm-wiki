@@ -90,8 +90,10 @@ findUntypedByEntityId(entityId: string, limit: number, recheckCutoff: number, tx
   //   AND (ontology_checked_at IS NULL OR ontology_checked_at <= ?)
   // ORDER BY updated_at ASC LIMIT ?
 countUntypedByEntityId(entityId: string, recheckCutoff: number, tx?: SQLiteAdapter): Promise<{ eligible: number; deferred: number }>
-updateOkfType(id: string, entityId: string, okfType: string, tx: SQLiteAdapter): Promise<void>
+updateOkfType(id: string, entityId: string, okfType: string, tx: SQLiteAdapter): Promise<{ changes: number }>
   // UPDATE ... SET okf_type = ? WHERE id = ? AND entity_id = ? AND okf_type IS NULL
+  // changes === 0 → the fact was typed concurrently between select and update
+  // (the okf_type IS NULL guard left it untouched); the caller skips it
 markOntologyChecked(ids: string[], entityId: string, now: number, tx: SQLiteAdapter): Promise<void>
   // UPDATE ... SET ontology_checked_at = ? WHERE id IN (…) AND entity_id = ?
   // NEVER touches updated_at — see Decision 3b
@@ -101,13 +103,14 @@ markOntologyChecked(ids: string[], entityId: string, now: number, tx: SQLiteAdap
   via `options.batchSize` for hosts whose LLM provider has tighter context limits.
   One LLM call per run, bounded cost. First-run backlogs (pre-ontology facts)
   converge across repeated triggers rather than bursting.
-- **Payload guard:** after selecting up to `batchSize` facts, drop trailing facts
-  once the accumulated `title + body` length exceeds
+- **Payload guard:** after selecting up to `batchSize` facts, add facts to the
+  batch only while the full serialized prompt (`systemPrompt` + `userPrompt`,
+  including the manifest, ids, tags, JSON syntax, and any override) stays within
   `ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS = 40_000`. Facts can be large (ingestion
   chunks run up to `maxChunkLength` ≈ 12k chars), and 25 dense facts could
   otherwise blow past a provider's context window or degrade instruction
   following. At least one fact is always sent (a single oversized fact is not
-  silently starved; the model sees it alone).
+  silently starved; the model sees it alone, even over the cap).
 - Oldest-first (`updated_at ASC`) so long-neglected facts are typed before recent
   ones and the queue drains deterministically. A useful side effect: facts created
   around the same time — the likely edge partners — cluster into the same batch.

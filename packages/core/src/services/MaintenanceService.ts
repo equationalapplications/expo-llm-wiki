@@ -592,25 +592,30 @@ export class MaintenanceService {
       return { ...zeroed, remaining: counts.eligible, deferred: counts.deferred };
     }
 
-    // Payload guard: cap accumulated title+body chars so dense facts cannot blow
-    // a provider's context window; a single oversized fact is still sent alone.
-    const batch: WikiFact[] = [];
-    let promptChars = 0;
-    for (const fact of candidates) {
-      const len = fact.title.length + fact.body.length;
-      if (batch.length > 0 && promptChars + len > ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS) break;
-      batch.push(fact);
-      promptChars += len;
-    }
-
     const ontologyContext = await ontologyService.buildPromptContext(entityId);
-    const factsForPrompt = batch.map(f => ({ id: f.id, title: f.title, body: f.body, tags: f.tags }));
 
-    const { systemPrompt, userPrompt } = this.promptService.buildOntologyBackfillPrompt(
-      factsForPrompt,
+    // Payload guard: cap the full serialized prompt (system + user — manifest,
+    // ids, tags, JSON syntax, overrides all counted) so dense facts cannot blow
+    // a provider's context window. A single fact whose prompt alone exceeds the
+    // cap is still sent by itself: deferring it would just re-defer forever and
+    // starve it (spec Decision 2).
+    const toPromptShape = (f: WikiFact) => ({ id: f.id, title: f.title, body: f.body, tags: f.tags });
+    const buildPrompt = (facts: WikiFact[]) => this.promptService.buildOntologyBackfillPrompt(
+      facts.map(toPromptShape),
       options?.promptOverride,
       ontologyContext,
     );
+
+    const batch: WikiFact[] = [candidates[0]];
+    let built = buildPrompt(batch);
+    for (let i = 1; i < candidates.length; i++) {
+      const next = buildPrompt([...batch, candidates[i]]);
+      if (next.systemPrompt.length + next.userPrompt.length > ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS) break;
+      batch.push(candidates[i]);
+      built = next;
+    }
+
+    const { systemPrompt, userPrompt } = built;
 
     const responseText = await this.options.llmProvider.generateText({ systemPrompt, userPrompt });
 
@@ -624,8 +629,18 @@ export class MaintenanceService {
     let failedValidation = 0;
     let edgesAdded = 0;
 
+    let abortedOntologyOff = false;
+
     await this.db.withTransactionAsync(async (tx) => {
       let { mode: txMode, manifest } = await ontologyService.getEffectiveState(entityId, tx);
+
+      // setOntologyManifest is not under this job lock, so ontology can be
+      // disabled while generateText was in flight. Abort without typing facts
+      // or stamping cooldowns.
+      if (txMode === 'off') {
+        abortedOntologyOff = true;
+        return;
+      }
 
       if (txMode === 'emergent' && parsed.ontology_updates) {
         manifest = await ontologyService.mergeEmergentUpdates(entityId, parsed.ontology_updates, tx);
@@ -685,6 +700,13 @@ export class MaintenanceService {
 
       await this.entryRepo.markOntologyChecked(batch.map(f => f.id), entityId, now, tx);
     });
+
+    if (abortedOntologyOff) {
+      // Mirror the mode === 'off' early path: remaining stays 0 so a host
+      // convergence loop (while remaining > 0) still terminates.
+      const counts = await this.entryRepo.countUntypedByEntityId(entityId, recheckCutoff);
+      return { ...zeroed, remaining: 0, deferred: counts.deferred };
+    }
 
     this.searchService.evictCache(entityId);
 

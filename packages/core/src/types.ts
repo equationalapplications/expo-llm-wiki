@@ -97,7 +97,9 @@ export interface OntologyBackfillResult {
   failedValidation: number;
   /** Edges persisted. */
   edgesAdded: number;
-  /** Untyped facts still eligible after this run — safe host convergence signal: loop while > 0. */
+  /** Untyped facts still eligible after this run — safe host convergence signal: loop while > 0.
+   * Always 0 when ontology mode is 'off' (nothing is eligible for typing while
+   * disabled), so 0 does not imply queue exhaustion in that mode. */
   remaining: number;
   /** Untyped facts inside the recheck cooldown. */
   deferred: number;
