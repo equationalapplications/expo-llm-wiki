@@ -4,7 +4,9 @@ import {
   INGEST_SYSTEM_PROMPT,
   LIBRARIAN_SYSTEM_PROMPT,
   HEAL_SYSTEM_PROMPT,
+  ONTOLOGY_BACKFILL_SYSTEM_PROMPT,
 } from '../../src/prompts';
+import { buildOntologyPromptAppendix } from '../../src/prompts/ontology';
 
 describe('PromptService', () => {
   describe('buildIngestPrompt', () => {
@@ -163,6 +165,32 @@ describe('PromptService', () => {
       const { systemPrompt, userPrompt } = svc.buildHealPrompt([], [], [], events, template);
       expect(systemPrompt).toContain('"recent thing"');
       expect(userPrompt).toBe('Please heal the memory graph.');
+    });
+  });
+
+  describe('buildOntologyBackfillPrompt', () => {
+    const facts = [{ id: 'fact_1', title: 'T', body: 'B', tags: [] }];
+
+    it('uses default prompt with facts in userPrompt and ontology context appended', () => {
+      const svc = new PromptService();
+      const ctx = buildOntologyPromptAppendix('strict', '{"node_types":[],"edge_types":[]}');
+      const { systemPrompt, userPrompt } = svc.buildOntologyBackfillPrompt(facts, undefined, ctx);
+      expect(systemPrompt).toContain(ONTOLOGY_BACKFILL_SYSTEM_PROMPT);
+      expect(systemPrompt).toContain(ctx.ontologyModeInstructions);
+      expect(userPrompt).toContain('fact_1');
+    });
+
+    it('runtime override wins over global override', () => {
+      const svc = new PromptService({ ontologyBackfillSystemPrompt: 'GLOBAL' });
+      expect(svc.buildOntologyBackfillPrompt(facts, 'RUNTIME').systemPrompt).toContain('RUNTIME');
+      expect(svc.buildOntologyBackfillPrompt(facts).systemPrompt).toContain('GLOBAL');
+    });
+
+    it('hydrates {{facts}} placeholder into systemPrompt', () => {
+      const svc = new PromptService();
+      const { systemPrompt, userPrompt } = svc.buildOntologyBackfillPrompt(facts, 'Classify: {{facts}}');
+      expect(systemPrompt).toContain('fact_1');
+      expect(userPrompt).toBe('Please classify the facts.');
     });
   });
 });

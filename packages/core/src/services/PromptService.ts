@@ -1,4 +1,9 @@
-import { INGEST_SYSTEM_PROMPT, LIBRARIAN_SYSTEM_PROMPT, HEAL_SYSTEM_PROMPT } from '../prompts';
+import {
+  INGEST_SYSTEM_PROMPT,
+  LIBRARIAN_SYSTEM_PROMPT,
+  HEAL_SYSTEM_PROMPT,
+  ONTOLOGY_BACKFILL_SYSTEM_PROMPT,
+} from '../prompts';
 import type { PromptOverrides, OntologyPromptContext } from '../types';
 
 export class PromptService {
@@ -105,6 +110,25 @@ export class PromptService {
     return {
       systemPrompt: template,
       userPrompt: `Heal Candidates:\n${JSON.stringify(healCandidates, null, 2)}\nDocument Anchors (DO NOT MODIFY OR DELETE):\n${JSON.stringify(documentAnchors, null, 2)}\nAll Tasks:\n${JSON.stringify(allTasks, null, 2)}\nRecent Events:\n${JSON.stringify(recentEvents, null, 2)}\nThe following document anchors are provided for contradiction detection only. Do not include them in \`downgraded\`, \`deleted\`, or \`newFacts\`.`,
+    };
+  }
+
+  buildOntologyBackfillPrompt(
+    facts: unknown[],
+    runtimeOverride?: string,
+    ontologyContext?: OntologyPromptContext | null,
+  ): { systemPrompt: string; userPrompt: string } {
+    const template = runtimeOverride ?? this.globalOverrides?.ontologyBackfillSystemPrompt ?? ONTOLOGY_BACKFILL_SYSTEM_PROMPT;
+    const hasFacts = /\{\{\s*facts\s*\}\}/.test(template);
+    if (hasFacts || this.hasOntologyPlaceholders(template)) {
+      return {
+        systemPrompt: this.buildSystemPrompt(template, { facts }, ontologyContext),
+        userPrompt: hasFacts ? 'Please classify the facts.' : `Facts:\n${JSON.stringify(facts, null, 2)}`,
+      };
+    }
+    return {
+      systemPrompt: this.appendOntology(template, ontologyContext),
+      userPrompt: `Facts:\n${JSON.stringify(facts, null, 2)}`,
     };
   }
 }

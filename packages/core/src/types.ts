@@ -27,6 +27,7 @@ export interface PromptOverrides {
   ingestSystemPrompt?: string;
   librarianSystemPrompt?: string;
   healSystemPrompt?: string;
+  ontologyBackfillSystemPrompt?: string;
 }
 
 export type OntologyMode = 'strict' | 'emergent' | 'off';
