@@ -1,7 +1,7 @@
 # Spec: Ontology Backfill — Typing Facts That Bypassed the Librarian
 
 **Date:** 2026-07-13
-**Status:** Proposed
+**Status:** Implemented
 **Packages:** `core-llm-wiki` (primary), `expo-llm-wiki` (re-export + docs)
 
 ---

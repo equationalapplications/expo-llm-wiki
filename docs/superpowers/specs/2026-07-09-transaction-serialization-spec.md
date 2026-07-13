@@ -1,7 +1,7 @@
 # Spec: Transaction Serialization & Connection-Wedge Hardening
 
 **Date:** 2026-07-09
-**Status:** Approved
+**Status:** Implemented
 **Packages:** `core-llm-wiki` (primary), `expo-llm-wiki` (adapter + docs)
 
 ---
