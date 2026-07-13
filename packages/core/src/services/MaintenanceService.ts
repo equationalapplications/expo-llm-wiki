@@ -6,7 +6,7 @@ import { generateId } from '../utils/ids';
 import { parseEmbedding } from '../utils/embedding';
 import { PrunePartialFailureError } from '../types';
 import { HOOK_TIMEOUT_MARKER } from '../types';
-import type { WikiOptions, ExtractedFact, ExtractedTask, ExtractedFactWithOntology, WikiFact, WikiTask, OntologyUpdates } from '../types';
+import type { WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedTask, ExtractedFactWithOntology, WikiFact, WikiTask, OntologyUpdates, OntologyBackfillResult } from '../types';
 import type { SQLiteAdapter } from '../types';
 import type { EntryRepository } from '../repositories/EntryRepository';
 import type { TaskRepository } from '../repositories/TaskRepository';
@@ -18,6 +18,10 @@ import type { EmbeddingService } from './EmbeddingService';
 
 const FUZZY_THRESHOLD = 0.5;
 const MIN_TOKENS_TO_QUALIFY = 3;
+
+export const ONTOLOGY_BACKFILL_BATCH_SIZE = 25;
+export const ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS = 40_000;
+export const ONTOLOGY_BACKFILL_RECHECK_MS = 7 * 24 * 60 * 60 * 1000;
 
 export class MaintenanceService {
   private promptService: PromptService;
@@ -135,6 +139,18 @@ export class MaintenanceService {
       await this.doRunHeal(entityId, options?.promptOverride);
     } finally {
       this.jobManager.releaseLock('heal', entityId);
+    }
+  }
+
+  async runOntologyBackfill(
+    entityId: string,
+    options?: { promptOverride?: string; batchSize?: number },
+  ): Promise<OntologyBackfillResult> {
+    this.jobManager.acquireLock('ontologyBackfill', entityId);
+    try {
+      return await this.doRunOntologyBackfill(entityId, options);
+    } finally {
+      this.jobManager.releaseLock('ontologyBackfill', entityId);
     }
   }
 
@@ -541,6 +557,139 @@ export class MaintenanceService {
     }
 
     this.searchService.evictCache(entityId);
+  }
+
+  /** Core ontology backfill pass (locks handled by {@link runOntologyBackfill}). Package-internal orchestration hook. */
+  async doRunOntologyBackfill(
+    entityId: string,
+    options?: { promptOverride?: string; batchSize?: number },
+  ): Promise<OntologyBackfillResult> {
+    const batchSize = options?.batchSize ?? ONTOLOGY_BACKFILL_BATCH_SIZE;
+    if (!Number.isInteger(batchSize) || batchSize < 1) {
+      throw new Error('Invalid batchSize: must be an integer >= 1');
+    }
+
+    const now = Date.now();
+    const recheckCutoff = now - ONTOLOGY_BACKFILL_RECHECK_MS;
+    const zeroed = { scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0 };
+
+    const ontologyService = this.ontologyService;
+    if (!ontologyService) {
+      return { ...zeroed, remaining: 0, deferred: 0 };
+    }
+
+    const { mode } = await ontologyService.getEffectiveState(entityId);
+    if (mode === 'off') {
+      // remaining stays 0: with ontology off nothing is eligible for typing, and
+      // a host convergence loop (while remaining > 0) must terminate.
+      const counts = await this.entryRepo.countUntypedByEntityId(entityId, recheckCutoff);
+      return { ...zeroed, remaining: 0, deferred: counts.deferred };
+    }
+
+    const candidates = await this.entryRepo.findUntypedByEntityId(entityId, batchSize, recheckCutoff);
+    if (candidates.length === 0) {
+      const counts = await this.entryRepo.countUntypedByEntityId(entityId, recheckCutoff);
+      return { ...zeroed, remaining: counts.eligible, deferred: counts.deferred };
+    }
+
+    // Payload guard: cap accumulated title+body chars so dense facts cannot blow
+    // a provider's context window; a single oversized fact is still sent alone.
+    const batch: WikiFact[] = [];
+    let promptChars = 0;
+    for (const fact of candidates) {
+      const len = fact.title.length + fact.body.length;
+      if (batch.length > 0 && promptChars + len > ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS) break;
+      batch.push(fact);
+      promptChars += len;
+    }
+
+    const ontologyContext = await ontologyService.buildPromptContext(entityId);
+    const factsForPrompt = batch.map(f => ({ id: f.id, title: f.title, body: f.body, tags: f.tags }));
+
+    const { systemPrompt, userPrompt } = this.promptService.buildOntologyBackfillPrompt(
+      factsForPrompt,
+      options?.promptOverride,
+      ontologyContext,
+    );
+
+    const responseText = await this.options.llmProvider.generateText({ systemPrompt, userPrompt });
+
+    const parsed = parseJsonResponse<{
+      classifications?: Array<{ id?: unknown; okf_type?: unknown; edges?: unknown }>;
+      ontology_updates?: OntologyUpdates;
+    }>(responseText);
+    const classifications = Array.isArray(parsed.classifications) ? parsed.classifications : [];
+
+    let typed = 0;
+    let failedValidation = 0;
+    let edgesAdded = 0;
+
+    await this.db.withTransactionAsync(async (tx) => {
+      let { mode: txMode, manifest } = await ontologyService.getEffectiveState(entityId, tx);
+
+      if (txMode === 'emergent' && parsed.ontology_updates) {
+        manifest = await ontologyService.mergeEmergentUpdates(entityId, parsed.ontology_updates, tx);
+      }
+
+      // Full breadth, three columns only: an old fact's edge targets are its
+      // contemporaries, which a recent-100 window would silently miss.
+      const titleRows = await this.entryRepo.findTitleIndexByEntityId(entityId, tx);
+      const titleIndex = new Map<string, TitleIndexEntry>();
+      for (const row of titleRows) {
+        titleIndex.set(normalizeTitleKey(row.title), { id: row.id, okf_type: row.okf_type });
+      }
+
+      const batchById = new Map(batch.map(f => [f.id, f]));
+      const applied = new Set<string>();
+      const pendingEdges: Array<{ sourceId: string; sourceType: string; edges: ExtractedFactEdge[] }> = [];
+
+      for (const classification of classifications) {
+        const fact = typeof classification.id === 'string' ? batchById.get(classification.id) : undefined;
+        if (!fact || applied.has(fact.id)) {
+          failedValidation++;
+          continue;
+        }
+        applied.add(fact.id);
+
+        const normalized = ontologyService.validateAndNormalizeFact(
+          {
+            title: fact.title, body: fact.body, tags: fact.tags, confidence: fact.confidence,
+            okf_type: classification.okf_type as string | undefined, edges: classification.edges as ExtractedFactEdge[] | undefined,
+          } as ExtractedFactWithOntology,
+          manifest,
+        );
+        if (!normalized.okf_type) {
+          failedValidation++;
+          continue;
+        }
+
+        const result = await this.entryRepo.updateOkfType(fact.id, entityId, normalized.okf_type, tx);
+        // changes === 0 → typed concurrently between select and update; the
+        // okf_type IS NULL guard left it untouched. Counted as an omission.
+        if (result.changes === 0) continue;
+
+        typed++;
+        titleIndex.set(normalizeTitleKey(fact.title), { id: fact.id, okf_type: normalized.okf_type });
+        if (normalized.edges.length > 0) {
+          pendingEdges.push({ sourceId: fact.id, sourceType: normalized.okf_type, edges: normalized.edges });
+        }
+      }
+
+      // Two-phase: edges resolve only after every batch fact has its new type,
+      // so intra-batch targets pass the target-type check.
+      for (const item of pendingEdges) {
+        edgesAdded += await ontologyService.resolveAndPersistEdges(
+          entityId, item.sourceId, item.sourceType, item.edges, manifest, titleIndex, tx, now,
+        );
+      }
+
+      await this.entryRepo.markOntologyChecked(batch.map(f => f.id), entityId, now, tx);
+    });
+
+    this.searchService.evictCache(entityId);
+
+    const counts = await this.entryRepo.countUntypedByEntityId(entityId, recheckCutoff);
+    return { scanned: batch.length, typed, failedValidation, edgesAdded, remaining: counts.eligible, deferred: counts.deferred };
   }
 
   private _validatePruneDuration(value: number | null | undefined, name: string): void {

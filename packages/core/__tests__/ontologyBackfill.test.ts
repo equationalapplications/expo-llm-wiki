@@ -4,6 +4,11 @@ import { setupDatabase } from '../src/db/schema';
 import { MIGRATIONS } from '../src/db/migrations';
 import { createWiki, WikiMemory } from '../src/index';
 import type { SQLiteAdapter, WikiFact, OntologyManifest } from '../src/types';
+import {
+  ONTOLOGY_BACKFILL_BATCH_SIZE,
+  ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS,
+  ONTOLOGY_BACKFILL_RECHECK_MS,
+} from '../src/services/MaintenanceService';
 
 const PREFIX = 'llm_wiki_';
 
@@ -137,5 +142,271 @@ describe('EntryRepository — backfill methods', () => {
       { id: 't1', title: 'Alpha', okf_type: 'person' },
       { id: 't2', title: 'Beta', okf_type: null },
     ]);
+  });
+});
+
+const MANIFEST: OntologyManifest = {
+  node_types: [
+    { type: 'person', description: 'A person' },
+    { type: 'place', description: 'A place' },
+  ],
+  edge_types: [
+    { type: 'lives_in', source_type: 'person', target_type: 'place', description: 'Person lives in place' },
+  ],
+};
+
+async function makeWiki(mode: 'strict' | 'emergent' | 'off' = 'strict') {
+  const db = openTestDatabase();
+  const generateText = vi.fn<any>();
+  const wiki = createWiki(db, { llmProvider: { generateText } } as any);
+  await wiki.setup();
+  await wiki.setOntologyManifest('e1', MANIFEST, { mode });
+  return { db, wiki, generateText };
+}
+
+const llmJson = (obj: unknown) => JSON.stringify(obj);
+
+async function edgeCount(db: SQLiteAdapter): Promise<number> {
+  const r = await db.getFirstAsync<{ c: number }>(`SELECT COUNT(*) AS c FROM ${PREFIX}edges`);
+  return r!.c;
+}
+
+async function getFactRow(db: SQLiteAdapter, id: string) {
+  return db.getFirstAsync<{ okf_type: string | null; updated_at: number; ontology_checked_at: number | null }>(
+    `SELECT okf_type, updated_at, ontology_checked_at FROM ${PREFIX}entries WHERE id = ?`, [id]);
+}
+
+describe('runOntologyBackfill', () => {
+  // Spec test 1
+  it('types untyped facts, creates edges, reports counts', async () => {
+    const { db, wiki, generateText } = await makeWiki('strict');
+    await seedEntry(db, { id: 'fact_p', title: 'Ada', updatedAt: 100 });
+    await seedEntry(db, { id: 'fact_c', title: 'London', updatedAt: 200 });
+    generateText.mockResolvedValue(llmJson({
+      classifications: [
+        { id: 'fact_c', okf_type: 'place' },
+        { id: 'fact_p', okf_type: 'person', edges: [{ edge_type: 'lives_in', target_title: 'London' }] },
+      ],
+    }));
+    const result = await wiki.runOntologyBackfill('e1');
+    expect(result).toEqual({ scanned: 2, typed: 2, failedValidation: 0, edgesAdded: 1, remaining: 0, deferred: 0 });
+    expect((await getFactRow(db, 'fact_p'))!.okf_type).toBe('person');
+    expect((await getFactRow(db, 'fact_c'))!.okf_type).toBe('place');
+    expect(await edgeCount(db)).toBe(1);
+  });
+
+  // Spec test 2a
+  it('early exit: ontology mode off — no LLM call, remaining 0', async () => {
+    const { db, wiki, generateText } = await makeWiki('off');
+    await seedEntry(db, { id: 'fact_x' });
+    const result = await wiki.runOntologyBackfill('e1');
+    expect(generateText).not.toHaveBeenCalled();
+    expect(result).toEqual({ scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0, remaining: 0, deferred: 0 });
+  });
+
+  // Spec test 2b
+  it('early exit: zero untyped facts — no LLM call', async () => {
+    const { db, wiki, generateText } = await makeWiki('strict');
+    await seedEntry(db, { id: 'fact_t', okfType: 'person' });
+    const result = await wiki.runOntologyBackfill('e1');
+    expect(generateText).not.toHaveBeenCalled();
+    expect(result).toEqual({ scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0, remaining: 0, deferred: 0 });
+  });
+
+  // Spec test 3
+  it('additive: never overwrites okf_type, never deletes or rewrites facts', async () => {
+    const { db, wiki, generateText } = await makeWiki('strict');
+    await seedEntry(db, { id: 'fact_a', title: 'A', body: 'body A' });
+    await seedEntry(db, { id: 'fact_pre', title: 'P', okfType: 'place' }); // already typed — model responds anyway
+    generateText.mockResolvedValue(llmJson({
+      classifications: [
+        { id: 'fact_a', okf_type: 'person' },
+        { id: 'fact_pre', okf_type: 'person' }, // unknown id (not in batch) → failedValidation
+      ],
+    }));
+    const before = await db.getFirstAsync<{ c: number }>(`SELECT COUNT(*) AS c FROM ${PREFIX}entries`);
+    const result = await wiki.runOntologyBackfill('e1');
+    const after = await db.getFirstAsync<{ c: number }>(`SELECT COUNT(*) AS c FROM ${PREFIX}entries`);
+    expect(after!.c).toBe(before!.c);
+    expect((await getFactRow(db, 'fact_pre'))!.okf_type).toBe('place'); // untouched
+    expect(result.typed).toBe(1);
+    expect(result.failedValidation).toBe(1);
+    const row = await db.getFirstAsync<{ body: string }>(`SELECT body FROM ${PREFIX}entries WHERE id = 'fact_a'`);
+    expect(row!.body).toBe('body A'); // never rewritten
+  });
+
+  // Spec test 4
+  it('emergent: merges ontology_updates before validating classifications', async () => {
+    const { db, wiki, generateText } = await makeWiki('emergent');
+    await seedEntry(db, { id: 'fact_n', title: 'N' });
+    generateText.mockResolvedValue(llmJson({
+      classifications: [{ id: 'fact_n', okf_type: 'project' }],
+      ontology_updates: { node_types: [{ type: 'project', description: 'A project' }] },
+    }));
+    const result = await wiki.runOntologyBackfill('e1');
+    expect(result.typed).toBe(1);
+    expect((await getFactRow(db, 'fact_n'))!.okf_type).toBe('project');
+    const manifest = await wiki.getOntologyManifest('e1');
+    expect(manifest!.manifest.node_types.some(n => n.type === 'project')).toBe(true);
+  });
+
+  // Spec test 5
+  it('strict: non-manifest type rejected, cooldown-stamped, lands in deferred', async () => {
+    const { db, wiki, generateText } = await makeWiki('strict');
+    await seedEntry(db, { id: 'fact_bad' });
+    generateText.mockResolvedValue(llmJson({
+      classifications: [{ id: 'fact_bad', okf_type: 'spaceship' }],
+    }));
+    const result = await wiki.runOntologyBackfill('e1');
+    expect(result).toMatchObject({ scanned: 1, typed: 0, failedValidation: 1, remaining: 0, deferred: 1 });
+    const row = await getFactRow(db, 'fact_bad');
+    expect(row!.okf_type).toBeNull();
+    expect(row!.ontology_checked_at).not.toBeNull();
+  });
+
+  // Spec test 6
+  it('batch cap: 30 untyped → one call with 25 oldest, remaining 5', async () => {
+    const { db, wiki, generateText } = await makeWiki('strict');
+    for (let i = 0; i < 30; i++) {
+      await seedEntry(db, { id: `fact_${String(i).padStart(2, '0')}`, updatedAt: 1000 + i });
+    }
+    generateText.mockImplementation(async ({ userPrompt }: { userPrompt: string }) => {
+      const ids = [...userPrompt.matchAll(/fact_\d\d/g)].map(m => m[0]);
+      return llmJson({ classifications: [...new Set(ids)].map(id => ({ id, okf_type: 'person' })) });
+    });
+    const result = await wiki.runOntologyBackfill('e1');
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ scanned: 25, typed: 25, remaining: 5 });
+    // oldest-first: fact_25..fact_29 (newest) are the ones left untyped
+    expect((await getFactRow(db, 'fact_29'))!.okf_type).toBeNull();
+    expect((await getFactRow(db, 'fact_00'))!.okf_type).toBe('person');
+  });
+
+  // Spec test 7
+  it('payload guard: truncates below batchSize; single oversized fact still sent alone', async () => {
+    const { db, wiki, generateText } = await makeWiki('strict');
+    const big = 'x'.repeat(ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS - 100);
+    await seedEntry(db, { id: 'fact_big1', body: big, updatedAt: 100 });
+    await seedEntry(db, { id: 'fact_big2', body: big, updatedAt: 200 });
+    generateText.mockResolvedValue(llmJson({ classifications: [{ id: 'fact_big1', okf_type: 'person' }] }));
+    const r1 = await wiki.runOntologyBackfill('e1');
+    expect(r1.scanned).toBe(1); // second fact would blow the char budget
+    expect(r1.remaining).toBe(1);
+    // second run: the remaining oversized fact is sent alone, never starved
+    generateText.mockResolvedValue(llmJson({ classifications: [{ id: 'fact_big2', okf_type: 'person' }] }));
+    const r2 = await wiki.runOntologyBackfill('e1');
+    expect(r2.scanned).toBe(1);
+    expect(r2.typed).toBe(1);
+  });
+
+  // Spec test 8
+  it('intra-batch edges resolve after all types applied', async () => {
+    const { db, wiki, generateText } = await makeWiki('strict');
+    await seedEntry(db, { id: 'fact_who', title: 'Grace', updatedAt: 100 });
+    await seedEntry(db, { id: 'fact_where', title: 'Paris', updatedAt: 200 });
+    generateText.mockResolvedValue(llmJson({
+      classifications: [
+        // edge source listed BEFORE the target is typed — two-phase ordering must handle it
+        { id: 'fact_who', okf_type: 'person', edges: [{ edge_type: 'lives_in', target_title: 'Paris' }] },
+        { id: 'fact_where', okf_type: 'place' },
+      ],
+    }));
+    const result = await wiki.runOntologyBackfill('e1');
+    expect(result.edgesAdded).toBe(1);
+    const edge = await db.getFirstAsync<{ source_id: string; target_id: string; edge_type: string }>(
+      `SELECT source_id, target_id, edge_type FROM ${PREFIX}edges`);
+    expect(edge).toEqual({ source_id: 'fact_who', target_id: 'fact_where', edge_type: 'lives_in' });
+  });
+
+  // Spec test 9
+  it('full title index breadth: edge to already-typed fact outside recent-100 window', async () => {
+    const { db, wiki, generateText } = await makeWiki('strict');
+    await seedEntry(db, { id: 'fact_target', title: 'Old Town', okfType: 'place', updatedAt: 10 });
+    await seedEntry(db, { id: 'fact_source', title: 'Elder', updatedAt: 20 });
+    for (let i = 0; i < 110; i++) {
+      await seedEntry(db, { id: `fact_noise_${i}`, title: `Noise ${i}`, okfType: 'person', updatedAt: 10_000 + i });
+    }
+    generateText.mockResolvedValue(llmJson({
+      classifications: [{ id: 'fact_source', okf_type: 'person', edges: [{ edge_type: 'lives_in', target_title: 'Old Town' }] }],
+    }));
+    const result = await wiki.runOntologyBackfill('e1');
+    expect(result.edgesAdded).toBe(1);
+  });
+
+  // Spec test 10
+  it('recheck cooldown: omitted fact deferred, re-eligible after cooldown; host loop terminates', async () => {
+    const { db, wiki, generateText } = await makeWiki('strict');
+    await seedEntry(db, { id: 'fact_meh' });
+    generateText.mockResolvedValue(llmJson({ classifications: [] })); // model omits it
+    const r1 = await wiki.runOntologyBackfill('e1');
+    expect(r1).toMatchObject({ scanned: 1, typed: 0, failedValidation: 0, remaining: 0, deferred: 1 });
+
+    // Host convergence loop terminates immediately: remaining === 0.
+    generateText.mockClear();
+    const r2 = await wiki.runOntologyBackfill('e1');
+    expect(generateText).not.toHaveBeenCalled();
+    expect(r2).toMatchObject({ scanned: 0, remaining: 0, deferred: 1 });
+
+    // Age the stamp past the cooldown → selected again.
+    await db.runAsync(
+      `UPDATE ${PREFIX}entries SET ontology_checked_at = ? WHERE id = 'fact_meh'`,
+      [Date.now() - ONTOLOGY_BACKFILL_RECHECK_MS - 1000]);
+    generateText.mockResolvedValue(llmJson({ classifications: [{ id: 'fact_meh', okf_type: 'person' }] }));
+    const r3 = await wiki.runOntologyBackfill('e1');
+    expect(r3).toMatchObject({ scanned: 1, typed: 1 });
+  });
+
+  // Spec test 11
+  it('cooldown stamp never touches updated_at', async () => {
+    const { db, wiki, generateText } = await makeWiki('strict');
+    await seedEntry(db, { id: 'fact_skip', updatedAt: 424242 });
+    generateText.mockResolvedValue(llmJson({ classifications: [] }));
+    await wiki.runOntologyBackfill('e1');
+    const row = await getFactRow(db, 'fact_skip');
+    expect(row!.updated_at).toBe(424242);
+    expect(row!.ontology_checked_at).not.toBeNull();
+  });
+
+  // Spec test 12
+  it('malformed output throws with lock released and zero writes; unknown ids counted not thrown', async () => {
+    const { db, wiki, generateText } = await makeWiki('strict');
+    await seedEntry(db, { id: 'fact_j', updatedAt: 777 });
+    generateText.mockResolvedValue('not json at all {');
+    await expect(wiki.runOntologyBackfill('e1')).rejects.toThrow();
+    const row = await getFactRow(db, 'fact_j');
+    expect(row!.okf_type).toBeNull();
+    expect(row!.ontology_checked_at).toBeNull(); // no cooldown stamps outside the tx
+
+    // lock released — next run proceeds
+    generateText.mockResolvedValue(llmJson({ classifications: [{ id: 'fact_ghost', okf_type: 'person' }] }));
+    const r = await wiki.runOntologyBackfill('e1');
+    expect(r).toMatchObject({ scanned: 1, typed: 0, failedValidation: 1 });
+  });
+
+  it('duplicate classification ids: first wins, duplicates counted as failedValidation', async () => {
+    const { db, wiki, generateText } = await makeWiki('strict');
+    await seedEntry(db, { id: 'fact_dup' });
+    generateText.mockResolvedValue(llmJson({
+      classifications: [
+        { id: 'fact_dup', okf_type: 'person' },
+        { id: 'fact_dup', okf_type: 'place' },
+      ],
+    }));
+    const r = await wiki.runOntologyBackfill('e1');
+    expect(r.typed).toBe(1);
+    expect(r.failedValidation).toBe(1);
+    expect((await getFactRow(db, 'fact_dup'))!.okf_type).toBe('person');
+  });
+
+  it('options.batchSize overrides the default; invalid values throw', async () => {
+    const { db, wiki, generateText } = await makeWiki('strict');
+    await seedEntry(db, { id: 'fact_b1', updatedAt: 1 });
+    await seedEntry(db, { id: 'fact_b2', updatedAt: 2 });
+    generateText.mockResolvedValue(llmJson({ classifications: [{ id: 'fact_b1', okf_type: 'person' }] }));
+    const r = await wiki.runOntologyBackfill('e1', { batchSize: 1 });
+    expect(r.scanned).toBe(1);
+    expect(r.remaining).toBe(1);
+    await expect(wiki.runOntologyBackfill('e1', { batchSize: 0 })).rejects.toThrow(/batchSize/);
+    expect(ONTOLOGY_BACKFILL_BATCH_SIZE).toBe(25);
   });
 });

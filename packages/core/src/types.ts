@@ -86,6 +86,23 @@ export interface OntologyPromptContext {
   ontologyModeInstructions: string;
 }
 
+/** Result of a single ontology backfill run. Omissions (facts the model declined
+ * to classify) are derivable as scanned − typed − failedValidation. */
+export interface OntologyBackfillResult {
+  /** Untyped facts sent to the model this run. */
+  scanned: number;
+  /** Facts that received an okf_type. */
+  typed: number;
+  /** Model classifications rejected (unknown/duplicate id, non-manifest type). */
+  failedValidation: number;
+  /** Edges persisted. */
+  edgesAdded: number;
+  /** Untyped facts still eligible after this run — safe host convergence signal: loop while > 0. */
+  remaining: number;
+  /** Untyped facts inside the recheck cooldown. */
+  deferred: number;
+}
+
 export interface WikiConfig {
   /**
    * Prefix applied to every SQL table/index/trigger name. Must match
