@@ -541,6 +541,38 @@ In **Strict** and **Emergent** modes, librarian and ingest JSON may include type
 
 See the design spec: [`docs/superpowers/specs/2026-06-23-per-entity-seeded-ontology-design.md`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/docs/superpowers/specs/2026-06-23-per-entity-seeded-ontology-design.md).
 
+### Ontology backfill
+
+Facts that enter the store without passing through the librarian (synced-down
+remote facts via `importDump`, or facts created before the ontology feature)
+have `okf_type = NULL` and no edges, so `traverseGraph` cannot reach them.
+`runOntologyBackfill` types them in place:
+
+```ts
+const result = await wiki.runOntologyBackfill(entityId);
+// { scanned, typed, failedValidation, edgesAdded, remaining, deferred }
+```
+
+- **When to call it:** you own the trigger — the library provides the operation,
+  not a scheduler (same as `runLibrarian`/`runHeal`). A good default is after
+  each sync/import completes. `WikiBusyError` under concurrency is safe to
+  swallow; the next trigger retries.
+- **Cost model:** one LLM call only when eligible untyped facts exist; otherwise
+  one SELECT. Each run scans at most 25 facts (override via
+  `options.batchSize`), oldest first, capped at 40k prompt chars.
+- **Convergence:** loop `while (result.remaining > 0)` to drain a backlog.
+  `remaining` counts only *eligible* untyped facts, so the loop terminates even
+  when unclassifiable facts exist; those are cooldown-stamped and retried after
+  7 days (`deferred` reports them). Because of that weekly retry, host
+  dashboards may see small recurring bumps in `scanned`/`failedValidation` as
+  the unclassifiable backlog is re-tested — expected, not a regression.
+- **Strictly additive:** never creates, deletes, or rewrites facts, and never
+  overwrites an existing `okf_type` (guarded in SQL, not just convention).
+  `updated_at` is never touched, so sync merge resolution is unaffected.
+- **Prompt customization:** per-call `options.promptOverride`, or global
+  `config.prompts.ontologyBackfillSystemPrompt` (template may use `{{facts}}`
+  and the ontology placeholders).
+
 ## OKF Import/Export
 
 The core package integrates with `@equationalapplications/core-okf` to seamlessly adapt wiki data dumps to and from Open Knowledge Format (OKF) v0.1 bundles.
