@@ -114,9 +114,10 @@ export class OntologyService {
     titleIndex: Map<string, TitleIndexEntry>,
     tx: SQLiteAdapter,
     now: number,
-  ): Promise<void> {
-    if (!sourceType || edges.length === 0) return;
+  ): Promise<number> {
+    if (!sourceType || edges.length === 0) return 0;
 
+    let persisted = 0;
     for (const edge of edges) {
       const def = resolveEdgeDefinition(edge.edge_type, manifest);
       if (!def || def.source_type.toLowerCase() !== sourceType.toLowerCase()) continue;
@@ -135,7 +136,9 @@ export class OntologyService {
         edge_type: def.type,
         created_at: now,
       };
-      await this.edgeRepo.addIgnoreDuplicate(wikiEdge, tx);
+      const inserted = await this.edgeRepo.addIgnoreDuplicate(wikiEdge, tx);
+      if (inserted) persisted++;
     }
+    return persisted;
   }
 }

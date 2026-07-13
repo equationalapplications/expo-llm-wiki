@@ -19,9 +19,10 @@ const CONFIDENCE_RANK: Record<'tentative' | 'inferred' | 'certain', number> = {
 export class EdgeRepository extends BaseRepository {
   /**
    * Insert an edge, silently skipping on primary-key or uniqueness conflicts.
+   * Returns true when a row was inserted, false when skipped as a duplicate.
    * Throws when the insert was skipped due to an id collision with a different edge tuple.
    */
-  async addIgnoreDuplicate(edge: WikiEdge, tx?: SQLiteAdapter): Promise<void> {
+  async addIgnoreDuplicate(edge: WikiEdge, tx?: SQLiteAdapter): Promise<boolean> {
     const executor = this.getExecutor(tx);
     const result = await executor.runAsync(
       `INSERT OR IGNORE INTO ${this.prefix}edges (id, entity_id, source_id, target_id, edge_type, created_at)
@@ -29,7 +30,7 @@ export class EdgeRepository extends BaseRepository {
       [edge.id, edge.entity_id, edge.source_id, edge.target_id, edge.edge_type, edge.created_at],
     );
 
-    if (result.changes > 0) return;
+    if (result.changes > 0) return true;
 
     const existing = await executor.getFirstAsync<{
       entity_id: string;
@@ -41,7 +42,7 @@ export class EdgeRepository extends BaseRepository {
       [edge.id],
     );
 
-    if (!existing) return;
+    if (!existing) return false;
 
     if (
       String(existing.entity_id) !== edge.entity_id ||
@@ -53,6 +54,8 @@ export class EdgeRepository extends BaseRepository {
         `Edge id collision: ${JSON.stringify(edge.id)} already exists with a different (entity_id, source_id, target_id, edge_type) tuple`,
       );
     }
+
+    return false;
   }
 
   async getByEntityId(entityId: string, tx?: SQLiteAdapter): Promise<WikiEdge[]> {

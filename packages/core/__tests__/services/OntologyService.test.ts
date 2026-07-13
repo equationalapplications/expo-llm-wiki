@@ -13,9 +13,11 @@ const edgeManifest: OntologyManifest = {
   node_types: [
     { type: 'Person', description: 'An individual.' },
     { type: 'project', description: 'A project.' },
+    { type: 'place', description: 'A location.' },
   ],
   edge_types: [
     { type: 'Reports_To', source_type: 'person', target_type: 'Person', description: 'Hierarchy.' },
+    { type: 'lives_in', source_type: 'person', target_type: 'place', description: 'Residency.' },
   ],
 };
 
@@ -190,6 +192,26 @@ describe('OntologyService', () => {
         }),
         tx,
       );
+    });
+
+    it('returns the number of edges actually persisted', async () => {
+      const { metadataRepo, edgeRepo } = makeMocks();
+      const svc = new OntologyService(metadataRepo, edgeRepo);
+      vi.mocked(edgeRepo.addIgnoreDuplicate).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+      const titleIndex = new Map([
+        ['alpha', { id: 'fact_a', okf_type: 'place' }],
+        ['beta', { id: 'fact_b', okf_type: 'place' }],
+      ]);
+      const count = await svc.resolveAndPersistEdges(
+        'e1', 'fact_src', 'person',
+        [
+          { edge_type: 'lives_in', target_title: 'Alpha' },
+          { edge_type: 'lives_in', target_title: 'Beta' },
+          { edge_type: 'lives_in', target_title: 'Missing' }, // unresolved target — skipped
+        ],
+        edgeManifest, titleIndex, {} as any, 123,
+      );
+      expect(count).toBe(1); // true + false + skipped
     });
   });
 
