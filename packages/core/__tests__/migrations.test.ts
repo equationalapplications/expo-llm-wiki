@@ -101,7 +101,7 @@ describe('schema migrations', () => {
     // Should have written schema_version
     const versionWrite = db.runCalls.find(
       c => (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
-           (c.args[0] === '6' || c.args[1] === '6')
+           (c.args[0] === '7' || c.args[1] === '7')
     );
     expect(versionWrite).toBeDefined();
 
@@ -122,7 +122,7 @@ describe('schema migrations', () => {
     // Version should have been written
     const versionWrite = db.runCalls.find(
       c => (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
-           (c.args[0] === '6' || c.args[1] === '6')
+           (c.args[0] === '7' || c.args[1] === '7')
     );
     expect(versionWrite).toBeDefined();
   });
@@ -145,7 +145,7 @@ describe('schema migrations', () => {
   });
 
   it('already at current version → no migration runs', async () => {
-    const db = makeMockDb({ hasEntries: true, hasPorter: true, metaVersion: '6' });
+    const db = makeMockDb({ hasEntries: true, hasPorter: true, metaVersion: '7' });
     const wiki = createWiki(db);
     await wiki.setup();
 
@@ -170,7 +170,7 @@ describe('schema migrations', () => {
 
     const versionWrite = db.runCalls.find(
       c => (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
-           (c.args[0] === '6' || c.args[1] === '6')
+           (c.args[0] === '7' || c.args[1] === '7')
     );
     expect(versionWrite).toBeDefined();
   });
@@ -187,7 +187,7 @@ describe('schema migrations', () => {
 
     const versionWrite = db.runCalls.find(
       c => (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
-           (c.args[0] === '6' || c.args[1] === '6')
+           (c.args[0] === '7' || c.args[1] === '7')
     );
     expect(versionWrite).toBeDefined();
   });
