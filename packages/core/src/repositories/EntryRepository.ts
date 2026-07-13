@@ -872,4 +872,80 @@ export class EntryRepository extends BaseRepository {
     );
     return rows.map(mapRowToFact);
   }
+
+  /**
+   * Live untyped facts eligible for ontology backfill, oldest first.
+   * Skips facts checked within the recheck cooldown (ontology_checked_at > recheckCutoff).
+   */
+  async findUntypedByEntityId(entityId: string, limit: number, recheckCutoff: number, tx?: SQLiteAdapter): Promise<WikiFact[]> {
+    const executor = this.getExecutor(tx);
+    const rows = await executor.getAllAsync<any>(
+      `SELECT * FROM ${this.prefix}entries
+       WHERE entity_id = ? AND okf_type IS NULL AND deleted_at IS NULL
+         AND (ontology_checked_at IS NULL OR ontology_checked_at <= ?)
+       ORDER BY updated_at ASC LIMIT ?`,
+      [entityId, recheckCutoff, limit],
+    );
+    return rows.map(mapRowToFact);
+  }
+
+  /** Counts live untyped facts: eligible (past cooldown) vs deferred (in cooldown). */
+  async countUntypedByEntityId(entityId: string, recheckCutoff: number, tx?: SQLiteAdapter): Promise<{ eligible: number; deferred: number }> {
+    const executor = this.getExecutor(tx);
+    const row = await executor.getFirstAsync<{ eligible: number | null; deferred: number | null }>(
+      `SELECT
+         SUM(CASE WHEN ontology_checked_at IS NULL OR ontology_checked_at <= ? THEN 1 ELSE 0 END) AS eligible,
+         SUM(CASE WHEN ontology_checked_at IS NOT NULL AND ontology_checked_at > ? THEN 1 ELSE 0 END) AS deferred
+       FROM ${this.prefix}entries
+       WHERE entity_id = ? AND okf_type IS NULL AND deleted_at IS NULL`,
+      [recheckCutoff, recheckCutoff, entityId],
+    );
+    return { eligible: Number(row?.eligible ?? 0), deferred: Number(row?.deferred ?? 0) };
+  }
+
+  /**
+   * Sets okf_type only when currently NULL — additive by construction: a
+   * concurrently-typed fact is never overwritten. Returns changes for the caller
+   * to distinguish applied vs skipped.
+   */
+  async updateOkfType(id: string, entityId: string, okfType: string, tx: SQLiteAdapter): Promise<{ changes: number }> {
+    const result = await tx.runAsync(
+      `UPDATE ${this.prefix}entries SET okf_type = ?
+       WHERE id = ? AND entity_id = ? AND okf_type IS NULL AND deleted_at IS NULL`,
+      [okfType, id, entityId],
+    );
+    return { changes: result.changes };
+  }
+
+  /**
+   * Stamps the backfill recheck cooldown. NEVER touches updated_at — import
+   * merge resolution is last-write-wins on updated_at and a bump here would
+   * make an unchanged local fact beat a genuinely newer remote edit.
+   */
+  async markOntologyChecked(ids: string[], entityId: string, now: number, tx: SQLiteAdapter): Promise<void> {
+    if (ids.length === 0) return;
+    for (let i = 0; i < ids.length; i += this.chunkSize) {
+      const chunk = ids.slice(i, i + this.chunkSize);
+      const placeholders = chunk.map(() => '?').join(',');
+      await tx.runAsync(
+        `UPDATE ${this.prefix}entries SET ontology_checked_at = ?
+         WHERE id IN (${placeholders}) AND entity_id = ?`,
+        [now, ...chunk, entityId],
+      );
+    }
+  }
+
+  /**
+   * Lightweight full-breadth title index (id, title, okf_type) over all live
+   * facts. Used by ontology backfill edge resolution — a recent-N window would
+   * miss an old fact's contemporaries.
+   */
+  async findTitleIndexByEntityId(entityId: string, tx?: SQLiteAdapter): Promise<Array<{ id: string; title: string; okf_type: string | null }>> {
+    const executor = this.getExecutor(tx);
+    const rows = await executor.getAllAsync<{ id: string; title: string; okf_type: string | null }>(
+      `SELECT id, title, okf_type FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
+      [entityId],
+    );
+    return rows.map(r => ({ id: r.id, title: r.title, okf_type: r.okf_type ?? null }));
+  }
 }
