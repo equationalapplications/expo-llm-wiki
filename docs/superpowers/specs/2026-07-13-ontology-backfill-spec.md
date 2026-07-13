@@ -55,14 +55,19 @@ operation, not a scheduler, matching `runLibrarian` / `runHeal` / `runPrune`.
 // WikiMemory (delegates to MaintenanceService)
 async runOntologyBackfill(
   entityId: string,
-  options?: { promptOverride?: string },
+  options?: { promptOverride?: string; batchSize?: number },
 ): Promise<OntologyBackfillResult>
 
 export interface OntologyBackfillResult {
-  scanned: number;     // untyped facts sent to the model this run
-  typed: number;       // facts that received an okf_type
-  edgesAdded: number;  // edges persisted
-  remaining: number;   // untyped facts still in the store after this run
+  scanned: number;          // untyped facts sent to the model this run
+  typed: number;            // facts that received an okf_type
+  failedValidation: number; // returned by the model but rejected (unknown id,
+                            // non-manifest type, etc.); omissions are derivable
+                            // as scanned − typed − failedValidation
+  edgesAdded: number;       // edges persisted
+  remaining: number;        // untyped facts still ELIGIBLE after this run —
+                            // safe host convergence signal: loop while > 0
+  deferred: number;         // untyped facts in the recheck cooldown (Decision 3b)
 }
 ```
 
@@ -74,38 +79,80 @@ export interface OntologyBackfillResult {
 - `remaining` lets hosts implement their own convergence policy (re-trigger later,
   show progress) without the library baking in a loop.
 
-### 2. Selection: `okf_type IS NULL`, oldest first, batch of 25
+### 2. Selection: `okf_type IS NULL`, oldest first, bounded batch
 
 New repository methods:
 
 ```ts
 // EntryRepository
-findUntypedByEntityId(entityId: string, limit: number, tx?: SQLiteAdapter): Promise<WikiFact[]>
+findUntypedByEntityId(entityId: string, limit: number, recheckCutoff: number, tx?: SQLiteAdapter): Promise<WikiFact[]>
   // WHERE entity_id = ? AND okf_type IS NULL AND deleted_at IS NULL
+  //   AND (ontology_checked_at IS NULL OR ontology_checked_at <= ?)
   // ORDER BY updated_at ASC LIMIT ?
-countUntypedByEntityId(entityId: string, tx?: SQLiteAdapter): Promise<number>
+countUntypedByEntityId(entityId: string, recheckCutoff: number, tx?: SQLiteAdapter): Promise<{ eligible: number; deferred: number }>
 updateOkfType(id: string, entityId: string, okfType: string, tx: SQLiteAdapter): Promise<void>
   // UPDATE ... SET okf_type = ? WHERE id = ? AND entity_id = ? AND okf_type IS NULL
+markOntologyChecked(ids: string[], entityId: string, now: number, tx: SQLiteAdapter): Promise<void>
+  // UPDATE ... SET ontology_checked_at = ? WHERE id IN (…) AND entity_id = ?
+  // NEVER touches updated_at — see Decision 3b
 ```
 
-- Batch size is a named constant `ONTOLOGY_BACKFILL_BATCH_SIZE = 25` — one LLM call
-  per run, bounded cost. First-run backlogs (pre-ontology facts) converge across
-  repeated triggers rather than bursting.
+- Batch size defaults to `ONTOLOGY_BACKFILL_BATCH_SIZE = 25`, overridable per call
+  via `options.batchSize` for hosts whose LLM provider has tighter context limits.
+  One LLM call per run, bounded cost. First-run backlogs (pre-ontology facts)
+  converge across repeated triggers rather than bursting.
+- **Payload guard:** after selecting up to `batchSize` facts, drop trailing facts
+  once the accumulated `title + body` length exceeds
+  `ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS = 40_000`. Facts can be large (ingestion
+  chunks run up to `maxChunkLength` ≈ 12k chars), and 25 dense facts could
+  otherwise blow past a provider's context window or degrade instruction
+  following. At least one fact is always sent (a single oversized fact is not
+  silently starved; the model sees it alone).
 - Oldest-first (`updated_at ASC`) so long-neglected facts are typed before recent
-  ones and the queue drains deterministically.
+  ones and the queue drains deterministically. A useful side effect: facts created
+  around the same time — the likely edge partners — cluster into the same batch.
 - `updateOkfType` guards `okf_type IS NULL` in the WHERE clause so a concurrent
   writer can never be overwritten — additive by construction, not by convention.
-- Facts whose type the model omits or that fail validation remain `NULL` and will
-  be re-selected next run. Acceptable: the model gets fresh manifest context each
-  time, and repeated hard failures surface in `scanned − typed` for host telemetry.
+
+### 3b. Recheck cooldown: skipped facts must not clog the queue
+
+Without bookkeeping, a fact the model consistently declines to type (malformed
+synced fact, or genuinely outside a strict manifest) sits at the head of the
+oldest-first queue forever, re-consuming tokens every run and eventually stalling
+the whole pipeline once `batchSize` such facts accumulate.
+
+**Mechanism:** new nullable `ontology_checked_at INTEGER` column on entries
+(migration follows the existing `ALTER TABLE ADD COLUMN` pattern with a
+column-existence guard, outside any explicit transaction — same as the `okf_type`
+migration). Every fact **scanned** in a run — typed or not — gets
+`ontology_checked_at = now` inside the write transaction. Selection skips facts
+checked within `ONTOLOGY_BACKFILL_RECHECK_MS = 7 days`.
+
+- Skipped facts re-enter the queue after the cooldown. In emergent mode this doubles
+  as the retry path for manifest growth: a fact unclassifiable today may fit after
+  new types emerge.
+- `remaining` counts only **eligible** untyped facts, so a host loop
+  (`while remaining > 0`) terminates even when unclassifiable facts exist;
+  `deferred` reports the cooled-down remainder for telemetry.
+
+**Rejected alternatives:**
+
+- *Bump `updated_at` on skip* — actively dangerous, not merely impure:
+  `ImportExportService.doImportEntity` merge resolution is last-write-wins on
+  `updated_at` (`if (merge && safeUpdatedAt <= existing.updated_at) continue`).
+  A backfill bump would make an unchanged local fact beat a genuinely newer
+  remote edit during sync.
+- *Sentinel `okf_type` (e.g. `unclassified`)* — `okf_type` flows into OKF export
+  and into `resolveAndPersistEdges`' manifest type checks; a non-manifest slug
+  breaks the "okf_type is a manifest slug" invariant everywhere it is read.
 
 ### 3. Early exits make the pass free when there is nothing to do
 
-`doRunOntologyBackfill` returns `{scanned: 0, typed: 0, edgesAdded: 0, remaining: 0}`
-without an LLM call when:
+`doRunOntologyBackfill` returns a zeroed result (`deferred` still reported) without
+an LLM call when:
 
 - ontology mode is `'off'` for the entity (via `getEffectiveState`), or
-- `findUntypedByEntityId` returns zero rows.
+- `findUntypedByEntityId` returns zero eligible rows.
 
 This is what makes an unconditional post-sync trigger in host apps viable: the
 common case (no server-agent writes since last sync) costs one SELECT.
@@ -144,23 +191,35 @@ Inside `db.withTransactionAsync`:
 1. `getEffectiveState(entityId, tx)`; in emergent mode with `ontology_updates`
    present → `mergeEmergentUpdates` first (manifest grows before validation, same
    order as the librarian).
-2. Build the title index from `findRecentByEntityId(entityId, 100, tx)` **plus the
-   batch facts themselves**, so edges may target other facts in the same batch.
+2. Build the title index from **all live facts for the entity** via a new
+   lightweight `EntryRepository.findTitleIndexByEntityId(entityId, tx)` selecting
+   only `id, title, okf_type` (not `SELECT *`). The librarian's
+   `findRecentByEntityId(…, 100)` window is wrong here: it returns the 100 most
+   *recently updated* facts, while the backfill batch is the *oldest* — an old
+   fact's edge targets are its contemporaries, which a recent-100 window would
+   miss and silently drop. Three columns across even thousands of local rows is
+   cheap in SQLite. (Full breadth helps only *already-typed* targets — an untyped
+   out-of-batch target still fails the target-type check; those edges belong to
+   the deferred edge-backfill in Out of Scope. Oldest-first batching mitigates by
+   clustering contemporaries into the same batch.)
 3. Per classification: resolve the fact by `id` against the selected batch (unknown
-   ids ignored); `validateAndNormalizeFact` → canonical `okf_type` or null; on
-   success `updateOkfType`, update the title index entry with the new type, and
-   queue edges.
+   ids counted in `failedValidation`); `validateAndNormalizeFact` → canonical
+   `okf_type` (on success `updateOkfType`, update the title index entry with the
+   new type, queue edges) or null (counted in `failedValidation`).
 4. After **all** classifications are applied: `resolveAndPersistEdges` per typed
    fact (existing duplicate-ignoring insert, existing source/target type checks
    against the manifest). Two-phase ordering matters — the target-type check reads
    `okf_type` from the title index, so intra-batch edges only resolve once every
    batch fact has its new type. Same apply-then-link ordering as the librarian's
    `pendingEdges`.
+5. `markOntologyChecked(scannedIds, entityId, now, tx)` — every scanned fact gets
+   its cooldown stamp, typed or not (Decision 3b). Never touches `updated_at`.
 
 After commit: `searchService.evictCache(entityId)`. No re-embed — title/body
 unchanged. No FTS re-sync — `okf_type` is not in the search index.
 
-`countUntypedByEntityId` after the write transaction supplies `remaining`.
+`countUntypedByEntityId` after the write transaction supplies
+`remaining` (eligible) and `deferred` (in cooldown).
 
 ### 6. Failure semantics
 
@@ -210,18 +269,37 @@ New suite `packages/core/__tests__/ontologyBackfill.test.ts`:
    node type used by a classification in the same response — assert merge happens
    first and the classification validates against the grown manifest.
 5. **Strict mode rejects unknown types.** Classification with a non-manifest type →
-   fact stays `NULL`, appears in `remaining`.
+   fact stays `NULL`, counted in `failedValidation`, cooldown-stamped (moves to
+   `deferred`, not `remaining`).
 6. **Batch cap.** 30 untyped facts, model types all it receives → exactly one LLM
    call carrying 25 facts (oldest first), `scanned = 25`, `remaining = 5`.
-7. **Intra-batch edges.** Two untyped facts in one batch, edge from one to the
+7. **Payload guard.** Facts with large bodies exceeding
+   `ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS` → batch truncated below `batchSize`; a
+   single oversized fact is still sent alone.
+8. **Intra-batch edges.** Two untyped facts in one batch, edge from one to the
    other via `target_title` — assert edge persists (title index includes batch).
-8. **Malformed model output.** Unparseable JSON → throws, lock released, no rows
-   changed; unknown fact ids → ignored without error.
-9. **Lock discipline.** Concurrent `runOntologyBackfill` throws `WikiBusyError`;
-   sequential run after completion succeeds.
+9. **Full title index breadth.** Old untyped fact proposes an edge to an old,
+   *already-typed* fact outside the recent-100 window (seed >100 newer facts) —
+   assert edge persists. Guards the recency-trap fix in Decision 5.
+10. **Recheck cooldown.** Run where the model omits a fact → immediate second run
+    selects nothing (`scanned = 0`, `deferred = 1`, no LLM call); after advancing
+    past `ONTOLOGY_BACKFILL_RECHECK_MS`, the fact is selected again. Host
+    convergence loop (`while remaining > 0`) terminates with unclassifiable facts
+    present.
+11. **Cooldown stamp never touches `updated_at`.** After a skip,
+    `updated_at` is byte-identical — guards the import-merge last-write-wins
+    hazard (Decision 3b).
+12. **Malformed model output.** Unparseable JSON → throws, lock released, no rows
+    changed (including no cooldown stamps); unknown fact ids → counted in
+    `failedValidation` without error.
+13. **Lock discipline.** Concurrent `runOntologyBackfill` throws `WikiBusyError`;
+    sequential run after completion succeeds.
 
 Existing suites must pass unchanged — the pass is opt-in and touches no existing
-code paths beyond additive repository methods and a new prompt export.
+code paths beyond additive repository methods, one additive schema migration
+(`ontology_checked_at`, nullable, no backfill of the column itself), and a new
+prompt export. Migration tests follow the existing migrations suite pattern
+(fresh DB + upgrade-from-previous-version both get the column).
 
 ---
 
