@@ -4,6 +4,7 @@ import { setupDatabase } from '../src/db/schema';
 import { MIGRATIONS } from '../src/db/migrations';
 import { createWiki, WikiMemory } from '../src/index';
 import type { SQLiteAdapter, WikiFact, OntologyManifest } from '../src/types';
+import { WikiBusyError } from '../src/types';
 import {
   ONTOLOGY_BACKFILL_BATCH_SIZE,
   ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS,
@@ -408,5 +409,29 @@ describe('runOntologyBackfill', () => {
     expect(r.remaining).toBe(1);
     await expect(wiki.runOntologyBackfill('e1', { batchSize: 0 })).rejects.toThrow(/batchSize/);
     expect(ONTOLOGY_BACKFILL_BATCH_SIZE).toBe(25);
+  });
+});
+
+describe('runOntologyBackfill — lock discipline (WikiMemory)', () => {
+  it('concurrent invocation throws WikiBusyError; sequential run succeeds', async () => {
+    const { db, wiki, generateText } = await makeWiki('strict');
+    await seedEntry(db, { id: 'fact_lock' });
+
+    let releaseLlm!: () => void;
+    const gate = new Promise<void>(resolve => { releaseLlm = resolve; });
+    generateText.mockImplementation(async () => {
+      await gate;
+      return llmJson({ classifications: [{ id: 'fact_lock', okf_type: 'person' }] });
+    });
+
+    const first = wiki.runOntologyBackfill('e1');
+    await new Promise(r => setTimeout(r, 10)); // let first acquire the lock
+    await expect(wiki.runOntologyBackfill('e1')).rejects.toThrow(WikiBusyError);
+
+    releaseLlm();
+    await expect(first).resolves.toMatchObject({ typed: 1 });
+
+    // sequential run after completion succeeds (early-exits: nothing untyped)
+    await expect(wiki.runOntologyBackfill('e1')).resolves.toMatchObject({ scanned: 0 });
   });
 });
