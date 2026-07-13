@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { WikiBusyError } from '../src/types';
 import { WikiMemory } from '../src/WikiMemory';
+import { JobManager } from '../src/services/JobManager';
 
 class MockSQLiteDatabase {
     async execAsync(_sql: string): Promise<void> {}
@@ -146,5 +147,27 @@ describe('getEntityStatus', () => {
     expect(wiki.getEntityStatus('e1').librarian).toBe(true);
     expect(wiki.getEntityStatus('e2').librarian).toBe(false);
     await p;
+  });
+});
+
+describe('ontologyBackfill lock', () => {
+  it('self-conflicts per entity and releases cleanly', () => {
+    const jm = new JobManager('llm_wiki_');
+    jm.acquireLock('ontologyBackfill', 'e1');
+    expect(() => jm.acquireLock('ontologyBackfill', 'e1')).toThrow(WikiBusyError);
+    jm.acquireLock('ontologyBackfill', 'e2'); // other entity fine
+    jm.releaseLock('ontologyBackfill', 'e1');
+    expect(() => jm.acquireLock('ontologyBackfill', 'e1')).not.toThrow();
+  });
+
+  it('is blocked by prune/reembed/import/forget, and blocks them back', () => {
+    for (const op of ['prune', 'reembed', 'import', 'forget'] as const) {
+      const jm = new JobManager('llm_wiki_');
+      jm.acquireLock(op, 'e1');
+      expect(() => jm.acquireLock('ontologyBackfill', 'e1')).toThrow(WikiBusyError);
+      jm.releaseLock(op, 'e1');
+      jm.acquireLock('ontologyBackfill', 'e1');
+      expect(() => jm.acquireLock(op, 'e1')).toThrow(WikiBusyError);
+    }
   });
 });

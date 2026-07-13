@@ -9,7 +9,8 @@ export type OperationType =
   | 'global_reembed'
   | 'import'
   | 'global_import'
-  | 'forget';
+  | 'forget'
+  | 'ontologyBackfill';
 
 export class JobManager {
   private activeMaintenanceJobs = new Set<string>();
@@ -29,6 +30,7 @@ export class JobManager {
   private _forgetKey(entityId: string) { return `${this.prefix}:${entityId}:forget`; }
   private _librarianKey(entityId: string) { return `${this.prefix}:${entityId}:librarian`; }
   private _healKey(entityId: string) { return `${this.prefix}:${entityId}:heal`; }
+  private _ontologyBackfillKey(entityId: string) { return `${this.prefix}:${entityId}:ontologyBackfill`; }
 
   /**
    * Lookup table for acquireLock/releaseLock's dynamic-dispatch branch.
@@ -46,6 +48,7 @@ export class JobManager {
     reembed: (id) => this._reembedKey(id),
     import: (id) => this._importKey(id),
     forget: (id) => this._forgetKey(id),
+    ontologyBackfill: (id) => this._ontologyBackfillKey(id),
   };
 
   private _isReembedActive(entityId: string): boolean {
@@ -110,6 +113,7 @@ export class JobManager {
         if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) blockingOperation = 'prune';
         else if (this.activeMaintenanceJobs.has(this._librarianKey(entityId))) blockingOperation = 'librarian';
         else if (this.activeMaintenanceJobs.has(this._healKey(entityId))) blockingOperation = 'heal';
+        else if (this.activeMaintenanceJobs.has(this._ontologyBackfillKey(entityId))) blockingOperation = 'ontologyBackfill';
         else if (this._isReembedActive(entityId)) blockingOperation = 'reembed';
         else if (this._isIngestActiveFor(entityId)) blockingOperation = 'ingest';
         else if (this._isImportActiveFor(entityId)) blockingOperation = 'import';
@@ -117,8 +121,9 @@ export class JobManager {
         break;
 
       case 'librarian':
-      case 'heal': {
-        const opKey = operation === 'librarian' ? this._librarianKey(entityId) : this._healKey(entityId);
+      case 'heal':
+      case 'ontologyBackfill': {
+        const opKey = this.lockKeyFns[operation](entityId);
         if (this.activeMaintenanceJobs.has(opKey)) blockingOperation = operation;
         else if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) blockingOperation = 'prune';
         else if (this._isReembedActive(entityId)) blockingOperation = 'reembed';
@@ -133,6 +138,7 @@ export class JobManager {
         else if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) blockingOperation = 'prune';
         else if (this.activeMaintenanceJobs.has(this._librarianKey(entityId))) blockingOperation = 'librarian';
         else if (this.activeMaintenanceJobs.has(this._healKey(entityId))) blockingOperation = 'heal';
+        else if (this.activeMaintenanceJobs.has(this._ontologyBackfillKey(entityId))) blockingOperation = 'ontologyBackfill';
         else if (this._isIngestActiveFor(entityId)) blockingOperation = 'ingest';
         else if (this._isImportActiveFor(entityId)) blockingOperation = 'import';
         else if (this._isForgetActiveFor(entityId)) blockingOperation = 'forget';
@@ -144,6 +150,7 @@ export class JobManager {
         else if (this._isAnyMaintenanceActiveWithSuffix(':prune')) blockingOperation = 'prune';
         else if (this._isAnyMaintenanceActiveWithSuffix(':librarian')) blockingOperation = 'librarian';
         else if (this._isAnyMaintenanceActiveWithSuffix(':heal')) blockingOperation = 'heal';
+        else if (this._isAnyMaintenanceActiveWithSuffix(':ontologyBackfill')) blockingOperation = 'ontologyBackfill';
         else if (this.activeIngestJobs.size > 0) blockingOperation = 'ingest';
         else if (this._isAnyMaintenanceActiveWithSuffix(':import')) blockingOperation = 'import';
         else if (this._isAnyMaintenanceActiveWithSuffix(':forget')) blockingOperation = 'forget';
@@ -155,6 +162,7 @@ export class JobManager {
         if (this.activeMaintenanceJobs.has(selfKey)) blockingOperation = operation;
         else if (this.activeMaintenanceJobs.has(this._librarianKey(entityId))) blockingOperation = 'librarian';
         else if (this.activeMaintenanceJobs.has(this._healKey(entityId))) blockingOperation = 'heal';
+        else if (this.activeMaintenanceJobs.has(this._ontologyBackfillKey(entityId))) blockingOperation = 'ontologyBackfill';
         else if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) blockingOperation = 'prune';
         else if (this._isReembedActive(entityId)) blockingOperation = 'reembed';
         else if (this._isIngestActiveFor(entityId)) blockingOperation = 'ingest';
@@ -266,6 +274,7 @@ export class JobManager {
       if (this.activeMaintenanceJobs.has(this._importKey(entityId))) throw new WikiBusyError('import', entityId);
       if (this.activeMaintenanceJobs.has(this._librarianKey(entityId))) throw new WikiBusyError('librarian', entityId);
       if (this.activeMaintenanceJobs.has(this._healKey(entityId))) throw new WikiBusyError('heal', entityId);
+      if (this.activeMaintenanceJobs.has(this._ontologyBackfillKey(entityId))) throw new WikiBusyError('ontologyBackfill', entityId);
       if (this.activeMaintenanceJobs.has(this._pruneKey(entityId))) throw new WikiBusyError('prune', entityId);
       if (this._isReembedActive(entityId)) throw new WikiBusyError('reembed', entityId);
       if (this._isIngestActiveFor(entityId)) throw new WikiBusyError('ingest', entityId);

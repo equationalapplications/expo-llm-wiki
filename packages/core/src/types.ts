@@ -495,8 +495,9 @@ export interface EntityStatus {
  *
  * @remarks **Breaking change from v2.x** — the union previously only contained
  * `'ingest' | 'librarian' | 'heal' | 'prune' | 'reembed'`. The values `'import'`
- * and `'forget'` were added in v3.0. Exhaustive `switch` / narrowing on this type
- * must be updated (or given a `default` arm) to compile without errors.
+ * and `'forget'` were added in v3.0. `'ontologyBackfill'` was added afterward.
+ * Exhaustive `switch` / narrowing on this type must be updated (or given a
+ * `default` arm) to compile without errors.
  */
 export type WikiBusyOperation =
   | 'ingest'
@@ -505,7 +506,8 @@ export type WikiBusyOperation =
   | 'prune'
   | 'reembed'
   | 'import'
-  | 'forget';
+  | 'forget'
+  | 'ontologyBackfill';
 
 /**
  * Thrown when a background mutator is already running for the requested entity.
