@@ -65,7 +65,7 @@ export function mergeOntologyUpdates(
   const node_types = [...current.node_types];
   const edge_types = [...current.edge_types];
   const nodeSlugs = new Set(node_types.map(n => n.type.trim().toLowerCase()));
-  const edgeSlugs = new Set(edge_types.map(e => e.type.trim().toLowerCase()));
+  const edgeKeys = new Set(edge_types.map(e => edgeTripleKey(e.type, e.source_type, e.target_type)));
 
   for (const node of updates.node_types ?? []) {
     const type = node?.type?.trim();
@@ -80,8 +80,8 @@ export function mergeOntologyUpdates(
     const sourceType = edge?.source_type?.trim();
     const targetType = edge?.target_type?.trim();
     if (!edgeType || !sourceType || !targetType) continue;
-    const edgeKey = edgeType.toLowerCase();
-    if (edgeSlugs.has(edgeKey)) continue;
+    const edgeKey = edgeTripleKey(edgeType, sourceType, targetType);
+    if (edgeKeys.has(edgeKey)) continue;
     if (!nodeSlugs.has(sourceType.toLowerCase()) || !nodeSlugs.has(targetType.toLowerCase())) continue;
     edge_types.push({
       type: edgeType,
@@ -89,7 +89,7 @@ export function mergeOntologyUpdates(
       target_type: targetType,
       description: String(edge.description ?? ''),
     });
-    edgeSlugs.add(edgeKey);
+    edgeKeys.add(edgeKey);
   }
   return { node_types, edge_types };
 }

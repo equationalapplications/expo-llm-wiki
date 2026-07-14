@@ -81,6 +81,23 @@ describe('ontology utils', () => {
     expect(merged.node_types.find(n => n.type === 'vendor')).toBeDefined();
   });
 
+  it('mergeOntologyUpdates adds a new source/target variant of an existing edge name', () => {
+    const merged = mergeOntologyUpdates(manifest, {
+      edge_types: [{ type: 'reports_to', source_type: 'person', target_type: 'project', description: 'Project lead.' }],
+    });
+    expect(merged.edge_types).toHaveLength(2);
+    expect(merged.edge_types[1]).toEqual({
+      type: 'reports_to', source_type: 'person', target_type: 'project', description: 'Project lead.',
+    });
+  });
+
+  it('mergeOntologyUpdates skips an exact-triple duplicate case-insensitively', () => {
+    const merged = mergeOntologyUpdates(manifest, {
+      edge_types: [{ type: 'Reports_To', source_type: 'Person', target_type: 'PERSON', description: 'dup' }],
+    });
+    expect(merged.edge_types).toHaveLength(1);
+  });
+
   it('validateManifest accepts one property name with distinct source/target triples', () => {
     expect(() => validateManifest(polyManifest)).not.toThrow();
   });
