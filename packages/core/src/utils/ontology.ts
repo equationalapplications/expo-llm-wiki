@@ -42,6 +42,7 @@ export function validateManifest(manifest: OntologyManifest): void {
     nodeSlugs.add(key);
   }
   const edgeKeys = new Set<string>();
+  const edgeNames = new Map<string, string>();
   for (const edge of manifest.edge_types ?? []) {
     const edgeType = edge.type?.trim();
     const sourceType = edge.source_type?.trim();
@@ -55,6 +56,14 @@ export function validateManifest(manifest: OntologyManifest): void {
       throw new Error(`Duplicate edge definition: ${edgeType} (${sourceType} → ${targetType})`);
     }
     edgeKeys.add(edgeKey);
+    // Persisted edge_type values come from def.type verbatim, so every triple
+    // sharing a name must agree on casing or storage ends up mixed.
+    const canonical = edgeNames.get(edgeType.toLowerCase());
+    if (canonical === undefined) {
+      edgeNames.set(edgeType.toLowerCase(), edgeType);
+    } else if (canonical !== edgeType) {
+      throw new Error(`Inconsistent casing for edge type: ${edgeType} conflicts with ${canonical}`);
+    }
   }
 }
 
@@ -66,6 +75,7 @@ export function mergeOntologyUpdates(
   const edge_types = [...current.edge_types];
   const nodeSlugs = new Set(node_types.map(n => n.type.trim().toLowerCase()));
   const edgeKeys = new Set(edge_types.map(e => edgeTripleKey(e.type, e.source_type, e.target_type)));
+  const edgeNames = new Map(edge_types.map(e => [e.type.trim().toLowerCase(), e.type.trim()]));
 
   for (const node of updates.node_types ?? []) {
     const type = node?.type?.trim();
@@ -76,13 +86,17 @@ export function mergeOntologyUpdates(
     nodeSlugs.add(key);
   }
   for (const edge of updates.edge_types ?? []) {
-    const edgeType = edge?.type?.trim();
+    const rawEdgeType = edge?.type?.trim();
     const sourceType = edge?.source_type?.trim();
     const targetType = edge?.target_type?.trim();
-    if (!edgeType || !sourceType || !targetType) continue;
+    if (!rawEdgeType || !sourceType || !targetType) continue;
+    // First-seen casing wins for a given edge name, as with node types, so a
+    // later triple spelled differently cannot make the manifest fail validation.
+    const edgeType = edgeNames.get(rawEdgeType.toLowerCase()) ?? rawEdgeType;
     const edgeKey = edgeTripleKey(edgeType, sourceType, targetType);
     if (edgeKeys.has(edgeKey)) continue;
     if (!nodeSlugs.has(sourceType.toLowerCase()) || !nodeSlugs.has(targetType.toLowerCase())) continue;
+    edgeNames.set(edgeType.toLowerCase(), edgeType);
     edge_types.push({
       type: edgeType,
       source_type: sourceType,

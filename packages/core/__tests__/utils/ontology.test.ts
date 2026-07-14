@@ -126,6 +126,36 @@ describe('ontology utils', () => {
     })).toThrow('Duplicate edge definition: About (CreativeWork → Person)');
   });
 
+  it('validateManifest rejects one edge name spelled with different casing across triples', () => {
+    expect(() => validateManifest({
+      node_types: polyManifest.node_types,
+      edge_types: [
+        { type: 'about', source_type: 'creativework', target_type: 'person', description: 'a' },
+        { type: 'About', source_type: 'creativework', target_type: 'place', description: 'b' },
+      ],
+    })).toThrow('Inconsistent casing for edge type: About conflicts with about');
+  });
+
+  it('mergeOntologyUpdates canonicalizes a new triple to the existing edge name casing', () => {
+    const merged = mergeOntologyUpdates(manifest, {
+      edge_types: [{ type: 'Reports_To', source_type: 'person', target_type: 'project', description: 'Project lead.' }],
+    });
+    expect(merged.edge_types).toHaveLength(2);
+    expect(merged.edge_types[1].type).toBe('reports_to');
+    expect(() => validateManifest(merged)).not.toThrow();
+  });
+
+  it('mergeOntologyUpdates canonicalizes casing within a single batch of new edges', () => {
+    const merged = mergeOntologyUpdates(manifest, {
+      edge_types: [
+        { type: 'ownedBy', source_type: 'project', target_type: 'person', description: 'a' },
+        { type: 'ownedby', source_type: 'person', target_type: 'project', description: 'b' },
+      ],
+    });
+    expect(merged.edge_types.filter(e => e.type === 'ownedBy')).toHaveLength(2);
+    expect(() => validateManifest(merged)).not.toThrow();
+  });
+
   it('emptyManifest returns empty arrays', () => {
     expect(emptyManifest()).toEqual({ node_types: [], edge_types: [] });
   });
