@@ -19,6 +19,22 @@ const manifest: OntologyManifest = {
   ],
 };
 
+const polyManifest: OntologyManifest = {
+  node_types: [
+    { type: 'creativework', description: 'Content.' },
+    { type: 'person', description: 'An individual.' },
+    { type: 'organization', description: 'An org.' },
+    { type: 'place', description: 'A location.' },
+    { type: 'event', description: 'An event.' },
+  ],
+  edge_types: [
+    { type: 'about', source_type: 'creativework', target_type: 'person', description: 'a' },
+    { type: 'about', source_type: 'creativework', target_type: 'organization', description: 'b' },
+    { type: 'about', source_type: 'creativework', target_type: 'place', description: 'c' },
+    { type: 'about', source_type: 'creativework', target_type: 'event', description: 'd' },
+  ],
+};
+
 describe('ontology utils', () => {
   it('normalizeTitleKey lowercases and collapses whitespace', () => {
     expect(normalizeTitleKey('  Jane   Doe ')).toBe('jane doe');
@@ -63,6 +79,20 @@ describe('ontology utils', () => {
     expect(merged.node_types).toHaveLength(3);
     expect(merged.node_types.find(n => n.type === 'person')?.description).toBe('An individual.');
     expect(merged.node_types.find(n => n.type === 'vendor')).toBeDefined();
+  });
+
+  it('validateManifest accepts one property name with distinct source/target triples', () => {
+    expect(() => validateManifest(polyManifest)).not.toThrow();
+  });
+
+  it('validateManifest rejects an exact duplicate triple case-insensitively with the triple message', () => {
+    expect(() => validateManifest({
+      node_types: polyManifest.node_types,
+      edge_types: [
+        { type: 'about', source_type: 'creativework', target_type: 'person', description: 'a' },
+        { type: 'About', source_type: 'CreativeWork', target_type: 'Person', description: 'b' },
+      ],
+    })).toThrow('Duplicate edge definition: About (CreativeWork → Person)');
   });
 
   it('emptyManifest returns empty arrays', () => {

@@ -28,6 +28,10 @@ export function resolveEdgeDefinition(
   return manifest.edge_types.find(e => e.type.toLowerCase() === slug.toLowerCase()) ?? null;
 }
 
+function edgeTripleKey(type: string, sourceType: string, targetType: string): string {
+  return `${type.trim().toLowerCase()}|${sourceType.trim().toLowerCase()}|${targetType.trim().toLowerCase()}`;
+}
+
 export function validateManifest(manifest: OntologyManifest): void {
   const nodeSlugs = new Set<string>();
   for (const node of manifest.node_types ?? []) {
@@ -37,18 +41,20 @@ export function validateManifest(manifest: OntologyManifest): void {
     if (nodeSlugs.has(key)) throw new Error(`Duplicate node type: ${type}`);
     nodeSlugs.add(key);
   }
-  const edgeSlugs = new Set<string>();
+  const edgeKeys = new Set<string>();
   for (const edge of manifest.edge_types ?? []) {
     const edgeType = edge.type?.trim();
     const sourceType = edge.source_type?.trim();
     const targetType = edge.target_type?.trim();
     if (!edgeType) throw new Error('Ontology edge type slug must be non-empty');
-    const edgeKey = edgeType.toLowerCase();
-    if (edgeSlugs.has(edgeKey)) throw new Error(`Duplicate edge type: ${edgeType}`);
-    edgeSlugs.add(edgeKey);
     if (!sourceType || !targetType || !nodeSlugs.has(sourceType.toLowerCase()) || !nodeSlugs.has(targetType.toLowerCase())) {
       throw new Error(`Edge type ${edgeType} references unknown node type`);
     }
+    const edgeKey = edgeTripleKey(edgeType, sourceType, targetType);
+    if (edgeKeys.has(edgeKey)) {
+      throw new Error(`Duplicate edge definition: ${edgeType} (${sourceType} → ${targetType})`);
+    }
+    edgeKeys.add(edgeKey);
   }
 }
 
