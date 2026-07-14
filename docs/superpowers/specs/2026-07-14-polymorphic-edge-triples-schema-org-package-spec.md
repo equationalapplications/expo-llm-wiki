@@ -1,8 +1,14 @@
 # Polymorphic Edge Triples + `@equationalapplications/schema-org-llm-wiki` — Spec
 
 **Date:** 2026-07-14
-**Status:** Design Complete (Pending Implementation)
+**Status:** Implemented (branch `feat/polymorphic-edge-triples`, 2026-07-14)
 **Packages:** `@equationalapplications/core-llm-wiki` (validation change), `@equationalapplications/schema-org-llm-wiki` (new)
+
+> **Implementation record.** This spec was implemented as designed with three
+> deliberate deviations, recorded in
+> [Deviations discovered during implementation](#deviations-discovered-during-implementation).
+> One semantic technicality in the manifest is recorded in
+> [Known semantic technicality](#known-semantic-technicality-suborganization).
 
 ---
 
@@ -48,7 +54,11 @@ fix is in the library, and it benefits every consumer of the packages.
   (each part trimmed + lowercased).
 - Error message for a true duplicate:
   `Duplicate edge definition: ${type} (${source_type} → ${target_type})`.
-- Node-type validation unchanged. Unknown source/target node check unchanged.
+- Node-type validation unchanged. Unknown source/target node check unchanged
+  in condition and message, but it now runs **before** the duplicate check
+  (the triple key requires non-empty source/target). A manifest failing both
+  checks now reports the unknown-node error instead of the duplicate error.
+  No consumer or test relied on the old ordering.
 
 **`mergeOntologyUpdates`** (emergent mode)
 - Skip-existing check uses the same triple key. An emergent update may now add
@@ -57,7 +67,13 @@ fix is in the library, and it benefits every consumer of the packages.
 **`resolveEdgeDefinition` → `resolveEdgeDefinitions`**
 - Returns **all** case-insensitive name matches (`OntologyEdgeType[]`) instead
   of the first. Internal utility — not exported from the package index, so no
-  public API break.
+  public API break. The singular `resolveEdgeDefinition` was deleted once its
+  last caller (`OntologyService`) migrated.
+
+**`validateManifest` export** (added during implementation)
+- Newly exported from `packages/core/src/index.ts`. Required so the
+  schema-org package's tests (and any consumer) can validate a manifest
+  across the package boundary before seeding. Additive — no API break.
 
 **`validateInlineEdges`**
 - An extracted edge is kept if **any** definition matches its name and the
@@ -109,17 +125,26 @@ Manifest JSON injection is otherwise unchanged.
 packages/schema-org/
   package.json          # name @equationalapplications/schema-org-llm-wiki
   tsconfig.json         # same pattern as sibling packages
+  tsup.config.ts        # cjs+esm+dts; core-llm-wiki external
+  vitest.config.ts      # node environment, __tests__/**/*.test.ts
+  LICENSE               # copy of core's MIT license
   src/index.ts          # manifest constant + re-exported types
   __tests__/manifest.test.ts
+  __tests__/__snapshots__/manifest.test.ts.snap
   README.md
 ```
 
 - **Data-only** — no runtime logic.
 - `dependencies`: `@equationalapplications/core-llm-wiki: workspace:*`
   (types only; matches sibling-package convention, e.g. `packages/react`).
-- Build: same tsup setup as siblings; picked up by root `pnpm -r build` and
-  the existing release workflow with no workflow changes.
-- Versioning/changelog: semantic-release lockstep — nothing manual.
+- Build: same tsup setup as siblings; picked up by root `pnpm -r build`.
+- Release: the pipeline hardcodes its package list, so schema-org was added
+  to `.releaserc.json` (prepareCmd array + git assets) and to
+  `.github/workflows/release.yml` (`publish_if_needed` line, placed after
+  core since schema-org depends only on core). See
+  [deviations](#deviations-discovered-during-implementation).
+- Versioning/changelog: semantic-release lockstep — nothing manual beyond
+  the initial scaffold version matching the then-current lockstep value.
 
 ### Exports
 
@@ -151,7 +176,9 @@ const wiki = createWiki(db, {
 `creativework`, `review`, `product`.
 
 Changes vs. the Clanker draft spec (all in service of full schema.org
-standardness — zero deviations, exact JSON-LD mapping):
+standardness — every type and property name is schema.org-standard, with one
+recorded semantic technicality on `subOrganization`; see
+[below](#known-semantic-technicality-suborganization)):
 
 | Draft | Final | Why |
 |-------|-------|-----|
@@ -206,6 +233,17 @@ Casing: property names keep schema.org camelCase (`worksFor`,
 `itemReviewed`). Validation compares lowercase but stores the given casing,
 so camelCase survives to storage and future JSON-LD export.
 
+### Known semantic technicality: `subOrganization`
+
+The manifest applies `subOrganization` as `project → project`. Schema.org
+defines the property's domain/range as Organization → Organization; the
+mapping here leans on Project ⊂ Organization subclassing. This is technically
+valid RDF/JSON-LD — a parser accepts a Project at either end — but it treats
+a Project as an entity structure rather than a pure task container, so the
+"exact JSON-LD mapping" claim is a stretch for this one row. Recorded as a
+deliberate pragmatic compromise: `subProject` does not exist in schema.org,
+and `subOrganization` is the closest standard hierarchy property.
+
 ### README contents
 
 - What the package is; why curated (prompt size, classification accuracy).
@@ -216,6 +254,27 @@ so camelCase survives to storage and future JSON-LD export.
 - Requires a core version with triple-keyed edge validation (same release).
 
 ---
+
+## Deviations discovered during implementation
+
+Three deliberate deviations from this spec as originally written, all made
+during implementation and reviewed:
+
+1. **Release pipeline changes were required** (spec originally claimed "no
+   workflow changes"). `.releaserc.json` hardcodes the package list in its
+   `@semantic-release/exec` prepareCmd and `@semantic-release/git` assets,
+   and `.github/workflows/release.yml` hardcodes one `publish_if_needed`
+   line per package. `schema-org` was added to all three; without this the
+   package would never be version-bumped or published.
+2. **`validateManifest` is exported from core's package index.** The spec's
+   own test plan ("Manifest passes `validateManifest`" in the schema-org
+   package) requires the function across the package boundary. Additive
+   export, no API break, useful to any consumer validating a custom
+   manifest before seeding.
+3. **Edge validation check ordering changed.** The unknown-node check in
+   `validateManifest` now runs before the duplicate check, because the
+   triple key requires non-empty source/target. Condition and message are
+   unchanged; only which error wins when a manifest fails both differs.
 
 ## Data Flow (unchanged paths, new behavior)
 
@@ -255,6 +314,9 @@ check) → `resolveAndPersistEdges` (target-type selection among rows) →
 - Exactly 9 node types, 28 edges; every edge's source/target exists in the
   node list.
 - Snapshot test to catch accidental content drift.
+- (Added during implementation) 19 unique property names with expected
+  polymorphic counts (`location` ×2, `organizer` ×2, `about` ×4,
+  `itemReviewed` ×5); every node and edge has a non-empty description.
 
 ### Integration — `packages/integration`
 - Seed the full manifest; librarian round-trip classifies facts into
