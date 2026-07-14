@@ -929,7 +929,7 @@ export class EntryRepository extends BaseRepository {
       const placeholders = chunk.map(() => '?').join(',');
       await tx.runAsync(
         `UPDATE ${this.prefix}entries SET ontology_checked_at = ?
-         WHERE id IN (${placeholders}) AND entity_id = ?`,
+         WHERE id IN (${placeholders}) AND entity_id = ? AND deleted_at IS NULL`,
         [now, ...chunk, entityId],
       );
     }
@@ -937,13 +937,15 @@ export class EntryRepository extends BaseRepository {
 
   /**
    * Lightweight full-breadth title index (id, title, okf_type) over all live
-   * facts. Used by ontology backfill edge resolution — a recent-N window would
-   * miss an old fact's contemporaries.
+   * typed facts. Used by ontology backfill edge resolution — a recent-N window
+   * would miss an old fact's contemporaries. Untyped rows are excluded: they
+   * can never pass the edge target-type check, and batch facts typed during
+   * the run are re-added to the in-memory index by the caller.
    */
   async findTitleIndexByEntityId(entityId: string, tx?: SQLiteAdapter): Promise<Array<{ id: string; title: string; okf_type: string | null }>> {
     const executor = this.getExecutor(tx);
     const rows = await executor.getAllAsync<{ id: string; title: string; okf_type: string | null }>(
-      `SELECT id, title, okf_type FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL`,
+      `SELECT id, title, okf_type FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL AND okf_type IS NOT NULL`,
       [entityId],
     );
     return rows.map(r => ({ id: r.id, title: r.title, okf_type: r.okf_type ?? null }));

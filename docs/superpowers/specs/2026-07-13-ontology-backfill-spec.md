@@ -95,7 +95,7 @@ updateOkfType(id: string, entityId: string, okfType: string, tx: SQLiteAdapter):
   // changes === 0 → the fact was typed concurrently between select and update
   // (the okf_type IS NULL guard left it untouched); the caller skips it
 markOntologyChecked(ids: string[], entityId: string, now: number, tx: SQLiteAdapter): Promise<void>
-  // UPDATE ... SET ontology_checked_at = ? WHERE id IN (…) AND entity_id = ?
+  // UPDATE ... SET ontology_checked_at = ? WHERE id IN (…) AND entity_id = ? AND deleted_at IS NULL
   // NEVER touches updated_at — see Decision 3b
 ```
 
@@ -194,16 +194,19 @@ Inside `db.withTransactionAsync`:
 1. `getEffectiveState(entityId, tx)`; in emergent mode with `ontology_updates`
    present → `mergeEmergentUpdates` first (manifest grows before validation, same
    order as the librarian).
-2. Build the title index from **all live facts for the entity** via a new
+2. Build the title index from **all live typed facts for the entity** via a new
    lightweight `EntryRepository.findTitleIndexByEntityId(entityId, tx)` selecting
-   only `id, title, okf_type` (not `SELECT *`). The librarian's
+   only `id, title, okf_type` (not `SELECT *`), filtered to
+   `okf_type IS NOT NULL`. The librarian's
    `findRecentByEntityId(…, 100)` window is wrong here: it returns the 100 most
    *recently updated* facts, while the backfill batch is the *oldest* — an old
    fact's edge targets are its contemporaries, which a recent-100 window would
    miss and silently drop. Three columns across even thousands of local rows is
    cheap in SQLite. (Full breadth helps only *already-typed* targets — an untyped
-   out-of-batch target still fails the target-type check; those edges belong to
-   the deferred edge-backfill in Out of Scope. Oldest-first batching mitigates by
+   out-of-batch target still fails the target-type check, so untyped rows are
+   excluded from the SQL index outright; batch facts typed during the run are
+   re-added to the in-memory index. Deferred edges to untyped targets belong to
+   the edge-backfill in Out of Scope. Oldest-first batching mitigates by
    clustering contemporaries into the same batch.)
 3. Per classification: resolve the fact by `id` against the selected batch (unknown
    ids counted in `failedValidation`); `validateAndNormalizeFact` → canonical

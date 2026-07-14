@@ -131,7 +131,7 @@ describe('EntryRepository — backfill methods', () => {
     ]);
   });
 
-  it('findTitleIndexByEntityId returns id/title/okf_type for all live facts', async () => {
+  it('findTitleIndexByEntityId returns only live typed facts', async () => {
     const db = openTestDatabase();
     await setupDatabase(db, PREFIX);
     const repo = makeRepo(db);
@@ -139,9 +139,23 @@ describe('EntryRepository — backfill methods', () => {
     await seedEntry(db, { id: 't2', title: 'Beta' });
     await seedEntry(db, { id: 't3', title: 'Gone', deletedAt: 5 });
     const rows = await repo.findTitleIndexByEntityId('e1');
-    expect(rows.sort((a, b) => a.id.localeCompare(b.id))).toEqual([
+    expect(rows).toEqual([
       { id: 't1', title: 'Alpha', okf_type: 'person' },
-      { id: 't2', title: 'Beta', okf_type: null },
+    ]);
+  });
+
+  it('markOntologyChecked skips soft-deleted facts', async () => {
+    const db = openTestDatabase();
+    await setupDatabase(db, PREFIX);
+    const repo = makeRepo(db);
+    await seedEntry(db, { id: 'd1', updatedAt: 111 });
+    await seedEntry(db, { id: 'd2', updatedAt: 222, deletedAt: 300 });
+    await db.withTransactionAsync(tx => repo.markOntologyChecked(['d1', 'd2'], 'e1', 9999, tx));
+    const rows = await db.getAllAsync<{ id: string; ontology_checked_at: number | null }>(
+      `SELECT id, ontology_checked_at FROM ${PREFIX}entries ORDER BY id`);
+    expect(rows).toEqual([
+      { id: 'd1', ontology_checked_at: 9999 },
+      { id: 'd2', ontology_checked_at: null },
     ]);
   });
 });
