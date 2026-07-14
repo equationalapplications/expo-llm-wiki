@@ -1,8 +1,14 @@
 # @equationalapplications/schema-org-llm-wiki
 
-Curated [schema.org](https://schema.org/) warm-agent ontology manifest for
-[LLM Wiki Memory](https://github.com/equationalapplications/expo-llm-wiki):
-**9 node types, 28 edges**, all schema.org-standard. Data-only — no runtime code.
+Curated [schema.org](https://schema.org/) warm-agent ontology manifest for hybrid LLM memory. Seeds a knowledge graph with 9 standard node types and 28 polymorphic edges — token-efficient, JSON-LD-ready, data-only with no runtime code.
+
+[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fschema-org-llm-wiki?label=schema-org)](https://www.npmjs.com/package/@equationalapplications/schema-org-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fschema-org-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/schema-org-llm-wiki)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/schema-org/LICENSE)
+
+**[GitHub](https://github.com/equationalapplications/expo-llm-wiki)** · **[ScopeLab](https://equationalapplications.github.io/expo-llm-wiki/scopelab/)** · **[WikiDemo](https://equationalapplications.github.io/expo-llm-wiki/wiki-demo/)** · **[Changelog](https://github.com/equationalapplications/expo-llm-wiki/blob/main/CHANGELOG.md)** · **[Issues](https://github.com/equationalapplications/expo-llm-wiki/issues)**
+
+> Ontology manifest for [LLM Wiki Memory](https://github.com/equationalapplications/expo-llm-wiki), inspired by [Andrej Karpathy's LLM Wiki memory spec](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
 
 ## Why curated?
 
@@ -18,6 +24,12 @@ Requires `@equationalapplications/core-llm-wiki` at the same release or newer �
 this manifest uses polymorphic edge rows (one property name with several
 source/target types), which core validates by the `(type, source_type, target_type)`
 triple.
+
+## Installation
+
+```bash
+npm install @equationalapplications/schema-org-llm-wiki
+```
 
 ## Usage
 
@@ -77,3 +89,23 @@ targets `person`, `organization`, `place`, and `event`.
 - Literal-valued properties (`birthDate`, `startTime`, `reviewRating` values, …)
   live inside fact content, not as edges. Only object-valued properties
   (pointing at other facts) are edges.
+
+## Monorepo Ecosystem
+
+| Package | Purpose |
+| ----- | ----- |
+| [**@equationalapplications/schema-org-llm-wiki**](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/schema-org/README.md) | Curated schema.org warm-agent ontology manifest |
+| [@equationalapplications/core-llm-wiki](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md) | Persistent episodic memory |
+| [@equationalapplications/expo-llm-wiki](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/expo/README.md) | Persistent episodic memory for Expo/React Native |
+| [@equationalapplications/react-llm-wiki](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/react/README.md) | Persistent episodic memory for Web |
+| [@equationalapplications/prisma-outbox](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/prisma-outbox/README.md) | Sync SQLite outbox events to Prisma |
+| [@equationalapplications/core-llm-tools](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core-llm-tools/README.md) | Gemini tool schemas and capability injector |
+| [@equationalapplications/core-okf](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/okf/README.md) | Zero-dependency Open Knowledge Format (OKF) v0.1 primitives — parse and produce interoperable knowledge bundles. |
+
+## License
+
+MIT
+
+---
+
+Made with ❤️ by Equational Applications LLC. [https://equationalapplications.com/](https://equationalapplications.com/)
