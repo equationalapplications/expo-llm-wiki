@@ -28,6 +28,15 @@ export function resolveEdgeDefinition(
   return manifest.edge_types.find(e => e.type.toLowerCase() === slug.toLowerCase()) ?? null;
 }
 
+export function resolveEdgeDefinitions(
+  rawEdgeType: string,
+  manifest: OntologyManifest,
+): OntologyManifest['edge_types'][number][] {
+  const slug = rawEdgeType.trim();
+  if (!slug) return [];
+  return manifest.edge_types.filter(e => e.type.toLowerCase() === slug.toLowerCase());
+}
+
 function edgeTripleKey(type: string, sourceType: string, targetType: string): string {
   return `${type.trim().toLowerCase()}|${sourceType.trim().toLowerCase()}|${targetType.trim().toLowerCase()}`;
 }
@@ -104,10 +113,10 @@ export function validateInlineEdges(
   const valid: ExtractedFactEdge[] = [];
   for (const edge of edges) {
     if (typeof edge?.edge_type !== 'string' || typeof edge?.target_title !== 'string') continue;
-    const def = resolveEdgeDefinition(edge.edge_type, manifest);
-    if (!def) continue;
-    if (def.source_type.toLowerCase() !== sourceType.toLowerCase()) continue;
-    valid.push({ edge_type: def.type, target_title: edge.target_title });
+    const defs = resolveEdgeDefinitions(edge.edge_type, manifest);
+    const match = defs.find(d => d.source_type.toLowerCase() === sourceType.toLowerCase());
+    if (!match) continue;
+    valid.push({ edge_type: match.type, target_title: edge.target_title });
   }
   return valid;
 }

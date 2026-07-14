@@ -6,6 +6,7 @@ import {
   validateManifest,
   mergeOntologyUpdates,
   validateInlineEdges,
+  resolveEdgeDefinitions,
 } from '../../src/utils/ontology';
 import type { OntologyManifest } from '../../src/types';
 
@@ -32,6 +33,19 @@ const polyManifest: OntologyManifest = {
     { type: 'about', source_type: 'creativework', target_type: 'organization', description: 'b' },
     { type: 'about', source_type: 'creativework', target_type: 'place', description: 'c' },
     { type: 'about', source_type: 'creativework', target_type: 'event', description: 'd' },
+  ],
+};
+
+const locationManifest: OntologyManifest = {
+  node_types: [
+    { type: 'person', description: 'x' },
+    { type: 'event', description: 'x' },
+    { type: 'organization', description: 'x' },
+    { type: 'place', description: 'x' },
+  ],
+  edge_types: [
+    { type: 'location', source_type: 'event', target_type: 'place', description: 'x' },
+    { type: 'location', source_type: 'organization', target_type: 'place', description: 'x' },
   ],
 };
 
@@ -133,5 +147,33 @@ describe('ontology utils', () => {
       mixedCaseManifest,
     );
     expect(edges).toEqual([{ edge_type: 'Reports_To', target_title: 'Bob Smith' }]);
+  });
+
+  it('resolveEdgeDefinitions returns all case-insensitive name matches', () => {
+    const defs = resolveEdgeDefinitions('About', polyManifest);
+    expect(defs).toHaveLength(4);
+    expect(defs.every(d => d.type === 'about')).toBe(true);
+    expect(resolveEdgeDefinitions('missing', polyManifest)).toEqual([]);
+    expect(resolveEdgeDefinitions('  ', polyManifest)).toEqual([]);
+  });
+
+  it('validateInlineEdges keeps an edge when any definition matches name + source', () => {
+    const edges = validateInlineEdges(
+      'Organization',
+      null,
+      [{ edge_type: 'Location', target_title: 'HQ Building' }],
+      locationManifest,
+    );
+    expect(edges).toEqual([{ edge_type: 'location', target_title: 'HQ Building' }]);
+  });
+
+  it('validateInlineEdges drops an edge when only the name matches (wrong source)', () => {
+    const edges = validateInlineEdges(
+      'person',
+      null,
+      [{ edge_type: 'location', target_title: 'HQ Building' }],
+      locationManifest,
+    );
+    expect(edges).toEqual([]);
   });
 });
