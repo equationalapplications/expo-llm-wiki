@@ -248,6 +248,9 @@ importers:
       '@equationalapplications/core-llm-wiki':
         specifier: workspace:*
         version: link:../core
+      '@equationalapplications/schema-org-llm-wiki':
+        specifier: workspace:*
+        version: link:../schema-org
     devDependencies:
       '@types/better-sqlite3':
         specifier: ^7.6.13

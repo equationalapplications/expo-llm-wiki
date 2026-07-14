@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@equationalapplications/core-llm-wiki": "workspace:*"
+    "@equationalapplications/core-llm-wiki": "workspace:*",
+    "@equationalapplications/schema-org-llm-wiki": "workspace:*"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
