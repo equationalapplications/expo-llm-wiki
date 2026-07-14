@@ -19,13 +19,17 @@ export function resolveNodeType(raw: string, manifest: OntologyManifest): string
   return hit?.type ?? null;
 }
 
-export function resolveEdgeDefinition(
+export function resolveEdgeDefinitions(
   rawEdgeType: string,
   manifest: OntologyManifest,
-): OntologyManifest['edge_types'][number] | null {
+): OntologyManifest['edge_types'][number][] {
   const slug = rawEdgeType.trim();
-  if (!slug) return null;
-  return manifest.edge_types.find(e => e.type.toLowerCase() === slug.toLowerCase()) ?? null;
+  if (!slug) return [];
+  return manifest.edge_types.filter(e => e.type.toLowerCase() === slug.toLowerCase());
+}
+
+function edgeTripleKey(type: string, sourceType: string, targetType: string): string {
+  return `${type.trim().toLowerCase()}|${sourceType.trim().toLowerCase()}|${targetType.trim().toLowerCase()}`;
 }
 
 export function validateManifest(manifest: OntologyManifest): void {
@@ -37,17 +41,28 @@ export function validateManifest(manifest: OntologyManifest): void {
     if (nodeSlugs.has(key)) throw new Error(`Duplicate node type: ${type}`);
     nodeSlugs.add(key);
   }
-  const edgeSlugs = new Set<string>();
+  const edgeKeys = new Set<string>();
+  const edgeNames = new Map<string, string>();
   for (const edge of manifest.edge_types ?? []) {
     const edgeType = edge.type?.trim();
     const sourceType = edge.source_type?.trim();
     const targetType = edge.target_type?.trim();
     if (!edgeType) throw new Error('Ontology edge type slug must be non-empty');
-    const edgeKey = edgeType.toLowerCase();
-    if (edgeSlugs.has(edgeKey)) throw new Error(`Duplicate edge type: ${edgeType}`);
-    edgeSlugs.add(edgeKey);
     if (!sourceType || !targetType || !nodeSlugs.has(sourceType.toLowerCase()) || !nodeSlugs.has(targetType.toLowerCase())) {
       throw new Error(`Edge type ${edgeType} references unknown node type`);
+    }
+    const edgeKey = edgeTripleKey(edgeType, sourceType, targetType);
+    if (edgeKeys.has(edgeKey)) {
+      throw new Error(`Duplicate edge definition: ${edgeType} (${sourceType} → ${targetType})`);
+    }
+    edgeKeys.add(edgeKey);
+    // Persisted edge_type values come from def.type verbatim, so every triple
+    // sharing a name must agree on casing or storage ends up mixed.
+    const canonical = edgeNames.get(edgeType.toLowerCase());
+    if (canonical === undefined) {
+      edgeNames.set(edgeType.toLowerCase(), edgeType);
+    } else if (canonical !== edgeType) {
+      throw new Error(`Inconsistent casing for edge type: ${edgeType} conflicts with ${canonical}`);
     }
   }
 }
@@ -59,7 +74,8 @@ export function mergeOntologyUpdates(
   const node_types = [...current.node_types];
   const edge_types = [...current.edge_types];
   const nodeSlugs = new Set(node_types.map(n => n.type.trim().toLowerCase()));
-  const edgeSlugs = new Set(edge_types.map(e => e.type.trim().toLowerCase()));
+  const edgeKeys = new Set(edge_types.map(e => edgeTripleKey(e.type, e.source_type, e.target_type)));
+  const edgeNames = new Map(edge_types.map(e => [e.type.trim().toLowerCase(), e.type.trim()]));
 
   for (const node of updates.node_types ?? []) {
     const type = node?.type?.trim();
@@ -70,20 +86,24 @@ export function mergeOntologyUpdates(
     nodeSlugs.add(key);
   }
   for (const edge of updates.edge_types ?? []) {
-    const edgeType = edge?.type?.trim();
+    const rawEdgeType = edge?.type?.trim();
     const sourceType = edge?.source_type?.trim();
     const targetType = edge?.target_type?.trim();
-    if (!edgeType || !sourceType || !targetType) continue;
-    const edgeKey = edgeType.toLowerCase();
-    if (edgeSlugs.has(edgeKey)) continue;
+    if (!rawEdgeType || !sourceType || !targetType) continue;
+    // First-seen casing wins for a given edge name, as with node types, so a
+    // later triple spelled differently cannot make the manifest fail validation.
+    const edgeType = edgeNames.get(rawEdgeType.toLowerCase()) ?? rawEdgeType;
+    const edgeKey = edgeTripleKey(edgeType, sourceType, targetType);
+    if (edgeKeys.has(edgeKey)) continue;
     if (!nodeSlugs.has(sourceType.toLowerCase()) || !nodeSlugs.has(targetType.toLowerCase())) continue;
+    edgeNames.set(edgeType.toLowerCase(), edgeType);
     edge_types.push({
       type: edgeType,
       source_type: sourceType,
       target_type: targetType,
       description: String(edge.description ?? ''),
     });
-    edgeSlugs.add(edgeKey);
+    edgeKeys.add(edgeKey);
   }
   return { node_types, edge_types };
 }
@@ -98,10 +118,10 @@ export function validateInlineEdges(
   const valid: ExtractedFactEdge[] = [];
   for (const edge of edges) {
     if (typeof edge?.edge_type !== 'string' || typeof edge?.target_title !== 'string') continue;
-    const def = resolveEdgeDefinition(edge.edge_type, manifest);
-    if (!def) continue;
-    if (def.source_type.toLowerCase() !== sourceType.toLowerCase()) continue;
-    valid.push({ edge_type: def.type, target_title: edge.target_title });
+    const defs = resolveEdgeDefinitions(edge.edge_type, manifest);
+    const match = defs.find(d => d.source_type.toLowerCase() === sourceType.toLowerCase());
+    if (!match) continue;
+    valid.push({ edge_type: match.type, target_title: edge.target_title });
   }
   return valid;
 }

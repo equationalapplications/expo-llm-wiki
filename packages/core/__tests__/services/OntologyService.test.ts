@@ -21,6 +21,23 @@ const edgeManifest: OntologyManifest = {
   ],
 };
 
+const polyManifest: OntologyManifest = {
+  node_types: [
+    { type: 'creativework', description: 'Content.' },
+    { type: 'person', description: 'An individual.' },
+    { type: 'organization', description: 'An org.' },
+    { type: 'place', description: 'A location.' },
+    { type: 'event', description: 'An event.' },
+    { type: 'product', description: 'A product.' },
+  ],
+  edge_types: [
+    { type: 'about', source_type: 'creativework', target_type: 'person', description: 'a' },
+    { type: 'about', source_type: 'creativework', target_type: 'organization', description: 'b' },
+    { type: 'about', source_type: 'creativework', target_type: 'place', description: 'c' },
+    { type: 'about', source_type: 'creativework', target_type: 'event', description: 'd' },
+  ],
+};
+
 function makeMocks() {
   const metadataRepo = {
     getManifest: vi.fn(),
@@ -123,6 +140,16 @@ describe('OntologyService', () => {
       expect(ctx).not.toBeNull();
       expect(ctx!.ontologyModeInstructions).toContain('STRICT MODE');
     });
+
+    it('appendix explains polymorphic edge rows', async () => {
+      const { metadataRepo, edgeRepo } = makeMocks();
+      vi.mocked(metadataRepo.getManifest).mockResolvedValue({ mode: 'strict', manifest });
+      const svc = new OntologyService(metadataRepo, edgeRepo);
+      const ctx = await svc.buildPromptContext('entity1');
+      expect(ctx!.ontologyModeInstructions).toContain(
+        'An edge_type may appear in the manifest multiple times',
+      );
+    });
   });
 
   describe('validateAndNormalizeFact', () => {
@@ -212,6 +239,56 @@ describe('OntologyService', () => {
         edgeManifest, titleIndex, {} as any, 123,
       );
       expect(count).toBe(1); // true + false + skipped
+    });
+
+    it('selects the definition whose target_type matches the resolved target okf_type', async () => {
+      const { metadataRepo, edgeRepo } = makeMocks();
+      vi.mocked(edgeRepo.addIgnoreDuplicate).mockResolvedValue(true);
+      const svc = new OntologyService(metadataRepo, edgeRepo);
+      const titleIndex = new Map([
+        ['yosemite valley', { id: 'fact_place', okf_type: 'place' }],
+      ]);
+      const count = await svc.resolveAndPersistEdges(
+        'e1', 'fact_doc', 'creativework',
+        [{ edge_type: 'about', target_title: 'Yosemite Valley' }],
+        polyManifest, titleIndex, {} as any, 1,
+      );
+      expect(count).toBe(1);
+      expect(edgeRepo.addIgnoreDuplicate).toHaveBeenCalledTimes(1);
+      expect(edgeRepo.addIgnoreDuplicate).toHaveBeenCalledWith(
+        expect.objectContaining({ source_id: 'fact_doc', target_id: 'fact_place', edge_type: 'about' }),
+        expect.anything(),
+      );
+    });
+
+    it('skips the edge when the target okf_type matches no definition', async () => {
+      const { metadataRepo, edgeRepo } = makeMocks();
+      const svc = new OntologyService(metadataRepo, edgeRepo);
+      const titleIndex = new Map([
+        ['widget', { id: 'fact_prod', okf_type: 'product' }],
+      ]);
+      const count = await svc.resolveAndPersistEdges(
+        'e1', 'fact_doc', 'creativework',
+        [{ edge_type: 'about', target_title: 'Widget' }],
+        polyManifest, titleIndex, {} as any, 1,
+      );
+      expect(count).toBe(0);
+      expect(edgeRepo.addIgnoreDuplicate).not.toHaveBeenCalled();
+    });
+
+    it('skips the edge when the target is untyped', async () => {
+      const { metadataRepo, edgeRepo } = makeMocks();
+      const svc = new OntologyService(metadataRepo, edgeRepo);
+      const titleIndex = new Map([
+        ['mystery', { id: 'fact_m', okf_type: null }],
+      ]);
+      const count = await svc.resolveAndPersistEdges(
+        'e1', 'fact_doc', 'creativework',
+        [{ edge_type: 'about', target_title: 'Mystery' }],
+        polyManifest, titleIndex, {} as any, 1,
+      );
+      expect(count).toBe(0);
+      expect(edgeRepo.addIgnoreDuplicate).not.toHaveBeenCalled();
     });
   });
 

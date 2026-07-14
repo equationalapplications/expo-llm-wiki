@@ -11,6 +11,7 @@ export { formatMemoryDump } from './utils/formatMemoryDump';
 export { formatOkfBundle } from './utils/formatOkfBundle';
 export { parseOkfBundle, type OkfImportOptions } from './utils/parseOkfBundle';
 export { parseEmbedding } from './utils/embedding';
+export { validateManifest } from './utils/ontology';
 export { configureRandomSource } from './utils/ids';
 export * from './librarianPrompt';
 export { PromptService } from './services/PromptService';

@@ -3,7 +3,8 @@ import type { OntologyMode } from '../types';
 const FACT_ONTOLOGY_FIELDS = `
 Each fact may optionally include:
 - "okf_type": string — must be one of the node_types in the manifest
-- "edges": [{ "edge_type": string, "target_title": string }] — target_title must match another fact's title in this response or existing memory`;
+- "edges": [{ "edge_type": string, "target_title": string }] — target_title must match another fact's title in this response or existing memory
+- An edge_type may appear in the manifest multiple times with different source_type/target_type; use the row whose types match your fact and target.`;
 
 const EMERGENT_EXTRA = `
 You may also return "ontology_updates" to propose new types:

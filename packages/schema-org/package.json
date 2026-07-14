@@ -1,0 +1,61 @@
+{
+  "name": "@equationalapplications/schema-org-llm-wiki",
+  "version": "4.21.0",
+  "description": "Curated schema.org warm-agent ontology manifest for LLM Wiki Memory: 9 node types, 28 edges, fully schema.org-standard. Data-only.",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "license": "MIT",
+  "keywords": [
+    "schema-org",
+    "ontology",
+    "knowledge-graph",
+    "llm-memory",
+    "ai-memory",
+    "json-ld",
+    "typescript"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/equationalapplications/expo-llm-wiki.git",
+    "directory": "packages/schema-org"
+  },
+  "bugs": {
+    "url": "https://github.com/equationalapplications/expo-llm-wiki/issues"
+  },
+  "homepage": "https://github.com/equationalapplications/expo-llm-wiki/tree/main/packages/schema-org#readme",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "dependencies": {
+    "@equationalapplications/core-llm-wiki": "workspace:*"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "4.1.5"
+  }
+}
