@@ -140,6 +140,16 @@ describe('OntologyService', () => {
       expect(ctx).not.toBeNull();
       expect(ctx!.ontologyModeInstructions).toContain('STRICT MODE');
     });
+
+    it('appendix explains polymorphic edge rows', async () => {
+      const { metadataRepo, edgeRepo } = makeMocks();
+      vi.mocked(metadataRepo.getManifest).mockResolvedValue({ mode: 'strict', manifest });
+      const svc = new OntologyService(metadataRepo, edgeRepo);
+      const ctx = await svc.buildPromptContext('entity1');
+      expect(ctx!.ontologyModeInstructions).toContain(
+        'An edge_type may appear in the manifest multiple times',
+      );
+    });
   });
 
   describe('validateAndNormalizeFact', () => {
