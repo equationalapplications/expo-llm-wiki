@@ -1,0 +1,214 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`schemaOrgWarmAgentManifest > matches snapshot (content drift guard) 1`] = `
+{
+  "edge_types": [
+    {
+      "description": "Friendship, acquaintance, or general connection between two people.",
+      "source_type": "person",
+      "target_type": "person",
+      "type": "knows",
+    },
+    {
+      "description": "Spousal or long-term partner relationship.",
+      "source_type": "person",
+      "target_type": "person",
+      "type": "spouse",
+    },
+    {
+      "description": "A parent of this person: the source is the child, the target is the parent.",
+      "source_type": "person",
+      "target_type": "person",
+      "type": "parent",
+    },
+    {
+      "description": "Employment or primary professional affiliation.",
+      "source_type": "person",
+      "target_type": "organization",
+      "type": "worksFor",
+    },
+    {
+      "description": "Membership in clubs, associations, or communities.",
+      "source_type": "person",
+      "target_type": "organization",
+      "type": "memberOf",
+    },
+    {
+      "description": "Primary residence.",
+      "source_type": "person",
+      "target_type": "place",
+      "type": "homeLocation",
+    },
+    {
+      "description": "Workplace or primary work location.",
+      "source_type": "person",
+      "target_type": "place",
+      "type": "workLocation",
+    },
+    {
+      "description": "Venue or geographic location of an event.",
+      "source_type": "event",
+      "target_type": "place",
+      "type": "location",
+    },
+    {
+      "description": "Physical headquarters or primary location.",
+      "source_type": "organization",
+      "target_type": "place",
+      "type": "location",
+    },
+    {
+      "description": "Hierarchical location: the source place is inside the target place (e.g., Paris is contained in France).",
+      "source_type": "place",
+      "target_type": "place",
+      "type": "containedInPlace",
+    },
+    {
+      "description": "Nested project hierarchy: the target is a sub-project contained in the source project.",
+      "source_type": "project",
+      "target_type": "project",
+      "type": "subOrganization",
+    },
+    {
+      "description": "Project this task belongs to; the object the action advances.",
+      "source_type": "action",
+      "target_type": "project",
+      "type": "object",
+    },
+    {
+      "description": "Person responsible for or performing the action.",
+      "source_type": "action",
+      "target_type": "person",
+      "type": "agent",
+    },
+    {
+      "description": "Person attending or participating in the event.",
+      "source_type": "event",
+      "target_type": "person",
+      "type": "attendee",
+    },
+    {
+      "description": "Person who organized the event.",
+      "source_type": "event",
+      "target_type": "person",
+      "type": "organizer",
+    },
+    {
+      "description": "Organization hosting the event.",
+      "source_type": "event",
+      "target_type": "organization",
+      "type": "organizer",
+    },
+    {
+      "description": "Author, creator, artist, or filmmaker.",
+      "source_type": "creativework",
+      "target_type": "person",
+      "type": "author",
+    },
+    {
+      "description": "Publisher, platform, studio, or distributor.",
+      "source_type": "creativework",
+      "target_type": "organization",
+      "type": "publisher",
+    },
+    {
+      "description": "Content centered on a specific person.",
+      "source_type": "creativework",
+      "target_type": "person",
+      "type": "about",
+    },
+    {
+      "description": "Content centered on a company, institution, or group.",
+      "source_type": "creativework",
+      "target_type": "organization",
+      "type": "about",
+    },
+    {
+      "description": "Content centered on a location (travel guide, history).",
+      "source_type": "creativework",
+      "target_type": "place",
+      "type": "about",
+    },
+    {
+      "description": "Content centered on an event (documentary, article).",
+      "source_type": "creativework",
+      "target_type": "event",
+      "type": "about",
+    },
+    {
+      "description": "The book, movie, article, or other work this review evaluates.",
+      "source_type": "review",
+      "target_type": "creativework",
+      "type": "itemReviewed",
+    },
+    {
+      "description": "The business, restaurant, or institution this review evaluates.",
+      "source_type": "review",
+      "target_type": "organization",
+      "type": "itemReviewed",
+    },
+    {
+      "description": "The venue, park, or location this review evaluates.",
+      "source_type": "review",
+      "target_type": "place",
+      "type": "itemReviewed",
+    },
+    {
+      "description": "The event this review evaluates.",
+      "source_type": "review",
+      "target_type": "event",
+      "type": "itemReviewed",
+    },
+    {
+      "description": "The tool, device, or product this review evaluates.",
+      "source_type": "review",
+      "target_type": "product",
+      "type": "itemReviewed",
+    },
+    {
+      "description": "Item owned by the person (electronics, vehicles, etc.).",
+      "source_type": "person",
+      "target_type": "product",
+      "type": "owns",
+    },
+  ],
+  "node_types": [
+    {
+      "description": "A person—friend, family member, colleague, or public figure. Use this for any individual in the user's social, professional, or knowledge network.",
+      "type": "person",
+    },
+    {
+      "description": "A company, nonprofit, club, sports team, or institution. Covers businesses, schools, local shops, and communities.",
+      "type": "organization",
+    },
+    {
+      "description": "A geographic location, address, landmark, or venue. Use for cities, buildings, parks, restaurants, or any physical or conceptual location.",
+      "type": "place",
+    },
+    {
+      "description": "A scheduled or past gathering, meeting, conference, concert, or celebration. Links attendees and organizers to the event.",
+      "type": "event",
+    },
+    {
+      "description": "A multi-step initiative, goal, or endeavor. Use for personal projects, learning goals, business initiatives, or long-term objectives.",
+      "type": "project",
+    },
+    {
+      "description": "An individual task, chore, step, or completed action. Links to a parent Project and assigns responsibility to a Person.",
+      "type": "action",
+    },
+    {
+      "description": "A book, movie, article, song, recipe, blog post, or other creative content. Captures media the user consumes, learns from, or creates.",
+      "type": "creativework",
+    },
+    {
+      "description": "A personal review, opinion, or evaluation. The implicit subject is always the owning character—use to review a book, restaurant, place, product, or experience. Rating values stay inside the fact content.",
+      "type": "review",
+    },
+    {
+      "description": "A physical item, software tool, or device owned or under consideration. Covers electronics, vehicles, household items, and software.",
+      "type": "product",
+    },
+  ],
+}
+`;
