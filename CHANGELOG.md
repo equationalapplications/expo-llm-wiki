@@ -1,3 +1,21 @@
+# [4.22.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.21.0...v4.22.0) (2026-07-14)
+
+
+### Bug Fixes
+
+* **ontology:** enforce canonical casing per edge type name ([5cfb8fb](https://github.com/equationalapplications/expo-llm-wiki/commit/5cfb8fb77bbfe00a611c3a174744cba20d3bbc64))
+
+
+### Features
+
+* add curated schema.org warm-agent ontology manifest ([fb6f3e1](https://github.com/equationalapplications/expo-llm-wiki/commit/fb6f3e194bc38ee807ff61319f7120e6f9fce4ec))
+* document polymorphic edge rows in ontology prompt appendix ([fb04603](https://github.com/equationalapplications/expo-llm-wiki/commit/fb046033c2dbeb316af442be2fea2c205b744a55))
+* export validateManifest for consumer manifest validation ([459d0e6](https://github.com/equationalapplications/expo-llm-wiki/commit/459d0e6ba42605706bb972b7dc85c39de53f4a72))
+* key ontology edge validation by (type, source, target) triple ([803208c](https://github.com/equationalapplications/expo-llm-wiki/commit/803208c80676b8aa9617f3ab35728e59d0392e3f))
+* merge emergent ontology edge updates by triple key ([b88d51b](https://github.com/equationalapplications/expo-llm-wiki/commit/b88d51b17ec9df1f3efae06d34af5ea24215d5d9))
+* resolve all ontology edge definitions matching a property name ([8b87667](https://github.com/equationalapplications/expo-llm-wiki/commit/8b8766773c94ec1f61687bb4422a5d5816939b4d))
+* select ontology edge definition by target type among polymorphic rows ([adaf016](https://github.com/equationalapplications/expo-llm-wiki/commit/adaf01690ff4d5cfbd4f183f7c6478461cf9cb5b))
+
 # [4.21.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.20.0...v4.21.0) (2026-07-14)
 
 
