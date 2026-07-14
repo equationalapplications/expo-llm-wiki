@@ -1,3 +1,23 @@
+# [4.21.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.20.0...v4.21.0) (2026-07-14)
+
+
+### Bug Fixes
+
+* address CodeRabbit review on ontology backfill ([d667838](https://github.com/equationalapplications/expo-llm-wiki/commit/d6678387c104c0de9f1dad6fb0dd22956a1c3a73))
+* address Copilot review on ontology backfill ([8b2cefb](https://github.com/equationalapplications/expo-llm-wiki/commit/8b2cefb7c3c0d734c7a31d120c8e4c30f5d60980))
+
+
+### Features
+
+* **core:** add ontology_checked_at column (migration v7) ([701b913](https://github.com/equationalapplications/expo-llm-wiki/commit/701b91368b5abc8f69d8a3cd3eb1f72acb1b3edc))
+* **core:** edge persistence reports inserted counts ([58260f6](https://github.com/equationalapplications/expo-llm-wiki/commit/58260f6fdd99a40de93bb262626b661896b26d30))
+* **core:** EntryRepository ontology backfill queries ([70034b4](https://github.com/equationalapplications/expo-llm-wiki/commit/70034b409516cb64241f7f3f8e6b7db89e7001ca))
+* **core:** expose runOntologyBackfill on WikiMemory ([807220b](https://github.com/equationalapplications/expo-llm-wiki/commit/807220beb3eb97cf4dc065ec47c8562756e507a9))
+* **core:** ontology backfill maintenance pass ([24fdb02](https://github.com/equationalapplications/expo-llm-wiki/commit/24fdb02b5e9032c651c3fdfb706274912e9bd62a))
+* **core:** ontology backfill pass for untyped facts ([ed8520d](https://github.com/equationalapplications/expo-llm-wiki/commit/ed8520d0b03724444b12f7e758ed394d2380dd43))
+* **core:** ontology backfill prompt and PromptService builder ([4de6fce](https://github.com/equationalapplications/expo-llm-wiki/commit/4de6fcec394cbc0ddc0656265a7fc248a1b51206))
+* **core:** ontologyBackfill JobManager lock ([19d0255](https://github.com/equationalapplications/expo-llm-wiki/commit/19d0255c2bcfd92d75ef8423e9e6783b07ac0875))
+
 # [4.20.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.19.0...v4.20.0) (2026-07-09)
 
 
