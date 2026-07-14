@@ -14,6 +14,12 @@ export { parseEmbedding } from './utils/embedding';
 export { configureRandomSource } from './utils/ids';
 export * from './librarianPrompt';
 export { PromptService } from './services/PromptService';
+export {
+  ONTOLOGY_BACKFILL_BATCH_SIZE,
+  ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS,
+  ONTOLOGY_BACKFILL_RECHECK_MS,
+} from './services/MaintenanceService';
+export { ONTOLOGY_BACKFILL_SYSTEM_PROMPT } from './prompts';
 
 export function createWiki(db: SQLiteAdapter, options: WikiOptions): WikiMemory {
   return new WikiMemory(db, options);

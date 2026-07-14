@@ -29,7 +29,7 @@ import { WriteService } from './services/WriteService';
 import { PromptService } from './services/PromptService';
 import { OntologyService } from './services/OntologyService';
 import { GraphTraversalService } from './services/GraphTraversalService';
-import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighborhood } from './types';
+import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighborhood, OntologyBackfillResult } from './types';
 
 export { WikiBusyError, WikiTransactionError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER } from './types';
 
@@ -309,6 +309,28 @@ export class WikiMemory {
    */
   async runHeal(entityId: string, options?: { promptOverride?: string }): Promise<void> {
     return this.maintenanceService.runHeal(entityId, options);
+  }
+
+  /**
+   * Types already-persisted untyped facts (okf_type IS NULL) in place via one
+   * librarian-style LLM call. Strictly additive: never creates, deletes, or
+   * rewrites facts; never overwrites an existing okf_type. Free when there is
+   * nothing to do (ontology off, or zero eligible untyped facts).
+   *
+   * Hosts own the trigger cadence (e.g. after each sync); loop `while
+   * result.remaining > 0` for convergence. Throws WikiBusyError when another
+   * backfill (or conflicting maintenance op) is running for the entity.
+   *
+   * @param options.promptOverride - Applies only to this call. For persistent
+   * customization set `options.config.prompts.ontologyBackfillSystemPrompt`.
+   * @param options.batchSize - Facts per run (default 25) for providers with
+   * tighter context limits.
+   */
+  async runOntologyBackfill(
+    entityId: string,
+    options?: { promptOverride?: string; batchSize?: number },
+  ): Promise<OntologyBackfillResult> {
+    return this.maintenanceService.runOntologyBackfill(entityId, options);
   }
 
   async runReembed(entityId?: string, opts?: { force?: boolean; skipExisting?: boolean }): Promise<{ embedded: number; skipped: number; failed: number }> {

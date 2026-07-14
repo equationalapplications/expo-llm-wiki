@@ -27,6 +27,7 @@ export interface PromptOverrides {
   ingestSystemPrompt?: string;
   librarianSystemPrompt?: string;
   healSystemPrompt?: string;
+  ontologyBackfillSystemPrompt?: string;
 }
 
 export type OntologyMode = 'strict' | 'emergent' | 'off';
@@ -83,6 +84,25 @@ export interface OntologyUpdates {
 export interface OntologyPromptContext {
   ontologyManifest: string;
   ontologyModeInstructions: string;
+}
+
+/** Result of a single ontology backfill run. Omissions (facts the model declined
+ * to classify) are derivable as scanned − typed − failedValidation. */
+export interface OntologyBackfillResult {
+  /** Untyped facts sent to the model this run. */
+  scanned: number;
+  /** Facts that received an okf_type. */
+  typed: number;
+  /** Model classifications rejected (unknown/duplicate id, non-manifest type). */
+  failedValidation: number;
+  /** Edges persisted. */
+  edgesAdded: number;
+  /** Untyped facts still eligible after this run — safe host convergence signal: loop while > 0.
+   * Always 0 when ontology mode is 'off' (nothing is eligible for typing while
+   * disabled), so 0 does not imply queue exhaustion in that mode. */
+  remaining: number;
+  /** Untyped facts inside the recheck cooldown. */
+  deferred: number;
 }
 
 export interface WikiConfig {
@@ -494,8 +514,9 @@ export interface EntityStatus {
  *
  * @remarks **Breaking change from v2.x** — the union previously only contained
  * `'ingest' | 'librarian' | 'heal' | 'prune' | 'reembed'`. The values `'import'`
- * and `'forget'` were added in v3.0. Exhaustive `switch` / narrowing on this type
- * must be updated (or given a `default` arm) to compile without errors.
+ * and `'forget'` were added in v3.0. `'ontologyBackfill'` was added afterward.
+ * Exhaustive `switch` / narrowing on this type must be updated (or given a
+ * `default` arm) to compile without errors.
  */
 export type WikiBusyOperation =
   | 'ingest'
@@ -504,7 +525,8 @@ export type WikiBusyOperation =
   | 'prune'
   | 'reembed'
   | 'import'
-  | 'forget';
+  | 'forget'
+  | 'ontologyBackfill';
 
 /**
  * Thrown when a background mutator is already running for the requested entity.

@@ -19,7 +19,8 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
       deleted_at INTEGER,
       embedding TEXT,
       embedding_blob BLOB,
-      okf_type TEXT
+      okf_type TEXT,
+      ontology_checked_at INTEGER
     );
 
     CREATE INDEX IF NOT EXISTS ${prefix}entries_entity_idx ON ${prefix}entries(entity_id);
