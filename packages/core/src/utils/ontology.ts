@@ -19,15 +19,6 @@ export function resolveNodeType(raw: string, manifest: OntologyManifest): string
   return hit?.type ?? null;
 }
 
-export function resolveEdgeDefinition(
-  rawEdgeType: string,
-  manifest: OntologyManifest,
-): OntologyManifest['edge_types'][number] | null {
-  const slug = rawEdgeType.trim();
-  if (!slug) return null;
-  return manifest.edge_types.find(e => e.type.toLowerCase() === slug.toLowerCase()) ?? null;
-}
-
 export function resolveEdgeDefinitions(
   rawEdgeType: string,
   manifest: OntologyManifest,

@@ -16,7 +16,7 @@ import {
   emptyManifest,
   normalizeTitleKey,
   resolveNodeType,
-  resolveEdgeDefinition,
+  resolveEdgeDefinitions,
   validateInlineEdges,
 } from '../utils/ontology';
 import { generateId } from '../utils/ids';
@@ -119,14 +119,18 @@ export class OntologyService {
 
     let persisted = 0;
     for (const edge of edges) {
-      const def = resolveEdgeDefinition(edge.edge_type, manifest);
-      if (!def || def.source_type.toLowerCase() !== sourceType.toLowerCase()) continue;
+      const candidates = resolveEdgeDefinitions(edge.edge_type, manifest)
+        .filter(d => d.source_type.toLowerCase() === sourceType.toLowerCase());
+      if (candidates.length === 0) continue;
 
       const targetKey = normalizeTitleKey(edge.target_title);
       const target = titleIndex.get(targetKey);
       if (!target) continue;
 
-      if (def.target_type.toLowerCase() !== (target.okf_type ?? '').toLowerCase()) continue;
+      const def = candidates.find(
+        d => d.target_type.toLowerCase() === (target.okf_type ?? '').toLowerCase(),
+      );
+      if (!def) continue;
 
       const wikiEdge: WikiEdge = {
         id: generateId(),
