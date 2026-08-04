@@ -71,9 +71,9 @@
     "react": ">=17"
   },
   "devDependencies": {
-    "expo-crypto": "^57.0.0",
-    "tsup": "^8.0.0",
-    "typescript": "^5.4.0",
+    "expo-crypto": "^57.0.1",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
     "vitest": "4.1.5"
   }
 }
