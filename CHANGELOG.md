@@ -1,3 +1,31 @@
+# [5.0.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.23.1...v5.0.0) (2026-08-04)
+
+
+### Bug Fixes
+
+* **core:** address CodeRabbit review on heal bounding ([00a56fc](https://github.com/equationalapplications/expo-llm-wiki/commit/00a56fcc84d70198692269b130983cd077765509)), closes [#67](https://github.com/equationalapplications/expo-llm-wiki/issues/67)
+* **core:** advance auto-heal checkpoint only on a converged pass ([e356f2a](https://github.com/equationalapplications/expo-llm-wiki/commit/e356f2ab52a720d097da3df059ca5ab72a9b220a))
+* **core:** exclude same-pass deletions from heal dedupe; count skipped as scanned ([a2ba9ca](https://github.com/equationalapplications/expo-llm-wiki/commit/a2ba9ca6074208c38364ba76c4386f0cae7ee761))
+* **core:** resolve verification failures from heal bounding ([cf06192](https://github.com/equationalapplications/expo-llm-wiki/commit/cf061927e524f6f6a3b3aefb13904e0c9980244c))
+* **deps:** bump undici override to 7.29.0 for five advisories ([aa7bf8d](https://github.com/equationalapplications/expo-llm-wiki/commit/aa7bf8d40e9a0446aeb6efa8f3aa972549a3aec3))
+
+
+### Features
+
+* **api:** surface HealResult through WikiMemory, hook, and demo ([18012ff](https://github.com/equationalapplications/expo-llm-wiki/commit/18012fff051ffb187cfd1d74de1b18e58224cfaf))
+* **core:** bound heal to HEAL_BATCH_SIZE candidates per pass ([040eee1](https://github.com/equationalapplications/expo-llm-wiki/commit/040eee1cee75b91abcced02d3cce5ab487287199))
+* **core:** bounded heal candidate queries and cooldown constants ([30e300e](https://github.com/equationalapplications/expo-llm-wiki/commit/30e300e1cbdbdf8ddaba34eb0305d8862bdc9269))
+* **db:** add heal_checked_at column and migration v8 ([8ebee30](https://github.com/equationalapplications/expo-llm-wiki/commit/8ebee3016b30827de27498300ff4fab78d73b4d9))
+
+
+### BREAKING CHANGES
+
+* **core:** MaintenanceService.doRunHeal now returns HealResult instead of
+void, and takes (entityId, options?: { promptOverride?, batchSize? }) instead of
+(entityId, promptOverride?). A single heal pass now covers at most
+HEAL_BATCH_SIZE candidates rather than the whole entity; callers that relied on
+one call sweeping the corpus must loop while result.remaining > 0.
+
 ## [4.23.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.23.0...v4.23.1) (2026-08-04)
 
 
