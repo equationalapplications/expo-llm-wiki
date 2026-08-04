@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { MaintenanceService, HEAL_MAX_ANCHORS } from '../src/services/MaintenanceService';
+import { MaintenanceService, HEAL_MAX_ANCHORS, HEAL_BATCH_SIZE } from '../src/services/MaintenanceService';
 import { PromptService } from '../src/services/PromptService';
 import type { WikiFact } from '../src/types';
 
@@ -51,6 +51,9 @@ describe('doRunHeal — bounded anchors and batched candidates (#63)', () => {
       downgradeByIds: vi.fn().mockResolvedValue(undefined),
       softDeleteByIds: vi.fn().mockResolvedValue(undefined),
       upsert: vi.fn().mockResolvedValue(undefined),
+      countHealCandidatesByEntityId: vi.fn().mockResolvedValue({ eligible: 0, deferred: 0 }),
+      markHealChecked: vi.fn().mockResolvedValue(undefined),
+      findInferredTitlesByEntityId: vi.fn().mockResolvedValue([]),
     };
     mockTaskRepo = { findAllPending: vi.fn().mockResolvedValue([]) };
     mockEventRepo = { getRecent: vi.fn().mockResolvedValue([]) };
@@ -121,7 +124,9 @@ describe('doRunHeal — bounded anchors and batched candidates (#63)', () => {
   it('never loads every fact for the entity', async () => {
     const svc = makeService();
     await svc.runHeal('e1');
-    expect(mockEntryRepo.findHealCandidatesByEntityId).toHaveBeenCalledWith('e1');
+    expect(mockEntryRepo.findHealCandidatesByEntityId).toHaveBeenCalledWith(
+      'e1', HEAL_BATCH_SIZE, expect.any(Number),
+    );
     expect(mockEntryRepo.findAllByEntityId).not.toHaveBeenCalled();
   });
 

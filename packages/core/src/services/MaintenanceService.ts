@@ -6,7 +6,7 @@ import { generateId } from '../utils/ids';
 import { parseEmbedding } from '../utils/embedding';
 import { PrunePartialFailureError } from '../types';
 import { HOOK_TIMEOUT_MARKER } from '../types';
-import type { WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedTask, ExtractedFactWithOntology, WikiFact, WikiTask, OntologyUpdates, OntologyBackfillResult } from '../types';
+import type { WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedTask, ExtractedFactWithOntology, WikiFact, WikiTask, OntologyUpdates, OntologyBackfillResult, HealResult } from '../types';
 import type { SQLiteAdapter } from '../types';
 import type { EntryRepository } from '../repositories/EntryRepository';
 import type { TaskRepository } from '../repositories/TaskRepository';
@@ -178,10 +178,13 @@ export class MaintenanceService {
     }
   }
 
-  async runHeal(entityId: string, options?: { promptOverride?: string }): Promise<void> {
+  async runHeal(
+    entityId: string,
+    options?: { promptOverride?: string; batchSize?: number },
+  ): Promise<HealResult> {
     this.jobManager.acquireLock('heal', entityId);
     try {
-      await this.doRunHeal(entityId, options?.promptOverride);
+      return await this.doRunHeal(entityId, options);
     } finally {
       this.jobManager.releaseLock('heal', entityId);
     }
@@ -476,9 +479,25 @@ export class MaintenanceService {
     this.searchService.evictCache(entityId);
   }
 
-  /** Core heal pass (locks handled by {@link runHeal}). Package-internal orchestration hook. */
-  async doRunHeal(entityId: string, promptOverride?: string): Promise<void> {
+  /**
+   * Core heal pass (locks handled by {@link runHeal}). Package-internal orchestration hook.
+   *
+   * Bounded: at most `batchSize` candidates per pass (#67). Loop on
+   * `result.remaining > 0` for convergence — see {@link HealResult.remaining}
+   * for what convergence means here.
+   */
+  async doRunHeal(
+    entityId: string,
+    options?: { promptOverride?: string; batchSize?: number },
+  ): Promise<HealResult> {
+    const promptOverride = options?.promptOverride;
+    const batchSize = options?.batchSize ?? HEAL_BATCH_SIZE;
+    if (!Number.isInteger(batchSize) || batchSize < 1) {
+      throw new Error('Invalid batchSize: must be an integer >= 1');
+    }
+
     const now = Date.now();
+    const recheckCutoff = now - HEAL_RECHECK_MS;
     const orphanAfterDays = this.options.config?.orphanAfterDays !== undefined ? this.options.config?.orphanAfterDays : 30;
     const staleInferredAfterDays = this.options.config?.staleInferredAfterDays !== undefined ? this.options.config?.staleInferredAfterDays : 60;
     const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -511,7 +530,19 @@ export class MaintenanceService {
       }
     }
 
-    const healCandidates = await this.entryRepo.findHealCandidatesByEntityId(entityId);
+    const healCandidates = await this.entryRepo.findHealCandidatesByEntityId(entityId, batchSize, recheckCutoff);
+    if (healCandidates.length === 0) {
+      // The orphan/stale SQL passes above may still have mutated rows, so the
+      // search index sync must happen before returning — it did today, after
+      // runBatched no-oped on an empty candidate list.
+      await this.searchService.sync(entityId);
+      this.searchService.evictCache(entityId);
+      const counts = await this.entryRepo.countHealCandidatesByEntityId(entityId, recheckCutoff);
+      return {
+        scanned: 0, downgraded: 0, deleted: 0, newFactsCreated: 0,
+        skipped: 0, remaining: counts.eligible, deferred: counts.deferred,
+      };
+    }
     const allTasks = await this.taskRepo.findAllPending([entityId]);
     const recentEvents = await this.eventRepo.getRecent(entityId, 20);
 
@@ -580,7 +611,12 @@ export class MaintenanceService {
     const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
     const uniqueDeletedFactIds = Array.from(new Set(safeDeleted));
 
-    const healFactsForDedupe = [...healCandidates];
+    // Full-breadth, independent of batchSize. Seeding from healCandidates would
+    // shrink dedupe to a batchSize window, letting a synthesized fact that
+    // duplicates a librarian_inferred fact outside the window pass the Jaccard
+    // check — and a convergence loop would then multiply those duplicates.
+    const healFactsForDedupe: Array<{ id: string; title: string }> =
+      await this.entryRepo.findInferredTitlesByEntityId(entityId);
 
     await this.db.withTransactionAsync(async (tx) => {
       await this.entryRepo.downgradeByIds(safeDowngraded, entityId, tx);
@@ -592,7 +628,8 @@ export class MaintenanceService {
 
         if (newTokens.size >= MIN_TOKENS_TO_QUALIFY) {
           for (const existing of healFactsForDedupe) {
-            if (existing.source_type !== 'librarian_inferred') continue;
+            // The query already restricts to librarian_inferred, so the
+            // projected { id, title } rows carry everything the check needs.
             const existingTokens = titleTokens(existing.title);
             if (existingTokens.size >= MIN_TOKENS_TO_QUALIFY) {
               if (jaccardScore(newTokens, existingTokens) >= FUZZY_THRESHOLD) {
@@ -614,8 +651,23 @@ export class MaintenanceService {
 
         await this.entryRepo.upsert(factObj, tx);
         insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
-        healFactsForDedupe.push(factObj);
+        healFactsForDedupe.push({ id, title: fact.title });
       }
+
+      // Every candidate offered this pass is stamped, whether it landed in a
+      // successful batch or in outcome.skipped: otherwise skipped facts stay at
+      // the head of the updated_at ASC queue and starve everything behind them.
+      // Facts heal just created are stamped too — without this each synthesized
+      // fact is immediately an eligible candidate again and a host
+      // `while (remaining > 0)` loop feeds on heal's own output.
+      // markHealChecked skips rows soft-deleted above, which is correct: a
+      // deleted row is not a candidate under any future pass.
+      await this.entryRepo.markHealChecked(
+        [...healCandidates.map(f => f.id), ...insertedFacts.map(f => f.id)],
+        entityId,
+        now,
+        tx,
+      );
     });
 
     await this.searchService.sync(entityId);
@@ -633,6 +685,20 @@ export class MaintenanceService {
     }
 
     this.searchService.evictCache(entityId);
+
+    let scanned = 0;
+    for (const batchResult of outcome.results) scanned += batchResult.batch.length;
+
+    const counts = await this.entryRepo.countHealCandidatesByEntityId(entityId, recheckCutoff);
+    return {
+      scanned,
+      downgraded: safeDowngraded.length,
+      deleted: uniqueDeletedFactIds.length,
+      newFactsCreated: insertedFacts.length,
+      skipped: outcome.skipped.length,
+      remaining: counts.eligible,
+      deferred: counts.deferred,
+    };
   }
 
   /** Core ontology backfill pass (locks handled by {@link runOntologyBackfill}). Package-internal orchestration hook. */
