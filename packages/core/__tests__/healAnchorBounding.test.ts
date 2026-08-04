@@ -47,7 +47,7 @@ describe('doRunHeal — bounded anchors and batched candidates (#63)', () => {
         ids.map(id => ({ id, title: `title ${id}`, source_ref: `doc://${id}` })),
       ),
       markOrphaned: vi.fn().mockResolvedValue([]),
-      downgradeStaleInferred: vi.fn().mockResolvedValue(undefined),
+      downgradeStaleInferred: vi.fn().mockResolvedValue([]),
       downgradeByIds: vi.fn().mockResolvedValue(undefined),
       softDeleteByIds: vi.fn().mockResolvedValue(undefined),
       upsert: vi.fn().mockResolvedValue(undefined),

@@ -44,7 +44,7 @@ describe('MaintenanceService — PromptService injection', () => {
       findAnchorRowsByIds: vi.fn().mockResolvedValue([]),
       upsert: vi.fn().mockResolvedValue(undefined),
       markOrphaned: vi.fn().mockResolvedValue([]),
-      downgradeStaleInferred: vi.fn().mockResolvedValue(undefined),
+      downgradeStaleInferred: vi.fn().mockResolvedValue([]),
       downgradeByIds: vi.fn().mockResolvedValue(undefined),
       softDeleteByIds: vi.fn().mockResolvedValue(undefined),
       countHealCandidatesByEntityId: vi.fn().mockResolvedValue({ eligible: 0, deferred: 0 }),

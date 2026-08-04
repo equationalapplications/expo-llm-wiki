@@ -615,12 +615,16 @@ export class EntryRepository extends BaseRepository {
   /**
    * Downgrade stale inferred entries to 'tentative'.
    * Used by MaintenanceService.doRunHeal().
+   *
+   * Returns the ids it downgraded so the caller can fold them into
+   * {@link HealResult.downgraded} without double-counting a fact the model also
+   * downgraded in the same pass.
    */
   async downgradeStaleInferred(
     entityId: string,
     staleThreshold: number,
     tx: SQLiteAdapter,
-  ): Promise<number> {
+  ): Promise<string[]> {
     const executor = this.getExecutor(tx);
     const now = Date.now();
     const eligibleRows = await executor.getAllAsync<{ id: string }>(
@@ -630,8 +634,8 @@ export class EntryRepository extends BaseRepository {
          AND source_type != 'immutable_document' AND deleted_at IS NULL`,
       [entityId, staleThreshold, staleThreshold],
     );
-    if (eligibleRows.length === 0) return 0;
-    const result = await executor.runAsync(
+    if (eligibleRows.length === 0) return [];
+    await executor.runAsync(
       `UPDATE ${this.prefix}entries
        SET confidence = 'tentative', updated_at = ?
        WHERE entity_id = ? AND confidence = 'inferred' AND (last_accessed_at <= ? OR (last_accessed_at IS NULL AND created_at <= ?)) AND source_type != 'immutable_document' AND deleted_at IS NULL`,
@@ -646,7 +650,7 @@ export class EntryRepository extends BaseRepository {
         payload: { id: row.id, entity_id: entityId, confidence: 'tentative', updated_at: now },
       }, tx);
     }
-    return result.changes;
+    return eligibleRows.map(r => r.id);
   }
 
   /**

@@ -510,6 +510,10 @@ export class MaintenanceService {
     }
 
     const orphanedIds: string[] = [];
+    // The SQL passes below mutate rows before candidates are even selected, so
+    // their ids are folded into the HealResult counters — otherwise a pass that
+    // soft-deletes 50 orphans but offers no candidates reports `deleted: 0`.
+    const staleDowngradedIds: string[] = [];
 
     await this.db.withTransactionAsync(async (tx) => {
       if (orphanAfterDays !== null) {
@@ -518,7 +522,7 @@ export class MaintenanceService {
       }
       if (staleInferredAfterDays !== null) {
         const staleThreshold = now - (staleInferredAfterDays * MS_PER_DAY);
-        await this.entryRepo.downgradeStaleInferred(entityId, staleThreshold, tx);
+        staleDowngradedIds.push(...await this.entryRepo.downgradeStaleInferred(entityId, staleThreshold, tx));
       }
     });
 
@@ -539,7 +543,10 @@ export class MaintenanceService {
       this.searchService.evictCache(entityId);
       const counts = await this.entryRepo.countHealCandidatesByEntityId(entityId, recheckCutoff);
       return {
-        scanned: 0, downgraded: 0, deleted: 0, newFactsCreated: 0,
+        scanned: 0,
+        downgraded: staleDowngradedIds.length,
+        deleted: orphanedIds.length,
+        newFactsCreated: 0,
         skipped: 0, remaining: counts.eligible, deferred: counts.deferred,
       };
     }
@@ -689,11 +696,17 @@ export class MaintenanceService {
     let scanned = 0;
     for (const batchResult of outcome.results) scanned += batchResult.batch.length;
 
+    // Union rather than sum: the orphan pass runs before candidate selection so
+    // its ids cannot also be model-deleted, but a fact the stale pass downgraded
+    // can be downgraded again by the model in the same pass.
+    const allDowngraded = new Set([...staleDowngradedIds, ...safeDowngraded]);
+    const allDeleted = new Set([...orphanedIds, ...uniqueDeletedFactIds]);
+
     const counts = await this.entryRepo.countHealCandidatesByEntityId(entityId, recheckCutoff);
     return {
       scanned,
-      downgraded: safeDowngraded.length,
-      deleted: uniqueDeletedFactIds.length,
+      downgraded: allDowngraded.size,
+      deleted: allDeleted.size,
       newFactsCreated: insertedFacts.length,
       skipped: outcome.skipped.length,
       remaining: counts.eligible,

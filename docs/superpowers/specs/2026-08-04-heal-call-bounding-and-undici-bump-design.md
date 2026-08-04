@@ -2,8 +2,8 @@
 
 **Date:** 2026-08-04
 **Status:** Implemented
-**Addresses:** #67 (bound heal's LLM calls per pass), 5 open Dependabot alerts (#96, #99, #102,
-#105, #108 — all `undici`)
+**Addresses:** #67 (bound heal's LLM calls per pass), 5 open Dependabot alerts
+(#96, #99, #102, #105, #108 — all `undici`)
 
 ## Problem
 
@@ -114,9 +114,14 @@ one pass costs at most ~2-3 calls instead of the current unbounded count.
   read the same at every layer.
 - `batchSize` defaults to `HEAL_BATCH_SIZE` and is validated identically to `doRunOntologyBackfill`
   (`Number.isInteger(batchSize) && batchSize >= 1`, else throw).
-- Orphan-marking and stale-inferred-downgrade (`MaintenanceService.ts:484-501`) are unchanged: pure
-  SQL updates against the full entity, not LLM calls, so they're not part of the #67 problem and
-  stay unbounded.
+- Orphan-marking and stale-inferred-downgrade (`MaintenanceService.ts:484-501`) stay unbounded: pure
+  SQL updates against the full entity, not LLM calls, so they're not part of the #67 problem. They
+  do however feed the result counters — `markOrphaned` already returns its ids and
+  `downgradeStaleInferred` is changed to return ids rather than a row count, so `deleted` and
+  `downgraded` are unions of the SQL-pass ids and the model-directed ids. Without this a pass that
+  soft-deletes 50 orphans but offers no candidates would report `deleted: 0`. Union rather than sum:
+  the orphan pass runs before candidate selection so its ids cannot also be model-deleted, but a
+  fact the stale pass downgraded can be downgraded again by the model in the same pass.
 - `findHealCandidatesByEntityId` call gains `batchSize` and `recheckCutoff = now - HEAL_RECHECK_MS`.
 - If no candidates are eligible, return early with a zeroed result and
   `remaining = (await countHealCandidatesByEntityId(...)).eligible` (mirrors the
@@ -223,9 +228,15 @@ if (result.remaining === 0) {
 }
 ```
 
-With the checkpoint held back, the next write re-satisfies the threshold immediately and runs
-another bounded pass, so a large corpus converges across successive writes instead of inside one
-call. That is the trade this workstream is making: heal work is spread over many writes rather than
+Holding the checkpoint back is necessary but not sufficient. `runLibrarianThenMaybeHeal` only runs
+after a librarian pass, and a successful librarian pass advances `memory` to `currentEventCount`, so
+a partial heal at event 100 would not retry at event 101 — it would wait for the next librarian
+threshold crossing (event 120 by default), or never retry if no further librarian pass runs. So the
+heal check is also extracted into `maybeRunHeal(entityId, eventCount)` and scheduled from `write()`
+on every write, guarded by `isBlocked('librarian', entityId)` so heal still never overlaps a
+librarian pass and by `tryAcquireAutoHealLock` so a burst of writes cannot stack passes. With both
+halves in place the next write runs another bounded pass, so a large corpus converges across
+successive writes instead of inside one call. That is the trade this workstream is making: heal work is spread over many writes rather than
 concentrated in one unbounded run, which is the point of #67. Cost per write stays bounded — a
 librarian run plus ~2-3 heal calls — and once converged the checkpoint advances and heal goes quiet
 for another `autoHealThreshold` events.

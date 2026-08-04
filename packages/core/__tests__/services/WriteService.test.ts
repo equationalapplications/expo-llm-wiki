@@ -164,6 +164,46 @@ describe('WriteService', () => {
       );
     });
 
+    it('retries a partial pass on the very next write, without another librarian pass', async () => {
+      // Write 1 at event 120: librarian runs, heal runs, pass does not converge
+      // so the heal checkpoint stays at 0.
+      mockEventRepo.count.mockResolvedValue(120);
+      mockMetadataRepo.getCheckpoint.mockResolvedValue({ memory: 120, heal: 0 });
+      mockMetadataRepo.getCheckpoint.mockResolvedValueOnce({ memory: 90, heal: 0 });
+      mockMaintenanceService.doRunHeal.mockResolvedValue({
+        scanned: 25, downgraded: 0, deleted: 0, newFactsCreated: 0,
+        skipped: 0, remaining: 40, deferred: 25,
+      });
+
+      await writeService.write('user_1', { summary: 'one', event_type: 'observation' });
+      await new Promise<void>((r) => setImmediate(r));
+
+      expect(mockMaintenanceService.doRunLibrarian).toHaveBeenCalledTimes(1);
+      expect(mockMaintenanceService.doRunHeal).toHaveBeenCalledTimes(1);
+
+      // Write 2 at event 121: the librarian is now caught up (memory 120,
+      // delta 1 < 20), so no librarian pass. Heal must still retry, because
+      // its checkpoint is still 0 and 121 - 0 >= 100.
+      mockEventRepo.count.mockResolvedValue(121);
+
+      await writeService.write('user_1', { summary: 'two', event_type: 'observation' });
+      await new Promise<void>((r) => setImmediate(r));
+
+      expect(mockMaintenanceService.doRunLibrarian).toHaveBeenCalledTimes(1);
+      expect(mockMaintenanceService.doRunHeal).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not schedule a per-write heal while a librarian pass is in flight', async () => {
+      mockEventRepo.count.mockResolvedValue(121);
+      mockMetadataRepo.getCheckpoint.mockResolvedValue({ memory: 120, heal: 0 });
+      mockJobManager.isBlocked.mockReturnValue(true);
+
+      await writeService.write('user_1', { summary: 'test', event_type: 'observation' });
+      await new Promise<void>((r) => setImmediate(r));
+
+      expect(mockMaintenanceService.doRunHeal).not.toHaveBeenCalled();
+    });
+
     it('does not advance the heal checkpoint when doRunHeal throws', async () => {
       mockEventRepo.count.mockResolvedValue(120);
       mockMetadataRepo.getCheckpoint.mockResolvedValueOnce({ memory: 90, heal: 0 });

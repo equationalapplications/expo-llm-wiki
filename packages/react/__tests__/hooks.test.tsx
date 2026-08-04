@@ -693,7 +693,7 @@ describe('useWikiMaintenance', () => {
     await act(async () => { await result.current.runHeal('user-1'); });
 
     expect(wiki.runHeal).toHaveBeenCalledWith('user-1');
-    expect(result.current.lastResult).toEqual({ operation: 'heal', result: undefined });
+    expect(result.current.lastResult).toMatchObject({ operation: 'heal' });
   });
 
   it('runLibrarian forwards promptOverride to wiki.runLibrarian', async () => {
@@ -721,6 +721,15 @@ describe('useWikiMaintenance', () => {
     let returned: unknown;
     await act(async () => { returned = await result.current.runHeal('user-1'); });
     expect(returned).toMatchObject({ scanned: 3, remaining: 7 });
+  });
+
+  it('runHeal exposes the HealResult on lastResult', async () => {
+    const { result } = renderHook(() => useWikiMaintenance(), { wrapper: wrapper(wiki) });
+    await act(async () => { await result.current.runHeal('user-1'); });
+    expect(result.current.lastResult).toMatchObject({
+      operation: 'heal',
+      result: { scanned: 3, remaining: 7 },
+    });
   });
 
   it('runHeal forwards batchSize to wiki.runHeal', async () => {

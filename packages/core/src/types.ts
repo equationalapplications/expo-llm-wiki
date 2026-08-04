@@ -112,9 +112,12 @@ export interface OntologyBackfillResult {
 export interface HealResult {
   /** Heal candidates sent to the model this run. */
   scanned: number;
-  /** Facts downgraded (immutable_document → mutable-eligible, or similar). */
+  /**
+   * Facts whose confidence was lowered to `tentative` — the stale-inferred SQL
+   * pass (`inferred` → `tentative`) plus any model-directed downgrades, deduped.
+   */
   downgraded: number;
-  /** Facts soft-deleted. */
+  /** Facts soft-deleted — the orphan-marking SQL pass plus model-directed deletes, deduped. */
   deleted: number;
   /** New facts synthesized by heal. */
   newFactsCreated: number;

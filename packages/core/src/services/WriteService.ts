@@ -69,6 +69,7 @@ export class WriteService {
     let shouldRunLibrarian = false;
     let librarianCount = 0;
     let prevMemoryCheckpoint = 0;
+    let eventCount = 0;
 
     await this.db.withTransactionAsync(async (tx) => {
       await this.eventRepo.add(newEvent, tx);
@@ -79,6 +80,7 @@ export class WriteService {
         this.eventRepo.count(entityId, tx),
         this.metadataRepo.getCheckpoint(entityId, tx),
       ]);
+      eventCount = count;
 
       let memoryCheckpoint = cp.memory ?? 0;
       if (memoryCheckpoint > count) memoryCheckpoint = 0;
@@ -105,6 +107,19 @@ export class WriteService {
         if (!(e instanceof WikiBusyError)) throw e;
         await this.metadataRepo.updateCheckpoint(entityId, { memory: prevMemoryCheckpoint }, this.db);
       }
+    } else if (!this.jobManager.isBlocked('librarian', entityId)) {
+      // Auto-heal is evaluated on every write, not only on writes that also
+      // trigger a librarian pass. doRunHeal is bounded to HEAL_BATCH_SIZE
+      // candidates (#67) and a non-converged pass deliberately holds its
+      // checkpoint back, so the gap stays above autoHealThreshold; gating the
+      // retry on a librarian pass would stall a partial sweep until the next
+      // librarian threshold crossing (another autoLibrarianThreshold events),
+      // or forever if no further librarian pass runs.
+      //
+      // Guarded by isBlocked('librarian') so heal still never overlaps a
+      // librarian pass, and by tryAcquireAutoHealLock inside maybeRunHeal so a
+      // burst of writes cannot stack passes.
+      this.maybeRunHeal(entityId, eventCount).catch(console.error);
     }
   }
 
@@ -119,6 +134,15 @@ export class WriteService {
       throw e;
     }
 
+    await this.maybeRunHeal(entityId, currentEventCount);
+  }
+
+  /**
+   * Run one bounded auto-heal pass if the heal checkpoint has fallen
+   * `autoHealThreshold` events behind. Called after every write (see
+   * {@link write}) so a partial pass retries on the next write.
+   */
+  private async maybeRunHeal(entityId: string, currentEventCount: number): Promise<void> {
     const autoHealThreshold = this.options.config?.autoHealThreshold || 100;
 
     const cp = await this.metadataRepo.getCheckpoint(entityId, this.db);
@@ -133,9 +157,9 @@ export class WriteService {
         // Advance only when the pass converged. doRunHeal is bounded to
         // HEAL_BATCH_SIZE candidates (#67); advancing unconditionally would cap
         // auto-heal at one batch per autoHealThreshold events and leave most of
-        // a large corpus never auto-healed. Held back, the next write
-        // re-satisfies the threshold immediately and runs another bounded pass,
-        // so cost per write stays bounded while the corpus still converges.
+        // a large corpus never auto-healed. Held back, the checkpoint gap stays
+        // above the threshold, so the next write runs another bounded pass —
+        // cost per write stays bounded while the corpus still converges.
         //
         // Sits inside the try, after the call: on a throw the checkpoint is not
         // advanced, exactly as before this change.
