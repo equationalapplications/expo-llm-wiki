@@ -403,17 +403,26 @@ export class EntryRepository extends BaseRepository {
 
   /**
    * Fetch live, mutable entries for an entity — everything heal is allowed to
-   * downgrade or delete. Heal previously loaded every row via
-   * findAllByEntityId and filtered in JS, which on a document-heavy corpus
-   * meant loading 2560 rows to keep 31.
+   * downgrade or delete — oldest first, capped at `limit`, skipping anything
+   * stamped inside the recheck cooldown (heal_checked_at > recheckCutoff).
+   *
+   * Oldest-first rather than newest-first: with a cooldown in place, newest-first
+   * would keep re-selecting recently-touched facts every pass while older ones
+   * wait indefinitely to even enter a batch.
    */
-  async findHealCandidatesByEntityId(entityId: string, tx?: SQLiteAdapter): Promise<WikiFact[]> {
+  async findHealCandidatesByEntityId(
+    entityId: string,
+    limit: number,
+    recheckCutoff: number,
+    tx?: SQLiteAdapter,
+  ): Promise<WikiFact[]> {
     const executor = this.getExecutor(tx);
     const rows = await executor.getAllAsync<any>(
       `SELECT * FROM ${this.prefix}entries
        WHERE entity_id = ? AND deleted_at IS NULL AND source_type != 'immutable_document'
-       ORDER BY updated_at DESC`,
-      [entityId],
+         AND (heal_checked_at IS NULL OR heal_checked_at <= ?)
+       ORDER BY updated_at ASC LIMIT ?`,
+      [entityId, recheckCutoff, limit],
     );
     return rows.map(mapRowToFact);
   }
@@ -606,12 +615,16 @@ export class EntryRepository extends BaseRepository {
   /**
    * Downgrade stale inferred entries to 'tentative'.
    * Used by MaintenanceService.doRunHeal().
+   *
+   * Returns the ids it downgraded so the caller can fold them into
+   * {@link HealResult.downgraded} without double-counting a fact the model also
+   * downgraded in the same pass.
    */
   async downgradeStaleInferred(
     entityId: string,
     staleThreshold: number,
     tx: SQLiteAdapter,
-  ): Promise<number> {
+  ): Promise<string[]> {
     const executor = this.getExecutor(tx);
     const now = Date.now();
     const eligibleRows = await executor.getAllAsync<{ id: string }>(
@@ -621,8 +634,8 @@ export class EntryRepository extends BaseRepository {
          AND source_type != 'immutable_document' AND deleted_at IS NULL`,
       [entityId, staleThreshold, staleThreshold],
     );
-    if (eligibleRows.length === 0) return 0;
-    const result = await executor.runAsync(
+    if (eligibleRows.length === 0) return [];
+    await executor.runAsync(
       `UPDATE ${this.prefix}entries
        SET confidence = 'tentative', updated_at = ?
        WHERE entity_id = ? AND confidence = 'inferred' AND (last_accessed_at <= ? OR (last_accessed_at IS NULL AND created_at <= ?)) AND source_type != 'immutable_document' AND deleted_at IS NULL`,
@@ -637,7 +650,7 @@ export class EntryRepository extends BaseRepository {
         payload: { id: row.id, entity_id: entityId, confidence: 'tentative', updated_at: now },
       }, tx);
     }
-    return result.changes;
+    return eligibleRows.map(r => r.id);
   }
 
   /**
@@ -997,5 +1010,67 @@ export class EntryRepository extends BaseRepository {
       [entityId],
     );
     return rows.map(r => ({ id: r.id, title: r.title, okf_type: r.okf_type ?? null }));
+  }
+
+  /** Counts live mutable facts: eligible (past cooldown) vs deferred (in cooldown). */
+  async countHealCandidatesByEntityId(
+    entityId: string,
+    recheckCutoff: number,
+    tx?: SQLiteAdapter,
+  ): Promise<{ eligible: number; deferred: number }> {
+    const executor = this.getExecutor(tx);
+    const row = await executor.getFirstAsync<{ eligible: number | null; deferred: number | null }>(
+      `SELECT
+         SUM(CASE WHEN heal_checked_at IS NULL OR heal_checked_at <= ? THEN 1 ELSE 0 END) AS eligible,
+         SUM(CASE WHEN heal_checked_at IS NOT NULL AND heal_checked_at > ? THEN 1 ELSE 0 END) AS deferred
+       FROM ${this.prefix}entries
+       WHERE entity_id = ? AND deleted_at IS NULL AND source_type != 'immutable_document'`,
+      [recheckCutoff, recheckCutoff, entityId],
+    );
+    return { eligible: Number(row?.eligible ?? 0), deferred: Number(row?.deferred ?? 0) };
+  }
+
+  /**
+   * Stamps the heal recheck cooldown. NEVER touches updated_at — import merge
+   * resolution is last-write-wins on updated_at and a bump here would make an
+   * unchanged local fact beat a genuinely newer remote edit.
+   *
+   * Soft-deleted rows are skipped: a candidate heal deleted earlier in the same
+   * transaction is no longer a candidate under any future pass, so its cooldown
+   * value is irrelevant. This means the stamped count can be lower than the
+   * offered-candidate count.
+   */
+  async markHealChecked(ids: string[], entityId: string, now: number, tx: SQLiteAdapter): Promise<void> {
+    if (ids.length === 0) return;
+    for (let i = 0; i < ids.length; i += this.chunkSize) {
+      const chunk = ids.slice(i, i + this.chunkSize);
+      const placeholders = chunk.map(() => '?').join(',');
+      await tx.runAsync(
+        `UPDATE ${this.prefix}entries SET heal_checked_at = ?
+         WHERE id IN (${placeholders}) AND entity_id = ? AND deleted_at IS NULL`,
+        [now, ...chunk, entityId],
+      );
+    }
+  }
+
+  /**
+   * Lightweight full-breadth index (id, title) over all live librarian_inferred
+   * facts. This is heal's fuzzy-dedupe corpus, deliberately kept independent of
+   * the bounded candidate window: seeding dedupe from a batchSize-limited read
+   * would let a synthesized fact duplicating a fact outside the window pass the
+   * Jaccard check, and a convergence loop would multiply those duplicates across
+   * passes. Mirrors findTitleIndexByEntityId — full breadth, two columns, cheap.
+   */
+  async findInferredTitlesByEntityId(
+    entityId: string,
+    tx?: SQLiteAdapter,
+  ): Promise<Array<{ id: string; title: string }>> {
+    const executor = this.getExecutor(tx);
+    const rows = await executor.getAllAsync<{ id: string; title: string }>(
+      `SELECT id, title FROM ${this.prefix}entries
+       WHERE entity_id = ? AND deleted_at IS NULL AND source_type = 'librarian_inferred'`,
+      [entityId],
+    );
+    return rows.map(r => ({ id: r.id, title: r.title }));
   }
 }

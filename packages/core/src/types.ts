@@ -108,6 +108,40 @@ export interface OntologyBackfillResult {
   skipped: number;
 }
 
+/** Result of a single heal run. */
+export interface HealResult {
+  /**
+   * Heal candidates sent to the model this run. Counts candidates whose batch
+   * came back unusable and landed in `skipped` as well — they reached the
+   * provider too, so this is provider exposure, not successful throughput.
+   */
+  scanned: number;
+  /**
+   * Facts whose confidence was lowered to `tentative` — the stale-inferred SQL
+   * pass (`inferred` → `tentative`) plus any model-directed downgrades, deduped.
+   */
+  downgraded: number;
+  /** Facts soft-deleted — the orphan-marking SQL pass plus model-directed deletes, deduped. */
+  deleted: number;
+  /** New facts synthesized by heal. */
+  newFactsCreated: number;
+  /** Candidates a batch could not process even alone, skipped so the pass could finish. */
+  skipped: number;
+  /**
+   * Heal candidates still eligible after this run — convergence signal: loop while > 0.
+   *
+   * This does NOT mean what it means for OntologyBackfillResult. Untyped facts are
+   * a finite backlog that drains permanently; heal's candidates are the live mutable
+   * corpus. `remaining === 0` means "every mutable fact is inside the recheck
+   * cooldown", not "there is no more work" — it climbs back as the cooldown lapses
+   * and as new facts are written. A host loop terminates, but it converges to
+   * "corpus swept once this cooldown window", not to a drained queue.
+   */
+  remaining: number;
+  /** Heal candidates inside the recheck cooldown. */
+  deferred: number;
+}
+
 export interface WikiConfig {
   /**
    * Prefix applied to every SQL table/index/trigger name. Must match

@@ -16,7 +16,7 @@ overrides:
   react-dom: 19.2.8
   shell-quote@<1.9.0: ^1.9.0
   tar@<7.5.21: ^7.5.21
-  undici@>=7.0.0 <7.28.0: 7.28.0
+  undici@>=7.0.0 <7.29.0: 7.29.0
   uuid@<11.1.1: 11.1.1
   vite@>=8.0.0 <=8.0.15: 8.0.16
   ws@>=7.0.0 <7.5.11: 7.5.11
@@ -122,8 +122,8 @@ importers:
   apps/wiki-demo:
     dependencies:
       '@equationalapplications/react-llm-wiki':
-        specifier: ^4.22.0
-        version: 4.22.0(react@19.2.8)
+        specifier: workspace:*
+        version: link:../../packages/react
       react:
         specifier: 19.2.8
         version: 19.2.8
@@ -1160,20 +1160,6 @@ packages:
 
   '@emnapi/wasi-threads@1.2.1':
     resolution: {integrity: sha512-uTII7OYF+/Mes/MrcIOYp5yOtSMLBWSIoLPpcgwipoiKbli6k322tcoFsxoIIxPDqW01SQGAgko4EzZi2BNv2w==}
-
-  '@equationalapplications/core-llm-wiki@4.22.0':
-    resolution: {integrity: sha512-M29Ld1Tfne6EgohmgCxm7iT95VEoDFw9Gat+N37Ix6RA5Ewg30k4t/qLPtfnhVtYLi8Cgzmm5dDtkUls0ZdzoQ==}
-    engines: {node: '>=20'}
-
-  '@equationalapplications/core-okf@4.22.0':
-    resolution: {integrity: sha512-NeCSzEtQH5wNHZXahxmvfFa7ALNzP7NdjRg1DOJs1BSQmLtUdI01KkVYuR/ASqXwUICaN96NbU7qihv4F3OAag==}
-    engines: {node: '>=20'}
-
-  '@equationalapplications/react-llm-wiki@4.22.0':
-    resolution: {integrity: sha512-YSrbhaq3ZXFK21s/E74nV4gtrRB+8X87xtXIYGv/jF7XO/pA8JrL+xMntFB+QAimMrT/b7YY09iqMBM8/6AJ6w==}
-    engines: {node: '>=20'}
-    peerDependencies:
-      react: 19.2.8
 
   '@esbuild/aix-ppc64@0.28.1':
     resolution: {integrity: sha512-Svl7tq8k/08+p6CXPpRjQ1fKX+1odH/BQbb48fV6fj3CWHhsoIOoY87w1oHXm0qEpkIK3ZfVgp0hed3XBXzXMQ==}
@@ -5757,8 +5743,8 @@ packages:
     resolution: {integrity: sha512-LIY910g9TI13YS95lrMFrs8Rm/u/irgHeTWoKCoteeJ04CUJ92eEfj0rVn+7VKMPBpUPiUoBKfhNyLI23EE/KA==}
     engines: {node: '>=18.17'}
 
-  undici@7.28.0:
-    resolution: {integrity: sha512-cRZYrTDwWznlnRiPjggAGxZXanty6M8RV1ff8Wm4LWXBp7/IG8v5DnOm74DtUBp9OONpK75YlPnIjQqX0dBDtA==}
+  undici@7.29.0:
+    resolution: {integrity: sha512-IDxfleLmmbSskfWSUATiN1nfn2rDuvnMOqb5CWR92iIfojA0Ud+ulOAAEQ57LPr9rWmsreUyf5lwyao+7GNNVw==}
     engines: {node: '>=20.18.1'}
 
   unicode-canonical-property-names-ecmascript@2.0.1:
@@ -7180,18 +7166,6 @@ snapshots:
       tslib: 2.8.1
     optional: true
 
-  '@equationalapplications/core-llm-wiki@4.22.0':
-    dependencies:
-      '@equationalapplications/core-okf': 4.22.0
-      minisearch: 7.2.0
-
-  '@equationalapplications/core-okf@4.22.0': {}
-
-  '@equationalapplications/react-llm-wiki@4.22.0(react@19.2.8)':
-    dependencies:
-      '@equationalapplications/core-llm-wiki': 4.22.0
-      react: 19.2.8
-
   '@esbuild/aix-ppc64@0.28.1':
     optional: true
 
@@ -8272,7 +8246,7 @@ snapshots:
       p-filter: 4.1.0
       semantic-release: 25.0.8(typescript@5.9.3)
       tinyglobby: 0.2.17
-      undici: 7.28.0
+      undici: 7.29.0
       url-join: 5.0.0
     transitivePeerDependencies:
       - kerberos
@@ -10510,7 +10484,7 @@ snapshots:
       saxes: 6.0.0
       symbol-tree: 3.2.4
       tough-cookie: 6.0.2
-      undici: 7.28.0
+      undici: 7.29.0
       w3c-xmlserializer: 5.0.0
       webidl-conversions: 8.0.1
       whatwg-mimetype: 5.0.0
@@ -12310,7 +12284,7 @@ snapshots:
 
   undici@6.28.0: {}
 
-  undici@7.28.0: {}
+  undici@7.29.0: {}
 
   unicode-canonical-property-names-ecmascript@2.0.1: {}
 

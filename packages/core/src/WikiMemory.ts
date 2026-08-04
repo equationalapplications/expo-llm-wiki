@@ -29,7 +29,7 @@ import { WriteService } from './services/WriteService';
 import { PromptService } from './services/PromptService';
 import { OntologyService } from './services/OntologyService';
 import { GraphTraversalService } from './services/GraphTraversalService';
-import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighborhood, OntologyBackfillResult } from './types';
+import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighborhood, OntologyBackfillResult, HealResult } from './types';
 
 export { WikiBusyError, WikiTransactionError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER } from './types';
 
@@ -303,11 +303,28 @@ export class WikiMemory {
   }
 
   /**
+   * Reviews stored facts with the LLM: removes orphans, downgrades stale
+   * inferences, synthesizes corrections.
+   *
+   * Bounded per call: covers at most `batchSize` candidates (default 25), so
+   * one call no longer sweeps the whole entity. Hosts own the cadence; loop
+   * `while (result.remaining > 0)` for convergence.
+   *
+   * `remaining === 0` means "every mutable fact is inside the 7-day recheck
+   * cooldown", not "there is no more work" — heal's candidate set is the live
+   * mutable corpus, not a draining backlog, so it climbs back as the cooldown
+   * lapses and as new facts are written. Do not write a loop expecting a drain.
+   *
    * @param options.promptOverride - Applies only to this manual call. Does NOT affect
    * WriteService-triggered auto-runs. For persistent prompt customization across auto-runs,
    * set `options.config.prompts.healSystemPrompt` at WikiMemory construction time.
+   * @param options.batchSize - Candidates per run (default 25) for providers with
+   * tighter context limits.
    */
-  async runHeal(entityId: string, options?: { promptOverride?: string }): Promise<void> {
+  async runHeal(
+    entityId: string,
+    options?: { promptOverride?: string; batchSize?: number },
+  ): Promise<HealResult> {
     return this.maintenanceService.runHeal(entityId, options);
   }
 

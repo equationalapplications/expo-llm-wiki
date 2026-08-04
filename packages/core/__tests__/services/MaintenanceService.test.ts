@@ -44,9 +44,12 @@ describe('MaintenanceService — PromptService injection', () => {
       findAnchorRowsByIds: vi.fn().mockResolvedValue([]),
       upsert: vi.fn().mockResolvedValue(undefined),
       markOrphaned: vi.fn().mockResolvedValue([]),
-      downgradeStaleInferred: vi.fn().mockResolvedValue(undefined),
+      downgradeStaleInferred: vi.fn().mockResolvedValue([]),
       downgradeByIds: vi.fn().mockResolvedValue(undefined),
       softDeleteByIds: vi.fn().mockResolvedValue(undefined),
+      countHealCandidatesByEntityId: vi.fn().mockResolvedValue({ eligible: 0, deferred: 0 }),
+      markHealChecked: vi.fn().mockResolvedValue(undefined),
+      findInferredTitlesByEntityId: vi.fn().mockResolvedValue([]),
     };
     mockTaskRepo = {
       findAllPending: vi.fn().mockResolvedValue([]),
@@ -154,7 +157,7 @@ describe('MaintenanceService — PromptService injection', () => {
     it('accepts promptOverride and passes it to PromptService', async () => {
       mockOptions.llmProvider.generateText.mockResolvedValue(healResponse);
       const svc = makeService(new PromptService());
-      await svc.doRunHeal('entity1', 'custom heal override');
+      await svc.doRunHeal('entity1', { promptOverride: 'custom heal override' });
       expect(mockOptions.llmProvider.generateText).toHaveBeenCalledWith(
         expect.objectContaining({ systemPrompt: 'custom heal override' })
       );

@@ -1,8 +1,10 @@
 import { useState, useCallback, useRef } from 'react';
 import { useWiki } from './WikiContext';
+import type { HealResult } from '@equationalapplications/core-llm-wiki';
 
 export type MaintenanceResult =
-  | { operation: 'librarian' | 'heal'; result: undefined }
+  | { operation: 'librarian'; result: undefined }
+  | { operation: 'heal'; result: HealResult }
   | { operation: 'prune'; result: { entries: number; tasks: number; events: number } };
 
 export function useWikiMaintenance() {
@@ -34,14 +36,20 @@ export function useWikiMaintenance() {
     }
   }, []);
 
-  const runHeal = useCallback(async (entityId: string, options?: { promptOverride?: string }): Promise<void> => {
+  const runHeal = useCallback(async (
+    entityId: string,
+    options?: { promptOverride?: string; batchSize?: number },
+  ): Promise<HealResult> => {
     setError(null);
     pendingCount.current += 1;
     setIsPending(true);
     setLastResult(null);
     try {
-      await (options ? wikiRef.current.runHeal(entityId, options) : wikiRef.current.runHeal(entityId));
-      setLastResult({ operation: 'heal', result: undefined });
+      const result = await (options
+        ? wikiRef.current.runHeal(entityId, options)
+        : wikiRef.current.runHeal(entityId));
+      setLastResult({ operation: 'heal', result });
+      return result;
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e));
       setError(err);
