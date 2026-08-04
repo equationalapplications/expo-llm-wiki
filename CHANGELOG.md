@@ -1,3 +1,10 @@
+## [4.23.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.23.0...v4.23.1) (2026-08-04)
+
+
+### Bug Fixes
+
+* **ci:** remove hardcoded pnpm versions from action-setup steps ([965fa36](https://github.com/equationalapplications/expo-llm-wiki/commit/965fa367f97f046a4ac47e014ef2a7d4a1e3b5ac))
+
 # [4.23.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.22.0...v4.23.0) (2026-08-04)
 
 
