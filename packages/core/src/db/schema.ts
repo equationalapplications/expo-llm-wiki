@@ -20,7 +20,8 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
       embedding TEXT,
       embedding_blob BLOB,
       okf_type TEXT,
-      ontology_checked_at INTEGER
+      ontology_checked_at INTEGER,
+      heal_checked_at INTEGER
     );
 
     CREATE INDEX IF NOT EXISTS ${prefix}entries_entity_idx ON ${prefix}entries(entity_id);

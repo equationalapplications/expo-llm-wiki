@@ -129,6 +129,23 @@ export const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 8,
+    description: 'Add heal_checked_at to entries for heal recheck cooldown',
+    run: async (db, prefix) => {
+      // ALTER TABLE ADD COLUMN must run outside any explicit transaction —
+      // SQLite (and expo-sqlite) do not permit schema alterations inside
+      // a BEGIN...COMMIT block. Same pattern as v2/v3/v5/v7.
+      const cols = await db.getAllAsync<{ name: string }>(
+        `PRAGMA table_info(${prefix}entries)`
+      );
+      if (!cols.some(c => c.name === 'heal_checked_at')) {
+        await db.execAsync(
+          `ALTER TABLE ${prefix}entries ADD COLUMN heal_checked_at INTEGER`
+        );
+      }
+    },
+  },
 ];
 
 // Verify MIGRATIONS are in strictly ascending version order at module load time.
