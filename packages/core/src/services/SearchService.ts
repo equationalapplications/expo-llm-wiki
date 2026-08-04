@@ -48,10 +48,25 @@ export class SearchService {
   private miniSearchEntryIdsByEntity = new Map<string, Set<string>>();
   private vectorCache: Map<string, Map<string, Float32Array>> = new Map();
 
+  /**
+   * Serializes rebuilds. `rebuildIndex` awaits a repository read between
+   * snapshotting the previous id set and discarding it, so two concurrent
+   * sync() calls for one entity can interleave: a slow, stale read lands last
+   * and discards documents the fresh read just added. Chaining also keeps
+   * discard()/addAll() out of each other's way, which is what accrued the
+   * auto-vacuum debt behind the TypeError in #64.
+   */
+  private syncChain: Promise<void> = Promise.resolve();
+
   constructor(private entryRepo: EntryRepository) {
     this.miniSearch = new MiniSearch({
       fields: ['title', 'body', 'tags'],
       storeFields: ['entity_id'],
+      // Vacuuming is driven explicitly at the end of each serialized rebuild
+      // (see sync). Auto-vacuum fires on its own schedule, asynchronously with
+      // respect to the caller, and traversing the tree mid-rebuild is what
+      // threw the uncaught TypeError in MiniSearch.performVacuuming (#64).
+      autoVacuum: false,
       searchOptions: {
         boost: { title: 2 },
         fuzzy: 0.2,
@@ -63,10 +78,23 @@ export class SearchService {
   /**
    * Rebuilds the search index and clears the vector cache for a given entity.
    * A direct replacement for manually syncing state after a DB transaction.
+   *
+   * Rebuilds are serialized per instance and never reject: the MiniSearch index
+   * is a rebuildable cache over SQLite, so degraded keyword search is the
+   * correct failure mode and killing the host process is not.
    */
   async sync(entityId?: string): Promise<void> {
-    await this.rebuildIndex(entityId);
-    this.evictCache(entityId);
+    const work = this.syncChain.then(async () => {
+      try {
+        await this.rebuildIndex(entityId);
+        await this.miniSearch.vacuum();
+      } catch (err) {
+        console.warn(`[WikiMemory] search index rebuild failed for ${entityId ?? '*'}:`, err);
+      }
+      this.evictCache(entityId);
+    });
+    this.syncChain = work;
+    return work;
   }
 
   /**

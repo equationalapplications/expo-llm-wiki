@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import MiniSearch from 'minisearch';
 import { SearchService } from '../src/services/SearchService';
 import type { EntryRepository } from '../src/repositories/EntryRepository';
 import { cosineSimilarity } from '../src/utils/cosine';
@@ -1055,5 +1056,115 @@ describe('rebuildIndex via sync()', () => {
     const service = new SearchService(repo);
     await service.sync();
     expect(repo.findMiniSearchRows).toHaveBeenCalledWith();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Concurrent sync() — #64
+// ---------------------------------------------------------------------------
+
+describe('sync() concurrency', () => {
+  /**
+   * Repo whose findMiniSearchRows snapshots the "database" at call time and
+   * resolves after a scripted delay. Concurrent rebuilds therefore let a slow,
+   * stale read land after a fast, fresh one and clobber it. Serialized
+   * rebuilds read at their own turn and cannot.
+   */
+  function makeScriptedRepo(
+    dbRows: { current: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> },
+    delaysMs: number[],
+  ) {
+    let call = 0;
+    const inFlight = { max: 0, now: 0 };
+    const repo = {
+      findMiniSearchRows: vi.fn(async () => {
+        const snapshot = dbRows.current.slice();
+        const delay = delaysMs[call++] ?? 0;
+        inFlight.now++;
+        inFlight.max = Math.max(inFlight.max, inFlight.now);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        inFlight.now--;
+        return snapshot;
+      }),
+    } as unknown as EntryRepository;
+    return { repo, inFlight };
+  }
+
+  it('a slow stale rebuild does not clobber a fast fresh one', async () => {
+    const dbRows = {
+      current: [makeMiniSearchRow('f1', 'e1', 'alpha')],
+    };
+    // First sync reads slowly, second reads fast — without serialization the
+    // first finishes last and discards f2.
+    const { repo } = makeScriptedRepo(dbRows, [40, 0]);
+    const service = new SearchService(repo);
+
+    const first = service.sync('e1');
+    dbRows.current = [makeMiniSearchRow('f1', 'e1', 'alpha'), makeMiniSearchRow('f2', 'e1', 'beta')];
+    const second = service.sync('e1');
+    await Promise.all([first, second]);
+
+    const ids = service.searchKeyword('alpha beta', ['e1'], 10).map((r) => r.id).sort();
+    expect(ids).toEqual(['f1', 'f2']);
+  });
+
+  it('never runs two rebuilds at once', async () => {
+    const dbRows = { current: [makeMiniSearchRow('f1', 'e1')] };
+    const { repo, inFlight } = makeScriptedRepo(dbRows, [30, 20, 10, 0, 0]);
+    const service = new SearchService(repo);
+
+    await Promise.all([
+      service.sync('e1'),
+      service.sync('e1'),
+      service.sync('e1'),
+      service.sync('e1'),
+      service.sync('e1'),
+    ]);
+
+    expect(repo.findMiniSearchRows).toHaveBeenCalledTimes(5);
+    expect(inFlight.max).toBe(1);
+  });
+
+  it('a rebuild failure warns instead of escaping as a rejection, and the chain survives', async () => {
+    const rows = [makeMiniSearchRow('f1', 'e1', 'alpha')];
+    let shouldFail = true;
+    const repo = {
+      findMiniSearchRows: vi.fn(async () => {
+        if (shouldFail) {
+          shouldFail = false;
+          throw new Error('boom');
+        }
+        return rows;
+      }),
+    } as unknown as EntryRepository;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const service = new SearchService(repo);
+
+    await expect(service.sync('e1')).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('search index rebuild failed'),
+      expect.any(Error),
+    );
+
+    // Chain is not poisoned: the next sync still runs and indexes.
+    await service.sync('e1');
+    expect(service.searchKeyword('alpha', ['e1'], 10).map((r) => r.id)).toEqual(['f1']);
+
+    warn.mockRestore();
+  });
+
+  it('vacuums explicitly and does not leave auto-vacuum armed', async () => {
+    const vacuumSpy = vi.spyOn(MiniSearch.prototype, 'vacuum').mockResolvedValue(undefined as never);
+    const repo = makeRepo([makeMiniSearchRow('f1', 'e1')]);
+    const service = new SearchService(repo);
+
+    await service.sync('e1');
+
+    expect(vacuumSpy).toHaveBeenCalledTimes(1);
+    // Reading MiniSearch's internal options is deliberate: autoVacuum has no
+    // public getter, and the whole point of B2 is that it is off.
+    expect((service as any).miniSearch._options.autoVacuum).toBe(false);
+
+    vacuumSpy.mockRestore();
   });
 });
