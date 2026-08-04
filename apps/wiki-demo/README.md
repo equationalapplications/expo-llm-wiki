@@ -14,9 +14,12 @@ All data stays in-browser using sql.js (WebAssembly SQLite) — no backend requi
 
 ## Setup
 
+This app is a workspace package in the monorepo, which is pinned to pnpm. Install
+from the repository root, then run the dev server:
+
 ```bash
-npm install
-npm run dev
+pnpm install          # from the repository root
+pnpm --filter llm-wiki-playground dev
 ```
 
 Open [http://localhost:5173](http://localhost:5173) and configure your LLM provider — either Anthropic or an OpenAI-compatible endpoint.
