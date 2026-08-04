@@ -15,6 +15,7 @@ import { entitySummaryMetaKey, type MetadataRepository } from '../repositories/M
 import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
+import { runBatched } from './BoundedLlmCall';
 
 const FUZZY_THRESHOLD = 0.5;
 const MIN_TOKENS_TO_QUALIFY = 3;
@@ -22,6 +23,13 @@ const MIN_TOKENS_TO_QUALIFY = 3;
 export const ONTOLOGY_BACKFILL_BATCH_SIZE = 25;
 export const ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS = 40_000;
 export const ONTOLOGY_BACKFILL_RECHECK_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** One parsed ontology-backfill response, paired with the facts that produced it. */
+interface OntologyBackfillBatch {
+  batch: WikiFact[];
+  classifications: Array<{ id?: unknown; okf_type?: unknown; edges?: unknown }>;
+  ontologyUpdates?: OntologyUpdates;
+}
 
 export class MaintenanceService {
   private promptService: PromptService;
@@ -598,7 +606,8 @@ export class MaintenanceService {
     // ids, tags, JSON syntax, overrides all counted) so dense facts cannot blow
     // a provider's context window. A single fact whose prompt alone exceeds the
     // cap is still sent by itself: deferring it would just re-defer forever and
-    // starve it (spec Decision 2).
+    // starve it (spec Decision 2). Output size is bounded separately, by
+    // runBatched — the two bounds are independent and both enforced.
     const toPromptShape = (f: WikiFact) => ({ id: f.id, title: f.title, body: f.body, tags: f.tags });
     const buildPrompt = (facts: WikiFact[]) => this.promptService.buildOntologyBackfillPrompt(
       facts.map(toPromptShape),
@@ -606,29 +615,94 @@ export class MaintenanceService {
       ontologyContext,
     );
 
-    const batch: WikiFact[] = [candidates[0]];
-    let built = buildPrompt(batch);
-    for (let i = 1; i < candidates.length; i++) {
-      const next = buildPrompt([...batch, candidates[i]]);
-      if (next.systemPrompt.length + next.userPrompt.length > ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS) break;
-      batch.push(candidates[i]);
-      built = next;
-    }
-
-    const { systemPrompt, userPrompt } = built;
-
-    const responseText = await this.options.llmProvider.generateText({ systemPrompt, userPrompt });
-
-    const parsed = parseJsonResponse<{
-      classifications?: Array<{ id?: unknown; okf_type?: unknown; edges?: unknown }>;
-      ontology_updates?: OntologyUpdates;
-    }>(responseText);
-    const classifications = Array.isArray(parsed.classifications) ? parsed.classifications : [];
+    const outcome = await runBatched<WikiFact, OntologyBackfillBatch>({
+      items: candidates,
+      buildPrompt,
+      call: (prompts) => this.options.llmProvider.generateText(prompts),
+      parse: (responseText, batch) => {
+        const parsed = parseJsonResponse<{
+          classifications?: Array<{ id?: unknown; okf_type?: unknown; edges?: unknown }>;
+          ontology_updates?: OntologyUpdates;
+        }>(responseText);
+        return {
+          batch,
+          classifications: Array.isArray(parsed.classifications) ? parsed.classifications : [],
+          ontologyUpdates: parsed.ontology_updates,
+        };
+      },
+      maxOutputTokens: this.options.llmProvider.maxOutputTokens,
+      maxPromptChars: ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS,
+      onSkip: (fact, err) => {
+        console.warn(
+          `[WikiMemory] ontology backfill skipped ${entityId}/${fact.id}: response could not be bounded`,
+          err,
+        );
+      },
+    });
 
     let typed = 0;
     let failedValidation = 0;
     let edgesAdded = 0;
+    let scanned = 0;
+    let abortedOntologyOff = false;
 
+    for (const batchResult of outcome.results) {
+      const applied = await this._applyOntologyBackfillBatch(entityId, batchResult, now);
+      if (applied.abortedOntologyOff) {
+        abortedOntologyOff = true;
+        break;
+      }
+      typed += applied.typed;
+      failedValidation += applied.failedValidation;
+      edgesAdded += applied.edgesAdded;
+      scanned += batchResult.batch.length;
+    }
+
+    if (abortedOntologyOff) {
+      // Mirror the mode === 'off' early path: remaining stays 0 so a host
+      // convergence loop (while remaining > 0) still terminates.
+      const counts = await this.entryRepo.countUntypedByEntityId(entityId, recheckCutoff);
+      return { ...zeroed, remaining: 0, deferred: counts.deferred };
+    }
+
+    // Skipped facts get the same cooldown stamp as processed ones. Without it
+    // they stay at the head of the updated_at ASC queue and every later pass
+    // re-attempts them first, starving everything behind them.
+    if (outcome.skipped.length > 0) {
+      await this.entryRepo.markOntologyChecked(outcome.skipped.map(f => f.id), entityId, now, this.db);
+    }
+
+    this.searchService.evictCache(entityId);
+
+    const counts = await this.entryRepo.countUntypedByEntityId(entityId, recheckCutoff);
+    return {
+      scanned,
+      typed,
+      failedValidation,
+      edgesAdded,
+      skipped: outcome.skipped.length,
+      remaining: counts.eligible,
+      deferred: counts.deferred,
+    };
+  }
+
+  /**
+   * Applies one parsed backfill batch in its own transaction. Per-batch rather
+   * than one transaction for the pass, so mergeEmergentUpdates semantics and
+   * the mid-flight `mode === 'off'` abort check keep the shape they had when a
+   * pass was a single call.
+   */
+  private async _applyOntologyBackfillBatch(
+    entityId: string,
+    batchResult: OntologyBackfillBatch,
+    now: number,
+  ): Promise<{ typed: number; failedValidation: number; edgesAdded: number; abortedOntologyOff: boolean }> {
+    const ontologyService = this.ontologyService!;
+    const { batch, classifications, ontologyUpdates } = batchResult;
+
+    let typed = 0;
+    let failedValidation = 0;
+    let edgesAdded = 0;
     let abortedOntologyOff = false;
 
     await this.db.withTransactionAsync(async (tx) => {
@@ -642,8 +716,8 @@ export class MaintenanceService {
         return;
       }
 
-      if (txMode === 'emergent' && parsed.ontology_updates) {
-        manifest = await ontologyService.mergeEmergentUpdates(entityId, parsed.ontology_updates, tx);
+      if (txMode === 'emergent' && ontologyUpdates) {
+        manifest = await ontologyService.mergeEmergentUpdates(entityId, ontologyUpdates, tx);
       }
 
       // Full breadth, three columns only: an old fact's edge targets are its
@@ -701,17 +775,7 @@ export class MaintenanceService {
       await this.entryRepo.markOntologyChecked(batch.map(f => f.id), entityId, now, tx);
     });
 
-    if (abortedOntologyOff) {
-      // Mirror the mode === 'off' early path: remaining stays 0 so a host
-      // convergence loop (while remaining > 0) still terminates.
-      const counts = await this.entryRepo.countUntypedByEntityId(entityId, recheckCutoff);
-      return { ...zeroed, remaining: 0, deferred: counts.deferred };
-    }
-
-    this.searchService.evictCache(entityId);
-
-    const counts = await this.entryRepo.countUntypedByEntityId(entityId, recheckCutoff);
-    return { scanned: batch.length, typed, failedValidation, edgesAdded, skipped: 0, remaining: counts.eligible, deferred: counts.deferred };
+    return { typed, failedValidation, edgesAdded, abortedOntologyOff };
   }
 
   private _validatePruneDuration(value: number | null | undefined, name: string): void {
