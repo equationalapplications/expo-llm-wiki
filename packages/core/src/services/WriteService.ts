@@ -129,8 +129,19 @@ export class WriteService {
 
     if (shouldRunHeal && this.jobManager.tryAcquireAutoHealLock(entityId)) {
       try {
-        await this.maintenanceService.doRunHeal(entityId);
-        await this.metadataRepo.updateCheckpoint(entityId, { heal: currentEventCount }, this.db);
+        const result = await this.maintenanceService.doRunHeal(entityId);
+        // Advance only when the pass converged. doRunHeal is bounded to
+        // HEAL_BATCH_SIZE candidates (#67); advancing unconditionally would cap
+        // auto-heal at one batch per autoHealThreshold events and leave most of
+        // a large corpus never auto-healed. Held back, the next write
+        // re-satisfies the threshold immediately and runs another bounded pass,
+        // so cost per write stays bounded while the corpus still converges.
+        //
+        // Sits inside the try, after the call: on a throw the checkpoint is not
+        // advanced, exactly as before this change.
+        if (result.remaining === 0) {
+          await this.metadataRepo.updateCheckpoint(entityId, { heal: currentEventCount }, this.db);
+        }
       } finally {
         this.jobManager.releaseLock('heal', entityId);
       }
