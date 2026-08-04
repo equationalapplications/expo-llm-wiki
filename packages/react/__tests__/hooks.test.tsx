@@ -25,7 +25,10 @@ function makeMockWiki() {
     exportDump: vi.fn().mockResolvedValue({ version: 1, entities: {} }),
     hasChanged: vi.fn().mockResolvedValue(true),
     runLibrarian: vi.fn().mockResolvedValue(undefined),
-    runHeal: vi.fn().mockResolvedValue(undefined),
+    runHeal: vi.fn().mockResolvedValue({
+      scanned: 3, downgraded: 0, deleted: 0, newFactsCreated: 0,
+      skipped: 0, remaining: 7, deferred: 3,
+    }),
     runPrune: vi.fn().mockResolvedValue({ entries: 0, tasks: 0, events: 0 }),
     runReembed: vi.fn().mockResolvedValue({ embedded: 0, skipped: 0, failed: 0 }),
     getEntityStatus: vi.fn().mockReturnValue({ ingesting: false, librarian: false, heal: false }),
@@ -711,6 +714,19 @@ describe('useWikiMaintenance', () => {
     });
 
     expect(wiki.runHeal).toHaveBeenCalledWith('user-1', { promptOverride: 'custom heal prompt' });
+  });
+
+  it('runHeal returns the HealResult instead of discarding it', async () => {
+    const { result } = renderHook(() => useWikiMaintenance(), { wrapper: wrapper(wiki) });
+    let returned: unknown;
+    await act(async () => { returned = await result.current.runHeal('user-1'); });
+    expect(returned).toMatchObject({ scanned: 3, remaining: 7 });
+  });
+
+  it('runHeal forwards batchSize to wiki.runHeal', async () => {
+    const { result } = renderHook(() => useWikiMaintenance(), { wrapper: wrapper(wiki) });
+    await act(async () => { await result.current.runHeal('user-1', { batchSize: 5 }); });
+    expect(wiki.runHeal).toHaveBeenCalledWith('user-1', { batchSize: 5 });
   });
 
   it('runPrune returns pruned counts and sets lastResult', async () => {

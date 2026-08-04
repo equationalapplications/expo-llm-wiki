@@ -96,12 +96,15 @@ export function MaintenanceTab() {
             <div className="job-card">
               <div className="job-info">
                 <strong>Heal</strong>
-                <p>LLM reviews facts: removes orphans, downgrades stale inferences, fixes errors.</p>
+                <p>LLM reviews facts: removes orphans, downgrades stale inferences, fixes errors. Covers up to 25 facts per run — check "remaining" and press again.</p>
               </div>
               <button
                 className="btn-job"
                 disabled={isPending}
-                onClick={() => run('Heal', () => runHeal(entityId))}
+                onClick={() => run('Heal', async () => {
+                  const r = await runHeal(entityId)
+                  return `scanned ${r.scanned}, deleted ${r.deleted}, new ${r.newFactsCreated}, remaining ${r.remaining}`
+                })}
               >Run</button>
             </div>
 
