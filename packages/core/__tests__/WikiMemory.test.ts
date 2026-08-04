@@ -160,6 +160,13 @@ describe('WikiMemory — prompt override API', () => {
       capturedCalls.push(params);
       return healResponse;
     });
+    // runBatched issues no call at all when there are zero heal candidates, so
+    // seed one — this test only exercises prompt routing, not heal semantics.
+    vi.spyOn(wiki.__testAccess.entryRepo, 'findHealCandidatesByEntityId').mockResolvedValue([{
+      id: 'fact1', entity_id: 'e1', title: 'title fact1', body: 'body fact1', tags: '[]',
+      confidence: 'inferred', source_type: 'librarian_inferred', source_hash: null, source_ref: null,
+      created_at: 1, updated_at: 1, last_accessed_at: null, access_count: 0, deleted_at: null,
+    } as any]);
     await wiki.runHeal('e1', { promptOverride: 'custom heal prompt' });
     const healCall = capturedCalls.find(c => c.systemPrompt === 'custom heal prompt');
     expect(healCall).toBeDefined();
@@ -259,6 +266,13 @@ describe('WikiMemory — prompt override API', () => {
 
     vi.spyOn((wikiWithGlobalHeal as any).eventRepo, 'count').mockResolvedValue(1);
     vi.spyOn(wikiWithGlobalHeal.__testAccess.metadataRepo, 'getCheckpoint').mockResolvedValue({ memory: 0, heal: 0 });
+    // runBatched issues no call at all when there are zero heal candidates, so
+    // seed one — this test only exercises prompt routing, not heal semantics.
+    vi.spyOn(wikiWithGlobalHeal.__testAccess.entryRepo, 'findHealCandidatesByEntityId').mockResolvedValue([{
+      id: 'fact1', entity_id: 'e4', title: 'title fact1', body: 'body fact1', tags: '[]',
+      confidence: 'inferred', source_type: 'librarian_inferred', source_hash: null, source_ref: null,
+      created_at: 1, updated_at: 1, last_accessed_at: null, access_count: 0, deleted_at: null,
+    } as any]);
 
     await wikiWithGlobalHeal.write('e4', { event_type: 'observation', summary: 'trigger heal' });
     await new Promise<void>((r) => setImmediate(r));

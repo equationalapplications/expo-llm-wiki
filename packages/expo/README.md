@@ -54,6 +54,7 @@ const wiki = createWiki(db, {
       // Your LLM call — must return the model output as a string
       return 'Model output';
     },
+    maxOutputTokens: 4096, // optional — your model's output ceiling; lets maintenance passes size their LLM calls
     embed: async (text: string) => {
       // Your embedding service (e.g., OpenAI, Cohere)
       // Use an absolute URL — React Native / Expo apps do not have a browser

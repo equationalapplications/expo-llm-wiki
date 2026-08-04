@@ -47,6 +47,7 @@ const wiki = createWiki(adapter, {
       // Your LLM
       return 'Model output';
     },
+    maxOutputTokens: 4096, // optional — your model's output ceiling; lets maintenance passes size their LLM calls
     embed: async (text: string) => {
       // Your embedding service
       const res = await fetch('https://your-app.example.com/api/embed', { 

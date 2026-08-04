@@ -42,6 +42,7 @@ const wikiMemory = new WikiMemory(db, {
       // Your LLM call for extracting facts, tasks
       return 'Model output';
     },
+    maxOutputTokens: 4096, // optional — lets runHeal/runOntologyBackfill size their first LLM call correctly instead of discovering the ceiling via a truncated response and retrying smaller
     embed: async (text: string) => {
       // Your embedding service (e.g., OpenAI, Cohere, local)
       const response = await fetch('https://your-app.example.com/api/embed', {
@@ -550,18 +551,21 @@ have `okf_type = NULL` and no edges, so `traverseGraph` cannot reach them.
 
 ```ts
 const result = await wiki.runOntologyBackfill(entityId);
-// { scanned, typed, failedValidation, edgesAdded, remaining, deferred }
+// { scanned, typed, failedValidation, edgesAdded, remaining, deferred, skipped }
 ```
 
 - **When to call it:** you own the trigger — the library provides the operation,
   not a scheduler (same as `runLibrarian`/`runHeal`). A good default is after
   each sync/import completes. `WikiBusyError` under concurrency is safe to
   swallow; the next trigger retries.
-- **Cost model:** one LLM call only when eligible untyped facts exist; otherwise
-  one SELECT. Each run scans at most 25 facts (override via
-  `options.batchSize`), oldest first, with the full serialized prompt
-  (system + user) capped at 40k chars. One exception: a single fact whose
-  prompt alone exceeds the cap is still sent by itself so it is never starved.
+- **Cost model:** one or more LLM calls only when eligible untyped facts exist;
+  otherwise one SELECT. Each run scans at most 25 facts (override via
+  `options.batchSize`), oldest first. Facts are sent to the LLM in bounded
+  sub-batches — sized from `llmProvider.maxOutputTokens` when supplied,
+  otherwise a conservative default — with the full serialized prompt
+  (system + user) capped at 40k chars. A sub-batch whose response is truncated
+  or fails to parse is halved and retried automatically; a single fact that
+  still fails alone is counted in `skipped` rather than aborting the run.
 - **Convergence:** loop `while (result.remaining > 0)` to drain a backlog.
   `remaining` counts only *eligible* untyped facts, so the loop terminates even
   when unclassifiable facts exist; those are cooldown-stamped and retried after

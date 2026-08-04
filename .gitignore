@@ -6,3 +6,8 @@ dist/
 .worktrees/
 docs/superpowers/plans
 *.tsbuildinfo
+
+# pnpm is the only supported package manager for this workspace (see root
+# package.json "packageManager"). npm lockfiles here are dead weight and get
+# scanned by Dependabot as if they were real.
+package-lock.json

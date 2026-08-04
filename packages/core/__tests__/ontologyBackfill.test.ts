@@ -181,6 +181,30 @@ async function makeWiki(mode: 'strict' | 'emergent' | 'off' = 'strict') {
 
 const llmJson = (obj: unknown) => JSON.stringify(obj);
 
+async function makeBackfillWiki(opts: {
+  generateText: (p: { systemPrompt: string; userPrompt: string }) => Promise<string>;
+  factCount: number;
+  maxOutputTokens?: number;
+}) {
+  const db = openTestDatabase();
+  await setupDatabase(db, PREFIX);
+  for (let i = 0; i < opts.factCount; i++) {
+    await seedEntry(db, { id: `f${i}`, title: `title f${i}`, body: `body f${i}` });
+  }
+  const wiki = createWiki(db, {
+    llmProvider: {
+      generateText: opts.generateText,
+      ...(opts.maxOutputTokens !== undefined ? { maxOutputTokens: opts.maxOutputTokens } : {}),
+    },
+  } as any);
+  await wiki.setup();
+  await wiki.setOntologyManifest('e1', {
+    node_types: [{ type: 'Concept', description: 'anything' }],
+    edge_types: [],
+  } as OntologyManifest, { mode: 'strict' });
+  return { db, wiki };
+}
+
 async function edgeCount(db: SQLiteAdapter): Promise<number> {
   const r = await db.getFirstAsync<{ c: number }>(`SELECT COUNT(*) AS c FROM ${PREFIX}edges`);
   return r!.c;
@@ -204,7 +228,7 @@ describe('runOntologyBackfill', () => {
       ],
     }));
     const result = await wiki.runOntologyBackfill('e1');
-    expect(result).toEqual({ scanned: 2, typed: 2, failedValidation: 0, edgesAdded: 1, remaining: 0, deferred: 0 });
+    expect(result).toEqual({ scanned: 2, typed: 2, failedValidation: 0, edgesAdded: 1, skipped: 0, remaining: 0, deferred: 0 });
     expect((await getFactRow(db, 'fact_p'))!.okf_type).toBe('person');
     expect((await getFactRow(db, 'fact_c'))!.okf_type).toBe('place');
     expect(await edgeCount(db)).toBe(1);
@@ -216,7 +240,7 @@ describe('runOntologyBackfill', () => {
     await seedEntry(db, { id: 'fact_x' });
     const result = await wiki.runOntologyBackfill('e1');
     expect(generateText).not.toHaveBeenCalled();
-    expect(result).toEqual({ scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0, remaining: 0, deferred: 0 });
+    expect(result).toEqual({ scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0, skipped: 0, remaining: 0, deferred: 0 });
   });
 
   // Spec test 2b
@@ -225,7 +249,7 @@ describe('runOntologyBackfill', () => {
     await seedEntry(db, { id: 'fact_t', okfType: 'person' });
     const result = await wiki.runOntologyBackfill('e1');
     expect(generateText).not.toHaveBeenCalled();
-    expect(result).toEqual({ scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0, remaining: 0, deferred: 0 });
+    expect(result).toEqual({ scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0, skipped: 0, remaining: 0, deferred: 0 });
   });
 
   // Spec test 3
@@ -280,7 +304,7 @@ describe('runOntologyBackfill', () => {
   });
 
   // Spec test 6
-  it('batch cap: 30 untyped → one call with 25 oldest, remaining 5', async () => {
+  it('batch cap: 30 untyped → fetches 25 oldest and classifies them across bounded LLM calls, remaining 5', async () => {
     const { db, wiki, generateText } = await makeWiki('strict');
     for (let i = 0; i < 30; i++) {
       await seedEntry(db, { id: `fact_${String(i).padStart(2, '0')}`, updatedAt: 1000 + i });
@@ -290,7 +314,9 @@ describe('runOntologyBackfill', () => {
       return llmJson({ classifications: [...new Set(ids)].map(id => ({ id, okf_type: 'person' })) });
     });
     const result = await wiki.runOntologyBackfill('e1');
-    expect(generateText).toHaveBeenCalledTimes(1);
+    // 25 fetched candidates are classified across multiple bounded runBatched
+    // calls (DEFAULT_BATCH_SIZE 10) rather than one oversized call.
+    expect(generateText.mock.calls.length).toBeGreaterThan(1);
     expect(result).toMatchObject({ scanned: 25, typed: 25, remaining: 5 });
     // oldest-first: fact_25..fact_29 (newest) are the ones left untyped
     expect((await getFactRow(db, 'fact_29'))!.okf_type).toBeNull();
@@ -303,36 +329,49 @@ describe('runOntologyBackfill', () => {
     const big = 'x'.repeat(ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS - 100);
     await seedEntry(db, { id: 'fact_big1', body: big, updatedAt: 100 });
     await seedEntry(db, { id: 'fact_big2', body: big, updatedAt: 200 });
-    generateText.mockResolvedValue(llmJson({ classifications: [{ id: 'fact_big1', okf_type: 'person' }] }));
+    // Each fact is oversized alone, so runBatched processes the whole pass as
+    // two single-fact batches rather than starving the second fact until a
+    // later call.
+    generateText.mockImplementation(async ({ systemPrompt, userPrompt }: { systemPrompt: string; userPrompt: string }) => {
+      const payload = `${systemPrompt}\n${userPrompt}`;
+      const ids = ['fact_big1', 'fact_big2'].filter(id => payload.includes(id));
+      return llmJson({ classifications: ids.map(id => ({ id, okf_type: 'person' })) });
+    });
     const r1 = await wiki.runOntologyBackfill('e1');
-    expect(r1.scanned).toBe(1); // second fact would blow the char budget
-    expect(r1.remaining).toBe(1);
+    expect(r1.scanned).toBe(2);
+    expect(r1.typed).toBe(2);
+    expect(r1.remaining).toBe(0);
     // The documented exception: a fact whose prompt alone exceeds the cap is
     // sent anyway rather than starved (deferring would re-defer forever).
-    const call1 = generateText.mock.calls[0][0];
-    expect(call1.systemPrompt.length + call1.userPrompt.length)
-      .toBeGreaterThan(ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS);
-    // second run: the remaining oversized fact is sent alone, never starved
-    generateText.mockResolvedValue(llmJson({ classifications: [{ id: 'fact_big2', okf_type: 'person' }] }));
-    const r2 = await wiki.runOntologyBackfill('e1');
-    expect(r2.scanned).toBe(1);
-    expect(r2.typed).toBe(1);
+    expect(generateText.mock.calls.length).toBe(2);
+    for (const call of generateText.mock.calls) {
+      const [prompts] = call;
+      expect(prompts.systemPrompt.length + prompts.userPrompt.length)
+        .toBeGreaterThan(ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS);
+    }
   });
 
   it('payload guard measures the full serialized prompt, not just title+body', async () => {
     const { db, wiki, generateText } = await makeWiki('strict');
     // Each fact's title+body sums to just under half the cap, so a title+body-only
     // guard would batch both; the full prompt (manifest, ids, tags, JSON syntax)
-    // pushes two facts over the cap.
+    // pushes two facts over the cap, so runBatched trims to one fact per call.
     const half = 'x'.repeat(ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS / 2 - 60);
     await seedEntry(db, { id: 'fact_half1', body: half, updatedAt: 100 });
     await seedEntry(db, { id: 'fact_half2', body: half, updatedAt: 200 });
-    generateText.mockResolvedValue(llmJson({ classifications: [{ id: 'fact_half1', okf_type: 'person' }] }));
+    generateText.mockImplementation(async ({ systemPrompt, userPrompt }: { systemPrompt: string; userPrompt: string }) => {
+      const payload = `${systemPrompt}\n${userPrompt}`;
+      const ids = ['fact_half1', 'fact_half2'].filter(id => payload.includes(id));
+      return llmJson({ classifications: ids.map(id => ({ id, okf_type: 'person' })) });
+    });
     const r1 = await wiki.runOntologyBackfill('e1');
-    expect(r1.scanned).toBe(1);
-    const call1 = generateText.mock.calls[0][0];
-    expect(call1.systemPrompt.length + call1.userPrompt.length)
-      .toBeLessThanOrEqual(ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS);
+    expect(r1.scanned).toBe(2);
+    expect(generateText.mock.calls.length).toBe(2);
+    for (const call of generateText.mock.calls) {
+      const [prompts] = call;
+      expect(prompts.systemPrompt.length + prompts.userPrompt.length)
+        .toBeLessThanOrEqual(ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS);
+    }
   });
 
   it('aborts without writes when ontology is disabled mid-flight (during the LLM call)', async () => {
@@ -344,10 +383,59 @@ describe('runOntologyBackfill', () => {
       return llmJson({ classifications: [{ id: 'fact_flip', okf_type: 'person' }] });
     });
     const r = await wiki.runOntologyBackfill('e1');
-    expect(r).toEqual({ scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0, remaining: 0, deferred: 0 });
+    expect(r).toEqual({ scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0, skipped: 0, remaining: 0, deferred: 0 });
     const row = await getFactRow(db, 'fact_flip');
     expect(row!.okf_type).toBeNull();
     expect(row!.ontology_checked_at).toBeNull(); // abort must not stamp the cooldown
+  });
+
+  it('reports work already committed when ontology is disabled part-way through a multi-batch pass', async () => {
+    // A pass is many transactions now, so a mid-flight flip can land after some
+    // batches have already been applied. Those writes are durable; the result
+    // must say so rather than reporting a zeroed pass.
+    const { db, wiki, generateText } = await makeWiki('strict');
+    for (let i = 0; i < 12; i++) {
+      await seedEntry(db, { id: `fact_m${i}`, title: `Name ${i}`, updatedAt: 100 + i });
+    }
+
+    generateText.mockImplementation(async ({ systemPrompt, userPrompt }: { systemPrompt: string; userPrompt: string }) => {
+      const payload = `${systemPrompt}\n${userPrompt}`;
+      const ids = Array.from({ length: 12 }, (_, i) => `fact_m${i}`).filter(id => payload.includes(id));
+      return llmJson({ classifications: ids.map(id => ({ id, okf_type: 'person' })) });
+    });
+
+    // Every LLM call in a pass completes before any batch is applied, so the
+    // window this test needs is between the two apply transactions, not during
+    // generateText. setOntologyManifest cannot be called from there — it would
+    // nest inside the open transaction — so the flip is staged at the read each
+    // batch does on entry, which is exactly where the abort check looks.
+    const ontologyService = (wiki as any).ontologyService;
+    const realGetState = ontologyService.getEffectiveState.bind(ontologyService);
+    let applyReads = 0;
+    vi.spyOn(ontologyService, 'getEffectiveState').mockImplementation(async (...args: any[]) => {
+      const state = await realGetState(...args);
+      // Only the per-batch abort check passes a transaction; the pass-entry
+      // read does not. Batch 1 sees the real mode, batch 2 onward sees 'off'.
+      if (args[1] === undefined) return state;
+      applyReads++;
+      return applyReads >= 2 ? { ...state, mode: 'off' } : state;
+    });
+
+    const r = await wiki.runOntologyBackfill('e1');
+
+    // DEFAULT_BATCH_SIZE is 10, so batch 1 carries 10 facts and commits.
+    expect(r.typed).toBe(10);
+    expect(r.scanned).toBe(10);
+    expect(r.remaining).toBe(0); // still 0 — a host convergence loop must terminate
+    expect(generateText.mock.calls.length).toBe(2);
+
+    // The report matches the database: batch 1 typed and stamped, batch 2 did not.
+    const first = await getFactRow(db, 'fact_m0');
+    expect(first!.okf_type).toBe('person');
+    expect(first!.ontology_checked_at).not.toBeNull();
+    const aborted = await getFactRow(db, 'fact_m11');
+    expect(aborted!.okf_type).toBeNull();
+    expect(aborted!.ontology_checked_at).toBeNull();
   });
 
   // Spec test 8
@@ -419,19 +507,22 @@ describe('runOntologyBackfill', () => {
   });
 
   // Spec test 12
-  it('malformed output throws with lock released and zero writes; unknown ids counted not thrown', async () => {
+  it('malformed output is treated like a truncated response: the fact is skipped and cooldown-stamped, not thrown', async () => {
     const { db, wiki, generateText } = await makeWiki('strict');
     await seedEntry(db, { id: 'fact_j', updatedAt: 777 });
     generateText.mockResolvedValue('not json at all {');
-    await expect(wiki.runOntologyBackfill('e1')).rejects.toThrow();
+    const result = await wiki.runOntologyBackfill('e1');
+    expect(result).toMatchObject({ scanned: 0, typed: 0, skipped: 1, deferred: 1, remaining: 0 });
     const row = await getFactRow(db, 'fact_j');
     expect(row!.okf_type).toBeNull();
-    expect(row!.ontology_checked_at).toBeNull(); // no cooldown stamps outside the tx
+    // Cooldown-stamped so it doesn't starve the updated_at ASC queue on the
+    // next pass — it reappears as deferred, not eligible.
+    expect(row!.ontology_checked_at).not.toBeNull();
 
     // lock released — next run proceeds
     generateText.mockResolvedValue(llmJson({ classifications: [{ id: 'fact_ghost', okf_type: 'person' }] }));
     const r = await wiki.runOntologyBackfill('e1');
-    expect(r).toMatchObject({ scanned: 1, typed: 0, failedValidation: 1 });
+    expect(r).toMatchObject({ scanned: 0, typed: 0 });
   });
 
   it('duplicate classification ids: first wins, duplicates counted as failedValidation', async () => {
@@ -486,5 +577,74 @@ describe('runOntologyBackfill — lock discipline (WikiMemory)', () => {
 
     // sequential run after completion succeeds (early-exits: nothing untyped)
     await expect(wiki.runOntologyBackfill('e1')).resolves.toMatchObject({ scanned: 0 });
+  });
+});
+
+describe('ontology backfill — bounded output (#65)', () => {
+  it('splits a batch that fails whole and merges the per-batch results', async () => {
+    // 12 untyped facts. The provider truncates any request carrying more than
+    // 4 facts, exactly like a hard output ceiling.
+    const seededIds = Array.from({ length: 12 }, (_, i) => `f${i}`);
+
+    const generateText = vi.fn(async ({ systemPrompt, userPrompt }: { systemPrompt: string; userPrompt: string }) => {
+      const payload = `${systemPrompt}\n${userPrompt}`;
+      const ids = seededIds.filter(id => payload.includes(`"id": "${id}"`) || payload.includes(`"${id}"`));
+      if (ids.length > 4) {
+        throw new Error('Model response truncated at the 9999-token limit');
+      }
+      return JSON.stringify({
+        classifications: ids.map(id => ({ id, okf_type: 'Concept', edges: [] })),
+      });
+    });
+
+    const { wiki } = await makeBackfillWiki({ generateText, factCount: 12 });
+    const result = await wiki.runOntologyBackfill('e1');
+
+    expect(result.typed).toBe(12);
+    expect(result.skipped).toBe(0);
+    expect(result.scanned).toBe(12);
+    // At least one oversized attempt, then splits.
+    expect(generateText.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it('skips a fact that fails alone, reports it, and stamps its cooldown', async () => {
+    const generateText = vi.fn(async ({ systemPrompt, userPrompt }: { systemPrompt: string; userPrompt: string }) => {
+      const payload = `${systemPrompt}\n${userPrompt}`;
+      const ids = ['f0', 'f1', 'f2', 'f3'].filter(id => payload.includes(id));
+      if (ids.includes('f2')) {
+        throw new Error('Model response truncated at the 9999-token limit');
+      }
+      return JSON.stringify({ classifications: ids.map(id => ({ id, okf_type: 'Concept', edges: [] })) });
+    });
+
+    const { wiki } = await makeBackfillWiki({ generateText, factCount: 4 });
+    const result = await wiki.runOntologyBackfill('e1');
+
+    expect(result.skipped).toBe(1);
+    expect(result.typed).toBe(3);
+
+    // The skipped fact must not come back first on the next pass — it is
+    // cooldown-stamped, so it counts as deferred, not eligible.
+    expect(result.deferred).toBe(1);
+    expect(result.remaining).toBe(0);
+  });
+
+  it('never re-climbs the batch size within a pass', async () => {
+    const attemptSizes: number[] = [];
+    const seededIds = Array.from({ length: 24 }, (_, i) => `f${i}`);
+    const generateText = vi.fn(async ({ systemPrompt, userPrompt }: { systemPrompt: string; userPrompt: string }) => {
+      const payload = `${systemPrompt}\n${userPrompt}`;
+      const ids = seededIds.filter(id => new RegExp(`"${id}"`).test(payload));
+      attemptSizes.push(ids.length);
+      if (ids.length > 3) throw new Error('Model response truncated at the 9999-token limit');
+      return JSON.stringify({ classifications: ids.map(id => ({ id, okf_type: 'Concept', edges: [] })) });
+    });
+
+    const { wiki } = await makeBackfillWiki({ generateText, factCount: 24 });
+    await wiki.runOntologyBackfill('e1');
+
+    const firstSuccess = attemptSizes.findIndex(s => s <= 3);
+    expect(firstSuccess).toBeGreaterThan(0);
+    expect(Math.max(...attemptSizes.slice(firstSuccess))).toBeLessThanOrEqual(3);
   });
 });

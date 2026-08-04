@@ -103,6 +103,9 @@ export interface OntologyBackfillResult {
   remaining: number;
   /** Untyped facts inside the recheck cooldown. */
   deferred: number;
+  /** Facts a batch could not process even alone, skipped so the pass could finish.
+   * Stamped with the recheck cooldown, so they reappear as `deferred` next pass. */
+  skipped: number;
 }
 
 export interface WikiConfig {
@@ -317,6 +320,17 @@ export interface LLMProvider {
    * When absent or throws, `read()` falls back to MiniSearch.
    */
   embed?: (text: string) => Promise<number[]>;
+  /**
+   * Optional. The provider's hard output-token ceiling for `generateText`.
+   * Core cannot observe it — the token budget lives entirely in the host's
+   * adapter — so maintenance passes that generate response-size-proportional
+   * output size their batches blind unless this is declared.
+   *
+   * When absent, batching falls back to a conservative default and adapts
+   * downward on failure. When present, it is used as a sizing hint only and is
+   * never trusted as a guarantee.
+   */
+  maxOutputTokens?: number;
 }
 
 /**

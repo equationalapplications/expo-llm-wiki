@@ -15,6 +15,7 @@ import { entitySummaryMetaKey, type MetadataRepository } from '../repositories/M
 import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
+import { runBatched } from './BoundedLlmCall';
 
 const FUZZY_THRESHOLD = 0.5;
 const MIN_TOKENS_TO_QUALIFY = 3;
@@ -22,6 +23,39 @@ const MIN_TOKENS_TO_QUALIFY = 3;
 export const ONTOLOGY_BACKFILL_BATCH_SIZE = 25;
 export const ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS = 40_000;
 export const ONTOLOGY_BACKFILL_RECHECK_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Anchors offered per heal call. Anchors exist only for contradiction
+ * detection; on a document-heavy corpus they outnumbered the candidates the
+ * model actually reasons about by ~80x and were the direct cause of #63.
+ */
+export const HEAL_MAX_ANCHORS = 50;
+
+/** Search hits requested before the immutable_document filter is applied.
+ * Overfetched because the index holds every fact, not only anchors. */
+const HEAL_ANCHOR_SEARCH_OVERFETCH = 4;
+
+/** Input bound for heal, mirroring ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS.
+ * Independent of output batching: a small number of dense facts is still trimmed. */
+export const HEAL_MAX_PROMPT_CHARS = 40_000;
+
+/** One parsed ontology-backfill response, paired with the facts that produced it. */
+interface OntologyBackfillBatch {
+  batch: WikiFact[];
+  classifications: Array<{ id?: unknown; okf_type?: unknown; edges?: unknown }>;
+  ontologyUpdates?: OntologyUpdates;
+}
+
+/** An immutable_document fact offered to heal purely for contradiction detection. */
+type HealAnchor = { id: string; title: string; source_ref: string | null };
+
+/** One parsed heal response, paired with the candidates that produced it. */
+interface HealBatch {
+  batch: WikiFact[];
+  downgraded: string[];
+  deleted: string[];
+  newFacts: ExtractedFact[];
+}
 
 export class MaintenanceService {
   private promptService: PromptService;
@@ -466,39 +500,70 @@ export class MaintenanceService {
       }
     }
 
-    const allFactsRows = await this.entryRepo.findAllByEntityId(entityId);
+    const healCandidates = await this.entryRepo.findHealCandidatesByEntityId(entityId);
     const allTasks = await this.taskRepo.findAllPending([entityId]);
     const recentEvents = await this.eventRepo.getRecent(entityId, 20);
 
-    const healCandidates = allFactsRows.filter(f => f.source_type !== 'immutable_document');
-    const documentAnchors = allFactsRows
-      .filter(f => f.source_type === 'immutable_document')
-      .map(({ id, title, source_ref }) => ({ id, title, source_ref }));
-
-    const healCandidatesForPrompt = healCandidates.map(f => {
+    const toPromptShape = (f: WikiFact) => {
       const { embedding: _embedding, embedding_blob: _blob, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
       return { ...rest, tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags };
+    };
+
+    // Anchor selection costs a keyword search plus a repository read, and
+    // runBatched calls buildPrompt more than once per batch it actually sends —
+    // while trimming to maxPromptChars, and again for each half when a batch is
+    // split. Prefixes recur heavily across those paths, so memoizing by the
+    // query the batch produces collapses the repeats. Scoped to this pass: the
+    // index and the anchor rows can both change between heal runs.
+    const anchorCache = new Map<string, HealAnchor[]>();
+
+    const outcome = await runBatched<WikiFact, HealBatch>({
+      items: healCandidates,
+      buildPrompt: async (batch) => {
+        const documentAnchors = await this._selectHealAnchors(entityId, batch, anchorCache);
+        return this.promptService.buildHealPrompt(
+          batch.map(toPromptShape),
+          documentAnchors,
+          allTasks,
+          recentEvents,
+          promptOverride,
+        );
+      },
+      call: (prompts) => this.options.llmProvider.generateText(prompts),
+      parse: (responseText, batch) => {
+        const result = parseJsonResponse<{ downgraded: string[], deleted: string[], newFacts: ExtractedFact[] }>(responseText);
+        return {
+          batch,
+          downgraded: Array.isArray(result.downgraded) ? result.downgraded : [],
+          deleted: Array.isArray(result.deleted) ? result.deleted : [],
+          newFacts: Array.isArray(result.newFacts) ? result.newFacts : [],
+        };
+      },
+      maxOutputTokens: this.options.llmProvider.maxOutputTokens,
+      maxPromptChars: HEAL_MAX_PROMPT_CHARS,
+      onSkip: (fact, err) => {
+        console.warn(
+          `[WikiMemory] heal skipped ${entityId}/${fact.id}: response could not be bounded`,
+          err,
+        );
+      },
     });
 
-    const { systemPrompt, userPrompt } = this.promptService.buildHealPrompt(
-      healCandidatesForPrompt,
-      documentAnchors,
-      allTasks,
-      recentEvents,
-      promptOverride,
-    );
+    // The mutable-ids guard is per batch: the model may only act on the
+    // candidates it was actually offered in the call that produced the output.
+    const safeDowngradedSet = new Set<string>();
+    const safeDeletedSet = new Set<string>();
+    const newFacts: ExtractedFact[] = [];
 
-    const responseText = await this.options.llmProvider.generateText({ systemPrompt, userPrompt });
+    for (const batchResult of outcome.results) {
+      const mutableIds = new Set(batchResult.batch.map(f => f.id));
+      for (const id of batchResult.downgraded) if (mutableIds.has(id)) safeDowngradedSet.add(id);
+      for (const id of batchResult.deleted) if (mutableIds.has(id)) safeDeletedSet.add(id);
+      newFacts.push(...batchResult.newFacts);
+    }
 
-    const result = parseJsonResponse<{ downgraded: string[], deleted: string[], newFacts: ExtractedFact[] }>(responseText);
-
-    const mutableIds = new Set(healCandidates.map(f => f.id));
-    const downgraded = Array.isArray(result.downgraded) ? result.downgraded : [];
-    const deleted = Array.isArray(result.deleted) ? result.deleted : [];
-    const newFacts = Array.isArray(result.newFacts) ? result.newFacts : [];
-
-    const safeDowngraded = Array.from(new Set(downgraded.filter(id => mutableIds.has(id))));
-    const safeDeleted = Array.from(new Set(deleted.filter(id => mutableIds.has(id))));
+    const safeDowngraded = Array.from(safeDowngradedSet);
+    const safeDeleted = Array.from(safeDeletedSet);
     const validNewFacts = newFacts.map(validateFact).filter((f): f is ExtractedFact => f !== null);
 
     const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
@@ -571,7 +636,7 @@ export class MaintenanceService {
 
     const now = Date.now();
     const recheckCutoff = now - ONTOLOGY_BACKFILL_RECHECK_MS;
-    const zeroed = { scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0 };
+    const zeroed = { scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0, skipped: 0 };
 
     const ontologyService = this.ontologyService;
     if (!ontologyService) {
@@ -598,7 +663,8 @@ export class MaintenanceService {
     // ids, tags, JSON syntax, overrides all counted) so dense facts cannot blow
     // a provider's context window. A single fact whose prompt alone exceeds the
     // cap is still sent by itself: deferring it would just re-defer forever and
-    // starve it (spec Decision 2).
+    // starve it (spec Decision 2). Output size is bounded separately, by
+    // runBatched — the two bounds are independent and both enforced.
     const toPromptShape = (f: WikiFact) => ({ id: f.id, title: f.title, body: f.body, tags: f.tags });
     const buildPrompt = (facts: WikiFact[]) => this.promptService.buildOntologyBackfillPrompt(
       facts.map(toPromptShape),
@@ -606,29 +672,110 @@ export class MaintenanceService {
       ontologyContext,
     );
 
-    const batch: WikiFact[] = [candidates[0]];
-    let built = buildPrompt(batch);
-    for (let i = 1; i < candidates.length; i++) {
-      const next = buildPrompt([...batch, candidates[i]]);
-      if (next.systemPrompt.length + next.userPrompt.length > ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS) break;
-      batch.push(candidates[i]);
-      built = next;
-    }
-
-    const { systemPrompt, userPrompt } = built;
-
-    const responseText = await this.options.llmProvider.generateText({ systemPrompt, userPrompt });
-
-    const parsed = parseJsonResponse<{
-      classifications?: Array<{ id?: unknown; okf_type?: unknown; edges?: unknown }>;
-      ontology_updates?: OntologyUpdates;
-    }>(responseText);
-    const classifications = Array.isArray(parsed.classifications) ? parsed.classifications : [];
+    const outcome = await runBatched<WikiFact, OntologyBackfillBatch>({
+      items: candidates,
+      buildPrompt,
+      call: (prompts) => this.options.llmProvider.generateText(prompts),
+      parse: (responseText, batch) => {
+        const parsed = parseJsonResponse<{
+          classifications?: Array<{ id?: unknown; okf_type?: unknown; edges?: unknown }>;
+          ontology_updates?: OntologyUpdates;
+        }>(responseText);
+        return {
+          batch,
+          classifications: Array.isArray(parsed.classifications) ? parsed.classifications : [],
+          ontologyUpdates: parsed.ontology_updates,
+        };
+      },
+      maxOutputTokens: this.options.llmProvider.maxOutputTokens,
+      maxPromptChars: ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS,
+      onSkip: (fact, err) => {
+        console.warn(
+          `[WikiMemory] ontology backfill skipped ${entityId}/${fact.id}: response could not be bounded`,
+          err,
+        );
+      },
+    });
 
     let typed = 0;
     let failedValidation = 0;
     let edgesAdded = 0;
+    let scanned = 0;
+    let abortedOntologyOff = false;
 
+    for (const batchResult of outcome.results) {
+      const applied = await this._applyOntologyBackfillBatch(entityId, batchResult, now);
+      if (applied.abortedOntologyOff) {
+        abortedOntologyOff = true;
+        break;
+      }
+      typed += applied.typed;
+      failedValidation += applied.failedValidation;
+      edgesAdded += applied.edgesAdded;
+      scanned += batchResult.batch.length;
+    }
+
+    if (abortedOntologyOff) {
+      // remaining stays 0 so a host convergence loop (while remaining > 0)
+      // still terminates, mirroring the mode === 'off' early path.
+      //
+      // The counters are NOT zeroed. A pass is now many transactions, so
+      // batches applied before the flip are already committed — facts typed,
+      // edges persisted, cooldowns stamped. Reporting zeros here would tell the
+      // caller nothing happened while the database says otherwise. Only the
+      // aborting batch and everything after it are dropped, and those wrote
+      // nothing: the abort check runs before any write in the batch's
+      // transaction.
+      const counts = await this.entryRepo.countUntypedByEntityId(entityId, recheckCutoff);
+      return {
+        scanned,
+        typed,
+        failedValidation,
+        edgesAdded,
+        skipped: outcome.skipped.length,
+        remaining: 0,
+        deferred: counts.deferred,
+      };
+    }
+
+    // Skipped facts get the same cooldown stamp as processed ones. Without it
+    // they stay at the head of the updated_at ASC queue and every later pass
+    // re-attempts them first, starving everything behind them.
+    if (outcome.skipped.length > 0) {
+      await this.entryRepo.markOntologyChecked(outcome.skipped.map(f => f.id), entityId, now, this.db);
+    }
+
+    this.searchService.evictCache(entityId);
+
+    const counts = await this.entryRepo.countUntypedByEntityId(entityId, recheckCutoff);
+    return {
+      scanned,
+      typed,
+      failedValidation,
+      edgesAdded,
+      skipped: outcome.skipped.length,
+      remaining: counts.eligible,
+      deferred: counts.deferred,
+    };
+  }
+
+  /**
+   * Applies one parsed backfill batch in its own transaction. Per-batch rather
+   * than one transaction for the pass, so mergeEmergentUpdates semantics and
+   * the mid-flight `mode === 'off'` abort check keep the shape they had when a
+   * pass was a single call.
+   */
+  private async _applyOntologyBackfillBatch(
+    entityId: string,
+    batchResult: OntologyBackfillBatch,
+    now: number,
+  ): Promise<{ typed: number; failedValidation: number; edgesAdded: number; abortedOntologyOff: boolean }> {
+    const ontologyService = this.ontologyService!;
+    const { batch, classifications, ontologyUpdates } = batchResult;
+
+    let typed = 0;
+    let failedValidation = 0;
+    let edgesAdded = 0;
     let abortedOntologyOff = false;
 
     await this.db.withTransactionAsync(async (tx) => {
@@ -642,8 +789,8 @@ export class MaintenanceService {
         return;
       }
 
-      if (txMode === 'emergent' && parsed.ontology_updates) {
-        manifest = await ontologyService.mergeEmergentUpdates(entityId, parsed.ontology_updates, tx);
+      if (txMode === 'emergent' && ontologyUpdates) {
+        manifest = await ontologyService.mergeEmergentUpdates(entityId, ontologyUpdates, tx);
       }
 
       // Full breadth, three columns only: an old fact's edge targets are its
@@ -701,23 +848,70 @@ export class MaintenanceService {
       await this.entryRepo.markOntologyChecked(batch.map(f => f.id), entityId, now, tx);
     });
 
-    if (abortedOntologyOff) {
-      // Mirror the mode === 'off' early path: remaining stays 0 so a host
-      // convergence loop (while remaining > 0) still terminates.
-      const counts = await this.entryRepo.countUntypedByEntityId(entityId, recheckCutoff);
-      return { ...zeroed, remaining: 0, deferred: counts.deferred };
-    }
-
-    this.searchService.evictCache(entityId);
-
-    const counts = await this.entryRepo.countUntypedByEntityId(entityId, recheckCutoff);
-    return { scanned: batch.length, typed, failedValidation, edgesAdded, remaining: counts.eligible, deferred: counts.deferred };
+    return { typed, failedValidation, edgesAdded, abortedOntologyOff };
   }
 
   private _validatePruneDuration(value: number | null | undefined, name: string): void {
     if (value !== null && value !== undefined && (typeof value !== 'number' || !isFinite(value) || value < 0)) {
       throw new Error(`Invalid ${name}: must be a non-negative finite number or null`);
     }
+  }
+
+  /**
+   * Anchors relevant to one batch of heal candidates.
+   *
+   * Heal used to pass every immutable_document fact for the entity — 2560 rows
+   * against 31 candidates on the corpus behind #63 — which is what blew the
+   * output ceiling. Anchors are now retrieved by keyword relevance to the batch
+   * and capped.
+   *
+   * The MiniSearch index holds all facts, not only anchors, so hits are
+   * overfetched and the source_type restriction is applied after retrieval, in
+   * SQL. Search rank order is preserved through the filter.
+   *
+   * Accepted tradeoff: an anchor that contradicts a candidate while sharing no
+   * vocabulary with it is now missed. Exhaustive-but-broken traded for
+   * relevance-scoped-and-working.
+   *
+   * `cache` is keyed by the derived query rather than by the batch, so two
+   * batches that reduce to the same query share one lookup. Caller-owned and
+   * per-pass — see the call site in doRunHeal.
+   */
+  private async _selectHealAnchors(
+    entityId: string,
+    batch: WikiFact[],
+    cache?: Map<string, HealAnchor[]>,
+  ): Promise<HealAnchor[]> {
+    const query = batch.map(f => f.title).join(' ').trim();
+    if (!query) return [];
+
+    const cached = cache?.get(query);
+    if (cached) return cached;
+
+    const hits = this.searchService.searchKeyword(
+      query,
+      [entityId],
+      HEAL_MAX_ANCHORS * HEAL_ANCHOR_SEARCH_OVERFETCH,
+    );
+    const hitIds = hits.map(h => h.id as string);
+
+    const anchors: HealAnchor[] = [];
+    if (hitIds.length > 0) {
+      const rows = await this.entryRepo.findAnchorRowsByIds(entityId, hitIds);
+      const byId = new Map(rows.map(r => [r.id, r]));
+
+      for (const id of hitIds) {
+        const row = byId.get(id);
+        if (!row) continue;
+        anchors.push(row);
+        if (anchors.length >= HEAL_MAX_ANCHORS) break;
+      }
+    }
+
+    // Cached even when empty: a query that matched nothing still cost a search,
+    // and the trim and split paths will ask for it again.
+    cache?.set(query, anchors);
+    return anchors;
   }
 
   private _sanitizeRankerError(err: unknown): Error {

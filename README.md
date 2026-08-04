@@ -174,6 +174,9 @@ const wiki = createWiki(db, {
       });
       return response.choices[0].message.content ?? '{}';
     },
+    // Optional: your model's hard output-token ceiling. Lets runHeal/runOntologyBackfill
+    // size their first LLM call correctly instead of discovering it via a truncated response.
+    maxOutputTokens: 4096,
     // Optional: supply embed() to enable cosine-similarity search.
     // Without it, read() falls back to MiniSearch keyword search.
     embed: async (text) => {

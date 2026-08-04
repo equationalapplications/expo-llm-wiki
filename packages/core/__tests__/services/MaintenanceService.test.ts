@@ -34,6 +34,14 @@ describe('MaintenanceService — PromptService injection', () => {
     mockEntryRepo = {
       findRecentByEntityId: vi.fn().mockResolvedValue([]),
       findAllByEntityId: vi.fn().mockResolvedValue([]),
+      // At least one heal candidate so runHeal/doRunHeal issue a generateText
+      // call — these tests exercise prompt routing, not heal semantics.
+      findHealCandidatesByEntityId: vi.fn().mockResolvedValue([{
+        id: 'fact1', entity_id: 'entity1', title: 'title fact1', body: 'body fact1', tags: '[]',
+        confidence: 'inferred', source_type: 'librarian_inferred', source_hash: null, source_ref: null,
+        created_at: 1, updated_at: 1, last_accessed_at: null, access_count: 0, deleted_at: null,
+      }]),
+      findAnchorRowsByIds: vi.fn().mockResolvedValue([]),
       upsert: vi.fn().mockResolvedValue(undefined),
       markOrphaned: vi.fn().mockResolvedValue([]),
       downgradeStaleInferred: vi.fn().mockResolvedValue(undefined),
@@ -51,6 +59,7 @@ describe('MaintenanceService — PromptService injection', () => {
     mockSearchService = {
       sync: vi.fn().mockResolvedValue(undefined),
       evictCache: vi.fn(),
+      searchKeyword: vi.fn().mockReturnValue([]),
     };
     mockJobManager = {
       acquireLock: vi.fn(),

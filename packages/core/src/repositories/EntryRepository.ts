@@ -402,6 +402,54 @@ export class EntryRepository extends BaseRepository {
   }
 
   /**
+   * Fetch live, mutable entries for an entity — everything heal is allowed to
+   * downgrade or delete. Heal previously loaded every row via
+   * findAllByEntityId and filtered in JS, which on a document-heavy corpus
+   * meant loading 2560 rows to keep 31.
+   */
+  async findHealCandidatesByEntityId(entityId: string, tx?: SQLiteAdapter): Promise<WikiFact[]> {
+    const executor = this.getExecutor(tx);
+    const rows = await executor.getAllAsync<any>(
+      `SELECT * FROM ${this.prefix}entries
+       WHERE entity_id = ? AND deleted_at IS NULL AND source_type != 'immutable_document'
+       ORDER BY updated_at DESC`,
+      [entityId],
+    );
+    return rows.map(mapRowToFact);
+  }
+
+  /**
+   * Resolve search hits to document anchors. The MiniSearch index holds every
+   * fact, not only immutable_document rows, so the source-type restriction has
+   * to be applied here, after retrieval.
+   */
+  async findAnchorRowsByIds(
+    entityId: string,
+    ids: readonly string[],
+    tx?: SQLiteAdapter,
+  ): Promise<Array<{ id: string; title: string; source_ref: string | null }>> {
+    if (ids.length === 0) return [];
+    const executor = this.getExecutor(tx);
+    const rows: Array<{ id: string; title: string; source_ref: string | null }> = [];
+    // Chunked like every other multi-id read here. The current caller stays well
+    // under SQLITE_MAX_VARIABLE_NUMBER, but that is a property of the caller,
+    // not of this method.
+    for (let i = 0; i < ids.length; i += this.chunkSize) {
+      const chunk = ids.slice(i, i + this.chunkSize);
+      const placeholders = chunk.map(() => '?').join(', ');
+      const chunkRows = await executor.getAllAsync<{ id: string; title: string; source_ref: string | null }>(
+        `SELECT id, title, source_ref FROM ${this.prefix}entries
+         WHERE entity_id = ? AND deleted_at IS NULL
+           AND source_type = 'immutable_document'
+           AND id IN (${placeholders})`,
+        [entityId, ...chunk],
+      );
+      rows.push(...chunkRows);
+    }
+    return rows;
+  }
+
+  /**
    * Fetch recent non-deleted entries for an entity (limited), ordered by updated_at DESC.
    * Used by MaintenanceService.doRunLibrarian().
    */
