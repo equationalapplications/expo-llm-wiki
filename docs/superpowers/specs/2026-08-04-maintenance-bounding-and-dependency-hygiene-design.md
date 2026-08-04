@@ -87,12 +87,14 @@ function:
 ```ts
 runBatched<TItem, TResult>(args: {
   items: TItem[];
-  buildPrompt: (batch: TItem[]) => { systemPrompt: string; userPrompt: string };
-  call: (prompts: { systemPrompt: string; userPrompt: string }) => Promise<string>;
-  parse: (responseText: string) => TResult;
+  buildPrompt: (batch: TItem[]) => BuiltPrompt | Promise<BuiltPrompt>;
+  call: (prompts: BuiltPrompt) => Promise<string>;
+  parse: (responseText: string, batch: TItem[]) => TResult;
   maxOutputTokens?: number;
   maxPromptChars: number;
+  onSkip?: (item: TItem, err: unknown) => void;
 }): Promise<{ results: TResult[]; skipped: TItem[]; batches: number }>
+// BuiltPrompt = { systemPrompt: string; userPrompt: string }
 ```
 
 It owns batch sizing, the `generateText` call, failure detection, halve-and-retry splitting, and the

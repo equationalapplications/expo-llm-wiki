@@ -1076,10 +1076,17 @@ describe('sync() concurrency', () => {
   ) {
     let call = 0;
     const inFlight = { max: 0, now: 0 };
+    // sync() does all its work inside a .then(), so nothing reads the "database"
+    // synchronously. A test that mutates dbRows right after calling sync() would
+    // mutate it *before* the first read and prove nothing; firstRead lets a test
+    // wait until the first read has actually snapshotted.
+    let signalFirstRead!: () => void;
+    const firstRead = new Promise<void>((resolve) => { signalFirstRead = resolve; });
     const repo = {
       findMiniSearchRows: vi.fn(async () => {
         const snapshot = dbRows.current.slice();
         const delay = delaysMs[call++] ?? 0;
+        signalFirstRead();
         inFlight.now++;
         inFlight.max = Math.max(inFlight.max, inFlight.now);
         await new Promise((resolve) => setTimeout(resolve, delay));
@@ -1087,7 +1094,7 @@ describe('sync() concurrency', () => {
         return snapshot;
       }),
     } as unknown as EntryRepository;
-    return { repo, inFlight };
+    return { repo, inFlight, firstRead };
   }
 
   it('a slow stale rebuild does not clobber a fast fresh one', async () => {
@@ -1096,10 +1103,14 @@ describe('sync() concurrency', () => {
     };
     // First sync reads slowly, second reads fast — without serialization the
     // first finishes last and discards f2.
-    const { repo } = makeScriptedRepo(dbRows, [40, 0]);
+    const { repo, firstRead } = makeScriptedRepo(dbRows, [40, 0]);
     const service = new SearchService(repo);
 
     const first = service.sync('e1');
+    // Only after the first (slow) read has snapshotted the old rows does f2
+    // land. Concurrently, the second read would then pick f2 up and finish
+    // first, and the stale first read would overwrite the index without it.
+    await firstRead;
     dbRows.current = [makeMiniSearchRow('f1', 'e1', 'alpha'), makeMiniSearchRow('f2', 'e1', 'beta')];
     const second = service.sync('e1');
     await Promise.all([first, second]);

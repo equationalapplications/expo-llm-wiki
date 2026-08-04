@@ -176,11 +176,20 @@ export async function runBatched<TItem, TResult>(
     // failure inside the first chunk can shrink batchSize further, and a later
     // chunk of this same batch must honor that smaller size too, not the size
     // this batch was split at before the shrink was discovered.
+    //
+    // Chunks go through `trim` rather than straight to `attempt`: a subset of a
+    // trimmed batch is not automatically under maxPromptChars, because
+    // buildPrompt is not required to be monotonic in batch size. Heal's is not
+    // — it re-selects up to HEAL_MAX_ANCHORS anchors per batch, so a sub-batch
+    // can match anchors the parent did not. Without this, the input bound held
+    // only on first attempts.
     let i = 0;
     while (i < batch.length) {
       const size = Math.min(batchSize, batch.length - i);
-      await attempt(batch.slice(i, i + size));
-      i += size;
+      const trimmed = await trim(batch.slice(i, i + size));
+      await attempt(trimmed.batch, trimmed.prompts);
+      // trim always returns at least one item, so this advances.
+      i += trimmed.batch.length;
     }
   };
 

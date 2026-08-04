@@ -430,14 +430,23 @@ export class EntryRepository extends BaseRepository {
   ): Promise<Array<{ id: string; title: string; source_ref: string | null }>> {
     if (ids.length === 0) return [];
     const executor = this.getExecutor(tx);
-    const placeholders = ids.map(() => '?').join(', ');
-    return executor.getAllAsync<{ id: string; title: string; source_ref: string | null }>(
-      `SELECT id, title, source_ref FROM ${this.prefix}entries
-       WHERE entity_id = ? AND deleted_at IS NULL
-         AND source_type = 'immutable_document'
-         AND id IN (${placeholders})`,
-      [entityId, ...ids],
-    );
+    const rows: Array<{ id: string; title: string; source_ref: string | null }> = [];
+    // Chunked like every other multi-id read here. The current caller stays well
+    // under SQLITE_MAX_VARIABLE_NUMBER, but that is a property of the caller,
+    // not of this method.
+    for (let i = 0; i < ids.length; i += this.chunkSize) {
+      const chunk = ids.slice(i, i + this.chunkSize);
+      const placeholders = chunk.map(() => '?').join(', ');
+      const chunkRows = await executor.getAllAsync<{ id: string; title: string; source_ref: string | null }>(
+        `SELECT id, title, source_ref FROM ${this.prefix}entries
+         WHERE entity_id = ? AND deleted_at IS NULL
+           AND source_type = 'immutable_document'
+           AND id IN (${placeholders})`,
+        [entityId, ...chunk],
+      );
+      rows.push(...chunkRows);
+    }
+    return rows;
   }
 
   /**

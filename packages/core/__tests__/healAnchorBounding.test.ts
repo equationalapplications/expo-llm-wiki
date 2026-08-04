@@ -89,6 +89,23 @@ describe('doRunHeal — bounded anchors and batched candidates (#63)', () => {
     }
   });
 
+  it('bounds the retrieval too, not just the post-retrieval cap', async () => {
+    const svc = makeService();
+    await svc.runHeal('e1');
+
+    // The mock returns all 2560 hits whatever limit it is given, so the cap
+    // assertion above passes even if the search itself became unbounded.
+    // Pin the requested limit: a small multiple of the cap (overfetch, because
+    // the source-type filter runs afterwards in SQL), never the whole corpus.
+    expect(mockSearchService.searchKeyword).toHaveBeenCalled();
+    for (const call of mockSearchService.searchKeyword.mock.calls) {
+      const limit = call[2];
+      expect(Number.isFinite(limit)).toBe(true);
+      expect(limit).toBeGreaterThanOrEqual(HEAL_MAX_ANCHORS);
+      expect(limit).toBeLessThanOrEqual(HEAL_MAX_ANCHORS * 10);
+    }
+  });
+
   it('drops non-anchor search hits — the index is not anchor-only', async () => {
     const svc = makeService();
     await svc.runHeal('e1');

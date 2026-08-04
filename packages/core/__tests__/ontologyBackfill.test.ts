@@ -184,7 +184,6 @@ const llmJson = (obj: unknown) => JSON.stringify(obj);
 async function makeBackfillWiki(opts: {
   generateText: (p: { systemPrompt: string; userPrompt: string }) => Promise<string>;
   factCount: number;
-  batchSize: number;
   maxOutputTokens?: number;
 }) {
   const db = openTestDatabase();
@@ -598,7 +597,7 @@ describe('ontology backfill — bounded output (#65)', () => {
       });
     });
 
-    const { wiki } = await makeBackfillWiki({ generateText, factCount: 12, batchSize: 12 });
+    const { wiki } = await makeBackfillWiki({ generateText, factCount: 12 });
     const result = await wiki.runOntologyBackfill('e1');
 
     expect(result.typed).toBe(12);
@@ -618,7 +617,7 @@ describe('ontology backfill — bounded output (#65)', () => {
       return JSON.stringify({ classifications: ids.map(id => ({ id, okf_type: 'Concept', edges: [] })) });
     });
 
-    const { wiki } = await makeBackfillWiki({ generateText, factCount: 4, batchSize: 4 });
+    const { wiki } = await makeBackfillWiki({ generateText, factCount: 4 });
     const result = await wiki.runOntologyBackfill('e1');
 
     expect(result.skipped).toBe(1);
@@ -641,7 +640,7 @@ describe('ontology backfill — bounded output (#65)', () => {
       return JSON.stringify({ classifications: ids.map(id => ({ id, okf_type: 'Concept', edges: [] })) });
     });
 
-    const { wiki } = await makeBackfillWiki({ generateText, factCount: 24, batchSize: 24 });
+    const { wiki } = await makeBackfillWiki({ generateText, factCount: 24 });
     await wiki.runOntologyBackfill('e1');
 
     const firstSuccess = attemptSizes.findIndex(s => s <= 3);

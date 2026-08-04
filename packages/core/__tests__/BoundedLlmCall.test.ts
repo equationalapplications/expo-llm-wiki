@@ -184,6 +184,47 @@ describe('runBatched — sizing', () => {
     const buildsBeforeFirstCall = log.findIndex((e) => e.kind === 'call');
     expect(buildsBeforeFirstCall).toBeLessThanOrEqual(8);
   });
+
+  it('applies maxPromptChars to split sub-batches too, not just the first attempt', async () => {
+    // Heal's buildPrompt is not monotonic in batch size: it re-selects up to
+    // HEAL_MAX_ANCHORS contradiction anchors per batch, so a sub-batch can
+    // match anchors the parent batch did not and produce a *longer* prompt from
+    // fewer items. Modelled here by an anchor block that grows as the batch
+    // shrinks. A subset of a trimmed batch is therefore not automatically
+    // within the cap, and the split path has to trim as well.
+    const anchorsFor = (batch: Item[]) => 'A'.repeat(Math.max(0, 12 - batch.length) * 40);
+    const expandingBuild = (batch: Item[]) => ({
+      systemPrompt: 'SYS' + anchorsFor(batch),
+      userPrompt: JSON.stringify(batch),
+    });
+
+    const cap = 400;
+    const sent: Array<{ size: number; chars: number }> = [];
+    const out = await runBatched<Item, { batch: Item[]; ids: string[] }>({
+      items: makeItems(10),
+      buildPrompt: expandingBuild,
+      // Always truncation-fails above 2, forcing the split path to run.
+      call: async (prompts) => {
+        const batch = JSON.parse(prompts.userPrompt) as Item[];
+        sent.push({
+          size: batch.length,
+          chars: prompts.systemPrompt.length + prompts.userPrompt.length,
+        });
+        return makeCall(2, [])(prompts);
+      },
+      parse: parseIds,
+      maxPromptChars: cap,
+    });
+
+    // The invariant the module documents: nothing over the cap is ever sent,
+    // except a single item that exceeds it alone. Under this non-monotonic
+    // buildPrompt the 1-item prompts are the *longest*, so they are the
+    // exception and multi-item batches are what the bound has to catch.
+    expect(sent.some((s) => s.size > 1)).toBe(true);
+    expect(sent.filter((s) => s.size > 1 && s.chars > cap)).toEqual([]);
+    expect(out.skipped).toEqual([]);
+    expect(out.results.flatMap((r) => r.ids).sort()).toEqual(makeItems(10).map((i) => i.id).sort());
+  });
 });
 
 describe('runBatched — splitting', () => {

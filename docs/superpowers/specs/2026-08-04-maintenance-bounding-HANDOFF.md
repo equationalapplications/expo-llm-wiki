@@ -11,7 +11,12 @@
 2. Invoke the `superpowers:writing-plans` skill and follow it. Brainstorming is already done; do
    not re-run it.
 
-## Current state
+> **Historical document.** This captured the state on 2026-08-04, when the branch held only the
+> spec. That work is done: the branch now carries the full implementation and the dependency
+> changes, under review as PR #66. Everything below is the original planning snapshot, kept for
+> provenance. Do not treat its counts or commit SHAs as current — measure instead.
+
+## Current state *(as of 2026-08-04, before implementation)*
 
 - Branch: `fix/maintenance-bounding-and-deps`, one commit (`d6a2b38`), spec only. No code written.
 - `main` is clean and untouched.
@@ -22,7 +27,9 @@
 Four defects, three workstreams, sequenced **C1 → B → A**:
 
 - **C1** — delete four stale git-tracked `package-lock.json` files, pin `packageManager`, gitignore.
-  Resolves 17 of 36 Dependabot alerts.
+  Expected to resolve 17 of the 36 Dependabot alerts open against `main` on 2026-08-04. The alert
+  count only moves once this merges and the default branch is re-scanned, so check the live count
+  rather than quoting this one.
 - **B** — fix the `SearchService.rebuildIndex` race behind GitHub #64: serialize `sync()`, disable
   `autoVacuum`, guard the rebuild, bump `minisearch`.
 - **A** — the large one, behind GitHub #63 and #65: a new `BoundedLlmCall.ts` module providing
