@@ -24,11 +24,34 @@ export const ONTOLOGY_BACKFILL_BATCH_SIZE = 25;
 export const ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS = 40_000;
 export const ONTOLOGY_BACKFILL_RECHECK_MS = 7 * 24 * 60 * 60 * 1000;
 
+/**
+ * Anchors offered per heal call. Anchors exist only for contradiction
+ * detection; on a document-heavy corpus they outnumbered the candidates the
+ * model actually reasons about by ~80x and were the direct cause of #63.
+ */
+export const HEAL_MAX_ANCHORS = 50;
+
+/** Search hits requested before the immutable_document filter is applied.
+ * Overfetched because the index holds every fact, not only anchors. */
+const HEAL_ANCHOR_SEARCH_OVERFETCH = 4;
+
+/** Input bound for heal, mirroring ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS.
+ * Independent of output batching: a small number of dense facts is still trimmed. */
+export const HEAL_MAX_PROMPT_CHARS = 40_000;
+
 /** One parsed ontology-backfill response, paired with the facts that produced it. */
 interface OntologyBackfillBatch {
   batch: WikiFact[];
   classifications: Array<{ id?: unknown; okf_type?: unknown; edges?: unknown }>;
   ontologyUpdates?: OntologyUpdates;
+}
+
+/** One parsed heal response, paired with the candidates that produced it. */
+interface HealBatch {
+  batch: WikiFact[];
+  downgraded: string[];
+  deleted: string[];
+  newFacts: ExtractedFact[];
 }
 
 export class MaintenanceService {
@@ -474,39 +497,62 @@ export class MaintenanceService {
       }
     }
 
-    const allFactsRows = await this.entryRepo.findAllByEntityId(entityId);
+    const healCandidates = await this.entryRepo.findHealCandidatesByEntityId(entityId);
     const allTasks = await this.taskRepo.findAllPending([entityId]);
     const recentEvents = await this.eventRepo.getRecent(entityId, 20);
 
-    const healCandidates = allFactsRows.filter(f => f.source_type !== 'immutable_document');
-    const documentAnchors = allFactsRows
-      .filter(f => f.source_type === 'immutable_document')
-      .map(({ id, title, source_ref }) => ({ id, title, source_ref }));
-
-    const healCandidatesForPrompt = healCandidates.map(f => {
+    const toPromptShape = (f: WikiFact) => {
       const { embedding: _embedding, embedding_blob: _blob, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
       return { ...rest, tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags };
+    };
+
+    const outcome = await runBatched<WikiFact, HealBatch>({
+      items: healCandidates,
+      buildPrompt: async (batch) => {
+        const documentAnchors = await this._selectHealAnchors(entityId, batch);
+        return this.promptService.buildHealPrompt(
+          batch.map(toPromptShape),
+          documentAnchors,
+          allTasks,
+          recentEvents,
+          promptOverride,
+        );
+      },
+      call: (prompts) => this.options.llmProvider.generateText(prompts),
+      parse: (responseText, batch) => {
+        const result = parseJsonResponse<{ downgraded: string[], deleted: string[], newFacts: ExtractedFact[] }>(responseText);
+        return {
+          batch,
+          downgraded: Array.isArray(result.downgraded) ? result.downgraded : [],
+          deleted: Array.isArray(result.deleted) ? result.deleted : [],
+          newFacts: Array.isArray(result.newFacts) ? result.newFacts : [],
+        };
+      },
+      maxOutputTokens: this.options.llmProvider.maxOutputTokens,
+      maxPromptChars: HEAL_MAX_PROMPT_CHARS,
+      onSkip: (fact, err) => {
+        console.warn(
+          `[WikiMemory] heal skipped ${entityId}/${fact.id}: response could not be bounded`,
+          err,
+        );
+      },
     });
 
-    const { systemPrompt, userPrompt } = this.promptService.buildHealPrompt(
-      healCandidatesForPrompt,
-      documentAnchors,
-      allTasks,
-      recentEvents,
-      promptOverride,
-    );
+    // The mutable-ids guard is per batch: the model may only act on the
+    // candidates it was actually offered in the call that produced the output.
+    const safeDowngradedSet = new Set<string>();
+    const safeDeletedSet = new Set<string>();
+    const newFacts: ExtractedFact[] = [];
 
-    const responseText = await this.options.llmProvider.generateText({ systemPrompt, userPrompt });
+    for (const batchResult of outcome.results) {
+      const mutableIds = new Set(batchResult.batch.map(f => f.id));
+      for (const id of batchResult.downgraded) if (mutableIds.has(id)) safeDowngradedSet.add(id);
+      for (const id of batchResult.deleted) if (mutableIds.has(id)) safeDeletedSet.add(id);
+      newFacts.push(...batchResult.newFacts);
+    }
 
-    const result = parseJsonResponse<{ downgraded: string[], deleted: string[], newFacts: ExtractedFact[] }>(responseText);
-
-    const mutableIds = new Set(healCandidates.map(f => f.id));
-    const downgraded = Array.isArray(result.downgraded) ? result.downgraded : [];
-    const deleted = Array.isArray(result.deleted) ? result.deleted : [];
-    const newFacts = Array.isArray(result.newFacts) ? result.newFacts : [];
-
-    const safeDowngraded = Array.from(new Set(downgraded.filter(id => mutableIds.has(id))));
-    const safeDeleted = Array.from(new Set(deleted.filter(id => mutableIds.has(id))));
+    const safeDowngraded = Array.from(safeDowngradedSet);
+    const safeDeleted = Array.from(safeDeletedSet);
     const validNewFacts = newFacts.map(validateFact).filter((f): f is ExtractedFact => f !== null);
 
     const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
@@ -782,6 +828,50 @@ export class MaintenanceService {
     if (value !== null && value !== undefined && (typeof value !== 'number' || !isFinite(value) || value < 0)) {
       throw new Error(`Invalid ${name}: must be a non-negative finite number or null`);
     }
+  }
+
+  /**
+   * Anchors relevant to one batch of heal candidates.
+   *
+   * Heal used to pass every immutable_document fact for the entity — 2560 rows
+   * against 31 candidates on the corpus behind #63 — which is what blew the
+   * output ceiling. Anchors are now retrieved by keyword relevance to the batch
+   * and capped.
+   *
+   * The MiniSearch index holds all facts, not only anchors, so hits are
+   * overfetched and the source_type restriction is applied after retrieval, in
+   * SQL. Search rank order is preserved through the filter.
+   *
+   * Accepted tradeoff: an anchor that contradicts a candidate while sharing no
+   * vocabulary with it is now missed. Exhaustive-but-broken traded for
+   * relevance-scoped-and-working.
+   */
+  private async _selectHealAnchors(
+    entityId: string,
+    batch: WikiFact[],
+  ): Promise<Array<{ id: string; title: string; source_ref: string | null }>> {
+    const query = batch.map(f => f.title).join(' ').trim();
+    if (!query) return [];
+
+    const hits = this.searchService.searchKeyword(
+      query,
+      [entityId],
+      HEAL_MAX_ANCHORS * HEAL_ANCHOR_SEARCH_OVERFETCH,
+    );
+    const hitIds = hits.map(h => h.id as string);
+    if (hitIds.length === 0) return [];
+
+    const rows = await this.entryRepo.findAnchorRowsByIds(entityId, hitIds);
+    const byId = new Map(rows.map(r => [r.id, r]));
+
+    const anchors: Array<{ id: string; title: string; source_ref: string | null }> = [];
+    for (const id of hitIds) {
+      const row = byId.get(id);
+      if (!row) continue;
+      anchors.push(row);
+      if (anchors.length >= HEAL_MAX_ANCHORS) break;
+    }
+    return anchors;
   }
 
   private _sanitizeRankerError(err: unknown): Error {
