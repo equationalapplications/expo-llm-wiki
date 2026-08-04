@@ -204,7 +204,7 @@ describe('runOntologyBackfill', () => {
       ],
     }));
     const result = await wiki.runOntologyBackfill('e1');
-    expect(result).toEqual({ scanned: 2, typed: 2, failedValidation: 0, edgesAdded: 1, remaining: 0, deferred: 0 });
+    expect(result).toEqual({ scanned: 2, typed: 2, failedValidation: 0, edgesAdded: 1, skipped: 0, remaining: 0, deferred: 0 });
     expect((await getFactRow(db, 'fact_p'))!.okf_type).toBe('person');
     expect((await getFactRow(db, 'fact_c'))!.okf_type).toBe('place');
     expect(await edgeCount(db)).toBe(1);
@@ -216,7 +216,7 @@ describe('runOntologyBackfill', () => {
     await seedEntry(db, { id: 'fact_x' });
     const result = await wiki.runOntologyBackfill('e1');
     expect(generateText).not.toHaveBeenCalled();
-    expect(result).toEqual({ scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0, remaining: 0, deferred: 0 });
+    expect(result).toEqual({ scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0, skipped: 0, remaining: 0, deferred: 0 });
   });
 
   // Spec test 2b
@@ -225,7 +225,7 @@ describe('runOntologyBackfill', () => {
     await seedEntry(db, { id: 'fact_t', okfType: 'person' });
     const result = await wiki.runOntologyBackfill('e1');
     expect(generateText).not.toHaveBeenCalled();
-    expect(result).toEqual({ scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0, remaining: 0, deferred: 0 });
+    expect(result).toEqual({ scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0, skipped: 0, remaining: 0, deferred: 0 });
   });
 
   // Spec test 3
@@ -344,7 +344,7 @@ describe('runOntologyBackfill', () => {
       return llmJson({ classifications: [{ id: 'fact_flip', okf_type: 'person' }] });
     });
     const r = await wiki.runOntologyBackfill('e1');
-    expect(r).toEqual({ scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0, remaining: 0, deferred: 0 });
+    expect(r).toEqual({ scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0, skipped: 0, remaining: 0, deferred: 0 });
     const row = await getFactRow(db, 'fact_flip');
     expect(row!.okf_type).toBeNull();
     expect(row!.ontology_checked_at).toBeNull(); // abort must not stamp the cooldown

@@ -571,7 +571,7 @@ export class MaintenanceService {
 
     const now = Date.now();
     const recheckCutoff = now - ONTOLOGY_BACKFILL_RECHECK_MS;
-    const zeroed = { scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0 };
+    const zeroed = { scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0, skipped: 0 };
 
     const ontologyService = this.ontologyService;
     if (!ontologyService) {
@@ -711,7 +711,7 @@ export class MaintenanceService {
     this.searchService.evictCache(entityId);
 
     const counts = await this.entryRepo.countUntypedByEntityId(entityId, recheckCutoff);
-    return { scanned: batch.length, typed, failedValidation, edgesAdded, remaining: counts.eligible, deferred: counts.deferred };
+    return { scanned: batch.length, typed, failedValidation, edgesAdded, skipped: 0, remaining: counts.eligible, deferred: counts.deferred };
   }
 
   private _validatePruneDuration(value: number | null | undefined, name: string): void {
