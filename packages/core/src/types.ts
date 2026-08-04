@@ -110,7 +110,11 @@ export interface OntologyBackfillResult {
 
 /** Result of a single heal run. */
 export interface HealResult {
-  /** Heal candidates sent to the model this run. */
+  /**
+   * Heal candidates sent to the model this run. Counts candidates whose batch
+   * came back unusable and landed in `skipped` as well — they reached the
+   * provider too, so this is provider exposure, not successful throughput.
+   */
   scanned: number;
   /**
    * Facts whose confidence was lowered to `tentative` — the stale-inferred SQL

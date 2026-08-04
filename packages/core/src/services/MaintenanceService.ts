@@ -622,8 +622,14 @@ export class MaintenanceService {
     // shrink dedupe to a batchSize window, letting a synthesized fact that
     // duplicates a librarian_inferred fact outside the window pass the Jaccard
     // check — and a convergence loop would then multiply those duplicates.
+    //
+    // Read before the transaction soft-deletes safeDeleted, so rows this pass
+    // retires are still in it. Filtered out here: delete-plus-restate is heal's
+    // normal output shape, and matching a replacement against the row it
+    // replaces would drop the replacement and leave the fact gone entirely.
     const healFactsForDedupe: Array<{ id: string; title: string }> =
-      await this.entryRepo.findInferredTitlesByEntityId(entityId);
+      (await this.entryRepo.findInferredTitlesByEntityId(entityId))
+        .filter(f => !safeDeletedSet.has(f.id));
 
     await this.db.withTransactionAsync(async (tx) => {
       await this.entryRepo.downgradeByIds(safeDowngraded, entityId, tx);
@@ -693,7 +699,11 @@ export class MaintenanceService {
 
     this.searchService.evictCache(entityId);
 
-    let scanned = 0;
+    // Skipped candidates were sent to the provider too — they just came back
+    // unusable, possibly after being split down to a batch of one. Counting
+    // only successful batches would under-report provider exposure, which is
+    // the number this field exists to report.
+    let scanned = outcome.skipped.length;
     for (const batchResult of outcome.results) scanned += batchResult.batch.length;
 
     // Union rather than sum: the orphan pass runs before candidate selection so

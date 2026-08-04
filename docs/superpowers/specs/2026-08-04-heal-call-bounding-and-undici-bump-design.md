@@ -141,7 +141,10 @@ one pass costs at most ~2-3 calls instead of the current unbounded count.
   insert stays, so facts synthesized earlier in the same pass still dedupe against later ones. The
   loop's `if (existing.source_type !== 'librarian_inferred') continue;` filter is dropped: the new
   query already restricts to that source type, so the projected `{ id, title }` rows carry
-  everything `titleTokens`/`jaccardScore` need.
+  everything `titleTokens`/`jaccardScore` need. The corpus is read before the transaction applies
+  this pass's `softDeleteByIds`, so rows the model retired this pass are filtered out of it by id:
+  delete-plus-restate is heal's normal output shape, and matching a replacement against the row it
+  replaces would drop the replacement and leave the fact gone entirely.
 - **Facts heal creates are stamped at insert** with `heal_checked_at = now`, in the same
   transaction as the `upsert`. Without this, every synthesized fact is an eligible candidate the
   instant it is written — `remaining` is nonzero immediately after a pass that fully covered the
@@ -157,7 +160,8 @@ one pass costs at most ~2-3 calls instead of the current unbounded count.
 
 ```ts
 export interface HealResult {
-  /** Heal candidates sent to the model this run. */
+  /** Heal candidates sent to the model this run. Includes candidates whose batch
+   *  came back unusable and landed in `skipped` — they reached the provider too. */
   scanned: number;
   /** Facts downgraded (immutable_document → mutable-eligible, or similar). */
   downgraded: number;

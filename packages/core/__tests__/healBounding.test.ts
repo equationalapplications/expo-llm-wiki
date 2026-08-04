@@ -191,4 +191,54 @@ describe('doRunHeal — per-pass call bounding (#67)', () => {
        WHERE title = 'unmistakable duplicate marker title' AND deleted_at IS NULL`);
     expect(dupes[0].c).toBe(1);
   });
+
+  it('does not dedupe a replacement against the fact deleted in the same pass', async () => {
+    // Delete-plus-replace is the shape heal is built for: the model retires a
+    // stale fact and restates it. The dedupe corpus is read before the pass's
+    // own soft-deletes land, so the retired row must be excluded explicitly or
+    // its replacement is dropped as a duplicate of a row that no longer exists.
+    const generateText = vi.fn(async () => JSON.stringify({
+      downgraded: [],
+      deleted: ['stale'],
+      newFacts: [{
+        title: 'unmistakable duplicate marker title',
+        body: 'restated body',
+        tags: [],
+        confidence: 'inferred',
+      }],
+    }));
+    const { db, wiki } = await makeHealWiki(generateText);
+    await seedFact(db, {
+      id: 'stale', updatedAt: 1000,
+      title: 'unmistakable duplicate marker title',
+      sourceType: 'librarian_inferred',
+    });
+
+    const result = await wiki.runHeal('e1', { batchSize: 1 });
+
+    expect(result.deleted).toBe(1);
+    expect(result.newFactsCreated).toBe(1);
+    const live = await db.getAllAsync<{ id: string; body: string }>(
+      `SELECT id, body FROM ${PREFIX}entries
+       WHERE title = 'unmistakable duplicate marker title' AND deleted_at IS NULL`);
+    expect(live).toHaveLength(1);
+    expect(live[0].id).not.toBe('stale');
+    expect(live[0].body).toBe('restated body');
+  });
+
+  it('counts candidates that ended up skipped as scanned', async () => {
+    // Every candidate offered this pass reached the provider, whether or not
+    // its batch produced a usable response. `scanned` documents provider
+    // exposure, so a pass whose responses are all unparseable still scanned
+    // its whole window.
+    const generateText = vi.fn(async () => 'not json at all');
+    const { db, wiki } = await makeHealWiki(generateText);
+    await seedFact(db, { id: 'c0', updatedAt: 1000 });
+    await seedFact(db, { id: 'c1', updatedAt: 1001 });
+
+    const result = await wiki.runHeal('e1', { batchSize: 2 });
+
+    expect(result.skipped).toBe(2);
+    expect(result.scanned).toBe(2);
+  });
 });
