@@ -77,7 +77,7 @@ describe('migrations v2–v6: FTS removal, embeddings, outbox, okf edges, entity
     const meta = await db.getFirstAsync<{ value: string }>(
       `SELECT value FROM llm_wiki_meta WHERE key = 'schema_version'`
     );
-    expect(meta?.value).toBe('7');
+    expect(meta?.value).toBe('8');
   });
 
   it('v1 DB: FTS5 table + triggers dropped, embedding column added, version becomes 7', async () => {
@@ -101,7 +101,7 @@ describe('migrations v2–v6: FTS removal, embeddings, outbox, okf edges, entity
     const meta = await db.getFirstAsync<{ value: string }>(
       `SELECT value FROM llm_wiki_meta WHERE key = 'schema_version'`
     );
-    expect(meta?.value).toBe('7');
+    expect(meta?.value).toBe('8');
   });
 
   it('running setup() twice is idempotent: embedding column appears once', async () => {
