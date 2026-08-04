@@ -1,3 +1,23 @@
+# [4.23.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.22.0...v4.23.0) (2026-08-04)
+
+
+### Bug Fixes
+
+* bound split sub-batch prompts, chunk anchor reads, restore React version ([6f11846](https://github.com/equationalapplications/expo-llm-wiki/commit/6f11846ae7b3a65a6f81a9846e5601d2dcda47a6))
+* **core:** bound heal output with relevance-scoped anchors and batching ([e67e6b8](https://github.com/equationalapplications/expo-llm-wiki/commit/e67e6b81c5c93f3e90609e5435256f14050ee7af)), closes [#63](https://github.com/equationalapplications/expo-llm-wiki/issues/63)
+* **core:** bound ontology backfill output with batched LLM calls ([7e3d6db](https://github.com/equationalapplications/expo-llm-wiki/commit/7e3d6dbcfa96536103fdd36b5cc8c04124dd2b97)), closes [#65](https://github.com/equationalapplications/expo-llm-wiki/issues/65)
+* **core:** exclude max-tokens config errors from truncation detection ([2a9177b](https://github.com/equationalapplications/expo-llm-wiki/commit/2a9177b41fd81a6f20146112c20d9ec0d266372a))
+* **core:** report committed work on abort, cheapen prompt trimming, harden sync chain ([17c2213](https://github.com/equationalapplications/expo-llm-wiki/commit/17c2213e05e0eb819a3eb16df30ab1f5dde6b3c3)), closes [#63](https://github.com/equationalapplications/expo-llm-wiki/issues/63) [#64](https://github.com/equationalapplications/expo-llm-wiki/issues/64) [#65](https://github.com/equationalapplications/expo-llm-wiki/issues/65)
+* **core:** serialize search index rebuilds and vacuum explicitly ([f94bf5d](https://github.com/equationalapplications/expo-llm-wiki/commit/f94bf5da88e25580a39de95884e3db75ff09c18d)), closes [#64](https://github.com/equationalapplications/expo-llm-wiki/issues/64)
+* **deps:** consolidate pnpm overrides into pnpm-workspace.yaml ([acef3f2](https://github.com/equationalapplications/expo-llm-wiki/commit/acef3f2d646d4727607fdf4b5147816f64ddf04a))
+
+
+### Features
+
+* **core:** add heal candidate and anchor repository queries ([d43c5f4](https://github.com/equationalapplications/expo-llm-wiki/commit/d43c5f438c7f411fff8a06f517d915922dac132f)), closes [#63](https://github.com/equationalapplications/expo-llm-wiki/issues/63)
+* **core:** add LLMProvider.maxOutputTokens and OntologyBackfillResult.skipped ([199df2e](https://github.com/equationalapplications/expo-llm-wiki/commit/199df2e2938bc5f1d8a19057d2dad7d068dca39f)), closes [#63](https://github.com/equationalapplications/expo-llm-wiki/issues/63) [#65](https://github.com/equationalapplications/expo-llm-wiki/issues/65)
+* **core:** add runBatched for bounded LLM calls ([573ac84](https://github.com/equationalapplications/expo-llm-wiki/commit/573ac84a0c850b36726d6b4ed782bd48edf64867)), closes [#63](https://github.com/equationalapplications/expo-llm-wiki/issues/63) [#65](https://github.com/equationalapplications/expo-llm-wiki/issues/65)
+
 # [4.22.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.21.0...v4.22.0) (2026-07-14)
 
 
