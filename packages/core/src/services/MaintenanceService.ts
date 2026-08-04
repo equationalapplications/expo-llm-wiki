@@ -39,6 +39,17 @@ const HEAL_ANCHOR_SEARCH_OVERFETCH = 4;
  * Independent of output batching: a small number of dense facts is still trimmed. */
 export const HEAL_MAX_PROMPT_CHARS = 40_000;
 
+/**
+ * Heal candidates fetched per pass. Bounds the pool runBatched draws from, not
+ * the size of an individual LLM call — runBatched still packs ~10 candidates per
+ * request and splits further on failure. At this default one pass costs roughly
+ * 2-3 provider calls instead of an unbounded count (#67).
+ */
+export const HEAL_BATCH_SIZE = 25;
+
+/** Cooldown before an already-healed fact is offered again. Matches ontology backfill. */
+export const HEAL_RECHECK_MS = 7 * 24 * 60 * 60 * 1000;
+
 /** One parsed ontology-backfill response, paired with the facts that produced it. */
 interface OntologyBackfillBatch {
   batch: WikiFact[];
