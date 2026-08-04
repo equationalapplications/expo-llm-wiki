@@ -184,7 +184,7 @@ importers:
         specifier: workspace:*
         version: link:../okf
       minisearch:
-        specifier: ^7.0.0
+        specifier: ^7.2.0
         version: 7.2.0
     devDependencies:
       '@types/better-sqlite3':

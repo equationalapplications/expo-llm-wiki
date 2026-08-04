@@ -60,7 +60,7 @@
     "node": ">=20"
   },
   "dependencies": {
-    "minisearch": "^7.0.0",
+    "minisearch": "^7.2.0",
     "@equationalapplications/core-okf": "workspace:*"
   },
   "devDependencies": {
