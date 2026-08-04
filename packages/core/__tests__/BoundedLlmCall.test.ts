@@ -126,3 +126,105 @@ describe('runBatched — sizing', () => {
     expect(out.results.flatMap((r) => r.ids)).toEqual(['big']);
   });
 });
+
+describe('runBatched — splitting', () => {
+  it('splits down to a working size and loses no items', async () => {
+    const sizes: number[] = [];
+    const items = makeItems(10);
+    const out = await runBatched<Item, { batch: Item[]; ids: string[] }>({
+      items,
+      buildPrompt,
+      call: makeCall(3, sizes),   // fails above 3
+      parse: parseIds,
+      maxPromptChars: NO_CHAR_CAP,
+    });
+
+    expect(out.skipped).toEqual([]);
+    expect(out.results.flatMap((r) => r.ids).sort()).toEqual(items.map((i) => i.id).sort());
+    expect(sizes[0]).toBe(DEFAULT_BATCH_SIZE);
+    expect(Math.max(...sizes.filter((_, i) => i > 0))).toBeLessThanOrEqual(5);
+  });
+
+  it('treats a parse failure exactly like a truncated call', async () => {
+    const items = makeItems(4);
+    const call = async (prompts: { systemPrompt: string; userPrompt: string }) => {
+      const batch = JSON.parse(prompts.userPrompt) as Item[];
+      // Above 2, return JSON that got cut mid-object.
+      return batch.length > 2 ? '{"ids": ["i0",' : JSON.stringify({ ids: batch.map((b) => b.id) });
+    };
+    const out = await runBatched<Item, { batch: Item[]; ids: string[] }>({
+      items,
+      buildPrompt,
+      call,
+      parse: parseIds,
+      maxPromptChars: NO_CHAR_CAP,
+    });
+
+    expect(out.skipped).toEqual([]);
+    expect(out.results.flatMap((r) => r.ids).sort()).toEqual(items.map((i) => i.id).sort());
+  });
+
+  it('skips a single unsplittable item instead of throwing, and finishes the pass', async () => {
+    const items = makeItems(4);
+    const onSkip = vi.fn();
+    const call = async (prompts: { systemPrompt: string; userPrompt: string }) => {
+      const batch = JSON.parse(prompts.userPrompt) as Item[];
+      if (batch.some((b) => b.id === 'i2')) {
+        throw new Error('Model response truncated at the 8192-token limit');
+      }
+      return JSON.stringify({ ids: batch.map((b) => b.id) });
+    };
+
+    const out = await runBatched<Item, { batch: Item[]; ids: string[] }>({
+      items,
+      buildPrompt,
+      call,
+      parse: parseIds,
+      maxPromptChars: NO_CHAR_CAP,
+      onSkip,
+    });
+
+    expect(out.skipped.map((i) => i.id)).toEqual(['i2']);
+    expect(out.results.flatMap((r) => r.ids).sort()).toEqual(['i0', 'i1', 'i3']);
+    expect(onSkip).toHaveBeenCalledTimes(1);
+    expect(onSkip).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'i2' }),
+      expect.any(Error),
+    );
+  });
+
+  it('propagates a non-truncation call error instead of skipping the corpus', async () => {
+    const items = makeItems(10);
+    const call = vi.fn().mockRejectedValue(new Error('fetch failed: ECONNRESET'));
+
+    await expect(
+      runBatched<Item, { batch: Item[]; ids: string[] }>({
+        items,
+        buildPrompt,
+        call,
+        parse: parseIds,
+        maxPromptChars: NO_CHAR_CAP,
+      }),
+    ).rejects.toThrow('ECONNRESET');
+
+    expect(call).toHaveBeenCalledTimes(1);
+  });
+
+  it('sticky adaptation does not re-climb within a run', async () => {
+    const sizes: number[] = [];
+    const items = makeItems(30);
+    await runBatched<Item, { batch: Item[]; ids: string[] }>({
+      items,
+      buildPrompt,
+      call: makeCall(3, sizes),
+      parse: parseIds,
+      maxPromptChars: NO_CHAR_CAP,
+    });
+
+    // Once the run has discovered that 10 and 5 fail, no later attempt may be
+    // made at those sizes again.
+    const firstSuccessIndex = sizes.findIndex((s) => s <= 3);
+    expect(firstSuccessIndex).toBeGreaterThan(0);
+    expect(Math.max(...sizes.slice(firstSuccessIndex))).toBeLessThanOrEqual(3);
+  });
+});

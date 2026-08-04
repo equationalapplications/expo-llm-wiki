@@ -138,8 +138,16 @@ export async function runBatched<TItem, TResult>(
     }
     const mid = Math.ceil(batch.length / 2);
     if (mid < batchSize) batchSize = mid;
-    await attempt(batch.slice(0, mid));
-    await attempt(batch.slice(mid));
+    // Re-reads batchSize on every chunk rather than fixing it once: a nested
+    // failure inside the first chunk can shrink batchSize further, and a later
+    // chunk of this same batch must honor that smaller size too, not the size
+    // this batch was split at before the shrink was discovered.
+    let i = 0;
+    while (i < batch.length) {
+      const size = Math.min(batchSize, batch.length - i);
+      await attempt(batch.slice(i, i + size));
+      i += size;
+    }
   };
 
   const attempt = async (batch: TItem[], prebuilt?: BuiltPrompt): Promise<void> => {
