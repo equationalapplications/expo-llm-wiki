@@ -58,6 +58,13 @@ describe('isTruncationError', () => {
     expect(isTruncationError(new Error('fetch failed: ECONNRESET'))).toBe(false);
     expect(isTruncationError(new Error('401 Unauthorized'))).toBe(false);
   });
+
+  it('does not match a requested max-tokens config error, which splitting cannot fix', () => {
+    expect(
+      isTruncationError(new Error('The maximum tokens you requested exceeds the model limit of 4096')),
+    ).toBe(false);
+    expect(isTruncationError(new Error('Requested max_tokens exceeds the model context limit'))).toBe(false);
+  });
 });
 
 describe('initialBatchSize', () => {

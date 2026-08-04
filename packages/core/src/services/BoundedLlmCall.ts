@@ -41,6 +41,13 @@ const TRUNCATION_PATTERNS: RegExp[] = [
   /finish[_ ]?reason/i,
 ];
 
+// A "max tokens" match paired with "exceed(s)" is a request-configuration
+// error (the caller asked for more than the model allows), not the provider
+// cutting a response short. Splitting the batch cannot fix it — the adapter
+// keeps requesting the same max tokens — so it must propagate instead of
+// being absorbed into a pile of skipped items.
+const EXCEEDS_LIMIT_PATTERN = /exceed[a-z]*[^.]{0,40}\b(model|context)?[ _-]?limit/i;
+
 /**
  * Whether a thrown error looks like the provider cut the response short.
  *
@@ -51,6 +58,7 @@ const TRUNCATION_PATTERNS: RegExp[] = [
  */
 export function isTruncationError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err ?? '');
+  if (EXCEEDS_LIMIT_PATTERN.test(message)) return false;
   return TRUNCATION_PATTERNS.some((pattern) => pattern.test(message));
 }
 
