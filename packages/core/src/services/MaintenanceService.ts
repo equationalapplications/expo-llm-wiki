@@ -46,6 +46,9 @@ interface OntologyBackfillBatch {
   ontologyUpdates?: OntologyUpdates;
 }
 
+/** An immutable_document fact offered to heal purely for contradiction detection. */
+type HealAnchor = { id: string; title: string; source_ref: string | null };
+
 /** One parsed heal response, paired with the candidates that produced it. */
 interface HealBatch {
   batch: WikiFact[];
@@ -506,10 +509,18 @@ export class MaintenanceService {
       return { ...rest, tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags };
     };
 
+    // Anchor selection costs a keyword search plus a repository read, and
+    // runBatched calls buildPrompt more than once per batch it actually sends —
+    // while trimming to maxPromptChars, and again for each half when a batch is
+    // split. Prefixes recur heavily across those paths, so memoizing by the
+    // query the batch produces collapses the repeats. Scoped to this pass: the
+    // index and the anchor rows can both change between heal runs.
+    const anchorCache = new Map<string, HealAnchor[]>();
+
     const outcome = await runBatched<WikiFact, HealBatch>({
       items: healCandidates,
       buildPrompt: async (batch) => {
-        const documentAnchors = await this._selectHealAnchors(entityId, batch);
+        const documentAnchors = await this._selectHealAnchors(entityId, batch, anchorCache);
         return this.promptService.buildHealPrompt(
           batch.map(toPromptShape),
           documentAnchors,
@@ -705,10 +716,26 @@ export class MaintenanceService {
     }
 
     if (abortedOntologyOff) {
-      // Mirror the mode === 'off' early path: remaining stays 0 so a host
-      // convergence loop (while remaining > 0) still terminates.
+      // remaining stays 0 so a host convergence loop (while remaining > 0)
+      // still terminates, mirroring the mode === 'off' early path.
+      //
+      // The counters are NOT zeroed. A pass is now many transactions, so
+      // batches applied before the flip are already committed — facts typed,
+      // edges persisted, cooldowns stamped. Reporting zeros here would tell the
+      // caller nothing happened while the database says otherwise. Only the
+      // aborting batch and everything after it are dropped, and those wrote
+      // nothing: the abort check runs before any write in the batch's
+      // transaction.
       const counts = await this.entryRepo.countUntypedByEntityId(entityId, recheckCutoff);
-      return { ...zeroed, remaining: 0, deferred: counts.deferred };
+      return {
+        scanned,
+        typed,
+        failedValidation,
+        edgesAdded,
+        skipped: outcome.skipped.length,
+        remaining: 0,
+        deferred: counts.deferred,
+      };
     }
 
     // Skipped facts get the same cooldown stamp as processed ones. Without it
@@ -845,13 +872,21 @@ export class MaintenanceService {
    * Accepted tradeoff: an anchor that contradicts a candidate while sharing no
    * vocabulary with it is now missed. Exhaustive-but-broken traded for
    * relevance-scoped-and-working.
+   *
+   * `cache` is keyed by the derived query rather than by the batch, so two
+   * batches that reduce to the same query share one lookup. Caller-owned and
+   * per-pass — see the call site in doRunHeal.
    */
   private async _selectHealAnchors(
     entityId: string,
     batch: WikiFact[],
-  ): Promise<Array<{ id: string; title: string; source_ref: string | null }>> {
+    cache?: Map<string, HealAnchor[]>,
+  ): Promise<HealAnchor[]> {
     const query = batch.map(f => f.title).join(' ').trim();
     if (!query) return [];
+
+    const cached = cache?.get(query);
+    if (cached) return cached;
 
     const hits = this.searchService.searchKeyword(
       query,
@@ -859,18 +894,23 @@ export class MaintenanceService {
       HEAL_MAX_ANCHORS * HEAL_ANCHOR_SEARCH_OVERFETCH,
     );
     const hitIds = hits.map(h => h.id as string);
-    if (hitIds.length === 0) return [];
 
-    const rows = await this.entryRepo.findAnchorRowsByIds(entityId, hitIds);
-    const byId = new Map(rows.map(r => [r.id, r]));
+    const anchors: HealAnchor[] = [];
+    if (hitIds.length > 0) {
+      const rows = await this.entryRepo.findAnchorRowsByIds(entityId, hitIds);
+      const byId = new Map(rows.map(r => [r.id, r]));
 
-    const anchors: Array<{ id: string; title: string; source_ref: string | null }> = [];
-    for (const id of hitIds) {
-      const row = byId.get(id);
-      if (!row) continue;
-      anchors.push(row);
-      if (anchors.length >= HEAL_MAX_ANCHORS) break;
+      for (const id of hitIds) {
+        const row = byId.get(id);
+        if (!row) continue;
+        anchors.push(row);
+        if (anchors.length >= HEAL_MAX_ANCHORS) break;
+      }
     }
+
+    // Cached even when empty: a query that matched nothing still cost a search,
+    // and the trim and split paths will ask for it again.
+    cache?.set(query, anchors);
     return anchors;
   }
 

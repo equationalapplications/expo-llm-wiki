@@ -390,6 +390,55 @@ describe('runOntologyBackfill', () => {
     expect(row!.ontology_checked_at).toBeNull(); // abort must not stamp the cooldown
   });
 
+  it('reports work already committed when ontology is disabled part-way through a multi-batch pass', async () => {
+    // A pass is many transactions now, so a mid-flight flip can land after some
+    // batches have already been applied. Those writes are durable; the result
+    // must say so rather than reporting a zeroed pass.
+    const { db, wiki, generateText } = await makeWiki('strict');
+    for (let i = 0; i < 12; i++) {
+      await seedEntry(db, { id: `fact_m${i}`, title: `Name ${i}`, updatedAt: 100 + i });
+    }
+
+    generateText.mockImplementation(async ({ systemPrompt, userPrompt }: { systemPrompt: string; userPrompt: string }) => {
+      const payload = `${systemPrompt}\n${userPrompt}`;
+      const ids = Array.from({ length: 12 }, (_, i) => `fact_m${i}`).filter(id => payload.includes(id));
+      return llmJson({ classifications: ids.map(id => ({ id, okf_type: 'person' })) });
+    });
+
+    // Every LLM call in a pass completes before any batch is applied, so the
+    // window this test needs is between the two apply transactions, not during
+    // generateText. setOntologyManifest cannot be called from there — it would
+    // nest inside the open transaction — so the flip is staged at the read each
+    // batch does on entry, which is exactly where the abort check looks.
+    const ontologyService = (wiki as any).ontologyService;
+    const realGetState = ontologyService.getEffectiveState.bind(ontologyService);
+    let applyReads = 0;
+    vi.spyOn(ontologyService, 'getEffectiveState').mockImplementation(async (...args: any[]) => {
+      const state = await realGetState(...args);
+      // Only the per-batch abort check passes a transaction; the pass-entry
+      // read does not. Batch 1 sees the real mode, batch 2 onward sees 'off'.
+      if (args[1] === undefined) return state;
+      applyReads++;
+      return applyReads >= 2 ? { ...state, mode: 'off' } : state;
+    });
+
+    const r = await wiki.runOntologyBackfill('e1');
+
+    // DEFAULT_BATCH_SIZE is 10, so batch 1 carries 10 facts and commits.
+    expect(r.typed).toBe(10);
+    expect(r.scanned).toBe(10);
+    expect(r.remaining).toBe(0); // still 0 — a host convergence loop must terminate
+    expect(generateText.mock.calls.length).toBe(2);
+
+    // The report matches the database: batch 1 typed and stamped, batch 2 did not.
+    const first = await getFactRow(db, 'fact_m0');
+    expect(first!.okf_type).toBe('person');
+    expect(first!.ontology_checked_at).not.toBeNull();
+    const aborted = await getFactRow(db, 'fact_m11');
+    expect(aborted!.okf_type).toBeNull();
+    expect(aborted!.ontology_checked_at).toBeNull();
+  });
+
   // Spec test 8
   it('intra-batch edges resolve after all types applied', async () => {
     const { db, wiki, generateText } = await makeWiki('strict');

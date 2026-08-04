@@ -86,12 +86,20 @@ export class SearchService {
   async sync(entityId?: string): Promise<void> {
     const work = this.syncChain.then(async () => {
       try {
-        await this.rebuildIndex(entityId);
-        await this.miniSearch.vacuum();
+        // evictCache is inside the guard, not after it: a throw escaping here
+        // would reject `work`, and since the next sync() chains off `work`,
+        // every later rebuild would reject too — the poisoned-chain form of
+        // exactly the unhandled rejection this method exists to prevent. The
+        // inner finally keeps eviction unconditional, as it was before.
+        try {
+          await this.rebuildIndex(entityId);
+          await this.miniSearch.vacuum();
+        } finally {
+          this.evictCache(entityId);
+        }
       } catch (err) {
         console.warn(`[WikiMemory] search index rebuild failed for ${entityId ?? '*'}:`, err);
       }
-      this.evictCache(entityId);
     });
     this.syncChain = work;
     return work;

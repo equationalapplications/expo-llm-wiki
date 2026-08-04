@@ -125,6 +125,65 @@ describe('runBatched — sizing', () => {
     expect(sizes).toEqual([1]);
     expect(out.results.flatMap((r) => r.ids)).toEqual(['big']);
   });
+
+  it('builds the prompt once per batch when the whole batch fits', async () => {
+    const builds: number[] = [];
+    const countingBuild = (batch: Item[]) => {
+      builds.push(batch.length);
+      return buildPrompt(batch);
+    };
+
+    await runBatched<Item, { batch: Item[]; ids: string[] }>({
+      items: makeItems(20),
+      buildPrompt: countingBuild,
+      call: makeCall(1000, []),
+      parse: parseIds,
+      maxPromptChars: NO_CHAR_CAP,
+    });
+
+    // Two full batches, no trimming, no splitting — buildPrompt must not be
+    // called speculatively. It is expensive for real callers (heal runs a
+    // keyword search and a repository read inside it).
+    expect(builds).toEqual([DEFAULT_BATCH_SIZE, DEFAULT_BATCH_SIZE]);
+  });
+
+  it('binary-searches the trim instead of dropping one item at a time', async () => {
+    // A declared ceiling sizes the first batch up to all 64 items, and the char
+    // cap admits only 3 — the widest possible gap for the trim to close.
+    const items = makeItems(64);
+    const cap = buildPrompt(items.slice(0, 3)).systemPrompt.length
+      + buildPrompt(items.slice(0, 3)).userPrompt.length;
+
+    const log: Array<{ kind: 'build' | 'call'; size: number }> = [];
+    const countingBuild = (batch: Item[]) => {
+      log.push({ kind: 'build', size: batch.length });
+      return buildPrompt(batch);
+    };
+    const sizes: number[] = [];
+
+    const out = await runBatched<Item, { batch: Item[]; ids: string[] }>({
+      items,
+      buildPrompt: countingBuild,
+      call: async (prompts) => {
+        const sent = JSON.parse(prompts.userPrompt) as Item[];
+        log.push({ kind: 'call', size: sent.length });
+        return makeCall(1000, sizes)(prompts);
+      },
+      parse: parseIds,
+      maxOutputTokens: 100_000,
+      maxPromptChars: cap,
+    });
+
+    // Same answer the one-at-a-time walk gave: the longest prefix that fits.
+    expect(Math.max(...sizes)).toBe(3);
+    expect(out.skipped).toEqual([]);
+    expect(out.results.flatMap((r) => r.ids).sort()).toEqual(items.map((i) => i.id).sort());
+
+    // Builds spent trimming the first batch, before anything was sent. Dropping
+    // one item at a time would have cost 62 (64 down to 3); log2(64) + 1 is 7.
+    const buildsBeforeFirstCall = log.findIndex((e) => e.kind === 'call');
+    expect(buildsBeforeFirstCall).toBeLessThanOrEqual(8);
+  });
 });
 
 describe('runBatched — splitting', () => {

@@ -1167,4 +1167,31 @@ describe('sync() concurrency', () => {
 
     vacuumSpy.mockRestore();
   });
+
+  it('a throw from cache eviction does not poison the chain for later syncs', async () => {
+    // evictCache runs after the rebuild on every sync. If it threw outside the
+    // guard it would reject the chain promise, and because each sync chains off
+    // the previous one, every subsequent sync would reject forever — the same
+    // unhandled rejection this method exists to prevent, just one step removed.
+    const repo = makeRepo([makeMiniSearchRow('f1', 'e1', 'alpha')]);
+    const service = new SearchService(repo);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const evict = vi.spyOn(service, 'evictCache').mockImplementationOnce(() => {
+      throw new Error('cache eviction blew up');
+    });
+
+    await expect(service.sync('e1')).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('search index rebuild failed'),
+      expect.any(Error),
+    );
+
+    // The chain still works, and the index from the failed turn is intact —
+    // eviction runs after the rebuild, so the rebuild itself had committed.
+    await expect(service.sync('e1')).resolves.toBeUndefined();
+    expect(service.searchKeyword('alpha', ['e1'], 10).map((r) => r.id)).toEqual(['f1']);
+
+    evict.mockRestore();
+    warn.mockRestore();
+  });
 });

@@ -129,4 +129,21 @@ describe('doRunHeal — bounded anchors and batched candidates (#63)', () => {
     expect(downgradedIds).toContain('c0');
     expect(downgradedIds).not.toContain('a0');
   });
+
+  it('resolves anchors at most once per distinct batch, not once per prompt build', async () => {
+    // Anchor selection costs a keyword search plus a repository read, and
+    // runBatched builds a prompt more than once per batch it sends — trimming
+    // to maxPromptChars, and again per half when a batch splits. Those repeats
+    // share prefixes, so the per-pass memo must collapse them.
+    const svc = makeService();
+    await svc.runHeal('e1');
+
+    const distinctQueries = new Set(
+      mockSearchService.searchKeyword.mock.calls.map((c: any[]) => c[0] as string),
+    );
+    expect(mockSearchService.searchKeyword.mock.calls.length).toBe(distinctQueries.size);
+    expect(mockEntryRepo.findAnchorRowsByIds.mock.calls.length).toBeLessThanOrEqual(
+      distinctQueries.size,
+    );
+  });
 });

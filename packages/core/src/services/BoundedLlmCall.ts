@@ -116,16 +116,50 @@ export async function runBatched<TItem, TResult>(
    */
   let batchSize = initialBatchSize(maxOutputTokens);
 
-  /** Drop trailing items until the built prompt fits. A single item that
-   * exceeds the cap alone is still sent: deferring it would starve it forever. */
+  /**
+   * Longest prefix of `candidate` whose built prompt fits `maxPromptChars`. A
+   * single item that exceeds the cap alone is still sent: deferring it would
+   * starve it forever.
+   *
+   * `buildPrompt` is not assumed cheap — heal runs a keyword search and a
+   * repository read on every call — so the overflow path binary-searches the
+   * prefix length instead of dropping one item at a time. The whole batch is
+   * tried first, which keeps the common case (it fits) at exactly one call and
+   * bounds the overflow case at ~log2(n) + 1 instead of n.
+   *
+   * Prompt length is treated as non-decreasing in prefix length. That is the
+   * same assumption the one-at-a-time walk made by stopping at the first fit;
+   * if it is ever violated the result is a slightly different batch size, never
+   * a lost item, and the split path stays armed either way.
+   */
   const trim = async (candidate: TItem[]): Promise<{ batch: TItem[]; prompts: BuiltPrompt }> => {
-    let batch = candidate;
-    let prompts = await buildPrompt(batch);
-    while (batch.length > 1 && promptLength(prompts) > maxPromptChars) {
-      batch = batch.slice(0, batch.length - 1);
-      prompts = await buildPrompt(batch);
+    const whole = await buildPrompt(candidate);
+    if (candidate.length <= 1 || promptLength(whole) <= maxPromptChars) {
+      return { batch: candidate, prompts: whole };
     }
-    return { batch, prompts };
+
+    let low = 2;
+    let high = candidate.length - 1; // the full length is known not to fit
+    let best: TItem[] | undefined;
+    let bestPrompts: BuiltPrompt | undefined;
+
+    while (low <= high) {
+      const mid = Math.floor((low + high) / 2);
+      const batch = candidate.slice(0, mid);
+      const prompts = await buildPrompt(batch);
+      if (promptLength(prompts) <= maxPromptChars) {
+        best = batch;
+        bestPrompts = prompts;
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
+    }
+
+    if (best && bestPrompts) return { batch: best, prompts: bestPrompts };
+
+    const single = candidate.slice(0, 1);
+    return { batch: single, prompts: await buildPrompt(single) };
   };
 
   const onFailure = async (batch: TItem[], err: unknown): Promise<void> => {
