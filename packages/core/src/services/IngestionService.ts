@@ -9,20 +9,7 @@ import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
 import type { OntologyService, TitleIndexEntry } from './OntologyService';
 import { PromptService } from './PromptService';
-
-/**
- * Default maximum characters per chunk that `ingestDocument` uses when a
- * caller doesn't override `maxChunkLength` (directly or via
- * `WikiOptions.config.maxChunkLength`).
- */
-export const DEFAULT_MAX_CHUNK_LENGTH = 12000;
-
-/**
- * Default character overlap between consecutive chunks that
- * `ingestDocument` uses when a caller doesn't override `chunkOverlap`
- * (directly or via `WikiOptions.config.chunkOverlap`).
- */
-export const DEFAULT_CHUNK_OVERLAP = 400;
+import { DEFAULT_MAX_CHUNK_LENGTH, DEFAULT_CHUNK_OVERLAP } from '../utils/chunkingDefaults';
 
 export class IngestionService {
   private promptService: PromptService;

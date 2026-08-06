@@ -817,7 +817,7 @@ const { chunks, truncated } = chunkText(
 );
 ```
 
-`chunkText(input, maxChunkLength, overlap)` returns `{ chunks, truncated }`. It prefers to split on a paragraph break, then a sentence terminator, then whitespace, falling back to a hard cut only when none is found within the window — `truncated` is `true` if any split needed that fallback. Consecutive chunks repeat up to `overlap` characters so context isn't lost at a boundary (less than `overlap` when the previous chunk was shorter than that). Throws if `maxChunkLength` is not an integer >= 2, or if `overlap` is not a non-negative integer < `maxChunkLength`.
+`chunkText(input, maxChunkLength, overlap)` returns `{ chunks, truncated }`. It prefers to split on a paragraph break, then a sentence terminator, then whitespace, falling back to a hard cut only when none is found within the window — `truncated` is `true` if any split needed that fallback. Consecutive chunks repeat up to `overlap` characters so context isn't lost at a boundary (less than `overlap` when the previous chunk was shorter than that). Empty/whitespace-only input returns `{ chunks: [], truncated: false }` without validating `maxChunkLength`/`overlap`; otherwise throws if `maxChunkLength` is not an integer >= 2, or if `overlap` is not a non-negative integer < `maxChunkLength`.
 
 `safeSlice(value, start, end?)` slices like `String.prototype.slice` but clamps out-of-range indices, swaps a start-after-end range, and never splits a UTF-16 surrogate pair.
 

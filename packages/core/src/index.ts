@@ -14,7 +14,7 @@ export { parseEmbedding } from './utils/embedding';
 export { validateManifest } from './utils/ontology';
 export { configureRandomSource } from './utils/ids';
 export { chunkText, safeSlice } from './utils/pure';
-export { DEFAULT_MAX_CHUNK_LENGTH, DEFAULT_CHUNK_OVERLAP } from './services/IngestionService';
+export { DEFAULT_MAX_CHUNK_LENGTH, DEFAULT_CHUNK_OVERLAP } from './utils/chunkingDefaults';
 export * from './librarianPrompt';
 export { PromptService } from './services/PromptService';
 export {

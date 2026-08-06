@@ -113,7 +113,10 @@ As implemented, `packages/core/README.md` also gained a "Chunking Utilities" sec
 documenting `chunkText`/`safeSlice`/the two constants for external consumers, including a
 note that `chunkText`'s per-chunk overlap is a maximum (a chunk repeats fewer than `overlap`
 characters when the previous chunk was shorter than that), and that `ingestDocument`'s
-overlap-clamp (Decision 2) still applies only to non-default configs.
+overlap-clamp (Decision 2) is evaluated on every call, including when only `maxChunkLength`
+is customized — it's a no-op for the shipped defaults, but reduces the effective overlap to
+`maxChunkLength - 1` whenever the resolved overlap (default or caller-supplied) would
+otherwise be too large.
 
 ## Minor Considerations
 
@@ -133,11 +136,12 @@ prefix change.
 
 `chunkText`, `safeSlice`, and the two new constants are moving from internal-only to public
 API surface consumed by at least one external package (aws-cloud-agent). Add JSDoc comments
-to all four at their definition sites (`packages/core/src/utils/pure.ts` for the functions,
-`packages/core/src/index.ts` for the constants) covering: what each does, parameter/return
-semantics for the functions, and — for the constants — that they are the values
-`IngestionService` uses when a caller doesn't override `maxChunkLength`/`chunkOverlap`. This
-is documentation only; no behavior or signature change.
+to all four at their definition sites (`packages/core/src/utils/pure.ts` for the functions;
+`packages/core/src/utils/chunkingDefaults.ts` for the constants — relocated there from
+`IngestionService.ts` so importing them doesn't pull in `IngestionService`'s runtime import
+graph) covering: what each does, parameter/return semantics for the functions, and — for the
+constants — that they are the values `IngestionService` uses when a caller doesn't override
+`maxChunkLength`/`chunkOverlap`. This is documentation only; no behavior or signature change.
 
 ## Non-Goals
 

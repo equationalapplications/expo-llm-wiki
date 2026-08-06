@@ -125,13 +125,14 @@ export function safeSlice(value: string, start: number, end?: number): string {
  * and `DEFAULT_CHUNK_OVERLAP` for the defaults ingest uses).
  *
  * @param input - The text to chunk; leading/trailing whitespace is trimmed
- *   before chunking.
- * @param maxChunkLength - Maximum characters per chunk; must be an integer
- *   >= 2.
- * @param overlap - Maximum number of characters each chunk repeats from the
- *   end of the previous chunk; must be a non-negative integer less than
- *   `maxChunkLength`. A chunk repeats fewer characters when the previous
- *   chunk was shorter than `overlap`.
+ *   before chunking. Empty/whitespace-only input returns the empty result
+ *   below without validating `maxChunkLength`/`overlap`.
+ * @param maxChunkLength - For non-empty input, maximum characters per chunk;
+ *   must be an integer >= 2.
+ * @param overlap - For non-empty input, maximum number of characters each
+ *   chunk repeats from the end of the previous chunk; must be a
+ *   non-negative integer less than `maxChunkLength`. A chunk repeats fewer
+ *   characters when the previous chunk was shorter than `overlap`.
  * @returns `chunks` — the resulting chunk strings (empty array for
  *   empty/whitespace-only input); `truncated` — `true` if any split had to
  *   fall back to a hard cut (no paragraph/sentence/whitespace boundary
