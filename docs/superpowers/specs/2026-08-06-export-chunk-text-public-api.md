@@ -99,6 +99,30 @@ Existing behavioral coverage of the chunking algorithm itself
 (`packages/core/__tests__/chunkText.test.ts`, via `WikiMemory.__testables`) is unaffected
 and continues to be the source of truth for chunking edge cases.
 
+## Minor Considerations
+
+### Constant naming
+
+Checked existing exports in `packages/core/src/index.ts`: none of the current top-level
+exports use a package-wide prefix (`formatContext`, `parseEmbedding`, `validateManifest`,
+etc. are all bare names); the one prefixed constant, `ONTOLOGY_BACKFILL_SYSTEM_PROMPT`, is
+prefixed with its own domain term, not a package-wide tag. `DEFAULT_MAX_CHUNK_LENGTH` and
+`DEFAULT_CHUNK_OVERLAP` also already match the field names on `WikiOptions.config`
+(`maxChunkLength`, `chunkOverlap`), so keeping the unprefixed names stays consistent with
+both established conventions and makes the connection to the config surface obvious.
+Decision: keep `DEFAULT_MAX_CHUNK_LENGTH` / `DEFAULT_CHUNK_OVERLAP` as specified — no
+prefix change.
+
+### JSDoc
+
+`chunkText`, `safeSlice`, and the two new constants are moving from internal-only to public
+API surface consumed by at least one external package (aws-cloud-agent). Add JSDoc comments
+to all four at their definition sites (`packages/core/src/utils/pure.ts` for the functions,
+`packages/core/src/index.ts` for the constants) covering: what each does, parameter/return
+semantics for the functions, and — for the constants — that they are the values
+`IngestionService` uses when a caller doesn't override `maxChunkLength`/`chunkOverlap`. This
+is documentation only; no behavior or signature change.
+
 ## Non-Goals
 
 - Changing the chunking algorithm's behavior.
