@@ -10,7 +10,7 @@
 
 ## Problem
 
-`chunkText` and its helper `safeSlice` (`packages/core/src/utils/pure.ts:102` and `:64`)
+`chunkText` and its helper `safeSlice` (both in `packages/core/src/utils/pure.ts`)
 implement the document-chunking algorithm `IngestionService.ingestDocument` uses to split
 text before embedding. Neither is exported from `packages/core/src/index.ts`, so they are
 invisible from the package's public entry point (`dist/index.d.ts`) — `expo-llm-wiki`
@@ -26,8 +26,9 @@ copy will silently drift from the library's actual behavior if `chunkText` ever 
 degrading passage recovery without any error.
 
 The consumer also needs to know the default `maxChunkLength`/`chunkOverlap` values ingest
-uses when a host app doesn't override them (`IngestionService.ts:49-50`, currently the
-literals `12000` and `400`), so it can reproduce default-config chunking without guessing.
+uses when a host app doesn't override them (the defaulting at the top of
+`IngestionService.ingestDocument`, at the time of writing the bare literals `12000` and
+`400`), so it can reproduce default-config chunking without guessing.
 
 ## Solution
 
@@ -36,25 +37,34 @@ Export `chunkText`, `safeSlice`, and the ingest default constants from
 that already exist and are already used internally; this only changes what's visible from
 the package boundary.
 
-As implemented, the constants are declared at their point of use in `IngestionService.ts`
-(not in `index.ts` as originally sketched below) and re-exported from `index.ts`:
+As implemented, the constants live in a small dependency-free module (not in `index.ts` as
+originally sketched, and no longer in `IngestionService.ts` — see the review note below).
+`IngestionService` imports them from there, and `index.ts` re-exports them:
 
 ```ts
-// packages/core/src/services/IngestionService.ts
+// packages/core/src/utils/chunkingDefaults.ts
 export const DEFAULT_MAX_CHUNK_LENGTH = 12000;
 export const DEFAULT_CHUNK_OVERLAP = 400;
 
+// packages/core/src/services/IngestionService.ts
+import { DEFAULT_MAX_CHUNK_LENGTH, DEFAULT_CHUNK_OVERLAP } from '../utils/chunkingDefaults';
+
 // packages/core/src/index.ts
 export { chunkText, safeSlice } from './utils/pure';
-export { DEFAULT_MAX_CHUNK_LENGTH, DEFAULT_CHUNK_OVERLAP } from './services/IngestionService';
+export { DEFAULT_MAX_CHUNK_LENGTH, DEFAULT_CHUNK_OVERLAP } from './utils/chunkingDefaults';
 ```
 
 This keeps the constant and the ingest-time default as the same binding rather than two
-values kept in sync by convention.
+values kept in sync by convention. The constants first landed directly in
+`IngestionService.ts`; PR review pointed out that this made the public constants depend on
+that service module's runtime import graph (importing them via the package entry point would
+execute `IngestionService` and its non-type imports like `PromptService`), so they moved to
+`utils/chunkingDefaults.ts` — same single binding, no service code on the constant path.
 
-All three literal sites in `IngestionService.ingestDocument` — not just `:49-50` — now
-reference the constants: the `maxChunkLength`/`rawOverlap` defaults and the sanitizer
-fallback used when a caller-supplied `chunkOverlap` is non-finite or negative.
+All three literal sites in `IngestionService.ingestDocument` — not just the two the spec
+originally named — now reference the constants: the `maxChunkLength`/`rawOverlap` defaults
+and the sanitizer fallback used when a caller-supplied `chunkOverlap` is non-finite or
+negative.
 
 `packages/expo/src/index.ts` requires no change — it already does
 `export * from '@equationalapplications/core-llm-wiki'`, so the new exports flow through
@@ -71,13 +81,17 @@ picks them up for free via its existing `export *`.
 
 ### 2. Export default chunking constants, not the overlap-clamp logic
 
-`IngestionService.ingestDocument` also clamps a caller-supplied `chunkOverlap` via
-`Math.min(rawOverlap, maxChunkLength - 1)` (`IngestionService.ts:51-54`). That clamp only
-matters when a caller overrides `chunkOverlap` to a value close to (or exceeding)
-`maxChunkLength`. This issue's motivating use case is reproducing *default-config* ingest
-chunking, where the clamp is a no-op (`400 < 12000 - 1`). Exporting the clamp function is
-out of scope; a future issue can add it if a consumer needs to replicate custom-config
-ingest behavior exactly.
+`IngestionService.ingestDocument` also clamps the *resolved* overlap via
+`Math.min(rawOverlap, maxChunkLength - 1)` (`IngestionService.ts:52-55`). The clamp is
+evaluated on every call and applies to the resolved value whatever its source — an explicit
+`chunkOverlap`, `WikiOptions.config.chunkOverlap`, or `DEFAULT_CHUNK_OVERLAP`. It is a no-op
+for the shipped defaults (`400 < 12000 - 1`), which is this issue's motivating use case, but
+it also bites when a custom `maxChunkLength` alone leaves the resolved overlap too large
+(e.g. `maxChunkLength: 100` with the default overlap `400` ingests at an effective overlap of
+`99`). Note the clamp is only observable at ingest: passing the unclamped pair to `chunkText`
+throws, since it requires `overlap < maxChunkLength`. Exporting the clamp function is out of
+scope; a future issue can add it if a consumer needs to replicate custom-config ingest
+behavior exactly.
 
 ### 3. Signatures are unchanged
 

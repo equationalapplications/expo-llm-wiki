@@ -823,7 +823,7 @@ const { chunks, truncated } = chunkText(
 
 `DEFAULT_MAX_CHUNK_LENGTH` and `DEFAULT_CHUNK_OVERLAP` are the values `ingestDocument()` uses when neither the call nor `WikiConfig` overrides them. Pass the same values your host app configured (`config.maxChunkLength` / `config.chunkOverlap`) to match a non-default ingest.
 
-> **Note:** when a caller overrides `chunkOverlap`, `ingestDocument()` additionally clamps it to `maxChunkLength - 1`. That clamp is internal and a no-op at the defaults; reproduce it yourself if you re-chunk with an overlap close to `maxChunkLength`.
+> **Note:** `ingestDocument()` clamps the resolved overlap — whether it came from `chunkOverlap`, `WikiConfig`, or `DEFAULT_CHUNK_OVERLAP` — to `maxChunkLength - 1`. The clamp is evaluated on every call and is a no-op at the shipped defaults (`400 < 12000 - 1`), but it also bites when a custom `maxChunkLength` alone leaves the resolved overlap too large (e.g. `maxChunkLength: 100` with the default overlap `400` ingests at an effective overlap of `99`). That clamp is internal: passing the unclamped pair straight to `chunkText` throws, since it requires `overlap < maxChunkLength`. Apply the same `Math.min(overlap, maxChunkLength - 1)` yourself when re-chunking under a custom config.
 
 ## Adapter Interface
 
