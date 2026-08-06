@@ -1,9 +1,10 @@
 # Spec: Export `chunkText` / `safeSlice` from the Public API
 
 **Date:** 2026-08-06
-**Status:** Draft
+**Status:** Implemented
 **Packages:** `core-llm-wiki` (primary), `expo-llm-wiki` (re-export, no code change needed)
 **Issue:** [equationalapplications/expo-llm-wiki#70](https://github.com/equationalapplications/expo-llm-wiki/issues/70)
+**PR:** [equationalapplications/expo-llm-wiki#71](https://github.com/equationalapplications/expo-llm-wiki/pull/71)
 
 ---
 
@@ -35,16 +36,25 @@ Export `chunkText`, `safeSlice`, and the ingest default constants from
 that already exist and are already used internally; this only changes what's visible from
 the package boundary.
 
+As implemented, the constants are declared at their point of use in `IngestionService.ts`
+(not in `index.ts` as originally sketched below) and re-exported from `index.ts`:
+
 ```ts
-// packages/core/src/index.ts
-export { chunkText, safeSlice } from './utils/pure';
+// packages/core/src/services/IngestionService.ts
 export const DEFAULT_MAX_CHUNK_LENGTH = 12000;
 export const DEFAULT_CHUNK_OVERLAP = 400;
+
+// packages/core/src/index.ts
+export { chunkText, safeSlice } from './utils/pure';
+export { DEFAULT_MAX_CHUNK_LENGTH, DEFAULT_CHUNK_OVERLAP } from './services/IngestionService';
 ```
 
-`IngestionService.ts:49-50` is updated to reference `DEFAULT_MAX_CHUNK_LENGTH` /
-`DEFAULT_CHUNK_OVERLAP` instead of the inline literals `12000` / `400`, so the exported
-constants and the actual ingest-time defaults cannot drift apart.
+This keeps the constant and the ingest-time default as the same binding rather than two
+values kept in sync by convention.
+
+All three literal sites in `IngestionService.ingestDocument` — not just `:49-50` — now
+reference the constants: the `maxChunkLength`/`rawOverlap` defaults and the sanitizer
+fallback used when a caller-supplied `chunkOverlap` is non-finite or negative.
 
 `packages/expo/src/index.ts` requires no change — it already does
 `export * from '@equationalapplications/core-llm-wiki'`, so the new exports flow through
@@ -98,6 +108,12 @@ package entry point, not a deep internal path), asserting:
 Existing behavioral coverage of the chunking algorithm itself
 (`packages/core/__tests__/chunkText.test.ts`, via `WikiMemory.__testables`) is unaffected
 and continues to be the source of truth for chunking edge cases.
+
+As implemented, `packages/core/README.md` also gained a "Chunking Utilities" section
+documenting `chunkText`/`safeSlice`/the two constants for external consumers, including a
+note that `chunkText`'s per-chunk overlap is a maximum (a chunk repeats fewer than `overlap`
+characters when the previous chunk was shorter than that), and that `ingestDocument`'s
+overlap-clamp (Decision 2) still applies only to non-default configs.
 
 ## Minor Considerations
 
