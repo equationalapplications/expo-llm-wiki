@@ -117,7 +117,7 @@ export function safeSlice(value: string, start: number, end?: number): string {
  * Splits `input` into chunks of at most `maxChunkLength` characters,
  * preferring to split on a paragraph break, then a sentence terminator,
  * then whitespace, falling back to a hard cut only when none of those are
- * found within the window. Consecutive chunks overlap by `overlap`
+ * found within the window. Consecutive chunks overlap by up to `overlap`
  * characters so context isn't lost at a chunk boundary. This is the exact
  * chunking algorithm `IngestionService.ingestDocument` uses before
  * embedding, so callers can reproduce ingest-time chunk boundaries exactly
@@ -128,9 +128,10 @@ export function safeSlice(value: string, start: number, end?: number): string {
  *   before chunking.
  * @param maxChunkLength - Maximum characters per chunk; must be an integer
  *   >= 2.
- * @param overlap - Number of characters each chunk repeats from the end of
- *   the previous chunk; must be a non-negative integer less than
- *   `maxChunkLength`.
+ * @param overlap - Maximum number of characters each chunk repeats from the
+ *   end of the previous chunk; must be a non-negative integer less than
+ *   `maxChunkLength`. A chunk repeats fewer characters when the previous
+ *   chunk was shorter than `overlap`.
  * @returns `chunks` — the resulting chunk strings (empty array for
  *   empty/whitespace-only input); `truncated` — `true` if any split had to
  *   fall back to a hard cut (no paragraph/sentence/whitespace boundary
