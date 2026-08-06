@@ -92,8 +92,8 @@ const wikiMemory = new WikiMemory(db, {
     maxResults: 10,                    // default: 10
     autoLibrarianThreshold: 20,        // default: 20 — events before librarian auto-runs
     autoHealThreshold: 100,            // default: 100 — events before heal auto-runs
-    maxChunkLength: 12000,             // default: 12000 (char count per ingestDocument chunk)
-    chunkOverlap: 400,                 // default: 400 (overlap between chunks in characters)
+    maxChunkLength: 12000,             // default: 12000 (char count per ingestDocument chunk; exported as DEFAULT_MAX_CHUNK_LENGTH)
+    chunkOverlap: 400,                 // default: 400 (overlap between chunks in characters; exported as DEFAULT_CHUNK_OVERLAP)
     chunkConcurrency: 1,               // default: 1 (parallel LLM calls per ingestDocument)
     pruneRetainSoftDeletedFor: 7,      // default: 7 (days before hard-deleting soft-deleted facts)
     pruneEventsAfter: 30,              // default: 30 (days before hard-deleting old events)
@@ -797,6 +797,33 @@ configureRandomSource(getRandomValues);
 ```
 
 `@equationalapplications/expo-llm-wiki` does this automatically on import (main entry and `/factory` subpath). If you use `@equationalapplications/core-llm-wiki` directly on React Native without the expo package, you must call `configureRandomSource()` yourself or polyfill `globalThis.crypto.getRandomValues`.
+
+## Chunking Utilities
+
+`ingestDocument()` splits a document into chunks before extraction. That same chunking is exported as a pure function, so a consumer can reproduce ingest-time chunk boundaries exactly — useful for recovering the passage a fact was extracted from, by re-chunking the source and ranking chunks against the fact's stored embedding.
+
+```typescript
+import {
+  chunkText,
+  safeSlice,
+  DEFAULT_MAX_CHUNK_LENGTH,  // 12000
+  DEFAULT_CHUNK_OVERLAP,     // 400
+} from '@equationalapplications/core-llm-wiki';
+
+const { chunks, truncated } = chunkText(
+  sourceDocument,
+  DEFAULT_MAX_CHUNK_LENGTH,
+  DEFAULT_CHUNK_OVERLAP
+);
+```
+
+`chunkText(input, maxChunkLength, overlap)` returns `{ chunks, truncated }`. It prefers to split on a paragraph break, then a sentence terminator, then whitespace, falling back to a hard cut only when none is found within the window — `truncated` is `true` if any split needed that fallback. Consecutive chunks repeat up to `overlap` characters so context isn't lost at a boundary (less than `overlap` when the previous chunk was shorter than that). Empty/whitespace-only input returns `{ chunks: [], truncated: false }` without validating `maxChunkLength`/`overlap`; otherwise throws if `maxChunkLength` is not an integer >= 2, or if `overlap` is not a non-negative integer < `maxChunkLength`.
+
+`safeSlice(value, start, end?)` slices like `String.prototype.slice` but clamps out-of-range indices, swaps a start-after-end range, and never splits a UTF-16 surrogate pair.
+
+`DEFAULT_MAX_CHUNK_LENGTH` and `DEFAULT_CHUNK_OVERLAP` are the values `ingestDocument()` uses when neither the call nor `WikiConfig` overrides them. Pass the same values your host app configured (`config.maxChunkLength` / `config.chunkOverlap`) to match a non-default ingest.
+
+> **Note:** `ingestDocument()` clamps the resolved overlap — whether it came from `chunkOverlap`, `WikiConfig`, or `DEFAULT_CHUNK_OVERLAP` — to `maxChunkLength - 1`. The clamp is evaluated on every call and is a no-op at the shipped defaults (`400 < 12000 - 1`), but it also bites when a custom `maxChunkLength` alone leaves the resolved overlap too large (e.g. `maxChunkLength: 100` with the default overlap `400` ingests at an effective overlap of `99`). That clamp is internal: passing the unclamped pair straight to `chunkText` throws, since it requires `overlap < maxChunkLength`. Apply the same `Math.min(overlap, maxChunkLength - 1)` yourself when re-chunking under a custom config.
 
 ## Adapter Interface
 

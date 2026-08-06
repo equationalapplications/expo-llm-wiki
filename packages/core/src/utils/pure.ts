@@ -61,6 +61,20 @@ export function sanitizeRankerError(err: unknown, sanitizeRankerErrors: boolean 
   return sanitized;
 }
 
+/**
+ * Slices a string like `String.prototype.slice`, but clamps out-of-range
+ * indices instead of relying on JS's implicit clamping, normalizes a
+ * start-after-end range by swapping the two bounds, and nudges either bound
+ * off a UTF-16 surrogate pair boundary so slicing never splits one code
+ * point in half.
+ *
+ * @param value - The source string to slice.
+ * @param start - Start index; negative counts from the end, out-of-range
+ *   values are clamped to `[0, value.length]`.
+ * @param end - End index (exclusive); defaults to `value.length` when
+ *   omitted. Same clamping/negative-index rules as `start`.
+ * @returns The sliced substring, never splitting a surrogate pair.
+ */
 export function safeSlice(value: string, start: number, end?: number): string {
   const length = value.length;
   let safeStart = start < 0 ? Math.max(length + start, 0) : Math.min(start, length);
@@ -99,6 +113,31 @@ export function safeSlice(value: string, start: number, end?: number): string {
   return value.slice(safeStart, safeEnd);
 }
 
+/**
+ * Splits `input` into chunks of at most `maxChunkLength` characters,
+ * preferring to split on a paragraph break, then a sentence terminator,
+ * then whitespace, falling back to a hard cut only when none of those are
+ * found within the window. Consecutive chunks overlap by up to `overlap`
+ * characters so context isn't lost at a chunk boundary. This is the exact
+ * chunking algorithm `IngestionService.ingestDocument` uses before
+ * embedding, so callers can reproduce ingest-time chunk boundaries exactly
+ * given the same `maxChunkLength`/`overlap` (see `DEFAULT_MAX_CHUNK_LENGTH`
+ * and `DEFAULT_CHUNK_OVERLAP` for the defaults ingest uses).
+ *
+ * @param input - The text to chunk; leading/trailing whitespace is trimmed
+ *   before chunking. Empty/whitespace-only input returns the empty result
+ *   below without validating `maxChunkLength`/`overlap`.
+ * @param maxChunkLength - For non-empty input, maximum characters per chunk;
+ *   must be an integer >= 2.
+ * @param overlap - For non-empty input, maximum number of characters each
+ *   chunk repeats from the end of the previous chunk; must be a
+ *   non-negative integer less than `maxChunkLength`. A chunk repeats fewer
+ *   characters when the previous chunk was shorter than `overlap`.
+ * @returns `chunks` — the resulting chunk strings (empty array for
+ *   empty/whitespace-only input); `truncated` — `true` if any split had to
+ *   fall back to a hard cut (no paragraph/sentence/whitespace boundary
+ *   found in the window).
+ */
 export function chunkText(
   input: string,
   maxChunkLength: number,

@@ -9,6 +9,7 @@ import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
 import type { OntologyService, TitleIndexEntry } from './OntologyService';
 import { PromptService } from './PromptService';
+import { DEFAULT_MAX_CHUNK_LENGTH, DEFAULT_CHUNK_OVERLAP } from '../utils/chunkingDefaults';
 
 export class IngestionService {
   private promptService: PromptService;
@@ -46,10 +47,10 @@ export class IngestionService {
     const sourceHash = normalizeSourceHash(params.sourceHash);
     if (!sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
 
-    const maxChunkLength = params.maxChunkLength ?? this.options.config?.maxChunkLength ?? 12000;
-    const rawOverlap = params.chunkOverlap ?? this.options.config?.chunkOverlap ?? 400;
+    const maxChunkLength = params.maxChunkLength ?? this.options.config?.maxChunkLength ?? DEFAULT_MAX_CHUNK_LENGTH;
+    const rawOverlap = params.chunkOverlap ?? this.options.config?.chunkOverlap ?? DEFAULT_CHUNK_OVERLAP;
     const chunkOverlap = Math.min(
-      Number.isFinite(rawOverlap) && rawOverlap >= 0 ? Math.floor(rawOverlap) : 400,
+      Number.isFinite(rawOverlap) && rawOverlap >= 0 ? Math.floor(rawOverlap) : DEFAULT_CHUNK_OVERLAP,
       maxChunkLength - 1
     );
 
