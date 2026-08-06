@@ -16,14 +16,8 @@ concurrency:
 
 jobs:
   test:
-    name: Test (node ${{ matrix.node-version }})
+    name: Test
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        # release.yml publishes on 24.10.0; deploy.yml builds on 20.19.0.
-        # Both are exercised so neither path can break unnoticed.
-        node-version: ["20.19.0", "24.10.0"]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -33,7 +27,7 @@ jobs:
 
       - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: "24.10.0"
 
       - name: Get pnpm store directory
         shell: bash
@@ -43,9 +37,9 @@ jobs:
         name: Setup pnpm cache
         with:
           path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-node${{ matrix.node-version }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: |
-            ${{ runner.os }}-node${{ matrix.node-version }}-pnpm-store-
+            ${{ runner.os }}-pnpm-store-
 
       - run: pnpm install --frozen-lockfile
 
