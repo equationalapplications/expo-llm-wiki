@@ -10,6 +10,20 @@ import type { EmbeddingService } from './EmbeddingService';
 import type { OntologyService, TitleIndexEntry } from './OntologyService';
 import { PromptService } from './PromptService';
 
+/**
+ * Default maximum characters per chunk that `ingestDocument` uses when a
+ * caller doesn't override `maxChunkLength` (directly or via
+ * `WikiOptions.config.maxChunkLength`).
+ */
+export const DEFAULT_MAX_CHUNK_LENGTH = 12000;
+
+/**
+ * Default character overlap between consecutive chunks that
+ * `ingestDocument` uses when a caller doesn't override `chunkOverlap`
+ * (directly or via `WikiOptions.config.chunkOverlap`).
+ */
+export const DEFAULT_CHUNK_OVERLAP = 400;
+
 export class IngestionService {
   private promptService: PromptService;
 
@@ -46,10 +60,10 @@ export class IngestionService {
     const sourceHash = normalizeSourceHash(params.sourceHash);
     if (!sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
 
-    const maxChunkLength = params.maxChunkLength ?? this.options.config?.maxChunkLength ?? 12000;
-    const rawOverlap = params.chunkOverlap ?? this.options.config?.chunkOverlap ?? 400;
+    const maxChunkLength = params.maxChunkLength ?? this.options.config?.maxChunkLength ?? DEFAULT_MAX_CHUNK_LENGTH;
+    const rawOverlap = params.chunkOverlap ?? this.options.config?.chunkOverlap ?? DEFAULT_CHUNK_OVERLAP;
     const chunkOverlap = Math.min(
-      Number.isFinite(rawOverlap) && rawOverlap >= 0 ? Math.floor(rawOverlap) : 400,
+      Number.isFinite(rawOverlap) && rawOverlap >= 0 ? Math.floor(rawOverlap) : DEFAULT_CHUNK_OVERLAP,
       maxChunkLength - 1
     );
 
