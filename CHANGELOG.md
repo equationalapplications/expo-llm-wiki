@@ -1,3 +1,15 @@
+# [5.1.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v5.0.0...v5.1.0) (2026-08-06)
+
+
+### Bug Fixes
+
+* **core:** address CodeRabbit/Copilot review on chunkText public API ([edce8db](https://github.com/equationalapplications/expo-llm-wiki/commit/edce8db8f9a45eba229856fecd14b7139ca55685))
+
+
+### Features
+
+* **core:** export chunkText, safeSlice, and default chunking constants ([1182128](https://github.com/equationalapplications/expo-llm-wiki/commit/11821287f44054d461f12c9f0bd2d99de7a1816d))
+
 # [5.0.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v4.23.1...v5.0.0) (2026-08-04)
 
 
