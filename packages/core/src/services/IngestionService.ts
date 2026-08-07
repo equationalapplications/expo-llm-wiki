@@ -1,6 +1,7 @@
 import { chunkText, withConcurrency, validateFact, parseJsonResponse, normalizeSourceRef, normalizeSourceHash } from '../utils/pure';
 import { normalizeTitleKey } from '../utils/ontology';
 import { generateId } from '../utils/ids';
+import { WikiDuplicateHashError } from '../types';
 import type { WikiOptions, ExtractedFact, ExtractedFactWithOntology, WikiFact, OntologyUpdates } from '../types';
 import type { SQLiteAdapter } from '../types';
 import type { EntryRepository } from '../repositories/EntryRepository';
@@ -39,13 +40,37 @@ export class IngestionService {
       chunkOverlap?: number;
       chunkConcurrency?: number;
       promptOverride?: string;
-    }
-  ): Promise<{ truncated: boolean; chunks: number }> {
+    },
+    opts?: { onDuplicateHash?: 'ingest' | 'skip' | 'throw' },
+  ): Promise<{ truncated: boolean; chunks: number; duplicateOf?: string }> {
     const sourceRef = normalizeSourceRef(params.sourceRef);
     if (!sourceRef) throw new Error('Invalid sourceRef');
 
     const sourceHash = normalizeSourceHash(params.sourceHash);
     if (!sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
+
+    // Duplicate-hash guard: runs BEFORE acquireLock, BEFORE chunking, BEFORE any
+    // LLM call. The spec's "synchronous return" regression guard is satisfied by
+    // returning directly — no setImmediate, no Promise.resolve().then().
+    const onDuplicateHash = opts?.onDuplicateHash ?? 'ingest';
+    if (onDuplicateHash !== 'ingest') {
+      const refs = await this.entryRepo.findSourceRefsByHash(entityId, sourceHash);
+      // Canonical must be a stored DIFFERENT source_ref, never the incoming ref.
+      // `refs` is already ordered `source_ref COLLATE BINARY` by the repo, so
+      // `others[0]` is the canonical — re-sorting in JS would use UTF-16
+      // code-unit ordering and could disagree with SQLite BINARY for non-ASCII.
+      // Excluding the incoming ref prevents the canonical from echoing the
+      // caller's own ref when it sorts first.
+      const others = refs.filter(r => r !== sourceRef);
+      if (others.length > 0) {
+        const canonical = others[0];
+        if (onDuplicateHash === 'throw') {
+          throw new WikiDuplicateHashError({ canonical, sourceHash, entityId });
+        }
+        // 'skip'
+        return { truncated: false, chunks: 0, duplicateOf: canonical };
+      }
+    }
 
     const maxChunkLength = params.maxChunkLength ?? this.options.config?.maxChunkLength ?? DEFAULT_MAX_CHUNK_LENGTH;
     const rawOverlap = params.chunkOverlap ?? this.options.config?.chunkOverlap ?? DEFAULT_CHUNK_OVERLAP;

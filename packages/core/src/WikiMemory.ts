@@ -251,19 +251,119 @@ export class WikiMemory {
     await this.searchService.sync();
   }
 
-  async hasChanged(entityId: string, sourceRef: string, sourceHash: string): Promise<boolean> {
-    const normalizedRef = normalizeSourceRef(sourceRef);
-    if (!normalizedRef) {
-      throw new Error(`Invalid sourceRef: ${JSON.stringify(sourceRef)}`);
+  async hasChanged(
+    entityId: string,
+    sourceRef: string,
+    sourceHash: string,
+  ): Promise<boolean>;
+  /**
+   * Batched overload.
+   *
+   * `duplicateOf`, when present, is the canonical stored DIFFERENT `source_ref`
+   * holding the same hash — never the incoming ref itself (the incoming ref is
+   * excluded from the canonical-sort set so a self-reference is impossible).
+   * `duplicateOf` reflects the *DB-side* normalized spelling; `sourceRef` in
+   * each result echoes the raw caller value. Hosts should not compare these
+   * two fields directly to infer canonical status.
+   */
+  async hasChanged(
+    entityId: string,
+    entries: Array<{ sourceRef: string; sourceHash: string }>,
+  ): Promise<Array<{ sourceRef: string; changed: boolean; duplicateOf?: string }>>;
+  async hasChanged(
+    entityId: string,
+    sourceRefOrEntries: string | Array<{ sourceRef: string; sourceHash: string }>,
+    sourceHashArg?: string,
+  ): Promise<boolean | Array<{ sourceRef: string; changed: boolean; duplicateOf?: string }>> {
+    // Single-doc path: delegate to existing semantics.
+    if (typeof sourceRefOrEntries === 'string') {
+      const sourceRef = normalizeSourceRef(sourceRefOrEntries);
+      if (!sourceRef) {
+        throw new Error(`Invalid sourceRef: ${JSON.stringify(sourceRefOrEntries)}`);
+      }
+      const sourceHash = normalizeSourceHash(sourceHashArg!);
+      if (!sourceHash) {
+        throw new Error('Invalid sourceHash: must be a 64-character hex string (normalized to lowercase)');
+      }
+      const storedHash = await this.entryRepo.findLatestSourceHash(entityId, sourceRef);
+      if (storedHash === null) return true;
+      const normalizedStoredHash = normalizeSourceHash(storedHash);
+      return normalizedStoredHash !== sourceHash;
     }
-    const normalizedHash = normalizeSourceHash(sourceHash);
-    if (!normalizedHash) {
-      throw new Error(`Invalid sourceHash: must be a 64-character hex string (normalized to lowercase)`);
+
+    // Batched path: empty input -> empty result, zero SQL calls.
+    const entries = sourceRefOrEntries;
+    if (entries.length === 0) return [];
+
+    // Normalize all inputs (validation up front). Preserve the raw ref so the
+    // result echoes the caller's spelling (DB refs are normalized on setup,
+    // but the caller hasn't seen that normalization yet).
+    const normalized = entries.map(e => {
+      const r = normalizeSourceRef(e.sourceRef);
+      if (!r) throw new Error(`Invalid sourceRef: ${JSON.stringify(e.sourceRef)}`);
+      const h = normalizeSourceHash(e.sourceHash);
+      if (!h) throw new Error('Invalid sourceHash: must be a 64-character hex string (normalized to lowercase)');
+      return { rawSourceRef: e.sourceRef, sourceRef: r, sourceHash: h };
+    });
+
+    // 1 + H SQL queries: one batched latest-hash lookup, plus one findSourceRefsByHash
+    // per distinct input hash. Lookups are issued in parallel — the bound is the
+    // SQL-query count, not the await count.
+    const latestHashes = await this.entryRepo.findLatestSourceHashes(entityId, normalized.map(e => e.sourceRef));
+
+    const distinctHashes = Array.from(new Set(normalized.map(e => e.sourceHash)));
+    const dupRefs = await Promise.all(
+      distinctHashes.map(h => this.entryRepo.findSourceRefsByHash(entityId, h)),
+    );
+    const dupMap = new Map<string, string[]>(); // hash -> refs (DB-side refs, possibly normalized)
+    for (let i = 0; i < distinctHashes.length; i++) {
+      dupMap.set(distinctHashes[i], dupRefs[i]);
     }
-    const storedHash = await this.entryRepo.findLatestSourceHash(entityId, normalizedRef);
-    if (storedHash === null) return true;
-    const normalizedStoredHash = normalizeSourceHash(storedHash);
-    return normalizedStoredHash !== normalizedHash;
+
+    return normalized.map(e => {
+      const stored = latestHashes.get(e.sourceRef);
+      const changed = stored === undefined || stored === null || normalizeSourceHash(stored) !== e.sourceHash;
+      const allRefs = dupMap.get(e.sourceHash) ?? [];
+      const others = allRefs.filter(r => r !== e.sourceRef);
+      if (others.length === 0) {
+        return { sourceRef: e.rawSourceRef, changed };
+      }
+      // Canonical: the first ref from findSourceRefsByHash after excluding the
+      // incoming ref. EntryRepository.findSourceRefsByHash returns refs already
+      // ordered by `source_ref COLLATE BINARY`, so the canonical matches the DB
+      // ordering for both ASCII and non-ASCII refs (UTF-16 code-unit sort in JS
+      // can disagree with SQLite BINARY for non-ASCII). Excluding the incoming
+      // ref prevents duplicateOf from echoing the caller's own ref when it
+      // sorts first.
+      const canonical = others[0];
+      return { sourceRef: e.rawSourceRef, changed, duplicateOf: canonical };
+    });
+  }
+
+  /**
+   * Returns the live source_refs for an entity, one row per ref, with the most
+   * recently-updated live `source_hash` and a live fact count. Refs are sorted
+   * `COLLATE BINARY` (no locale dependency). Used by hosts to reconcile stored
+   * state against a live source, or audit duplicate-hash collisions via
+   * `findSourceRefsByHash`.
+   */
+  async listSourceRefs(entityId: string): Promise<Array<{
+    sourceRef: string;
+    sourceHash: string | null;
+    factCount: number;
+    lastIngestedAt: number;
+  }>> {
+    return this.entryRepo.listSourceRefs(entityId);
+  }
+
+  /**
+   * Returns the live source_refs for an entity that hold the given source_hash,
+   * sorted `COLLATE BINARY` ascending. The first element is the canonical ref
+   * under the code-unit-minimum rule (no locale dependency). Used by the
+   * ingestDocument guard and by hosts auditing duplicate-content collisions.
+   */
+  async findSourceRefsByHash(entityId: string, sourceHash: string): Promise<string[]> {
+    return this.entryRepo.findSourceRefsByHash(entityId, sourceHash);
   }
 
   async runPrune(
@@ -382,8 +482,12 @@ export class WikiMemory {
     return this.importExportService.importDump(dump, opts);
   }
 
-  async forget(entityId: string, params: { entryId?: string; taskId?: string; sourceRef?: string; sourceHash?: string; clearAll?: boolean }): Promise<{ deleted: { entries: number; tasks: number } }> {
-    return this.maintenanceService.forget(entityId, params);
+  async forget(
+    entityId: string,
+    params: { entryId?: string; taskId?: string; sourceRef?: string; sourceHash?: string; clearAll?: boolean },
+    opts?: { dryRun?: boolean },
+  ): Promise<{ deleted: { entries: number; tasks: number }; metadataReset?: boolean }> {
+    return this.maintenanceService.forget(entityId, params, opts);
   }
 
   /**
@@ -401,9 +505,10 @@ export class WikiMemory {
       chunkOverlap?: number;
       chunkConcurrency?: number;
       promptOverride?: string;
-    }
-  ): Promise<{ truncated: boolean; chunks: number }> {
-    return this.ingestionService.ingestDocument(entityId, params);
+    },
+    opts?: { onDuplicateHash?: 'ingest' | 'skip' | 'throw' },
+  ): Promise<{ truncated: boolean; chunks: number; duplicateOf?: string }> {
+    return this.ingestionService.ingestDocument(entityId, params, opts);
   }
 
   /**

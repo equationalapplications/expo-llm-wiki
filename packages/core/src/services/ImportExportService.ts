@@ -7,7 +7,7 @@ import { entitySummaryMetaKey, type MetadataRepository } from '../repositories/M
 import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
-import { clip } from '../utils/pure';
+import { clip, normalizeSourceRef } from '../utils/pure';
 
 const MAX_EMBEDDING_BLOB_BYTES = 32 * 1024; // 8192-dim float32 ceiling
 const IMPORT_TITLE_MAX = 500;
@@ -261,6 +261,26 @@ export class ImportExportService {
         const safeBody = clip(String(fact.body ?? ''), IMPORT_BODY_MAX);
         clippedTextByFactId.set(fact.id, { title: safeTitle, body: safeBody });
 
+        // Normalize source_ref using the same rules as ingestDocument and the
+        // startup migration. Persisting the raw value would let a later re-ingest
+        // collide on shape mismatch (raw DB ref vs. normalized incoming ref) and
+        // would skip soft-deletion on the default-path overwrite.
+        // A non-null source_ref that normalizes to null (e.g. all-special-chars
+        // or whitespace-only) is rejected to mirror ingestDocument — silently
+        // coercing it to NULL would create a legacy row that many APIs
+        // intentionally exclude.
+        let normalizedSourceRef: string | null = null;
+        if (fact.source_ref !== null && fact.source_ref !== undefined) {
+          normalizedSourceRef = normalizeSourceRef(fact.source_ref);
+          if (normalizedSourceRef === null) {
+            throw new Error(
+              `importDump: invalid source_ref ${JSON.stringify(fact.source_ref)} ` +
+              `for entity "${entityId}" fact "${fact.id}" ` +
+              `(must normalize to a non-empty string; see ingestDocument's sourceRef validation)`,
+            );
+          }
+        }
+
         const factObj: WikiFact = {
           id: fact.id,
           entity_id: entityId,
@@ -270,7 +290,7 @@ export class ImportExportService {
           confidence: fact.confidence,
           source_type: sourceType,
           source_hash: fact.source_hash,
-          source_ref: fact.source_ref,
+          source_ref: normalizedSourceRef,
           created_at: fact.created_at,
           updated_at: safeUpdatedAt,
           last_accessed_at: fact.last_accessed_at,
