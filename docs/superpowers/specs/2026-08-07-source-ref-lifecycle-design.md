@@ -46,20 +46,31 @@ interface StoredSourceRef {
 listSourceRefs(entityId: string): Promise<StoredSourceRef[]>;
 ```
 
-Single SQL aggregation against `${prefix}entries`, scoped to `entity_id`, live only, grouped by `source_ref`:
+Single SQL aggregation against `${prefix}entries`, scoped to `entity_id`, live only, partitioned by `source_ref`. The `source_hash` returned for each ref is the hash from the row with `MAX(updated_at)`, matching single-doc `hasChanged` / `findLatestSourceHash` semantics — **not** the lexicographically maximum hash. `MAX(source_hash)` is wrong because aggregation is computed independently across grouped rows; the hash and the timestamp can come from different rows. This matters under the import-path anomaly where one ref can have multiple live rows with different hashes.
 
 ```sql
+WITH ranked AS (
+  SELECT source_ref, source_hash, updated_at,
+         ROW_NUMBER() OVER (
+           PARTITION BY source_ref
+           ORDER BY updated_at DESC
+         ) AS rn,
+         COUNT(*) OVER (PARTITION BY source_ref) AS fact_count
+  FROM ${prefix}entries
+  WHERE entity_id = ? AND deleted_at IS NULL AND source_ref IS NOT NULL
+)
 SELECT source_ref,
-       MAX(source_hash) AS source_hash,
-       COUNT(*)         AS fact_count,
-       MAX(updated_at)  AS last_ingested_at
-FROM ${prefix}entries
-WHERE entity_id = ? AND deleted_at IS NULL AND source_ref IS NOT NULL
-GROUP BY source_ref
+       source_hash       AS source_hash,
+       fact_count        AS fact_count,
+       updated_at        AS last_ingested_at
+FROM ranked
+WHERE rn = 1
 ORDER BY source_ref COLLATE BINARY
 ```
 
-`COLLATE BINARY` is the explicit signal that locale dependency is rejected. A regression test asserts the sort is identical on a developer machine and in Lambda — env-independence is otherwise invisible.
+`ROW_NUMBER()` (not `RANK()` or `DENSE_RANK()`) — tie-break by `ROWID` is implicit but the spec doesn't rely on it; under normal ingest all live rows for a ref share the same hash (see §3 invariant), and under import, the timestamp tie-break is deterministic enough. `COLLATE BINARY` on the outer `ORDER BY` is the explicit signal that locale dependency is rejected.
+
+**Cross-method consistency:** a regression test asserts that for any `(entityId, sourceRef)`, `listSourceRefs(entityId)[i].sourceHash === (await findLatestSourceHash(entityId, sourceRef))`. This catches the exact bug `MAX(source_hash)` would introduce — the SQL aggregate and `findLatestSourceHash` returning different hashes for the same ref under the import-path anomaly.
 
 **Repository placement:** new `EntryRepository.listSourceRefs(entityId, tx?)`.
 
@@ -228,7 +239,7 @@ A regression test asserts the batched and original signatures return equivalent 
 
 ## Tests
 
-- `listSourceRefs`: live-only filter (soft-deleted rows excluded); code-unit sort; empty entity returns `[]`; mixed deleted/live rows; multi-fact document returns one row; **environment-independent sort** (same input → same output on any platform).
+- `listSourceRefs`: live-only filter (soft-deleted rows excluded); code-unit sort; empty entity returns `[]`; mixed deleted/live rows; multi-fact document returns one row; **environment-independent sort** (same input → same output on any platform); **cross-method consistency** — for any ref in the result, `sourceHash === findLatestSourceHash(entityId, sourceRef)`, including under the import-path multi-live-hash anomaly.
 - `forget({ dryRun: true })`: returns same shape as real call; no rows mutated; no outbox rows staged; no embedding hooks fired; no lock contention with concurrent real forget; non-transactional read documented.
 - `findSourceRefsByHash`: live-only; code-unit sort; empty result for unknown hash; multiple results for collision case; first element is the canonical.
 - `ingestDocument({ onDuplicateHash })`:
