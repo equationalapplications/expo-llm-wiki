@@ -125,3 +125,125 @@ describe('WikiMemory.hasChanged — batched overload', () => {
     ]);
   });
 });
+
+describe('WikiMemory.hasChanged — multi-live-hash regression (ROW_NUMBER vs MAX(source_hash))', () => {
+  it('batched result agrees with single-doc hasChanged when importDump seeded multiple live hashes for the same ref', async () => {
+    const { wiki } = await makeWiki();
+
+    // Two live rows for the SAME ref at different updated_at values, with
+    // different hashes. The row with the most-recent updated_at is the one
+    // that should win. MAX(source_hash) would return 'f'.repeat(64) here
+    // because it sorts lexically after 'b'.repeat(64); the test fails the
+    // moment the SQL is "cleaned up" to MAX(source_hash).
+    const newerHash = 'b'.repeat(64);    // 'b' < 'f' lexically
+    const olderHash = 'f'.repeat(64);
+    const dump = {
+      generatedAt: 1,
+      entities: {
+        'entity-1': {
+          facts: [
+            {
+              id: 'fact-newer',
+              entity_id: 'entity-1',
+              title: 'T',
+              body: 'B',
+              tags: [],
+              confidence: 'certain',
+              source_type: 'immutable_document',
+              source_hash: newerHash,
+              source_ref: 'doc.md',
+              created_at: 1000,
+              updated_at: 1100,
+              last_accessed_at: null,
+              access_count: 0,
+              deleted_at: null,
+              okf_type: null,
+            },
+            {
+              id: 'fact-older',
+              entity_id: 'entity-1',
+              title: 'T',
+              body: 'B',
+              tags: [],
+              confidence: 'certain',
+              source_type: 'immutable_document',
+              source_hash: olderHash,
+              source_ref: 'doc.md',
+              created_at: 500,
+              updated_at: 600,
+              last_accessed_at: null,
+              access_count: 0,
+              deleted_at: null,
+              okf_type: null,
+            },
+          ],
+          tasks: [],
+          events: [],
+          edges: [],
+        },
+      },
+    };
+    await wiki.importDump(dump as any);
+
+    // Sanity: both rows are live.
+    const liveRows = await wiki.__testAccess.entryRepo.findAllByEntityId('entity-1');
+    expect(liveRows).toHaveLength(2);
+
+    // Single-doc: should report newerHash (the more recent updated_at).
+    const singleChanged = await wiki.hasChanged('entity-1', 'doc.md', newerHash);
+    expect(singleChanged).toBe(false); // matching newerHash → unchanged
+
+    // Batched: must agree with the single-doc result.
+    const batched = await wiki.hasChanged('entity-1', [{ sourceRef: 'doc.md', sourceHash: newerHash }]);
+    expect(batched).toEqual([{ sourceRef: 'doc.md', changed: false }]);
+
+    // Cross-check: feeding the older hash to single-doc must report changed
+    // (because the latest row holds newerHash, not olderHash).
+    expect(await wiki.hasChanged('entity-1', 'doc.md', olderHash)).toBe(true);
+
+    // ...and the batched path must agree.
+    const batchedOlder = await wiki.hasChanged('entity-1', [{ sourceRef: 'doc.md', sourceHash: olderHash }]);
+    expect(batchedOlder).toEqual([{ sourceRef: 'doc.md', changed: true }]);
+  });
+
+  it('listSourceRefs surfaces the row with MAX(updated_at) hash, not MAX(source_hash) — same anomaly, different surface', async () => {
+    const { wiki } = await makeWiki();
+    const newerHash = 'b'.repeat(64);
+    const olderHash = 'f'.repeat(64);
+    const dump = {
+      generatedAt: 1,
+      entities: {
+        'entity-1': {
+          facts: [
+            {
+              id: 'fact-newer',
+              entity_id: 'entity-1',
+              title: 'T', body: 'B', tags: [], confidence: 'certain',
+              source_type: 'immutable_document', source_hash: newerHash, source_ref: 'doc.md',
+              created_at: 1000, updated_at: 1100, last_accessed_at: null, access_count: 0, deleted_at: null,
+              okf_type: null,
+            },
+            {
+              id: 'fact-older',
+              entity_id: 'entity-1',
+              title: 'T', body: 'B', tags: [], confidence: 'certain',
+              source_type: 'immutable_document', source_hash: olderHash, source_ref: 'doc.md',
+              created_at: 500, updated_at: 600, last_accessed_at: null, access_count: 0, deleted_at: null,
+              okf_type: null,
+            },
+          ],
+          tasks: [],
+          events: [],
+          edges: [],
+        },
+      },
+    };
+    await wiki.importDump(dump as any);
+
+    const refs = await wiki.listSourceRefs('entity-1');
+    expect(refs).toHaveLength(1);
+    expect(refs[0].sourceRef).toBe('doc.md');
+    expect(refs[0].sourceHash).toBe(newerHash); // most-recent updated_at, NOT lex max
+    expect(refs[0].factCount).toBe(2);
+  });
+});
