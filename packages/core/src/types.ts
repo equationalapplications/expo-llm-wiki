@@ -592,6 +592,26 @@ export class WikiBusyError extends Error {
 }
 
 /**
+ * Thrown by `ingestDocument({ onDuplicateHash: 'throw' })` when a different
+ * source_ref in the same entity already holds the supplied source_hash against
+ * a live row. Mirrors {@link WikiBusyError}'s anchoring of canonical metadata
+ * on the error instance for stable observability.
+ */
+export class WikiDuplicateHashError extends Error {
+  readonly canonical: string;
+  readonly sourceHash: string;
+  readonly entityId: string;
+
+  constructor(params: { canonical: string; sourceHash: string; entityId: string }) {
+    super(`Duplicate source hash for entity ${params.entityId}; another ref already holds this content`);
+    this.name = 'WikiDuplicateHashError';
+    this.canonical = params.canonical;
+    this.sourceHash = params.sourceHash;
+    this.entityId = params.entityId;
+  }
+}
+
+/**
  * Thrown by the serialized transaction wrapper when a SQLite driver error
  * escapes a transaction callback (nested BEGIN, SQLITE_BUSY, constraint
  * violation). Domain errors thrown from callback logic pass through unwrapped.

@@ -421,9 +421,10 @@ export class WikiMemory {
       chunkOverlap?: number;
       chunkConcurrency?: number;
       promptOverride?: string;
-    }
-  ): Promise<{ truncated: boolean; chunks: number }> {
-    return this.ingestionService.ingestDocument(entityId, params);
+    },
+    opts?: { onDuplicateHash?: 'ingest' | 'skip' | 'throw' },
+  ): Promise<{ truncated: boolean; chunks: number; duplicateOf?: string }> {
+    return this.ingestionService.ingestDocument(entityId, params, opts);
   }
 
   /**

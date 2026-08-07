@@ -832,6 +832,28 @@ export class EntryRepository extends BaseRepository {
   }
 
   /**
+   * Return the live source_refs for an entity that hold the given source_hash.
+   * Used by the ingestDocument duplicate-hash guard and by hosts auditing
+   * duplicate-content collisions. Sorted `COLLATE BINARY` so the canonical
+   * ref (the code-unit-minimum of the set) is stable across deploys.
+   */
+  async findSourceRefsByHash(
+    entityId: string,
+    sourceHash: string,
+    tx?: SQLiteAdapter,
+  ): Promise<string[]> {
+    const executor = this.getExecutor(tx);
+    const rows = await executor.getAllAsync<{ source_ref: string }>(
+      `SELECT source_ref FROM ${this.prefix}entries
+       WHERE entity_id = ? AND source_hash = ? AND deleted_at IS NULL
+       GROUP BY source_ref
+       ORDER BY source_ref COLLATE BINARY`,
+      [entityId, sourceHash],
+    );
+    return rows.map(r => r.source_ref);
+  }
+
+  /**
    * Per-sourceRef rollup for an entity: one row per live source_ref, with the
    * most-recently-updated live hash (NOT the lexically-max hash) and a live
    * fact count.
