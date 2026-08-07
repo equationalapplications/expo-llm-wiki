@@ -241,4 +241,70 @@ describe('doRunHeal — per-pass call bounding (#67)', () => {
     expect(result.skipped).toBe(2);
     expect(result.scanned).toBe(2);
   });
+
+  it('does not insert a duplicate when a librarian pass commits right before heal opens its transaction', async () => {
+    // Heal reads the dedupe corpus at line 630 (outside tx), then opens its
+    // transaction at line 634. A librarian insert landing in that gap is
+    // invisible to heal's dedupe check. We inject the librarian by spying on
+    // findInferredTitlesByEntityId: when called without a tx (the pre-tx read),
+    // we insert a matching fact and return a stale snapshot that omits it.
+    //
+    // Before the fix: the pre-tx read returns a stale snapshot → duplicate.
+    // After the fix: the read moves inside the tx callback (called with tx),
+    // so the spy's tx-less branch never fires and the real query sees the
+    // injected fact → deduped.
+    const generateText = vi.fn(async () => JSON.stringify({
+      downgraded: [],
+      deleted: [],
+      newFacts: [{
+        title: 'concurrent race test title',
+        body: 'heal body',
+        tags: [],
+        confidence: 'inferred',
+      }],
+    }));
+
+    const { db, wiki } = await makeHealWiki(generateText);
+    await seedFact(db, { id: 'c0', updatedAt: 1000 });
+
+    const entryRepo = wiki.__testAccess.entryRepo;
+    const originalFind = entryRepo.findInferredTitlesByEntityId.bind(entryRepo);
+
+    vi.spyOn(entryRepo, 'findInferredTitlesByEntityId').mockImplementation(
+      async (entityId: string, tx?: any) => {
+        if (!tx) {
+          // Pre-transaction read (line 630): inject a matching librarian fact
+          // and return a stale snapshot that doesn't include it.
+          await db.withTransactionAsync(async (innerTx: any) => {
+            await entryRepo.upsert({
+              id: 'fact_lib_1',
+              entity_id: 'e1',
+              title: 'concurrent race test title',
+              body: 'librarian body',
+              tags: [],
+              confidence: 'inferred',
+              source_type: 'librarian_inferred',
+              source_hash: null,
+              source_ref: null,
+              created_at: 2000,
+              updated_at: 2000,
+              last_accessed_at: null,
+              access_count: 0,
+              deleted_at: null,
+            }, innerTx);
+          });
+          return [];
+        }
+        // Inside-transaction read (after fix): do the real query.
+        return originalFind(entityId, tx);
+      },
+    );
+
+    await wiki.runHeal('e1', { batchSize: 1 });
+
+    const rows = await db.getAllAsync<{ c: number }>(
+      `SELECT COUNT(*) AS c FROM ${PREFIX}entries
+       WHERE title = 'concurrent race test title' AND deleted_at IS NULL`);
+    expect(rows[0].c).toBe(1);
+  });
 });
