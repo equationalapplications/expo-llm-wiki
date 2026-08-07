@@ -1,3 +1,10 @@
+## [5.1.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v5.1.0...v5.1.1) (2026-08-07)
+
+
+### Bug Fixes
+
+* move heal dedupe read inside transaction to close race with librarian ([#69](https://github.com/equationalapplications/expo-llm-wiki/issues/69)) ([7b278b5](https://github.com/equationalapplications/expo-llm-wiki/commit/7b278b593c6d3f01791f9aeb0f71763215658abf))
+
 # [5.1.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v5.0.0...v5.1.0) (2026-08-06)
 
 
