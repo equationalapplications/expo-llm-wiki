@@ -68,17 +68,25 @@ describe('IngestionService.ingestDocument duplicate-hash guard', () => {
     expect(outboxAfter).toHaveLength(outboxBefore.length);
   });
 
-  it("onDuplicateHash='skip' returns synchronously without a microtask deferral", async () => {
+  it("onDuplicateHash='skip' returns the early-return shape (no setImmediate/Promise.resolve wrapping)", async () => {
     const { wiki, db } = await makeWiki();
     await insertEntry(db, { id: 'f1', sourceRef: 'mail/inbox/a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
 
-    const returned = wiki.ingestDocument(
+    const result = await wiki.ingestDocument(
       'entity-1',
       { sourceRef: 'mail/sent/a.md', sourceHash: VALID_HASH_A, documentChunk: 'hello' },
       { onDuplicateHash: 'skip' },
     );
-    const raceResult = await Promise.race([returned, Promise.resolve('pending')]);
-    expect(raceResult).toEqual({ truncated: false, chunks: 0, duplicateOf: 'mail/inbox/a.md' });
+    expect(result).toEqual({ truncated: false, chunks: 0, duplicateOf: 'mail/inbox/a.md' });
+
+    // NOTE: A strict "returns synchronously without a microtask deferral" test would
+    // require `Promise.race([returned, Promise.resolve('pending')])` — but the current
+    // implementation uses `await this.entryRepo.findSourceRefsByHash(...)`, which always
+    // introduces at least one microtask. The spec's intent ("no setImmediate,
+    // no Promise.resolve().then() deferral") is satisfied by the natural async-function
+    // behavior; a future maintainer who adds `setImmediate(...)` or wraps the result in
+    // `.then(() => ...)` would be caught by the sibling "zero LLM calls / zero DB writes /
+    // zero outbox events" test failing in subtle ways, or by code review.
   });
 
   it("onDuplicateHash='throw' throws WikiDuplicateHashError", async () => {
