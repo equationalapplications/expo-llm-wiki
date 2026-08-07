@@ -247,3 +247,50 @@ describe('WikiMemory.hasChanged — multi-live-hash regression (ROW_NUMBER vs MA
     expect(refs[0].factCount).toBe(2);
   });
 });
+
+describe('WikiMemory.hasChanged — concurrency bounds', () => {
+  it('batched hasChanged acquires no lock and writes no rows', async () => {
+    const { wiki, db } = await makeWiki();
+    // Sanity: nothing is in flight for entity-1.
+    const jm = wiki.__testAccess.jobManager;
+    expect(jm.isBlocked('forget', 'entity-1')).toBe(false);
+    expect(jm.isBlocked('ingest', 'entity-1')).toBe(false);
+
+    const entriesBefore = await db.getAllAsync<{ id: string }>(
+      `SELECT id FROM llm_wiki_entries WHERE entity_id = ?`,
+      ['entity-1'],
+    );
+
+    await wiki.hasChanged('entity-1', [{ sourceRef: 'a.md', sourceHash: VALID_HASH_A }]);
+
+    // No lock should be held after the call either.
+    expect(jm.isBlocked('forget', 'entity-1')).toBe(false);
+    expect(jm.isBlocked('ingest', 'entity-1')).toBe(false);
+
+    // No new rows should have been inserted.
+    const entriesAfter = await db.getAllAsync<{ id: string }>(
+      `SELECT id FROM llm_wiki_entries WHERE entity_id = ?`,
+      ['entity-1'],
+    );
+    expect(entriesAfter).toHaveLength(entriesBefore.length);
+  });
+
+  it('single-doc hasChanged acquires no lock and writes no rows', async () => {
+    const { wiki, db } = await makeWiki();
+    const jm = wiki.__testAccess.jobManager;
+    const entriesBefore = await db.getAllAsync<{ id: string }>(
+      `SELECT id FROM llm_wiki_entries WHERE entity_id = ?`,
+      ['entity-1'],
+    );
+
+    await wiki.hasChanged('entity-1', 'a.md', VALID_HASH_A);
+
+    expect(jm.isBlocked('forget', 'entity-1')).toBe(false);
+    expect(jm.isBlocked('ingest', 'entity-1')).toBe(false);
+    const entriesAfter = await db.getAllAsync<{ id: string }>(
+      `SELECT id FROM llm_wiki_entries WHERE entity_id = ?`,
+      ['entity-1'],
+    );
+    expect(entriesAfter).toHaveLength(entriesBefore.length);
+  });
+});
