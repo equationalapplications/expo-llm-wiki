@@ -396,6 +396,13 @@ export class MaintenanceService {
     const sourceHash = params.sourceHash !== undefined ? normalizeSourceHash(params.sourceHash) : null;
     if (params.sourceHash !== undefined && !sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
 
+    // No source selectors supplied: the real call is a no-op (softDeleteBySource
+    // is gated on `if (sourceRef || sourceHash)`). Mirror that — do NOT count all
+    // live entries, which would silently mask a caller bug as a large blast radius.
+    if (sourceRef === null && sourceHash === null) {
+      return { deleted: { entries: 0, tasks: 0 } };
+    }
+
     const entries = await this.entryRepo.countLiveBySource(entityId, sourceRef, sourceHash);
     return { deleted: { entries, tasks: 0 } };
   }

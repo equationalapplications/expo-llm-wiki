@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { WikiMemory } from '../src/WikiMemory';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 import { setupDatabase } from '../src/db/schema';
@@ -32,11 +32,16 @@ describe('EntryRepository.findLatestSourceHashes — empty input edge case', () 
 describe('WikiMemory.hasChanged — batched overload', () => {
   it('returns [] for empty input with zero SQL calls (synchronous)', async () => {
     const { wiki } = await makeWiki();
-    const t0 = Date.now();
+    const entryRepo = wiki.__testAccess.entryRepo;
+    const latestHashesSpy = vi.spyOn(entryRepo, 'findLatestSourceHashes');
+    const findByHashSpy = vi.spyOn(entryRepo, 'findSourceRefsByHash');
+
     const result = await wiki.hasChanged('entity-1', []);
     expect(result).toEqual([]);
-    // Sanity: synchronous, no awaits
-    expect(Date.now() - t0).toBeLessThan(50);
+
+    // Strict guard: empty input must short-circuit before any repo call.
+    expect(latestHashesSpy).not.toHaveBeenCalled();
+    expect(findByHashSpy).not.toHaveBeenCalled();
   });
 
   it('marks changed: true when no live row exists for the ref', async () => {

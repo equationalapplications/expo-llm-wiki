@@ -92,6 +92,40 @@ describe('MaintenanceService.forget({ dryRun: true })', () => {
     const result = await wiki.forget('entity-1', { sourceRef: 'no-such.md' }, { dryRun: true });
     expect(result).toEqual({ deleted: { entries: 0, tasks: 0 } });
   });
+
+  it('with no selectors returns 0/0, matching the real call’s no-op (regression guard: must not silently report all live entries)', async () => {
+    const { wiki, db } = await makeWiki();
+    await insertEntry(db, { id: 'f1', sourceRef: 'a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
+    await insertEntry(db, { id: 'f2', sourceRef: 'a.md', sourceHash: VALID_HASH_A, updatedAt: 1100 });
+    await insertEntry(db, { id: 'f3', sourceRef: 'b.md', sourceHash: VALID_HASH_A, updatedAt: 1200 });
+
+    const dryResult = await wiki.forget('entity-1', {}, { dryRun: true });
+    expect(dryResult).toEqual({ deleted: { entries: 0, tasks: 0 } });
+
+    const realResult = await wiki.forget('entity-1', {});
+    expect(realResult).toEqual({ deleted: { entries: 0, tasks: 0 } });
+
+    // And the rows must remain live after the real call.
+    const rows = await db.getAllAsync<{ deleted_at: number | null }>(
+      `SELECT deleted_at FROM llm_wiki_entries WHERE entity_id = ?`,
+      ['entity-1'],
+    );
+    expect(rows.every(r => r.deleted_at === null)).toBe(true);
+  });
+
+  it('rejects entryId selectors with a clear error', async () => {
+    const { wiki } = await makeWiki();
+    await expect(
+      wiki.forget('entity-1', { entryId: 'fact_1' }, { dryRun: true }),
+    ).rejects.toThrow(/entryId\/taskId/);
+  });
+
+  it('rejects taskId selectors with a clear error', async () => {
+    const { wiki } = await makeWiki();
+    await expect(
+      wiki.forget('entity-1', { taskId: 'task_1' }, { dryRun: true }),
+    ).rejects.toThrow(/entryId\/taskId/);
+  });
 });
 
 describe('MaintenanceService.forget — real call metadataReset', () => {

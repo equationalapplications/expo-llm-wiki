@@ -297,14 +297,17 @@ export class WikiMemory {
     });
 
     // 1 + H SQL queries: one batched latest-hash lookup, plus one findSourceRefsByHash
-    // per distinct input hash.
+    // per distinct input hash. Lookups are issued in parallel — the bound is the
+    // SQL-query count, not the await count.
     const latestHashes = await this.entryRepo.findLatestSourceHashes(entityId, normalized.map(e => e.sourceRef));
 
     const distinctHashes = Array.from(new Set(normalized.map(e => e.sourceHash)));
+    const dupRefs = await Promise.all(
+      distinctHashes.map(h => this.entryRepo.findSourceRefsByHash(entityId, h)),
+    );
     const dupMap = new Map<string, string[]>(); // hash -> refs (DB-side refs, possibly normalized)
-    for (const h of distinctHashes) {
-      const refs = await this.entryRepo.findSourceRefsByHash(entityId, h);
-      dupMap.set(h, refs);
+    for (let i = 0; i < distinctHashes.length; i++) {
+      dupMap.set(distinctHashes[i], dupRefs[i]);
     }
 
     return normalized.map(e => {
