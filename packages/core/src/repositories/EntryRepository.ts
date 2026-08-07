@@ -831,6 +831,61 @@ export class EntryRepository extends BaseRepository {
     return row?.source_hash ?? null;
   }
 
+  /**
+   * Per-sourceRef rollup for an entity: one row per live source_ref, with the
+   * most-recently-updated live hash (NOT the lexically-max hash) and a live
+   * fact count.
+   *
+   * The hash comes from the same row that wins ROW_NUMBER() over updated_at
+   * DESC, so a ref with multiple live hashes (e.g. from import) reports the
+   * latest one — matching single-doc `findLatestSourceHash` semantics.
+   *
+   * Sort is COLLATE BINARY: locale-dependent ordering re-mints identity on
+   * every deploy, which is the bug this whole section exists to prevent.
+   */
+  async listSourceRefs(
+    entityId: string,
+    tx?: SQLiteAdapter,
+  ): Promise<Array<{
+    sourceRef: string;
+    sourceHash: string | null;
+    factCount: number;
+    lastIngestedAt: number;
+  }>> {
+    const executor = this.getExecutor(tx);
+    const rows = await executor.getAllAsync<{
+      source_ref: string;
+      source_hash: string | null;
+      fact_count: number;
+      last_ingested_at: number;
+    }>(
+      `WITH ranked AS (
+         SELECT source_ref, source_hash, updated_at,
+                ROW_NUMBER() OVER (
+                  PARTITION BY source_ref
+                  ORDER BY updated_at DESC
+                ) AS rn,
+                COUNT(*) OVER (PARTITION BY source_ref) AS fact_count
+         FROM ${this.prefix}entries
+         WHERE entity_id = ? AND deleted_at IS NULL AND source_ref IS NOT NULL
+       )
+       SELECT source_ref,
+              source_hash       AS source_hash,
+              fact_count        AS fact_count,
+              updated_at        AS last_ingested_at
+       FROM ranked
+       WHERE rn = 1
+       ORDER BY source_ref COLLATE BINARY`,
+      [entityId],
+    );
+    return rows.map(r => ({
+      sourceRef: r.source_ref,
+      sourceHash: r.source_hash,
+      factCount: Number(r.fact_count),
+      lastIngestedAt: Number(r.last_ingested_at),
+    }));
+  }
+
   async findMetadataByIds(ids: readonly string[], tx?: SQLiteAdapter): Promise<EntryRowMetadata[]> {
     if (ids.length === 0) return [];
     const executor = this.getExecutor(tx);
