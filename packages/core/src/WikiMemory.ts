@@ -398,8 +398,12 @@ export class WikiMemory {
     return this.importExportService.importDump(dump, opts);
   }
 
-  async forget(entityId: string, params: { entryId?: string; taskId?: string; sourceRef?: string; sourceHash?: string; clearAll?: boolean }): Promise<{ deleted: { entries: number; tasks: number } }> {
-    return this.maintenanceService.forget(entityId, params);
+  async forget(
+    entityId: string,
+    params: { entryId?: string; taskId?: string; sourceRef?: string; sourceHash?: string; clearAll?: boolean },
+    opts?: { dryRun?: boolean },
+  ): Promise<{ deleted: { entries: number; tasks: number }; metadataReset?: boolean }> {
+    return this.maintenanceService.forget(entityId, params, opts);
   }
 
   /**

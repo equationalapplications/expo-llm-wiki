@@ -886,6 +886,40 @@ export class EntryRepository extends BaseRepository {
     }));
   }
 
+  /**
+   * Count live entries for an entity across all source_refs/source_hashes.
+   * Used by forget({ dryRun, clearAll: true }).
+   */
+  async countLiveByEntityId(entityId: string, tx?: SQLiteAdapter): Promise<number> {
+    const executor = this.getExecutor(tx);
+    const row = await executor.getFirstAsync<{ cnt: number }>(
+      `SELECT COUNT(*) AS cnt FROM ${this.prefix}entries
+     WHERE entity_id = ? AND deleted_at IS NULL`,
+      [entityId],
+    );
+    return row?.cnt ?? 0;
+  }
+
+  /**
+   * Count live entries matching a source filter (either or both may be null).
+   * Used by forget({ dryRun: true }) with sourceRef/sourceHash.
+   */
+  async countLiveBySource(
+    entityId: string,
+    sourceRef: string | null,
+    sourceHash: string | null,
+    tx?: SQLiteAdapter,
+  ): Promise<number> {
+    const executor = this.getExecutor(tx);
+    let q = `SELECT COUNT(*) AS cnt FROM ${this.prefix}entries
+           WHERE entity_id = ? AND deleted_at IS NULL`;
+    const args: unknown[] = [entityId];
+    if (sourceRef !== null) { q += ` AND source_ref = ?`; args.push(sourceRef); }
+    if (sourceHash !== null) { q += ` AND source_hash = ?`; args.push(sourceHash); }
+    const row = await executor.getFirstAsync<{ cnt: number }>(q, args);
+    return row?.cnt ?? 0;
+  }
+
   async findMetadataByIds(ids: readonly string[], tx?: SQLiteAdapter): Promise<EntryRowMetadata[]> {
     if (ids.length === 0) return [];
     const executor = this.getExecutor(tx);

@@ -294,4 +294,17 @@ export class TaskRepository extends BaseRepository {
     }
     return result.changes;
   }
+
+  /**
+   * Count live tasks for an entity. Used by forget({ dryRun, clearAll: true }).
+   */
+  async countLiveByEntityId(entityId: string, tx?: SQLiteAdapter): Promise<number> {
+    const executor = this.getExecutor(tx);
+    const row = await executor.getFirstAsync<{ cnt: number }>(
+      `SELECT COUNT(*) AS cnt FROM ${this.prefix}tasks
+     WHERE entity_id = ? AND deleted_at IS NULL`,
+      [entityId],
+    );
+    return row?.cnt ?? 0;
+  }
 }

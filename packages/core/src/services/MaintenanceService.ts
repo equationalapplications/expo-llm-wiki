@@ -265,9 +265,18 @@ export class MaintenanceService {
     }
   }
 
-  async forget(entityId: string, params: { entryId?: string; taskId?: string; sourceRef?: string; sourceHash?: string; clearAll?: boolean }): Promise<{ deleted: { entries: number; tasks: number } }> {
+  async forget(
+    entityId: string,
+    params: { entryId?: string; taskId?: string; sourceRef?: string; sourceHash?: string; clearAll?: boolean },
+    opts?: { dryRun?: boolean },
+  ): Promise<{ deleted: { entries: number; tasks: number }; metadataReset?: boolean }> {
     if (params.clearAll && (params.entryId !== undefined || params.taskId !== undefined || params.sourceRef !== undefined || params.sourceHash !== undefined)) {
       throw new Error('forget() clearAll is mutually exclusive with entryId, taskId, sourceRef, and sourceHash');
+    }
+
+    // Dry-run: read-only, no lock, no outbox events, no embedding hooks.
+    if (opts?.dryRun === true) {
+      return this.forgetDryRun(entityId, params);
     }
 
     this.jobManager.acquireLock('forget', entityId);
@@ -347,6 +356,42 @@ export class MaintenanceService {
     } finally {
       this.jobManager.releaseLock('forget', entityId);
     }
+  }
+
+  /**
+   * Read-only dry-run preview of {@link forget}. Returns the same shape as a
+   * real call would, without acquiring the lock, opening a transaction, staging
+   * outbox events, or firing embedding hooks. Counts may be off-by-N during a
+   * concurrent real forget — this is accepted, not considered a bug.
+   *
+   * `metadataReset` mirrors the real call: only `clearAll: true` returns true,
+   * because only `clearAll` actually resets the metadata checkpoint.
+   * `standard` (sourceRef/sourceHash) returns no metadataReset field, just like
+   * the real call. `entryId`/`taskId` selectors are rejected with a clear error
+   * (the spec keeps dry-run narrow).
+   */
+  private async forgetDryRun(
+    entityId: string,
+    params: { entryId?: string; taskId?: string; sourceRef?: string; sourceHash?: string; clearAll?: boolean },
+  ): Promise<{ deleted: { entries: number; tasks: number }; metadataReset?: boolean }> {
+    if (params.entryId || params.taskId) {
+      throw new Error('forget({ dryRun: true }) does not support entryId/taskId selectors; use sourceRef/sourceHash or clearAll');
+    }
+
+    if (params.clearAll) {
+      const entries = await this.entryRepo.countLiveByEntityId(entityId);
+      const tasks = await this.taskRepo.countLiveByEntityId(entityId);
+      return { deleted: { entries, tasks }, metadataReset: true };
+    }
+
+    const sourceRef = params.sourceRef !== undefined ? normalizeSourceRef(params.sourceRef) : null;
+    if (params.sourceRef !== undefined && !sourceRef) throw new Error('Invalid sourceRef');
+
+    const sourceHash = params.sourceHash !== undefined ? normalizeSourceHash(params.sourceHash) : null;
+    if (params.sourceHash !== undefined && !sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
+
+    const entries = await this.entryRepo.countLiveBySource(entityId, sourceRef, sourceHash);
+    return { deleted: { entries, tasks: 0 } };
   }
 
   /** Core librarian pass (locks handled by {@link runLibrarian}). Package-internal orchestration hook. */
