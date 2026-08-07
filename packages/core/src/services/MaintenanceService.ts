@@ -623,17 +623,23 @@ export class MaintenanceService {
     // duplicates a librarian_inferred fact outside the window pass the Jaccard
     // check — and a convergence loop would then multiply those duplicates.
     //
-    // Read before the transaction soft-deletes safeDeleted, so rows this pass
-    // retires are still in it. Filtered out here: delete-plus-restate is heal's
-    // normal output shape, and matching a replacement against the row it
-    // replaces would drop the replacement and leave the fact gone entirely.
-    const healFactsForDedupe: Array<{ id: string; title: string }> =
-      (await this.entryRepo.findInferredTitlesByEntityId(entityId))
-        .filter(f => !safeDeletedSet.has(f.id));
-
+    // Read inside the transaction, after softDeleteByIds. The query filters
+    // deleted_at IS NULL, so rows this pass retires leave the corpus naturally
+    // — no explicit safeDeletedSet filter needed. Ordering is load-bearing:
+    // the read must follow softDeleteByIds, or a delete-plus-restate (heal's
+    // normal output shape) would match the replacement against the row it
+    // replaces, drop the replacement, and leave the fact gone entirely (#68).
+    // Reading inside the transaction also closes the race with concurrent
+    // librarian passes (#69): withSerializedTransactions ensures a librarian
+    // transaction either commits entirely before this transaction begins or
+    // entirely after it ends, so there is no interleaving point at which a
+    // librarian insert could land unseen.
     await this.db.withTransactionAsync(async (tx) => {
       await this.entryRepo.downgradeByIds(safeDowngraded, entityId, tx);
       await this.entryRepo.softDeleteByIds(safeDeleted, entityId, tx);
+
+      const healFactsForDedupe: Array<{ id: string; title: string }> =
+        await this.entryRepo.findInferredTitlesByEntityId(entityId, tx);
 
       for (const fact of validNewFacts) {
         const newTokens = titleTokens(fact.title);

@@ -194,9 +194,9 @@ describe('doRunHeal — per-pass call bounding (#67)', () => {
 
   it('does not dedupe a replacement against the fact deleted in the same pass', async () => {
     // Delete-plus-replace is the shape heal is built for: the model retires a
-    // stale fact and restates it. The dedupe corpus is read before the pass's
-    // own soft-deletes land, so the retired row must be excluded explicitly or
-    // its replacement is dropped as a duplicate of a row that no longer exists.
+    // stale fact and restates it. The dedupe corpus is read after the pass's
+    // own soft-deletes land, so the retired row leaves the corpus via the
+    // deleted_at IS NULL filter and its replacement is not falsely matched.
     const generateText = vi.fn(async () => JSON.stringify({
       downgraded: [],
       deleted: ['stale'],
@@ -240,5 +240,71 @@ describe('doRunHeal — per-pass call bounding (#67)', () => {
 
     expect(result.skipped).toBe(2);
     expect(result.scanned).toBe(2);
+  });
+
+  it('does not insert a duplicate when a librarian pass commits right before heal opens its transaction', async () => {
+    // Heal reads its dedupe corpus inside its serialized write transaction
+    // (after same-pass soft-deletes). Because transactions are globally
+    // serialized, a librarian insert that commits before heal's transaction
+    // begins is guaranteed to be visible to heal's dedupe check — there is no
+    // interleaving point at which a librarian insert could land unseen.
+    //
+    // We simulate that librarian pass by inserting a matching fact directly
+    // before heal runs. To reproduce the pre-fix race, we spy on
+    // findInferredTitlesByEntityId so the pre-transaction read (the unfixed
+    // path, called without a tx) returns a stale snapshot that omits the
+    // librarian fact — as if the librarian committed after that read. The
+    // fixed path reads inside the transaction (called with tx), so the real
+    // query sees the librarian fact and heal must skip creating its own.
+    const generateText = vi.fn(async () => JSON.stringify({
+      downgraded: [],
+      deleted: [],
+      newFacts: [{
+        title: 'concurrent race test title',
+        body: 'heal body',
+        tags: [],
+        confidence: 'inferred',
+      }],
+    }));
+
+    const { db, wiki } = await makeHealWiki(generateText);
+    await seedFact(db, { id: 'c0', updatedAt: 1000 });
+    // Independent librarian insert that commits before heal's transaction.
+    await seedFact(db, {
+      id: 'fact_lib_1',
+      title: 'concurrent race test title',
+      body: 'librarian body',
+      updatedAt: 2000,
+    });
+
+    const entryRepo = wiki.__testAccess.entryRepo;
+    const originalFind = entryRepo.findInferredTitlesByEntityId.bind(entryRepo);
+
+    vi.spyOn(entryRepo, 'findInferredTitlesByEntityId').mockImplementation(
+      async (entityId: string, tx?: any) => {
+        if (!tx) {
+          // Pre-transaction read (unfixed path): return a stale snapshot that
+          // omits the already-committed librarian fact.
+          return [];
+        }
+        // Inside-transaction read (fixed path): do the real query, which sees
+        // fact_lib_1 because it committed before this transaction began.
+        return originalFind(entityId, tx);
+      },
+    );
+
+    await wiki.runHeal('e1', { batchSize: 1 });
+
+    // fact_lib_1 remains live (heal did not delete it)...
+    const libRows = await db.getAllAsync<{ c: number }>(
+      `SELECT COUNT(*) AS c FROM ${PREFIX}entries
+       WHERE id = 'fact_lib_1' AND deleted_at IS NULL`);
+    expect(libRows[0].c).toBe(1);
+
+    // ...and heal created zero matching facts of its own.
+    const rows = await db.getAllAsync<{ c: number }>(
+      `SELECT COUNT(*) AS c FROM ${PREFIX}entries
+       WHERE title = 'concurrent race test title' AND deleted_at IS NULL`);
+    expect(rows[0].c).toBe(1);
   });
 });

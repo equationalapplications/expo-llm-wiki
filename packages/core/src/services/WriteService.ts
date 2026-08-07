@@ -116,9 +116,13 @@ export class WriteService {
       // librarian threshold crossing (another autoLibrarianThreshold events),
       // or forever if no further librarian pass runs.
       //
-      // Guarded by isBlocked('librarian') so heal still never overlaps a
-      // librarian pass, and by tryAcquireAutoHealLock inside maybeRunHeal so a
-      // burst of writes cannot stack passes.
+      // heal and librarian can overlap (deliberate mutex split in
+      // JobManager.acquireLock). This check only reduces redundant passes — a
+      // librarian pass already calls maybeRunHeal when it finishes, so losing
+      // the race costs a duplicate pass, not correctness. Correctness rests on
+      // heal's dedupe read being inside its transaction (#69).
+      // tryAcquireAutoHealLock inside maybeRunHeal prevents a burst of writes
+      // from stacking passes.
       this.maybeRunHeal(entityId, eventCount).catch(console.error);
     }
   }
