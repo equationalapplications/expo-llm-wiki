@@ -832,6 +832,49 @@ export class EntryRepository extends BaseRepository {
   }
 
   /**
+   * Batch version of {@link findLatestSourceHash}. Returns a Map covering every
+   * requested ref, where the value is the source_hash from the row with the
+   * most-recently-updated live fact for that ref, or null when no live row exists.
+   *
+   * The SQL uses ROW_NUMBER() OVER (PARTITION BY source_ref ORDER BY updated_at
+   * DESC) — NOT MAX(source_hash). Aggregation with MAX(source_hash) is wrong
+   * because MAX computes independently across grouped rows; the hash must come
+   * from the exact row that wins MAX(updated_at). This matters when one ref has
+   * multiple live hashes (the import-path anomaly).
+   *
+   * Empty input is a synchronous early return with zero SQL calls.
+   */
+  async findLatestSourceHashes(
+    entityId: string,
+    sourceRefs: readonly string[],
+    tx?: SQLiteAdapter,
+  ): Promise<Map<string, string | null>> {
+    if (sourceRefs.length === 0) return new Map();
+    const executor = this.getExecutor(tx);
+    const placeholders = sourceRefs.map(() => '?').join(',');
+    const rows = await executor.getAllAsync<{ source_ref: string; source_hash: string | null }>(
+      `WITH ranked AS (
+         SELECT source_ref, source_hash,
+                ROW_NUMBER() OVER (
+                  PARTITION BY source_ref
+                  ORDER BY updated_at DESC
+                ) as rn
+         FROM ${this.prefix}entries
+         WHERE entity_id = ? AND source_ref IN (${placeholders}) AND deleted_at IS NULL
+       )
+       SELECT source_ref, source_hash
+       FROM ranked
+       WHERE rn = 1`,
+      [entityId, ...sourceRefs],
+    );
+    const out = new Map<string, string | null>();
+    for (const r of rows) {
+      out.set(r.source_ref, r.source_hash);
+    }
+    return out;
+  }
+
+  /**
    * Return the live source_refs for an entity that hold the given source_hash.
    * Used by the ingestDocument duplicate-hash guard and by hosts auditing
    * duplicate-content collisions. Sorted `COLLATE BINARY` so the canonical
