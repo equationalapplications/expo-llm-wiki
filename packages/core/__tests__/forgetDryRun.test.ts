@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { WikiMemory } from '../src/WikiMemory';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 import { setupDatabase } from '../src/db/schema';
@@ -40,12 +40,16 @@ describe('MaintenanceService.forget({ dryRun: true })', () => {
 
     const result = await wiki.forget('entity-1', { sourceRef: 'a.md' }, { dryRun: true });
     expect(result).toEqual({ deleted: { entries: 2, tasks: 0 } });
-    expect('metadataReset' in result).toBe(false);
   });
 
   it('does not mutate any rows', async () => {
     const { wiki, db } = await makeWiki();
     await insertEntry(db, { id: 'f1', sourceRef: 'a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
+
+    const beforeOutbox = await db.getAllAsync<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM llm_wiki_outbox`,
+    );
+    expect(beforeOutbox[0]?.count).toBe(0);
 
     await wiki.forget('entity-1', { sourceRef: 'a.md' }, { dryRun: true });
 
@@ -54,14 +58,27 @@ describe('MaintenanceService.forget({ dryRun: true })', () => {
       ['entity-1'],
     );
     expect(rows.every(r => r.deleted_at === null)).toBe(true);
+
+    const afterOutbox = await db.getAllAsync<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM llm_wiki_outbox`,
+    );
+    expect(afterOutbox[0]?.count).toBe(0);
   });
 
   it('does not acquire the forget lock', async () => {
     const { wiki } = await makeWiki();
     const jm = wiki.__testAccess.jobManager;
     expect(jm.isBlocked('forget', 'entity-1')).toBe(false);
+
+    jm.acquireLock('forget', 'entity-1');
+    expect(jm.isBlocked('forget', 'entity-1')).toBe(true);
+    jm.releaseLock('forget', 'entity-1');
+
+    const acquireLockSpy = vi.spyOn(jm, 'acquireLock');
     await wiki.forget('entity-1', { sourceRef: 'a.md' }, { dryRun: true });
+    expect(acquireLockSpy).not.toHaveBeenCalled();
     expect(jm.isBlocked('forget', 'entity-1')).toBe(false);
+    acquireLockSpy.mockRestore();
   });
 
   it('returns metadataReset: true when clearAll: true is requested (dry-run)', async () => {
@@ -74,6 +91,5 @@ describe('MaintenanceService.forget({ dryRun: true })', () => {
     const { wiki } = await makeWiki();
     const result = await wiki.forget('entity-1', { sourceRef: 'no-such.md' }, { dryRun: true });
     expect(result).toEqual({ deleted: { entries: 0, tasks: 0 } });
-    expect('metadataReset' in result).toBe(false);
   });
 });

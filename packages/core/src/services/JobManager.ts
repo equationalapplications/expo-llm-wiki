@@ -245,6 +245,47 @@ export class JobManager {
                this._isIngestActiveFor(entityId) ||
                this._isImportActiveFor(entityId) ||
                this._isForgetActiveFor(entityId);
+      case 'reembed':
+        return this.activeMaintenanceJobs.has(this._reembedKey(entityId)) ||
+               this.activeMaintenanceJobs.has(this._globalReembedKey()) ||
+               this.activeMaintenanceJobs.has(this._pruneKey(entityId)) ||
+               this.activeMaintenanceJobs.has(this._librarianKey(entityId)) ||
+               this.activeMaintenanceJobs.has(this._healKey(entityId)) ||
+               this.activeMaintenanceJobs.has(this._ontologyBackfillKey(entityId)) ||
+               this._isIngestActiveFor(entityId) ||
+               this._isImportActiveFor(entityId) ||
+               this._isForgetActiveFor(entityId);
+      case 'global_reembed':
+        return this.activeMaintenanceJobs.has(this._globalReembedKey()) ||
+               this._isAnyMaintenanceActiveWithSuffix(':reembed') ||
+               this._isAnyMaintenanceActiveWithSuffix(':prune') ||
+               this._isAnyMaintenanceActiveWithSuffix(':librarian') ||
+               this._isAnyMaintenanceActiveWithSuffix(':heal') ||
+               this._isAnyMaintenanceActiveWithSuffix(':ontologyBackfill') ||
+               this.activeIngestJobs.size > 0 ||
+               this._isAnyMaintenanceActiveWithSuffix(':import') ||
+               this._isAnyMaintenanceActiveWithSuffix(':forget');
+      case 'import':
+      case 'forget': {
+        const selfKey = operation === 'import' ? this._importKey(entityId) : this._forgetKey(entityId);
+        return this.activeMaintenanceJobs.has(selfKey) ||
+               this.activeMaintenanceJobs.has(this._librarianKey(entityId)) ||
+               this.activeMaintenanceJobs.has(this._healKey(entityId)) ||
+               this.activeMaintenanceJobs.has(this._ontologyBackfillKey(entityId)) ||
+               this.activeMaintenanceJobs.has(this._pruneKey(entityId)) ||
+               this._isReembedActive(entityId) ||
+               this._isIngestActiveFor(entityId) ||
+               this._isImportActiveFor(entityId) ||
+               this._isForgetActiveFor(entityId);
+      }
+      case 'global_import':
+        return this.activeMaintenanceJobs.has(this._globalImportKey());
+      case 'ingest':
+        return this._hasIngestJob(entityId) ||
+               this.activeMaintenanceJobs.has(this._pruneKey(entityId)) ||
+               this._isReembedActive(entityId) ||
+               this._isImportActiveFor(entityId) ||
+               this._isForgetActiveFor(entityId);
       default:
         return false;
     }
