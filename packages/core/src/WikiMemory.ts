@@ -266,6 +266,22 @@ export class WikiMemory {
     return normalizedStoredHash !== normalizedHash;
   }
 
+  /**
+   * Returns the live source_refs for an entity, one row per ref, with the most
+   * recently-updated live `source_hash` and a live fact count. Refs are sorted
+   * `COLLATE BINARY` (no locale dependency). Used by hosts to reconcile stored
+   * state against a live source, or audit duplicate-hash collisions via
+   * `findSourceRefsByHash`.
+   */
+  async listSourceRefs(entityId: string): Promise<Array<{
+    sourceRef: string;
+    sourceHash: string | null;
+    factCount: number;
+    lastIngestedAt: number;
+  }>> {
+    return this.entryRepo.listSourceRefs(entityId);
+  }
+
   async runPrune(
     entityId: string,
     options?: {

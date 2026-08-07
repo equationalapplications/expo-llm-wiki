@@ -102,3 +102,22 @@ describe('EntryRepository.listSourceRefs', () => {
     expect(out.map(r => r.sourceRef)).toEqual(['Z.md', 'a.md']);
   });
 });
+
+describe('WikiMemory.listSourceRefs – cross-method consistency', () => {
+  it('sourceHash matches single-doc findLatestSourceHash for every ref (regression guard against MAX(source_hash) anti-pattern)', async () => {
+    const { wiki, db } = await makeWiki();
+    // Ref "a.md" has two live hashes (the same anomaly the import path produces).
+    const lexLarger = 'f'.repeat(64);
+    await insertEntry(db, { id: 'f1', sourceRef: 'a.md', sourceHash: lexLarger, updatedAt: 1000 });
+    await insertEntry(db, { id: 'f2', sourceRef: 'a.md', sourceHash: VALID_HASH_B, updatedAt: 1100 });
+    await insertEntry(db, { id: 'f3', sourceRef: 'b.md', sourceHash: VALID_HASH_A, updatedAt: 1200 });
+
+    const refs = await wiki.listSourceRefs('entity-1');
+    expect(refs).toHaveLength(2);
+
+    for (const row of refs) {
+      const latestHash = await wiki.__testAccess.entryRepo.findLatestSourceHash('entity-1', row.sourceRef);
+      expect(row.sourceHash).toBe(latestHash);
+    }
+  });
+});
