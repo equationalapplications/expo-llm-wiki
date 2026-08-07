@@ -282,6 +282,16 @@ export class WikiMemory {
     return this.entryRepo.listSourceRefs(entityId);
   }
 
+  /**
+   * Returns the live source_refs for an entity that hold the given source_hash,
+   * sorted `COLLATE BINARY` ascending. The first element is the canonical ref
+   * under the code-unit-minimum rule (no locale dependency). Used by the
+   * ingestDocument guard and by hosts auditing duplicate-content collisions.
+   */
+  async findSourceRefsByHash(entityId: string, sourceHash: string): Promise<string[]> {
+    return this.entryRepo.findSourceRefsByHash(entityId, sourceHash);
+  }
+
   async runPrune(
     entityId: string,
     options?: {
