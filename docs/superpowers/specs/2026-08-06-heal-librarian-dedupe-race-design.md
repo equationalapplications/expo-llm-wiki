@@ -1,7 +1,7 @@
 # Spec: Heal/Librarian Dedupe Race
 
 **Date:** 2026-08-06
-**Status:** Approved, not implemented
+**Status:** Implemented
 **Issue:** [#69](https://github.com/equationalapplications/expo-llm-wiki/issues/69)
 **Packages:** `@eq/wiki-core`
 
