@@ -55,6 +55,8 @@ export class IngestionService {
     const onDuplicateHash = opts?.onDuplicateHash ?? 'ingest';
     if (onDuplicateHash !== 'ingest') {
       const refs = await this.entryRepo.findSourceRefsByHash(entityId, sourceHash);
+      // Exclude the incoming ref so the canonical is computed from the universe of OTHER refs;
+      // the incoming ref is then re-added below before sorting to make it a candidate too.
       const others = refs.filter(r => r !== sourceRef);
       if (others.length > 0) {
         // Canonical: code-unit-minimum of the set including the incoming ref.

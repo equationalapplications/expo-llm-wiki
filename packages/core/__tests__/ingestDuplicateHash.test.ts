@@ -52,6 +52,7 @@ describe('IngestionService.ingestDocument duplicate-hash guard', () => {
 
     const spy = vi.spyOn(wiki.__testAccess.ingestionService['options']['llmProvider'], 'generateText');
     const entriesBefore = await db.getAllAsync<{ id: string }>(`SELECT id FROM llm_wiki_entries WHERE entity_id = ?`, ['entity-1']);
+    const outboxBefore = await db.getAllAsync<{ id: string }>(`SELECT id FROM llm_wiki_outbox`);
 
     const result = await wiki.ingestDocument(
       'entity-1',
@@ -63,6 +64,8 @@ describe('IngestionService.ingestDocument duplicate-hash guard', () => {
     expect(spy).not.toHaveBeenCalled();
     const entriesAfter = await db.getAllAsync<{ id: string }>(`SELECT id FROM llm_wiki_entries WHERE entity_id = ?`, ['entity-1']);
     expect(entriesAfter).toHaveLength(entriesBefore.length);
+    const outboxAfter = await db.getAllAsync<{ id: string }>(`SELECT id FROM llm_wiki_outbox`);
+    expect(outboxAfter).toHaveLength(outboxBefore.length);
   });
 
   it("onDuplicateHash='skip' returns synchronously without a microtask deferral", async () => {
@@ -74,9 +77,8 @@ describe('IngestionService.ingestDocument duplicate-hash guard', () => {
       { sourceRef: 'mail/sent/a.md', sourceHash: VALID_HASH_A, documentChunk: 'hello' },
       { onDuplicateHash: 'skip' },
     );
-    await Promise.resolve();
-    const result = await returned;
-    expect(result.duplicateOf).toBe('mail/inbox/a.md');
+    const raceResult = await Promise.race([returned, Promise.resolve('pending')]);
+    expect(raceResult).toEqual({ truncated: false, chunks: 0, duplicateOf: 'mail/inbox/a.md' });
   });
 
   it("onDuplicateHash='throw' throws WikiDuplicateHashError", async () => {
@@ -134,6 +136,7 @@ describe('IngestionService.ingestDocument duplicate-hash guard', () => {
       { onDuplicateHash: 'skip' },
     );
     expect(result.duplicateOf).toBeUndefined();
+    expect(result.chunks).toBeGreaterThan(0);
   });
 
   it('Soft-deleted row does NOT fire the guard', async () => {
