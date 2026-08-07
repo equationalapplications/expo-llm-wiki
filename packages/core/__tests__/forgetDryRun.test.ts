@@ -93,3 +93,22 @@ describe('MaintenanceService.forget({ dryRun: true })', () => {
     expect(result).toEqual({ deleted: { entries: 0, tasks: 0 } });
   });
 });
+
+describe('MaintenanceService.forget — real call metadataReset', () => {
+  it('returns metadataReset: true when clearAll is invoked (real call)', async () => {
+    const { wiki, db } = await makeWiki();
+    await insertEntry(db, { id: 'f1', sourceRef: 'a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
+
+    const result = await wiki.forget('entity-1', { clearAll: true });
+    expect(result).toEqual({ deleted: { entries: 1, tasks: 0 }, metadataReset: true });
+  });
+
+  it('returns NO metadataReset field for standard forget', async () => {
+    const { wiki, db } = await makeWiki();
+    await insertEntry(db, { id: 'f1', sourceRef: 'a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
+
+    const result = await wiki.forget('entity-1', { sourceRef: 'a.md' });
+    expect(result).toEqual({ deleted: { entries: 1, tasks: 0 } });
+    expect('metadataReset' in result).toBe(false);
+  });
+});

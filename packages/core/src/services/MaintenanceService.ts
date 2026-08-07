@@ -352,7 +352,9 @@ export class MaintenanceService {
         }
       }
 
-      return { deleted: { entries: deletedEntries, tasks: deletedTasks } };
+      return params.clearAll
+        ? { deleted: { entries: deletedEntries, tasks: deletedTasks }, metadataReset: true }
+        : { deleted: { entries: deletedEntries, tasks: deletedTasks } };
     } finally {
       this.jobManager.releaseLock('forget', entityId);
     }
