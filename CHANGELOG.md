@@ -1,3 +1,27 @@
+# [5.2.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v5.1.1...v5.2.0) (2026-08-07)
+
+
+### Bug Fixes
+
+* **core:** address source-ref-lifecycle CodeRabbit review ([e4c40b2](https://github.com/equationalapplications/expo-llm-wiki/commit/e4c40b2a305ebc9bf081558427589fc9afe7fb3a))
+* **core:** address source-ref-lifecycle Copilot review ([0bdb0e2](https://github.com/equationalapplications/expo-llm-wiki/commit/0bdb0e25463e0721cc0b29a5224e606b642afc8a))
+* **core:** make isBlocked cover forget/import/ingest so lock-test assertions are meaningful ([5af5e3f](https://github.com/equationalapplications/expo-llm-wiki/commit/5af5e3fa65406d827c796d5203bc1a8617273405))
+* **core:** tighten onDuplicateHash skip regression guards (Promise.race + outbox check) ([574d348](https://github.com/equationalapplications/expo-llm-wiki/commit/574d3486accd382963441e6ee02a83dc2c4bbeb2))
+* **core:** tighten source-ref-lifecycle surface per review ([41a8f34](https://github.com/equationalapplications/expo-llm-wiki/commit/41a8f347c2050cd6bd32985b2cd53c45f1cdc57b))
+* listSourceRefs SQL — hash from MAX(updated_at) row, not MAX(hash) ([d6bc3c9](https://github.com/equationalapplications/expo-llm-wiki/commit/d6bc3c9f6c7a3814535ab2b76a62da08c941a7b9))
+
+
+### Features
+
+* **core:** add batched hasChanged overload ([e324a1b](https://github.com/equationalapplications/expo-llm-wiki/commit/e324a1baf206c7a4211725c7532796c64e73aea6))
+* **core:** add EntryRepository.findLatestSourceHashes (ROW_NUMBER() shape) ([a5b0de4](https://github.com/equationalapplications/expo-llm-wiki/commit/a5b0de407f6a6de12745f220f28bb23552847665))
+* **core:** add EntryRepository.listSourceRefs with ROW_NUMBER() shape ([e949937](https://github.com/equationalapplications/expo-llm-wiki/commit/e949937bd93bb1c58adc706c033219d5e41eab6c))
+* **core:** add forget({ dryRun: true }) read-only preview path ([cd8b20f](https://github.com/equationalapplications/expo-llm-wiki/commit/cd8b20f63259b9de87dced20af9a3bf187f649ab))
+* **core:** add onDuplicateHash guard to ingestDocument ([50b72a1](https://github.com/equationalapplications/expo-llm-wiki/commit/50b72a104fc32b63a0d157567a59932ee69ebd50))
+* **core:** expose WikiMemory.findSourceRefsByHash facade ([f745021](https://github.com/equationalapplications/expo-llm-wiki/commit/f74502161f040329c1a4a94f9a1418720b885bd0))
+* **core:** expose WikiMemory.listSourceRefs facade ([e649cd2](https://github.com/equationalapplications/expo-llm-wiki/commit/e649cd228b285ded638c85ec408ea3a9888804da))
+* **core:** widen forget opts bag and return metadataReset on clearAll ([9723ad2](https://github.com/equationalapplications/expo-llm-wiki/commit/9723ad2dc0b4d75fd8afc9833b41f90af7922e57))
+
 ## [5.1.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v5.1.0...v5.1.1) (2026-08-07)
 
 
