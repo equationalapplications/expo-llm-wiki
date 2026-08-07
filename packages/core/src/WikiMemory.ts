@@ -256,6 +256,16 @@ export class WikiMemory {
     sourceRef: string,
     sourceHash: string,
   ): Promise<boolean>;
+  /**
+   * Batched overload.
+   *
+   * `duplicateOf`, when present, is the canonical stored DIFFERENT `source_ref`
+   * holding the same hash — never the incoming ref itself (the incoming ref is
+   * excluded from the canonical-sort set so a self-reference is impossible).
+   * `duplicateOf` reflects the *DB-side* normalized spelling; `sourceRef` in
+   * each result echoes the raw caller value. Hosts should not compare these
+   * two fields directly to infer canonical status.
+   */
   async hasChanged(
     entityId: string,
     entries: Array<{ sourceRef: string; sourceHash: string }>,
@@ -318,8 +328,9 @@ export class WikiMemory {
       if (others.length === 0) {
         return { sourceRef: e.rawSourceRef, changed };
       }
-      // Canonical: code-unit-minimum of the set including the incoming ref.
-      const canonical = [e.sourceRef, ...others].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))[0];
+      // Canonical: code-unit-minimum of the set of stored different refs.
+      // The incoming ref is excluded so duplicateOf never echoes the caller's ref.
+      const canonical = [...others].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))[0];
       return { sourceRef: e.rawSourceRef, changed, duplicateOf: canonical };
     });
   }

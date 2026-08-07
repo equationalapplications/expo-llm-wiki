@@ -55,12 +55,13 @@ export class IngestionService {
     const onDuplicateHash = opts?.onDuplicateHash ?? 'ingest';
     if (onDuplicateHash !== 'ingest') {
       const refs = await this.entryRepo.findSourceRefsByHash(entityId, sourceHash);
-      // Exclude the incoming ref so the canonical is computed from the universe of OTHER refs;
-      // the incoming ref is then re-added below before sorting to make it a candidate too.
+      // Canonical must be a stored DIFFERENT source_ref, never the incoming ref.
+      // Excluding the incoming ref from the sort prevents the canonical from
+      // echoing the caller's own ref when it sorts first.
       const others = refs.filter(r => r !== sourceRef);
       if (others.length > 0) {
-        // Canonical: code-unit-minimum of the set including the incoming ref.
-        const canonical = [sourceRef, ...others].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))[0];
+        // Canonical: code-unit-minimum of the set of stored different refs.
+        const canonical = [...others].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))[0];
         if (onDuplicateHash === 'throw') {
           throw new WikiDuplicateHashError({ canonical, sourceHash, entityId });
         }

@@ -101,6 +101,21 @@ describe('EntryRepository.listSourceRefs', () => {
     const out = await wiki['entryRepo'].listSourceRefs('entity-1');
     expect(out.map(r => r.sourceRef)).toEqual(['Z.md', 'a.md']);
   });
+
+  it('is deterministic when two live rows share updated_at (id ASC tie-break)', async () => {
+    const { wiki, db } = await makeWiki();
+    // Two live rows for the same ref with identical updated_at — the lexically
+    // smaller id should win. Without the explicit `id ASC` tie-break the result
+    // would depend on ROWID insertion order, which is not part of the spec.
+    const lexLarger = 'f'.repeat(64);
+    const lexSmaller = '1'.repeat(64); // lexically smaller than lexLarger, used as the expected winner
+    await insertEntry(db, { id: 'id-z', sourceRef: 'a.md', sourceHash: lexLarger, updatedAt: 1000 });
+    await insertEntry(db, { id: 'id-a', sourceRef: 'a.md', sourceHash: lexSmaller, updatedAt: 1000 });
+
+    const out = await wiki['entryRepo'].listSourceRefs('entity-1');
+    expect(out).toHaveLength(1);
+    expect(out[0].sourceHash).toBe(lexSmaller);
+  });
 });
 
 describe('WikiMemory.listSourceRefs – cross-method consistency', () => {

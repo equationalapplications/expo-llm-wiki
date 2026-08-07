@@ -81,10 +81,10 @@ describe('WikiMemory.hasChanged — batched overload', () => {
       `INSERT INTO llm_wiki_entries (id, entity_id, title, body, tags, confidence, source_type,
         source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ['f1', 'entity-1', 'T', 'B', '[]', 'certain', 'immutable_document', VALID_HASH_A, 'mail/inbox/a.md', 1000, 1000, null, 0, null],
+      ['f1', 'entity-1', 'T', 'B', '[]', 'certain', 'immutable_document', VALID_HASH_A, 'mail-inbox-a.md', 1000, 1000, null, 0, null],
     );
-    const out = await wiki.hasChanged('entity-1', [{ sourceRef: 'mail/sent/a.md', sourceHash: VALID_HASH_A }]);
-    expect(out).toEqual([{ sourceRef: 'mail/sent/a.md', changed: true, duplicateOf: 'mail/inbox/a.md' }]);
+    const out = await wiki.hasChanged('entity-1', [{ sourceRef: 'mail-sent-a.md', sourceHash: VALID_HASH_A }]);
+    expect(out).toEqual([{ sourceRef: 'mail-sent-a.md', changed: true, duplicateOf: 'mail-inbox-a.md' }]);
   });
 
   it('preserves the input order in the result', async () => {
@@ -122,11 +122,14 @@ describe('WikiMemory.hasChanged — batched overload', () => {
       { sourceRef: 'collision.md', sourceHash: VALID_HASH_A },   // unchanged + duplicate self
       { sourceRef: 'both.md', sourceHash: VALID_HASH_A },        // changed + duplicate of collision.md
     ]);
+    // duplicateOf is the code-unit minimum of STORED DIFFERENT refs holding the
+    // same hash; the incoming ref is excluded. 'collision.md' has 'same.md' as
+    // its stored-different duplicate (the incoming ref filters itself out).
     expect(out).toEqual([
       { sourceRef: 'same.md', changed: false, duplicateOf: 'collision.md' },
-      { sourceRef: 'changed.md', changed: true, duplicateOf: 'changed.md' },
-      { sourceRef: 'collision.md', changed: false, duplicateOf: 'collision.md' },
-      { sourceRef: 'both.md', changed: true, duplicateOf: 'both.md' },
+      { sourceRef: 'changed.md', changed: true, duplicateOf: 'collision.md' },
+      { sourceRef: 'collision.md', changed: false, duplicateOf: 'same.md' },
+      { sourceRef: 'both.md', changed: true, duplicateOf: 'collision.md' },
     ]);
   });
 });

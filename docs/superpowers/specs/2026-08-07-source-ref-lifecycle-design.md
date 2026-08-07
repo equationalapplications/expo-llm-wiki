@@ -27,7 +27,9 @@ Three additions to the public `WikiMemory` API, all additive. No schema migratio
 | §2 | `findSourceRefsByHash(entityId, sourceHash)`; `ingestDocument(entityId, params, { onDuplicateHash: 'ingest' \| 'skip' \| 'throw' })` |
 | §3 | `hasChanged` overloaded to accept `Array<{ sourceRef; sourceHash }>` |
 
-**Canonical-selection rule** (used by §2 and §3): when multiple `source_ref`s in one entity share a `source_hash`, the canonical is the **code-unit-minimum** of the set, ordered by `source_ref COLLATE BINARY`. Locale-dependent comparison (`localeCompare`, ICU) is explicitly rejected — a canonical choice that varies by environment re-mints identity on every deploy, which is the original bug with extra steps.
+## Canonical-Selection Rule {#canonical-selection-rule}
+
+**Canonical-selection rule** (used by §2 and §3): when multiple `source_ref`s in one entity share a `source_hash`, the canonical is the **code-unit-minimum** of the set of *stored different* `source_ref`s, ordered by `source_ref COLLATE BINARY`. The incoming `sourceRef` is **excluded** from the set before sorting — the canonical must always be a stored different reference. Locale-dependent comparison (`localeCompare`, ICU) is explicitly rejected — a canonical choice that varies by environment re-mints identity on every deploy, which is the original bug with extra steps.
 
 *Example:* Given refs `['mail/sent/a.md', 'mail/inbox/a.md', 'mail/inbox/b.md']` all sharing hash `h1`, the canonical ref is `mail/inbox/a.md`.
 
@@ -55,7 +57,7 @@ WITH ranked AS (
   SELECT source_ref, source_hash, updated_at,
          ROW_NUMBER() OVER (
            PARTITION BY source_ref
-           ORDER BY updated_at DESC
+           ORDER BY updated_at DESC, id ASC
          ) AS rn,
          COUNT(*) OVER (PARTITION BY source_ref) AS fact_count
   FROM ${prefix}entries
@@ -70,7 +72,7 @@ WHERE rn = 1
 ORDER BY source_ref COLLATE BINARY
 ```
 
-`ROW_NUMBER()` (not `RANK()` or `DENSE_RANK()`) — tie-break by `ROWID` is implicit, but deterministic for our purposes: no spec-defined query depends on the order within a `MAX(updated_at)` tie, only on which row wins. `COLLATE BINARY` on the outer `ORDER BY` is the explicit signal that locale dependency is rejected.
+`ROW_NUMBER()` (not `RANK()` or `DENSE_RANK()`) — explicit tie-break key is `id ASC`. If two live rows for the same `source_ref` share an `updated_at` value, the row with the lexically-smaller `id` wins; this is deterministic across deploys and avoids depending on `ROWID` insertion order. `COLLATE BINARY` on the outer `ORDER BY` is the explicit signal that locale dependency is rejected.
 
 **Cross-method consistency:** a regression test asserts that for any `(entityId, sourceRef)`, `listSourceRefs(entityId)[i].sourceHash === findLatestSourceHash(entityId, sourceRef)`. `findLatestSourceHash` lives on `EntryRepository` (library-internal — hosts use the `WikiMemory` facade, not direct repo access); the test reaches it via the test-only `__testAccess` escape hatch. This catches the exact bug `MAX(source_hash)` would introduce.
 
@@ -225,11 +227,12 @@ Returns a `Map<sourceRef, latestHash | null>` covering every requested ref.
 ```sql
 -- ANTI-PATTERN WARNING: Do not use MAX(source_hash). 
 -- The hash must come from the exact row matching MAX(updated_at).
+-- Tie-break on `id ASC` so two live rows sharing updated_at are deterministic.
 WITH ranked AS (
   SELECT source_ref, source_hash,
          ROW_NUMBER() OVER (
            PARTITION BY source_ref 
-           ORDER BY updated_at DESC
+           ORDER BY updated_at DESC, id ASC
          ) as rn
   FROM ${prefix}entries
   WHERE entity_id = ? AND source_ref IN (${placeholders}) AND deleted_at IS NULL

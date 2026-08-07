@@ -824,7 +824,7 @@ export class EntryRepository extends BaseRepository {
     const row = await executor.getFirstAsync<{ source_hash: string | null }>(
       `SELECT source_hash FROM ${this.prefix}entries
        WHERE entity_id = ? AND source_ref = ? AND deleted_at IS NULL
-       ORDER BY updated_at DESC
+       ORDER BY updated_at DESC, id ASC
        LIMIT 1`,
       [entityId, sourceRef],
     );
@@ -837,10 +837,14 @@ export class EntryRepository extends BaseRepository {
    * most-recently-updated live fact for that ref, or null when no live row exists.
    *
    * The SQL uses ROW_NUMBER() OVER (PARTITION BY source_ref ORDER BY updated_at
-   * DESC) — NOT MAX(source_hash). Aggregation with MAX(source_hash) is wrong
-   * because MAX computes independently across grouped rows; the hash must come
-   * from the exact row that wins MAX(updated_at). This matters when one ref has
-   * multiple live hashes (the import-path anomaly).
+   * DESC, id ASC) — NOT MAX(source_hash). Aggregation with MAX(source_hash) is
+   * wrong because MAX computes independently across grouped rows; the hash must
+   * come from the exact row that wins MAX(updated_at). The `id ASC` tie-break
+   * keeps selection deterministic when two live rows share `updated_at`.
+   *
+   * Source refs are de-duplicated and processed in chunks so the per-query bind
+   * parameter count stays under SQLite's `SQLITE_MAX_VARIABLE_NUMBER` (default
+   * 999, leaving one slot for `entity_id`).
    *
    * Empty input is a synchronous early return with zero SQL calls.
    */
@@ -849,27 +853,39 @@ export class EntryRepository extends BaseRepository {
     sourceRefs: readonly string[],
     tx?: SQLiteAdapter,
   ): Promise<Map<string, string | null>> {
-    if (sourceRefs.length === 0) return new Map();
-    const executor = this.getExecutor(tx);
-    const placeholders = sourceRefs.map(() => '?').join(',');
-    const rows = await executor.getAllAsync<{ source_ref: string; source_hash: string | null }>(
-      `WITH ranked AS (
-         SELECT source_ref, source_hash,
-                ROW_NUMBER() OVER (
-                  PARTITION BY source_ref
-                  ORDER BY updated_at DESC
-                ) as rn
-         FROM ${this.prefix}entries
-         WHERE entity_id = ? AND source_ref IN (${placeholders}) AND deleted_at IS NULL
-       )
-       SELECT source_ref, source_hash
-       FROM ranked
-       WHERE rn = 1`,
-      [entityId, ...sourceRefs],
-    );
     const out = new Map<string, string | null>();
-    for (const r of rows) {
-      out.set(r.source_ref, r.source_hash);
+    if (sourceRefs.length === 0) return out;
+    // Pre-populate with null for every requested ref so callers can distinguish
+    // "no live row" (null) from "row with a null source_hash" (also null in this
+    // shape, but at least the key is guaranteed present).
+    const dedupedRefs = Array.from(new Set(sourceRefs));
+    for (const ref of dedupedRefs) {
+      out.set(ref, null);
+    }
+    const executor = this.getExecutor(tx);
+    // 1 bind parameter for entity_id; remaining slots for source_ref placeholders.
+    const chunkLimit = Math.max(1, this.chunkSize - 1);
+    for (let i = 0; i < dedupedRefs.length; i += chunkLimit) {
+      const chunk = dedupedRefs.slice(i, i + chunkLimit);
+      const placeholders = chunk.map(() => '?').join(',');
+      const rows = await executor.getAllAsync<{ source_ref: string; source_hash: string | null }>(
+        `WITH ranked AS (
+           SELECT source_ref, source_hash,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY source_ref
+                    ORDER BY updated_at DESC, id ASC
+                  ) as rn
+           FROM ${this.prefix}entries
+           WHERE entity_id = ? AND source_ref IN (${placeholders}) AND deleted_at IS NULL
+         )
+         SELECT source_ref, source_hash
+         FROM ranked
+         WHERE rn = 1`,
+        [entityId, ...chunk],
+      );
+      for (const r of rows) {
+        out.set(r.source_ref, r.source_hash);
+      }
     }
     return out;
   }
@@ -889,6 +905,7 @@ export class EntryRepository extends BaseRepository {
     const rows = await executor.getAllAsync<{ source_ref: string }>(
       `SELECT source_ref FROM ${this.prefix}entries
        WHERE entity_id = ? AND source_hash = ? AND deleted_at IS NULL
+         AND source_ref IS NOT NULL
        GROUP BY source_ref
        ORDER BY source_ref COLLATE BINARY`,
       [entityId, sourceHash],
@@ -928,7 +945,7 @@ export class EntryRepository extends BaseRepository {
          SELECT source_ref, source_hash, updated_at,
                 ROW_NUMBER() OVER (
                   PARTITION BY source_ref
-                  ORDER BY updated_at DESC
+                  ORDER BY updated_at DESC, id ASC
                 ) AS rn,
                 COUNT(*) OVER (PARTITION BY source_ref) AS fact_count
          FROM ${this.prefix}entries

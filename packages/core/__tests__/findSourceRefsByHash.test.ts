@@ -22,7 +22,7 @@ async function makeWiki(): Promise<{ wiki: WikiMemory; db: SQLiteAdapter }> {
 
 async function insertEntry(
   db: SQLiteAdapter,
-  row: { id: string; sourceRef: string; sourceHash: string | null; updatedAt: number; deletedAt?: number | null },
+  row: { id: string; sourceRef: string | null; sourceHash: string | null; updatedAt: number; deletedAt?: number | null },
 ): Promise<void> {
   await db.runAsync(
     `INSERT INTO llm_wiki_entries (id, entity_id, title, body, tags, confidence, source_type,
@@ -83,5 +83,13 @@ describe('WikiMemory.findSourceRefsByHash', () => {
     const { wiki, db } = await makeWiki();
     await insertEntry(db, { id: 'f1', sourceRef: 'a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
     expect(await wiki.findSourceRefsByHash('entity-1', VALID_HASH_B)).toEqual([]);
+  });
+
+  it('excludes legacy rows with null source_ref (regression guard)', async () => {
+    const { wiki, db } = await makeWiki();
+    await insertEntry(db, { id: 'f1', sourceRef: 'a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
+    await insertEntry(db, { id: 'f2', sourceRef: null, sourceHash: VALID_HASH_A, updatedAt: 1100 });
+
+    expect(await wiki.findSourceRefsByHash('entity-1', VALID_HASH_A)).toEqual(['a.md']);
   });
 });

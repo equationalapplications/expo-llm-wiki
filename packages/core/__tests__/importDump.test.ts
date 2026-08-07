@@ -287,6 +287,42 @@ describe('importDump', () => {
     const out = await wiki.exportDump(['e']);
     expect(out.entities.e.facts.length).toBe(2);
   });
+
+  it('normalizes raw source_ref before persistence (regression guard against un-normalized import)', async () => {
+    const wiki = await freshWiki('impnorm_');
+    const rawRef = 'mail/inbox/a.md'; // '/' is stripped by normalizeSourceRef
+    const expectedNormalized = 'mailinboxa.md';
+    const dump: MemoryDump = {
+      generatedAt: 1,
+      entities: {
+        'e-norm': {
+          facts: [{
+            id: 'f-norm',
+            entity_id: 'e-norm',
+            title: 'T',
+            body: 'B',
+            tags: [],
+            confidence: 'certain',
+            source_type: 'immutable_document',
+            source_hash: 'a'.repeat(64),
+            source_ref: rawRef,
+            created_at: 1000,
+            updated_at: 1000,
+            last_accessed_at: null,
+            access_count: 0,
+            deleted_at: null,
+          }],
+          tasks: [],
+          events: [],
+          edges: [],
+        },
+      },
+    };
+    await wiki.importDump(dump);
+
+    const out = await wiki.exportDump(['e-norm']);
+    expect(out.entities['e-norm'].facts[0].source_ref).toBe(expectedNormalized);
+  });
 });
 
 describe('importDump — legacy source_type guard', () => {

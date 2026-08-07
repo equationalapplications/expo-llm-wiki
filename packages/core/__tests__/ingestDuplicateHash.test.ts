@@ -37,18 +37,18 @@ async function insertEntry(
 describe('IngestionService.ingestDocument duplicate-hash guard', () => {
   it("onDuplicateHash='skip' returns immediately with duplicateOf when another ref holds the hash", async () => {
     const { wiki, db } = await makeWiki();
-    await insertEntry(db, { id: 'f1', sourceRef: 'mail/inbox/a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
+    await insertEntry(db, { id: 'f1', sourceRef: 'mail-inbox-a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
     const result = await wiki.ingestDocument(
       'entity-1',
-      { sourceRef: 'mail/sent/a.md', sourceHash: VALID_HASH_A, documentChunk: 'hello' },
+      { sourceRef: 'mail-sent-a.md', sourceHash: VALID_HASH_A, documentChunk: 'hello' },
       { onDuplicateHash: 'skip' },
     );
-    expect(result).toEqual({ truncated: false, chunks: 0, duplicateOf: 'mail/inbox/a.md' });
+    expect(result).toEqual({ truncated: false, chunks: 0, duplicateOf: 'mail-inbox-a.md' });
   });
 
   it("onDuplicateHash='skip' makes zero LLM calls / zero DB writes / zero outbox events", async () => {
     const { wiki, db } = await makeWiki();
-    await insertEntry(db, { id: 'f1', sourceRef: 'mail/inbox/a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
+    await insertEntry(db, { id: 'f1', sourceRef: 'mail-inbox-a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
 
     const spy = vi.spyOn(wiki.__testAccess.ingestionService['options']['llmProvider'], 'generateText');
     const entriesBefore = await db.getAllAsync<{ id: string }>(`SELECT id FROM llm_wiki_entries WHERE entity_id = ?`, ['entity-1']);
@@ -56,11 +56,11 @@ describe('IngestionService.ingestDocument duplicate-hash guard', () => {
 
     const result = await wiki.ingestDocument(
       'entity-1',
-      { sourceRef: 'mail/sent/a.md', sourceHash: VALID_HASH_A, documentChunk: 'hello' },
+      { sourceRef: 'mail-sent-a.md', sourceHash: VALID_HASH_A, documentChunk: 'hello' },
       { onDuplicateHash: 'skip' },
     );
 
-    expect(result).toEqual({ truncated: false, chunks: 0, duplicateOf: 'mail/inbox/a.md' });
+    expect(result).toEqual({ truncated: false, chunks: 0, duplicateOf: 'mail-inbox-a.md' });
     expect(spy).not.toHaveBeenCalled();
     const entriesAfter = await db.getAllAsync<{ id: string }>(`SELECT id FROM llm_wiki_entries WHERE entity_id = ?`, ['entity-1']);
     expect(entriesAfter).toHaveLength(entriesBefore.length);
@@ -70,14 +70,14 @@ describe('IngestionService.ingestDocument duplicate-hash guard', () => {
 
   it("onDuplicateHash='skip' returns the early-return shape (no setImmediate/Promise.resolve wrapping)", async () => {
     const { wiki, db } = await makeWiki();
-    await insertEntry(db, { id: 'f1', sourceRef: 'mail/inbox/a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
+    await insertEntry(db, { id: 'f1', sourceRef: 'mail-inbox-a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
 
     const result = await wiki.ingestDocument(
       'entity-1',
-      { sourceRef: 'mail/sent/a.md', sourceHash: VALID_HASH_A, documentChunk: 'hello' },
+      { sourceRef: 'mail-sent-a.md', sourceHash: VALID_HASH_A, documentChunk: 'hello' },
       { onDuplicateHash: 'skip' },
     );
-    expect(result).toEqual({ truncated: false, chunks: 0, duplicateOf: 'mail/inbox/a.md' });
+    expect(result).toEqual({ truncated: false, chunks: 0, duplicateOf: 'mail-inbox-a.md' });
 
     // NOTE: A strict "returns synchronously without a microtask deferral" test would
     // require `Promise.race([returned, Promise.resolve('pending')])` — but the current
@@ -91,12 +91,12 @@ describe('IngestionService.ingestDocument duplicate-hash guard', () => {
 
   it("onDuplicateHash='throw' throws WikiDuplicateHashError", async () => {
     const { wiki, db } = await makeWiki();
-    await insertEntry(db, { id: 'f1', sourceRef: 'mail/inbox/a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
+    await insertEntry(db, { id: 'f1', sourceRef: 'mail-inbox-a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
 
     await expect(
       wiki.ingestDocument(
         'entity-1',
-        { sourceRef: 'mail/sent/a.md', sourceHash: VALID_HASH_A, documentChunk: 'hello' },
+        { sourceRef: 'mail-sent-a.md', sourceHash: VALID_HASH_A, documentChunk: 'hello' },
         { onDuplicateHash: 'throw' },
       ),
     ).rejects.toBeInstanceOf(WikiDuplicateHashError);
@@ -104,17 +104,17 @@ describe('IngestionService.ingestDocument duplicate-hash guard', () => {
 
   it('WikiDuplicateHashError carries canonical, sourceHash, entityId', async () => {
     const { wiki, db } = await makeWiki();
-    await insertEntry(db, { id: 'f1', sourceRef: 'mail/inbox/a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
+    await insertEntry(db, { id: 'f1', sourceRef: 'mail-inbox-a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
     try {
       await wiki.ingestDocument(
         'entity-1',
-        { sourceRef: 'mail/sent/a.md', sourceHash: VALID_HASH_A, documentChunk: 'hello' },
+        { sourceRef: 'mail-sent-a.md', sourceHash: VALID_HASH_A, documentChunk: 'hello' },
         { onDuplicateHash: 'throw' },
       );
       expect.fail('expected throw');
     } catch (err) {
       const e = err as WikiDuplicateHashError;
-      expect(e.canonical).toBe('mail/inbox/a.md');
+      expect(e.canonical).toBe('mail-inbox-a.md');
       expect(e.sourceHash).toBe(VALID_HASH_A);
       expect(e.entityId).toBe('entity-1');
       expect(e).toBeInstanceOf(Error);
@@ -123,11 +123,11 @@ describe('IngestionService.ingestDocument duplicate-hash guard', () => {
 
   it("onDuplicateHash='ingest' (default) proceeds with the normal ingest path", async () => {
     const { wiki, db } = await makeWiki();
-    await insertEntry(db, { id: 'f1', sourceRef: 'mail/inbox/a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
+    await insertEntry(db, { id: 'f1', sourceRef: 'mail-inbox-a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
 
     const result = await wiki.ingestDocument(
       'entity-1',
-      { sourceRef: 'mail/sent/a.md', sourceHash: VALID_HASH_A, documentChunk: 'hello' },
+      { sourceRef: 'mail-sent-a.md', sourceHash: VALID_HASH_A, documentChunk: 'hello' },
       { onDuplicateHash: 'ingest' },
     );
     expect(result.duplicateOf).toBeUndefined();
@@ -149,11 +149,11 @@ describe('IngestionService.ingestDocument duplicate-hash guard', () => {
 
   it('Soft-deleted row does NOT fire the guard', async () => {
     const { wiki, db } = await makeWiki();
-    await insertEntry(db, { id: 'f1', sourceRef: 'mail/inbox/a.md', sourceHash: VALID_HASH_A, updatedAt: 1000, deletedAt: 999 });
+    await insertEntry(db, { id: 'f1', sourceRef: 'mail-inbox-a.md', sourceHash: VALID_HASH_A, updatedAt: 1000, deletedAt: 999 });
 
     const result = await wiki.ingestDocument(
       'entity-1',
-      { sourceRef: 'mail/sent/a.md', sourceHash: VALID_HASH_A, documentChunk: 'hello' },
+      { sourceRef: 'mail-sent-a.md', sourceHash: VALID_HASH_A, documentChunk: 'hello' },
       { onDuplicateHash: 'skip' },
     );
     expect(result.duplicateOf).toBeUndefined();

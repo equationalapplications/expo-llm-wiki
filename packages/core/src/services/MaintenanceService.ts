@@ -376,11 +376,11 @@ export class MaintenanceService {
     entityId: string,
     params: { entryId?: string; taskId?: string; sourceRef?: string; sourceHash?: string; clearAll?: boolean },
   ): Promise<{ deleted: { entries: number; tasks: number }; metadataReset?: boolean }> {
-    if (params.clearAll && (params.entryId !== undefined || params.taskId !== undefined || params.sourceRef !== undefined || params.sourceHash !== undefined)) {
-      throw new Error('forget() clearAll is mutually exclusive with entryId, taskId, sourceRef, and sourceHash');
-    }
+    // Note: the clearAll mutual-exclusion check is performed by the public
+    // forget() before dispatching here. forgetDryRun is private and unreachable
+    // for callers that violate that contract, so it does not re-validate.
 
-    if (params.entryId || params.taskId) {
+    if (params.entryId !== undefined || params.taskId !== undefined) {
       throw new Error('forget({ dryRun: true }) does not support entryId/taskId selectors; use sourceRef/sourceHash or clearAll');
     }
 
