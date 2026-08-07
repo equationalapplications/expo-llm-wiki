@@ -328,9 +328,14 @@ export class WikiMemory {
       if (others.length === 0) {
         return { sourceRef: e.rawSourceRef, changed };
       }
-      // Canonical: code-unit-minimum of the set of stored different refs.
-      // The incoming ref is excluded so duplicateOf never echoes the caller's ref.
-      const canonical = [...others].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))[0];
+      // Canonical: the first ref from findSourceRefsByHash after excluding the
+      // incoming ref. EntryRepository.findSourceRefsByHash returns refs already
+      // ordered by `source_ref COLLATE BINARY`, so the canonical matches the DB
+      // ordering for both ASCII and non-ASCII refs (UTF-16 code-unit sort in JS
+      // can disagree with SQLite BINARY for non-ASCII). Excluding the incoming
+      // ref prevents duplicateOf from echoing the caller's own ref when it
+      // sorts first.
+      const canonical = others[0];
       return { sourceRef: e.rawSourceRef, changed, duplicateOf: canonical };
     });
   }

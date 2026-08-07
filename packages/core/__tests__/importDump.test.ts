@@ -323,6 +323,84 @@ describe('importDump', () => {
     const out = await wiki.exportDump(['e-norm']);
     expect(out.entities['e-norm'].facts[0].source_ref).toBe(expectedNormalized);
   });
+
+  it('rejects a non-null source_ref that normalizes to null (mirrors ingestDocument validation)', async () => {
+    const wiki = await freshWiki('impnorm_reject_');
+    // All chars get stripped by normalizeSourceRef (only [A-Za-z0-9._\- ] survive).
+    // A non-null raw value that normalizes to null would silently turn into a
+    // legacy NULL row — many APIs intentionally exclude those. Import should
+    // throw, mirroring ingestDocument's "Invalid sourceRef" guard.
+    const invalidRawRef = '///\\\\$$@@';
+    const dump: MemoryDump = {
+      generatedAt: 1,
+      entities: {
+        'e-bad': {
+          facts: [{
+            id: 'f-bad',
+            entity_id: 'e-bad',
+            title: 'T',
+            body: 'B',
+            tags: [],
+            confidence: 'certain',
+            source_type: 'immutable_document',
+            source_hash: 'a'.repeat(64),
+            source_ref: invalidRawRef,
+            created_at: 1000,
+            updated_at: 1000,
+            last_accessed_at: null,
+            access_count: 0,
+            deleted_at: null,
+          }],
+          tasks: [],
+          events: [],
+          edges: [],
+        },
+      },
+    };
+
+    await expect(wiki.importDump(dump)).rejects.toThrow(/invalid source_ref/);
+
+    // No rows should have been written — the validation throws before the
+    // transaction writes.
+    const out = await wiki.exportDump(['e-bad']);
+    expect(out.entities['e-bad'].facts).toHaveLength(0);
+  });
+
+  it('still accepts a fact with null source_ref (legacy rows must continue to round-trip)', async () => {
+    const wiki = await freshWiki('impnorm_null_');
+    const dump: MemoryDump = {
+      generatedAt: 1,
+      entities: {
+        'e-null': {
+          facts: [{
+            id: 'f-null',
+            entity_id: 'e-null',
+            title: 'T',
+            body: 'B',
+            tags: [],
+            confidence: 'certain',
+            source_type: 'immutable_document',
+            source_hash: 'a'.repeat(64),
+            source_ref: null,
+            created_at: 1000,
+            updated_at: 1000,
+            last_accessed_at: null,
+            access_count: 0,
+            deleted_at: null,
+          }],
+          tasks: [],
+          events: [],
+          edges: [],
+        },
+      },
+    };
+
+    await expect(wiki.importDump(dump)).resolves.toBeUndefined();
+
+    const out = await wiki.exportDump(['e-null']);
+    expect(out.entities['e-null'].facts).toHaveLength(1);
+    expect(out.entities['e-null'].facts[0].source_ref).toBeNull();
+  });
 });
 
 describe('importDump — legacy source_type guard', () => {

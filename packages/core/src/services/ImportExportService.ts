@@ -265,10 +265,21 @@ export class ImportExportService {
         // startup migration. Persisting the raw value would let a later re-ingest
         // collide on shape mismatch (raw DB ref vs. normalized incoming ref) and
         // would skip soft-deletion on the default-path overwrite.
-        const normalizedSourceRef =
-          fact.source_ref === null || fact.source_ref === undefined
-            ? null
-            : normalizeSourceRef(fact.source_ref);
+        // A non-null source_ref that normalizes to null (e.g. all-special-chars
+        // or whitespace-only) is rejected to mirror ingestDocument — silently
+        // coercing it to NULL would create a legacy row that many APIs
+        // intentionally exclude.
+        let normalizedSourceRef: string | null = null;
+        if (fact.source_ref !== null && fact.source_ref !== undefined) {
+          normalizedSourceRef = normalizeSourceRef(fact.source_ref);
+          if (normalizedSourceRef === null) {
+            throw new Error(
+              `importDump: invalid source_ref ${JSON.stringify(fact.source_ref)} ` +
+              `for entity "${entityId}" fact "${fact.id}" ` +
+              `(must normalize to a non-empty string; see ingestDocument's sourceRef validation)`,
+            );
+          }
+        }
 
         const factObj: WikiFact = {
           id: fact.id,

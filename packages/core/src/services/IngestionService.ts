@@ -56,12 +56,14 @@ export class IngestionService {
     if (onDuplicateHash !== 'ingest') {
       const refs = await this.entryRepo.findSourceRefsByHash(entityId, sourceHash);
       // Canonical must be a stored DIFFERENT source_ref, never the incoming ref.
-      // Excluding the incoming ref from the sort prevents the canonical from
-      // echoing the caller's own ref when it sorts first.
+      // `refs` is already ordered `source_ref COLLATE BINARY` by the repo, so
+      // `others[0]` is the canonical — re-sorting in JS would use UTF-16
+      // code-unit ordering and could disagree with SQLite BINARY for non-ASCII.
+      // Excluding the incoming ref prevents the canonical from echoing the
+      // caller's own ref when it sorts first.
       const others = refs.filter(r => r !== sourceRef);
       if (others.length > 0) {
-        // Canonical: code-unit-minimum of the set of stored different refs.
-        const canonical = [...others].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))[0];
+        const canonical = others[0];
         if (onDuplicateHash === 'throw') {
           throw new WikiDuplicateHashError({ canonical, sourceHash, entityId });
         }
