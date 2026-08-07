@@ -70,7 +70,7 @@ WHERE rn = 1
 ORDER BY source_ref COLLATE BINARY
 ```
 
-`ROW_NUMBER()` (not `RANK()` or `DENSE_RANK()`) — tie-break by `ROWID` is implicit, but deterministic for our purposes — the spec never queries under a `MAX(updated_at)` tie. `COLLATE BINARY` on the outer `ORDER BY` is the explicit signal that locale dependency is rejected.
+`ROW_NUMBER()` (not `RANK()` or `DENSE_RANK()`) — tie-break by `ROWID` is implicit, but deterministic for our purposes: no spec-defined query depends on the order within a `MAX(updated_at)` tie, only on which row wins. `COLLATE BINARY` on the outer `ORDER BY` is the explicit signal that locale dependency is rejected.
 
 **Cross-method consistency:** a regression test asserts that for any `(entityId, sourceRef)`, `listSourceRefs(entityId)[i].sourceHash === (await findLatestSourceHash(entityId, sourceRef))`. This catches the exact bug `MAX(source_hash)` would introduce.
 
@@ -96,7 +96,7 @@ interface ForgetResponse {
 1. **Skip `jobManager.acquireLock('forget', entityId)`.** Dry-run is read-only.
 2. **Read outside any `withTransactionAsync`.** Dry-run counts being off-by-N during a concurrent real forget is acceptable.
 3. **Run queries** against the live state:
-   - *Standard case:* Run a `COUNT(*)` query for entries (to avoid `O(N)` memory overhead from materializing IDs) and the equivalent `TaskRepository` count for tasks. The dry-run computes whether the post-delete state would have `memory: 0, heal: 0`; if so, it reports `metadataReset: true`.
+   - *Standard case:* Run a `COUNT(*)` query for entries (the existing `softDeleteBySource` pattern materialises affected IDs to stage per-fact outbox events — see `EntryRepository.ts:357` — but dry-run stages no events, so it skips the ID materialisation and just counts) and the equivalent `TaskRepository` count for tasks. Returns `{ deleted: { entries, tasks } }` (no `metadataReset` field). The real standard-case `forget({ sourceRef })` does NOT reset the metadata checkpoint — only `clearAll: true` does (`MaintenanceService.ts:286`). `metadataReset` is therefore false for standard dry-run and real calls alike, and true only when `params.clearAll === true`. The dry-run contract is identical.
    - *`clearAll` case:* If `clearAll: true` is passed, calculate counts using `COUNT(*)` without source filters. Returns `{ deleted: { entries, tasks }, metadataReset: true }`. The real call's return type is widened to match, returning `metadataReset: true` when a checkpoint reset actually occurs, as pretending a side-effect doesn't happen is the kind of lie that bites six months later.
    - *Unknown-ref case:* Returns `{ deleted: { entries: 0, tasks: 0 } }` (no `metadataReset` field).
 4. **Return `ForgetResponse` — the same shape for real forget and dry-run.** No fact IDs in the dry-run payload.
@@ -146,7 +146,7 @@ interface IngestDocumentOptions {
 
 When the guard fires, `duplicateOf` reports the canonical `source_ref` under the code-unit-minimum rule ([see Canonical-Selection Rule](#canonical-selection-rule)).
 
-*Note on concurrency:* The `'skip'` decision itself, and the `duplicateOf` value, reflect state at *guard-time*, not *commit-time*. If a concurrent ingest deletes the duplicate between the guard check and return, the ingest will skip anyway based on the moment-of-check state. This is an intentional design choice to avoid re-checking inside the lock. For moment-of-commit guarantees, re-query via `findSourceRefsByHash` after ingest.
+*Note on concurrency:* The `'skip'` decision itself, and the `duplicateOf` value, reflect state at *guard-time*, not *commit-time*. The race is narrow: same-sourceRef concurrent re-ingest — the canonical ref is the same as the incoming one, so the guard never fires in the first place; the "concurrent delete" means a concurrent same-ref re-ingest has overwritten the duplicate between guard and return, not that the ref has vanished from the entity. In that case the ingest will still skip based on the moment-of-check state. This is an intentional design choice to avoid re-checking inside the lock. For moment-of-commit guarantees, re-query via `findSourceRefsByHash` after ingest.
 
 **Behavior per mode:**
 
@@ -168,7 +168,7 @@ export class WikiDuplicateHashError extends Error {
   readonly sourceHash: string;
   readonly entityId: string;
   constructor(params: { canonical: string; sourceHash: string; entityId: string }) {
-    super(`Duplicate source hash for entity ${params.entityId}: canonical ${params.canonical}`);
+    super(`Duplicate source hash for entity ${params.entityId}; another ref already holds this content`);
     this.name = 'WikiDuplicateHashError';
     this.canonical = params.canonical;
     this.sourceHash = params.sourceHash;
@@ -262,11 +262,11 @@ WHERE rn = 1;
 ## Tests
 
 - `listSourceRefs`: live-only filter; code-unit sort; empty entity returns `[]`; mixed deleted/live rows; **multi-fact document returns one row**; **handles `sourceHash` IS NULL branches**; **environment-independent sort**; **cross-method consistency** (`sourceHash === findLatestSourceHash(...)`).
-- `forget({ dryRun: true })`: returns same shape as real call; no rows mutated; no outbox/hooks fired; no lock contention; **standard case properly returns `metadataReset` if the cutoff is met**; **`clearAll: true` returns correct entity/task counts and explicitly reports metadata reset**; **unknown refs return `{ deleted: { entries: 0, tasks: 0 }`**.
-- `findSourceRefsByHash`: live-only; code-unit sort; empty result for unknown hash; multiple results for collision case.
+- `forget({ dryRun: true })`: returns same shape as real call; no rows mutated; no outbox/hooks fired; no lock contention; **standard case returns NO `metadataReset` field** (real standard `forget` never resets the checkpoint); **`clearAll: true` returns correct entity/task counts and explicitly reports `metadataReset: true`**; **unknown refs return `{ deleted: { entries: 0, tasks: 0 } }`**.
+- `findSourceRefsByHash`: live-only; code-unit sort; empty result for unknown hash; multiple results for collision case; **soft-deleted rows with the same hash are excluded** (regression guard against SQL accidentally including `deleted_at IS NOT NULL` rows, which would re-introduce the original bug).
 - `ingestDocument({ onDuplicateHash })`:
   - `'ingest'` matches current behavior.
-  - `'skip'` returns `{ truncated: false, chunks: 0, duplicateOf }`; **asserts zero LLM calls, zero ingest-lock acquisitions, zero DB writes, zero outbox events**.
+  - `'skip'` returns `{ truncated: false, chunks: 0, duplicateOf }`; **asserts zero LLM calls, zero ingest-lock acquisitions, zero DB writes, zero outbox events, and synchronous return with no `setImmediate` / `Promise.resolve().then()` deferral** (regression guard against a future refactor that wraps the early-return in a microtask).
   - `'throw'` raises `WikiDuplicateHashError` (and verifies `WikiDuplicateHashError instanceof Error`).
   - Same-sourceRef collision does **not** fire the guard.
   - Soft-deleted row does **not** fire the guard.
