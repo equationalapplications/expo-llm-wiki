@@ -200,7 +200,7 @@ EntryRepository.findLatestSourceHashes(
 ): Promise<Map<string, string | null>>;
 ```
 
-Returns a `Map<sourceRef, latestHash | null>` covering every requested ref (missing refs map to `null` — same as `findLatestSourceHash` returning `null` for unknown refs). One round-trip.
+Returns a `Map<sourceRef, latestHash | null>` covering every requested ref (missing refs map to `null` — same as `findLatestSourceHash` returning `null` for unknown refs). One SQL query (e.g. via a window function or correlated subquery matching `MAX(updated_at) DESC LIMIT 1` semantics), not N round-trips.
 
 For the batched `hasChanged` flow:
 
