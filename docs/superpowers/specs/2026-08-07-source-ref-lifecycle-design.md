@@ -1,7 +1,7 @@
 # Spec: Source-Ref Lifecycle, Duplicate Detection, and Batched Change Check
 
 **Date:** 2026-08-07
-**Status:** Approved
+**Status:** Implemented
 **Issue:** [#74](https://github.com/equationalapplications/expo-llm-wiki/issues/74)
 **Packages:** `@eq/wiki-core`
 
@@ -72,7 +72,7 @@ ORDER BY source_ref COLLATE BINARY
 
 `ROW_NUMBER()` (not `RANK()` or `DENSE_RANK()`) — tie-break by `ROWID` is implicit, but deterministic for our purposes: no spec-defined query depends on the order within a `MAX(updated_at)` tie, only on which row wins. `COLLATE BINARY` on the outer `ORDER BY` is the explicit signal that locale dependency is rejected.
 
-**Cross-method consistency:** a regression test asserts that for any `(entityId, sourceRef)`, `listSourceRefs(entityId)[i].sourceHash === (await findLatestSourceHash(entityId, sourceRef))`. This catches the exact bug `MAX(source_hash)` would introduce.
+**Cross-method consistency:** a regression test asserts that for any `(entityId, sourceRef)`, `listSourceRefs(entityId)[i].sourceHash === findLatestSourceHash(entityId, sourceRef)`. `findLatestSourceHash` lives on `EntryRepository` (library-internal — hosts use the `WikiMemory` facade, not direct repo access); the test reaches it via the test-only `__testAccess` escape hatch. This catches the exact bug `MAX(source_hash)` would introduce.
 
 **Repository placement:** new `EntryRepository.listSourceRefs(entityId, tx?)`.
 
@@ -96,9 +96,10 @@ interface ForgetResponse {
 1. **Skip `jobManager.acquireLock('forget', entityId)`.** Dry-run is read-only.
 2. **Read outside any `withTransactionAsync`.** Dry-run counts being off-by-N during a concurrent real forget is acceptable.
 3. **Run queries** against the live state:
-   - *Standard case:* Run a `COUNT(*)` query for entries (the existing `softDeleteBySource` pattern materialises affected IDs to stage per-fact outbox events — see `EntryRepository.ts:357` — but dry-run stages no events, so it skips the ID materialisation and just counts) and the equivalent `TaskRepository` count for tasks. Returns `{ deleted: { entries, tasks } }` (no `metadataReset` field). The real standard-case `forget({ sourceRef })` does NOT reset the metadata checkpoint — only `clearAll: true` does (`MaintenanceService.ts:286`). `metadataReset` is therefore false for standard dry-run and real calls alike, and true only when `params.clearAll === true`. The dry-run contract is identical.
+   - *Standard case:* Run a `COUNT(*)` query for entries (the existing `softDeleteBySource` pattern materialises affected IDs to stage per-fact outbox events — see `EntryRepository.ts:357` — but dry-run stages no events, so it skips the ID materialisation and just counts). Tasks are always `0` in the standard case: tasks carry no `source_ref`, so a source-scoped task count is undefined, and the real call's standard branch does not touch tasks. Returns `{ deleted: { entries, tasks: 0 } }` (no `metadataReset` field). The real standard-case `forget({ sourceRef })` does NOT reset the metadata checkpoint — only `clearAll: true` does (`MaintenanceService.ts:286`). `metadataReset` is therefore false for standard dry-run and real calls alike, and true only when `params.clearAll === true`. The dry-run contract is identical.
    - *`clearAll` case:* If `clearAll: true` is passed, calculate counts using `COUNT(*)` without source filters. Returns `{ deleted: { entries, tasks }, metadataReset: true }`. The real call's return type is widened to match, returning `metadataReset: true` when a checkpoint reset actually occurs, as pretending a side-effect doesn't happen is the kind of lie that bites six months later.
    - *Unknown-ref case:* Returns `{ deleted: { entries: 0, tasks: 0 } }` (no `metadataReset` field).
+- *No-selector case:* If `params` contains no source selectors (no `sourceRef`, no `sourceHash`, no `clearAll`) and was not rejected by the `entryId`/`taskId` guard above, the real call is a no-op (`softDeleteBySource` is gated on `if (sourceRef || sourceHash)`; with nothing set, the transaction does nothing and the call returns `{ deleted: { entries: 0, tasks: 0 } }`). Dry-run mirrors this exactly — it must **not** call `countLiveBySource(entityId, null, null)` and silently report all live entries as the blast radius. Returning the full entity count would mask a caller bug (forgot to pass a selector) as a giant dry-run, defeating the purpose of the preview. Dry-run returns `{ deleted: { entries: 0, tasks: 0 } }`.
 4. **Return `ForgetResponse` — the same shape for real forget and dry-run.** No fact IDs in the dry-run payload.
 5. **Stage no outbox events. Fire no embedding hooks.**
 
@@ -262,11 +263,11 @@ WHERE rn = 1;
 ## Tests
 
 - `listSourceRefs`: live-only filter; code-unit sort; empty entity returns `[]`; mixed deleted/live rows; **multi-fact document returns one row**; **handles `sourceHash` IS NULL branches**; **environment-independent sort**; **cross-method consistency** (`sourceHash === findLatestSourceHash(...)`).
-- `forget({ dryRun: true })`: returns same shape as real call; no rows mutated; no outbox/hooks fired; no lock contention; **standard case returns NO `metadataReset` field** (real standard `forget` never resets the checkpoint); **`clearAll: true` returns correct entity/task counts and explicitly reports `metadataReset: true`**; **unknown refs return `{ deleted: { entries: 0, tasks: 0 } }`**.
+- `forget({ dryRun: true })`: returns same shape as real call; no rows mutated; no outbox/hooks fired; no lock contention; **standard case returns NO `metadataReset` field** (real standard `forget` never resets the checkpoint); **`clearAll: true` returns correct entity/task counts and explicitly reports `metadataReset: true`**; **unknown refs return `{ deleted: { entries: 0, tasks: 0 } }`**; **rejects `entryId`/`taskId` selectors with a clear error** (dry-run is source-scope or whole-entity only — a single-id dry-run would just be 0 or 1 and adds no signal); **no-selector case (`{}`) returns `{ deleted: { entries: 0, tasks: 0 } }`** (matches the real call's no-op — must NOT report all live entries as the blast radius).
 - `findSourceRefsByHash`: live-only; code-unit sort; empty result for unknown hash; multiple results for collision case; **soft-deleted rows with the same hash are excluded** (regression guard against SQL accidentally including `deleted_at IS NOT NULL` rows, which would re-introduce the original bug).
 - `ingestDocument({ onDuplicateHash })`:
   - `'ingest'` matches current behavior.
-  - `'skip'` returns `{ truncated: false, chunks: 0, duplicateOf }`; **asserts zero LLM calls, zero ingest-lock acquisitions, zero DB writes, zero outbox events, and synchronous return with no `setImmediate` / `Promise.resolve().then()` deferral** (regression guard against a future refactor that wraps the early-return in a microtask).
+  - `'skip'` returns `{ truncated: false, chunks: 0, duplicateOf }`; **asserts zero LLM calls, zero ingest-lock acquisitions, zero DB writes, zero outbox events, and synchronous return with no `setImmediate` / `Promise.resolve().then()` deferral** (regression guard against a future refactor that wraps the early-return in a microtask). The "no extra deferral" check is bounded by the natural `await this.entryRepo.findSourceRefsByHash(...)` microtask; what it actually guards against is *additional* deferral inserted on top of the DB read. The strongest machine-checkable form is a `Promise.race([result, Promise.resolve('pending')])` *before* the `await findSourceRefsByHash` resolves, asserting the call doesn't schedule a `.then` after the early-return path; the sibling zero-effect assertions catch the more common failure modes (an extra LLM call, an extra outbox event) without needing the race.
   - `'throw'` raises `WikiDuplicateHashError` (and verifies `WikiDuplicateHashError instanceof Error`).
   - Same-sourceRef collision does **not** fire the guard.
   - Soft-deleted row does **not** fire the guard.
