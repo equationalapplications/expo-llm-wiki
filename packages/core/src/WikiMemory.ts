@@ -251,19 +251,74 @@ export class WikiMemory {
     await this.searchService.sync();
   }
 
-  async hasChanged(entityId: string, sourceRef: string, sourceHash: string): Promise<boolean> {
-    const normalizedRef = normalizeSourceRef(sourceRef);
-    if (!normalizedRef) {
-      throw new Error(`Invalid sourceRef: ${JSON.stringify(sourceRef)}`);
+  async hasChanged(
+    entityId: string,
+    sourceRef: string,
+    sourceHash: string,
+  ): Promise<boolean>;
+  async hasChanged(
+    entityId: string,
+    entries: Array<{ sourceRef: string; sourceHash: string }>,
+  ): Promise<Array<{ sourceRef: string; changed: boolean; duplicateOf?: string }>>;
+  async hasChanged(
+    entityId: string,
+    sourceRefOrEntries: string | Array<{ sourceRef: string; sourceHash: string }>,
+    sourceHashArg?: string,
+  ): Promise<boolean | Array<{ sourceRef: string; changed: boolean; duplicateOf?: string }>> {
+    // Single-doc path: delegate to existing semantics.
+    if (typeof sourceRefOrEntries === 'string') {
+      const sourceRef = normalizeSourceRef(sourceRefOrEntries);
+      if (!sourceRef) {
+        throw new Error(`Invalid sourceRef: ${JSON.stringify(sourceRefOrEntries)}`);
+      }
+      const sourceHash = normalizeSourceHash(sourceHashArg!);
+      if (!sourceHash) {
+        throw new Error('Invalid sourceHash: must be a 64-character hex string (normalized to lowercase)');
+      }
+      const storedHash = await this.entryRepo.findLatestSourceHash(entityId, sourceRef);
+      if (storedHash === null) return true;
+      const normalizedStoredHash = normalizeSourceHash(storedHash);
+      return normalizedStoredHash !== sourceHash;
     }
-    const normalizedHash = normalizeSourceHash(sourceHash);
-    if (!normalizedHash) {
-      throw new Error(`Invalid sourceHash: must be a 64-character hex string (normalized to lowercase)`);
+
+    // Batched path: empty input -> empty result, zero SQL calls.
+    const entries = sourceRefOrEntries;
+    if (entries.length === 0) return [];
+
+    // Normalize all inputs (validation up front). Preserve the raw ref so the
+    // result echoes the caller's spelling (DB refs are normalized on setup,
+    // but the caller hasn't seen that normalization yet).
+    const normalized = entries.map(e => {
+      const r = normalizeSourceRef(e.sourceRef);
+      if (!r) throw new Error(`Invalid sourceRef: ${JSON.stringify(e.sourceRef)}`);
+      const h = normalizeSourceHash(e.sourceHash);
+      if (!h) throw new Error('Invalid sourceHash: must be a 64-character hex string (normalized to lowercase)');
+      return { rawSourceRef: e.sourceRef, sourceRef: r, sourceHash: h };
+    });
+
+    // 1 + H SQL queries: one batched latest-hash lookup, plus one findSourceRefsByHash
+    // per distinct input hash.
+    const latestHashes = await this.entryRepo.findLatestSourceHashes(entityId, normalized.map(e => e.sourceRef));
+
+    const distinctHashes = Array.from(new Set(normalized.map(e => e.sourceHash)));
+    const dupMap = new Map<string, string[]>(); // hash -> refs (DB-side refs, possibly normalized)
+    for (const h of distinctHashes) {
+      const refs = await this.entryRepo.findSourceRefsByHash(entityId, h);
+      dupMap.set(h, refs);
     }
-    const storedHash = await this.entryRepo.findLatestSourceHash(entityId, normalizedRef);
-    if (storedHash === null) return true;
-    const normalizedStoredHash = normalizeSourceHash(storedHash);
-    return normalizedStoredHash !== normalizedHash;
+
+    return normalized.map(e => {
+      const stored = latestHashes.get(e.sourceRef);
+      const changed = stored === undefined || stored === null || normalizeSourceHash(stored) !== e.sourceHash;
+      const allRefs = dupMap.get(e.sourceHash) ?? [];
+      const others = allRefs.filter(r => r !== e.sourceRef);
+      if (others.length === 0) {
+        return { sourceRef: e.rawSourceRef, changed };
+      }
+      // Canonical: code-unit-minimum of the set including the incoming ref.
+      const canonical = [e.sourceRef, ...others].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))[0];
+      return { sourceRef: e.rawSourceRef, changed, duplicateOf: canonical };
+    });
   }
 
   /**
