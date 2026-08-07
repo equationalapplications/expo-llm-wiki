@@ -194,9 +194,9 @@ describe('doRunHeal — per-pass call bounding (#67)', () => {
 
   it('does not dedupe a replacement against the fact deleted in the same pass', async () => {
     // Delete-plus-replace is the shape heal is built for: the model retires a
-    // stale fact and restates it. The dedupe corpus is read before the pass's
-    // own soft-deletes land, so the retired row must be excluded explicitly or
-    // its replacement is dropped as a duplicate of a row that no longer exists.
+    // stale fact and restates it. The dedupe corpus is read after the pass's
+    // own soft-deletes land, so the retired row leaves the corpus via the
+    // deleted_at IS NULL filter and its replacement is not falsely matched.
     const generateText = vi.fn(async () => JSON.stringify({
       downgraded: [],
       deleted: ['stale'],
