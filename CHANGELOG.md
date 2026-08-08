@@ -1,3 +1,19 @@
+## [5.2.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v5.2.0...v5.2.1) (2026-08-08)
+
+
+### Bug Fixes
+
+* **ci:** address CodeRabbit review feedback on PR [#80](https://github.com/equationalapplications/expo-llm-wiki/issues/80) ([587e58b](https://github.com/equationalapplications/expo-llm-wiki/commit/587e58b89f72629e4ec7a25a5e69aef95919df1e))
+* **ci:** escape awk regex and rewrite audit step to avoid command substitution ([e55be5a](https://github.com/equationalapplications/expo-llm-wiki/commit/e55be5a521e014fb4b6ed348a5e983277978e959))
+* **ci:** pin js-yaml 3.x to 3.15.1 and gate audit on fixable advisories only ([57846f4](https://github.com/equationalapplications/expo-llm-wiki/commit/57846f47bbe4fe819bc7cd97233bcad5fc5bebf0))
+* **ci:** pipe gh pr list output to jq instead of gh --jq --arg ([37b29d1](https://github.com/equationalapplications/expo-llm-wiki/commit/37b29d118801b2d88a74504b3607fb055e84702a))
+* **core:** disambiguate hash-lock key with NUL separator ([#80](https://github.com/equationalapplications/expo-llm-wiki/issues/80) review) ([f8dc235](https://github.com/equationalapplications/expo-llm-wiki/commit/f8dc235ce47e8c6b4ffd0938c6191adc8ac7d8c0))
+* **core:** enforce unique live source hashes ([e303bdd](https://github.com/equationalapplications/expo-llm-wiki/commit/e303bdd223c0dba8050c4c6f54e693fe3b19e511)), closes [#79](https://github.com/equationalapplications/expo-llm-wiki/issues/79)
+* **core:** move TOCTOU safety net to source_ref_index table ([4e9aa8d](https://github.com/equationalapplications/expo-llm-wiki/commit/4e9aa8d1c9c51136ec94771d9e8e4c08e8c0760b)), closes [#1](https://github.com/equationalapplications/expo-llm-wiki/issues/1)
+* **core:** preserve sqlite unique constraint codes ([d30ac0c](https://github.com/equationalapplications/expo-llm-wiki/commit/d30ac0c77a5271f1199c47ec921077304f835fbe))
+* **core:** serialize ingest locks by source hash ([b585328](https://github.com/equationalapplications/expo-llm-wiki/commit/b585328caca079ecf3898260b09e1d2324ea8c5f))
+* **core:** translate racing duplicate hash writes ([3df4824](https://github.com/equationalapplications/expo-llm-wiki/commit/3df482433601c2a40811021db4f8fc0aaf2f372d))
+
 # [5.2.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v5.1.1...v5.2.0) (2026-08-07)
 
 
