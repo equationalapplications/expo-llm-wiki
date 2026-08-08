@@ -54,9 +54,11 @@ jobs:
           # triggered this push is the squash-merge commit of a PR whose head
           # branch was release/v*, this push is the release PR landing - Phase 2.
           # Otherwise this is an ordinary push (feature merge) - Phase 1.
+          # `gh --jq` does not accept `--arg`; pipe into a separate `jq` so the
+          # commit SHA is bound safely instead of interpolated into the filter.
           MATCH=$(gh pr list --repo "$REPO" --state merged --base main --limit 10 \
             --json number,headRefName,mergeCommit \
-            --jq --arg sha "${{ github.sha }}" \
+            | jq -r --arg sha "${{ github.sha }}" \
               '[.[] | select(.mergeCommit.oid == $sha) | select(.headRefName | test("^release/v"))] | .[0].headRefName // empty')
 
           if [ -n "$MATCH" ]; then
