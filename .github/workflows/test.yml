@@ -69,20 +69,32 @@ jobs:
         run: |
           set -e
           pnpm audit --audit-level=high --json > /tmp/audit.json || true
-          UNFIXABLE=$(python3 -c "
-          import json
-          data = json.load(open('/tmp/audit.json'))
-          advisories = data.get('advisories') or {}
-          # An advisory is 'fixable' iff its patched_versions is something
-          # other than the pnpm-sentinel '<0.0.0>' meaning 'no patch yet'.
-          fixable = [a for a in advisories.values() if a.get('patched_versions') != '<0.0.0>']
+          # Run Python directly (no command substitution): under `set -e`,
+          # a non-zero exit inside $(...) would terminate the shell before
+          # the captured diagnostics can be printed, masking the real
+          # cause. Python prints warnings for unfixable advisories (no
+          # upstream patch) before raising SystemExit(1) only if any
+          # fixable advisory exists. The script is written to a file first
+          # to avoid the heredoc / multi-line -c indentation pitfalls that
+          # bit an earlier draft of this step.
+          cat > /tmp/audit-classify.py <<'PYEOF'
+          import json, sys
+          data = json.load(open("/tmp/audit.json", encoding="utf-8"))
+          advisories = data.get("advisories") or {}
+          # pnpm's "no patch yet" sentinel: patched_versions is a placeholder
+          # like "<0.0.0" (an opening bracket followed by 0.0.0). Anything
+          # that doesn't match that prefix is a real version range and the
+          # advisory is considered fixable.
+          def is_unfixable(a):
+              pv = a.get("patched_versions") or ""
+              return pv.startswith("<0.0.0")
+          fixable = [a for a in advisories.values() if not is_unfixable(a)]
+          unfixable = [a for a in advisories.values() if is_unfixable(a)]
+          for a in unfixable:
+              print(f"WARNING: {a['module_name']} ({a.get('url', '')}) has no upstream patch")
           if fixable:
               for a in fixable:
-                  print(f\"  HIGH: {a['module_name']} ({a.get('url','')}) — fix to {a.get('patched_versions')}\")
-              raise SystemExit(1)
-          ")
-          if [ -n "$UNFIXABLE" ]; then
-            echo "$UNFIXABLE"
-            exit 1
-          fi
-          echo "No fixable high-severity advisories."
+                  print(f"HIGH: {a['module_name']} ({a.get('url', '')}) — fix to {a.get('patched_versions')}")
+              sys.exit(1)
+          PYEOF
+          python3 /tmp/audit-classify.py && echo "No fixable high-severity advisories." || exit 1
