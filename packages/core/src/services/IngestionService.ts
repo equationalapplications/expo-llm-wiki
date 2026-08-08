@@ -1,9 +1,10 @@
 import { chunkText, withConcurrency, validateFact, parseJsonResponse, normalizeSourceRef, normalizeSourceHash } from '../utils/pure';
 import { normalizeTitleKey } from '../utils/ontology';
 import { generateId } from '../utils/ids';
-import { WikiDuplicateHashError } from '../types';
+import { WikiDuplicateHashError, WikiTransactionError } from '../types';
 import type { WikiOptions, ExtractedFact, ExtractedFactWithOntology, WikiFact, OntologyUpdates } from '../types';
 import type { SQLiteAdapter } from '../types';
+import { extractSqliteCode } from '../db/sqliteCodes';
 import type { EntryRepository } from '../repositories/EntryRepository';
 import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
@@ -130,65 +131,92 @@ export class IngestionService {
       const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
       const deletedSourceFactIds: string[] = [];
 
-      await this.db.withTransactionAsync(async (tx) => {
-        deletedSourceFactIds.push(...(await this.entryRepo.findIdsBySource(entityId, sourceRef, null, tx, false)));
-        await this.entryRepo.softDeleteBySource(entityId, tx, sourceRef, null);
+      try {
+        await this.db.withTransactionAsync(async (tx) => {
+          deletedSourceFactIds.push(...(await this.entryRepo.findIdsBySource(entityId, sourceRef, null, tx, false)));
+          await this.entryRepo.softDeleteBySource(entityId, tx, sourceRef, null);
 
-        const titleIndex = new Map<string, TitleIndexEntry>();
-        const pendingEdges: Array<{
-          sourceId: string;
-          sourceType: string | null;
-          edges: ExtractedFactWithOntology['edges'];
-        }> = [];
+          const titleIndex = new Map<string, TitleIndexEntry>();
+          const pendingEdges: Array<{
+            sourceId: string;
+            sourceType: string | null;
+            edges: ExtractedFactWithOntology['edges'];
+          }> = [];
 
-        const existingFacts = await this.entryRepo.findRecentByEntityId(entityId, 500, tx);
-        for (const existing of existingFacts) {
-          titleIndex.set(normalizeTitleKey(existing.title), {
-            id: existing.id,
-            okf_type: existing.okf_type ?? null,
-          });
-        }
-
-        let ontologyState = await this.ontologyService?.getEffectiveState(entityId, tx)
-          ?? { mode: 'off' as const, manifest: { node_types: [], edge_types: [] } };
-        let { mode, manifest } = ontologyState;
-
-        for (const { facts, ontology_updates } of orderedChunkFacts) {
-          if (mode === 'emergent' && ontology_updates && this.ontologyService) {
-            manifest = await this.ontologyService.mergeEmergentUpdates(entityId, ontology_updates, tx);
-            ontologyState = await this.ontologyService.getEffectiveState(entityId, tx);
-            mode = ontologyState.mode;
+          const existingFacts = await this.entryRepo.findRecentByEntityId(entityId, 500, tx);
+          for (const existing of existingFacts) {
+            titleIndex.set(normalizeTitleKey(existing.title), {
+              id: existing.id,
+              okf_type: existing.okf_type ?? null,
+            });
           }
 
-          for (const fact of facts) {
-            const ontologyFact = fact as ExtractedFactWithOntology;
-            const normalized = this.ontologyService?.validateAndNormalizeFact(ontologyFact, manifest)
-              ?? { okf_type: null, edges: [] };
+          let ontologyState = await this.ontologyService?.getEffectiveState(entityId, tx)
+            ?? { mode: 'off' as const, manifest: { node_types: [], edge_types: [] } };
+          let { mode, manifest } = ontologyState;
 
-            const id = generateId('fact_');
-            const wikiFact: WikiFact = {
-              id, entity_id: entityId, title: fact.title, body: fact.body, tags: fact.tags, confidence: fact.confidence,
-              source_type: 'immutable_document', source_hash: sourceHash, source_ref: sourceRef,
-              created_at: now, updated_at: now, last_accessed_at: null, access_count: 0, deleted_at: null,
-              okf_type: normalized.okf_type,
-            };
-            await this.entryRepo.upsert(wikiFact, tx);
-            insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
+          for (const { facts, ontology_updates } of orderedChunkFacts) {
+            if (mode === 'emergent' && ontology_updates && this.ontologyService) {
+              manifest = await this.ontologyService.mergeEmergentUpdates(entityId, ontology_updates, tx);
+              ontologyState = await this.ontologyService.getEffectiveState(entityId, tx);
+              mode = ontologyState.mode;
+            }
 
-            titleIndex.set(normalizeTitleKey(fact.title), { id, okf_type: normalized.okf_type });
+            for (const fact of facts) {
+              const ontologyFact = fact as ExtractedFactWithOntology;
+              const normalized = this.ontologyService?.validateAndNormalizeFact(ontologyFact, manifest)
+                ?? { okf_type: null, edges: [] };
 
-            if (normalized.edges.length > 0) {
-              pendingEdges.push({ sourceId: id, sourceType: normalized.okf_type, edges: normalized.edges });
+              const id = generateId('fact_');
+              const wikiFact: WikiFact = {
+                id, entity_id: entityId, title: fact.title, body: fact.body, tags: fact.tags, confidence: fact.confidence,
+                source_type: 'immutable_document', source_hash: sourceHash, source_ref: sourceRef,
+                created_at: now, updated_at: now, last_accessed_at: null, access_count: 0, deleted_at: null,
+                okf_type: normalized.okf_type,
+              };
+              await this.entryRepo.upsert(wikiFact, tx);
+              insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
+
+              titleIndex.set(normalizeTitleKey(fact.title), { id, okf_type: normalized.okf_type });
+
+              if (normalized.edges.length > 0) {
+                pendingEdges.push({ sourceId: id, sourceType: normalized.okf_type, edges: normalized.edges });
+              }
             }
           }
-        }
 
-        for (const item of pendingEdges) {
-          await this.ontologyService?.resolveAndPersistEdges(
-            entityId, item.sourceId, item.sourceType, item.edges ?? [], manifest, titleIndex, tx, now,
-          );
+          for (const item of pendingEdges) {
+            await this.ontologyService?.resolveAndPersistEdges(
+              entityId, item.sourceId, item.sourceType, item.edges ?? [], manifest, titleIndex, tx, now,
+            );
+          }
+        });
+      } catch (err) {
+        // A concurrent ingest for a DIFFERENT sourceRef beat us to the same
+        // sourceHash between the pre-check above and this write — the v9
+        // partial UNIQUE index (entity_id, source_hash) rejected the INSERT.
+        // Translate into the same duplicate-hash outcome the pre-check would
+        // have produced, by mode. Any other error re-throws unmodified.
+        const sqliteCode = err instanceof WikiTransactionError
+          ? err.sqliteErrorCode
+          : extractSqliteCode(err);
+        if (sqliteCode !== 'SQLITE_CONSTRAINT_UNIQUE') throw err;
+
+        const refs = await this.entryRepo.findSourceRefsByHash(entityId, sourceHash);
+        const others = refs.filter(r => r !== sourceRef);
+        // No other live ref holds this hash (e.g. a different constraint
+        // fired, or the racing writer's row was itself rolled back) — the
+        // UNIQUE violation isn't explained by a duplicate-hash race; surface
+        // the original error rather than a misleading result.
+        if (others.length === 0) throw err;
+        const canonical = others[0];
+
+        if (onDuplicateHash === 'throw' || onDuplicateHash === 'ingest') {
+          throw new WikiDuplicateHashError({ canonical, sourceHash, entityId });
         }
-      });
+        // 'skip'
+        return { truncated: false, chunks: 0, duplicateOf: canonical };
+      }
 
       await this.searchService.sync(entityId);
 
