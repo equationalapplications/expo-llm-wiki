@@ -86,7 +86,7 @@ export class IngestionService {
       throw new Error(`documentChunk must be a string, received ${typeof params.documentChunk}`);
     }
 
-    this.jobManager.acquireLock('ingest', entityId, sourceRef);
+    const releaseIngestLocks = await this.jobManager.acquireIngestLocks(entityId, sourceRef, sourceHash);
 
     try {
       const { chunks, truncated } = chunkText(params.documentChunk, maxChunkLength, chunkOverlap);
@@ -209,7 +209,7 @@ export class IngestionService {
       return { truncated, chunks: chunks.length };
 
     } finally {
-      this.jobManager.releaseLock('ingest', entityId, sourceRef);
+      releaseIngestLocks();
     }
   }
 }

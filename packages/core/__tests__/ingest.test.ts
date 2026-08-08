@@ -36,6 +36,7 @@ describe('IngestionService — PromptService injection', () => {
     mockJobManager = {
       acquireLock: vi.fn(),
       releaseLock: vi.fn(),
+      acquireIngestLocks: vi.fn().mockResolvedValue(vi.fn()),
     };
     mockEmbeddingService = {
       embedFact: vi.fn().mockResolvedValue(true),

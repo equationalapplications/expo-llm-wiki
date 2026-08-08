@@ -15,12 +15,70 @@ export type OperationType =
 export class JobManager {
   private activeMaintenanceJobs = new Set<string>();
   private activeIngestJobs = new Map<string, Set<string>>();
+  /**
+   * Per-(entityId, sourceHash) promise-chain lock. Serializes ingest races
+   * at the application level (the v9 partial UNIQUE index enforces it at
+   * the DB level as defense-in-depth). Two callers holding the same hash
+   * see FIFO order; different hashes never block one another.
+   *
+   * Keyed `${entityId}${sourceHash}` so an entityId that happens to
+   * contain the separator cannot collide with a different entity's lock.
+   */
+  private hashLocks: Map<string, Promise<unknown>> = new Map();
   private statusSubscribers = new Map<
     string,
     Set<{ callback: (s: EntityStatus) => void; last: EntityStatus }>
   >();
 
   constructor(private prefix: string) {}
+
+  private _hashLockKey(entityId: string, sourceHash: string): string {
+    return `${entityId}${sourceHash}`;
+  }
+
+  /**
+   * Acquire a promise-chain lock scoped to one `(entityId, sourceHash)` pair.
+   * Returns a zero-argument release closure that removes the current tail
+   * from the chain. Releasing is idempotent so a holder that double-fires
+   * (e.g. on a finally that races an explicit release) cannot unblock
+   * the next holder prematurely.
+   *
+   * Documented ordering: ingest acquires the hash lock FIRST, then the
+   * synchronous sourceRef ingest lock, and the release closure unwinds in
+   * the opposite order (sourceRef first, hash second). Hash-then-sourceRef
+   * is required because the v9 partial UNIQUE index conflicts on the
+   * (entity_id, source_hash) pair regardless of source_ref, so two callers
+   * with DIFFERENT source_refs racing the same hash are the exact case the
+   * TOCTOU race fix needs to serialize.
+   *
+   * Mechanics: each holder owns a private `released` promise that resolves
+   * only when THIS holder calls release(). The map stores the holder's
+   * `released` promise as the "tail" — the NEXT caller awaits that tail
+   * via `previous = this.hashLocks.get(key)`. The current caller gets
+   * their unique release function once `previous` (the prior holder's
+   * release signal) settles, so each holder is guaranteed a UNIQUE release
+   * closure bound to their own `released` promise.
+   */
+  acquireHashLock(entityId: string, sourceHash: string): Promise<() => void> {
+    const key = this._hashLockKey(entityId, sourceHash);
+    const previous = this.hashLocks.get(key) ?? Promise.resolve();
+    let resolveReleased!: () => void;
+    const released = new Promise<void>((resolve) => { resolveReleased = resolve; });
+    let fired = false;
+    const release = () => {
+      if (fired) return;
+      fired = true;
+      // Unlink from the map ONLY if we are still the current tail; otherwise
+      // a fresh holder has already chained a new tail and ours would race.
+      if (this.hashLocks.get(key) === released) {
+        this.hashLocks.delete(key);
+      }
+      resolveReleased();
+    };
+    this.hashLocks.set(key, released);
+    // Wait for the prior holder to release, then hand back OUR unique closure.
+    return previous.then(() => release);
+  }
 
   private _pruneKey(entityId: string) { return `${this.prefix}:${entityId}:prune`; }
   private _reembedKey(entityId: string) { return `${this.prefix}:${entityId}:reembed`; }
@@ -301,6 +359,43 @@ export class JobManager {
     this.activeMaintenanceJobs.add(healKey);
     this._notifyStatusSubscribers(entityId);
     return true;
+  }
+
+  /**
+   * Centralized ingest lock acquisition. Acquires the hash lock FIRST
+   * (FIFO across callers racing the same hash), then the synchronous
+   * sourceRef ingest lock (rejects cross-entity conflicts and busy
+   * operations). Returns a single zero-argument release closure that
+   * unwinds in the opposite order — sourceRef first, hash second — so
+   * the sourceRef lock is freed the instant its work is done and only
+   * the hash lock keeps serializing the duplicate-content race window.
+   *
+   * On a sourceRef conflict (WikiBusyError thrown synchronously by the
+   * underlying acquireLock) the hash lock is released BEFORE the error
+   * propagates, so the next caller in the hash chain is not held up by
+   * a request that never reached the DB.
+   */
+  async acquireIngestLocks(
+    entityId: string,
+    sourceRef: string,
+    sourceHash: string,
+  ): Promise<() => void> {
+    const releaseHash = await this.acquireHashLock(entityId, sourceHash);
+    let sourceLockAcquired = false;
+    try {
+      this.acquireLock('ingest', entityId, sourceRef);
+      sourceLockAcquired = true;
+    } catch (err) {
+      releaseHash();
+      throw err;
+    }
+    return () => {
+      try {
+        if (sourceLockAcquired) this.releaseLock('ingest', entityId, sourceRef);
+      } finally {
+        releaseHash();
+      }
+    };
   }
 
   /**
