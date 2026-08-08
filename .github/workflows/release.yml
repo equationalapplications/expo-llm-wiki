@@ -118,6 +118,26 @@ jobs:
 
       - run: pnpm run build
 
+      - name: Prune orphaned local tags
+        run: |
+          # actions/checkout fetches tags by default. A tag left over from a
+          # prior failed Phase 1 run (tagged before the branch+tag push, then
+          # never reached because the run died) points at a "chore(release)"
+          # commit that was never merged into main - it is not an ancestor of
+          # HEAD. semantic-release's verifyRelease step creates a local tag
+          # named after the computed version and fails with `fatal: tag
+          # 'vX.Y.Z' already exists` if a same-named tag is already present,
+          # so any such orphan must be deleted before semantic-release runs
+          # (this bit us with v5.2.1 on 2026-08-08, see PR #82 / #84).
+          # Real historical release tags remain untouched: they were reached
+          # via a squash-merge onto main, so they ARE ancestors of HEAD.
+          for tag in $(git tag); do
+            if ! git merge-base --is-ancestor "$tag" HEAD 2>/dev/null; then
+              echo "Deleting orphaned local tag: $tag"
+              git tag -d "$tag"
+            fi
+          done
+
       - name: Run semantic-release (--no-ci, dry local mutation only)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
