@@ -833,7 +833,7 @@ const { chunks, truncated } = chunkText(
 
 If your existing database already has live rows that violate this invariant (created before the app-level race fix shipped), `setup()` throws:
 
-```
+```text
 Migration v9 (add_live_hash_unique_index) failed: existing live rows violate the new UNIQUE index. …
 ```
 

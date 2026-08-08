@@ -11,19 +11,18 @@ on:
         type: string
 
 permissions:
-  contents: write # create GitHub release, push release branch/tag
-  issues: write # comment on issues resolved by release
-  pull-requests: write # comment on PRs resolved by release, create/merge/reopen release PR
-  id-token: write # npm provenance
+  contents: read
 
-# cancel-in-progress must stay false: a Phase 2 run (mid-publish) must never be
-# cancelled by a subsequent Phase 1 trigger, and a Phase 1 run must never be
-# cancelled by a subsequent Phase 2 trigger. Non-release pushes that land while
-# a release is in flight simply queue behind it in this group instead of
-# clobbering a partial publish.
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
+# Concurrency guards per-phase and live at the job level (not the workflow
+# level) so Phase 1 and Phase 2 each get their own pending slot. GitHub keeps
+# at most one pending run per concurrency group: keying only by github.ref
+# would let an ordinary push cancel a queued Phase 2 run (or vice versa).
+# Per-phase keys keep the in-flight run protected while a queued same-phase
+# run waits — a subsequent Phase 2 trigger cannot cancel an in-flight
+# Phase 1, and vice versa. Non-release pushes still queue against the same
+# group (same github.ref, same phase=1 → no release PR to find), where the
+# phase-detection step exits cleanly when semantic-release finds no releasable
+# commits.
 
 jobs:
   # Determines whether this run is Phase 1 (an ordinary push to main that may
@@ -32,6 +31,9 @@ jobs:
   detect:
     name: Detect release phase
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       phase: ${{ steps.detect.outputs.phase }}
       release_branch: ${{ steps.detect.outputs.release_branch }}
@@ -41,6 +43,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             # Manual republish always means "publish this already-tagged version" -
@@ -50,16 +53,14 @@ jobs:
             exit 0
           fi
 
-          # Look at the most recently merged PRs into main. If the commit that
-          # triggered this push is the squash-merge commit of a PR whose head
-          # branch was release/v*, this push is the release PR landing - Phase 2.
-          # Otherwise this is an ordinary push (feature merge) - Phase 1.
-          # `gh --jq` does not accept `--arg`; pipe into a separate `jq` so the
-          # commit SHA is bound safely instead of interpolated into the filter.
-          MATCH=$(gh pr list --repo "$REPO" --state merged --base main --limit 10 \
-            --json number,headRefName,mergeCommit \
-            | jq -r --arg sha "${{ github.sha }}" \
-              '[.[] | select(.mergeCommit.oid == $sha) | select(.headRefName | test("^release/v"))] | .[0].headRefName // empty')
+          # Query the pull requests associated with the exact commit SHA that
+          # triggered this push. This avoids the ordering / --limit pitfalls of
+          # `gh pr list --state merged` (which sorts by creation date and can
+          # drop a release PR that was created earlier but merged most
+          # recently), and removes the need to bind github.sha into a jq
+          # filter via shell interpolation.
+          MATCH=$(gh api "repos/${REPO}/commits/${COMMIT_SHA}/pulls" \
+            --jq '[.[] | select(.merged_at != null) | select(.base.ref == "main") | select(.head.ref | test("^release/v")) | .head.ref] | .[0] // empty')
 
           if [ -n "$MATCH" ]; then
             echo "phase=2" >> "$GITHUB_OUTPUT"
@@ -78,6 +79,12 @@ jobs:
     needs: detect
     if: needs.detect.outputs.phase == '1'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: release-${{ github.ref }}-1
+      cancel-in-progress: false
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -129,7 +136,13 @@ jobs:
       - name: Check for releasable changes
         id: changes
         run: |
-          if [ -z "$(git status --porcelain)" ]; then
+          # Restrict the check to the files semantic-release actually mutates
+          # (same paths the staging step below stages). pnpm run build runs
+          # earlier in the job, so any build output, lockfile touch, or
+          # generated file that is not ignored would otherwise make the
+          # working tree dirty and falsely report has_changes=true.
+          RELEASE_PATHS="CHANGELOG.md package.json packages/*/package.json"
+          if [ -z "$(git status --porcelain -- $RELEASE_PATHS)" ]; then
             echo "No releasable commits found by semantic-release; nothing to do."
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
           else
@@ -154,18 +167,27 @@ jobs:
           EXISTING=$(gh pr list --head "$BRANCH" --state all --json number,state,url)
           OPEN_PR=$(echo "$EXISTING" | node -e "const a=JSON.parse(require('fs').readFileSync(0,'utf8'));const p=a.find(x=>x.state==='OPEN');console.log(p?p.url:'')")
           CLOSED_PR=$(echo "$EXISTING" | node -e "const a=JSON.parse(require('fs').readFileSync(0,'utf8'));const p=a.find(x=>x.state==='CLOSED');console.log(p?p.url:'')")
+          MERGED_PR=$(echo "$EXISTING" | node -e "const a=JSON.parse(require('fs').readFileSync(0,'utf8'));const p=a.find(x=>x.state==='MERGED');console.log(p?p.url:'')")
+
+          if [ -n "$MERGED_PR" ]; then
+            echo "Release PR for ${BRANCH} is already merged: ${MERGED_PR}"
+            echo "Phase 2 owns publication for this version; nothing to do here."
+            exit 0
+          fi
 
           if [ -n "$OPEN_PR" ]; then
             echo "Release PR already open for ${BRANCH}: ${OPEN_PR}"
             echo "Idempotent rerun - nothing to commit/push, just ensure auto-merge is requested."
-            gh pr merge --auto --squash "$OPEN_PR" || true
+            gh pr merge --auto --squash "$OPEN_PR" \
+              || echo "::warning::Could not enable auto-merge on ${OPEN_PR}; merge it manually."
             exit 0
           fi
 
           if [ -n "$CLOSED_PR" ]; then
             echo "Reopening previously closed release PR: ${CLOSED_PR}"
             gh pr reopen "$CLOSED_PR"
-            gh pr merge --auto --squash "$CLOSED_PR" || true
+            gh pr merge --auto --squash "$CLOSED_PR" \
+              || echo "::warning::Could not enable auto-merge on ${CLOSED_PR}; merge it manually."
             exit 0
           fi
 
@@ -182,8 +204,12 @@ jobs:
           # push-triggered workflow. It does NOT affect the pull_request-triggered
           # Test workflow run against the release PR, which is what we need to run.
           git commit -m "chore(release): ${RELEASE_VERSION} [skip ci]"
-          git tag "v${RELEASE_VERSION}"
-          git push origin "$BRANCH" --follow-tags
+          # Annotated tag so `git push` actually transmits the ref. A
+          # lightweight tag is a ref without an object, and `git push --follow-tags`
+          # only follows annotated tags — pushing it would silently leave the
+          # tag local and Phase 2's `git fetch --tags` would not find it.
+          git tag -a "v${RELEASE_VERSION}" -m "v${RELEASE_VERSION}"
+          git push origin "$BRANCH" "refs/tags/v${RELEASE_VERSION}"
 
           PR_URL=$(gh pr create --base main --head "$BRANCH" \
             --title "chore(release): ${RELEASE_VERSION}" \
@@ -199,6 +225,14 @@ jobs:
     needs: detect
     if: needs.detect.outputs.phase == '2'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      id-token: write
+    concurrency:
+      group: release-${{ github.ref }}-2
+      cancel-in-progress: false
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -208,7 +242,14 @@ jobs:
           # Do NOT set persist-credentials: false here - this job needs to
           # force-push the relocated release tag using the workflow's own
           # GITHUB_TOKEN.
-          ref: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.release_version) || github.ref }}
+          # On a push event (release PR squash-merge landing on main),
+          # checkout the exact commit SHA that triggered the workflow —
+          # `github.ref` resolves to refs/heads/main and would advance to
+          # any commit that landed between the merge and this job starting,
+          # which would let `git tag -f HEAD` point the release tag at the
+          # wrong commit. workflow_dispatch still needs the explicit
+          # `v<version>` ref to check out the tag's commit for republish.
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.release_version) || github.sha }}
 
       - uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d # v4.0.0
 
@@ -315,4 +356,14 @@ jobs:
           # Do NOT use --clobber: if a release for this tag already exists,
           # fail loudly - that signals Phase 2 re-ran after already creating
           # the release, a real problem worth surfacing rather than masking.
-          gh release create "v${RELEASE_VERSION}" --title "v${RELEASE_VERSION}" --notes-file CHANGELOG.md --verify-tag
+          # Extract only this version's section from CHANGELOG.md so the
+          # release body contains just the changes for this version instead
+          # of the full project history (which would also eventually exceed
+          # GitHub's 125000-character release-body limit).
+          awk -v ver="${RELEASE_VERSION}" '
+            $0 ~ "^#+ +\\[?" ver "\\]?" {found=1; next}
+            found && /^#+ +\[?[0-9]+\.[0-9]+\.[0-9]+/ {exit}
+            found {print}
+          ' CHANGELOG.md > release-notes.md
+          [ -s release-notes.md ] || echo "Release v${RELEASE_VERSION}" > release-notes.md
+          gh release create "v${RELEASE_VERSION}" --title "v${RELEASE_VERSION}" --notes-file release-notes.md --verify-tag

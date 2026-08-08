@@ -50,29 +50,6 @@ export class IngestionService {
     const sourceHash = normalizeSourceHash(params.sourceHash);
     if (!sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
 
-    // Duplicate-hash guard: runs BEFORE acquireLock, BEFORE chunking, BEFORE any
-    // LLM call. The spec's "synchronous return" regression guard is satisfied by
-    // returning directly — no setImmediate, no Promise.resolve().then().
-    const onDuplicateHash = opts?.onDuplicateHash ?? 'ingest';
-    if (onDuplicateHash !== 'ingest') {
-      const refs = await this.entryRepo.findSourceRefsByHash(entityId, sourceHash);
-      // Canonical must be a stored DIFFERENT source_ref, never the incoming ref.
-      // `refs` is already ordered `source_ref COLLATE BINARY` by the repo, so
-      // `others[0]` is the canonical — re-sorting in JS would use UTF-16
-      // code-unit ordering and could disagree with SQLite BINARY for non-ASCII.
-      // Excluding the incoming ref prevents the canonical from echoing the
-      // caller's own ref when it sorts first.
-      const others = refs.filter(r => r !== sourceRef);
-      if (others.length > 0) {
-        const canonical = others[0];
-        if (onDuplicateHash === 'throw') {
-          throw new WikiDuplicateHashError({ canonical, sourceHash, entityId });
-        }
-        // 'skip'
-        return { truncated: false, chunks: 0, duplicateOf: canonical };
-      }
-    }
-
     const maxChunkLength = params.maxChunkLength ?? this.options.config?.maxChunkLength ?? DEFAULT_MAX_CHUNK_LENGTH;
     const rawOverlap = params.chunkOverlap ?? this.options.config?.chunkOverlap ?? DEFAULT_CHUNK_OVERLAP;
     const chunkOverlap = Math.min(
@@ -87,9 +64,39 @@ export class IngestionService {
       throw new Error(`documentChunk must be a string, received ${typeof params.documentChunk}`);
     }
 
+    // Acquire the hash + sourceRef ingest locks BEFORE the duplicate pre-check
+    // so concurrent same-hash callers serialize here. Two callers that both
+    // observe no duplicate at the pre-check can otherwise both reach the
+    // INSERT and trip the v9 UNIQUE constraint — see
+    // docs/superpowers/specs/2026-08-07-dependabot-concurrency-release-hygiene-design.md §B.
     const releaseIngestLocks = await this.jobManager.acquireIngestLocks(entityId, sourceRef, sourceHash);
 
     try {
+      // Duplicate-hash guard: runs AFTER acquireIngestLocks but BEFORE chunking
+      // and any LLM call. With the per-hash lock held by the previous holder,
+      // we are guaranteed to observe any committed write they made before
+      // releasing. Early duplicate returns go through the `finally` block
+      // below so both locks are released cleanly.
+      const onDuplicateHash = opts?.onDuplicateHash ?? 'ingest';
+      if (onDuplicateHash !== 'ingest') {
+        const refs = await this.entryRepo.findSourceRefsByHash(entityId, sourceHash);
+        // Canonical must be a stored DIFFERENT source_ref, never the incoming ref.
+        // `refs` is already ordered `source_ref COLLATE BINARY` by the repo, so
+        // `others[0]` is the canonical — re-sorting in JS would use UTF-16
+        // code-unit ordering and could disagree with SQLite BINARY for non-ASCII.
+        // Excluding the incoming ref prevents the canonical from echoing the
+        // caller's own ref when it sorts first.
+        const others = refs.filter(r => r !== sourceRef);
+        if (others.length > 0) {
+          const canonical = others[0];
+          if (onDuplicateHash === 'throw') {
+            throw new WikiDuplicateHashError({ canonical, sourceHash, entityId });
+          }
+          // 'skip'
+          return { truncated: false, chunks: 0, duplicateOf: canonical };
+        }
+      }
+
       const { chunks, truncated } = chunkText(params.documentChunk, maxChunkLength, chunkOverlap);
       if (chunks.length === 0) return { truncated: false, chunks: 0 };
 

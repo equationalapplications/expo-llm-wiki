@@ -35,17 +35,20 @@ async function insertEntry(
 
 /**
  * Bypass the pre-check (Task 6's translation path only fires when the
- * pre-check's snapshot was already stale) by inserting the canonical row
- * AFTER `wiki.setup()` but going straight to `ingestDocument` with a
- * DIFFERENT sourceRef under the SAME hash lock — that alone can't race,
- * since the hash lock (Task 5) already serializes same-hash callers. To
- * reach the translation path deterministically we insert the colliding row
- * directly via `db.runAsync` in between the pre-check and the transaction —
- * simulated here by inserting the canonical row, then calling
- * ingestDocument with a raw db write racing in via a monkeypatched
- * `findSourceRefsByHash` that reports no collision on the FIRST call (so
- * the pre-check passes) but the row exists by the time the transaction
- * commits, tripping the real UNIQUE index.
+ * pre-check's snapshot was already stale) by injecting the colliding row
+ * via a monkeypatched `findSourceRefsByHash`.
+ *
+ * For `'skip'` / `'throw'`, the first call IS the pre-check: we insert the
+ * canonical row right then (simulating a writer that landed between the
+ * pre-check snapshot and our transaction write), then return [] so the
+ * pre-check reports no collision and ingestDocument proceeds into the
+ * transaction. The second call — the catch-block lookup — falls through to
+ * the real repo and observes the row.
+ *
+ * For default `'ingest'` mode there is no pre-check, so the canonical row
+ * must already exist by the time the transaction INSERT fires — we insert
+ * it before calling `ingestDocument` (the first mock call is the
+ * catch-block lookup and returns the real repo, which finds the row).
  */
 async function ingestWithRaceInjected(
   wiki: WikiMemory,
@@ -54,25 +57,36 @@ async function ingestWithRaceInjected(
 ) {
   const entryRepo = (wiki as any).entryRepo;
   const original = entryRepo.findSourceRefsByHash.bind(entryRepo);
-  let canonicalInserted = false;
+  const mode = args.onDuplicateHash ?? 'ingest';
+  let firstCallDone = false;
+
+  if (mode === 'ingest') {
+    // Default mode has no pre-check; the row must exist before the
+    // transaction INSERT for the UNIQUE constraint to fire.
+    await insertEntry(db, { id: 'canonical', sourceRef: args.canonicalRef, sourceHash: args.sourceHash, updatedAt: 1000 });
+  }
+
   entryRepo.findSourceRefsByHash = async (entityId: string, hash: string, tx?: SQLiteAdapter) => {
-    if (!canonicalInserted) {
-      // Pre-check (only reached for 'skip'/'throw' modes) — or the sole
-      // catch-block lookup for default 'ingest' mode, which skips the
-      // pre-check entirely: report no collision either way, since the
-      // canonical row hasn't been inserted into the fixture yet.
-      return [];
+    if (!firstCallDone) {
+      firstCallDone = true;
+      if (mode === 'skip' || mode === 'throw') {
+        // First call IS the pre-check. Inject the collision now (simulating
+        // a writer that landed between the pre-check snapshot and our
+        // transaction write), then report no collision so ingestDocument
+        // continues into the transaction (which trips the UNIQUE index and
+        // exercises the catch-and-translate path).
+        await insertEntry(db, { id: 'canonical', sourceRef: args.canonicalRef, sourceHash: args.sourceHash, updatedAt: 1000 });
+        return [];
+      }
+      // Default 'ingest' mode: the first call is the catch-block lookup.
+      // The canonical row was inserted before ingestDocument ran, so the
+      // real repo finds it.
+      return original(entityId, hash, tx);
     }
-    // Called after the canonical row has been inserted below — use the
-    // real repo so the catch-block translation sees the true collision.
+    // Subsequent calls (catch-block lookup for skip/throw) use the real
+    // repo so the translation sees the true collision.
     return original(entityId, hash, tx);
   };
-
-  // Insert the canonical row AFTER the pre-check would have run but BEFORE
-  // the transaction commits, simulating a writer that landed between the
-  // pre-check snapshot and this call's write.
-  await insertEntry(db, { id: 'canonical', sourceRef: args.canonicalRef, sourceHash: args.sourceHash, updatedAt: 1000 });
-  canonicalInserted = true;
 
   try {
     return await wiki.ingestDocument(

@@ -144,7 +144,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ${prefix}idx_entries_live_hash
 
 If the database already contains live duplicate rows (i.e., a previous ingest beat the new guard), `CREATE UNIQUE INDEX` fails. The migration script **aborts with a clear, actionable error** rather than auto-resolving:
 
-```
+```text
 Migration v9 (add_live_hash_unique_index) failed: existing live rows
 violate the new UNIQUE index. Run the following query to find duplicates,
 then resolve each via `forget({ sourceRef: <loser> })` and re-run the
@@ -178,31 +178,31 @@ class JobManager {
 }
 ```
 
-**Hash lock primitive semantics are intentionally different from the existing `acquireLock` / `releaseLock` pair.** The existing pair is `acquireLock(operation: OperationType, entityId: string, sourceRef?: string): void` (sync, throws `WikiBusyError` on conflict) and `releaseLock(operation: OperationType, entityId: string, sourceRef?: string): void` (sync, separate method call with three positional arguments) — see `packages/core/src/services/JobManager.ts:104` and `:209`. The hash lock uses promise-chain tail-advancement so concurrent ingests with the same hash **serialize** through the lock rather than fail-fast on it: the second caller awaits the first's completion, then runs the duplicate-hash guard against the first's committed write. The new primitive is released by calling the closure returned from `acquireHashLock` — a zero-arg function distinct from the existing `releaseLock` method. Internal-only; not exposed on the `WikiMemory` facade. Hosts do not acquire hash locks directly — `IngestionService.acquireIngestLocks` does.
+**Hash lock primitive semantics are intentionally different from the existing `acquireLock` / `releaseLock` pair.** The existing pair is `acquireLock(operation: OperationType, entityId: string, sourceRef?: string): void` (sync, throws `WikiBusyError` on conflict) and `releaseLock(operation: OperationType, entityId: string, sourceRef?: string): void` (sync, separate method call with three positional arguments) — see `packages/core/src/services/JobManager.ts:104` and `:209`. The hash lock uses promise-chain tail-advancement so concurrent ingests with the same hash **serialize** through the lock rather than fail-fast on it: the second caller awaits the first's completion, then runs the duplicate-hash guard against the first's committed write. The new primitive is released by calling the closure returned from `acquireHashLock` — a zero-arg function distinct from the existing `releaseLock` method. Internal-only; not exposed on the `WikiMemory` facade. Hosts do not acquire hash locks directly — `JobManager.acquireIngestLocks` does.
 
-**B3.1 — migrate existing `acquireLock('ingest', ...)` call sites.** As a discrete deliverable of B3, every existing call to `this.jobManager.acquireLock('ingest', ...)` in `IngestionService` (currently the single call at `IngestionService.ts:89` keyed as `${entityId}:${sourceRef}`) is migrated to go through the new `acquireIngestLocks` helper. After this migration, no caller in the codebase takes the `ingest` lock directly — `acquireIngestLocks` is the only entry point, which is what makes the hash-then-sourceRef invariant structurally enforceable.
+**B3.1 — migrate existing `acquireLock('ingest', ...)` call sites.** As a discrete deliverable of B3, every existing call to `this.jobManager.acquireLock('ingest', ...)` in `IngestionService` (currently the single call at `IngestionService.ts:89` keyed as `${entityId}:${sourceRef}`) is migrated to go through the new `JobManager.acquireIngestLocks` helper. After this migration, no caller in the codebase takes the `ingest` lock directly — `acquireIngestLocks` is the only entry point, which is what makes the hash-then-sourceRef invariant structurally enforceable.
 
 ### B4 — lock acquisition order (codified)
 
 A single helper owns the order, removing the per-caller decision:
 
 ```ts
-// IngestionService.ts
-async function acquireIngestLocks(
+// packages/core/src/services/JobManager.ts
+async acquireIngestLocks(
   entityId: string,
   sourceRef: string,
   sourceHash: string,
 ): Promise<() => void> {
   // INVARIANT: hash lock ALWAYS acquired before sourceRef lock.
   // Reversed order is the only way two callers deadlock.
-  const releaseHash = await this.jobManager.acquireHashLock(entityId, sourceHash);
+  const releaseHash = await this.acquireHashLock(entityId, sourceHash);
   try {
     // acquireLock('ingest', ...) is sync and throws WikiBusyError on conflict;
     // no closure to capture — the symmetric releaseLock call takes the same
     // positional args (entityId, sourceRef) at the end of the critical section.
-    this.jobManager.acquireLock('ingest', entityId, sourceRef);
+    this.acquireLock('ingest', entityId, sourceRef);
     return () => {
-      this.jobManager.releaseLock('ingest', entityId, sourceRef);
+      this.releaseLock('ingest', entityId, sourceRef);
       releaseHash();
     };
   } catch (e) {
@@ -214,14 +214,14 @@ async function acquireIngestLocks(
 
 The invariant is documented in a comment block at the top of `JobManager`:
 
-```
+```ts
 // Lock acquisition order in this library:
 //
 //   1. Hash lock       (per (entityId, sourceHash))
 //   2. sourceRef lock  (per (entityId, sourceRef), keyed as 'ingest')
 //
 // Always hash-then-sourceRef. A reversed order is the only deadlock path.
-// The single helper `IngestionService.acquireIngestLocks` enforces this for
+// The single helper `JobManager.acquireIngestLocks` enforces this for
 // all ingest callers — do NOT take the sourceRef lock directly.
 ```
 

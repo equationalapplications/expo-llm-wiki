@@ -132,6 +132,7 @@ Version bumps and `CHANGELOG.md` are managed by [semantic-release](https://githu
 
 - **Phase 1** — an ordinary merge to `main` runs `semantic-release --no-ci`, which computes the next version and updates `CHANGELOG.md` + `package.json` files locally (it no longer commits, tags, or publishes). The workflow commits that as a `release/vX.Y.Z` branch, tags it, and opens a release PR with squash auto-merge requested — so the `Test` workflow validates the release commit like any other PR before it lands.
 - **Phase 2** — when that release PR's squash-merge commit lands on `main`, the tag is relocated onto the new commit, packages publish to npm in dependency order, and the GitHub Release is created.
+- **Manual republish (recovery path)** — the workflow also supports a `workflow_dispatch` trigger that accepts a `release_version` input (e.g. `4.15.1`) and reruns Phase 2 against the existing `v<version>` tag. Use this when Phase 2 partially fails — packages already published are skipped via `npm view … version`, so reruns are idempotent.
 
 **Do not edit in PRs:**
 - `CHANGELOG.md`

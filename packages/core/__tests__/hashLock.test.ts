@@ -52,19 +52,37 @@ describe('JobManager.acquireHashLock', () => {
   it('does not block different hashes for the same entity', async () => {
     const jm = new JobManager('llm_wiki_');
     const order: number[] = [];
+    let releaseA: (() => void) | null = null;
 
-    const acquire = (hash: string, id: number) =>
-      jm.acquireHashLock('e1', hash).then((release) => {
-        order.push(id);
-        return release();
-      });
+    // Hold HASH_A with a deferred release so we can observe HASH_B entering
+    // while HASH_A is still held. If acquireHashLock were globally
+    // serialized, HASH_B would be queued behind HASH_A's release and only
+    // enter after we resolve releaseA — failing this assertion.
+    let aReleased: () => void;
+    const holdAPromise = new Promise<void>((resolve) => { aReleased = resolve; });
+    const holdA = jm.acquireHashLock('e1', HASH_A).then((release) => {
+      order.push(1);
+      releaseA = release;
+      return holdAPromise;
+    });
+    // Flush microtasks so HASH_A has actually entered before HASH_B starts.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(order).toEqual([1]);
 
-    // Interleave the calls. Different keys must run without serializing.
-    await Promise.all([acquire(HASH_A, 1), acquire(HASH_B, 2), acquire(HASH_A, 3), acquire(HASH_B, 4)]);
-    // FIFO per-key but no cross-key ordering — at minimum both keys advanced.
-    expect(order).toContain(1);
-    expect(order).toContain(2);
-    expect(order.length).toBe(4);
+    const acquireB = jm.acquireHashLock('e1', HASH_B).then((release) => {
+      order.push(2);
+      return release();
+    });
+    // Flush microtasks: HASH_B must enter while HASH_A is still held.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(order).toEqual([1, 2]);
+
+    // Now release HASH_A — both holdA and acquireB should settle.
+    releaseA!();
+    aReleased!();
+    await Promise.all([holdA, acquireB]);
   });
 
   it('isolates the lock by entityId (same hash, different entities does not block)', async () => {

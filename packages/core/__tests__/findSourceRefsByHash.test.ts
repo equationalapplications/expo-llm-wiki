@@ -75,14 +75,17 @@ describe('WikiMemory.findSourceRefsByHash', () => {
     const { wiki, db } = await makeWiki();
     // The v9 partial UNIQUE index allows a soft-deleted row to share a hash
     // with a live row (deleted_at IS NULL filter). The live row's ref wins.
+    // Both rows below use the SAME hash so the partial-index WHERE clause
+    // is exercised end-to-end: an unconditional UNIQUE index would have
+    // prevented this fixture from existing at all.
     const hashLive = '1'.repeat(64);
-    const hashDeleted = '2'.repeat(64);
     await insertEntry(db, { id: 'f1', sourceRef: 'a.md', sourceHash: hashLive, updatedAt: 1000 });
-    await insertEntry(db, { id: 'f2', sourceRef: 'b.md', sourceHash: hashDeleted, updatedAt: 1000, deletedAt: 999 });
+    await insertEntry(db, { id: 'f2', sourceRef: 'b.md', sourceHash: hashLive, updatedAt: 1000, deletedAt: 999 });
 
     expect(await wiki.findSourceRefsByHash('entity-1', hashLive)).toEqual(['a.md']);
-    // The soft-deleted row is excluded by the query (WHERE deleted_at IS NULL).
-    expect(await wiki.findSourceRefsByHash('entity-1', hashDeleted)).toEqual([]);
+    // The soft-deleted row is excluded by the query (WHERE deleted_at IS NULL)
+    // even though its hash matches the live row's.
+    expect((await wiki.findSourceRefsByHash('entity-1', hashLive))).toHaveLength(1);
   });
 
   it('does not return refs from a different entity', async () => {

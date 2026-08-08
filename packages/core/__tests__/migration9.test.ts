@@ -111,7 +111,18 @@ describe('migration v9: add_live_hash_unique_index', () => {
     const wiki = new WikiMemory(db, stubOptions);
     await wiki.setup();
 
-    // Same (entity_id, source_hash) as a live row, but soft-deleted.
+    // Live row with the same (entity_id, source_hash) as the tombstone below.
+    // An unconditional UNIQUE index, or one that forgot `deleted_at IS NULL`,
+    // would reject this pair and break the partial-index predicate.
+    await insertEntry(db, {
+      id: 'live',
+      entityId: 'ent',
+      sourceRef: 'current.md',
+      sourceHash: 'a'.repeat(64),
+      updatedAt: 1000,
+    });
+    // Same (entity_id, source_hash) as the live row, but soft-deleted.
+    // The partial WHERE clause lets this coexist.
     await insertEntry(db, {
       id: 'tombstone',
       entityId: 'ent',
@@ -132,10 +143,10 @@ describe('migration v9: add_live_hash_unique_index', () => {
     // A second setup() on the populated DB must NOT throw on either fixture.
     await expect(wiki.setup()).resolves.toBeUndefined();
 
-    // Both rows still present (no destructive cleanup happened).
+    // All three rows still present (no destructive cleanup happened).
     const rows = await db.getAllAsync<{ id: string }>(`SELECT id FROM ${PREFIX}entries`);
     const ids = rows.map(r => r.id).sort();
-    expect(ids).toEqual(['nullhash', 'tombstone']);
+    expect(ids).toEqual(['live', 'nullhash', 'tombstone']);
   });
 
   it('abort path: pre-existing live duplicate causes setup to throw with the exact actionable prefix', async () => {
