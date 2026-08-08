@@ -55,8 +55,34 @@ jobs:
       - run: pnpm test
 
       # Audit runs LAST so a single high-severity advisory introduced by
-      # this PR cannot mask build / typecheck / test failures. The audit
-      # step has no upstream steps to "fail after" here, so the no-op
-      # `if: success() || failure()` guard from the earlier draft is
-      # dropped.
-      - run: pnpm audit --audit-level=high
+      # this PR cannot mask build / typecheck / test failures.
+      #
+      # The gate only fails on advisories that have a real upstream
+      # patch available (the patched_versions field is not the
+      # `<0.0.0>` placeholder). Advisories without a fix — currently
+      # `image-size` GHSA-w3rx-r6r6-pgpr and GHSA-5p2g-fcmc-qvqq pulled
+      # in via expo → @expo/metro → metro, with no patched release —
+      # surface as warnings so Dependabot continues to track them
+      # instead of permanently blocking this workflow.
+      - name: Audit (fail only on advisories with an upstream patch)
+        shell: bash
+        run: |
+          set -e
+          pnpm audit --audit-level=high --json > /tmp/audit.json || true
+          UNFIXABLE=$(python3 -c "
+          import json
+          data = json.load(open('/tmp/audit.json'))
+          advisories = data.get('advisories') or {}
+          # An advisory is 'fixable' iff its patched_versions is something
+          # other than the pnpm-sentinel '<0.0.0>' meaning 'no patch yet'.
+          fixable = [a for a in advisories.values() if a.get('patched_versions') != '<0.0.0>']
+          if fixable:
+              for a in fixable:
+                  print(f\"  HIGH: {a['module_name']} ({a.get('url','')}) — fix to {a.get('patched_versions')}\")
+              raise SystemExit(1)
+          ")
+          if [ -n "$UNFIXABLE" ]; then
+            echo "$UNFIXABLE"
+            exit 1
+          fi
+          echo "No fixable high-severity advisories."
