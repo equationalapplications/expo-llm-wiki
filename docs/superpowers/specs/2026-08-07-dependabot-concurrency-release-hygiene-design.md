@@ -42,7 +42,7 @@ Three workstreams bundled in one PR, sequenced so each step's CI gate (when pres
 | § | Title | Touches |
 |---|---|---|
 | A | Dependabot hygiene | `pnpm-workspace.yaml`, `.github/workflows/test.yml` |
-| B | #79 TOCTOU race fix | `packages/core/src/types.ts`, `packages/core/src/db/sqliteCodes.ts`, `packages/core/src/db/serializedAdapter.ts`, `packages/core/src/services/IngestionService.ts`, `packages/core/src/services/JobManager.ts`, `packages/core/src/repositories/EntryRepository.ts`, schema migration v9 |
+| B | #79 TOCTOU race fix | `packages/core/src/types.ts`, `packages/core/src/db/sqliteCodes.ts`, `packages/core/src/db/serializedAdapter.ts`, `packages/core/src/services/IngestionService.ts`, `packages/core/src/services/JobManager.ts`, `packages/core/src/repositories/EntryRepository.ts`, `packages/core/src/repositories/SourceRefIndexRepository.ts` (new), `packages/core/src/services/MaintenanceService.ts`, schema migrations v9 (dropped) + v10 (new) |
 | C | #76 two-phase release flow | `.releaserc.json`, `.github/workflows/release.yml`, `Protect Main` ruleset (id 20511961) |
 
 ---
@@ -124,40 +124,62 @@ The `--audit-level=high` threshold matches the maintenance spec's policy.
 
 Defense in depth. Application-level per-hash lock is the **fast path** — most concurrent ingests with the same hash serialize through it and the second caller sees the first's committed write at guard time. The DB-level UNIQUE index is the **safety net** — a true race that beats both the guard and the lock (e.g., timing where the lock is released between guard and write) is caught at INSERT time by the constraint, not by an inconsistent read.
 
-### B1 — partial UNIQUE index (schema migration v9)
+### B1 — source-ref index table (schema migration v10)
 
-A new migration adds:
+A new migration adds a dedicated `source_ref_index` table that records, for each `(entity_id, source_hash)` pair, the canonical `source_ref` currently holding that hash. The safety-net UNIQUE constraint lives on this table, not on `entries`. Migration v10 also **drops the v9 entries-level UNIQUE index** that incorrectly conflated facts and sourceRefs:
 
 ```sql
-CREATE UNIQUE INDEX IF NOT EXISTS ${prefix}idx_entries_live_hash
-  ON ${prefix}entries (entity_id, source_hash)
-  WHERE deleted_at IS NULL AND source_hash IS NOT NULL;
+-- 1. Drop the v9 entries-level UNIQUE index (now superseded by source_ref_index).
+DROP INDEX IF EXISTS ${prefix}idx_entries_live_hash;
+
+-- 2. Create the new table + UNIQUE index that encodes the sourceRef-level invariant.
+CREATE TABLE ${prefix}source_ref_index (
+  id TEXT PRIMARY KEY,
+  entity_id TEXT NOT NULL,
+  source_hash TEXT NOT NULL,
+  source_ref TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  deleted_at INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ${prefix}idx_source_ref_hash
+  ON ${prefix}source_ref_index (entity_id, source_hash)
+  WHERE deleted_at IS NULL;
 ```
 
-**Why a partial index:** soft-deleted rows can carry the same hash as the live row. Without `WHERE deleted_at IS NULL`, the constraint would prevent `forget({ sourceRef: A })` + `ingestDocument(sourceRef: A)` from working (the soft-deleted row still occupies the `(entity_id, source_hash)` slot).
+**Why a separate table, not an index on `entries`:** the `entries` table has one row per extracted fact, and a single `ingestDocument` call writes N facts that all share `(entity_id, source_ref, source_hash)`. A UNIQUE index on `entries(entity_id, source_hash)` would therefore block the 2nd–Nth fact inserts inside every normal multi-fact ingest, not just true races. The right invariant is *"at most one sourceRef per (entity, hash)"*, which a per-fact table cannot express — a dedicated table that explicitly models the (entity, hash) → sourceRef mapping can.
 
-**Why `source_hash IS NOT NULL`:** some legacy rows carry NULL hashes (per the source-ref-lifecycle spec §1). The constraint must not fire on NULL — three NULLs are not duplicates under SQL semantics, but a NOT NULL filter makes the invariant explicit and avoids surprise behavior if the database driver handles NULLs differently across versions.
+**Why `WHERE deleted_at IS NULL`:** the same soft-delete + re-ingest argument as before. `forget({ sourceRef: A })` followed by `ingestDocument(sourceRef: A, hash: H)` must work; the soft-deleted index row must not occupy the `(entity_id, source_hash)` slot.
 
-**Migration name:** `add_live_hash_unique_index` (matches the existing migration naming convention).
+**Why `source_hash IS NOT NULL` is not needed:** the table's `source_hash` column is `NOT NULL` by definition — only `entries` ever stores NULL hashes (legacy rows per the source-ref-lifecycle spec §1). The index predicate does not need to repeat the filter.
+
+**Migration name:** `add_source_ref_index` (matches the existing migration naming convention). The earlier v9 migration is preserved as a no-op (its `CREATE UNIQUE INDEX` is a CREATE, not a DROP, and the index is dropped in v10).
+
+**v9 supersession rationale:** v9 (`add_live_hash_unique_index`) shipped with the original review branch but the design was wrong — a UNIQUE on `entries(entity_id, source_hash)` cannot express the sourceRef-level invariant without blocking legitimate multi-fact ingests. v10 supersedes v9 by dropping the entries-level index and replacing it with a per-(entity, hash) sourceRef index. Existing v9-applied databases (including all current `main` snapshots) need v10 to be applied to receive the fix.
 
 ### B2 — migration conflict-resolution policy (abort, not auto-resolve)
 
-If the database already contains live duplicate rows (i.e., a previous ingest beat the new guard), `CREATE UNIQUE INDEX` fails. The migration script **aborts with a clear, actionable error** rather than auto-resolving:
+If the database already contains live rows where **multiple distinct sourceRefs share a single `source_hash`** (i.e., a previous ingest beat the new app-level guard), the migration script **aborts with a clear, actionable error** rather than auto-resolving:
 
 ```text
-Migration v9 (add_live_hash_unique_index) failed: existing live rows
-violate the new UNIQUE index. Run the following query to find duplicates,
-then resolve each via `forget({ sourceRef: <loser> })` and re-run the
-migration:
+Migration v10 (add_source_ref_index) failed: existing live rows have
+multiple sourceRefs sharing a hash. Run the following query to find
+conflicts, then resolve each via `forget({ sourceRef: <loser> })` and
+re-run the migration:
 
-  SELECT entity_id, source_hash, COUNT(*) AS n
+  SELECT entity_id, source_hash, COUNT(DISTINCT source_ref) AS n_refs
   FROM ${prefix}entries
   WHERE deleted_at IS NULL AND source_hash IS NOT NULL
   GROUP BY entity_id, source_hash
-  HAVING COUNT(*) > 1;
+  HAVING COUNT(DISTINCT source_ref) > 1;
 ```
 
-Auto-resolving would either destroy facts (deleting all but one row) or pick a wrong canonical (silently choosing which row to keep). Both are worse than failing safe. The manual remediation path is documented and uses the existing `forget({ sourceRef })` API introduced in the source-ref-lifecycle spec §1.
+The query now counts **distinct sourceRefs**, not rows — multiple live rows for the same `(entity_id, source_hash)` is the normal multi-fact shape and is no longer a violation. Only true sourceRef-level races fail this check.
+
+Auto-resolving would either destroy facts (deleting all but one row) or pick a wrong canonical (silently choosing which sourceRef to keep). Both are worse than failing safe. The manual remediation path is documented and uses the existing `forget({ sourceRef })` API introduced in the source-ref-lifecycle spec §1.
+
+**Backfill.** When the abort check passes, the migration backfills the new table from existing live rows — for each `(entity_id, source_hash)` group, the row's `source_ref` is the sourceRef of the entry that wins `ROW_NUMBER() OVER (PARTITION BY entity_id, source_hash ORDER BY updated_at ASC, id ASC) = 1`. The tie-breaker `id ASC` matches the deterministic ordering used by `findLatestSourceHash` in `EntryRepository`. The migration only fires on the upgrade path; fresh DBs (where `entries` did not exist before `setup()`) get the table from `setupDatabase` directly and skip the backfill.
+
+**Idempotency.** The backfill uses `INSERT OR IGNORE` with a deterministic ID of the form `'sri_' || entity_id || ':' || source_hash`, so re-running the migration on the same data is a no-op. The runtime `SourceRefIndexRepository.upsert` uses a fresh prefixed UUID from `generateId('sri_')`; the two ID spaces do not collide because the deterministic IDs include the `:` separator.
 
 ### B3 — `JobManager.hashLocks` (per-hash application lock)
 
@@ -229,24 +251,23 @@ Code review enforces the invariant at every call site. The `acquireLock('ingest'
 
 ### B5 — catch-and-translate pattern (in `IngestionService.ingestDocument`)
 
-The exception path inside `ingestDocument` becomes:
+The catch site moves **up to the `source_ref_index` upsert** (the only place a `SQLITE_CONSTRAINT_UNIQUE` can fire now that the constraint is off `entries`):
 
 ```ts
 try {
-  // ... existing chunk-insert path (runs inside withTransactionAsync, so any
-  // SQLite error is wrapped as WikiTransactionError by serializedAdapter).
+  await this.sourceRefIndexRepo.upsert(entityId, sourceHash, sourceRef, tx);
 } catch (err) {
   const code =
     err instanceof WikiTransactionError
       ? err.sqliteErrorCode
       : extractSqliteCode(err);
-  if (code === 'SQLITE_CONSTRAINT_UNIQUE') {
-    return translateConstraintToDuplicateHash(err, {
-      entityId, sourceRef, sourceHash, mode: opts?.onDuplicateHash ?? 'ingest',
-    });
-  }
-  throw err;
+  if (code !== 'SQLITE_CONSTRAINT_UNIQUE') throw err;
+  return translateConstraintToDuplicateHash(err, {
+    entityId, sourceRef, sourceHash, mode: opts?.onDuplicateHash ?? 'ingest',
+  });
 }
+// ... existing chunk-insert path runs normally; entries inserts cannot fail
+// with a hash-related UNIQUE because the entries table no longer has the index.
 ```
 
 `translateConstraintToDuplicateHash` does the post-violation canonical lookup and dispatches per `onDuplicateHash`:
@@ -256,22 +277,16 @@ async function translateConstraintToDuplicateHash(
   _err: unknown,
   ctx: { entityId: string; sourceRef: string; sourceHash: string; mode: 'ingest' | 'skip' | 'throw' },
 ): Promise<IngestDocumentResult> {
-  // Post-violation lookup: at least one row is now committed (the racing writer
-  // beat us). Use the source-ref-lifecycle spec's canonical-selection rule:
+  // Post-violation lookup: the racing writer's source_ref_index row is now
+  // committed. Use the source-ref-lifecycle spec's canonical-selection rule:
   // canonical must be a stored DIFFERENT source_ref, never the incoming ref.
-  const refs = await this.entryRepo.findSourceRefsByHash(ctx.entityId, ctx.sourceHash);
-  // `refs` is already ordered `source_ref COLLATE BINARY` by the repo, so
-  // `others[0]` is the canonical — re-sorting in JS would use UTF-16
-  // code-unit ordering and could disagree with SQLite BINARY for non-ASCII.
-  // Excluding the incoming ref prevents the canonical from echoing the
-  // caller's own ref when it sorts first (the same filter the pre-check at
-  // IngestionService.ts:64 applies).
-  const others = refs.filter(r => r !== ctx.sourceRef);
-  // The `?? ctx.sourceRef` fallback applies only in the narrow window where
-  // a racing `forget({ sourceRef: <canonical> })` lands between the violation
+  const canonical = (await this.sourceRefIndexRepo.findActiveByEntityAndHash(
+    ctx.entityId, ctx.sourceHash,
+  )) ?? ctx.sourceRef;
+  // The `?? ctx.sourceRef` fallback applies only in the narrow window where a
+  // racing `forget({ sourceRef: <canonical> })` lands between the violation
   // and this lookup; in that case there is no stored different ref to surface,
   // and reporting the incoming ref is the least-bad answer.
-  const canonical = others[0] ?? ctx.sourceRef;
 
   switch (ctx.mode) {
     case 'throw':
@@ -287,7 +302,7 @@ async function translateConstraintToDuplicateHash(
 }
 ```
 
-**Canonical-selection rule (summary, per source-ref-lifecycle spec §"Canonical-Selection Rule"):** when multiple `source_ref`s in one entity share a `source_hash`, the canonical is the code-unit-minimum (`ORDER BY source_ref COLLATE BINARY`) of the set of *stored different* `source_ref`s; the incoming `sourceRef` is excluded before sorting so the canonical never echoes the caller's own ref. Locale-dependent comparison is explicitly rejected. `EntryRepository.findSourceRefsByHash` (existing, at `packages/core/src/repositories/EntryRepository.ts:899`) already returns refs sorted `COLLATE BINARY` ascending against live rows only, so after filtering out the incoming ref via `refs.filter(r => r !== ctx.sourceRef)`, the entry at index 0 of the filtered array is the canonical — the helper does not re-sort in JS (UTF-16 code-unit ordering can disagree with SQLite BINARY for non-ASCII). The `?? ctx.sourceRef` fallback applies only in the narrow window where a racing `forget({ sourceRef: <canonical> })` lands between the violation and this lookup; in that case there is no stored different ref to surface, and reporting the incoming ref is the least-bad answer.
+**Canonical-selection rule (summary, per source-ref-lifecycle spec §"Canonical-Selection Rule"):** the source_ref_index table guarantees at most one live row per `(entity_id, source_hash)`, so the post-violation canonical lookup reduces to a single-row fetch — `SourceRefIndexRepository.findActiveByEntityAndHash(entityId, sourceHash)`. Because the row in `source_ref_index` is the OTHER writer's sourceRef (the racing writer beat us), it cannot echo the incoming ref. The `?? ctx.sourceRef` fallback applies only in the narrow window where a racing `forget({ sourceRef: <canonical> })` lands between the violation and this lookup; in that case no stored ref remains and reporting the incoming ref is the least-bad answer. The earlier `findSourceRefsByHash` (which scanned `entries` for distinct sourceRefs and re-sorted in JS) is no longer needed for the catch-and-translate path — the new table is the source of truth and a single indexed read is both faster and unambiguous.
 
 The `'ingest'` mode throws on a UNIQUE violation because the documented contract for `'ingest'` is "preserve current behavior" (the source-ref-lifecycle spec §2 row in the per-mode table). Under the original single-call semantics, two concurrent calls with the same hash both wrote — that's the bug. Under the new lock + constraint, only one can possibly write; the other must surface the duplicate rather than silently swallowing the violation. This is a **deliberate tightening** of `'ingest'` mode behavior, called out as a behavior change in §"Public API impact" below.
 
@@ -469,7 +484,7 @@ Internal to the combined PR. Squashing collapses these into one commit, but the 
 |---|---|---|
 | 1 | A2a — restore `test.yml` without audit step | Restores CI gating — combined PR passes through it |
 | 2 | A1 (`fast-uri` override) | Independently ships; A2b's audit step in step 7 catches the next advisory |
-| 3 | B1 (schema migration v9 + partial UNIQUE index) | Lowest-level guarantee first; everything in B3-B5 builds on the new invariant |
+| 3 | B1 (schema migration v10: source_ref_index table, drops v9 entries-level index) | Lowest-level guarantee first; everything in B3-B5 builds on the new invariant |
 | 4 | B6 (`sqliteCodes.ts` extended code mapping) | Needed by B5's catch block; ship with the migration so tests can assert on it |
 | 5 | B3, B4 (`JobManager.hashLocks` primitive + `acquireIngestLocks` helper) | App-layer lock needs B1's invariant; the helper codifies hash-then-sourceRef order |
 | 6 | B5 (`IngestionService` catch-and-translate + `translateConstraintToDuplicateHash`) | Uses B1's invariant, B3's lock primitive, B4's helper, and B6's code mapping |
@@ -490,19 +505,20 @@ Steps 1-7 are independently testable. Step 8 depends on 1 (test.yml) and 7 (audi
 | `JobManager.hashLocks` | new internal field | none (internal) |
 | `JobManager.acquireHashLock` | new internal method | none (internal) |
 | `IngestionService.acquireIngestLocks` | new internal helper | none (internal) |
+| `SourceRefIndexRepository` | new internal repository | none (internal) |
 | `WikiDuplicateHashError` | unchanged from source-ref-lifecycle spec | none |
 | `'ingest'` mode on UNIQUE violation | **behavior change**: now throws `WikiDuplicateHashError` instead of silently writing | hosts relying on the racy behavior will see a new error path |
 
 The behavior change in `'ingest'` mode is a **deliberate tightening** of the contract. Hosts that previously relied on "two concurrent calls with the same hash both write" should switch to `onDuplicateHash: 'skip'` (which now race-free skips) or `onDuplicateHash: 'throw'` (which has always thrown). The `aws-cloud-agent` host's §6.1 mitigation (`documentConcurrency: 1`) becomes redundant after this change — the host can safely restore `INGEST_DOCUMENT_CONCURRENCY=3`.
 
-**Outbox events:** unchanged. The duplicate guard catches before any outbox event is emitted (matches the source-ref-lifecycle spec §2 contract).
+**Outbox events:** unchanged. The duplicate guard catches before any outbox event is emitted (matches the source-ref-lifecycle spec §2 contract). The new `source_ref_index` table does not fire outbox events — it is an internal invariant table; downstream consumers react to `entries` CDC events as before, and `source_ref_index` state is fully derivable from `entries` (it is a per-(entity, hash) projection of which sourceRef currently owns the hash).
 
 **Locking:**
 
 - §B B2 introduces the per-hash lock; B4 codifies hash-then-sourceRef acquisition order.
 - §B's catch-and-translate runs inside the existing `withSerializedTransactions` mutex (no new lock primitive for the catch itself).
 
-**Schema:** one migration (v9). Conflict-resolution policy in §B2.
+**Schema:** two migrations (v9 + v10). v9 originally shipped on the branch but the design was wrong (the entries-level UNIQUE conflates facts with sourceRefs); v10 supersedes v9 by dropping the entries-level index and adding `source_ref_index` with the correct per-sourceRef invariant. The migration tracking system records the v9 → v10 transition in `schema_version`; the v9 migration's `CREATE UNIQUE INDEX` is a CREATE (not idempotent on a DROP) and is replaced by a DROP in v10. Conflict-resolution policy in §B2.
 
 **`--no-ci` trade-off:** semantic-release's built-in CI verification is what would catch "tests failed but I'm going to release anyway." We lose that. Mitigation: the Phase-1 release PR must pass `Test` before auto-merge, enforced by the ruleset. Documented in a comment at the top of `release.yml`.
 
@@ -517,22 +533,28 @@ The behavior change in `'ingest'` mode is a **deliberate tightening** of the con
 
 ### §B tests
 
-- **UNIQUE index migration:** fresh install adds the index; idempotent (`CREATE UNIQUE INDEX IF NOT EXISTS`).
-- **UNIQUE index migration abort path (§B2):** load a DB fixture with **two live rows sharing `(entity_id, source_hash)`** (e.g., an `entity_id="ent"`, `source_hash="h1"` row inserted at `source_ref="a.md"` and a second at `source_ref="b.md"`, both with `deleted_at IS NULL`); run the v9 migration; assert:
-  - the migration aborts with the documented error message containing `Migration v9 (add_live_hash_unique_index) failed: existing live rows violate the new UNIQUE index`,
-  - the index is **NOT** created (verify via `${prefix}idx_entries_live_hash` not present in `sqlite_master`, or a follow-up INSERT that would have collided succeeds instead of erroring),
-  - the abort happens **before** any destructive migration step would have run — the migration script is all-or-nothing on this index.
-- **Duplicate-detection on UNIQUE violation:** insert a row, then `ingestDocument` for a *different* `sourceRef` with the same `sourceHash` *bypassing the pre-check* (test fixture inserts into the repo layer directly). Assert: `ingestDocument` catches the `SQLITE_CONSTRAINT_UNIQUE`, translates per `onDuplicateHash` mode:
-  - `'skip'` returns `{ truncated: false, chunks: 0, duplicateOf: <canonical> }`.
-  - `'throw'` raises `WikiDuplicateHashError` with the canonical populated.
+- **Source-ref index migration:** fresh install creates the `source_ref_index` table + its `idx_source_ref_hash` UNIQUE index; idempotent (`CREATE TABLE IF NOT EXISTS` / `CREATE UNIQUE INDEX IF NOT EXISTS`).
+- **Source-ref index migration abort path (§B2):** load a DB fixture with **two live rows sharing `(entity_id, source_hash)` AND different `source_ref`s** (e.g., an `entity_id="ent"`, `source_hash="h1"` row at `source_ref="a.md"` and a second at `source_ref="b.md"`, both with `deleted_at IS NULL`); run the v10 migration; assert:
+  - the migration aborts with the documented error message containing `Migration v10 (add_source_ref_index) failed: existing live rows have multiple sourceRefs sharing a hash`,
+  - the v9 entries-level index is **dropped** (verify via `${prefix}idx_entries_live_hash` not present in `sqlite_master`),
+  - the new `source_ref_index` table is **NOT** created (verify via `${prefix}source_ref_index` not present in `sqlite_master`),
+  - the abort happens **before** any destructive migration step would have run — the migration script is all-or-nothing.
+- **Multi-fact ingest does not violate the constraint:** this is the regression test for the original review. `ingestDocument` for one `sourceRef` + `sourceHash` returning N≥2 facts inserts all N rows; the entries table no longer carries the (entity_id, source_hash) UNIQUE so the 2nd–Nth inserts succeed. Without this test, the prior `idx_entries_live_hash` would have failed this scenario.
+- **Backfill picks the earliest sourceRef per (entity, hash):** insert two live rows sharing `(entity_id, source_hash)` with different `source_ref`s, run the migration (forcing v9→v10), assert the `source_ref_index` row's `source_ref` matches the entry with the minimum `(updated_at ASC, id ASC)`.
+- **Backfill is idempotent:** re-run the migration and assert no new `source_ref_index` rows are created (`INSERT OR IGNORE` makes the deterministic-ID backfill a no-op on the second run).
+- **Duplicate-detection on UNIQUE violation:** insert a `source_ref_index` row for `sourceRef=A`, then `ingestDocument` for `sourceRef=B` with the same `sourceHash` *bypassing the pre-check* (test fixture inserts into the repo layer directly, so the pre-check sees no rows but the upsert hits the UNIQUE). Assert: `ingestDocument` catches the `SQLITE_CONSTRAINT_UNIQUE`, translates per `onDuplicateHash` mode:
+  - `'skip'` returns `{ truncated: false, chunks: 0, duplicateOf: <canonical> }` where `canonical === 'A'`.
+  - `'throw'` raises `WikiDuplicateHashError({ canonical: 'A', sourceHash, entityId })`.
   - `'ingest'` raises `WikiDuplicateHashError` (deliberate tightening).
 - **`extractSqliteCode` extended-code mapping:** unit test asserting the cross-platform adapters resolve `SQLITE_CONSTRAINT_UNIQUE`:
   - `extractSqliteCode({ code: 'SQLITE_CONSTRAINT_UNIQUE' })` → `'SQLITE_CONSTRAINT_UNIQUE'` (better-sqlite3 / node:sqlite shape).
   - `extractSqliteCode({ message: 'Error code 2067: UNIQUE constraint failed' })` → `'SQLITE_CONSTRAINT_UNIQUE'` (expo-sqlite shape; requires the 2067 row added in §B6).
-  - `extractSqliteCode({ message: 'UNIQUE constraint failed: entries.source_hash' })` → `undefined` (sql.js shape; documented gap per §B6 table).
+  - `extractSqliteCode({ message: 'UNIQUE constraint failed: source_ref_index.entity_id, source_ref_index.source_hash' })` → `undefined` (sql.js shape; documented gap per §B6 table).
 - **`WikiTransactionError.sqliteErrorCode` on UNIQUE:** test that the wrapped error carries the right code when a UNIQUE violation fires inside `withTransactionAsync`, across both the string-code (better-sqlite3 / node:sqlite) and numeric-code (expo-sqlite) shapes.
-- **Per-hash lock ordering:** two concurrent `ingestDocument` calls for different refs sharing a hash serialize through the hash lock; assertion checks no deadlock and exactly one row committed.
-- **The race-cloaking test:** **N=10** concurrent `ingestDocument` calls with N distinct `sourceRef`s sharing one `sourceHash`, **repeated for 20 iterations** to catch flaky passes. Assert each iteration: exactly one row in `${prefix}entries`, the other N-1 receive the per-mode result. **This test fails against current code; passes after B1-B5.**
+- **Per-hash lock ordering:** two concurrent `ingestDocument` calls for different refs sharing a hash serialize through the hash lock; assertion checks no deadlock and exactly one `source_ref_index` row committed.
+- **The race-cloaking test:** **N=10** concurrent `ingestDocument` calls with N distinct `sourceRef`s sharing one `sourceHash`, **repeated for 20 iterations** to catch flaky passes. Assert each iteration: exactly one row in `${prefix}source_ref_index`, the other N-1 receive the per-mode result. **This test fails against current code; passes after B1-B5.**
+- **Forget frees the index slot:** `forget({ sourceRef: A })` after a successful ingest of `(A, H)` soft-deletes both the entries rows and the `source_ref_index` row; a subsequent `ingestDocument(sourceRef: A, sourceHash: H)` succeeds.
+- **`forget({ sourceHash })` and `forget({ clearAll: true })` keep the index in sync:** both paths also soft-delete the relevant `source_ref_index` rows so the post-forget state is consistent.
 
 ### §C tests
 
@@ -561,7 +583,7 @@ This smoke test is the verification of Risk #2 ("`test.yml` doesn't exist when t
 
 ## Risks
 
-1. **UNIQUE constraint migration on existing duplicates.** A live database that already contains duplicate `(entity_id, source_hash)` rows fails the migration. §B2's abort-and-document policy is the response. Manual remediation: `forget({ sourceRef: loser })` per duplicate, then re-run migration. This risk is highest for the `aws-cloud-agent` host (which, per #79, has been forcing `documentConcurrency: 1` for some time — but the source-ref-lifecycle dedup query in §2 is best-effort at higher concurrency, so duplicates may exist).
+1. **UNIQUE constraint migration on existing duplicates.** A live database that already contains live rows where **multiple sourceRefs share a single `source_hash`** fails the v10 migration. §B2's abort-and-document policy is the response. Manual remediation: `forget({ sourceRef: loser })` per duplicate, then re-run migration. This risk is highest for the `aws-cloud-agent` host (which, per #79, has been forcing `documentConcurrency: 1` for some time — but the source-ref-lifecycle dedup query in §2 is best-effort at higher concurrency, so duplicates may exist). Note that multiple *facts* per `(entity_id, source_hash)` is no longer a violation — the abort query counts `DISTINCT source_ref`.
 2. **`test.yml` doesn't exist when this PR opens.** The combined PR doesn't need `Test` to merge (no rule requires it yet). After merge, the ruleset change (§C4) takes effect AND `test.yml` is in place — future PRs and the first release PR get `Test`. Verified end-to-end by the first release after this PR lands.
 3. **`--no-ci` semantic-release trade-off.** Covered above.
 4. **Abandoned release PRs.** If auto-merge abandons (e.g., `Test` flaked then went green but the PR was force-closed), the tag is still on `release/vX.Y.Z` from Phase 1 step 6 (and never moved because Phase 2 didn't run), and no packages have been published (Phase 2's `Publish all packages` only fires on merge of the release PR). A re-run on `main` from a fresh push produces another Phase 1 run; the `--state all` PR check in C1 step 6 finds the closed PR and reuses the branch (reopening via `gh pr reopen`); if the new commit is the same version, `git push --follow-tags` overwrites the existing tag in place. **No GitHub Release entry exists until Phase 2 merges**, so an abandoned release leaves no release entry behind — the only orphan state is the `release/vX.Y.Z` branch and a possibly-overwritten tag, both of which are recoverable. The first end-to-end release verifies the reopen path.

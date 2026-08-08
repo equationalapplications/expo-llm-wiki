@@ -148,43 +148,87 @@ export const MIGRATIONS: Migration[] = [
   },
   {
     version: 9,
-    description: 'add_live_hash_unique_index',
+    description: 'add_source_ref_index',
     run: async (db, prefix) => {
-      // Defense-in-depth safety net for the #79 TOCTOU race fix: enforce at
-      // the DB level that at most one LIVE row per (entity_id, source_hash)
-      // exists. The partial WHERE clause lets soft-deleted rows and NULL-hash
-      // legacy rows coexist — same (entity_id, source_hash) may still exist
-      // across a soft-delete + re-ingest cycle.
+      // Defense-in-depth safety net for the #79 TOCTOU race fix. The original
+      // design put a UNIQUE index on `entries(entity_id, source_hash)`, but
+      // that conflates per-fact and per-sourceRef granularity: a single
+      // `ingestDocument` writes N facts that all share
+      // (entity_id, source_ref, source_hash), and the 2nd–Nth inserts hit
+      // SQLITE_CONSTRAINT_UNIQUE inside the normal multi-fact path. The
+      // correct invariant is "at most one sourceRef per (entity, hash)", so
+      // the constraint lives on a dedicated per-(entity, hash) table that
+      // records the canonical sourceRef for each hash. See
+      // docs/superpowers/specs/2026-08-07-dependabot-concurrency-release-hygiene-design.md §B1.
       //
-      // If a previous ingest already produced live duplicates (i.e. a race
-      // beat the new app-level guard), abort with an actionable error rather
-      // than auto-resolving — auto-resolving would either destroy facts or
-      // pick a wrong canonical, both worse than failing safe. The thrown
-      // error escapes setup() BEFORE the CREATE INDEX runs, so the index is
-      // never created and schema_version is never advanced.
-      const duplicates = await db.getAllAsync<{ entity_id: string; source_hash: string; cnt: number }>(
-        `SELECT entity_id, source_hash, COUNT(*) AS cnt
+      // Abort path: if any (entity_id, source_hash) already has live rows
+      // under multiple distinct source_refs, a previous race beat the new
+      // app-level guard. The migration aborts with an actionable error
+      // rather than auto-resolving — auto-resolving would either destroy
+      // facts or pick a wrong canonical, both worse than failing safe. The
+      // thrown error escapes setup() BEFORE the CREATE TABLE runs, so the
+      // new table is never created and schema_version is never advanced.
+      const duplicates = await db.getAllAsync<{ entity_id: string; source_hash: string; n_refs: number }>(
+        `SELECT entity_id, source_hash, COUNT(DISTINCT source_ref) AS n_refs
          FROM ${prefix}entries
          WHERE deleted_at IS NULL AND source_hash IS NOT NULL
          GROUP BY entity_id, source_hash
-         HAVING COUNT(*) > 1`
+         HAVING COUNT(DISTINCT source_ref) > 1`
       );
       if (duplicates.length > 0) {
         const sample = duplicates
           .slice(0, 5)
-          .map(d => `(entity_id=${d.entity_id}, source_hash=${d.source_hash.slice(0, 12)}…, count=${d.cnt})`)
+          .map(d => `(entity_id=${d.entity_id}, source_hash=${d.source_hash.slice(0, 12)}…, n_refs=${d.n_refs})`)
           .join(', ');
         throw new Error(
-          `Migration v9 (add_live_hash_unique_index) failed: existing live rows violate the new UNIQUE index. ` +
+          `Migration v9 (add_source_ref_index) failed: existing live rows have multiple sourceRefs sharing a hash. ` +
           `Found ${duplicates.length} duplicate (entity_id, source_hash) groups. ` +
           `First ${Math.min(5, duplicates.length)}: ${sample}. ` +
-          `Resolve by consolidating duplicates before re-running setup.`
+          `Resolve each by calling forget({ sourceRef: <loser> }) for the offending sourceRef, then re-run setup.`
         );
       }
       await db.execAsync(
-        `CREATE UNIQUE INDEX IF NOT EXISTS ${prefix}idx_entries_live_hash
-         ON ${prefix}entries (entity_id, source_hash)
-         WHERE deleted_at IS NULL AND source_hash IS NOT NULL`
+        `CREATE TABLE IF NOT EXISTS ${prefix}source_ref_index (
+          id TEXT PRIMARY KEY,
+          entity_id TEXT NOT NULL,
+          source_hash TEXT NOT NULL,
+          source_ref TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          deleted_at INTEGER
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ${prefix}idx_source_ref_hash
+          ON ${prefix}source_ref_index (entity_id, source_hash)
+          WHERE deleted_at IS NULL;`
+      );
+      // Backfill: for each (entity_id, source_hash) group with live entries,
+      // pick the sourceRef of the entry that wins
+      // `ROW_NUMBER() OVER (PARTITION BY entity_id, source_hash ORDER BY updated_at ASC, id ASC) = 1`.
+      // The tie-breaker `id ASC` matches `findLatestSourceHash` ordering so
+      // the canonical row is deterministic. INSERT OR IGNORE with a
+      // deterministic ID (`sri_<entity_id>:<source_hash>`) makes the backfill
+      // idempotent — re-running v9 is a no-op.
+      await db.execAsync(
+        `INSERT OR IGNORE INTO ${prefix}source_ref_index (id, entity_id, source_hash, source_ref, created_at, deleted_at)
+         SELECT
+           'sri:' || entity_id || ':' || source_hash,
+           entity_id,
+           source_hash,
+           source_ref,
+           updated_at,
+           NULL
+         FROM (
+           SELECT
+             entity_id, source_hash, source_ref, updated_at,
+             ROW_NUMBER() OVER (
+               PARTITION BY entity_id, source_hash
+               ORDER BY updated_at ASC, id ASC
+             ) AS rn
+           FROM ${prefix}entries
+           WHERE deleted_at IS NULL
+             AND source_hash IS NOT NULL
+             AND source_ref IS NOT NULL
+         ) ranked
+         WHERE rn = 1;`
       );
     },
   },

@@ -11,6 +11,7 @@ describe('IngestionService — PromptService injection', () => {
   let mockDb: any;
   let mockOptions: any;
   let mockEntryRepo: any;
+  let mockSourceRefIndexRepo: any;
   let mockSearchService: any;
   let mockJobManager: any;
   let mockEmbeddingService: any;
@@ -27,6 +28,11 @@ describe('IngestionService — PromptService injection', () => {
       findIdsBySource: vi.fn().mockResolvedValue([]),
       softDeleteBySource: vi.fn().mockResolvedValue(undefined),
       findRecentByEntityId: vi.fn().mockResolvedValue([]),
+      upsert: vi.fn().mockResolvedValue(undefined),
+    };
+    mockSourceRefIndexRepo = {
+      findActiveByEntityAndHash: vi.fn().mockResolvedValue(null),
+      softDeleteByEntityAndSourceRef: vi.fn().mockResolvedValue(0),
       upsert: vi.fn().mockResolvedValue(undefined),
     };
     mockSearchService = {
@@ -46,7 +52,7 @@ describe('IngestionService — PromptService injection', () => {
 
   it('passes systemPrompt and userPrompt from PromptService to llmProvider', async () => {
     const promptService = new PromptService();
-    const svc = new IngestionService(mockDb, 'llm_wiki_', mockOptions, mockEntryRepo, mockSearchService, mockJobManager, mockEmbeddingService, promptService);
+    const svc = new IngestionService(mockDb, 'llm_wiki_', mockOptions, mockEntryRepo, mockSourceRefIndexRepo, mockSearchService, mockJobManager, mockEmbeddingService, promptService);
 
     const sourceHash = 'a'.repeat(64);
     await svc.ingestDocument('entity1', {
@@ -65,7 +71,7 @@ describe('IngestionService — PromptService injection', () => {
 
   it('applies runtime promptOverride via PromptService', async () => {
     const promptService = new PromptService();
-    const svc = new IngestionService(mockDb, 'llm_wiki_', mockOptions, mockEntryRepo, mockSearchService, mockJobManager, mockEmbeddingService, promptService);
+    const svc = new IngestionService(mockDb, 'llm_wiki_', mockOptions, mockEntryRepo, mockSourceRefIndexRepo, mockSearchService, mockJobManager, mockEmbeddingService, promptService);
 
     const sourceHash = 'b'.repeat(64);
     await svc.ingestDocument('entity1', {

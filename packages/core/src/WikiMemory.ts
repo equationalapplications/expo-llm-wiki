@@ -13,6 +13,7 @@ import {
 } from './types';
 import { EntryRepository } from './repositories/EntryRepository';
 import { OutboxRepository } from './repositories/OutboxRepository';
+import { SourceRefIndexRepository } from './repositories/SourceRefIndexRepository';
 import { TaskRepository } from './repositories/TaskRepository';
 import { EventRepository } from './repositories/EventRepository';
 import { EdgeRepository } from './repositories/EdgeRepository';
@@ -47,6 +48,7 @@ export interface WikiMemoryTestAccess {
   promptService: PromptService;
   graphTraversalService: GraphTraversalService;
   entryRepo: EntryRepository;
+  sourceRefIndexRepo: SourceRefIndexRepository;
   metadataRepo: MetadataRepository;
   jobManager: JobManager;
 }
@@ -60,6 +62,7 @@ export class WikiMemory {
   private options: WikiOptions;
   private entryRepo: EntryRepository;
   private outboxRepo: OutboxRepository;
+  private sourceRefIndexRepo: SourceRefIndexRepository;
   private taskRepo: TaskRepository;
   private eventRepo: EventRepository;
   private edgeRepo: EdgeRepository;
@@ -90,6 +93,7 @@ export class WikiMemory {
     }
     this.outboxRepo = new OutboxRepository(this.db, this.prefix, !!options.config?.enableOutbox);
     this.entryRepo = new EntryRepository(this.db, this.prefix, this.outboxRepo);
+    this.sourceRefIndexRepo = new SourceRefIndexRepository(this.db, this.prefix);
     this.taskRepo = new TaskRepository(this.db, this.prefix, this.outboxRepo);
     this.eventRepo = new EventRepository(this.db, this.prefix);
     this.edgeRepo = new EdgeRepository(this.db, this.prefix);
@@ -108,6 +112,7 @@ export class WikiMemory {
       this.prefix,
       this.options,
       this.entryRepo,
+      this.sourceRefIndexRepo,
       this.searchService,
       this.jobManager,
       this.embeddingService,
@@ -119,6 +124,7 @@ export class WikiMemory {
       this.prefix,
       this.options,
       this.entryRepo,
+      this.sourceRefIndexRepo,
       this.taskRepo,
       this.eventRepo,
       this.metadataRepo,
@@ -191,6 +197,7 @@ export class WikiMemory {
       promptService: this.promptService,
       graphTraversalService: this.graphTraversalService,
       entryRepo: this.entryRepo,
+      sourceRefIndexRepo: this.sourceRefIndexRepo,
       metadataRepo: this.metadataRepo,
       jobManager: this.jobManager,
     };
@@ -306,16 +313,16 @@ export class WikiMemory {
       return { rawSourceRef: e.sourceRef, sourceRef: r, sourceHash: h };
     });
 
-    // 1 + H SQL queries: one batched latest-hash lookup, plus one findSourceRefsByHash
-    // per distinct input hash. Lookups are issued in parallel — the bound is the
-    // SQL-query count, not the await count.
+    // 1 + H SQL queries: one batched latest-hash lookup, plus one source_ref_index
+    // lookup per distinct input hash. Lookups are issued in parallel — the bound
+    // is the SQL-query count, not the await count.
     const latestHashes = await this.entryRepo.findLatestSourceHashes(entityId, normalized.map(e => e.sourceRef));
 
     const distinctHashes = Array.from(new Set(normalized.map(e => e.sourceHash)));
     const dupRefs = await Promise.all(
-      distinctHashes.map(h => this.entryRepo.findSourceRefsByHash(entityId, h)),
+      distinctHashes.map(h => this.sourceRefIndexRepo.findActiveByEntityAndHash(entityId, h)),
     );
-    const dupMap = new Map<string, string[]>(); // hash -> refs (DB-side refs, possibly normalized)
+    const dupMap = new Map<string, string | null>(); // hash -> canonical sourceRef (or null)
     for (let i = 0; i < distinctHashes.length; i++) {
       dupMap.set(distinctHashes[i], dupRefs[i]);
     }
@@ -323,19 +330,16 @@ export class WikiMemory {
     return normalized.map(e => {
       const stored = latestHashes.get(e.sourceRef);
       const changed = stored === undefined || stored === null || normalizeSourceHash(stored) !== e.sourceHash;
-      const allRefs = dupMap.get(e.sourceHash) ?? [];
-      const others = allRefs.filter(r => r !== e.sourceRef);
-      if (others.length === 0) {
+      const canonical = dupMap.get(e.sourceHash) ?? null;
+      if (canonical === null || canonical === e.sourceRef) {
         return { sourceRef: e.rawSourceRef, changed };
       }
-      // Canonical: the first ref from findSourceRefsByHash after excluding the
-      // incoming ref. EntryRepository.findSourceRefsByHash returns refs already
-      // ordered by `source_ref COLLATE BINARY`, so the canonical matches the DB
-      // ordering for both ASCII and non-ASCII refs (UTF-16 code-unit sort in JS
-      // can disagree with SQLite BINARY for non-ASCII). Excluding the incoming
-      // ref prevents duplicateOf from echoing the caller's own ref when it
-      // sorts first.
-      const canonical = others[0];
+      // Canonical: the single sourceRef from source_ref_index that holds
+      // this hash, if any. Because the partial UNIQUE index allows at most
+      // one live row per (entity, hash), the canonical cannot be the
+      // incoming ref (it would be the same sourceRef) — we filter that out
+      // above. Non-ASCII sourceRefs are still compared by the DB's
+      // source_ref index, so the canonical matches the DB ordering.
       return { sourceRef: e.rawSourceRef, changed, duplicateOf: canonical };
     });
   }
@@ -357,13 +361,17 @@ export class WikiMemory {
   }
 
   /**
-   * Returns the live source_refs for an entity that hold the given source_hash,
-   * sorted `COLLATE BINARY` ascending. The first element is the canonical ref
-   * under the code-unit-minimum rule (no locale dependency). Used by the
-   * ingestDocument guard and by hosts auditing duplicate-content collisions.
+   * Returns the live source_refs for an entity that hold the given source_hash.
+   * With v9, source_ref_index is the source of truth for the sourceRef-level
+   * TOCTOU-race invariant: at most one sourceRef can hold a given
+   * (entity_id, source_hash). The result is either a single-element array
+   * (one canonical ref) or empty (no live ref holds the hash). Returned as
+   * an array to preserve the existing public-API shape used by hosts
+   * auditing duplicate-content collisions.
    */
   async findSourceRefsByHash(entityId: string, sourceHash: string): Promise<string[]> {
-    return this.entryRepo.findSourceRefsByHash(entityId, sourceHash);
+    const canonical = await this.sourceRefIndexRepo.findActiveByEntityAndHash(entityId, sourceHash);
+    return canonical === null ? [] : [canonical];
   }
 
   async runPrune(

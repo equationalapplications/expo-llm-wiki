@@ -75,7 +75,8 @@ describe('doRunHeal — bounded anchors and batched candidates (#63)', () => {
     buildHealSpy = vi.spyOn(promptService, 'buildHealPrompt');
     return new MaintenanceService(
       mockDb, 'llm_wiki_', mockOptions,
-      mockEntryRepo, mockTaskRepo, mockEventRepo, {} as any,
+      mockEntryRepo, { softDeleteByEntityAndSourceRef: vi.fn().mockResolvedValue(0) } as any,
+      mockTaskRepo, mockEventRepo, {} as any,
       mockSearchService, mockJobManager, mockEmbeddingService,
       promptService,
     );

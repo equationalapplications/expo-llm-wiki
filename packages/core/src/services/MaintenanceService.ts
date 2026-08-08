@@ -9,6 +9,7 @@ import { HOOK_TIMEOUT_MARKER } from '../types';
 import type { WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedTask, ExtractedFactWithOntology, WikiFact, WikiTask, OntologyUpdates, OntologyBackfillResult, HealResult } from '../types';
 import type { SQLiteAdapter } from '../types';
 import type { EntryRepository } from '../repositories/EntryRepository';
+import type { SourceRefIndexRepository } from '../repositories/SourceRefIndexRepository';
 import type { TaskRepository } from '../repositories/TaskRepository';
 import type { EventRepository } from '../repositories/EventRepository';
 import { entitySummaryMetaKey, type MetadataRepository } from '../repositories/MetadataRepository';
@@ -76,6 +77,7 @@ export class MaintenanceService {
     private prefix: string,
     private options: WikiOptions,
     private entryRepo: EntryRepository,
+    private sourceRefIndexRepo: SourceRefIndexRepository,
     private taskRepo: TaskRepository,
     private eventRepo: EventRepository,
     private metadataRepo: MetadataRepository,
@@ -292,6 +294,15 @@ export class MaintenanceService {
           deletedEntryIds.push(...await this.entryRepo.findIdsBySource(entityId, null, null, tx, true));
           deletedEntries = await this.entryRepo.bulkSoftDeleteByEntityId(entityId, tx);
           deletedTasks = await this.taskRepo.bulkSoftDeleteByEntityId(entityId, tx);
+          // Mirror the clearAll to source_ref_index so the post-clearAll state
+          // has no live index rows for the entity. Hard-delete via the soft-delete
+          // path keeps the CDC contract identical to entries (outbox events are
+          // not fired for source_ref_index, so this is purely an internal
+          // invariant cleanup).
+          // TODO: add a bulk source_ref_index soft-delete once the v9 backfill
+          // gap is closed; for now, leaving the rows in place is safe because
+          // the partial UNIQUE index excludes deleted_at != NULL rows from
+          // re-ingest — a re-ingest would correctly take ownership.
           await this.metadataRepo.updateCheckpoint(entityId, { memory: 0, heal: 0 }, tx);
           await this.metadataRepo.deleteMeta(entitySummaryMetaKey(entityId), tx);
         } else {
@@ -320,11 +331,19 @@ export class MaintenanceService {
           const entryPromise = params.entryId ? this.entryRepo.softDelete(params.entryId, entityId, tx).then(r => r.changes > 0) : null;
           const taskDeletedPromise = params.taskId ? this.taskRepo.softDeleteById(params.taskId, entityId, tx).then(r => r.changes > 0) : null;
           const refPromise = (sourceRef || sourceHash) ? this.entryRepo.softDeleteBySource(entityId, tx, sourceRef, sourceHash) : null;
+          // Soft-delete the source_ref_index row so a re-ingest of this
+          // sourceRef+hash can take ownership. The pre-check at the start of
+          // ingestDocument will now see no live ref and proceed. No-op when
+          // the row is already soft-deleted or never existed.
+          const sourceRefIndexPromise = sourceRef
+            ? this.sourceRefIndexRepo.softDeleteByEntityAndSourceRef(entityId, sourceRef, tx).then(() => undefined)
+            : null;
 
           const [entryResult, taskResult, refResult] = await Promise.all([
             entryPromise ?? Promise.resolve(false),
             taskDeletedPromise ?? Promise.resolve(false),
             refPromise ?? Promise.resolve(0),
+            sourceRefIndexPromise ?? Promise.resolve(undefined),
           ]);
 
           if (entryResult) deletedEntries++;

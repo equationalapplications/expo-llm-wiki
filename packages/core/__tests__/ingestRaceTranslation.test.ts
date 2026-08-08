@@ -20,53 +20,58 @@ async function makeWiki(): Promise<{ wiki: WikiMemory; db: SQLiteAdapter }> {
   return { wiki, db };
 }
 
-async function insertEntry(
+/**
+ * Insert a live row directly into the source_ref_index table so the test can
+ * fabricate a "pre-existing live ref" without going through ingestDocument.
+ * The row matches what a successful ingestDocument would have written for
+ * `(entity, sourceHash, sourceRef)`. Bypasses the partial UNIQUE index check
+ * by running inside a transaction that is rolled back if the insert fails.
+ */
+async function insertSourceRefIndexRow(
   db: SQLiteAdapter,
-  row: { id: string; sourceRef: string; sourceHash: string; updatedAt: number; deletedAt?: number | null },
+  row: { entityId: string; sourceRef: string; sourceHash: string; createdAt?: number },
 ): Promise<void> {
   await db.runAsync(
-    `INSERT INTO llm_wiki_entries (id, entity_id, title, body, tags, confidence, source_type,
-      source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [row.id, 'entity-1', 'T', 'B', '[]', 'certain', 'immutable_document',
-     row.sourceHash, row.sourceRef, row.updatedAt, row.updatedAt, null, 0, row.deletedAt ?? null],
+    `INSERT INTO llm_wiki_source_ref_index (id, entity_id, source_hash, source_ref, created_at, deleted_at)
+     VALUES (?, ?, ?, ?, ?, NULL)`,
+    [`sri_test_${row.sourceRef}_${row.createdAt ?? 0}`, row.entityId, row.sourceHash, row.sourceRef, row.createdAt ?? 0],
   );
 }
 
 /**
- * Bypass the pre-check (Task 6's translation path only fires when the
- * pre-check's snapshot was already stale) by injecting the colliding row
- * via a monkeypatched `findSourceRefsByHash`.
+ * Bypass the pre-check (the translation path only fires when the pre-check's
+ * snapshot was already stale) by injecting the colliding source_ref_index
+ * row via a monkeypatched `findActiveByEntityAndHash`.
  *
  * For `'skip'` / `'throw'`, the first call IS the pre-check: we insert the
  * canonical row right then (simulating a writer that landed between the
- * pre-check snapshot and our transaction write), then return [] so the
+ * pre-check snapshot and our transaction write), then return null so the
  * pre-check reports no collision and ingestDocument proceeds into the
  * transaction. The second call — the catch-block lookup — falls through to
  * the real repo and observes the row.
  *
  * For default `'ingest'` mode there is no pre-check, so the canonical row
  * must already exist by the time the transaction INSERT fires — we insert
- * it before calling `ingestDocument` (the first mock call is the
- * catch-block lookup and returns the real repo, which finds the row).
+ * it before calling `ingestDocument` (the first mock call is the catch-block
+ * lookup and returns the real repo, which finds the row).
  */
 async function ingestWithRaceInjected(
   wiki: WikiMemory,
   db: SQLiteAdapter,
   args: { sourceRef: string; sourceHash: string; canonicalRef: string; onDuplicateHash?: 'ingest' | 'skip' | 'throw' },
 ) {
-  const entryRepo = (wiki as any).entryRepo;
-  const original = entryRepo.findSourceRefsByHash.bind(entryRepo);
+  const sourceRefIndexRepo = (wiki as any).sourceRefIndexRepo;
+  const original = sourceRefIndexRepo.findActiveByEntityAndHash.bind(sourceRefIndexRepo);
   const mode = args.onDuplicateHash ?? 'ingest';
   let firstCallDone = false;
 
   if (mode === 'ingest') {
     // Default mode has no pre-check; the row must exist before the
     // transaction INSERT for the UNIQUE constraint to fire.
-    await insertEntry(db, { id: 'canonical', sourceRef: args.canonicalRef, sourceHash: args.sourceHash, updatedAt: 1000 });
+    await insertSourceRefIndexRow(db, { entityId: 'entity-1', sourceRef: args.canonicalRef, sourceHash: args.sourceHash });
   }
 
-  entryRepo.findSourceRefsByHash = async (entityId: string, hash: string, tx?: SQLiteAdapter) => {
+  sourceRefIndexRepo.findActiveByEntityAndHash = async (entityId: string, hash: string, tx?: SQLiteAdapter) => {
     if (!firstCallDone) {
       firstCallDone = true;
       if (mode === 'skip' || mode === 'throw') {
@@ -75,8 +80,8 @@ async function ingestWithRaceInjected(
         // transaction write), then report no collision so ingestDocument
         // continues into the transaction (which trips the UNIQUE index and
         // exercises the catch-and-translate path).
-        await insertEntry(db, { id: 'canonical', sourceRef: args.canonicalRef, sourceHash: args.sourceHash, updatedAt: 1000 });
-        return [];
+        await insertSourceRefIndexRow(db, { entityId, sourceRef: args.canonicalRef, sourceHash: hash });
+        return null;
       }
       // Default 'ingest' mode: the first call is the catch-block lookup.
       // The canonical row was inserted before ingestDocument ran, so the
@@ -95,7 +100,7 @@ async function ingestWithRaceInjected(
       { onDuplicateHash: args.onDuplicateHash },
     );
   } finally {
-    entryRepo.findSourceRefsByHash = original;
+    sourceRefIndexRepo.findActiveByEntityAndHash = original;
   }
 }
 
@@ -176,8 +181,8 @@ describe('IngestionService — UNIQUE violation translation', () => {
   });
 });
 
-describe('IngestionService — N=10 concurrent race-cloaking (v9 index + hash lock + translation)', () => {
-  it('exactly one live row survives per iteration; every loser gets the expected per-mode result; no deadlock', async () => {
+describe('IngestionService — N=10 concurrent race-cloaking (v9 source_ref_index + hash lock + translation)', () => {
+  it('exactly one live source_ref_index row survives per iteration; every loser gets the expected per-mode result; no deadlock', async () => {
     for (let iter = 0; iter < 20; iter++) {
       const { wiki } = await makeWiki();
       const hash = 'c'.repeat(64);
@@ -213,7 +218,7 @@ describe('IngestionService — N=10 concurrent race-cloaking (v9 index + hash lo
         expect(loser.value.duplicateOf).toBe(winnerRef);
       }
 
-      // Exactly one live row for this hash in the DB.
+      // Exactly one sourceRef in source_ref_index for this hash.
       const refs = await wiki.findSourceRefsByHash('entity-1', hash);
       expect(refs).toEqual([winnerRef]);
     }

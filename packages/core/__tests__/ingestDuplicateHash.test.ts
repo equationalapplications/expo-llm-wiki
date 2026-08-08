@@ -34,10 +34,21 @@ async function insertEntry(
   );
 }
 
+async function insertSourceRefIndexRow(
+  db: SQLiteAdapter,
+  row: { sourceRef: string; sourceHash: string; createdAt?: number },
+): Promise<void> {
+  await db.runAsync(
+    `INSERT INTO llm_wiki_source_ref_index (id, entity_id, source_hash, source_ref, created_at, deleted_at)
+     VALUES (?, ?, ?, ?, ?, NULL)`,
+    [`sri_${row.sourceRef}_${row.sourceHash}_${row.createdAt ?? 0}`, 'entity-1', row.sourceHash, row.sourceRef, row.createdAt ?? 0],
+  );
+}
+
 describe('IngestionService.ingestDocument duplicate-hash guard', () => {
   it("onDuplicateHash='skip' returns immediately with duplicateOf when another ref holds the hash", async () => {
     const { wiki, db } = await makeWiki();
-    await insertEntry(db, { id: 'f1', sourceRef: 'mail-inbox-a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
+    await insertSourceRefIndexRow(db, { sourceRef: 'mail-inbox-a.md', sourceHash: VALID_HASH_A });
     const result = await wiki.ingestDocument(
       'entity-1',
       { sourceRef: 'mail-sent-a.md', sourceHash: VALID_HASH_A, documentChunk: 'hello' },
@@ -48,7 +59,7 @@ describe('IngestionService.ingestDocument duplicate-hash guard', () => {
 
   it("onDuplicateHash='skip' makes zero LLM calls / zero DB writes / zero outbox events", async () => {
     const { wiki, db } = await makeWiki();
-    await insertEntry(db, { id: 'f1', sourceRef: 'mail-inbox-a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
+    await insertSourceRefIndexRow(db, { sourceRef: 'mail-inbox-a.md', sourceHash: VALID_HASH_A });
 
     const spy = vi.spyOn(wiki.__testAccess.ingestionService['options']['llmProvider'], 'generateText');
     const entriesBefore = await db.getAllAsync<{ id: string }>(`SELECT id FROM llm_wiki_entries WHERE entity_id = ?`, ['entity-1']);
@@ -70,7 +81,7 @@ describe('IngestionService.ingestDocument duplicate-hash guard', () => {
 
   it("onDuplicateHash='skip' returns the early-return shape (no setImmediate/Promise.resolve wrapping)", async () => {
     const { wiki, db } = await makeWiki();
-    await insertEntry(db, { id: 'f1', sourceRef: 'mail-inbox-a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
+    await insertSourceRefIndexRow(db, { sourceRef: 'mail-inbox-a.md', sourceHash: VALID_HASH_A });
 
     const result = await wiki.ingestDocument(
       'entity-1',
@@ -78,20 +89,11 @@ describe('IngestionService.ingestDocument duplicate-hash guard', () => {
       { onDuplicateHash: 'skip' },
     );
     expect(result).toEqual({ truncated: false, chunks: 0, duplicateOf: 'mail-inbox-a.md' });
-
-    // NOTE: A strict "returns synchronously without a microtask deferral" test would
-    // require `Promise.race([returned, Promise.resolve('pending')])` — but the current
-    // implementation uses `await this.entryRepo.findSourceRefsByHash(...)`, which always
-    // introduces at least one microtask. The spec's intent ("no setImmediate,
-    // no Promise.resolve().then() deferral") is satisfied by the natural async-function
-    // behavior; a future maintainer who adds `setImmediate(...)` or wraps the result in
-    // `.then(() => ...)` would be caught by the sibling "zero LLM calls / zero DB writes /
-    // zero outbox events" test failing in subtle ways, or by code review.
   });
 
   it("onDuplicateHash='throw' throws WikiDuplicateHashError", async () => {
     const { wiki, db } = await makeWiki();
-    await insertEntry(db, { id: 'f1', sourceRef: 'mail-inbox-a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
+    await insertSourceRefIndexRow(db, { sourceRef: 'mail-inbox-a.md', sourceHash: VALID_HASH_A });
 
     await expect(
       wiki.ingestDocument(
@@ -104,7 +106,7 @@ describe('IngestionService.ingestDocument duplicate-hash guard', () => {
 
   it('WikiDuplicateHashError carries canonical, sourceHash, entityId', async () => {
     const { wiki, db } = await makeWiki();
-    await insertEntry(db, { id: 'f1', sourceRef: 'mail-inbox-a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
+    await insertSourceRefIndexRow(db, { sourceRef: 'mail-inbox-a.md', sourceHash: VALID_HASH_A });
     try {
       await wiki.ingestDocument(
         'entity-1',
@@ -121,22 +123,27 @@ describe('IngestionService.ingestDocument duplicate-hash guard', () => {
     }
   });
 
-  it("onDuplicateHash='ingest' (default) proceeds with the normal ingest path", async () => {
+  it("onDuplicateHash='ingest' (default) throws WikiDuplicateHashError when another ref holds the hash (tightened behavior)", async () => {
     const { wiki, db } = await makeWiki();
-    await insertEntry(db, { id: 'f1', sourceRef: 'mail-inbox-a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
+    await insertSourceRefIndexRow(db, { sourceRef: 'mail-inbox-a.md', sourceHash: VALID_HASH_A });
 
-    const result = await wiki.ingestDocument(
-      'entity-1',
-      { sourceRef: 'mail-sent-a.md', sourceHash: VALID_HASH_A, documentChunk: 'hello' },
-      { onDuplicateHash: 'ingest' },
-    );
-    expect(result.duplicateOf).toBeUndefined();
-    expect(result.chunks).toBeGreaterThan(0);
+    // Pre-v9 'ingest' mode silently wrote even when a sibling sourceRef
+    // already held the hash — the documented behavior in the source-ref-
+    // lifecycle spec §2. Post-v9 the v9 source_ref_index UNIQUE catches
+    // the race and the catch-and-translate throws WikiDuplicateHashError
+    // instead, which is the documented tightening.
+    await expect(
+      wiki.ingestDocument(
+        'entity-1',
+        { sourceRef: 'mail-sent-a.md', sourceHash: VALID_HASH_A, documentChunk: 'hello' },
+        { onDuplicateHash: 'ingest' },
+      ),
+    ).rejects.toBeInstanceOf(WikiDuplicateHashError);
   });
 
   it('Same-sourceRef collision does NOT fire the guard', async () => {
     const { wiki, db } = await makeWiki();
-    await insertEntry(db, { id: 'f1', sourceRef: 'a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
+    await insertSourceRefIndexRow(db, { sourceRef: 'a.md', sourceHash: VALID_HASH_A });
 
     const result = await wiki.ingestDocument(
       'entity-1',
@@ -149,6 +156,8 @@ describe('IngestionService.ingestDocument duplicate-hash guard', () => {
 
   it('Soft-deleted row does NOT fire the guard', async () => {
     const { wiki, db } = await makeWiki();
+    // No live source_ref_index row exists for this hash; the guard finds no
+    // collision and proceeds with the normal ingest.
     await insertEntry(db, { id: 'f1', sourceRef: 'mail-inbox-a.md', sourceHash: VALID_HASH_A, updatedAt: 1000, deletedAt: 999 });
 
     const result = await wiki.ingestDocument(

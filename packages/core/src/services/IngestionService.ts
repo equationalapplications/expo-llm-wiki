@@ -6,6 +6,7 @@ import type { WikiOptions, ExtractedFact, ExtractedFactWithOntology, WikiFact, O
 import type { SQLiteAdapter } from '../types';
 import { extractSqliteCode } from '../db/sqliteCodes';
 import type { EntryRepository } from '../repositories/EntryRepository';
+import type { SourceRefIndexRepository } from '../repositories/SourceRefIndexRepository';
 import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
@@ -21,6 +22,7 @@ export class IngestionService {
     private prefix: string,
     private options: WikiOptions,
     private entryRepo: EntryRepository,
+    private sourceRefIndexRepo: SourceRefIndexRepository,
     private searchService: SearchService,
     private jobManager: JobManager,
     private embeddingService: EmbeddingService,
@@ -79,16 +81,13 @@ export class IngestionService {
       // below so both locks are released cleanly.
       const onDuplicateHash = opts?.onDuplicateHash ?? 'ingest';
       if (onDuplicateHash !== 'ingest') {
-        const refs = await this.entryRepo.findSourceRefsByHash(entityId, sourceHash);
-        // Canonical must be a stored DIFFERENT source_ref, never the incoming ref.
-        // `refs` is already ordered `source_ref COLLATE BINARY` by the repo, so
-        // `others[0]` is the canonical — re-sorting in JS would use UTF-16
-        // code-unit ordering and could disagree with SQLite BINARY for non-ASCII.
-        // Excluding the incoming ref prevents the canonical from echoing the
-        // caller's own ref when it sorts first.
-        const others = refs.filter(r => r !== sourceRef);
-        if (others.length > 0) {
-          const canonical = others[0];
+        // Source_ref_index is the source of truth for "who currently holds
+        // this hash"; the pre-check queries it directly. At most one sourceRef
+        // can hold a given hash, so the result is either null (no live ref)
+        // or a single sourceRef (which cannot echo the incoming ref because
+        // the source_ref_index row is the OTHER writer's).
+        const canonical = await this.sourceRefIndexRepo.findActiveByEntityAndHash(entityId, sourceHash);
+        if (canonical !== null && canonical !== sourceRef) {
           if (onDuplicateHash === 'throw') {
             throw new WikiDuplicateHashError({ canonical, sourceHash, entityId });
           }
@@ -142,6 +141,16 @@ export class IngestionService {
         await this.db.withTransactionAsync(async (tx) => {
           deletedSourceFactIds.push(...(await this.entryRepo.findIdsBySource(entityId, sourceRef, null, tx, false)));
           await this.entryRepo.softDeleteBySource(entityId, tx, sourceRef, null);
+          // Remove the prior run's source_ref_index row for this sourceRef so
+          // the upsert below doesn't collide with ourselves. No-op when the
+          // sourceRef has never been ingested before.
+          await this.sourceRefIndexRepo.softDeleteByEntityAndSourceRef(entityId, sourceRef, tx);
+          // Take ownership of (entity, hash). The partial UNIQUE index on
+          // source_ref_index (entity_id, source_hash) WHERE deleted_at IS NULL
+          // catches concurrent writers for the same hash from a DIFFERENT
+          // sourceRef; the catch-and-translate below turns the violation into
+          // the per-mode duplicate-hash outcome.
+          await this.sourceRefIndexRepo.upsert(entityId, sourceHash, sourceRef, tx);
 
           const titleIndex = new Map<string, TitleIndexEntry>();
           const pendingEdges: Array<{
@@ -200,23 +209,24 @@ export class IngestionService {
         });
       } catch (err) {
         // A concurrent ingest for a DIFFERENT sourceRef beat us to the same
-        // sourceHash between the pre-check above and this write — the v9
-        // partial UNIQUE index (entity_id, source_hash) rejected the INSERT.
-        // Translate into the same duplicate-hash outcome the pre-check would
-        // have produced, by mode. Any other error re-throws unmodified.
+        // sourceHash between the pre-check above and this write — the
+        // source_ref_index partial UNIQUE index (entity_id, source_hash)
+        // rejected the upsert. Translate into the same duplicate-hash
+        // outcome the pre-check would have produced, by mode. Any other
+        // error re-throws unmodified. With the entries-level UNIQUE gone,
+        // every UNIQUE violation inside this transaction originates from
+        // source_ref_index, so the single check is sufficient.
         const sqliteCode = err instanceof WikiTransactionError
           ? err.sqliteErrorCode
           : extractSqliteCode(err);
         if (sqliteCode !== 'SQLITE_CONSTRAINT_UNIQUE') throw err;
 
-        const refs = await this.entryRepo.findSourceRefsByHash(entityId, sourceHash);
-        const others = refs.filter(r => r !== sourceRef);
+        const canonical = await this.sourceRefIndexRepo.findActiveByEntityAndHash(entityId, sourceHash);
         // No other live ref holds this hash (e.g. a different constraint
         // fired, or the racing writer's row was itself rolled back) — the
         // UNIQUE violation isn't explained by a duplicate-hash race; surface
         // the original error rather than a misleading result.
-        if (others.length === 0) throw err;
-        const canonical = others[0];
+        if (canonical === null) throw err;
 
         if (onDuplicateHash === 'throw' || onDuplicateHash === 'ingest') {
           throw new WikiDuplicateHashError({ canonical, sourceHash, entityId });
