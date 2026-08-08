@@ -208,8 +208,32 @@ jobs:
           # lightweight tag is a ref without an object, and `git push --follow-tags`
           # only follows annotated tags — pushing it would silently leave the
           # tag local and Phase 2's `git fetch --tags` would not find it.
+          #
+          # semantic-release's verifyRelease step creates a local lightweight tag
+          # at HEAD before its plugins run; @semantic-release/git is removed from
+          # .releaserc.json so the tag stays local. Without the `tag -d` below,
+          # `git tag -a` fails with `fatal: tag 'vX.Y.Z' already exists` because
+          # the lightweight tag exists at HEAD (which is the chore commit after
+          # `git commit` above, but on a re-run of a stuck workflow HEAD was on
+          # main and the tag pointed at the spec merge — that's what broke the
+          # 2026-08-08 Phase 1 run for v5.2.1, see PR #80 spec §C1 step 6).
+          #
+          # --force on the push so an orphan tag (or a stale release branch) from
+          # a prior failed run cannot block this push either. The release branch
+          # is ephemeral and only ever carries one chore commit at a time, so a
+          # force-push is safe — no review history lives on it.
+          git tag -d "v${RELEASE_VERSION}" 2>/dev/null || true
           git tag -a "v${RELEASE_VERSION}" -m "v${RELEASE_VERSION}"
-          git push origin "$BRANCH" "refs/tags/v${RELEASE_VERSION}"
+          # --atomic: branch and tag succeed or fail together. Phase 2 depends on
+          # the tag being present after Phase 1; without atomicity a partial push
+          # (branch up, tag rejected) would silently leave Phase 1 looking green
+          # while Phase 2 has nothing to relocate.
+          # --force: the orphan-tag scenario we hit on 2026-08-08 (a prior
+          # failed Phase 1 push left a remote tag at a different commit —
+          # verifyRelease's own tag is local only, per the comment above) means
+          # the push can otherwise reject. The release branch is ephemeral, so
+          # force-pushing it is safe. See PR #80 spec §C1 step 6 for context.
+          git push --atomic origin "$BRANCH" "refs/tags/v${RELEASE_VERSION}" --force
 
           PR_URL=$(gh pr create --base main --head "$BRANCH" \
             --title "chore(release): ${RELEASE_VERSION}" \
