@@ -229,8 +229,9 @@ jobs:
           # (branch up, tag rejected) would silently leave Phase 1 looking green
           # while Phase 2 has nothing to relocate.
           # --force: the orphan-tag scenario we hit on 2026-08-08 (a prior
-          # verifyRelease created a remote tag at a different commit) means the
-          # push can otherwise reject. The release branch is ephemeral, so
+          # failed Phase 1 push left a remote tag at a different commit —
+          # verifyRelease's own tag is local only, per the comment above) means
+          # the push can otherwise reject. The release branch is ephemeral, so
           # force-pushing it is safe. See PR #80 spec §C1 step 6 for context.
           git push --atomic origin "$BRANCH" "refs/tags/v${RELEASE_VERSION}" --force
 
