@@ -14,6 +14,12 @@ const SQLITE_RESULT_CODE_NAMES: Record<number, string> = {
   17: 'SQLITE_SCHEMA', 18: 'SQLITE_TOOBIG', 19: 'SQLITE_CONSTRAINT', 20: 'SQLITE_MISMATCH',
   21: 'SQLITE_MISUSE', 22: 'SQLITE_NOLFS', 23: 'SQLITE_AUTH', 24: 'SQLITE_FORMAT',
   25: 'SQLITE_RANGE', 26: 'SQLITE_NOTADB', 27: 'SQLITE_NOTICE', 28: 'SQLITE_WARNING',
+  // Extended result codes (https://sqlite.org/rescode.html#extended_result_code_list).
+  // 2067 = SQLITE_CONSTRAINT_UNIQUE — raised when a UNIQUE index/PRIMARY KEY
+  // rejects an INSERT/UPDATE; expo-sqlite reports this as a numeric "Error code N:"
+  // prefix and we normalize it back to the symbolic name so callers can branch on
+  // the same string the rest of the ecosystem uses.
+  2067: 'SQLITE_CONSTRAINT_UNIQUE',
   100: 'SQLITE_ROW', 101: 'SQLITE_DONE',
 };
 
