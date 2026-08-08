@@ -11,20 +11,201 @@ on:
         type: string
 
 permissions:
-  contents: write # create GitHub release, push release commit
+  contents: write # create GitHub release, push release branch/tag
   issues: write # comment on issues resolved by release
-  pull-requests: write # comment on PRs resolved by release
+  pull-requests: write # comment on PRs resolved by release, create/merge/reopen release PR
   id-token: write # npm provenance
 
+# cancel-in-progress must stay false: a Phase 2 run (mid-publish) must never be
+# cancelled by a subsequent Phase 1 trigger, and a Phase 1 run must never be
+# cancelled by a subsequent Phase 2 trigger. Non-release pushes that land while
+# a release is in flight simply queue behind it in this group instead of
+# clobbering a partial publish.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  release:
-    name: Release
+  # Determines whether this run is Phase 1 (an ordinary push to main that may
+  # contain releasable commits) or Phase 2 (a release PR's squash-merge commit
+  # landing on main, or a manual workflow_dispatch republish).
+  detect:
+    name: Detect release phase
     runs-on: ubuntu-latest
+    outputs:
+      phase: ${{ steps.detect.outputs.phase }}
+      release_branch: ${{ steps.detect.outputs.release_branch }}
+    steps:
+      - name: Detect phase
+        id: detect
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # Manual republish always means "publish this already-tagged version" -
+            # bypass merged-PR detection entirely.
+            echo "phase=2" >> "$GITHUB_OUTPUT"
+            echo "release_branch=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Look at the most recently merged PRs into main. If the commit that
+          # triggered this push is the squash-merge commit of a PR whose head
+          # branch was release/v*, this push is the release PR landing - Phase 2.
+          # Otherwise this is an ordinary push (feature merge) - Phase 1.
+          MATCH=$(gh pr list --repo "$REPO" --state merged --base main --limit 10 \
+            --json number,headRefName,mergeCommit \
+            --jq --arg sha "${{ github.sha }}" \
+              '[.[] | select(.mergeCommit.oid == $sha) | select(.headRefName | test("^release/v"))] | .[0].headRefName // empty')
+
+          if [ -n "$MATCH" ]; then
+            echo "phase=2" >> "$GITHUB_OUTPUT"
+            echo "release_branch=${MATCH}" >> "$GITHUB_OUTPUT"
+          else
+            echo "phase=1" >> "$GITHUB_OUTPUT"
+            echo "release_branch=" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Phase 1: compute the next version with semantic-release, open (or reuse) a
+  # release PR carrying the version-bump commit, and request squash auto-merge.
+  # This lets the Test workflow validate the release commit via a normal PR
+  # before anything is tagged-and-published, closing the branch-protection gap.
+  phase1:
+    name: Phase 1 - Prepare release PR
+    needs: detect
+    if: needs.detect.outputs.phase == '1'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           fetch-depth: 0
-          persist-credentials: false
+          # Do NOT set persist-credentials: false here - this job needs to push
+          # a new release branch and tag using the workflow's own GITHUB_TOKEN.
+
+      - uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d # v4.0.0
+
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 24.10.0
+          registry-url: https://registry.npmjs.org
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - uses: actions/cache@v4
+        name: Setup pnpm cache
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm run build
+
+      - name: Run semantic-release (--no-ci, dry local mutation only)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # --no-ci is required here for two reasons:
+          #  1. The git/github plugins have already been removed from
+          #     .releaserc.json, so semantic-release cannot push, tag, or
+          #     create a GitHub release even without --no-ci - but the flag
+          #     also disables semantic-release's own CI-environment branch/PR
+          #     detection safety checks, which could otherwise cause it to
+          #     refuse to run at all in this workflow context.
+          #  2. It documents intent: this invocation only computes the next
+          #     version and mutates CHANGELOG.md + package.json files on disk.
+          npx semantic-release --no-ci
+
+      - name: Check for releasable changes
+        id: changes
+        run: |
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "No releasable commits found by semantic-release; nothing to do."
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compute release version
+        id: version
+        if: steps.changes.outputs.has_changes == 'true'
+        run: |
+          RELEASE_VERSION=$(node -p "require('./package.json').version")
+          echo "release_version=${RELEASE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Computed release version: ${RELEASE_VERSION}"
+
+      - name: Create or reuse release PR
+        if: steps.changes.outputs.has_changes == 'true'
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.release_version }}
+        run: |
+          BRANCH="release/v${RELEASE_VERSION}"
+
+          EXISTING=$(gh pr list --head "$BRANCH" --state all --json number,state,url)
+          OPEN_PR=$(echo "$EXISTING" | node -e "const a=JSON.parse(require('fs').readFileSync(0,'utf8'));const p=a.find(x=>x.state==='OPEN');console.log(p?p.url:'')")
+          CLOSED_PR=$(echo "$EXISTING" | node -e "const a=JSON.parse(require('fs').readFileSync(0,'utf8'));const p=a.find(x=>x.state==='CLOSED');console.log(p?p.url:'')")
+
+          if [ -n "$OPEN_PR" ]; then
+            echo "Release PR already open for ${BRANCH}: ${OPEN_PR}"
+            echo "Idempotent rerun - nothing to commit/push, just ensure auto-merge is requested."
+            gh pr merge --auto --squash "$OPEN_PR" || true
+            exit 0
+          fi
+
+          if [ -n "$CLOSED_PR" ]; then
+            echo "Reopening previously closed release PR: ${CLOSED_PR}"
+            gh pr reopen "$CLOSED_PR"
+            gh pr merge --auto --squash "$CLOSED_PR" || true
+            exit 0
+          fi
+
+          # No PR exists yet: create the release branch from current main HEAD,
+          # commit the semantic-release mutations, tag it, and push branch+tag
+          # together so a subsequent Phase 2 run can find the tag it needs to
+          # relocate onto the eventual squash-merge commit.
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git checkout -b "$BRANCH"
+          git add CHANGELOG.md package.json packages/*/package.json
+          # [skip ci] prevents this branch's own push from re-triggering this
+          # push-triggered workflow. It does NOT affect the pull_request-triggered
+          # Test workflow run against the release PR, which is what we need to run.
+          git commit -m "chore(release): ${RELEASE_VERSION} [skip ci]"
+          git tag "v${RELEASE_VERSION}"
+          git push origin "$BRANCH" --follow-tags
+
+          PR_URL=$(gh pr create --base main --head "$BRANCH" \
+            --title "chore(release): ${RELEASE_VERSION}" \
+            --body "Automated release PR. Merging this via squash will trigger Phase 2 (publish + GitHub Release).")
+
+          gh pr merge --auto --squash "$PR_URL"
+
+  # Phase 2: the release PR's squash-merge commit has landed on main (or this
+  # is a manual workflow_dispatch republish). Relocate the release tag onto the
+  # new commit, publish all packages, and create the GitHub Release.
+  phase2:
+    name: Phase 2 - Publish release
+    needs: detect
+    if: needs.detect.outputs.phase == '2'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          # Do NOT set persist-credentials: false here - this job needs to
+          # force-push the relocated release tag using the workflow's own
+          # GITHUB_TOKEN.
           ref: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.release_version) || github.ref }}
 
       - uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d # v4.0.0
@@ -51,37 +232,34 @@ jobs:
 
       - run: pnpm run build
 
-      - name: Get current version
-        id: pre_version
-        run: |
-          node -p "require('./package.json').version" | xargs -I{} echo "version={}" >> $GITHUB_OUTPUT
-
-      - run: npx semantic-release
-        if: github.event_name == 'push'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish all packages
+      - name: Relocate release tag and publish
         env:
           INPUT_RELEASE_VERSION: ${{ github.event.inputs.release_version }}
+          RELEASE_BRANCH: ${{ needs.detect.outputs.release_branch }}
         run: |
           if [ -n "${INPUT_RELEASE_VERSION}" ]; then
             RELEASE_VERSION="${INPUT_RELEASE_VERSION}"
+          else
+            RELEASE_VERSION="${RELEASE_BRANCH#release/v}"
+
+            # Sanity check: Phase 1 already pushed this tag pointing at the
+            # release-branch commit. If it's missing, something went wrong
+            # upstream - fail loudly rather than silently skipping.
+            git fetch --tags
             if ! git rev-parse "v${RELEASE_VERSION}" >/dev/null 2>&1; then
-              echo "Tag v${RELEASE_VERSION} does not exist."
+              echo "Expected tag v${RELEASE_VERSION} to exist from Phase 1 but it was not found."
               exit 1
             fi
-          else
-            # Determine the released version from a release tag that points at the
-            # checked-out commit. This keeps reruns pinned to the code being
-            # published instead of accidentally picking a newer unrelated tag from
-            # elsewhere in the repository.
-            RELEASE_VERSION=$(git tag --points-at HEAD --sort=-version:refname --list 'v[0-9]*' | head -1 | sed 's/^v//')
-            if [ -z "$RELEASE_VERSION" ]; then
-              echo "No release tag found for the checked-out commit; semantic-release did not create a new release for this revision. Nothing to publish."
-              exit 0
-            fi
+
+            # A squash merge always produces a brand-new commit SHA on main,
+            # even though the tree content matches what Phase 1 tagged on the
+            # release branch. Move the tag so it points at the commit that is
+            # actually reachable from main.
+            git tag -f "v${RELEASE_VERSION}" HEAD
+            # Force-push only the tag ref - never force-push branches.
+            git push origin "v${RELEASE_VERSION}" --force
           fi
+
           echo "Release version: ${RELEASE_VERSION}"
 
           package_name() {
@@ -127,3 +305,12 @@ jobs:
           publish_if_needed "./packages/expo/package.json" pnpm --filter "./packages/expo" publish --no-git-checks --access public
           publish_if_needed "./packages/prisma-outbox/package.json" pnpm --filter "./packages/prisma-outbox" publish --no-git-checks --access public
           publish_if_needed "./packages/okf/package.json" pnpm --filter "./packages/okf" publish --no-git-checks --access public
+
+          echo "RELEASE_VERSION=${RELEASE_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Create GitHub Release
+        run: |
+          # Do NOT use --clobber: if a release for this tag already exists,
+          # fail loudly - that signals Phase 2 re-ran after already creating
+          # the release, a real problem worth surfacing rather than masking.
+          gh release create "v${RELEASE_VERSION}" --title "v${RELEASE_VERSION}" --notes-file CHANGELOG.md --verify-tag
