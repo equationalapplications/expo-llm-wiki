@@ -100,6 +100,49 @@ describe('JobManager.acquireHashLock', () => {
     expect(order.filter((e) => e === 'e2')).toHaveLength(2);
   });
 
+  it('distinct (entityId, sourceHash) pairs that collide under raw concatenation still produce distinct lock keys', async () => {
+    const jm = new JobManager('llm_wiki_');
+    // Pairs that collide under `${entityId}${sourceHash}`:
+    //   ("ab", "c"*63) and ("a", "b" + "c"*63)
+    // both produce the 65-char string "ab" + "c"*63.
+    const hashC63 = 'c'.repeat(63);
+    const hashB64 = 'b' + 'c'.repeat(63);
+    expect(hashC63).toHaveLength(63);
+    expect(hashB64).toHaveLength(64);
+    // Pre-condition: the raw concatenations really do collide (otherwise the
+    // regression test below would be vacuous).
+    expect(`ab${hashC63}`).toBe(`a${hashB64}`);
+
+    const key1 = (jm as any)._hashLockKey('ab', hashC63);
+    const key2 = (jm as any)._hashLockKey('a', hashB64);
+    expect(key1).not.toBe(key2);
+
+    // And behaviorally: holding one lock must not block acquiring the other.
+    const order: number[] = [];
+    let releaseA: (() => void) | null = null;
+    let releaseHolderA: () => void = () => {};
+    const holdAPromise = new Promise<void>((resolve) => { releaseHolderA = resolve; });
+    const holdA = jm.acquireHashLock('ab', hashC63).then((release) => {
+      order.push(1);
+      releaseA = release;
+      return holdAPromise;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const acquireB = jm.acquireHashLock('a', hashB64).then((release) => {
+      order.push(2);
+      release();
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(order).toEqual([1, 2]);
+
+    releaseA!();
+    releaseHolderA();
+    await Promise.all([holdA, acquireB]);
+  });
+
   it('release closure is idempotent (calling twice is a no-op)', async () => {
     const jm = new JobManager('llm_wiki_');
     const release = await jm.acquireHashLock('e1', HASH_A);
@@ -138,7 +181,7 @@ describe('JobManager.acquireIngestLocks', () => {
       // hash release is internal — observable via _hashLockKey check below
     ]);
     // After release, the hash map entry for (e1, HASH_A) should be gone.
-    expect((jm as any).hashLocks.has(`${'e1'}${HASH_A}`)).toBe(false);
+    expect((jm as any).hashLocks.has(`${'e1'}\0${HASH_A}`)).toBe(false);
   });
 
   it('propagates WikiBusyError from the sourceRef lock and releases the hash lock', async () => {
@@ -150,7 +193,7 @@ describe('JobManager.acquireIngestLocks', () => {
     await expect(jm.acquireIngestLocks('e1', 'doc.md', HASH_A))
       .rejects.toBeInstanceOf(WikiBusyError);
     // Hash lock must be released despite the failure.
-    expect((jm as any).hashLocks.has(`${'e1'}${HASH_A}`)).toBe(false);
+    expect((jm as any).hashLocks.has(`${'e1'}\0${HASH_A}`)).toBe(false);
 
     jm.releaseLock('ingest', 'e1', 'doc.md');
   });

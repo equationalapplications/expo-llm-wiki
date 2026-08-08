@@ -21,8 +21,11 @@ export class JobManager {
    * the DB level as defense-in-depth). Two callers holding the same hash
    * see FIFO order; different hashes never block one another.
    *
-   * Keyed `${entityId}${sourceHash}` so an entityId that happens to
-   * contain the separator cannot collide with a different entity's lock.
+   * Keyed `${entityId}\0${sourceHash}` so distinct (entityId, sourceHash)
+   * pairs can never share a lock. A raw concatenation would let
+   * ("ab", "c…") collide with ("a", "bc…"); the NUL separator makes that
+   * impossible because neither component can contain NUL (entityIds are
+   * user-supplied identifiers; sourceHashes are hex digests).
    */
   private hashLocks: Map<string, Promise<unknown>> = new Map();
   private statusSubscribers = new Map<
@@ -33,7 +36,7 @@ export class JobManager {
   constructor(private prefix: string) {}
 
   private _hashLockKey(entityId: string, sourceHash: string): string {
-    return `${entityId}${sourceHash}`;
+    return `${entityId}\0${sourceHash}`;
   }
 
   /**
