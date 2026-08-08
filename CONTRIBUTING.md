@@ -128,13 +128,17 @@ Update all callers before upgrading.
 
 ## Releases
 
-Version bumps and `CHANGELOG.md` are managed by [semantic-release](https://github.com/semantic-release/semantic-release) on merge to `main` (see `.releaserc.json` and `.github/workflows/release.yml`).
+Version bumps and `CHANGELOG.md` are managed by [semantic-release](https://github.com/semantic-release/semantic-release), driven through a two-phase gated workflow (see `.releaserc.json` and `.github/workflows/release.yml`):
+
+- **Phase 1** — an ordinary merge to `main` runs `semantic-release --no-ci`, which computes the next version and updates `CHANGELOG.md` + `package.json` files locally (it no longer commits, tags, or publishes). The workflow commits that as a `release/vX.Y.Z` branch, tags it, and opens a release PR with squash auto-merge requested — so the `Test` workflow validates the release commit like any other PR before it lands.
+- **Phase 2** — when that release PR's squash-merge commit lands on `main`, the tag is relocated onto the new commit, packages publish to npm in dependency order, and the GitHub Release is created.
+- **Manual republish (recovery path)** — the workflow also supports a `workflow_dispatch` trigger that accepts a `release_version` input (e.g. `4.15.1`) and reruns Phase 2 against the existing `v<version>` tag. Use this when Phase 2 partially fails — packages already published are skipped via `npm view … version`, so reruns are idempotent.
 
 **Do not edit in PRs:**
 - `CHANGELOG.md`
 - `"version"` in root or workspace `package.json` files (`packages/*/package.json`)
 
-Use conventional commits instead. semantic-release analyzes squash-merge commits on `main`, bumps versions, writes release notes, publishes to npm, and commits the updated files back with `[skip ci]`.
+Use conventional commits instead — semantic-release analyzes squash-merge commits on `main` to decide whether (and how) to bump.
 
 For breaking changes, include a `BREAKING CHANGE:` footer in the commit message — release notes are generated from that automatically.
 

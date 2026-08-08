@@ -29,6 +29,24 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
     CREATE INDEX IF NOT EXISTS ${prefix}entries_source_hash_idx ON ${prefix}entries(entity_id, source_hash) WHERE source_hash IS NOT NULL;
     CREATE INDEX IF NOT EXISTS ${prefix}entries_updated_idx ON ${prefix}entries(updated_at DESC);
 
+    -- source_ref_index: per-(entity, source_hash) record of the canonical sourceRef
+    -- currently holding that hash. The partial UNIQUE index on (entity_id, source_hash)
+    -- WHERE deleted_at IS NULL enforces the sourceRef-level TOCTOU-race invariant;
+    -- entries-level uniqueness cannot express it because a single ingestDocument call
+    -- writes N facts that all share (entity_id, source_ref, source_hash). See
+    -- docs/superpowers/specs/2026-08-07-dependabot-concurrency-release-hygiene-design.md §B1.
+    CREATE TABLE IF NOT EXISTS ${prefix}source_ref_index (
+      id TEXT PRIMARY KEY,
+      entity_id TEXT NOT NULL,
+      source_hash TEXT NOT NULL,
+      source_ref TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      deleted_at INTEGER
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS ${prefix}idx_source_ref_hash
+      ON ${prefix}source_ref_index (entity_id, source_hash)
+      WHERE deleted_at IS NULL;
+
     CREATE TABLE IF NOT EXISTS ${prefix}tasks (
       id TEXT PRIMARY KEY,
       entity_id TEXT NOT NULL,

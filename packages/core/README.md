@@ -825,6 +825,20 @@ const { chunks, truncated } = chunkText(
 
 > **Note:** `ingestDocument()` clamps the resolved overlap — whether it came from `chunkOverlap`, `WikiConfig`, or `DEFAULT_CHUNK_OVERLAP` — to `maxChunkLength - 1`. The clamp is evaluated on every call and is a no-op at the shipped defaults (`400 < 12000 - 1`), but it also bites when a custom `maxChunkLength` alone leaves the resolved overlap too large (e.g. `maxChunkLength: 100` with the default overlap `400` ingests at an effective overlap of `99`). That clamp is internal: passing the unclamped pair straight to `chunkText` throws, since it requires `overlap < maxChunkLength`. Apply the same `Math.min(overlap, maxChunkLength - 1)` yourself when re-chunking under a custom config.
 
+## Schema Migrations
+
+`wikiMemory.setup()` runs pending schema migrations in order and records the applied version. Migrations are additive and safe to re-run.
+
+**Migration v9** (`add_live_hash_unique_index`) adds a partial `UNIQUE` index on `(entity_id, source_hash)` scoped to live (`deleted_at IS NULL`), non-null-hash rows. This closes a TOCTOU race where two concurrent `ingestDocument()` calls for different `sourceRef`s could both pass the duplicate-hash pre-check before either write committed, leaving two live rows with the same content hash.
+
+If your existing database already has live rows that violate this invariant (created before the app-level race fix shipped), `setup()` throws:
+
+```text
+Migration v9 (add_live_hash_unique_index) failed: existing live rows violate the new UNIQUE index. …
+```
+
+The error lists the offending `(entity_id, source_hash)` groups. `setup()` performs no destructive cleanup on this path — the index is not created and the schema version is not advanced, so it's safe to retry after remediation. To remediate, either soft-delete (or re-ingest with a corrected `sourceRef`) all but one live row per listed group, then re-run `setup()`.
+
 ## Adapter Interface
 
 Implement `SQLiteAdapter` to use your platform's SQLite driver:

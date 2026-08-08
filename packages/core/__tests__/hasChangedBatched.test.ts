@@ -29,12 +29,37 @@ describe('EntryRepository.findLatestSourceHashes — empty input edge case', () 
   });
 });
 
+async function insertSourceRefIndexRow(
+  db: SQLiteAdapter,
+  row: { sourceRef: string; sourceHash: string; createdAt?: number },
+): Promise<void> {
+  await db.runAsync(
+    `INSERT INTO llm_wiki_source_ref_index (id, entity_id, source_hash, source_ref, created_at, deleted_at)
+     VALUES (?, ?, ?, ?, ?, NULL)`,
+    [`sri_${row.sourceRef}_${row.sourceHash}_${row.createdAt ?? 0}`, 'entity-1', row.sourceHash, row.sourceRef, row.createdAt ?? 0],
+  );
+}
+
+async function insertEntry(
+  db: SQLiteAdapter,
+  row: { id: string; sourceRef: string; sourceHash: string; updatedAt: number },
+): Promise<void> {
+  await db.runAsync(
+    `INSERT INTO llm_wiki_entries (id, entity_id, title, body, tags, confidence, source_type,
+      source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [row.id, 'entity-1', 'T', 'B', '[]', 'certain', 'immutable_document',
+     row.sourceHash, row.sourceRef, row.updatedAt, row.updatedAt, null, 0, null],
+  );
+}
+
 describe('WikiMemory.hasChanged — batched overload', () => {
   it('returns [] for empty input with zero SQL calls (synchronous)', async () => {
     const { wiki } = await makeWiki();
     const entryRepo = wiki.__testAccess.entryRepo;
+    const sourceRefIndexRepo = wiki.__testAccess.sourceRefIndexRepo;
     const latestHashesSpy = vi.spyOn(entryRepo, 'findLatestSourceHashes');
-    const findByHashSpy = vi.spyOn(entryRepo, 'findSourceRefsByHash');
+    const findByHashSpy = vi.spyOn(sourceRefIndexRepo, 'findActiveByEntityAndHash');
 
     const result = await wiki.hasChanged('entity-1', []);
     expect(result).toEqual([]);
@@ -52,37 +77,27 @@ describe('WikiMemory.hasChanged — batched overload', () => {
 
   it('marks changed: false when stored hash matches', async () => {
     const { wiki, db } = await makeWiki();
-    await db.runAsync(
-      `INSERT INTO llm_wiki_entries (id, entity_id, title, body, tags, confidence, source_type,
-        source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ['f1', 'entity-1', 'T', 'B', '[]', 'certain', 'immutable_document', VALID_HASH_A, 'a.md', 1000, 1000, null, 0, null],
-    );
+    await insertSourceRefIndexRow(db, { sourceRef: 'a.md', sourceHash: VALID_HASH_A });
+    // findLatestSourceHashes queries the entries table, so we also seed
+    // an entry for the same ref+hash.
+    await insertEntry(db, { id: 'f1', sourceRef: 'a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
     const out = await wiki.hasChanged('entity-1', [{ sourceRef: 'a.md', sourceHash: VALID_HASH_A }]);
     expect(out).toEqual([{ sourceRef: 'a.md', changed: false }]);
   });
 
   it('marks changed: true when stored hash differs', async () => {
     const { wiki, db } = await makeWiki();
-    await db.runAsync(
-      `INSERT INTO llm_wiki_entries (id, entity_id, title, body, tags, confidence, source_type,
-        source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ['f1', 'entity-1', 'T', 'B', '[]', 'certain', 'immutable_document', VALID_HASH_A, 'a.md', 1000, 1000, null, 0, null],
-    );
+    await insertSourceRefIndexRow(db, { sourceRef: 'a.md', sourceHash: VALID_HASH_A });
+    await insertEntry(db, { id: 'f1', sourceRef: 'a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
     const out = await wiki.hasChanged('entity-1', [{ sourceRef: 'a.md', sourceHash: VALID_HASH_B }]);
     expect(out).toEqual([{ sourceRef: 'a.md', changed: true }]);
   });
 
   it('sets duplicateOf only when a different ref holds the same hash', async () => {
     const { wiki, db } = await makeWiki();
-    // Two refs, same hash.
-    await db.runAsync(
-      `INSERT INTO llm_wiki_entries (id, entity_id, title, body, tags, confidence, source_type,
-        source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ['f1', 'entity-1', 'T', 'B', '[]', 'certain', 'immutable_document', VALID_HASH_A, 'mail-inbox-a.md', 1000, 1000, null, 0, null],
-    );
+    // Two refs, same hash — but only one can hold the hash in source_ref_index.
+    // The stored ref is the one inserted; the other reports duplicateOf.
+    await insertSourceRefIndexRow(db, { sourceRef: 'mail-inbox-a.md', sourceHash: VALID_HASH_A });
     const out = await wiki.hasChanged('entity-1', [{ sourceRef: 'mail-sent-a.md', sourceHash: VALID_HASH_A }]);
     expect(out).toEqual([{ sourceRef: 'mail-sent-a.md', changed: true, duplicateOf: 'mail-inbox-a.md' }]);
   });
@@ -99,37 +114,24 @@ describe('WikiMemory.hasChanged — batched overload', () => {
     expect(out.every(r => r.changed === true)).toBe(true);
   });
 
-  it('mixed entries: unchanged / changed / duplicate / duplicate-and-changed', async () => {
+  it('mixed entries: unchanged / changed / duplicate-of-stored (pre-check)', async () => {
     const { wiki, db } = await makeWiki();
-    // same same -> unchanged
-    await db.runAsync(
-      `INSERT INTO llm_wiki_entries (id, entity_id, title, body, tags, confidence, source_type,
-        source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ['f1', 'entity-1', 'T', 'B', '[]', 'certain', 'immutable_document', VALID_HASH_A, 'same.md', 1000, 1000, null, 0, null],
-    );
-    // other has hash A so 'duplicate' will collide
-    await db.runAsync(
-      `INSERT INTO llm_wiki_entries (id, entity_id, title, body, tags, confidence, source_type,
-        source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ['f2', 'entity-1', 'T', 'B', '[]', 'certain', 'immutable_document', VALID_HASH_A, 'collision.md', 1000, 1000, null, 0, null],
-    );
+    // Stored hash lives under source_ref_index.source_ref = 'same.md'.
+    // 'incoming.md' shares the same hash; hasChanged reports duplicateOf.
+    await insertSourceRefIndexRow(db, { sourceRef: 'same.md', sourceHash: VALID_HASH_A });
+    // findLatestSourceHashes queries the entries table for the per-ref
+    // "latest stored hash" so the unchanged signal can be computed.
+    await insertEntry(db, { id: 'f1', sourceRef: 'same.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
 
     const out = await wiki.hasChanged('entity-1', [
       { sourceRef: 'same.md', sourceHash: VALID_HASH_A },        // unchanged
-      { sourceRef: 'changed.md', sourceHash: VALID_HASH_A },     // changed, no collision
-      { sourceRef: 'collision.md', sourceHash: VALID_HASH_A },   // unchanged + duplicate self
-      { sourceRef: 'both.md', sourceHash: VALID_HASH_A },        // changed + duplicate of collision.md
+      { sourceRef: 'changed.md', sourceHash: VALID_HASH_B },     // changed, no collision
+      { sourceRef: 'incoming.md', sourceHash: VALID_HASH_A },    // changed + duplicate of same.md
     ]);
-    // duplicateOf is the code-unit minimum of STORED DIFFERENT refs holding the
-    // same hash; the incoming ref is excluded. 'collision.md' has 'same.md' as
-    // its stored-different duplicate (the incoming ref filters itself out).
     expect(out).toEqual([
-      { sourceRef: 'same.md', changed: false, duplicateOf: 'collision.md' },
-      { sourceRef: 'changed.md', changed: true, duplicateOf: 'collision.md' },
-      { sourceRef: 'collision.md', changed: false, duplicateOf: 'same.md' },
-      { sourceRef: 'both.md', changed: true, duplicateOf: 'collision.md' },
+      { sourceRef: 'same.md', changed: false },
+      { sourceRef: 'changed.md', changed: true },
+      { sourceRef: 'incoming.md', changed: true, duplicateOf: 'same.md' },
     ]);
   });
 });

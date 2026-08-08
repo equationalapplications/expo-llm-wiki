@@ -1,0 +1,100 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Grant contents: read so actions/checkout can authenticate repo reads
+# even if the repo is later flipped to private, or if a submodule fetch
+# is added. This workflow never pushes; the broader token is unused here.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          # Never push from the test job — drop the GITHUB_TOKEN from
+          # .git/config so a transitive dependency or later step cannot
+          # accidentally read it.
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d # v4.0.0
+
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 24.10.0
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        name: Setup pnpm cache
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm run build
+
+      - run: pnpm run typecheck
+
+      - run: pnpm test
+
+      # Audit runs LAST so a single high-severity advisory introduced by
+      # this PR cannot mask build / typecheck / test failures.
+      #
+      # The gate only fails on advisories that have a real upstream
+      # patch available (the patched_versions field is not the
+      # `<0.0.0>` placeholder). Advisories without a fix — currently
+      # `image-size` GHSA-w3rx-r6r6-pgpr and GHSA-5p2g-fcmc-qvqq pulled
+      # in via expo → @expo/metro → metro, with no patched release —
+      # surface as warnings so Dependabot continues to track them
+      # instead of permanently blocking this workflow.
+      - name: Audit (fail only on advisories with an upstream patch)
+        shell: bash
+        run: |
+          set -e
+          pnpm audit --audit-level=high --json > /tmp/audit.json || true
+          # Run Python directly (no command substitution): under `set -e`,
+          # a non-zero exit inside $(...) would terminate the shell before
+          # the captured diagnostics can be printed, masking the real
+          # cause. Python prints warnings for unfixable advisories (no
+          # upstream patch) before raising SystemExit(1) only if any
+          # fixable advisory exists. The script is written to a file first
+          # to avoid the heredoc / multi-line -c indentation pitfalls that
+          # bit an earlier draft of this step.
+          cat > /tmp/audit-classify.py <<'PYEOF'
+          import json, sys
+          data = json.load(open("/tmp/audit.json", encoding="utf-8"))
+          advisories = data.get("advisories") or {}
+          # pnpm's "no patch yet" sentinel: patched_versions is a placeholder
+          # like "<0.0.0" (an opening bracket followed by 0.0.0). Anything
+          # that doesn't match that prefix is a real version range and the
+          # advisory is considered fixable.
+          def is_unfixable(a):
+              pv = a.get("patched_versions") or ""
+              return pv.startswith("<0.0.0")
+          fixable = [a for a in advisories.values() if not is_unfixable(a)]
+          unfixable = [a for a in advisories.values() if is_unfixable(a)]
+          for a in unfixable:
+              print(f"WARNING: {a['module_name']} ({a.get('url', '')}) has no upstream patch")
+          if fixable:
+              for a in fixable:
+                  print(f"HIGH: {a['module_name']} ({a.get('url', '')}) — fix to {a.get('patched_versions')}")
+              sys.exit(1)
+          PYEOF
+          python3 /tmp/audit-classify.py && echo "No fixable high-severity advisories." || exit 1

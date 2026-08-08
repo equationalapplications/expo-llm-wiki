@@ -74,6 +74,10 @@ describe('subscribeEntityStatus — initial emission', () => {
     });
 
     expect(calls[0]).toEqual({ ingesting: false, librarian: false, heal: false });
+    // The Task 5 hash lock delays the ingesting:true flip by a macrotask
+    // (see the sibling "ingest transition" describe block) — yield before
+    // asserting it appeared.
+    await new Promise((r) => setTimeout(r, 0));
     expect(calls.some((s) => s.ingesting)).toBe(true);
     await ingestPromise;
     expect(calls.at(-1)).toEqual({ ingesting: false, librarian: false, heal: false });
@@ -91,6 +95,11 @@ describe('subscribeEntityStatus — ingest transition', () => {
 
     const sourceHash = 'a'.repeat(64);
     const p = wiki.ingestDocument('e1', { sourceRef: 'doc1', sourceHash, documentChunk: 'hello world' });
+    // The Task 5 hash lock (JobManager.acquireIngestLocks) is acquired
+    // BEFORE the synchronous sourceRef lock, so the ingesting:true flip is
+    // no longer observable in the same microtask as the ingestDocument()
+    // call — yield to a macrotask so the lock chain settles before asserting.
+    await new Promise((r) => setTimeout(r, 0));
     expect(calls.at(-1)).toEqual({ ingesting: true, librarian: false, heal: false });
 
     await p;

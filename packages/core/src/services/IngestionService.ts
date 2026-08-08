@@ -1,10 +1,12 @@
 import { chunkText, withConcurrency, validateFact, parseJsonResponse, normalizeSourceRef, normalizeSourceHash } from '../utils/pure';
 import { normalizeTitleKey } from '../utils/ontology';
 import { generateId } from '../utils/ids';
-import { WikiDuplicateHashError } from '../types';
+import { WikiDuplicateHashError, WikiTransactionError } from '../types';
 import type { WikiOptions, ExtractedFact, ExtractedFactWithOntology, WikiFact, OntologyUpdates } from '../types';
 import type { SQLiteAdapter } from '../types';
+import { extractSqliteCode } from '../db/sqliteCodes';
 import type { EntryRepository } from '../repositories/EntryRepository';
+import type { SourceRefIndexRepository } from '../repositories/SourceRefIndexRepository';
 import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
@@ -20,6 +22,7 @@ export class IngestionService {
     private prefix: string,
     private options: WikiOptions,
     private entryRepo: EntryRepository,
+    private sourceRefIndexRepo: SourceRefIndexRepository,
     private searchService: SearchService,
     private jobManager: JobManager,
     private embeddingService: EmbeddingService,
@@ -49,29 +52,6 @@ export class IngestionService {
     const sourceHash = normalizeSourceHash(params.sourceHash);
     if (!sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
 
-    // Duplicate-hash guard: runs BEFORE acquireLock, BEFORE chunking, BEFORE any
-    // LLM call. The spec's "synchronous return" regression guard is satisfied by
-    // returning directly — no setImmediate, no Promise.resolve().then().
-    const onDuplicateHash = opts?.onDuplicateHash ?? 'ingest';
-    if (onDuplicateHash !== 'ingest') {
-      const refs = await this.entryRepo.findSourceRefsByHash(entityId, sourceHash);
-      // Canonical must be a stored DIFFERENT source_ref, never the incoming ref.
-      // `refs` is already ordered `source_ref COLLATE BINARY` by the repo, so
-      // `others[0]` is the canonical — re-sorting in JS would use UTF-16
-      // code-unit ordering and could disagree with SQLite BINARY for non-ASCII.
-      // Excluding the incoming ref prevents the canonical from echoing the
-      // caller's own ref when it sorts first.
-      const others = refs.filter(r => r !== sourceRef);
-      if (others.length > 0) {
-        const canonical = others[0];
-        if (onDuplicateHash === 'throw') {
-          throw new WikiDuplicateHashError({ canonical, sourceHash, entityId });
-        }
-        // 'skip'
-        return { truncated: false, chunks: 0, duplicateOf: canonical };
-      }
-    }
-
     const maxChunkLength = params.maxChunkLength ?? this.options.config?.maxChunkLength ?? DEFAULT_MAX_CHUNK_LENGTH;
     const rawOverlap = params.chunkOverlap ?? this.options.config?.chunkOverlap ?? DEFAULT_CHUNK_OVERLAP;
     const chunkOverlap = Math.min(
@@ -86,9 +66,36 @@ export class IngestionService {
       throw new Error(`documentChunk must be a string, received ${typeof params.documentChunk}`);
     }
 
-    this.jobManager.acquireLock('ingest', entityId, sourceRef);
+    // Acquire the hash + sourceRef ingest locks BEFORE the duplicate pre-check
+    // so concurrent same-hash callers serialize here. Two callers that both
+    // observe no duplicate at the pre-check can otherwise both reach the
+    // INSERT and trip the v9 UNIQUE constraint — see
+    // docs/superpowers/specs/2026-08-07-dependabot-concurrency-release-hygiene-design.md §B.
+    const releaseIngestLocks = await this.jobManager.acquireIngestLocks(entityId, sourceRef, sourceHash);
 
     try {
+      // Duplicate-hash guard: runs AFTER acquireIngestLocks but BEFORE chunking
+      // and any LLM call. With the per-hash lock held by the previous holder,
+      // we are guaranteed to observe any committed write they made before
+      // releasing. Early duplicate returns go through the `finally` block
+      // below so both locks are released cleanly.
+      const onDuplicateHash = opts?.onDuplicateHash ?? 'ingest';
+      if (onDuplicateHash !== 'ingest') {
+        // Source_ref_index is the source of truth for "who currently holds
+        // this hash"; the pre-check queries it directly. At most one sourceRef
+        // can hold a given hash, so the result is either null (no live ref)
+        // or a single sourceRef (which cannot echo the incoming ref because
+        // the source_ref_index row is the OTHER writer's).
+        const canonical = await this.sourceRefIndexRepo.findActiveByEntityAndHash(entityId, sourceHash);
+        if (canonical !== null && canonical !== sourceRef) {
+          if (onDuplicateHash === 'throw') {
+            throw new WikiDuplicateHashError({ canonical, sourceHash, entityId });
+          }
+          // 'skip'
+          return { truncated: false, chunks: 0, duplicateOf: canonical };
+        }
+      }
+
       const { chunks, truncated } = chunkText(params.documentChunk, maxChunkLength, chunkOverlap);
       if (chunks.length === 0) return { truncated: false, chunks: 0 };
 
@@ -130,65 +137,103 @@ export class IngestionService {
       const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
       const deletedSourceFactIds: string[] = [];
 
-      await this.db.withTransactionAsync(async (tx) => {
-        deletedSourceFactIds.push(...(await this.entryRepo.findIdsBySource(entityId, sourceRef, null, tx, false)));
-        await this.entryRepo.softDeleteBySource(entityId, tx, sourceRef, null);
+      try {
+        await this.db.withTransactionAsync(async (tx) => {
+          deletedSourceFactIds.push(...(await this.entryRepo.findIdsBySource(entityId, sourceRef, null, tx, false)));
+          await this.entryRepo.softDeleteBySource(entityId, tx, sourceRef, null);
+          // Remove the prior run's source_ref_index row for this sourceRef so
+          // the upsert below doesn't collide with ourselves. No-op when the
+          // sourceRef has never been ingested before.
+          await this.sourceRefIndexRepo.softDeleteByEntityAndSourceRef(entityId, sourceRef, tx);
+          // Take ownership of (entity, hash). The partial UNIQUE index on
+          // source_ref_index (entity_id, source_hash) WHERE deleted_at IS NULL
+          // catches concurrent writers for the same hash from a DIFFERENT
+          // sourceRef; the catch-and-translate below turns the violation into
+          // the per-mode duplicate-hash outcome.
+          await this.sourceRefIndexRepo.upsert(entityId, sourceHash, sourceRef, tx);
 
-        const titleIndex = new Map<string, TitleIndexEntry>();
-        const pendingEdges: Array<{
-          sourceId: string;
-          sourceType: string | null;
-          edges: ExtractedFactWithOntology['edges'];
-        }> = [];
+          const titleIndex = new Map<string, TitleIndexEntry>();
+          const pendingEdges: Array<{
+            sourceId: string;
+            sourceType: string | null;
+            edges: ExtractedFactWithOntology['edges'];
+          }> = [];
 
-        const existingFacts = await this.entryRepo.findRecentByEntityId(entityId, 500, tx);
-        for (const existing of existingFacts) {
-          titleIndex.set(normalizeTitleKey(existing.title), {
-            id: existing.id,
-            okf_type: existing.okf_type ?? null,
-          });
-        }
-
-        let ontologyState = await this.ontologyService?.getEffectiveState(entityId, tx)
-          ?? { mode: 'off' as const, manifest: { node_types: [], edge_types: [] } };
-        let { mode, manifest } = ontologyState;
-
-        for (const { facts, ontology_updates } of orderedChunkFacts) {
-          if (mode === 'emergent' && ontology_updates && this.ontologyService) {
-            manifest = await this.ontologyService.mergeEmergentUpdates(entityId, ontology_updates, tx);
-            ontologyState = await this.ontologyService.getEffectiveState(entityId, tx);
-            mode = ontologyState.mode;
+          const existingFacts = await this.entryRepo.findRecentByEntityId(entityId, 500, tx);
+          for (const existing of existingFacts) {
+            titleIndex.set(normalizeTitleKey(existing.title), {
+              id: existing.id,
+              okf_type: existing.okf_type ?? null,
+            });
           }
 
-          for (const fact of facts) {
-            const ontologyFact = fact as ExtractedFactWithOntology;
-            const normalized = this.ontologyService?.validateAndNormalizeFact(ontologyFact, manifest)
-              ?? { okf_type: null, edges: [] };
+          let ontologyState = await this.ontologyService?.getEffectiveState(entityId, tx)
+            ?? { mode: 'off' as const, manifest: { node_types: [], edge_types: [] } };
+          let { mode, manifest } = ontologyState;
 
-            const id = generateId('fact_');
-            const wikiFact: WikiFact = {
-              id, entity_id: entityId, title: fact.title, body: fact.body, tags: fact.tags, confidence: fact.confidence,
-              source_type: 'immutable_document', source_hash: sourceHash, source_ref: sourceRef,
-              created_at: now, updated_at: now, last_accessed_at: null, access_count: 0, deleted_at: null,
-              okf_type: normalized.okf_type,
-            };
-            await this.entryRepo.upsert(wikiFact, tx);
-            insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
+          for (const { facts, ontology_updates } of orderedChunkFacts) {
+            if (mode === 'emergent' && ontology_updates && this.ontologyService) {
+              manifest = await this.ontologyService.mergeEmergentUpdates(entityId, ontology_updates, tx);
+              ontologyState = await this.ontologyService.getEffectiveState(entityId, tx);
+              mode = ontologyState.mode;
+            }
 
-            titleIndex.set(normalizeTitleKey(fact.title), { id, okf_type: normalized.okf_type });
+            for (const fact of facts) {
+              const ontologyFact = fact as ExtractedFactWithOntology;
+              const normalized = this.ontologyService?.validateAndNormalizeFact(ontologyFact, manifest)
+                ?? { okf_type: null, edges: [] };
 
-            if (normalized.edges.length > 0) {
-              pendingEdges.push({ sourceId: id, sourceType: normalized.okf_type, edges: normalized.edges });
+              const id = generateId('fact_');
+              const wikiFact: WikiFact = {
+                id, entity_id: entityId, title: fact.title, body: fact.body, tags: fact.tags, confidence: fact.confidence,
+                source_type: 'immutable_document', source_hash: sourceHash, source_ref: sourceRef,
+                created_at: now, updated_at: now, last_accessed_at: null, access_count: 0, deleted_at: null,
+                okf_type: normalized.okf_type,
+              };
+              await this.entryRepo.upsert(wikiFact, tx);
+              insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
+
+              titleIndex.set(normalizeTitleKey(fact.title), { id, okf_type: normalized.okf_type });
+
+              if (normalized.edges.length > 0) {
+                pendingEdges.push({ sourceId: id, sourceType: normalized.okf_type, edges: normalized.edges });
+              }
             }
           }
-        }
 
-        for (const item of pendingEdges) {
-          await this.ontologyService?.resolveAndPersistEdges(
-            entityId, item.sourceId, item.sourceType, item.edges ?? [], manifest, titleIndex, tx, now,
-          );
+          for (const item of pendingEdges) {
+            await this.ontologyService?.resolveAndPersistEdges(
+              entityId, item.sourceId, item.sourceType, item.edges ?? [], manifest, titleIndex, tx, now,
+            );
+          }
+        });
+      } catch (err) {
+        // A concurrent ingest for a DIFFERENT sourceRef beat us to the same
+        // sourceHash between the pre-check above and this write — the
+        // source_ref_index partial UNIQUE index (entity_id, source_hash)
+        // rejected the upsert. Translate into the same duplicate-hash
+        // outcome the pre-check would have produced, by mode. Any other
+        // error re-throws unmodified. With the entries-level UNIQUE gone,
+        // every UNIQUE violation inside this transaction originates from
+        // source_ref_index, so the single check is sufficient.
+        const sqliteCode = err instanceof WikiTransactionError
+          ? err.sqliteErrorCode
+          : extractSqliteCode(err);
+        if (sqliteCode !== 'SQLITE_CONSTRAINT_UNIQUE') throw err;
+
+        const canonical = await this.sourceRefIndexRepo.findActiveByEntityAndHash(entityId, sourceHash);
+        // No other live ref holds this hash (e.g. a different constraint
+        // fired, or the racing writer's row was itself rolled back) — the
+        // UNIQUE violation isn't explained by a duplicate-hash race; surface
+        // the original error rather than a misleading result.
+        if (canonical === null) throw err;
+
+        if (onDuplicateHash === 'throw' || onDuplicateHash === 'ingest') {
+          throw new WikiDuplicateHashError({ canonical, sourceHash, entityId });
         }
-      });
+        // 'skip'
+        return { truncated: false, chunks: 0, duplicateOf: canonical };
+      }
 
       await this.searchService.sync(entityId);
 
@@ -209,7 +254,7 @@ export class IngestionService {
       return { truncated, chunks: chunks.length };
 
     } finally {
-      this.jobManager.releaseLock('ingest', entityId, sourceRef);
+      releaseIngestLocks();
     }
   }
 }

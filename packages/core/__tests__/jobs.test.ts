@@ -90,10 +90,13 @@ describe('job mutex', () => {
 
   it('ingestDocument throws WikiBusyError for same (entity, sourceRef)', async () => {
     const wiki = await freshWiki(slowProvider(100));
-    const sourceHash = 'a'.repeat(64);
-    const params = { sourceRef: 'doc1', sourceHash, documentChunk: 'some content here' };
-    const first = wiki.ingestDocument('e1', params);
-    await expect(wiki.ingestDocument('e1', params)).rejects.toBeInstanceOf(WikiBusyError);
+    // Distinct hashes: the hash lock (Task 5) serializes same-hash callers
+    // by design, which would mask the sourceRef busy-check this test targets.
+    // Using different hashes isolates the sourceRef collision this asserts.
+    const first = wiki.ingestDocument('e1', { sourceRef: 'doc1', sourceHash: 'a'.repeat(64), documentChunk: 'some content here' });
+    await expect(
+      wiki.ingestDocument('e1', { sourceRef: 'doc1', sourceHash: 'b'.repeat(64), documentChunk: 'some content here' })
+    ).rejects.toBeInstanceOf(WikiBusyError);
     await first;
   });
 

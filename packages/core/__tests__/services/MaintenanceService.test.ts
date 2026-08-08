@@ -77,7 +77,8 @@ describe('MaintenanceService — PromptService injection', () => {
   function makeService(promptService: PromptService, ontologyService?: OntologyService) {
     return new MaintenanceService(
       mockDb, 'llm_wiki_', mockOptions,
-      mockEntryRepo, mockTaskRepo, mockEventRepo, mockMetadataRepo,
+      mockEntryRepo, { softDeleteByEntityAndSourceRef: vi.fn().mockResolvedValue(0) } as any,
+      mockTaskRepo, mockEventRepo, mockMetadataRepo,
       mockSearchService, mockJobManager, mockEmbeddingService,
       promptService,
       ontologyService,
@@ -211,6 +212,7 @@ describe('MaintenanceService — ontology integration', () => {
       db, PREFIX,
       { llmProvider: { generateText: vi.fn().mockResolvedValue(librarianResponse) } },
       entryRepo,
+      { softDeleteByEntityAndSourceRef: vi.fn().mockResolvedValue(0) } as any,
       mockTaskRepo as any,
       mockEventRepo as any,
       metadataRepo,

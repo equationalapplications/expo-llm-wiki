@@ -1,0 +1,600 @@
+# Spec: Dependabot Hygiene, #79 TOCTOU Race Fix, and #76 Two-Phase Release Flow
+
+**Date:** 2026-08-07
+**Status:** Implemented
+**Addresses:** Dependabot (remaining `fast-uri` advisory + missing audit gate), [#79](https://github.com/equationalapplications/expo-llm-wiki/issues/79) (TOCTOU race in `onDuplicateHash: 'skip'`), [#76](https://github.com/equationalapplications/expo-llm-wiki/issues/76) (two-phase PR release flow)
+**Packages:** `@eq/wiki-core`, root CI/release configuration
+
+---
+
+## Problem
+
+Three independent issues accumulated against the current `main` and ship as one combined PR.
+
+### A — Dependabot hygiene gap
+
+The maintenance-bounding spec (`2026-08-04-maintenance-bounding-and-dependency-hygiene-design.md`) addressed 36 Dependabot alerts, of which 17 closed via lockfile removal (C1) and the remainder via `pnpm.overrides` in `pnpm-workspace.yaml` (C2). One advisory explicitly listed in C2 is **not** present in the live overrides:
+
+| Package | Severity | Fixed in | Listed in C2? | Present in overrides? |
+|---|---|---|---|---|
+| `fast-uri` | high | 3.1.4 | yes | **no** |
+
+Either `fast-uri` was never overridden, or a later edit dropped it without re-running `pnpm audit`. Either way the gap exists today.
+
+A second issue is **process**, not state: `.github/workflows/test.yml` was deleted in #77 as a temporary mitigation to unblock the 5.1.1 release. Without that workflow, even if `fast-uri` is fixed today, the next Dependabot advisory has no CI gate to fail it on PR — the same accumulation pattern repeats.
+
+### B — #79 TOCTOU race in `onDuplicateHash: 'skip'`
+
+The `onDuplicateHash` guard introduced in `2026-08-07-source-ref-lifecycle-design.md` (§2) fires *before* the per-`(entityId, sourceRef)` ingest lock. Two concurrent ingest tasks with different `sourceRef`s but identical `sourceHash`es both pass the guard (both see no live row), both acquire their respective locks, both write. The guard is racy.
+
+The host (`aws-cloud-agent`) currently works around this with `documentConcurrency: 1`, which serializes ingestion and neutralizes the race but trades correctness for throughput (default `INGEST_DOCUMENT_CONCURRENCY=3` was chosen to avoid Bedrock TPS throttling).
+
+### C — #76 release flow blocked by ruleset
+
+The `Protect Main` ruleset (id 20511961, created 2026-08-06) requires `Test` status on pushes to `main`. `release.yml` uses `@semantic-release/git` to push the release commit and tag directly to `main`; that push is rejected because no `Test` status exists for the bot's commit yet. The 5.1.1 release was unblocked in #77 by deleting `test.yml` and dropping `required_status_checks`. The desired end state restores gating without breaking the release pipeline.
+
+---
+
+## Solution
+
+Three workstreams bundled in one PR, sequenced so each step's CI gate (when present) protects the next.
+
+| § | Title | Touches |
+|---|---|---|
+| A | Dependabot hygiene | `pnpm-workspace.yaml`, `.github/workflows/test.yml` |
+| B | #79 TOCTOU race fix | `packages/core/src/types.ts`, `packages/core/src/db/sqliteCodes.ts`, `packages/core/src/db/serializedAdapter.ts`, `packages/core/src/services/IngestionService.ts`, `packages/core/src/services/JobManager.ts`, `packages/core/src/repositories/EntryRepository.ts`, `packages/core/src/repositories/SourceRefIndexRepository.ts` (new), `packages/core/src/services/MaintenanceService.ts`, schema migrations v9 (dropped) + v10 (new) |
+| C | #76 two-phase release flow | `.releaserc.json`, `.github/workflows/release.yml`, `Protect Main` ruleset (id 20511961) |
+
+---
+
+## §A. Dependabot hygiene
+
+### A1 — `fast-uri` override
+
+Add to the `overrides` block in `pnpm-workspace.yaml` (kept single-source-of-truth per the existing comment block — do NOT add `pnpm.overrides` to root `package.json`):
+
+```yaml
+  fast-uri@>=3.0.0 <3.1.4: 3.1.4
+  fast-uri@>=2.0.0 <3.0.0: ^3.0.0
+```
+
+Two ranges because pnpm overrides match by version range, and the dep tree expresses the package as both `^2.x` (legacy) and `^3.x`; a single override can only patch one side, so both ranges are needed. Verification: `pnpm audit --json` shows zero high/critical `fast-uri` advisories post-merge.
+
+### A2 — restore `.github/workflows/test.yml` with audit gate
+
+The workflow lands in two stages (matches the sequencing table below):
+
+**A2a — restore `test.yml` without the audit step** (step 1 in sequencing). This unblocks the combined PR's own `Test` run before §A2b lands. Final form of the workflow:
+
+```yaml
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@<pinned-sha>
+        with: { fetch-depth: 0 }
+
+      - uses: pnpm/action-setup@<pinned-sha>
+
+      - uses: actions/setup-node@<pinned-sha>
+        with: { node-version: 24.10.0 }
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm run build
+      - run: pnpm run typecheck
+      - run: pnpm test
+```
+
+**A2b — extend `test.yml` with the audit step** (step 7 in sequencing). Inserted before the build step so a fresh advisory surfaces before the long test suite:
+
+```yaml
+      # Fails on any high or critical advisory introduced by this PR.
+      # The `if: success() || failure()` guard runs the audit on every non-
+      # cancelled workflow outcome, including after a test failure, but skips
+      # on cancellation (where pnpm install would not have completed and the
+      # audit signal would only mask the original failure in the UI).
+      - run: pnpm audit --audit-level=high
+        if: success() || failure()
+```
+
+The `--audit-level=high` threshold matches the maintenance spec's policy.
+
+### A3 — verification
+
+- `pnpm audit --json` → zero high/critical.
+- `pnpm test` → green.
+- `gh api /repos/equationalapplications/expo-llm-wiki/dependabot/alerts` → re-query and record before/after counts.
+
+---
+
+## §B. #79 TOCTOU race fix (hybrid: app-lock + DB constraint)
+
+Defense in depth. Application-level per-hash lock is the **fast path** — most concurrent ingests with the same hash serialize through it and the second caller sees the first's committed write at guard time. The DB-level UNIQUE index is the **safety net** — a true race that beats both the guard and the lock (e.g., timing where the lock is released between guard and write) is caught at INSERT time by the constraint, not by an inconsistent read.
+
+### B1 — source-ref index table (schema migration v10)
+
+A new migration adds a dedicated `source_ref_index` table that records, for each `(entity_id, source_hash)` pair, the canonical `source_ref` currently holding that hash. The safety-net UNIQUE constraint lives on this table, not on `entries`. Migration v10 also **drops the v9 entries-level UNIQUE index** that incorrectly conflated facts and sourceRefs:
+
+```sql
+-- 1. Drop the v9 entries-level UNIQUE index (now superseded by source_ref_index).
+DROP INDEX IF EXISTS ${prefix}idx_entries_live_hash;
+
+-- 2. Create the new table + UNIQUE index that encodes the sourceRef-level invariant.
+CREATE TABLE ${prefix}source_ref_index (
+  id TEXT PRIMARY KEY,
+  entity_id TEXT NOT NULL,
+  source_hash TEXT NOT NULL,
+  source_ref TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  deleted_at INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ${prefix}idx_source_ref_hash
+  ON ${prefix}source_ref_index (entity_id, source_hash)
+  WHERE deleted_at IS NULL;
+```
+
+**Why a separate table, not an index on `entries`:** the `entries` table has one row per extracted fact, and a single `ingestDocument` call writes N facts that all share `(entity_id, source_ref, source_hash)`. A UNIQUE index on `entries(entity_id, source_hash)` would therefore block the 2nd–Nth fact inserts inside every normal multi-fact ingest, not just true races. The right invariant is *"at most one sourceRef per (entity, hash)"*, which a per-fact table cannot express — a dedicated table that explicitly models the (entity, hash) → sourceRef mapping can.
+
+**Why `WHERE deleted_at IS NULL`:** the same soft-delete + re-ingest argument as before. `forget({ sourceRef: A })` followed by `ingestDocument(sourceRef: A, hash: H)` must work; the soft-deleted index row must not occupy the `(entity_id, source_hash)` slot.
+
+**Why `source_hash IS NOT NULL` is not needed:** the table's `source_hash` column is `NOT NULL` by definition — only `entries` ever stores NULL hashes (legacy rows per the source-ref-lifecycle spec §1). The index predicate does not need to repeat the filter.
+
+**Migration name:** `add_source_ref_index` (matches the existing migration naming convention). The earlier v9 migration is preserved as a no-op (its `CREATE UNIQUE INDEX` is a CREATE, not a DROP, and the index is dropped in v10).
+
+**v9 supersession rationale:** v9 (`add_live_hash_unique_index`) shipped with the original review branch but the design was wrong — a UNIQUE on `entries(entity_id, source_hash)` cannot express the sourceRef-level invariant without blocking legitimate multi-fact ingests. v10 supersedes v9 by dropping the entries-level index and replacing it with a per-(entity, hash) sourceRef index. Existing v9-applied databases (including all current `main` snapshots) need v10 to be applied to receive the fix.
+
+### B2 — migration conflict-resolution policy (abort, not auto-resolve)
+
+If the database already contains live rows where **multiple distinct sourceRefs share a single `source_hash`** (i.e., a previous ingest beat the new app-level guard), the migration script **aborts with a clear, actionable error** rather than auto-resolving:
+
+```text
+Migration v10 (add_source_ref_index) failed: existing live rows have
+multiple sourceRefs sharing a hash. Run the following query to find
+conflicts, then resolve each via `forget({ sourceRef: <loser> })` and
+re-run the migration:
+
+  SELECT entity_id, source_hash, COUNT(DISTINCT source_ref) AS n_refs
+  FROM ${prefix}entries
+  WHERE deleted_at IS NULL AND source_hash IS NOT NULL
+  GROUP BY entity_id, source_hash
+  HAVING COUNT(DISTINCT source_ref) > 1;
+```
+
+The query now counts **distinct sourceRefs**, not rows — multiple live rows for the same `(entity_id, source_hash)` is the normal multi-fact shape and is no longer a violation. Only true sourceRef-level races fail this check.
+
+Auto-resolving would either destroy facts (deleting all but one row) or pick a wrong canonical (silently choosing which sourceRef to keep). Both are worse than failing safe. The manual remediation path is documented and uses the existing `forget({ sourceRef })` API introduced in the source-ref-lifecycle spec §1.
+
+**Backfill.** When the abort check passes, the migration backfills the new table from existing live rows — for each `(entity_id, source_hash)` group, the row's `source_ref` is the sourceRef of the entry that wins `ROW_NUMBER() OVER (PARTITION BY entity_id, source_hash ORDER BY updated_at ASC, id ASC) = 1`. The tie-breaker `id ASC` matches the deterministic ordering used by `findLatestSourceHash` in `EntryRepository`. The migration only fires on the upgrade path; fresh DBs (where `entries` did not exist before `setup()`) get the table from `setupDatabase` directly and skip the backfill.
+
+**Idempotency.** The backfill uses `INSERT OR IGNORE` with a deterministic ID of the form `'sri_' || entity_id || ':' || source_hash`, so re-running the migration on the same data is a no-op. The runtime `SourceRefIndexRepository.upsert` uses a fresh prefixed UUID from `generateId('sri_')`; the two ID spaces do not collide because the deterministic IDs include the `:` separator.
+
+### B3 — `JobManager.hashLocks` (per-hash application lock)
+
+`JobManager` gains a new internal primitive:
+
+```ts
+class JobManager {
+  // Existing fields unchanged: activeMaintenanceJobs (Set<string>),
+  // activeIngestJobs (Map<string, Set<string>>), etc. (the actual
+  // declaration lives at packages/core/src/services/JobManager.ts:16-17).
+
+  // New — keyed by `${entityId}:${sourceHash}`. Promise-chain tail-advancement,
+  // deliberately different from the existing acquireLock/releaseLock API;
+  // see "Hash lock primitive semantics" below.
+  private hashLocks: Map<string, Promise<unknown>> = new Map();
+
+  async acquireHashLock(entityId: string, sourceHash: string): Promise<() => void> { /* ... */ }
+}
+```
+
+**Hash lock primitive semantics are intentionally different from the existing `acquireLock` / `releaseLock` pair.** The existing pair is `acquireLock(operation: OperationType, entityId: string, sourceRef?: string): void` (sync, throws `WikiBusyError` on conflict) and `releaseLock(operation: OperationType, entityId: string, sourceRef?: string): void` (sync, separate method call with three positional arguments) — see `packages/core/src/services/JobManager.ts:104` and `:209`. The hash lock uses promise-chain tail-advancement so concurrent ingests with the same hash **serialize** through the lock rather than fail-fast on it: the second caller awaits the first's completion, then runs the duplicate-hash guard against the first's committed write. The new primitive is released by calling the closure returned from `acquireHashLock` — a zero-arg function distinct from the existing `releaseLock` method. Internal-only; not exposed on the `WikiMemory` facade. Hosts do not acquire hash locks directly — `JobManager.acquireIngestLocks` does.
+
+**B3.1 — migrate existing `acquireLock('ingest', ...)` call sites.** As a discrete deliverable of B3, every existing call to `this.jobManager.acquireLock('ingest', ...)` in `IngestionService` (currently the single call at `IngestionService.ts:89` keyed as `${entityId}:${sourceRef}`) is migrated to go through the new `JobManager.acquireIngestLocks` helper. After this migration, no caller in the codebase takes the `ingest` lock directly — `acquireIngestLocks` is the only entry point, which is what makes the hash-then-sourceRef invariant structurally enforceable.
+
+### B4 — lock acquisition order (codified)
+
+A single helper owns the order, removing the per-caller decision:
+
+```ts
+// packages/core/src/services/JobManager.ts
+async acquireIngestLocks(
+  entityId: string,
+  sourceRef: string,
+  sourceHash: string,
+): Promise<() => void> {
+  // INVARIANT: hash lock ALWAYS acquired before sourceRef lock.
+  // Reversed order is the only way two callers deadlock.
+  const releaseHash = await this.acquireHashLock(entityId, sourceHash);
+  try {
+    // acquireLock('ingest', ...) is sync and throws WikiBusyError on conflict;
+    // no closure to capture — the symmetric releaseLock call takes the same
+    // positional args (entityId, sourceRef) at the end of the critical section.
+    this.acquireLock('ingest', entityId, sourceRef);
+    return () => {
+      this.releaseLock('ingest', entityId, sourceRef);
+      releaseHash();
+    };
+  } catch (e) {
+    releaseHash();
+    throw e;
+  }
+}
+```
+
+The invariant is documented in a comment block at the top of `JobManager`:
+
+```ts
+// Lock acquisition order in this library:
+//
+//   1. Hash lock       (per (entityId, sourceHash))
+//   2. sourceRef lock  (per (entityId, sourceRef), keyed as 'ingest')
+//
+// Always hash-then-sourceRef. A reversed order is the only deadlock path.
+// The single helper `JobManager.acquireIngestLocks` enforces this for
+// all ingest callers — do NOT take the sourceRef lock directly.
+```
+
+Code review enforces the invariant at every call site. The `acquireLock('ingest', ...)` callers in the existing codebase that don't go through `acquireIngestLocks` are migrated to the new helper as part of B3.
+
+### B5 — catch-and-translate pattern (in `IngestionService.ingestDocument`)
+
+The catch site moves **up to the `source_ref_index` upsert** (the only place a `SQLITE_CONSTRAINT_UNIQUE` can fire now that the constraint is off `entries`):
+
+```ts
+try {
+  await this.sourceRefIndexRepo.upsert(entityId, sourceHash, sourceRef, tx);
+} catch (err) {
+  const code =
+    err instanceof WikiTransactionError
+      ? err.sqliteErrorCode
+      : extractSqliteCode(err);
+  if (code !== 'SQLITE_CONSTRAINT_UNIQUE') throw err;
+  return translateConstraintToDuplicateHash(err, {
+    entityId, sourceRef, sourceHash, mode: opts?.onDuplicateHash ?? 'ingest',
+  });
+}
+// ... existing chunk-insert path runs normally; entries inserts cannot fail
+// with a hash-related UNIQUE because the entries table no longer has the index.
+```
+
+`translateConstraintToDuplicateHash` does the post-violation canonical lookup and dispatches per `onDuplicateHash`:
+
+```ts
+async function translateConstraintToDuplicateHash(
+  _err: unknown,
+  ctx: { entityId: string; sourceRef: string; sourceHash: string; mode: 'ingest' | 'skip' | 'throw' },
+): Promise<IngestDocumentResult> {
+  // Post-violation lookup: the racing writer's source_ref_index row is now
+  // committed. Use the source-ref-lifecycle spec's canonical-selection rule:
+  // canonical must be a stored DIFFERENT source_ref, never the incoming ref.
+  const canonical = (await this.sourceRefIndexRepo.findActiveByEntityAndHash(
+    ctx.entityId, ctx.sourceHash,
+  )) ?? ctx.sourceRef;
+  // The `?? ctx.sourceRef` fallback applies only in the narrow window where a
+  // racing `forget({ sourceRef: <canonical> })` lands between the violation
+  // and this lookup; in that case there is no stored different ref to surface,
+  // and reporting the incoming ref is the least-bad answer.
+
+  switch (ctx.mode) {
+    case 'throw':
+      throw new WikiDuplicateHashError({ canonical, sourceHash: ctx.sourceHash, entityId: ctx.entityId });
+    case 'skip':
+      return { truncated: false, chunks: 0, duplicateOf: canonical };
+    case 'ingest':
+      // The pre-check passed and the lock was acquired. A UNIQUE violation here
+      // means a true race — the OTHER writer committed between our guard and
+      // our write. We must NOT silently re-ingest; surface the duplicate.
+      throw new WikiDuplicateHashError({ canonical, sourceHash: ctx.sourceHash, entityId: ctx.entityId });
+  }
+}
+```
+
+**Canonical-selection rule (summary, per source-ref-lifecycle spec §"Canonical-Selection Rule"):** the source_ref_index table guarantees at most one live row per `(entity_id, source_hash)`, so the post-violation canonical lookup reduces to a single-row fetch — `SourceRefIndexRepository.findActiveByEntityAndHash(entityId, sourceHash)`. Because the row in `source_ref_index` is the OTHER writer's sourceRef (the racing writer beat us), it cannot echo the incoming ref. The `?? ctx.sourceRef` fallback applies only in the narrow window where a racing `forget({ sourceRef: <canonical> })` lands between the violation and this lookup; in that case no stored ref remains and reporting the incoming ref is the least-bad answer. The earlier `findSourceRefsByHash` (which scanned `entries` for distinct sourceRefs and re-sorted in JS) is no longer needed for the catch-and-translate path — the new table is the source of truth and a single indexed read is both faster and unambiguous.
+
+The `'ingest'` mode throws on a UNIQUE violation because the documented contract for `'ingest'` is "preserve current behavior" (the source-ref-lifecycle spec §2 row in the per-mode table). Under the original single-call semantics, two concurrent calls with the same hash both wrote — that's the bug. Under the new lock + constraint, only one can possibly write; the other must surface the duplicate rather than silently swallowing the violation. This is a **deliberate tightening** of `'ingest'` mode behavior, called out as a behavior change in §"Public API impact" below.
+
+**Why the helper exists:** keeps the catch site readable and cleanly separates "this is a SQL constraint violation" from "this is a duplicate-hash domain event". A reviewer scanning `ingestDocument` sees one try/catch with three branches (constraint / skip / rethrow); they do not have to read `findSourceRefsByHash` to understand the catch.
+
+### B6 — extend `SQLITE_RESULT_CODE_NAMES` for `expo-sqlite`
+
+`packages/core/src/db/sqliteCodes.ts` adds one row:
+
+```ts
+const SQLITE_RESULT_CODE_NAMES: Record<number, string> = {
+  // ... existing rows ...
+  19: 'SQLITE_CONSTRAINT',
+  2067: 'SQLITE_CONSTRAINT_UNIQUE', // extended code; better-sqlite3 / node:sqlite report the string directly
+  // ...
+};
+```
+
+Without this row, `expo-sqlite` reports `'Error code 2067: …'`, which `extractSqliteCode` normalizes via `nameForSqliteResultCode(2067)` → `'SQLITE_2067'` (the fallback for unmapped codes), and the catch-and-translate block misses it. The 2067 mapping is the cross-platform guarantee that `onDuplicateHash: 'skip'` works on every adapter.
+
+**Adapter error-shape inventory (per adapter that ships in this repo):**
+
+| Adapter | Location | Error shape on UNIQUE violation | How `extractSqliteCode` resolves it |
+|---|---|---|---|
+| `expo-sqlite` | `packages/expo/src/adapter.ts` | Plain `Error` with `message: 'Error code 2067: UNIQUE constraint failed: …'` (no `.code` property) | Regex-parses the message → `nameForSqliteResultCode(2067)` → `'SQLITE_CONSTRAINT_UNIQUE'` |
+| `better-sqlite3` | `packages/core/__tests__/helpers/sqliteAdapter.ts`, `packages/integration/helpers/db.ts` | `{ code: 'SQLITE_CONSTRAINT_UNIQUE', message: 'UNIQUE constraint failed: …' }` | Returns `err.code` directly |
+| `node:sqlite` (built-in, Node ≥22.5) | not currently used in the repo; referenced in `sqliteCodes.ts` comments | `{ code: 'SQLITE_CONSTRAINT_UNIQUE', … }` — same shape as better-sqlite3 | Returns `err.code` directly |
+| `sql.js` | `apps/scopelab/src/lib/database/sqljs-adapter.ts`, `apps/wiki-demo/src/lib/sqlJsAdapter.ts` | Plain `Error` with `message: 'UNIQUE constraint failed: …'` — no `Error code N:` prefix, no `.code` property | **Currently not handled** by `extractSqliteCode` — returns `undefined`. The catch-and-translate block therefore misses the constraint violation and re-throws as a generic error. Documented here as a known gap; fixing sql.js support is **out of scope** for this spec and tracked as a follow-up. |
+
+The 2067 row is required for `expo-sqlite`; the other adapters that report the string directly need no mapping change. The `better-sqlite3` and `node:sqlite` rows above are already covered by the existing `if (typeof code === 'string' && code.startsWith('SQLITE_'))` branch in `extractSqliteCode`.
+
+---
+
+## §C. #76 two-phase release flow
+
+### C1 — `release.yml` rewrite
+
+The release workflow splits into two phases, separated by a `release/vX.Y.Z` PR. Both phases share the same workflow file; a phase-detection step at the top of the job (described inline below) routes execution to the right set of steps.
+
+**Phase 1 — push to `main` triggers `release.yml`:**
+
+1. Checkout, pnpm install, build (unchanged).
+2. **Detect release phase.** Phase 1 is "a release commit is being prepared" (no release PR has merged recently); Phase 2 is "a release PR just merged and the version is ready to publish". The cleanest signal that works regardless of squash vs merge is **the most recently merged PR's head branch**, not the tag-at-HEAD — a tag pushed against the source branch HEAD in Phase 1 step 6 does NOT end up on the squash-merge commit on `main` (tags are SHA references and don't migrate through merges), so `--points-at HEAD` returns empty for Phase 2 and breaks. The fix:
+
+   ```yaml
+   - name: Detect release phase
+     id: phase
+     env:
+       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+     run: |
+       # Look at the last 10 merged PRs against main (not just the most
+       # recent one) and find the most recent release/v* branch in that
+       # window. The wider window handles a hotfix being merged into main
+       # in the seconds between a release PR's squash-merge and this
+       # workflow re-running — without it, the most-recently-merged PR is
+       # the hotfix and the script misclassifies as Phase 1. If a release
+       # PR is found in the window, this push is Phase 2 (the release PR
+       # just merged). Otherwise it's Phase 1 (no release has merged in
+       # this window).
+       MERGED_HEAD=$(gh pr list --state merged --base main \
+         --limit 10 --json headRefName,mergedAt \
+         --jq '[.[] | select(.headRefName | startswith("release/v"))] | .[0].headRefName')
+       if [ -n "$MERGED_HEAD" ]; then
+         echo "phase=2" >> "$GITHUB_OUTPUT"
+         echo "release_branch=${MERGED_HEAD}" >> "$GITHUB_OUTPUT"
+       else
+         echo "phase=1" >> "$GITHUB_OUTPUT"
+       fi
+   ```
+
+   All subsequent steps gate on `if: steps.phase.outputs.phase == '1'` (Phase 1 steps) or `== '2'` (Phase 2 steps). The `workflow_dispatch` republish path skips the phase detection and goes straight to Phase 2's `Publish all packages` step with the input version, unchanged from today. For the workflow_dispatch path, set `phase=2` via the inputs.
+
+   **Why not `--points-at HEAD`:** the issue description proposed this as the cleanest signal, but it only works if Phase 1's tag ends up on `main`'s merge commit. With `--squash`, the source-branch HEAD is not an ancestor of the squash commit and the tag does not propagate. With `--merge` (non-squash), the source-branch HEAD is an ancestor of the merge commit but the tag is still on the source-branch SHA, not the merge commit SHA — `--points-at HEAD` still returns empty. Either way the tag needs a Phase 2 step to be moved (see Phase 2 step 4 below). The PR-list-based detection avoids the cycle of "move the tag → tag-based detection → move the tag again".
+3. Run `npx semantic-release --no-ci` against the current commit. `--no-ci` skips semantic-release's built-in CI verification; the ruleset's required `Test` check on the Phase-1 PR replaces it.
+4. semantic-release mutates the working tree: bumps root + per-package versions in `package.json`, updates `CHANGELOG.md`. `@semantic-release/git` is **dropped** from `.releaserc.json` — semantic-release no longer commits or pushes. `@semantic-release/github` is **also dropped** — it created a GitHub Release entry tagged against the **original** (pre-bump) HEAD, which was the wrong commit; Phase 2's `gh release create` now owns that responsibility.
+5. Derive `RELEASE_VERSION` from the modified root `package.json` (`node -p "require('./package.json').version"`).
+6. Detect dirty working tree (semantic-release's mutations are uncommitted). Branch handling:
+   - `BRANCH="release/v${RELEASE_VERSION}"`.
+   - `EXISTING_PR=$(gh pr list --base main --head "${BRANCH}" --state all --json number --jq '.[0].number')` — if a PR is already open or **closed** against `${BRANCH}` from a prior abandoned run, reuse it (`gh pr edit` to update title/body as needed; do NOT open a duplicate). `--state all` covers the abandoned-and-closed case where a prior auto-merge gave up after a transient `Test` failure; the workflow creates a new commit on the same branch rather than a competing branch. (A new commit on a closed-but-not-merged PR does not reopen the PR — GitHub treats pushes to a closed branch as a no-op for the PR view. The script detects this and re-opens the PR via `gh pr reopen` before the next `gh pr edit`.)
+   - If no PR exists, `git checkout -B "${BRANCH}" main` from the current main, commit as `github-actions[bot]`, push the branch.
+   - Tag and push: `git tag v${RELEASE_VERSION}` (the tag must point at the version-bump commit, not the original HEAD) followed by `git push origin "${BRANCH}" --follow-tags` so the tag and branch land in one push.
+   - Open the PR via `gh pr create --base main --head "${BRANCH}"` if it does not exist yet.
+   - In all cases, `RELEASE_VERSION` is read from the modified root `package.json` (not hardcoded), so a retried release PR carries the same version as the abandoned one.
+7. Auto-merge: `gh pr merge --auto --squash release/v${RELEASE_VERSION}`. Auto-merge waits for the `Test` check on the PR; squash preserves the merge commit's status check semantics. **The tag does NOT travel with the merge commit** — squash-merge creates a new commit on `main` with the same tree but a different SHA; the tag remains on the source-branch HEAD until Phase 2's tag-move step (step 4 below) relocates it to the merge commit.
+
+**Phase 2 — PR is merged into `main`:**
+
+1. The merge commit triggers `release.yml` again. The phase-detection step finds the just-merged `release/vX.Y.Z` PR → `phase=2`.
+2. `npx semantic-release --no-ci` re-runs on the merge commit. Version detection is a **no-op** because the merge commit message (`Merge pull request #N from release/vX.Y.Z`) is not a conventional-commit bump trigger. The version-detection step still writes the bumped `package.json` files and `CHANGELOG.md` to the working tree (idempotent on a no-op release).
+3. `RELEASE_VERSION` derivation: read from the phase-detection output (`steps.phase.outputs.release_branch` strips to `vX.Y.Z`). Sanity-check against the existing local tag (which Phase 1 step 6 pushed to the release branch's source HEAD): if the local tag's version disagrees with `release_branch`'s version, abort loudly — Phase 1 and Phase 2 disagree about the release version.
+4. **Move the release tag to the merge commit on `main`.** Phase 1 pushed the tag against the source-branch HEAD; the squash-merge created a new commit on `main` that doesn't carry the tag. Move the tag so it points at the merge commit on `main` (the commit that's actually getting released), and force-push:
+
+   ```yaml
+   - name: Move release tag to merge commit
+     if: steps.phase.outputs.phase == '2'
+     run: |
+       TAG="v${RELEASE_VERSION}"
+       git tag -f "$TAG" HEAD
+       git push origin "$TAG" --force
+   ```
+
+   `--force` is required because the tag already exists remotely (pointing at the source-branch HEAD from Phase 1). After this step, `git tag --points-at HEAD` would correctly return `vX.Y.Z`, so any future Phase 2 rerun on the same commit works idempotently.
+5. `Publish all packages` runs unchanged.
+6. **Create the GitHub Release entry** (Phase 1's `@semantic-release/github` was dropped, so this is now the only place a release entry is created):
+
+   ```yaml
+   - name: Create GitHub release
+     if: steps.phase.outputs.phase == '2'
+     env:
+       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+     run: |
+       gh release create "v${RELEASE_VERSION}" \
+         --title "v${RELEASE_VERSION}" \
+         --notes-file CHANGELOG.md \
+         --verify-tag
+   ```
+
+   `--verify-tag` ensures the local tag (now pointing at the merge commit on `main` after step 4) matches the remote before publishing. The release entry's notes come from `CHANGELOG.md`, which semantic-release has already populated for this version. If the release entry already exists from a previous run (e.g., a workflow retry), `gh release create` fails loudly — the step does NOT use `--clobber`; a duplicate is a real signal that requires investigation, not silent overwrite.
+
+### C2 — `.releaserc.json` updates
+
+```diff
+   "plugins": [
+     "@semantic-release/commit-analyzer",
+     "@semantic-release/release-notes-generator",
+     ["@semantic-release/changelog", { "changelogFile": "CHANGELOG.md" }],
+     ["@semantic-release/npm", { "npmPublish": false }],
+     ["@semantic-release/exec", {
+       "prepareCmd": "node -e \"...\""
+     }]
+-    ,
+-    "@semantic-release/github"
+-    ,
+-    ["@semantic-release/git", {
+-      "assets": ["CHANGELOG.md", "package.json", "..."],
+-      "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+-    }]
+   ]
+```
+
+`@semantic-release/git` removed entirely. `@semantic-release/github` removed entirely — its job (creating a GitHub Release entry) is now done by Phase 2's `gh release create` step (C1), which correctly tags against the version-bump commit rather than the pre-bump HEAD. The remaining plugins cover version detection, changelog generation, the per-package version bump, and the npm publish-no-op; everything that touches git or the GitHub Release entry is replaced by C1's manual PR + tag + release steps.
+
+### C3 — `concurrency` and `permissions`
+
+```yaml
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false  # don't cancel an in-flight release — let it finish or fail
+```
+
+`cancel-in-progress: false` so a back-to-back push doesn't kill a release that's mid-publish. `cancel-in-progress: true` was tempting (faster feedback on stale pushes) but a half-finished publish leaves packages in inconsistent states.
+
+**Concurrency-group behavior on non-release pushes.** `github.ref` for a `push` event to `main` resolves to `refs/heads/main`, so the group key is `release-refs/heads/main` for **every** push to `main` — including non-release merges. A non-release merge pushed while a release is mid-flight therefore queues behind the in-flight release rather than running in parallel. This is conservative (release is never re-entered concurrently) but pessimistic (a routine PR merge blocks until the release finishes). The chosen tradeoff: queue non-release pushes rather than risk two `release.yml` runs sharing the same concurrency key and racing on the tag/publish steps. The phase-detection step (C1 step 2) keeps a queued run from doing redundant work — the queued non-release push enters `release.yml`, detects `phase=1`, runs `semantic-release --no-ci`, which exits non-zero ("no release"); the workflow run is marked failed, but no PR was opened and no packages were published — no corrective action needed.
+
+**Future refinement (out of scope).** A tighter group key would be `release-${{ github.ref }}-${{ steps.phase.outputs.phase }}` plus an `if: steps.phase.outputs.phase == '1' || steps.phase.outputs.phase == '2'` guard on the concurrency block itself, so non-release pushes don't queue at all. Documented here for future tightening; not implemented in this spec because the queue-and-fast-fail path is functionally correct and the dynamic-output `if` on a concurrency group is fragile across GitHub Actions versions.
+
+`permissions:` block stays as-is (`contents: write`, `issues: write`, `pull-requests: write`, `id-token: write`).
+
+### C4 — `Protect Main` ruleset reconfiguration
+
+Add `Test` as a required status check on ruleset 20511961. Done via:
+
+```bash
+gh api -X PUT \
+  -H "Accept: application/vnd.github+json" \
+  /repos/equationalapplications/expo-llm-wiki/rulesets/20511961 \
+  --input ruleset.json
+```
+
+`ruleset.json` adds `"Test"` to the required checks list. The first time this is applied, the ruleset has been accepting pushes without the check (since #77 dropped it); after this PR, all subsequent pushes and PRs require `Test`. The Phase-1 release PR passes `Test` via the restored workflow (§A2) before auto-merge.
+
+---
+
+## Sequencing
+
+Internal to the combined PR. Squashing collapses these into one commit, but the agent writes patches in this order so each step builds on the last:
+
+| Order | Change | Why this position |
+|---|---|---|
+| 1 | A2a — restore `test.yml` without audit step | Restores CI gating — combined PR passes through it |
+| 2 | A1 (`fast-uri` override) | Independently ships; A2b's audit step in step 7 catches the next advisory |
+| 3 | B1 (schema migration v10: source_ref_index table, drops v9 entries-level index) | Lowest-level guarantee first; everything in B3-B5 builds on the new invariant |
+| 4 | B6 (`sqliteCodes.ts` extended code mapping) | Needed by B5's catch block; ship with the migration so tests can assert on it |
+| 5 | B3, B4 (`JobManager.hashLocks` primitive + `acquireIngestLocks` helper) | App-layer lock needs B1's invariant; the helper codifies hash-then-sourceRef order |
+| 6 | B5 (`IngestionService` catch-and-translate + `translateConstraintToDuplicateHash`) | Uses B1's invariant, B3's lock primitive, B4's helper, and B6's code mapping |
+| 7 | A2b — add `pnpm audit --audit-level=high` step to `test.yml` | Now that `test.yml` exists from step 1, the audit gate lands |
+| 8 | C1, C2 (`release.yml` rewrite + `.releaserc.json`) | Workflow changes; depend on `test.yml` for the Phase-1 PR to gate on |
+| 9 | C3 (`concurrency`), C4 (ruleset reconfiguration) | Last; depends on `test.yml` existing and on Phase-1's PR actually getting gated |
+
+Steps 1-7 are independently testable. Step 8 depends on 1 (test.yml) and 7 (audit step). Step 9 depends on 8 being ready (ruleset only useful if Phase-1 PR actually goes through Test).
+
+---
+
+## Cross-cutting
+
+**Public API impact (§B only):**
+
+| Change | Type | Hosts affected |
+|---|---|---|
+| `JobManager.hashLocks` | new internal field | none (internal) |
+| `JobManager.acquireHashLock` | new internal method | none (internal) |
+| `IngestionService.acquireIngestLocks` | new internal helper | none (internal) |
+| `SourceRefIndexRepository` | new internal repository | none (internal) |
+| `WikiDuplicateHashError` | unchanged from source-ref-lifecycle spec | none |
+| `'ingest'` mode on UNIQUE violation | **behavior change**: now throws `WikiDuplicateHashError` instead of silently writing | hosts relying on the racy behavior will see a new error path |
+
+The behavior change in `'ingest'` mode is a **deliberate tightening** of the contract. Hosts that previously relied on "two concurrent calls with the same hash both write" should switch to `onDuplicateHash: 'skip'` (which now race-free skips) or `onDuplicateHash: 'throw'` (which has always thrown). The `aws-cloud-agent` host's §6.1 mitigation (`documentConcurrency: 1`) becomes redundant after this change — the host can safely restore `INGEST_DOCUMENT_CONCURRENCY=3`.
+
+**Outbox events:** unchanged. The duplicate guard catches before any outbox event is emitted (matches the source-ref-lifecycle spec §2 contract). The new `source_ref_index` table does not fire outbox events — it is an internal invariant table; downstream consumers react to `entries` CDC events as before, and `source_ref_index` state is fully derivable from `entries` (it is a per-(entity, hash) projection of which sourceRef currently owns the hash).
+
+**Locking:**
+
+- §B B2 introduces the per-hash lock; B4 codifies hash-then-sourceRef acquisition order.
+- §B's catch-and-translate runs inside the existing `withSerializedTransactions` mutex (no new lock primitive for the catch itself).
+
+**Schema:** two migrations (v9 + v10). v9 originally shipped on the branch but the design was wrong (the entries-level UNIQUE conflates facts with sourceRefs); v10 supersedes v9 by dropping the entries-level index and adding `source_ref_index` with the correct per-sourceRef invariant. The migration tracking system records the v9 → v10 transition in `schema_version`; the v9 migration's `CREATE UNIQUE INDEX` is a CREATE (not idempotent on a DROP) and is replaced by a DROP in v10. Conflict-resolution policy in §B2.
+
+**`--no-ci` trade-off:** semantic-release's built-in CI verification is what would catch "tests failed but I'm going to release anyway." We lose that. Mitigation: the Phase-1 release PR must pass `Test` before auto-merge, enforced by the ruleset. Documented in a comment at the top of `release.yml`.
+
+---
+
+## Tests
+
+### §A tests
+
+- `pnpm audit --json` exits 0 with no high/critical in CI.
+- After merging a branch that intentionally reverts the `fast-uri` override, the audit step fails on the resulting PR (smoke test).
+
+### §B tests
+
+- **Source-ref index migration:** fresh install creates the `source_ref_index` table + its `idx_source_ref_hash` UNIQUE index; idempotent (`CREATE TABLE IF NOT EXISTS` / `CREATE UNIQUE INDEX IF NOT EXISTS`).
+- **Source-ref index migration abort path (§B2):** load a DB fixture with **two live rows sharing `(entity_id, source_hash)` AND different `source_ref`s** (e.g., an `entity_id="ent"`, `source_hash="h1"` row at `source_ref="a.md"` and a second at `source_ref="b.md"`, both with `deleted_at IS NULL`); run the v10 migration; assert:
+  - the migration aborts with the documented error message containing `Migration v10 (add_source_ref_index) failed: existing live rows have multiple sourceRefs sharing a hash`,
+  - the v9 entries-level index is **dropped** (verify via `${prefix}idx_entries_live_hash` not present in `sqlite_master`),
+  - the new `source_ref_index` table is **NOT** created (verify via `${prefix}source_ref_index` not present in `sqlite_master`),
+  - the abort happens **before** any destructive migration step would have run — the migration script is all-or-nothing.
+- **Multi-fact ingest does not violate the constraint:** this is the regression test for the original review. `ingestDocument` for one `sourceRef` + `sourceHash` returning N≥2 facts inserts all N rows; the entries table no longer carries the (entity_id, source_hash) UNIQUE so the 2nd–Nth inserts succeed. Without this test, the prior `idx_entries_live_hash` would have failed this scenario.
+- **Backfill picks the earliest sourceRef per (entity, hash):** insert two live rows sharing `(entity_id, source_hash)` with different `source_ref`s, run the migration (forcing v9→v10), assert the `source_ref_index` row's `source_ref` matches the entry with the minimum `(updated_at ASC, id ASC)`.
+- **Backfill is idempotent:** re-run the migration and assert no new `source_ref_index` rows are created (`INSERT OR IGNORE` makes the deterministic-ID backfill a no-op on the second run).
+- **Duplicate-detection on UNIQUE violation:** insert a `source_ref_index` row for `sourceRef=A`, then `ingestDocument` for `sourceRef=B` with the same `sourceHash` *bypassing the pre-check* (test fixture inserts into the repo layer directly, so the pre-check sees no rows but the upsert hits the UNIQUE). Assert: `ingestDocument` catches the `SQLITE_CONSTRAINT_UNIQUE`, translates per `onDuplicateHash` mode:
+  - `'skip'` returns `{ truncated: false, chunks: 0, duplicateOf: <canonical> }` where `canonical === 'A'`.
+  - `'throw'` raises `WikiDuplicateHashError({ canonical: 'A', sourceHash, entityId })`.
+  - `'ingest'` raises `WikiDuplicateHashError` (deliberate tightening).
+- **`extractSqliteCode` extended-code mapping:** unit test asserting the cross-platform adapters resolve `SQLITE_CONSTRAINT_UNIQUE`:
+  - `extractSqliteCode({ code: 'SQLITE_CONSTRAINT_UNIQUE' })` → `'SQLITE_CONSTRAINT_UNIQUE'` (better-sqlite3 / node:sqlite shape).
+  - `extractSqliteCode({ message: 'Error code 2067: UNIQUE constraint failed' })` → `'SQLITE_CONSTRAINT_UNIQUE'` (expo-sqlite shape; requires the 2067 row added in §B6).
+  - `extractSqliteCode({ message: 'UNIQUE constraint failed: source_ref_index.entity_id, source_ref_index.source_hash' })` → `undefined` (sql.js shape; documented gap per §B6 table).
+- **`WikiTransactionError.sqliteErrorCode` on UNIQUE:** test that the wrapped error carries the right code when a UNIQUE violation fires inside `withTransactionAsync`, across both the string-code (better-sqlite3 / node:sqlite) and numeric-code (expo-sqlite) shapes.
+- **Per-hash lock ordering:** two concurrent `ingestDocument` calls for different refs sharing a hash serialize through the hash lock; assertion checks no deadlock and exactly one `source_ref_index` row committed.
+- **The race-cloaking test:** **N=10** concurrent `ingestDocument` calls with N distinct `sourceRef`s sharing one `sourceHash`, **repeated for 20 iterations** to catch flaky passes. Assert each iteration: exactly one row in `${prefix}source_ref_index`, the other N-1 receive the per-mode result. **This test fails against current code; passes after B1-B5.**
+- **Forget frees the index slot:** `forget({ sourceRef: A })` after a successful ingest of `(A, H)` soft-deletes both the entries rows and the `source_ref_index` row; a subsequent `ingestDocument(sourceRef: A, sourceHash: H)` succeeds.
+- **`forget({ sourceHash })` and `forget({ clearAll: true })` keep the index in sync:** both paths also soft-delete the relevant `source_ref_index` rows so the post-forget state is consistent.
+
+### §C tests
+
+Cannot meaningfully unit-test workflow YAML. Verification is end-to-end:
+
+- A release PR is opened by Phase 1; it carries the `Test` status; auto-merge waits for green; merge fires Phase 2; `Publish all packages` publishes all 7 workspace packages in the documented dependency order.
+- `workflow_dispatch` republish path still resolves `RELEASE_VERSION` from the input.
+- A back-to-back push during an in-flight release is held by the concurrency group and runs after the in-flight release completes.
+
+**End-to-end smoke test (executed by the next release after this PR lands):**
+
+- [ ] **Phase 1 fires on push to `main`:** a conventional-commit push to `main` triggers `release.yml`; the phase-detection step prints `phase=1`.
+- [ ] **Phase 1 creates a release PR:** semantic-release mutates the working tree; `git checkout -B release/vX.Y.Z`; `git commit` with the version-bump changes; `git tag vX.Y.Z`; `git push origin release/vX.Y.Z --follow-tags`; `gh pr create --base main --head release/vX.Y.Z`.
+- [ ] **The `Test` check passes on the Phase-1 PR:** `Test` workflow (restored by §A2) runs against the PR head; the ruleset's required `Test` check is satisfied.
+- [ ] **Auto-merge waits and merges:** `gh pr merge --auto --squash` waits for `Test` to go green; squash-merge into `main` happens.
+- [ ] **Phase 2 fires on merge:** the merge commit triggers `release.yml`; the phase-detection step prints `phase=2`; semantic-release is a no-op on the merge commit.
+- [ ] **`Publish all packages` publishes all 7 workspace packages in dependency order:** `core-llm-tools` → `core` → `schema-org` → `react` → `expo` → `prisma-outbox` → `okf`, each `pnpm publish --no-git-checks --access public` succeeding for unpublished packages and skipping for already-published ones.
+- [ ] **Phase 2 moves the tag to the merge commit:** after phase-detection confirms `phase=2`, Phase 2 step 4 (`git tag -f vX.Y.Z HEAD && git push origin vX.Y.Z --force`) moves the tag from the source-branch HEAD to the merge commit on `main`. Verify via `git rev-parse vX.Y.Z` returns the merge commit SHA, not the release-branch HEAD SHA.
+- [ ] **`gh release create vX.Y.Z` succeeds in Phase 2:** the release entry is created against the merge commit on `main`; `CHANGELOG.md` is attached as release notes; `--verify-tag` confirms the tag matches the remote.
+- [ ] **The `vX.Y.Z` git tag points to a commit that contains the version bumps:** `git show vX.Y.Z --stat` includes the bumped `package.json` files for root + all 7 workspace packages. (This is the regression guard for the original "tag-against-wrong-commit" bug — the bug was that `@semantic-release/github` tagged the pre-bump HEAD; the fix is the explicit `git tag` step in Phase 1 plus the `git tag -f` step in Phase 2, and this assertion is what proves it works.)
+- [ ] **No duplicate GitHub Release entry exists:** `gh release view vX.Y.Z` shows exactly one release; the previous failure mode (one release per workflow run from `@semantic-release/github` plus a second from Phase 2's `gh release create`) does not recur.
+
+This smoke test is the verification of Risk #2 ("`test.yml` doesn't exist when this PR opens — verified end-to-end by the first release after this PR lands"). It is not deferred; the next release after this PR merges executes these checks. Failures abort the rollout and are investigated before any subsequent release attempt.
+
+---
+
+## Risks
+
+1. **UNIQUE constraint migration on existing duplicates.** A live database that already contains live rows where **multiple sourceRefs share a single `source_hash`** fails the v10 migration. §B2's abort-and-document policy is the response. Manual remediation: `forget({ sourceRef: loser })` per duplicate, then re-run migration. This risk is highest for the `aws-cloud-agent` host (which, per #79, has been forcing `documentConcurrency: 1` for some time — but the source-ref-lifecycle dedup query in §2 is best-effort at higher concurrency, so duplicates may exist). Note that multiple *facts* per `(entity_id, source_hash)` is no longer a violation — the abort query counts `DISTINCT source_ref`.
+2. **`test.yml` doesn't exist when this PR opens.** The combined PR doesn't need `Test` to merge (no rule requires it yet). After merge, the ruleset change (§C4) takes effect AND `test.yml` is in place — future PRs and the first release PR get `Test`. Verified end-to-end by the first release after this PR lands.
+3. **`--no-ci` semantic-release trade-off.** Covered above.
+4. **Abandoned release PRs.** If auto-merge abandons (e.g., `Test` flaked then went green but the PR was force-closed), the tag is still on `release/vX.Y.Z` from Phase 1 step 6 (and never moved because Phase 2 didn't run), and no packages have been published (Phase 2's `Publish all packages` only fires on merge of the release PR). A re-run on `main` from a fresh push produces another Phase 1 run; the `--state all` PR check in C1 step 6 finds the closed PR and reuses the branch (reopening via `gh pr reopen`); if the new commit is the same version, `git push --follow-tags` overwrites the existing tag in place. **No GitHub Release entry exists until Phase 2 merges**, so an abandoned release leaves no release entry behind — the only orphan state is the `release/vX.Y.Z` branch and a possibly-overwritten tag, both of which are recoverable. The first end-to-end release verifies the reopen path.
+5. **`'ingest'` mode behavior change.** Hosts relying on the racy behavior (two concurrent same-hash writes both succeed) will see a new `WikiDuplicateHashError` path. Listed in "Cross-cutting" as a deliberate tightening; called out here for review.
+6. **Branch naming collisions.** If two releases are attempted back-to-back, `release/vX.Y.Z` must be derived from `nextRelease.version` deterministically. §C1 reads it from the modified root `package.json` after semantic-release runs (not hardcoded). The Phase-1 step retries on branch-already-exists by checking first and reusing if so.
+
+---
+
+## Out of scope
+
+- Per-`sourceRef` dry-run for `forget` (covered in source-ref-lifecycle spec).
+- Anything about ingest performance beyond the lock acquisition cost.
+- Dependabot version-PRs from the bot itself — the audit gate in §A2 catches advisories that survive as range issues, but Dependabot's PR flow is unchanged. If the audit gate becomes noisy, the fix is in `.github/dependabot.yml` configuration, not in this spec.
+- `aws-cloud-agent` host-side cleanup (`documentConcurrency: 1` mitigation becomes redundant after this lands). The host's own spec/PR is a follow-up.

@@ -29,6 +29,24 @@ describe('extractSqliteCode', () => {
       .toBe('SQLITE_9999');
   });
 
+  it('maps the extended SQLITE_CONSTRAINT_UNIQUE code (2067) used by UNIQUE-index violations', () => {
+    expect(extractSqliteCode({ message: 'Error code 2067: UNIQUE constraint failed: llm_wiki_entries.entity_id, llm_wiki_entries.source_hash' }))
+      .toBe('SQLITE_CONSTRAINT_UNIQUE');
+    // better-sqlite3 / node:sqlite already report the symbolic string for the same condition.
+    expect(extractSqliteCode({ code: 'SQLITE_CONSTRAINT_UNIQUE' }))
+      .toBe('SQLITE_CONSTRAINT_UNIQUE');
+  });
+
+  it('leaves a sql.js-style "UNIQUE constraint failed" message un-extracted (no numeric prefix)', () => {
+    // sql.js surfaces failures with the bare "UNIQUE constraint failed" text and no
+    // numeric Error code prefix. We deliberately do NOT match that shape here — the
+    // numeric expo-sqlite path is the only one with the structured prefix, and
+    // matching the bare text would produce false positives for any library that
+    // re-throws the message.
+    expect(extractSqliteCode({ message: 'UNIQUE constraint failed: llm_wiki_entries.entity_id' }))
+      .toBeUndefined();
+  });
+
   it('returns undefined for a non-driver error', () => {
     expect(extractSqliteCode(new Error('validation failed'))).toBeUndefined();
     expect(extractSqliteCode(null)).toBeUndefined();
@@ -57,6 +75,12 @@ describe('WikiTransactionError', () => {
   it('leaves sqliteErrorCode undefined when the code cannot be parsed', () => {
     const err = new WikiTransactionError('Transaction failed', { cause: new Error('opaque') });
     expect(err.sqliteErrorCode).toBeUndefined();
+  });
+
+  it('preserves SQLITE_CONSTRAINT_UNIQUE on the wrapped error (defense-in-depth for ingest duplicate-hash translation)', () => {
+    const expoCause = { message: 'Error code 2067: UNIQUE constraint failed: llm_wiki_entries.entity_id, llm_wiki_entries.source_hash' };
+    const err = new WikiTransactionError('Transaction failed', { cause: expoCause });
+    expect(err.sqliteErrorCode).toBe('SQLITE_CONSTRAINT_UNIQUE');
   });
 });
 
