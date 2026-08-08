@@ -181,6 +181,16 @@ jobs:
         if: steps.changes.outputs.has_changes == 'true'
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.release_version }}
+          # A PR opened (or auto-merge-enabled) via the default GITHUB_TOKEN
+          # does not trigger other workflows' pull_request events - GitHub's
+          # anti-recursion guard blocks it, even though the PR's displayed
+          # author is a real user (git commit authorship is unrelated to
+          # which token made the API call). That left the required `test`
+          # status check permanently stuck at "Expected" on release PRs
+          # (e.g. #81). RELEASE_BOT_PAT is a fine-grained PAT scoped to this
+          # repo (Contents: read/write, Pull requests: read/write) so the
+          # gh pr create/merge calls below can trigger the Test workflow.
+          GH_TOKEN: ${{ secrets.RELEASE_BOT_PAT }}
         run: |
           BRANCH="release/v${RELEASE_VERSION}"
 
