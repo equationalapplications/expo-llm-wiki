@@ -146,6 +146,48 @@ export const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 9,
+    description: 'add_live_hash_unique_index',
+    run: async (db, prefix) => {
+      // Defense-in-depth safety net for the #79 TOCTOU race fix: enforce at
+      // the DB level that at most one LIVE row per (entity_id, source_hash)
+      // exists. The partial WHERE clause lets soft-deleted rows and NULL-hash
+      // legacy rows coexist — same (entity_id, source_hash) may still exist
+      // across a soft-delete + re-ingest cycle.
+      //
+      // If a previous ingest already produced live duplicates (i.e. a race
+      // beat the new app-level guard), abort with an actionable error rather
+      // than auto-resolving — auto-resolving would either destroy facts or
+      // pick a wrong canonical, both worse than failing safe. The thrown
+      // error escapes setup() BEFORE the CREATE INDEX runs, so the index is
+      // never created and schema_version is never advanced.
+      const duplicates = await db.getAllAsync<{ entity_id: string; source_hash: string; cnt: number }>(
+        `SELECT entity_id, source_hash, COUNT(*) AS cnt
+         FROM ${prefix}entries
+         WHERE deleted_at IS NULL AND source_hash IS NOT NULL
+         GROUP BY entity_id, source_hash
+         HAVING COUNT(*) > 1`
+      );
+      if (duplicates.length > 0) {
+        const sample = duplicates
+          .slice(0, 5)
+          .map(d => `(entity_id=${d.entity_id}, source_hash=${d.source_hash.slice(0, 12)}…, count=${d.cnt})`)
+          .join(', ');
+        throw new Error(
+          `Migration v9 (add_live_hash_unique_index) failed: existing live rows violate the new UNIQUE index. ` +
+          `Found ${duplicates.length} duplicate (entity_id, source_hash) groups. ` +
+          `First ${Math.min(5, duplicates.length)}: ${sample}. ` +
+          `Resolve by consolidating duplicates before re-running setup.`
+        );
+      }
+      await db.execAsync(
+        `CREATE UNIQUE INDEX IF NOT EXISTS ${prefix}idx_entries_live_hash
+         ON ${prefix}entries (entity_id, source_hash)
+         WHERE deleted_at IS NULL AND source_hash IS NOT NULL`
+      );
+    },
+  },
 ];
 
 // Verify MIGRATIONS are in strictly ascending version order at module load time.

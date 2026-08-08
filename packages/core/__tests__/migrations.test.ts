@@ -101,7 +101,7 @@ describe('schema migrations', () => {
     // Should have written schema_version
     const versionWrite = db.runCalls.find(
       c => (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
-           (c.args[0] === '8' || c.args[1] === '8')
+           (c.args[0] === '9' || c.args[1] === '9')
     );
     expect(versionWrite).toBeDefined();
 
@@ -122,7 +122,7 @@ describe('schema migrations', () => {
     // Version should have been written
     const versionWrite = db.runCalls.find(
       c => (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
-           (c.args[0] === '8' || c.args[1] === '8')
+           (c.args[0] === '9' || c.args[1] === '9')
     );
     expect(versionWrite).toBeDefined();
   });
@@ -170,7 +170,7 @@ describe('schema migrations', () => {
 
     const versionWrite = db.runCalls.find(
       c => (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
-           (c.args[0] === '8' || c.args[1] === '8')
+           (c.args[0] === '9' || c.args[1] === '9')
     );
     expect(versionWrite).toBeDefined();
   });
@@ -187,7 +187,7 @@ describe('schema migrations', () => {
 
     const versionWrite = db.runCalls.find(
       c => (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
-           (c.args[0] === '8' || c.args[1] === '8')
+           (c.args[0] === '9' || c.args[1] === '9')
     );
     expect(versionWrite).toBeDefined();
   });

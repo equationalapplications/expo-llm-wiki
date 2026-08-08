@@ -35,8 +35,11 @@ async function insertEntry(
 describe('MaintenanceService.forget({ dryRun: true })', () => {
   it('returns the same shape as the real call: standard case has NO metadataReset field', async () => {
     const { wiki, db } = await makeWiki();
-    await insertEntry(db, { id: 'f1', sourceRef: 'a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
-    await insertEntry(db, { id: 'f2', sourceRef: 'a.md', sourceHash: VALID_HASH_A, updatedAt: 1100 });
+    // Distinct hashes so both rows are valid live rows under the v9 UNIQUE index.
+    const hash1 = '1'.repeat(64);
+    const hash2 = '2'.repeat(64);
+    await insertEntry(db, { id: 'f1', sourceRef: 'a.md', sourceHash: hash1, updatedAt: 1000 });
+    await insertEntry(db, { id: 'f2', sourceRef: 'a.md', sourceHash: hash2, updatedAt: 1100 });
 
     const result = await wiki.forget('entity-1', { sourceRef: 'a.md' }, { dryRun: true });
     expect(result).toEqual({ deleted: { entries: 2, tasks: 0 } });
@@ -95,9 +98,13 @@ describe('MaintenanceService.forget({ dryRun: true })', () => {
 
   it('with no selectors returns 0/0, matching the real call’s no-op (regression guard: must not silently report all live entries)', async () => {
     const { wiki, db } = await makeWiki();
-    await insertEntry(db, { id: 'f1', sourceRef: 'a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
-    await insertEntry(db, { id: 'f2', sourceRef: 'a.md', sourceHash: VALID_HASH_A, updatedAt: 1100 });
-    await insertEntry(db, { id: 'f3', sourceRef: 'b.md', sourceHash: VALID_HASH_A, updatedAt: 1200 });
+    // Distinct hashes so all three rows are valid live rows under the v9 UNIQUE index.
+    const hash1 = '1'.repeat(64);
+    const hash2 = '2'.repeat(64);
+    const hash3 = '3'.repeat(64);
+    await insertEntry(db, { id: 'f1', sourceRef: 'a.md', sourceHash: hash1, updatedAt: 1000 });
+    await insertEntry(db, { id: 'f2', sourceRef: 'a.md', sourceHash: hash2, updatedAt: 1100 });
+    await insertEntry(db, { id: 'f3', sourceRef: 'b.md', sourceHash: hash3, updatedAt: 1200 });
 
     const dryResult = await wiki.forget('entity-1', {}, { dryRun: true });
     expect(dryResult).toEqual({ deleted: { entries: 0, tasks: 0 } });

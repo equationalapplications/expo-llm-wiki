@@ -37,14 +37,21 @@ async function insertEntry(
 describe('EntryRepository.listSourceRefs', () => {
   it('returns one row per live sourceRef with factCount and lastIngestedAt', async () => {
     const { wiki, db } = await makeWiki();
-    await insertEntry(db, { id: 'f1', sourceRef: 'a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
-    await insertEntry(db, { id: 'f2', sourceRef: 'a.md', sourceHash: VALID_HASH_A, updatedAt: 1100 });
-    await insertEntry(db, { id: 'f3', sourceRef: 'b.md', sourceHash: VALID_HASH_A, updatedAt: 1200 });
+    // v9 UNIQUE index forbids two LIVE rows sharing (entity_id, source_hash).
+    // f1 and f2 share a sourceRef but each carries a distinct hash, so both
+    // are valid live rows; the aggregator should still merge them under the
+    // same sourceRef and pick the most recent hash.
+    const hashA = 'a'.repeat(64);
+    const hashC = 'c'.repeat(64);
+    const hashD = 'd'.repeat(64);
+    await insertEntry(db, { id: 'f1', sourceRef: 'a.md', sourceHash: hashA, updatedAt: 1000 });
+    await insertEntry(db, { id: 'f2', sourceRef: 'a.md', sourceHash: hashC, updatedAt: 1100 });
+    await insertEntry(db, { id: 'f3', sourceRef: 'b.md', sourceHash: hashD, updatedAt: 1200 });
 
     const out = await wiki['entryRepo'].listSourceRefs('entity-1');
     expect(out).toEqual([
-      { sourceRef: 'a.md', sourceHash: VALID_HASH_A, factCount: 2, lastIngestedAt: 1100 },
-      { sourceRef: 'b.md', sourceHash: VALID_HASH_A, factCount: 1, lastIngestedAt: 1200 },
+      { sourceRef: 'a.md', sourceHash: hashC, factCount: 2, lastIngestedAt: 1100 },
+      { sourceRef: 'b.md', sourceHash: hashD, factCount: 1, lastIngestedAt: 1200 },
     ]);
   });
 
@@ -55,12 +62,16 @@ describe('EntryRepository.listSourceRefs', () => {
 
   it('excludes soft-deleted rows and only counts live facts', async () => {
     const { wiki, db } = await makeWiki();
-    await insertEntry(db, { id: 'f1', sourceRef: 'a.md', sourceHash: VALID_HASH_A, updatedAt: 1000, deletedAt: 999 });
-    await insertEntry(db, { id: 'f2', sourceRef: 'a.md', sourceHash: VALID_HASH_A, updatedAt: 1100 });
+    // Distinct hashes so the soft-deleted row is allowed by the v9 UNIQUE
+    // index (deleted_at IS NOT NULL) alongside the live row.
+    const hashDeleted = '1'.repeat(64);
+    const hashLive = '2'.repeat(64);
+    await insertEntry(db, { id: 'f1', sourceRef: 'a.md', sourceHash: hashDeleted, updatedAt: 1000, deletedAt: 999 });
+    await insertEntry(db, { id: 'f2', sourceRef: 'a.md', sourceHash: hashLive, updatedAt: 1100 });
 
     const out = await wiki['entryRepo'].listSourceRefs('entity-1');
     expect(out).toEqual([
-      { sourceRef: 'a.md', sourceHash: VALID_HASH_A, factCount: 1, lastIngestedAt: 1100 },
+      { sourceRef: 'a.md', sourceHash: hashLive, factCount: 1, lastIngestedAt: 1100 },
     ]);
   });
 
@@ -95,8 +106,10 @@ describe('EntryRepository.listSourceRefs', () => {
   it('sorts results by sourceRef COLLATE BINARY (not locale)', async () => {
     const { wiki, db } = await makeWiki();
     // 'Z' < 'a' under BINARY; 'a' < 'Z' under localeCompare in some locales.
-    await insertEntry(db, { id: 'f1', sourceRef: 'a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
-    await insertEntry(db, { id: 'f2', sourceRef: 'Z.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
+    const hash1 = '1'.repeat(64);
+    const hash2 = '2'.repeat(64);
+    await insertEntry(db, { id: 'f1', sourceRef: 'a.md', sourceHash: hash1, updatedAt: 1000 });
+    await insertEntry(db, { id: 'f2', sourceRef: 'Z.md', sourceHash: hash2, updatedAt: 1000 });
 
     const out = await wiki['entryRepo'].listSourceRefs('entity-1');
     expect(out.map(r => r.sourceRef)).toEqual(['Z.md', 'a.md']);
@@ -104,9 +117,9 @@ describe('EntryRepository.listSourceRefs', () => {
 
   it('is deterministic when two live rows share updated_at (id ASC tie-break)', async () => {
     const { wiki, db } = await makeWiki();
-    // Two live rows for the same ref with identical updated_at — the lexically
-    // smaller id should win. Without the explicit `id ASC` tie-break the result
-    // would depend on ROWID insertion order, which is not part of the spec.
+    // Two live rows for the same ref with distinct hashes (v9 UNIQUE index
+    // forbids two live rows with the same (entity_id, source_hash)) and
+    // identical updated_at — the lexically smaller id should win.
     const lexLarger = 'f'.repeat(64);
     const lexSmaller = '1'.repeat(64); // lexically smaller than lexLarger, used as the expected winner
     await insertEntry(db, { id: 'id-z', sourceRef: 'a.md', sourceHash: lexLarger, updatedAt: 1000 });

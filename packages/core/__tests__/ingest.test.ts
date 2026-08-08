@@ -360,7 +360,7 @@ describe('ingestDocument — ontology', () => {
     const db = openTestDatabase();
     await setupDatabase(db, PREFIX);
 
-    const ingestResponse = JSON.stringify({
+    const bobResponse = JSON.stringify({
       facts: [
         {
           title: 'Bob Smith',
@@ -369,6 +369,10 @@ describe('ingestDocument — ontology', () => {
           confidence: 'certain',
           okf_type: 'person',
         },
+      ],
+    });
+    const janeResponse = JSON.stringify({
+      facts: [
         {
           title: 'Jane reports to Bob',
           body: 'Jane reports to Bob Smith.',
@@ -380,8 +384,10 @@ describe('ingestDocument — ontology', () => {
       ],
     });
 
+    let responseIdx = 0;
+    const responses = [bobResponse, janeResponse];
     const wiki = new WikiMemory(db, {
-      llmProvider: { generateText: async () => ingestResponse },
+      llmProvider: { generateText: async () => responses[responseIdx++] ?? '{}' },
       config: { tablePrefix: PREFIX, ontology: { mode: 'strict' } },
     });
     await wiki.setup();
@@ -395,10 +401,20 @@ describe('ingestDocument — ontology', () => {
       }],
     }, { mode: 'strict' });
 
+    // v9 UNIQUE index forbids two live rows sharing (entity_id, source_hash),
+    // so the two facts have to come from distinct documents (distinct hashes).
+    // The ontology edge wiring between them is what this test is verifying.
+    const bobHash = 'b'.repeat(64);
+    const janeHash = 'c'.repeat(64);
     await wiki.ingestDocument('entity_ont', {
-      sourceRef: 'doc://ontology',
-      sourceHash,
-      documentChunk: 'Jane reports to Bob Smith. Bob is a manager.',
+      sourceRef: 'doc://ontology-bob',
+      sourceHash: bobHash,
+      documentChunk: 'Bob Smith is a manager.',
+    });
+    await wiki.ingestDocument('entity_ont', {
+      sourceRef: 'doc://ontology-jane',
+      sourceHash: janeHash,
+      documentChunk: 'Jane reports to Bob Smith.',
     });
 
     const bundle = await wiki.getMemoryBundle('entity_ont');

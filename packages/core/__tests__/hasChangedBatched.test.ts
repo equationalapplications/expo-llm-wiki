@@ -99,37 +99,28 @@ describe('WikiMemory.hasChanged — batched overload', () => {
     expect(out.every(r => r.changed === true)).toBe(true);
   });
 
-  it('mixed entries: unchanged / changed / duplicate / duplicate-and-changed', async () => {
+  it('mixed entries: unchanged / changed / duplicate-of-stored (pre-check)', async () => {
     const { wiki, db } = await makeWiki();
-    // same same -> unchanged
+    // Under the v9 UNIQUE index, the DB can hold at most one live row per
+    // (entity_id, source_hash). Stored "duplicates" are no longer reachable,
+    // so the duplicateOf signal in hasChanged is now a pre-check against
+    // whatever ref is already stored for a given hash.
     await db.runAsync(
       `INSERT INTO llm_wiki_entries (id, entity_id, title, body, tags, confidence, source_type,
         source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ['f1', 'entity-1', 'T', 'B', '[]', 'certain', 'immutable_document', VALID_HASH_A, 'same.md', 1000, 1000, null, 0, null],
     );
-    // other has hash A so 'duplicate' will collide
-    await db.runAsync(
-      `INSERT INTO llm_wiki_entries (id, entity_id, title, body, tags, confidence, source_type,
-        source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ['f2', 'entity-1', 'T', 'B', '[]', 'certain', 'immutable_document', VALID_HASH_A, 'collision.md', 1000, 1000, null, 0, null],
-    );
 
     const out = await wiki.hasChanged('entity-1', [
       { sourceRef: 'same.md', sourceHash: VALID_HASH_A },        // unchanged
-      { sourceRef: 'changed.md', sourceHash: VALID_HASH_A },     // changed, no collision
-      { sourceRef: 'collision.md', sourceHash: VALID_HASH_A },   // unchanged + duplicate self
-      { sourceRef: 'both.md', sourceHash: VALID_HASH_A },        // changed + duplicate of collision.md
+      { sourceRef: 'changed.md', sourceHash: VALID_HASH_B },     // changed, no collision
+      { sourceRef: 'incoming.md', sourceHash: VALID_HASH_A },    // changed + duplicate of same.md
     ]);
-    // duplicateOf is the code-unit minimum of STORED DIFFERENT refs holding the
-    // same hash; the incoming ref is excluded. 'collision.md' has 'same.md' as
-    // its stored-different duplicate (the incoming ref filters itself out).
     expect(out).toEqual([
-      { sourceRef: 'same.md', changed: false, duplicateOf: 'collision.md' },
-      { sourceRef: 'changed.md', changed: true, duplicateOf: 'collision.md' },
-      { sourceRef: 'collision.md', changed: false, duplicateOf: 'same.md' },
-      { sourceRef: 'both.md', changed: true, duplicateOf: 'collision.md' },
+      { sourceRef: 'same.md', changed: false },
+      { sourceRef: 'changed.md', changed: true },
+      { sourceRef: 'incoming.md', changed: true, duplicateOf: 'same.md' },
     ]);
   });
 });

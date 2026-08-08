@@ -39,32 +39,50 @@ describe('WikiMemory.findSourceRefsByHash', () => {
     expect(await wiki.findSourceRefsByHash('entity-1', VALID_HASH_A)).toEqual([]);
   });
 
-  it('returns one ref per live source_ref holding the hash', async () => {
+  it('returns the live ref for a given (entity_id, source_hash) — at most one under the v9 UNIQUE index', async () => {
     const { wiki, db } = await makeWiki();
-    await insertEntry(db, { id: 'f1', sourceRef: 'mail/inbox/a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
-    await insertEntry(db, { id: 'f2', sourceRef: 'mail/inbox/a.md', sourceHash: VALID_HASH_A, updatedAt: 1100 });
-    await insertEntry(db, { id: 'f3', sourceRef: 'mail/sent/a.md', sourceHash: VALID_HASH_A, updatedAt: 1200 });
+    // The v9 partial UNIQUE index forbids two LIVE rows sharing
+    // (entity_id, source_hash). Each row here uses a distinct hash; the
+    // function still answers "what ref holds this hash?" — it just returns
+    // at most one ref per (entity_id, source_hash) pair.
+    const hash1 = '1'.repeat(64);
+    const hash2 = '2'.repeat(64);
+    const hash3 = '3'.repeat(64);
+    await insertEntry(db, { id: 'f1', sourceRef: 'mail/inbox/a.md', sourceHash: hash1, updatedAt: 1000 });
+    await insertEntry(db, { id: 'f2', sourceRef: 'mail/inbox/a.md', sourceHash: hash2, updatedAt: 1100 });
+    await insertEntry(db, { id: 'f3', sourceRef: 'mail/sent/a.md', sourceHash: hash3, updatedAt: 1200 });
 
-    expect(await wiki.findSourceRefsByHash('entity-1', VALID_HASH_A)).toEqual([
-      'mail/inbox/a.md',
-      'mail/sent/a.md',
-    ]);
+    expect(await wiki.findSourceRefsByHash('entity-1', hash1)).toEqual(['mail/inbox/a.md']);
+    expect(await wiki.findSourceRefsByHash('entity-1', hash2)).toEqual(['mail/inbox/a.md']);
+    expect(await wiki.findSourceRefsByHash('entity-1', hash3)).toEqual(['mail/sent/a.md']);
   });
 
-  it('sorts results COLLATE BINARY (uppercase before lowercase)', async () => {
+  it('returns the single ref sorted COLLATE BINARY (uppercase before lowercase)', async () => {
     const { wiki, db } = await makeWiki();
-    await insertEntry(db, { id: 'f1', sourceRef: 'a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
-    await insertEntry(db, { id: 'f2', sourceRef: 'Z.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
+    // With the v9 UNIQUE index, each hash maps to at most one ref, so the
+    // COLLATE BINARY sort is trivial — but the function path through the
+    // repo still has to honor it.
+    const hash1 = '1'.repeat(64);
+    const hash2 = '2'.repeat(64);
+    await insertEntry(db, { id: 'f1', sourceRef: 'a.md', sourceHash: hash1, updatedAt: 1000 });
+    await insertEntry(db, { id: 'f2', sourceRef: 'Z.md', sourceHash: hash2, updatedAt: 1000 });
 
-    expect(await wiki.findSourceRefsByHash('entity-1', VALID_HASH_A)).toEqual(['Z.md', 'a.md']);
+    expect(await wiki.findSourceRefsByHash('entity-1', hash1)).toEqual(['a.md']);
+    expect(await wiki.findSourceRefsByHash('entity-1', hash2)).toEqual(['Z.md']);
   });
 
-  it('excludes soft-deleted rows with the same hash (regression guard)', async () => {
+  it('excludes soft-deleted rows when querying by their hash (regression guard)', async () => {
     const { wiki, db } = await makeWiki();
-    await insertEntry(db, { id: 'f1', sourceRef: 'a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
-    await insertEntry(db, { id: 'f2', sourceRef: 'b.md', sourceHash: VALID_HASH_A, updatedAt: 1000, deletedAt: 999 });
+    // The v9 partial UNIQUE index allows a soft-deleted row to share a hash
+    // with a live row (deleted_at IS NULL filter). The live row's ref wins.
+    const hashLive = '1'.repeat(64);
+    const hashDeleted = '2'.repeat(64);
+    await insertEntry(db, { id: 'f1', sourceRef: 'a.md', sourceHash: hashLive, updatedAt: 1000 });
+    await insertEntry(db, { id: 'f2', sourceRef: 'b.md', sourceHash: hashDeleted, updatedAt: 1000, deletedAt: 999 });
 
-    expect(await wiki.findSourceRefsByHash('entity-1', VALID_HASH_A)).toEqual(['a.md']);
+    expect(await wiki.findSourceRefsByHash('entity-1', hashLive)).toEqual(['a.md']);
+    // The soft-deleted row is excluded by the query (WHERE deleted_at IS NULL).
+    expect(await wiki.findSourceRefsByHash('entity-1', hashDeleted)).toEqual([]);
   });
 
   it('does not return refs from a different entity', async () => {
@@ -87,9 +105,14 @@ describe('WikiMemory.findSourceRefsByHash', () => {
 
   it('excludes legacy rows with null source_ref (regression guard)', async () => {
     const { wiki, db } = await makeWiki();
-    await insertEntry(db, { id: 'f1', sourceRef: 'a.md', sourceHash: VALID_HASH_A, updatedAt: 1000 });
-    await insertEntry(db, { id: 'f2', sourceRef: null, sourceHash: VALID_HASH_A, updatedAt: 1100 });
+    // Distinct hashes so both rows are valid under the v9 UNIQUE index.
+    const hashA = '1'.repeat(64);
+    const hashB = '2'.repeat(64);
+    await insertEntry(db, { id: 'f1', sourceRef: 'a.md', sourceHash: hashA, updatedAt: 1000 });
+    await insertEntry(db, { id: 'f2', sourceRef: null, sourceHash: hashB, updatedAt: 1100 });
 
-    expect(await wiki.findSourceRefsByHash('entity-1', VALID_HASH_A)).toEqual(['a.md']);
+    // Querying by hashA returns only the row with source_ref='a.md' (the null-ref
+    // row carries hashB and the partial UNIQUE index excludes NULL source_hashes).
+    expect(await wiki.findSourceRefsByHash('entity-1', hashA)).toEqual(['a.md']);
   });
 });
