@@ -1,7 +1,7 @@
 # Spec: `WikiMemory` Public-API Extensions — `listEntityIds`, `upsertGraph`
 
 **Date:** 2026-08-14
-**Status:** Approved
+**Status:** Implemented (see [implementation plan](../plans/2026-08-14-wikimemory-public-api-extensions.md))
 **Issues:** [#85](https://github.com/equationalapplications/expo-llm-wiki/issues/85), [#86](https://github.com/equationalapplications/expo-llm-wiki/issues/86)
 **Packages:** `@eq/wiki-core`
 **Consumer context:** `equationalapplications/aws-cloud-agent` — tier registry, deterministic-write ingest path for `tier_codebase`
