@@ -132,6 +132,26 @@ describe('EntryRepository', () => {
     expect(rows.length).toBe(1);
     expect(rows[0].id).toBe('old1');
   });
+
+  it('findRecentByEntityId with excludeSourceRef keeps NULL source_ref rows in the index', async () => {
+    // Regression for the cross-sourceRef title index used by
+    // IngestionService.ts:167. NULL source_ref rows exist in production
+    // (librarian_inferred facts — see MaintenanceService.ts:518, 744) and
+    // do not belong to the excluded sourceRef, so they must remain available
+    // for edges to resolve against.
+    const excluded = makeFact({ id: 'excluded', source_ref: 'a.ts' });
+    const otherRef = makeFact({ id: 'otherRef', source_ref: 'b.ts' });
+    const nullRef = makeFact({ id: 'nullRef', source_ref: null });
+    for (const f of [excluded, otherRef, nullRef]) {
+      await db.withTransactionAsync(async () => {
+        await repo.upsert(f, db);
+      });
+    }
+
+    const rows = await repo.findRecentByEntityId('entity1', 500, db, 'a.ts');
+    const ids = rows.map(r => r.id).sort();
+    expect(ids).toEqual(['nullRef', 'otherRef']);
+  });
 });
 
 describe('EntryRepository with OutboxRepository', () => {

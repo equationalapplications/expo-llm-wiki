@@ -477,7 +477,12 @@ export class EntryRepository extends BaseRepository {
     excludeSourceRef?: string,
   ): Promise<WikiFact[]> {
     const executor = this.getExecutor(tx);
-    const excludeClause = excludeSourceRef ? ` AND source_ref != ?` : '';
+    // `IS NULL OR !=` keeps NULL-source_ref rows (e.g. librarian_inferred facts)
+    // in the cross-sourceRef title index. The intent of `excludeSourceRef` is
+    // "drop THIS sourceRef's rows"; NULL rows belong to neither the current
+    // sourceRef nor the replacement set, and excluding them causes edges
+    // targeting legacy/non-document facts to fail to resolve.
+    const excludeClause = excludeSourceRef ? ` AND (source_ref IS NULL OR source_ref != ?)` : '';
     const args: unknown[] = excludeSourceRef ? [entityId, excludeSourceRef, limit] : [entityId, limit];
     const rows = await executor.getAllAsync<any>(
       `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL${excludeClause} ORDER BY updated_at DESC LIMIT ?`,
