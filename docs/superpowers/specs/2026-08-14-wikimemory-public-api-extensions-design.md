@@ -119,7 +119,9 @@ An edge whose `targetId` names a node that does not exist is stored, not rejecte
 
 This rule keeps batch correctness independent of file ordering. A `calls` edge from `auth.ts` to a symbol defined in `crypto.ts` is written when `auth.ts` is parsed — possibly before `crypto.ts` is parsed, possibly when it never will be.
 
-C3 and C4 hold each other up: because dangling targets are stored rather than skipped, a correct writer always returns `edgesWritten === validEdges.length`, which is what makes the caller's "did you drop anything?" assertion sound. If C3 went the other way, edge loss and edge deferral would be indistinguishable in the return value.
+C3 and C4 hold each other up: because dangling targets are stored rather than skipped, a correct writer's `edgesWritten` reflects only pre-flight-valid edges — never a *silent* post-flight drop. If C3 went the other way, edge loss and edge deferral would be indistinguishable in the return value.
+
+`edgesWritten` counts actual inserts (`edgeRepo.addIgnoreDuplicate` returning `true`), not `validEdges.length`. A caller-supplied edge id reused across two distinct `sourceRef`s collides on `(entity_id, source_id, target_id, edge_type)` uniqueness and is skipped by `addIgnoreDuplicate` without error; counting `validEdges.length` would over-report in that case. See step (j).
 
 #### C4 — Strict-mode violations throw
 
@@ -144,11 +146,11 @@ a. **Read persisted ontology mode**: `metadataRepo.getManifest(entityId, tx)`. S
 
 b. **Validate all node types** (pre-flight, all-or-nothing): for each `params.node`, call `validateAndNormalizeFact(node, manifest, { strict })`. If `strict` and the type is out-of-manifest → throws `WikiStrictOntologyViolation` on the first invalid node. Otherwise the helper returns the canonical slug or `null`; `null` results in a fact written with `okf_type: null` (matches `ingestDocument`'s silent-drop semantics for the non-strict path).
 
-c. **Validate all edge types** (pre-flight, all-or-nothing): group `params.edges` by `sourceId`. For each source node `n` in `params.nodes`, validate that node's outgoing edges via `validateInlineEdges(n.type, edgesForN, manifest, { strict })`. Aggregate valid edges across all source-node groups. If `strict` and any edge type is out-of-manifest for its source's type → throws `WikiStrictOntologyViolation` on the first invalid edge. Otherwise invalid edges are filtered out across groups.
+c. **Validate all edge types** (pre-flight, all-or-nothing): group `params.edges` by `sourceId`. For each edge, resolve its source's `okf_type` from this call's own `params.nodes` (edges whose `sourceId` isn't among this call's nodes pass through verbatim, same lenient treatment C3 gives dangling `targetId`s) and match `(sourceType, edge.type)` against `manifest.edge_types` directly — an inline lookup local to `upsertGraphCore`, not a call to `validateInlineEdges` (that helper operates on the LLM-extraction `ExtractedFactEdge`/`target_title` shape used by `ingestDocument`, not the host's `{sourceId,targetId}` shape). If `strict` and any edge type is out-of-manifest for its source's type → throws `WikiStrictOntologyViolation` on the first invalid edge. Otherwise invalid edges are filtered out across groups.
 
 d. **Supersede prior facts for `sourceRef`**: `entryRepo.softDeleteBySource(entityId, tx, params.sourceRef, null)`. Capture `deletedFactIds`; their count contributes to `superseded`.
 
-e. **Supersede prior edges** whose source is in `deletedFactIds`: `edgeRepo.softDeleteBySourceFactIds(entityId, deletedFactIds, tx)`. This is the new `EdgeRepository` method that closes a gap the current `ingestDocument` does not have — without it, a re-parse with a new `sourceHash` would leave stale edges from the prior parse around. `deletedFactIds.length + deletedEdgeIds.length` is the `superseded` count returned.
+e. **Supersede prior edges** whose source is in `deletedFactIds`: `edgeRepo.softDeleteBySourceFactIds(entityId, deletedFactIds, tx)`. This is the new `EdgeRepository` method that closes a gap the current `ingestDocument` does not have — without it, a re-parse with a new `sourceHash` would leave stale edges from the prior parse around. It returns a plain row-count (`Promise<number>`, not a list of deleted edge ids). `deletedFactIds.length + deletedEdgeCount` is the `superseded` count returned.
 
 f. **Clear prior `source_ref_index` row** for `(entityId, sourceRef)`: `sourceRefIndexRepo.softDeleteByEntityAndSourceRef(entityId, params.sourceRef, tx)`.
 
@@ -158,7 +160,7 @@ h. **Write nodes**: for each validated `WikiFact`, `entryRepo.upsert(wikiFact, t
 
 i. **Write edges**: for each valid edge from step (c), `edgeRepo.addIgnoreDuplicate(edge, tx)`. C3 satisfied — no FK on `target_id`, no title-index resolution, dangling targets stored verbatim.
 
-j. **Return** `{ nodesWritten: params.nodes.length, edgesWritten: validEdges.length, superseded }`.
+j. **Return** `{ nodesWritten: params.nodes.length, edgesWritten: edgesInsertedCount, superseded }`, where `edgesInsertedCount` counts only the edges from step (i) for which `edgeRepo.addIgnoreDuplicate` returned `true` — a caller-supplied edge id reused across two distinct `sourceRef`s collides and is skipped without error, so `edgesInsertedCount` can be less than `validEdges.length`.
 
 ### Return shape
 
@@ -193,7 +195,7 @@ validateInlineEdges(
 ): readonly { type: string; /* … */ }[];
 ```
 
-When `strict: true` and a type doesn't resolve against the manifest, the function throws `WikiStrictOntologyViolation` (§3). When `strict: false` (default), invalid types are silently dropped as today. All existing callers — currently only `IngestionService.ingestDocument` — continue to receive the default `strict: false`; grep-verified at implementation time.
+When `strict: true` and a type doesn't resolve against the manifest, the function throws `WikiStrictOntologyViolation` (§3). When `strict: false` (default), invalid types are silently dropped as today. All existing callers — `IngestionService.ingestDocument` and the two `MaintenanceService` call sites (`runHeal`, `runOntologyBackfill`) — must pass `{ strict: false }` explicitly to preserve current behavior; grep-verified at implementation time.
 
 ---
 
@@ -319,7 +321,7 @@ The following must continue to pass without modification:
 - `__tests__/integration/outbox-atomicity.test.ts` — supersession + outbox staging still atomic.
 - `__tests__/integration/prune-atomicity.test.ts` — atomicity around prune operations.
 - `__tests__/integration/heal-librarian-dedupe-race.test.ts` — race contract around dedupe.
-- All existing callers of `validateAndNormalizeFact` / `validateInlineEdges` receive the default `strict: false`. Grep-verify at implementation time: only `IngestionService.ingestDocument` calls them today; the new `strict` parameter is opt-in.
+- All existing callers of `validateAndNormalizeFact` / `validateInlineEdges` receive the default `strict: false`. Grep-verify at implementation time: `IngestionService.ingestDocument` and the two `MaintenanceService` call sites (`runHeal`, `runOntologyBackfill`) call `validateAndNormalizeFact` today; the new `strict` parameter is opt-in and must be passed explicitly at each site.
 
 ### Vitest configuration
 
