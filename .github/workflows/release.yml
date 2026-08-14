@@ -142,6 +142,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
+          RELEASE_BOT_PAT: ${{ secrets.RELEASE_BOT_PAT }}
         run: |
           # A second orphan-tag class is not reachable by the local prune
           # above: a tag that points AT HEAD (or at a commit reachable from
