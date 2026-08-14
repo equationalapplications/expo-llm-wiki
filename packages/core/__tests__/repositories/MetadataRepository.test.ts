@@ -130,3 +130,77 @@ describe('MetadataRepository', () => {
     expect(result.heal).toBe(10);
   });
 });
+
+describe('MetadataRepository.getDistinctEntityIds', () => {
+  let db: ReturnType<typeof openTestDatabase>;
+  let repo: MetadataRepository;
+
+  beforeEach(async () => {
+    db = openTestDatabase();
+    await setupDatabase(db, PREFIX);
+    repo = new MetadataRepository(db, PREFIX);
+  });
+
+  async function seedEntry(entityId: string, deleted = false): Promise<void> {
+    const id = `f_${entityId}_${Math.random().toString(36).slice(2)}`;
+    await db.runAsync(
+      `INSERT INTO ${PREFIX}entries (id, entity_id, title, body, tags, confidence, source_type,
+        source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count, deleted_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, entityId, 't', 'b', '[]', 'certain', 'immutable_document',
+       'a'.repeat(64), 'src', 1000, 1000, null, 0, deleted ? 1500 : null],
+    );
+  }
+  async function seedTask(entityId: string, deleted = false): Promise<void> {
+    await db.runAsync(
+      `INSERT INTO ${PREFIX}tasks (id, entity_id, description, status, priority, created_at, updated_at, resolved_at, deleted_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [`tk_${entityId}_${Math.random()}`, entityId, 'desc', 'pending', 1, 1000, 1000, null, deleted ? 1500 : null],
+    );
+  }
+  async function seedEvent(entityId: string): Promise<void> {
+    await db.runAsync(
+      `INSERT INTO ${PREFIX}events (id, entity_id, event_type, summary, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [`ev_${entityId}_${Math.random()}`, entityId, 'observation', 'sum', 1000],
+    );
+  }
+
+  it('returns [] for empty database', async () => {
+    expect(await repo.getDistinctEntityIds()).toEqual([]);
+  });
+
+  it('returns ids sorted ascending COLLATE BINARY across entries/tasks/events', async () => {
+    await seedEntry('bravo');
+    await seedEntry('alpha');
+    await seedTask('charlie');
+    await seedEvent('delta');
+    expect(await repo.getDistinctEntityIds()).toEqual(['alpha', 'bravo', 'charlie', 'delta']);
+  });
+
+  it('includes entities whose only rows are soft-deleted (closes the decommissioned-scope leak)', async () => {
+    await seedEntry('live', false);
+    await seedEntry('orphaned', true);
+    await seedTask('orphaned', true);
+    const ids = await repo.getDistinctEntityIds();
+    expect(ids).toContain('live');
+    expect(ids).toContain('orphaned');
+  });
+
+  it('returns each id only once even if present in entries/tasks/events', async () => {
+    await seedEntry('shared');
+    await seedTask('shared');
+    await seedEvent('shared');
+    expect(await repo.getDistinctEntityIds()).toEqual(['shared']);
+  });
+
+  it('sorts ids with COLLATE BINARY ordering (uppercase before lowercase)', async () => {
+    await seedEntry('alpha');
+    await seedEntry('Bravo');
+    await seedTask('charlie');
+    const ids = await repo.getDistinctEntityIds();
+    // SQLite default BINARY collation: ASCII ordering, uppercase letters (0x41–0x5A)
+    // sort before lowercase (0x61–0x7A).
+    expect(ids).toEqual(['Bravo', 'alpha', 'charlie']);
+  });
+});

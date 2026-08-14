@@ -119,16 +119,25 @@ export class MetadataRepository extends BaseRepository {
     await this.db.execAsync(`VACUUM`);
   }
 
+  /**
+   * Returns the set of distinct `entity_id` values across entries/tasks/events.
+   *
+   * Deliberately widened from a prior `WHERE deleted_at IS NULL` form: the
+   * returned set intentionally includes entities whose only rows are
+   * soft-deleted, so the host's maintenance sweep can visit such
+   * "decommissioned-scope" namespaces and reap the soft-deleted rows. Sorting
+   * is `entity_id COLLATE BINARY` for stable, locale-independent ordering.
+   */
   async getDistinctEntityIds(tx?: SQLiteAdapter): Promise<string[]> {
     const executor = this.getExecutor(tx);
     const rows = await executor.getAllAsync<{ entity_id: string }>(
       `SELECT DISTINCT entity_id FROM (
-         SELECT entity_id FROM ${this.prefix}entries WHERE deleted_at IS NULL
+         SELECT entity_id FROM ${this.prefix}entries
          UNION
-         SELECT entity_id FROM ${this.prefix}tasks WHERE deleted_at IS NULL
+         SELECT entity_id FROM ${this.prefix}tasks
          UNION
          SELECT entity_id FROM ${this.prefix}events
-       ) ORDER BY entity_id`,
+       ) ORDER BY entity_id COLLATE BINARY`,
     );
     return rows.map(r => r.entity_id);
   }

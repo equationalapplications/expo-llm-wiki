@@ -509,7 +509,7 @@ export class MaintenanceService {
         if (skip) continue;
 
         const ontologyFact = fact as ExtractedFactWithOntology;
-        const normalized = this.ontologyService?.validateAndNormalizeFact(ontologyFact, manifest)
+        const normalized = this.ontologyService?.validateAndNormalizeFact(ontologyFact, manifest, { strict: false })
           ?? { okf_type: null, edges: [] };
 
         const id = generateId('fact_');
@@ -1002,6 +1002,7 @@ export class MaintenanceService {
             okf_type: classification.okf_type as string | undefined, edges: classification.edges as ExtractedFactEdge[] | undefined,
           } as ExtractedFactWithOntology,
           manifest,
+          { strict: false },
         );
         if (!normalized.okf_type) {
           failedValidation++;

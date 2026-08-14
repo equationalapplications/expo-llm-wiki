@@ -345,3 +345,73 @@ describe('EdgeRepository.getNeighborhood()', () => {
     expect(result).toEqual({ nodeIds: [], edges: [] });
   });
 });
+
+describe('EdgeRepository.softDeleteBySourceFactIds', () => {
+  let db: SQLiteAdapter;
+  let edgeRepo: EdgeRepository;
+
+  beforeEach(async () => {
+    db = openTestDatabase();
+    await setupDatabase(db, PREFIX);
+    edgeRepo = new EdgeRepository(db, PREFIX);
+  });
+
+  async function seedEdge(entityId: string, sourceId: string, targetId: string, edgeType = 'calls'): Promise<string> {
+    const id = `e_${sourceId}_${targetId}_${edgeType}`;
+    await db.runAsync(
+      `INSERT INTO ${PREFIX}edges (id, entity_id, source_id, target_id, edge_type, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [id, entityId, sourceId, targetId, edgeType, Date.now()],
+    );
+    return id;
+  }
+
+  it('hard-deletes edges whose source_id is in the provided list', async () => {
+    await seedEdge('entity-1', 'fact-a', 'fact-b');
+    await seedEdge('entity-1', 'fact-a', 'fact-c');
+    await seedEdge('entity-1', 'fact-x', 'fact-y');
+
+    const deleted = await db.withTransactionAsync(async (tx) =>
+      edgeRepo.softDeleteBySourceFactIds('entity-1', ['fact-a'], tx),
+    );
+    expect(deleted).toBe(2);
+
+    const remaining = await db.getAllAsync<{ source_id: string }>(
+      `SELECT source_id FROM ${PREFIX}edges WHERE entity_id = ?`,
+      ['entity-1'],
+    );
+    expect(remaining.map(r => r.source_id)).toEqual(['fact-x']);
+  });
+
+  it('returns 0 when no edges match', async () => {
+    await seedEdge('entity-1', 'fact-a', 'fact-b');
+    const deleted = await db.withTransactionAsync(async (tx) =>
+      edgeRepo.softDeleteBySourceFactIds('entity-1', ['nonexistent'], tx),
+    );
+    expect(deleted).toBe(0);
+  });
+
+  it('does not delete edges from a different entity', async () => {
+    await seedEdge('entity-1', 'fact-a', 'fact-b');
+    await seedEdge('entity-2', 'fact-a', 'fact-c');
+
+    const deleted = await db.withTransactionAsync(async (tx) =>
+      edgeRepo.softDeleteBySourceFactIds('entity-1', ['fact-a'], tx),
+    );
+    expect(deleted).toBe(1);
+
+    const entity2Edge = await db.getFirstAsync<{ source_id: string }>(
+      `SELECT source_id FROM ${PREFIX}edges WHERE entity_id = ?`,
+      ['entity-2'],
+    );
+    expect(entity2Edge?.source_id).toBe('fact-a');
+  });
+
+  it('accepts an empty sourceFactIds list and deletes nothing', async () => {
+    await seedEdge('entity-1', 'fact-a', 'fact-b');
+    const deleted = await db.withTransactionAsync(async (tx) =>
+      edgeRepo.softDeleteBySourceFactIds('entity-1', [], tx),
+    );
+    expect(deleted).toBe(0);
+  });
+});

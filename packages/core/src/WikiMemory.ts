@@ -10,6 +10,7 @@ import {
   WikiEvent,
   EntityStatus,
   ReadOptions,
+  WikiSourceRefHashCollision,
 } from './types';
 import { EntryRepository } from './repositories/EntryRepository';
 import { OutboxRepository } from './repositories/OutboxRepository';
@@ -32,7 +33,7 @@ import { OntologyService } from './services/OntologyService';
 import { GraphTraversalService } from './services/GraphTraversalService';
 import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighborhood, OntologyBackfillResult, HealResult } from './types';
 
-export { WikiBusyError, WikiTransactionError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER } from './types';
+export { WikiBusyError, WikiTransactionError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER, WikiStrictOntologyViolation, WikiSourceRefHashCollision } from './types';
 
 const TABLE_PREFIX_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,30}_$/;
 
@@ -113,6 +114,8 @@ export class WikiMemory {
       this.options,
       this.entryRepo,
       this.sourceRefIndexRepo,
+      this.metadataRepo,
+      this.edgeRepo,
       this.searchService,
       this.jobManager,
       this.embeddingService,
@@ -374,6 +377,37 @@ export class WikiMemory {
     return canonical === null ? [] : [canonical];
   }
 
+  /**
+   * Returns the set of `entity_id` values with at least one row in this
+   * database, INCLUDING entities whose only remaining rows are soft-deleted
+   * — sorted ascending `entity_id COLLATE BINARY`. Empty array when the
+   * database has no entities.
+   *
+   * The deliberate inclusion of soft-deleted-only entities closes the
+   * decommissioned-scope leak: a scoped namespace whose documents have all
+   * been forgotten or superseded must still appear so host maintenance
+   * sweeps (`runLibrarian`, `runHeal`, `runOntologyBackfill`, `runPrune`)
+   * can visit it and reap the soft-deleted rows.
+   *
+   * Read-only. Never acquires a lock. Never opens a transaction. Propagates
+   * underlying read errors.
+   *
+   * @param options.prefix - Optional string filter applied as
+   *   `id.startsWith(prefix)`. O(n) over distinct ids because the
+   *   `(entity_id, source_ref)` index is not seekable on `entity_id`-only
+   *   prefix. Empty-string prefix matches every id.
+   *
+   * Note: this widens the coverage of `exportDump` (which delegates to
+   * `MetadataRepository.getDistinctEntityIds`); exported dumps now include
+   * orphaned entities. This is a deliberate widening for backup/migration
+   * coverage, not a breaking change to `exportDump`'s return shape.
+   */
+  async listEntityIds(options?: { prefix?: string }): Promise<string[]> {
+    const ids = await this.metadataRepo.getDistinctEntityIds();
+    if (options?.prefix === undefined) return ids;
+    return ids.filter(id => id.startsWith(options.prefix!));
+  }
+
   async runPrune(
     entityId: string,
     options?: {
@@ -517,6 +551,73 @@ export class WikiMemory {
     opts?: { onDuplicateHash?: 'ingest' | 'skip' | 'throw' },
   ): Promise<{ truncated: boolean; chunks: number; duplicateOf?: string }> {
     return this.ingestionService.ingestDocument(entityId, params, opts);
+  }
+
+  /**
+   * Deterministic write path into the graph. Accepts caller-supplied
+   * `(nodes, edges)` and writes them under `(sourceRef, sourceHash)`
+   * semantics identical to `ingestDocument`, minus the LLM extraction step.
+   *
+   * MUST be called from inside an open `db.withTransactionAsync` callback —
+   * the third argument is the caller's `tx`. The method does not open a
+   * nested transaction, does not acquire any lock, and does not perform
+   * post-commit work (search sync, embedding, cache eviction). Hosts that
+   * want embeddings synced should drive the existing maintenance sweep
+   * (`runLibrarian` / `runHeal` / `runOntologyBackfill` / `runPrune`,
+   * scoped via `listEntityIds`).
+   *
+   * Contract (full pre-flight validation lives inside
+   * `IngestionService.upsertGraphCore`, which this method delegates to):
+   * - C2: no-op when `(entityId, sourceHash)` is already mapped to
+   *   `params.sourceRef`; throws `WikiSourceRefHashCollision` if mapped to
+   *   a different `sourceRef`.
+   * - C3: edges with dangling `targetId` are stored verbatim (no FK, no
+   *   resolution).
+   * - C4: under persisted ontology mode `'strict'`, an out-of-manifest node
+   *   or edge `type` throws `WikiStrictOntologyViolation` (pre-flight,
+   *   all-or-nothing — NONE written on failure).
+   *
+   * @returns Counts: nodesWritten (validated nodes persisted), edgesWritten
+   *   (manifest-valid edges persisted), superseded (prior facts soft-deleted
+   *   plus prior source-ref edges hard-deleted).
+   */
+  async upsertGraph(
+    entityId: string,
+    params: {
+      sourceRef: string;
+      sourceHash: string;
+      nodes: readonly { id: string; type: string; title: string; body?: string }[];
+      edges: readonly { type: string; sourceId: string; targetId: string; id?: string }[];
+    },
+    adapter: SQLiteAdapter,
+  ): Promise<{ nodesWritten: number; edgesWritten: number; superseded: number }> {
+    const sourceRef = normalizeSourceRef(params.sourceRef);
+    if (!sourceRef) throw new Error('Invalid sourceRef');
+    const sourceHash = normalizeSourceHash(params.sourceHash);
+    if (!sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
+
+    // C2 probe — runs inside the caller's tx so it sees the in-flight state.
+    const canonical = await this.sourceRefIndexRepo.findActiveByEntityAndHash(entityId, sourceHash, adapter);
+    if (canonical !== null && canonical === sourceRef) {
+      return { nodesWritten: 0, edgesWritten: 0, superseded: 0 };
+    }
+    if (canonical !== null && canonical !== sourceRef) {
+      throw new WikiSourceRefHashCollision({
+        entityId,
+        sourceHash,
+        existingSourceRef: canonical,
+        attemptedSourceRef: sourceRef,
+      });
+    }
+
+    // Delegate to upsertGraphCore for steps a–j (manifest read, validation,
+    // supersession, writes, returns counts). No opts.strict override — let
+    // the persisted ontology mode drive strictness per the spec.
+    return this.ingestionService.upsertGraphCore(
+      entityId,
+      { sourceRef, sourceHash, nodes: params.nodes, edges: params.edges },
+      adapter,
+    );
   }
 
   /**

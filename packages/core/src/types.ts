@@ -612,6 +612,65 @@ export class WikiDuplicateHashError extends Error {
 }
 
 /**
+ * Thrown by `WikiMemory.upsertGraph` when the persisted ontology mode for the
+ * entity is `'strict'` and a caller-supplied node or edge `type` does not
+ * resolve against the entity's manifest. Mirrors {@link WikiBusyError}'s
+ * anchoring of canonical metadata on the error instance for stable
+ * observability. Per C4, the check is pre-flight and all-or-nothing — the
+ * first invalid item throws; NONE are written.
+ */
+export class WikiStrictOntologyViolation extends Error {
+  readonly entityId: string;
+  readonly kind: 'node' | 'edge';
+  readonly type: string;
+  readonly code = 'WIKI_STRICT_ONTOLOGY_VIOLATION' as const;
+
+  constructor(entityId: string, kind: 'node' | 'edge', type: string) {
+    super(
+      `Out-of-manifest ${kind} type "${type}" for entity "${entityId}" under strict mode.`,
+    );
+    this.entityId = entityId;
+    this.kind = kind;
+    this.type = type;
+    this.name = 'WikiStrictOntologyViolation';
+  }
+}
+
+/**
+ * Thrown by `WikiMemory.upsertGraph`'s C2 probe when the supplied
+ * `sourceHash` is already mapped to a *different* `sourceRef` for the same
+ * entity. Indicates either a caller-side id-derivation collision, a race with
+ * another writer, or — per the C2 known-limitation note in the spec — two
+ * source files with genuinely identical content (byte-identical barrel
+ * re-exports, blank stubs, vendored boilerplate). In all cases: fail loud.
+ */
+export class WikiSourceRefHashCollision extends Error {
+  readonly entityId: string;
+  readonly sourceHash: string;
+  readonly existingSourceRef: string;
+  readonly attemptedSourceRef: string;
+  readonly code = 'WIKI_SOURCE_REF_HASH_COLLISION' as const;
+
+  constructor(params: {
+    entityId: string;
+    sourceHash: string;
+    existingSourceRef: string;
+    attemptedSourceRef: string;
+  }) {
+    super(
+      `Source hash "${params.sourceHash}" for entity "${params.entityId}" ` +
+        `is already mapped to sourceRef "${params.existingSourceRef}"; ` +
+        `cannot remap to "${params.attemptedSourceRef}".`,
+    );
+    this.entityId = params.entityId;
+    this.sourceHash = params.sourceHash;
+    this.existingSourceRef = params.existingSourceRef;
+    this.attemptedSourceRef = params.attemptedSourceRef;
+    this.name = 'WikiSourceRefHashCollision';
+  }
+}
+
+/**
  * Thrown by the serialized transaction wrapper when a SQLite driver error
  * escapes a transaction callback (nested BEGIN, SQLITE_BUSY, constraint
  * violation). Domain errors thrown from callback logic pass through unwrapped.

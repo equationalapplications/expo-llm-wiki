@@ -3,6 +3,7 @@ import type {
   OntologyUpdates,
   ExtractedFactEdge,
 } from '../types';
+import { WikiStrictOntologyViolation } from '../types';
 
 export function emptyManifest(): OntologyManifest {
   return { node_types: [], edge_types: [] };
@@ -113,14 +114,26 @@ export function validateInlineEdges(
   _targetType: string | null,
   edges: ExtractedFactEdge[],
   manifest: OntologyManifest,
+  opts?: { strict?: boolean; entityId?: string },
 ): ExtractedFactEdge[] {
-  if (!Array.isArray(edges)) return [];
+  const strict = opts?.strict === true;
+  const entityId = opts?.entityId ?? '';
+  if (!Array.isArray(edges)) {
+    if (strict) throw new WikiStrictOntologyViolation(entityId, 'edge', '');
+    return [];
+  }
   const valid: ExtractedFactEdge[] = [];
   for (const edge of edges) {
-    if (typeof edge?.edge_type !== 'string' || typeof edge?.target_title !== 'string') continue;
+    if (typeof edge?.edge_type !== 'string' || typeof edge?.target_title !== 'string') {
+      if (strict) throw new WikiStrictOntologyViolation(entityId, 'edge', String(edge?.edge_type ?? ''));
+      continue;
+    }
     const defs = resolveEdgeDefinitions(edge.edge_type, manifest);
     const match = defs.find(d => d.source_type.toLowerCase() === sourceType.toLowerCase());
-    if (!match) continue;
+    if (!match) {
+      if (strict) throw new WikiStrictOntologyViolation(entityId, 'edge', edge.edge_type);
+      continue;
+    }
     valid.push({ edge_type: match.type, target_title: edge.target_title });
   }
   return valid;

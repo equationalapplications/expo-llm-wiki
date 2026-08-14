@@ -8,6 +8,7 @@ import {
   validateInlineEdges,
   resolveEdgeDefinitions,
 } from '../../src/utils/ontology';
+import { WikiStrictOntologyViolation } from '../../src/index';
 import type { OntologyManifest } from '../../src/types';
 
 const manifest: OntologyManifest = {
@@ -205,5 +206,56 @@ describe('ontology utils', () => {
       locationManifest,
     );
     expect(edges).toEqual([]);
+  });
+});
+
+describe('validateInlineEdges strict mode', () => {
+  const manifest: OntologyManifest = {
+    node_types: [{ type: 'Function', description: '' }, { type: 'Module', description: '' }],
+    edge_types: [{ type: 'calls', source_type: 'Function', target_type: 'Function', description: '' }],
+  };
+
+  it('throws WikiStrictOntologyViolation on first invalid edge type when strict: true', () => {
+    expect(() => validateInlineEdges(
+      'Function', null,
+      [{ edge_type: 'unmapped', target_title: 'foo' }],
+      manifest,
+      { strict: true, entityId: 'entity-x' },
+    )).toThrow(WikiStrictOntologyViolation);
+  });
+
+  it('still silently drops invalid edge when strict: false (default)', () => {
+    expect(validateInlineEdges(
+      'Function', null,
+      [{ edge_type: 'unmapped', target_title: 'foo' }],
+      manifest,
+    )).toEqual([]);
+  });
+
+  it('throws with kind="edge" and the offending type string in the message', () => {
+    try {
+      validateInlineEdges('Function', null, [{ edge_type: 'unmapped', target_title: 'x' }], manifest, { strict: true, entityId: 'entity-x' });
+      throw new Error('expected throw');
+    } catch (e) {
+      const err = e as WikiStrictOntologyViolation;
+      expect(err).toBeInstanceOf(WikiStrictOntologyViolation);
+      expect(err.kind).toBe('edge');
+      expect(err.type).toBe('unmapped');
+      expect(err.entityId).toBe('entity-x');
+    }
+  });
+
+  it('throws on a non-array edges value under strict mode', () => {
+    expect(() => validateInlineEdges(
+      'Function', null, 'not-an-array' as unknown as never,
+      manifest, { strict: true, entityId: 'entity-x' },
+    )).toThrow(WikiStrictOntologyViolation);
+  });
+
+  it('still returns [] for a non-array edges value under non-strict mode', () => {
+    expect(validateInlineEdges(
+      'Function', null, 'not-an-array' as unknown as never,
+      manifest,
+    )).toEqual([]);
   });
 });

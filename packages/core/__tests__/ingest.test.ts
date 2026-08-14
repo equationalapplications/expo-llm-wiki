@@ -15,6 +15,8 @@ describe('IngestionService — PromptService injection', () => {
   let mockSearchService: any;
   let mockJobManager: any;
   let mockEmbeddingService: any;
+  let mockMetadataRepo: any;
+  let mockEdgeRepo: any;
 
   beforeEach(() => {
     mockDb = {
@@ -35,6 +37,13 @@ describe('IngestionService — PromptService injection', () => {
       softDeleteByEntityAndSourceRef: vi.fn().mockResolvedValue(0),
       upsert: vi.fn().mockResolvedValue(undefined),
     };
+    mockMetadataRepo = {
+      getManifest: vi.fn().mockResolvedValue(null),
+    };
+    mockEdgeRepo = {
+      addIgnoreDuplicate: vi.fn().mockResolvedValue(true),
+      softDeleteBySourceFactIds: vi.fn().mockResolvedValue(0),
+    };
     mockSearchService = {
       sync: vi.fn().mockResolvedValue(undefined),
       evictCache: vi.fn(),
@@ -52,7 +61,7 @@ describe('IngestionService — PromptService injection', () => {
 
   it('passes systemPrompt and userPrompt from PromptService to llmProvider', async () => {
     const promptService = new PromptService();
-    const svc = new IngestionService(mockDb, 'llm_wiki_', mockOptions, mockEntryRepo, mockSourceRefIndexRepo, mockSearchService, mockJobManager, mockEmbeddingService, promptService);
+    const svc = new IngestionService(mockDb, 'llm_wiki_', mockOptions, mockEntryRepo, mockSourceRefIndexRepo, mockMetadataRepo, mockEdgeRepo, mockSearchService, mockJobManager, mockEmbeddingService, promptService);
 
     const sourceHash = 'a'.repeat(64);
     await svc.ingestDocument('entity1', {
@@ -71,7 +80,7 @@ describe('IngestionService — PromptService injection', () => {
 
   it('applies runtime promptOverride via PromptService', async () => {
     const promptService = new PromptService();
-    const svc = new IngestionService(mockDb, 'llm_wiki_', mockOptions, mockEntryRepo, mockSourceRefIndexRepo, mockSearchService, mockJobManager, mockEmbeddingService, promptService);
+    const svc = new IngestionService(mockDb, 'llm_wiki_', mockOptions, mockEntryRepo, mockSourceRefIndexRepo, mockMetadataRepo, mockEdgeRepo, mockSearchService, mockJobManager, mockEmbeddingService, promptService);
 
     const sourceHash = 'b'.repeat(64);
     await svc.ingestDocument('entity1', {
@@ -497,5 +506,43 @@ describe('ingestDocument — ontology', () => {
     expect(bundle.edges?.[0].edge_type).toBe('reports_to');
     expect(bundle.edges?.[0].source_id).toBe(jane?.id);
     expect(bundle.edges?.[0].target_id).toBe(bob?.id);
+  });
+
+  it('persists LLM-supplied tags and confidence through the upsertGraphCore path (regression: ensure refactor did not lose metadata)', async () => {
+    // Refactor route: ingestDocument → upsertGraphCore. The OLD wikiFact
+    // construction stored the LLM-extracted `fact.tags` and `fact.confidence`
+    // verbatim; the refactored upsertGraphCore initially hardcoded
+    // `tags: []` and `confidence: 'certain'` (the public upsertGraph default
+    // for deterministic host nodes), silently dropping them for ingest.
+    // That broke search-filter-by-tag, heal-candidate selection
+    // (`findHealCandidatesByEntityId` filters on `confidence = 'inferred'`),
+    // and runReembed's embedding-text (which joins `tags.join(' ')`).
+    const db = openTestDatabase();
+    await setupDatabase(db, PREFIX);
+    const tags = ['auth', 'rate-limit'];
+    const resp = JSON.stringify({
+      facts: [{
+        title: 'Tagged fact',
+        body: 'Some body.',
+        tags,
+        confidence: 'inferred',
+        okf_type: '',
+      }],
+    });
+    const wiki = new WikiMemory(db, {
+      llmProvider: { generateText: async () => resp },
+      config: { tablePrefix: PREFIX },
+    });
+    await wiki.setup();
+    await wiki.ingestDocument('entity_tag', {
+      sourceRef: 'doc://tag',
+      sourceHash: 'd'.repeat(64),
+      documentChunk: 'Tagged fact body.',
+    });
+    const bundle = await wiki.getMemoryBundle('entity_tag');
+    const fact = bundle.facts.find(f => f.title === 'Tagged fact');
+    expect(fact).toBeDefined();
+    expect(fact!.tags).toEqual(tags);
+    expect(fact!.confidence).toBe('inferred');
   });
 });

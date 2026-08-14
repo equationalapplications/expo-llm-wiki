@@ -181,6 +181,25 @@ jobs:
         if: steps.changes.outputs.has_changes == 'true'
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.release_version }}
+          REPO: ${{ github.repository }}
+          # PRs created or updated with the default GITHUB_TOKEN DO trigger
+          # other workflows' pull_request events, but the run starts in an
+          # "approval-required" state for the `opened`, `synchronize`, and
+          # `reopened` activity types - GitHub's anti-recursion guard
+          # prevents the token that just created the PR from silently
+          # triggering itself every run. That left the required `test`
+          # status check permanently stuck at "Expected" on release PRs
+          # (e.g. #81) until a maintainer manually approved each run.
+          # RELEASE_BOT_PAT is a fine-grained PAT scoped to this repo
+          # (Contents: read/write, Pull requests: read/write) so the
+          # gh pr create/merge calls below are NOT subject to the
+          # approval-required gate and the Test workflow runs autonomously.
+          # Also exposed directly as RELEASE_BOT_PAT (rather than only as
+          # GH_TOKEN, which `gh` consumes) so the recovery push below can
+          # authenticate the git push with the same PAT — `git push` honors
+          # the remote URL's embedded credentials, not GH_TOKEN.
+          GH_TOKEN: ${{ secrets.RELEASE_BOT_PAT }}
+          RELEASE_BOT_PAT: ${{ secrets.RELEASE_BOT_PAT }}
         run: |
           BRANCH="release/v${RELEASE_VERSION}"
 
@@ -193,6 +212,48 @@ jobs:
             echo "Release PR for ${BRANCH} is already merged: ${MERGED_PR}"
             echo "Phase 2 owns publication for this version; nothing to do here."
             exit 0
+          fi
+
+          # Recovery: if the release branch's head commit still carries
+          # [skip ci] (a pre-fix artifact from the v5.2.1 era — see PR #82
+          # / #84), the Test workflow was never triggered for the PR —
+          # GitHub skips pull_request runs when the head commit contains
+          # [skip ci], and no manual rerun can recover a run that was
+          # never scheduled. Push a no-op follow-up commit so the next
+          # pull_request event fires the Test check. Post-fix, new PRs do
+          # not have [skip ci] in their head commit, so this is a no-op
+          # for them.
+          #
+          # Runs for BOTH open and closed release PRs — the check is on
+          # the branch head, not on the PR state. A closed PR with [skip
+          # ci] in its head would otherwise be reopened below with the
+          # skipped head unchanged, leaving the reopened Test run skipped
+          # and auto-merge permanently blocked.
+          #
+          # The commit runs BEFORE the post-PR-creation identity setup
+          # at the bottom of this step, so user.name/email must be
+          # configured here explicitly. The push authenticates with
+          # RELEASE_BOT_PAT via the URL-embedded credential rather than
+          # the GITHUB_TOKEN that actions/checkout persisted — pushing
+          # with GITHUB_TOKEN would cause the resulting synchronize
+          # event to start in the "approval-required" state, which is
+          # exactly the suppression we're trying to avoid.
+          if [ -n "${OPEN_PR}${CLOSED_PR}" ] \
+             && git fetch origin "$BRANCH" 2>/dev/null \
+             && git log -1 --format=%s "origin/$BRANCH" 2>/dev/null | grep -q '\[skip ci\]'; then
+            echo "PR head commit contains [skip ci] - pushing fix-up commit to trigger Test workflow."
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            # Discard the semantic-release artifacts left in the working tree
+            # by restoring the branch from origin. The plain `git checkout
+            # "$BRANCH"` above fails when the on-disk release files (CHANGELOG
+            # + versions) differ from the branch's state — semantic-release
+            # ran in a prior step and the working tree is dirty. The recovery
+            # commit on the existing-PR path is an empty no-op, so the
+            # discarded generated files are not needed on this branch.
+            git checkout -f -B "$BRANCH" "origin/$BRANCH"
+            git commit --allow-empty --no-verify -m "chore(release): trigger Test workflow"
+            git push "https://x-access-token:${RELEASE_BOT_PAT}@github.com/${REPO}.git" "$BRANCH"
           fi
 
           if [ -n "$OPEN_PR" ]; then
@@ -220,10 +281,14 @@ jobs:
 
           git checkout -b "$BRANCH"
           git add CHANGELOG.md package.json packages/*/package.json
-          # [skip ci] prevents this branch's own push from re-triggering this
-          # push-triggered workflow. It does NOT affect the pull_request-triggered
-          # Test workflow run against the release PR, which is what we need to run.
-          git commit -m "chore(release): ${RELEASE_VERSION} [skip ci]"
+          # [skip ci] is intentionally NOT used. The release branch is
+          # release/v*, which matches neither the Release workflow's push
+          # trigger (branches: [main]) nor the Test workflow's push trigger
+          # (branches: [main]), so the branch push itself triggers no
+          # workflow. Adding [skip ci] would propagate to the PR's HEAD
+          # commit and prevent the pull_request-triggered Test workflow
+          # from running - the very check we need to gate the squash-merge.
+          git commit -m "chore(release): ${RELEASE_VERSION}"
           # Annotated tag so `git push` actually transmits the ref. A
           # lightweight tag is a ref without an object, and `git push --follow-tags`
           # only follows annotated tags — pushing it would silently leave the
