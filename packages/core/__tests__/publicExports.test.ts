@@ -4,6 +4,8 @@ import {
   safeSlice,
   DEFAULT_MAX_CHUNK_LENGTH,
   DEFAULT_CHUNK_OVERLAP,
+  WikiStrictOntologyViolation,
+  WikiSourceRefHashCollision,
 } from '../src/index';
 import { chunkText as chunkTextInternal, safeSlice as safeSliceInternal } from '../src/utils/pure';
 
@@ -28,5 +30,45 @@ describe('public exports: chunking', () => {
   it('exports the ingest default chunking constants', () => {
     expect(DEFAULT_MAX_CHUNK_LENGTH).toBe(12000);
     expect(DEFAULT_CHUNK_OVERLAP).toBe(400);
+  });
+});
+
+describe('public exports: new error classes', () => {
+  it('WikiStrictOntologyViolation is exported and constructs with the documented fields', () => {
+    const e = new WikiStrictOntologyViolation('entity-x', 'node', 'unmapped_type');
+    expect(e).toBeInstanceOf(Error);
+    expect(e).toBeInstanceOf(WikiStrictOntologyViolation);
+    expect(e.entityId).toBe('entity-x');
+    expect(e.kind).toBe('node');
+    expect(e.type).toBe('unmapped_type');
+    expect(e.code).toBe('WIKI_STRICT_ONTOLOGY_VIOLATION');
+    expect(e.name).toBe('WikiStrictOntologyViolation');
+    expect(e.message).toContain('unmapped_type');
+    expect(e.message).toContain('entity-x');
+  });
+
+  it('WikiStrictOntologyViolation kind="edge" constructs symmetrically', () => {
+    const e = new WikiStrictOntologyViolation('e1', 'edge', 'calls');
+    expect(e.kind).toBe('edge');
+    expect(e.type).toBe('calls');
+  });
+
+  it('WikiSourceRefHashCollision is exported and constructs with the documented fields', () => {
+    const e = new WikiSourceRefHashCollision({
+      entityId: 'entity-x',
+      sourceHash: 'a'.repeat(64),
+      existingSourceRef: 'fileA.ts',
+      attemptedSourceRef: 'fileB.ts',
+    });
+    expect(e).toBeInstanceOf(Error);
+    expect(e).toBeInstanceOf(WikiSourceRefHashCollision);
+    expect(e.entityId).toBe('entity-x');
+    expect(e.sourceHash).toBe('a'.repeat(64));
+    expect(e.existingSourceRef).toBe('fileA.ts');
+    expect(e.attemptedSourceRef).toBe('fileB.ts');
+    expect(e.code).toBe('WIKI_SOURCE_REF_HASH_COLLISION');
+    expect(e.name).toBe('WikiSourceRefHashCollision');
+    expect(e.message).toContain('fileA.ts');
+    expect(e.message).toContain('fileB.ts');
   });
 });
