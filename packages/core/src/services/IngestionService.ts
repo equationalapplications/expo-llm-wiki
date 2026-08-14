@@ -283,7 +283,7 @@ export class IngestionService {
    *   (manifest-valid edges persisted), superseded (prior facts soft-deleted
    *   plus prior source-ref edges hard-deleted).
    */
-  private async upsertGraphCore(
+  async upsertGraphCore(
     entityId: string,
     params: {
       sourceRef: string;
