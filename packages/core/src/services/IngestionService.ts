@@ -178,7 +178,7 @@ export class IngestionService {
           // pass 2 against the FINALIZED index. Pass 2 then resolves each
           // staged request into concrete hostEdges. upsertGraphCore owns the
           // persistence step.
-          const hostNodes: { id: string; type: string; title: string; body: string }[] = [];
+          const hostNodes: { id: string; type: string; title: string; body: string; tags?: readonly string[]; confidence?: 'certain' | 'inferred' | 'tentative' }[] = [];
           const rawEdgeRequests: { sourceId: string; sourceType: string | null; edges: ExtractedFactEdge[] }[] = [];
 
           for (const { facts, ontology_updates } of orderedChunkFacts) {
@@ -199,6 +199,15 @@ export class IngestionService {
                 type: ontologyFact.okf_type ?? '',
                 title: fact.title,
                 body: fact.body,
+                // Forward the LLM-extracted tags/confidence through the
+                // extracted-shape upsertGraphCore path so the entries row
+                // stores them (search filterability, heal-candidate
+                // selection, runReembed embedding-text signal). The public
+                // WikiMemory.upsertGraph API doesn't accept tags/confidence
+                // — host-supplied deterministic nodes default to [] and
+                // 'certain' as documented.
+                tags: fact.tags,
+                confidence: fact.confidence,
               });
               insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
 
@@ -307,7 +316,7 @@ export class IngestionService {
     params: {
       sourceRef: string;
       sourceHash: string;
-      nodes: readonly { id: string; type: string; title: string; body?: string }[];
+      nodes: readonly { id: string; type: string; title: string; body?: string; tags?: readonly string[]; confidence?: 'certain' | 'inferred' | 'tentative' }[];
       edges: readonly { type: string; sourceId: string; targetId: string; id?: string }[];
     },
     tx: SQLiteAdapter,
@@ -341,8 +350,14 @@ export class IngestionService {
         entity_id: entityId,
         title: node.title,
         body: node.body ?? '',
-        tags: [],
-        confidence: 'certain', // host-supplied deterministic nodes default to 'certain'
+        // Public upsertGraph callers don't supply tags/confidence, so they
+        // default to [] / 'certain' for deterministic AST-grade facts.
+        // ingestDocument routes through this method for the LLM path and
+        // forwards the LLM-supplied tags + confidence, preserving the prior
+        // behavior (search filterability, heal-candidate selection, runReembed
+        // embedding-text signal).
+        tags: node.tags ? Array.from(node.tags) : [],
+        confidence: node.confidence ?? 'certain',
         source_type: 'immutable_document',
         source_hash: params.sourceHash,
         source_ref: params.sourceRef,
@@ -381,7 +396,23 @@ export class IngestionService {
         });
         continue;
       }
-      const sourceType = sourceIdToType.get(edge.sourceId) ?? null;
+      // Per spec step (c): "for each source node `n` in `params.nodes`, validate
+      // that node's outgoing edges". Edges whose sourceId references a node
+      // OUTSIDE this call's nodes (a prior sourceRef's node) cannot have their
+      // source type resolved without a DB lookup, so they pass through verbatim
+      // — same lenient treatment C3 gives dangling targetIds.
+      if (!sourceIdToType.has(edge.sourceId)) {
+        validEdges.push({
+          id: edge.id ?? generateId(),
+          entity_id: entityId,
+          source_id: edge.sourceId,
+          target_id: edge.targetId,
+          edge_type: edge.type,
+          created_at: now,
+        });
+        continue;
+      }
+      const sourceType = sourceIdToType.get(edge.sourceId);
       const candidates = (manifest.edge_types ?? []).filter(d =>
         d.type.toLowerCase() === edge.type.toLowerCase()
         && d.source_type.toLowerCase() === (sourceType ?? '').toLowerCase(),
@@ -420,14 +451,23 @@ export class IngestionService {
     }
 
     // (i) Write edges (C3: dangling targets stored verbatim, no FK, no title-index resolution).
+    // Count actual inserts via addIgnoreDuplicate; an edge whose id already
+    // exists with the same (entity_id, source_id, target_id, edge_type) tuple
+    // — e.g. a deterministic edge id reused across two distinct sourceRefs —
+    // is silently skipped (returns false) and must NOT be counted as written.
+    // Counting `validEdges.length` over-reports when caller-supplied edge ids
+    // collide across sourceRefs, breaking the spec's C3 invariant that the
+    // caller can rely on `edgesWritten` to assert "did you drop anything?".
+    let edgesInsertedCount = 0;
     for (const edge of validEdges) {
-      await this.edgeRepo.addIgnoreDuplicate(edge, tx);
+      const inserted = await this.edgeRepo.addIgnoreDuplicate(edge, tx);
+      if (inserted) edgesInsertedCount++;
     }
 
     // (j) Return counts.
     return {
       nodesWritten: wikiFacts.length,
-      edgesWritten: validEdges.length,
+      edgesWritten: edgesInsertedCount,
       superseded: deletedFactIds.length + deletedEdgeCount,
     };
   }

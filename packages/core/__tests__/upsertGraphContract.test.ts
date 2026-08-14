@@ -449,4 +449,36 @@ describe('upsertGraph contract — C4: strict-mode throws', () => {
     const dropped = facts.find(f => f.id === 'f2');
     expect(dropped?.okf_type).toBeNull();
   });
+
+  it('edges whose sourceId is outside this call\'s nodes pass through verbatim (per spec step c)', async () => {
+    // Strict mode is still in effect (set in beforeEach). An edge whose sourceId
+    // is NOT in params.nodes (an external sourceId pointing at a node from a
+    // prior sourceRef) cannot have its source type resolved from this call's
+    // nodes, so per spec step (c) it falls outside the validation pass and is
+    // stored verbatim — same lenient treatment C3 gives dangling targetIds.
+    // Without this assertion, the implementation could silently drop the edge
+    // (or throw under strict), which would defeat cross-sourceRef edges for
+    // the tier_codebase motivating consumer.
+    await db.withTransactionAsync(async (tx) =>
+      wiki.upsertGraph(
+        'entity-1',
+        {
+          sourceRef: 'src/auth.ts',
+          sourceHash: VALID_HASH,
+          nodes: [{ id: 'sym_in_auth', type: 'Function', title: 'sym1' }],
+          edges: [{ type: 'unknown_edge_type', sourceId: 'sym_in_crypto_parsed_earlier', targetId: 'sym_in_auth' }],
+        },
+        tx,
+      ),
+    );
+
+    const storedEdges = await db.getAllAsync<{ source_id: string; target_id: string; edge_type: string }>(
+      `SELECT source_id, target_id, edge_type FROM llm_wiki_edges WHERE entity_id = ?`,
+      ['entity-1'],
+    );
+    expect(storedEdges).toHaveLength(1);
+    expect(storedEdges[0].source_id).toBe('sym_in_crypto_parsed_earlier');
+    expect(storedEdges[0].target_id).toBe('sym_in_auth');
+    expect(storedEdges[0].edge_type).toBe('unknown_edge_type');
+  });
 });
