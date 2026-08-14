@@ -377,6 +377,37 @@ export class WikiMemory {
     return canonical === null ? [] : [canonical];
   }
 
+  /**
+   * Returns the set of `entity_id` values with at least one row in this
+   * database, INCLUDING entities whose only remaining rows are soft-deleted
+   * — sorted ascending `entity_id COLLATE BINARY`. Empty array when the
+   * database has no entities.
+   *
+   * The deliberate inclusion of soft-deleted-only entities closes the
+   * decommissioned-scope leak: a scoped namespace whose documents have all
+   * been forgotten or superseded must still appear so host maintenance
+   * sweeps (`runLibrarian`, `runHeal`, `runOntologyBackfill`, `runPrune`)
+   * can visit it and reap the soft-deleted rows.
+   *
+   * Read-only. Never acquires a lock. Never opens a transaction. Propagates
+   * underlying read errors.
+   *
+   * @param options.prefix - Optional string filter applied as
+   *   `id.startsWith(prefix)`. O(n) over distinct ids because the
+   *   `(entity_id, source_ref)` index is not seekable on `entity_id`-only
+   *   prefix. Empty-string prefix matches every id.
+   *
+   * Note: this widens the coverage of `exportDump` (which delegates to
+   * `MetadataRepository.getDistinctEntityIds`); exported dumps now include
+   * orphaned entities. This is a deliberate widening for backup/migration
+   * coverage, not a breaking change to `exportDump`'s return shape.
+   */
+  async listEntityIds(options?: { prefix?: string }): Promise<string[]> {
+    const ids = await this.metadataRepo.getDistinctEntityIds();
+    if (options?.prefix === undefined) return ids;
+    return ids.filter(id => id.startsWith(options.prefix!));
+  }
+
   async runPrune(
     entityId: string,
     options?: {
