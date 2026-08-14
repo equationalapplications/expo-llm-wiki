@@ -343,8 +343,25 @@ export class IngestionService {
     const sourceIdToType = new Map<string, string | null>();
     for (const fact of wikiFacts) sourceIdToType.set(fact.id, fact.okf_type ?? null);
 
+    // When the manifest is empty (no node_types AND no edge_types), the user
+    // has expressed no constraints; edges pass through verbatim. This is
+    // the documented "no validation" semantics — the host gets exactly the
+    // edges it supplied, including dangling targetIds (C3).
+    const hasConstraints = (manifest.node_types?.length ?? 0) > 0 || (manifest.edge_types?.length ?? 0) > 0;
+
     const validEdges: WikiEdge[] = [];
     for (const edge of params.edges) {
+      if (!hasConstraints) {
+        validEdges.push({
+          id: edge.id ?? generateId(),
+          entity_id: entityId,
+          source_id: edge.sourceId,
+          target_id: edge.targetId,
+          edge_type: edge.type,
+          created_at: now,
+        });
+        continue;
+      }
       const sourceType = sourceIdToType.get(edge.sourceId) ?? null;
       const candidates = (manifest.edge_types ?? []).filter(d =>
         d.type.toLowerCase() === edge.type.toLowerCase()
