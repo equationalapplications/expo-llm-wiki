@@ -181,15 +181,18 @@ jobs:
         if: steps.changes.outputs.has_changes == 'true'
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.release_version }}
-          # A PR opened (or auto-merge-enabled) via the default GITHUB_TOKEN
-          # does not trigger other workflows' pull_request events - GitHub's
-          # anti-recursion guard blocks it, even though the PR's displayed
-          # author is a real user (git commit authorship is unrelated to
-          # which token made the API call). That left the required `test`
+          # PRs created or updated with the default GITHUB_TOKEN DO trigger
+          # other workflows' pull_request events, but the run starts in an
+          # "approval-required" state for the `opened`, `synchronize`, and
+          # `reopened` activity types - GitHub's anti-recursion guard
+          # prevents the token that just created the PR from silently
+          # triggering itself every run. That left the required `test`
           # status check permanently stuck at "Expected" on release PRs
-          # (e.g. #81). RELEASE_BOT_PAT is a fine-grained PAT scoped to this
-          # repo (Contents: read/write, Pull requests: read/write) so the
-          # gh pr create/merge calls below can trigger the Test workflow.
+          # (e.g. #81) until a maintainer manually approved each run.
+          # RELEASE_BOT_PAT is a fine-grained PAT scoped to this repo
+          # (Contents: read/write, Pull requests: read/write) so the
+          # gh pr create/merge calls below are NOT subject to the
+          # approval-required gate and the Test workflow runs autonomously.
           GH_TOKEN: ${{ secrets.RELEASE_BOT_PAT }}
         run: |
           BRANCH="release/v${RELEASE_VERSION}"
@@ -208,6 +211,22 @@ jobs:
           if [ -n "$OPEN_PR" ]; then
             echo "Release PR already open for ${BRANCH}: ${OPEN_PR}"
             echo "Idempotent rerun - nothing to commit/push, just ensure auto-merge is requested."
+
+            # Recovery: if the PR's head commit still carries [skip ci] (a pre-fix
+            # artifact), the Test workflow was never triggered for it - GitHub
+            # skips pull_request runs when the head commit contains [skip ci],
+            # and no manual rerun can recover a run that was never scheduled.
+            # Push a no-op follow-up commit so the next pull_request event fires
+            # the Test check. Post-fix, new PRs do not have [skip ci] in their
+            # head commit, so this is a no-op for them.
+            if git fetch origin "$BRANCH" 2>/dev/null \
+               && git log -1 --format=%s "origin/$BRANCH" 2>/dev/null | grep -q '\[skip ci\]'; then
+              echo "PR head commit contains [skip ci] - pushing fix-up commit to trigger Test workflow."
+              git checkout "$BRANCH"
+              git commit --allow-empty --no-verify -m "chore(release): trigger Test workflow"
+              git push origin "$BRANCH"
+            fi
+
             gh pr merge --auto --squash "$OPEN_PR" \
               || echo "::warning::Could not enable auto-merge on ${OPEN_PR}; merge it manually."
             exit 0
@@ -230,10 +249,14 @@ jobs:
 
           git checkout -b "$BRANCH"
           git add CHANGELOG.md package.json packages/*/package.json
-          # [skip ci] prevents this branch's own push from re-triggering this
-          # push-triggered workflow. It does NOT affect the pull_request-triggered
-          # Test workflow run against the release PR, which is what we need to run.
-          git commit -m "chore(release): ${RELEASE_VERSION} [skip ci]"
+          # [skip ci] is intentionally NOT used. The release branch is
+          # release/v*, which matches neither the Release workflow's push
+          # trigger (branches: [main]) nor the Test workflow's push trigger
+          # (branches: [main]), so the branch push itself triggers no
+          # workflow. Adding [skip ci] would propagate to the PR's HEAD
+          # commit and prevent the pull_request-triggered Test workflow
+          # from running - the very check we need to gate the squash-merge.
+          git commit -m "chore(release): ${RELEASE_VERSION}"
           # Annotated tag so `git push` actually transmits the ref. A
           # lightweight tag is a ref without an object, and `git push --follow-tags`
           # only follows annotated tags — pushing it would silently leave the
