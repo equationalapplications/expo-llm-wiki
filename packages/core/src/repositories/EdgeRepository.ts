@@ -74,6 +74,33 @@ export class EdgeRepository extends BaseRepository {
   }
 
   /**
+   * Hard-delete every edge whose `source_id` is in `sourceFactIds`, scoped to
+   * `entityId`. Returns the number of rows deleted. Edges have no soft-delete
+   * concept; this method is named `softDeleteBySourceFactIds` for symmetry with
+   * `EntryRepository.softDeleteBySource` (which IS a soft delete), but its
+   * semantics are immediate presence/absence removal. Use ONLY inside an open
+   * transaction — the method requires `tx` and performs no autocommit.
+   *
+   * Used by `IngestionService.upsertGraphCore` to retire the prior parse's
+   * edges whose source facts are being superseded by `softDeleteBySource`.
+   */
+  async softDeleteBySourceFactIds(
+    entityId: string,
+    sourceFactIds: readonly string[],
+    tx: SQLiteAdapter,
+  ): Promise<number> {
+    if (sourceFactIds.length === 0) return 0;
+    const executor = this.getExecutor(tx);
+    const placeholders = sourceFactIds.map(() => '?').join(',');
+    const result = await executor.runAsync(
+      `DELETE FROM ${this.prefix}edges
+       WHERE entity_id = ? AND source_id IN (${placeholders})`,
+      [entityId, ...sourceFactIds],
+    );
+    return result.changes;
+  }
+
+  /**
    * Multi-hop traversal from `sourceId` via SQLite `WITH RECURSIVE`. All filtering,
    * dead-ending, cycle-guarding, capping, and ordering happens in this one query.
    * The anchor is validated (exists, right entity, not soft-deleted) but never gated
