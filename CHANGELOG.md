@@ -1,3 +1,10 @@
+## [5.3.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v5.3.0...v5.3.1) (2026-08-14)
+
+
+### Bug Fixes
+
+* **ci:** detect and recover from orphan tag pointing at HEAD ([#88](https://github.com/equationalapplications/expo-llm-wiki/issues/88)) ([4d39bd7](https://github.com/equationalapplications/expo-llm-wiki/commit/4d39bd7711b584d5dfcc52a403b3bbfb832c908d)), closes [#84](https://github.com/equationalapplications/expo-llm-wiki/issues/84)
+
 # [5.3.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v5.2.1...v5.3.0) (2026-08-14)
 
 
