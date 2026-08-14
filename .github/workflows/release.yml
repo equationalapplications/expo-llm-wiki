@@ -138,6 +138,41 @@ jobs:
             fi
           done
 
+      - name: Detect and recover from orphan tag at HEAD
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          # A second orphan-tag class is not reachable by the local prune
+          # above: a tag that points AT HEAD (or at a commit reachable from
+          # HEAD) but at a non-chore(release) commit. semantic-release's
+          # findLastRelease sees the tag, computes "0 commits since last
+          # release", and Phase 1 silently exits with has_changes=false —
+          # the exact failure mode that produced the v5.3.0 ghost tag at
+          # the PR #84 merge commit (fa9e9bb) on 2026-08-14. The tag was
+          # reachable from HEAD so the local prune above did nothing.
+          #
+          # Detection: the latest tag must agree with main's package.json
+          # version. If they disagree, the tag is from a feature merge (or
+          # any non-chore commit) and must be removed so semantic-release
+          # can compute the next release cleanly.
+          #
+          # Use RELEASE_BOT_PAT to delete the remote tag — pushing via
+          # GITHUB_TOKEN is suppressed by GitHub's anti-recursion guard
+          # for GITHUB_TOKEN-triggered synchronize events, and a ref delete
+          # still counts as a synchronize event for that guard.
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          if [ -n "$LATEST_TAG" ] && git merge-base --is-ancestor "$LATEST_TAG" HEAD 2>/dev/null; then
+            TAG_VERSION=${LATEST_TAG#v}
+            HEAD_VERSION=$(node -p "require('./package.json').version")
+            if [ "$TAG_VERSION" != "$HEAD_VERSION" ]; then
+              echo "::warning::Latest tag $LATEST_TAG points at a commit whose package.json does not match main ($HEAD_VERSION). Treating as orphan and deleting (local + remote) so semantic-release can recompute."
+              git tag -d "$LATEST_TAG" || true
+              git push "https://x-access-token:${RELEASE_BOT_PAT}@github.com/${REPO}.git" ":refs/tags/${LATEST_TAG}" 2>&1 \
+                || echo "::warning::Could not delete remote tag $LATEST_TAG — clean it up manually before re-running."
+            fi
+          fi
+
       - name: Run semantic-release (--no-ci, dry local mutation only)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
