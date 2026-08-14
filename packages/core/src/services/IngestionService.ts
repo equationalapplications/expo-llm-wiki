@@ -2,7 +2,7 @@ import { chunkText, withConcurrency, validateFact, parseJsonResponse, normalizeS
 import { normalizeTitleKey } from '../utils/ontology';
 import { generateId } from '../utils/ids';
 import { WikiDuplicateHashError, WikiTransactionError, WikiStrictOntologyViolation } from '../types';
-import type { WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedFactWithOntology, WikiFact, OntologyUpdates, OntologyMode, OntologyManifest, WikiEdge } from '../types';
+import type { WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedFactWithOntology, WikiFact, OntologyUpdates, WikiEdge } from '../types';
 import type { SQLiteAdapter } from '../types';
 import { extractSqliteCode } from '../db/sqliteCodes';
 import type { EntryRepository } from '../repositories/EntryRepository';
@@ -324,17 +324,24 @@ export class IngestionService {
   ): Promise<{ nodesWritten: number; edgesWritten: number; superseded: number }> {
     const now = Date.now();
 
-    // (a) Read persisted ontology mode.
-    const ontologyRow = await this.metadataRepo.getManifest(entityId, tx);
-    const persistedMode: OntologyMode = ontologyRow?.mode ?? 'off';
+    // (a) Resolve the effective ontology state through OntologyService rather
+    // than reading metadataRepo.getManifest directly. OntologyService handles
+    // the seedManifests contract (types.ts:65-66 — seeds are persisted on
+    // first access when a tx is supplied, and cached otherwise) and the
+    // ontologyConfig.mode fallback. Reading the repo directly here would
+    // return null for an entity that has only a seedManifests entry, leaving
+    // the strict mode silently unwritten and letting out-of-manifest data
+    // through even when the host configured strict via the seed.
+    const ontologyState = await this.ontologyService?.getEffectiveState(entityId, tx)
+      ?? { mode: 'off' as const, manifest: { node_types: [], edge_types: [] } };
+    let { mode, manifest } = ontologyState;
     // `opts.strict === false` overrides the persisted mode (used by
     // ingestDocument to preserve its pre-strict-mode silent-drop behavior).
     // `opts.strict === true` forces strict. `opts.strict === undefined`
     // follows the persisted mode.
     const strictEffective = opts?.strict === false
       ? false
-      : opts?.strict === true || persistedMode === 'strict';
-    const manifest: OntologyManifest = ontologyRow?.manifest ?? { node_types: [], edge_types: [] };
+      : opts?.strict === true || mode === 'strict';
 
     // (b) Pre-flight node validation — all-or-nothing under strict mode.
     // Build WikiFacts ready for upsert, with canonical okf_type.

@@ -482,3 +482,58 @@ describe('upsertGraph contract — C4: strict-mode throws', () => {
     expect(storedEdges[0].edge_type).toBe('unknown_edge_type');
   });
 });
+
+describe('upsertGraph contract — seedManifests honored before first persist', () => {
+  // The OntologyConfig contract (types.ts:65-66) requires seedManifests to
+  // be persisted on first access. If upsertGraphCore reads
+  // metadataRepo.getManifest directly instead of OntologyService.getEffectiveState,
+  // an entity configured strictly via seedManifests only (no prior DB row)
+  // would be treated as 'off' and out-of-manifest data would be silently
+  // written — defeating the host's strict-mode intent.
+  it('strict seedManifests throws on out-of-manifest node type even when no DB row exists yet', async () => {
+    const db = openTestDatabase();
+    await setupDatabase(db, 'llm_wiki_');
+    const wiki = new WikiMemory(db, {
+      llmProvider: { generateText: async () => '{}' },
+      config: {
+        ontology: {
+          seedManifests: {
+            'fresh-entity': {
+              manifest: {
+                node_types: [{ type: 'Function', description: '' }],
+                edge_types: [],
+              },
+              mode: 'strict',
+            },
+          },
+        },
+      },
+    });
+    await wiki.setup();
+
+    // No prior setManifest call — the only thing constraining this entity
+    // is the seed. Without the OntologyService.getEffectiveState routing,
+    // metadataRepo.getManifest returns null, mode defaults to 'off', and
+    // this upsertGraph would succeed instead of throwing.
+    await expect(
+      db.withTransactionAsync(async (tx) =>
+        wiki.upsertGraph(
+          'fresh-entity',
+          {
+            sourceRef: 'src/foo.ts',
+            sourceHash: VALID_HASH,
+            nodes: [{ id: 'f1', type: 'NotInManifest', title: 't' }],
+            edges: [],
+          },
+          tx,
+        ),
+      ),
+    ).rejects.toBeInstanceOf(WikiStrictOntologyViolation);
+
+    // The seed must be persisted to the metadata table as a side effect of
+    // the rejected call — subsequent reads should observe strict mode
+    // without re-seeding.
+    const persisted = await wiki.getOntologyManifest('fresh-entity');
+    expect(persisted?.mode).toBe('strict');
+  });
+});
