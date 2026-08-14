@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { OntologyService } from '../../src/services/OntologyService';
+import { WikiStrictOntologyViolation } from '../../src/index';
 import type { MetadataRepository } from '../../src/repositories/MetadataRepository';
 import type { EdgeRepository } from '../../src/repositories/EdgeRepository';
 import type { OntologyManifest } from '../../src/types';
@@ -188,6 +189,37 @@ describe('OntologyService', () => {
         edgeManifest,
       );
       expect(result).toEqual({ okf_type: 'Person', edges: [] });
+    });
+
+    it('throws WikiStrictOntologyViolation on unknown node type when strict: true', () => {
+      const { metadataRepo, edgeRepo } = makeMocks();
+      const svc = new OntologyService(metadataRepo, edgeRepo);
+      expect(() =>
+        svc.validateAndNormalizeFact(
+          { title: 'T', body: 'B', tags: [], confidence: 'certain', okf_type: 'unknown' },
+          manifest,
+          { strict: true, entityId: 'entity-x' },
+        ),
+      ).toThrow(WikiStrictOntologyViolation);
+    });
+
+    it('throws with kind="node" and the offending type for unknown node types in strict mode', () => {
+      const { metadataRepo, edgeRepo } = makeMocks();
+      const svc = new OntologyService(metadataRepo, edgeRepo);
+      try {
+        svc.validateAndNormalizeFact(
+          { title: 'T', body: 'B', tags: [], confidence: 'certain', okf_type: 'unknown' },
+          manifest,
+          { strict: true, entityId: 'entity-x' },
+        );
+        throw new Error('expected throw');
+      } catch (e) {
+        const err = e as WikiStrictOntologyViolation;
+        expect(err).toBeInstanceOf(WikiStrictOntologyViolation);
+        expect(err.kind).toBe('node');
+        expect(err.type).toBe('unknown');
+        expect(err.entityId).toBe('entity-x');
+      }
     });
   });
 

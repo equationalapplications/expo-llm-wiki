@@ -9,6 +9,7 @@ import type {
   SQLiteAdapter,
   WikiEdge,
 } from '../types';
+import { WikiStrictOntologyViolation } from '../types';
 import type { MetadataRepository } from '../repositories/MetadataRepository';
 import type { EdgeRepository } from '../repositories/EdgeRepository';
 import { buildOntologyPromptAppendix } from '../prompts/ontology';
@@ -97,11 +98,16 @@ export class OntologyService {
   validateAndNormalizeFact(
     fact: ExtractedFactWithOntology,
     manifest: OntologyManifest,
+    opts?: { strict?: boolean; entityId?: string },
   ): { okf_type: string | null; edges: ExtractedFactEdge[] } {
     const rawType = typeof fact.okf_type === 'string' ? fact.okf_type : '';
+    const strict = opts?.strict === true;
     const canonical = resolveNodeType(rawType, manifest);
-    if (!canonical) return { okf_type: null, edges: [] };
-    const edges = validateInlineEdges(canonical, null, fact.edges ?? [], manifest);
+    if (!canonical) {
+      if (strict) throw new WikiStrictOntologyViolation(opts?.entityId ?? '', 'node', rawType);
+      return { okf_type: null, edges: [] };
+    }
+    const edges = validateInlineEdges(canonical, null, fact.edges ?? [], manifest, opts);
     return { okf_type: canonical, edges };
   }
 

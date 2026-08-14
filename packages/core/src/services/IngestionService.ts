@@ -180,7 +180,7 @@ export class IngestionService {
 
             for (const fact of facts) {
               const ontologyFact = fact as ExtractedFactWithOntology;
-              const normalized = this.ontologyService?.validateAndNormalizeFact(ontologyFact, manifest)
+              const normalized = this.ontologyService?.validateAndNormalizeFact(ontologyFact, manifest, { strict: false })
                 ?? { okf_type: null, edges: [] };
 
               const id = generateId('fact_');
