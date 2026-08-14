@@ -91,13 +91,23 @@ export class EdgeRepository extends BaseRepository {
   ): Promise<number> {
     if (sourceFactIds.length === 0) return 0;
     const executor = this.getExecutor(tx);
-    const placeholders = sourceFactIds.map(() => '?').join(',');
-    const result = await executor.runAsync(
-      `DELETE FROM ${this.prefix}edges
-       WHERE entity_id = ? AND source_id IN (${placeholders})`,
-      [entityId, ...sourceFactIds],
-    );
-    return result.changes;
+    // SQLite's SQLITE_MAX_VARIABLE_NUMBER defaults to 32,766; binding
+    // `entityId` plus every ID in one statement would overflow once a
+    // single sourceRef accumulates tens of thousands of facts. Chunk to
+    // stay well under the limit, reusing the supplied tx executor.
+    const chunkSize = 500;
+    let totalChanges = 0;
+    for (let i = 0; i < sourceFactIds.length; i += chunkSize) {
+      const chunk = sourceFactIds.slice(i, i + chunkSize);
+      const placeholders = chunk.map(() => '?').join(',');
+      const result = await executor.runAsync(
+        `DELETE FROM ${this.prefix}edges
+         WHERE entity_id = ? AND source_id IN (${placeholders})`,
+        [entityId, ...chunk],
+      );
+      totalChanges += result.changes;
+    }
+    return totalChanges;
   }
 
   /**

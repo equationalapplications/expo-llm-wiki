@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { WikiMemory } from '../src/WikiMemory';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 import { setupDatabase } from '../src/db/schema';
@@ -85,6 +85,8 @@ describe('WikiMemory.listEntityIds', () => {
 
   it('does not acquire any lock and does not open a transaction', async () => {
     await seedEntry(db, 'a');
+    const transactionSpy = vi.spyOn(db, 'withTransactionAsync');
+    const lockSpy = vi.spyOn(wiki.__testAccess.jobManager, 'acquireLock');
     // Concurrent import-lock acquisition on the same entity must succeed —
     // listEntityIds does not participate in the lock map.
     const result = await Promise.all([
@@ -95,5 +97,7 @@ describe('WikiMemory.listEntityIds', () => {
     expect(result[0]).toEqual(['a']);
     expect(result[1]).toEqual(['a']);
     expect(result[2]).toEqual(['a']);
+    expect(transactionSpy).not.toHaveBeenCalled();
+    expect(lockSpy).not.toHaveBeenCalled();
   });
 });

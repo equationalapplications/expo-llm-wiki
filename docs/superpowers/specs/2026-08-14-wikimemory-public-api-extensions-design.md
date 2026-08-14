@@ -136,7 +136,7 @@ Under non-strict modes (`'emergent'`, `'off'`, or no manifest), invalid types ar
    - Result is non-null AND `result.sourceRef === params.sourceRef` → return `{ nodesWritten: 0, edgesWritten: 0, superseded: 0 }`. Idempotent no-op per C2.
    - Result is non-null with a different sourceRef → throw `WikiSourceRefHashCollision`.
 
-2. **Delegate** to `injectionService.upsertGraphCore(entityId, params, adapter)`. Return its result.
+2. **Delegate** to `ingestionService.upsertGraphCore(entityId, params, adapter)`. Return its result.
 
 `upsertGraphCore(entityId, params, tx)` (runs inside the supplied `tx`, no nested transaction, no lock acquisition):
 

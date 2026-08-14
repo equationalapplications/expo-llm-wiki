@@ -244,4 +244,18 @@ describe('validateInlineEdges strict mode', () => {
       expect(err.entityId).toBe('entity-x');
     }
   });
+
+  it('throws on a non-array edges value under strict mode', () => {
+    expect(() => validateInlineEdges(
+      'Function', null, 'not-an-array' as unknown as never,
+      manifest, { strict: true, entityId: 'entity-x' },
+    )).toThrow(WikiStrictOntologyViolation);
+  });
+
+  it('still returns [] for a non-array edges value under non-strict mode', () => {
+    expect(validateInlineEdges(
+      'Function', null, 'not-an-array' as unknown as never,
+      manifest,
+    )).toEqual([]);
+  });
 });

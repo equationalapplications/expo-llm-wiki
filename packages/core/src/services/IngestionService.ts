@@ -2,7 +2,7 @@ import { chunkText, withConcurrency, validateFact, parseJsonResponse, normalizeS
 import { normalizeTitleKey } from '../utils/ontology';
 import { generateId } from '../utils/ids';
 import { WikiDuplicateHashError, WikiTransactionError, WikiStrictOntologyViolation } from '../types';
-import type { WikiOptions, ExtractedFact, ExtractedFactWithOntology, WikiFact, OntologyUpdates, OntologyMode, OntologyManifest, WikiEdge } from '../types';
+import type { WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedFactWithOntology, WikiFact, OntologyUpdates, OntologyMode, OntologyManifest, WikiEdge } from '../types';
 import type { SQLiteAdapter } from '../types';
 import { extractSqliteCode } from '../db/sqliteCodes';
 import type { EntryRepository } from '../repositories/EntryRepository';
@@ -151,11 +151,16 @@ export class IngestionService {
           // set for the embedding lifecycle.
           deletedSourceFactIds.push(...(await this.entryRepo.findIdsBySource(entityId, sourceRef, null, tx, false)));
 
-          // Build title index from existing facts (used to resolve LLM
-          // target_title → target_id) and merge emergent ontology updates.
+          // Build title index from PRIOR facts EXCLUDING the current sourceRef.
+          // Facts from this sourceRef are about to be superseded by
+          // upsertGraphCore step (d); seeding them here would let resolveEdges
+          // target a soon-to-be-retired fact and leave the new edge pointing
+          // at a soft-deleted record (the new edge's source is fresh, so step
+          // (e) only retires edges whose SOURCE is in the deleted-fact set).
           const titleIndex = new Map<string, TitleIndexEntry>();
           const existingFacts = await this.entryRepo.findRecentByEntityId(entityId, 500, tx);
           for (const existing of existingFacts) {
+            if (existing.source_ref === sourceRef) continue;
             titleIndex.set(normalizeTitleKey(existing.title), {
               id: existing.id,
               okf_type: existing.okf_type ?? null,
@@ -166,11 +171,15 @@ export class IngestionService {
             ?? { mode: 'off' as const, manifest: { node_types: [], edge_types: [] } };
           let { mode, manifest } = ontologyState;
 
-          // Convert LLM extraction into host-facing (nodes, edges) shape:
-          // concrete sourceId / targetId per edge, with title→id resolution
-          // already applied. upsertGraphCore owns the persistence step.
+          // Two-pass conversion of LLM extraction into host-facing shape.
+          // Pass 1 (below) populates hostNodes and stages raw edge requests
+          // for every replacement fact — facts from this ingest enter the
+          // titleIndex as they're added, so forward references resolve in
+          // pass 2 against the FINALIZED index. Pass 2 then resolves each
+          // staged request into concrete hostEdges. upsertGraphCore owns the
+          // persistence step.
           const hostNodes: { id: string; type: string; title: string; body: string }[] = [];
-          const hostEdges: { type: string; sourceId: string; targetId: string }[] = [];
+          const rawEdgeRequests: { sourceId: string; sourceType: string | null; edges: ExtractedFactEdge[] }[] = [];
 
           for (const { facts, ontology_updates } of orderedChunkFacts) {
             if (mode === 'emergent' && ontology_updates && this.ontologyService) {
@@ -196,13 +205,23 @@ export class IngestionService {
               titleIndex.set(normalizeTitleKey(fact.title), { id, okf_type: normalized.okf_type });
 
               if (normalized.edges.length > 0) {
-                const resolved = this.ontologyService?.resolveEdges(
-                  entityId, id, normalized.okf_type, normalized.edges, manifest, titleIndex, now,
-                ) ?? [];
-                for (const e of resolved) {
-                  hostEdges.push({ type: e.edge_type, sourceId: e.source_id, targetId: e.target_id });
-                }
+                rawEdgeRequests.push({ sourceId: id, sourceType: normalized.okf_type, edges: normalized.edges });
               }
+            }
+          }
+
+          // Pass 2: resolve every staged edge against the finalized title
+          // index. By this point the index contains both surviving prior
+          // facts (excluding this sourceRef) AND every replacement fact from
+          // this ingest, so forward references resolve correctly and no
+          // resolved edge points at a fact that's about to be soft-deleted.
+          const hostEdges: { type: string; sourceId: string; targetId: string }[] = [];
+          for (const req of rawEdgeRequests) {
+            const resolved = this.ontologyService?.resolveEdges(
+              entityId, req.sourceId, req.sourceType, req.edges, manifest, titleIndex, now,
+            ) ?? [];
+            for (const e of resolved) {
+              hostEdges.push({ type: e.edge_type, sourceId: e.source_id, targetId: e.target_id });
             }
           }
 

@@ -116,9 +116,12 @@ export function validateInlineEdges(
   manifest: OntologyManifest,
   opts?: { strict?: boolean; entityId?: string },
 ): ExtractedFactEdge[] {
-  if (!Array.isArray(edges)) return [];
   const strict = opts?.strict === true;
   const entityId = opts?.entityId ?? '';
+  if (!Array.isArray(edges)) {
+    if (strict) throw new WikiStrictOntologyViolation(entityId, 'edge', '');
+    return [];
+  }
   const valid: ExtractedFactEdge[] = [];
   for (const edge of edges) {
     if (typeof edge?.edge_type !== 'string' || typeof edge?.target_title !== 'string') {

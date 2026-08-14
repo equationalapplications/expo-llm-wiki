@@ -198,6 +198,76 @@ describe('upsertGraph contract — C2: no-op on unchanged scope', () => {
       ),
     ).rejects.toBeInstanceOf(WikiSourceRefHashCollision);
   });
+
+  it('same sourceRef with different sourceHash supersedes prior facts + edges and returns superseded count', async () => {
+    const sourceRef = 'foo.ts';
+    const firstHash = 'a'.repeat(64);
+    const secondHash = 'b'.repeat(64);
+
+    // First write: 2 facts, 1 edge between them.
+    const first = await db.withTransactionAsync(async (tx) =>
+      wiki.upsertGraph(
+        'entity-1',
+        {
+          sourceRef,
+          sourceHash: firstHash,
+          nodes: [
+            { id: 'f1', type: '', title: 'sym1' },
+            { id: 'f2', type: '', title: 'sym2' },
+          ],
+          edges: [{ type: '', sourceId: 'f1', targetId: 'f2' }],
+        },
+        tx,
+      ),
+    );
+    expect(first).toEqual({ nodesWritten: 2, edgesWritten: 1, superseded: 0 });
+
+    // Second write: same sourceRef, different sourceHash. Prior facts
+    // for this sourceRef are soft-deleted; the prior edge sourced from a
+    // retired fact is hard-deleted; the new facts/edges are persisted.
+    const second = await db.withTransactionAsync(async (tx) =>
+      wiki.upsertGraph(
+        'entity-1',
+        {
+          sourceRef,
+          sourceHash: secondHash,
+          nodes: [
+            { id: 'g1', type: '', title: 'sym1' },
+            { id: 'g2', type: '', title: 'sym2' },
+            { id: 'g3', type: '', title: 'sym3' },
+          ],
+          edges: [
+            { type: '', sourceId: 'g1', targetId: 'g2' },
+            { type: '', sourceId: 'g1', targetId: 'g3' },
+          ],
+        },
+        tx,
+      ),
+    );
+    expect(second.nodesWritten).toBe(3);
+    expect(second.edgesWritten).toBe(2);
+    // superseded = retired facts (2: f1, f2) + retired edges (1: f1→f2)
+    expect(second.superseded).toBe(3);
+
+    // Prior facts are soft-deleted (deleted_at set).
+    const facts = await db.getAllAsync<{ id: string; deleted_at: number | null }>(
+      `SELECT id, deleted_at FROM llm_wiki_entries WHERE entity_id = ? ORDER BY id`,
+      ['entity-1'],
+    );
+    const live = facts.filter(f => f.deleted_at === null).map(f => f.id);
+    const retired = facts.filter(f => f.deleted_at !== null).map(f => f.id);
+    expect(live.sort()).toEqual(['g1', 'g2', 'g3']);
+    expect(retired.sort()).toEqual(['f1', 'f2']);
+
+    // The original source edge is gone; the replacement edges remain.
+    const edges = await db.getAllAsync<{ source_id: string; target_id: string }>(
+      `SELECT source_id, target_id FROM llm_wiki_edges WHERE entity_id = ? ORDER BY source_id, target_id`,
+      ['entity-1'],
+    );
+    const edgePairs = edges.map(e => `${e.source_id}->${e.target_id}`).sort();
+    expect(edgePairs).toEqual(['g1->g2', 'g1->g3']);
+    expect(edgePairs).not.toContain('f1->f2');
+  });
 });
 
 describe('upsertGraph contract — C3: dangling edge targets legal', () => {
