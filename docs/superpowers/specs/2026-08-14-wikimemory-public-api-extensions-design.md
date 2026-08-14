@@ -1,7 +1,7 @@
-# Spec: `WikiMemory` Public-API Extensions — `listEntityIds`, `upsertGraph`, `commitIngest`
+# Spec: `WikiMemory` Public-API Extensions — `listEntityIds`, `upsertGraph`
 
 **Date:** 2026-08-14
-**Status:** Proposed
+**Status:** Approved
 **Issues:** [#85](https://github.com/equationalapplications/expo-llm-wiki/issues/85), [#86](https://github.com/equationalapplications/expo-llm-wiki/issues/86)
 **Packages:** `@eq/wiki-core`
 **Consumer context:** `equationalapplications/aws-cloud-agent` — tier registry, deterministic-write ingest path for `tier_codebase`
@@ -21,14 +21,13 @@ The motivating consumer is `aws-cloud-agent`, which holds a tier registry where 
 
 ## Solution
 
-Three additions to the public `WikiMemory` API, plus one internal refactor. All additive. No schema migration. No new outbox event type. No breaking changes.
+Two additions to the public `WikiMemory` API, plus one internal refactor. All additive. No schema migration. No new outbox event type. No breaking changes.
 
 | Section | Surface | New / Modified |
 | --- | --- | --- |
 | §1 | `listEntityIds(options?: { prefix?: string }): Promise<string[]>` | New public method |
 | §2 | `upsertGraph(entityId, params, adapter: SQLiteAdapter): Promise<{ nodesWritten; edgesWritten; superseded }>` | New public method |
-| §3 | `commitIngest(entityId: string): Promise<{ embedded; failed; synced; evicted }>` | New public method |
-| §4 | New error classes `WikiStrictOntologyViolation` and `WikiSourceRefHashCollision` | New exports |
+| §3 | New error classes `WikiStrictOntologyViolation` and `WikiSourceRefHashCollision` | New exports |
 | §2 (refactor) | `IngestionService.upsertGraphCore` extracted from `ingestDocument`; `validateAndNormalizeFact` / `validateInlineEdges` gain a `strict: boolean` flag; new `EdgeRepository.softDeleteBySourceFactIds` method | Internal refactor |
 
 `upsertGraph` is "the tail of `ingestDocument` with the middle (LLM extraction) step removed." It accepts caller-supplied nodes and edges and writes them directly under `(sourceRef, sourceHash)` semantics identical to `ingestDocument`, with one structural difference: it must participate in the caller's transaction (C1 in §2) rather than open its own.
@@ -110,7 +109,9 @@ This clause also makes the call cheap enough to invoke once per source file insi
 
 When `(entityId, params.sourceHash)` is already mapped to `params.sourceRef` in the `source_ref_index` table, write nothing and return `{ nodesWritten: 0, edgesWritten: 0, superseded: 0 }`. Reuses `hasChanged` semantics, implemented by reading `SourceRefIndexRepository.findActiveByEntityAndHash(entityId, sourceHash)` (a single read inside the caller's tx).
 
-When the same hash is already mapped to a *different* `sourceRef`, throw `WikiSourceRefHashCollision` (§4) — the partial UNIQUE index `(entity_id, source_hash) WHERE deleted_at IS NULL` would reject the upsert in step 5 below, but failing loudly here gives a clearer message before any writes happen.
+When the same hash is already mapped to a *different* `sourceRef`, throw `WikiSourceRefHashCollision` (§3) — the partial UNIQUE index `(entity_id, source_hash) WHERE deleted_at IS NULL` would reject the upsert in step 5 below, but failing loudly here gives a clearer message before any writes happen.
+
+> **Known limitation, carried over from an existing library invariant, not introduced here.** `source_ref_index` is keyed on `(entity_id, source_hash)` alone, not `(entity_id, source_ref, source_hash)` — `ingestDocument` already throws `WikiDuplicateHashError` on this same collision today. For prose documents, two different documents sharing a content hash is rare. For `upsertGraph`'s motivating consumer, `sourceHash` is a git blob SHA — a pure content hash, path-independent — and **two files with byte-identical content in the same repository (duplicate barrel `index.ts` re-exports, blank stub files, vendored boilerplate) collide today.** The second file's `upsertGraph` call throws `WikiSourceRefHashCollision`, which the host has no special handling for, so that file's graph write becomes a terminal rejection — permanent until the file's content changes, since the hash doesn't change across re-parses. This is not new behavior introduced by this spec, but it is a real-world cost for a source-tree producer in a way it isn't for a document-ingestion producer, and is called out here rather than left for the consumer to discover as a mystery.
 
 #### C3 — Dangling edge targets are legal
 
@@ -122,7 +123,7 @@ C3 and C4 hold each other up: because dangling targets are stored rather than sk
 
 #### C4 — Strict-mode violations throw
 
-When the persisted ontology manifest for `entityId` has `mode === 'strict'`, an out-of-manifest node `type` or edge `type` causes `upsertGraph` to throw `WikiStrictOntologyViolation` (§4). Pre-flight validation is all-or-nothing: if any node or edge is invalid in strict mode, NONE are written — never drops the offending item and returns success.
+When the persisted ontology manifest for `entityId` has `mode === 'strict'`, an out-of-manifest node `type` or edge `type` causes `upsertGraph` to throw `WikiStrictOntologyViolation` (§3). Pre-flight validation is all-or-nothing: if any node or edge is invalid in strict mode, NONE are written — never drops the offending item and returns success.
 
 Under non-strict modes (`'emergent'`, `'off'`, or no manifest), invalid types are silently dropped or written with `okf_type: null`, matching `ingestDocument`'s current behavior. The strict-mode harmonization for `ingestDocument` itself is out of scope for this spec (§5).
 
@@ -171,7 +172,7 @@ j. **Return** `{ nodesWritten: params.nodes.length, edgesWritten: validEdges.len
 
 The transactional block of `IngestionService.ingestDocument` (steps d–i above, parameterised over the source of the `(nodes, edges)` pair) is extracted as a new private method `IngestionService.upsertGraphCore(entityId, params, tx, opts?: { strict?: boolean })`. Both `ingestDocument` (with `strict: false`, preserving current behavior) and `WikiMemory.upsertGraph` (with `strict: true` driven by the persisted mode) route through it. The extraction boundary is the existing `withTransactionAsync` block in `ingestDocument`; the refactor is mechanical.
 
-The lock acquisition (`acquireIngestLocks`), post-commit search sync, post-commit embedding, and cache eviction remain in `ingestDocument` and do **not** move into `upsertGraphCore`. They move into the new `commitIngest` (§3) for the deterministic-write path.
+The lock acquisition (`acquireIngestLocks`), post-commit search sync, post-commit embedding, and cache eviction remain in `ingestDocument` and do **not** move into `upsertGraphCore`.
 
 ### Strict-mode validator change
 
@@ -192,41 +193,11 @@ validateInlineEdges(
 ): readonly { type: string; /* … */ }[];
 ```
 
-When `strict: true` and a type doesn't resolve against the manifest, the function throws `WikiStrictOntologyViolation` (§4). When `strict: false` (default), invalid types are silently dropped as today. All existing callers — currently only `IngestionService.ingestDocument` — continue to receive the default `strict: false`; grep-verified at implementation time.
+When `strict: true` and a type doesn't resolve against the manifest, the function throws `WikiStrictOntologyViolation` (§3). When `strict: false` (default), invalid types are silently dropped as today. All existing callers — currently only `IngestionService.ingestDocument` — continue to receive the default `strict: false`; grep-verified at implementation time.
 
 ---
 
-## §3. `WikiMemory.commitIngest`
-
-```ts
-commitIngest(entityId: string): Promise<{
-  embedded: number;
-  failed: number;
-  synced: boolean;
-  evicted: boolean;
-}>;
-```
-
-Post-commit companion for `upsertGraph`. Caller wraps multiple `upsertGraph` calls in their tx, commits, then calls `commitIngest(entityId)`. Encapsulates the post-commit pattern (search sync, embedding, cache eviction) in one method.
-
-**Does not open its own transaction.** Caller's tx is already committed by the time `commitIngest` is called.
-
-**Error tolerance:**
-- `searchService.sync` failure: propagates (matches `runReembed`'s "fail loud on infrastructure" pattern).
-- `embeddingService.embedFact` per-fact failure: counted in `failed`, does not fail the call. The loop is **sequential `await` with per-fact `try/catch`** (matches `runReembed`'s pattern). `Promise.allSettled` is **rejected** for this surface: concurrent embedding would defeat per-call rate limiting and complicate error attribution when several facts fail simultaneously. Because `embedFact` is an `async` LLM call, the failure mode is rejection; the loop awaits each call inside a `try/catch` and increments `failed` on rejection.
-- `searchService.evictCache` failure: logged, `evicted: false`, does not fail the call (cache operations are best-effort).
-
-**Scope:** embeds *all* facts in the entity with `embedding IS NULL`, regardless of `sourceRef`. This is conservative — if the caller wants to scope by `sourceRef`, they call `runReembed(entityId, { sourceRef })` separately. Documented contract.
-
-**Steps:**
-1. `searchService.sync(entityId)` → `synced: boolean`.
-2. Loop: for each fact in `${prefix}entries` where `entity_id = ? AND embedding IS NULL`, call `embeddingService.embedFact(fact)`. Increment `embedded` on success, `failed` on throw.
-3. `searchService.evictCache(entityId)` → `evicted: boolean`.
-4. Return `{ embedded, failed, synced, evicted }`.
-
----
-
-## §4. New error classes
+## §3. New error classes
 
 Both added to `packages/core/src/types.ts` and re-exported from the package barrel. Extend `Error` directly. Mirror the existing `WikiBusyError` / `WikiDuplicateHashError` public shape (a `code` field plus named fields relevant to the violation).
 
@@ -281,19 +252,19 @@ export class WikiSourceRefHashCollision extends Error {
 }
 ```
 
-Thrown at the C2 probe when the supplied `sourceHash` is already mapped to a different `sourceRef` for the same entity. Indicates either a caller-side bug (id derivation collision) or a race with another writer; in both cases fail loud.
+Thrown at the C2 probe when the supplied `sourceHash` is already mapped to a different `sourceRef` for the same entity. Indicates either a caller-side bug (id derivation collision), a race with another writer, or — per the C2 known-limitation note above — two source files with genuinely identical content. In all cases, fail loud.
 
 ---
 
 ## Cross-cutting
 
-**Backwards compatibility:** all three new methods are additive. No existing method's signature changes. No return type widens in a way that breaks strict destructure-only callers.
+**Backwards compatibility:** both new methods are additive. No existing method's signature changes. No return type widens in a way that breaks strict destructure-only callers.
 
 **Public-surface ownership:** hosts use the `WikiMemory` facade. `IngestionService.upsertGraphCore`, `EdgeRepository.softDeleteBySourceFactIds`, and the new strict-mode validator option are library-internal. Migration off direct-schema access in the consumer (e.g. `aws-cloud-agent` reaching under the abstraction today) is the host's job; this spec does not change that.
 
 **Outbox events:** unchanged. `upsertGraph` stages the same per-row INSERT outbox events that `ingestDocument` does today, via the same `entryRepo.upsert` path.
 
-**Locking:** `upsertGraph` and `commitIngest` acquire no locks. The `'ingest'`, `'import'`, `'prune'`, `'librarian'`, `'heal'`, `'ontologyBackfill'`, `'reembed'`, and `'forget'` lock groupings are unaffected.
+**Locking:** `upsertGraph` acquires no locks. The `'ingest'`, `'import'`, `'prune'`, `'librarian'`, `'heal'`, `'ontologyBackfill'`, `'reembed'`, and `'forget'` lock groupings are unaffected.
 
 **Schema:** no migrations. No new columns. No new tables. No new indexes.
 
@@ -319,6 +290,7 @@ Harness: `makeWiki()` from `packages/core/__tests__/write.test.ts` (returns `{ w
 **C2 — no-op on unchanged scope:**
 - `re-call with same (sourceRef, sourceHash) returns zeros, writes nothing`: first call writes 3 nodes + 2 edges. Second call: identical params. Assert returns zeros; row counts unchanged.
 - `same sourceHash with different sourceRef throws WikiSourceRefHashCollision`: first call `sourceRef='a', hash='h`; second call `sourceRef='b', hash='h`; assert throws.
+- `two distinct sourceRefs with genuinely identical content both throw on the second write`: regression test pinning the known limitation documented in §2/C2 — first call `sourceRef='fileA.ts', hash='h'` succeeds; second call `sourceRef='fileB.ts', hash='h'` (same hash, different path, as two byte-identical files would produce) throws `WikiSourceRefHashCollision`. Exists so a future attempt to silently "fix" this by loosening the index is a deliberate, reviewed decision rather than an accidental behavior change.
 
 **C3 — dangling edge targets legal:**
 - `edge whose targetId names a missing node is stored verbatim`: nodes=[{id:'a:sym1'}], edges=[{sourceId:'a:sym1', targetId:'b:sym_never_parsed'}]. Assert edge row exists with `target_id='b:sym_never_parsed'`.
@@ -329,12 +301,6 @@ Harness: `makeWiki()` from `packages/core/__tests__/write.test.ts` (returns `{ w
 - `out-of-manifest edge type under strict mode throws`: symmetric.
 - `all-or-nothing — first invalid node throws, NONE written`: 3 nodes, 2nd invalid. Assert 0 rows in `entries`, `edges`, `source_ref_index`.
 - `out-of-manifest type under non-strict mode silently drops (matches ingestDocument parity)`: mode='off'; facts written with `okf_type=null`; invalid edges filtered.
-
-**`upsertGraph` integration with `commitIngest`:**
-- `commitIngest embeds facts with embedding IS NULL after upsertGraph`: call `upsertGraph` (with `tx`); commit; call `commitIngest`; assert `embedded > 0` and all rows have non-null `embedding`.
-- `commitIngest per-fact embedFact failures counted, do not fail the call`: mock `embedFact` to throw on second call; assert `failed: 1, embedded: 1`, no throw.
-- `commitIngest searchService.sync failure propagates`: mock `sync` to throw; assert rejects.
-- `commitIngest searchService.evictCache failure tolerated, evicted: false`: mock `evictCache` to throw; assert returns `evicted: false`, no throw.
 
 ### `packages/core/__tests__/listEntityIds.test.ts`
 
@@ -363,12 +329,12 @@ Default. No special ordering or setup needed.
 
 ## Out of Scope
 
-- **Strict-mode harmonization for `ingestDocument` itself.** Today's `validateAndNormalizeFact` / `validateInlineEdges` silently drop invalid types regardless of mode. This spec closes that gap for `upsertGraph` only. Closing it for `ingestDocument` would surface a behavior change for existing callers and is a separate future ticket — explicitly noted here so it's not silently closed off.
+- **`commitIngest(entityId)` post-commit helper.** Considered as a companion method bundling `searchService.sync` + per-fact `embeddingService.embedFact` + `searchService.evictCache` into one call, for a caller driving many `upsertGraph` calls inside one transaction and wanting embeddings synced afterward. Not specced here: the motivating consumer's tier registry already plans to cover scoped-namespace embedding freshness through its existing maintenance sweep (`runLibrarian` / `runHeal` / `runOntologyBackfill` / `runPrune`, widened via `listEntityIds()` from §1) rather than through a new per-write method, so there is no concrete caller for `commitIngest` today. A `commitIngest(entityId, sourceRefs)` scoped-by-`sourceRef` variant was also considered and rejected for the same reason. Revisit as a new, separately-specced method if a consumer needs post-write embedding freshness faster than the maintenance sweep provides, rather than folding it into this spec speculatively.
 - **Counts in `listEntityIds` return value.** The motivating case (§85) only needs the id list. Counts (`Array<{ entityId: string; factCount: number }>`) would require either an N+1 follow-up query or a more expensive JOIN'd aggregation. Not implemented in v1; documented as a possible v2 if the empty-namespace-skip use case becomes real.
 - **Index on `entity_id` alone.** The `(entity_id, source_ref)` index does not support `entity_id`-only prefix seeks. Adding such an index is a schema change and out of scope. The O(n) `.filter()` is acceptable for v1; revisit if profiling shows it as a bottleneck.
-- **`commitIngest(entityId, sourceRefs)` overload.** Considered scoping by `sourceRef` to embed only the new facts. Rejected as premature; callers needing scope can call `runReembed(entityId, { sourceRef })` after `commitIngest`.
+- **A wider `(entity_id, source_ref, source_hash)` uniqueness scope for `source_ref_index`.** Would eliminate the identical-content collision documented under C2, but is a schema/index change to a table `ingestDocument` also depends on (the #79 TOCTOU fix), and changes `ingestDocument`'s existing collision behavior for every caller, not just `upsertGraph`. Out of scope for this spec; tracked as the natural follow-up if the collision proves costly in practice.
 - **New `DirectWriteService` to host `upsertGraphCore`.** Considered extracting into a new service for cleaner name separation. Rejected in favor of keeping the diff focused on `IngestionService` + `WikiMemory` + the strict-mode validator addition.
-- **A new public `syncSearchIndex(entityId)` method.** `searchService.sync` is reachable only through the existing post-commit hooks inside `ingestDocument` and the new `commitIngest`. Exposing it directly is out of scope.
+- **A new public `syncSearchIndex(entityId)` method.** `searchService.sync` is reachable only through the existing post-commit hooks inside `ingestDocument`. Exposing it directly is out of scope.
 
 ---
 
