@@ -111,19 +111,24 @@ export class OntologyService {
     return { okf_type: canonical, edges };
   }
 
-  async resolveAndPersistEdges(
+  /**
+   * Pure resolver: given a source type, LLM-supplied edges, the manifest,
+   * and a title index, return a list of concrete `WikiEdge` objects ready
+   * for persistence. Performs no DB writes. Used by callers that batch edge
+   * writes inside their own transaction (e.g. `IngestionService.ingestDocument`
+   * when delegating to `upsertGraphCore`).
+   */
+  resolveEdges(
     entityId: string,
     sourceId: string,
     sourceType: string | null,
     edges: ExtractedFactEdge[],
     manifest: OntologyManifest,
     titleIndex: Map<string, TitleIndexEntry>,
-    tx: SQLiteAdapter,
     now: number,
-  ): Promise<number> {
-    if (!sourceType || edges.length === 0) return 0;
-
-    let persisted = 0;
+  ): WikiEdge[] {
+    if (!sourceType || edges.length === 0) return [];
+    const out: WikiEdge[] = [];
     for (const edge of edges) {
       const candidates = resolveEdgeDefinitions(edge.edge_type, manifest)
         .filter(d => d.source_type.toLowerCase() === sourceType.toLowerCase());
@@ -138,15 +143,39 @@ export class OntologyService {
       );
       if (!def) continue;
 
-      const wikiEdge: WikiEdge = {
+      out.push({
         id: generateId(),
         entity_id: entityId,
         source_id: sourceId,
         target_id: target.id,
         edge_type: def.type,
         created_at: now,
-      };
-      const inserted = await this.edgeRepo.addIgnoreDuplicate(wikiEdge, tx);
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Backwards-compatible wrapper: resolves edges via {@link resolveEdges},
+   * then persists each via `edgeRepo.addIgnoreDuplicate` in the supplied
+   * transaction. Returns the number of edges persisted. Used by paths that
+   * want self-contained edge persistence (e.g. MaintenanceService heal /
+   * backfill callers that do not have a separate edge-write step).
+   */
+  async resolveAndPersistEdges(
+    entityId: string,
+    sourceId: string,
+    sourceType: string | null,
+    edges: ExtractedFactEdge[],
+    manifest: OntologyManifest,
+    titleIndex: Map<string, TitleIndexEntry>,
+    tx: SQLiteAdapter,
+    now: number,
+  ): Promise<number> {
+    const resolved = this.resolveEdges(entityId, sourceId, sourceType, edges, manifest, titleIndex, now);
+    let persisted = 0;
+    for (const edge of resolved) {
+      const inserted = await this.edgeRepo.addIgnoreDuplicate(edge, tx);
       if (inserted) persisted++;
     }
     return persisted;

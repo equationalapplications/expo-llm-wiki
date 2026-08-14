@@ -1,12 +1,14 @@
 import { chunkText, withConcurrency, validateFact, parseJsonResponse, normalizeSourceRef, normalizeSourceHash } from '../utils/pure';
 import { normalizeTitleKey } from '../utils/ontology';
 import { generateId } from '../utils/ids';
-import { WikiDuplicateHashError, WikiTransactionError } from '../types';
-import type { WikiOptions, ExtractedFact, ExtractedFactWithOntology, WikiFact, OntologyUpdates } from '../types';
+import { WikiDuplicateHashError, WikiTransactionError, WikiStrictOntologyViolation } from '../types';
+import type { WikiOptions, ExtractedFact, ExtractedFactWithOntology, WikiFact, OntologyUpdates, OntologyMode, OntologyManifest, WikiEdge } from '../types';
 import type { SQLiteAdapter } from '../types';
 import { extractSqliteCode } from '../db/sqliteCodes';
 import type { EntryRepository } from '../repositories/EntryRepository';
 import type { SourceRefIndexRepository } from '../repositories/SourceRefIndexRepository';
+import type { MetadataRepository } from '../repositories/MetadataRepository';
+import type { EdgeRepository } from '../repositories/EdgeRepository';
 import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
@@ -23,6 +25,8 @@ export class IngestionService {
     private options: WikiOptions,
     private entryRepo: EntryRepository,
     private sourceRefIndexRepo: SourceRefIndexRepository,
+    private metadataRepo: MetadataRepository,
+    private edgeRepo: EdgeRepository,
     private searchService: SearchService,
     private jobManager: JobManager,
     private embeddingService: EmbeddingService,
@@ -139,26 +143,17 @@ export class IngestionService {
 
       try {
         await this.db.withTransactionAsync(async (tx) => {
+          // Capture the IDs of facts about to be soft-deleted so we can fire
+          // onEmbeddingPersisted hooks AFTER the transaction commits. The
+          // capture happens BEFORE the softDelete, so even though
+          // upsertGraphCore performs its own findIdsBySource for edge
+          // supersession, the IDs here are the canonical "what we retired"
+          // set for the embedding lifecycle.
           deletedSourceFactIds.push(...(await this.entryRepo.findIdsBySource(entityId, sourceRef, null, tx, false)));
-          await this.entryRepo.softDeleteBySource(entityId, tx, sourceRef, null);
-          // Remove the prior run's source_ref_index row for this sourceRef so
-          // the upsert below doesn't collide with ourselves. No-op when the
-          // sourceRef has never been ingested before.
-          await this.sourceRefIndexRepo.softDeleteByEntityAndSourceRef(entityId, sourceRef, tx);
-          // Take ownership of (entity, hash). The partial UNIQUE index on
-          // source_ref_index (entity_id, source_hash) WHERE deleted_at IS NULL
-          // catches concurrent writers for the same hash from a DIFFERENT
-          // sourceRef; the catch-and-translate below turns the violation into
-          // the per-mode duplicate-hash outcome.
-          await this.sourceRefIndexRepo.upsert(entityId, sourceHash, sourceRef, tx);
 
+          // Build title index from existing facts (used to resolve LLM
+          // target_title → target_id) and merge emergent ontology updates.
           const titleIndex = new Map<string, TitleIndexEntry>();
-          const pendingEdges: Array<{
-            sourceId: string;
-            sourceType: string | null;
-            edges: ExtractedFactWithOntology['edges'];
-          }> = [];
-
           const existingFacts = await this.entryRepo.findRecentByEntityId(entityId, 500, tx);
           for (const existing of existingFacts) {
             titleIndex.set(normalizeTitleKey(existing.title), {
@@ -170,6 +165,12 @@ export class IngestionService {
           let ontologyState = await this.ontologyService?.getEffectiveState(entityId, tx)
             ?? { mode: 'off' as const, manifest: { node_types: [], edge_types: [] } };
           let { mode, manifest } = ontologyState;
+
+          // Convert LLM extraction into host-facing (nodes, edges) shape:
+          // concrete sourceId / targetId per edge, with title→id resolution
+          // already applied. upsertGraphCore owns the persistence step.
+          const hostNodes: { id: string; type: string; title: string; body: string }[] = [];
+          const hostEdges: { type: string; sourceId: string; targetId: string }[] = [];
 
           for (const { facts, ontology_updates } of orderedChunkFacts) {
             if (mode === 'emergent' && ontology_updates && this.ontologyService) {
@@ -184,28 +185,33 @@ export class IngestionService {
                 ?? { okf_type: null, edges: [] };
 
               const id = generateId('fact_');
-              const wikiFact: WikiFact = {
-                id, entity_id: entityId, title: fact.title, body: fact.body, tags: fact.tags, confidence: fact.confidence,
-                source_type: 'immutable_document', source_hash: sourceHash, source_ref: sourceRef,
-                created_at: now, updated_at: now, last_accessed_at: null, access_count: 0, deleted_at: null,
-                okf_type: normalized.okf_type,
-              };
-              await this.entryRepo.upsert(wikiFact, tx);
+              hostNodes.push({
+                id,
+                type: ontologyFact.okf_type ?? '',
+                title: fact.title,
+                body: fact.body,
+              });
               insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
 
               titleIndex.set(normalizeTitleKey(fact.title), { id, okf_type: normalized.okf_type });
 
               if (normalized.edges.length > 0) {
-                pendingEdges.push({ sourceId: id, sourceType: normalized.okf_type, edges: normalized.edges });
+                const resolved = this.ontologyService?.resolveEdges(
+                  entityId, id, normalized.okf_type, normalized.edges, manifest, titleIndex, now,
+                ) ?? [];
+                for (const e of resolved) {
+                  hostEdges.push({ type: e.edge_type, sourceId: e.source_id, targetId: e.target_id });
+                }
               }
             }
           }
 
-          for (const item of pendingEdges) {
-            await this.ontologyService?.resolveAndPersistEdges(
-              entityId, item.sourceId, item.sourceType, item.edges ?? [], manifest, titleIndex, tx, now,
-            );
-          }
+          await this.upsertGraphCore(
+            entityId,
+            { sourceRef, sourceHash, nodes: hostNodes, edges: hostEdges },
+            tx,
+            { strict: false },
+          );
         });
       } catch (err) {
         // A concurrent ingest for a DIFFERENT sourceRef beat us to the same
@@ -256,5 +262,137 @@ export class IngestionService {
     } finally {
       releaseIngestLocks();
     }
+  }
+
+  /**
+   * Implements spec §2 data flow steps a–j with the host-facing
+   * `{sourceRef, sourceHash, nodes, edges}` parameter shape. Shared between
+   * `ingestDocument` (with `{ strict: false }` to preserve current behavior)
+   * and `WikiMemory.upsertGraph` (which lets the persisted ontology mode
+   * decide strictness).
+   *
+   * Runs ENTIRELY inside the supplied `tx`. Does not acquire locks, does not
+   * open a nested transaction, does not perform post-commit work (search
+   * sync, embedding, cache eviction). Those concerns remain in `ingestDocument`.
+   *
+   * The pre-flight validation (steps a–c) lives INSIDE this method per the
+   * spec, so the public `WikiMemory.upsertGraph` can be a thin wrapper that
+   * performs only the C2 probe before delegating.
+   *
+   * @returns Counts: nodesWritten (validated nodes persisted), edgesWritten
+   *   (manifest-valid edges persisted), superseded (prior facts soft-deleted
+   *   plus prior source-ref edges hard-deleted).
+   */
+  private async upsertGraphCore(
+    entityId: string,
+    params: {
+      sourceRef: string;
+      sourceHash: string;
+      nodes: readonly { id: string; type: string; title: string; body?: string }[];
+      edges: readonly { type: string; sourceId: string; targetId: string; id?: string }[];
+    },
+    tx: SQLiteAdapter,
+    opts?: { strict?: boolean },
+  ): Promise<{ nodesWritten: number; edgesWritten: number; superseded: number }> {
+    const now = Date.now();
+
+    // (a) Read persisted ontology mode.
+    const ontologyRow = await this.metadataRepo.getManifest(entityId, tx);
+    const persistedMode: OntologyMode = ontologyRow?.mode ?? 'off';
+    // `opts.strict === false` overrides the persisted mode (used by
+    // ingestDocument to preserve its pre-strict-mode silent-drop behavior).
+    // `opts.strict === true` forces strict. `opts.strict === undefined`
+    // follows the persisted mode.
+    const strictEffective = opts?.strict === false
+      ? false
+      : opts?.strict === true || persistedMode === 'strict';
+    const manifest: OntologyManifest = ontologyRow?.manifest ?? { node_types: [], edge_types: [] };
+
+    // (b) Pre-flight node validation — all-or-nothing under strict mode.
+    // Build WikiFacts ready for upsert, with canonical okf_type.
+    const wikiFacts: WikiFact[] = [];
+    for (const node of params.nodes) {
+      const factLike = { okf_type: node.type, edges: [] } as unknown as ExtractedFactWithOntology;
+      const normalized = this.ontologyService?.validateAndNormalizeFact(factLike, manifest, {
+        strict: strictEffective,
+        entityId,
+      }) ?? { okf_type: null, edges: [] };
+      const wikiFact: WikiFact = {
+        id: node.id,
+        entity_id: entityId,
+        title: node.title,
+        body: node.body ?? '',
+        tags: [],
+        confidence: 'certain', // host-supplied deterministic nodes default to 'certain'
+        source_type: 'immutable_document',
+        source_hash: params.sourceHash,
+        source_ref: params.sourceRef,
+        created_at: now,
+        updated_at: now,
+        last_accessed_at: null,
+        access_count: 0,
+        deleted_at: null,
+        okf_type: normalized.okf_type,
+      };
+      wikiFacts.push(wikiFact);
+    }
+
+    // (c) Pre-flight edge validation, grouped by sourceId.
+    // C3: dangling targetIds are stored verbatim. We only validate against
+    // the manifest's (source_type, edge_type) lookup.
+    const sourceIdToType = new Map<string, string | null>();
+    for (const fact of wikiFacts) sourceIdToType.set(fact.id, fact.okf_type ?? null);
+
+    const validEdges: WikiEdge[] = [];
+    for (const edge of params.edges) {
+      const sourceType = sourceIdToType.get(edge.sourceId) ?? null;
+      const candidates = (manifest.edge_types ?? []).filter(d =>
+        d.type.toLowerCase() === edge.type.toLowerCase()
+        && d.source_type.toLowerCase() === (sourceType ?? '').toLowerCase(),
+      );
+      const match = candidates[0];
+      if (!match) {
+        if (strictEffective) throw new WikiStrictOntologyViolation(entityId, 'edge', edge.type);
+        continue;
+      }
+      validEdges.push({
+        id: edge.id ?? generateId(),
+        entity_id: entityId,
+        source_id: edge.sourceId,
+        target_id: edge.targetId,
+        edge_type: match.type,
+        created_at: now,
+      });
+    }
+
+    // (d) Supersede prior facts for sourceRef.
+    const deletedFactIds = await this.entryRepo.findIdsBySource(entityId, params.sourceRef, null, tx, false);
+    await this.entryRepo.softDeleteBySource(entityId, tx, params.sourceRef, null);
+
+    // (e) Supersede prior edges whose source is in deletedFactIds.
+    const deletedEdgeCount = await this.edgeRepo.softDeleteBySourceFactIds(entityId, deletedFactIds, tx);
+
+    // (f) Clear prior source_ref_index row for (entity, sourceRef).
+    await this.sourceRefIndexRepo.softDeleteByEntityAndSourceRef(entityId, params.sourceRef, tx);
+
+    // (g) Take ownership of (entity, hash).
+    await this.sourceRefIndexRepo.upsert(entityId, params.sourceHash, params.sourceRef, tx);
+
+    // (h) Write nodes (per-row outbox INSERT via entryRepo.upsert).
+    for (const wikiFact of wikiFacts) {
+      await this.entryRepo.upsert(wikiFact, tx);
+    }
+
+    // (i) Write edges (C3: dangling targets stored verbatim, no FK, no title-index resolution).
+    for (const edge of validEdges) {
+      await this.edgeRepo.addIgnoreDuplicate(edge, tx);
+    }
+
+    // (j) Return counts.
+    return {
+      nodesWritten: wikiFacts.length,
+      edgesWritten: validEdges.length,
+      superseded: deletedFactIds.length + deletedEdgeCount,
+    };
   }
 }

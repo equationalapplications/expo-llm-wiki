@@ -15,6 +15,8 @@ describe('IngestionService — PromptService injection', () => {
   let mockSearchService: any;
   let mockJobManager: any;
   let mockEmbeddingService: any;
+  let mockMetadataRepo: any;
+  let mockEdgeRepo: any;
 
   beforeEach(() => {
     mockDb = {
@@ -35,6 +37,13 @@ describe('IngestionService — PromptService injection', () => {
       softDeleteByEntityAndSourceRef: vi.fn().mockResolvedValue(0),
       upsert: vi.fn().mockResolvedValue(undefined),
     };
+    mockMetadataRepo = {
+      getManifest: vi.fn().mockResolvedValue(null),
+    };
+    mockEdgeRepo = {
+      addIgnoreDuplicate: vi.fn().mockResolvedValue(true),
+      softDeleteBySourceFactIds: vi.fn().mockResolvedValue(0),
+    };
     mockSearchService = {
       sync: vi.fn().mockResolvedValue(undefined),
       evictCache: vi.fn(),
@@ -52,7 +61,7 @@ describe('IngestionService — PromptService injection', () => {
 
   it('passes systemPrompt and userPrompt from PromptService to llmProvider', async () => {
     const promptService = new PromptService();
-    const svc = new IngestionService(mockDb, 'llm_wiki_', mockOptions, mockEntryRepo, mockSourceRefIndexRepo, mockSearchService, mockJobManager, mockEmbeddingService, promptService);
+    const svc = new IngestionService(mockDb, 'llm_wiki_', mockOptions, mockEntryRepo, mockSourceRefIndexRepo, mockMetadataRepo, mockEdgeRepo, mockSearchService, mockJobManager, mockEmbeddingService, promptService);
 
     const sourceHash = 'a'.repeat(64);
     await svc.ingestDocument('entity1', {
@@ -71,7 +80,7 @@ describe('IngestionService — PromptService injection', () => {
 
   it('applies runtime promptOverride via PromptService', async () => {
     const promptService = new PromptService();
-    const svc = new IngestionService(mockDb, 'llm_wiki_', mockOptions, mockEntryRepo, mockSourceRefIndexRepo, mockSearchService, mockJobManager, mockEmbeddingService, promptService);
+    const svc = new IngestionService(mockDb, 'llm_wiki_', mockOptions, mockEntryRepo, mockSourceRefIndexRepo, mockMetadataRepo, mockEdgeRepo, mockSearchService, mockJobManager, mockEmbeddingService, promptService);
 
     const sourceHash = 'b'.repeat(64);
     await svc.ingestDocument('entity1', {

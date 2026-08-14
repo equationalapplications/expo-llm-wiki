@@ -113,6 +113,8 @@ export class WikiMemory {
       this.options,
       this.entryRepo,
       this.sourceRefIndexRepo,
+      this.metadataRepo,
+      this.edgeRepo,
       this.searchService,
       this.jobManager,
       this.embeddingService,
