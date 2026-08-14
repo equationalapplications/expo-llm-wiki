@@ -244,7 +244,14 @@ jobs:
             echo "PR head commit contains [skip ci] - pushing fix-up commit to trigger Test workflow."
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
-            git checkout "$BRANCH"
+            # Discard the semantic-release artifacts left in the working tree
+            # by restoring the branch from origin. The plain `git checkout
+            # "$BRANCH"` above fails when the on-disk release files (CHANGELOG
+            # + versions) differ from the branch's state — semantic-release
+            # ran in a prior step and the working tree is dirty. The recovery
+            # commit on the existing-PR path is an empty no-op, so the
+            # discarded generated files are not needed on this branch.
+            git checkout -f -B "$BRANCH" "origin/$BRANCH"
             git commit --allow-empty --no-verify -m "chore(release): trigger Test workflow"
             git push "https://x-access-token:${RELEASE_BOT_PAT}@github.com/${REPO}.git" "$BRANCH"
           fi

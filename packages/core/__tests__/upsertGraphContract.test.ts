@@ -530,10 +530,19 @@ describe('upsertGraph contract — seedManifests honored before first persist', 
       ),
     ).rejects.toBeInstanceOf(WikiStrictOntologyViolation);
 
-    // The seed must be persisted to the metadata table as a side effect of
-    // the rejected call — subsequent reads should observe strict mode
-    // without re-seeding.
-    const persisted = await wiki.getOntologyManifest('fresh-entity');
-    expect(persisted?.mode).toBe('strict');
+    // The strict violation throws BEFORE the caller's transaction commits,
+    // so the seed write that OntologyService.getEffectiveState performs when
+    // it first observes the seed (under tx) is rolled back along with the
+    // rest of the upsertGraph. The strict-mode enforcement is therefore
+    // proven by the .rejects.toBeInstanceOf assertion above; a subsequent
+    // read observes the seed via WikiMemory.getOntologyManifest's
+    // seedManifests fallback, not via a persisted row. Query the table
+    // directly to assert no row was persisted (the rollback discarded the
+    // seed write).
+    const row = await db.getFirstAsync<{ mode: string }>(
+      `SELECT mode FROM llm_wiki_entity_manifests WHERE entity_id = ?`,
+      ['fresh-entity'],
+    );
+    expect(row).toBeNull();
   });
 });

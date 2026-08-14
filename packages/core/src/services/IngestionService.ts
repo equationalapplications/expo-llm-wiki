@@ -157,10 +157,15 @@ export class IngestionService {
           // target a soon-to-be-retired fact and leave the new edge pointing
           // at a soft-deleted record (the new edge's source is fresh, so step
           // (e) only retires edges whose SOURCE is in the deleted-fact set).
+          // The sourceRef exclusion is applied in SQL (via
+          // findRecentByEntityId's excludeSourceRef param) so the 500-row
+          // LIMIT applies to usable rows only — a re-ingest where the current
+          // sourceRef owns most recent facts otherwise leaves the index empty
+          // after the post-query filter, silently losing cross-sourceRef edges
+          // that a first ingest would have resolved.
           const titleIndex = new Map<string, TitleIndexEntry>();
-          const existingFacts = await this.entryRepo.findRecentByEntityId(entityId, 500, tx);
+          const existingFacts = await this.entryRepo.findRecentByEntityId(entityId, 500, tx, sourceRef);
           for (const existing of existingFacts) {
-            if (existing.source_ref === sourceRef) continue;
             titleIndex.set(normalizeTitleKey(existing.title), {
               id: existing.id,
               okf_type: existing.okf_type ?? null,

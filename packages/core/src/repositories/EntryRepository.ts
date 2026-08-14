@@ -461,12 +461,27 @@ export class EntryRepository extends BaseRepository {
   /**
    * Fetch recent non-deleted entries for an entity (limited), ordered by updated_at DESC.
    * Used by MaintenanceService.doRunLibrarian().
+   *
+   * When `excludeSourceRef` is supplied, the WHERE clause filters out that
+   * sourceRef BEFORE applying LIMIT. The caller in IngestionService is
+   * `findRecentByEntityId(entityId, 500, tx)` — it discards same-sourceRef
+   * rows after the read to build a cross-sourceRef title index. If those
+   * rows are filtered out in SQL, the limit applies to usable rows only
+   * and a re-ingest where the caller's sourceRef owns most recent facts
+   * still leaves cross-sourceRef entries in the index.
    */
-  async findRecentByEntityId(entityId: string, limit: number, tx?: SQLiteAdapter): Promise<WikiFact[]> {
+  async findRecentByEntityId(
+    entityId: string,
+    limit: number,
+    tx?: SQLiteAdapter,
+    excludeSourceRef?: string,
+  ): Promise<WikiFact[]> {
     const executor = this.getExecutor(tx);
+    const excludeClause = excludeSourceRef ? ` AND source_ref != ?` : '';
+    const args: unknown[] = excludeSourceRef ? [entityId, excludeSourceRef, limit] : [entityId, limit];
     const rows = await executor.getAllAsync<any>(
-      `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT ?`,
-      [entityId, limit],
+      `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL${excludeClause} ORDER BY updated_at DESC LIMIT ?`,
+      args,
     );
     return rows.map(mapRowToFact);
   }
