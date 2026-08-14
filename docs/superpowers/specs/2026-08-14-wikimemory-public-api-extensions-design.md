@@ -41,9 +41,13 @@ Three additions to the public `WikiMemory` API, plus one internal refactor. All 
 listEntityIds(options?: { prefix?: string }): Promise<string[]>;
 ```
 
-Returns the set of `entity_id` values with at least one live row in this database, ascending by `entity_id COLLATE BINARY`. Empty array when the database has no entities.
+Returns the set of `entity_id` values with at least one row in this database — **including entities whose only remaining rows are soft-deleted** — ascending by `entity_id COLLATE BINARY`. Empty array when the database has no entities.
 
-**Source query.** Thin wrapper over `MetadataRepository.getDistinctEntityIds` (already exists, already used internally by `exportDump`). The repo issues a UNION query across `${prefix}entries`, `${prefix}tasks`, and `${prefix}events` with `deleted_at IS NULL` filters where applicable, sorted by `entity_id COLLATE BINARY`.
+**Why include soft-deleted-only entities.** The motivating use case for this method (#85) is host-driven maintenance scheduling: a host runs `runLibrarian` / `runHeal` / `runOntologyBackfill` / `runPrune` over the entity set returned by `listEntityIds`. If a scoped namespace has all its documents forgotten or superseded, it has only soft-deleted rows. A `listEntityIds` that filtered on `deleted_at IS NULL` would no longer return that namespace, the host's pruning loop would skip it, and the soft-deleted rows would never be hard-deleted — a permanent storage leak for decommissioned scopes. Including soft-deleted-only entities closes this gap: the host's pruning loop visits orphaned namespaces and `runPrune` reaps them.
+
+**Source query.** Thin wrapper over `MetadataRepository.getDistinctEntityIds`. The repo's underlying query is widened (from its current `deleted_at IS NULL` form on entries and tasks) to a UNION across `${prefix}entries`, `${prefix}tasks`, and `${prefix}events` with no soft-delete filters, sorted by `entity_id COLLATE BINARY`.
+
+**Effect on `exportDump`.** `exportDump` calls `getDistinctEntityIds` to enumerate entities to dump. With this change, `exportDump` will include orphaned entities (those with only soft-deleted rows) in its output. This is a deliberate widening of `exportDump`'s effective coverage — exports should be conservative for backup and migration, not selective — and is **not** a breaking change to `exportDump`'s API contract (the return shape is unchanged; only the set of entities included grows). Documented in the host-visible CHANGELOG under the `core` package.
 
 **Optional `prefix` filter.** Applied as a post-read `.filter(id => id.startsWith(prefix))`. The `(entity_id, source_ref)` index is not seekable on `entity_id`-only prefix, so this is O(n) over distinct ids. Documented contract. Empty-string prefix matches every id (`''.startsWith('')` is true).
 
@@ -53,12 +57,13 @@ Returns the set of `entity_id` values with at least one live row in this databas
 - Empty database → `[]`.
 - Prefix matches nothing → `[]`.
 - Empty-string prefix → all ids.
+- Soft-deleted-only entities → included.
 
 ```sql
--- (existing, used as-is)
-SELECT DISTINCT entity_id FROM ${prefix}entries WHERE deleted_at IS NULL
+-- (widened from previous form; was filtered on deleted_at IS NULL)
+SELECT DISTINCT entity_id FROM ${prefix}entries
 UNION
-SELECT DISTINCT entity_id FROM ${prefix}tasks WHERE deleted_at IS NULL
+SELECT DISTINCT entity_id FROM ${prefix}tasks
 UNION
 SELECT DISTINCT entity_id FROM ${prefix}events
 ORDER BY 1 COLLATE BINARY
@@ -208,7 +213,7 @@ Post-commit companion for `upsertGraph`. Caller wraps multiple `upsertGraph` cal
 
 **Error tolerance:**
 - `searchService.sync` failure: propagates (matches `runReembed`'s "fail loud on infrastructure" pattern).
-- `embeddingService.embedFact` per-fact failure: counted in `failed`, does not fail the call (matches `runReembed`). Because `embedFact` is an `async` LLM call, the failure mode is rejection; the loop awaits each call and catches the rejection.
+- `embeddingService.embedFact` per-fact failure: counted in `failed`, does not fail the call. The loop is **sequential `await` with per-fact `try/catch`** (matches `runReembed`'s pattern). `Promise.allSettled` is **rejected** for this surface: concurrent embedding would defeat per-call rate limiting and complicate error attribution when several facts fail simultaneously. Because `embedFact` is an `async` LLM call, the failure mode is rejection; the loop awaits each call inside a `try/catch` and increments `failed` on rejection.
 - `searchService.evictCache` failure: logged, `evicted: false`, does not fail the call (cache operations are best-effort).
 
 **Scope:** embeds *all* facts in the entity with `embedding IS NULL`, regardless of `sourceRef`. This is conservative — if the caller wants to scope by `sourceRef`, they call `runReembed(entityId, { sourceRef })` separately. Documented contract.
@@ -335,7 +340,7 @@ Harness: `makeWiki()` from `packages/core/__tests__/write.test.ts` (returns `{ w
 
 - `returns [] for empty database`.
 - `returns ids sorted ascending, COLLATE BINARY`.
-- `returns union across entries/tasks/events with deleted_at IS NULL filter`: seed live + soft-deleted; assert only live ids returned.
+- `returns union across entries/tasks/events with no soft-delete filter`: seed entries/tasks/events for several entities; soft-delete all rows for one entity; assert that entity STILL appears in the result (closes the decommissioned-scope leak).
 - `prefix filter scopes the result`.
 - `empty-string prefix returns all ids`.
 - `prefix matching nothing returns []`.
