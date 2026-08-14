@@ -1,3 +1,26 @@
+# [5.3.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v5.2.1...v5.3.0) (2026-08-14)
+
+
+### Bug Fixes
+
+* **ci,core:** address /fix-pr review on PR [#84](https://github.com/equationalapplications/expo-llm-wiki/issues/84) ([7e8fce9](https://github.com/equationalapplications/expo-llm-wiki/commit/7e8fce9896b2b6076dadfbaf79ca7e557b706424))
+* **ci:** address CodeRabbit review on release PR workflow ([38394a2](https://github.com/equationalapplications/expo-llm-wiki/commit/38394a2105cc8d11eb2a279bcc07b440f116ee9e))
+* **ci:** use RELEASE_BOT_PAT for release PR creation to trigger Test workflow ([fe42ef0](https://github.com/equationalapplications/expo-llm-wiki/commit/fe42ef0e21f932cb044ff8e5ba5f6174f5967e71)), closes [#81](https://github.com/equationalapplications/expo-llm-wiki/issues/81)
+* **core,ci:** address /fix-pr review on PR [#84](https://github.com/equationalapplications/expo-llm-wiki/issues/84) ([104ffad](https://github.com/equationalapplications/expo-llm-wiki/commit/104ffad79e87f768f082cb9405ea28aa5b4603a9))
+* **core:** address CodeRabbit review on WikiMemory public-API extensions ([265a10f](https://github.com/equationalapplications/expo-llm-wiki/commit/265a10f66432067b88df4a7c22990298441cfc52))
+* **core:** keep NULL source_ref rows in cross-sourceRef title index ([144cf97](https://github.com/equationalapplications/expo-llm-wiki/commit/144cf9781d100d2b5aa8e513be776f378e304ccf))
+* **core:** preserve tags/confidence + cross-sourceRef edges + honest edgesWritten ([df8c236](https://github.com/equationalapplications/expo-llm-wiki/commit/df8c2364f46c0e0681c85268ff801b4a6df5bc35))
+
+
+### Features
+
+* **core:** add EdgeRepository.softDeleteBySourceFactIds for stale-edge cleanup ([6692d85](https://github.com/equationalapplications/expo-llm-wiki/commit/6692d85b01c904a89eefe550c32da6833992ffcc))
+* **core:** add strict opt-in to validateAndNormalizeFact and validateInlineEdges ([dc02e81](https://github.com/equationalapplications/expo-llm-wiki/commit/dc02e8196f5ec3b479d1f5e7a42683831f1d12fc))
+* **core:** add WikiMemory.listEntityIds public method ([fa7e608](https://github.com/equationalapplications/expo-llm-wiki/commit/fa7e6087f79a6a16c03b3aa2ac70b9ea40ec71e5))
+* **core:** add WikiMemory.upsertGraph public method ([7041bdd](https://github.com/equationalapplications/expo-llm-wiki/commit/7041bdd48ff300fd3095ab8d53c89d50102163f5))
+* **core:** add WikiStrictOntologyViolation and WikiSourceRefHashCollision error classes ([68d22e3](https://github.com/equationalapplications/expo-llm-wiki/commit/68d22e3db6010684932025220e42d22050953e04))
+* **core:** widen MetadataRepository.getDistinctEntityIds to include orphaned entities ([a6f616c](https://github.com/equationalapplications/expo-llm-wiki/commit/a6f616ca04f2ecf0a49ef697a51c26fd4f42ee83))
+
 ## [5.2.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v5.2.0...v5.2.1) (2026-08-08)
 
 
