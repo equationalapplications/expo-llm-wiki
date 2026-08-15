@@ -24,20 +24,27 @@ export interface FormatOkfBundleOptions {
 
 const DEFAULT_PROFILE: OkfFormatProfile = 'llm-wiki/2';
 
+/**
+ * Format an epoch-ms timestamp as ISO 8601 with a double fallback:
+ *   1. NaN / Infinity / non-finite -> epoch (0).
+ *   2. Outside JS Date's representable range (e.g. 1e300) -> epoch.
+ * `new Date(finite).toISOString()` throws RangeError only when the value is
+ * outside the supported range; a finite but absurd number still throws. We
+ * validate the constructed Date before calling toISOString so the helper
+ * never aborts the bundle export.
+ */
 function isoOrFallback(updatedAt: number): string {
-  // Non-finite values reach here via a raw importDump payload (see ImportExportService
-  // line 182's Number.isFinite guard, which still accepts 0 as "valid" — and 0
-  // IS finite, but a NaN/Infinity from elsewhere can slip through). new Date(NaN)
-  // throws RangeError on toISOString, so fall back to the epoch rather than
-  // aborting the whole bundle export.
-  return Number.isFinite(updatedAt)
-    ? new Date(updatedAt).toISOString()
-    : new Date(0).toISOString();
+  if (!Number.isFinite(updatedAt)) return new Date(0).toISOString();
+  const d = new Date(updatedAt);
+  if (!Number.isFinite(d.getTime())) return new Date(0).toISOString();
+  return d.toISOString();
 }
 
 function isoDateOrOmit(ms: number | null | undefined): string | undefined {
   if (ms == null || !Number.isFinite(ms)) return undefined;
-  return new Date(ms).toISOString().slice(0, 10);
+  const d = new Date(ms);
+  if (!Number.isFinite(d.getTime())) return undefined;
+  return d.toISOString().slice(0, 10);
 }
 
 function factFrontmatterV2(f: WikiFact): OkfFrontmatter {

@@ -105,14 +105,56 @@ export function latestVerified(
 const URL_LINE = /^\s*-\s+(https?:\/\/\S+)\s*$/;
 
 export function parseCitationsList(body: string): string[] {
-  // Find a '# Citations' (case-insensitive) heading; collect URL list lines until the next heading or EOF.
+  // Find a '# Citations' (case-insensitive) heading; collect URL list lines
+  // until the next heading or EOF. Headings inside fenced code blocks
+  // (``` and ~~~) are ignored so a Markdown example containing
+  // `# Citations` and URL bullets is not imported as real provenance.
   const lines = body.split(/\r?\n/);
-  const startIdx = lines.findIndex((l) => /^\s*#{1,2}\s*citations\s*$/i.test(l));
+  let inFence = false;
+  let fenceMarker = '';
+  let startIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const fence = /^\s*(```+|~~~+)/.exec(line);
+    if (fence) {
+      const marker = fence[1]!;
+      if (!inFence) {
+        inFence = true;
+        fenceMarker = marker[0]!;
+      } else if (marker[0] === fenceMarker) {
+        inFence = false;
+        fenceMarker = '';
+      }
+      continue;
+    }
+    if (!inFence && /^\s*#{1,2}\s*citations\s*$/i.test(line)) {
+      startIdx = i;
+      break;
+    }
+  }
   if (startIdx === -1) return [];
   const out: string[] = [];
   for (let i = startIdx + 1; i < lines.length; i++) {
     const line = lines[i];
-    if (/^\s*#{1,2}\s+/.test(line)) break; // next heading
+    // Closing fence or a new heading exits the citations section.
+    const fence = /^\s*(```+|~~~+)/.exec(line);
+    if (fence) {
+      const marker = fence[1]!;
+      if (!inFence) {
+        inFence = true;
+        fenceMarker = marker[0]!;
+        continue;
+      }
+      if (marker[0] === fenceMarker) {
+        inFence = false;
+        fenceMarker = '';
+      }
+      continue;
+    }
+    if (!inFence && /^\s*#{1,2}\s+/.test(line)) break; // next heading
+    // Skip URL line matching inside open fences — body's narrative code
+    // examples must not contaminate provenance.
+    if (inFence) continue;
     const m = URL_LINE.exec(line);
     if (m) out.push(m[1]);
   }

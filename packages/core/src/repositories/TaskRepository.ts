@@ -98,6 +98,12 @@ export class TaskRepository extends BaseRepository {
    * Uses ON CONFLICT(id) DO UPDATE (not INSERT OR REPLACE).
    * Stages an outbox entry in the same transaction.
    * `tx` is REQUIRED.
+   *
+   * OKF metadata (lifecycle_status, sources, etc.) is intentionally excluded
+   * from the SET clause so content writes preserve any existing row values.
+   * See {@link EntryRepository.upsert} for the rationale — the same applies
+   * symmetrically to tasks (spec §2.5). Callers that need to overwrite OKF
+   * metadata should use {@link upsertForImport}.
    */
   async upsert(task: WikiTask, tx: SQLiteAdapter, updatedAt?: number): Promise<void> {
     const executor = this.getExecutor(tx);
@@ -123,15 +129,7 @@ export class TaskRepository extends BaseRepository {
         priority = excluded.priority,
         updated_at = excluded.updated_at,
         resolved_at = excluded.resolved_at,
-        deleted_at = excluded.deleted_at,
-        lifecycle_status = CASE WHEN excluded.lifecycle_status IS NULL THEN lifecycle_status ELSE excluded.lifecycle_status END,
-        stale_after = CASE WHEN excluded.stale_after IS NULL THEN stale_after ELSE excluded.stale_after END,
-        generated_by = CASE WHEN excluded.generated_by IS NULL THEN generated_by ELSE excluded.generated_by END,
-        last_verified_at = CASE WHEN excluded.last_verified_at IS NULL THEN last_verified_at ELSE excluded.last_verified_at END,
-        last_verified_by = CASE WHEN excluded.last_verified_by IS NULL THEN last_verified_by ELSE excluded.last_verified_by END,
-        okf_sources = CASE WHEN excluded.okf_sources IS NULL THEN okf_sources ELSE excluded.okf_sources END,
-        okf_verified = CASE WHEN excluded.okf_verified IS NULL THEN okf_verified ELSE excluded.okf_verified END,
-        okf_usage_window = CASE WHEN excluded.okf_usage_window IS NULL THEN okf_usage_window ELSE excluded.okf_usage_window END`,
+        deleted_at = excluded.deleted_at`,
       [
         task.id,
         task.entity_id,
@@ -142,7 +140,9 @@ export class TaskRepository extends BaseRepository {
         now, // updated_at set by repo or import override
         task.resolved_at ?? null,
         task.deleted_at ?? null,
-        // lifecycle_status has NOT NULL DEFAULT 'stable' (see EntryRepository.upsert).
+        // OKF v0.2 metadata — bound for INSERT only; ON CONFLICT UPDATE
+        // preserves the existing row values (these columns are intentionally
+        // absent from the SET clause above).
         task.lifecycle_status ?? 'stable',
         task.stale_after ?? null,
         task.generated_by ?? null,
@@ -170,6 +170,9 @@ export class TaskRepository extends BaseRepository {
     const executor = this.getExecutor(tx);
     const now = Number.isFinite(updatedAt) ? updatedAt : Date.now();
 
+    // Import is replace semantics, mirroring EntryRepository.upsertForImport.
+    // Dump is authoritative: a re-import that cleared stale_after, generated_by,
+    // or verification mirrors must overwrite, not preserve.
     await executor.runAsync(
       `INSERT INTO ${this.prefix}tasks (
         id, entity_id, description, status, priority,
@@ -186,14 +189,14 @@ export class TaskRepository extends BaseRepository {
         resolved_at = excluded.resolved_at,
         deleted_at = excluded.deleted_at,
         okf_type = excluded.okf_type,
-        lifecycle_status = CASE WHEN excluded.lifecycle_status IS NULL THEN lifecycle_status ELSE excluded.lifecycle_status END,
-        stale_after = CASE WHEN excluded.stale_after IS NULL THEN stale_after ELSE excluded.stale_after END,
-        generated_by = CASE WHEN excluded.generated_by IS NULL THEN generated_by ELSE excluded.generated_by END,
-        last_verified_at = CASE WHEN excluded.last_verified_at IS NULL THEN last_verified_at ELSE excluded.last_verified_at END,
-        last_verified_by = CASE WHEN excluded.last_verified_by IS NULL THEN last_verified_by ELSE excluded.last_verified_by END,
-        okf_sources = CASE WHEN excluded.okf_sources IS NULL THEN okf_sources ELSE excluded.okf_sources END,
-        okf_verified = CASE WHEN excluded.okf_verified IS NULL THEN okf_verified ELSE excluded.okf_verified END,
-        okf_usage_window = CASE WHEN excluded.okf_usage_window IS NULL THEN okf_usage_window ELSE excluded.okf_usage_window END`,
+        lifecycle_status = excluded.lifecycle_status,
+        stale_after = excluded.stale_after,
+        generated_by = excluded.generated_by,
+        last_verified_at = excluded.last_verified_at,
+        last_verified_by = excluded.last_verified_by,
+        okf_sources = excluded.okf_sources,
+        okf_verified = excluded.okf_verified,
+        okf_usage_window = excluded.okf_usage_window`,
       [
         task.id,
         task.entity_id,

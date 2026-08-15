@@ -135,6 +135,21 @@ export class EntryRepository extends BaseRepository {
    * Upsert a WikiFact. Nullable fields set to null when fact value is null.
    * Returns { changes, lastInsertRowId }.
    * `tx` is REQUIRED to ensure atomic outbox staging.
+   *
+   * OKF metadata discipline (spec §2.5 + DAO checklist §8): content writes
+   * MUST NOT silently overwrite OKF metadata that a caller didn't supply. The
+   * previous CASE WHEN IS NULL guards around `lifecycle_status`, etc. were
+   * dead because the bind always supplied a non-null value (notably
+   * `fact.lifecycle_status ?? 'stable'`), so excluded.X was never NULL and
+   * an UPDATE rewrote an existing `deprecated` row to `stable`. We now omit
+   * these columns from the SET clause entirely — SQLite's ON CONFLICT UPDATE
+   * leaves untouched columns at their existing row value, which is exactly
+   * the preservation semantics we want for content writes. Callers that
+   * intentionally want to overwrite OKF metadata should use
+   * {@link upsertForImport} (always-replace semantics for that path).
+   * New-row INSERTs still bind a value so the column is populated; if the
+   * caller supplied nothing, the schema DEFAULT 'stable' applies when the
+   * bind is bound as 'stable' explicitly here.
    */
   async upsert(fact: WikiFact, tx: SQLiteAdapter): Promise<{ changes: number; lastInsertRowId: number }> {
     const executor = this.getExecutor(tx);
@@ -171,15 +186,7 @@ export class EntryRepository extends BaseRepository {
         deleted_at = excluded.deleted_at,
         embedding_blob = CASE WHEN excluded.embedding_blob IS NULL THEN embedding_blob ELSE excluded.embedding_blob END,
         embedding = NULL,
-        okf_type = excluded.okf_type,
-        lifecycle_status = CASE WHEN excluded.lifecycle_status IS NULL THEN lifecycle_status ELSE excluded.lifecycle_status END,
-        stale_after = CASE WHEN excluded.stale_after IS NULL THEN stale_after ELSE excluded.stale_after END,
-        generated_by = CASE WHEN excluded.generated_by IS NULL THEN generated_by ELSE excluded.generated_by END,
-        last_verified_at = CASE WHEN excluded.last_verified_at IS NULL THEN last_verified_at ELSE excluded.last_verified_at END,
-        last_verified_by = CASE WHEN excluded.last_verified_by IS NULL THEN last_verified_by ELSE excluded.last_verified_by END,
-        okf_sources = CASE WHEN excluded.okf_sources IS NULL THEN okf_sources ELSE excluded.okf_sources END,
-        okf_verified = CASE WHEN excluded.okf_verified IS NULL THEN okf_verified ELSE excluded.okf_verified END,
-        okf_usage_window = CASE WHEN excluded.okf_usage_window IS NULL THEN okf_usage_window ELSE excluded.okf_usage_window END`,
+        okf_type = excluded.okf_type`,
       [
         fact.id,
         fact.entity_id,
@@ -198,11 +205,9 @@ export class EntryRepository extends BaseRepository {
         embeddingBlob ?? null,
         null,
         fact.okf_type ?? null,
-        // lifecycle_status has NOT NULL DEFAULT 'stable'. SQLite enforces NOT NULL
-        // strictly on explicit binds, so we must send the default explicitly on
-        // INSERT. The CASE WHEN guard in the SET clause preserves any existing
-        // value on UPDATE when the caller omitted lifecycle_status (the bug
-        // CodeRabbit flagged — see PR #90 review).
+        // OKF v0.2 metadata — bound for INSERT only; ON CONFLICT UPDATE
+        // preserves the existing row values (these columns are intentionally
+        // absent from the SET clause above).
         fact.lifecycle_status ?? 'stable',
         fact.stale_after ?? null,
         fact.generated_by ?? null,
@@ -292,6 +297,11 @@ export class EntryRepository extends BaseRepository {
     const tagsJson = JSON.stringify(fact.tags);
     const embeddingBlob = this.normalizeEmbeddingBlob(fact.embedding_blob);
 
+    // Import is replace semantics: a re-imported fact whose OKF metadata
+    // cleared (stale_after removed, generated_by removed, etc.) MUST overwrite
+    // the prior row's value. The previous CASE WHEN IS NULL guards preserved
+    // the old database values instead, so an "absent in dump" never cleared.
+    // Direct `= excluded.X` ensures the dump is authoritative.
     const result = await executor.runAsync(
       `INSERT INTO ${this.prefix}entries (
         id, entity_id, title, body, tags, confidence, source_type,
@@ -317,14 +327,14 @@ export class EntryRepository extends BaseRepository {
         embedding_blob = excluded.embedding_blob,
         embedding = NULL,
         okf_type = excluded.okf_type,
-        lifecycle_status = CASE WHEN excluded.lifecycle_status IS NULL THEN lifecycle_status ELSE excluded.lifecycle_status END,
-        stale_after = CASE WHEN excluded.stale_after IS NULL THEN stale_after ELSE excluded.stale_after END,
-        generated_by = CASE WHEN excluded.generated_by IS NULL THEN generated_by ELSE excluded.generated_by END,
-        last_verified_at = CASE WHEN excluded.last_verified_at IS NULL THEN last_verified_at ELSE excluded.last_verified_at END,
-        last_verified_by = CASE WHEN excluded.last_verified_by IS NULL THEN last_verified_by ELSE excluded.last_verified_by END,
-        okf_sources = CASE WHEN excluded.okf_sources IS NULL THEN okf_sources ELSE excluded.okf_sources END,
-        okf_verified = CASE WHEN excluded.okf_verified IS NULL THEN okf_verified ELSE excluded.okf_verified END,
-        okf_usage_window = CASE WHEN excluded.okf_usage_window IS NULL THEN okf_usage_window ELSE excluded.okf_usage_window END`,
+        lifecycle_status = excluded.lifecycle_status,
+        stale_after = excluded.stale_after,
+        generated_by = excluded.generated_by,
+        last_verified_at = excluded.last_verified_at,
+        last_verified_by = excluded.last_verified_by,
+        okf_sources = excluded.okf_sources,
+        okf_verified = excluded.okf_verified,
+        okf_usage_window = excluded.okf_usage_window`,
       [
         fact.id,
         fact.entity_id,

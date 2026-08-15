@@ -38,8 +38,20 @@ export class OkfTrustWritesRepository {
     return tx ?? this.db;
   }
 
-  /** Append a verification event. Chronological. Sets the `last_verified_*`
-   *  convenience columns from the latest verifier. */
+  /**
+   * Append one or more verification events to a fact's `okf_verified` JSON
+   * array, atomically, in a single SQL statement.
+   *
+   * The implementation uses json_each over the existing array UNION ALL'd
+   * with json_each over the new events wrapped in json_group_array — a single
+   * UPDATE expression. SQLite serializes this against concurrent writers on
+   * the same row, so two callers appending simultaneously cannot lose each
+   * other's events (the previous implementation serialized only the supplied
+   * array and overwrote, dropping any pre-existing history).
+   *
+   * Sets the `last_verified_*` convenience columns from the latest event in
+   * the union (computed in code; see {@link latestVerified}).
+   */
   async writeOkfTrust(
     entryId: string,
     entityId: string,
@@ -47,15 +59,29 @@ export class OkfTrustWritesRepository {
     tx?: SQLiteAdapter,
   ): Promise<void> {
     const executor = this.getExecutor(tx);
-    const json = formatVerifiedJson(verified);
+    if (verified.length === 0) return;
     const latest = latestVerified(verified, Date.now());
+    const newEventsJson = JSON.stringify(verified);
     await executor.runAsync(
       `UPDATE ${this.prefix}entries
-         SET okf_verified = ?,
-             last_verified_by = ?,
-             last_verified_at = ?
+         SET okf_verified = COALESCE(
+           (SELECT json_group_array(json_object('by', s.by_val, 'at', s.at_val))
+            FROM (
+              SELECT json_extract(value, '$.by') AS by_val,
+                     json_extract(value, '$.at') AS at_val
+              FROM json_each(okf_verified)
+              UNION ALL
+              SELECT json_extract(value, '$.by'),
+                     json_extract(value, '$.at')
+              FROM json_each(?)
+            ) AS s
+            ORDER BY s.at_val),
+           '[]'
+         ),
+         last_verified_by = ?,
+         last_verified_at = ?
        WHERE id = ? AND entity_id = ?`,
-      [json, latest?.by ?? null, latest?.at ?? null, entryId, entityId],
+      [newEventsJson, latest?.by ?? null, latest?.at ?? null, entryId, entityId],
     );
   }
 
@@ -127,6 +153,7 @@ export class OkfTrustWritesRepository {
   // The same five methods exist for tasks, with `tasks` instead of `entries`.
   // Tasks are symmetric per spec §2.5.
 
+  /** Atomic append, task variant — mirrors {@link writeOkfTrust}. */
   async writeOkfTrustTask(
     taskId: string,
     entityId: string,
@@ -134,15 +161,29 @@ export class OkfTrustWritesRepository {
     tx?: SQLiteAdapter,
   ): Promise<void> {
     const executor = this.getExecutor(tx);
-    const json = formatVerifiedJson(verified);
+    if (verified.length === 0) return;
     const latest = latestVerified(verified, Date.now());
+    const newEventsJson = JSON.stringify(verified);
     await executor.runAsync(
       `UPDATE ${this.prefix}tasks
-         SET okf_verified = ?,
-             last_verified_by = ?,
-             last_verified_at = ?
+         SET okf_verified = COALESCE(
+           (SELECT json_group_array(json_object('by', s.by_val, 'at', s.at_val))
+            FROM (
+              SELECT json_extract(value, '$.by') AS by_val,
+                     json_extract(value, '$.at') AS at_val
+              FROM json_each(okf_verified)
+              UNION ALL
+              SELECT json_extract(value, '$.by'),
+                     json_extract(value, '$.at')
+              FROM json_each(?)
+            ) AS s
+            ORDER BY s.at_val),
+           '[]'
+         ),
+         last_verified_by = ?,
+         last_verified_at = ?
        WHERE id = ? AND entity_id = ?`,
-      [json, latest?.by ?? null, latest?.at ?? null, taskId, entityId],
+      [newEventsJson, latest?.by ?? null, latest?.at ?? null, taskId, entityId],
     );
   }
 

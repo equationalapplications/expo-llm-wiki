@@ -189,16 +189,22 @@ function frontmatterToFact(
   now: number,
 ): WikiFact {
   const created_at = parseFrontmatterTimestamp(frontmatter.created_at, now);
-  // v0.2: `generated.at` wins; v0.1: `timestamp` is the canonical source.
-  const generatedAt = parseFrontmatterTimestamp((frontmatter as any).generated?.at, NaN);
-  const tsAt = parseFrontmatterTimestamp(frontmatter.timestamp, NaN);
+  // Precedence (spec §2.4): v0.2 `generated.at` -> v0.1 `timestamp` -> legacy
+  // `updated_at` -> `now`. The previous order swapped `updated_at` ahead of
+  // the other two, so a present-but-finite `updated_at` clobbered
+  // `generated.at`. We nest the fallbacks so the first finite wins.
   const updated_at = parseFrontmatterTimestamp(
-    frontmatter.updated_at,
-    Number.isFinite(generatedAt) ? generatedAt : (Number.isFinite(tsAt) ? tsAt : now),
+    (frontmatter as any).generated?.at,
+    parseFrontmatterTimestamp(
+      frontmatter.timestamp,
+      parseFrontmatterTimestamp(frontmatter.updated_at, now),
+    ),
   );
 
   const verified: OkfVerified = parseVerifiedFlexible((frontmatter as any).verified);
-  const sources: OkfSource[] = Array.isArray((frontmatter as any).sources) ? (frontmatter as any).sources as OkfSource[] : [];
+  const rawSources = (frontmatter as any).sources;
+  const hasSourcesKey = rawSources !== undefined;
+  const sources: OkfSource[] = Array.isArray(rawSources) ? rawSources as OkfSource[] : [];
   const usageWindow = (frontmatter as any).usage_window && typeof (frontmatter as any).usage_window === 'object'
     ? (frontmatter as any).usage_window as { from: string; to: string }
     : null;
@@ -212,12 +218,12 @@ function frontmatterToFact(
   const generated_by = (frontmatter as any).generated?.by ?? null;
 
   // Spec §13.1 fallback (applies to v0.1, profile-0, AND v0.2 paths): body
-  // `# Citations` -> synthetic sources, one entry per URL. v0.2 bundles with a
-  // declared `sources` key opt out (`sources.length === 0` is the gate); v0.2
-  // bundles with neither key but with a `# Citations` list still get the
-  // fallback because they may carry provenance only in the body. The previous
-  // `isLegacy && ...` gate silently dropped those URLs on v0.2 imports.
-  if (sources.length === 0) {
+  // `# Citations` -> synthetic sources, one entry per URL. The fallback only
+  // fires when the `sources` key is ABSENT — a bundle that explicitly declares
+  // `sources: []` (an author clearing provenance) MUST NOT have body citations
+  // silently synthesized back into it. `hasSourcesKey` distinguishes absent
+  // from explicitly-empty.
+  if (!hasSourcesKey) {
     const urls = parseCitationsList(body);
     for (const url of urls) {
       sources.push({ resource: url });
@@ -267,14 +273,19 @@ function frontmatterToTask(
   id: string,
   frontmatter: OkfFrontmatter,
   now: number,
-  isLegacyV1: boolean,
+  // Treat profile-1 explicit and version-only legacy the same: in both cases
+  // `status` on the wire is the v0.1 execution state. Profile-2 (and unknown
+  // profile with okf_version 0.2) uses the v0.2 rename rule.
+  usesV1StatusRule: boolean,
 ): WikiTask {
   const created_at = parseFrontmatterTimestamp(frontmatter.created_at, now);
-  const generatedAt = parseFrontmatterTimestamp((frontmatter as any).generated?.at, NaN);
-  const tsAt = parseFrontmatterTimestamp(frontmatter.timestamp, NaN);
+  // Precedence (spec §2.4) — same nested-fallback chain as frontmatterToFact.
   const updated_at = parseFrontmatterTimestamp(
-    frontmatter.updated_at,
-    Number.isFinite(generatedAt) ? generatedAt : (Number.isFinite(tsAt) ? tsAt : now),
+    (frontmatter as any).generated?.at,
+    parseFrontmatterTimestamp(
+      frontmatter.timestamp,
+      parseFrontmatterTimestamp(frontmatter.updated_at, now),
+    ),
   );
 
   const verified: OkfVerified = parseVerifiedFlexible((frontmatter as any).verified);
@@ -295,10 +306,13 @@ function frontmatterToTask(
   // Status rename rule (spec §2.3):
   // - v0.2: wire `status` = lifecycle (already in lifecycle_status above);
   //         wire `execution_status` = execution -> `task.status`.
-  // - v0.1: wire `status` = execution -> `task.status`; lifecycle is implicit 'stable'.
+  // - v0.1 / profile 0: wire `status` = execution -> `task.status`; lifecycle
+  //   is implicit 'stable'. Profile-1 bundles are explicit about being v0.1
+  //   (`profile: llm-wiki/1`); profile-0 (no profile key, `okf_version: 0.1`)
+  //   is the version-only fallback; both MUST use the v0.1 rule.
   const executionRaw = (frontmatter as any).execution_status;
   let executionState: WikiTask['status'];
-  if (isLegacyV1) {
+  if (usesV1StatusRule) {
     executionState = TASK_STATUSES.has(String(frontmatter.status))
       ? (frontmatter.status as WikiTask['status']) : 'pending';
   } else {
@@ -408,9 +422,16 @@ export function parseOkfBundle(
   const isProfile2 = profile === 'llm-wiki/2';
   const isLegacyV1 = profile === undefined && okfVersion === '0.1';
 
+  // Entity summary is a profile >= 1 feature (§4 of the profile doc). The
+  // documented detection order (§4.8 detection plan) names four v0.1 and v0.2
+  // entry points: explicit profile, version-only v0.1, version-only v0.2, and
+  // unknown-profile v0.2 (best-effort). All four should pick up the summary.
+  const isVersionOnlyV2 = profile === undefined && okfVersion === '0.2';
+  const isUnknownProfileV2 = profile !== undefined && profile !== 'llm-wiki/1' && profile !== 'llm-wiki/2' && okfVersion === '0.2';
+  const summaryEligible = isProfile1 || isProfile2 || isLegacyV1 || isVersionOnlyV2 || isUnknownProfileV2;
   let entitySummary: string | undefined;
   const entityIndex = allowedFiles.find(f => f.path === `${entityPrefix}index.md`);
-  if ((isProfile1 || isProfile2) && entityIndex) {
+  if (summaryEligible && entityIndex) {
     const summary = parseEntityIndexMd(entityIndex.content).summary;
     entitySummary = summary || undefined;
   }
@@ -452,10 +473,16 @@ export function parseOkfBundle(
       ? relatedLinks
       : [...relatedLinks, ...extractMarkdownLinks(storedBody)];
 
+    // Task status rename rule (spec §2.3) — v0.1 wire uses `status` as
+    // execution state; v0.2 wire uses `status` as lifecycle and adds
+    // `execution_status`. The flag we pass below is true when we are NOT
+    // reading this task as a v0.2-style bundle.
+    const usesV1StatusRule = isProfile1 || isLegacyV1 || (profile === undefined && okfVersion === undefined);
+
     if (route === 'fact') {
       facts.push(frontmatterToFact(entityId, resolvedId, frontmatter, storedBody, now));
     } else {
-      tasks.push(frontmatterToTask(entityId, resolvedId, frontmatter, now, isLegacyV1));
+      tasks.push(frontmatterToTask(entityId, resolvedId, frontmatter, now, usesV1StatusRule));
     }
 
     const seenEdges = new Set<string>();

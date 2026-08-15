@@ -256,7 +256,7 @@ For producers upgrading from `llm-wiki/1` to `llm-wiki/2`:
 | v0.1 wire | v0.2 wire | Where it lands |
 | --- | --- | --- |
 | `timestamp` (ISO 8601) | `generated.at` (ISO 8601) | `updated_at` (ms). v0.1 `timestamp` is still accepted; `generated.at` wins if both are present. |
-| body `# Citations` list | `sources: [...]` | `okf_sources` (JSON). v0.1 body citations become a single synthetic source entry on import. |
+| body `# Citations` list | `sources: [...]` | `okf_sources` (JSON). v0.1 body citations become one synthetic source entry per citation URL — a list of three URLs produces three sources, each `{ resource: <url> }` with no `id` and no credibility signals. |
 | `status` on tasks (execution) | `status` (lifecycle) + `execution_status` (execution) | Tasks: `lifecycle_status` + `tasks.status`. |
 | `tags` block list | unchanged | unchanged |
 | `## Related` section | unchanged | unchanged |

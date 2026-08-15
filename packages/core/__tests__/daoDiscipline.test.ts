@@ -141,3 +141,67 @@ describe('DAO discipline: non-content writes MUST NOT touch updated_at', () => {
     expect(updates.length).toBeGreaterThan(0);
   });
 });
+
+describe('DAO discipline: task variants must mirror the entry variants (spec §2.5 symmetry)', () => {
+  async function insertProbeTask(db: SQLiteAdapter, updatedAt: number, id: string): Promise<void> {
+    await db.runAsync(
+      `INSERT INTO ${PREFIX}tasks (id, entity_id, description, status, priority, created_at, updated_at) VALUES (?, 'e', 'T', 'pending', 0, ?, ?)`,
+      [id, updatedAt, updatedAt],
+    );
+  }
+
+  it('writeOkfTrustTask has no updated_at in SET clause', async () => {
+    const { wiki, db, recorded } = await makeWikiWithRecorder();
+    const t = 1_700_000_000_000;
+    await insertProbeTask(db, t, 'tp1');
+    recorded.length = 0;
+    await wiki.writeOkfTrustTask('tp1', 'e', [{ by: 'human:a', at: '2026-01-01T00:00:00Z' }]);
+    const updates = recorded.filter((r) => /UPDATE/i.test(r.sql));
+    expect(updates.length).toBeGreaterThan(0);
+    for (const u of updates) expect(updatedAtInSet(u.sql), `unexpected updated_at in: ${u.sql}`).toBe(false);
+  });
+
+  it('writeOkfSourcesTask has no updated_at in SET clause', async () => {
+    const { wiki, db, recorded } = await makeWikiWithRecorder();
+    const t = 1_700_000_000_000;
+    await insertProbeTask(db, t, 'tp2');
+    recorded.length = 0;
+    await wiki.writeOkfSourcesTask('tp2', 'e', [{ resource: 'https://a' }]);
+    const updates = recorded.filter((r) => /UPDATE/i.test(r.sql));
+    expect(updates.length).toBeGreaterThan(0);
+    for (const u of updates) expect(updatedAtInSet(u.sql)).toBe(false);
+  });
+
+  it('setLifecycleStatusTask has no updated_at in SET clause', async () => {
+    const { wiki, db, recorded } = await makeWikiWithRecorder();
+    const t = 1_700_000_000_000;
+    await insertProbeTask(db, t, 'tp3');
+    recorded.length = 0;
+    await wiki.setLifecycleStatusTask('tp3', 'e', 'deprecated');
+    const updates = recorded.filter((r) => /UPDATE/i.test(r.sql));
+    expect(updates.length).toBeGreaterThan(0);
+    for (const u of updates) expect(updatedAtInSet(u.sql)).toBe(false);
+  });
+
+  it('setStaleAfterTask has no updated_at in SET clause', async () => {
+    const { wiki, db, recorded } = await makeWikiWithRecorder();
+    const t = 1_700_000_000_000;
+    await insertProbeTask(db, t, 'tp4');
+    recorded.length = 0;
+    await wiki.setStaleAfterTask('tp4', 'e', null);
+    const updates = recorded.filter((r) => /UPDATE/i.test(r.sql));
+    expect(updates.length).toBeGreaterThan(0);
+    for (const u of updates) expect(updatedAtInSet(u.sql)).toBe(false);
+  });
+
+  it('setGeneratedByTask has no updated_at in SET clause', async () => {
+    const { wiki, db, recorded } = await makeWikiWithRecorder();
+    const t = 1_700_000_000_000;
+    await insertProbeTask(db, t, 'tp5');
+    recorded.length = 0;
+    await wiki.setGeneratedByTask('tp5', 'e', 'process:cron');
+    const updates = recorded.filter((r) => /UPDATE/i.test(r.sql));
+    expect(updates.length).toBeGreaterThan(0);
+    for (const u of updates) expect(updatedAtInSet(u.sql)).toBe(false);
+  });
+});

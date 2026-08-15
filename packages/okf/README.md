@@ -6,7 +6,7 @@
 
 A zero-dependency library for parsing and producing [Open Knowledge Format (OKF) v0.1 and v0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) bundles. This package provides the raw primitives to work with OKF frontmatter, concept documents, and index/log files, completely decoupled from any specific database or data model.
 
-For a ready-made `MemoryDump` � OKF bundle adapter, see the [OKF Import/Export section in `@equationalapplications/core-llm-wiki`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md#okf-importexport).
+For a ready-made `MemoryDump` ⇄ OKF bundle adapter, see the [OKF Import/Export section in `@equationalapplications/core-llm-wiki`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md#okf-importexport).
 
 For the llm-wiki interoperability profiles (`llm-wiki/1` and `llm-wiki/2`), see [`docs/okf-profile.md`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/docs/okf-profile.md). Conformance fixtures live in [`fixtures/`](./fixtures/).
 
