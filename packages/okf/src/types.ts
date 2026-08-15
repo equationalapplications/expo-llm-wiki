@@ -1,5 +1,9 @@
 export type OkfFrontmatterScalar = string | number | boolean | null;
-export type OkfFrontmatterValue = OkfFrontmatterScalar | OkfFrontmatterScalar[];
+export type OkfFrontmatterValue =
+  | OkfFrontmatterScalar
+  | OkfFrontmatterScalar[]
+  | { [key: string]: OkfFrontmatterValue | undefined }
+  | OkfFrontmatterValue[];
 
 export interface OkfFrontmatter {
   type: string;
