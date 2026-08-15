@@ -1,7 +1,7 @@
 # Spec: Ingest Parse Resilience
 
 **Date:** 2026-08-15 (revised)
-**Status:** Approved  
+**Status:** Implemented (closes issue #92 — 7 commits on branch `docs/spec-revise-ingest-parse-resilience`, 1024/1024 core tests + 41/41 integration tests green as of 2026-08-15)
 **Approach:** A revised — strict + single container-aware repair pass on raw text, partial per-chunk commit with retry semantics, prompt tightening
 
 Closes issue #92.
