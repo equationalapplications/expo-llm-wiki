@@ -9,6 +9,13 @@ import {
   splitRelatedSection,
   isAllowedOkfPath,
   extractMarkdownLinks,
+  parseVerifiedFlexible,
+  parseCitationsList,
+  latestVerified,
+  formatVerifiedJson,
+  formatSourcesJson,
+  type OkfSource,
+  type OkfVerified,
 } from '@equationalapplications/core-okf';
 import { generateId } from './ids';
 
@@ -152,12 +159,43 @@ function frontmatterToFact(
   frontmatter: OkfFrontmatter,
   body: string,
   now: number,
+  isProfile1: boolean,
+  isLegacyV1: boolean,
 ): WikiFact {
   const created_at = parseFrontmatterTimestamp(frontmatter.created_at, now);
+  // v0.2: `generated.at` wins; v0.1: `timestamp` is the canonical source.
+  const generatedAt = parseFrontmatterTimestamp((frontmatter as any).generated?.at, NaN);
+  const tsAt = parseFrontmatterTimestamp(frontmatter.timestamp, NaN);
   const updated_at = parseFrontmatterTimestamp(
-    frontmatter.timestamp,
-    parseFrontmatterTimestamp(frontmatter.updated_at, now),
+    frontmatter.updated_at,
+    Number.isFinite(generatedAt) ? generatedAt : (Number.isFinite(tsAt) ? tsAt : now),
   );
+
+  const verified: OkfVerified = parseVerifiedFlexible((frontmatter as any).verified);
+  const sources: OkfSource[] = Array.isArray((frontmatter as any).sources) ? (frontmatter as any).sources as OkfSource[] : [];
+  const usageWindow = (frontmatter as any).usage_window && typeof (frontmatter as any).usage_window === 'object'
+    ? (frontmatter as any).usage_window as { from: string; to: string }
+    : null;
+  const lastV = latestVerified(verified, now);
+  const lifecycleRaw = (frontmatter as any).status;
+  const lifecycle_status: 'draft' | 'stable' | 'deprecated' =
+    lifecycleRaw === 'draft' || lifecycleRaw === 'stable' || lifecycleRaw === 'deprecated'
+      ? lifecycleRaw : 'stable';
+  const staleAfterRaw = (frontmatter as any).stale_after;
+  const stale_after = typeof staleAfterRaw === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(staleAfterRaw)
+    ? new Date(`${staleAfterRaw}T00:00:00Z`).getTime()
+    : null;
+  const generated_by = (frontmatter as any).generated?.by ?? null;
+
+  // v0.1 fallback (spec §13.1): body # Citations -> synthetic sources, one
+  // entry per URL (a v0.1 body commonly cites several references — keeping
+  // only the first would silently drop provenance).
+  if (isProfile1 && sources.length === 0) {
+    const urls = parseCitationsList(body);
+    for (const url of urls) {
+      sources.push({ resource: url });
+    }
+  }
 
   return {
     id,
@@ -185,6 +223,15 @@ function frontmatterToFact(
     deleted_at:
       frontmatter.deleted_at != null ? parseFrontmatterTimestamp(frontmatter.deleted_at, 0) : null,
     okf_type: frontmatter.type,
+    // OKF v0.2
+    lifecycle_status,
+    stale_after,
+    generated_by,
+    okf_sources: sources,
+    okf_verified: verified,
+    okf_usage_window: usageWindow,
+    last_verified_at: lastV?.at ?? null,
+    last_verified_by: lastV?.by ?? null,
   };
 }
 
@@ -193,20 +240,57 @@ function frontmatterToTask(
   id: string,
   frontmatter: OkfFrontmatter,
   now: number,
+  isProfile1: boolean,
+  isLegacyV1: boolean,
 ): WikiTask {
   const created_at = parseFrontmatterTimestamp(frontmatter.created_at, now);
+  const generatedAt = parseFrontmatterTimestamp((frontmatter as any).generated?.at, NaN);
+  const tsAt = parseFrontmatterTimestamp(frontmatter.timestamp, NaN);
   const updated_at = parseFrontmatterTimestamp(
-    frontmatter.timestamp,
-    parseFrontmatterTimestamp(frontmatter.updated_at, now),
+    frontmatter.updated_at,
+    Number.isFinite(generatedAt) ? generatedAt : (Number.isFinite(tsAt) ? tsAt : now),
   );
+
+  const verified: OkfVerified = parseVerifiedFlexible((frontmatter as any).verified);
+  const sources: OkfSource[] = Array.isArray((frontmatter as any).sources) ? (frontmatter as any).sources as OkfSource[] : [];
+  const usageWindow = (frontmatter as any).usage_window && typeof (frontmatter as any).usage_window === 'object'
+    ? (frontmatter as any).usage_window as { from: string; to: string }
+    : null;
+  const lastV = latestVerified(verified, now);
+  const lifecycleRaw = (frontmatter as any).status;
+  const lifecycle_status: 'draft' | 'stable' | 'deprecated' =
+    lifecycleRaw === 'draft' || lifecycleRaw === 'stable' || lifecycleRaw === 'deprecated'
+      ? lifecycleRaw : 'stable';
+  // stale_after is symmetric with facts (spec §2.5) — parsed the same way,
+  // not hardcoded to null.
+  const staleAfterRaw = (frontmatter as any).stale_after;
+  const stale_after = typeof staleAfterRaw === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(staleAfterRaw)
+    ? new Date(`${staleAfterRaw}T00:00:00Z`).getTime()
+    : null;
+
+  // Status rename rule (spec §2.3):
+  // - v0.2: wire `status` = lifecycle (already in lifecycle_status above);
+  //         wire `execution_status` = execution -> `task.status`.
+  // - v0.1: wire `status` = execution -> `task.status`; lifecycle is implicit 'stable'.
+  const executionRaw = (frontmatter as any).execution_status;
+  let executionState: WikiTask['status'];
+  if (isProfile1 || isLegacyV1) {
+    executionState = TASK_STATUSES.has(String(frontmatter.status))
+      ? (frontmatter.status as WikiTask['status']) : 'pending';
+  } else {
+    // v0.2 (or unknown profile — best-effort per spec §6 "profile key unknown").
+    executionState = TASK_STATUSES.has(String(executionRaw))
+      ? (executionRaw as WikiTask['status'])
+      : TASK_STATUSES.has(String(frontmatter.status))
+        ? (frontmatter.status as WikiTask['status'])
+        : 'pending';
+  }
 
   return {
     id,
     entity_id: entityId,
     description: typeof frontmatter.title === 'string' ? frontmatter.title : '',
-    status: TASK_STATUSES.has(String(frontmatter.status))
-      ? (frontmatter.status as WikiTask['status'])
-      : 'pending',
+    status: executionState,
     priority: typeof frontmatter.priority === 'number' ? frontmatter.priority : 0,
     created_at,
     updated_at,
@@ -217,6 +301,15 @@ function frontmatterToTask(
     deleted_at:
       frontmatter.deleted_at != null ? parseFrontmatterTimestamp(frontmatter.deleted_at, 0) : null,
     okf_type: frontmatter.type,
+    // OKF v0.2
+    lifecycle_status,
+    stale_after,
+    generated_by: (frontmatter as any).generated?.by ?? null,
+    okf_sources: sources,
+    okf_verified: verified,
+    okf_usage_window: usageWindow,
+    last_verified_at: lastV?.at ?? null,
+    last_verified_by: lastV?.by ?? null,
   };
 }
 
@@ -285,7 +378,12 @@ export function parseOkfBundle(
   );
   const rootIndex = allowedFiles.find(f => f.path === 'index.md');
   const profileMeta = rootIndex ? parseRootIndexMd(rootIndex.content) : {};
-  const isProfile1 = profileMeta.profile === 'llm-wiki/1';
+  const okfVersion = profileMeta.okf_version;
+  const profile = profileMeta.profile;
+  const isProfile1 = profile === 'llm-wiki/1';
+  const isProfile2 = profile === 'llm-wiki/2';
+  const isLegacyV1 = profile === undefined && okfVersion === '0.1';
+  // Treat `profile === undefined && okfVersion === undefined` as profile-0 (legacy).
 
   let entitySummary: string | undefined;
   const entityIndex = allowedFiles.find(f => f.path === `${entityPrefix}index.md`);
@@ -327,14 +425,14 @@ export function parseOkfBundle(
       typeof frontmatter.id === 'string' && frontmatter.id ? frontmatter.id : basenameMd(file.path);
 
     const { body: storedBody, relatedLinks } = splitRelatedSection(body);
-    const edgeLinks = isProfile1
+    const edgeLinks = (isProfile1 || isLegacyV1)
       ? relatedLinks
       : [...relatedLinks, ...extractMarkdownLinks(storedBody)];
 
     if (route === 'fact') {
-      facts.push(frontmatterToFact(entityId, resolvedId, frontmatter, storedBody, now));
+      facts.push(frontmatterToFact(entityId, resolvedId, frontmatter, storedBody, now, isProfile1, isLegacyV1));
     } else {
-      tasks.push(frontmatterToTask(entityId, resolvedId, frontmatter, now));
+      tasks.push(frontmatterToTask(entityId, resolvedId, frontmatter, now, isProfile1, isLegacyV1));
     }
 
     const seenEdges = new Set<string>();
