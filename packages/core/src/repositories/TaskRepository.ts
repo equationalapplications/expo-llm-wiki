@@ -109,8 +109,21 @@ export class TaskRepository extends BaseRepository {
     const executor = this.getExecutor(tx);
     const now = Number.isFinite(updatedAt) ? updatedAt : Date.now();
 
-    const existingRow = await executor.getFirstAsync<{ id: string }>(
-      `SELECT id FROM ${this.prefix}tasks WHERE id = ?`,
+    const existingRow = await executor.getFirstAsync<{
+      id: string;
+      lifecycle_status: string;
+      stale_after: number | null;
+      generated_by: string | null;
+      okf_sources: string | null;
+      okf_verified: string | null;
+      okf_usage_window: string | null;
+      last_verified_at: number | null;
+      last_verified_by: string | null;
+    }>(
+      `SELECT id, lifecycle_status, stale_after, generated_by,
+              okf_sources, okf_verified, okf_usage_window,
+              last_verified_at, last_verified_by
+         FROM ${this.prefix}tasks WHERE id = ?`,
       [task.id],
     );
     const operation = task.deleted_at != null ? 'DELETE' : (existingRow ? 'UPDATE' : 'INSERT');
@@ -154,13 +167,30 @@ export class TaskRepository extends BaseRepository {
       ],
     );
 
+    // Outbox payload mirrors what is actually persisted. On UPDATE, the SET
+    // clause intentionally omits OKF metadata so prior row values win, but
+    // the caller-supplied `task` would still describe state we did NOT write.
+    // Re-read those columns from the stored row and overlay them onto the
+    // caller-supplied payload before publishing (#90 review).
+    const persistedOkf = existingRow
+      ? {
+          lifecycle_status: (existingRow.lifecycle_status ?? 'stable') as WikiTask['lifecycle_status'],
+          stale_after: existingRow.stale_after != null ? Number(existingRow.stale_after) : null,
+          generated_by: existingRow.generated_by ?? null,
+          okf_sources: parseJsonArray<NonNullable<WikiTask['okf_sources']>[number]>(existingRow.okf_sources, []),
+          okf_verified: parseJsonArray<NonNullable<WikiTask['okf_verified']>[number]>(existingRow.okf_verified, []),
+          okf_usage_window: parseJsonObject<NonNullable<WikiTask['okf_usage_window']>>(existingRow.okf_usage_window),
+          last_verified_at: existingRow.last_verified_at != null ? Number(existingRow.last_verified_at) : null,
+          last_verified_by: existingRow.last_verified_by ?? null,
+        }
+      : null;
     await this.outbox.push(
       {
         entityId: task.entity_id,
         tableName: 'tasks',
         recordId: task.id,
         operation,
-        payload: task,
+        payload: persistedOkf ? { ...task, ...persistedOkf } : task,
       },
       tx,
     );

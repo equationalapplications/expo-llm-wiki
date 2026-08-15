@@ -157,8 +157,21 @@ export class EntryRepository extends BaseRepository {
     const tagsJson = JSON.stringify(fact.tags);
     const embeddingBlob = this.normalizeEmbeddingBlob(fact.embedding_blob);
 
-    const existingRow = await executor.getFirstAsync<{ id: string }>(
-      `SELECT id FROM ${this.prefix}entries WHERE id = ?`,
+    const existingRow = await executor.getFirstAsync<{
+      id: string;
+      lifecycle_status: string;
+      stale_after: number | null;
+      generated_by: string | null;
+      okf_sources: string | null;
+      okf_verified: string | null;
+      okf_usage_window: string | null;
+      last_verified_at: number | null;
+      last_verified_by: string | null;
+    }>(
+      `SELECT id, lifecycle_status, stale_after, generated_by,
+              okf_sources, okf_verified, okf_usage_window,
+              last_verified_at, last_verified_by
+         FROM ${this.prefix}entries WHERE id = ?`,
       [fact.id],
     );
     const operation = fact.deleted_at ? 'DELETE' : (existingRow ? 'UPDATE' : 'INSERT');
@@ -219,12 +232,29 @@ export class EntryRepository extends BaseRepository {
       ],
     );
 
+    // Outbox payload mirrors what is actually persisted. On UPDATE, the SET
+    // clause intentionally omits the OKF metadata columns so the prior row
+    // values win — so `fact.X` here would describe state we did NOT write.
+    // Re-read those columns from the stored row and overlay them onto the
+    // caller-supplied payload before publishing (#90 review).
+    const persistedOkf = existingRow
+      ? {
+          lifecycle_status: (existingRow.lifecycle_status ?? 'stable') as WikiFact['lifecycle_status'],
+          stale_after: existingRow.stale_after != null ? Number(existingRow.stale_after) : null,
+          generated_by: existingRow.generated_by ?? null,
+          okf_sources: parseJsonArray<NonNullable<WikiFact['okf_sources']>[number]>(existingRow.okf_sources, []),
+          okf_verified: parseJsonArray<NonNullable<WikiFact['okf_verified']>[number]>(existingRow.okf_verified, []),
+          okf_usage_window: parseJsonObject<NonNullable<WikiFact['okf_usage_window']>>(existingRow.okf_usage_window),
+          last_verified_at: existingRow.last_verified_at != null ? Number(existingRow.last_verified_at) : null,
+          last_verified_by: existingRow.last_verified_by ?? null,
+        }
+      : null;
     await this.outbox.push({
       entityId: fact.entity_id,
       tableName: 'entries',
       recordId: fact.id,
       operation,
-      payload: fact,
+      payload: persistedOkf ? { ...fact, ...persistedOkf } : fact,
     }, tx);
 
     return result;

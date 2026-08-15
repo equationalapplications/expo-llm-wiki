@@ -109,10 +109,22 @@ export function parseCitationsList(body: string): string[] {
   // until the next heading or EOF. Headings inside fenced code blocks
   // (``` and ~~~) are ignored so a Markdown example containing
   // `# Citations` and URL bullets is not imported as real provenance.
+  //
+  // Fence tracking retains the full opening fence length: a 4-backtick
+  // opener is only closed by a 4+ backtick line of the same character
+  // followed by whitespace (CommonMark §4.5). Tracking only the marker
+  // char let ``` close ```` blocks, which then exposed the next line as
+  // a URL bullet and imported it as synthetic provenance (see #90 review).
   const lines = body.split(/\r?\n/);
   let inFence = false;
   let fenceMarker = '';
+  let fenceLength = 0;
   let startIdx = -1;
+  const isFenceClose = (marker: string, fullMatch: string, line: string): boolean => {
+    if (marker[0] !== fenceMarker) return false;
+    if (marker.length < fenceLength) return false;
+    return /^\s*$/.test(line.slice(fullMatch.length));
+  };
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const fence = /^\s*(```+|~~~+)/.exec(line);
@@ -121,9 +133,11 @@ export function parseCitationsList(body: string): string[] {
       if (!inFence) {
         inFence = true;
         fenceMarker = marker[0]!;
-      } else if (marker[0] === fenceMarker) {
+        fenceLength = marker.length;
+      } else if (isFenceClose(marker, fence[0], line)) {
         inFence = false;
         fenceMarker = '';
+        fenceLength = 0;
       }
       continue;
     }
@@ -143,11 +157,13 @@ export function parseCitationsList(body: string): string[] {
       if (!inFence) {
         inFence = true;
         fenceMarker = marker[0]!;
+        fenceLength = marker.length;
         continue;
       }
-      if (marker[0] === fenceMarker) {
+      if (isFenceClose(marker, fence[0], line)) {
         inFence = false;
         fenceMarker = '';
+        fenceLength = 0;
       }
       continue;
     }
