@@ -148,7 +148,7 @@ A network/rate-limit error from `generateText` (e.g. Bedrock `ThrottlingExceptio
 
 `console.warn` fires **exactly once per failed chunk** in a fixed format:
 ```
-[WikiMemory] ingest chunk 3/7 parse failed (sourceRef=doc://spec, tier=repair): <message>
+[WikiMemory] ingest chunk 3/7 parse (tier=repair) failed (sourceRef=doc://spec): <message>
 [WikiMemory] ingest chunk 5/7 llm failed (sourceRef=doc://spec): <message>
 ```
 
