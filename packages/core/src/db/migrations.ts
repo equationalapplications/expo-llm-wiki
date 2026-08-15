@@ -232,6 +232,43 @@ export const MIGRATIONS: Migration[] = [
       );
     },
   },
+  {
+    version: 10,
+    description: 'OKF v0.2: add lifecycle_status, stale_after, generated_by, last_verified_*, okf_sources, okf_verified, okf_usage_window to entries and tasks',
+    run: async (db, prefix) => {
+      // ALTER TABLE ADD COLUMN must run outside any explicit transaction — same constraint
+      // as v2/v3/v5/v7/v8. We do all eight columns per table, then indexes, inside
+      // a single execAsync batch where possible. SQLite ALTER on the same table from
+      // separate statements is fine; we just can't wrap it in BEGIN...COMMIT.
+      for (const table of ['entries', 'tasks'] as const) {
+        const cols = await db.getAllAsync<{ name: string }>(
+          `PRAGMA table_info(${prefix}${table})`
+        );
+        const existing = new Set(cols.map((c) => c.name));
+        const adds: Array<[string, string]> = [
+          ['lifecycle_status', `ALTER TABLE ${prefix}${table} ADD COLUMN lifecycle_status TEXT NOT NULL DEFAULT 'stable'`],
+          ['stale_after', `ALTER TABLE ${prefix}${table} ADD COLUMN stale_after INTEGER`],
+          ['generated_by', `ALTER TABLE ${prefix}${table} ADD COLUMN generated_by TEXT`],
+          ['last_verified_at', `ALTER TABLE ${prefix}${table} ADD COLUMN last_verified_at INTEGER`],
+          ['last_verified_by', `ALTER TABLE ${prefix}${table} ADD COLUMN last_verified_by TEXT`],
+          ['okf_sources', `ALTER TABLE ${prefix}${table} ADD COLUMN okf_sources TEXT`],
+          ['okf_verified', `ALTER TABLE ${prefix}${table} ADD COLUMN okf_verified TEXT`],
+          ['okf_usage_window', `ALTER TABLE ${prefix}${table} ADD COLUMN okf_usage_window TEXT`],
+        ];
+        for (const [name, sql] of adds) {
+          if (!existing.has(name)) await db.execAsync(sql);
+        }
+      }
+      await db.execAsync(`
+        CREATE INDEX IF NOT EXISTS ${prefix}entries_lifecycle_status_idx ON ${prefix}entries(lifecycle_status);
+        CREATE INDEX IF NOT EXISTS ${prefix}entries_stale_after_idx ON ${prefix}entries(stale_after);
+        CREATE INDEX IF NOT EXISTS ${prefix}entries_last_verified_at_idx ON ${prefix}entries(last_verified_at);
+        CREATE INDEX IF NOT EXISTS ${prefix}tasks_lifecycle_status_idx ON ${prefix}tasks(lifecycle_status);
+        CREATE INDEX IF NOT EXISTS ${prefix}tasks_stale_after_idx ON ${prefix}tasks(stale_after);
+        CREATE INDEX IF NOT EXISTS ${prefix}tasks_last_verified_at_idx ON ${prefix}tasks(last_verified_at);
+      `);
+    },
+  },
 ];
 
 // Verify MIGRATIONS are in strictly ascending version order at module load time.

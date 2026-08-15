@@ -21,13 +21,24 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
       embedding_blob BLOB,
       okf_type TEXT,
       ontology_checked_at INTEGER,
-      heal_checked_at INTEGER
+      heal_checked_at INTEGER,
+      lifecycle_status TEXT NOT NULL DEFAULT 'stable',
+      stale_after INTEGER,
+      generated_by TEXT,
+      last_verified_at INTEGER,
+      last_verified_by TEXT,
+      okf_sources TEXT,
+      okf_verified TEXT,
+      okf_usage_window TEXT
     );
 
     CREATE INDEX IF NOT EXISTS ${prefix}entries_entity_idx ON ${prefix}entries(entity_id);
     CREATE INDEX IF NOT EXISTS ${prefix}entries_source_ref_idx ON ${prefix}entries(entity_id, source_ref);
     CREATE INDEX IF NOT EXISTS ${prefix}entries_source_hash_idx ON ${prefix}entries(entity_id, source_hash) WHERE source_hash IS NOT NULL;
     CREATE INDEX IF NOT EXISTS ${prefix}entries_updated_idx ON ${prefix}entries(updated_at DESC);
+    CREATE INDEX IF NOT EXISTS ${prefix}entries_lifecycle_status_idx ON ${prefix}entries(lifecycle_status);
+    CREATE INDEX IF NOT EXISTS ${prefix}entries_stale_after_idx ON ${prefix}entries(stale_after);
+    CREATE INDEX IF NOT EXISTS ${prefix}entries_last_verified_at_idx ON ${prefix}entries(last_verified_at);
 
     -- source_ref_index: per-(entity, source_hash) record of the canonical sourceRef
     -- currently holding that hash. The partial UNIQUE index on (entity_id, source_hash)
@@ -57,10 +68,21 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
       updated_at INTEGER NOT NULL,
       resolved_at INTEGER,
       deleted_at INTEGER,
-      okf_type TEXT
+      okf_type TEXT,
+      lifecycle_status TEXT NOT NULL DEFAULT 'stable',
+      stale_after INTEGER,
+      generated_by TEXT,
+      last_verified_at INTEGER,
+      last_verified_by TEXT,
+      okf_sources TEXT,
+      okf_verified TEXT,
+      okf_usage_window TEXT
     );
 
     CREATE INDEX IF NOT EXISTS ${prefix}tasks_entity_idx ON ${prefix}tasks(entity_id, status);
+    CREATE INDEX IF NOT EXISTS ${prefix}tasks_lifecycle_status_idx ON ${prefix}tasks(lifecycle_status);
+    CREATE INDEX IF NOT EXISTS ${prefix}tasks_stale_after_idx ON ${prefix}tasks(stale_after);
+    CREATE INDEX IF NOT EXISTS ${prefix}tasks_last_verified_at_idx ON ${prefix}tasks(last_verified_at);
 
     CREATE TABLE IF NOT EXISTS ${prefix}edges (
       id TEXT PRIMARY KEY,

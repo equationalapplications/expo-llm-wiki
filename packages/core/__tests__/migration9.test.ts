@@ -87,20 +87,20 @@ async function readSourceRefIndexRow(
 }
 
 describe('migration v9: add_source_ref_index', () => {
-  it('CURRENT_SCHEMA_VERSION is 9 after the v9 migration is registered', async () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(9);
-    expect(MIGRATIONS[MIGRATIONS.length - 1].description).toBe('add_source_ref_index');
+  it('CURRENT_SCHEMA_VERSION is at least 9 after the v9 migration is registered', async () => {
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(9);
+    expect(MIGRATIONS[MIGRATIONS.length - 1].description).not.toBe('add_source_ref_index');
   });
 
   it('v9 migration creates the source_ref_index table and its UNIQUE index', async () => {
     // WikiMemory.setup() on a fresh DB sets schema_version = CURRENT_SCHEMA_VERSION
-    // (9) directly and skips running migrations — the migration's effect is
+    // (now 10) directly and skips running migrations — the migration's effect is
     // verified by forcing a v0→v9 upgrade path: reset schema_version and re-run
     // setup() so the migration loop executes.
     const db = openTestDatabase();
     const wiki = new WikiMemory(db, stubOptions);
     await wiki.setup();
-    expect(await readSchemaVersion(db)).toBe('9');
+    expect(await readSchemaVersion(db)).toBe(String(CURRENT_SCHEMA_VERSION));
 
     // Simulate a v0 DB so setup() runs every migration including v9.
     await db.runAsync(
@@ -110,10 +110,10 @@ describe('migration v9: add_source_ref_index', () => {
 
     expect(await readIndexExists(db)).toBe(true);
     expect(await readTableExists(db)).toBe(true);
-    expect(await readSchemaVersion(db)).toBe('9');
+    expect(await readSchemaVersion(db)).toBe(String(CURRENT_SCHEMA_VERSION));
   });
 
-  it('rerunning the v9 migration is idempotent: index/table exist exactly once and version stays 9', async () => {
+  it('rerunning the v9 migration is idempotent: index/table exist exactly once and version stays stable', async () => {
     const db = openTestDatabase();
     const wiki = new WikiMemory(db, stubOptions);
     await wiki.setup();
@@ -125,8 +125,8 @@ describe('migration v9: add_source_ref_index', () => {
 
     expect(await readIndexExists(db)).toBe(true);
     expect(await readTableExists(db)).toBe(true);
-    // schema_version is still '9' — not bumped twice.
-    expect(await readSchemaVersion(db)).toBe('9');
+    // schema_version is stable — not bumped twice.
+    expect(await readSchemaVersion(db)).toBe(String(CURRENT_SCHEMA_VERSION));
   });
 
   it('soft-deleted duplicates and NULL hashes do not collide — backfill succeeds, setup returns', async () => {
