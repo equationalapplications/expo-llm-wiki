@@ -193,4 +193,25 @@ describe('PromptService', () => {
       expect(userPrompt).toBe('Please classify the facts.');
     });
   });
+
+  describe('system prompts: JSON-escape discipline (issue #92)', () => {
+    it('INGEST_SYSTEM_PROMPT mentions re-escaping source quotes and embedded newlines', () => {
+      expect(INGEST_SYSTEM_PROMPT).toContain('re-escape');
+      // The new sentence names both escape sequences explicitly per spec §6.
+      expect(INGEST_SYSTEM_PROMPT).toMatch(/\\"/);
+      expect(INGEST_SYSTEM_PROMPT).toMatch(/\\n/);
+    });
+
+    it('ONTOLOGY_BACKFILL_SYSTEM_PROMPT instructs the model to preserve existing JSON escapes when echoing titles', () => {
+      expect(ONTOLOGY_BACKFILL_SYSTEM_PROMPT).toContain('preserve every JSON escape');
+    });
+
+    it('LIBRARIAN_SYSTEM_PROMPT and HEAL_SYSTEM_PROMPT are unchanged', () => {
+      // Sanity guard — these prompts do not process verbatim source prose, so
+      // they MUST NOT have been touched by this change. We assert on a stable
+      // substring of each.
+      expect(LIBRARIAN_SYSTEM_PROMPT).toContain('knowledge extraction agent');
+      expect(HEAL_SYSTEM_PROMPT).toContain('memory grooming agent');
+    });
+  });
 });
