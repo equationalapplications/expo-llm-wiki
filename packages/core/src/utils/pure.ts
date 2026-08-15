@@ -66,16 +66,20 @@ export function parseJsonResponse<T>(text: string): T {
   // be arbitrarily truncated by a bare quote mid-string — running the walker
   // on the raw text from `start` is the only way to get a complete container
   // span to repair against.
-  const candidate = containerAwareRepair(text, start);
-  if (candidate !== null) {
-    try {
-      return JSON.parse(candidate) as T;
-    } catch (err) {
-      throw new WikiParseError(
-        `Repair produced a candidate but JSON.parse rejected it: ${(err as Error).message}`,
-        { tier: 'repair', position: extractParsePosition(err), slice: candidate },
-      );
-    }
+  const repair = containerAwareRepair(text, start);
+  if (repair.success !== null) {
+    return JSON.parse(repair.success) as T;
+  }
+  // `repair.failed` carries the largest balanced span the walker found plus
+  // the parse position from JSON.parse — both fields the public contract
+  // promises on `WikiParseError` for `tier: 'repair'`. Without this branch
+  // a balanced but invalid payload (e.g. `{"facts":}`) would fall through to
+  // the generic `tier: 'all'` throw below, losing the diagnostic.
+  if (repair.failed !== null) {
+    throw new WikiParseError(
+      `Repair produced a candidate but JSON.parse rejected it: ${repair.failed.message}`,
+      { tier: 'repair', position: repair.failed.position, slice: repair.failed.candidate },
+    );
   }
 
   // Per spec (WikiParseError `tier: 'strict'`): a scanner that produced NO
@@ -134,14 +138,44 @@ function scanJsonSlice(text: string, start: number, openChar: string): string | 
  * Bounded to {@link MAX_REPAIR_CANDIDATES} candidates to avoid pathological
  * retries on truly broken inputs.
  */
-function containerAwareRepair(text: string, start: number): string | null {
+interface ContainerFrame {
+  container: 'object' | 'array';
+  /**
+   * For objects: `true` while the next string token starts a property NAME;
+   * `false` while the next string token starts a property VALUE. Stays the
+   * role through `,` (a `,` in an object leaves us expecting a key again) and
+   * through `:` (a `:` leaves us expecting a value). Arrays always treat
+   * every string as a value, so this flag is unused for arrays.
+   */
+  expectKey: boolean;
+}
+
+interface RepairFailure {
+  candidate: string;
+  position: number | null;
+  message: string;
+}
+
+interface RepairResult {
+  /** First candidate that JSON.parse accepted, or null if none parsed. */
+  success: string | null;
+  /** First candidate that JSON.parse rejected (best diagnostic), or null. */
+  failed: RepairFailure | null;
+}
+
+function containerAwareRepair(text: string, start: number): RepairResult {
   const openChar = text[start];
   // The walker produces a sequence of (candidateString, parseable) attempts
   // in largest-first order. We only care about the first one that JSON.parse
-  // accepts; JSON.parse itself throws on bad candidates, so we wrap it.
+  // accepts; JSON.parse itself throws on bad candidates, so we wrap it. The
+  // `failed` slot is the best rejection we saw along the way — callers use
+  // it to construct a `WikiParseError` with `tier: 'repair'` when no
+  // candidate parses (the public contract documents the slice + position in
+  // the error; without this we'd lose them and be forced to `tier: 'all'`).
   const candidates: string[] = [];
-  const stack: Array<'object' | 'array'> = [];
+  const stack: ContainerFrame[] = [];
   let inString = false;
+  let stringRole: 'key' | 'value' | null = null;
   let escape = false;
   let i = start;
   // Output buffer; rebuilt as we walk, used to emit candidate substrings.
@@ -194,6 +228,10 @@ function containerAwareRepair(text: string, start: number): string | null {
           continue;
         }
         // Structural opening quote — always treated as opening (no escape).
+        // Determine the string's role from the top frame: object + expectKey
+        // → key, otherwise value. Arrays always treat strings as values.
+        const top = stack[stack.length - 1];
+        stringRole = top?.container === 'object' && top.expectKey ? 'key' : 'value';
         out += ch;
         inString = true;
         i++;
@@ -204,20 +242,42 @@ function containerAwareRepair(text: string, start: number): string | null {
       // Suppress the comma-only close when we have an open bare quote —
       // a `,` peek-ahead after an odd number of bare quotes means the
       // comma is body content, not a structural separator.
+      //
+      // Role-aware: `next === ':'` and `next === '"' && text[j+1] === ':'`
+      // are KEY-close signals (the `: ` is the JSON "this string was a key"
+      // separator) and only fire for `stringRole === 'key'`. For value
+      // strings, a `:` after the closing quote is body content (e.g.
+      // `{"body":"foo: "bar": baz"}`) — closing prematurely there corrupts
+      // the value. The `,` `}` `]` cases are value-close signals and always
+      // apply.
       const commaOnly = next === ',';
+      const isKeyClose = stringRole === 'key' && (
+        next === ':' ||
+        (next === '"' && j + 1 < text.length && text[j + 1] === ':')
+      );
+      const isValueClose = !commaOnly && (
+        next === ',' ||
+        next === '}' ||
+        next === ']'
+      );
       const isClosing =
-        !commaOnly && (
-          next === ',' ||
-          next === '}' ||
-          next === ']' ||
-          next === ':' ||
-          (next === '"' && j + 1 < text.length && text[j + 1] === ':')
-        ) ||
+        isKeyClose ||
+        isValueClose ||
         (commaOnly && bareQuoteCount % 2 === 0);
 
       if (isClosing) {
         out += ch;
         inString = false;
+        // Update the top frame's expectKey state. After closing a key, the
+        // next string token is a value (separator is `:`) — expectKey=false.
+        // After closing a value in an object, the next string token is a key
+        // (separator is `,` or end-of-object) — expectKey=true. Array frames
+        // ignore this flag (every string in an array is a value).
+        const topFrame = stack[stack.length - 1];
+        if (topFrame && topFrame.container === 'object') {
+          topFrame.expectKey = stringRole === 'value';
+        }
+        stringRole = null;
         bareQuoteCount = 0;
         i++;
         continue;
@@ -230,7 +290,24 @@ function containerAwareRepair(text: string, start: number): string | null {
       continue;
     }
     if (!inString && (ch === '{' || ch === '[')) {
-      stack.push(ch === '{' ? 'object' : 'array');
+      // Push a new frame. Objects start expecting a key; arrays ignore the
+      // flag (every string token is a value).
+      stack.push({ container: ch === '{' ? 'object' : 'array', expectKey: true });
+      out += ch;
+      i++;
+      continue;
+    }
+    if (!inString && ch === ',') {
+      // A `,` in an object leaves us expecting a key. The string-close handler
+      // already sets `expectKey=true` after a value close, so the only case
+      // we need to handle here is the unit-structural case where the prior
+      // element was a primitive (number, null, true, false, etc.) — its
+      // position in the OUT stream is identical to a value close for the
+      // purposes of the next string token.
+      const topFrame = stack[stack.length - 1];
+      if (topFrame && topFrame.container === 'object') {
+        topFrame.expectKey = true;
+      }
       out += ch;
       i++;
       continue;
@@ -254,15 +331,26 @@ function containerAwareRepair(text: string, start: number): string | null {
     i++;
   }
 
+  let bestFailed: RepairFailure | null = null;
   for (const candidate of candidates) {
     try {
       JSON.parse(candidate);
-      return candidate;
-    } catch {
-      // try next candidate
+      return { success: candidate, failed: bestFailed };
+    } catch (err) {
+      // Capture the first rejection as the best diagnostic. `parseJsonResponse`
+      // uses this to build `WikiParseError` with `tier: 'repair'` and the
+      // candidate slice + parse position — the public contract that callers
+      // rely on for observability.
+      if (bestFailed === null) {
+        bestFailed = {
+          candidate,
+          position: extractParsePosition(err),
+          message: err instanceof Error ? err.message : String(err),
+        };
+      }
     }
   }
-  return null;
+  return { success: null, failed: bestFailed };
 }
 
 /**

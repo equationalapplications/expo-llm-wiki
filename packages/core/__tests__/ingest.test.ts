@@ -585,16 +585,22 @@ describe('ingestDocument — ontology', () => {
 });
 
 describe('ingestDocument — partial commit (issue #92)', () => {
-  const sourceHashFor = (i: number) => String(i).repeat(64).slice(0, 64);
+  // Deterministic 64-char hex string per integer index. `padStart` keeps
+  // each output distinct (e.g. `1` and `11`) so a future test that reuses
+  // one `freshWiki` instance with two colliding indices cannot hit the
+  // duplicate-hash path for an unrelated reason.
+  const sourceHashFor = (i: number) => String(i).padStart(4, '0').repeat(16);
 
   function makeBadJson() {
-    // LLM emits a structurally-broken object: a bare quote terminates the
-    // "title" string early, leaving unparsable trailing tokens. Both the
-    // strict scanner and the container-aware repair walker reject this — see
-    // pure.ts parseJsonResponse. (The plan's originally-suggested "she said
-    // "hi"" input is now handled by the tier-2 repair pass introduced in
-    // Task 1, so we use an input that both tiers reject.)
-    return '{"facts":[{"title":"a"b","body":"c","tags":[],"confidence":"certain"}]}';
+    // LLM emits a structurally-incomplete payload: an array bracket with
+    // no balanced close. Both the strict scanner (no balanced span) and the
+    // container-aware repair walker (no candidate produced — the stack
+    // never pops to empty) reject this. See pure.ts parseJsonResponse.
+    // The plan's originally-suggested `"she said "hi"` input is now
+    // handled by tier-2; the previous `"a"b"` fixture was a bare quote
+    // inside a value string which the walker also now repairs. An unclosed
+    // bracket is a structural failure that defeats every parser tier.
+    return '{"facts":[';
   }
 
   it('one chunk parse-fails: siblings commit, failedChunks=1, source=parse', async () => {
@@ -774,14 +780,16 @@ describe('ingestDocument — partial commit (issue #92)', () => {
         JSON.stringify({ facts: [{ title: 'T', body: 'B', tags: [], confidence: 'certain' }] }),
     };
     const wiki = await freshWiki(provider);
-    // Inject a buildPromptContext failure by replacing the ontology service
-    // with one that always throws.
+    // Inject a buildPromptContext failure by spying on the real ontology
+    // service instance. Spying preserves the prototype methods on the
+    // underlying service — a plain object-spread replacement would expose
+    // only `buildPromptContext` and fail any future call that uses a
+    // sibling method (e.g. `getEffectiveState`) with a TypeError instead of
+    // the intended assertion.
     const svc = wiki.__testAccess.ingestionService as IngestionService;
-    const originalOntology = (svc as any).ontologyService;
-    (svc as any).ontologyService = {
-      ...originalOntology,
-      buildPromptContext: async () => { throw new Error('DB connection lost'); },
-    };
+    const ontologySpy = vi
+      .spyOn((svc as any).ontologyService, 'buildPromptContext')
+      .mockRejectedValue(new Error('DB connection lost'));
     try {
       await expect(
         wiki.ingestDocument('e_ontology', {
@@ -793,7 +801,7 @@ describe('ingestDocument — partial commit (issue #92)', () => {
         }),
       ).rejects.toThrow('DB connection lost');
     } finally {
-      (svc as any).ontologyService = originalOntology;
+      ontologySpy.mockRestore();
     }
   });
 
@@ -963,5 +971,43 @@ describe('ingestDocument — partial commit (issue #92)', () => {
     const bundle = await wiki.getMemoryBundle('e_retry');
     const titles = bundle.facts.map((f) => f.title);
     expect(titles).toEqual(['Final']);
+  });
+
+  it('hasChanged returns true after a partial commit (so the failed chunks retry on the same hash)', async () => {
+    // Regression: appendPartialFacts stores source_hash as NULL on partial
+    // rows. findLatestSourceHash reads from the most recently updated live
+    // row, so the partial commit's NULL hash lets hasChanged keep returning
+    // true on a same-hash retry — the failed chunks get a second chance.
+    // The previous implementation stamped the incoming hash, which made
+    // hasChanged return false and prevent the retry.
+    const text = 'First chunk content here long enough.\n\nSecond chunk content here long enough.\n\nThird chunk content here long enough.';
+    let i = 0;
+    const provider = {
+      generateText: async () => {
+        const idx = i++;
+        if (idx === 1) return makeBadJson();
+        return JSON.stringify({
+          facts: [{ title: `Fact ${idx}`, body: `body ${idx}`, tags: [], confidence: 'certain' }],
+        });
+      },
+    };
+    const wiki = await freshWiki(provider);
+    const sourceRef = 'doc://same-hash';
+    const sourceHash = sourceHashFor(20);
+
+    // First attempt: partial (chunk 1 fails).
+    const result = await wiki.ingestDocument('e_samehash', {
+      sourceRef,
+      sourceHash,
+      documentChunk: text,
+      maxChunkLength: 50,
+      chunkOverlap: 0,
+    });
+    expect(result.failedChunks).toBe(1);
+    expect(result.ingestedChunks).toBe(2);
+
+    // Same hash, no full commit yet: hasChanged must still return true so a
+    // retry of the same content re-attempts the failed chunk.
+    await expect(wiki.hasChanged('e_samehash', sourceRef, sourceHash)).resolves.toBe(true);
   });
 });

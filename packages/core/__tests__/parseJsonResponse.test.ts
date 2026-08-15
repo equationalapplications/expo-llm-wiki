@@ -48,6 +48,42 @@ describe('parseJsonResponse — tier 2 (container-aware repair)', () => {
     const result = parseJsonResponse<{ a: { b: string } }>('{"a":{"b":"he said "x""}}');
     expect(result).toEqual({ a: { b: 'he said "x"' } });
   });
+
+  it('does not close a value string on a `:` peek-ahead (key-vs-value role)', () => {
+    // Regression: the walker previously treated every `"` followed by `:`
+    // as a structural close, which prematurely ended the value string here
+    // and produced unparsable JSON. The fix tracks `stringRole` so the `:`
+    // signal only fires for object-key strings.
+    const result = parseJsonResponse<{ body: string }>('{"body":"Example: "key": value"}');
+    expect(result).toEqual({ body: 'Example: "key": value' });
+  });
+});
+
+describe('parseJsonResponse — repair tier surfaces failed candidate', () => {
+  it('balanced but invalid JSON throws WikiParseError with tier=repair and the failed slice', () => {
+    // `{"facts":}` is balanced (the walker finds a complete outer span) but
+    // JSON.parse rejects it. The public contract documents that
+    // `WikiParseError` for `tier: 'repair'` carries the candidate slice +
+    // parse position — keeping the diagnostic instead of falling through to
+    // the generic `tier: 'all'` throw.
+    //
+    // Position is best-effort: V8 reports the position of the unexpected
+    // token in the older "in JSON at position N" format. Newer V8 emits
+    // "Unexpected token 'X', "..." is not valid JSON" without an explicit
+    // position, so `position` is null in that case. The slice is the more
+    // important diagnostic — it always carries the candidate.
+    expect(() => parseJsonResponse('{"facts":}')).toThrow(WikiParseError);
+    try {
+      parseJsonResponse('{"facts":}');
+    } catch (e) {
+      const err = e as WikiParseError;
+      expect(err.tier).toBe('repair');
+      expect(err.slice).toBe('{"facts":}');
+      if (err.position !== null) {
+        expect(typeof err.position).toBe('number');
+      }
+    }
+  });
 });
 
 describe('parseJsonResponse — failure modes throw WikiParseError', () => {

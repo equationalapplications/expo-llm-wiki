@@ -29,7 +29,12 @@ Supports [Open Knowledge Format (OKF) v0.1](https://github.com/GoogleCloudPlatfo
 ### 5.4.1 — Ingest parse resilience (issue #92)
 
 - `parseJsonResponse` now tolerates bare `"` characters in LLM output via a
-  container-aware repair pass. Single-function refactor; no API change.
+  container-aware repair pass. The function's signature is unchanged
+  (`parseJsonResponse<T>(text: string): T`); the runtime contract widens —
+  the new `WikiParseError` type carries `{ tier, position, slice }` instead
+  of an opaque `Error`, and `tier: 'repair'` is now reachable for balanced
+  invalid payloads (e.g. `{"facts":}`) where the walker found a candidate
+  span that `JSON.parse` ultimately rejected.
 - `IngestionService.ingestDocument` no longer rejects the whole call when one
   chunk fails. Sibling chunks commit; the result's `parseFailures[]` records
   per-chunk failures. A new typed error `WikiIngestEmptyError` is thrown when
@@ -37,9 +42,12 @@ Supports [Open Knowledge Format (OKF) v0.1](https://github.com/GoogleCloudPlatfo
   position, slice}`. New result fields: `ingestedChunks`, `failedChunks`,
   `parseFailures?`.
 - Partial-commit semantics: when some chunks fail, the document's
-  `(entity, sourceHash) → sourceRef` ownership is **not** recorded, so
-  `hasChanged` returns `true` on every subsequent run and the failed chunks
-  retry. On full success the next run supersedes everything atomically.
+  `(entity, sourceHash) → sourceRef` ownership is **not** recorded and the
+  partial rows are stored with `source_hash = NULL`. Subsequent runs with
+  the same hash see `hasChanged` return `true` and the failed chunks retry
+  on the next pass; the retry's `appendPartialFacts` dedupes against the
+  prior partial's surviving rows so titles are never duplicated. On full
+  success the next run supersedes everything atomically.
 - `INGEST_SYSTEM_PROMPT` and `ONTOLOGY_BACKFILL_SYSTEM_PROMPT` were tightened
   to call out JSON-escape discipline explicitly.
 - **Hosts must update**: a host that today treats `ingestDocument` throwing as
@@ -447,7 +455,7 @@ await wiki.write('entity-123', {
 
 ### Ingest Document
 
-Extract facts from a document (chunked internally). Idempotent — re-calling with the same `sourceRef` replaces the prior extraction. Documents are automatically chunked at sentence boundaries; if a sentence exceeds `maxChunkLength`, it is hard-split.
+Extract facts from a document (chunked internally). Idempotent on a full-success run — re-calling with the same `sourceRef` and `sourceHash` replaces the prior extraction. Documents are automatically chunked at sentence boundaries; if a sentence exceeds `maxChunkLength`, it is hard-split.
 
 ```typescript
 const result = await wiki.ingestDocument('entity-123', {
@@ -466,10 +474,22 @@ const result = await wiki.ingestDocument('entity-123', {
 
 Return JSON: {"facts": [{"title": "...", "body": "...", "tags": ["..."], "confidence": "certain|tentative|inferred"}]}`,
 });
-// result: { truncated: boolean; chunks: number }
-// truncated: true if at least one hard-split was required (no sentence boundary)
-// chunks: number of LLM calls made
+// result: {
+//   truncated: boolean;          // true if at least one hard-split was required (no sentence boundary)
+//   chunks: number;              // total number of LLM calls made
+//   ingestedChunks: number;      // chunks whose facts were committed
+//   failedChunks: number;        // chunks whose LLM/parse response was rejected
+//   parseFailures?: ChunkFailure[]; // present iff failedChunks > 0; per-chunk detail
+// }
+// On a full success (failedChunks === 0), re-calling with the same sourceRef
+// supersedes the prior extraction atomically. On a partial success
+// (0 < failedChunks < chunks), the document's `(entity, sourceHash) → sourceRef`
+// ownership is NOT recorded — `hasChanged` keeps returning true and a retry
+// re-attempts the failed chunks. On a total failure (failedChunks === chunks),
+// `ingestDocument` throws `WikiIngestEmptyError` with the full parseFailures.
 ```
+
+**Hosts must update**: a host that today treats `ingestDocument` throwing as the only failure signal will, after release 5.4.1, see a successful return with `parseFailures[]` set when a subset of chunks failed. Inspect `result.failedChunks` and surface `result.parseFailures[]` for observability — do not rely on the throw for partial failures. Only `WikiIngestEmptyError` (every chunk failed) still throws.
 
 ### Background Maintenance
 

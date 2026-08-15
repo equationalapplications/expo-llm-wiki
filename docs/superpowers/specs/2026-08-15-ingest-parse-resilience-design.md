@@ -279,19 +279,21 @@ The verbatim-prose tension is milder here — there is no source document, but `
 
 ### Unit — `packages/core/__tests__/parseJsonResponse.test.ts` (new)
 
-| # | Input | Assertion |
-|---|---|---|
+| # | Scenario | Input | Assertion |
+|---|---|---|---|
 | 1 | strict happy path | `{"facts":[]}` | Returns `{facts: []}`, no warning |
 | 2 | array happy path | `[1,2,3]` | Returns `[1,2,3]` |
 | 3 | walker repairs bare quote in object body | `{"body":"she said "hi""}` | Tier 2 walker finds the bare `"`, re-escapes, `JSON.parse` succeeds; result has `body: 'she said "hi"'` |
 | 4 | walker repairs bare quote in array element | `["he said "hi""]` | Tier 2 walker finds the bare `"`, re-escapes, `JSON.parse` succeeds |
 | 5 | walker repairs multiple bare quotes (prose shape) | `{"body":"He said "hi", then left."}` | Tier 2 walker re-escapes both bare quotes; result has `body: 'He said "hi", then left.'` |
 | 6 | walker repairs mid-string bare quote at end of value | `{"body":"He said "hi""}` (closing pair) | Tier 2 re-escapes both bare quotes; result has `body: 'He said "hi"'` |
-| 7 | all tiers fail on truly broken input, throws typed error | `{` (truncated mid-key — no balanced close) | `WikiParseError` thrown with `tier: 'strict'`, `position: 0`, `slice === text` |
+| 7 | all tiers fail on truly broken input, throws typed error | `{"facts":[` (unclosed array — no balanced close) | `WikiParseError` thrown with `tier: 'strict'`, `position: 0`, `slice === text` |
 | 8 | no JSON object/array at all | `no braces at all` | `WikiParseError` thrown with `tier: 'strict'`, `position: null`, `slice === text` |
 | 9 | walker does NOT corrupt already-valid JSON | `["a","b","c"]` | Tier 1 succeeds; tier 2 never runs |
 | 10 | peek-ahead respects object key/value disambiguation | `{"a":"b","c":"d"}` | Tier 1 succeeds |
 | 11 | walker handles nested object in object | `{"a":{"b":"he said "x""}}` | Tier 2 repairs, `JSON.parse` succeeds |
+| 12 | walker does not close a value string on a `:` (role tracking) | `{"body":"Example: "key": value"}` | Tier 2 keeps the value string open across the embedded `:` and `"key":`; result has `body: 'Example: "key": value'` |
+| 13 | balanced invalid JSON throws `WikiParseError` with `tier: 'repair'` and the failed slice | `{"facts":}` | `WikiParseError` thrown with `tier: 'repair'`, `slice === '{"facts":}'`; `position` is best-effort (a number when extractable from V8's older "in JSON at position N" format, `null` when V8 emits the newer "Unexpected token 'X', "..." is not valid JSON" format) |
 
 ### Unit — extend `packages/core/__tests__/ingest.test.ts`
 

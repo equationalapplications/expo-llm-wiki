@@ -117,12 +117,19 @@ export class IngestionService {
           // immediately, not after the host has spent LLM tokens on every
           // chunk. See spec §3.
           const ontologyContext = await this.ontologyService?.buildPromptContext(entityId) ?? null;
+          // Prompt building is ALSO template-driven and systemic, like
+          // buildPromptContext above: a malformatted `promptOverride` or a
+          // configured-template regression fails identically for every chunk
+          // and would otherwise be recorded as N `source: 'llm'` failures
+          // before `WikiIngestEmptyError` buries the real cause. Surface
+          // template/override errors as raw throws so the host sees them on
+          // the first chunk instead of after `chunks.length` LLM calls.
+          const { systemPrompt, userPrompt } = this.promptService.buildIngestPrompt(
+            chunk,
+            params.promptOverride,
+            ontologyContext,
+          );
           try {
-            const { systemPrompt, userPrompt } = this.promptService.buildIngestPrompt(
-              chunk,
-              params.promptOverride,
-              ontologyContext,
-            );
             const responseText = await this.options.llmProvider.generateText({ systemPrompt, userPrompt });
             const result = parseJsonResponse<{ facts: ExtractedFact[]; ontology_updates?: OntologyUpdates }>(responseText);
             return {
@@ -609,16 +616,29 @@ export class IngestionService {
    * build, no `resolveEdges`, no `mergeEmergentUpdates`). Stale edges from
    * prior attempts are recovered on the next full run's supersession.
    *
+   * Source-hash is stored as NULL on partial rows. `findLatestSourceHash`
+   * reads from the most recently updated live row for the sourceRef, so
+   * storing the incoming hash here would cause `hasChanged` to return
+   * `false` on a same-hash retry — the failed chunks would never get a
+   * second chance. With NULL, a retry sees `storedHash === null`, `hasChanged`
+   * returns `true`, and the partial commit's sibling rows remain live
+   * (deduped, not superseded) for the next attempt to extend.
+   *
    * Runs INSIDE the caller's `tx`. Does not open a nested transaction.
    * Returns `{ inserted, skippedDuplicate }` for observability.
    */
   private async appendPartialFacts(
     entityId: string,
     sourceRef: string,
-    sourceHash: string,
+    _sourceHash: string,
     dedupedFacts: ExtractedFact[],
     tx: SQLiteAdapter,
   ): Promise<{ inserted: number; skippedDuplicate: number }> {
+    // `sourceHash` is intentionally unused on this path — the parameter
+    // remains in the signature so `runFullUpsertGraph` and this helper
+    // share a call shape, but its value is dropped to keep partial rows
+    // hash-less and let `hasChanged` keep returning true for retries.
+    void _sourceHash;
     // Load the live (sourceRef, *) rows so we can dedup by title against prior
     // partial attempts AND prior full attempts. includeDeleted=false matches
     // the pre-supersession dedup semantics of the full path. Per spec §4.2:
@@ -648,7 +668,10 @@ export class IngestionService {
         tags: fact.tags,
         confidence: fact.confidence,
         source_type: 'immutable_document',
-        source_hash: sourceHash,
+        // source_hash: null on partial rows — see method docstring. The
+        // full path stamps the actual hash; partial rows stay hash-less so
+        // `hasChanged` keeps returning true for retries.
+        source_hash: null,
         source_ref: sourceRef,
         created_at: now,
         updated_at: now,
