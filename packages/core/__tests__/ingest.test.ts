@@ -125,11 +125,15 @@ class MockSQLiteDatabase {
         return { changes, lastInsertRowId: 0 };
       }
 
-      if (normalized.startsWith('UPDATE') && normalized.includes('entries SET deleted_at = ?, updated_at = ? WHERE source_ref = ? AND entity_id = ? AND deleted_at IS NULL')) {
-        const [deletedAt, updatedAt, sourceRef, entityId] = args;
+      if (normalized.startsWith('UPDATE') && normalized.includes('entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL')) {
+        // Actual SQL: `... WHERE entity_id = ? AND deleted_at IS NULL [AND source_ref = ?]`
+        // (order is entity_id first, then optional source_ref). args = [deletedAt, updatedAt, entityId]
+        // or [deletedAt, updatedAt, entityId, sourceRef].
+        const [deletedAt, updatedAt, entityId, sourceRefMaybe] = args;
         let changes = 0;
         for (const entry of this.entries) {
-          if (entry.source_ref === sourceRef && entry.entity_id === entityId && entry.deleted_at == null) {
+          if (entry.entity_id === entityId && entry.deleted_at == null) {
+            if (sourceRefMaybe !== undefined && entry.source_ref !== sourceRefMaybe) continue;
             entry.deleted_at = deletedAt;
             entry.updated_at = updatedAt;
             changes++;
@@ -193,6 +197,30 @@ class MockSQLiteDatabase {
 
       if (normalized.startsWith('SELECT rowid, source_ref FROM') && normalized.includes('entries')) {
         return [] as T[];
+      }
+
+      if (normalized.startsWith('SELECT id FROM') && normalized.includes('entries') && normalized.includes('source_ref = ?') && normalized.includes('entity_id = ?')) {
+        // EntryRepository.findIdsBySource(entityId, sourceRef, null, tx, false)
+        // Actual SQL: `SELECT id FROM entries WHERE entity_id = ? AND source_ref = ? AND deleted_at IS NULL`
+        const [entityId, sourceRef] = args as string[];
+        return this.entries
+          .filter(e => e.entity_id === entityId && e.source_ref === sourceRef && e.deleted_at == null)
+          .map(e => ({ id: e.id })) as T[];
+      }
+
+      if (normalized.startsWith('SELECT * FROM') && normalized.includes('entries') && normalized.includes('id IN (') && normalized.includes('deleted_at IS NULL')) {
+        // EntryRepository.findByIds(ids, scopedEntityIds, tx)
+        // Actual SQL: `SELECT * FROM entries WHERE id IN (?,...) [AND entity_id IN (?,...)] AND deleted_at IS NULL`
+        // args layout: [...ids, ...entityIds]. Heuristic: filter by id match AND entity_id match.
+        const idSet = new Set<string>();
+        const entityIdSet = new Set<string>();
+        for (const a of args) {
+          if (typeof a !== 'string') continue;
+          if (this.entries.some(e => e.id === a)) idSet.add(a);
+          if (this.entries.some(e => e.entity_id === a)) entityIdSet.add(a);
+        }
+        return this.entries
+          .filter(e => e.deleted_at == null && idSet.has(e.id) && entityIdSet.has(e.entity_id)) as T[];
       }
 
       if (normalized.startsWith('SELECT * FROM') && normalized.includes('entries WHERE entity_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC')) {
@@ -767,5 +795,173 @@ describe('ingestDocument — partial commit (issue #92)', () => {
     } finally {
       (svc as any).ontologyService = originalOntology;
     }
+  });
+
+  it('partial commit does NOT update source_ref_index (no ownership on partial)', async () => {
+    const text = 'First chunk content here long enough.\n\nSecond chunk content here long enough.\n\nThird chunk content here long enough.';
+    let i = 0;
+    const provider = {
+      generateText: async () => {
+        const idx = i++;
+        if (idx === 1) return makeBadJson();
+        return JSON.stringify({
+          facts: [{ title: `Fact ${idx}`, body: `body ${idx}`, tags: [], confidence: 'certain' }],
+        });
+      },
+    };
+    const wiki = await freshWiki(provider);
+    const svc = wiki.__testAccess.ingestionService as IngestionService;
+    const upsertSpy = vi.spyOn(svc['sourceRefIndexRepo'], 'upsert');
+    await wiki.ingestDocument('e_no_own', {
+      sourceRef: 'doc://no-own',
+      sourceHash: sourceHashFor(8),
+      documentChunk: text,
+      maxChunkLength: 50,
+      chunkOverlap: 0,
+    });
+    expect(upsertSpy).not.toHaveBeenCalled();
+  });
+
+  it('partial commit does NOT supersede prior facts for the same sourceRef', async () => {
+    // First: a full successful ingest.
+    const text = 'First chunk content here long enough.';
+    const fullProvider = {
+      generateText: async () =>
+        JSON.stringify({ facts: [{ title: 'Original', body: 'body', tags: [], confidence: 'certain' }] }),
+    };
+    const wiki = await freshWiki(fullProvider);
+    const sourceHashA = sourceHashFor(9);
+    await wiki.ingestDocument('e_super', {
+      sourceRef: 'doc://super',
+      sourceHash: sourceHashA,
+      documentChunk: text,
+      maxChunkLength: 50,
+      chunkOverlap: 0,
+    });
+    // Confirm the original fact is live.
+    const bundleBefore = await wiki.getMemoryBundle('e_super');
+    expect(bundleBefore.facts.map((f) => f.title)).toContain('Original');
+
+    // Now: a partial ingest with a new sourceHash (different content) but
+    // same sourceRef — this must NOT soft-delete the prior fact.
+    const partialText = 'New chunk content here long enough.\n\nNewer chunk content here long enough.';
+    let i = 0;
+    const partialProvider = {
+      generateText: async () => {
+        const idx = i++;
+        if (idx === 1) return makeBadJson();
+        return JSON.stringify({
+          facts: [{ title: `New ${idx}`, body: `new body ${idx}`, tags: [], confidence: 'certain' }],
+        });
+      },
+    };
+    (wiki as any).options.llmProvider = partialProvider;
+    const sourceHashB = sourceHashFor(10);
+    await wiki.ingestDocument('e_super', {
+      sourceRef: 'doc://super',
+      sourceHash: sourceHashB,
+      documentChunk: partialText,
+      maxChunkLength: 50,
+      chunkOverlap: 0,
+    });
+
+    const bundleAfter = await wiki.getMemoryBundle('e_super');
+    // Both the original fact and the partial attempt's new facts are live.
+    expect(bundleAfter.facts.map((f) => f.title)).toContain('Original');
+    expect(bundleAfter.facts.map((f) => f.title)).toContain('New 0');
+  });
+
+  it('partial commit dedups against prior live facts for the same sourceRef', async () => {
+    // First: a full ingest of 'Fact A' under sourceRef.
+    const wiki = await freshWiki({
+      generateText: async () =>
+        JSON.stringify({ facts: [{ title: 'Fact A', body: 'body', tags: [], confidence: 'certain' }] }),
+    });
+    await wiki.ingestDocument('e_dedup', {
+      sourceRef: 'doc://dedup',
+      sourceHash: sourceHashFor(11),
+      documentChunk: 'Chunk A content here long enough.',
+      maxChunkLength: 50,
+      chunkOverlap: 0,
+    });
+
+    // Now: a partial ingest where chunk 0 succeeds with the SAME title 'Fact A'.
+    let i = 0;
+    (wiki as any).options.llmProvider = {
+      generateText: async () => {
+        const idx = i++;
+        if (idx === 1) return makeBadJson();
+        return JSON.stringify({
+          facts: [{ title: 'Fact A', body: 'duplicate body', tags: [], confidence: 'certain' }],
+        });
+      },
+    };
+    const result = await wiki.ingestDocument('e_dedup', {
+      sourceRef: 'doc://dedup',
+      sourceHash: sourceHashFor(12),
+      documentChunk: 'New chunk content here long enough.\n\nNewer chunk content here long enough.',
+      maxChunkLength: 50,
+      chunkOverlap: 0,
+    });
+
+    expect(result.failedChunks).toBe(1);
+    // Only one 'Fact A' in the bundle despite two ingest attempts.
+    const bundle = await wiki.getMemoryBundle('e_dedup');
+    const factAs = bundle.facts.filter((f) => f.title === 'Fact A');
+    expect(factAs.length).toBe(1);
+  });
+
+  it('a subsequent full success replaces both prior partial and prior full attempts in one transaction', async () => {
+    // First: a full ingest that establishes the sourceRef.
+    const wiki = await freshWiki({
+      generateText: async () => JSON.stringify({ facts: [{ title: 'Full', body: 'f', tags: [], confidence: 'certain' }] }),
+    });
+    const sourceRef = 'doc://retry';
+    await wiki.ingestDocument('e_retry', {
+      sourceRef,
+      sourceHash: sourceHashFor(13),
+      documentChunk: 'First chunk content here long enough.',
+      maxChunkLength: 50,
+      chunkOverlap: 0,
+    });
+
+    // Second: a partial ingest (chunk 1 fails) for the same sourceRef with new hash.
+    let i = 0;
+    (wiki as any).options.llmProvider = {
+      generateText: async () => {
+        const idx = i++;
+        if (idx === 1) return makeBadJson();
+        return JSON.stringify({ facts: [{ title: 'Partial', body: 'p', tags: [], confidence: 'certain' }] });
+      },
+    };
+    await wiki.ingestDocument('e_retry', {
+      sourceRef,
+      sourceHash: sourceHashFor(14),
+      documentChunk: 'New chunk content here long enough.\n\nNewer chunk content here long enough.',
+      maxChunkLength: 50,
+      chunkOverlap: 0,
+    });
+    const partialBundle = await wiki.getMemoryBundle('e_retry');
+    // Both 'Full' (prior) and 'Partial' (this partial attempt) are live.
+    expect(partialBundle.facts.map((f) => f.title).sort()).toEqual(['Full', 'Partial']);
+
+    // Third: a full success for the same sourceRef with a new hash. The full
+    // path's supersession replaces BOTH the prior full attempt AND the partial
+    // attempt in one transaction.
+    (wiki as any).options.llmProvider = {
+      generateText: async () => JSON.stringify({ facts: [{ title: 'Final', body: 'f', tags: [], confidence: 'certain' }] }),
+    };
+    await wiki.ingestDocument('e_retry', {
+      sourceRef,
+      sourceHash: sourceHashFor(15),
+      documentChunk: 'Final chunk content here long enough.',
+      maxChunkLength: 50,
+      chunkOverlap: 0,
+    });
+
+    // Only 'Final' should be live — both prior attempts were superseded.
+    const bundle = await wiki.getMemoryBundle('e_retry');
+    const titles = bundle.facts.map((f) => f.title);
+    expect(titles).toEqual(['Final']);
   });
 });
