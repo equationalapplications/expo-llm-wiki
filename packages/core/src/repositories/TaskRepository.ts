@@ -3,6 +3,20 @@ import { OutboxRepository } from './OutboxRepository';
 import type { WikiTask, SQLiteAdapter } from '../types';
 
 function mapRowToTask(row: any): WikiTask {
+  const parseJsonArray = <T>(s: unknown, fallback: T[]): T[] => {
+    if (Array.isArray(s)) return s as T[];
+    if (typeof s === 'string' && s.length > 0) {
+      try { const p = JSON.parse(s); if (Array.isArray(p)) return p; } catch {}
+    }
+    return fallback;
+  };
+  const parseJsonObject = <T>(s: unknown, fallback: T | null = null): T | null => {
+    if (s && typeof s === 'object') return s as T;
+    if (typeof s === 'string' && s.length > 0) {
+      try { const p = JSON.parse(s); if (p && typeof p === 'object') return p as T; } catch {}
+    }
+    return fallback;
+  };
   return {
     id: row.id,
     entity_id: row.entity_id,
@@ -14,6 +28,15 @@ function mapRowToTask(row: any): WikiTask {
     resolved_at: row.resolved_at != null ? Number(row.resolved_at) : null,
     deleted_at: row.deleted_at != null ? Number(row.deleted_at) : null,
     okf_type: row.okf_type ?? null,
+    // OKF v0.2
+    lifecycle_status: (row.lifecycle_status ?? 'stable') as WikiTask['lifecycle_status'],
+    stale_after: row.stale_after != null ? Number(row.stale_after) : null,
+    generated_by: row.generated_by ?? null,
+    okf_sources: parseJsonArray<NonNullable<WikiTask['okf_sources']>[number]>(row.okf_sources, []),
+    okf_verified: parseJsonArray<NonNullable<WikiTask['okf_verified']>[number]>(row.okf_verified, []),
+    okf_usage_window: parseJsonObject<NonNullable<WikiTask['okf_usage_window']>>(row.okf_usage_window),
+    last_verified_at: row.last_verified_at != null ? Number(row.last_verified_at) : null,
+    last_verified_by: row.last_verified_by ?? null,
   };
 }
 
@@ -92,8 +115,10 @@ export class TaskRepository extends BaseRepository {
     await executor.runAsync(
       `INSERT INTO ${this.prefix}tasks (
         id, entity_id, description, status, priority,
-        created_at, updated_at, resolved_at, deleted_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        created_at, updated_at, resolved_at, deleted_at,
+        lifecycle_status, stale_after, generated_by, last_verified_at, last_verified_by,
+        okf_sources, okf_verified, okf_usage_window
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         entity_id = excluded.entity_id,
         description = excluded.description,
@@ -101,7 +126,15 @@ export class TaskRepository extends BaseRepository {
         priority = excluded.priority,
         updated_at = excluded.updated_at,
         resolved_at = excluded.resolved_at,
-        deleted_at = excluded.deleted_at`,
+        deleted_at = excluded.deleted_at,
+        lifecycle_status = excluded.lifecycle_status,
+        stale_after = excluded.stale_after,
+        generated_by = excluded.generated_by,
+        last_verified_at = excluded.last_verified_at,
+        last_verified_by = excluded.last_verified_by,
+        okf_sources = excluded.okf_sources,
+        okf_verified = excluded.okf_verified,
+        okf_usage_window = excluded.okf_usage_window`,
       [
         task.id,
         task.entity_id,
@@ -112,6 +145,14 @@ export class TaskRepository extends BaseRepository {
         now, // updated_at set by repo or import override
         task.resolved_at ?? null,
         task.deleted_at ?? null,
+        task.lifecycle_status ?? 'stable',
+        task.stale_after ?? null,
+        task.generated_by ?? null,
+        task.last_verified_at ?? null,
+        task.last_verified_by ?? null,
+        task.okf_sources ? JSON.stringify(task.okf_sources) : null,
+        task.okf_verified ? JSON.stringify(task.okf_verified) : null,
+        task.okf_usage_window ? JSON.stringify(task.okf_usage_window) : null,
       ],
     );
 
@@ -134,8 +175,10 @@ export class TaskRepository extends BaseRepository {
     await executor.runAsync(
       `INSERT INTO ${this.prefix}tasks (
         id, entity_id, description, status, priority,
-        created_at, updated_at, resolved_at, deleted_at, okf_type
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        created_at, updated_at, resolved_at, deleted_at, okf_type,
+        lifecycle_status, stale_after, generated_by, last_verified_at, last_verified_by,
+        okf_sources, okf_verified, okf_usage_window
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         entity_id = excluded.entity_id,
         description = excluded.description,
@@ -144,7 +187,15 @@ export class TaskRepository extends BaseRepository {
         updated_at = excluded.updated_at,
         resolved_at = excluded.resolved_at,
         deleted_at = excluded.deleted_at,
-        okf_type = excluded.okf_type`,
+        okf_type = excluded.okf_type,
+        lifecycle_status = excluded.lifecycle_status,
+        stale_after = excluded.stale_after,
+        generated_by = excluded.generated_by,
+        last_verified_at = excluded.last_verified_at,
+        last_verified_by = excluded.last_verified_by,
+        okf_sources = excluded.okf_sources,
+        okf_verified = excluded.okf_verified,
+        okf_usage_window = excluded.okf_usage_window`,
       [
         task.id,
         task.entity_id,
@@ -156,6 +207,14 @@ export class TaskRepository extends BaseRepository {
         task.resolved_at ?? null,
         task.deleted_at ?? null,
         task.okf_type ?? null,
+        task.lifecycle_status ?? 'stable',
+        task.stale_after ?? null,
+        task.generated_by ?? null,
+        task.last_verified_at ?? null,
+        task.last_verified_by ?? null,
+        task.okf_sources ? JSON.stringify(task.okf_sources) : null,
+        task.okf_verified ? JSON.stringify(task.okf_verified) : null,
+        task.okf_usage_window ? JSON.stringify(task.okf_usage_window) : null,
       ],
     );
   }

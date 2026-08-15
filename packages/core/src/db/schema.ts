@@ -36,9 +36,6 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
     CREATE INDEX IF NOT EXISTS ${prefix}entries_source_ref_idx ON ${prefix}entries(entity_id, source_ref);
     CREATE INDEX IF NOT EXISTS ${prefix}entries_source_hash_idx ON ${prefix}entries(entity_id, source_hash) WHERE source_hash IS NOT NULL;
     CREATE INDEX IF NOT EXISTS ${prefix}entries_updated_idx ON ${prefix}entries(updated_at DESC);
-    CREATE INDEX IF NOT EXISTS ${prefix}entries_lifecycle_status_idx ON ${prefix}entries(lifecycle_status);
-    CREATE INDEX IF NOT EXISTS ${prefix}entries_stale_after_idx ON ${prefix}entries(stale_after);
-    CREATE INDEX IF NOT EXISTS ${prefix}entries_last_verified_at_idx ON ${prefix}entries(last_verified_at);
 
     -- source_ref_index: per-(entity, source_hash) record of the canonical sourceRef
     -- currently holding that hash. The partial UNIQUE index on (entity_id, source_hash)
@@ -80,9 +77,6 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
     );
 
     CREATE INDEX IF NOT EXISTS ${prefix}tasks_entity_idx ON ${prefix}tasks(entity_id, status);
-    CREATE INDEX IF NOT EXISTS ${prefix}tasks_lifecycle_status_idx ON ${prefix}tasks(lifecycle_status);
-    CREATE INDEX IF NOT EXISTS ${prefix}tasks_stale_after_idx ON ${prefix}tasks(stale_after);
-    CREATE INDEX IF NOT EXISTS ${prefix}tasks_last_verified_at_idx ON ${prefix}tasks(last_verified_at);
 
     CREATE TABLE IF NOT EXISTS ${prefix}edges (
       id TEXT PRIMARY KEY,
@@ -141,4 +135,30 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
     CREATE INDEX IF NOT EXISTS ${prefix}outbox_created_at
       ON ${prefix}outbox (created_at);
   `);
+
+  // OKF v0.2 indexes — gated on column existence so we never try to create an
+  // index on a column that hasn't been added yet (upgrade-from-pre-v10 case).
+  // The columns themselves are in the CREATE TABLE above (fresh installs get
+  // them directly) and in migration v10 (upgrades get them via ALTER TABLE).
+  // The migration also creates these same indexes, so the IF NOT EXISTS guard
+  // makes either path safe.
+  await createOkfV02IndexesIfColumnsExist(db, prefix);
+}
+
+async function createOkfV02IndexesIfColumnsExist(db: SQLiteAdapter, prefix: string): Promise<void> {
+  for (const table of ['entries', 'tasks'] as const) {
+    const cols = await db.getAllAsync<{ name: string }>(
+      `PRAGMA table_info(${prefix}${table})`
+    );
+    const colNames = new Set(cols.map((c) => c.name));
+    if (colNames.has('lifecycle_status')) {
+      await db.execAsync(`CREATE INDEX IF NOT EXISTS ${prefix}${table}_lifecycle_status_idx ON ${prefix}${table}(lifecycle_status);`);
+    }
+    if (colNames.has('stale_after')) {
+      await db.execAsync(`CREATE INDEX IF NOT EXISTS ${prefix}${table}_stale_after_idx ON ${prefix}${table}(stale_after);`);
+    }
+    if (colNames.has('last_verified_at')) {
+      await db.execAsync(`CREATE INDEX IF NOT EXISTS ${prefix}${table}_last_verified_at_idx ON ${prefix}${table}(last_verified_at);`);
+    }
+  }
 }

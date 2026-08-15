@@ -298,6 +298,16 @@ export class ImportExportService {
           deleted_at: fact.deleted_at,
           embedding_blob: blobData ?? undefined,
           okf_type: fact.okf_type ?? null,
+          // OKF v0.2 — forwarded as-is; parseOkfBundle / the caller is responsible for
+          // populating these per spec, importDump does not derive or validate them.
+          lifecycle_status: fact.lifecycle_status ?? 'stable',
+          stale_after: fact.stale_after ?? null,
+          generated_by: fact.generated_by ?? null,
+          okf_sources: fact.okf_sources ?? [],
+          okf_verified: fact.okf_verified ?? [],
+          okf_usage_window: fact.okf_usage_window ?? null,
+          last_verified_at: fact.last_verified_at ?? null,
+          last_verified_by: fact.last_verified_by ?? null,
         };
 
         await this.entryRepo.upsertForImport(factObj, tx);
@@ -361,6 +371,15 @@ export class ImportExportService {
             resolved_at: task.resolved_at,
             deleted_at: task.deleted_at,
             okf_type: task.okf_type ?? null,
+            // OKF v0.2
+            lifecycle_status: task.lifecycle_status ?? 'stable',
+            stale_after: task.stale_after ?? null,
+            generated_by: task.generated_by ?? null,
+            okf_sources: task.okf_sources ?? [],
+            okf_verified: task.okf_verified ?? [],
+            okf_usage_window: task.okf_usage_window ?? null,
+            last_verified_at: task.last_verified_at ?? null,
+            last_verified_by: task.last_verified_by ?? null,
           },
           tx,
           safeUpdatedAt,

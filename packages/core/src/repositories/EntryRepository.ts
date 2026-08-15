@@ -20,6 +20,20 @@ function mapRowToFact(row: any): WikiFact {
     try { const p = JSON.parse(row.tags as string); if (Array.isArray(p)) return p; } catch {}
     return [];
   })();
+  const parseJsonArray = <T>(s: unknown, fallback: T[]): T[] => {
+    if (Array.isArray(s)) return s as T[];
+    if (typeof s === 'string' && s.length > 0) {
+      try { const p = JSON.parse(s); if (Array.isArray(p)) return p; } catch {}
+    }
+    return fallback;
+  };
+  const parseJsonObject = <T>(s: unknown, fallback: T | null = null): T | null => {
+    if (s && typeof s === 'object') return s as T;
+    if (typeof s === 'string' && s.length > 0) {
+      try { const p = JSON.parse(s); if (p && typeof p === 'object') return p as T; } catch {}
+    }
+    return fallback;
+  };
 
   return {
     id: row.id,
@@ -39,6 +53,15 @@ function mapRowToFact(row: any): WikiFact {
     deleted_at: row.deleted_at != null ? Number(row.deleted_at) : null,
     access_count: Number(row.access_count ?? 0),
     okf_type: row.okf_type ?? null,
+    // OKF v0.2
+    lifecycle_status: (row.lifecycle_status ?? 'stable') as WikiFact['lifecycle_status'],
+    stale_after: row.stale_after != null ? Number(row.stale_after) : null,
+    generated_by: row.generated_by ?? null,
+    okf_sources: parseJsonArray<NonNullable<WikiFact['okf_sources']>[number]>(row.okf_sources, []),
+    okf_verified: parseJsonArray<NonNullable<WikiFact['okf_verified']>[number]>(row.okf_verified, []),
+    okf_usage_window: parseJsonObject<NonNullable<WikiFact['okf_usage_window']>>(row.okf_usage_window),
+    last_verified_at: row.last_verified_at != null ? Number(row.last_verified_at) : null,
+    last_verified_by: row.last_verified_by ?? null,
   };
 }
 
@@ -129,8 +152,10 @@ export class EntryRepository extends BaseRepository {
       `INSERT INTO ${this.prefix}entries (
         id, entity_id, title, body, tags, confidence, source_type,
         source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count,
-        deleted_at, embedding_blob, embedding, okf_type
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        deleted_at, embedding_blob, embedding, okf_type,
+        lifecycle_status, stale_after, generated_by, last_verified_at, last_verified_by,
+        okf_sources, okf_verified, okf_usage_window
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         entity_id = excluded.entity_id,
         title = excluded.title,
@@ -146,7 +171,15 @@ export class EntryRepository extends BaseRepository {
         deleted_at = excluded.deleted_at,
         embedding_blob = CASE WHEN excluded.embedding_blob IS NULL THEN embedding_blob ELSE excluded.embedding_blob END,
         embedding = NULL,
-        okf_type = excluded.okf_type`,
+        okf_type = excluded.okf_type,
+        lifecycle_status = excluded.lifecycle_status,
+        stale_after = excluded.stale_after,
+        generated_by = excluded.generated_by,
+        last_verified_at = excluded.last_verified_at,
+        last_verified_by = excluded.last_verified_by,
+        okf_sources = excluded.okf_sources,
+        okf_verified = excluded.okf_verified,
+        okf_usage_window = excluded.okf_usage_window`,
       [
         fact.id,
         fact.entity_id,
@@ -165,6 +198,14 @@ export class EntryRepository extends BaseRepository {
         embeddingBlob ?? null,
         null,
         fact.okf_type ?? null,
+        fact.lifecycle_status ?? 'stable',
+        fact.stale_after ?? null,
+        fact.generated_by ?? null,
+        fact.last_verified_at ?? null,
+        fact.last_verified_by ?? null,
+        fact.okf_sources ? JSON.stringify(fact.okf_sources) : null,
+        fact.okf_verified ? JSON.stringify(fact.okf_verified) : null,
+        fact.okf_usage_window ? JSON.stringify(fact.okf_usage_window) : null,
       ],
     );
 
@@ -250,8 +291,10 @@ export class EntryRepository extends BaseRepository {
       `INSERT INTO ${this.prefix}entries (
         id, entity_id, title, body, tags, confidence, source_type,
         source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count,
-        deleted_at, embedding_blob, embedding, okf_type
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        deleted_at, embedding_blob, embedding, okf_type,
+        lifecycle_status, stale_after, generated_by, last_verified_at, last_verified_by,
+        okf_sources, okf_verified, okf_usage_window
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         entity_id = excluded.entity_id,
         title = excluded.title,
@@ -268,7 +311,15 @@ export class EntryRepository extends BaseRepository {
         deleted_at = excluded.deleted_at,
         embedding_blob = excluded.embedding_blob,
         embedding = NULL,
-        okf_type = excluded.okf_type`,
+        okf_type = excluded.okf_type,
+        lifecycle_status = excluded.lifecycle_status,
+        stale_after = excluded.stale_after,
+        generated_by = excluded.generated_by,
+        last_verified_at = excluded.last_verified_at,
+        last_verified_by = excluded.last_verified_by,
+        okf_sources = excluded.okf_sources,
+        okf_verified = excluded.okf_verified,
+        okf_usage_window = excluded.okf_usage_window`,
       [
         fact.id,
         fact.entity_id,
@@ -287,6 +338,14 @@ export class EntryRepository extends BaseRepository {
         embeddingBlob ?? null,
         null,
         fact.okf_type ?? null,
+        fact.lifecycle_status ?? 'stable',
+        fact.stale_after ?? null,
+        fact.generated_by ?? null,
+        fact.last_verified_at ?? null,
+        fact.last_verified_by ?? null,
+        fact.okf_sources ? JSON.stringify(fact.okf_sources) : null,
+        fact.okf_verified ? JSON.stringify(fact.okf_verified) : null,
+        fact.okf_usage_window ? JSON.stringify(fact.okf_usage_window) : null,
       ],
     );
 
