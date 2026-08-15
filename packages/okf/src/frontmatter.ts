@@ -60,7 +60,73 @@ function serializeValue(value: unknown): string {
   if (typeof value === 'boolean') return String(value);
   if (typeof value === 'number') return String(value);
   if (typeof value === 'string') return serializeScalarString(value);
+  if (Array.isArray(value)) return serializeFlowSequenceValue(value);
+  if (typeof value === 'object') return serializeFlowMappingValue(value as Record<string, OkfFrontmatterValue>);
   throw new Error(`Unsupported frontmatter value type: ${typeof value}`);
+}
+
+/**
+ * Quote a flow-mapping/-sequence scalar string more strictly than a top-level
+ * scalar. Flow syntax additionally treats `,`, `{`, `}`, `[`, `]` as
+ * structural (so a `title` like `"Foo, Bar"` MUST be quoted even though
+ * `needsQuoting` alone wouldn't require it for a top-level, non-flow value),
+ * and `/`/`:` are quoted too — this is what makes it safe to use uniformly
+ * for actor strings (`reference_agent/gemini-2.5-pro`, `human:ahormati`) as
+ * well as ordinary string values inside the same flow mapping. This
+ * subsumes what a narrower "only quote actor-shaped values" helper would
+ * need to do, so every string inside a flow mapping/sequence goes through
+ * this one function rather than two different quoting rules depending on
+ * which key it's under.
+ */
+function needsFlowQuoting(value: string): boolean {
+  return needsQuoting(value) || /[,{}[\]/:]/.test(value);
+}
+
+function serializeFlowScalarString(value: string): string {
+  return needsFlowQuoting(value) ? quoteString(value) : value;
+}
+
+/** Emit a plain object as an inline flow mapping `{ k: v, k: v }`. At most one
+ *  level of nested flow collection (mapping or sequence) as a value, per
+ *  spec §2.6 — matches what the parser accepts. */
+function serializeFlowMappingValue(obj: Record<string, OkfFrontmatterValue>, depth = 0): string {
+  const entries = Object.entries(obj).filter(([, v]) => v !== undefined);
+  if (entries.length === 0) return '{}';
+  const parts = entries.map(([k, v]) => {
+    let rendered: string;
+    if (typeof v === 'string') rendered = serializeFlowScalarString(v);
+    else if (v === null || typeof v === 'boolean' || typeof v === 'number') rendered = serializeValue(v);
+    else if (Array.isArray(v)) {
+      if (depth >= 1) throw new Error(`serializeFlowMappingValue: nesting deeper than one level is not supported (key "${k}")`);
+      rendered = serializeFlowSequenceValue(v, depth + 1);
+    } else if (typeof v === 'object') {
+      if (depth >= 1) throw new Error(`serializeFlowMappingValue: nesting deeper than one level is not supported (key "${k}")`);
+      rendered = serializeFlowMappingValue(v as Record<string, OkfFrontmatterValue>, depth + 1);
+    } else {
+      throw new Error(`serializeFlowMappingValue: unsupported value type for key "${k}"`);
+    }
+    return `${serializeKey(k)}: ${rendered}`;
+  });
+  return `{ ${parts.join(', ')} }`;
+}
+
+/** Emit an array as an inline flow sequence `[ a, b, c ]`. Object items
+ *  serialize as nested inline flow mappings (the base "array of objects"
+ *  shape — see the design note above Step 5.1 — does not consume the
+ *  one-level nesting budget). */
+function serializeFlowSequenceValue(arr: unknown[], depth = 0): string {
+  if (arr.length === 0) return '[]';
+  const parts = arr.map((item) => {
+    if (typeof item === 'string') return serializeFlowScalarString(item);
+    if (item === null || typeof item === 'boolean' || typeof item === 'number') return serializeValue(item);
+    if (item !== null && typeof item === 'object' && !Array.isArray(item)) {
+      // Sequence item that is itself a mapping: same depth (base shape, not nesting).
+      return serializeFlowMappingValue(item as Record<string, OkfFrontmatterValue>, depth);
+    }
+    if (Array.isArray(item)) return serializeFlowSequenceValue(item, depth);
+    throw new Error('serializeFlowSequenceValue: unsupported item type');
+  });
+  return `[ ${parts.join(', ')} ]`;
 }
 
 export function serializeFrontmatter(fm: OkfFrontmatter): string {
@@ -70,16 +136,20 @@ export function serializeFrontmatter(fm: OkfFrontmatter): string {
     if (Array.isArray(value)) {
       if (value.length === 0) {
         lines.push(`${serializeKey(key)}: []`);
+      } else if ((value as unknown[]).some((item) => item !== null && typeof item === 'object')) {
+        // Array of objects (sources, verified-list, parameters, ...): always a
+        // single-line flow sequence, never a block-list of flow-mapping items
+        // (see the Step 5 design note — the latter cannot round-trip).
+        lines.push(`${serializeKey(key)}: ${serializeFlowSequenceValue(value as unknown[])}`);
       } else {
+        // Plain scalar array: existing v0.1 block-sequence form, unchanged.
         lines.push(`${serializeKey(key)}:`);
         for (const item of value as unknown[]) {
-          if (typeof item === 'string') {
-            lines.push(`  - ${serializeScalarString(item)}`);
-          } else {
-            lines.push(`  - ${serializeValue(item)}`);
-          }
+          lines.push(`  - ${typeof item === 'string' ? serializeScalarString(item) : serializeValue(item)}`);
         }
       }
+    } else if (value !== null && typeof value === 'object') {
+      lines.push(`${serializeKey(key)}: ${serializeFlowMappingValue(value as Record<string, OkfFrontmatterValue>)}`);
     } else {
       lines.push(`${serializeKey(key)}: ${serializeValue(value)}`);
     }

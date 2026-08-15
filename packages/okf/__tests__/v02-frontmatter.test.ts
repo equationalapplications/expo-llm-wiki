@@ -84,12 +84,12 @@ describe('serializeFrontmatter: flow mapping emission', () => {
     const out = serializeFrontmatter({ type: 'fact', generated: { by: 'a', at: 'b' } } as any);
     expect(out).toContain('generated: { by: a, at: b }');
   });
-  it('emits an array of objects as a block sequence of flow mappings', () => {
+  it('emits an array of objects as an inline flow sequence (never a block-list of flow-mapping items)', () => {
     const out = serializeFrontmatter({
       type: 'fact',
       sources: [{ resource: 'https://a' }, { resource: 'https://b' }],
     } as any);
-    expect(out).toContain('sources:\n  - { resource: https://a }\n  - { resource: https://b }');
+    expect(out).toContain('sources: [ { resource: "https://a" }, { resource: "https://b" } ]');
   });
 });
 
@@ -109,5 +109,22 @@ describe('parse / serialize round-trip — v0.2 shapes', () => {
     expect(parsed.verified).toEqual(original.verified);
     expect(parsed.usage_window).toEqual(original.usage_window);
     expect(parsed.status).toBe('stable');
+  });
+  it('round-trips a sources entry with a per-entry usage_window (one level of nesting)', () => {
+    const original = {
+      type: 'fact',
+      sources: [{ resource: 'https://a', usage_window: { from: '2025-01-01', to: '2025-12-31' } }],
+    };
+    const serialized = serializeFrontmatter(original as any);
+    const parsed = parseFrontmatter(serialized).frontmatter;
+    expect(parsed.sources).toEqual(original.sources);
+  });
+  it('round-trips a flow-mapping string value containing a comma (would otherwise split as two entries)', () => {
+    // A naive quoting rule that only checks '/' and ':' (actor-string shape) would
+    // emit `{ title: Foo, Bar }` unquoted, which re-parses as two separate entries.
+    const original = { type: 'fact', generated: { by: 'human:a', at: 'Foo, Bar' } };
+    const serialized = serializeFrontmatter(original as any);
+    const parsed = parseFrontmatter(serialized).frontmatter;
+    expect(parsed.generated).toEqual(original.generated);
   });
 });
