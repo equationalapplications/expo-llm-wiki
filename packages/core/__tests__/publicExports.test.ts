@@ -6,6 +6,9 @@ import {
   DEFAULT_CHUNK_OVERLAP,
   WikiStrictOntologyViolation,
   WikiSourceRefHashCollision,
+  WikiParseError,
+  WikiIngestEmptyError,
+  type ChunkFailure,
 } from '../src/index';
 import { chunkText as chunkTextInternal, safeSlice as safeSliceInternal } from '../src/utils/pure';
 
@@ -70,5 +73,35 @@ describe('public exports: new error classes', () => {
     expect(e.name).toBe('WikiSourceRefHashCollision');
     expect(e.message).toContain('fileA.ts');
     expect(e.message).toContain('fileB.ts');
+  });
+});
+
+describe('public exports: parse resilience error classes', () => {
+  it('WikiParseError constructs with documented fields (tier=strict)', () => {
+    const e = new WikiParseError('boom', { tier: 'strict', position: 0, slice: '{' });
+    expect(e).toBeInstanceOf(Error);
+    expect(e).toBeInstanceOf(WikiParseError);
+    expect(e.name).toBe('WikiParseError');
+    expect(e.tier).toBe('strict');
+    expect(e.position).toBe(0);
+    expect(e.slice).toBe('{');
+    expect(e.message).toBe('boom');
+  });
+
+  it('WikiParseError defaults position=null and slice="" when omitted', () => {
+    const e = new WikiParseError('x', { tier: 'repair' });
+    expect(e.position).toBeNull();
+    expect(e.slice).toBe('');
+  });
+
+  it('WikiIngestEmptyError exposes parseFailures, sourceRef, and chunks', () => {
+    const f: ChunkFailure = { chunkIndex: 0, sourceRef: 'doc://x', source: 'parse', position: 1, message: 'm' };
+    const e = new WikiIngestEmptyError({ parseFailures: [f], sourceRef: 'doc://x', chunks: 3 });
+    expect(e).toBeInstanceOf(Error);
+    expect(e).toBeInstanceOf(WikiIngestEmptyError);
+    expect(e.name).toBe('WikiIngestEmptyError');
+    expect(e.parseFailures).toEqual([f]);
+    expect(e.sourceRef).toBe('doc://x');
+    expect(e.chunks).toBe(3);
   });
 });
