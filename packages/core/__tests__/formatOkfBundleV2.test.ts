@@ -41,7 +41,7 @@ describe('formatOkfBundle v0.2 (default)', () => {
   it('writes okf_version 0.2 and profile llm-wiki/2', () => {
     const { files } = formatOkfBundle(dump);
     const root = files.find((f) => f.path === 'index.md')!;
-    expect(root.content).toContain('okf_version: 0.2');
+    expect(root.content).toContain('okf_version: "0.2"');
     expect(root.content).toContain('profile: llm-wiki/2');
   });
 
@@ -89,7 +89,7 @@ describe('formatOkfBundle v0.1 (explicit override)', () => {
   it('writes okf_version 0.1 and profile llm-wiki/1 when options.profile=llm-wiki/1', () => {
     const { files } = formatOkfBundle(dump, { profile: 'llm-wiki/1' });
     const root = files.find((f) => f.path === 'index.md')!;
-    expect(root.content).toContain('okf_version: 0.1');
+    expect(root.content).toContain('okf_version: "0.1"');
     expect(root.content).toContain('profile: llm-wiki/1');
     const fact = files.find((f) => f.path.endsWith('facts/f1.md'))!;
     expect(fact.content).not.toContain('generated:');
