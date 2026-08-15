@@ -75,3 +75,15 @@ const links = extractMarkdownLinks('See [preferences](facts/fact_abc.md) for mor
 | [@equationalapplications/core-llm-tools](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core-llm-tools/README.md) | Gemini tool schemas and capability injector |
 | [**@equationalapplications/core-okf**](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/okf/README.md) | Zero-dependency Open Knowledge Format (OKF) v0.1 primitives — parse and produce interoperable knowledge bundles. |
 | [@equationalapplications/schema-org-llm-wiki](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/schema-org/README.md) | Curated schema.org warm-agent ontology manifest |
+
+## OKF v0.2 conformance
+
+This package conforms to [OKF v0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md). New helpers for v0.2:
+
+- `deriveTrustTier(verified)` — derive `'unverified' | 'machine-confirmed' | 'human-reviewed'`.
+- `isStaleAfter(staleAfter, now)` — staleness check against an absolute `YYYY-MM-DD` cutoff.
+- `parseVerifiedFlexible(value)` — accept either an array or a bare `{ by, at }` mapping.
+- `extractFootnotes(body)` / `serializeFootnotes(footnotes)` — preserve footnote attribution verbatim.
+- `parseFlowMapping(text)` / `parseFlowSequence(text)` — flow parsing with at most one level of mapping-value nesting (no anchors/aliases outside quoted strings).
+
+The `serializeFrontmatter` function emits plain objects as flow mappings and actor strings (containing `/` or `:`) via `serializeActorString`. Anchor/alias expansion is rejected; lines containing `&` or `*` are treated as opaque.
