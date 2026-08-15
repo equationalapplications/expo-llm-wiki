@@ -1,3 +1,10 @@
+# [5.4.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v5.3.1...v5.4.0) (2026-08-15)
+
+
+### Features
+
+* OKF v0.1 → v0.2 upgrade (llm-wiki/2 conformance) ([#90](https://github.com/equationalapplications/expo-llm-wiki/issues/90)) ([b0fe903](https://github.com/equationalapplications/expo-llm-wiki/commit/b0fe90372ee8ac1793f343ce8dd6a085550821b1)), closes [hi#effort](https://github.com/hi/issues/effort) [body-#-Citations](https://github.com/body-/issues/-Citations)
+
 ## [5.3.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v5.3.0...v5.3.1) (2026-08-14)
 
 
