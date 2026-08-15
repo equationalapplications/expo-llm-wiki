@@ -37,8 +37,17 @@ export function extractFootnotes(body: string): OkfFootnote[] {
   return out;
 }
 
-/** Joins footnote definitions back into a body block. Currently unused by round-trip
- * (we preserve bodies verbatim), but exported for future callers. */
+/** Joins footnote definitions back into a body block. Continuation lines are
+ * indented (two spaces) so that {@link extractFootnotes} — which only
+ * recognizes continuation lines that are indented per CommonMark — round-trips
+ * multi-line bodies. */
 export function serializeFootnotes(footnotes: OkfFootnote[]): string {
-  return footnotes.map((f) => `[^${f.id}]: ${f.body}`).join('\n');
+  return footnotes
+    .map((f) => {
+      const lines = f.body.split('\n');
+      const [firstLine, ...continuation] = lines;
+      const tail = continuation.map((line) => `\n  ${line}`).join('');
+      return `[^${f.id}]: ${firstLine ?? ''}${tail}`;
+    })
+    .join('\n');
 }

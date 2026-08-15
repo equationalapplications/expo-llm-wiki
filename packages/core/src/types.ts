@@ -1,4 +1,9 @@
 import { extractSqliteCode } from './db/sqliteCodes';
+import type {
+  OkfSource,
+  OkfSourceUsageWindow,
+  OkfVerifiedEntry,
+} from '@equationalapplications/core-okf';
 
 /**
  * Platform-agnostic SQLite driver interface.
@@ -266,19 +271,11 @@ export interface WikiFact {
   /** Actor string per OKF v0.2 §7 (`<producer>/<version>`, `human:<id>`, `process:<id>`). */
   generated_by?: string | null;
   /** Full list of OKF v0.2 sources (provenance). */
-  okf_sources?: Array<{
-    id?: string;
-    resource: string;
-    title?: string;
-    author?: string;
-    usage_count?: number;
-    last_modified?: string;
-    usage_window?: { from: string; to: string };
-  }>;
+  okf_sources?: OkfSource[];
   /** Chronological list of verification events. */
-  okf_verified?: Array<{ by: string; at: string }>;
+  okf_verified?: OkfVerifiedEntry[];
   /** Sibling-of-sources usage window object. */
-  okf_usage_window?: { from: string; to: string } | null;
+  okf_usage_window?: OkfSourceUsageWindow | null;
   /** Convenience: epoch ms of the latest verifier. Derived; mirrored for query speed. */
   last_verified_at?: number | null;
   /** Convenience: actor string of the latest verifier. Derived; mirrored for query speed. */
@@ -301,17 +298,9 @@ export interface WikiTask {
   lifecycle_status?: 'draft' | 'stable' | 'deprecated';
   stale_after?: number | null;
   generated_by?: string | null;
-  okf_sources?: Array<{
-    id?: string;
-    resource: string;
-    title?: string;
-    author?: string;
-    usage_count?: number;
-    last_modified?: string;
-    usage_window?: { from: string; to: string };
-  }>;
-  okf_verified?: Array<{ by: string; at: string }>;
-  okf_usage_window?: { from: string; to: string } | null;
+  okf_sources?: OkfSource[];
+  okf_verified?: OkfVerifiedEntry[];
+  okf_usage_window?: OkfSourceUsageWindow | null;
   last_verified_at?: number | null;
   last_verified_by?: string | null;
 }

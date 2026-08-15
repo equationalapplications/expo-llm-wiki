@@ -25,7 +25,19 @@ export interface FormatOkfBundleOptions {
 const DEFAULT_PROFILE: OkfFormatProfile = 'llm-wiki/2';
 
 function isoOrFallback(updatedAt: number): string {
-  return new Date(updatedAt).toISOString();
+  // Non-finite values reach here via a raw importDump payload (see ImportExportService
+  // line 182's Number.isFinite guard, which still accepts 0 as "valid" — and 0
+  // IS finite, but a NaN/Infinity from elsewhere can slip through). new Date(NaN)
+  // throws RangeError on toISOString, so fall back to the epoch rather than
+  // aborting the whole bundle export.
+  return Number.isFinite(updatedAt)
+    ? new Date(updatedAt).toISOString()
+    : new Date(0).toISOString();
+}
+
+function isoDateOrOmit(ms: number | null | undefined): string | undefined {
+  if (ms == null || !Number.isFinite(ms)) return undefined;
+  return new Date(ms).toISOString().slice(0, 10);
 }
 
 function factFrontmatterV2(f: WikiFact): OkfFrontmatter {
@@ -50,7 +62,7 @@ function factFrontmatterV2(f: WikiFact): OkfFrontmatter {
     deleted_at: f.deleted_at,
     // OKF v0.2
     status: f.lifecycle_status ?? 'stable',
-    ...(f.stale_after != null ? { stale_after: new Date(f.stale_after).toISOString().slice(0, 10) } : {}),
+    ...(isoDateOrOmit(f.stale_after) ? { stale_after: isoDateOrOmit(f.stale_after) } : {}),
     // Omit `generated` entirely when there's no actor on record — never
     // fabricate a `generated_by` (mirrors the import side's rule in §4.8:
     // it never invents one either, so export must not manufacture one that
@@ -81,7 +93,7 @@ function taskFrontmatterV2(t: WikiTask): OkfFrontmatter {
     // OKF v0.2 — symmetric with facts (spec §2.5): stale_after applies to
     // tasks too (a hallucinated task needs a freshness signal as much as a
     // hallucinated fact does).
-    ...(t.stale_after != null ? { stale_after: new Date(t.stale_after).toISOString().slice(0, 10) } : {}),
+    ...(isoDateOrOmit(t.stale_after) ? { stale_after: isoDateOrOmit(t.stale_after) } : {}),
     ...(t.generated_by ? { generated: { by: t.generated_by, at: isoOrFallback(t.updated_at) } } : {}),
     ...(t.okf_verified && t.okf_verified.length > 0 ? { verified: t.okf_verified } : {}),
     ...(t.okf_sources && t.okf_sources.length > 0 ? { sources: t.okf_sources } : {}),

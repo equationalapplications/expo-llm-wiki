@@ -48,6 +48,9 @@ describe('migration v10 round-trip on WikiFact', () => {
     const exported = await wiki.exportDump(['e1']);
     const read = exported.entities.e1.facts.find((f) => f.id === 'f_v2');
     expect(read?.lifecycle_status).toBe('draft');
+    expect(read?.stale_after).toBe(new Date('2026-01-01T00:00:00Z').getTime());
+    expect(read?.last_verified_at).toBe(new Date('2026-01-01T00:00:00Z').getTime());
+    expect(read?.okf_usage_window).toEqual({ from: '2026-01-01', to: '2026-12-31' });
     expect(read?.generated_by).toBe('reference_agent/gemini-2.5-pro');
     expect(read?.okf_sources).toEqual([{ resource: 'https://example.com', id: 'a' }]);
     expect(read?.okf_verified).toEqual([{ by: 'human:ahormati', at: '2026-01-01T00:00:00Z' }]);

@@ -1,6 +1,7 @@
 import type { SQLiteAdapter, WikiFact } from '../types';
 import { BaseRepository } from './BaseRepository';
 import { OutboxRepository } from './OutboxRepository';
+import { parseJsonArray, parseJsonObject } from './rowMappers';
 
 export type EntryRowMetadata = {
   id: string;
@@ -20,20 +21,6 @@ function mapRowToFact(row: any): WikiFact {
     try { const p = JSON.parse(row.tags as string); if (Array.isArray(p)) return p; } catch {}
     return [];
   })();
-  const parseJsonArray = <T>(s: unknown, fallback: T[]): T[] => {
-    if (Array.isArray(s)) return s as T[];
-    if (typeof s === 'string' && s.length > 0) {
-      try { const p = JSON.parse(s); if (Array.isArray(p)) return p; } catch {}
-    }
-    return fallback;
-  };
-  const parseJsonObject = <T>(s: unknown, fallback: T | null = null): T | null => {
-    if (s && typeof s === 'object') return s as T;
-    if (typeof s === 'string' && s.length > 0) {
-      try { const p = JSON.parse(s); if (p && typeof p === 'object') return p as T; } catch {}
-    }
-    return fallback;
-  };
 
   return {
     id: row.id,
@@ -172,14 +159,14 @@ export class EntryRepository extends BaseRepository {
         embedding_blob = CASE WHEN excluded.embedding_blob IS NULL THEN embedding_blob ELSE excluded.embedding_blob END,
         embedding = NULL,
         okf_type = excluded.okf_type,
-        lifecycle_status = excluded.lifecycle_status,
-        stale_after = excluded.stale_after,
-        generated_by = excluded.generated_by,
-        last_verified_at = excluded.last_verified_at,
-        last_verified_by = excluded.last_verified_by,
-        okf_sources = excluded.okf_sources,
-        okf_verified = excluded.okf_verified,
-        okf_usage_window = excluded.okf_usage_window`,
+        lifecycle_status = CASE WHEN excluded.lifecycle_status IS NULL THEN lifecycle_status ELSE excluded.lifecycle_status END,
+        stale_after = CASE WHEN excluded.stale_after IS NULL THEN stale_after ELSE excluded.stale_after END,
+        generated_by = CASE WHEN excluded.generated_by IS NULL THEN generated_by ELSE excluded.generated_by END,
+        last_verified_at = CASE WHEN excluded.last_verified_at IS NULL THEN last_verified_at ELSE excluded.last_verified_at END,
+        last_verified_by = CASE WHEN excluded.last_verified_by IS NULL THEN last_verified_by ELSE excluded.last_verified_by END,
+        okf_sources = CASE WHEN excluded.okf_sources IS NULL THEN okf_sources ELSE excluded.okf_sources END,
+        okf_verified = CASE WHEN excluded.okf_verified IS NULL THEN okf_verified ELSE excluded.okf_verified END,
+        okf_usage_window = CASE WHEN excluded.okf_usage_window IS NULL THEN okf_usage_window ELSE excluded.okf_usage_window END`,
       [
         fact.id,
         fact.entity_id,
@@ -198,6 +185,11 @@ export class EntryRepository extends BaseRepository {
         embeddingBlob ?? null,
         null,
         fact.okf_type ?? null,
+        // lifecycle_status has NOT NULL DEFAULT 'stable'. SQLite enforces NOT NULL
+        // strictly on explicit binds, so we must send the default explicitly on
+        // INSERT. The CASE WHEN guard in the SET clause preserves any existing
+        // value on UPDATE when the caller omitted lifecycle_status (the bug
+        // CodeRabbit flagged — see PR #90 review).
         fact.lifecycle_status ?? 'stable',
         fact.stale_after ?? null,
         fact.generated_by ?? null,
@@ -312,14 +304,14 @@ export class EntryRepository extends BaseRepository {
         embedding_blob = excluded.embedding_blob,
         embedding = NULL,
         okf_type = excluded.okf_type,
-        lifecycle_status = excluded.lifecycle_status,
-        stale_after = excluded.stale_after,
-        generated_by = excluded.generated_by,
-        last_verified_at = excluded.last_verified_at,
-        last_verified_by = excluded.last_verified_by,
-        okf_sources = excluded.okf_sources,
-        okf_verified = excluded.okf_verified,
-        okf_usage_window = excluded.okf_usage_window`,
+        lifecycle_status = CASE WHEN excluded.lifecycle_status IS NULL THEN lifecycle_status ELSE excluded.lifecycle_status END,
+        stale_after = CASE WHEN excluded.stale_after IS NULL THEN stale_after ELSE excluded.stale_after END,
+        generated_by = CASE WHEN excluded.generated_by IS NULL THEN generated_by ELSE excluded.generated_by END,
+        last_verified_at = CASE WHEN excluded.last_verified_at IS NULL THEN last_verified_at ELSE excluded.last_verified_at END,
+        last_verified_by = CASE WHEN excluded.last_verified_by IS NULL THEN last_verified_by ELSE excluded.last_verified_by END,
+        okf_sources = CASE WHEN excluded.okf_sources IS NULL THEN okf_sources ELSE excluded.okf_sources END,
+        okf_verified = CASE WHEN excluded.okf_verified IS NULL THEN okf_verified ELSE excluded.okf_verified END,
+        okf_usage_window = CASE WHEN excluded.okf_usage_window IS NULL THEN okf_usage_window ELSE excluded.okf_usage_window END`,
       [
         fact.id,
         fact.entity_id,
@@ -338,6 +330,7 @@ export class EntryRepository extends BaseRepository {
         embeddingBlob ?? null,
         null,
         fact.okf_type ?? null,
+        // Same NOT NULL DEFAULT note as in upsert above.
         fact.lifecycle_status ?? 'stable',
         fact.stale_after ?? null,
         fact.generated_by ?? null,

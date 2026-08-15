@@ -8,6 +8,7 @@ import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
 import { clip, normalizeSourceRef } from '../utils/pure';
+import { latestVerified } from '@equationalapplications/core-okf';
 
 const MAX_EMBEDDING_BLOB_BYTES = 32 * 1024; // 8192-dim float32 ceiling
 const IMPORT_TITLE_MAX = 500;
@@ -306,8 +307,14 @@ export class ImportExportService {
           okf_sources: fact.okf_sources ?? [],
           okf_verified: fact.okf_verified ?? [],
           okf_usage_window: fact.okf_usage_window ?? null,
-          last_verified_at: fact.last_verified_at ?? null,
-          last_verified_by: fact.last_verified_by ?? null,
+          // last_verified_at/_by are DERIVED mirrors of `okf_verified` per spec
+          // §5.3. Recomputing here (instead of trusting the payload field) closes
+          // the invariant that a raw importDump cannot carry a
+          // last_verified_by that contradicts its own okf_verified list.
+          ...(() => {
+            const latest = latestVerified(fact.okf_verified ?? [], Date.now());
+            return { last_verified_at: latest?.at ?? null, last_verified_by: latest?.by ?? null };
+          })(),
         };
 
         await this.entryRepo.upsertForImport(factObj, tx);
@@ -378,8 +385,11 @@ export class ImportExportService {
             okf_sources: task.okf_sources ?? [],
             okf_verified: task.okf_verified ?? [],
             okf_usage_window: task.okf_usage_window ?? null,
-            last_verified_at: task.last_verified_at ?? null,
-            last_verified_by: task.last_verified_by ?? null,
+            // Derived mirrors — see fact branch above; same invariant.
+            ...(() => {
+              const latest = latestVerified(task.okf_verified ?? [], Date.now());
+              return { last_verified_at: latest?.at ?? null, last_verified_by: latest?.by ?? null };
+            })(),
           },
           tx,
           safeUpdatedAt,

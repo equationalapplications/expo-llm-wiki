@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { WikiMemory } from '../src/WikiMemory';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 import type { SQLiteAdapter } from '../src/types';
@@ -8,24 +8,31 @@ const PREFIX = 'llm_wiki_';
 
 type Recorded = { sql: string; params: unknown[] };
 
-function wrapWithRecorder(db: SQLiteAdapter): { db: SQLiteAdapter; recorded: Recorded[] } {
-  const recorded: Recorded[] = [];
-  const wrapped: SQLiteAdapter = {
+function wrapWithRecorderInto(target: SQLiteAdapter, recorded: Recorded[]): SQLiteAdapter {
+  return {
     execAsync: (sql: string) => {
       recorded.push({ sql, params: [] });
-      return db.execAsync(sql);
+      return target.execAsync(sql);
     },
     runAsync: async (sql, params = []) => {
       recorded.push({ sql, params });
-      return db.runAsync(sql, params);
+      return target.runAsync(sql, params);
     },
-    getAllAsync: <T>(sql: string, params?: unknown[]) => db.getAllAsync<T>(sql, params),
-    getFirstAsync: <T>(sql: string, params?: unknown[]) => db.getFirstAsync<T>(sql, params),
+    getAllAsync: <T>(sql: string, params?: unknown[]) => target.getAllAsync<T>(sql, params),
+    getFirstAsync: <T>(sql: string, params?: unknown[]) => target.getFirstAsync<T>(sql, params),
+    // Wrap the tx handle the underlying adapter hands us — the recorder has to
+    // mirror the real call graph so a regression that distinguishes the
+    // transaction handle from the base connection is caught instead of
+    // silently executing outside the transaction.
     withTransactionAsync: <T>(fn: (tx: SQLiteAdapter) => Promise<T>) =>
-      db.withTransactionAsync((tx) => fn(wrapped)),
-    closeAsync: () => db.closeAsync(),
+      target.withTransactionAsync((tx) => fn(wrapWithRecorderInto(tx, recorded))),
+    closeAsync: () => target.closeAsync(),
   };
-  return { db: wrapped, recorded };
+}
+
+function wrapWithRecorder(db: SQLiteAdapter): { db: SQLiteAdapter; recorded: Recorded[] } {
+  const recorded: Recorded[] = [];
+  return { db: wrapWithRecorderInto(db, recorded), recorded };
 }
 
 async function makeWikiWithRecorder(): Promise<{ wiki: WikiMemory; db: SQLiteAdapter; recorded: Recorded[] }> {
@@ -47,8 +54,6 @@ function updatedAtInSet(sql: string): boolean {
 }
 
 describe('DAO discipline: non-content writes MUST NOT touch updated_at', () => {
-  beforeEach(async () => {});
-
   it('writeOkfTrust has no updated_at in SET clause', async () => {
     const { wiki, db, recorded } = await makeWikiWithRecorder();
     const t = 1_700_000_000_000;
@@ -73,6 +78,7 @@ describe('DAO discipline: non-content writes MUST NOT touch updated_at', () => {
     recorded.length = 0;
     await wiki.writeOkfSources('p2', 'e', [{ resource: 'https://a' }]);
     const updates = recorded.filter((r) => /UPDATE/i.test(r.sql));
+    expect(updates.length).toBeGreaterThan(0);
     for (const u of updates) expect(updatedAtInSet(u.sql)).toBe(false);
   });
 
@@ -86,6 +92,7 @@ describe('DAO discipline: non-content writes MUST NOT touch updated_at', () => {
     recorded.length = 0;
     await wiki.setLifecycleStatus('p3', 'e', 'deprecated');
     const updates = recorded.filter((r) => /UPDATE/i.test(r.sql));
+    expect(updates.length).toBeGreaterThan(0);
     for (const u of updates) expect(updatedAtInSet(u.sql)).toBe(false);
   });
 
@@ -99,6 +106,7 @@ describe('DAO discipline: non-content writes MUST NOT touch updated_at', () => {
     recorded.length = 0;
     await wiki.setStaleAfter('p4', 'e', null);
     const updates = recorded.filter((r) => /UPDATE/i.test(r.sql));
+    expect(updates.length).toBeGreaterThan(0);
     for (const u of updates) expect(updatedAtInSet(u.sql)).toBe(false);
   });
 
@@ -112,23 +120,8 @@ describe('DAO discipline: non-content writes MUST NOT touch updated_at', () => {
     recorded.length = 0;
     await wiki.setGeneratedBy('p5', 'e', 'process:cron');
     const updates = recorded.filter((r) => /UPDATE/i.test(r.sql));
+    expect(updates.length).toBeGreaterThan(0);
     for (const u of updates) expect(updatedAtInSet(u.sql)).toBe(false);
-  });
-
-  it('access_count increment has no updated_at in SET clause (positive existing behavior)', async () => {
-    const { wiki, db, recorded } = await makeWikiWithRecorder();
-    const t = 1_700_000_000_000;
-    await db.runAsync(
-      `INSERT INTO ${PREFIX}entries (id, entity_id, title, body, confidence, source_type, created_at, updated_at) VALUES ('p6', 'e', 'T', 'B', 'certain', 'user_stated', ?, ?)`,
-      [t, t],
-    );
-    recorded.length = 0;
-    await wiki.read('e', 'x'); // any read triggers trackAccess
-    const updates = recorded.filter((r) => /UPDATE/i.test(r.sql) && /\baccess_count\b/.test(r.sql));
-    if (updates.length > 0) {
-      for (const u of updates) expect(updatedAtInSet(u.sql)).toBe(false);
-    }
-    // If no access tracking fires (empty read), this test still passes (no assertion).
   });
 
   it('positive control: a content-mutating write DOES touch updated_at', async () => {

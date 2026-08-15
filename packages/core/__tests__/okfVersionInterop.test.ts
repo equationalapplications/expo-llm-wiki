@@ -133,6 +133,11 @@ Body.
     ];
     const dump = parseOkfBundle('demo', files);
     const f = dump.entities.demo.facts[0]!;
-    expect(f.okf_sources?.[0]?.resource).toBe('https://legacy.example.com/a');
+    // Both URLs must be preserved (spec §13.1): a regression to first-URL-only
+    // would silently drop the second source.
+    expect(f.okf_sources?.map((s) => s.resource)).toEqual([
+      'https://legacy.example.com/a',
+      'https://legacy.example.com/b',
+    ]);
   });
 });

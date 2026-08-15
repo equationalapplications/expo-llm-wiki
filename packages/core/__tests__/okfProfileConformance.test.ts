@@ -154,16 +154,32 @@ describe('OKF profile conformance — golden-v2', () => {
     expect(t.status).toBe('in_progress');
   });
 
-  it('golden-v2 SHA256SUMS matches the committed fixtures', () => {
+  it('golden-v2 SHA256SUMS matches every committed fixture and vice versa', () => {
     const sumsPath = path.join(FIXTURES_ROOT, 'golden-v2', 'SHA256SUMS');
     const lines = fs.readFileSync(sumsPath, 'utf8').split('\n').filter((l) => l.trim().length > 0);
+    const manifestPaths = new Set<string>();
+    // Manifest stores entries with a leading `./` (the way `shasum -a 256` from
+    // inside the directory emits them). Strip the prefix once so we can
+    // compare against walkMd() output, which uses OS-relative paths.
+    const normalize = (p: string) => p.replace(/^\.\//, '');
     for (const line of lines) {
       const m = /^([0-9a-f]{64})\s+(.+)$/.exec(line);
       expect(m, `malformed SHA256SUMS line: ${line}`).not.toBeNull();
-      const [, expected, rel] = m!;
+      const [, expected, relRaw] = m!;
+      const rel = normalize(relRaw);
       const full = path.join(FIXTURES_ROOT, 'golden-v2', rel);
       const actual = crypto.createHash('sha256').update(fs.readFileSync(full)).digest('hex');
       expect(actual, `drifted: ${rel}`).toBe(expected);
+      manifestPaths.add(rel);
+    }
+    // Forward coverage: every .md on disk must appear in the manifest. A new
+    // fixture that nobody updated SHA256SUMS for used to pass this test.
+    const onDisk = new Set(walkMd(path.join(FIXTURES_ROOT, 'golden-v2')).map(normalize));
+    for (const rel of onDisk) {
+      expect(manifestPaths.has(rel), `missing from SHA256SUMS: ${rel}`).toBe(true);
+    }
+    for (const rel of manifestPaths) {
+      expect(onDisk.has(rel), `in SHA256SUMS but not on disk: ${rel}`).toBe(true);
     }
   });
 
@@ -173,9 +189,12 @@ describe('OKF profile conformance — golden-v2', () => {
       if (!f.path.endsWith('.md')) continue;
       // Anchor `&` and alias `*` MUST NOT appear in frontmatter or body.
       // They are forbidden by spec §2.6 (hand-rolled parser rejects them).
-      // We check by scanning for YAML anchor/alias grammar: `&identifier:` or `*identifier`.
-      expect(/&\w+\s*:/.test(f.content), `anchor in ${f.path}`).toBe(false);
-      expect(/\*\w+/.test(f.content), `alias in ${f.path}`).toBe(false);
+      // Match standard YAML grammar: an anchor `&name` may appear after
+      // whitespace, after `:` (key separator), or at line start. We scan
+      // without the `&name:` colon requirement so generated anchors like
+      // `generated: &ref { ... }` are also caught.
+      expect(/^\s*&[\w-]+|[^\s]&[\w-]+/.test(f.content), `anchor in ${f.path}`).toBe(false);
+      expect(/(^|[^\s])\*[\w-]+/.test(f.content), `alias in ${f.path}`).toBe(false);
     }
   });
 });

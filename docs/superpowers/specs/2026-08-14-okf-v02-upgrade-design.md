@@ -125,7 +125,7 @@ Result: zero new runtime dependencies; the `core-okf` package stays zero-dep. Ro
 
 We don't store the trust tier string. We provide a helper function `deriveTrustTier(verifiedList: {by, at}[]): 'unverified' | 'machine-confirmed' | 'human-reviewed'` per spec §5.3. The consumer reads the tier off `okf_verified` at query time. Storing the tier would invite staleness (the tier changes the moment a new verifier is added), and v0.2 is explicit: tiers are derived signals, not stored fields. Rule: if **any** verifier's actor starts with `human:`, return `human-reviewed` (human review is sticky — once a human has verified, the tier stays at `human-reviewed` even if subsequent machine verifications are appended). Otherwise, if at least one verifier exists, return `machine-confirmed`. Otherwise `unverified`.
 
-`read()` returns `isStale: boolean` per fact/task (today, ≥ `stale_after`). It never auto-filters stale rows — the host application decides display policy. The spec's `today >= stale_after` check is a single epoch comparison; the helper `isStaleAfter(stale_after: number | null, now: number): boolean` is exported from `core-okf`.
+`read()` returns `isStale: boolean` per fact/task (today, ≥ `stale_after`). It never auto-filters stale rows — the host application decides display policy. The spec's `today >= stale_after` check is a single epoch comparison; the helper `isStaleAfter(staleAfter: string | number | null, now: number): boolean` is exported from `core-okf`. The wire-format input is the v0.2 `YYYY-MM-DD` string, but the helper also accepts an epoch ms number (useful for tests and for callers that have already parsed the date) and `null` (treated as never-stale).
 
 ### 2.8 Footnotes — verbatim on round-trip, never synthetic
 
@@ -140,7 +140,7 @@ A concept of `type: Attested Computation` arriving in a v0.2 bundle is imported 
 - `runtime`, `parameters`, `computation`, `executor`, `attester` → **NOT preserved** on round-trip in this profile. `docs/okf-profile.md` §5's "unknown frontmatter keys MUST be preserved on round-trip where the consumer re-exports" is a pre-existing profile-1 contract, but `core-llm-wiki`'s `WikiFact`/`WikiTask` have no field for storing arbitrary unrecognized keys today — there is no generic opaque-passthrough column, and this profile does not add one (adding a catch-all "extra frontmatter" JSON column is real scope, not implied by "defer the Attested Computation runtime," and is left to whichever future profile actually needs opaque-key fidelity for *any* concept type, not just this one). Import silently drops these five keys the same way import already silently drops any other unrecognized key from any other concept type today. A caller that needs the discarded keys must read them from the original bundle text directly (the OKF files are typically kept in version control), not from `WikiFact`.
 - The concept's body, including the `# Computation` section if present, is preserved verbatim (bodies are always stored whole, regardless of frontmatter key recognition — this is unaffected by the point above).
 
-We do not implement executors, attesters, receipts, or the §10.5 attestation lifecycle. A future profile (`llm-wiki/3`?) takes that on, and MAY also be the profile that closes the opaque-key-preservation gap generally. For now, an `Attested Computation` concept round-trips through our system as a generic fact with its runtime-specific contract fields (`runtime`/`parameters`/`computation`/`executor`/`attester`) lost on import — this is a known, accepted limitation for v0.2, not silently-broken behavior a reader would need to discover independently.
+We do not implement executors, attesters, receipts, or the §10.5 attestation lifecycle. A future profile (`llm-wiki/3`?) takes that on, and is the profile that adds an opaque-passthrough column for arbitrary unrecognized frontmatter keys — that profile closes the gap for *all* concept types, not just `Attested Computation`. For now, an `Attested Computation` concept round-trips through our system as a generic fact with its runtime-specific contract fields (`runtime`/`parameters`/`computation`/`executor`/`attester`) lost on import — this is a known, accepted limitation for v0.2, not silently-broken behavior a reader would need to discover independently. (Earlier revisions of this section and a few adjacent bullets said "preserved as opaque frontmatter"; that phrasing was aspirational and is corrected here so the spec matches the shipped behavior. The conformance test asserts the keys are dropped — see `packages/core/__tests__/okfProfileConformance.test.ts` `f_attested`.)
 
 ### 2.10 Conformance fixtures — `golden-v2` alongside existing
 
@@ -392,14 +392,21 @@ export interface WikiTask {
 
 ### 4.8 `packages/core/src/utils/parseOkfBundle.ts` — auto-detect + v0.2 path
 
-- Read `profile` from root index. Branch into v0.1 path (`isProfile1 = profile === 'llm-wiki/1' || profile === undefined && okfVersion === '0.1'`) or v0.2 path (`isProfile2 = profile === 'llm-wiki/2'`).
+- Read `profile` and `okf_version` from root index. The detection order is:
+  1. `profile === 'llm-wiki/2'` → v0.2 path (explicit).
+  2. `profile === 'llm-wiki/1'` → v0.1 path (explicit).
+  3. `profile === undefined && okfVersion === '0.1'` → v0.1 path (isLegacyV1).
+  4. `profile === undefined && okfVersion === undefined` → profile-0 (treated as v0.1 for status-rename + citations fallback; legacy edge-link extraction still applies).
+  5. `profile === undefined && okfVersion === '0.2'` → v0.2 path (version-only fallback).
+  6. Any other `profile` value (unknown profile key) with `okfVersion === '0.2'` → v0.2 path (unknown-profile fallback).
 - v0.2 path:
   - For each concept: extract `generated.by`/`generated.at`, `verified` (handle bare-mapping form), `status` (lifecycle), `stale_after`, `sources`, `usage_window` from frontmatter. Map them into the new `WikiFact` / `WikiTask` fields.
-  - Fallbacks (per spec §13.1): if `generated` absent but `timestamp` present, treat `timestamp` as `generated.at` with `by = null`. If `sources` absent but body has `# Citations` list, parse it into a single synthetic source (no `id`, `title` from URL, no credibility signals). Mark these as fallback-derived (e.g., a transient `generated_by` default of `null` rather than inventing one).
+  - Fallbacks (per spec §13.1): if `generated` absent but `timestamp` present, treat `timestamp` as `generated.at` with `by = null`. If `sources` absent but body has `# Citations` list, parse it into a synthetic source **per URL** (no `id`, no credibility signals) — every URL is preserved, not just the first. Mark these as fallback-derived (e.g., a transient `generated_by` default of `null` rather than inventing one).
   - For tasks: extract `execution_status` (v0.2) or `status` (v0.1 profile) into the task's execution `status`. Map v0.2 `status` (lifecycle) into `lifecycle_status`.
   - Update the JSON columns: write `okf_sources`, `okf_verified`, `okf_usage_window`; compute `last_verified_at`/`last_verified_by` via the helper.
   - Footnotes: parse but don't reconstruct body; carry the body verbatim.
 - v0.1 path: unchanged.
+- Tests must cover each detection branch (explicit v0.2, version-only v0.2, unknown-profile v0.2, explicit v0.1, isLegacyV1, profile-0).
 
 ### 4.9 `packages/core/src/WikiMemory.ts` — DAO discipline enforcement
 
@@ -429,7 +436,7 @@ formatOkfBundle(dump, { profile: 'llm-wiki/2' })
    │
    ├── for each fact/task: frontmatter object
    │     ├── type, title, description, resource, tags (existing)
-   │     ├── generated: { by: generated_by ?? 'process:llm-wiki', at: iso(updated_at) }
+   │     ├── generated: { by: generated_by, at: iso(updated_at) }  (emitted only when generated_by is non-null; absent when null)
    │     ├── verified: okf_verified  (JSON-deserialized)
    │     ├── status: lifecycle_status
    │     ├── stale_after: YYYY-MM-DD (if set)
@@ -521,7 +528,7 @@ wiki.read(entityId, query)
 | `stale_after` is not a `YYYY-MM-DD`                    | Skip on import; do not store. Non-throwing.                                                                  |
 | `okf_sources` JSON is malformed                        | Skip on import; leave the column NULL. Non-throwing.                                                        |
 | Foreign concept type not in our known set              | Routed by directory path (`facts/` → fact, `tasks/` → task). Type preserved as `okf_type`.                  |
-| `Attested Computation` concept                         | Imported as a generic `okf_type` fact (per §2.9). `runtime`/`parameters`/etc. carried as opaque frontmatter keys. |
+| `Attested Computation` concept                         | Imported as a generic `okf_type` fact (per §2.9). `runtime`/`parameters`/etc. dropped on import (no opaque-passthrough column in v0.2; deferred to a future profile). |
 | Profile key absent but `okf_version` is `"0.2"`        | Treated as profile 2 path (v0.2 with no `profile` line is best-effort consumable per spec §12).              |
 | `profile` key is unknown (e.g. `llm-wiki/3`)           | Best-effort: assume profile 2 unless `profile === 'llm-wiki/1'` or profile-0 markers are detected.          |
 
@@ -546,7 +553,7 @@ Errors never throw on import. The robustness contract is unchanged.
 - New test: `golden-v2` profile detection — `profile === 'llm-wiki/2'` triggers v0.2 path; the v0.1 path is not invoked.
 - New test: `golden-v2` fact with `sources` + `generated` + `verified` + `status` + `stale_after` + footnote body round-trips losslessly.
 - New test: `golden-v2` task with `status` (lifecycle) + `execution_status` (execution) — the rename rule is exercised; round-trip preserves both keys.
-- New test: `golden-v2` `Attested Computation` concept — imported as a generic fact with `okf_type: 'Attested Computation'` and the v0.2 computation keys preserved as opaque frontmatter.
+- New test: `golden-v2` `Attested Computation` concept — imported as a generic fact with `okf_type: 'Attested Computation'`. v0.2 computation keys (`runtime`/`parameters`/`computation`/`executor`/`attester`) are dropped on import per §2.9; future-profile opaque-passthrough is the work item that revisits this.
 - Existing tests: `golden-v1` round-trip unchanged (regression guard); `legacy-profile-0` import unchanged (regression guard); README trap test unchanged.
 
 ### 7.3 Backward-compat / cross-version tests (new `__tests__/okfVersionInterop.test.ts`)
@@ -642,7 +649,7 @@ Implementation rule: every DAO method names itself by intent (`writeOkfTrust`, `
 
 ## 10. Deferred to a Future Profile (explicitly not in this work)
 
-- **Attested Computation runtime.** `type: Attested Computation` is imported as a generic `okf_type` fact with the v0.2 keys (`runtime`, `parameters`, `computation`, `executor`, `attester`) preserved as opaque frontmatter. No executor, no attester, no receipt, no verdict.
+- **Attested Computation runtime.** `type: Attested Computation` is imported as a generic `okf_type` fact. Its v0.2 keys (`runtime`, `parameters`, `computation`, `executor`, `attester`) are dropped on import per §2.9 — there is no opaque-passthrough column in v0.2, so any caller that needs those keys must read them from the bundle text directly. No executor, no attester, no receipt, no verdict is implemented.
 - **`# Computation` body section handling.** Bodies are preserved verbatim; we do not extract the inline computation into a separate field. A future profile can address this if the LLM-authored memory use-case starts demanding it.
 - **Cross-entity edges.** Out of scope today; out of scope in this profile.
 - **Per-source usage_count / last_modified harvesting.** The fields are stored; the harvesting pipeline (turning BigQuery job counts into `usage_count`) is application behavior.

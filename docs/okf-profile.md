@@ -156,7 +156,7 @@ Line grammar: `- ({event_type}) {summary}` with two optional parts — the summa
 
 **Frontmatter YAML subset.** The frontmatter grammar is the subset emitted by `serializeFrontmatter`: scalar string/number/boolean/null values, double- or single-quoted strings with the documented escapes, and block-style string lists (`- item`). It is NOT general YAML.
 
-- Producers MUST NOT emit flow collections (`[...]`, `{...}` — except the literal empty list `[]`), block scalars (`|`, `>`), anchors, aliases, or tags (`&`, `*`, `!!`). This is a hard requirement: anchor/alias expansion is the vector for billion-laughs payload amplification.
+- For profile `llm-wiki/1` (this section's normative scope), producers MUST NOT emit flow collections (`[...]`, `{...}` — except the literal empty list `[]`), block scalars (`|`, `>`), anchors, aliases, or tags (`&`, `*`, `!!`). Anchor/alias expansion is the vector for billion-laughs payload amplification and remains forbidden in every profile. Profile `llm-wiki/2` §11.4 widens the flow-collection rule for the small set of v0.2 canonical shapes it requires (`generated`, `verified`, `sources`, `usage_window`, per-source objects), still bounded and still anchor/alias-free.
 - Consumers MUST NOT run frontmatter through a general-purpose YAML parser with anchor/alias expansion enabled. A conforming consumer either uses the subset parser (which treats unrecognized shapes as skipped lines or opaque scalars — the reference `parseFrontmatter` behavior) or a general parser hardened to reject the constructs above.
 - Unrecognized lines MUST be skipped, not thrown on: a foreign bundle degrades in fidelity, never crashes the import.
 

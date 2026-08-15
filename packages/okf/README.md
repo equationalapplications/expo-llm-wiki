@@ -4,11 +4,11 @@
 
 ## Overview
 
-A zero-dependency library for parsing and producing [Open Knowledge Format (OKF) v0.1](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) bundles. This package provides the raw primitives to work with OKF frontmatter, concept documents, and index/log files, completely decoupled from any specific database or data model.
+A zero-dependency library for parsing and producing [Open Knowledge Format (OKF) v0.1 and v0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) bundles. This package provides the raw primitives to work with OKF frontmatter, concept documents, and index/log files, completely decoupled from any specific database or data model.
 
-For a ready-made `MemoryDump` ⇄ OKF bundle adapter, see the [OKF Import/Export section in `@equationalapplications/core-llm-wiki`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md#okf-importexport).
+For a ready-made `MemoryDump` � OKF bundle adapter, see the [OKF Import/Export section in `@equationalapplications/core-llm-wiki`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md#okf-importexport).
 
-For the llm-wiki interoperability profile (llm-wiki/1), see [`docs/okf-profile.md`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/docs/okf-profile.md). Conformance fixtures live in [`fixtures/`](./fixtures/).
+For the llm-wiki interoperability profiles (`llm-wiki/1` and `llm-wiki/2`), see [`docs/okf-profile.md`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/docs/okf-profile.md). Conformance fixtures live in [`fixtures/`](./fixtures/).
 
 ## Installation
 
@@ -86,4 +86,4 @@ This package conforms to [OKF v0.2](https://github.com/GoogleCloudPlatform/knowl
 - `extractFootnotes(body)` / `serializeFootnotes(footnotes)` — preserve footnote attribution verbatim.
 - `parseFlowMapping(text)` / `parseFlowSequence(text)` — flow parsing with at most one level of mapping-value nesting (no anchors/aliases outside quoted strings).
 
-The `serializeFrontmatter` function emits plain objects as flow mappings and actor strings (containing `/` or `:`) via `serializeActorString`. Anchor/alias expansion is rejected; lines containing `&` or `*` are treated as opaque.
+The `serializeFrontmatter` function emits plain objects as flow mappings and actor strings (containing `/` or `:`) via `serializeActorString`. Anchor/alias expansion is rejected; only **unquoted** `&` or `*` characters are treated as opaque (quoted spans are excluded from the scan, so URL query strings like `"https://x/a?p=1&q=2"` remain valid).

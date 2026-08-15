@@ -55,6 +55,9 @@ export interface OkfGenerated {
 export interface OkfVerifiedEntry {
   by: string;
   at: string;
+  // Index signature for structural compatibility with `OkfFrontmatterValue`
+  // (see OkfSourceUsageWindow for the rationale). All real values are strings.
+  [key: string]: OkfFrontmatterScalar;
 }
 
 export type OkfVerified = OkfVerifiedEntry[]; // bare mapping = one-element list per v0.2 §5.2
@@ -62,6 +65,9 @@ export type OkfVerified = OkfVerifiedEntry[]; // bare mapping = one-element list
 export interface OkfSourceUsageWindow {
   from: string; // YYYY-MM-DD
   to: string;   // YYYY-MM-DD
+  // Index signature for structural compatibility with `OkfFrontmatterValue`
+  // — see OkfSourceUsageWindow / OkfSource notes. All real values are strings.
+  [key: string]: OkfFrontmatterScalar;
 }
 
 export interface OkfSource {
@@ -72,6 +78,9 @@ export interface OkfSource {
   usage_count?: number;
   last_modified?: string;      // YYYY-MM-DD
   usage_window?: OkfSourceUsageWindow; // per-entry override of the sibling usage_window
+  // Same index-signature rationale as OkfSourceUsageWindow: lets an OkfSource
+  // (which is itself a mapping) sit inside an OkfFrontmatter mapping.
+  [key: string]: OkfFrontmatterValue | undefined;
 }
 
 export interface OkfFootnote {

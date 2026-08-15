@@ -20,4 +20,4 @@ Body with a footnote[^a] and inline ref[^b].
 
 ## Related
 
-- [renames](./t_rename.md)
+- [renames](../tasks/t_rename.md)

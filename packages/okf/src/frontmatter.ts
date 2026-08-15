@@ -113,7 +113,10 @@ function serializeFlowMappingValue(obj: Record<string, OkfFrontmatterValue>, dep
 /** Emit an array as an inline flow sequence `[ a, b, c ]`. Object items
  *  serialize as nested inline flow mappings (the base "array of objects"
  *  shape — see the design note above Step 5.1 — does not consume the
- *  one-level nesting budget). */
+ *  one-level nesting budget). A nested ARRAY does consume the budget: the
+ *  `parameters` field in v0.2 §10 is a sequence of values, not a sequence
+ *  of mappings, and recursing with the same depth would let a hostile
+ *  `[[[[...]]]]` exhaust the JS stack. */
 function serializeFlowSequenceValue(arr: unknown[], depth = 0): string {
   if (arr.length === 0) return '[]';
   const parts = arr.map((item) => {
@@ -123,7 +126,10 @@ function serializeFlowSequenceValue(arr: unknown[], depth = 0): string {
       // Sequence item that is itself a mapping: same depth (base shape, not nesting).
       return serializeFlowMappingValue(item as Record<string, OkfFrontmatterValue>, depth);
     }
-    if (Array.isArray(item)) return serializeFlowSequenceValue(item, depth);
+    if (Array.isArray(item)) {
+      if (depth >= 1) throw new Error(`serializeFlowSequenceValue: nested array deeper than one level is not supported`);
+      return serializeFlowSequenceValue(item, depth + 1);
+    }
     throw new Error('serializeFlowSequenceValue: unsupported item type');
   });
   return `[ ${parts.join(', ')} ]`;
@@ -306,7 +312,7 @@ export function parseFlowMapping(text: string, depth = 0): Record<string, OkfFro
       if (depth >= 1) return null; // would be a 2nd level of mapping-value nesting — reject
       const nested = v.startsWith('{') ? parseFlowMapping(v, depth + 1) : parseFlowSequence(v, depth + 1);
       if (nested === null) return null;
-      out[parseKey(kv.key)] = nested as OkfFrontmatterValue;
+      out[parseKey(kv.key)] = nested as unknown as OkfFrontmatterValue;
       continue;
     }
     out[parseKey(kv.key)] = parseScalarValue(v);
@@ -325,13 +331,19 @@ export function parseFlowSequence(text: string, depth = 0): OkfFrontmatterValue[
   const out: OkfFrontmatterValue[] = [];
   for (const entry of entries) {
     const v = entry.trim();
-    if (v.startsWith('{') || v.startsWith('[')) {
-      // A sequence item that is itself a collection does NOT consume nesting
-      // budget — it's parsed at the SAME depth (array-of-objects is the base
-      // shape, not an extra level of nesting).
-      const nested = v.startsWith('{') ? parseFlowMapping(v, depth) : parseFlowSequence(v, depth);
+    if (v.startsWith('{')) {
+      // Sequence item is a mapping: same depth (base array-of-objects shape).
+      const nested = parseFlowMapping(v, depth);
       if (nested === null) return null;
-      out.push(nested as OkfFrontmatterValue);
+      out.push(nested as unknown as OkfFrontmatterValue);
+      continue;
+    }
+    if (v.startsWith('[')) {
+      // Nested array consumes one level of depth budget.
+      if (depth >= 1) return null;
+      const nested = parseFlowSequence(v, depth + 1);
+      if (nested === null) return null;
+      out.push(nested as unknown as OkfFrontmatterValue);
       continue;
     }
     out.push(parseScalarValue(v));
@@ -393,7 +405,7 @@ export function parseFrontmatter(content: string): { frontmatter: OkfFrontmatter
     // of nesting (spec §2.6). Anchor/alias-opaque (handled inside the flow parsers).
     if (valueRaw.startsWith('{')) {
       const flowObj = parseFlowMapping(valueRaw);
-      if (flowObj !== null) { frontmatter[parseKey(kv.key)] = flowObj as OkfFrontmatterValue; i++; continue; }
+      if (flowObj !== null) { frontmatter[parseKey(kv.key)] = flowObj as unknown as OkfFrontmatterValue; i++; continue; }
       // Rejected (anchor/alias, or nested more than one level deep): preserve the key
       // with a null value rather than misreading `{ a: { b: 1 } }` as a scalar string.
       frontmatter[parseKey(kv.key)] = null;
@@ -408,7 +420,7 @@ export function parseFrontmatter(content: string): { frontmatter: OkfFrontmatter
         continue;
       }
       const flowSeq = parseFlowSequence(valueRaw);
-      if (flowSeq !== null) { frontmatter[parseKey(kv.key)] = flowSeq as OkfFrontmatterValue; i++; continue; }
+      if (flowSeq !== null) { frontmatter[parseKey(kv.key)] = flowSeq as unknown as OkfFrontmatterValue; i++; continue; }
       frontmatter[parseKey(kv.key)] = null;
       i++;
       continue;
