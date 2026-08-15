@@ -323,7 +323,7 @@ describe('ingestDocument', () => {
     expect(sames[0].body).toBe('body 1'); // first-wins
   });
 
-  it('one chunk failing rejects whole call with no DB writes', async () => {
+  it('one chunk failing allows sibling chunks to commit; failedChunks reflects the count', async () => {
     const text = 'First chunk content.\n\nSecond chunk content.';
     let callCount = 0;
     const failProvider = {
@@ -334,11 +334,20 @@ describe('ingestDocument', () => {
       },
     };
     const wiki = await freshWiki(failProvider);
-    await expect(
-      wiki.ingestDocument('e3', { sourceRef: 'doc3', sourceHash, documentChunk: text, maxChunkLength: 30, chunkOverlap: 0 })
-    ).rejects.toThrow('LLM failed');
+    const result = await wiki.ingestDocument('e3', {
+      sourceRef: 'doc3',
+      sourceHash,
+      documentChunk: text,
+      maxChunkLength: 30,
+      chunkOverlap: 0,
+    });
+    expect(result.failedChunks).toBe(1);
+    expect(result.ingestedChunks).toBe(result.chunks - 1);
+    expect(result.parseFailures![0].source).toBe('llm');
+    // Sibling facts DID write through.
     const bundle = await wiki.getMemoryBundle('e3');
-    expect(bundle.facts.length).toBe(0);
+    expect(bundle.facts.length).toBe(1);
+    expect(bundle.facts[0].title).toBe('Good Fact');
   });
 
   it.each([
@@ -544,5 +553,219 @@ describe('ingestDocument — ontology', () => {
     expect(fact).toBeDefined();
     expect(fact!.tags).toEqual(tags);
     expect(fact!.confidence).toBe('inferred');
+  });
+});
+
+describe('ingestDocument — partial commit (issue #92)', () => {
+  const sourceHashFor = (i: number) => String(i).repeat(64).slice(0, 64);
+
+  function makeBadJson() {
+    // LLM emits a structurally-broken object: a bare quote terminates the
+    // "title" string early, leaving unparsable trailing tokens. Both the
+    // strict scanner and the container-aware repair walker reject this — see
+    // pure.ts parseJsonResponse. (The plan's originally-suggested "she said
+    // "hi"" input is now handled by the tier-2 repair pass introduced in
+    // Task 1, so we use an input that both tiers reject.)
+    return '{"facts":[{"title":"a"b","body":"c","tags":[],"confidence":"certain"}]}';
+  }
+
+  it('one chunk parse-fails: siblings commit, failedChunks=1, source=parse', async () => {
+    const text = 'First chunk content here long enough.\n\nSecond chunk content here long enough.\n\nThird chunk content here long enough.';
+    let i = 0;
+    const provider = {
+      generateText: async () => {
+        const idx = i++;
+        if (idx === 1) return makeBadJson();
+        return JSON.stringify({
+          facts: [{ title: `Fact ${idx}`, body: `body ${idx}`, tags: [], confidence: 'certain' }],
+        });
+      },
+    };
+    const wiki = await freshWiki(provider);
+    const result = await wiki.ingestDocument('e_partial_1', {
+      sourceRef: 'doc-partial-1',
+      sourceHash: sourceHashFor(1),
+      documentChunk: text,
+      maxChunkLength: 50,
+      chunkOverlap: 0,
+    });
+    expect(result.chunks).toBeGreaterThan(2);
+    expect(result.failedChunks).toBe(1);
+    expect(result.ingestedChunks).toBe(result.chunks - 1);
+    expect(result.parseFailures).toBeDefined();
+    expect(result.parseFailures![0].source).toBe('parse');
+    expect(result.parseFailures![0].chunkIndex).toBe(1);
+    expect(result.parseFailures![0].sourceRef).toBe('doc-partial-1');
+    // Sibling facts reach the bundle (the persistent set is non-empty).
+    const bundle = await wiki.getMemoryBundle('e_partial_1');
+    expect(bundle.facts.length).toBe(result.ingestedChunks);
+  });
+
+  it('one chunk LLM-fails: siblings commit, source=llm (no tier)', async () => {
+    const text = 'First chunk content here long enough.\n\nSecond chunk content here long enough.\n\nThird chunk content here long enough.';
+    let i = 0;
+    const provider = {
+      generateText: async () => {
+        const idx = i++;
+        if (idx === 1) throw new Error('Bedrock ThrottlingException');
+        return JSON.stringify({
+          facts: [{ title: `Fact ${idx}`, body: `body ${idx}`, tags: [], confidence: 'certain' }],
+        });
+      },
+    };
+    const wiki = await freshWiki(provider);
+    const result = await wiki.ingestDocument('e_partial_2', {
+      sourceRef: 'doc-partial-2',
+      sourceHash: sourceHashFor(2),
+      documentChunk: text,
+      maxChunkLength: 50,
+      chunkOverlap: 0,
+    });
+    expect(result.failedChunks).toBe(1);
+    expect(result.parseFailures![0].source).toBe('llm');
+    expect(result.parseFailures![0].tier).toBeUndefined();
+    expect(result.parseFailures![0].message).toContain('ThrottlingException');
+  });
+
+  it('all chunks fail: throws WikiIngestEmptyError with full parseFailures', async () => {
+    const text = 'First chunk content.\n\nSecond chunk content.\n\nThird chunk content.';
+    const provider = {
+      generateText: async () => makeBadJson(),
+    };
+    const wiki = await freshWiki(provider);
+    await expect(
+      wiki.ingestDocument('e_all_fail', {
+        sourceRef: 'doc-all-fail',
+        sourceHash: sourceHashFor(3),
+        documentChunk: text,
+        maxChunkLength: 30,
+        chunkOverlap: 0,
+      }),
+    ).rejects.toMatchObject({
+      name: 'WikiIngestEmptyError',
+      sourceRef: 'doc-all-fail',
+      chunks: expect.any(Number),
+    });
+  });
+
+  it('mixed parse + llm failures: sources correctly tagged per chunk', async () => {
+    const text = 'First chunk content here.\n\nSecond chunk content here.\n\nThird chunk content here.\n\nFourth chunk content here.\n\nFifth chunk content here.';
+    let i = 0;
+    const provider = {
+      generateText: async () => {
+        const idx = i++;
+        if (idx === 0) return makeBadJson();          // parse failure
+        if (idx === 2) throw new Error('rate limit'); // llm failure
+        return JSON.stringify({
+          facts: [{ title: `Fact ${idx}`, body: `body ${idx}`, tags: [], confidence: 'certain' }],
+        });
+      },
+    };
+    const wiki = await freshWiki(provider);
+    const result = await wiki.ingestDocument('e_mixed', {
+      sourceRef: 'doc-mixed',
+      sourceHash: sourceHashFor(4),
+      documentChunk: text,
+      maxChunkLength: 35,
+      chunkOverlap: 0,
+    });
+    expect(result.failedChunks).toBe(2);
+    const sources = result.parseFailures!.map((f) => f.source).sort();
+    expect(sources).toEqual(['llm', 'parse']);
+  });
+
+  it('console.warn fires exactly once per failed chunk', async () => {
+    const text = 'First chunk content here long enough.\n\nSecond chunk content here long enough.\n\nThird chunk content here long enough.';
+    let i = 0;
+    const provider = {
+      generateText: async () => {
+        const idx = i++;
+        if (idx === 0 || idx === 2) return makeBadJson();
+        return JSON.stringify({
+          facts: [{ title: `Fact ${idx}`, body: `body ${idx}`, tags: [], confidence: 'certain' }],
+        });
+      },
+    };
+    const wiki = await freshWiki(provider);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const result = await wiki.ingestDocument('e_warn', {
+        sourceRef: 'doc-warn',
+        sourceHash: sourceHashFor(5),
+        documentChunk: text,
+        maxChunkLength: 50,
+        chunkOverlap: 0,
+      });
+      expect(warnSpy.mock.calls.length).toBe(result.failedChunks);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('console.warn NEVER includes the raw LLM response body', async () => {
+    const text = 'First chunk content here long enough.\n\nSecond chunk content here long enough.';
+    const badJson = makeBadJson();
+    let i = 0;
+    const provider = {
+      generateText: async () => {
+        const idx = i++;
+        if (idx === 0) return badJson;
+        return JSON.stringify({
+          facts: [{ title: `Fact ${idx}`, body: `body ${idx}`, tags: [], confidence: 'certain' }],
+        });
+      },
+    };
+    const wiki = await freshWiki(provider);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await wiki.ingestDocument('e_noleak', {
+        sourceRef: 'doc-noleak',
+        sourceHash: sourceHashFor(6),
+        documentChunk: text,
+        maxChunkLength: 50,
+        chunkOverlap: 0,
+      });
+      for (const call of warnSpy.mock.calls) {
+        // Concatenate all string args; assert none of them contains the
+        // response payload substring.
+        for (const arg of call) {
+          if (typeof arg === 'string') {
+            expect(arg).not.toContain('"a"b"');
+          }
+        }
+      }
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('ontologyContext failure propagates as a raw throw, does NOT become WikiIngestEmptyError', async () => {
+    const text = 'First chunk content.\n\nSecond chunk content.';
+    const provider = {
+      generateText: async () =>
+        JSON.stringify({ facts: [{ title: 'T', body: 'B', tags: [], confidence: 'certain' }] }),
+    };
+    const wiki = await freshWiki(provider);
+    // Inject a buildPromptContext failure by replacing the ontology service
+    // with one that always throws.
+    const svc = wiki.__testAccess.ingestionService as IngestionService;
+    const originalOntology = (svc as any).ontologyService;
+    (svc as any).ontologyService = {
+      ...originalOntology,
+      buildPromptContext: async () => { throw new Error('DB connection lost'); },
+    };
+    try {
+      await expect(
+        wiki.ingestDocument('e_ontology', {
+          sourceRef: 'doc-ontology',
+          sourceHash: sourceHashFor(7),
+          documentChunk: text,
+          maxChunkLength: 30,
+          chunkOverlap: 0,
+        }),
+      ).rejects.toThrow('DB connection lost');
+    } finally {
+      (svc as any).ontologyService = originalOntology;
+    }
   });
 });

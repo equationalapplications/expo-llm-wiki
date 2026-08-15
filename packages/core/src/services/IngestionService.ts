@@ -1,8 +1,8 @@
 import { chunkText, withConcurrency, validateFact, parseJsonResponse, normalizeSourceRef, normalizeSourceHash } from '../utils/pure';
 import { normalizeTitleKey } from '../utils/ontology';
 import { generateId } from '../utils/ids';
-import { WikiDuplicateHashError, WikiTransactionError, WikiStrictOntologyViolation } from '../types';
-import type { WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedFactWithOntology, WikiFact, OntologyUpdates, WikiEdge } from '../types';
+import { WikiParseError, WikiIngestEmptyError, WikiDuplicateHashError, WikiTransactionError, WikiStrictOntologyViolation } from '../types';
+import type { ChunkFailure, WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedFactWithOntology, WikiFact, OntologyUpdates, WikiEdge, IngestDocumentResult } from '../types';
 import type { SQLiteAdapter } from '../types';
 import { extractSqliteCode } from '../db/sqliteCodes';
 import type { EntryRepository } from '../repositories/EntryRepository';
@@ -15,6 +15,10 @@ import type { EmbeddingService } from './EmbeddingService';
 import type { OntologyService, TitleIndexEntry } from './OntologyService';
 import { PromptService } from './PromptService';
 import { DEFAULT_MAX_CHUNK_LENGTH, DEFAULT_CHUNK_OVERLAP } from '../utils/chunkingDefaults';
+
+type ChunkResult =
+  | { status: 'ok'; facts: ExtractedFact[]; ontology_updates?: OntologyUpdates }
+  | { status: 'failed'; error: ChunkFailure };
 
 export class IngestionService {
   private promptService: PromptService;
@@ -49,7 +53,7 @@ export class IngestionService {
       promptOverride?: string;
     },
     opts?: { onDuplicateHash?: 'ingest' | 'skip' | 'throw' },
-  ): Promise<{ truncated: boolean; chunks: number; duplicateOf?: string }> {
+  ): Promise<IngestDocumentResult> {
     const sourceRef = normalizeSourceRef(params.sourceRef);
     if (!sourceRef) throw new Error('Invalid sourceRef');
 
@@ -96,36 +100,95 @@ export class IngestionService {
             throw new WikiDuplicateHashError({ canonical, sourceHash, entityId });
           }
           // 'skip'
-          return { truncated: false, chunks: 0, duplicateOf: canonical };
+          return { truncated: false, chunks: 0, ingestedChunks: 0, failedChunks: 0, duplicateOf: canonical };
         }
       }
 
       const { chunks, truncated } = chunkText(params.documentChunk, maxChunkLength, chunkOverlap);
-      if (chunks.length === 0) return { truncated: false, chunks: 0 };
+      if (chunks.length === 0) return { truncated: false, chunks: 0, ingestedChunks: 0, failedChunks: 0 };
 
       const chunkResults = await withConcurrency(
-        chunks.map((chunk) => async () => {
+        chunks.map((chunk, chunkIndex) => async () => {
+          // buildPromptContext is INTENTIONALLY outside the try — it's a DB
+          // read (OntologyService.ts:81) whose failures are systemic to the
+          // database connection, not per-chunk. Swallowing it would turn one
+          // DB fault into WikiIngestEmptyError with the real cause buried in
+          // N identical parseFailures entries. A DB fault should surface
+          // immediately, not after the host has spent LLM tokens on every
+          // chunk. See spec §3.
           const ontologyContext = await this.ontologyService?.buildPromptContext(entityId) ?? null;
-          const { systemPrompt, userPrompt } = this.promptService.buildIngestPrompt(
-            chunk,
-            params.promptOverride,
-            ontologyContext,
-          );
-          const responseText = await this.options.llmProvider.generateText({ systemPrompt, userPrompt });
-          const result = parseJsonResponse<{ facts: ExtractedFact[]; ontology_updates?: OntologyUpdates }>(responseText);
-          return {
-            facts: (Array.isArray(result.facts) ? result.facts : [])
-              .map(validateFact)
-              .filter((f): f is ExtractedFact => f !== null),
-            ontology_updates: result.ontology_updates,
-          };
+          try {
+            const { systemPrompt, userPrompt } = this.promptService.buildIngestPrompt(
+              chunk,
+              params.promptOverride,
+              ontologyContext,
+            );
+            const responseText = await this.options.llmProvider.generateText({ systemPrompt, userPrompt });
+            const result = parseJsonResponse<{ facts: ExtractedFact[]; ontology_updates?: OntologyUpdates }>(responseText);
+            return {
+              status: 'ok' as const,
+              facts: (Array.isArray(result.facts) ? result.facts : [])
+                .map(validateFact)
+                .filter((f): f is ExtractedFact => f !== null),
+              ontology_updates: result.ontology_updates,
+            };
+          } catch (e) {
+            const failure: ChunkFailure = e instanceof WikiParseError
+              ? {
+                  chunkIndex,
+                  sourceRef,
+                  source: 'parse',
+                  tier: e.tier,
+                  position: e.position,
+                  message: e.message,
+                }
+              : {
+                  chunkIndex,
+                  sourceRef,
+                  source: 'llm',
+                  position: null,
+                  message: e instanceof Error ? e.message : String(e),
+                };
+            // Spec §2: log once per failure, NEVER include the raw response.
+            const total = chunks.length;
+            const tag = failure.source === 'parse' && failure.tier
+              ? `${failure.source} (tier=${failure.tier})`
+              : failure.source;
+            console.warn(`[WikiMemory] ingest chunk ${chunkIndex + 1}/${total} ${tag} failed (sourceRef=${sourceRef}): ${failure.message}`);
+            return { status: 'failed' as const, error: failure };
+          }
         }),
         chunkConcurrency
       );
 
+      // Count ok/failed once; downstream uses these for branching.
+      let ingestedChunks = 0;
+      let failedChunks = 0;
+      const failures: ChunkFailure[] = [];
+      const okSlots: Array<{ facts: ExtractedFact[]; ontology_updates?: OntologyUpdates }> = [];
+      for (const slot of chunkResults) {
+        if (slot.status === 'ok') {
+          ingestedChunks++;
+          okSlots.push(slot);
+        } else {
+          failedChunks++;
+          failures.push(slot.error);
+        }
+      }
+
+      // Total failure: throw WikiIngestEmptyError before any persistence runs.
+      // A silent zero-fact ingest is a worse regression than a typed throw.
+      if (failedChunks === chunks.length) {
+        throw new WikiIngestEmptyError({
+          parseFailures: failures,
+          sourceRef,
+          chunks: chunks.length,
+        });
+      }
+
       const seen = new Set<string>();
       const orderedChunkFacts: Array<{ facts: ExtractedFact[]; ontology_updates?: OntologyUpdates }> = [];
-      for (const chunkResult of chunkResults) {
+      for (const chunkResult of okSlots) {
         const dedupedFacts: ExtractedFact[] = [];
         for (const fact of chunkResult.facts) {
           const normalizedTitle = normalizeTitleKey(fact.title);
@@ -137,115 +200,26 @@ export class IngestionService {
         orderedChunkFacts.push({ facts: dedupedFacts, ontology_updates: chunkResult.ontology_updates });
       }
 
-      const now = Date.now();
       const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
       const deletedSourceFactIds: string[] = [];
 
       try {
-        await this.db.withTransactionAsync(async (tx) => {
-          // Capture the IDs of facts about to be soft-deleted so we can fire
-          // onEmbeddingPersisted hooks AFTER the transaction commits. The
-          // capture happens BEFORE the softDelete, so even though
-          // upsertGraphCore performs its own findIdsBySource for edge
-          // supersession, the IDs here are the canonical "what we retired"
-          // set for the embedding lifecycle.
-          deletedSourceFactIds.push(...(await this.entryRepo.findIdsBySource(entityId, sourceRef, null, tx, false)));
-
-          // Build title index from PRIOR facts EXCLUDING the current sourceRef.
-          // Facts from this sourceRef are about to be superseded by
-          // upsertGraphCore step (d); seeding them here would let resolveEdges
-          // target a soon-to-be-retired fact and leave the new edge pointing
-          // at a soft-deleted record (the new edge's source is fresh, so step
-          // (e) only retires edges whose SOURCE is in the deleted-fact set).
-          // The sourceRef exclusion is applied in SQL (via
-          // findRecentByEntityId's excludeSourceRef param) so the 500-row
-          // LIMIT applies to usable rows only — a re-ingest where the current
-          // sourceRef owns most recent facts otherwise leaves the index empty
-          // after the post-query filter, silently losing cross-sourceRef edges
-          // that a first ingest would have resolved.
-          const titleIndex = new Map<string, TitleIndexEntry>();
-          const existingFacts = await this.entryRepo.findRecentByEntityId(entityId, 500, tx, sourceRef);
-          for (const existing of existingFacts) {
-            titleIndex.set(normalizeTitleKey(existing.title), {
-              id: existing.id,
-              okf_type: existing.okf_type ?? null,
-            });
-          }
-
-          let ontologyState = await this.ontologyService?.getEffectiveState(entityId, tx)
-            ?? { mode: 'off' as const, manifest: { node_types: [], edge_types: [] } };
-          let { mode, manifest } = ontologyState;
-
-          // Two-pass conversion of LLM extraction into host-facing shape.
-          // Pass 1 (below) populates hostNodes and stages raw edge requests
-          // for every replacement fact — facts from this ingest enter the
-          // titleIndex as they're added, so forward references resolve in
-          // pass 2 against the FINALIZED index. Pass 2 then resolves each
-          // staged request into concrete hostEdges. upsertGraphCore owns the
-          // persistence step.
-          const hostNodes: { id: string; type: string; title: string; body: string; tags?: readonly string[]; confidence?: 'certain' | 'inferred' | 'tentative' }[] = [];
-          const rawEdgeRequests: { sourceId: string; sourceType: string | null; edges: ExtractedFactEdge[] }[] = [];
-
-          for (const { facts, ontology_updates } of orderedChunkFacts) {
-            if (mode === 'emergent' && ontology_updates && this.ontologyService) {
-              manifest = await this.ontologyService.mergeEmergentUpdates(entityId, ontology_updates, tx);
-              ontologyState = await this.ontologyService.getEffectiveState(entityId, tx);
-              mode = ontologyState.mode;
-            }
-
-            for (const fact of facts) {
-              const ontologyFact = fact as ExtractedFactWithOntology;
-              const normalized = this.ontologyService?.validateAndNormalizeFact(ontologyFact, manifest, { strict: false })
-                ?? { okf_type: null, edges: [] };
-
-              const id = generateId('fact_');
-              hostNodes.push({
-                id,
-                type: ontologyFact.okf_type ?? '',
-                title: fact.title,
-                body: fact.body,
-                // Forward the LLM-extracted tags/confidence through the
-                // extracted-shape upsertGraphCore path so the entries row
-                // stores them (search filterability, heal-candidate
-                // selection, runReembed embedding-text signal). The public
-                // WikiMemory.upsertGraph API doesn't accept tags/confidence
-                // — host-supplied deterministic nodes default to [] and
-                // 'certain' as documented.
-                tags: fact.tags,
-                confidence: fact.confidence,
-              });
-              insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
-
-              titleIndex.set(normalizeTitleKey(fact.title), { id, okf_type: normalized.okf_type });
-
-              if (normalized.edges.length > 0) {
-                rawEdgeRequests.push({ sourceId: id, sourceType: normalized.okf_type, edges: normalized.edges });
-              }
-            }
-          }
-
-          // Pass 2: resolve every staged edge against the finalized title
-          // index. By this point the index contains both surviving prior
-          // facts (excluding this sourceRef) AND every replacement fact from
-          // this ingest, so forward references resolve correctly and no
-          // resolved edge points at a fact that's about to be soft-deleted.
-          const hostEdges: { type: string; sourceId: string; targetId: string }[] = [];
-          for (const req of rawEdgeRequests) {
-            const resolved = this.ontologyService?.resolveEdges(
-              entityId, req.sourceId, req.sourceType, req.edges, manifest, titleIndex, now,
-            ) ?? [];
-            for (const e of resolved) {
-              hostEdges.push({ type: e.edge_type, sourceId: e.source_id, targetId: e.target_id });
-            }
-          }
-
-          await this.upsertGraphCore(
-            entityId,
-            { sourceRef, sourceHash, nodes: hostNodes, edges: hostEdges },
-            tx,
-            { strict: false },
-          );
-        });
+        if (failedChunks === 0) {
+          // Happy path — full upsertGraphCore supersession + ownership.
+          const fullResult = await this.db.withTransactionAsync(async (tx) => {
+            return await this.runFullUpsertGraph(entityId, sourceRef, sourceHash, orderedChunkFacts, tx);
+          });
+          deletedSourceFactIds.push(...fullResult.deletedSourceFactIds);
+          insertedFacts.push(...fullResult.insertedFacts);
+        } else {
+          // Partial path — append dedup-only, NO supersession, NO ownership update.
+          // See spec §4.2.
+          await this.db.withTransactionAsync(async (tx) => {
+            const flat: ExtractedFact[] = [];
+            for (const slot of orderedChunkFacts) flat.push(...slot.facts);
+            await this.appendPartialFacts(entityId, sourceRef, sourceHash, flat, tx);
+          });
+        }
       } catch (err) {
         // A concurrent ingest for a DIFFERENT sourceRef beat us to the same
         // sourceHash between the pre-check above and this write — the
@@ -271,26 +245,41 @@ export class IngestionService {
           throw new WikiDuplicateHashError({ canonical, sourceHash, entityId });
         }
         // 'skip'
-        return { truncated: false, chunks: 0, duplicateOf: canonical };
+        return { truncated: false, chunks: 0, ingestedChunks: 0, failedChunks: 0, duplicateOf: canonical };
       }
 
       await this.searchService.sync(entityId);
 
-      const uniqueDeletedSourceFactIds = Array.from(new Set(deletedSourceFactIds));
-      for (const factId of uniqueDeletedSourceFactIds) {
-        try {
-          await this.embeddingService.notifyEmbeddingPersisted(entityId, factId, null);
-        } catch (hookErr) {
-          console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during ingest for ${factId}:`, hookErr);
+      // Post-commit hook loop is gated to the full path. On the partial path,
+      // deletedSourceFactIds and insertedFacts stay empty (the partial path
+      // does no supersession, so there's nothing to retire for embedding
+      // lifecycle, and the partial path doesn't go through the embedding
+      // service — it's a dedup-only append). See spec §4.2.
+      if (failedChunks === 0) {
+        const uniqueDeletedSourceFactIds = Array.from(new Set(deletedSourceFactIds));
+        for (const factId of uniqueDeletedSourceFactIds) {
+          try {
+            await this.embeddingService.notifyEmbeddingPersisted(entityId, factId, null);
+          } catch (hookErr) {
+            console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during ingest for ${factId}:`, hookErr);
+          }
+        }
+
+        for (const fact of insertedFacts) {
+          await this.embeddingService.embedFact(fact);
         }
       }
 
-      for (const fact of insertedFacts) {
-        await this.embeddingService.embedFact(fact);
-      }
-
       this.searchService.evictCache(entityId);
-      return { truncated, chunks: chunks.length };
+
+      const result: IngestDocumentResult = {
+        truncated,
+        chunks: chunks.length,
+        ingestedChunks,
+        failedChunks,
+      };
+      if (failedChunks > 0) result.parseFailures = failures;
+      return result;
 
     } finally {
       releaseIngestLocks();
@@ -482,5 +471,195 @@ export class IngestionService {
       edgesWritten: edgesInsertedCount,
       superseded: deletedFactIds.length + deletedEdgeCount,
     };
+  }
+
+  /**
+   * Full supersession + ownership path: identical to the pre-issue-#92 behavior
+   * for the happy path. Called from the `failedChunks === 0` branch of
+   * `ingestDocument`. Runs INSIDE the caller's tx.
+   *
+   * Returns `{ deletedSourceFactIds, insertedFacts }` so the caller can fire
+   * post-commit hooks (embedding lifecycle) AFTER the transaction commits.
+   * On the partial path the caller never invokes this method; the empty
+   * arrays stay empty.
+   */
+  private async runFullUpsertGraph(
+    entityId: string,
+    sourceRef: string,
+    sourceHash: string,
+    orderedChunkFacts: Array<{ facts: ExtractedFact[]; ontology_updates?: OntologyUpdates }>,
+    tx: SQLiteAdapter,
+  ): Promise<{ deletedSourceFactIds: string[]; insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> }> {
+    const deletedSourceFactIds: string[] = [];
+    const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
+
+    // Capture the IDs of facts about to be soft-deleted so we can fire
+    // onEmbeddingPersisted hooks AFTER the transaction commits. The
+    // capture happens BEFORE the softDelete, so even though
+    // upsertGraphCore performs its own findIdsBySource for edge
+    // supersession, the IDs here are the canonical "what we retired"
+    // set for the embedding lifecycle.
+    deletedSourceFactIds.push(...(await this.entryRepo.findIdsBySource(entityId, sourceRef, null, tx, false)));
+
+    // Build title index from PRIOR facts EXCLUDING the current sourceRef.
+    // Facts from this sourceRef are about to be superseded by
+    // upsertGraphCore step (d); seeding them here would let resolveEdges
+    // target a soon-to-be-retired fact and leave the new edge pointing
+    // at a soft-deleted record (the new edge's source is fresh, so step
+    // (e) only retires edges whose SOURCE is in the deleted-fact set).
+    // The sourceRef exclusion is applied in SQL (via
+    // findRecentByEntityId's excludeSourceRef param) so the 500-row
+    // LIMIT applies to usable rows only — a re-ingest where the current
+    // sourceRef owns most recent facts otherwise leaves the index empty
+    // after the post-query filter, silently losing cross-sourceRef edges
+    // that a first ingest would have resolved.
+    const titleIndex = new Map<string, TitleIndexEntry>();
+    const existingFacts = await this.entryRepo.findRecentByEntityId(entityId, 500, tx, sourceRef);
+    for (const existing of existingFacts) {
+      titleIndex.set(normalizeTitleKey(existing.title), {
+        id: existing.id,
+        okf_type: existing.okf_type ?? null,
+      });
+    }
+
+    let ontologyState = await this.ontologyService?.getEffectiveState(entityId, tx)
+      ?? { mode: 'off' as const, manifest: { node_types: [], edge_types: [] } };
+    let { mode, manifest } = ontologyState;
+
+    // Two-pass conversion of LLM extraction into host-facing shape.
+    // Pass 1 (below) populates hostNodes and stages raw edge requests
+    // for every replacement fact — facts from this ingest enter the
+    // titleIndex as they're added, so forward references resolve in
+    // pass 2 against the FINALIZED index. Pass 2 then resolves each
+    // staged request into concrete hostEdges. upsertGraphCore owns the
+    // persistence step.
+    const hostNodes: { id: string; type: string; title: string; body: string; tags?: readonly string[]; confidence?: 'certain' | 'inferred' | 'tentative' }[] = [];
+    const rawEdgeRequests: { sourceId: string; sourceType: string | null; edges: ExtractedFactEdge[] }[] = [];
+    const now = Date.now();
+
+    for (const { facts, ontology_updates } of orderedChunkFacts) {
+      if (mode === 'emergent' && ontology_updates && this.ontologyService) {
+        manifest = await this.ontologyService.mergeEmergentUpdates(entityId, ontology_updates, tx);
+        ontologyState = await this.ontologyService.getEffectiveState(entityId, tx);
+        mode = ontologyState.mode;
+      }
+
+      for (const fact of facts) {
+        const ontologyFact = fact as ExtractedFactWithOntology;
+        const normalized = this.ontologyService?.validateAndNormalizeFact(ontologyFact, manifest, { strict: false })
+          ?? { okf_type: null, edges: [] };
+
+        const id = generateId('fact_');
+        hostNodes.push({
+          id,
+          type: ontologyFact.okf_type ?? '',
+          title: fact.title,
+          body: fact.body,
+          // Forward the LLM-extracted tags/confidence through the
+          // extracted-shape upsertGraphCore path so the entries row
+          // stores them (search filterability, heal-candidate
+          // selection, runReembed embedding-text signal). The public
+          // WikiMemory.upsertGraph API doesn't accept tags/confidence
+          // — host-supplied deterministic nodes default to [] and
+          // 'certain' as documented.
+          tags: fact.tags,
+          confidence: fact.confidence,
+        });
+        insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
+
+        titleIndex.set(normalizeTitleKey(fact.title), { id, okf_type: normalized.okf_type });
+
+        if (normalized.edges.length > 0) {
+          rawEdgeRequests.push({ sourceId: id, sourceType: normalized.okf_type, edges: normalized.edges });
+        }
+      }
+    }
+
+    // Pass 2: resolve every staged edge against the finalized title
+    // index. By this point the index contains both surviving prior
+    // facts (excluding this sourceRef) AND every replacement fact from
+    // this ingest, so forward references resolve correctly and no
+    // resolved edge points at a fact that's about to be soft-deleted.
+    const hostEdges: { type: string; sourceId: string; targetId: string }[] = [];
+    for (const req of rawEdgeRequests) {
+      const resolved = this.ontologyService?.resolveEdges(
+        entityId, req.sourceId, req.sourceType, req.edges, manifest, titleIndex, now,
+      ) ?? [];
+      for (const e of resolved) {
+        hostEdges.push({ type: e.edge_type, sourceId: e.source_id, targetId: e.target_id });
+      }
+    }
+
+    await this.upsertGraphCore(
+      entityId,
+      { sourceRef, sourceHash, nodes: hostNodes, edges: hostEdges },
+      tx,
+      { strict: false },
+    );
+
+    return { deletedSourceFactIds, insertedFacts };
+  }
+
+  /**
+   * Partial-commit path for `ingestDocument`. Inserts ONLY facts whose
+   * normalized title is not already in the live set for this (entityId,
+   * sourceRef). Does NOT call `entryRepo.softDeleteBySource` (no
+   * supersession) and does NOT call `sourceRefIndexRepo.upsert` (no
+   * ownership). Edges are NOT resolved on this path (no ontology-context
+   * build, no `resolveEdges`, no `mergeEmergentUpdates`). Stale edges from
+   * prior attempts are recovered on the next full run's supersession.
+   *
+   * Runs INSIDE the caller's `tx`. Does not open a nested transaction.
+   * Returns `{ inserted, skippedDuplicate }` for observability.
+   */
+  private async appendPartialFacts(
+    entityId: string,
+    sourceRef: string,
+    sourceHash: string,
+    dedupedFacts: ExtractedFact[],
+    tx: SQLiteAdapter,
+  ): Promise<{ inserted: number; skippedDuplicate: number }> {
+    // Load the live (sourceRef, *) rows so we can dedup by title against prior
+    // partial attempts AND prior full attempts. includeDeleted=false matches
+    // the pre-supersession dedup semantics of the full path. Per spec §4.2:
+    // `findIdsBySource` returns the ids; `findByIds` resolves titles.
+    const liveIds = await this.entryRepo.findIdsBySource(entityId, sourceRef, null, tx, false);
+    const liveFacts = liveIds.length === 0
+      ? []
+      : await this.entryRepo.findByIds(liveIds, [entityId], tx);
+    const liveTitles = new Set(liveFacts.map((f) => normalizeTitleKey(f.title)));
+
+    let inserted = 0;
+    let skippedDuplicate = 0;
+    const now = Date.now();
+    for (const fact of dedupedFacts) {
+      const normalizedTitle = normalizeTitleKey(fact.title);
+      if (liveTitles.has(normalizedTitle)) {
+        skippedDuplicate++;
+        continue;
+      }
+      liveTitles.add(normalizedTitle);
+
+      const wikiFact: WikiFact = {
+        id: generateId('fact_'),
+        entity_id: entityId,
+        title: fact.title,
+        body: fact.body,
+        tags: fact.tags,
+        confidence: fact.confidence,
+        source_type: 'immutable_document',
+        source_hash: sourceHash,
+        source_ref: sourceRef,
+        created_at: now,
+        updated_at: now,
+        last_accessed_at: null,
+        access_count: 0,
+        deleted_at: null,
+        okf_type: null,
+      };
+      await this.entryRepo.upsert(wikiFact, tx);
+      inserted++;
+    }
+    return { inserted, skippedDuplicate };
   }
 }
