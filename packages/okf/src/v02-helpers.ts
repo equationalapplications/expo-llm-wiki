@@ -1,0 +1,178 @@
+import type {
+  OkfVerified,
+  OkfVerifiedEntry,
+  OkfSource,
+  OkfSourceUsageWindow,
+} from './types';
+
+export type TrustTier = 'unverified' | 'machine-confirmed' | 'human-reviewed';
+
+export function deriveTrustTier(verified: OkfVerified | undefined): TrustTier {
+  if (!verified || verified.length === 0) return 'unverified';
+  for (const v of verified) {
+    if (typeof v?.by === 'string' && v.by.startsWith('human:')) return 'human-reviewed';
+  }
+  return 'machine-confirmed';
+}
+
+function parseStaleAfter(staleAfter: string | number | null): number | null {
+  if (staleAfter == null) return null;
+  if (typeof staleAfter === 'number') return Number.isFinite(staleAfter) ? staleAfter : null;
+  // YYYY-MM-DD — compare at day granularity: stale_after is the first day that IS stale.
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(staleAfter);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const ts = Date.UTC(year, month - 1, day);
+  if (!Number.isFinite(ts)) return null;
+  // Date.UTC silently normalizes calendar-invalid dates (2025-02-29 → 2025-03-01);
+  // round-trip back through Date and reject any component that doesn't match.
+  const d = new Date(ts);
+  if (
+    d.getUTCFullYear() !== year ||
+    d.getUTCMonth() + 1 !== month ||
+    d.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return ts;
+}
+
+export function isStaleAfter(staleAfter: string | number | null, now: number): boolean {
+  const cutoff = parseStaleAfter(staleAfter);
+  if (cutoff == null) return false;
+  return now >= cutoff;
+}
+
+export function parseVerifiedFlexible(value: unknown): OkfVerified {
+  if (value == null) return [];
+  if (Array.isArray(value)) {
+    return value.filter(
+      (v): v is OkfVerifiedEntry =>
+        !!v && typeof v === 'object' && typeof (v as any).by === 'string' && typeof (v as any).at === 'string',
+    );
+  }
+  if (typeof value === 'object' && typeof (value as any).by === 'string' && typeof (value as any).at === 'string') {
+    return [value as OkfVerifiedEntry];
+  }
+  return [];
+}
+
+export function formatVerifiedJson(entries: OkfVerified): string {
+  // Sort by Date.parse() instant so different ISO 8601 offsets don't re-order
+  // (lexical sort put `2026-01-01T00:00:00-08:00` before `2026-01-01T05:00:00Z`,
+  // even though the latter is later in real time). Falls back to a deterministic
+  // lexical tiebreak only when one or both values fail to parse.
+  const sorted = [...entries].sort((a, b) => {
+    const ta = Date.parse(a.at);
+    const tb = Date.parse(b.at);
+    const fa = Number.isFinite(ta);
+    const fb = Number.isFinite(tb);
+    if (fa && fb) return ta - tb;
+    if (fa && !fb) return -1;
+    if (!fa && fb) return 1;
+    return a.at < b.at ? -1 : a.at > b.at ? 1 : 0;
+  });
+  return JSON.stringify(sorted);
+}
+
+export function formatSourcesJson(sources: OkfSource[], sharedWindow?: OkfSourceUsageWindow | null): string {
+  const folded = sources.map((s) =>
+    s.usage_window ? s : sharedWindow ? { ...s, usage_window: sharedWindow } : s,
+  );
+  return JSON.stringify(folded);
+}
+
+export function latestVerified(
+  entries: OkfVerified | undefined,
+  _now: number,
+): { by: string; at: number } | null {
+  if (!entries || entries.length === 0) return null;
+  let best: OkfVerifiedEntry | null = null;
+  let bestAt = -Infinity;
+  for (const e of entries) {
+    const ts = Date.parse(e.at);
+    if (Number.isFinite(ts) && ts > bestAt) {
+      best = e;
+      bestAt = ts;
+    }
+  }
+  if (!best) return null;
+  return { by: best.by, at: bestAt };
+}
+
+const URL_LINE = /^\s*-\s+(https?:\/\/\S+)\s*$/;
+
+export function parseCitationsList(body: string): string[] {
+  // Find a '# Citations' (case-insensitive) heading; collect URL list lines
+  // until the next heading or EOF. Headings inside fenced code blocks
+  // (``` and ~~~) are ignored so a Markdown example containing
+  // `# Citations` and URL bullets is not imported as real provenance.
+  //
+  // Fence tracking retains the full opening fence length: a 4-backtick
+  // opener is only closed by a 4+ backtick line of the same character
+  // followed by whitespace (CommonMark §4.5). Tracking only the marker
+  // char let ``` close ```` blocks, which then exposed the next line as
+  // a URL bullet and imported it as synthetic provenance (see #90 review).
+  const lines = body.split(/\r?\n/);
+  let inFence = false;
+  let fenceMarker = '';
+  let fenceLength = 0;
+  let startIdx = -1;
+  const isFenceClose = (marker: string, fullMatch: string, line: string): boolean => {
+    if (marker[0] !== fenceMarker) return false;
+    if (marker.length < fenceLength) return false;
+    return /^\s*$/.test(line.slice(fullMatch.length));
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const fence = /^\s*(```+|~~~+)/.exec(line);
+    if (fence) {
+      const marker = fence[1]!;
+      if (!inFence) {
+        inFence = true;
+        fenceMarker = marker[0]!;
+        fenceLength = marker.length;
+      } else if (isFenceClose(marker, fence[0], line)) {
+        inFence = false;
+        fenceMarker = '';
+        fenceLength = 0;
+      }
+      continue;
+    }
+    if (!inFence && /^\s*#{1,2}\s*citations\s*$/i.test(line)) {
+      startIdx = i;
+      break;
+    }
+  }
+  if (startIdx === -1) return [];
+  const out: string[] = [];
+  for (let i = startIdx + 1; i < lines.length; i++) {
+    const line = lines[i];
+    // Closing fence or a new heading exits the citations section.
+    const fence = /^\s*(```+|~~~+)/.exec(line);
+    if (fence) {
+      const marker = fence[1]!;
+      if (!inFence) {
+        inFence = true;
+        fenceMarker = marker[0]!;
+        fenceLength = marker.length;
+        continue;
+      }
+      if (isFenceClose(marker, fence[0], line)) {
+        inFence = false;
+        fenceMarker = '';
+        fenceLength = 0;
+      }
+      continue;
+    }
+    if (!inFence && /^\s*#{1,2}\s+/.test(line)) break; // next heading
+    // Skip URL line matching inside open fences — body's narrative code
+    // examples must not contaminate provenance.
+    if (inFence) continue;
+    const m = URL_LINE.exec(line);
+    if (m) out.push(m[1]);
+  }
+  return out;
+}

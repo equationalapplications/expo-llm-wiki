@@ -52,7 +52,7 @@ function makeEvent(overrides: Partial<WikiEvent> = {}): WikiEvent {
 
 describe('formatOkfBundle', () => {
   it('produces no files for an empty dump except the root index.md', () => {
-    const { files } = formatOkfBundle({ generatedAt: 0, entities: {} });
+    const { files } = formatOkfBundle({ generatedAt: 0, entities: {} }, { profile: 'llm-wiki/1' });
     expect(files).toHaveLength(1);
     expect(files[0].path).toBe('index.md');
     expect(files[0].content).toBe('---\nokf_version: "0.1"\nprofile: llm-wiki/1\n---\n\n');
@@ -63,7 +63,7 @@ describe('formatOkfBundle', () => {
       generatedAt: 0,
       entities: { alice: { facts: [makeFact()], tasks: [], events: [], edges: [] } },
     };
-    const { files } = formatOkfBundle(dump);
+    const { files } = formatOkfBundle(dump, { profile: 'llm-wiki/1' });
     const factFile = files.find(f => f.path === 'entities/alice/facts/fact_aaa.md');
     expect(factFile).toBeDefined();
     expect(factFile!.content).not.toContain('embedding_blob');
@@ -84,7 +84,7 @@ describe('formatOkfBundle', () => {
       generatedAt: 0,
       entities: { alice: { facts: [makeFact({ source_ref: null })], tasks: [], events: [], edges: [] } },
     };
-    const { files } = formatOkfBundle(dump);
+    const { files } = formatOkfBundle(dump, { profile: 'llm-wiki/1' });
     const factFile = files.find(f => f.path === 'entities/alice/facts/fact_aaa.md')!;
     expect(factFile.content).not.toContain('resource:');
   });
@@ -94,7 +94,7 @@ describe('formatOkfBundle', () => {
       generatedAt: 0,
       entities: { alice: { facts: [], tasks: [makeTask()], events: [], edges: [] } },
     };
-    const { files } = formatOkfBundle(dump);
+    const { files } = formatOkfBundle(dump, { profile: 'llm-wiki/1' });
     const taskFile = files.find(f => f.path === 'entities/alice/tasks/task_bbb.md');
     expect(taskFile).toBeDefined();
     expect(taskFile!.content).toBe(
@@ -114,7 +114,7 @@ describe('formatOkfBundle', () => {
         },
       },
     };
-    const { files } = formatOkfBundle(dump);
+    const { files } = formatOkfBundle(dump, { profile: 'llm-wiki/1' });
     const logFile = files.find(f => f.path === 'entities/alice/log.md')!;
     expect(logFile.content).toContain('[Confirmed coffee preference](./facts/fact_aaa.md)');
   });
@@ -131,7 +131,7 @@ describe('formatOkfBundle', () => {
         },
       },
     };
-    const { files } = formatOkfBundle(dump);
+    const { files } = formatOkfBundle(dump, { profile: 'llm-wiki/1' });
     const logFile = files.find(f => f.path === 'entities/alice/log.md')!;
     expect(logFile.content).toContain('(observation) Unlinked event');
     expect(logFile.content).not.toContain('[Unlinked event]');
@@ -142,7 +142,7 @@ describe('formatOkfBundle', () => {
       generatedAt: 0,
       entities: { alice: { facts: [makeFact()], tasks: [makeTask()], events: [], edges: [] } },
     };
-    const { files } = formatOkfBundle(dump);
+    const { files } = formatOkfBundle(dump, { profile: 'llm-wiki/1' });
     const entityIndex = files.find(f => f.path === 'entities/alice/index.md')!;
     expect(entityIndex.content).toContain('## Facts');
     expect(entityIndex.content).toContain('* [Likes coffee](facts/fact_aaa.md)');
@@ -159,7 +159,7 @@ describe('formatOkfBundle', () => {
         bob: { facts: [], tasks: [], events: [], edges: [] },
       },
     };
-    const { files } = formatOkfBundle(dump);
+    const { files } = formatOkfBundle(dump, { profile: 'llm-wiki/1' });
     const rootIndex = files.find(f => f.path === 'index.md')!;
     expect(rootIndex.content).toContain('* [alice](entities/alice/index.md)');
     expect(rootIndex.content).toContain('* [bob](entities/bob/index.md)');
@@ -176,7 +176,7 @@ describe('formatOkfBundle', () => {
         },
       },
     };
-    const { files } = formatOkfBundle(dump);
+    const { files } = formatOkfBundle(dump, { profile: 'llm-wiki/1' });
     const paths = files.map(f => f.path);
     const conceptPaths = paths.filter(p => p.includes('/facts/') || p.includes('/tasks/'));
     expect(conceptPaths.every(p => !p.endsWith('/facts/index.md') && !p.endsWith('/tasks/log.md'))).toBe(true);
@@ -199,7 +199,7 @@ describe('formatOkfBundle', () => {
         },
       },
     };
-    const { files } = formatOkfBundle(dump);
+    const { files } = formatOkfBundle(dump, { profile: 'llm-wiki/1' });
     const factFile = files.find(f => f.path.startsWith('entities/alice/facts/'))!;
     expect(factFile.path).toMatch(/^entities\/alice\/facts\/escape-[0-9a-f]{16}\.md$/);
     expect(factFile.path).not.toContain('..');
@@ -210,7 +210,7 @@ describe('formatOkfBundle', () => {
       generatedAt: 0,
       entities: { alice: { facts: [makeFact({ okf_type: 'meeting_note' })], tasks: [], events: [], edges: [] } },
     };
-    const { files } = formatOkfBundle(dump);
+    const { files } = formatOkfBundle(dump, { profile: 'llm-wiki/1' });
     const factFile = files.find(f => f.path === 'entities/alice/facts/fact_aaa.md')!;
     expect(factFile.content).toContain('type: meeting_note');
     expect(factFile.content).not.toContain('type: fact');
@@ -221,7 +221,7 @@ describe('formatOkfBundle', () => {
       generatedAt: 0,
       entities: { alice: { facts: [makeFact()], tasks: [], events: [], edges: [] } },
     };
-    const { files } = formatOkfBundle(dump);
+    const { files } = formatOkfBundle(dump, { profile: 'llm-wiki/1' });
     const factFile = files.find(f => f.path === 'entities/alice/facts/fact_aaa.md')!;
     expect(factFile.content).toContain('type: fact');
   });
@@ -231,7 +231,7 @@ describe('formatOkfBundle', () => {
       generatedAt: 0,
       entities: { alice: { facts: [], tasks: [makeTask({ okf_type: 'todo_item' })], events: [], edges: [] } },
     };
-    const { files } = formatOkfBundle(dump);
+    const { files } = formatOkfBundle(dump, { profile: 'llm-wiki/1' });
     const taskFile = files.find(f => f.path === 'entities/alice/tasks/task_bbb.md')!;
     expect(taskFile.content).toContain('type: todo_item');
   });
@@ -241,13 +241,13 @@ describe('formatOkfBundle', () => {
       generatedAt: 0,
       entities: { alice: { facts: [], tasks: [makeTask()], events: [], edges: [] } },
     };
-    const { files } = formatOkfBundle(dump);
+    const { files } = formatOkfBundle(dump, { profile: 'llm-wiki/1' });
     const taskFile = files.find(f => f.path === 'entities/alice/tasks/task_bbb.md')!;
     expect(taskFile.content).toContain('type: task');
   });
 
   it('emits profile: llm-wiki/1 on root index.md', () => {
-    const { files } = formatOkfBundle({ generatedAt: 0, entities: {} });
+    const { files } = formatOkfBundle({ generatedAt: 0, entities: {} }, { profile: 'llm-wiki/1' });
     expect(files[0].content).toContain('profile: llm-wiki/1');
   });
 
@@ -258,7 +258,7 @@ describe('formatOkfBundle', () => {
         alice: { summary: 'Alice loves coffee.', facts: [], tasks: [], events: [], edges: [] },
       },
     };
-    const entityIndex = formatOkfBundle(dump).files.find(f => f.path === 'entities/alice/index.md')!;
+    const entityIndex = formatOkfBundle(dump, { profile: 'llm-wiki/1' }).files.find(f => f.path === 'entities/alice/index.md')!;
     expect(entityIndex.content.startsWith('Alice loves coffee.\n\n')).toBe(true);
   });
 
@@ -294,7 +294,7 @@ describe('formatOkfBundle', () => {
         },
       },
     };
-    const factA = formatOkfBundle(dump).files.find(f => f.path === 'entities/alice/facts/fact_a.md')!;
+    const factA = formatOkfBundle(dump, { profile: 'llm-wiki/1' }).files.find(f => f.path === 'entities/alice/facts/fact_a.md')!;
     const relatedSection = factA.content.slice(factA.content.indexOf('## Related'));
     const referencesIdx = relatedSection.indexOf('- [references]');
     const blocksIdx = relatedSection.indexOf('- [blocks]');
@@ -335,7 +335,7 @@ describe('formatOkfBundle', () => {
         },
       },
     };
-    const factA = formatOkfBundle(dump).files.find(f => f.path === 'entities/alice/facts/fact_a.md')!;
+    const factA = formatOkfBundle(dump, { profile: 'llm-wiki/1' }).files.find(f => f.path === 'entities/alice/facts/fact_a.md')!;
     expect(factA.content).toContain('Plain body without links.');
     expect(factA.content).toContain('## Related');
     expect(factA.content).toContain('- [mentions](./fact_b.md)');
@@ -354,7 +354,7 @@ describe('formatOkfBundle', () => {
         },
       },
     };
-    const logFile = formatOkfBundle(dump).files.find(f => f.path === 'entities/alice/log.md')!;
+    const logFile = formatOkfBundle(dump, { profile: 'llm-wiki/1' }).files.find(f => f.path === 'entities/alice/log.md')!;
     expect(logFile.content).toContain('<!-- id: evt_ccc -->');
   });
 });

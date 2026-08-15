@@ -39,6 +39,13 @@ export function serializeScalarString(value: string): string {
   return needsQuoting(value) ? quoteString(value) : value;
 }
 
+export function serializeActorString(value: string): string {
+  // Actor strings in OKF v0.2 §7 contain `/` (agent/version), `:` (human:/process:),
+  // or both — any of these would otherwise parse ambiguously as YAML scalars.
+  if (/[/:]/.test(value)) return quoteString(value);
+  return value;
+}
+
 function serializeKey(key: string): string {
   // needsQuoting() intentionally exempts ISO 8601 timestamps for *values*.
   // For keys, quote timestamp-like scalars to avoid YAML timestamp coercion in some parsers.
@@ -53,7 +60,79 @@ function serializeValue(value: unknown): string {
   if (typeof value === 'boolean') return String(value);
   if (typeof value === 'number') return String(value);
   if (typeof value === 'string') return serializeScalarString(value);
+  if (Array.isArray(value)) return serializeFlowSequenceValue(value);
+  if (typeof value === 'object') return serializeFlowMappingValue(value as Record<string, OkfFrontmatterValue>);
   throw new Error(`Unsupported frontmatter value type: ${typeof value}`);
+}
+
+/**
+ * Quote a flow-mapping/-sequence scalar string more strictly than a top-level
+ * scalar. Flow syntax additionally treats `,`, `{`, `}`, `[`, `]` as
+ * structural (so a `title` like `"Foo, Bar"` MUST be quoted even though
+ * `needsQuoting` alone wouldn't require it for a top-level, non-flow value),
+ * and `/`/`:` are quoted too — this is what makes it safe to use uniformly
+ * for actor strings (`reference_agent/gemini-2.5-pro`, `human:ahormati`) as
+ * well as ordinary string values inside the same flow mapping. This
+ * subsumes what a narrower "only quote actor-shaped values" helper would
+ * need to do, so every string inside a flow mapping/sequence goes through
+ * this one function rather than two different quoting rules depending on
+ * which key it's under.
+ */
+function needsFlowQuoting(value: string): boolean {
+  return needsQuoting(value) || /[,{}[\]/:]/.test(value);
+}
+
+function serializeFlowScalarString(value: string): string {
+  return needsFlowQuoting(value) ? quoteString(value) : value;
+}
+
+/** Emit a plain object as an inline flow mapping `{ k: v, k: v }`. At most one
+ *  level of nested flow collection (mapping or sequence) as a value, per
+ *  spec §2.6 — matches what the parser accepts. */
+function serializeFlowMappingValue(obj: Record<string, OkfFrontmatterValue>, depth = 0): string {
+  const entries = Object.entries(obj).filter(([, v]) => v !== undefined);
+  if (entries.length === 0) return '{}';
+  const parts = entries.map(([k, v]) => {
+    let rendered: string;
+    if (typeof v === 'string') rendered = serializeFlowScalarString(v);
+    else if (v === null || typeof v === 'boolean' || typeof v === 'number') rendered = serializeValue(v);
+    else if (Array.isArray(v)) {
+      if (depth >= 1) throw new Error(`serializeFlowMappingValue: nesting deeper than one level is not supported (key "${k}")`);
+      rendered = serializeFlowSequenceValue(v, depth + 1);
+    } else if (typeof v === 'object') {
+      if (depth >= 1) throw new Error(`serializeFlowMappingValue: nesting deeper than one level is not supported (key "${k}")`);
+      rendered = serializeFlowMappingValue(v as Record<string, OkfFrontmatterValue>, depth + 1);
+    } else {
+      throw new Error(`serializeFlowMappingValue: unsupported value type for key "${k}"`);
+    }
+    return `${serializeKey(k)}: ${rendered}`;
+  });
+  return `{ ${parts.join(', ')} }`;
+}
+
+/** Emit an array as an inline flow sequence `[ a, b, c ]`. Object items
+ *  serialize as nested inline flow mappings (the base "array of objects"
+ *  shape — see the design note above Step 5.1 — does not consume the
+ *  one-level nesting budget). A nested ARRAY does consume the budget: the
+ *  `parameters` field in v0.2 §10 is a sequence of values, not a sequence
+ *  of mappings, and recursing with the same depth would let a hostile
+ *  `[[[[...]]]]` exhaust the JS stack. */
+function serializeFlowSequenceValue(arr: unknown[], depth = 0): string {
+  if (arr.length === 0) return '[]';
+  const parts = arr.map((item) => {
+    if (typeof item === 'string') return serializeFlowScalarString(item);
+    if (item === null || typeof item === 'boolean' || typeof item === 'number') return serializeValue(item);
+    if (item !== null && typeof item === 'object' && !Array.isArray(item)) {
+      // Sequence item that is itself a mapping: same depth (base shape, not nesting).
+      return serializeFlowMappingValue(item as Record<string, OkfFrontmatterValue>, depth);
+    }
+    if (Array.isArray(item)) {
+      if (depth >= 1) throw new Error(`serializeFlowSequenceValue: nested array deeper than one level is not supported`);
+      return serializeFlowSequenceValue(item, depth + 1);
+    }
+    throw new Error('serializeFlowSequenceValue: unsupported item type');
+  });
+  return `[ ${parts.join(', ')} ]`;
 }
 
 export function serializeFrontmatter(fm: OkfFrontmatter): string {
@@ -63,16 +142,20 @@ export function serializeFrontmatter(fm: OkfFrontmatter): string {
     if (Array.isArray(value)) {
       if (value.length === 0) {
         lines.push(`${serializeKey(key)}: []`);
+      } else if ((value as unknown[]).some((item) => item !== null && typeof item === 'object')) {
+        // Array of objects (sources, verified-list, parameters, ...): always a
+        // single-line flow sequence, never a block-list of flow-mapping items
+        // (see the Step 5 design note — the latter cannot round-trip).
+        lines.push(`${serializeKey(key)}: ${serializeFlowSequenceValue(value as unknown[])}`);
       } else {
+        // Plain scalar array: existing v0.1 block-sequence form, unchanged.
         lines.push(`${serializeKey(key)}:`);
         for (const item of value as unknown[]) {
-          if (typeof item === 'string') {
-            lines.push(`  - ${serializeScalarString(item)}`);
-          } else {
-            lines.push(`  - ${serializeValue(item)}`);
-          }
+          lines.push(`  - ${typeof item === 'string' ? serializeScalarString(item) : serializeValue(item)}`);
         }
       }
+    } else if (value !== null && typeof value === 'object') {
+      lines.push(`${serializeKey(key)}: ${serializeFlowMappingValue(value as Record<string, OkfFrontmatterValue>)}`);
     } else {
       lines.push(`${serializeKey(key)}: ${serializeValue(value)}`);
     }
@@ -141,6 +224,134 @@ function matchFrontmatterKeyValue(
 }
 
 /**
+ * True if `text` contains an unquoted `&` or `*` — the anchor/alias indicators we
+ * refuse to recognize (billion-laughs safety, profile-1 §8). Quoted spans are
+ * excluded from the scan so an ordinary value like a URL query string
+ * (`"https://x/a?p=1&q=2"`) is never misdetected as an anchor.
+ */
+function hasUnquotedAnchorOrAlias(text: string): boolean {
+  let quote: '"' | "'" | null = null;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quote) {
+      if (ch === '\\' && i + 1 < text.length) { i++; continue; }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") { quote = ch; continue; }
+    if (ch === '&' || ch === '*') return true;
+  }
+  return false;
+}
+
+/**
+ * Split a comma-separated list of inner flow entries, respecting quoted strings
+ * and nested `{...}` / `[...]` spans (so a nested flow collection's internal
+ * commas don't split the outer entry list). Returns null on unbalanced
+ * quotes/brackets.
+ */
+function splitFlowEntries(inner: string): string[] | null {
+  const entries: string[] = [];
+  let buf = '';
+  let i = 0;
+  let quote: '"' | "'" | null = null;
+  let depthBrace = 0;
+  let depthBracket = 0;
+  while (i < inner.length) {
+    const ch = inner[i];
+    if (quote) {
+      buf += ch;
+      if (ch === '\\' && i + 1 < inner.length) { buf += inner[i + 1]; i += 2; continue; }
+      if (ch === quote) quote = null;
+      i++; continue;
+    }
+    if (ch === '"' || ch === "'") { quote = ch; buf += ch; i++; continue; }
+    if (ch === '{') depthBrace++;
+    else if (ch === '}') depthBrace--;
+    else if (ch === '[') depthBracket++;
+    else if (ch === ']') depthBracket--;
+    if (ch === ',' && depthBrace === 0 && depthBracket === 0) {
+      entries.push(buf.trim()); buf = ''; i++; continue;
+    }
+    buf += ch;
+    i++;
+  }
+  if (buf.trim().length > 0) entries.push(buf.trim());
+  if (depthBrace !== 0 || depthBracket !== 0 || quote !== null) return null;
+  return entries;
+}
+
+/**
+ * `depth` counts levels of **mapping-value nesting** only: it increments when a
+ * flow MAPPING's key has a value that is itself a flow collection, and is
+ * rejected once it would exceed 1 (spec §2.6's "at most one level of nesting").
+ * It does NOT increment when a flow SEQUENCE's item is itself a mapping or
+ * sequence — `sources: [ {...}, {...} ]` (a flat array of objects) is the base
+ * shape v0.2 uses everywhere and is not "nesting" in the spec's sense. This is
+ * what lets `sources: [ { usage_window: { from, to } } ]` parse (sequence item
+ * is a mapping at depth 0; that mapping's `usage_window` value is a mapping at
+ * depth 1 — one level, allowed) while `{ a: { b: { c: 1 } } }` is rejected
+ * (`a`'s value nests at depth 1; `b`'s value would need depth 2 — rejected).
+ */
+export function parseFlowMapping(text: string, depth = 0): Record<string, OkfFrontmatterValue> | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null;
+  // Anchor / alias hard ban, quoted spans excluded from the scan.
+  if (hasUnquotedAnchorOrAlias(trimmed)) return null;
+  const inner = trimmed.slice(1, -1).trim();
+  if (inner.length === 0) return {};
+  const entries = splitFlowEntries(inner);
+  if (!entries) return null;
+  const out: Record<string, OkfFrontmatterValue> = {};
+  for (const entry of entries) {
+    const kv = matchFrontmatterKeyValue(entry);
+    if (!kv || !kv.hasValue) return null;
+    const v = kv.value.trim();
+    if (v.startsWith('{') || v.startsWith('[')) {
+      // This IS a mapping-value nesting step: consumes one level of budget.
+      if (depth >= 1) return null; // would be a 2nd level of mapping-value nesting — reject
+      const nested = v.startsWith('{') ? parseFlowMapping(v, depth + 1) : parseFlowSequence(v, depth + 1);
+      if (nested === null) return null;
+      out[parseKey(kv.key)] = nested as unknown as OkfFrontmatterValue;
+      continue;
+    }
+    out[parseKey(kv.key)] = parseScalarValue(v);
+  }
+  return out;
+}
+
+export function parseFlowSequence(text: string, depth = 0): OkfFrontmatterValue[] | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) return null;
+  if (hasUnquotedAnchorOrAlias(trimmed)) return null;
+  const inner = trimmed.slice(1, -1).trim();
+  if (inner.length === 0) return [];
+  const entries = splitFlowEntries(inner);
+  if (!entries) return null;
+  const out: OkfFrontmatterValue[] = [];
+  for (const entry of entries) {
+    const v = entry.trim();
+    if (v.startsWith('{')) {
+      // Sequence item is a mapping: same depth (base array-of-objects shape).
+      const nested = parseFlowMapping(v, depth);
+      if (nested === null) return null;
+      out.push(nested as unknown as OkfFrontmatterValue);
+      continue;
+    }
+    if (v.startsWith('[')) {
+      // Nested array consumes one level of depth budget.
+      if (depth >= 1) return null;
+      const nested = parseFlowSequence(v, depth + 1);
+      if (nested === null) return null;
+      out.push(nested as unknown as OkfFrontmatterValue);
+      continue;
+    }
+    out.push(parseScalarValue(v));
+  }
+  return out;
+}
+
+/**
  * Parses the subset of YAML frontmatter that {@link serializeFrontmatter} produces:
  * scalar string/number/boolean/null values, quoted strings, and block string-lists.
  * NOT a general YAML parser — flow collections (`[...]`/`{...}`), multi-line block
@@ -187,6 +398,31 @@ export function parseFrontmatter(content: string): { frontmatter: OkfFrontmatter
         i++;
       }
       frontmatter[key] = items;
+      continue;
+    }
+    const valueRaw = kv.value.trim();
+    // OKF v0.2 flow collections: { k: v, k: v } and [ a, b, c ], at most one level
+    // of nesting (spec §2.6). Anchor/alias-opaque (handled inside the flow parsers).
+    if (valueRaw.startsWith('{')) {
+      const flowObj = parseFlowMapping(valueRaw);
+      if (flowObj !== null) { frontmatter[parseKey(kv.key)] = flowObj as unknown as OkfFrontmatterValue; i++; continue; }
+      // Rejected (anchor/alias, or nested more than one level deep): preserve the key
+      // with a null value rather than misreading `{ a: { b: 1 } }` as a scalar string.
+      frontmatter[parseKey(kv.key)] = null;
+      i++;
+      continue;
+    }
+    if (valueRaw.startsWith('[')) {
+      // Empty flow sequence falls through to existing `[]` handling above.
+      if (valueRaw === '[]') {
+        frontmatter[parseKey(kv.key)] = [];
+        i++;
+        continue;
+      }
+      const flowSeq = parseFlowSequence(valueRaw);
+      if (flowSeq !== null) { frontmatter[parseKey(kv.key)] = flowSeq as unknown as OkfFrontmatterValue; i++; continue; }
+      frontmatter[parseKey(kv.key)] = null;
+      i++;
       continue;
     }
     frontmatter[parseKey(kv.key)] = parseScalarValue(kv.value);

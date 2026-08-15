@@ -1,4 +1,9 @@
 import { extractSqliteCode } from './db/sqliteCodes';
+import type {
+  OkfSource,
+  OkfSourceUsageWindow,
+  OkfVerifiedEntry,
+} from '@equationalapplications/core-okf';
 
 /**
  * Platform-agnostic SQLite driver interface.
@@ -258,6 +263,39 @@ export interface WikiFact {
    * OKF import. Distinct from `source_type`, which governs immutability rules.
    */
   okf_type?: string | null;
+  // --- OKF v0.2 surface (additive; see spec §4.6) ---
+  /** OKF v0.2 lifecycle state. Defaults to 'stable' on the SQL side. */
+  lifecycle_status?: 'draft' | 'stable' | 'deprecated';
+  /** Absolute YYYY-MM-DD cutoff for staleness. NULL = never stale. */
+  stale_after?: number | null;
+  /** Actor string per OKF v0.2 §7 (`<producer>/<version>`, `human:<id>`, `process:<id>`). */
+  generated_by?: string | null;
+  /** Full list of OKF v0.2 sources (provenance). */
+  okf_sources?: OkfSource[];
+  /** Chronological list of verification events. */
+  okf_verified?: OkfVerifiedEntry[];
+  /** Sibling-of-sources usage window object. */
+  okf_usage_window?: OkfSourceUsageWindow | null;
+  /** Convenience: epoch ms of the latest verifier. Derived; mirrored for query speed. */
+  last_verified_at?: number | null;
+  /** Convenience: actor string of the latest verifier. Derived; mirrored for query speed. */
+  last_verified_by?: string | null;
+  /**
+   * Hydrated at read time: `isStaleAfter(stale_after, now)`. `true` once the
+   * absolute stale_after cutoff has passed; `false` otherwise (including when
+   * stale_after is null). Surfaced per spec §2.7 + §5.3 so hosts can render
+   * staleness without recomputing. Always present on read paths that go
+   * through `mapRowToFact` / `mapRowToTask`.
+   */
+  isStale?: boolean;
+  /**
+   * Hydrated at read time: `deriveTrustTier(okf_verified)`. `'human-reviewed'`
+   * when any entry has `by: 'human:...'`, `'machine-confirmed'` when entries
+   * exist without a human verifier, `'unverified'` when okf_verified is empty.
+   * Surfaced per spec §2.7 + §5.3. Always present on read paths that go through
+   * `mapRowToFact` / `mapRowToTask`.
+   */
+  trustTier?: 'unverified' | 'machine-confirmed' | 'human-reviewed';
 }
 
 export interface WikiTask {
@@ -272,6 +310,28 @@ export interface WikiTask {
   deleted_at: number | null;
   /** Verbatim OKF `type:` frontmatter value when this task originated from an OKF bundle. */
   okf_type?: string | null;
+  // --- OKF v0.2 surface (additive; see spec §4.6) ---
+  lifecycle_status?: 'draft' | 'stable' | 'deprecated';
+  stale_after?: number | null;
+  generated_by?: string | null;
+  okf_sources?: OkfSource[];
+  okf_verified?: OkfVerifiedEntry[];
+  okf_usage_window?: OkfSourceUsageWindow | null;
+  last_verified_at?: number | null;
+  last_verified_by?: string | null;
+  /**
+   * Hydrated at read time: `isStaleAfter(stale_after, now)`. Mirrors
+   * {@link WikiFact.isStale} (spec §2.5 + §5.3 treat stale_after symmetrically
+   * for tasks and facts). Always present on read paths that go through
+   * `mapRowToTask`.
+   */
+  isStale?: boolean;
+  /**
+   * Hydrated at read time: `deriveTrustTier(okf_verified)`. Mirrors
+   * {@link WikiFact.trustTier}. Always present on read paths that go through
+   * `mapRowToTask`.
+   */
+  trustTier?: 'unverified' | 'machine-confirmed' | 'human-reviewed';
 }
 
 export interface WikiEvent {

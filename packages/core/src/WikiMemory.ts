@@ -31,6 +31,7 @@ import { WriteService } from './services/WriteService';
 import { PromptService } from './services/PromptService';
 import { OntologyService } from './services/OntologyService';
 import { GraphTraversalService } from './services/GraphTraversalService';
+import { OkfTrustWritesRepository } from './db/okf-trust-writes';
 import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighborhood, OntologyBackfillResult, HealResult } from './types';
 
 export { WikiBusyError, WikiTransactionError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER, WikiStrictOntologyViolation, WikiSourceRefHashCollision } from './types';
@@ -79,6 +80,7 @@ export class WikiMemory {
   private promptService: PromptService;
   private ontologyService: OntologyService;
   private graphTraversalService: GraphTraversalService;
+  private readonly okfTrustWrites: OkfTrustWritesRepository;
 
   constructor(db: SQLiteAdapter, options: WikiOptions) {
     // Serialize transactions on the single shared connection before the adapter
@@ -170,6 +172,7 @@ export class WikiMemory {
       this.entryRepo,
       this.options.config ?? {},
     );
+    this.okfTrustWrites = new OkfTrustWritesRepository(this.db, this.prefix);
   }
 
   /**
@@ -682,6 +685,48 @@ export class WikiMemory {
       this.metadataRepo.setManifest(entityId, { mode, manifest }, tx),
     );
     this.ontologyService.invalidateCache(entityId);
+  }
+
+  /** Append a verification event to a fact. Does NOT touch `updated_at`. */
+  async writeOkfTrust(entryId: string, entityId: string, verified: { by: string; at: string }[]): Promise<void> {
+    return this.okfTrustWrites.writeOkfTrust(entryId, entityId, verified);
+  }
+
+  /** Replace a fact's source list. Does NOT touch `updated_at`. */
+  async writeOkfSources(entryId: string, entityId: string, sources: Array<{ resource: string; [k: string]: unknown }>): Promise<void> {
+    return this.okfTrustWrites.writeOkfSources(entryId, entityId, sources as any);
+  }
+
+  /** Set a fact's OKF v0.2 lifecycle status. Does NOT touch `updated_at`. */
+  async setLifecycleStatus(entryId: string, entityId: string, status: 'draft' | 'stable' | 'deprecated'): Promise<void> {
+    return this.okfTrustWrites.setLifecycleStatus(entryId, entityId, status);
+  }
+
+  /** Set a fact's stale_after (epoch ms) or clear it. Does NOT touch `updated_at`. */
+  async setStaleAfter(entryId: string, entityId: string, date: number | null): Promise<void> {
+    return this.okfTrustWrites.setStaleAfter(entryId, entityId, date);
+  }
+
+  /** Set a fact's generated_by actor string. Does NOT touch `updated_at`. */
+  async setGeneratedBy(entryId: string, entityId: string, actor: string): Promise<void> {
+    return this.okfTrustWrites.setGeneratedBy(entryId, entityId, actor);
+  }
+
+  /** Task variants of the same five DAO methods. Symmetric per spec §2.5. */
+  async writeOkfTrustTask(taskId: string, entityId: string, verified: { by: string; at: string }[]): Promise<void> {
+    return this.okfTrustWrites.writeOkfTrustTask(taskId, entityId, verified);
+  }
+  async writeOkfSourcesTask(taskId: string, entityId: string, sources: Array<{ resource: string; [k: string]: unknown }>): Promise<void> {
+    return this.okfTrustWrites.writeOkfSourcesTask(taskId, entityId, sources as any);
+  }
+  async setLifecycleStatusTask(taskId: string, entityId: string, status: 'draft' | 'stable' | 'deprecated'): Promise<void> {
+    return this.okfTrustWrites.setLifecycleStatusTask(taskId, entityId, status);
+  }
+  async setStaleAfterTask(taskId: string, entityId: string, date: number | null): Promise<void> {
+    return this.okfTrustWrites.setStaleAfterTask(taskId, entityId, date);
+  }
+  async setGeneratedByTask(taskId: string, entityId: string, actor: string): Promise<void> {
+    return this.okfTrustWrites.setGeneratedByTask(taskId, entityId, actor);
   }
 }
 

@@ -1,8 +1,16 @@
 import { BaseRepository } from './BaseRepository';
 import { OutboxRepository } from './OutboxRepository';
 import type { WikiTask, SQLiteAdapter } from '../types';
+import { parseJsonArray, parseJsonObject } from './rowMappers';
+import { isStaleAfter, deriveTrustTier } from '@equationalapplications/core-okf';
 
 function mapRowToTask(row: any): WikiTask {
+  const okf_verified = parseJsonArray<NonNullable<WikiTask['okf_verified']>[number]>(row.okf_verified, []);
+  // Mirror EntryRepository.mapRowToFact — see that file for the rationale on
+  // per-row Date.now() sampling vs. a shared per-call value.
+  const now = Date.now();
+  const staleAfterRaw = row.stale_after != null ? Number(row.stale_after) : null;
+
   return {
     id: row.id,
     entity_id: row.entity_id,
@@ -14,6 +22,18 @@ function mapRowToTask(row: any): WikiTask {
     resolved_at: row.resolved_at != null ? Number(row.resolved_at) : null,
     deleted_at: row.deleted_at != null ? Number(row.deleted_at) : null,
     okf_type: row.okf_type ?? null,
+    // OKF v0.2
+    lifecycle_status: (row.lifecycle_status ?? 'stable') as WikiTask['lifecycle_status'],
+    stale_after: staleAfterRaw,
+    generated_by: row.generated_by ?? null,
+    okf_sources: parseJsonArray<NonNullable<WikiTask['okf_sources']>[number]>(row.okf_sources, []),
+    okf_verified,
+    okf_usage_window: parseJsonObject<NonNullable<WikiTask['okf_usage_window']>>(row.okf_usage_window),
+    last_verified_at: row.last_verified_at != null ? Number(row.last_verified_at) : null,
+    last_verified_by: row.last_verified_by ?? null,
+    // Spec §2.7 + §5.3: hydrate so read() consumers don't re-call the helpers.
+    isStale: isStaleAfter(staleAfterRaw, now),
+    trustTier: deriveTrustTier(okf_verified),
   };
 }
 
@@ -78,13 +98,32 @@ export class TaskRepository extends BaseRepository {
    * Uses ON CONFLICT(id) DO UPDATE (not INSERT OR REPLACE).
    * Stages an outbox entry in the same transaction.
    * `tx` is REQUIRED.
+   *
+   * OKF metadata (lifecycle_status, sources, etc.) is intentionally excluded
+   * from the SET clause so content writes preserve any existing row values.
+   * See {@link EntryRepository.upsert} for the rationale — the same applies
+   * symmetrically to tasks (spec §2.5). Callers that need to overwrite OKF
+   * metadata should use {@link upsertForImport}.
    */
   async upsert(task: WikiTask, tx: SQLiteAdapter, updatedAt?: number): Promise<void> {
     const executor = this.getExecutor(tx);
     const now = Number.isFinite(updatedAt) ? updatedAt : Date.now();
 
-    const existingRow = await executor.getFirstAsync<{ id: string }>(
-      `SELECT id FROM ${this.prefix}tasks WHERE id = ?`,
+    const existingRow = await executor.getFirstAsync<{
+      id: string;
+      lifecycle_status: string;
+      stale_after: number | null;
+      generated_by: string | null;
+      okf_sources: string | null;
+      okf_verified: string | null;
+      okf_usage_window: string | null;
+      last_verified_at: number | null;
+      last_verified_by: string | null;
+    }>(
+      `SELECT id, lifecycle_status, stale_after, generated_by,
+              okf_sources, okf_verified, okf_usage_window,
+              last_verified_at, last_verified_by
+         FROM ${this.prefix}tasks WHERE id = ?`,
       [task.id],
     );
     const operation = task.deleted_at != null ? 'DELETE' : (existingRow ? 'UPDATE' : 'INSERT');
@@ -92,8 +131,10 @@ export class TaskRepository extends BaseRepository {
     await executor.runAsync(
       `INSERT INTO ${this.prefix}tasks (
         id, entity_id, description, status, priority,
-        created_at, updated_at, resolved_at, deleted_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        created_at, updated_at, resolved_at, deleted_at,
+        lifecycle_status, stale_after, generated_by, last_verified_at, last_verified_by,
+        okf_sources, okf_verified, okf_usage_window
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         entity_id = excluded.entity_id,
         description = excluded.description,
@@ -112,16 +153,44 @@ export class TaskRepository extends BaseRepository {
         now, // updated_at set by repo or import override
         task.resolved_at ?? null,
         task.deleted_at ?? null,
+        // OKF v0.2 metadata — bound for INSERT only; ON CONFLICT UPDATE
+        // preserves the existing row values (these columns are intentionally
+        // absent from the SET clause above).
+        task.lifecycle_status ?? 'stable',
+        task.stale_after ?? null,
+        task.generated_by ?? null,
+        task.last_verified_at ?? null,
+        task.last_verified_by ?? null,
+        task.okf_sources ? JSON.stringify(task.okf_sources) : null,
+        task.okf_verified ? JSON.stringify(task.okf_verified) : null,
+        task.okf_usage_window ? JSON.stringify(task.okf_usage_window) : null,
       ],
     );
 
+    // Outbox payload mirrors what is actually persisted. On UPDATE, the SET
+    // clause intentionally omits OKF metadata so prior row values win, but
+    // the caller-supplied `task` would still describe state we did NOT write.
+    // Re-read those columns from the stored row and overlay them onto the
+    // caller-supplied payload before publishing (#90 review).
+    const persistedOkf = existingRow
+      ? {
+          lifecycle_status: (existingRow.lifecycle_status ?? 'stable') as WikiTask['lifecycle_status'],
+          stale_after: existingRow.stale_after != null ? Number(existingRow.stale_after) : null,
+          generated_by: existingRow.generated_by ?? null,
+          okf_sources: parseJsonArray<NonNullable<WikiTask['okf_sources']>[number]>(existingRow.okf_sources, []),
+          okf_verified: parseJsonArray<NonNullable<WikiTask['okf_verified']>[number]>(existingRow.okf_verified, []),
+          okf_usage_window: parseJsonObject<NonNullable<WikiTask['okf_usage_window']>>(existingRow.okf_usage_window),
+          last_verified_at: existingRow.last_verified_at != null ? Number(existingRow.last_verified_at) : null,
+          last_verified_by: existingRow.last_verified_by ?? null,
+        }
+      : null;
     await this.outbox.push(
       {
         entityId: task.entity_id,
         tableName: 'tasks',
         recordId: task.id,
         operation,
-        payload: task,
+        payload: persistedOkf ? { ...task, ...persistedOkf } : task,
       },
       tx,
     );
@@ -131,11 +200,16 @@ export class TaskRepository extends BaseRepository {
     const executor = this.getExecutor(tx);
     const now = Number.isFinite(updatedAt) ? updatedAt : Date.now();
 
+    // Import is replace semantics, mirroring EntryRepository.upsertForImport.
+    // Dump is authoritative: a re-import that cleared stale_after, generated_by,
+    // or verification mirrors must overwrite, not preserve.
     await executor.runAsync(
       `INSERT INTO ${this.prefix}tasks (
         id, entity_id, description, status, priority,
-        created_at, updated_at, resolved_at, deleted_at, okf_type
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        created_at, updated_at, resolved_at, deleted_at, okf_type,
+        lifecycle_status, stale_after, generated_by, last_verified_at, last_verified_by,
+        okf_sources, okf_verified, okf_usage_window
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         entity_id = excluded.entity_id,
         description = excluded.description,
@@ -144,7 +218,15 @@ export class TaskRepository extends BaseRepository {
         updated_at = excluded.updated_at,
         resolved_at = excluded.resolved_at,
         deleted_at = excluded.deleted_at,
-        okf_type = excluded.okf_type`,
+        okf_type = excluded.okf_type,
+        lifecycle_status = excluded.lifecycle_status,
+        stale_after = excluded.stale_after,
+        generated_by = excluded.generated_by,
+        last_verified_at = excluded.last_verified_at,
+        last_verified_by = excluded.last_verified_by,
+        okf_sources = excluded.okf_sources,
+        okf_verified = excluded.okf_verified,
+        okf_usage_window = excluded.okf_usage_window`,
       [
         task.id,
         task.entity_id,
@@ -156,6 +238,14 @@ export class TaskRepository extends BaseRepository {
         task.resolved_at ?? null,
         task.deleted_at ?? null,
         task.okf_type ?? null,
+        task.lifecycle_status ?? 'stable',
+        task.stale_after ?? null,
+        task.generated_by ?? null,
+        task.last_verified_at ?? null,
+        task.last_verified_by ?? null,
+        task.okf_sources ? JSON.stringify(task.okf_sources) : null,
+        task.okf_verified ? JSON.stringify(task.okf_verified) : null,
+        task.okf_usage_window ? JSON.stringify(task.okf_usage_window) : null,
       ],
     );
   }

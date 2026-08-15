@@ -1,6 +1,8 @@
 import type { SQLiteAdapter, WikiFact } from '../types';
 import { BaseRepository } from './BaseRepository';
 import { OutboxRepository } from './OutboxRepository';
+import { parseJsonArray, parseJsonObject } from './rowMappers';
+import { isStaleAfter, deriveTrustTier } from '@equationalapplications/core-okf';
 
 export type EntryRowMetadata = {
   id: string;
@@ -21,6 +23,15 @@ function mapRowToFact(row: any): WikiFact {
     return [];
   })();
 
+  const okf_verified = parseJsonArray<NonNullable<WikiFact['okf_verified']>[number]>(row.okf_verified, []);
+  // Hydrate per spec §2.7 + §5.3: surface isStale/trustTier so hosts don't have to
+  // re-call the core-okf helpers. Sampled once per row rather than once per call
+  // because `now` here means "as of this hydration" — using a stable per-call
+  // value would shift staleness while we're mapping sibling rows in the same
+  // read. Date.now() is cheap enough that per-row sampling is fine.
+  const now = Date.now();
+  const staleAfterRaw = row.stale_after != null ? Number(row.stale_after) : null;
+
   return {
     id: row.id,
     entity_id: row.entity_id,
@@ -39,6 +50,18 @@ function mapRowToFact(row: any): WikiFact {
     deleted_at: row.deleted_at != null ? Number(row.deleted_at) : null,
     access_count: Number(row.access_count ?? 0),
     okf_type: row.okf_type ?? null,
+    // OKF v0.2
+    lifecycle_status: (row.lifecycle_status ?? 'stable') as WikiFact['lifecycle_status'],
+    stale_after: staleAfterRaw,
+    generated_by: row.generated_by ?? null,
+    okf_sources: parseJsonArray<NonNullable<WikiFact['okf_sources']>[number]>(row.okf_sources, []),
+    okf_verified,
+    okf_usage_window: parseJsonObject<NonNullable<WikiFact['okf_usage_window']>>(row.okf_usage_window),
+    last_verified_at: row.last_verified_at != null ? Number(row.last_verified_at) : null,
+    last_verified_by: row.last_verified_by ?? null,
+    // Spec §2.7 + §5.3: hydrate so read() consumers don't re-call the helpers.
+    isStale: isStaleAfter(staleAfterRaw, now),
+    trustTier: deriveTrustTier(okf_verified),
   };
 }
 
@@ -112,6 +135,21 @@ export class EntryRepository extends BaseRepository {
    * Upsert a WikiFact. Nullable fields set to null when fact value is null.
    * Returns { changes, lastInsertRowId }.
    * `tx` is REQUIRED to ensure atomic outbox staging.
+   *
+   * OKF metadata discipline (spec §2.5 + DAO checklist §8): content writes
+   * MUST NOT silently overwrite OKF metadata that a caller didn't supply. The
+   * previous CASE WHEN IS NULL guards around `lifecycle_status`, etc. were
+   * dead because the bind always supplied a non-null value (notably
+   * `fact.lifecycle_status ?? 'stable'`), so excluded.X was never NULL and
+   * an UPDATE rewrote an existing `deprecated` row to `stable`. We now omit
+   * these columns from the SET clause entirely — SQLite's ON CONFLICT UPDATE
+   * leaves untouched columns at their existing row value, which is exactly
+   * the preservation semantics we want for content writes. Callers that
+   * intentionally want to overwrite OKF metadata should use
+   * {@link upsertForImport} (always-replace semantics for that path).
+   * New-row INSERTs still bind a value so the column is populated; if the
+   * caller supplied nothing, the schema DEFAULT 'stable' applies when the
+   * bind is bound as 'stable' explicitly here.
    */
   async upsert(fact: WikiFact, tx: SQLiteAdapter): Promise<{ changes: number; lastInsertRowId: number }> {
     const executor = this.getExecutor(tx);
@@ -119,8 +157,21 @@ export class EntryRepository extends BaseRepository {
     const tagsJson = JSON.stringify(fact.tags);
     const embeddingBlob = this.normalizeEmbeddingBlob(fact.embedding_blob);
 
-    const existingRow = await executor.getFirstAsync<{ id: string }>(
-      `SELECT id FROM ${this.prefix}entries WHERE id = ?`,
+    const existingRow = await executor.getFirstAsync<{
+      id: string;
+      lifecycle_status: string;
+      stale_after: number | null;
+      generated_by: string | null;
+      okf_sources: string | null;
+      okf_verified: string | null;
+      okf_usage_window: string | null;
+      last_verified_at: number | null;
+      last_verified_by: string | null;
+    }>(
+      `SELECT id, lifecycle_status, stale_after, generated_by,
+              okf_sources, okf_verified, okf_usage_window,
+              last_verified_at, last_verified_by
+         FROM ${this.prefix}entries WHERE id = ?`,
       [fact.id],
     );
     const operation = fact.deleted_at ? 'DELETE' : (existingRow ? 'UPDATE' : 'INSERT');
@@ -129,8 +180,10 @@ export class EntryRepository extends BaseRepository {
       `INSERT INTO ${this.prefix}entries (
         id, entity_id, title, body, tags, confidence, source_type,
         source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count,
-        deleted_at, embedding_blob, embedding, okf_type
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        deleted_at, embedding_blob, embedding, okf_type,
+        lifecycle_status, stale_after, generated_by, last_verified_at, last_verified_by,
+        okf_sources, okf_verified, okf_usage_window
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         entity_id = excluded.entity_id,
         title = excluded.title,
@@ -165,15 +218,43 @@ export class EntryRepository extends BaseRepository {
         embeddingBlob ?? null,
         null,
         fact.okf_type ?? null,
+        // OKF v0.2 metadata — bound for INSERT only; ON CONFLICT UPDATE
+        // preserves the existing row values (these columns are intentionally
+        // absent from the SET clause above).
+        fact.lifecycle_status ?? 'stable',
+        fact.stale_after ?? null,
+        fact.generated_by ?? null,
+        fact.last_verified_at ?? null,
+        fact.last_verified_by ?? null,
+        fact.okf_sources ? JSON.stringify(fact.okf_sources) : null,
+        fact.okf_verified ? JSON.stringify(fact.okf_verified) : null,
+        fact.okf_usage_window ? JSON.stringify(fact.okf_usage_window) : null,
       ],
     );
 
+    // Outbox payload mirrors what is actually persisted. On UPDATE, the SET
+    // clause intentionally omits the OKF metadata columns so the prior row
+    // values win — so `fact.X` here would describe state we did NOT write.
+    // Re-read those columns from the stored row and overlay them onto the
+    // caller-supplied payload before publishing (#90 review).
+    const persistedOkf = existingRow
+      ? {
+          lifecycle_status: (existingRow.lifecycle_status ?? 'stable') as WikiFact['lifecycle_status'],
+          stale_after: existingRow.stale_after != null ? Number(existingRow.stale_after) : null,
+          generated_by: existingRow.generated_by ?? null,
+          okf_sources: parseJsonArray<NonNullable<WikiFact['okf_sources']>[number]>(existingRow.okf_sources, []),
+          okf_verified: parseJsonArray<NonNullable<WikiFact['okf_verified']>[number]>(existingRow.okf_verified, []),
+          okf_usage_window: parseJsonObject<NonNullable<WikiFact['okf_usage_window']>>(existingRow.okf_usage_window),
+          last_verified_at: existingRow.last_verified_at != null ? Number(existingRow.last_verified_at) : null,
+          last_verified_by: existingRow.last_verified_by ?? null,
+        }
+      : null;
     await this.outbox.push({
       entityId: fact.entity_id,
       tableName: 'entries',
       recordId: fact.id,
       operation,
-      payload: fact,
+      payload: persistedOkf ? { ...fact, ...persistedOkf } : fact,
     }, tx);
 
     return result;
@@ -246,12 +327,19 @@ export class EntryRepository extends BaseRepository {
     const tagsJson = JSON.stringify(fact.tags);
     const embeddingBlob = this.normalizeEmbeddingBlob(fact.embedding_blob);
 
+    // Import is replace semantics: a re-imported fact whose OKF metadata
+    // cleared (stale_after removed, generated_by removed, etc.) MUST overwrite
+    // the prior row's value. The previous CASE WHEN IS NULL guards preserved
+    // the old database values instead, so an "absent in dump" never cleared.
+    // Direct `= excluded.X` ensures the dump is authoritative.
     const result = await executor.runAsync(
       `INSERT INTO ${this.prefix}entries (
         id, entity_id, title, body, tags, confidence, source_type,
         source_hash, source_ref, created_at, updated_at, last_accessed_at, access_count,
-        deleted_at, embedding_blob, embedding, okf_type
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        deleted_at, embedding_blob, embedding, okf_type,
+        lifecycle_status, stale_after, generated_by, last_verified_at, last_verified_by,
+        okf_sources, okf_verified, okf_usage_window
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         entity_id = excluded.entity_id,
         title = excluded.title,
@@ -268,7 +356,15 @@ export class EntryRepository extends BaseRepository {
         deleted_at = excluded.deleted_at,
         embedding_blob = excluded.embedding_blob,
         embedding = NULL,
-        okf_type = excluded.okf_type`,
+        okf_type = excluded.okf_type,
+        lifecycle_status = excluded.lifecycle_status,
+        stale_after = excluded.stale_after,
+        generated_by = excluded.generated_by,
+        last_verified_at = excluded.last_verified_at,
+        last_verified_by = excluded.last_verified_by,
+        okf_sources = excluded.okf_sources,
+        okf_verified = excluded.okf_verified,
+        okf_usage_window = excluded.okf_usage_window`,
       [
         fact.id,
         fact.entity_id,
@@ -287,6 +383,15 @@ export class EntryRepository extends BaseRepository {
         embeddingBlob ?? null,
         null,
         fact.okf_type ?? null,
+        // Same NOT NULL DEFAULT note as in upsert above.
+        fact.lifecycle_status ?? 'stable',
+        fact.stale_after ?? null,
+        fact.generated_by ?? null,
+        fact.last_verified_at ?? null,
+        fact.last_verified_by ?? null,
+        fact.okf_sources ? JSON.stringify(fact.okf_sources) : null,
+        fact.okf_verified ? JSON.stringify(fact.okf_verified) : null,
+        fact.okf_usage_window ? JSON.stringify(fact.okf_usage_window) : null,
       ],
     );
 

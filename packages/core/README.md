@@ -998,6 +998,30 @@ The flowchart shows:
 | [@equationalapplications/core-okf](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/okf/README.md) | Zero-dependency Open Knowledge Format (OKF) v0.1 primitives — parse and produce interoperable knowledge bundles. |
 | [@equationalapplications/schema-org-llm-wiki](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/schema-org/README.md) | Curated schema.org warm-agent ontology manifest |
 
+## OKF v0.2 conformance (llm-wiki/2)
+
+`formatOkfBundle` defaults to `okf_version: 0.2` + `profile: llm-wiki/2`. To force a v0.1 export, pass `{ profile: 'llm-wiki/1' }`:
+
+```ts
+formatOkfBundle(dump, { profile: 'llm-wiki/1' });
+```
+
+`parseOkfBundle` auto-detects the profile from the root index frontmatter:
+
+- `profile === 'llm-wiki/2'` → v0.2 path (new fields populated).
+- `profile === 'llm-wiki/1'` → v0.1 path (unchanged behavior).
+- `profile === undefined && okf_version === '0.1'` → v0.1 legacy path.
+- `profile === undefined && okf_version === undefined` → profile-0 (legacy) path.
+
+New public methods on `WikiMemory` for OKF v0.2 trust/provenance writes (each DAO method omits `updated_at` from its SQL):
+
+- `writeOkfTrust(entryId, entityId, verified)`
+- `writeOkfSources(entryId, entityId, sources)`
+- `setLifecycleStatus(entryId, entityId, status)`
+- `setStaleAfter(entryId, entityId, date | null)`
+- `setGeneratedBy(entryId, entityId, actor)`
+- (and `…Task` variants of all five)
+
 ## License
 
 MIT

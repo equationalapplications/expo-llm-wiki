@@ -9,6 +9,13 @@ import {
   splitRelatedSection,
   isAllowedOkfPath,
   extractMarkdownLinks,
+  parseVerifiedFlexible,
+  parseCitationsList,
+  latestVerified,
+  formatVerifiedJson,
+  formatSourcesJson,
+  type OkfSource,
+  type OkfVerified,
 } from '@equationalapplications/core-okf';
 import { generateId } from './ids';
 
@@ -125,6 +132,34 @@ function parseFrontmatterTimestamp(value: OkfFrontmatterValue | undefined, fallb
   return fallback;
 }
 
+/**
+ * Parse an OKF v0.2 `stale_after` YYYY-MM-DD wire string into an epoch ms
+ * value. Returns null on non-string, regex mismatch, or a calendar-invalid
+ * date — the previous inline regex accepted any three numeric components, so
+ * `2026-13-45` would yield NaN and crash the SQLite bind downstream.
+ */
+function parseStaleAfterRaw(raw: unknown): number | null {
+  if (typeof raw !== 'string') return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  if (!m) return null;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  const ms = Date.UTC(year, month - 1, day);
+  if (!Number.isFinite(ms)) return null;
+  // Reject calendar-invalid dates that Date.UTC silently normalizes (e.g.
+  // 2025-02-29 → 2025-03-01). Compare the round-tripped components.
+  const d = new Date(ms);
+  if (
+    d.getUTCFullYear() !== year ||
+    d.getUTCMonth() + 1 !== month ||
+    d.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return ms;
+}
+
 function unescapeLogSummary(summary: string): string {
   return summary.replace(/\\\]/g, ']').replace(/\\\[/g, '[').replace(/\\\\/g, '\\');
 }
@@ -154,10 +189,46 @@ function frontmatterToFact(
   now: number,
 ): WikiFact {
   const created_at = parseFrontmatterTimestamp(frontmatter.created_at, now);
+  // Precedence (spec §2.4): v0.2 `generated.at` -> v0.1 `timestamp` -> legacy
+  // `updated_at` -> `now`. The previous order swapped `updated_at` ahead of
+  // the other two, so a present-but-finite `updated_at` clobbered
+  // `generated.at`. We nest the fallbacks so the first finite wins.
   const updated_at = parseFrontmatterTimestamp(
-    frontmatter.timestamp,
-    parseFrontmatterTimestamp(frontmatter.updated_at, now),
+    (frontmatter as any).generated?.at,
+    parseFrontmatterTimestamp(
+      frontmatter.timestamp,
+      parseFrontmatterTimestamp(frontmatter.updated_at, now),
+    ),
   );
+
+  const verified: OkfVerified = parseVerifiedFlexible((frontmatter as any).verified);
+  const rawSources = (frontmatter as any).sources;
+  const hasSourcesKey = rawSources !== undefined;
+  const sources: OkfSource[] = Array.isArray(rawSources) ? rawSources as OkfSource[] : [];
+  const usageWindow = (frontmatter as any).usage_window && typeof (frontmatter as any).usage_window === 'object'
+    ? (frontmatter as any).usage_window as { from: string; to: string }
+    : null;
+  const lastV = latestVerified(verified, now);
+  const lifecycleRaw = (frontmatter as any).status;
+  const lifecycle_status: 'draft' | 'stable' | 'deprecated' =
+    lifecycleRaw === 'draft' || lifecycleRaw === 'stable' || lifecycleRaw === 'deprecated'
+      ? lifecycleRaw : 'stable';
+  const staleAfterRaw = (frontmatter as any).stale_after;
+  const stale_after = parseStaleAfterRaw(staleAfterRaw);
+  const generated_by = (frontmatter as any).generated?.by ?? null;
+
+  // Spec §13.1 fallback (applies to v0.1, profile-0, AND v0.2 paths): body
+  // `# Citations` -> synthetic sources, one entry per URL. The fallback only
+  // fires when the `sources` key is ABSENT — a bundle that explicitly declares
+  // `sources: []` (an author clearing provenance) MUST NOT have body citations
+  // silently synthesized back into it. `hasSourcesKey` distinguishes absent
+  // from explicitly-empty.
+  if (!hasSourcesKey) {
+    const urls = parseCitationsList(body);
+    for (const url of urls) {
+      sources.push({ resource: url });
+    }
+  }
 
   return {
     id,
@@ -185,6 +256,15 @@ function frontmatterToFact(
     deleted_at:
       frontmatter.deleted_at != null ? parseFrontmatterTimestamp(frontmatter.deleted_at, 0) : null,
     okf_type: frontmatter.type,
+    // OKF v0.2
+    lifecycle_status,
+    stale_after,
+    generated_by,
+    okf_sources: sources,
+    okf_verified: verified,
+    okf_usage_window: usageWindow,
+    last_verified_at: lastV?.at ?? null,
+    last_verified_by: lastV?.by ?? null,
   };
 }
 
@@ -193,20 +273,62 @@ function frontmatterToTask(
   id: string,
   frontmatter: OkfFrontmatter,
   now: number,
+  // Treat profile-1 explicit and version-only legacy the same: in both cases
+  // `status` on the wire is the v0.1 execution state. Profile-2 (and unknown
+  // profile with okf_version 0.2) uses the v0.2 rename rule.
+  usesV1StatusRule: boolean,
 ): WikiTask {
   const created_at = parseFrontmatterTimestamp(frontmatter.created_at, now);
+  // Precedence (spec §2.4) — same nested-fallback chain as frontmatterToFact.
   const updated_at = parseFrontmatterTimestamp(
-    frontmatter.timestamp,
-    parseFrontmatterTimestamp(frontmatter.updated_at, now),
+    (frontmatter as any).generated?.at,
+    parseFrontmatterTimestamp(
+      frontmatter.timestamp,
+      parseFrontmatterTimestamp(frontmatter.updated_at, now),
+    ),
   );
+
+  const verified: OkfVerified = parseVerifiedFlexible((frontmatter as any).verified);
+  const sources: OkfSource[] = Array.isArray((frontmatter as any).sources) ? (frontmatter as any).sources as OkfSource[] : [];
+  const usageWindow = (frontmatter as any).usage_window && typeof (frontmatter as any).usage_window === 'object'
+    ? (frontmatter as any).usage_window as { from: string; to: string }
+    : null;
+  const lastV = latestVerified(verified, now);
+  const lifecycleRaw = (frontmatter as any).status;
+  const lifecycle_status: 'draft' | 'stable' | 'deprecated' =
+    lifecycleRaw === 'draft' || lifecycleRaw === 'stable' || lifecycleRaw === 'deprecated'
+      ? lifecycleRaw : 'stable';
+  // stale_after is symmetric with facts (spec §2.5) — parsed the same way,
+  // not hardcoded to null.
+  const staleAfterRaw = (frontmatter as any).stale_after;
+  const stale_after = parseStaleAfterRaw(staleAfterRaw);
+
+  // Status rename rule (spec §2.3):
+  // - v0.2: wire `status` = lifecycle (already in lifecycle_status above);
+  //         wire `execution_status` = execution -> `task.status`.
+  // - v0.1 / profile 0: wire `status` = execution -> `task.status`; lifecycle
+  //   is implicit 'stable'. Profile-1 bundles are explicit about being v0.1
+  //   (`profile: llm-wiki/1`); profile-0 (no profile key, `okf_version: 0.1`)
+  //   is the version-only fallback; both MUST use the v0.1 rule.
+  const executionRaw = (frontmatter as any).execution_status;
+  let executionState: WikiTask['status'];
+  if (usesV1StatusRule) {
+    executionState = TASK_STATUSES.has(String(frontmatter.status))
+      ? (frontmatter.status as WikiTask['status']) : 'pending';
+  } else {
+    // v0.2 (or unknown profile — best-effort per spec §6 "profile key unknown").
+    executionState = TASK_STATUSES.has(String(executionRaw))
+      ? (executionRaw as WikiTask['status'])
+      : TASK_STATUSES.has(String(frontmatter.status))
+        ? (frontmatter.status as WikiTask['status'])
+        : 'pending';
+  }
 
   return {
     id,
     entity_id: entityId,
     description: typeof frontmatter.title === 'string' ? frontmatter.title : '',
-    status: TASK_STATUSES.has(String(frontmatter.status))
-      ? (frontmatter.status as WikiTask['status'])
-      : 'pending',
+    status: executionState,
     priority: typeof frontmatter.priority === 'number' ? frontmatter.priority : 0,
     created_at,
     updated_at,
@@ -217,6 +339,15 @@ function frontmatterToTask(
     deleted_at:
       frontmatter.deleted_at != null ? parseFrontmatterTimestamp(frontmatter.deleted_at, 0) : null,
     okf_type: frontmatter.type,
+    // OKF v0.2
+    lifecycle_status,
+    stale_after,
+    generated_by: (frontmatter as any).generated?.by ?? null,
+    okf_sources: sources,
+    okf_verified: verified,
+    okf_usage_window: usageWindow,
+    last_verified_at: lastV?.at ?? null,
+    last_verified_by: lastV?.by ?? null,
   };
 }
 
@@ -285,11 +416,22 @@ export function parseOkfBundle(
   );
   const rootIndex = allowedFiles.find(f => f.path === 'index.md');
   const profileMeta = rootIndex ? parseRootIndexMd(rootIndex.content) : {};
-  const isProfile1 = profileMeta.profile === 'llm-wiki/1';
+  const okfVersion = profileMeta.okf_version;
+  const profile = profileMeta.profile;
+  const isProfile1 = profile === 'llm-wiki/1';
+  const isProfile2 = profile === 'llm-wiki/2';
+  const isLegacyV1 = profile === undefined && okfVersion === '0.1';
 
+  // Entity summary is a profile >= 1 feature (§4 of the profile doc). The
+  // documented detection order (§4.8 detection plan) names four v0.1 and v0.2
+  // entry points: explicit profile, version-only v0.1, version-only v0.2, and
+  // unknown-profile v0.2 (best-effort). All four should pick up the summary.
+  const isVersionOnlyV2 = profile === undefined && okfVersion === '0.2';
+  const isUnknownProfileV2 = profile !== undefined && profile !== 'llm-wiki/1' && profile !== 'llm-wiki/2' && okfVersion === '0.2';
+  const summaryEligible = isProfile1 || isProfile2 || isLegacyV1 || isVersionOnlyV2 || isUnknownProfileV2;
   let entitySummary: string | undefined;
   const entityIndex = allowedFiles.find(f => f.path === `${entityPrefix}index.md`);
-  if (isProfile1 && entityIndex) {
+  if (summaryEligible && entityIndex) {
     const summary = parseEntityIndexMd(entityIndex.content).summary;
     entitySummary = summary || undefined;
   }
@@ -327,14 +469,20 @@ export function parseOkfBundle(
       typeof frontmatter.id === 'string' && frontmatter.id ? frontmatter.id : basenameMd(file.path);
 
     const { body: storedBody, relatedLinks } = splitRelatedSection(body);
-    const edgeLinks = isProfile1
+    const edgeLinks = (isProfile1 || isLegacyV1)
       ? relatedLinks
       : [...relatedLinks, ...extractMarkdownLinks(storedBody)];
+
+    // Task status rename rule (spec §2.3) — v0.1 wire uses `status` as
+    // execution state; v0.2 wire uses `status` as lifecycle and adds
+    // `execution_status`. The flag we pass below is true when we are NOT
+    // reading this task as a v0.2-style bundle.
+    const usesV1StatusRule = isProfile1 || isLegacyV1 || (profile === undefined && okfVersion === undefined);
 
     if (route === 'fact') {
       facts.push(frontmatterToFact(entityId, resolvedId, frontmatter, storedBody, now));
     } else {
-      tasks.push(frontmatterToTask(entityId, resolvedId, frontmatter, now));
+      tasks.push(frontmatterToTask(entityId, resolvedId, frontmatter, now, usesV1StatusRule));
     }
 
     const seenEdges = new Set<string>();

@@ -8,6 +8,7 @@ import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
 import { clip, normalizeSourceRef } from '../utils/pure';
+import { latestVerified } from '@equationalapplications/core-okf';
 
 const MAX_EMBEDDING_BLOB_BYTES = 32 * 1024; // 8192-dim float32 ceiling
 const IMPORT_TITLE_MAX = 500;
@@ -298,6 +299,22 @@ export class ImportExportService {
           deleted_at: fact.deleted_at,
           embedding_blob: blobData ?? undefined,
           okf_type: fact.okf_type ?? null,
+          // OKF v0.2 — forwarded as-is; parseOkfBundle / the caller is responsible for
+          // populating these per spec, importDump does not derive or validate them.
+          lifecycle_status: fact.lifecycle_status ?? 'stable',
+          stale_after: fact.stale_after ?? null,
+          generated_by: fact.generated_by ?? null,
+          okf_sources: fact.okf_sources ?? [],
+          okf_verified: fact.okf_verified ?? [],
+          okf_usage_window: fact.okf_usage_window ?? null,
+          // last_verified_at/_by are DERIVED mirrors of `okf_verified` per spec
+          // §5.3. Recomputing here (instead of trusting the payload field) closes
+          // the invariant that a raw importDump cannot carry a
+          // last_verified_by that contradicts its own okf_verified list.
+          ...(() => {
+            const latest = latestVerified(fact.okf_verified ?? [], Date.now());
+            return { last_verified_at: latest?.at ?? null, last_verified_by: latest?.by ?? null };
+          })(),
         };
 
         await this.entryRepo.upsertForImport(factObj, tx);
@@ -361,6 +378,18 @@ export class ImportExportService {
             resolved_at: task.resolved_at,
             deleted_at: task.deleted_at,
             okf_type: task.okf_type ?? null,
+            // OKF v0.2
+            lifecycle_status: task.lifecycle_status ?? 'stable',
+            stale_after: task.stale_after ?? null,
+            generated_by: task.generated_by ?? null,
+            okf_sources: task.okf_sources ?? [],
+            okf_verified: task.okf_verified ?? [],
+            okf_usage_window: task.okf_usage_window ?? null,
+            // Derived mirrors — see fact branch above; same invariant.
+            ...(() => {
+              const latest = latestVerified(task.okf_verified ?? [], Date.now());
+              return { last_verified_at: latest?.at ?? null, last_verified_by: latest?.by ?? null };
+            })(),
           },
           tx,
           safeUpdatedAt,

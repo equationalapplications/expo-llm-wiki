@@ -8,7 +8,7 @@ export type { WikiMemoryTestAccess } from './WikiMemory';
 export { formatContext } from './utils/formatContext';
 export { formatGraphContext } from './utils/formatGraphContext';
 export { formatMemoryDump } from './utils/formatMemoryDump';
-export { formatOkfBundle } from './utils/formatOkfBundle';
+export { formatOkfBundle, type FormatOkfBundleOptions, type OkfFormatProfile } from './utils/formatOkfBundle';
 export { parseOkfBundle, type OkfImportOptions } from './utils/parseOkfBundle';
 export { parseEmbedding } from './utils/embedding';
 export { validateManifest } from './utils/ontology';

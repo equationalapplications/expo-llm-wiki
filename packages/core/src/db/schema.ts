@@ -21,7 +21,15 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
       embedding_blob BLOB,
       okf_type TEXT,
       ontology_checked_at INTEGER,
-      heal_checked_at INTEGER
+      heal_checked_at INTEGER,
+      lifecycle_status TEXT NOT NULL DEFAULT 'stable',
+      stale_after INTEGER,
+      generated_by TEXT,
+      last_verified_at INTEGER,
+      last_verified_by TEXT,
+      okf_sources TEXT,
+      okf_verified TEXT,
+      okf_usage_window TEXT
     );
 
     CREATE INDEX IF NOT EXISTS ${prefix}entries_entity_idx ON ${prefix}entries(entity_id);
@@ -57,7 +65,15 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
       updated_at INTEGER NOT NULL,
       resolved_at INTEGER,
       deleted_at INTEGER,
-      okf_type TEXT
+      okf_type TEXT,
+      lifecycle_status TEXT NOT NULL DEFAULT 'stable',
+      stale_after INTEGER,
+      generated_by TEXT,
+      last_verified_at INTEGER,
+      last_verified_by TEXT,
+      okf_sources TEXT,
+      okf_verified TEXT,
+      okf_usage_window TEXT
     );
 
     CREATE INDEX IF NOT EXISTS ${prefix}tasks_entity_idx ON ${prefix}tasks(entity_id, status);
@@ -119,4 +135,30 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
     CREATE INDEX IF NOT EXISTS ${prefix}outbox_created_at
       ON ${prefix}outbox (created_at);
   `);
+
+  // OKF v0.2 indexes — gated on column existence so we never try to create an
+  // index on a column that hasn't been added yet (upgrade-from-pre-v10 case).
+  // The columns themselves are in the CREATE TABLE above (fresh installs get
+  // them directly) and in migration v10 (upgrades get them via ALTER TABLE).
+  // The migration also creates these same indexes, so the IF NOT EXISTS guard
+  // makes either path safe.
+  await createOkfV02IndexesIfColumnsExist(db, prefix);
+}
+
+async function createOkfV02IndexesIfColumnsExist(db: SQLiteAdapter, prefix: string): Promise<void> {
+  for (const table of ['entries', 'tasks'] as const) {
+    const cols = await db.getAllAsync<{ name: string }>(
+      `PRAGMA table_info(${prefix}${table})`
+    );
+    const colNames = new Set(cols.map((c) => c.name));
+    if (colNames.has('lifecycle_status')) {
+      await db.execAsync(`CREATE INDEX IF NOT EXISTS ${prefix}${table}_lifecycle_status_idx ON ${prefix}${table}(lifecycle_status);`);
+    }
+    if (colNames.has('stale_after')) {
+      await db.execAsync(`CREATE INDEX IF NOT EXISTS ${prefix}${table}_stale_after_idx ON ${prefix}${table}(stale_after);`);
+    }
+    if (colNames.has('last_verified_at')) {
+      await db.execAsync(`CREATE INDEX IF NOT EXISTS ${prefix}${table}_last_verified_at_idx ON ${prefix}${table}(last_verified_at);`);
+    }
+  }
 }
