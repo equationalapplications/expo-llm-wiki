@@ -3,7 +3,6 @@ import type {
   OkfVerifiedEntry,
   OkfSource,
   OkfSourceUsageWindow,
-  OkfFrontmatterValue,
 } from './types';
 
 export type TrustTier = 'unverified' | 'machine-confirmed' | 'human-reviewed';
@@ -32,7 +31,7 @@ export function isStaleAfter(staleAfter: string | number | null, now: number): b
   return now >= cutoff;
 }
 
-export function parseVerifiedFlexible(value: OkfFrontmatterValue | undefined): OkfVerified {
+export function parseVerifiedFlexible(value: unknown): OkfVerified {
   if (value == null) return [];
   if (Array.isArray(value)) {
     return value.filter(
