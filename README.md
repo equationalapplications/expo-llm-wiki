@@ -24,6 +24,31 @@ Supports [Open Knowledge Format (OKF) v0.1](https://github.com/GoogleCloudPlatfo
 - **Universal Support:** Expo • React • Vite • Vue • Svelte • Node.js
 - **Core Engine:** Pure TypeScript logic with platform-specific adapters.
 
+## Recent changes
+
+### 5.4.1 — Ingest parse resilience (issue #92)
+
+- `parseJsonResponse` now tolerates bare `"` characters in LLM output via a
+  container-aware repair pass. Single-function refactor; no API change.
+- `IngestionService.ingestDocument` no longer rejects the whole call when one
+  chunk fails. Sibling chunks commit; the result's `parseFailures[]` records
+  per-chunk failures. A new typed error `WikiIngestEmptyError` is thrown when
+  every chunk failed. New typed error `WikiParseError` carries `{tier,
+  position, slice}`. New result fields: `ingestedChunks`, `failedChunks`,
+  `parseFailures?`.
+- Partial-commit semantics: when some chunks fail, the document's
+  `(entity, sourceHash) → sourceRef` ownership is **not** recorded, so
+  `hasChanged` returns `true` on every subsequent run and the failed chunks
+  retry. On full success the next run supersedes everything atomically.
+- `INGEST_SYSTEM_PROMPT` and `ONTOLOGY_BACKFILL_SYSTEM_PROMPT` were tightened
+  to call out JSON-escape discipline explicitly.
+- **Hosts must update**: a host that today treats `ingestDocument` throwing as
+  the only failure signal will, after this change, see a successful return
+  with `parseFailures[]` set when a subset of chunks failed. Hosts should
+  inspect `result.failedChunks` and surface `result.parseFailures[]` for
+  observability. `aws-cloud-agent`'s Writer Lambda was updated in this
+  release.
+
 ## Key Principles
 
 - **Bring Your Own Inference (BYOI):** Provide one `generateText` function. The package owns prompt construction, JSON parsing, and database writes.

@@ -10,6 +10,25 @@ Platform-agnostic TypeScript engine for hybrid LLM memory. Features episodic fac
 
 > Inspired by [Andrej Karpathy's LLM Wiki memory spec](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
 
+## Recent changes
+
+### 5.4.1 — Ingest parse resilience (issue #92)
+
+- `parseJsonResponse` now tolerates bare `"` characters in LLM output via a
+  container-aware repair pass. Single-function refactor; no API change.
+- `IngestionService.ingestDocument` no longer rejects the whole call when one
+  chunk fails. Sibling chunks commit; the result's `parseFailures[]` records
+  per-chunk failures. A new typed error `WikiIngestEmptyError` is thrown when
+  every chunk failed. New typed error `WikiParseError` carries `{tier,
+  position, slice}`. New result fields: `ingestedChunks`, `failedChunks`,
+  `parseFailures?`.
+- Partial-commit semantics: when some chunks fail, the document's
+  `(entity, sourceHash) → sourceRef` ownership is **not** recorded, so
+  `hasChanged` returns `true` on every subsequent run and the failed chunks
+  retry. On full success the next run supersedes everything atomically.
+- `INGEST_SYSTEM_PROMPT` and `ONTOLOGY_BACKFILL_SYSTEM_PROMPT` were tightened
+  to call out JSON-escape discipline explicitly.
+
 ## Features
 
 - **Platform-agnostic** — Zero runtime dependencies; works with any SQLite driver via the `SQLiteAdapter` interface
