@@ -1,12 +1,39 @@
 import type { ExtractedFact, ExtractedTask } from '../types';
+import { WikiParseError } from '../types';
 
+/**
+ * Maximum number of candidate substrings the tier-2 walker will try before
+ * throwing `WikiParseError`. 5 covers the realistic case (a few bare quotes
+ * produce a few candidate spans) without unbounded retry on truly broken
+ * inputs.
+ */
+const MAX_REPAIR_CANDIDATES = 5;
+
+/**
+ * Extract JSON from an LLM response.
+ *
+ * Tier 1 (strict): the existing hand-rolled brace-matching scanner. Walks
+ * `text` from the first `{` or `[` to its matching close, respecting `\"` and
+ * `\\`. Correct whenever the input contains no unescaped `"` inside string
+ * bodies. Returns the parsed value via `JSON.parse`.
+ *
+ * Tier 2 (repair): triggered only when tier 1 throws. Re-walks the raw text
+ * from `start` (NOT from the scanner's possibly-truncated slice) with a
+ * container-context stack that classifies every `"` as **structural** (open
+ * or close a string) or **content** (needs `\` prefix). Produces candidate
+ * substrings at every position the container stack returns to empty and
+ * tries each largest-first; the first that `JSON.parse` accepts is returned.
+ *
+ * Throws {@link WikiParseError} when both tiers fail. The error's `tier`
+ * field distinguishes 'strict' (no scanner slice found) from 'repair'
+ * (scanner slice found but unparsable) from 'all' (catch-all).
+ */
 export function parseJsonResponse<T>(text: string): T {
   const firstBrace = text.indexOf('{');
   const firstBracket = text.indexOf('[');
 
   let start: number;
   let openChar: string;
-  let closeChar: string;
 
   const useBrace =
     firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket);
@@ -14,15 +41,68 @@ export function parseJsonResponse<T>(text: string): T {
   if (useBrace) {
     start = firstBrace;
     openChar = '{';
-    closeChar = '}';
   } else if (firstBracket !== -1) {
     start = firstBracket;
     openChar = '[';
-    closeChar = ']';
   } else {
-    throw new SyntaxError('No JSON object/array found in LLM response');
+    throw new WikiParseError(
+      'No JSON object/array found in LLM response',
+      { tier: 'strict', position: null, slice: text },
+    );
   }
 
+  // Tier 1: try the existing scanner first. If `JSON.parse` succeeds we're done.
+  const slice = scanJsonSlice(text, start, openChar);
+  const scannerFoundSlice = slice !== null;
+  if (slice !== null) {
+    try {
+      return JSON.parse(slice) as T;
+    } catch {
+      // fall through to tier 2
+    }
+  }
+
+  // Tier 2: container-aware walker over the raw text. The scanner's slice may
+  // be arbitrarily truncated by a bare quote mid-string — running the walker
+  // on the raw text from `start` is the only way to get a complete container
+  // span to repair against.
+  const candidate = containerAwareRepair(text, start);
+  if (candidate !== null) {
+    try {
+      return JSON.parse(candidate) as T;
+    } catch (err) {
+      throw new WikiParseError(
+        `Repair produced a candidate but JSON.parse rejected it: ${(err as Error).message}`,
+        { tier: 'repair', position: extractParsePosition(err), slice: candidate },
+      );
+    }
+  }
+
+  // Per spec (WikiParseError `tier: 'strict'`): a scanner that produced NO
+  // usable slice (no balanced close) is a strict failure even when the
+  // container-aware walker also finds nothing — the input is structurally
+  // incomplete, not just unparseable.
+  if (!scannerFoundSlice) {
+    throw new WikiParseError(
+      'No JSON object/array found in LLM response',
+      { tier: 'strict', position: start, slice: text },
+    );
+  }
+
+  throw new WikiParseError(
+    'No parsable JSON candidate found',
+    { tier: 'all', position: start, slice: text },
+  );
+}
+
+/**
+ * Tier-1 scanner: returns the substring from `start` to the matching close
+ * of the container opened by `openChar` at `start`, or `null` if no balanced
+ * close exists. Pure function — extracted so `parseJsonResponse` reads as
+ * the two-tier flow it implements.
+ */
+function scanJsonSlice(text: string, start: number, openChar: string): string | null {
+  const closeChar = openChar === '{' ? '}' : ']';
   let depth = 0;
   let inString = false;
   let escape = false;
@@ -39,9 +119,162 @@ export function parseJsonResponse<T>(text: string): T {
       if (depth === 0) { end = i; break; }
     }
   }
+  if (end === -1) return null;
+  return text.slice(start, end + 1);
+}
 
-  if (end === -1) throw new SyntaxError('No JSON object/array found in LLM response');
-  return JSON.parse(text.slice(start, end + 1)) as T;
+/**
+ * Tier-2 walker: re-walks the raw text from `start` with a container-context
+ * stack and a peek-ahead rule that classifies every `"` as either structural
+ * (opens/closes a string) or content (needs `\` prefix). Produces candidate
+ * substrings at every balanced container close and returns the first one
+ * that `JSON.parse` would accept (largest balanced span first), or `null` if
+ * no candidate parses.
+ *
+ * Bounded to {@link MAX_REPAIR_CANDIDATES} candidates to avoid pathological
+ * retries on truly broken inputs.
+ */
+function containerAwareRepair(text: string, start: number): string | null {
+  const openChar = text[start];
+  // The walker produces a sequence of (candidateString, parseable) attempts
+  // in largest-first order. We only care about the first one that JSON.parse
+  // accepts; JSON.parse itself throws on bad candidates, so we wrap it.
+  const candidates: string[] = [];
+  const stack: Array<'object' | 'array'> = [];
+  let inString = false;
+  let escape = false;
+  let i = start;
+  // Output buffer; rebuilt as we walk, used to emit candidate substrings.
+  let out = '';
+  // Tracks bare quotes emitted as content so far inside the current string
+  // token. Used to suppress a structural close on a `,` peek-ahead when the
+  // body still has an open unescaped bare quote (`{"body":"hi", then...`}`);
+  // closing prematurely puts the comma at structural level where JSON.parse
+  // expects a property name. Reset on every structural close (or open).
+  let bareQuoteCount = 0;
+
+  while (i < text.length) {
+    const ch = text[i];
+
+    if (escape) {
+      out += ch;
+      escape = false;
+      i++;
+      continue;
+    }
+    if (inString && ch === '\\') {
+      out += ch;
+      escape = true;
+      i++;
+      continue;
+    }
+    if (ch === '"') {
+      // Peek-ahead: skip whitespace, then look at the next non-whitespace char.
+      let j = i + 1;
+      while (j < text.length && (text[j] === ' ' || text[j] === '\t' || text[j] === '\n' || text[j] === '\r')) {
+        j++;
+      }
+      const next = j < text.length ? text[j] : '';
+
+      if (!inString) {
+        // Structural opening quote — except when peek-ahead shows a
+        // container close, in which case this `"` is the close of an
+        // implicit string (the body string was implicitly closed at the
+        // previous position by a bare-quote fix) and the structural close
+        // follows immediately. Emit both and pop the stack.
+        if (next === '}' || next === ']') {
+          out += ch;
+          out += next;
+          i = j + 1;
+          stack.pop();
+          if (stack.length === 0) {
+            candidates.push(out);
+            if (candidates.length >= MAX_REPAIR_CANDIDATES) break;
+          }
+          continue;
+        }
+        // Structural opening quote — always treated as opening (no escape).
+        out += ch;
+        inString = true;
+        i++;
+        continue;
+      }
+
+      // We're inside a string. Closing if next is one of , } ] : or another " followed by :
+      // Suppress the comma-only close when we have an open bare quote —
+      // a `,` peek-ahead after an odd number of bare quotes means the
+      // comma is body content, not a structural separator.
+      const commaOnly = next === ',';
+      const isClosing =
+        !commaOnly && (
+          next === ',' ||
+          next === '}' ||
+          next === ']' ||
+          next === ':' ||
+          (next === '"' && j + 1 < text.length && text[j + 1] === ':')
+        ) ||
+        (commaOnly && bareQuoteCount % 2 === 0);
+
+      if (isClosing) {
+        out += ch;
+        inString = false;
+        bareQuoteCount = 0;
+        i++;
+        continue;
+      }
+
+      // Content quote — escape it.
+      out += '\\' + ch;
+      bareQuoteCount++;
+      i++;
+      continue;
+    }
+    if (!inString && (ch === '{' || ch === '[')) {
+      stack.push(ch === '{' ? 'object' : 'array');
+      out += ch;
+      i++;
+      continue;
+    }
+    if (!inString && (ch === '}' || ch === ']')) {
+      out += ch;
+      stack.pop();
+      if (stack.length === 0) {
+        // Balanced close at this position — emit a candidate.
+        candidates.push(out);
+        if (candidates.length >= MAX_REPAIR_CANDIDATES) break;
+        // Continue walking; subsequent balanced spans are inner / sibling
+        // subtrees. The largest outer span is what `JSON.parse` will accept
+        // first, so we try in collection order (outermost wins).
+      }
+      i++;
+      continue;
+    }
+
+    out += ch;
+    i++;
+  }
+
+  for (const candidate of candidates) {
+    try {
+      JSON.parse(candidate);
+      return candidate;
+    } catch {
+      // try next candidate
+    }
+  }
+  return null;
+}
+
+/**
+ * Pulls the position offset out of a V8 `SyntaxError` message when present.
+ * The V8 message format is `"Unexpected token X in JSON at position N"` (or
+ * `"Unexpected end of JSON input"` with no position). We return `null` when
+ * no position can be parsed — `WikiParseError.position` is `number | null`.
+ */
+function extractParsePosition(err: unknown): number | null {
+  const msg = err instanceof Error ? err.message : String(err);
+  const match = /position\s+(\d+)/.exec(msg);
+  return match ? Number(match[1]) : null;
 }
 
 export function sanitizeRankerError(err: unknown, sanitizeRankerErrors: boolean | undefined): Error {
