@@ -46,7 +46,7 @@ describe('OKF profile conformance', () => {
 
   it('round-trips golden-v1 losslessly for normative fields', () => {
     const imported = parseOkfBundle('demo', loadFixture('golden-v1'));
-    const { files: exported } = formatOkfBundle(imported);
+    const { files: exported } = formatOkfBundle(imported, { profile: 'llm-wiki/1' });
     const reimported = parseOkfBundle('demo', exported);
     const a = imported.entities.demo;
     const b = reimported.entities.demo;

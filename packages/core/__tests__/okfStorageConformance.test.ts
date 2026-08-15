@@ -50,7 +50,7 @@ describe('OKF profile conformance through storage', () => {
     const exported = await wiki.exportDump(['demo']);
     expect(exported.entities.demo.summary).toBe('Demo entity summary prose.');
 
-    const { files } = formatOkfBundle(exported);
+    const { files } = formatOkfBundle(exported, { profile: 'llm-wiki/1' });
     const reparsed = parseOkfBundle('demo', files);
     expect(reparsed.entities.demo.summary).toBe('Demo entity summary prose.');
   });
