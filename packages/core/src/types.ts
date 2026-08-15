@@ -258,6 +258,31 @@ export interface WikiFact {
    * OKF import. Distinct from `source_type`, which governs immutability rules.
    */
   okf_type?: string | null;
+  // --- OKF v0.2 surface (additive; see spec §4.6) ---
+  /** OKF v0.2 lifecycle state. Defaults to 'stable' on the SQL side. */
+  lifecycle_status?: 'draft' | 'stable' | 'deprecated';
+  /** Absolute YYYY-MM-DD cutoff for staleness. NULL = never stale. */
+  stale_after?: number | null;
+  /** Actor string per OKF v0.2 §7 (`<producer>/<version>`, `human:<id>`, `process:<id>`). */
+  generated_by?: string | null;
+  /** Full list of OKF v0.2 sources (provenance). */
+  okf_sources?: Array<{
+    id?: string;
+    resource: string;
+    title?: string;
+    author?: string;
+    usage_count?: number;
+    last_modified?: string;
+    usage_window?: { from: string; to: string };
+  }>;
+  /** Chronological list of verification events. */
+  okf_verified?: Array<{ by: string; at: string }>;
+  /** Sibling-of-sources usage window object. */
+  okf_usage_window?: { from: string; to: string } | null;
+  /** Convenience: epoch ms of the latest verifier. Derived; mirrored for query speed. */
+  last_verified_at?: number | null;
+  /** Convenience: actor string of the latest verifier. Derived; mirrored for query speed. */
+  last_verified_by?: string | null;
 }
 
 export interface WikiTask {
@@ -272,6 +297,23 @@ export interface WikiTask {
   deleted_at: number | null;
   /** Verbatim OKF `type:` frontmatter value when this task originated from an OKF bundle. */
   okf_type?: string | null;
+  // --- OKF v0.2 surface (additive; see spec §4.6) ---
+  lifecycle_status?: 'draft' | 'stable' | 'deprecated';
+  stale_after?: number | null;
+  generated_by?: string | null;
+  okf_sources?: Array<{
+    id?: string;
+    resource: string;
+    title?: string;
+    author?: string;
+    usage_count?: number;
+    last_modified?: string;
+    usage_window?: { from: string; to: string };
+  }>;
+  okf_verified?: Array<{ by: string; at: string }>;
+  okf_usage_window?: { from: string; to: string } | null;
+  last_verified_at?: number | null;
+  last_verified_by?: string | null;
 }
 
 export interface WikiEvent {
