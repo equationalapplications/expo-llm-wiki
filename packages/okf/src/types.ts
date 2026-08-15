@@ -36,3 +36,41 @@ export interface OkfMarkdownLink {
   text: string;
   path: string;
 }
+
+// --- OKF v0.2 surface (additive; existing types unchanged) -----------------
+
+export type OkfStatus = 'draft' | 'stable' | 'deprecated';
+
+export type OkfActorKind = 'agent' | 'human' | 'process';
+
+export interface OkfGenerated {
+  by: string; // actor per v0.2 §7 (e.g. 'reference_agent/gemini-2.5-pro', 'human:ahormati', 'process:finance-nightly')
+  at: string; // ISO 8601 datetime
+}
+
+export interface OkfVerifiedEntry {
+  by: string;
+  at: string;
+}
+
+export type OkfVerified = OkfVerifiedEntry[]; // bare mapping = one-element list per v0.2 §5.2
+
+export interface OkfSourceUsageWindow {
+  from: string; // YYYY-MM-DD
+  to: string;   // YYYY-MM-DD
+}
+
+export interface OkfSource {
+  id?: string;
+  resource: string;            // absolute URL, bundle-relative path, or scope descriptor
+  title?: string;
+  author?: string;             // actor per v0.2 §7
+  usage_count?: number;
+  last_modified?: string;      // YYYY-MM-DD
+  usage_window?: OkfSourceUsageWindow; // per-entry override of the sibling usage_window
+}
+
+export interface OkfFootnote {
+  id: string;
+  body: string;
+}
