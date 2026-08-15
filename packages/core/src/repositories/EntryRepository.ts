@@ -2,6 +2,7 @@ import type { SQLiteAdapter, WikiFact } from '../types';
 import { BaseRepository } from './BaseRepository';
 import { OutboxRepository } from './OutboxRepository';
 import { parseJsonArray, parseJsonObject } from './rowMappers';
+import { isStaleAfter, deriveTrustTier } from '@equationalapplications/core-okf';
 
 export type EntryRowMetadata = {
   id: string;
@@ -21,6 +22,15 @@ function mapRowToFact(row: any): WikiFact {
     try { const p = JSON.parse(row.tags as string); if (Array.isArray(p)) return p; } catch {}
     return [];
   })();
+
+  const okf_verified = parseJsonArray<NonNullable<WikiFact['okf_verified']>[number]>(row.okf_verified, []);
+  // Hydrate per spec §2.7 + §5.3: surface isStale/trustTier so hosts don't have to
+  // re-call the core-okf helpers. Sampled once per row rather than once per call
+  // because `now` here means "as of this hydration" — using a stable per-call
+  // value would shift staleness while we're mapping sibling rows in the same
+  // read. Date.now() is cheap enough that per-row sampling is fine.
+  const now = Date.now();
+  const staleAfterRaw = row.stale_after != null ? Number(row.stale_after) : null;
 
   return {
     id: row.id,
@@ -42,13 +52,16 @@ function mapRowToFact(row: any): WikiFact {
     okf_type: row.okf_type ?? null,
     // OKF v0.2
     lifecycle_status: (row.lifecycle_status ?? 'stable') as WikiFact['lifecycle_status'],
-    stale_after: row.stale_after != null ? Number(row.stale_after) : null,
+    stale_after: staleAfterRaw,
     generated_by: row.generated_by ?? null,
     okf_sources: parseJsonArray<NonNullable<WikiFact['okf_sources']>[number]>(row.okf_sources, []),
-    okf_verified: parseJsonArray<NonNullable<WikiFact['okf_verified']>[number]>(row.okf_verified, []),
+    okf_verified,
     okf_usage_window: parseJsonObject<NonNullable<WikiFact['okf_usage_window']>>(row.okf_usage_window),
     last_verified_at: row.last_verified_at != null ? Number(row.last_verified_at) : null,
     last_verified_by: row.last_verified_by ?? null,
+    // Spec §2.7 + §5.3: hydrate so read() consumers don't re-call the helpers.
+    isStale: isStaleAfter(staleAfterRaw, now),
+    trustTier: deriveTrustTier(okf_verified),
   };
 }
 

@@ -280,6 +280,22 @@ export interface WikiFact {
   last_verified_at?: number | null;
   /** Convenience: actor string of the latest verifier. Derived; mirrored for query speed. */
   last_verified_by?: string | null;
+  /**
+   * Hydrated at read time: `isStaleAfter(stale_after, now)`. `true` once the
+   * absolute stale_after cutoff has passed; `false` otherwise (including when
+   * stale_after is null). Surfaced per spec §2.7 + §5.3 so hosts can render
+   * staleness without recomputing. Always present on read paths that go
+   * through `mapRowToFact` / `mapRowToTask`.
+   */
+  isStale?: boolean;
+  /**
+   * Hydrated at read time: `deriveTrustTier(okf_verified)`. `'human-reviewed'`
+   * when any entry has `by: 'human:...'`, `'machine-confirmed'` when entries
+   * exist without a human verifier, `'unverified'` when okf_verified is empty.
+   * Surfaced per spec §2.7 + §5.3. Always present on read paths that go through
+   * `mapRowToFact` / `mapRowToTask`.
+   */
+  trustTier?: 'unverified' | 'machine-confirmed' | 'human-reviewed';
 }
 
 export interface WikiTask {
@@ -303,6 +319,19 @@ export interface WikiTask {
   okf_usage_window?: OkfSourceUsageWindow | null;
   last_verified_at?: number | null;
   last_verified_by?: string | null;
+  /**
+   * Hydrated at read time: `isStaleAfter(stale_after, now)`. Mirrors
+   * {@link WikiFact.isStale} (spec §2.5 + §5.3 treat stale_after symmetrically
+   * for tasks and facts). Always present on read paths that go through
+   * `mapRowToTask`.
+   */
+  isStale?: boolean;
+  /**
+   * Hydrated at read time: `deriveTrustTier(okf_verified)`. Mirrors
+   * {@link WikiFact.trustTier}. Always present on read paths that go through
+   * `mapRowToTask`.
+   */
+  trustTier?: 'unverified' | 'machine-confirmed' | 'human-reviewed';
 }
 
 export interface WikiEvent {

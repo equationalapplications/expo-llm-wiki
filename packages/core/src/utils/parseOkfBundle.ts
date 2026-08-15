@@ -187,7 +187,6 @@ function frontmatterToFact(
   frontmatter: OkfFrontmatter,
   body: string,
   now: number,
-  isLegacy: boolean,
 ): WikiFact {
   const created_at = parseFrontmatterTimestamp(frontmatter.created_at, now);
   // v0.2: `generated.at` wins; v0.1: `timestamp` is the canonical source.
@@ -212,13 +211,13 @@ function frontmatterToFact(
   const stale_after = parseStaleAfterRaw(staleAfterRaw);
   const generated_by = (frontmatter as any).generated?.by ?? null;
 
-  // Pre-v0.2 fallback (spec §13.1): body # Citations -> synthetic sources, one
-  // entry per URL. Any bundle shape that pre-dates v0.2's structured `sources`
-  // key is in scope — explicit `llm-wiki/1` profile, `okf_version: 0.1` without
-  // a profile key, or profile-0 (no keys at all). v0.2 bundles with a declared
-  // `sources` key opt out; v0.2 bundles with neither key but with a `# Citations`
-  // list still get the fallback because they may carry provenance only in the body.
-  if (isLegacy && sources.length === 0) {
+  // Spec §13.1 fallback (applies to v0.1, profile-0, AND v0.2 paths): body
+  // `# Citations` -> synthetic sources, one entry per URL. v0.2 bundles with a
+  // declared `sources` key opt out (`sources.length === 0` is the gate); v0.2
+  // bundles with neither key but with a `# Citations` list still get the
+  // fallback because they may carry provenance only in the body. The previous
+  // `isLegacy && ...` gate silently dropped those URLs on v0.2 imports.
+  if (sources.length === 0) {
     const urls = parseCitationsList(body);
     for (const url of urls) {
       sources.push({ resource: url });
@@ -408,10 +407,6 @@ export function parseOkfBundle(
   const isProfile1 = profile === 'llm-wiki/1';
   const isProfile2 = profile === 'llm-wiki/2';
   const isLegacyV1 = profile === undefined && okfVersion === '0.1';
-  // Profile-0 (no profile key, no okf_version key) is also a legacy shape.
-  // Anything pre-v0.2 opts into the body-#-Citations fallback, v0.1 status
-  // rename rule, and legacy edge-link extraction.
-  const isLegacy = isProfile1 || isLegacyV1 || (!isProfile2 && profile === undefined && okfVersion === undefined);
 
   let entitySummary: string | undefined;
   const entityIndex = allowedFiles.find(f => f.path === `${entityPrefix}index.md`);
@@ -458,7 +453,7 @@ export function parseOkfBundle(
       : [...relatedLinks, ...extractMarkdownLinks(storedBody)];
 
     if (route === 'fact') {
-      facts.push(frontmatterToFact(entityId, resolvedId, frontmatter, storedBody, now, isLegacy));
+      facts.push(frontmatterToFact(entityId, resolvedId, frontmatter, storedBody, now));
     } else {
       tasks.push(frontmatterToTask(entityId, resolvedId, frontmatter, now, isLegacyV1));
     }

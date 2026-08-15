@@ -140,4 +140,39 @@ Body.
       'https://legacy.example.com/b',
     ]);
   });
+
+  it('body # Citations list (v0.2 with no sources key) also becomes a synthetic okf_sources entry', () => {
+    // Regression guard for the v0.2-path case: when a v0.2 bundle has neither a
+    // `sources` frontmatter key nor a profile that opts into the fallback, the
+    // body-#-Citations URLs must still be parsed into synthetic sources (spec
+    // §4.8 v0.2-path section). The previous `isLegacy && sources.length === 0`
+    // gate silently dropped these URLs.
+    const files: OkfFile[] = [
+      { path: 'index.md', content: `---\nokf_version: 0.2\nprofile: llm-wiki/2\n---\n\n## Entities\n\n* [demo](entities/demo/index.md)\n` },
+      { path: 'entities/demo/index.md', content: 'demo\n\n## Facts\n\n* [v2](facts/v2.md)\n' },
+      { path: 'entities/demo/facts/v2.md', content: `---
+type: fact
+title: v2 with body citations
+status: stable
+generated: { by: "process:cron", at: "2026-04-01T00:00:00Z" }
+id: v2
+entity_id: demo
+created_at: 1700000000000
+---
+
+Body.
+
+# Citations
+
+- https://example.com/a
+- https://example.com/b
+` },
+    ];
+    const dump = parseOkfBundle('demo', files);
+    const f = dump.entities.demo.facts[0]!;
+    expect(f.okf_sources?.map((s) => s.resource)).toEqual([
+      'https://example.com/a',
+      'https://example.com/b',
+    ]);
+  });
 });

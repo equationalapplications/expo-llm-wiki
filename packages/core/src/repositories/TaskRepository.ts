@@ -2,8 +2,15 @@ import { BaseRepository } from './BaseRepository';
 import { OutboxRepository } from './OutboxRepository';
 import type { WikiTask, SQLiteAdapter } from '../types';
 import { parseJsonArray, parseJsonObject } from './rowMappers';
+import { isStaleAfter, deriveTrustTier } from '@equationalapplications/core-okf';
 
 function mapRowToTask(row: any): WikiTask {
+  const okf_verified = parseJsonArray<NonNullable<WikiTask['okf_verified']>[number]>(row.okf_verified, []);
+  // Mirror EntryRepository.mapRowToFact — see that file for the rationale on
+  // per-row Date.now() sampling vs. a shared per-call value.
+  const now = Date.now();
+  const staleAfterRaw = row.stale_after != null ? Number(row.stale_after) : null;
+
   return {
     id: row.id,
     entity_id: row.entity_id,
@@ -17,13 +24,16 @@ function mapRowToTask(row: any): WikiTask {
     okf_type: row.okf_type ?? null,
     // OKF v0.2
     lifecycle_status: (row.lifecycle_status ?? 'stable') as WikiTask['lifecycle_status'],
-    stale_after: row.stale_after != null ? Number(row.stale_after) : null,
+    stale_after: staleAfterRaw,
     generated_by: row.generated_by ?? null,
     okf_sources: parseJsonArray<NonNullable<WikiTask['okf_sources']>[number]>(row.okf_sources, []),
-    okf_verified: parseJsonArray<NonNullable<WikiTask['okf_verified']>[number]>(row.okf_verified, []),
+    okf_verified,
     okf_usage_window: parseJsonObject<NonNullable<WikiTask['okf_usage_window']>>(row.okf_usage_window),
     last_verified_at: row.last_verified_at != null ? Number(row.last_verified_at) : null,
     last_verified_by: row.last_verified_by ?? null,
+    // Spec §2.7 + §5.3: hydrate so read() consumers don't re-call the helpers.
+    isStale: isStaleAfter(staleAfterRaw, now),
+    trustTier: deriveTrustTier(okf_verified),
   };
 }
 
