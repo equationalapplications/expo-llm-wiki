@@ -192,6 +192,85 @@ Line grammar: `- ({event_type}) {summary}` with two optional parts — the summa
 - **Replace-mode event clearing** is likewise application behavior; this profile only guarantees event identity (§7) so applications can implement any replace/merge policy without duplication.
 - **Cross-entity edges** are out of scope for profile 1.
 
+## 11. llm-wiki/2 — OKF v0.2 Conformance
+
+**Profile identifier:** `llm-wiki/2`
+**Builds on:** [Open Knowledge Format (OKF) v0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) (upstream)
+**Design record:** `docs/superpowers/specs/2026-08-14-okf-v02-upgrade-design.md`
+**Default export:** yes — `formatOkfBundle()` emits `okf_version: 0.2` + `profile: llm-wiki/2` unless the caller passes `{ profile: 'llm-wiki/1' }`.
+
+`llm-wiki/2` adds three first-class concerns to the wire format, while staying round-trip compatible with `llm-wiki/1` and profile-0 bundles:
+
+### 11.1 New frontmatter families
+
+| Key | Type | Required | Semantics |
+| --- | --- | --- | --- |
+| `generated` | `{ by: string, at: string }` | OPTIONAL | Producer actor + ISO 8601 timestamp. Maps to `updated_at` on import. |
+| `verified` | `[{ by: string, at: string }]` OR bare `{ by, at }` | OPTIONAL | Chronological list of verifiers. Bare mapping = one-element list (v0.2 §5.2). Trust tier derived on read. |
+| `status` | `'draft' \| 'stable' \| 'deprecated'` | OPTIONAL | Lifecycle state. On tasks, the v0.2 wire `status` is the lifecycle state (see §11.3). |
+| `stale_after` | `YYYY-MM-DD` | OPTIONAL | Absolute cutoff; a fact is `isStale` when `today >= stale_after`. |
+| `sources` | `[{ id?, resource, title?, author?, usage_count?, last_modified?, usage_window? }]` | OPTIONAL | Provenance with per-source credibility signals. |
+| `usage_window` | `{ from: YYYY-MM-DD, to: YYYY-MM-DD }` | OPTIONAL | Sibling of `sources`. Per-entry `usage_window` overrides. |
+
+**`timestamp` still rides along.** `llm-wiki/2` export emits `timestamp` alongside `generated.at` on every concept, not only on the `llm-wiki/1` path — a deliberate, permanent back-compat choice so a naive v0.1-only reader stays fully functional against a v0.2 bundle without understanding flow-mapping syntax at all. `generated.at` is canonical; if a document somehow carries both with different values (a hand-edited or transitional bundle), `generated.at` wins on import.
+
+**Absent, not empty.** `verified` and `sources` are omitted entirely when there is nothing to report, never emitted as `verified: []` / `sources: []` — an empty list is not the same shape as "no `verified` key" (OKF v0.2 §5.3 derives the `unverified` trust tier specifically from key absence). The same applies to `generated`: if a fact has no recorded `generated_by` actor, the `generated` key is omitted rather than defaulting to a fabricated actor like `process:llm-wiki`.
+
+### 11.2 Actor convention (v0.2 §7)
+
+- `agent`: `<producer>/<version>` — e.g. `reference_agent/gemini-2.5-pro`.
+- `human`: `human:<id>` — e.g. `human:ahormati`.
+- `process`: `process:<id>` — e.g. `process:finance-nightly`.
+
+The trust tier (`unverified` / `machine-confirmed` / `human-reviewed`) is derived from the `verified` list at read time. If any verifier actor starts with `human:`, the tier is sticky `human-reviewed`.
+
+### 11.3 The `status` rename rule (no two consumers fight over one key)
+
+Profile-1 §5.2 requires `status` on tasks for **execution** state. OKF v0.2 wants `status` for **lifecycle** state. The reader/writer contract:
+
+- **DB column** `tasks.status` keeps its execution meaning (no rename). A new `lifecycle_status TEXT NOT NULL DEFAULT 'stable'` column carries the OKF v0.2 lifecycle.
+- **Wire (v0.2) — tasks:** `status` = lifecycle (imported into `lifecycle_status`); `execution_status` = execution (imported into `tasks.status`).
+- **Wire (v0.1 / profile 0) — tasks:** `status` = execution (imported into `tasks.status`); lifecycle is implicit `'stable'`.
+- **Wire (v0.2) — facts:** `status` = lifecycle (no execution state on facts). The `facts.status` column does not exist; only `lifecycle_status`.
+
+### 11.4 YAML flow collections (at most one level of nesting)
+
+The `core-okf` subset parser recognizes flow mappings (`{ k: v, k: v }`) and flow sequences (`[ a, b, c ]`) needed for v0.2 canonical shapes (`generated`, `verified`, `usage_window`, per-source objects, `executor.receipt`). Strict guard rails:
+
+- **No anchor or alias expansion.** `&name` and `*name` are never recognized outside quoted strings (a quoted value like a URL query string, `"https://x/a?p=1&q=2"`, is not an anchor). Any unquoted `&`/`*` inside a flow value is rejected outright. This preserves the billion-laughs safety that motivated profile-1 §8.
+- **At most one level of nesting inside a flow mapping value.** `{ a: { b: 1 } }` parses; `{ a: { b: { c: 1 } } }` does not (the key is preserved with a `null` value rather than silently dropped). This is what makes `sources[].usage_window` and `executor.receipt` parse — v0.2's own canonical shapes need exactly one level. A flow *sequence's* items being mappings (`sources: [ {...}, {...} ]`, the base "array of objects" shape) does not consume this budget by itself.
+- **`sources`, `verified` (list form), and `parameters` are always emitted as a single-line flow sequence.** Never as a legacy block-list whose items happen to be flow mappings (`key:\n  - { ... }`) — that shape cannot round-trip through the block-sequence parser, which predates flow-collection support and has no way to flow-parse a `- ...` line's contents.
+
+### 11.5 Footnotes
+
+Bodies MAY carry footnote attribution via `[^id]` markers whose label joins to `sources[].id`. Bodies are preserved verbatim on round-trip. Producers MUST NOT synthesize footnote markers on export.
+
+### 11.6 Attested Computation (deferred to a future profile)
+
+A concept of `type: Attested Computation` is imported as a generic `okf_type` fact. Its `status`/`generated`/`verified`/`stale_after`/`sources`/`usage_window` round-trip exactly like any other v0.2 concept. Its runtime-specific contract fields — `runtime`, `parameters`, `computation`, `executor`, `attester` — do **not** round-trip: `core-llm-wiki` has no generic column for arbitrary unrecognized frontmatter keys, so these are silently dropped on import, the same as any other unrecognized key on any concept type. (§5's blanket "unknown frontmatter keys MUST be preserved on round-trip" is a pre-existing profile-1 contract that `core-llm-wiki` does not fully implement today; `llm-wiki/2` does not close that gap, only documents it against this specific concept type where it's most visible.) No executor, no attester, no receipt runtime is implemented in `llm-wiki/2`. A future profile (`llm-wiki/3`?) takes both on.
+
+## 12. v0.1 → v0.2 Migration Cheat-Sheet
+
+For producers upgrading from `llm-wiki/1` to `llm-wiki/2`:
+
+| v0.1 wire | v0.2 wire | Where it lands |
+| --- | --- | --- |
+| `timestamp` (ISO 8601) | `generated.at` (ISO 8601) | `updated_at` (ms). v0.1 `timestamp` is still accepted; `generated.at` wins if both are present. |
+| body `# Citations` list | `sources: [...]` | `okf_sources` (JSON). v0.1 body citations become a single synthetic source entry on import. |
+| `status` on tasks (execution) | `status` (lifecycle) + `execution_status` (execution) | Tasks: `lifecycle_status` + `tasks.status`. |
+| `tags` block list | unchanged | unchanged |
+| `## Related` section | unchanged | unchanged |
+| event id comments | unchanged | unchanged |
+
+For consumers reading a v0.2 bundle:
+
+- Read `status` as **lifecycle**; read `execution_status` as **execution**.
+- A task bundle without `execution_status` (foreign producer) → fall back to `'pending'`.
+- A fact bundle with `status: 'stable'` is the default; do not require it.
+- Trust tier is derived: any `human:*` verifier → `human-reviewed` (sticky).
+- `isStale = (today >= stale_after)`. NULL `stale_after` → never stale.
+
 ## Changelog
 
+- **llm-wiki/2** (2026-08-14): OKF v0.2 conformance. New frontmatter families (`sources`, `generated`, `verified`, `status`, `stale_after`, `usage_window`). Hand-rolled flow-mapping parser (no anchor/alias expansion). Hybrid DB schema (discrete + JSON). `status` rename rule for tasks (`status` = lifecycle, `execution_status` = execution). `generated.at` mapped onto existing `updated_at` with strict DAO discipline. `Attested Computation` deferred. Footnotes verbatim on round-trip (no synthesis). `isStale` and trust tier surfaced on read, never auto-filtered.
 - **llm-wiki/1** (2026-07-05): first normative profile. Additions over the de-facto profile 0: `profile` root key; `## Related` moves from call-site convention to producer-MUST with consumer strip-on-parse; event id comments; entity summary prose block; explicit YAML-subset and robustness requirements.
