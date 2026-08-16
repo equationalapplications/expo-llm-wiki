@@ -57,6 +57,20 @@ describe('parseJsonResponse — tier 2 (container-aware repair)', () => {
     const result = parseJsonResponse<{ body: string }>('{"body":"Example: "key": value"}');
     expect(result).toEqual({ body: 'Example: "key": value' });
   });
+
+  it('repairs single bare quote before a later property (comma-ambiguity)', () => {
+    // Regression: the walker previously chose the comma-ambiguity
+    // interpretation by parity alone, which silently corrupted inputs like
+    // this — title is `24" monitor` (single bare quote) followed by a real
+    // `,` close; the odd count used to make the walker treat the close
+    // as content, consuming `,"body":"ok"` into the title and dropping
+    // the body field. The fix runs the walker twice under opposing
+    // comma-ambiguity policies and accepts either parse-success.
+    const result = parseJsonResponse<{ title: string; body: string }>(
+      '{"title":"24" monitor","body":"ok"}',
+    );
+    expect(result).toEqual({ title: '24" monitor', body: 'ok' });
+  });
 });
 
 describe('parseJsonResponse — repair tier surfaces failed candidate', () => {

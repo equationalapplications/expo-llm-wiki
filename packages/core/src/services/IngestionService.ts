@@ -1,4 +1,4 @@
-import { chunkText, withConcurrency, validateFact, parseJsonResponse, normalizeSourceRef, normalizeSourceHash } from '../utils/pure';
+import { chunkText, withConcurrency, validateFact, parseJsonResponse, normalizeSourceRef, normalizeSourceHash, safeErrorToString } from '../utils/pure';
 import { normalizeTitleKey } from '../utils/ontology';
 import { generateId } from '../utils/ids';
 import { WikiParseError, WikiIngestEmptyError, WikiDuplicateHashError, WikiTransactionError, WikiStrictOntologyViolation } from '../types';
@@ -168,20 +168,36 @@ export class IngestionService {
                   chunkIndex,
                   sourceRef,
                   source: 'llm',
+                  // `safeErrorToString` is a non-throwing coercion: an LLM
+                  // provider may reject with a non-Error value, and even
+                  // `String(e)` itself can throw when `e.toString()` throws.
+                  // Letting such an exception escape this catch would cause
+                  // `withConcurrency` to reject, discarding every sibling
+                  // chunk's results — the exact failure mode this per-chunk
+                  // try/catch exists to prevent. Keeping the value in the
+                  // `ChunkFailure` preserves the typed diagnostic for
+                  // callers (see parseFailures) without unwinding the loop.
                   position: null,
-                  message: e instanceof Error ? e.message : String(e),
+                  message: safeErrorToString(e),
                 };
             // Spec §2: log once per failure, NEVER include the raw response.
-            // Note: `failure.message` is the error message, NOT the LLM response
-            // body — WikiParseError.message is the parser's diagnostic and
-            // LLM-error .message is provider-controlled. A provider that
-            // surfaces the raw response in its Error.message could leak through
-            // this line; the test asserts the parse-error branch is clean.
+            // We deliberately omit `failure.message` here:
+            //  - For `source: 'parse'` the message is the parser's diagnostic
+            //    (safe) but in the interest of a single, narrow warn format we
+            //    surface only the tier (and position when known) on the log.
+            //  - For `source: 'llm'` the message is provider-controlled: an
+            //    LLM SDK commonly surfaces the raw response body, document
+            //    content, or a multi-megabyte HTTP error in `Error.message`.
+            //    Even a parser-diagnostic message that happens to share bytes
+            //    with a never-logged raw response would leak if we printed
+            //    it verbatim. The full message stays in `parseFailures` for
+            //    callers that want it; the warn line is intentionally narrow.
             const total = chunks.length;
-            const tag = failure.tier
-              ? `${failure.source} (tier=${failure.tier})`
-              : failure.source;
-            console.warn(`[WikiMemory] ingest chunk ${chunkIndex + 1}/${total} ${tag} failed (sourceRef=${sourceRef}): ${failure.message}`);
+            const tierTag = failure.tier ? ` tier=${failure.tier}` : '';
+            const positionTag = failure.position !== null ? ` position=${failure.position}` : '';
+            console.warn(
+              `[WikiMemory] ingest chunk ${chunkIndex + 1}/${total} ${failure.source} failed (sourceRef=${sourceRef};${tierTag}${positionTag})`,
+            );
             return { status: 'failed' as const, error: failure };
           }
         }),
@@ -236,12 +252,19 @@ export class IngestionService {
           insertedFacts.push(...fullResult.insertedFacts);
         } else {
           // Partial path — append dedup-only, NO supersession, NO ownership update.
-          // See spec §4.2.
-          await this.db.withTransactionAsync(async (tx) => {
+          // See spec §4.2. `insertedFacts` carries the per-fact descriptors
+          // the post-commit hook loop needs to fire `embedFact` after the
+          // partial transaction commits — without this, partial-row facts
+          // would never reach the embedding service and the vector ranker
+          // would never be notified for them (despite them being live in
+          // the entries table). See the copilot review note on
+          // `embeddingService.embedFact` vs. the partial-path gate.
+          const partialResult = await this.db.withTransactionAsync(async (tx) => {
             const flat: ExtractedFact[] = [];
             for (const slot of orderedChunkFacts) flat.push(...slot.facts);
-            await this.appendPartialFacts(entityId, sourceRef, flat, tx);
+            return await this.appendPartialFacts(entityId, sourceRef, flat, tx);
           });
+          insertedFacts.push(...partialResult.insertedDescriptors);
         }
       } catch (err) {
         // A concurrent ingest for a DIFFERENT sourceRef beat us to the same
@@ -273,11 +296,16 @@ export class IngestionService {
 
       await this.searchService.sync(entityId);
 
-      // Post-commit hook loop is gated to the full path. On the partial path,
-      // deletedSourceFactIds and insertedFacts stay empty (the partial path
-      // does no supersession, so there's nothing to retire for embedding
-      // lifecycle, and the partial path doesn't go through the embedding
-      // service — it's a dedup-only append). See spec §4.2.
+      // Post-commit hook loop. `notifyEmbeddingPersisted(entityId, factId, null)`
+      // is the embedding-lifecycle retirement signal — only relevant on the
+      // full path, which is the only path that calls `softDeleteBySource`.
+      // `embedFact` runs for every newly-inserted fact on EITHER path: the
+      // partial path appends live rows, and those rows must participate in
+      // semantic retrieval just like full-path facts — otherwise a 6-of-7
+      // partial commit would leave the embedded fields null until a later
+      // full retry, and a vector ranker wouldn't be notified for them.
+      // (The earlier gate `if (failedChunks === 0)` blocked both halves of
+      // this block on the partial path and was the bug copilot flagged.)
       if (failedChunks === 0) {
         const uniqueDeletedSourceFactIds = Array.from(new Set(deletedSourceFactIds));
         for (const factId of uniqueDeletedSourceFactIds) {
@@ -287,10 +315,10 @@ export class IngestionService {
             console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during ingest for ${factId}:`, hookErr);
           }
         }
+      }
 
-        for (const fact of insertedFacts) {
-          await this.embeddingService.embedFact(fact);
-        }
+      for (const fact of insertedFacts) {
+        await this.embeddingService.embedFact(fact);
       }
 
       this.searchService.evictCache(entityId);
@@ -648,7 +676,15 @@ export class IngestionService {
     sourceRef: string,
     dedupedFacts: ExtractedFact[],
     tx: SQLiteAdapter,
-  ): Promise<{ inserted: number; skippedDuplicate: number }> {
+  ): Promise<{
+    inserted: number;
+    skippedDuplicate: number;
+    /** Descriptors for the rows this call actually inserted, in the same
+     * shape `runFullUpsertGraph` returns — the post-commit hook loop
+     * passes these to `embedFact`. Without them, partial-path inserts
+     * would skip the embedding service entirely. */
+    insertedDescriptors: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }>;
+  }> {
     // Partial rows are intentionally stored with `source_hash: null` so
     // `hasChanged` keeps returning true on every retry of the same hash —
     // the failed chunks get a second chance. The full path stamps the actual
@@ -666,6 +702,7 @@ export class IngestionService {
     let inserted = 0;
     let skippedDuplicate = 0;
     const now = Date.now();
+    const insertedDescriptors: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
     for (const fact of dedupedFacts) {
       const normalizedTitle = normalizeTitleKey(fact.title);
       if (liveTitles.has(normalizedTitle)) {
@@ -674,8 +711,9 @@ export class IngestionService {
       }
       liveTitles.add(normalizedTitle);
 
+      const id = generateId('fact_');
       const wikiFact: WikiFact = {
-        id: generateId('fact_'),
+        id,
         entity_id: entityId,
         title: fact.title,
         body: fact.body,
@@ -695,8 +733,17 @@ export class IngestionService {
         okf_type: null,
       };
       await this.entryRepo.upsert(wikiFact, tx);
+      // Mirror the shape `runFullUpsertGraph` returns so the caller's
+      // post-commit `embedFact` loop is path-agnostic.
+      insertedDescriptors.push({
+        id,
+        entity_id: entityId,
+        title: fact.title,
+        body: fact.body,
+        tags: JSON.stringify(fact.tags),
+      });
       inserted++;
     }
-    return { inserted, skippedDuplicate };
+    return { inserted, skippedDuplicate, insertedDescriptors };
   }
 }

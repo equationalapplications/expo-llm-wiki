@@ -779,6 +779,53 @@ describe('ingestDocument — partial commit (issue #92)', () => {
     }
   });
 
+  it('console.warn NEVER includes the provider Error.message body (llm-error branch)', async () => {
+    // Regression for the provider-controlled `Error.message` leak:
+    // some LLM SDKs surface the raw response body, document content, or a
+    // multi-megabyte HTTP error in `Error.message`. The warn line must
+    // redact this — full detail stays in `parseFailures` for callers that
+    // opt in, but the unconditional warn is intentionally narrow.
+    const text = 'First chunk content here long enough.\n\nSecond chunk content here long enough.';
+    const responseBodyFragment = '{"facts":[{"body":"super-secret-proprietary-document-content"}]}';
+    const leakyMessage = `Bedrock InvocationModelError: server returned 4xx with body: ${responseBodyFragment}`;
+    let i = 0;
+    const provider = {
+      generateText: async () => {
+        const idx = i++;
+        if (idx === 0) throw new Error(leakyMessage);
+        return JSON.stringify({
+          facts: [{ title: `Fact ${idx}`, body: `body ${idx}`, tags: [], confidence: 'certain' }],
+        });
+      },
+    };
+    const wiki = await freshWiki(provider);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const result = await wiki.ingestDocument('e_noleak_llm', {
+        sourceRef: 'doc-noleak-llm',
+        sourceHash: sourceHashFor(8),
+        documentChunk: text,
+        maxChunkLength: 50,
+        chunkOverlap: 0,
+      });
+      expect(result.failedChunks).toBe(1);
+      expect(result.parseFailures![0].source).toBe('llm');
+      // The full leaky message stays in parseFailures (typed diagnostic
+      // for callers that opt in).
+      expect(result.parseFailures![0].message).toContain(responseBodyFragment);
+      // But the warn line must NOT contain the leaky fragment.
+      for (const call of warnSpy.mock.calls) {
+        for (const arg of call) {
+          if (typeof arg === 'string') {
+            expect(arg).not.toContain(responseBodyFragment);
+          }
+        }
+      }
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it('ontologyContext failure propagates as a raw throw, does NOT become WikiIngestEmptyError', async () => {
     const text = 'First chunk content.\n\nSecond chunk content.';
     const provider = {
@@ -923,6 +970,56 @@ describe('ingestDocument — partial commit (issue #92)', () => {
     const bundle = await wiki.getMemoryBundle('e_dedup');
     const factAs = bundle.facts.filter((f) => f.title === 'Fact A');
     expect(factAs.length).toBe(1);
+  });
+
+  it('partial commit fires embedFact for every inserted fact', async () => {
+    // Regression for the copilot review: when a partial commit inserts
+    // rows via `appendPartialFacts`, those rows' embedding lifecycle
+    // previously skipped `embedFact` and `onEmbeddingPersisted` because
+    // the post-commit hook loop was gated on `failedChunks === 0`. That
+    // left `embedding_blob` null on partial-path rows and never notified
+    // the vector ranker — silently broken semantic retrieval until a
+    // later full retry. The fix threads the inserted descriptors through
+    // the same hook loop on either path.
+    const text = 'First chunk content here long enough.\n\nSecond chunk content here long enough.\n\nThird chunk content here long enough.';
+    let i = 0;
+    const provider = {
+      generateText: async () => {
+        const idx = i++;
+        if (idx === 1) return makeBadJson();
+        return JSON.stringify({
+          facts: [{ title: `Partial ${idx}`, body: `partial body ${idx}`, tags: [], confidence: 'certain' }],
+        });
+      },
+    };
+    const wiki = await freshWiki(provider);
+    const embedSpy = vi.spyOn(wiki.__testAccess.embeddingService, 'embedFact');
+    try {
+      const result = await wiki.ingestDocument('e_partial_embed', {
+        sourceRef: 'doc://partial-embed',
+        sourceHash: sourceHashFor(13),
+        documentChunk: text,
+        maxChunkLength: 50,
+        chunkOverlap: 0,
+      });
+      expect(result.chunks).toBeGreaterThan(2);
+      expect(result.ingestedChunks).toBe(result.chunks - 1);
+      expect(result.failedChunks).toBe(1);
+      // Every successful chunk's fact reaches `embedFact` — one call per
+      // inserted fact descriptor. The descriptor shape mirrors what
+      // `runFullUpsertGraph` returns so the embedding service sees the
+      // same shape whether the insert came from the full or partial path.
+      expect(embedSpy.mock.calls.length).toBe(result.ingestedChunks);
+      for (const call of embedSpy.mock.calls) {
+        const descriptor = call[0];
+        expect(typeof descriptor.id).toBe('string');
+        expect(typeof descriptor.entity_id).toBe('string');
+        expect(typeof descriptor.title).toBe('string');
+        expect(typeof descriptor.body).toBe('string');
+      }
+    } finally {
+      embedSpy.mockRestore();
+    }
   });
 
   it('a subsequent full success replaces both prior partial and prior full attempts in one transaction', async () => {

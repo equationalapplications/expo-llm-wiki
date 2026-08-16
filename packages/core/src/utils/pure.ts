@@ -78,15 +78,28 @@ export function parseJsonResponse<T>(text: string): T {
   // on the raw text from `start` is the only way to get a complete container
   // span to repair against. The walker validates via `JSON.parse` itself and
   // returns the already-parsed value, so we don't re-parse on the hot path.
-  const repair = containerAwareRepair(text, start);
-  if (repair.success !== null) {
-    return repair.success as T;
+  //
+  // The walker runs twice under opposing comma-ambiguity policies — see
+  // `containerAwareRepair` docstring. Both passes can produce parseable
+  // JSON for inputs like `{"title":"24" monitor","body":"ok"}` but with
+  // DIFFERENT shapes — the even-parity pass collapses later properties into
+  // the first value, the odd-parity pass keeps the boundary. We prefer the
+  // odd-parity pass's success when it parses; the even-parity pass keeps
+  // existing diagnostic-shaped failures intact for inputs where neither
+  // produces the right shape. Each pass is bounded by MAX_REPAIR_CANDIDATES.
+  const repairOdd = containerAwareRepair(text, start, false);
+  if (repairOdd.success !== null) {
+    return repairOdd.success as T;
   }
-  // `repair.failed` carries the largest balanced span the walker found plus
-  // the parse position from JSON.parse — both fields the public contract
-  // promises on `WikiParseError` for `tier: 'repair'`. Without this branch
-  // a balanced but invalid payload (e.g. `{"facts":}`) would fall through to
-  // the generic `tier: 'all'` throw below, losing the diagnostic.
+  const repairEven = containerAwareRepair(text, start, true);
+  if (repairEven.success !== null) {
+    return repairEven.success as T;
+  }
+  // Both policies failed to parse. Prefer the even-parity failed candidate
+  // as the diagnostic — it's the original walker behavior and its failure
+  // message matches what callers (and existing tests) expect on
+  // balanced-but-invalid payloads like `{"facts":}`.
+  const repair = repairEven.failed !== null ? repairEven : repairOdd;
   if (repair.failed !== null) {
     throw new WikiParseError(
       `Repair produced a candidate but JSON.parse rejected it: ${repair.failed.message}`,
@@ -148,8 +161,20 @@ function scanJsonSlice(text: string, start: number, openChar: string): string | 
  * that `JSON.parse` would accept (largest balanced span first), or `null` if
  * no candidate parses.
  *
- * Bounded to {@link MAX_REPAIR_CANDIDATES} candidates to avoid pathological
- * retries on truly broken inputs.
+ * The walker tries two policies at comma-ambiguity positions (`"X"`,
+ * `X` ends in a bare quote, peek-ahead is `,`):
+ *
+ * - `closeOnEvenParity=true`  — treat the quote as STRUCTURAL CLOSE when the
+ *   bare-quote count is EVEN, content escape when ODD. This is the heuristic
+ *   that has historically matched LLM output (it works for `"He said "hi", then left."`).
+ * - `closeOnEvenParity=false` — the opposite flip. Required for inputs whose
+ *   real close is at an ODD count (e.g. `"24" monitor","body":"ok"}`), where
+ *   the model intended one literal `"` inside the value string and the next
+ *   `"` to be the structural close.
+ *
+ * `parseJsonResponse` runs both policies and accepts the first parse-success
+ * from either; {@link MAX_REPAIR_CANDIDATES} bounds each policy's emissions
+ * so the combined work stays small.
  */
 interface ContainerFrame {
   container: 'object' | 'array';
@@ -176,7 +201,11 @@ interface RepairResult {
   failed: RepairFailure | null;
 }
 
-function containerAwareRepair(text: string, start: number): RepairResult {
+function containerAwareRepair(
+  text: string,
+  start: number,
+  closeOnEvenParity: boolean,
+): RepairResult {
   const openChar = text[start];
   // The walker produces a stream of balanced-span candidates in largest-first
   // order. We try each via `JSON.parse` at emission time so the success
@@ -308,10 +337,30 @@ function containerAwareRepair(text: string, start: number): RepairResult {
         next === '}' ||
         next === ']'
       );
+      // Comma-ambiguity: when the peek-ahead is `,` after at least one
+      // bare-quote content escape, neither interpretation is structurally
+      // implied — the comma is either a value separator OR content body.
+      // The walker tries BOTH policies (see the parameter docs on
+      // containerAwareRepair): the `closeOnEvenParity=true` pass treats
+      // an even count as the close (the legacy heuristic — works for the
+      // "He said "hi", then left." case where the bare-quote count is 2),
+      // and the false pass treats an odd count as the close (works for
+      // `"24" monitor","body":"ok"}` where the real close follows the
+      // single bare quote). When `bareQuoteCount === 0` neither parity
+      // is in play — no ambiguity exists, the comma must close — so we
+      // close under both policies. parseJsonResponse unions the two
+      // results.
+      const shouldCommaClose =
+        commaOnly && (
+          bareQuoteCount === 0 ||
+          (closeOnEvenParity
+            ? bareQuoteCount % 2 === 0
+            : bareQuoteCount % 2 === 1)
+        );
       const isClosing =
         isKeyClose ||
         isValueClose ||
-        (commaOnly && bareQuoteCount % 2 === 0);
+        shouldCommaClose;
 
       if (isClosing) {
         out += ch;
@@ -392,6 +441,34 @@ function extractParsePosition(err: unknown): number | null {
   const msg = err instanceof Error ? err.message : String(err);
   const match = /position\s+(\d+)/.exec(msg);
   return match ? Number(match[1]) : null;
+}
+
+/**
+ * Non-throwing coercion of an arbitrary JavaScript value to a string for
+ * error-message reporting. JavaScript's `String(e)` returns `e.toString()`
+ * for objects, which can throw if `toString` itself throws (e.g. an object
+ * with a misbehaving prototype). Without this guard, a single provider-side
+ * rejection can escape an `ingestDocument` per-chunk `catch` and tear down
+ * `withConcurrency`, discarding every sibling chunk's results — the exact
+ * silent-forever failure mode the partial-commit work exists to prevent.
+ *
+ * Falls back through:
+ * - `Error.message` for `Error` instances (always available).
+ * - `String(e)`, wrapped in try/catch.
+ * - `Object.prototype.toString.call(e)` if `String(e)` threw (also wrapped).
+ * - A static `[unstringifiable error]` marker as a final guarantee.
+ */
+export function safeErrorToString(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  try {
+    return String(e);
+  } catch {
+    try {
+      return Object.prototype.toString.call(e);
+    } catch {
+      return '[unstringifiable error]';
+    }
+  }
 }
 
 export function sanitizeRankerError(err: unknown, sanitizeRankerErrors: boolean | undefined): Error {
