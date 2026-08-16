@@ -1,8 +1,8 @@
 # Spec: Ingest Parse Resilience
 
-**Date:** 2026-08-15 (revised)
-**Status:** Implemented (closes issue #92 — 7 commits on branch `docs/spec-revise-ingest-parse-resilience`, 1024/1024 core tests + 41/41 integration tests green as of 2026-08-15)
-**Approach:** A revised — strict + single container-aware repair pass on raw text, partial per-chunk commit with retry semantics, prompt tightening
+**Date:** 2026-08-15 (revised 2026-08-16 after post-implementation code review)
+**Status:** Implemented — closes issue #92 via PR #93 (branch `docs/spec-revise-ingest-parse-resilience`; original implementation 1024/1024 core + 41/41 integration green as of 2026-08-15). Revised 2026-08-16: post-implementation review found the first walker's odd-parity-first trial order could silently swallow properties (the exact loss mode of #92); the fixes — two-pass comma-parity arbitration by minimal mutation, deterministic C0 control-char escaping, sibling-candidate buffer reset, stray-quote skip — are applied on top (core 1062/1062 across 88 files, `tsc --noEmit` clean). §1.2 rewritten to specify the verified arbitration design; deferred findings recorded under Open Questions.
+**Approach:** Strict + single container-aware repair pass on raw text with minimal-mutation arbitration, partial per-chunk commit with retry semantics, prompt tightening
 
 Closes issue #92.
 
@@ -72,23 +72,43 @@ For tier 1 we keep the existing scanner — it is correct whenever the input has
 
 #### 1.2 What tier 2 does differently
 
-Tier 2 does **not** reuse the scanner's slice. It re-walks the raw text from `start` (the index of the first `{` or `[`) with a walker that:
+Tier 2 does **not** reuse the scanner's slice. It re-walks the raw text from `start` (the index of the first `{` or `[`) with a walker that tracks `inString`, `escape`, the current string's role (`key` vs `value`), and a **container-context stack** of frames (`{ container: 'object' | 'array', expectKey: boolean }`), pushed on `{`/`[` and popped on `}`/`]`.
 
-- Tracks `inString`, `escape`, **and a container-context stack** (`'object' | 'array'`).
-- For every `"`, classifies it as **structural** (open or close a string) or **content** (needs `\` prefix) using a peek-ahead rule:
-  - If `!inString`: it's an opening quote; push `inString = true`. (No escape; an opening quote is always structural.)
-  - If `inString`:
-    - Skip whitespace ahead.
-    - If the next non-whitespace character is one of `,`, `}`, `]`, `:`, or `"` (followed by `:`), the quote is **closing** → pop `inString = false`.
-    - Otherwise the quote is **content** → insert `\` before it and stay `inString = true`.
+**Deterministic repairs — identical under both policy passes below:**
 
-The container stack is pushed on `{` or `[`, popped on `}` or `]`. It is consulted only to disambiguate the peek-ahead rule in nested positions; the walker itself is the same code for objects and arrays. An array element position does not expect a closing quote before `,` or `]` to be ambiguous — the same peek-ahead rule works because in an array the next structural token after a value is `,` or `]` and both are in the closing-quote set.
+- **Raw C0 control characters inside strings** are escaped as they're walked (`\n`, `\t`, `\r`, `\b`, `\f`; other C0 as `\u00XX`). A literal newline in a body otherwise invalidates every candidate, and this repair is ambiguity-free (a control char inside a string can only be content), so both passes produce identical output for it.
+- **A stray `"` at structural level immediately before `}`/`]`** is skipped, not emitted — emitting it would open an unterminated string and guarantee `JSON.parse` rejects the candidate.
 
-The walker produces a stream of candidate substrings by recording every position at which the top of the container stack returns to empty (i.e., a balanced `{}` or `[]` ends). Each candidate is fed to `JSON.parse` in **largest-first** order (the first balanced span is the outermost; we stop at the first parse success).
+**Close-quote classification.** For a `"` inside a string, skip whitespace ahead and classify the quote **closing** when the next non-whitespace character is:
 
-**Bounded retries:** at most `MAX_REPAIR_CANDIDATES = 5` candidates are tried; if none parse, `WikiParseError` is thrown.
+- `:` — **key close only** (role `key`): the `:` is JSON's "this string was a key" separator. For a *value* string, a following `:` is body content (`{"body":"foo: "bar": baz"}` must not close at `foo:`). The adjacent-pair form — next is `"` and the char after that is `:` — is likewise a key-close signal.
+- `}` or `]` — value close, unconditional.
+- `,` — value close **when no unescaped bare quote is currently open in this string token** (`bareQuoteCount === 0`).
 
-**O(n) over the raw text**, with a small constant-factor peek-ahead (bounded by run of whitespace, in practice a few chars).
+Every other in-string `"` — quote-then-space, quote-then-letter — is **content** and gets a `\` prefix. Quote-then-comma *with* an open bare quote is the ambiguous case, resolved per-pass by the parity policies below.
+
+**The comma ambiguity — why arbitration, not a cleverer rule.** When the peek-ahead is `,` and `bareQuoteCount > 0`, the same local bytes admit two globally valid readings. Anchor pairs, verified against the implementation:
+
+- `{"title":"He said "hi"","body":"ok"}` (the #92 repro shape) — both quotes around `hi` are content; the final quote, followed by `,` at an even bare-quote count, is the structural close. The swallowing reading also parses (as a single-key object) but silently drops `body`.
+- `{"title":"24" monitor","body":"ok"}` — the mirror image: at an odd count the quote before `,` is the *close*, and here it is the even-parity reading that swallows.
+- In arrays: `["a","b","c"]` requires comma-adjacent quotes to close, while `["He said "hi", then left."]` requires them to be content. (The valid array normally exits at tier 1; the pair shows why no deterministic comma rule survives both.)
+
+No single-pass deterministic rule survives both members of any pair — this is the ambiguity itself, not an insufficiently clever lookahead. A spec that prescribes one is prescribing an algorithm that fails one of the two inputs.
+
+**Arbitration by minimal mutation.** The walker therefore runs **two passes** over the text, differing only at comma-ambiguity positions: the *even* pass treats the quote as structural close when the running `bareQuoteCount` is even (the legacy heuristic), the *odd* pass flips it. Each pass validates candidates with `JSON.parse` as it walks and reports `{ success, failed, escapes, ambiguous }`. Selection, in order:
+
+1. **Short-circuit**: if the first pass parsed and hit no comma-ambiguity, the second pass is provably identical — return without running it. Unambiguous input takes exactly the deterministic path; only ambiguous input pays for the second pass.
+2. If **both** passes parsed, the one that **escaped fewer content quotes** wins: the correct interpretation escapes exactly the true bare quotes, while the swallowing interpretation must also escape the structural quotes it consumes. Tie → the first pass's result.
+3. If **exactly one** parsed, that one wins — the wrong interpretation usually yields structurally invalid output.
+4. If **neither** parsed, tier 2 fails (error mapping in §1.5).
+
+The residual risk of a wrong arbitration pick is bounded the right way: repair only runs after a strict parse failure, and `validateFact` still gates ingestion downstream, so a mis-pick lands in the same risk class as any LLM extraction error (accepted in Risk & Rollout).
+
+**Candidate collection.** Each pass emits a candidate whenever the container stack returns to empty — a balanced `{}`/`[]` completes — so candidates arrive **largest-first** (a nested span never empties the stack; the first candidate is the outermost). On a rejection the output buffer resets and inter-span text is skipped, so a later balanced span (`noise {"bad"} tail {"facts":[]}`) is offered standalone rather than concatenated onto the already-rejected prefix. At most `MAX_REPAIR_CANDIDATES = 5` candidates are tried per pass.
+
+**O(n) per pass**, at most two passes, with a small constant-factor peek-ahead (bounded by runs of whitespace, in practice a few chars).
+
+**Known limitation — keys containing bare quotes.** The `:`-adjacent key-close signals are not parity-gated, so a property *name* containing a bare quote (`{"say "hi"":"v"}`) can be truncated under both passes. The schemas in this system use fixed-vocabulary keys (`facts`, `title`, `body`, `target_title`, …) — never verbatim prose — so a bare quote inside a key is a near-zero-probability event, and a half-validated heuristic here is exactly how the first implementation's arbitration bug was introduced. Documented, not patched.
 
 #### 1.3 Why the existing scanner's slice is unfit for tier 2
 
@@ -286,16 +306,18 @@ The verbatim-prose tension is milder here — there is no source document, but `
 | 1 | strict happy path | `{"facts":[]}` | Returns `{facts: []}`, no warning |
 | 2 | array happy path | `[1,2,3]` | Returns `[1,2,3]` |
 | 3 | walker repairs bare quote in object body | `{"body":"she said "hi""}` | Tier 2 walker finds the bare `"`, re-escapes, `JSON.parse` succeeds; result has `body: 'she said "hi"'` |
-| 4 | walker repairs bare quote in array element | `["he said "hi""]` | Tier 2 walker finds the bare `"`, re-escapes, `JSON.parse` succeeds |
-| 5 | walker repairs multiple bare quotes (prose shape) | `{"body":"He said "hi", then left."}` | Tier 2 walker re-escapes both bare quotes; result has `body: 'He said "hi", then left.'` |
-| 6 | walker repairs mid-string bare quote at end of value | `{"body":"He said "hi""}` (closing pair) | Tier 2 re-escapes both bare quotes; result has `body: 'He said "hi"'` |
-| 7 | all tiers fail on truly broken input, throws typed error | `{"facts":[` (unclosed array — no balanced close) | `WikiParseError` thrown with `tier: 'strict'`, `position: 0`, `slice === text` |
-| 8 | no JSON object/array at all | `no braces at all` | `WikiParseError` thrown with `tier: 'strict'`, `position: null`, `slice === text` |
-| 9 | walker does NOT corrupt already-valid JSON | `["a","b","c"]` | Tier 1 succeeds; tier 2 never runs |
-| 10 | peek-ahead respects object key/value disambiguation | `{"a":"b","c":"d"}` | Tier 1 succeeds |
-| 11 | walker handles nested object in object | `{"a":{"b":"he said "x""}}` | Tier 2 repairs, `JSON.parse` succeeds |
-| 12 | walker does not close a value string on a `:` (role tracking) | `{"body":"Example: "key": value"}` | Tier 2 keeps the value string open across the embedded `:` and `"key":`; result has `body: 'Example: "key": value'` |
-| 13 | balanced invalid JSON throws `WikiParseError` with `tier: 'repair'` and the failed slice | `{"facts":}` | `WikiParseError` thrown with `tier: 'repair'`, `slice === '{"facts":}'`; `position` is best-effort (a number when extractable from V8's older "in JSON at position N" format, `null` when V8 emits the newer "Unexpected token 'X', "..." is not valid JSON" format) |
+| 4 | walker repairs bare quote in array element (context-aware) | `["he said "hi""]` | Tier 2 walker uses array-context to distinguish `","` from value-end; repairs correctly; result has `['he said "hi"']` |
+| 5 | walker repairs multiple bare quotes with quote-then-comma (prose shape) | `{"body":"He said "hi", then left."}` | Tier 2 walker classifies the quote before `,` as content (not closing) using object-context; re-escapes both bare quotes; result has `body: 'He said "hi", then left.'` |
+| 6 | walker repairs bare quote followed by space | `{"body":"He said "hi" to me."}` | Tier 2 walker classifies the quote before ` ` (space) as content using object-context; re-escapes; result has `body: 'He said "hi" to me.'` |
+| 7 | walker repairs mid-string bare quote at end of value | `{"body":"He said "hi""}` (closing pair) | Tier 2 re-escapes both bare quotes; result has `body: 'He said "hi"'` |
+| 8 | all tiers fail on truly broken input, throws typed error | `{"facts":[` (unclosed array — no balanced close) | `WikiParseError` thrown with `tier: 'strict'`, `position: 0`, `slice === text` |
+| 9 | no JSON object/array at all | `no braces at all` | `WikiParseError` thrown with `tier: 'strict'`, `position: null`, `slice === text` |
+| 10 | walker does NOT corrupt already-valid array JSON | `["a","b","c"]` | Tier 1 succeeds; tier 2 never runs; result is `['a', 'b', 'c']` (not mangled) |
+| 11 | peek-ahead respects object key/value disambiguation | `{"a":"b","c":"d"}` | Tier 1 succeeds |
+| 12 | walker handles nested object in object | `{"a":{"b":"he said "x""}}` | Tier 2 repairs, `JSON.parse` succeeds |
+| 13 | walker does not close a value string on a `:` (role tracking) | `{"body":"Example: "key": value"}` | Tier 2 keeps the value string open across the embedded `:` and `"key":`; result has `body: 'Example: "key": value'` |
+| 14 | balanced invalid JSON throws `WikiParseError` with `tier: 'repair'` and the failed slice | `{"facts":}` | `WikiParseError` thrown with `tier: 'repair'`, `slice === '{"facts":}'`; `position` is best-effort (a number when extractable from V8's older "in JSON at position N" format, `null` when V8 emits the newer "Unexpected token 'X', "..." is not valid JSON" format) |
+| 15 | scanner produces no slice (end === -1) becomes WikiParseError | `{"facts": junk...` (no balanced close) | The existing scanner returns `end === -1`; tier 2's walker still attempts repair from `start`; if no candidate parses, `WikiParseError` thrown with `tier: 'strict'`, `position: start`, `slice === text` |
 
 ### Unit — extend `packages/core/__tests__/ingest.test.ts`
 
@@ -324,7 +346,9 @@ expect(ONTOLOGY_BACKFILL_SYSTEM_PROMPT).toContain('preserve every JSON escape');
 
 ### Integration — `packages/integration/__tests__/ingestParseResilience.test.ts` (new)
 
-- **Repro subset**: 5 canned responses, one of which is the verbatim-quote case from issue #92. Verify `parseFailures[0].source === 'parse'`, recovery tier recorded, `ingestedChunks === 4`.
+- **Repro subset (two canned shapes, matching the implemented tests)**:
+  - *Beyond-repair chunk*: 5 canned responses, one of which is structurally truncated (`{"facts":[` — defeats both tiers). Verify `ingestedChunks === 4`, `failedChunks === 1`, `parseFailures[0].source === 'parse'` with a `tier` value from the typed union, and the four sibling facts reach storage.
+  - *Reparable bare-quote chunk*: 5 canned responses, one of which is the verbatim-quote case from issue #92. Verify the chunk is **repaired by tier 2** — `ingestedChunks === 5`, `parseFailures` undefined — and the repaired fact's body preserves the literal quoted prose (e.g. contains `"hi"`), proving the walker escaped the bare quotes rather than dropping them.
 - **All-fail subset**: 5 canned responses, all malformed. Verify `WikiIngestEmptyError` thrown.
 - **Retry subset**: First call partial (1 of 5 fails); second call all-succeed. Verify final live set has all 5 chunks' facts, no duplication, prior partial attempt's facts are gone.
 
@@ -348,9 +372,18 @@ expect(ONTOLOGY_BACKFILL_SYSTEM_PROMPT).toContain('preserve every JSON escape');
 
 ## Open Questions
 
-None at design completion (revised). All decisions resolved during revision:
-- **Repair strategy**: Strict → container-aware walker on raw text → throw. (Tiers 2a/2b collapsed into one walker; tier 3 / `json5` removed.)
+None open at design completion (revised 2026-08-16 after post-implementation review). Resolved decisions:
+- **Repair strategy**: Strict → container-aware walker on raw text → throw. Single tier-2 walker running two comma-parity passes with minimal-mutation arbitration; tier 3 / `json5` removed as it doesn't fix issue #92's bare-quote failure mode.
 - **Failure surface**: Per-chunk try/catch around LLM + parse only; `buildPromptContext` propagates as DB-systemic.
 - **Partial-commit semantics**: Successful chunks append (with dedup against prior live rows for the sourceRef); supersession and `source_ref_index` ownership update are SKIPPED on partial failure. The next full run supersedes everything for the sourceRef in one transaction.
 - **Repair mode**: Always-on (no API change).
 - **LLM error scope**: Catch LLM + parse errors per-chunk; tag by source (`parse` or `llm`).
+- **Comma-ambiguity resolution**: Arbitration by minimal mutation (§1.2), not a deterministic delimiter rule — a deterministic rule is provably insufficient for the `["a","b","c"]` vs. array-prose pair.
+
+### Recorded-but-deferred (post-implementation review, 2026-08-16)
+
+Real findings, follow-up scope — not blockers for PR #93:
+
+- **`hasChanged` after a partial commit is hash-agnostic**: partial rows store NULL `source_hash` and `findLatestSourceHash` reads the newest live row for the sourceRef regardless of hash, so after any partial commit `hasChanged` returns `true` for *every* hash of that sourceRef — including a previously fully-ingested older one; re-ingesting that older hash runs hash-agnostic supersession and soft-deletes the partial rows. Deferred: this is §4.2's documented retry trade-off; changing it needs a spec decision.
+- **Unbounded retry accumulation**: partial commits dedup only by exact normalized title, so each retry of a still-failing document can insert paraphrased near-duplicates of the successful chunks; growth is bounded only by a fully-successful run. Deferred: needs a spec-level mechanism (e.g. an attempt counter), not a local fix.
+- **Typed errors flattened on `ChunkFailure`**: total failure throws `WikiIngestEmptyError` replacing the original provider error, and `ChunkFailure` keeps only `safeErrorToString`'s message — error class/name and retryability signals (e.g. `e.name === 'RateLimitError'`) are lost. Deferred: `ChunkFailure`'s shape is spec-defined; widening it changes the public contract.
