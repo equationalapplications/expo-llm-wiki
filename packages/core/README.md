@@ -10,6 +10,35 @@ Platform-agnostic TypeScript engine for hybrid LLM memory. Features episodic fac
 
 > Inspired by [Andrej Karpathy's LLM Wiki memory spec](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
 
+## Recent changes
+
+### 5.4.1 — Ingest parse resilience (issue #92)
+
+- `parseJsonResponse` now tolerates bare `"` characters in LLM output via a
+  container-aware repair pass. The function's signature is unchanged
+  (`parseJsonResponse<T>(text: string): T`); the runtime contract widens —
+  the new `WikiParseError` type carries `{ tier, position, slice }` instead
+  of an opaque `Error`, and `tier: 'repair'` is now reachable for balanced
+  invalid payloads (e.g. `{"facts":}`) where the walker found a candidate
+  span that `JSON.parse` ultimately rejected.
+- `IngestionService.ingestDocument` no longer rejects the whole call when one
+  chunk fails. Sibling chunks commit; the result's `parseFailures[]` records
+  per-chunk failures. A new typed error `WikiIngestEmptyError` is thrown when
+  every chunk failed. New typed error `WikiParseError` carries `{tier,
+  position, slice}`. New result fields: `ingestedChunks`, `failedChunks`,
+  `parseFailures?`.
+- Partial-commit semantics: when some chunks fail, the document's
+  `(entity, sourceHash) → sourceRef` ownership is **not** recorded and the
+  partial rows are stored with `source_hash = NULL`. Subsequent runs with
+  the same hash see `hasChanged` return `true` and the failed chunks retry
+  on the next pass; the retry's `appendPartialFacts` dedupes against the
+  prior partial's surviving rows so titles are never duplicated. On full
+  success the next run supersedes everything atomically.
+- `INGEST_SYSTEM_PROMPT` and `ONTOLOGY_BACKFILL_SYSTEM_PROMPT` were tightened
+  to call out JSON-escape discipline explicitly.
+
+**Hosts must update (host-facing migration)**: a host that today treats `ingestDocument` throwing as the only failure signal will, after 5.4.1, see a successful return with `parseFailures[]` set when a subset of chunks failed. Inspect `result.failedChunks` and surface `result.parseFailures[]` for observability — do not rely on the throw for partial failures. Only `WikiIngestEmptyError` (every chunk failed) still throws. Catch `WikiParseError` explicitly if you previously caught `Error` to log parse failures — the new `tier` field replaces the opaque `message`.
+
 ## Features
 
 - **Platform-agnostic** — Zero runtime dependencies; works with any SQLite driver via the `SQLiteAdapter` interface

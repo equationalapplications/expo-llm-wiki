@@ -125,11 +125,15 @@ class MockSQLiteDatabase {
         return { changes, lastInsertRowId: 0 };
       }
 
-      if (normalized.startsWith('UPDATE') && normalized.includes('entries SET deleted_at = ?, updated_at = ? WHERE source_ref = ? AND entity_id = ? AND deleted_at IS NULL')) {
-        const [deletedAt, updatedAt, sourceRef, entityId] = args;
+      if (normalized.startsWith('UPDATE') && normalized.includes('entries SET deleted_at = ?, updated_at = ? WHERE entity_id = ? AND deleted_at IS NULL')) {
+        // Actual SQL: `... WHERE entity_id = ? AND deleted_at IS NULL [AND source_ref = ?]`
+        // (order is entity_id first, then optional source_ref). args = [deletedAt, updatedAt, entityId]
+        // or [deletedAt, updatedAt, entityId, sourceRef].
+        const [deletedAt, updatedAt, entityId, sourceRefMaybe] = args;
         let changes = 0;
         for (const entry of this.entries) {
-          if (entry.source_ref === sourceRef && entry.entity_id === entityId && entry.deleted_at == null) {
+          if (entry.entity_id === entityId && entry.deleted_at == null) {
+            if (sourceRefMaybe !== undefined && entry.source_ref !== sourceRefMaybe) continue;
             entry.deleted_at = deletedAt;
             entry.updated_at = updatedAt;
             changes++;
@@ -193,6 +197,33 @@ class MockSQLiteDatabase {
 
       if (normalized.startsWith('SELECT rowid, source_ref FROM') && normalized.includes('entries')) {
         return [] as T[];
+      }
+
+      if (normalized.startsWith('SELECT id FROM') && normalized.includes('entries') && normalized.includes('source_ref = ?') && normalized.includes('entity_id = ?')) {
+        // EntryRepository.findIdsBySource(entityId, sourceRef, null, tx, false)
+        // Actual SQL: `SELECT id FROM entries WHERE entity_id = ? AND source_ref = ? AND deleted_at IS NULL`
+        const [entityId, sourceRef] = args as string[];
+        return this.entries
+          .filter(e => e.entity_id === entityId && e.source_ref === sourceRef && e.deleted_at == null)
+          .map(e => ({ id: e.id })) as T[];
+      }
+
+      if (normalized.startsWith('SELECT * FROM') && normalized.includes('entries') && normalized.includes('id IN (') && normalized.includes('deleted_at IS NULL')) {
+        // EntryRepository.findByIds(ids, scopedEntityIds, tx)
+        // Actual SQL: `SELECT * FROM entries WHERE id IN (?,...) [AND entity_id IN (?,...)] AND deleted_at IS NULL`
+        // When the SQL carries `entity_id IN`, args layout is [...ids, ...entityIds] and both
+        // sets must match. When the SQL omits the entity clause (scopedEntityIds undefined),
+        // args are just the ids.
+        const hasEntityClause = normalized.includes('entity_id IN (');
+        const idSet = new Set<string>();
+        const entityIdSet = new Set<string>();
+        for (const a of args) {
+          if (typeof a !== 'string') continue;
+          if (this.entries.some(e => e.id === a)) idSet.add(a);
+          if (this.entries.some(e => e.entity_id === a)) entityIdSet.add(a);
+        }
+        return this.entries
+          .filter(e => e.deleted_at == null && idSet.has(e.id) && (!hasEntityClause || entityIdSet.has(e.entity_id))) as T[];
       }
 
       if (normalized.startsWith('SELECT * FROM') && normalized.includes('entries WHERE entity_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC')) {
@@ -323,7 +354,7 @@ describe('ingestDocument', () => {
     expect(sames[0].body).toBe('body 1'); // first-wins
   });
 
-  it('one chunk failing rejects whole call with no DB writes', async () => {
+  it('one chunk failing allows sibling chunks to commit; failedChunks reflects the count', async () => {
     const text = 'First chunk content.\n\nSecond chunk content.';
     let callCount = 0;
     const failProvider = {
@@ -334,11 +365,20 @@ describe('ingestDocument', () => {
       },
     };
     const wiki = await freshWiki(failProvider);
-    await expect(
-      wiki.ingestDocument('e3', { sourceRef: 'doc3', sourceHash, documentChunk: text, maxChunkLength: 30, chunkOverlap: 0 })
-    ).rejects.toThrow('LLM failed');
+    const result = await wiki.ingestDocument('e3', {
+      sourceRef: 'doc3',
+      sourceHash,
+      documentChunk: text,
+      maxChunkLength: 30,
+      chunkOverlap: 0,
+    });
+    expect(result.failedChunks).toBe(1);
+    expect(result.ingestedChunks).toBe(result.chunks - 1);
+    expect(result.parseFailures![0].source).toBe('llm');
+    // Sibling facts DID write through.
     const bundle = await wiki.getMemoryBundle('e3');
-    expect(bundle.facts.length).toBe(0);
+    expect(bundle.facts.length).toBe(1);
+    expect(bundle.facts[0].title).toBe('Good Fact');
   });
 
   it.each([
@@ -544,5 +584,536 @@ describe('ingestDocument — ontology', () => {
     expect(fact).toBeDefined();
     expect(fact!.tags).toEqual(tags);
     expect(fact!.confidence).toBe('inferred');
+  });
+});
+
+describe('ingestDocument — partial commit (issue #92)', () => {
+  // Deterministic 64-char hex string per integer index. `padStart` keeps
+  // each output distinct (e.g. `1` and `11`) so a future test that reuses
+  // one `freshWiki` instance with two colliding indices cannot hit the
+  // duplicate-hash path for an unrelated reason.
+  const sourceHashFor = (i: number) => String(i).padStart(4, '0').repeat(16);
+
+  function makeBadJson() {
+    // LLM emits a structurally-incomplete payload: an array bracket with
+    // no balanced close. Both the strict scanner (no balanced span) and the
+    // container-aware repair walker (no candidate produced — the stack
+    // never pops to empty) reject this. See pure.ts parseJsonResponse.
+    // The plan's originally-suggested `"she said "hi"` input is now
+    // handled by tier-2; the previous `"a"b"` fixture was a bare quote
+    // inside a value string which the walker also now repairs. An unclosed
+    // bracket is a structural failure that defeats every parser tier.
+    return '{"facts":[';
+  }
+
+  it('one chunk parse-fails: siblings commit, failedChunks=1, source=parse', async () => {
+    const text = 'First chunk content here long enough.\n\nSecond chunk content here long enough.\n\nThird chunk content here long enough.';
+    let i = 0;
+    const provider = {
+      generateText: async () => {
+        const idx = i++;
+        if (idx === 1) return makeBadJson();
+        return JSON.stringify({
+          facts: [{ title: `Fact ${idx}`, body: `body ${idx}`, tags: [], confidence: 'certain' }],
+        });
+      },
+    };
+    const wiki = await freshWiki(provider);
+    const result = await wiki.ingestDocument('e_partial_1', {
+      sourceRef: 'doc-partial-1',
+      sourceHash: sourceHashFor(1),
+      documentChunk: text,
+      maxChunkLength: 50,
+      chunkOverlap: 0,
+    });
+    expect(result.chunks).toBeGreaterThan(2);
+    expect(result.failedChunks).toBe(1);
+    expect(result.ingestedChunks).toBe(result.chunks - 1);
+    expect(result.parseFailures).toBeDefined();
+    expect(result.parseFailures![0].source).toBe('parse');
+    expect(result.parseFailures![0].chunkIndex).toBe(1);
+    expect(result.parseFailures![0].sourceRef).toBe('doc-partial-1');
+    // Sibling facts reach the bundle (the persistent set is non-empty).
+    const bundle = await wiki.getMemoryBundle('e_partial_1');
+    expect(bundle.facts.length).toBe(result.ingestedChunks);
+  });
+
+  it('one chunk LLM-fails: siblings commit, source=llm (no tier)', async () => {
+    const text = 'First chunk content here long enough.\n\nSecond chunk content here long enough.\n\nThird chunk content here long enough.';
+    let i = 0;
+    const provider = {
+      generateText: async () => {
+        const idx = i++;
+        if (idx === 1) throw new Error('Bedrock ThrottlingException');
+        return JSON.stringify({
+          facts: [{ title: `Fact ${idx}`, body: `body ${idx}`, tags: [], confidence: 'certain' }],
+        });
+      },
+    };
+    const wiki = await freshWiki(provider);
+    const result = await wiki.ingestDocument('e_partial_2', {
+      sourceRef: 'doc-partial-2',
+      sourceHash: sourceHashFor(2),
+      documentChunk: text,
+      maxChunkLength: 50,
+      chunkOverlap: 0,
+    });
+    expect(result.failedChunks).toBe(1);
+    expect(result.parseFailures![0].source).toBe('llm');
+    expect(result.parseFailures![0].tier).toBeUndefined();
+    expect(result.parseFailures![0].message).toContain('ThrottlingException');
+  });
+
+  it('all chunks fail: throws WikiIngestEmptyError with full parseFailures', async () => {
+    const text = 'First chunk content.\n\nSecond chunk content.\n\nThird chunk content.';
+    const provider = {
+      generateText: async () => makeBadJson(),
+    };
+    const wiki = await freshWiki(provider);
+    await expect(
+      wiki.ingestDocument('e_all_fail', {
+        sourceRef: 'doc-all-fail',
+        sourceHash: sourceHashFor(3),
+        documentChunk: text,
+        maxChunkLength: 30,
+        chunkOverlap: 0,
+      }),
+    ).rejects.toMatchObject({
+      name: 'WikiIngestEmptyError',
+      sourceRef: 'doc-all-fail',
+      chunks: expect.any(Number),
+    });
+  });
+
+  it('mixed parse + llm failures: sources correctly tagged per chunk', async () => {
+    const text = 'First chunk content here.\n\nSecond chunk content here.\n\nThird chunk content here.\n\nFourth chunk content here.\n\nFifth chunk content here.';
+    let i = 0;
+    const provider = {
+      generateText: async () => {
+        const idx = i++;
+        if (idx === 0) return makeBadJson();          // parse failure
+        if (idx === 2) throw new Error('rate limit'); // llm failure
+        return JSON.stringify({
+          facts: [{ title: `Fact ${idx}`, body: `body ${idx}`, tags: [], confidence: 'certain' }],
+        });
+      },
+    };
+    const wiki = await freshWiki(provider);
+    const result = await wiki.ingestDocument('e_mixed', {
+      sourceRef: 'doc-mixed',
+      sourceHash: sourceHashFor(4),
+      documentChunk: text,
+      maxChunkLength: 35,
+      chunkOverlap: 0,
+    });
+    expect(result.failedChunks).toBe(2);
+    const sources = result.parseFailures!.map((f) => f.source).sort();
+    expect(sources).toEqual(['llm', 'parse']);
+  });
+
+  it('console.warn fires exactly once per failed chunk', async () => {
+    const text = 'First chunk content here long enough.\n\nSecond chunk content here long enough.\n\nThird chunk content here long enough.';
+    let i = 0;
+    const provider = {
+      generateText: async () => {
+        const idx = i++;
+        if (idx === 0 || idx === 2) return makeBadJson();
+        return JSON.stringify({
+          facts: [{ title: `Fact ${idx}`, body: `body ${idx}`, tags: [], confidence: 'certain' }],
+        });
+      },
+    };
+    const wiki = await freshWiki(provider);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const result = await wiki.ingestDocument('e_warn', {
+        sourceRef: 'doc-warn',
+        sourceHash: sourceHashFor(5),
+        documentChunk: text,
+        maxChunkLength: 50,
+        chunkOverlap: 0,
+      });
+      expect(warnSpy.mock.calls.length).toBe(result.failedChunks);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('console.warn NEVER includes the raw LLM response body', async () => {
+    const text = 'First chunk content here long enough.\n\nSecond chunk content here long enough.';
+    const badJson = makeBadJson();
+    let i = 0;
+    const provider = {
+      generateText: async () => {
+        const idx = i++;
+        if (idx === 0) return badJson;
+        return JSON.stringify({
+          facts: [{ title: `Fact ${idx}`, body: `body ${idx}`, tags: [], confidence: 'certain' }],
+        });
+      },
+    };
+    const wiki = await freshWiki(provider);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await wiki.ingestDocument('e_noleak', {
+        sourceRef: 'doc-noleak',
+        sourceHash: sourceHashFor(6),
+        documentChunk: text,
+        maxChunkLength: 50,
+        chunkOverlap: 0,
+      });
+      // `makeBadJson()` returns `'{"facts":['` — the substring below is
+      // a fragment of the raw LLM response body. If the no-leak invariant
+      // regresses (e.g. the response text is interpolated into the warn
+      // line), this assertion catches it. Do NOT change this fragment to
+      // something not in `badJson` — the previous incarnation asserted
+      // against `'"a"b"'` which was a vacuous substring check.
+      const responseBodyFragment = '{"facts":[';
+      expect(badJson).toContain(responseBodyFragment);
+      for (const call of warnSpy.mock.calls) {
+        for (const arg of call) {
+          if (typeof arg === 'string') {
+            expect(arg).not.toContain(responseBodyFragment);
+          }
+        }
+      }
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('console.warn NEVER includes the provider Error.message body (llm-error branch)', async () => {
+    // Regression for the provider-controlled `Error.message` leak:
+    // some LLM SDKs surface the raw response body, document content, or a
+    // multi-megabyte HTTP error in `Error.message`. The warn line must
+    // redact this — full detail stays in `parseFailures` for callers that
+    // opt in, but the unconditional warn is intentionally narrow.
+    const text = 'First chunk content here long enough.\n\nSecond chunk content here long enough.';
+    const responseBodyFragment = '{"facts":[{"body":"super-secret-proprietary-document-content"}]}';
+    const leakyMessage = `Bedrock InvocationModelError: server returned 4xx with body: ${responseBodyFragment}`;
+    let i = 0;
+    const provider = {
+      generateText: async () => {
+        const idx = i++;
+        if (idx === 0) throw new Error(leakyMessage);
+        return JSON.stringify({
+          facts: [{ title: `Fact ${idx}`, body: `body ${idx}`, tags: [], confidence: 'certain' }],
+        });
+      },
+    };
+    const wiki = await freshWiki(provider);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const result = await wiki.ingestDocument('e_noleak_llm', {
+        sourceRef: 'doc-noleak-llm',
+        sourceHash: sourceHashFor(8),
+        documentChunk: text,
+        maxChunkLength: 50,
+        chunkOverlap: 0,
+      });
+      expect(result.failedChunks).toBe(1);
+      expect(result.parseFailures![0].source).toBe('llm');
+      // The full leaky message stays in parseFailures (typed diagnostic
+      // for callers that opt in).
+      expect(result.parseFailures![0].message).toContain(responseBodyFragment);
+      // But the warn line must NOT contain the leaky fragment.
+      for (const call of warnSpy.mock.calls) {
+        for (const arg of call) {
+          if (typeof arg === 'string') {
+            expect(arg).not.toContain(responseBodyFragment);
+          }
+        }
+      }
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('ontologyContext failure propagates as a raw throw, does NOT become WikiIngestEmptyError', async () => {
+    const text = 'First chunk content.\n\nSecond chunk content.';
+    const provider = {
+      generateText: async () =>
+        JSON.stringify({ facts: [{ title: 'T', body: 'B', tags: [], confidence: 'certain' }] }),
+    };
+    const wiki = await freshWiki(provider);
+    // Inject a buildPromptContext failure by spying on the real ontology
+    // service instance. Spying preserves the prototype methods on the
+    // underlying service — a plain object-spread replacement would expose
+    // only `buildPromptContext` and fail any future call that uses a
+    // sibling method (e.g. `getEffectiveState`) with a TypeError instead of
+    // the intended assertion.
+    const svc = wiki.__testAccess.ingestionService as IngestionService;
+    const ontologySpy = vi
+      .spyOn((svc as any).ontologyService, 'buildPromptContext')
+      .mockRejectedValue(new Error('DB connection lost'));
+    try {
+      await expect(
+        wiki.ingestDocument('e_ontology', {
+          sourceRef: 'doc-ontology',
+          sourceHash: sourceHashFor(7),
+          documentChunk: text,
+          maxChunkLength: 30,
+          chunkOverlap: 0,
+        }),
+      ).rejects.toThrow('DB connection lost');
+    } finally {
+      ontologySpy.mockRestore();
+    }
+  });
+
+  it('partial commit does NOT update source_ref_index (no ownership on partial)', async () => {
+    const text = 'First chunk content here long enough.\n\nSecond chunk content here long enough.\n\nThird chunk content here long enough.';
+    let i = 0;
+    const provider = {
+      generateText: async () => {
+        const idx = i++;
+        if (idx === 1) return makeBadJson();
+        return JSON.stringify({
+          facts: [{ title: `Fact ${idx}`, body: `body ${idx}`, tags: [], confidence: 'certain' }],
+        });
+      },
+    };
+    const wiki = await freshWiki(provider);
+    const svc = wiki.__testAccess.ingestionService as IngestionService;
+    const upsertSpy = vi.spyOn(svc['sourceRefIndexRepo'], 'upsert');
+    await wiki.ingestDocument('e_no_own', {
+      sourceRef: 'doc://no-own',
+      sourceHash: sourceHashFor(8),
+      documentChunk: text,
+      maxChunkLength: 50,
+      chunkOverlap: 0,
+    });
+    expect(upsertSpy).not.toHaveBeenCalled();
+  });
+
+  it('partial commit does NOT supersede prior facts for the same sourceRef', async () => {
+    // First: a full successful ingest.
+    const text = 'First chunk content here long enough.';
+    const fullProvider = {
+      generateText: async () =>
+        JSON.stringify({ facts: [{ title: 'Original', body: 'body', tags: [], confidence: 'certain' }] }),
+    };
+    const wiki = await freshWiki(fullProvider);
+    const sourceHashA = sourceHashFor(9);
+    await wiki.ingestDocument('e_super', {
+      sourceRef: 'doc://super',
+      sourceHash: sourceHashA,
+      documentChunk: text,
+      maxChunkLength: 50,
+      chunkOverlap: 0,
+    });
+    // Confirm the original fact is live.
+    const bundleBefore = await wiki.getMemoryBundle('e_super');
+    expect(bundleBefore.facts.map((f) => f.title)).toContain('Original');
+
+    // Now: a partial ingest with a new sourceHash (different content) but
+    // same sourceRef — this must NOT soft-delete the prior fact.
+    const partialText = 'New chunk content here long enough.\n\nNewer chunk content here long enough.';
+    let i = 0;
+    const partialProvider = {
+      generateText: async () => {
+        const idx = i++;
+        if (idx === 1) return makeBadJson();
+        return JSON.stringify({
+          facts: [{ title: `New ${idx}`, body: `new body ${idx}`, tags: [], confidence: 'certain' }],
+        });
+      },
+    };
+    (wiki as any).options.llmProvider = partialProvider;
+    const sourceHashB = sourceHashFor(10);
+    await wiki.ingestDocument('e_super', {
+      sourceRef: 'doc://super',
+      sourceHash: sourceHashB,
+      documentChunk: partialText,
+      maxChunkLength: 50,
+      chunkOverlap: 0,
+    });
+
+    const bundleAfter = await wiki.getMemoryBundle('e_super');
+    // Both the original fact and the partial attempt's new facts are live.
+    expect(bundleAfter.facts.map((f) => f.title)).toContain('Original');
+    expect(bundleAfter.facts.map((f) => f.title)).toContain('New 0');
+  });
+
+  it('partial commit dedups against prior live facts for the same sourceRef', async () => {
+    // First: a full ingest of 'Fact A' under sourceRef.
+    const wiki = await freshWiki({
+      generateText: async () =>
+        JSON.stringify({ facts: [{ title: 'Fact A', body: 'body', tags: [], confidence: 'certain' }] }),
+    });
+    await wiki.ingestDocument('e_dedup', {
+      sourceRef: 'doc://dedup',
+      sourceHash: sourceHashFor(11),
+      documentChunk: 'Chunk A content here long enough.',
+      maxChunkLength: 50,
+      chunkOverlap: 0,
+    });
+
+    // Now: a partial ingest where chunk 0 succeeds with the SAME title 'Fact A'.
+    let i = 0;
+    (wiki as any).options.llmProvider = {
+      generateText: async () => {
+        const idx = i++;
+        if (idx === 1) return makeBadJson();
+        return JSON.stringify({
+          facts: [{ title: 'Fact A', body: 'duplicate body', tags: [], confidence: 'certain' }],
+        });
+      },
+    };
+    const result = await wiki.ingestDocument('e_dedup', {
+      sourceRef: 'doc://dedup',
+      sourceHash: sourceHashFor(12),
+      documentChunk: 'New chunk content here long enough.\n\nNewer chunk content here long enough.',
+      maxChunkLength: 50,
+      chunkOverlap: 0,
+    });
+
+    expect(result.failedChunks).toBe(1);
+    // Only one 'Fact A' in the bundle despite two ingest attempts.
+    const bundle = await wiki.getMemoryBundle('e_dedup');
+    const factAs = bundle.facts.filter((f) => f.title === 'Fact A');
+    expect(factAs.length).toBe(1);
+  });
+
+  it('partial commit fires embedFact for every inserted fact', async () => {
+    // Regression for the copilot review: when a partial commit inserts
+    // rows via `appendPartialFacts`, those rows' embedding lifecycle
+    // previously skipped `embedFact` and `onEmbeddingPersisted` because
+    // the post-commit hook loop was gated on `failedChunks === 0`. That
+    // left `embedding_blob` null on partial-path rows and never notified
+    // the vector ranker — silently broken semantic retrieval until a
+    // later full retry. The fix threads the inserted descriptors through
+    // the same hook loop on either path.
+    const text = 'First chunk content here long enough.\n\nSecond chunk content here long enough.\n\nThird chunk content here long enough.';
+    let i = 0;
+    const provider = {
+      generateText: async () => {
+        const idx = i++;
+        if (idx === 1) return makeBadJson();
+        return JSON.stringify({
+          facts: [{ title: `Partial ${idx}`, body: `partial body ${idx}`, tags: [], confidence: 'certain' }],
+        });
+      },
+    };
+    const wiki = await freshWiki(provider);
+    const embedSpy = vi.spyOn(wiki.__testAccess.embeddingService, 'embedFact');
+    try {
+      const result = await wiki.ingestDocument('e_partial_embed', {
+        sourceRef: 'doc://partial-embed',
+        sourceHash: sourceHashFor(13),
+        documentChunk: text,
+        maxChunkLength: 50,
+        chunkOverlap: 0,
+      });
+      expect(result.chunks).toBeGreaterThan(2);
+      expect(result.ingestedChunks).toBe(result.chunks - 1);
+      expect(result.failedChunks).toBe(1);
+      // Every successful chunk's fact reaches `embedFact` — one call per
+      // inserted fact descriptor. The descriptor shape mirrors what
+      // `runFullUpsertGraph` returns so the embedding service sees the
+      // same shape whether the insert came from the full or partial path.
+      expect(embedSpy.mock.calls.length).toBe(result.ingestedChunks);
+      for (const call of embedSpy.mock.calls) {
+        const descriptor = call[0];
+        expect(typeof descriptor.id).toBe('string');
+        expect(typeof descriptor.entity_id).toBe('string');
+        expect(typeof descriptor.title).toBe('string');
+        expect(typeof descriptor.body).toBe('string');
+      }
+    } finally {
+      embedSpy.mockRestore();
+    }
+  });
+
+  it('a subsequent full success replaces both prior partial and prior full attempts in one transaction', async () => {
+    // First: a full ingest that establishes the sourceRef.
+    const wiki = await freshWiki({
+      generateText: async () => JSON.stringify({ facts: [{ title: 'Full', body: 'f', tags: [], confidence: 'certain' }] }),
+    });
+    const sourceRef = 'doc://retry';
+    await wiki.ingestDocument('e_retry', {
+      sourceRef,
+      sourceHash: sourceHashFor(13),
+      documentChunk: 'First chunk content here long enough.',
+      maxChunkLength: 50,
+      chunkOverlap: 0,
+    });
+
+    // Second: a partial ingest (chunk 1 fails) for the same sourceRef with new hash.
+    let i = 0;
+    (wiki as any).options.llmProvider = {
+      generateText: async () => {
+        const idx = i++;
+        if (idx === 1) return makeBadJson();
+        return JSON.stringify({ facts: [{ title: 'Partial', body: 'p', tags: [], confidence: 'certain' }] });
+      },
+    };
+    await wiki.ingestDocument('e_retry', {
+      sourceRef,
+      sourceHash: sourceHashFor(14),
+      documentChunk: 'New chunk content here long enough.\n\nNewer chunk content here long enough.',
+      maxChunkLength: 50,
+      chunkOverlap: 0,
+    });
+    const partialBundle = await wiki.getMemoryBundle('e_retry');
+    // Both 'Full' (prior) and 'Partial' (this partial attempt) are live.
+    expect(partialBundle.facts.map((f) => f.title).sort()).toEqual(['Full', 'Partial']);
+
+    // Third: a full success for the same sourceRef with a new hash. The full
+    // path's supersession replaces BOTH the prior full attempt AND the partial
+    // attempt in one transaction.
+    (wiki as any).options.llmProvider = {
+      generateText: async () => JSON.stringify({ facts: [{ title: 'Final', body: 'f', tags: [], confidence: 'certain' }] }),
+    };
+    await wiki.ingestDocument('e_retry', {
+      sourceRef,
+      sourceHash: sourceHashFor(15),
+      documentChunk: 'Final chunk content here long enough.',
+      maxChunkLength: 50,
+      chunkOverlap: 0,
+    });
+
+    // Only 'Final' should be live — both prior attempts were superseded.
+    const bundle = await wiki.getMemoryBundle('e_retry');
+    const titles = bundle.facts.map((f) => f.title);
+    expect(titles).toEqual(['Final']);
+  });
+
+  it('hasChanged returns true after a partial commit (so the failed chunks retry on the same hash)', async () => {
+    // Regression: appendPartialFacts stores source_hash as NULL on partial
+    // rows. findLatestSourceHash reads from the most recently updated live
+    // row, so the partial commit's NULL hash lets hasChanged keep returning
+    // true on a same-hash retry — the failed chunks get a second chance.
+    // The previous implementation stamped the incoming hash, which made
+    // hasChanged return false and prevent the retry.
+    const text = 'First chunk content here long enough.\n\nSecond chunk content here long enough.\n\nThird chunk content here long enough.';
+    let i = 0;
+    const provider = {
+      generateText: async () => {
+        const idx = i++;
+        if (idx === 1) return makeBadJson();
+        return JSON.stringify({
+          facts: [{ title: `Fact ${idx}`, body: `body ${idx}`, tags: [], confidence: 'certain' }],
+        });
+      },
+    };
+    const wiki = await freshWiki(provider);
+    const sourceRef = 'doc://same-hash';
+    const sourceHash = sourceHashFor(20);
+
+    // First attempt: partial (chunk 1 fails).
+    const result = await wiki.ingestDocument('e_samehash', {
+      sourceRef,
+      sourceHash,
+      documentChunk: text,
+      maxChunkLength: 50,
+      chunkOverlap: 0,
+    });
+    expect(result.failedChunks).toBe(1);
+    expect(result.ingestedChunks).toBe(2);
+
+    // Same hash, no full commit yet: hasChanged must still return true so a
+    // retry of the same content re-attempts the failed chunk.
+    await expect(wiki.hasChanged('e_samehash', sourceRef, sourceHash)).resolves.toBe(true);
   });
 });

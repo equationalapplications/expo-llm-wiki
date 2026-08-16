@@ -32,9 +32,9 @@ import { PromptService } from './services/PromptService';
 import { OntologyService } from './services/OntologyService';
 import { GraphTraversalService } from './services/GraphTraversalService';
 import { OkfTrustWritesRepository } from './db/okf-trust-writes';
-import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighborhood, OntologyBackfillResult, HealResult } from './types';
+import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighborhood, OntologyBackfillResult, HealResult, IngestDocumentResult } from './types';
 
-export { WikiBusyError, WikiTransactionError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER, WikiStrictOntologyViolation, WikiSourceRefHashCollision } from './types';
+export { WikiBusyError, WikiTransactionError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER, WikiStrictOntologyViolation, WikiSourceRefHashCollision, WikiParseError, WikiIngestEmptyError } from './types';
 
 const TABLE_PREFIX_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,30}_$/;
 
@@ -552,7 +552,7 @@ export class WikiMemory {
       promptOverride?: string;
     },
     opts?: { onDuplicateHash?: 'ingest' | 'skip' | 'throw' },
-  ): Promise<{ truncated: boolean; chunks: number; duplicateOf?: string }> {
+  ): Promise<IngestDocumentResult> {
     return this.ingestionService.ingestDocument(entityId, params, opts);
   }
 

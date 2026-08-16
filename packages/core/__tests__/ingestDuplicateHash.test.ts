@@ -54,7 +54,7 @@ describe('IngestionService.ingestDocument duplicate-hash guard', () => {
       { sourceRef: 'mail-sent-a.md', sourceHash: VALID_HASH_A, documentChunk: 'hello' },
       { onDuplicateHash: 'skip' },
     );
-    expect(result).toEqual({ truncated: false, chunks: 0, duplicateOf: 'mail-inbox-a.md' });
+    expect(result).toEqual({ truncated: false, chunks: 0, ingestedChunks: 0, failedChunks: 0, duplicateOf: 'mail-inbox-a.md' });
   });
 
   it("onDuplicateHash='skip' makes zero LLM calls / zero DB writes / zero outbox events", async () => {
@@ -71,7 +71,7 @@ describe('IngestionService.ingestDocument duplicate-hash guard', () => {
       { onDuplicateHash: 'skip' },
     );
 
-    expect(result).toEqual({ truncated: false, chunks: 0, duplicateOf: 'mail-inbox-a.md' });
+    expect(result).toEqual({ truncated: false, chunks: 0, ingestedChunks: 0, failedChunks: 0, duplicateOf: 'mail-inbox-a.md' });
     expect(spy).not.toHaveBeenCalled();
     const entriesAfter = await db.getAllAsync<{ id: string }>(`SELECT id FROM llm_wiki_entries WHERE entity_id = ?`, ['entity-1']);
     expect(entriesAfter).toHaveLength(entriesBefore.length);
@@ -88,7 +88,7 @@ describe('IngestionService.ingestDocument duplicate-hash guard', () => {
       { sourceRef: 'mail-sent-a.md', sourceHash: VALID_HASH_A, documentChunk: 'hello' },
       { onDuplicateHash: 'skip' },
     );
-    expect(result).toEqual({ truncated: false, chunks: 0, duplicateOf: 'mail-inbox-a.md' });
+    expect(result).toEqual({ truncated: false, chunks: 0, ingestedChunks: 0, failedChunks: 0, duplicateOf: 'mail-inbox-a.md' });
   });
 
   it("onDuplicateHash='throw' throws WikiDuplicateHashError", async () => {

@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { useWiki } from './WikiContext';
+import type { ChunkFailure } from '@equationalapplications/core-llm-wiki';
 
 interface IngestParams {
   sourceRef: string;
@@ -9,7 +10,22 @@ interface IngestParams {
   promptOverride?: string;
 }
 
-type IngestResult = { truncated: boolean; chunks: number };
+/**
+ * Mirrors the widened `IngestDocumentResult` contract: `ingestDocument` no
+ * longer throws when a SUBSET of chunks fails — it returns successfully with
+ * `failedChunks > 0` and `parseFailures` describing each failed chunk.
+ * Consumers of this hook should check `failedChunks`/`parseFailures` on the
+ * resolved value; `error` remains reserved for total failure
+ * (`WikiIngestEmptyError`) and systemic throws.
+ */
+type IngestResult = {
+  truncated: boolean;
+  chunks: number;
+  ingestedChunks: number;
+  failedChunks: number;
+  duplicateOf?: string;
+  parseFailures?: ChunkFailure[];
+};
 
 export function useWikiIngest() {
   const wiki = useWiki();

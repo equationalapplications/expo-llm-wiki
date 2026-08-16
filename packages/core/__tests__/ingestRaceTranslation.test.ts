@@ -113,7 +113,7 @@ describe('IngestionService — UNIQUE violation translation', () => {
       canonicalRef: 'canonical.md',
       onDuplicateHash: 'skip',
     });
-    expect(result).toEqual({ truncated: false, chunks: 0, duplicateOf: 'canonical.md' });
+    expect(result).toEqual({ truncated: false, chunks: 0, ingestedChunks: 0, failedChunks: 0, duplicateOf: 'canonical.md' });
   });
 
   it("mode 'throw': raises WikiDuplicateHashError with canonical/entity/hash", async () => {

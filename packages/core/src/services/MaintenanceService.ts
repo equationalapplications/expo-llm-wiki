@@ -1,4 +1,4 @@
-import { parseJsonResponse, validateFact, validateTask, titleTokens, jaccardScore, normalizeSourceRef, normalizeSourceHash, sanitizeRankerError } from '../utils/pure';
+import { parseJsonResponse, validateFact, validateTask, titleTokens, jaccardScore, normalizeSourceRef, normalizeSourceHash, sanitizeRankerError, safeErrorToString, safeSlice } from '../utils/pure';
 import { normalizeTitleKey } from '../utils/ontology';
 import { PromptService } from './PromptService';
 import type { OntologyService, TitleIndexEntry } from './OntologyService';
@@ -68,6 +68,78 @@ interface HealBatch {
   deleted: string[];
   newFacts: ExtractedFact[];
 }
+
+/**
+ * Hard cap on skipped-item error text in the log. A provider response or
+ * prompt artifact can carry a multi-MB message; one unbounded failure must
+ * not flood stderr (or any downstream log-shipping pipeline) by being logged
+ * once per skipped item.
+ */
+const SKIP_ERROR_LOG_CHARS = 4096;
+
+/**
+ * Stringify an unknown error from `RunBatchedArgs.onSkip` for the log.
+ * Exported for unit testing only — callers must always treat the return
+ * value as a bounded, log-safe string. Internal callers feed this through
+ * `console.warn` from heal/ontology-backfill `onSkip` paths.
+ *
+ * The callback receives `unknown`, so the value is not guaranteed to be a
+ * `WikiParseError` with a small `.message`; a raw provider stack, an HTTP
+ * error object, or a `string` is all possible. `String(err)` on a plain object
+ * uses `Object.prototype.toString` and stays small, but `JSON.stringify` is
+ * needed to surface anything structured, and the output is bounded either
+ * way so a degenerate payload cannot slip through.
+ *
+ * Implementation note: every coercion path delegates to `safeErrorToString`,
+ * which guarantees a non-throwing string return via a static
+ * `[unstringifiable error]` marker. The previous hand-rolled chain had a
+ * hole — `JSON.stringify` throws and the `catch` then ran
+ * `Object.prototype.toString.call(err)`, which itself can throw (a Proxy
+ * whose `get` trap rejects every property access — including
+ * `Symbol.toStringTag`). That throw escaped the function and rejected the
+ * surrounding `runBatched` operation wholesale. `safeErrorToString` was
+ * hardened against this exact path; reuse it.
+ */
+export const formatSkipError = (err: unknown): string => {
+  // Two goals:
+  //   1. Surface structured provider errors as JSON when present
+  //      (e.g. `{code: 500, msg: 'oops'}` -> `"{"code":500,"msg":"oops"}"`).
+  //   2. Never throw, regardless of what hostile value reaches us via
+  //      `onSkip` (Symbol, function, throwing toString, Proxy rejecting
+  //      property access, Error with bad message, etc).
+  //
+  // `safeErrorToString` is the hardened non-throwing helper; every path
+  // either uses it directly or falls back to it. JSON.stringify failure
+  // paths (throwing toJSON, circular structure, Proxy) all converge on
+  // `safeErrorToString`, which itself wraps String() and
+  // Object.prototype.toString.call() in nested try/catch.
+  let base: string;
+  if (err instanceof Error || (typeof err !== 'object' && typeof err !== 'function')) {
+    // Errors -> safeErrorToString (returns err.message verbatim, or .name,
+    //   or '[Error]' for hostile Error subclasses)
+    // Primitives (string, number, boolean, bigint, undefined, symbol) ->
+    //   safeErrorToString (String() handles them all)
+    base = safeErrorToString(err);
+  } else {
+    // null + plain objects + arrays -> try JSON.stringify to surface
+    //   structure. `null` JSON-stringifies to 'null', `typeof null ===
+    //   'object'` so it lands here safely.
+    try {
+      const json = JSON.stringify(err);
+      base = typeof json === 'string' ? json : safeErrorToString(err);
+    } catch {
+      base = safeErrorToString(err);
+    }
+  }
+  if (base.length > SKIP_ERROR_LOG_CHARS) {
+    // safeSlice (from utils/pure) never splits a UTF-16 surrogate pair at the
+    // cut boundary — a bare String.slice can, leaving a lone high surrogate
+    // that renders as U+FFFD in the log line.
+    const truncated = safeSlice(base, 0, SKIP_ERROR_LOG_CHARS);
+    return `${truncated}…[+${base.length - SKIP_ERROR_LOG_CHARS} chars truncated]`;
+  }
+  return base;
+};
 
 export class MaintenanceService {
   private promptService: PromptService;
@@ -669,8 +741,7 @@ export class MaintenanceService {
       maxPromptChars: HEAL_MAX_PROMPT_CHARS,
       onSkip: (fact, err) => {
         console.warn(
-          `[WikiMemory] heal skipped ${entityId}/${fact.id}: response could not be bounded`,
-          err,
+          `[WikiMemory] heal skipped ${entityId}/${fact.id}: response could not be bounded: ${formatSkipError(err)}`,
         );
       },
     });
@@ -874,8 +945,7 @@ export class MaintenanceService {
       maxPromptChars: ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS,
       onSkip: (fact, err) => {
         console.warn(
-          `[WikiMemory] ontology backfill skipped ${entityId}/${fact.id}: response could not be bounded`,
-          err,
+          `[WikiMemory] ontology backfill skipped ${entityId}/${fact.id}: response could not be bounded: ${formatSkipError(err)}`,
         );
       },
     });

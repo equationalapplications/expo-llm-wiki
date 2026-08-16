@@ -776,3 +776,90 @@ export class PrunePartialFailureError extends Error {
 
 export const HOOK_TIMEOUT_MARKER = Symbol('WikiMemoryHookTimeout');
 
+/**
+ * Failure record for a single chunk that could not be ingested. Produced by
+ * `IngestionService.ingestDocument` and surfaced on the result's `parseFailures`
+ * array. `source === 'parse'` for `WikiParseError`-shaped failures (then `tier`
+ * is set); `source === 'llm'` for `generateText` rejections (no `tier`).
+ *
+ * Note: `'ontologyContext'` is reserved but NEVER produced. `buildPromptContext`
+ * failures are DB-systemic and propagate as raw throws, not as `parseFailures`.
+ */
+export interface ChunkFailure {
+  chunkIndex: number;
+  sourceRef: string;
+  source: 'parse' | 'llm';
+  tier?: 'strict' | 'repair' | 'all';
+  position: number | null;
+  message: string;
+}
+
+/**
+ * Result of `IngestionService.ingestDocument`. The shape WIDENS relative to
+ * earlier versions: `ingestedChunks` and `failedChunks` are always present;
+ * `parseFailures` is present iff at least one chunk failed.
+ *
+ * Hosts that destructure `{ truncated, chunks }` see no behavior change.
+ * Hosts pattern-matching the entire shape must update to the new fields.
+ */
+export interface IngestDocumentResult {
+  truncated: boolean;
+  chunks: number;
+  ingestedChunks: number;
+  failedChunks: number;
+  duplicateOf?: string;
+  parseFailures?: ChunkFailure[];
+}
+
+/**
+ * Thrown by `parseJsonResponse` when both the strict scanner pass and the
+ * container-aware repair pass fail to produce a parsable candidate.
+ *
+ * - `tier: 'strict'` — the existing scanner produced no usable slice (no
+ *   `{`/`[` at all, or no balanced close). `slice` is the full input text;
+ *   `position` is the offset of the first `{`/`[`, or `null` when none found.
+ * - `tier: 'repair'` — tier 1 found a slice but `JSON.parse` failed; tier 2
+ *   produced no parsable candidate within `MAX_REPAIR_CANDIDATES`. `slice` is
+ *   the largest balanced span the walker found; `position` is the offset of
+ *   the first parse failure within that candidate when known.
+ * - `tier: 'all'` — generic catch-all.
+ */
+export class WikiParseError extends Error {
+  readonly tier: 'strict' | 'repair' | 'all';
+  readonly position: number | null;
+  readonly slice: string;
+
+  constructor(
+    message: string,
+    opts: { tier: WikiParseError['tier']; position?: number | null; slice?: string },
+  ) {
+    super(message);
+    this.name = 'WikiParseError';
+    this.tier = opts.tier;
+    this.position = opts.position ?? null;
+    this.slice = opts.slice ?? '';
+  }
+}
+
+/**
+ * Thrown by `IngestionService.ingestDocument` when every chunk of a document
+ * failed (either `parseJsonResponse` or `generateText`). A silent zero-fact
+ * ingest is a worse regression than a typed throw — matches existing host
+ * semantics (`aws-cloud-agent` Writer Lambda today sees `ingestDocument`
+ * throw on any failure).
+ */
+export class WikiIngestEmptyError extends Error {
+  readonly parseFailures: ChunkFailure[];
+  readonly sourceRef: string;
+  readonly chunks: number;
+
+  constructor(params: { parseFailures: ChunkFailure[]; sourceRef: string; chunks: number }) {
+    const summary = `All ${params.chunks} chunks failed for sourceRef "${params.sourceRef}"; see parseFailures for per-chunk detail`;
+    super(summary);
+    this.name = 'WikiIngestEmptyError';
+    this.parseFailures = params.parseFailures;
+    this.sourceRef = params.sourceRef;
+    this.chunks = params.chunks;
+  }
+}
+
