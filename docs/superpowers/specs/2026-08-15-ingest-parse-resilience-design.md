@@ -68,7 +68,7 @@ throw WikiParseError(...)
 
 The existing scanner (`pure.ts:3-45`) finds the first `{` or `[` and walks depth until depth returns to 0, producing `slice = text.slice(start, end + 1)`. The bug is that the scanner's `inString` toggles on every `"`, so a bare quote inside a string mis-tracks state and produces either a truncated slice (early exit at a false positive `depth === 0`) or no slice at all (`end === -1`).
 
-For tier 1 we keep the existing scanner — it is correct whenever the input has no bare quotes. We only invoke tier 2 when tier 1 throws.
+For tier 1 we keep the existing scanner — it is correct whenever the input has no bare quotes. We only invoke tier 2 (containerAwareRepair) when tier 1 throws.
 
 #### 1.2 What tier 2 does differently
 
@@ -78,6 +78,8 @@ Tier 2 does **not** reuse the scanner's slice. It re-walks the raw text from `st
 
 - **Raw C0 control characters inside strings** are escaped as they're walked (`\n`, `\t`, `\r`, `\b`, `\f`; other C0 as `\u00XX`). A literal newline in a body otherwise invalidates every candidate, and this repair is ambiguity-free (a control char inside a string can only be content), so both passes produce identical output for it.
 - **A stray `"` at structural level immediately before `}`/`]`** is skipped, not emitted — emitting it would open an unterminated string and guarantee `JSON.parse` rejects the candidate.
+
+**Reused helper functions.** `safeErrorToString` (pure.ts:537), `controlCharEscape` (pure.ts:494), and `extractParsePosition` (pure.ts:517) already exist in the codebase; the tier-2 walker uses them as infrastructure.
 
 **Close-quote classification.** For a `"` inside a string, skip whitespace ahead and classify the quote **closing** when the next non-whitespace character is:
 
@@ -116,13 +118,15 @@ The scanner's slice can be arbitrarily truncated by a single bare quote mid-stri
 
 #### 1.4 What was removed from the earlier draft
 
-The earlier draft specified three tiers (2a on slice, 2b on raw text, **3 = `JSON5.parse`**) and listed the `json5` npm dependency. **Tier 3 is removed.** `json5` is permissive about trailing commas, comments, single-quoted strings, and unquoted keys — none of which is the failure mode of issue #92. Verified empirically: the issue's repro and the draft's own test inputs all fail `JSON5.parse` with `invalid character` at the position of the bare quote. The dependency buys nothing for the stated problem and is removed from this revision.
+The earlier draft specified three tiers (2a on slice, 2b on raw text, **3 = `JSON5.parse`**) and listed the `json5` npm dependency. **Tier 3 is removed.** `json5` is permissive about trailing commas, comments, single-quoted strings, and unquoted keys — none of which is the failure mode of issue #92. Verified empirically: the issue's repro and the draft's own test inputs all fail `JSON5.parse` with `invalid character` at the position of the bare quote. The dependency buys nothing for the stated problem and is removed from this revision. `json5` is not in the current codebase (`packages/core/package.json` shows no json5 dependency).
 
 If a different drift class surfaces in telemetry (e.g., trailing-comma responses from a model), a future tier can be added without touching this spec's invariants.
 
 #### 1.5 `WikiParseError` shape
 
 `packages/core/src/types.ts`:
+
+**Note:** Helper functions `safeErrorToString`, `controlCharEscape`, and `extractParsePosition` already exist in `packages/core/src/utils/pure.ts` (lines 494, 517, 537 respectively) and are reused by the tier-2 walker as infrastructure.
 
 ```ts
 export class WikiParseError extends Error {
