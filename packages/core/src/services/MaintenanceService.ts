@@ -69,6 +69,46 @@ interface HealBatch {
   newFacts: ExtractedFact[];
 }
 
+/**
+ * Hard cap on skipped-item error text in the log. A provider response or
+ * prompt artifact can carry a multi-MB message; one unbounded failure must
+ * not flood stderr (or any downstream log-shipping pipeline) by being logged
+ * once per skipped item.
+ */
+const SKIP_ERROR_LOG_CHARS = 4096;
+
+/**
+ * Stringify an unknown error from `RunBatchedArgs.onSkip` for the log.
+ *
+ * The callback receives `unknown`, so the value is not guaranteed to be a
+ * `WikiParseError` with a small `.message`; a raw provider stack, an HTTP
+ * error object, or a `string` is all possible. `String(err)` on a plain object
+ * uses `Object.prototype.toString` and stays small, but `JSON.stringify` is
+ * needed to surface anything structured, and the output is bounded either
+ * way so a degenerate payload cannot slip through.
+ */
+const formatSkipError = (err: unknown): string => {
+  let text: string;
+  if (err instanceof Error) {
+    text = err.message;
+  } else if (typeof err === 'string') {
+    text = err;
+  } else if (typeof err === 'number' || typeof err === 'boolean' || typeof err === 'bigint' || err === null || err === undefined) {
+    text = String(err);
+  } else {
+    try {
+      text = JSON.stringify(err);
+    } catch {
+      text = Object.prototype.toString.call(err);
+    }
+  }
+  if (text.length > SKIP_ERROR_LOG_CHARS) {
+    const truncated = text.slice(0, SKIP_ERROR_LOG_CHARS);
+    return `${truncated}…[+${text.length - SKIP_ERROR_LOG_CHARS} chars truncated]`;
+  }
+  return text;
+};
+
 export class MaintenanceService {
   private promptService: PromptService;
 
@@ -668,13 +708,8 @@ export class MaintenanceService {
       maxOutputTokens: this.options.llmProvider.maxOutputTokens,
       maxPromptChars: HEAL_MAX_PROMPT_CHARS,
       onSkip: (fact, err) => {
-        // Pass only the error message — `err` is a `WikiParseError` that carries
-        // a `slice` field which may be the entire 1MB+ LLM response. util.format
-        // would not truncate that, so a single unbounded response would flood
-        // stderr and any log-shipping pipeline.
-        const message = err instanceof Error ? err.message : String(err);
         console.warn(
-          `[WikiMemory] heal skipped ${entityId}/${fact.id}: response could not be bounded: ${message}`,
+          `[WikiMemory] heal skipped ${entityId}/${fact.id}: response could not be bounded: ${formatSkipError(err)}`,
         );
       },
     });
@@ -877,13 +912,8 @@ export class MaintenanceService {
       maxOutputTokens: this.options.llmProvider.maxOutputTokens,
       maxPromptChars: ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS,
       onSkip: (fact, err) => {
-        // Pass only the error message — `err` is a `WikiParseError` that carries
-        // a `slice` field which may be the entire 1MB+ LLM response. util.format
-        // would not truncate that, so a single unbounded response would flood
-        // stderr and any log-shipping pipeline.
-        const message = err instanceof Error ? err.message : String(err);
         console.warn(
-          `[WikiMemory] ontology backfill skipped ${entityId}/${fact.id}: response could not be bounded: ${message}`,
+          `[WikiMemory] ontology backfill skipped ${entityId}/${fact.id}: response could not be bounded: ${formatSkipError(err)}`,
         );
       },
     });
