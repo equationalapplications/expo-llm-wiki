@@ -64,7 +64,6 @@ export function parseJsonResponse<T>(text: string): T {
 
   // Tier 1: try the existing scanner first. If `JSON.parse` succeeds we're done.
   const slice = scanJsonSlice(text, start, openChar);
-  const scannerFoundSlice = slice !== null;
   if (slice !== null) {
     try {
       return JSON.parse(slice) as T;
@@ -81,17 +80,32 @@ export function parseJsonResponse<T>(text: string): T {
   //
   // The walker runs twice under opposing comma-ambiguity policies — see
   // `containerAwareRepair` docstring. Both passes can produce parseable
-  // JSON for inputs like `{"title":"24" monitor","body":"ok"}` but with
-  // DIFFERENT shapes — the even-parity pass collapses later properties into
-  // the first value, the odd-parity pass keeps the boundary. We prefer the
-  // odd-parity pass's success when it parses; the even-parity pass keeps
-  // existing diagnostic-shaped failures intact for inputs where neither
-  // produces the right shape. Each pass is bounded by MAX_REPAIR_CANDIDATES.
+  // JSON for the SAME input but with different shapes — e.g. for
+  // `{"title":"He said "hi"","body":"ok"}` the odd-parity pass swallows
+  // `,"body":"ok"` into the title (parseable but wrong), while for
+  // `{"title":"24" monitor","body":"ok"}` the even-parity pass does the
+  // swallowing. When both parse, we prefer the pass that mutated the input
+  // LESS (fewer content-quote escapes): the correct interpretation escapes
+  // exactly the true bare quotes, while the swallowing one escapes the
+  // structural quotes it consumes too. When only the odd-parity pass parsed
+  // AND it never hit a comma-ambiguity position, the even-parity pass is
+  // guaranteed to make identical decisions, so we skip it entirely. Each
+  // pass is bounded by MAX_REPAIR_CANDIDATES.
   const repairOdd = containerAwareRepair(text, start, false);
-  if (repairOdd.success !== null) {
+  if (repairOdd.success !== null && !repairOdd.ambiguous) {
     return repairOdd.success as T;
   }
   const repairEven = containerAwareRepair(text, start, true);
+  if (repairOdd.success !== null && repairEven.success !== null) {
+    // Both policies produced a parseable candidate. Prefer the minimal
+    // repair; on a tie (identical walks) keep the odd-parity result, which
+    // matches the historical single-pass behavior.
+    const pick = repairEven.escapes < repairOdd.escapes ? repairEven : repairOdd;
+    return pick.success as T;
+  }
+  if (repairOdd.success !== null) {
+    return repairOdd.success as T;
+  }
   if (repairEven.success !== null) {
     return repairEven.success as T;
   }
@@ -111,7 +125,7 @@ export function parseJsonResponse<T>(text: string): T {
   // usable slice (no balanced close) is a strict failure even when the
   // container-aware walker also finds nothing — the input is structurally
   // incomplete, not just unparseable.
-  if (!scannerFoundSlice) {
+  if (slice === null) {
     throwNoJsonFound(text, start);
   }
 
@@ -199,6 +213,15 @@ interface RepairResult {
   success: unknown | null;
   /** First candidate that JSON.parse rejected (best diagnostic), or null. */
   failed: RepairFailure | null;
+  /** Number of content quotes this policy escaped (mutated) while walking.
+   * Used to arbitrate when BOTH policies produce a parseable candidate:
+   * the interpretation that mutated the input less is preferred. */
+  escapes: number;
+  /** True when the walk hit at least one comma-ambiguity position — the
+   * only place the two policies' decisions can diverge. When false, the
+   * opposing-policy pass is guaranteed to make identical decisions, so the
+   * caller can skip it entirely. */
+  ambiguous: boolean;
 }
 
 function containerAwareRepair(
@@ -206,7 +229,6 @@ function containerAwareRepair(
   start: number,
   closeOnEvenParity: boolean,
 ): RepairResult {
-  const openChar = text[start];
   // The walker produces a stream of balanced-span candidates in largest-first
   // order. We try each via `JSON.parse` at emission time so the success
   // path short-circuits without ever building the trailing-prefix out of
@@ -232,6 +254,11 @@ function containerAwareRepair(
   // Best rejection seen so far — captured when JSON.parse rejects a
   // candidate so we can surface it on `WikiParseError(tier: 'repair')`.
   let bestFailed: RepairFailure | null = null;
+  // Content quotes escaped so far this pass (see RepairResult.escapes).
+  let escapes = 0;
+  // Whether any comma-ambiguity position was reached (see
+  // RepairResult.ambiguous).
+  let ambiguous = false;
   // Captured successfully-parsed value of the first candidate that JSON.parse
   // accepted. Carried through the walker's short-circuit return so callers
   // can skip a second `JSON.parse` and `T`-cast on the hot success path.
@@ -268,6 +295,20 @@ function containerAwareRepair(
   while (i < text.length) {
     const ch = text[i];
 
+    // Between top-level spans (stack empty after a failed candidate emit):
+    // skip everything except a new container opener, and never accumulate
+    // the inter-span text into `out` — sibling candidates must be
+    // standalone spans, not span1 + prose + span2 concatenations that
+    // JSON.parse can never accept.
+    if (stack.length === 0 && !inString) {
+      if (ch === '{' || ch === '[') {
+        stack.push({ container: ch === '{' ? 'object' : 'array', expectKey: true });
+        out += ch;
+      }
+      i++;
+      continue;
+    }
+
     if (escape) {
       out += ch;
       escape = false;
@@ -280,6 +321,18 @@ function containerAwareRepair(
       i++;
       continue;
     }
+    // Raw C0 control characters are invalid inside JSON strings, always.
+    // Unlike the bare-quote case this repair is fully deterministic (no
+    // comma-parity ambiguity — a control char inside a string body can
+    // only be content), so both policy passes escape identically.
+    if (inString) {
+      const code = ch.charCodeAt(0);
+      if (code < 0x20) {
+        out += controlCharEscape(code);
+        i++;
+        continue;
+      }
+    }
     if (ch === '"') {
       // Peek-ahead: skip whitespace, then look at the next non-whitespace char.
       let j = i + 1;
@@ -289,24 +342,20 @@ function containerAwareRepair(
       const next = j < text.length ? text[j] : '';
 
       if (!inString) {
-        // Structural opening quote — except when peek-ahead shows a
-        // container close, in which case this `"` is the close of an
-        // implicit string (the body string was implicitly closed at the
-        // previous position by a bare-quote fix) and the structural close
-        // follows immediately. Emit both and pop the stack.
+        // A `"` sitting at structural level right before a container close
+        // is stray punctuation from a mis-tracked string boundary — emitting
+        // it would open an unterminated string and guarantee JSON.parse
+        // rejects the candidate. Skip the quote itself, preserve any
+        // whitespace the peek-ahead skipped, emit the close, and pop.
         if (next === '}' || next === ']') {
-          out += ch;
-          // Preserve any whitespace the peek-ahead skipped so the candidate
-          // mirrors the input byte-for-byte. Without this a failed candidate
-          // surfaces in `WikiParseError.slice` with the whitespace silently
-          // dropped, misleading anyone reading the diagnostic.
           if (j > i + 1) out += text.slice(i + 1, j);
           out += next;
           i = j + 1;
           stack.pop();
           if (stack.length === 0) {
-            if (tryEmitCandidate(out)) return { success: bestSuccess, failed: bestFailed };
+            if (tryEmitCandidate(out)) return { success: bestSuccess, failed: bestFailed, escapes, ambiguous };
             if (attempts >= MAX_REPAIR_CANDIDATES) break;
+            out = '';
           }
           continue;
         }
@@ -346,16 +395,13 @@ function containerAwareRepair(
       // Comma-ambiguity: when the peek-ahead is `,` after at least one
       // bare-quote content escape, neither interpretation is structurally
       // implied — the comma is either a value separator OR content body.
-      // The walker tries BOTH policies (see the parameter docs on
-      // containerAwareRepair): the `closeOnEvenParity=true` pass treats
-      // an even count as the close (the legacy heuristic — works for the
-      // "He said "hi", then left." case where the bare-quote count is 2),
-      // and the false pass treats an odd count as the close (works for
-      // `"24" monitor","body":"ok"}` where the real close follows the
-      // single bare quote). When `bareQuoteCount === 0` neither parity
-      // is in play — no ambiguity exists, the comma must close — so we
-      // close under both policies. parseJsonResponse unions the two
-      // results.
+      // The two passes diverge ONLY here (see the parameter docs on
+      // `containerAwareRepair`): the `closeOnEvenParity=true` pass closes
+      // on an even count (the legacy heuristic), the false pass on an odd
+      // count. When `bareQuoteCount === 0` no ambiguity exists — the comma
+      // must close — so both passes close and the caller can skip the
+      // second pass entirely (see RepairResult.ambiguous).
+      if (commaOnly && bareQuoteCount > 0) ambiguous = true;
       const shouldCommaClose =
         commaOnly && (
           bareQuoteCount === 0 ||
@@ -389,6 +435,7 @@ function containerAwareRepair(
       // Content quote — escape it.
       out += '\\' + ch;
       bareQuoteCount++;
+      escapes++;
       i++;
       continue;
     }
@@ -421,10 +468,12 @@ function containerAwareRepair(
       if (stack.length === 0) {
         // Balanced close at this position — try the candidate. The largest
         // outer span is the first one tried, so this short-circuits on the
-        // success path before the walker rebuilds `out` for any trailing
-        // sibling / inner subtrees.
-        if (tryEmitCandidate(out)) return { success: bestSuccess, failed: bestFailed };
+        // success path. On a rejection, reset `out` so any trailing sibling
+        // span is emitted standalone rather than concatenated onto the
+        // already-rejected prefix.
+        if (tryEmitCandidate(out)) return { success: bestSuccess, failed: bestFailed, escapes, ambiguous };
         if (attempts >= MAX_REPAIR_CANDIDATES) break;
+        out = '';
       }
       i++;
       continue;
@@ -434,7 +483,23 @@ function containerAwareRepair(
     i++;
   }
 
-  return { success: null, failed: bestFailed };
+  return { success: null, failed: bestFailed, escapes, ambiguous };
+}
+
+/**
+ * Maps a C0 control character's code point to its JSON string escape.
+ * Uses the short forms JSON shares with JS (\n, \t, \r, \b, \f) and
+ * \u00XX for everything else, exactly as JSON.stringify would.
+ */
+function controlCharEscape(code: number): string {
+  switch (code) {
+    case 0x0A: return '\\n';
+    case 0x09: return '\\t';
+    case 0x0D: return '\\r';
+    case 0x08: return '\\b';
+    case 0x0C: return '\\f';
+    default: return '\\u' + code.toString(16).padStart(4, '0');
+  }
 }
 
 /**

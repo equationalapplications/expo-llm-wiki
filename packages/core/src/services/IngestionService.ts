@@ -22,17 +22,19 @@ type ChunkResult =
 
 /** Shape returned by {@link IngestionService.ingestDocument} when no chunks
  * ran — used for both the `chunks.length === 0` early-return and the
- * `onDuplicateHash: 'skip'` early-return. `duplicateOf` is set only when
- * the skip is owed to a duplicate-hash collision; undefined is allowed on
- * the optional field without `exactOptionalPropertyTypes`. */
+ * `onDuplicateHash: 'skip'` early-return. `duplicateOf` is present as an own
+ * key ONLY when the skip is owed to a duplicate-hash collision — hosts using
+ * `'duplicateOf' in result` to detect that case must not see the key on the
+ * empty-document path (matching the pre-widening contract). */
 function zeroChunkResult(duplicateOf?: string): IngestDocumentResult {
-  return {
+  const result: IngestDocumentResult = {
     truncated: false,
     chunks: 0,
     ingestedChunks: 0,
     failedChunks: 0,
-    duplicateOf,
   };
+  if (duplicateOf !== undefined) result.duplicateOf = duplicateOf;
+  return result;
 }
 
 export class IngestionService {

@@ -71,6 +71,66 @@ describe('parseJsonResponse — tier 2 (container-aware repair)', () => {
     );
     expect(result).toEqual({ title: '24" monitor', body: 'ok' });
   });
+
+  it('arbitrates opposing policies by minimal mutation, not trial order', () => {
+    // Regression: the odd-parity pass used to be preferred whenever its
+    // candidate parsed. For an EVEN number of bare quotes immediately
+    // before the structural close (`He said "hi"` as a complete value),
+    // the odd-parity pass swallows `,"body":"ok"` into the title — the
+    // swallowed candidate still parses, so the corrupted value was
+    // returned and the body field silently dropped. Both policies now run
+    // and the one that escaped fewer quotes (the minimal repair) wins.
+    const result = parseJsonResponse<{ title: string; body: string }>(
+      '{"title":"He said "hi"","body":"ok"}',
+    );
+    expect(result).toEqual({ title: 'He said "hi"', body: 'ok' });
+  });
+
+  it('arbitrates inside a realistic facts array payload', () => {
+    const result = parseJsonResponse<{ facts: Array<{ title: string; body: string }> }>(
+      '{"facts":[{"title":"He said "hi"","body":"the full quote context"}]}',
+    );
+    expect(result.facts[0].title).toBe('He said "hi"');
+    expect(result.facts[0].body).toBe('the full quote context');
+  });
+
+  it('repairs an even-count bare-quote value followed by a later property', () => {
+    const result = parseJsonResponse<{ facts: Array<{ body: string; confidence: string }> }>(
+      '{"facts":[{"title":"quote","body":"he said "hi" and "bye"","confidence":"tentative"}]}',
+    );
+    expect(result.facts[0].body).toBe('he said "hi" and "bye"');
+    expect(result.facts[0].confidence).toBe('tentative');
+  });
+
+  it('repairs a bare-quoted span in an array element (doubled close quote)', () => {
+    const result = parseJsonResponse<{ tags: string[] }>('{"tags":["say "hi"", "z"]}');
+    expect(result).toEqual({ tags: ['say "hi"', 'z'] });
+  });
+
+  it('repairs a raw newline inside a string body', () => {
+    // The model emitted a literal line break inside the JSON string.
+    // Deterministic repair (no comma-parity ambiguity): escape it as \n.
+    const result = parseJsonResponse<{ facts: Array<{ body: string }> }>(
+      '{"facts":[{"title":"a","body":"line1\nline2"}]}',
+    );
+    expect(result.facts[0].body).toBe('line1\nline2');
+  });
+
+  it('repairs a raw tab inside a string body', () => {
+    const result = parseJsonResponse<{ body: string }>('{"body":"col1\tcol2"}');
+    expect(result.body).toBe('col1\tcol2');
+  });
+
+  it('falls through to a later sibling span after an unrepairable span', () => {
+    // The first balanced span is unrepairable, but a complete valid object
+    // follows it. The walker resets its output buffer at the failed span's
+    // close so the sibling is emitted standalone rather than concatenated
+    // onto the rejected prefix (which could never parse).
+    const result = parseJsonResponse<{ facts: unknown[] }>(
+      'noise {"bad"} tail {"facts":[]}',
+    );
+    expect(result).toEqual({ facts: [] });
+  });
 });
 
 describe('parseJsonResponse — repair tier surfaces failed candidate', () => {

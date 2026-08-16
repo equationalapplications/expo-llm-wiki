@@ -1,4 +1,4 @@
-import { parseJsonResponse, validateFact, validateTask, titleTokens, jaccardScore, normalizeSourceRef, normalizeSourceHash, sanitizeRankerError, safeErrorToString } from '../utils/pure';
+import { parseJsonResponse, validateFact, validateTask, titleTokens, jaccardScore, normalizeSourceRef, normalizeSourceHash, sanitizeRankerError, safeErrorToString, safeSlice } from '../utils/pure';
 import { normalizeTitleKey } from '../utils/ontology';
 import { PromptService } from './PromptService';
 import type { OntologyService, TitleIndexEntry } from './OntologyService';
@@ -79,6 +79,9 @@ const SKIP_ERROR_LOG_CHARS = 4096;
 
 /**
  * Stringify an unknown error from `RunBatchedArgs.onSkip` for the log.
+ * Exported for unit testing only — callers must always treat the return
+ * value as a bounded, log-safe string. Internal callers feed this through
+ * `console.warn` from heal/ontology-backfill `onSkip` paths.
  *
  * The callback receives `unknown`, so the value is not guaranteed to be a
  * `WikiParseError` with a small `.message`; a raw provider stack, an HTTP
@@ -96,11 +99,6 @@ const SKIP_ERROR_LOG_CHARS = 4096;
  * `Symbol.toStringTag`). That throw escaped the function and rejected the
  * surrounding `runBatched` operation wholesale. `safeErrorToString` was
  * hardened against this exact path; reuse it.
- */
-/**
- * Exported for unit testing only. Callers must always treat the return value
- * as a bounded, log-safe string. Internal callers feed this through
- * `console.warn` from heal/ontology-backfill `onSkip` paths.
  */
 export const formatSkipError = (err: unknown): string => {
   // Two goals:
@@ -134,7 +132,10 @@ export const formatSkipError = (err: unknown): string => {
     }
   }
   if (base.length > SKIP_ERROR_LOG_CHARS) {
-    const truncated = base.slice(0, SKIP_ERROR_LOG_CHARS);
+    // safeSlice (from utils/pure) never splits a UTF-16 surrogate pair at the
+    // cut boundary — a bare String.slice can, leaving a lone high surrogate
+    // that renders as U+FFFD in the log line.
+    const truncated = safeSlice(base, 0, SKIP_ERROR_LOG_CHARS);
     return `${truncated}…[+${base.length - SKIP_ERROR_LOG_CHARS} chars truncated]`;
   }
   return base;
