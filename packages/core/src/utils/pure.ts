@@ -242,6 +242,12 @@ function containerAwareRepair(
   // failure as bestFailed (or the value as bestSuccess) and bump the
   // attempt counter. Returns true on success so the caller can short-circuit
   // out of the walk.
+  //
+  // `safeErrorToString` (defined in this same file) is the hardened
+  // non-throwing coercion for the message field. `JSON.parse` always throws
+  // a `SyntaxError`, but a hostile SyntaxError subclass with a throwing
+  // `message` getter could still escape a raw `err.message` access —
+  // delegating to `safeErrorToString` keeps the helper non-throwing.
   function tryEmitCandidate(candidate: string): boolean {
     attempts++;
     try {
@@ -252,7 +258,7 @@ function containerAwareRepair(
         bestFailed = {
           candidate,
           position: extractParsePosition(err),
-          message: err instanceof Error ? err.message : String(err),
+          message: safeErrorToString(err),
         };
       }
       return false;
@@ -436,10 +442,15 @@ function containerAwareRepair(
  * The V8 message format is `"Unexpected token X in JSON at position N"` (or
  * `"Unexpected end of JSON input"` with no position). We return `null` when
  * no position can be parsed — `WikiParseError.position` is `number | null`.
+ *
+ * Delegates the unknown→string coercion to `safeErrorToString` so a hostile
+ * value (throwing toString, Proxy rejecting property access) can never throw
+ * out of this helper and unwind the walker. JSON.parse always throws a
+ * `SyntaxError`, so the defensive branch is rarely exercised in practice,
+ * but the fallback is here to keep the walker non-throwing by construction.
  */
 function extractParsePosition(err: unknown): number | null {
-  const msg = err instanceof Error ? err.message : String(err);
-  const match = /position\s+(\d+)/.exec(msg);
+  const match = /position\s+(\d+)/.exec(safeErrorToString(err));
   return match ? Number(match[1]) : null;
 }
 
