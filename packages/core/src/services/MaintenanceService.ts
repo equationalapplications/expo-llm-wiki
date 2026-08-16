@@ -87,7 +87,12 @@ const SKIP_ERROR_LOG_CHARS = 4096;
  * needed to surface anything structured, and the output is bounded either
  * way so a degenerate payload cannot slip through.
  */
-const formatSkipError = (err: unknown): string => {
+/**
+ * Exported for unit testing only. Callers must always treat the return value
+ * as a bounded, log-safe string. Internal callers feed this through
+ * `console.warn` from heal/ontology-backfill `onSkip` paths.
+ */
+export const formatSkipError = (err: unknown): string => {
   let text: string;
   if (err instanceof Error) {
     text = err.message;
@@ -97,9 +102,22 @@ const formatSkipError = (err: unknown): string => {
     text = String(err);
   } else {
     try {
+      // JSON.stringify can return undefined for Symbols, functions, or objects
+      // whose toJSON returns undefined; fall through to String() in those cases.
       text = JSON.stringify(err);
     } catch {
       text = Object.prototype.toString.call(err);
+    }
+    if (typeof text !== 'string') {
+      try {
+        text = String(err);
+      } catch {
+        // A custom toString() that throws is the last failure mode; keep the
+        // Object.prototype.toString string from the outer catch as the guard.
+        if (typeof text !== 'string') {
+          text = Object.prototype.toString.call(err);
+        }
+      }
     }
   }
   if (text.length > SKIP_ERROR_LOG_CHARS) {
