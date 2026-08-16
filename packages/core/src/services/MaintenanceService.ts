@@ -1,4 +1,4 @@
-import { parseJsonResponse, validateFact, validateTask, titleTokens, jaccardScore, normalizeSourceRef, normalizeSourceHash, sanitizeRankerError } from '../utils/pure';
+import { parseJsonResponse, validateFact, validateTask, titleTokens, jaccardScore, normalizeSourceRef, normalizeSourceHash, sanitizeRankerError, safeErrorToString } from '../utils/pure';
 import { normalizeTitleKey } from '../utils/ontology';
 import { PromptService } from './PromptService';
 import type { OntologyService, TitleIndexEntry } from './OntologyService';
@@ -86,6 +86,16 @@ const SKIP_ERROR_LOG_CHARS = 4096;
  * uses `Object.prototype.toString` and stays small, but `JSON.stringify` is
  * needed to surface anything structured, and the output is bounded either
  * way so a degenerate payload cannot slip through.
+ *
+ * Implementation note: every coercion path delegates to `safeErrorToString`,
+ * which guarantees a non-throwing string return via a static
+ * `[unstringifiable error]` marker. The previous hand-rolled chain had a
+ * hole — `JSON.stringify` throws and the `catch` then ran
+ * `Object.prototype.toString.call(err)`, which itself can throw (a Proxy
+ * whose `get` trap rejects every property access — including
+ * `Symbol.toStringTag`). That throw escaped the function and rejected the
+ * surrounding `runBatched` operation wholesale. `safeErrorToString` was
+ * hardened against this exact path; reuse it.
  */
 /**
  * Exported for unit testing only. Callers must always treat the return value
@@ -93,38 +103,41 @@ const SKIP_ERROR_LOG_CHARS = 4096;
  * `console.warn` from heal/ontology-backfill `onSkip` paths.
  */
 export const formatSkipError = (err: unknown): string => {
-  let text: string;
-  if (err instanceof Error) {
-    text = err.message;
-  } else if (typeof err === 'string') {
-    text = err;
-  } else if (typeof err === 'number' || typeof err === 'boolean' || typeof err === 'bigint' || err === null || err === undefined) {
-    text = String(err);
+  // Two goals:
+  //   1. Surface structured provider errors as JSON when present
+  //      (e.g. `{code: 500, msg: 'oops'}` -> `"{"code":500,"msg":"oops"}"`).
+  //   2. Never throw, regardless of what hostile value reaches us via
+  //      `onSkip` (Symbol, function, throwing toString, Proxy rejecting
+  //      property access, Error with bad message, etc).
+  //
+  // `safeErrorToString` is the hardened non-throwing helper; every path
+  // either uses it directly or falls back to it. JSON.stringify failure
+  // paths (throwing toJSON, circular structure, Proxy) all converge on
+  // `safeErrorToString`, which itself wraps String() and
+  // Object.prototype.toString.call() in nested try/catch.
+  let base: string;
+  if (err instanceof Error || (typeof err !== 'object' && typeof err !== 'function')) {
+    // Errors -> safeErrorToString (returns err.message verbatim, or .name,
+    //   or '[Error]' for hostile Error subclasses)
+    // Primitives (string, number, boolean, bigint, undefined, symbol) ->
+    //   safeErrorToString (String() handles them all)
+    base = safeErrorToString(err);
   } else {
+    // null + plain objects + arrays -> try JSON.stringify to surface
+    //   structure. `null` JSON-stringifies to 'null', `typeof null ===
+    //   'object'` so it lands here safely.
     try {
-      // JSON.stringify can return undefined for Symbols, functions, or objects
-      // whose toJSON returns undefined; fall through to String() in those cases.
-      text = JSON.stringify(err);
+      const json = JSON.stringify(err);
+      base = typeof json === 'string' ? json : safeErrorToString(err);
     } catch {
-      text = Object.prototype.toString.call(err);
-    }
-    if (typeof text !== 'string') {
-      try {
-        text = String(err);
-      } catch {
-        // A custom toString() that throws is the last failure mode; keep the
-        // Object.prototype.toString string from the outer catch as the guard.
-        if (typeof text !== 'string') {
-          text = Object.prototype.toString.call(err);
-        }
-      }
+      base = safeErrorToString(err);
     }
   }
-  if (text.length > SKIP_ERROR_LOG_CHARS) {
-    const truncated = text.slice(0, SKIP_ERROR_LOG_CHARS);
-    return `${truncated}…[+${text.length - SKIP_ERROR_LOG_CHARS} chars truncated]`;
+  if (base.length > SKIP_ERROR_LOG_CHARS) {
+    const truncated = base.slice(0, SKIP_ERROR_LOG_CHARS);
+    return `${truncated}…[+${base.length - SKIP_ERROR_LOG_CHARS} chars truncated]`;
   }
-  return text;
+  return base;
 };
 
 export class MaintenanceService {

@@ -459,7 +459,17 @@ function extractParsePosition(err: unknown): number | null {
  * - A static `[unstringifiable error]` marker as a final guarantee.
  */
 export function safeErrorToString(e: unknown): string {
-  if (e instanceof Error) return e.message;
+  if (e instanceof Error) {
+    // Defensive: a hostile `Error` subclass or a tampered native Error could
+    // set `message` to a non-string (e.g. `err.message = 42`) or make it a
+    // throwing getter. `e.name` is similarly attacker-controllable. Coerce
+    // both without unwinding so this helper is truly non-throwing.
+    const msg = readErrorField(e, 'message');
+    if (typeof msg === 'string' && msg.length > 0) return msg;
+    const name = readErrorField(e, 'name');
+    if (typeof name === 'string' && name.length > 0) return name;
+    return '[Error]';
+  }
   try {
     return String(e);
   } catch {
@@ -468,6 +478,19 @@ export function safeErrorToString(e: unknown): string {
     } catch {
       return '[unstringifiable error]';
     }
+  }
+}
+
+/**
+ * Read a fixed string-typed field off an `Error` instance without ever
+ * throwing, even if a subclass installs a hostile getter. Internal helper
+ * for `safeErrorToString`.
+ */
+function readErrorField(e: Error, key: 'message' | 'name'): unknown {
+  try {
+    return (e as unknown as Record<string, unknown>)[key];
+  } catch {
+    return undefined;
   }
 }
 

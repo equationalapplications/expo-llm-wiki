@@ -45,4 +45,47 @@ describe('safeErrorToString — non-throwing error coercion', () => {
     const out = safeErrorToString(bizarre);
     expect(out.length).toBeGreaterThan(0);
   });
+
+  // Regression: an Error subclass (or a tampered native Error) could set
+  // `message` to undefined, a non-string, or a throwing getter. The
+  // contract is "non-throwing coercion" so this must never escape.
+  it('does not throw when Error.message is undefined', () => {
+    const err = new Error('x');
+    (err as { message?: unknown }).message = undefined;
+    expect(() => safeErrorToString(err)).not.toThrow();
+    // Fallback chain: message -> name -> '[Error]'
+    expect(safeErrorToString(err)).toBe('Error');
+  });
+
+  it('does not throw when Error.message is a non-string', () => {
+    const err = new Error('x');
+    (err as { message?: unknown }).message = 42;
+    expect(() => safeErrorToString(err)).not.toThrow();
+    expect(safeErrorToString(err)).toBe('Error');
+  });
+
+  it('does not throw when Error.message is a throwing getter', () => {
+    const err = new Error('x');
+    Object.defineProperty(err, 'message', {
+      get() { throw new Error('msg getter throws'); },
+    });
+    expect(() => safeErrorToString(err)).not.toThrow();
+    expect(safeErrorToString(err)).toBe('Error');
+  });
+
+  it('falls back to Error.name when message is empty', () => {
+    const err = new Error('');
+    expect(safeErrorToString(err)).toBe('Error');
+  });
+
+  it('uses a custom name when message is missing', () => {
+    class CustomError extends Error {
+      constructor() {
+        super('');
+        this.name = 'CustomError';
+      }
+    }
+    const err = new CustomError();
+    expect(safeErrorToString(err)).toBe('CustomError');
+  });
 });
