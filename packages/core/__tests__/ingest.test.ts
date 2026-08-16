@@ -759,12 +759,18 @@ describe('ingestDocument — partial commit (issue #92)', () => {
         maxChunkLength: 50,
         chunkOverlap: 0,
       });
+      // `makeBadJson()` returns `'{"facts":['` — the substring below is
+      // a fragment of the raw LLM response body. If the no-leak invariant
+      // regresses (e.g. the response text is interpolated into the warn
+      // line), this assertion catches it. Do NOT change this fragment to
+      // something not in `badJson` — the previous incarnation asserted
+      // against `'"a"b"'` which was a vacuous substring check.
+      const responseBodyFragment = '{"facts":[';
+      expect(badJson).toContain(responseBodyFragment);
       for (const call of warnSpy.mock.calls) {
-        // Concatenate all string args; assert none of them contains the
-        // response payload substring.
         for (const arg of call) {
           if (typeof arg === 'string') {
-            expect(arg).not.toContain('"a"b"');
+            expect(arg).not.toContain(responseBodyFragment);
           }
         }
       }

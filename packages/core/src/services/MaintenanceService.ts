@@ -668,9 +668,13 @@ export class MaintenanceService {
       maxOutputTokens: this.options.llmProvider.maxOutputTokens,
       maxPromptChars: HEAL_MAX_PROMPT_CHARS,
       onSkip: (fact, err) => {
+        // Pass only the error message — `err` is a `WikiParseError` that carries
+        // a `slice` field which may be the entire 1MB+ LLM response. util.format
+        // would not truncate that, so a single unbounded response would flood
+        // stderr and any log-shipping pipeline.
+        const message = err instanceof Error ? err.message : String(err);
         console.warn(
-          `[WikiMemory] heal skipped ${entityId}/${fact.id}: response could not be bounded`,
-          err,
+          `[WikiMemory] heal skipped ${entityId}/${fact.id}: response could not be bounded: ${message}`,
         );
       },
     });
@@ -873,9 +877,13 @@ export class MaintenanceService {
       maxOutputTokens: this.options.llmProvider.maxOutputTokens,
       maxPromptChars: ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS,
       onSkip: (fact, err) => {
+        // Pass only the error message — `err` is a `WikiParseError` that carries
+        // a `slice` field which may be the entire 1MB+ LLM response. util.format
+        // would not truncate that, so a single unbounded response would flood
+        // stderr and any log-shipping pipeline.
+        const message = err instanceof Error ? err.message : String(err);
         console.warn(
-          `[WikiMemory] ontology backfill skipped ${entityId}/${fact.id}: response could not be bounded`,
-          err,
+          `[WikiMemory] ontology backfill skipped ${entityId}/${fact.id}: response could not be bounded: ${message}`,
         );
       },
     });

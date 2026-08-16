@@ -10,6 +10,20 @@ import { WikiParseError } from '../types';
 const MAX_REPAIR_CANDIDATES = 5;
 
 /**
+ * Throws {@link WikiParseError} for the "no JSON object/array found" case.
+ * Used at the two strict-tier throw sites that differ only in whether a
+ * `[`/`{` was located: when `start === null`, no open bracket was found;
+ * when `start` is a number, an open bracket was found but no balanced
+ * close existed. Both share the user-facing diagnostic.
+ */
+function throwNoJsonFound(text: string, start: number | null): never {
+  throw new WikiParseError(
+    'No JSON object/array found in LLM response',
+    { tier: 'strict', position: start, slice: text },
+  );
+}
+
+/**
  * Extract JSON from an LLM response.
  *
  * Tier 1 (strict): the existing hand-rolled brace-matching scanner. Walks
@@ -45,10 +59,7 @@ export function parseJsonResponse<T>(text: string): T {
     start = firstBracket;
     openChar = '[';
   } else {
-    throw new WikiParseError(
-      'No JSON object/array found in LLM response',
-      { tier: 'strict', position: null, slice: text },
-    );
+    throwNoJsonFound(text, null);
   }
 
   // Tier 1: try the existing scanner first. If `JSON.parse` succeeds we're done.
@@ -65,10 +76,11 @@ export function parseJsonResponse<T>(text: string): T {
   // Tier 2: container-aware walker over the raw text. The scanner's slice may
   // be arbitrarily truncated by a bare quote mid-string — running the walker
   // on the raw text from `start` is the only way to get a complete container
-  // span to repair against.
+  // span to repair against. The walker validates via `JSON.parse` itself and
+  // returns the already-parsed value, so we don't re-parse on the hot path.
   const repair = containerAwareRepair(text, start);
   if (repair.success !== null) {
-    return JSON.parse(repair.success) as T;
+    return repair.success as T;
   }
   // `repair.failed` carries the largest balanced span the walker found plus
   // the parse position from JSON.parse — both fields the public contract
@@ -87,10 +99,7 @@ export function parseJsonResponse<T>(text: string): T {
   // container-aware walker also finds nothing — the input is structurally
   // incomplete, not just unparseable.
   if (!scannerFoundSlice) {
-    throw new WikiParseError(
-      'No JSON object/array found in LLM response',
-      { tier: 'strict', position: start, slice: text },
-    );
+    throwNoJsonFound(text, start);
   }
 
   throw new WikiParseError(
@@ -124,7 +133,11 @@ function scanJsonSlice(text: string, start: number, openChar: string): string | 
     }
   }
   if (end === -1) return null;
-  return text.slice(start, end + 1);
+  // safeSlice lives in this same file and is the project's surrogate-pair-safe
+  // string-slice helper (used by chunkText). Bare `text.slice(start, end + 1)`
+  // can split a UTF-16 surrogate pair when `end` lands between the high and
+  // low halves; the walker downstream then trips on a U+FFFD replacement char.
+  return safeSlice(text, start, end + 1);
 }
 
 /**
@@ -158,21 +171,22 @@ interface RepairFailure {
 
 interface RepairResult {
   /** First candidate that JSON.parse accepted, or null if none parsed. */
-  success: string | null;
+  success: unknown | null;
   /** First candidate that JSON.parse rejected (best diagnostic), or null. */
   failed: RepairFailure | null;
 }
 
 function containerAwareRepair(text: string, start: number): RepairResult {
   const openChar = text[start];
-  // The walker produces a sequence of (candidateString, parseable) attempts
-  // in largest-first order. We only care about the first one that JSON.parse
-  // accepts; JSON.parse itself throws on bad candidates, so we wrap it. The
-  // `failed` slot is the best rejection we saw along the way — callers use
-  // it to construct a `WikiParseError` with `tier: 'repair'` when no
-  // candidate parses (the public contract documents the slice + position in
-  // the error; without this we'd lose them and be forced to `tier: 'all'`).
-  const candidates: string[] = [];
+  // The walker produces a stream of balanced-span candidates in largest-first
+  // order. We try each via `JSON.parse` at emission time so the success
+  // path short-circuits without ever building the trailing-prefix out of
+  // the walker; on a rejection we capture the first failure as the best
+  // diagnostic and keep walking to find another candidate (bounded by
+  // MAX_REPAIR_CANDIDATES). The `failed` slot is what callers use to
+  // construct a `WikiParseError` with `tier: 'repair'` when nothing parses
+  // — the public contract documents the slice + parse position in the
+  // error.
   const stack: ContainerFrame[] = [];
   let inString = false;
   let stringRole: 'key' | 'value' | null = null;
@@ -186,6 +200,35 @@ function containerAwareRepair(text: string, start: number): RepairResult {
   // closing prematurely puts the comma at structural level where JSON.parse
   // expects a property name. Reset on every structural close (or open).
   let bareQuoteCount = 0;
+  // Best rejection seen so far — captured when JSON.parse rejects a
+  // candidate so we can surface it on `WikiParseError(tier: 'repair')`.
+  let bestFailed: RepairFailure | null = null;
+  // Captured successfully-parsed value of the first candidate that JSON.parse
+  // accepted. Carried through the walker's short-circuit return so callers
+  // can skip a second `JSON.parse` and `T`-cast on the hot success path.
+  let bestSuccess: unknown = null;
+  let attempts = 0;
+
+  // Try `JSON.parse(candidate)` immediately on emission; capture the
+  // failure as bestFailed (or the value as bestSuccess) and bump the
+  // attempt counter. Returns true on success so the caller can short-circuit
+  // out of the walk.
+  function tryEmitCandidate(candidate: string): boolean {
+    attempts++;
+    try {
+      bestSuccess = JSON.parse(candidate);
+      return true;
+    } catch (err) {
+      if (bestFailed === null) {
+        bestFailed = {
+          candidate,
+          position: extractParsePosition(err),
+          message: err instanceof Error ? err.message : String(err),
+        };
+      }
+      return false;
+    }
+  }
 
   while (i < text.length) {
     const ch = text[i];
@@ -218,12 +261,17 @@ function containerAwareRepair(text: string, start: number): RepairResult {
         // follows immediately. Emit both and pop the stack.
         if (next === '}' || next === ']') {
           out += ch;
+          // Preserve any whitespace the peek-ahead skipped so the candidate
+          // mirrors the input byte-for-byte. Without this a failed candidate
+          // surfaces in `WikiParseError.slice` with the whitespace silently
+          // dropped, misleading anyone reading the diagnostic.
+          if (j > i + 1) out += text.slice(i + 1, j);
           out += next;
           i = j + 1;
           stack.pop();
           if (stack.length === 0) {
-            candidates.push(out);
-            if (candidates.length >= MAX_REPAIR_CANDIDATES) break;
+            if (tryEmitCandidate(out)) return { success: bestSuccess, failed: bestFailed };
+            if (attempts >= MAX_REPAIR_CANDIDATES) break;
           }
           continue;
         }
@@ -316,12 +364,12 @@ function containerAwareRepair(text: string, start: number): RepairResult {
       out += ch;
       stack.pop();
       if (stack.length === 0) {
-        // Balanced close at this position — emit a candidate.
-        candidates.push(out);
-        if (candidates.length >= MAX_REPAIR_CANDIDATES) break;
-        // Continue walking; subsequent balanced spans are inner / sibling
-        // subtrees. The largest outer span is what `JSON.parse` will accept
-        // first, so we try in collection order (outermost wins).
+        // Balanced close at this position — try the candidate. The largest
+        // outer span is the first one tried, so this short-circuits on the
+        // success path before the walker rebuilds `out` for any trailing
+        // sibling / inner subtrees.
+        if (tryEmitCandidate(out)) return { success: bestSuccess, failed: bestFailed };
+        if (attempts >= MAX_REPAIR_CANDIDATES) break;
       }
       i++;
       continue;
@@ -331,25 +379,6 @@ function containerAwareRepair(text: string, start: number): RepairResult {
     i++;
   }
 
-  let bestFailed: RepairFailure | null = null;
-  for (const candidate of candidates) {
-    try {
-      JSON.parse(candidate);
-      return { success: candidate, failed: bestFailed };
-    } catch (err) {
-      // Capture the first rejection as the best diagnostic. `parseJsonResponse`
-      // uses this to build `WikiParseError` with `tier: 'repair'` and the
-      // candidate slice + parse position — the public contract that callers
-      // rely on for observability.
-      if (bestFailed === null) {
-        bestFailed = {
-          candidate,
-          position: extractParsePosition(err),
-          message: err instanceof Error ? err.message : String(err),
-        };
-      }
-    }
-  }
   return { success: null, failed: bestFailed };
 }
 

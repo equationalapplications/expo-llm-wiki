@@ -20,6 +20,21 @@ type ChunkResult =
   | { status: 'ok'; facts: ExtractedFact[]; ontology_updates?: OntologyUpdates }
   | { status: 'failed'; error: ChunkFailure };
 
+/** Shape returned by {@link IngestionService.ingestDocument} when no chunks
+ * ran — used for both the `chunks.length === 0` early-return and the
+ * `onDuplicateHash: 'skip'` early-return. `duplicateOf` is set only when
+ * the skip is owed to a duplicate-hash collision; undefined is allowed on
+ * the optional field without `exactOptionalPropertyTypes`. */
+function zeroChunkResult(duplicateOf?: string): IngestDocumentResult {
+  return {
+    truncated: false,
+    chunks: 0,
+    ingestedChunks: 0,
+    failedChunks: 0,
+    duplicateOf,
+  };
+}
+
 export class IngestionService {
   private promptService: PromptService;
 
@@ -100,30 +115,30 @@ export class IngestionService {
             throw new WikiDuplicateHashError({ canonical, sourceHash, entityId });
           }
           // 'skip'
-          return { truncated: false, chunks: 0, ingestedChunks: 0, failedChunks: 0, duplicateOf: canonical };
+          return zeroChunkResult(canonical);
         }
       }
 
       const { chunks, truncated } = chunkText(params.documentChunk, maxChunkLength, chunkOverlap);
-      if (chunks.length === 0) return { truncated: false, chunks: 0, ingestedChunks: 0, failedChunks: 0 };
+      if (chunks.length === 0) return zeroChunkResult();
+
+      // Hoist the ontology prompt context out of the per-chunk closure:
+      // `buildPromptContext(entityId)` depends only on entityId and reads
+      // the manifest ONCE; running it per chunk is N-1 wasted DB reads.
+      // Hoisting also makes its DB-systemic nature structural — a fault
+      // surfaces before any LLM tokens are spent, not buried under
+      // `WikiIngestEmptyError` after the first LLM call. See spec §3.
+      const ontologyContext = await this.ontologyService?.buildPromptContext(entityId) ?? null;
 
       const chunkResults = await withConcurrency(
         chunks.map((chunk, chunkIndex) => async () => {
-          // buildPromptContext is INTENTIONALLY outside the try — it's a DB
-          // read (OntologyService.ts:81) whose failures are systemic to the
-          // database connection, not per-chunk. Swallowing it would turn one
-          // DB fault into WikiIngestEmptyError with the real cause buried in
-          // N identical parseFailures entries. A DB fault should surface
-          // immediately, not after the host has spent LLM tokens on every
-          // chunk. See spec §3.
-          const ontologyContext = await this.ontologyService?.buildPromptContext(entityId) ?? null;
-          // Prompt building is ALSO template-driven and systemic, like
-          // buildPromptContext above: a malformatted `promptOverride` or a
-          // configured-template regression fails identically for every chunk
-          // and would otherwise be recorded as N `source: 'llm'` failures
-          // before `WikiIngestEmptyError` buries the real cause. Surface
-          // template/override errors as raw throws so the host sees them on
-          // the first chunk instead of after `chunks.length` LLM calls.
+          // Prompt building is INTENTIONALLY outside the try — it's a
+          // template-driven step whose failures (malformatted
+          // `promptOverride`, configured-template regression) are systemic
+          // and identical for every chunk. Surfacing as a raw throw means
+          // the host sees the real cause on the first chunk instead of
+          // after `chunks.length` LLM calls under a `WikiIngestEmptyError`.
+          // See spec §3.
           const { systemPrompt, userPrompt } = this.promptService.buildIngestPrompt(
             chunk,
             params.promptOverride,
@@ -157,8 +172,13 @@ export class IngestionService {
                   message: e instanceof Error ? e.message : String(e),
                 };
             // Spec §2: log once per failure, NEVER include the raw response.
+            // Note: `failure.message` is the error message, NOT the LLM response
+            // body — WikiParseError.message is the parser's diagnostic and
+            // LLM-error .message is provider-controlled. A provider that
+            // surfaces the raw response in its Error.message could leak through
+            // this line; the test asserts the parse-error branch is clean.
             const total = chunks.length;
-            const tag = failure.source === 'parse' && failure.tier
+            const tag = failure.tier
               ? `${failure.source} (tier=${failure.tier})`
               : failure.source;
             console.warn(`[WikiMemory] ingest chunk ${chunkIndex + 1}/${total} ${tag} failed (sourceRef=${sourceRef}): ${failure.message}`);
@@ -168,19 +188,29 @@ export class IngestionService {
         chunkConcurrency
       );
 
-      // Count ok/failed once; downstream uses these for branching.
+      // Single pass: collect failures, dedup ok facts against the cross-chunk
+      // `seen` set, and count `ingestedChunks` / `failedChunks` together.
       let ingestedChunks = 0;
       let failedChunks = 0;
       const failures: ChunkFailure[] = [];
-      const okSlots: Array<{ facts: ExtractedFact[]; ontology_updates?: OntologyUpdates }> = [];
+      const seen = new Set<string>();
+      const orderedChunkFacts: Array<{ facts: ExtractedFact[]; ontology_updates?: OntologyUpdates }> = [];
       for (const slot of chunkResults) {
-        if (slot.status === 'ok') {
-          ingestedChunks++;
-          okSlots.push(slot);
-        } else {
+        if (slot.status === 'failed') {
           failedChunks++;
           failures.push(slot.error);
+          continue;
         }
+        ingestedChunks++;
+        const dedupedFacts: ExtractedFact[] = [];
+        for (const fact of slot.facts) {
+          const normalizedTitle = normalizeTitleKey(fact.title);
+          if (!seen.has(normalizedTitle)) {
+            seen.add(normalizedTitle);
+            dedupedFacts.push(fact);
+          }
+        }
+        orderedChunkFacts.push({ facts: dedupedFacts, ontology_updates: slot.ontology_updates });
       }
 
       // Total failure: throw WikiIngestEmptyError before any persistence runs.
@@ -191,20 +221,6 @@ export class IngestionService {
           sourceRef,
           chunks: chunks.length,
         });
-      }
-
-      const seen = new Set<string>();
-      const orderedChunkFacts: Array<{ facts: ExtractedFact[]; ontology_updates?: OntologyUpdates }> = [];
-      for (const chunkResult of okSlots) {
-        const dedupedFacts: ExtractedFact[] = [];
-        for (const fact of chunkResult.facts) {
-          const normalizedTitle = normalizeTitleKey(fact.title);
-          if (!seen.has(normalizedTitle)) {
-            seen.add(normalizedTitle);
-            dedupedFacts.push(fact);
-          }
-        }
-        orderedChunkFacts.push({ facts: dedupedFacts, ontology_updates: chunkResult.ontology_updates });
       }
 
       const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
@@ -224,7 +240,7 @@ export class IngestionService {
           await this.db.withTransactionAsync(async (tx) => {
             const flat: ExtractedFact[] = [];
             for (const slot of orderedChunkFacts) flat.push(...slot.facts);
-            await this.appendPartialFacts(entityId, sourceRef, sourceHash, flat, tx);
+            await this.appendPartialFacts(entityId, sourceRef, flat, tx);
           });
         }
       } catch (err) {
@@ -252,7 +268,7 @@ export class IngestionService {
           throw new WikiDuplicateHashError({ canonical, sourceHash, entityId });
         }
         // 'skip'
-        return { truncated: false, chunks: 0, ingestedChunks: 0, failedChunks: 0, duplicateOf: canonical };
+        return zeroChunkResult(canonical);
       }
 
       await this.searchService.sync(entityId);
@@ -630,15 +646,13 @@ export class IngestionService {
   private async appendPartialFacts(
     entityId: string,
     sourceRef: string,
-    _sourceHash: string,
     dedupedFacts: ExtractedFact[],
     tx: SQLiteAdapter,
   ): Promise<{ inserted: number; skippedDuplicate: number }> {
-    // `sourceHash` is intentionally unused on this path — the parameter
-    // remains in the signature so `runFullUpsertGraph` and this helper
-    // share a call shape, but its value is dropped to keep partial rows
-    // hash-less and let `hasChanged` keep returning true for retries.
-    void _sourceHash;
+    // Partial rows are intentionally stored with `source_hash: null` so
+    // `hasChanged` keeps returning true on every retry of the same hash —
+    // the failed chunks get a second chance. The full path stamps the actual
+    // hash via `runFullUpsertGraph`; this helper deliberately does not.
     // Load the live (sourceRef, *) rows so we can dedup by title against prior
     // partial attempts AND prior full attempts. includeDeleted=false matches
     // the pre-supersession dedup semantics of the full path. Per spec §4.2:
