@@ -148,11 +148,13 @@ A network/rate-limit error from `generateText` (e.g. Bedrock `ThrottlingExceptio
 
 `console.warn` fires **exactly once per failed chunk** in a fixed format:
 ```
-[WikiMemory] ingest chunk 3/7 parse (tier=repair) failed (sourceRef=doc://spec): <message>
-[WikiMemory] ingest chunk 5/7 llm failed (sourceRef=doc://spec): <message>
+[WikiMemory] ingest chunk 3/7 parse failed (sourceRef=doc://spec; tier=repair position=42)
+[WikiMemory] ingest chunk 5/7 llm failed (sourceRef=doc://spec)
 ```
 
-The raw LLM response body is **never** included in the warn line — it may contain document content. Tests assert this.
+The trailing `;` and the `tier=` / `position=` tags are emitted only when present. `position` is appended after `tier` when both are known. When `position` is `null` and `tier` is absent (every `source: 'llm'` row, plus any parse failure with no known offset), the parens close without a trailing `;`.
+
+The raw LLM response body is **never** included in the warn line — it may contain document content. Tests assert this. The full `ChunkFailure.message` (which can include the parser's diagnostic but is never the raw response) stays in `parseFailures[]` and is omitted from the warn line by design: an LLM SDK commonly surfaces the raw response body or a multi-megabyte HTTP error in `Error.message`, so even a parser-diagnostic message that happens to share bytes with the never-logged raw response would leak if printed verbatim. Hosts that want the message inspect `parseFailures[*].message`.
 
 ### 3. `buildPromptContext` failures propagate
 

@@ -211,7 +211,10 @@ class MockSQLiteDatabase {
       if (normalized.startsWith('SELECT * FROM') && normalized.includes('entries') && normalized.includes('id IN (') && normalized.includes('deleted_at IS NULL')) {
         // EntryRepository.findByIds(ids, scopedEntityIds, tx)
         // Actual SQL: `SELECT * FROM entries WHERE id IN (?,...) [AND entity_id IN (?,...)] AND deleted_at IS NULL`
-        // args layout: [...ids, ...entityIds]. Heuristic: filter by id match AND entity_id match.
+        // When the SQL carries `entity_id IN`, args layout is [...ids, ...entityIds] and both
+        // sets must match. When the SQL omits the entity clause (scopedEntityIds undefined),
+        // args are just the ids.
+        const hasEntityClause = normalized.includes('entity_id IN (');
         const idSet = new Set<string>();
         const entityIdSet = new Set<string>();
         for (const a of args) {
@@ -220,7 +223,7 @@ class MockSQLiteDatabase {
           if (this.entries.some(e => e.entity_id === a)) entityIdSet.add(a);
         }
         return this.entries
-          .filter(e => e.deleted_at == null && idSet.has(e.id) && entityIdSet.has(e.entity_id)) as T[];
+          .filter(e => e.deleted_at == null && idSet.has(e.id) && (!hasEntityClause || entityIdSet.has(e.entity_id))) as T[];
       }
 
       if (normalized.startsWith('SELECT * FROM') && normalized.includes('entries WHERE entity_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC')) {

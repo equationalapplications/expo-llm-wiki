@@ -193,10 +193,12 @@ export class IngestionService {
             //    it verbatim. The full message stays in `parseFailures` for
             //    callers that want it; the warn line is intentionally narrow.
             const total = chunks.length;
-            const tierTag = failure.tier ? ` tier=${failure.tier}` : '';
-            const positionTag = failure.position !== null ? ` position=${failure.position}` : '';
+            const tags: string[] = [];
+            if (failure.tier) tags.push(`tier=${failure.tier}`);
+            if (failure.position !== null) tags.push(`position=${failure.position}`);
+            const tagsSuffix = tags.length > 0 ? `; ${tags.join(' ')}` : '';
             console.warn(
-              `[WikiMemory] ingest chunk ${chunkIndex + 1}/${total} ${failure.source} failed (sourceRef=${sourceRef};${tierTag}${positionTag})`,
+              `[WikiMemory] ingest chunk ${chunkIndex + 1}/${total} ${failure.source} failed (sourceRef=${sourceRef}${tagsSuffix})`,
             );
             return { status: 'failed' as const, error: failure };
           }
@@ -692,11 +694,13 @@ export class IngestionService {
     // Load the live (sourceRef, *) rows so we can dedup by title against prior
     // partial attempts AND prior full attempts. includeDeleted=false matches
     // the pre-supersession dedup semantics of the full path. Per spec §4.2:
-    // `findIdsBySource` returns the ids; `findByIds` resolves titles.
+    // `findIdsBySource` returns the ids (already scoped to `entityId` and
+    // excluding deleted rows); `findByIds` resolves titles — no entity filter
+    // needed because the ids carry that scope already.
     const liveIds = await this.entryRepo.findIdsBySource(entityId, sourceRef, null, tx, false);
     const liveFacts = liveIds.length === 0
       ? []
-      : await this.entryRepo.findByIds(liveIds, [entityId], tx);
+      : await this.entryRepo.findByIds(liveIds, undefined, tx);
     const liveTitles = new Set(liveFacts.map((f) => normalizeTitleKey(f.title)));
 
     let inserted = 0;
