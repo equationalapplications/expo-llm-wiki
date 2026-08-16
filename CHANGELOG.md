@@ -1,3 +1,10 @@
+# [5.5.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v5.4.0...v5.5.0) (2026-08-16)
+
+
+### Features
+
+* **core:** ingest parse resilience (closes [#92](https://github.com/equationalapplications/expo-llm-wiki/issues/92)) ([#93](https://github.com/equationalapplications/expo-llm-wiki/issues/93)) ([7f735c1](https://github.com/equationalapplications/expo-llm-wiki/commit/7f735c18660e652c278ba17731ac7365c81eba9d))
+
 # [5.4.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v5.3.1...v5.4.0) (2026-08-15)
 
 
