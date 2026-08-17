@@ -130,8 +130,26 @@ export interface HealResult {
   deleted: number;
   /** New facts synthesized by heal. */
   newFactsCreated: number;
-  /** Candidates a batch could not process even alone, skipped so the pass could finish. */
-  skipped: number;
+  /**
+   * Candidates that could not converge after the helper's full escalation
+   * path (terminal give-up at attemptLevel 3, parse error, or non-truncation
+   * call error). Each entry's `reason` discriminates the cause; today every
+   * value is `'non_convergent'` but the field is here so future failure
+   * modes can extend the union without another shape change. Mutually
+   * exclusive with `degraded` on `id`.
+   */
+  skipped: Array<{ id: string; reason: 'non_convergent' }>;
+  /**
+   * L3 heal successes: facts the model emitted a verdict for under a
+   * truncated view of their own body. Each entry carries the truncation
+   * magnitude so an operator can flag the fact for re-inspection. The
+   * corresponding log line `[WikiMemory] heal healed under degraded
+   * context ...` fires for each entry. Mutually exclusive with `skipped`
+   * on `id` — the reconciliation step in doRunHeal drops any record
+   * whose id also appears in `skipped` (a contradiction: degraded means
+   * healed, skipped means dropped).
+   */
+  degraded: Array<{ id: string; originalBodyChars: number; truncatedBodyChars: number }>;
   /**
    * Heal candidates still eligible after this run — convergence signal: loop while > 0.
    *
