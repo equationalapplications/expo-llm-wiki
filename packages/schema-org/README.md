@@ -18,6 +18,41 @@ accuracy. This manifest selects the high-value warm-agent subset (~2 KB serializ
 9-way classification) while keeping every type and property standard, so stored
 facts and edges map 1:1 onto schema.org for future JSON-LD export.
 
+## Why this is the GraphRAG ontology
+
+This manifest is designed as the canonical taxonomy bundle for warm-agent GraphRAG: the 9 node types and 28 polymorphic edges cover the people, places, organizations, projects, events, and creative works that dominate personal and professional knowledge graphs. Pair it with `core-llm-wiki`'s `traverseGraph()` and you get a SQL-only GraphRAG stack with no Neo4j.
+
+### Why a curated ontology prevents hallucination in edge extraction
+
+The librarian and ingest LLM passes that write `llm_wiki_edges` only see this manifest's node types and edge properties in their prompt context. Without that constraint, an unconstrained LLM will invent edge types and node types on every call — producing a noisy graph where `WITH RECURSIVE` walks return orphaned nodes and arbitrary relationships.
+
+With the manifest:
+- **Every edge has a valid `(type, source_type, target_type)` triple** — the recursive CTE's JOINs return dense, connected subgraphs instead of dead-ends.
+- **Polymorphic edges** (`knows`, `about`, `itemReviewed`, `object`, `agent`) cover the cases where a single property name applies to many source/target type combinations.
+- **Token budget stays small** — ~2 KB serialized, vs ~50 KB for the full schema.org catalog. Edge classification accuracy stays high.
+
+### Use it with `core-llm-wiki` for GraphRAG
+
+```ts
+import { createWiki } from '@equationalapplications/core-llm-wiki';
+import { schemaOrgWarmAgentManifest } from '@equationalapplications/schema-org-llm-wiki';
+
+const wiki = createWiki(db, {
+  llmProvider,
+  config: {
+    ontology: {
+      mode: 'strict',
+      seedManifests: {
+        [entityId]: { mode: 'strict', manifest: schemaOrgWarmAgentManifest },
+      },
+    },
+  },
+});
+
+// After ingestDocument / runLibrarian populate edges:
+const graph = await wiki.traverseGraph(entityId, { sourceId, maxDepth: 2 });
+```
+
 ## Requirements
 
 Requires `@equationalapplications/core-llm-wiki` at the same release or newer —
