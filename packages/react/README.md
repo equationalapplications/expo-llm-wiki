@@ -17,7 +17,7 @@ In-browser LLM memory for React web apps. Bring your own SQLite adapter (e.g., [
 - **Multi-entity reads** — Search across multiple `entity_id` namespaces in one pass with `tierWeights` and optional `includeZeroWeightEntities`
 - **Source provenance** — `WikiFact.source_type` distinguishes immutable document facts (`immutable_document`) from mutable derived/user facts (`librarian_inferred`, `user_stated`, `user_confirmed`). Immutable document facts are preserved from librarian/heal rewriting and only removed by `forget()` or by re-ingesting the source.
 - **Seeded ontologies** — Enforce strict taxonomies or allow emergent graph relationship extraction (`useOntologyManifest`, `useSetOntologyManifest`; Strict, Emergent, or Off; defaults to Off).
-- **Graph traversal** — Walk the knowledge graph N hops from a fact and format the result for LLM prompts (`useWikiTraversal`, `formatGraphContext`).
+- **Graph traversal (GraphRAG)** — Walk the knowledge graph N hops from a fact and format the result for LLM prompts (`useWikiTraversal`, `formatGraphContext`). This is the React-web surface of the GraphRAG retrieval layer; pair with `@equationalapplications/schema-org-llm-wiki` for the canonical ontology. See [root README: GraphRAG](../../README.md#graphrag-sql-only-graph-retrieval).
 - **Reactive reads** — Auto-refetch on `entityId`, query, or `options` changes
 - **Mutation hooks** — `useWikiWrite`, `useWikiIngest`, `useWikiForget`, `useWikiMaintenance`, `useSetOntologyManifest`, etc.
 - **Shared context** — Single `WikiProvider` per app, use anywhere
