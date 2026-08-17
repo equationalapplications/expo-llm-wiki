@@ -20,6 +20,35 @@ const hostileProxy = new Proxy({}, {
   },
 });
 
+/**
+ * Hostile Proxy that traps `getPrototypeOf` (instanceof surface) AND
+ * `toString` / `valueOf` / `Symbol.toPrimitive` (the string-coercion
+ * surface used by `String(err)` fallbacks). Used to verify that the
+ * full sanitize / fallback chain holds the non-throwing contract even
+ * when the attacker controls more than just instanceof.
+ */
+const hostileToStringProxy = new Proxy({}, {
+  getPrototypeOf() {
+    throw new Error('proxy rejects prototype access');
+  },
+  get(_target, prop) {
+    if (prop === 'toString' || prop === 'valueOf' || prop === Symbol.toPrimitive) {
+      throw new Error('toString throws');
+    }
+    return undefined;
+  },
+});
+
+/**
+ * Error subclass whose `cause` getter throws. Used to verify that the
+ * `sanitizeRankerError` inner-cause branch does not escape the function
+ * when the source Error's `.cause` access throws.
+ */
+class HostileCauseError extends Error {
+  constructor() { super('boom'); }
+  get cause(): unknown { throw new Error('cause throws'); }
+}
+
 describe('instanceof Error Proxy guards', () => {
   describe('formatSkipError (site 5)', () => {
     it('does not throw on a hostile Proxy', () => {
@@ -103,16 +132,16 @@ describe('instanceof Error Proxy guards', () => {
     it('returns the wrapped-Error message when sanitizeRankerErrors=false and the input is a hostile Proxy', () => {
       // Lock the sanitizeRankerErrors=false path's exact return value:
       // hostileProxy is treated as non-Error, so we wrap it in
-      // `new Error(String(err))`. String(hostileProxy) throws under the
-      // hostile getPrototypeOf trap... actually no — String() coercion
-      // does NOT invoke getPrototypeOf; it walks valueOf/toString. So
-      // this assertion documents that the wrap path produces an Error
-      // whose message is whatever String(err) yields, not the scrubbed
-      // marker. If future changes add a getPrototypeOf-touching path here,
-      // this assertion will surface it.
+      // `new Error(String(err))`. String(hostileProxy) does NOT throw on
+      // the getPrototypeOf-only Proxy (String() walks valueOf/toString,
+      // neither of which invokes getPrototypeOf) and returns the literal
+      // '[object Object]'. Locks both the message shape and the
+      // getPrototypeOf-only contract: a future change to a more hostile
+      // Proxy fixture (with toString/Symbol.toPrimitive traps) would
+      // require delegating to safeErrorToString and would surface here.
       const result = sanitizeRankerError(hostileProxy, false);
       expect(result).toBeInstanceOf(Error);
-      expect(typeof result.message).toBe('string');
+      expect(result.message).toBe('[object Object]');
     });
   });
 
@@ -133,4 +162,63 @@ describe('instanceof Error Proxy guards', () => {
   // covered transitively via vectorRanker.test.ts (Task 6), since the only
   // public path to those checks is via the VectorRanker fallback callback,
   // which already exercises sanitizeRankerError via _sanitizeRankerError.
+
+  // -------------------------------------------------------------------------
+  // Second-tier hostile-input coverage: the spec audited only the
+  // `instanceof Error` operator surface (getPrototypeOf trap). A complete
+  // non-throwing fix must also hold against the *string-coercion* surface
+  // (`toString` / `Symbol.toPrimitive`) and against Error subclasses whose
+  // own property accessors (`cause`, `constructor`) reject — both of which
+  // `sanitizeRankerError` reaches after the instanceof guard passes.
+  // -------------------------------------------------------------------------
+  describe('sanitizeRankerError with hostile toString trap', () => {
+    it('does not throw (sanitizeRankerErrors=false path wraps with safeErrorToString)', () => {
+      expect(() => sanitizeRankerError(hostileToStringProxy, false)).not.toThrow();
+    });
+
+    it('does not throw (sanitizeRankerErrors=true path avoids String(err) entirely)', () => {
+      expect(() => sanitizeRankerError(hostileToStringProxy, true)).not.toThrow();
+    });
+
+    it('returns an Error instance for sanitizeRankerErrors=false', () => {
+      const result = sanitizeRankerError(hostileToStringProxy, false);
+      expect(result).toBeInstanceOf(Error);
+    });
+
+    it('returns the scrubbed VectorRanker marker for sanitizeRankerErrors=true', () => {
+      // Lock the observable contract: the toString trap is never reached on
+      // this path because the function takes the typeof-fallback branch
+      // (typeof err === 'object') — no String() coercion runs.
+      const result = sanitizeRankerError(hostileToStringProxy, true);
+      expect(result.message).toBe('VectorRanker object (message scrubbed for security)');
+    });
+  });
+
+  describe('sanitizeRankerError with hostile Error subclass getters', () => {
+    it('does not throw on a hostile cause getter', () => {
+      expect(() => sanitizeRankerError(new HostileCauseError(), true)).not.toThrow();
+    });
+
+    it('returns the scrubbed marker with the hostile class name (cause getter did not abort sanitization)', () => {
+      const result = sanitizeRankerError(new HostileCauseError(), true);
+      expect(result.message).toBe('VectorRanker HostileCauseError (message scrubbed for security)');
+    });
+
+    it('does not throw on a hostile constructor getter', () => {
+      const e = new Error('boom') as Error & { constructor: unknown };
+      Object.defineProperty(e, 'constructor', {
+        get() { throw new Error('constructor throws'); },
+      });
+      expect(() => sanitizeRankerError(e, true)).not.toThrow();
+    });
+
+    it('falls back to "Error" as typeName when the constructor getter throws', () => {
+      const e = new Error('boom') as Error & { constructor: unknown };
+      Object.defineProperty(e, 'constructor', {
+        get() { throw new Error('constructor throws'); },
+      });
+      const result = sanitizeRankerError(e, true);
+      expect(result.message).toBe('VectorRanker Error (message scrubbed for security)');
+    });
+  });
 });

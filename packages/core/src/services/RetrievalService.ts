@@ -6,7 +6,7 @@ import type { EventRepository } from '../repositories/EventRepository';
 import type { MetadataRepository } from '../repositories/MetadataRepository';
 import type { SearchService } from './SearchService';
 import { applyTierWeight, normalizeEntityIds, sanitizeTierWeights, shouldExposeReadMetadata } from '../readOptions';
-import { sanitizeRankerError } from '../utils/pure';
+import { sanitizeRankerError, safeErrorToString } from '../utils/pure';
 
 type ReadCandidateRowMetadata = EntryRowMetadata;
 type ReadCandidateRowWithEmbeddings = EntryRowWithEmbeddings;
@@ -351,7 +351,14 @@ export class RetrievalService {
                 } catch {
                   // hostile Proxy — fall through
                 }
-                const rankerError = isErrorLike ? rankerErr : new Error(String(rankerErr));
+                // `String(rankerErr)` invokes the `toString` /
+                // `Symbol.toPrimitive` trap on rankerErr — a hostile Proxy
+                // whose trap rejects would throw out of this catch and tear
+                // down the retrieval. Delegate to the hardened
+                // `safeErrorToString` helper (converges on the static
+                // `[unstringifiable error]` marker on throw) to honor the
+                // non-throwing contract this guard exists to provide.
+                const rankerError = isErrorLike ? rankerErr : new Error(safeErrorToString(rankerErr));
                 const policy = this.options.vectorRankerFallback ?? 'js-cosine';
 
                 this.options.onVectorRankerFallback?.({
@@ -510,7 +517,10 @@ export class RetrievalService {
           // Narrowed view: only valid when `isErrorLike` is true (guaranteed
           // by the try/catch above). Cast captures that runtime invariant
           // for the typechecker; the runtime is already proven correct.
-          const error = isErrorLike ? (err as Error) : new Error(String(err));
+          // `String(err)` invokes the `toString` / `Symbol.toPrimitive` trap
+          // on err — delegate to the hardened `safeErrorToString` helper
+          // so a hostile Proxy whose trap rejects cannot escape this catch.
+          const error = isErrorLike ? (err as Error) : new Error(safeErrorToString(err));
           if (rankerShouldRethrow) {
             throw error;
           }

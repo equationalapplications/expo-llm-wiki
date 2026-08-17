@@ -33,15 +33,15 @@ All take `unknown` (or `unknown`-shaped values from plugin callbacks) and rely o
 | #   | File:line                                       | Function                          | Source of `err`                          |
 | --- | ----------------------------------------------- | --------------------------------- | ---------------------------------------- |
 | 1   | `packages/core/src/utils/pure.ts:545`           | `safeErrorToString`               | callers (provider errors, parse errors)  |
-| 2   | `packages/core/src/utils/pure.ts:591`           | `sanitizeRankerError`             | VectorRanker plugin                      |
-| 3   | `packages/core/src/utils/pure.ts:591`           | `sanitizeRankerError`             | VectorRanker plugin                      |
-| 4   | `packages/core/src/utils/pure.ts:591`           | `sanitizeRankerError`             | VectorRanker plugin                      |
+| 2   | `packages/core/src/utils/pure.ts:592`           | `sanitizeRankerError`             | VectorRanker plugin                      |
+| 3   | `packages/core/src/utils/pure.ts:592`           | `sanitizeRankerError`             | VectorRanker plugin                      |
+| 4   | `packages/core/src/utils/pure.ts:592`           | `sanitizeRankerError`             | VectorRanker plugin                      |
 | 5   | `packages/core/src/services/MaintenanceService.ts:125` | `formatSkipError`            | `onSkip` callback (provider errors)      |
 | 6   | `packages/core/src/services/BoundedLlmCall.ts:70`     | `isTruncationError`          | LLM provider, called from `runBatched`   |
 | 7   | `packages/core/src/services/RetrievalService.ts:350`  | (inline in ranker fallback)  | VectorRanker plugin                      |
-| 8   | `packages/core/src/services/RetrievalService.ts:506`  | (inline in catch block)      | caught from inner try                    |
+| 8   | `packages/core/src/services/RetrievalService.ts:513`  | (inline in catch block)      | caught from inner try                    |
 
-Sites 2–4 collapse to one boolean (`sanitizeRankerError` runs three `instanceof Error` checks against the same value; the fix hoists them into a single `try { isErrorLike = err instanceof Error } catch {}` at `utils/pure.ts:591`). Sites 7–8 share a similar shape inside one method.
+Sites 2–4 collapse to one boolean (`sanitizeRankerError` runs three `instanceof Error` checks against the same value; the fix hoists them into a single `try { isErrorLike = err instanceof Error } catch {}` at `utils/pure.ts:592`). Sites 7–8 share a similar shape inside one method.
 
 ### Out of scope — Tier-B sites
 
