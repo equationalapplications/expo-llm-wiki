@@ -6,6 +6,8 @@ import {
 } from '../prompts';
 import type { PromptOverrides, OntologyPromptContext } from '../types';
 
+export type DegradedRecord = { id: string; originalBodyChars: number; truncatedBodyChars: number };
+
 export class PromptService {
   constructor(private globalOverrides?: PromptOverrides) {}
 
@@ -88,13 +90,59 @@ export class PromptService {
     };
   }
 
+  /**
+   * Heal-prompt level interpretation for the `attemptLevel` ladder.
+   *
+   * Caller contract: `documentAnchors` may be a slice sized for `batch.length`
+   * or a larger set (e.g. a cache hit from `_selectHealAnchors`). This function
+   * applies the prompt-side anchor cap `min(HEAL_MAX_ANCHORS=50, batch.length
+   * * HEAL_ANCHORS_PER_CANDIDATE=4)` so the rendered prompt is bounded
+   * regardless of caller input. `HEAL_MAX_ANCHORS` and
+   * `HEAL_ANCHORS_PER_CANDIDATE` live here too — keeping the formula
+   * co-located with its application avoids a "MaintenanceService policy"
+   * import cycle (`PromptService` is constructed before `MaintenanceService`
+   * exists) and makes the cap testable without a `MaintenanceService`
+   * instance. Task 3 exports the same two constants from `MaintenanceService`
+   * for caller-side overfetch sizing; the values must match.
+   *
+   * Level semantics:
+   * - L0: allTasks + recentEvents + full candidate bodies; anchors re-capped
+   * - L1: drop allTasks; recentEvents present; candidate bodies full
+   * - L2: drop allTasks and recentEvents; candidate bodies full
+   * - L3: drop allTasks and recentEvents; truncate each candidate body to
+   *   `bodyTruncationChars` and emit a `degraded` record per truncated fact
+   */
   buildHealPrompt(
     healCandidates: unknown[],
     documentAnchors: unknown[],
     allTasks: unknown[],
     recentEvents: unknown[],
-    runtimeOverride?: string,
-  ): { systemPrompt: string; userPrompt: string } {
+    runtimeOverride: string | undefined,
+    attemptLevel: 0 | 1 | 2 | 3,
+    bodyTruncationChars: number = 4_000,
+  ): { prompts: { systemPrompt: string; userPrompt: string }; degraded: DegradedRecord[] } {
+    // L0: all context. L1: drop allTasks. L2: also drop recentEvents.
+    const effectiveTasks = attemptLevel >= 1 ? [] : allTasks;
+    const effectiveEvents = attemptLevel >= 2 ? [] : recentEvents;
+
+    // L0 anchor cap: min(HEAL_MAX_ANCHORS=50, batch.length * 4). The caller
+    // is responsible for sizing the documentAnchors slice; we re-cap here
+    // in case the caller passed a superset (e.g. from _selectHealAnchors cache).
+    const HEAL_MAX_ANCHORS = 50;
+    const HEAL_ANCHORS_PER_CANDIDATE = 4;
+    const maxAnchors = Math.min(HEAL_MAX_ANCHORS, healCandidates.length * HEAL_ANCHORS_PER_CANDIDATE);
+    const effectiveAnchors = documentAnchors.slice(0, maxAnchors);
+
+    // L3: truncate each candidate's body independently. A fact whose body
+    // is already <= bodyTruncationChars passes through unchanged; the
+    // caller sees that fact is absent from `degraded` and can treat the
+    // result as if no truncation had occurred.
+    const { shapedCandidates, degraded } = applyBodyTruncation(
+      healCandidates,
+      attemptLevel,
+      bodyTruncationChars,
+    );
+
     const template = runtimeOverride ?? this.globalOverrides?.healSystemPrompt ?? HEAL_SYSTEM_PROMPT;
     if (
       /\{\{\s*healCandidates\s*\}\}/.test(template) ||
@@ -103,13 +151,24 @@ export class PromptService {
       /\{\{\s*recentEvents\s*\}\}/.test(template)
     ) {
       return {
-        systemPrompt: this.hydrate(template, { healCandidates, documentAnchors, allTasks, recentEvents }),
-        userPrompt: 'Please heal the memory graph.',
+        prompts: {
+          systemPrompt: this.hydrate(template, {
+            healCandidates: shapedCandidates,
+            documentAnchors: effectiveAnchors,
+            allTasks: effectiveTasks,
+            recentEvents: effectiveEvents,
+          }),
+          userPrompt: 'Please heal the memory graph.',
+        },
+        degraded,
       };
     }
     return {
-      systemPrompt: template,
-      userPrompt: `Heal Candidates:\n${JSON.stringify(healCandidates, null, 2)}\nDocument Anchors (DO NOT MODIFY OR DELETE):\n${JSON.stringify(documentAnchors, null, 2)}\nAll Tasks:\n${JSON.stringify(allTasks, null, 2)}\nRecent Events:\n${JSON.stringify(recentEvents, null, 2)}\nThe following document anchors are provided for contradiction detection only. Do not include them in \`downgraded\`, \`deleted\`, or \`newFacts\`.`,
+      prompts: {
+        systemPrompt: template,
+        userPrompt: `Heal Candidates:\n${JSON.stringify(shapedCandidates, null, 2)}\nDocument Anchors (DO NOT MODIFY OR DELETE):\n${JSON.stringify(effectiveAnchors, null, 2)}\nAll Tasks:\n${JSON.stringify(effectiveTasks, null, 2)}\nRecent Events:\n${JSON.stringify(effectiveEvents, null, 2)}\nThe following document anchors are provided for contradiction detection only. Do not include them in \`downgraded\`, \`deleted\`, or \`newFacts\`.`,
+      },
+      degraded,
     };
   }
 
@@ -131,4 +190,42 @@ export class PromptService {
       userPrompt: `Facts:\n${JSON.stringify(facts, null, 2)}`,
     };
   }
+}
+
+/**
+ * Truncate candidate bodies at L3 only. Each fact is sliced independently;
+ * a fact whose body is at or below the cap passes through unchanged. The
+ * trailing marker is what the post-reconcile log line references — an
+ * operator scanning the log sees the truncation magnitude without
+ * re-querying the fact.
+ */
+function applyBodyTruncation(
+  candidates: unknown[],
+  attemptLevel: 0 | 1 | 2 | 3,
+  bodyTruncationChars: number,
+): { shapedCandidates: unknown[]; degraded: DegradedRecord[] } {
+  if (attemptLevel < 3) {
+    return { shapedCandidates: candidates, degraded: [] };
+  }
+  const shapedCandidates: unknown[] = [];
+  const degraded: DegradedRecord[] = [];
+  for (const c of candidates) {
+    if (typeof c !== 'object' || c === null) {
+      shapedCandidates.push(c);
+      continue;
+    }
+    const fact = c as { id?: unknown; body?: unknown };
+    const body = typeof fact.body === 'string' ? fact.body : '';
+    if (body.length <= bodyTruncationChars) {
+      shapedCandidates.push(c);
+      continue;
+    }
+    const originalBodyChars = body.length;
+    const truncated = `${body.slice(0, bodyTruncationChars)}…[truncated at ${bodyTruncationChars} chars, original was ${originalBodyChars}]`;
+    shapedCandidates.push({ ...fact, body: truncated });
+    if (typeof fact.id === 'string') {
+      degraded.push({ id: fact.id, originalBodyChars, truncatedBodyChars: bodyTruncationChars });
+    }
+  }
+  return { shapedCandidates, degraded };
 }
