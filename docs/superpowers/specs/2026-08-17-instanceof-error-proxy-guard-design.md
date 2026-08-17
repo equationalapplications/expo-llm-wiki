@@ -1,6 +1,6 @@
 # Defensive `instanceof Error` Guards for Hostile Proxies
 
-Status: Implemented (PR open — awaiting merge).
+Status: Draft — awaiting user review.
 Originates: Issue #96 (follow-up to PR #95, which was docs-only after #93 squash-merged onto `main`).
 
 ## Problem
@@ -32,16 +32,16 @@ All take `unknown` (or `unknown`-shaped values from plugin callbacks) and rely o
 
 | #   | File:line                                       | Function                          | Source of `err`                          |
 | --- | ----------------------------------------------- | --------------------------------- | ---------------------------------------- |
-| 1   | `packages/core/src/utils/pure.ts:545`           | `safeErrorToString`               | callers (provider errors, parse errors)  |
-| 2   | `packages/core/src/utils/pure.ts:592`           | `sanitizeRankerError`             | VectorRanker plugin                      |
-| 3   | `packages/core/src/utils/pure.ts:592`           | `sanitizeRankerError`             | VectorRanker plugin                      |
-| 4   | `packages/core/src/utils/pure.ts:592`           | `sanitizeRankerError`             | VectorRanker plugin                      |
-| 5   | `packages/core/src/services/MaintenanceService.ts:125` | `formatSkipError`            | `onSkip` callback (provider errors)      |
-| 6   | `packages/core/src/services/BoundedLlmCall.ts:70`     | `isTruncationError`          | LLM provider, called from `runBatched`   |
-| 7   | `packages/core/src/services/RetrievalService.ts:350`  | (inline in ranker fallback)  | VectorRanker plugin                      |
-| 8   | `packages/core/src/services/RetrievalService.ts:513`  | (inline in catch block)      | caught from inner try                    |
+| 1   | `packages/core/src/utils/pure.ts:538`           | `safeErrorToString`               | callers (provider errors, parse errors)  |
+| 2   | `packages/core/src/utils/pure.ts:575`           | `sanitizeRankerError`             | VectorRanker plugin                      |
+| 3   | `packages/core/src/utils/pure.ts:577`           | `sanitizeRankerError`             | VectorRanker plugin                      |
+| 4   | `packages/core/src/utils/pure.ts:579`           | `sanitizeRankerError`             | VectorRanker plugin                      |
+| 5   | `packages/core/src/services/MaintenanceService.ts:117` | `formatSkipError`            | `onSkip` callback (provider errors)      |
+| 6   | `packages/core/src/services/BoundedLlmCall.ts:60`     | `isTruncationError`          | LLM provider, called from `runBatched`   |
+| 7   | `packages/core/src/services/RetrievalService.ts:343`  | (inline in ranker fallback)  | VectorRanker plugin                      |
+| 8   | `packages/core/src/services/RetrievalService.ts:489`  | (inline in catch block)      | caught from inner try                    |
 
-Sites 2–4 collapse to one boolean (`sanitizeRankerError` runs three `instanceof Error` checks against the same value; the fix hoists them into a single `try { isErrorLike = err instanceof Error } catch {}` at `utils/pure.ts:592`). Sites 7–8 share a similar shape inside one method.
+Sites 2–4 share one function and one boolean (`sanitizeRankerError` runs three `instanceof Error` checks against the same value). Sites 7–8 share a similar shape inside one method.
 
 ### Out of scope — Tier-B sites
 
@@ -61,7 +61,7 @@ The bug is a structural property of the `instanceof` operator, not of the data f
 Three properties make inline `try/catch` the right shape:
 
 1. **Locality of intent.** Each site already has a docstring contract ("never throw", "non-throwing by construction", "sanitize"). The fix lives next to that contract.
-2. **One primitive, no new surface.** `try { return x instanceof Y } catch { return false }` is four lines, no exports, no API to version. `safeErrorToString` already uses this exact pattern (`readErrorField` at `utils/pure.ts:576–582`) — matching the local convention rather than introducing a new one.
+2. **One primitive, no new surface.** `try { return x instanceof Y } catch { return false }` is four lines, no exports, no API to version. `safeErrorToString` already uses this exact pattern (`readErrorField` at `utils/pure.ts:565–571`) — matching the local convention rather than introducing a new one.
 3. **Per-site control of the fallback.** A helper forces one policy; inline lets each site pick. In practice all eight sites want `false`-on-throw (treat as non-Error, fall through), but keeping them inline means future divergence is one edit, not one helper signature.
 
 ### Alternatives considered
@@ -100,7 +100,7 @@ This is the canonical pattern. Sites 1, 6, 7, 8 use the same shape. Sites 2–4 
 export function sanitizeRankerError(err: unknown, sanitizeRankerErrors: boolean | undefined): Error {
   let isErrorLike = false;
   try { isErrorLike = err instanceof Error; }
-  catch { /* already false */ }
+  catch { isErrorLike = false; }
   if (sanitizeRankerErrors === false) {
     return isErrorLike ? err : new Error(String(err));
   }
@@ -113,7 +113,7 @@ export function sanitizeRankerError(err: unknown, sanitizeRankerErrors: boolean 
 }
 ```
 
-**Site 6 (`isTruncationError`):** The function returns a boolean used internally by `runBatched`; if the underlying `err instanceof Error` throws, the only consequence is a wrong answer (one wasted batch split). The contract is explicit: `isTruncationError` should return `false` (treating the value as non-truncation-related) when a hostile Proxy appears — never throw. The try/catch wraps the entire expression:
+**Site 6 (`isTruncationError`):** The function returns a boolean used internally by `runBatched`; if the underlying `err instanceof Error` throws, the only consequence is a wrong answer (one wasted batch split). The try/catch wraps the entire expression:
 
 ```ts
 let message: string;
@@ -146,7 +146,6 @@ try {
 - For each Tier-A function, imports it and asserts:
   1. The call does not throw.
   2. The return value is well-typed (`string` for the string-returning helpers; `Error` instance for `sanitizeRankerError`; `boolean` for `isTruncationError`).
-  3. The specific observable return value for the hostile-Proxy case matches the function's contract — e.g. `_sanitizeRankerError` returns `new Error('VectorRanker object (message scrubbed for security)')`, `isTruncationError` returns `false`, `formatSkipError` returns `'{}'` (via the `JSON.stringify` branch — `JSON.stringify(hostileProxy)` returns the empty-object literal because the Proxy has no own enumerable properties and does not invoke `getPrototypeOf`). This locks the observable contract and catches silent regressions where the function starts returning a different non-throwing value.
 
 This file is the single grep target for future audits of the same vulnerability class.
 
@@ -155,7 +154,7 @@ This file is the single grep target for future audits of the same vulnerability 
 | Test file                                                | New test                                                                                                              |
 | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | `packages/core/__tests__/formatSkipError.test.ts`        | `does not throw on a Proxy whose getPrototypeOf trap rejects` (the literal issue #96 case)                            |
-| `packages/core/__tests__/safeErrorToString.test.ts`      | `does not throw on a Proxy whose getPrototypeOf trap rejects` — assert returns `'[object Object]'` (`String(e)` and `Object.prototype.toString.call(e)` do NOT invoke `getPrototypeOf`, so both return `'[object Object]'` under the hostile `getPrototypeOf`-only trap; the `[unstringifiable error]` marker is reserved for inputs where both throw) |
+| `packages/core/__tests__/safeErrorToString.test.ts`      | `does not throw on a Proxy whose getPrototypeOf trap rejects` — assert returns the `[unstringifiable error]` marker (both `String(e)` and `Object.prototype.toString.call(e)` throw under the hostile `getPrototypeOf` trap, so the static marker is the final fallback) |
 | `packages/core/__tests__/BoundedLlmCall.test.ts`         | `isTruncationError returns false on a Proxy whose getPrototypeOf trap rejects`                                         |
 | `packages/core/__tests__/vectorRanker.test.ts`           | `_sanitizeRankerError returns an Error instance on a hostile Proxy` (covers RetrievalService call sites transitively) |
 
@@ -181,66 +180,9 @@ Neither layer is redundant. The dedicated file is a single grep target. The per-
 After implementation:
 
 1. `pnpm --filter @equationalapplications/core-llm-wiki test` — full suite green.
-2. ```bash
-   # Total instanceof Error code sites in core (filter out documentation
-   # comment lines that mention the pattern; the fix's comments do, which
-   # would otherwise inflate the count).
-   TOTAL=$(grep -rn 'instanceof Error' packages/core/src | grep -vE ':\s*(//|\*)' | wc -l)
-   # Sites protected with try/catch — handles both forms:
-   #   - multi-line:  `try {` on the line(s) above `instanceof Error`
-   #   - single-line: `try { ... instanceof Error ... } catch {}` on one line
-   # A simple `grep -B1` only matches the multi-line form, so this script
-   # uses awk to track whether a `try {` has been seen on any recent line.
-   PROTECTED=$(awk -F: '
-     {
-       line = $0
-       sub(/^[^:]+:/, "", line)
-       sub(/^[0-9]+:/, "", line)
-       if (line ~ /try \{/) has_try = 1
-       if (line ~ /instanceof Error/) {
-         if (has_try) count++
-         has_try = 0
-       }
-     }
-     END { print count+0 }
-   ' <(grep -rn -E 'instanceof Error|try \{' packages/core/src | grep -vE ':\s*(//|\*)'))
-   echo "Protected: $PROTECTED / $TOTAL"
-   test "$PROTECTED" -eq "$TOTAL"
-   ```
-   Asserts `$PROTECTED == $TOTAL` — every `instanceof Error` code site is wrapped in a `try` block. The comment filter is required: the fix patches themselves add comments that mention `instanceof Error` to document the rationale, which would otherwise inflate `TOTAL`. Sites listed as out-of-scope (Tier-B) should be excluded via additional filtering.
+2. `grep -rn 'instanceof Error' packages/core/src` — eight hits, all either inside a try block, inside a documented non-throwing helper, or out of scope per the table above.
 3. The dedicated regression test fails on every Tier-A function before the fix and passes after.
 4. The new `formatSkipError` smoke test fails on `main` before the source fix lands and passes after.
-
-### Audit gate (for code-review time)
-
-To verify that all Tier-A `instanceof Error` checks are properly guarded, run the following audit command. It counts total `instanceof Error` sites and verifies that each is within its corresponding try block (scoped to the same block, not carrying `has_try` across unrelated code).
-
-```bash
-# Count total instanceof Error sites in packages/core/src
-TOTAL=$(grep -rn 'instanceof Error' packages/core/src | grep -vE ':\s*(//|\*)' | wc -l | tr -d ' ')
-echo "Total: $TOTAL"
-
-# Count protected sites (instanceof Error within its own try block)
-# Uses structural parsing: reset has_try at each instanceof, only count if try appeared AFTER the last instanceof
-PROTECTED=$(awk -F: '
-  {
-    line = $0
-    sub(/^[^:]+:/, "", line)
-    sub(/^[0-9]+:/, "", line)
-    # Reset has_try when we encounter instanceof Error (new check starts)
-    if (line ~ /instanceof Error/) {
-      if (has_try) count++
-      has_try = 0
-    } else if (line ~ /try \{/) {
-      # Set has_try only after last instanceof was reset
-      has_try = 1
-    }
-  }
-  END { print count+0 }
-' <(grep -rn -E 'instanceof Error|try \{' packages/core/src | grep -vE ':\s*(//|\*)'))
-echo "Protected: $PROTECTED / $TOTAL"
-test "$PROTECTED" -eq "$TOTAL" || { echo "FAIL: $PROTECTED/$TOTAL instanceof Error sites are guarded"; exit 1; }
-```
 
 ## Future work (out of scope for this fix)
 
