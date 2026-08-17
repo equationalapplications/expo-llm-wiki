@@ -150,7 +150,8 @@ const wiki = createWiki(db, { llmProvider: { generateText } });
 // 1. Ingest a document — librarian/ingest writes edges automatically.
 await wiki.ingestDocument('user-123', {
   sourceRef: 'onboarding-doc.md',
-  body: 'Alice joined the data team in March and reports to Bob.',
+  sourceHash: '<sha256-of-onboarding-doc>',
+  documentChunk: 'Alice joined the data team in March and reports to Bob.',
 });
 
 // 2. Pick an anchor fact and walk the graph N hops.
@@ -173,50 +174,49 @@ const answer = await generateText({
 
 ### The SQL: how traversal works in one query
 
-`EdgeRepository.getNeighborhood()` runs a single recursive CTE that walks edges in either direction, guards against cycles via a string-accumulator `visited` column, and ranks results by hop distance and confidence rank.
+`EdgeRepository.getNeighborhood()` runs a single recursive CTE that walks edges in either direction, guards against cycles via a string-accumulator `visited` column, and ranks results by hop depth (`MIN(depth)`, then most-recently-updated entry as the tiebreaker). The query below is abridged from [`packages/core/src/repositories/EdgeRepository.ts`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/src/repositories/EdgeRepository.ts) — bind parameters are shown as `?`, and the dynamic `edge_types` and `excludeSourceTypes` clauses are expanded inline for clarity. After the CTE returns `(node_id, depth)`, `GraphTraversalService.traverseGraph` hydrates those ids into full `WikiFact` rows and filters edges whose endpoints fell out.
 
 ```sql
-WITH RECURSIVE walk(node_id, distance, visited) AS (
-  -- 1. Anchor: Start at the exact nodes found via vector/keyword search
+WITH RECURSIVE walk(node_id, depth, visited) AS (
+  -- 1. Anchor: the source fact row, scoped to entity, soft-delete-aware
   SELECT id, 0, ',' || id || ','
   FROM llm_wiki_entries
-  WHERE id IN (/* Initial Retrieval IDs */)
+  WHERE id = ? AND entity_id = ? AND deleted_at IS NULL
 
   UNION
 
-  -- 2. Recursive Step: Walk edges in both directions
+  -- 2. Recursive step: walk edges in the requested direction(s), join the
+  --    neighbour entry, gate by min-confidence and excluded source_type,
+  --    and append the neighbour id to the `visited` accumulator to break
+  --    cycles before recursing further.
   SELECT
     CASE WHEN e.source_id = w.node_id THEN e.target_id ELSE e.source_id END,
-    w.distance + 1,
-    w.visited || CASE WHEN e.source_id = w.node_id THEN e.target_id ELSE e.source_id END || ','
+    w.depth + 1,
+    w.visited || (CASE WHEN e.source_id = w.node_id THEN e.target_id ELSE e.source_id END) || ','
   FROM walk w
   JOIN llm_wiki_edges e
-    ON (e.source_id = w.node_id OR e.target_id = w.node_id)
+    ON e.entity_id = ?
+    AND (
+      (? != 'inbound'  AND e.source_id = w.node_id) OR
+      (? != 'outbound' AND e.target_id = w.node_id)
+    )
+    AND e.edge_type IN (?, ?)                          -- expanded from opts.edgeTypes[]
   JOIN llm_wiki_entries n
-    ON n.id = CASE WHEN e.source_id = w.node_id THEN e.target_id ELSE e.source_id END
-  WHERE w.distance < /* maxDepth */
-    -- 3. Cycle Guard: Prevent infinite loops on bidirectional edges
-    AND instr(w.visited, ',' || n.id || ',') = 0
-    -- [Abstracted: Edge type and excluded source_type filters applied here]
+    ON n.id = (CASE WHEN e.source_id = w.node_id THEN e.target_id ELSE e.source_id END)
+    AND n.entity_id = ?
+    AND n.deleted_at IS NULL
+    AND (CASE n.confidence WHEN 'tentative' THEN 0 WHEN 'inferred' THEN 1 WHEN 'certain' THEN 2 ELSE -1 END) >= ?
+    AND n.source_type NOT IN (?, ?)                    -- expanded from opts.excludeSourceTypes[]
+  WHERE w.depth < ?                                    -- opts.maxDepth (clamped to [1, 3])
+    AND instr(w.visited, ',' || (CASE WHEN e.source_id = w.node_id THEN e.target_id ELSE e.source_id END) || ',') = 0
 )
--- 4. Final Aggregation & Ranking
-SELECT
-  n.id, n.title, n.body,
-  MIN(w.distance) as min_distance,
-  CASE n.confidence
-    WHEN 'certain' THEN 2
-    WHEN 'inferred' THEN 1
-    WHEN 'tentative' THEN 0
-    ELSE -1
-  END as rank_weight
-FROM walk w
-JOIN llm_wiki_entries n ON n.id = w.node_id
-GROUP BY n.id
-ORDER BY min_distance ASC, rank_weight DESC
-LIMIT /* maxNodes */;
+-- 3. Final ranking: shallowest hop first, then most-recently-updated entry
+SELECT node_id, MIN(depth) AS depth
+FROM walk
+GROUP BY node_id
+ORDER BY depth ASC, (SELECT updated_at FROM llm_wiki_entries WHERE id = node_id) DESC
+LIMIT ?                                                -- opts.maxTraversalNodes
 ```
-
-> *Note: For clarity, the snippet above shows the final hydrated output in a single query. In the actual `expo-llm-wiki` codebase, the recursive CTE strictly calculates the `(node_id, distance)` graph traversal, and `GraphTraversalService` handles hydration in a subsequent optimized batch lookup.*
 
 ## Monorepo Ecosystem
 
