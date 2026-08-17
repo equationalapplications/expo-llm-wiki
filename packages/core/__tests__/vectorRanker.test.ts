@@ -1057,6 +1057,54 @@ describe('VectorRanker integration', () => {
     });
   });
 
+  // Regression: issue #96, sites 7 and 8. The inline
+  // `rankerErr instanceof Error` checks at RetrievalService.ts:343 and :489
+  // invoke the getPrototypeOf trap on rankerErr. A hostile VectorRanker
+  // plugin whose trap rejects would throw out of the catch and tear down
+  // the retrieval operation. On a hostile trap, the value is treated as
+  // non-Error and wrapped in a synthetic Error by sanitizeRankerError,
+  // which then passes through to the `onVectorRankerFallback` callback.
+  // This test mirrors the existing "sanitizes non-Error throws without
+  // crashing" test (which throws a string) but exercises the
+  // Proxy/getPrototypeOf class.
+  it('sanitizes a hostile Proxy thrown by the ranker without crashing (sanitizer robustness)', async () => {
+    const db = openTestDatabase();
+    let capturedError: Error | undefined;
+
+    const hostileProxy = new Proxy({}, {
+      getPrototypeOf() { throw new Error('proxy rejects prototype access'); },
+    });
+
+    const proxyThrowingRanker: VectorRanker = {
+      async rankBySimilarity() {
+        // eslint-disable-next-line no-throw-literal
+        throw hostileProxy;
+      },
+    };
+
+    const wiki = new WikiMemory(db, {
+      llmProvider: { generateText: async () => '{}', embed: async (t) => keywordEmbed(t) },
+      vectorRanker: proxyThrowingRanker,
+      vectorRankerFallback: 'js-cosine',
+      propagateRankerFailureToRetrievalFallback: true,
+      onRetrievalFallback: (error) => { capturedError = error; },
+    });
+    await wiki.setup();
+    await wiki.importDump(makeDump([
+      { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+    ]));
+
+    // Should not throw out of retrieval — the hostile Proxy is treated as
+    // a non-Error throw, wrapped in a synthetic Error by sanitizeRankerError,
+    // and passed to the retrieval fallback callback.
+    await expect(wiki.read('user-1', 'apple')).resolves.toBeDefined();
+
+    expect(capturedError).toBeDefined();
+    const cause = (capturedError as Error & { cause?: Error }).cause!;
+    expect(cause.message).toContain('VectorRanker');
+    expect(cause.message).toContain('scrubbed');
+  });
+
   describe('Buffer mutation protection', () => {
     it('protects vector from mutation by onEmbeddingPersisted hook', async () => {
       const db = openTestDatabase();
