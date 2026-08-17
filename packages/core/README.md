@@ -52,6 +52,45 @@ Platform-agnostic TypeScript engine for hybrid LLM memory. Features episodic fac
 - **Interoperability:** Supports [Open Knowledge Format (OKF) v0.1](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) import and export via the [llm-wiki OKF profile (llm-wiki/1)](https://github.com/equationalapplications/expo-llm-wiki/blob/main/docs/okf-profile.md).
 - **Per-entity seeded ontology** — Optional Strict, Emergent, or Off modes govern LLM graph extraction; seed taxonomies per entity and persist typed facts with inline edges.
 
+## GraphRAG & Multi-Modal Retrieval
+
+`@equationalapplications/core-llm-wiki` exposes three complementary retrieval modes, each addressing a different shape of query:
+
+| Mode | API | Best for |
+|---|---|---|
+| **Semantic** (vector cosine) | `wiki.read(entityId, query)` with `embed` configured | Open-ended natural-language questions; "what do I know about X" |
+| **Keyword** (MiniSearch) | `wiki.read(entityId, query)` with `embed` absent or offline | Exact terms, identifiers, names; offline fallback |
+| **GraphRAG** (recursive CTE) | `wiki.traverseGraph(entityId, options)` + `formatGraphContext(result)` | Structural questions; "what connects to X", "everything two hops from this fact", "summarise the people, places, and projects linked to Alice" |
+
+The GraphRAG path is structurally distinct: it doesn't rank by relevance to a query string, it walks `llm_wiki_edges` from a known anchor fact. The result is dense and connected — subgraphs, not loose top-K hits.
+
+### Graph traversal APIs
+
+```typescript
+import { WikiMemory, formatGraphContext } from '@equationalapplications/core-llm-wiki';
+
+const graph = await wikiMemory.traverseGraph('user-123', {
+  sourceId: '<anchor-fact-id>',
+  maxDepth: 2,
+  direction: 'both',          // 'inbound' | 'outbound' | 'both'
+  edgeTypes: ['reports_to'],   // optional filter
+  excludeSourceTypes: ['immutable_document'],
+  minTraversalConfidence: 'inferred',
+  maxTraversalNodes: 20,
+});
+
+const promptContext = formatGraphContext(graph);
+// → dense text block ready for prompt injection
+```
+
+`traverseGraph` runs as a single recursive CTE in SQLite (see the root README's ["The SQL: how traversal works in one query"](../../README.md#the-sql-how-traversal-works-in-one-query) for the query shape). No external graph database.
+
+### Deterministic graph seeding (no LLM)
+
+For programmatic pipelines — importing pre-classified data, building a GraphRAG corpus from a CSV, or seed-loading from a JSON file — use `upsertGraph()`. It writes nodes and edges directly under the same `(sourceRef, sourceHash)` ownership semantics as `ingestDocument()`, but skips the LLM extraction step. See [Direct Graph Write](#direct-graph-write) for the canonical signature, including the required `SQLiteAdapter` argument and transactional semantics.
+
+This is the GraphRAG seed path: load a corpus, walk it.
+
 ## Installation
 
 ```bash

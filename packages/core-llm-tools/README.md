@@ -23,6 +23,7 @@ It also introduces a robust **Capability-Based Scope Model** (similar to OAuth 2
 - **Capability-Based Security** — Tools are locked behind specific scopes (e.g., `calendar:read`, `messages:send`). The injector ensures models cannot hallucinate calls to unauthorized tools.
 - **Strict Typings** — Provides rigid interfaces (`AgentToolSchema`, `AgentToolManifest`) to prevent malformed Gemini API requests.
 - **Harmonized Edge/Cloud Routing** — Enables lightweight edge models (like Gemini Nano) to triage intents using the exact same schemas the heavy Cloud Run backend uses to execute them.
+- **GraphRAG tool schemas** — `wikiTraverseGraphManifest` and `wikiGetOntologyManifest` are pre-built Gemini tool schemas for the GraphRAG retrieval API; see [root README: GraphRAG](../../README.md#graphrag-sql-only-graph-retrieval).
 
 ## Installation
 

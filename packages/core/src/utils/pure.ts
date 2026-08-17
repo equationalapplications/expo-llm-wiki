@@ -535,7 +535,18 @@ function extractParsePosition(err: unknown): number | null {
  * - A static `[unstringifiable error]` marker as a final guarantee.
  */
 export function safeErrorToString(e: unknown): string {
-  if (e instanceof Error) {
+  // `e instanceof Error` invokes the `getPrototypeOf` trap on `e`. A Proxy
+  // whose trap rejects turns the type-check itself into a throw point,
+  // escaping every catch around this function body. Treat the trap throw
+  // as "not an Error" and fall through to the String() / Object.prototype
+  // paths, which themselves catch their own throws.
+  let isErrorLike = false;
+  try {
+    isErrorLike = e instanceof Error;
+  } catch {
+    // hostile Proxy whose getPrototypeOf trap rejects — fall through
+  }
+  if (isErrorLike) {
     // Defensive: a hostile `Error` subclass or a tampered native Error could
     // set `message` to a non-string (e.g. `err.message = 42`) or make it a
     // throwing getter. `e.name` is similarly attacker-controllable. Coerce
@@ -562,28 +573,66 @@ export function safeErrorToString(e: unknown): string {
  * throwing, even if a subclass installs a hostile getter. Internal helper
  * for `safeErrorToString`.
  */
-function readErrorField(e: Error, key: 'message' | 'name'): unknown {
+function readErrorField(e: unknown, key: 'message' | 'name'): unknown {
   try {
-    return (e as unknown as Record<string, unknown>)[key];
+    return (e as Record<string, unknown>)[key];
   } catch {
     return undefined;
   }
 }
 
 export function sanitizeRankerError(err: unknown, sanitizeRankerErrors: boolean | undefined): Error {
-  if (sanitizeRankerErrors === false) {
-    return err instanceof Error ? err : new Error(String(err));
+  // `err instanceof Error` invokes the `getPrototypeOf` trap on `err`. A
+  // hostile Proxy (e.g. an injected VectorRanker returning one) whose trap
+  // rejects would otherwise escape this "sanitize" function. Compute the
+  // guard once — the property accesses below share the same hostile-input
+  // surface and need their own guards.
+  let isErrorLike = false;
+  try {
+    isErrorLike = err instanceof Error;
+  } catch {
+    /* hostile Proxy — treat as non-Error */
   }
-  const typeName = err instanceof Error ? (err.constructor?.name ?? 'Error') : typeof err;
-  const innerCause =
-    err instanceof Error && err.cause !== undefined
-      ? new Error(`Caused by: ${(err.cause as Error)?.constructor?.name ?? typeof err.cause}`)
-      : undefined;
+  if (sanitizeRankerErrors === false) {
+    // `String(err)` invokes the `toString` / `Symbol.toPrimitive` trap on
+    // `err`; a hostile Proxy whose trap rejects would throw out of this
+    // function, defeating the non-throwing contract. Delegate to the
+    // hardened `safeErrorToString` helper which converges all coercion
+    // paths onto the static `[unstringifiable error]` marker on throw.
+    return isErrorLike ? (err as Error) : new Error(safeErrorToString(err));
+  }
+  // `errLike.constructor?.name` and `.cause` access can also throw on a
+  // hostile Error subclass with throwing getters (optional chaining `?.`
+  // only short-circuits null/undefined, not trap throws). Wrap each access
+  // so the function's documented non-throwing contract holds for all
+  // attacker-controlled inputs.
+  let errLike: Error | null = null;
+  if (isErrorLike) errLike = err as Error;
+  let typeName: string;
+  try {
+    typeName = errLike ? (errLike.constructor?.name ?? 'Error') : typeof err;
+  } catch {
+    typeName = isErrorLike ? 'Error' : typeof err;
+  }
+  let innerCause: Error | undefined;
+  if (errLike) {
+    let cause: unknown;
+    try { cause = errLike.cause; } catch { cause = undefined; }
+    if (cause !== undefined) {
+      let causeName: string;
+      try {
+        causeName = (cause as Error)?.constructor?.name ?? typeof cause;
+      } catch {
+        causeName = typeof cause;
+      }
+      innerCause = new Error(`Caused by: ${causeName}`);
+    }
+  }
   const sanitized = new Error(
     `VectorRanker ${typeName} (message scrubbed for security)`,
     innerCause ? { cause: innerCause } : undefined,
   );
-  sanitized.name = typeName;
+  try { sanitized.name = typeName; } catch { /* hostile name setter — leave default */ }
   return sanitized;
 }
 

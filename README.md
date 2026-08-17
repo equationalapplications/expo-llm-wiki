@@ -66,7 +66,7 @@ Supports [Open Knowledge Format (OKF) v0.1](https://github.com/GoogleCloudPlatfo
 - **Offline First:** The MiniSearch fallback runs entirely in-process with no network required. The cosine similarity path requires `embed()` to vectorise the query (typically a cloud API call) but falls back to MiniSearch automatically when offline or when `embed` throws.
 - **Full Unicode Support:** UTF-8 and UTF-16 (including surrogate pairs for emoji) are fully supported. Chunks are split safely at sentence boundaries; surrogate pairs are never fragmented.
 - **Immutable vs mutable memory:** Every fact includes `source_type`. Facts from `ingestDocument()` are stored as `immutable_document` and are preserved from librarian/heal rewriting; they can only be removed with `forget()` or replaced via re-ingest. Derived or user assertions are mutable (`librarian_inferred`, `user_stated`, `user_confirmed`) and can be updated by healer/librarian workflows.
-- **Seeded ontology & graph extraction:** Optional per-entity taxonomies (Strict, Emergent, or Off) guide librarian and ingest passes to classify facts with `okf_type` and persist structured graph edges alongside semantic and episodic memory.
+- **Seeded ontology & graph extraction (GraphRAG):** Optional per-entity taxonomies (Strict, Emergent, or Off) guide librarian and ingest passes to classify facts with `okf_type` and persist structured graph edges alongside semantic and episodic memory. This is the GraphRAG retrieval layer — `traverseGraph()` walks the resulting graph with `WITH RECURSIVE` SQLite, no separate graph database required.
 - **Cross-Platform:** Choose the right package for your platform: Expo, React Native, React web, vanilla JS, or Node.js. The core logic is framework-agnostic with platform-specific adapters.
 
 ## How It Works
@@ -98,6 +98,7 @@ flowchart TB
     subgraph ReadPath["Read Path"]
         CosineSim(["cosine similarity\nprimary path"])
         MSFallback(["MiniSearch\nfallback"])
+        GraphTraversal(["GraphRAG\ntraversal"])
         Bundle(["MemoryBundle\nfacts · tasks · events"])
     end
 
@@ -129,6 +130,128 @@ flowchart TB
     MSFallback --> Bundle
     tasks --> Bundle
     events --> Bundle
+    %% Graph traversal is a separate API (traverseGraph) — not a side-effect of read()
+    traverseGraphAPI(["traverseGraph()"]) --> GraphTraversal
+    GraphTraversal --> Bundle
+```
+
+## GraphRAG: SQL-only graph retrieval
+
+GraphRAG (Graph Retrieval-Augmented Generation) runs entirely on SQLite — no Neo4j, no separate graph database. Every fact becomes a node, every librarian/ingest pass writes typed edges into `llm_wiki_edges`, and `traverseGraph()` walks the resulting structure with one recursive CTE.
+
+### End-to-end recipe
+
+```typescript
+import { createWiki } from '@equationalapplications/core-llm-wiki';
+import Database from 'better-sqlite3';
+import type { SQLiteAdapter } from '@equationalapplications/core-llm-wiki';
+import { schemaOrgWarmAgentManifest } from '@equationalapplications/schema-org-llm-wiki';
+
+const db = new Database('memory.db');
+
+// Wrap raw Database in SQLiteAdapter (canonical pattern)
+const adapter: SQLiteAdapter = {
+  async execAsync(sql) { db.exec(sql); },
+  async runAsync(sql, params = []) {
+    const info = db.prepare(sql).run(...(params as any[]));
+    return { changes: info.changes, lastInsertRowId: Number(info.lastInsertid) };
+  },
+  async getAllAsync<T>(sql, params = []) {
+    return db.prepare(sql).all(...(params as any[])) as T[];
+  },
+  async getFirstAsync<T>(sql, params = []) {
+    return (db.prepare(sql).get(...(params as any[])) ?? null) as T | null;
+  },
+  async withTransactionAsync(fn) {
+    db.exec('BEGIN');
+    try { const r = await fn(); db.exec('COMMIT'); return r; }
+    catch (e) { db.exec('ROLLBACK'); throw e; }
+  },
+  async closeAsync() { db.close(); },
+};
+
+// Enable strict GraphRAG ontology extraction
+const wiki = createWiki(adapter, {
+  llmProvider: { generateText },
+  config: {
+    ontology: {
+      mode: 'strict',
+      seedManifests: {
+        'user-123': { mode: 'strict', manifest: schemaOrgWarmAgentManifest },
+      },
+    },
+  },
+});
+
+// 1. Ingest a document — strict-mode librarian writes edges automatically
+await wiki.ingestDocument('user-123', {
+  sourceRef: 'onboarding-doc.md',
+  sourceHash: '<sha256-of-onboarding-doc>',
+  documentChunk: 'Alice joined the data team in March and reports to Bob.',
+});
+
+// 2. Pick an anchor fact and walk the graph N hops.
+const graph = await wiki.traverseGraph('user-123', {
+  sourceId: '<fact-id-for-alice>',
+  maxDepth: 2,
+  direction: 'both',
+});
+
+// 3. Format the result for prompt injection.
+import { formatGraphContext } from '@equationalapplications/core-llm-wiki';
+const promptContext = formatGraphContext(graph);
+
+// 4. Inject into your next LLM call alongside vector results.
+const answer = await generateText({
+  systemPrompt: `You are an assistant with the following memory:\n\n${promptContext}`,
+  userPrompt: userQuestion,
+});
+```
+
+### The SQL: how traversal works in one query
+
+`EdgeRepository.getNeighborhood()` runs a single recursive CTE that walks edges in either direction, guards against cycles via a string-accumulator `visited` column, and ranks results by hop depth (`MIN(depth)`, then most-recently-updated entry as the tiebreaker). The query below is abridged from [`packages/core/src/repositories/EdgeRepository.ts`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/src/repositories/EdgeRepository.ts) — bind parameters are shown as `?`, and the dynamic `edge_types` and `excludeSourceTypes` clauses are expanded inline for clarity. After the CTE returns `(node_id, depth)`, `GraphTraversalService.traverseGraph` hydrates those ids into full `WikiFact` rows and filters edges whose endpoints fell out.
+
+```sql
+WITH RECURSIVE walk(node_id, depth, visited) AS (
+  -- 1. Anchor: the source fact row, scoped to entity, soft-delete-aware
+  SELECT id, 0, ',' || id || ','
+  FROM llm_wiki_entries
+  WHERE id = ? AND entity_id = ? AND deleted_at IS NULL
+
+  UNION
+
+  -- 2. Recursive step: walk edges in the requested direction(s), join the
+  --    neighbour entry, gate by min-confidence and excluded source_type,
+  --    and append the neighbour id to the `visited` accumulator to break
+  --    cycles before recursing further.
+  SELECT
+    CASE WHEN e.source_id = w.node_id THEN e.target_id ELSE e.source_id END,
+    w.depth + 1,
+    w.visited || (CASE WHEN e.source_id = w.node_id THEN e.target_id ELSE e.source_id END) || ','
+  FROM walk w
+  JOIN llm_wiki_edges e
+    ON e.entity_id = ?
+    AND (
+      (? != 'inbound'  AND e.source_id = w.node_id) OR
+      (? != 'outbound' AND e.target_id = w.node_id)
+    )
+    AND e.edge_type IN (?, ?)                          -- expanded from opts.edgeTypes[]
+  JOIN llm_wiki_entries n
+    ON n.id = (CASE WHEN e.source_id = w.node_id THEN e.target_id ELSE e.source_id END)
+    AND n.entity_id = ?
+    AND n.deleted_at IS NULL
+    AND (CASE n.confidence WHEN 'tentative' THEN 0 WHEN 'inferred' THEN 1 WHEN 'certain' THEN 2 ELSE -1 END) >= ?
+    AND n.source_type NOT IN (?, ?)                    -- expanded from opts.excludeSourceTypes[]
+  WHERE w.depth < ?                                    -- opts.maxDepth (clamped to [1, 3])
+    AND instr(w.visited, ',' || (CASE WHEN e.source_id = w.node_id THEN e.target_id ELSE e.source_id END) || ',') = 0
+)
+-- 3. Final ranking: shallowest hop first, then most-recently-updated entry
+SELECT node_id, MIN(depth) AS depth
+FROM walk
+GROUP BY node_id
+ORDER BY depth ASC, (SELECT updated_at FROM llm_wiki_entries WHERE id = node_id) DESC
+LIMIT ?                                                -- opts.maxTraversalNodes
 ```
 
 ## Monorepo Ecosystem
@@ -137,13 +260,15 @@ flowchart TB
 
 | Package | Purpose | Platform |
 |---------|---------|----------|
-| **`@equationalapplications/core-llm-wiki`** | Persistent episodic memory | Node.js, any platform |
+| **`@equationalapplications/core-llm-wiki`** | Persistent episodic memory* | Node.js, any platform |
 | **`@equationalapplications/expo-llm-wiki`** | Persistent episodic memory | Expo, React Native |
 | **`@equationalapplications/react-llm-wiki`** | Persistent episodic memory | Web (React) |
 | **`@equationalapplications/prisma-outbox`** | Sync SQLite outbox events to Prisma-backed database (transactional outbox pattern) | Node.js |
 | **`@equationalapplications/core-llm-tools`** | Platform-agnostic Gemini tool schemas and capability-based scope injector | Node.js, browser, React Native |
 | **`@equationalapplications/core-okf`** | Zero-dependency Open Knowledge Format (OKF) v0.1 primitives — parse and produce interoperable knowledge bundles. | Node.js, browser, React Native |
-| **`@equationalapplications/schema-org-llm-wiki`** | Curated schema.org warm-agent ontology manifest — 9 node types, 28 polymorphic edges, data-only | Node.js, browser, React Native |
+| **`@equationalapplications/schema-org-llm-wiki`** | Curated schema.org warm-agent ontology manifest — 9 node types, 28 polymorphic edges, data-only* | Node.js, browser, React Native |
+
+**\*** *These packages provide the core GraphRAG surface area and canonical ontology for warm-agent graph retrieval. See [GraphRAG: SQL-only graph retrieval](#graphrag-sql-only-graph-retrieval) above.*
 
 **Choose your package:**
 - **Expo/React Native app?** → `@equationalapplications/expo-llm-wiki`

@@ -54,6 +54,18 @@ jobs:
 
       - run: pnpm test
 
+      - name: Verify README GraphRAG SQL is in sync with EdgeRepository
+        run: |
+          # Check WITH RECURSIVE in both EdgeRepository.ts and README.md
+          grep -q "WITH RECURSIVE" packages/core/src/repositories/EdgeRepository.ts || { echo "Missing WITH RECURSIVE in EdgeRepository"; exit 1; }
+          grep -q "WITH RECURSIVE" README.md || { echo "Missing WITH RECURSIVE in README.md"; exit 1; }
+          # Check cycle guard in both EdgeRepository.ts and README.md
+          grep -q "instr(w.visited" packages/core/src/repositories/EdgeRepository.ts || { echo "Missing cycle guard in EdgeRepository"; exit 1; }
+          grep -q "instr(w.visited" README.md || { echo "Missing cycle guard in README.md"; exit 1; }
+          # Check confidence CASE in both EdgeRepository.ts and README.md
+          grep -q "WHEN 'certain' THEN 2" packages/core/src/repositories/EdgeRepository.ts || { echo "Missing confidence CASE in EdgeRepository"; exit 1; }
+          grep -q "WHEN 'certain' THEN 2" README.md || { echo "Missing confidence CASE in README.md"; exit 1; }
+
       # Audit runs LAST so a single high-severity advisory introduced by
       # this PR cannot mask build / typecheck / test failures.
       #

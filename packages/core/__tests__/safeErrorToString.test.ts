@@ -88,4 +88,18 @@ describe('safeErrorToString — non-throwing error coercion', () => {
     const err = new CustomError();
     expect(safeErrorToString(err)).toBe('CustomError');
   });
+
+  // Regression: issue #96. The `e instanceof Error` check invokes the
+  // getPrototypeOf trap on e. After the safeErrorToString patch, the
+  // trap throw is caught and the function falls through to the
+  // String() fallback — which does NOT invoke getPrototypeOf and so
+  // returns '[object Object]'. This test pins both the no-throw
+  // contract and the actual observable return value.
+  it("returns '[object Object]' on a Proxy whose getPrototypeOf trap rejects", () => {
+    const hostileProxy = new Proxy({}, {
+      getPrototypeOf() { throw new Error('proxy rejects prototype access'); },
+    });
+    expect(() => safeErrorToString(hostileProxy)).not.toThrow();
+    expect(safeErrorToString(hostileProxy)).toBe('[object Object]');
+  });
 });

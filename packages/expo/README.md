@@ -24,6 +24,8 @@ Local-first LLM memory for Expo and React Native. Combines the core semantic sea
 - **Full-featured memory** — Facts, tasks, events, maintenance jobs (librarian, heal, reembed, prune)
 - **Interoperability:** Supports [Open Knowledge Format (OKF) v0.1](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) import and export.
 
+- **GraphRAG on React Native** — `useWikiTraversal` + `formatGraphContext` give you the same SQLite-only graph retrieval as the core package; pair with `@equationalapplications/schema-org-llm-wiki` for the canonical ontology. See [root README: GraphRAG](../../README.md#graphrag-sql-only-graph-retrieval).
+
 ## Installation
 
 ```bash

@@ -133,4 +133,18 @@ describe('formatSkipError', () => {
     expect(typeof result).toBe('string');
     expect(result.length).toBeGreaterThan(0);
   });
+
+  // Regression: issue #96. `err instanceof Error` invokes the
+  // getPrototypeOf trap on err. A Proxy whose trap rejects throws out
+  // of this helper, escaping the surrounding runBatched. This test pins
+  // the documented "never throw" contract for the operator-level path.
+  it('does not throw on a Proxy whose getPrototypeOf trap rejects', () => {
+    const hostileProxy = new Proxy({}, {
+      getPrototypeOf() { throw new Error('proxy rejects prototype access'); },
+    });
+    expect(() => formatSkipError(hostileProxy)).not.toThrow();
+    const result = formatSkipError(hostileProxy);
+    expect(typeof result).toBe('string');
+    expect(result.length).toBeGreaterThan(0);
+  });
 });

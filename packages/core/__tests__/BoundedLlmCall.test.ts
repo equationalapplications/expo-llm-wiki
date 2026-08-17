@@ -65,6 +65,19 @@ describe('isTruncationError', () => {
     ).toBe(false);
     expect(isTruncationError(new Error('Requested max_tokens exceeds the model context limit'))).toBe(false);
   });
+
+  // Regression: issue #96. The internal classifier's `err instanceof
+  // Error` check invokes the getPrototypeOf trap on err. A hostile trap
+  // would throw out of runBatched. On a hostile trap, isTruncationError
+  // falls back to `false` — at most one wasted batch split, which is the
+  // correct trade-off.
+  it('returns false on a Proxy whose getPrototypeOf trap rejects', () => {
+    const hostileProxy = new Proxy({}, {
+      getPrototypeOf() { throw new Error('proxy rejects prototype access'); },
+    });
+    expect(() => isTruncationError(hostileProxy)).not.toThrow();
+    expect(isTruncationError(hostileProxy)).toBe(false);
+  });
 });
 
 describe('initialBatchSize', () => {

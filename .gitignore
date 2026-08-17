@@ -3,6 +3,7 @@
 node_modules/
 dist/
 .codegraph/
+.superpowers/
 .worktrees/
 docs/superpowers/plans
 *.tsbuildinfo
