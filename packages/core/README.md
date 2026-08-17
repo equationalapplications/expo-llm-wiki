@@ -621,7 +621,7 @@ const result = await wiki.runOntologyBackfill(entityId);
 
 ## OKF Import/Export
 
-The core package integrates with `@equationalapplications/core-okf` to seamlessly adapt wiki data dumps to and from Open Knowledge Format (OKF) v0.1 bundles.
+The core package integrates with `@equationalapplications/core-okf` to seamlessly adapt wiki data dumps to and from Open Knowledge Format (OKF) bundles (v0.1 and v0.2; `formatOkfBundle` defaults to the v0.2 / `llm-wiki/2` profile).
 
 ### Exporting an OKF Bundle
 
