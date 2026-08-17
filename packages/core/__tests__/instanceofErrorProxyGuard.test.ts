@@ -32,12 +32,19 @@ describe('instanceof Error Proxy guards', () => {
       expect(result.length).toBeGreaterThan(0);
     });
 
-    it("returns the [unstringifiable error] marker (the documented fallback when no branch can stringify the value)", () => {
+    it("returns '{}' (the JSON.stringify branch for objects; the hostile getPrototypeOf trap only affects instanceof)", () => {
       // Lock the observable contract: under the hostile getPrototypeOf
-      // trap, the type check falls through to safeErrorToString, which
-      // itself catches throws from String() and Object.prototype.toString
-      // and lands on the static `[unstringifiable error]` marker.
-      expect(formatSkipError(hostileProxy)).toBe('[unstringifiable error]');
+      // trap, the `err instanceof Error` check throws and is caught by
+      // the function-top guard, so the if-condition is false. Then
+      // `typeof err === 'object'` is true, so the function takes the
+      // JSON.stringify branch. JSON.stringify(hostileProxy) does NOT
+      // throw — it returns '{}' because the Proxy has no own enumerable
+      // properties. So formatSkipError's hostile-Proxy observable
+      // return is exactly '{}', not the '[unstringifiable error]'
+      // marker. The marker would only be reached if both
+      // instanceof and JSON.stringify threw — which the getPrototypeOf
+      // trap does not produce.
+      expect(formatSkipError(hostileProxy)).toBe('{}');
     });
   });
 
@@ -46,11 +53,19 @@ describe('instanceof Error Proxy guards', () => {
       expect(() => safeErrorToString(hostileProxy)).not.toThrow();
     });
 
-    it('returns the [unstringifiable error] marker (String() and Object.prototype.toString both fail under the trap)', () => {
-      // Under the hostile getPrototypeOf trap, both `String(hostileProxy)`
-      // and `Object.prototype.toString.call(hostileProxy)` throw, so the
-      // static marker is the final fallback.
-      expect(safeErrorToString(hostileProxy)).toBe('[unstringifiable error]');
+    it("returns '[object Object]' (the String() fallback; the hostile getPrototypeOf trap only affects instanceof)", () => {
+      // Lock the observable contract: under the hostile getPrototypeOf
+      // trap, the `e instanceof Error` check throws and is caught by the
+      // function-top guard, so `isErrorLike` is false. Then `String(e)`
+      // does NOT throw — String() coercion walks valueOf/toString, not
+      // getPrototypeOf — and returns '[object Object]'. So
+      // safeErrorToString's hostile-Proxy observable return is exactly
+      // '[object Object]', not the '[unstringifiable error]' marker.
+      // That marker is reserved for values where String() and
+      // Object.prototype.toString.call() both throw (e.g. a Proxy whose
+      // `toString` trap rejects). For the getPrototypeOf-only Proxy in
+      // this audit, the marker is never reached.
+      expect(safeErrorToString(hostileProxy)).toBe('[object Object]');
     });
   });
 
