@@ -573,9 +573,9 @@ export function safeErrorToString(e: unknown): string {
  * throwing, even if a subclass installs a hostile getter. Internal helper
  * for `safeErrorToString`.
  */
-function readErrorField(e: Error, key: 'message' | 'name'): unknown {
+function readErrorField(e: unknown, key: 'message' | 'name'): unknown {
   try {
-    return (e as unknown as Record<string, unknown>)[key];
+    return (e as Record<string, unknown>)[key];
   } catch {
     return undefined;
   }
@@ -593,12 +593,16 @@ export function sanitizeRankerError(err: unknown, sanitizeRankerErrors: boolean 
     /* already false — relies on the declaration's initializer */
   }
   if (sanitizeRankerErrors === false) {
-    return isErrorLike ? err : new Error(String(err));
+    return isErrorLike ? (err as Error) : new Error(String(err));
   }
-  const typeName = isErrorLike ? (err.constructor?.name ?? 'Error') : typeof err;
+  // Narrowed view: only valid when `isErrorLike` is true (guaranteed by
+  // the try/catch above). Captured once to avoid repeated casts at each
+  // usage site; the runtime is already proven correct by the guard.
+  const errLike = isErrorLike ? (err as Error) : null;
+  const typeName = errLike ? (errLike.constructor?.name ?? 'Error') : typeof err;
   const innerCause =
-    isErrorLike && err.cause !== undefined
-      ? new Error(`Caused by: ${(err.cause as Error)?.constructor?.name ?? typeof err.cause}`)
+    errLike && errLike.cause !== undefined
+      ? new Error(`Caused by: ${(errLike.cause as Error)?.constructor?.name ?? typeof errLike.cause}`)
       : undefined;
   const sanitized = new Error(
     `VectorRanker ${typeName} (message scrubbed for security)`,

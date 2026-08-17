@@ -507,7 +507,10 @@ export class RetrievalService {
           } catch {
             // hostile Proxy — fall through
           }
-          const error = isErrorLike ? err : new Error(String(err));
+          // Narrowed view: only valid when `isErrorLike` is true (guaranteed
+          // by the try/catch above). Cast captures that runtime invariant
+          // for the typechecker; the runtime is already proven correct.
+          const error = isErrorLike ? (err as Error) : new Error(String(err));
           if (rankerShouldRethrow) {
             throw error;
           }
