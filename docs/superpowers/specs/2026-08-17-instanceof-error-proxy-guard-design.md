@@ -193,12 +193,16 @@ After implementation:
    # uses awk to track whether a `try {` has been seen on any recent line.
    PROTECTED=$(awk -F: '
      {
+       file = $1
+       lineno = $2
        line = $0
        sub(/^[^:]+:/, "", line)
        sub(/^[0-9]+:/, "", line)
-       if (line ~ /try \{/) has_try = 1
+       if (file != prev_file) { has_try = 0 }
+       prev_file = file
+       if (line ~ /try \{/) { has_try = 1; try_line = lineno }
        if (line ~ /instanceof Error/) {
-         if (has_try) count++
+         if (has_try && lineno - try_line <= 3) count++
          has_try = 0
        }
      }
@@ -210,37 +214,6 @@ After implementation:
    Asserts `$PROTECTED == $TOTAL` — every `instanceof Error` code site is wrapped in a `try` block. The comment filter is required: the fix patches themselves add comments that mention `instanceof Error` to document the rationale, which would otherwise inflate `TOTAL`. Sites listed as out-of-scope (Tier-B) should be excluded via additional filtering.
 3. The dedicated regression test fails on every Tier-A function before the fix and passes after.
 4. The new `formatSkipError` smoke test fails on `main` before the source fix lands and passes after.
-
-### Audit gate (for code-review time)
-
-To verify that all Tier-A `instanceof Error` checks are properly guarded, run the following audit command. It counts total `instanceof Error` sites and verifies that each is within its corresponding try block (scoped to the same block, not carrying `has_try` across unrelated code).
-
-```bash
-# Count total instanceof Error sites in packages/core/src
-TOTAL=$(grep -rn 'instanceof Error' packages/core/src | grep -vE ':\s*(//|\*)' | wc -l | tr -d ' ')
-echo "Total: $TOTAL"
-
-# Count protected sites (instanceof Error within its own try block)
-# Uses structural parsing: reset has_try at each instanceof, only count if try appeared AFTER the last instanceof
-PROTECTED=$(awk -F: '
-  {
-    line = $0
-    sub(/^[^:]+:/, "", line)
-    sub(/^[0-9]+:/, "", line)
-    # Reset has_try when we encounter instanceof Error (new check starts)
-    if (line ~ /instanceof Error/) {
-      if (has_try) count++
-      has_try = 0
-    } else if (line ~ /try \{/) {
-      # Set has_try only after last instanceof was reset
-      has_try = 1
-    }
-  }
-  END { print count+0 }
-' <(grep -rn -E 'instanceof Error|try \{' packages/core/src | grep -vE ':\s*(//|\*)'))
-echo "Protected: $PROTECTED / $TOTAL"
-test "$PROTECTED" -eq "$TOTAL" || { echo "FAIL: $PROTECTED/$TOTAL instanceof Error sites are guarded"; exit 1; }
-```
 
 ## Future work (out of scope for this fix)
 

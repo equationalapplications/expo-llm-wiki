@@ -610,7 +610,12 @@ export function sanitizeRankerError(err: unknown, sanitizeRankerErrors: boolean 
   if (isErrorLike) errLike = err as Error;
   let typeName: string;
   try {
-    typeName = errLike ? (errLike.constructor?.name ?? 'Error') : typeof err;
+    if (errLike) {
+      const rawName: unknown = errLike.constructor?.name;
+      typeName = typeof rawName === 'string' ? rawName : 'Error';
+    } else {
+      typeName = typeof err;
+    }
   } catch {
     typeName = isErrorLike ? 'Error' : typeof err;
   }
@@ -621,7 +626,8 @@ export function sanitizeRankerError(err: unknown, sanitizeRankerErrors: boolean 
     if (cause !== undefined) {
       let causeName: string;
       try {
-        causeName = (cause as Error)?.constructor?.name ?? typeof cause;
+        const rawCauseName: unknown = (cause as Error)?.constructor?.name;
+        causeName = typeof rawCauseName === 'string' ? rawCauseName : typeof cause;
       } catch {
         causeName = typeof cause;
       }

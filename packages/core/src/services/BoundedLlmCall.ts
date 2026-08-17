@@ -67,10 +67,9 @@ const EXCEEDS_LIMIT_PATTERN = /exceed[a-z]*[^.]{0,40}\b(model|context)?[ _-]?lim
 export function isTruncationError(err: unknown): boolean {
   let message: string;
   try {
-    // String() coercion catches Symbol or throwing message-object coercion
-    message = String(err instanceof Error ? err.message : (err ?? ''));
+    message = err instanceof Error ? err.message : String(err ?? '');
   } catch {
-    // hostile Proxy whose getPrototypeOf or message getter rejects — fall back to false
+    // hostile Proxy whose getPrototypeOf trap rejects — fall back to false
     return false;
   }
   if (EXCEEDS_LIMIT_PATTERN.test(message)) return false;

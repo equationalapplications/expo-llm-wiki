@@ -28,7 +28,7 @@ The librarian and ingest LLM passes that write `llm_wiki_edges` only see this ma
 
 With the manifest:
 - **Every edge has a valid `(type, source_type, target_type)` triple** — the manifest validates edge structure and reduces invalid relationships.
-- **Polymorphic edges** (`knows`, `about`, `itemReviewed`, `object`, `agent`) cover the cases where a single property name applies to many source/target type combinations.
+- **Polymorphic edges** (`location`, `organizer`, `about`, `itemReviewed`) cover the cases where a single property name applies to many source/target type combinations.
 - **Token budget stays small** — ~2 KB serialized, vs ~50 KB for the full schema.org catalog. Edge classification accuracy stays high.
 
 ### Use it with `core-llm-wiki` for GraphRAG

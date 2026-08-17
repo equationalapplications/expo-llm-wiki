@@ -358,7 +358,7 @@ export class RetrievalService {
                 // `safeErrorToString` helper (converges on the static
                 // `[unstringifiable error]` marker on throw) to honor the
                 // non-throwing contract this guard exists to provide.
-                const rankerError = isErrorLike ? rankerErr : new Error(safeErrorToString(rankerErr));
+                const rankerError = isErrorLike ? (rankerErr as Error) : new Error(safeErrorToString(rankerErr));
                 const policy = this.options.vectorRankerFallback ?? 'js-cosine';
 
                 this.options.onVectorRankerFallback?.({
@@ -526,13 +526,13 @@ export class RetrievalService {
           }
           // If Phase 2 failed and there's a pending ranker error, include it as cause
           if (pendingRankerFallbackError) {
-            // Guard against hostile Proxy set trap on error.cause
             try {
               (error as any).cause = pendingRankerFallbackError;
             } catch {
-              // If the cause assignment throws, convert to a fresh Error
-              // with the stringified pending fallback value as the cause
-              (error as any).cause = new Error(String(pendingRankerFallbackError));
+              // Hostile or frozen error object — the assignment threw, so the
+              // ranker diagnostic would otherwise be silently dropped. Surface
+              // it as its own fallback notification instead of losing it.
+              this.options.onRetrievalFallback?.(pendingRankerFallbackError);
             }
             pendingRankerFallbackError = undefined;
           }

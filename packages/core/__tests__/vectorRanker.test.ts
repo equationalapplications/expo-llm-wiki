@@ -1149,9 +1149,6 @@ describe('VectorRanker integration', () => {
     expect(capturedError).toBeDefined();
     expect(capturedError).toBeInstanceOf(Error);
     expect(capturedError!.message).toBe('[object Object]');
-
-    expect(capturedError).toBeDefined();
-    expect(capturedError).toBeInstanceOf(Error);
   });
 
   describe('Buffer mutation protection', () => {
