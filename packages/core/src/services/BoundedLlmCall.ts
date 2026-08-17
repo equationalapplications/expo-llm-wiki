@@ -55,9 +55,23 @@ const EXCEEDS_LIMIT_PATTERN = /exceed[a-z]*[^.]{0,40}\b(model|context)?[ _-]?lim
  * necessity. A false positive costs one wasted split; a false negative
  * propagates the error, which is the right outcome for a network or auth
  * failure that must not be silently absorbed into a pile of skipped items.
+ *
+ * The contract is explicit: this function must never throw. The
+ * `err instanceof Error` check below invokes the `getPrototypeOf` trap on
+ * `err`. A hostile Proxy whose trap rejects would otherwise throw out of
+ * `runBatched` — and any throw inside `runBatched` is the silent-batch-
+ * failure mode this whole helper exists to prevent. On a hostile trap, we
+ * fall back to `false` (treat as not a truncation error): the consequence
+ * is at most one wasted batch split, which is the correct trade-off.
  */
 export function isTruncationError(err: unknown): boolean {
-  const message = err instanceof Error ? err.message : String(err ?? '');
+  let message: string;
+  try {
+    message = err instanceof Error ? err.message : String(err ?? '');
+  } catch {
+    // hostile Proxy whose getPrototypeOf trap rejects — fall back to false
+    return false;
+  }
   if (EXCEEDS_LIMIT_PATTERN.test(message)) return false;
   return TRUNCATION_PATTERNS.some((pattern) => pattern.test(message));
 }
