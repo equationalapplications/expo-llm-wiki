@@ -114,7 +114,19 @@ export const formatSkipError = (err: unknown): string => {
   // `safeErrorToString`, which itself wraps String() and
   // Object.prototype.toString.call() in nested try/catch.
   let base: string;
-  if (err instanceof Error || (typeof err !== 'object' && typeof err !== 'function')) {
+  // `err instanceof Error` invokes the `getPrototypeOf` trap on `err`. A
+  // hostile Proxy (e.g. one passed through `onSkip` from a misbehaving
+  // provider plugin) whose trap rejects would throw out of this function —
+  // defeating the documented "never throw" contract. Treat the trap throw
+  // as "not an Error" and fall through to the JSON.stringify / safeErrorToString
+  // branch below.
+  let isErrorLike = false;
+  try {
+    isErrorLike = err instanceof Error;
+  } catch {
+    // hostile Proxy whose getPrototypeOf trap rejects — fall through
+  }
+  if (isErrorLike || (typeof err !== 'object' && typeof err !== 'function')) {
     // Errors -> safeErrorToString (returns err.message verbatim, or .name,
     //   or '[Error]' for hostile Error subclasses)
     // Primitives (string, number, boolean, bigint, undefined, symbol) ->
