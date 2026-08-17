@@ -122,7 +122,7 @@ const adapter: SQLiteAdapter = {
   async execAsync(sql) { db.exec(sql); },
   async runAsync(sql, params = []) {
     const info = db.prepare(sql).run(...(params as any[]));
-    return { changes: info.changes, lastInsertRowId: Number(info.lastInsertid) };
+    return { changes: info.changes, lastInsertRowId: Number(info.lastInsertRowid) };
   },
   async getAllAsync<T>(sql, params = []) {
     return db.prepare(sql).all(...(params as any[])) as T[];
@@ -150,6 +150,7 @@ const wiki = createWiki(adapter, {
     },
   },
 });
+await wiki.setup();
 
 // 1. Ingest a document — strict-mode librarian writes edges automatically
 await wiki.ingestDocument('user-123', {

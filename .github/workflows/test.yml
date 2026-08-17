@@ -56,15 +56,33 @@ jobs:
 
       - name: Verify README GraphRAG SQL is in sync with EdgeRepository
         run: |
-          # Check WITH RECURSIVE in both EdgeRepository.ts and README.md
-          grep -q "WITH RECURSIVE" packages/core/src/repositories/EdgeRepository.ts || { echo "Missing WITH RECURSIVE in EdgeRepository"; exit 1; }
-          grep -q "WITH RECURSIVE" README.md || { echo "Missing WITH RECURSIVE in README.md"; exit 1; }
-          # Check cycle guard in both EdgeRepository.ts and README.md
-          grep -q "instr(w.visited" packages/core/src/repositories/EdgeRepository.ts || { echo "Missing cycle guard in EdgeRepository"; exit 1; }
-          grep -q "instr(w.visited" README.md || { echo "Missing cycle guard in README.md"; exit 1; }
-          # Check confidence CASE in both EdgeRepository.ts and README.md
-          grep -q "WHEN 'certain' THEN 2" packages/core/src/repositories/EdgeRepository.ts || { echo "Missing confidence CASE in EdgeRepository"; exit 1; }
-          grep -q "WHEN 'certain' THEN 2" README.md || { echo "Missing confidence CASE in README.md"; exit 1; }
+          REPO=packages/core/src/repositories/EdgeRepository.ts
+          DOC=README.md
+          # Presence checks: both files must still contain each SQL fragment.
+          for pat in "WITH RECURSIVE" "instr(w.visited" "WHEN 'certain' THEN 2"; do
+            grep -q -- "$pat" "$REPO" || { echo "Missing '$pat' in EdgeRepository"; exit 1; }
+            grep -q -- "$pat" "$DOC" || { echo "Missing '$pat' in README.md"; exit 1; }
+          done
+          # Content checks: the depth guard and final ranking clause must match
+          # semantically, not just be present — this is what catches an operator
+          # change (e.g. `<` -> `<=`) or a reordered ORDER BY going undetected.
+          extract() {
+            # $1 = file, $2 = grep pattern; strips SQL comments/template-literal
+            # prefix interpolation and collapses whitespace so the two files'
+            # differing styles (raw TS vs abridged, commented README) compare equal.
+            grep -- "$2" "$1" | head -1 \
+              | sed -E 's/--.*$//; s/\$\{this\.prefix\}/llm_wiki_/g; s/[[:space:]]+/ /g; s/^ //; s/ $//'
+          }
+          repo_depth=$(extract "$REPO" "WHERE w.depth")
+          doc_depth=$(extract "$DOC" "WHERE w.depth")
+          if [ "$repo_depth" != "$doc_depth" ]; then
+            echo "Depth guard clause differs:"; echo "  EdgeRepository: $repo_depth"; echo "  README:         $doc_depth"; exit 1
+          fi
+          repo_order=$(extract "$REPO" "ORDER BY depth ASC")
+          doc_order=$(extract "$DOC" "ORDER BY depth ASC")
+          if [ "$repo_order" != "$doc_order" ]; then
+            echo "ORDER BY clause differs:"; echo "  EdgeRepository: $repo_order"; echo "  README:         $doc_order"; exit 1
+          fi
 
       # Audit runs LAST so a single high-severity advisory introduced by
       # this PR cannot mask build / typecheck / test failures.

@@ -529,7 +529,10 @@ export class RetrievalService {
             try {
               (error as any).cause = pendingRankerFallbackError;
             } catch {
-              // hostile or frozen error object — drop the cause rather than throw
+              // Hostile or frozen error object — the assignment threw, so the
+              // ranker diagnostic would otherwise be silently dropped. Surface
+              // it as its own fallback notification instead of losing it.
+              this.options.onRetrievalFallback?.(pendingRankerFallbackError);
             }
             pendingRankerFallbackError = undefined;
           }
