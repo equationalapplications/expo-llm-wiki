@@ -2,6 +2,7 @@
 
 **Date:** 2026-08-17
 **Status:** Approved
+**Status (2026-08-17):** Implemented via this spec — see commit history on `docs/graphrag-readme-positioning` for the per-file commit sequence.
 **Branch:** docs/graphrag-readme-positioning
 **Builds on:**
 - [`2026-06-23-graph-traversal-api-design.md`](./2026-06-23-graph-traversal-api-design.md) — `traverseGraph`, `useWikiTraversal`, `formatGraphContext`
