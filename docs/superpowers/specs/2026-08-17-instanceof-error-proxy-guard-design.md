@@ -193,12 +193,16 @@ After implementation:
    # uses awk to track whether a `try {` has been seen on any recent line.
    PROTECTED=$(awk -F: '
      {
+       file = $1
+       lineno = $2
        line = $0
        sub(/^[^:]+:/, "", line)
        sub(/^[0-9]+:/, "", line)
-       if (line ~ /try \{/) has_try = 1
+       if (file != prev_file) { has_try = 0 }
+       prev_file = file
+       if (line ~ /try \{/) { has_try = 1; try_line = lineno }
        if (line ~ /instanceof Error/) {
-         if (has_try) count++
+         if (has_try && lineno - try_line <= 3) count++
          has_try = 0
        }
      }
