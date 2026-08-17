@@ -358,7 +358,7 @@ export class RetrievalService {
                 // `safeErrorToString` helper (converges on the static
                 // `[unstringifiable error]` marker on throw) to honor the
                 // non-throwing contract this guard exists to provide.
-                const rankerError = isErrorLike ? rankerErr : new Error(safeErrorToString(rankerErr));
+                const rankerError = isErrorLike ? (rankerErr as Error) : new Error(safeErrorToString(rankerErr));
                 const policy = this.options.vectorRankerFallback ?? 'js-cosine';
 
                 this.options.onVectorRankerFallback?.({
