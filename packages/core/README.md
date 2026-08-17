@@ -70,38 +70,24 @@ The GraphRAG path is structurally distinct: it doesn't rank by relevance to a qu
 import { WikiMemory, formatGraphContext } from '@equationalapplications/core-llm-wiki';
 
 const graph = await wikiMemory.traverseGraph('user-123', {
-  sourceId: anchorFactId,
+  sourceId: '<anchor-fact-id>',
   maxDepth: 2,
   direction: 'both',          // 'inbound' | 'outbound' | 'both'
   edgeTypes: ['reports_to'],   // optional filter
   excludeSourceTypes: ['immutable_document'],
-  minConfidence: 'inferred',
-  maxNodes: 20,
+  minTraversalConfidence: 'inferred',
+  maxTraversalNodes: 20,
 });
 
 const promptContext = formatGraphContext(graph);
 // → dense text block ready for prompt injection
 ```
 
-`traverseGraph` runs as a single recursive CTE in SQLite (see the root README's ["The SQL: how traversal works in one query"](#the-sql-how-traversal-works-in-one-query) for the query shape). No external graph database.
+`traverseGraph` runs as a single recursive CTE in SQLite (see the root README's ["The SQL: how traversal works in one query"](../../README.md#the-sql-how-traversal-works-in-one-query) for the query shape). No external graph database.
 
 ### Deterministic graph seeding (no LLM)
 
-For programmatic pipelines — importing pre-classified data, building a GraphRAG corpus from a CSV, or seed-loading from a JSON file — use `upsertGraph()`. It writes nodes and edges directly under the same `(sourceRef, sourceHash)` ownership semantics as `ingestDocument()`, but skips the LLM extraction step.
-
-```typescript
-await wikiMemory.upsertGraph('user-123', {
-  sourceRef: 'crm-export.csv',
-  sourceHash: '<sha256>',
-  nodes: [
-    { id: 'alice', type: 'person', title: 'Alice', body: 'Data team' },
-    { id: 'bob',   type: 'person', title: 'Bob',   body: 'Data team lead' },
-  ],
-  edges: [
-    { type: 'reports_to', sourceId: 'alice', targetId: 'bob' },
-  ],
-});
-```
+For programmatic pipelines — importing pre-classified data, building a GraphRAG corpus from a CSV, or seed-loading from a JSON file — use `upsertGraph()`. It writes nodes and edges directly under the same `(sourceRef, sourceHash)` ownership semantics as `ingestDocument()`, but skips the LLM extraction step. See [Direct Graph Write](#direct-graph-write) for the canonical signature, including the required `SQLiteAdapter` argument and transactional semantics.
 
 This is the GraphRAG seed path: load a corpus, walk it.
 
