@@ -340,7 +340,18 @@ export class RetrievalService {
                   }
                 }
               } catch (rankerErr) {
-                const rankerError = rankerErr instanceof Error ? rankerErr : new Error(String(rankerErr));
+                // `rankerErr instanceof Error` invokes the getPrototypeOf
+                // trap on rankerErr. A hostile VectorRanker plugin could
+                // return one whose trap rejects — treat as non-Error and
+                // wrap in a synthetic Error so the fallback callback still
+                // receives an Error instance.
+                let isErrorLike = false;
+                try {
+                  isErrorLike = rankerErr instanceof Error;
+                } catch {
+                  // hostile Proxy — fall through
+                }
+                const rankerError = isErrorLike ? rankerErr : new Error(String(rankerErr));
                 const policy = this.options.vectorRankerFallback ?? 'js-cosine';
 
                 this.options.onVectorRankerFallback?.({
@@ -486,7 +497,17 @@ export class RetrievalService {
             }
           } // closes the candidateRows !== null else block
         } catch (err) {
-          const error = err instanceof Error ? err : new Error(String(err));
+          // `err instanceof Error` invokes the getPrototypeOf trap on err.
+          // A hostile Proxy (e.g. from a VectorRanker plugin or a wrapped
+          // inner-call result) whose trap rejects must not throw out of
+          // this catch — it would tear down the entire retrieval operation.
+          let isErrorLike = false;
+          try {
+            isErrorLike = err instanceof Error;
+          } catch {
+            // hostile Proxy — fall through
+          }
+          const error = isErrorLike ? err : new Error(String(err));
           if (rankerShouldRethrow) {
             throw error;
           }
