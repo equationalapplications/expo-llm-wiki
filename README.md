@@ -587,7 +587,7 @@ Return JSON: {"facts": [{"title": "...", "body": "...", "tags": ["..."], "confid
 // `ingestDocument` throws `WikiIngestEmptyError` with the full parseFailures.
 ```
 
-**Hosts must update**: a host that today treats `ingestDocument` throwing as the only failure signal will, after release 5.4.1, see a successful return with `parseFailures[]` set when a subset of chunks failed. Inspect `result.failedChunks` and surface `result.parseFailures[]` for observability — do not rely on the throw for partial failures. Only `WikiIngestEmptyError` (every chunk failed) still throws.
+**Hosts must update**: a host that today treats `ingestDocument` throwing as the only failure signal will, after release 5.5.0, see a successful return with `parseFailures[]` set when a subset of chunks failed. Inspect `result.failedChunks` and surface `result.parseFailures[]` for observability — do not rely on the throw for partial failures. Only `WikiIngestEmptyError` (every chunk failed) still throws.
 
 **Duplicate hash handling:** When the same `sourceHash` is already held live under a *different* `sourceRef` (e.g., the same document ingested at another path), `onDuplicateHash` (a third-argument option, not a params field) controls behavior:
 - `'ingest'` (default): No duplicate pre-check; extraction proceeds as before this option existed. A collision detected at commit time (concurrent-writer race caught by the source-ref unique index) still throws `WikiDuplicateHashError`.
