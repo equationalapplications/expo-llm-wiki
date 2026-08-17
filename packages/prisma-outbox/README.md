@@ -10,6 +10,9 @@ Sync [`@equationalapplications/core-llm-wiki`](https://www.npmjs.com/package/@eq
 
 Polls the SQLite outbox table written by `@equationalapplications/core-llm-wiki` and syncs events to your Prisma-backed system inside a Prisma transaction, with configurable batch size, poll interval, error handling, and a concurrency guard.
 
+
+For the GraphRAG retrieval surface (`traverseGraph`, `useWikiTraversal`, `formatGraphContext`), see [root README: GraphRAG](../../README.md#graphrag-sql-only-graph-retrieval).
+
 ## Installation
 
 ```bash
