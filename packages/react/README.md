@@ -22,7 +22,7 @@ In-browser LLM memory for React web apps. Bring your own SQLite adapter (e.g., [
 - **Mutation hooks** — `useWikiWrite`, `useWikiIngest`, `useWikiForget`, `useWikiMaintenance`, `useSetOntologyManifest`, etc.
 - **Shared context** — Single `WikiProvider` per app, use anywhere
 - **Full-featured memory** — Facts, tasks, events, maintenance jobs (librarian, heal, reembed, prune)
-- **Interoperability:** Supports [Open Knowledge Format (OKF) v0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) import and export (with v0.1 / `llm-wiki/1` back-compat).
+- **Interoperability:** Supports [Open Knowledge Format (OKF)](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) v0.1 + v0.2 import and export via the [llm-wiki OKF profiles](https://github.com/equationalapplications/expo-llm-wiki/blob/main/docs/okf-profile.md) (default `llm-wiki/2`, back-compat `llm-wiki/1`).
 
 ## Installation
 

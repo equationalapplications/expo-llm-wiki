@@ -22,7 +22,7 @@ Local-first LLM memory for Expo and React Native. Combines the core semantic sea
 - **Seeded ontologies** — Enforce strict taxonomies or allow emergent graph relationship extraction (`useOntologyManifest`, `useSetOntologyManifest`; Strict, Emergent, or Off; defaults to Off).
 - **React hooks** — `WikiProvider`, `useMemoryRead`, `useOntologyManifest`, `useSetOntologyManifest`, `useWikiTraversal`, and all other hooks re-exported from `@equationalapplications/expo-llm-wiki`
 - **Full-featured memory** — Facts, tasks, events, maintenance jobs (librarian, heal, reembed, prune)
-- **Interoperability:** Supports [Open Knowledge Format (OKF) v0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) import and export (with v0.1 / `llm-wiki/1` back-compat).
+- **Interoperability:** Supports [Open Knowledge Format (OKF)](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) v0.1 + v0.2 import and export via the [llm-wiki OKF profiles](https://github.com/equationalapplications/expo-llm-wiki/blob/main/docs/okf-profile.md) (default `llm-wiki/2`, back-compat `llm-wiki/1`).
 
 - **GraphRAG on React Native** — `useWikiTraversal` + `formatGraphContext` give you the same SQLite-only graph retrieval as the core package; pair with `@equationalapplications/schema-org-llm-wiki` for the canonical ontology. See [root README: GraphRAG](../../README.md#graphrag-sql-only-graph-retrieval).
 
