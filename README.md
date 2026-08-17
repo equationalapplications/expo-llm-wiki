@@ -19,7 +19,7 @@ expo-llm-wiki is a cross-platform TypeScript and SQLite library for long-term LL
 
 > Inspired by [Andrej Karpathy's LLM Wiki memory spec](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
 
-Supports [Open Knowledge Format (OKF) v0.1](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) import and export for interoperable knowledge bases.
+Supports [Open Knowledge Format (OKF) v0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) import and export for interoperable knowledge bases.
 
 - **Universal Support:** Expo • React • Vite • Vue • Svelte • Node.js
 - **Core Engine:** Pure TypeScript logic with platform-specific adapters.
@@ -234,7 +234,7 @@ LIMIT ?                                                -- opts.maxTraversalNodes
 | **`@equationalapplications/react-llm-wiki`** | Persistent episodic memory | Web (React) |
 | **`@equationalapplications/prisma-outbox`** | Sync SQLite outbox events to Prisma-backed database (transactional outbox pattern) | Node.js |
 | **`@equationalapplications/core-llm-tools`** | Platform-agnostic Gemini tool schemas and capability-based scope injector | Node.js, browser, React Native |
-| **`@equationalapplications/core-okf`** | Zero-dependency Open Knowledge Format (OKF) v0.1 primitives — parse and produce interoperable knowledge bundles. | Node.js, browser, React Native |
+| **`@equationalapplications/core-okf`** | Zero-dependency Open Knowledge Format (OKF) v0.1 + v0.2 primitives — parse and produce interoperable knowledge bundles. | Node.js, browser, React Native |
 | **`@equationalapplications/schema-org-llm-wiki`** | Curated schema.org warm-agent ontology manifest — 9 node types, 28 polymorphic edges, data-only* | Node.js, browser, React Native |
 
 **\*** *These packages provide the core GraphRAG surface area and canonical ontology for warm-agent graph retrieval. See [GraphRAG: SQL-only graph retrieval](#graphrag-sql-only-graph-retrieval) above.*
@@ -486,7 +486,7 @@ await wiki.setup();
 
 ## OKF Import/Export
 
-This library provides full interoperability with [OKF v0.1](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf). You can parse and produce OKF bundles using the zero-dependency `@equationalapplications/core-okf` primitives, or use the built-in wiki adapters to convert directly between `MemoryDump` and OKF bundles.
+This library provides full interoperability with [OKF](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) bundles — first-class OKF v0.2 / `llm-wiki/2` conformance with v0.1 / `llm-wiki/1` back-compat. You can parse and produce OKF bundles using the zero-dependency `@equationalapplications/core-okf` primitives, or use the built-in wiki adapters to convert directly between `MemoryDump` and OKF bundles.
 
 See the full [OKF Import/Export documentation in packages/core](packages/core/README.md#okf-importexport) or view the [core-okf API reference](packages/okf/README.md).
 
