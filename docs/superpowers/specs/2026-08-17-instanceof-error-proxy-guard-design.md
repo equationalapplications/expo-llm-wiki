@@ -1,6 +1,6 @@
 # Defensive `instanceof Error` Guards for Hostile Proxies
 
-Status: Draft — awaiting user review.
+Status: Approved.
 Originates: Issue #96 (follow-up to PR #95, which was docs-only after #93 squash-merged onto `main`).
 
 ## Problem
@@ -100,7 +100,7 @@ This is the canonical pattern. Sites 1, 6, 7, 8 use the same shape. Sites 2–4 
 export function sanitizeRankerError(err: unknown, sanitizeRankerErrors: boolean | undefined): Error {
   let isErrorLike = false;
   try { isErrorLike = err instanceof Error; }
-  catch { isErrorLike = false; }
+  catch { /* already false */ }
   if (sanitizeRankerErrors === false) {
     return isErrorLike ? err : new Error(String(err));
   }
@@ -113,7 +113,7 @@ export function sanitizeRankerError(err: unknown, sanitizeRankerErrors: boolean 
 }
 ```
 
-**Site 6 (`isTruncationError`):** The function returns a boolean used internally by `runBatched`; if the underlying `err instanceof Error` throws, the only consequence is a wrong answer (one wasted batch split). The try/catch wraps the entire expression:
+**Site 6 (`isTruncationError`):** The function returns a boolean used internally by `runBatched`; if the underlying `err instanceof Error` throws, the only consequence is a wrong answer (one wasted batch split). The contract is explicit: `isTruncationError` should return `false` (treating the value as non-truncation-related) when a hostile Proxy appears — never throw. The try/catch wraps the entire expression:
 
 ```ts
 let message: string;
@@ -146,6 +146,7 @@ try {
 - For each Tier-A function, imports it and asserts:
   1. The call does not throw.
   2. The return value is well-typed (`string` for the string-returning helpers; `Error` instance for `sanitizeRankerError`; `boolean` for `isTruncationError`).
+  3. The specific observable return value for the hostile-Proxy case matches the function's contract — e.g. `_sanitizeRankerError` returns `new Error('VectorRanker object (message scrubbed for security)')`, `isTruncationError` returns `false`, `formatSkipError` returns its `[unstringifiable error]` marker. This locks the observable contract and catches silent regressions where the function starts returning a different non-throwing value.
 
 This file is the single grep target for future audits of the same vulnerability class.
 
@@ -180,7 +181,16 @@ Neither layer is redundant. The dedicated file is a single grep target. The per-
 After implementation:
 
 1. `pnpm --filter @equationalapplications/core-llm-wiki test` — full suite green.
-2. `grep -rn 'instanceof Error' packages/core/src` — eight hits, all either inside a try block, inside a documented non-throwing helper, or out of scope per the table above.
+2. ```bash
+   # Total instanceof Error sites in core
+   TOTAL=$(grep -rn 'instanceof Error' packages/core/src | wc -l)
+   # Sites protected with try/catch — covers both inline `try { ... instanceof Error ... }`
+   # and the canonical multi-line `try {` ... `instanceof Error` (preceding line) pattern.
+   PROTECTED=$(grep -rn -B1 'instanceof Error' packages/core/src | grep -c 'try {' || true)
+   echo "Protected: $PROTECTED / $TOTAL"
+   test "$PROTECTED" = "$TOTAL"
+   ```
+   Asserts `$PROTECTED == $TOTAL` — every `instanceof Error` site is wrapped in a `try` block. Sites listed as out-of-scope (Tier-B) should be excluded from this count via additional filtering.
 3. The dedicated regression test fails on every Tier-A function before the fix and passes after.
 4. The new `formatSkipError` smoke test fails on `main` before the source fix lands and passes after.
 
