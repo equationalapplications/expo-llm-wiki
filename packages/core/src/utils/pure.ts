@@ -535,7 +535,18 @@ function extractParsePosition(err: unknown): number | null {
  * - A static `[unstringifiable error]` marker as a final guarantee.
  */
 export function safeErrorToString(e: unknown): string {
-  if (e instanceof Error) {
+  // `e instanceof Error` invokes the `getPrototypeOf` trap on `e`. A Proxy
+  // whose trap rejects turns the type-check itself into a throw point,
+  // escaping every catch around this function body. Treat the trap throw
+  // as "not an Error" and fall through to the String() / Object.prototype
+  // paths, which themselves catch their own throws.
+  let isErrorLike = false;
+  try {
+    isErrorLike = e instanceof Error;
+  } catch {
+    // hostile Proxy whose getPrototypeOf trap rejects — fall through
+  }
+  if (isErrorLike) {
     // Defensive: a hostile `Error` subclass or a tampered native Error could
     // set `message` to a non-string (e.g. `err.message = 42`) or make it a
     // throwing getter. `e.name` is similarly attacker-controllable. Coerce
@@ -571,12 +582,22 @@ function readErrorField(e: Error, key: 'message' | 'name'): unknown {
 }
 
 export function sanitizeRankerError(err: unknown, sanitizeRankerErrors: boolean | undefined): Error {
-  if (sanitizeRankerErrors === false) {
-    return err instanceof Error ? err : new Error(String(err));
+  // `err instanceof Error` invokes the `getPrototypeOf` trap on `err`. A
+  // hostile Proxy (e.g. an injected VectorRanker returning one) whose trap
+  // rejects would otherwise escape this "sanitize" function. Compute the
+  // guard once — three checks below share it.
+  let isErrorLike = false;
+  try {
+    isErrorLike = err instanceof Error;
+  } catch {
+    /* already false — relies on the declaration's initializer */
   }
-  const typeName = err instanceof Error ? (err.constructor?.name ?? 'Error') : typeof err;
+  if (sanitizeRankerErrors === false) {
+    return isErrorLike ? err : new Error(String(err));
+  }
+  const typeName = isErrorLike ? (err.constructor?.name ?? 'Error') : typeof err;
   const innerCause =
-    err instanceof Error && err.cause !== undefined
+    isErrorLike && err.cause !== undefined
       ? new Error(`Caused by: ${(err.cause as Error)?.constructor?.name ?? typeof err.cause}`)
       : undefined;
   const sanitized = new Error(
