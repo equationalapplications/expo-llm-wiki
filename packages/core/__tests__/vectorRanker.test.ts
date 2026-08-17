@@ -1105,6 +1105,45 @@ describe('VectorRanker integration', () => {
     expect(cause.message).toContain('scrubbed');
   });
 
+  // Regression: issue #96, site 8. The phase-2 catch block
+  // (`RetrievalService.read`, the outer try around the ranker/hydrate path)
+  // invokes the getPrototypeOf trap on err. A hostile Proxy thrown from the
+  // embed function — or any other operation in the outer try that escapes
+  // the inner rankerErr catch — would otherwise throw out of this catch
+  // and tear down the entire retrieval operation. The companion test above
+  // (sites 7 and 8) only exercises the rankerErr catch (site 7); this test
+  // specifically exercises the outer catch (site 8) by making embed throw
+  // hostileProxy, so a regression of the site-8 patch would surface here
+  // without overlapping the site-7 path.
+  it('does not throw on a hostile Proxy thrown from the embed function (sanitizer robustness for site 8)', async () => {
+    const db = openTestDatabase();
+    let capturedError: Error | undefined;
+
+    const hostileProxy = new Proxy({}, {
+      getPrototypeOf() { throw new Error('proxy rejects prototype access'); },
+    });
+
+    const wiki = new WikiMemory(db, {
+      llmProvider: {
+        generateText: async () => '{}',
+        embed: async () => { throw hostileProxy; },
+      },
+      // No vectorRanker configured — forces the read path through the
+      // outer try's embed branch, which throws hostileProxy directly into
+      // site 8's catch.
+      onRetrievalFallback: (error) => { capturedError = error; },
+    });
+    await wiki.setup();
+    await wiki.importDump(makeDump([
+      { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+    ]));
+
+    await expect(wiki.read('user-1', 'apple')).resolves.toBeDefined();
+
+    expect(capturedError).toBeDefined();
+    expect(capturedError).toBeInstanceOf(Error);
+  });
+
   describe('Buffer mutation protection', () => {
     it('protects vector from mutation by onEmbeddingPersisted hook', async () => {
       const db = openTestDatabase();

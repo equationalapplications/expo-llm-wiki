@@ -91,7 +91,7 @@ describe('instanceof Error Proxy guards', () => {
       expect(result.message).toBe('VectorRanker object (message scrubbed for security)');
     });
 
-    it('returns the input unchanged when sanitizeRankerErrors=false and the input is a hostile Proxy (treated as non-Error)', () => {
+    it('wraps the input in a synthetic Error when sanitizeRankerErrors=false and the input is a hostile Proxy (treated as non-Error)', () => {
       // When sanitizeRankerErrors=false, the function returns the original
       // value if it is an Error, else wraps in new Error(String(err)).
       // A hostile Proxy that throws on getPrototypeOf must be treated as
