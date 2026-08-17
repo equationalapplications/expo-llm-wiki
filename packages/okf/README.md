@@ -10,6 +10,8 @@ For a ready-made `MemoryDump` ⇄ OKF bundle adapter, see the [OKF Import/Export
 
 For the llm-wiki interoperability profiles (`llm-wiki/1` and `llm-wiki/2`), see [`docs/okf-profile.md`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/docs/okf-profile.md). Conformance fixtures live in [`fixtures/`](./fixtures/).
 
+> **GraphRAG compatibility:** OKF v0.2 bundles import directly into `llm_wiki_edges`, populating the GraphRAG graph for `traverseGraph()`. See [root README: GraphRAG](../../README.md#graphrag-sql-only-graph-retrieval).
+
 ## Installation
 
 ```bash
