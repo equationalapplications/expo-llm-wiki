@@ -585,30 +585,54 @@ export function sanitizeRankerError(err: unknown, sanitizeRankerErrors: boolean 
   // `err instanceof Error` invokes the `getPrototypeOf` trap on `err`. A
   // hostile Proxy (e.g. an injected VectorRanker returning one) whose trap
   // rejects would otherwise escape this "sanitize" function. Compute the
-  // guard once — three checks below share it.
+  // guard once — the property accesses below share the same hostile-input
+  // surface and need their own guards.
   let isErrorLike = false;
   try {
     isErrorLike = err instanceof Error;
   } catch {
-    /* already false — relies on the declaration's initializer */
+    /* hostile Proxy — treat as non-Error */
   }
   if (sanitizeRankerErrors === false) {
-    return isErrorLike ? (err as Error) : new Error(String(err));
+    // `String(err)` invokes the `toString` / `Symbol.toPrimitive` trap on
+    // `err`; a hostile Proxy whose trap rejects would throw out of this
+    // function, defeating the non-throwing contract. Delegate to the
+    // hardened `safeErrorToString` helper which converges all coercion
+    // paths onto the static `[unstringifiable error]` marker on throw.
+    return isErrorLike ? (err as Error) : new Error(safeErrorToString(err));
   }
-  // Narrowed view: only valid when `isErrorLike` is true (guaranteed by
-  // the try/catch above). Captured once to avoid repeated casts at each
-  // usage site; the runtime is already proven correct by the guard.
-  const errLike = isErrorLike ? (err as Error) : null;
-  const typeName = errLike ? (errLike.constructor?.name ?? 'Error') : typeof err;
-  const innerCause =
-    errLike && errLike.cause !== undefined
-      ? new Error(`Caused by: ${(errLike.cause as Error)?.constructor?.name ?? typeof errLike.cause}`)
-      : undefined;
+  // `errLike.constructor?.name` and `.cause` access can also throw on a
+  // hostile Error subclass with throwing getters (optional chaining `?.`
+  // only short-circuits null/undefined, not trap throws). Wrap each access
+  // so the function's documented non-throwing contract holds for all
+  // attacker-controlled inputs.
+  let errLike: Error | null = null;
+  if (isErrorLike) errLike = err as Error;
+  let typeName: string;
+  try {
+    typeName = errLike ? (errLike.constructor?.name ?? 'Error') : typeof err;
+  } catch {
+    typeName = isErrorLike ? 'Error' : typeof err;
+  }
+  let innerCause: Error | undefined;
+  if (errLike) {
+    let cause: unknown;
+    try { cause = errLike.cause; } catch { cause = undefined; }
+    if (cause !== undefined) {
+      let causeName: string;
+      try {
+        causeName = (cause as Error)?.constructor?.name ?? typeof cause;
+      } catch {
+        causeName = typeof cause;
+      }
+      innerCause = new Error(`Caused by: ${causeName}`);
+    }
+  }
   const sanitized = new Error(
     `VectorRanker ${typeName} (message scrubbed for security)`,
     innerCause ? { cause: innerCause } : undefined,
   );
-  sanitized.name = typeName;
+  try { sanitized.name = typeName; } catch { /* hostile name setter — leave default */ }
   return sanitized;
 }
 
