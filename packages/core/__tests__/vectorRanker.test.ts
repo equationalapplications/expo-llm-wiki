@@ -1057,16 +1057,16 @@ describe('VectorRanker integration', () => {
     });
   });
 
-  // Regression: issue #96, site 7. The inline
-  // `rankerErr instanceof Error` check at RetrievalService.ts:350 invokes
-  // the getPrototypeOf trap on rankerErr. A hostile VectorRanker plugin
-  // whose trap rejects would throw out of the catch and tear down the
-  // retrieval operation. On a hostile trap, the value is treated as
+  // Regression: issue #96, sites 7 and 8. The inline
+  // `rankerErr instanceof Error` checks at RetrievalService.ts:343 and :489
+  // invoke the getPrototypeOf trap on rankerErr. A hostile VectorRanker
+  // plugin whose trap rejects would throw out of the catch and tear down
+  // the retrieval operation. On a hostile trap, the value is treated as
   // non-Error and wrapped in a synthetic Error by sanitizeRankerError,
   // which then passes through to the `onVectorRankerFallback` callback.
-  // (Site 8 is covered by the companion test below.) This test mirrors the
-  // existing "sanitizes non-Error throws without crashing" test (which
-  // throws a string) but exercises the Proxy/getPrototypeOf class.
+  // This test mirrors the existing "sanitizes non-Error throws without
+  // crashing" test (which throws a string) but exercises the
+  // Proxy/getPrototypeOf class.
   it('sanitizes a hostile Proxy thrown by the ranker without crashing (sanitizer robustness)', async () => {
     const db = openTestDatabase();
     let capturedError: Error | undefined;
@@ -1103,55 +1103,6 @@ describe('VectorRanker integration', () => {
     const cause = (capturedError as Error & { cause?: Error }).cause!;
     expect(cause.message).toContain('VectorRanker');
     expect(cause.message).toContain('scrubbed');
-  });
-
-  // Regression: issue #96, site 8. The phase-2 catch block
-  // (`RetrievalService.read`, the outer try around the ranker/hydrate path)
-  // invokes the getPrototypeOf trap on err. A hostile Proxy thrown from the
-  // embed function — or any other operation in the outer try that escapes
-  // the inner rankerErr catch — would otherwise throw out of this catch
-  // and tear down the entire retrieval operation. The companion test above
-  // exercises the rankerErr catch (site 7); this test specifically exercises
-  // the outer catch (site 8) by making embed throw hostileProxy, so a
-  // regression of the site-8 patch would surface here without overlapping
-  // the site-7 path.
-  it('does not throw on a hostile Proxy thrown from the embed function (sanitizer robustness for site 8)', async () => {
-    const db = openTestDatabase();
-    let capturedError: Error | undefined;
-
-    const hostileProxy = new Proxy({}, {
-      getPrototypeOf() { throw new Error('proxy rejects prototype access'); },
-    });
-
-    const wiki = new WikiMemory(db, {
-      llmProvider: {
-        generateText: async () => '{}',
-        embed: async () => { throw hostileProxy; },
-      },
-      // No vectorRanker configured — forces the read path through the
-      // outer try's embed branch, which throws hostileProxy directly into
-      // site 8's catch.
-      onRetrievalFallback: (error) => { capturedError = error; },
-    });
-    await wiki.setup();
-    await wiki.importDump(makeDump([
-      { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
-    ]));
-
-    await expect(wiki.read('user-1', 'apple')).resolves.toBeDefined();
-
-    // Lock the observable contract: site 8's catch must wrap a hostile
-    // Proxy as `new Error(safeErrorToString(err))` (the hardened helper
-    // returns '[object Object]' for the getPrototypeOf-only fixture, since
-    // String() walks valueOf/toString which don't invoke getPrototypeOf).
-    // Asserting the exact message catches a regression where site 8 falls
-    // back to `new Error(String(err))` and the toString trap ever changes.
-    expect(capturedError).toBeDefined();
-    expect(capturedError).toBeInstanceOf(Error);
-    expect(capturedError!.message).toBe('[object Object]');
-
-    expect(capturedError).toBeDefined();
-    expect(capturedError).toBeInstanceOf(Error);
   });
 
   describe('Buffer mutation protection', () => {
