@@ -53,14 +53,15 @@ Lists all documents stored for an entity with metadata (sourceRef, sourceHash, f
 ### `upsertGraph(entityId, params, adapter): Promise<{ nodesWritten, edgesWritten, superseded }>`
 Writes structured graph data directly without LLM extraction. The tail of `ingestDocument` with the middle (LLM extraction) step removed. Accepts caller-supplied nodes (`{ id, type, title, body? }`) and edges (`{ type, sourceId, targetId, id? }`) under same `(sourceRef, sourceHash)` semantics. Throws `WikiSourceRefHashCollision` when a different live `sourceRef` already holds the same hash.
 
-### `ingestDocument(..., { onDuplicateHash: 'ingest' | 'skip' | 'throw' })`
-Controls behavior when a different live `sourceRef` already holds the same `sourceHash`:
-- `'ingest'` (default): Proceed with extraction (pre-guard behavior)
-- `'skip'`: Return early, zero-chunk result, no LLM call
-- `'throw'`: Throw `WikiDuplicateHashError`
+### `ingestDocument(entityId, params, { onDuplicateHash: 'ingest' | 'skip' | 'throw' })`
+The duplicate-hash option is a third-argument `opts` field, not part of `params`. Controls behavior when a different live `sourceRef` already holds the same `sourceHash`:
+- `'ingest'` (default): No pre-check; proceeds. A live collision detected at commit time (concurrent-writer race) throws `WikiDuplicateHashError`.
+- `'skip'`: Pre-check; return early with a zero-chunk result, no LLM call.
+- `'throw'`: Pre-check; throw `WikiDuplicateHashError`.
+- Soft-deleted refs never trigger the guard (live rows only).
 
 ### `hasChanged(entityId, batch[]): Promise<Array<{ sourceRef, changed, duplicateOf? }>>`
-Batch overload for checking multiple documents in one efficient query. `duplicateOf`, when present, is the canonical stored different `sourceRef` holding the same hash.
+Batch overload for per-document change detection. `duplicateOf`, when present, is the canonical stored different `sourceRef` holding the same hash.
 
 ### `forget(entityId, params, { dryRun: true })`
 Preview deletion impact without writing to database. Returns `{ deleted: { entries, tasks } }` for blast-radius validation.

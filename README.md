@@ -473,7 +473,9 @@ const result = await wiki.ingestDocument('entity-123', {
   promptOverride: `Extract strict technical requirements: {{documentChunk}}
 
 Return JSON: {"facts": [{"title": "...", "body": "...", "tags": ["..."], "confidence": "certain|tentative|inferred"}]}`,
-  // Optional: control behavior when a different live sourceRef already holds this hash
+}, {
+  // Optional third-argument opts — control behavior when a different live
+  // sourceRef already holds this hash.
   onDuplicateHash: 'ingest',          // 'ingest' (default) | 'skip' | 'throw'
 });
 // result: {
@@ -493,10 +495,11 @@ Return JSON: {"facts": [{"title": "...", "body": "...", "tags": ["..."], "confid
 
 **Hosts must update**: a host that today treats `ingestDocument` throwing as the only failure signal will, after release 5.4.1, see a successful return with `parseFailures[]` set when a subset of chunks failed. Inspect `result.failedChunks` and surface `result.parseFailures[]` for observability — do not rely on the throw for partial failures. Only `WikiIngestEmptyError` (every chunk failed) still throws.
 
-**Duplicate hash handling:** When the same `sourceHash` is already held live under a *different* `sourceRef` (e.g., the same document ingested at another path), `onDuplicateHash` controls behavior:
-- `'ingest'` (default): Proceed with extraction as normal — the pre-guard behavior. Use when duplicate content under different refs is acceptable.
-- `'skip'`: Return early without writing and without an LLM call (zero-chunk result). Use when the stored document holding this hash is authoritative.
-- `'throw'`: Throw `WikiDuplicateHashError` (carries the canonical `sourceRef`). Use for strict auditing.
+**Duplicate hash handling:** When the same `sourceHash` is already held live under a *different* `sourceRef` (e.g., the same document ingested at another path), `onDuplicateHash` (a third-argument option, not a params field) controls behavior:
+- `'ingest'` (default): No duplicate pre-check; extraction proceeds as before this option existed. A collision detected at commit time (concurrent-writer race caught by the source-ref unique index) still throws `WikiDuplicateHashError`.
+- `'skip'`: Pre-check before any LLM call; if a different live `sourceRef` already holds the hash, return a zero-chunk result without writing.
+- `'throw'`: Pre-check before any LLM call; throw `WikiDuplicateHashError` (carries the canonical `sourceRef`).
+- The guard only considers **live** references — soft-deleted refs do not trigger it in any mode.
 
 ### Direct Graph Write
 
@@ -621,7 +624,10 @@ List all documents currently stored for an entity:
 
 ```typescript
 const sourceRefs = await wiki.listSourceRefs('entity-123');
-// Returns: Array<{ sourceRef: string; sourceHash: string | null; factCount: number; lastIngestedAt: number }>
+// One row per live sourceRef (soft-deleted rows are excluded):
+// Array<{ sourceRef: string; sourceHash: string | null; factCount: number; lastIngestedAt: number }>
+// factCount — number of live facts under that sourceRef
+// lastIngestedAt — Unix timestamp in ms from the most recently updated live entry
 ```
 
 Use this to audit stored documents, validate external sync state, or preview the blast radius before `forget()` operations.
@@ -673,7 +679,7 @@ const changes = await wiki.hasChanged('entity-123', batch);
 // changes: Array<{ sourceRef: string; changed: boolean; duplicateOf?: string }>
 // duplicateOf — when present, the canonical stored different sourceRef holding
 // the same hash (DB-normalized spelling; sourceRef echoes the raw caller value).
-// Efficient single query with per-document change detection
+// Per-document change detection; internally batched across queries
 ```
 
 Throws `Error` if `sourceRef` or `sourceHash` is invalid (same rules as `ingestDocument`).

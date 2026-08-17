@@ -845,7 +845,10 @@ List all documents currently stored for an entity:
 
 ```typescript
 const sourceRefs = await wikiMemory.listSourceRefs('user-123');
-// Returns: Array<{ sourceRef: string; sourceHash: string | null; factCount: number; lastIngestedAt: number }>
+// One row per live sourceRef (soft-deleted rows are excluded):
+// Array<{ sourceRef: string; sourceHash: string | null; factCount: number; lastIngestedAt: number }>
+// factCount — number of live facts under that sourceRef
+// lastIngestedAt — Unix timestamp in ms from the most recently updated live entry
 ```
 
 Use this to audit stored documents, validate external sync state, or preview the blast radius before `forget()` operations.
@@ -872,24 +875,28 @@ const { nodesWritten, edgesWritten, superseded } = await wikiMemory.upsertGraph(
 
 ## Duplicate Hash Detection
 
-Control behavior when multiple `sourceRef` values share the same `sourceHash`:
+Control behavior when a different live `sourceRef` already holds the same `sourceHash`. The option is passed as a third argument to `ingestDocument`, not inside the params object:
 
 ```typescript
-await wikiMemory.ingestDocument('entity-123', {
-  sourceRef: 'doc.md',
-  sourceHash: sha256(content),
-  documentChunk: content,
-  onDuplicateHash: 'ingest',  // 'ingest' (default) | 'skip' | 'throw'
-});
+await wikiMemory.ingestDocument(
+  'entity-123',
+  {
+    sourceRef: 'doc.md',
+    sourceHash: sha256(content),
+    documentChunk: content,
+  },
+  { onDuplicateHash: 'ingest' }  // 'ingest' (default) | 'skip' | 'throw'
+);
 ```
 
-- `'ingest'` (default): Proceed with extraction as normal — the pre-guard behavior. Use when duplicate content under different refs is acceptable.
-- `'skip'`: Return early without writing and without an LLM call (zero-chunk result). Use when the stored document holding this hash is authoritative.
-- `'throw'`: Throw `WikiDuplicateHashError` (carries the canonical `sourceRef`). Use for strict auditing.
+- `'ingest'` (default): No duplicate pre-check; extraction proceeds as before this option existed. If a different live `sourceRef` is found holding the same hash at commit time (a concurrent-writer race caught by the source-ref unique index), the call still throws `WikiDuplicateHashError`.
+- `'skip'`: Pre-check before any LLM call; if a different live `sourceRef` already holds the hash, return a zero-chunk result without writing.
+- `'throw'`: Pre-check before any LLM call; throw `WikiDuplicateHashError` (carries the canonical `sourceRef`).
+- The guard only considers **live** references — soft-deleted refs do not trigger it in any mode.
 
 ## Batch Change Detection
 
-Check multiple documents for changes in one query:
+Check multiple documents for changes in one call:
 
 ```typescript
 const batch = [
@@ -901,7 +908,7 @@ const changes = await wikiMemory.hasChanged('entity-123', batch);
 // changes: Array<{ sourceRef: string; changed: boolean; duplicateOf?: string }>
 // duplicateOf — when present, the canonical stored different sourceRef holding
 // the same hash (DB-normalized spelling; sourceRef echoes the raw caller value).
-// Efficient single query with per-document change detection
+// Per-document change detection; internally batched across queries
 ```
 
 ## Dry-Run Deletion
