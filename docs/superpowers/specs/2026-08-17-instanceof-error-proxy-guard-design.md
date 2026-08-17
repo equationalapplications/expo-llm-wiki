@@ -1,6 +1,6 @@
 # Defensive `instanceof Error` Guards for Hostile Proxies
 
-Status: Implemented (PR open — awaiting merge).
+Status: Implemented
 Originates: Issue #96 (follow-up to PR #95, which was docs-only after #93 squash-merged onto `main`).
 
 ## Problem

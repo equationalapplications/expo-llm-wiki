@@ -22,7 +22,7 @@ In-browser LLM memory for React web apps. Bring your own SQLite adapter (e.g., [
 - **Mutation hooks** — `useWikiWrite`, `useWikiIngest`, `useWikiForget`, `useWikiMaintenance`, `useSetOntologyManifest`, etc.
 - **Shared context** — Single `WikiProvider` per app, use anywhere
 - **Full-featured memory** — Facts, tasks, events, maintenance jobs (librarian, heal, reembed, prune)
-- **Interoperability:** Supports [Open Knowledge Format (OKF) v0.1](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) import and export.
+- **Interoperability:** Supports [Open Knowledge Format (OKF)](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) v0.1 + v0.2 import and export via the [llm-wiki OKF profiles](https://github.com/equationalapplications/expo-llm-wiki/blob/main/docs/okf-profile.md) (default `llm-wiki/2`, back-compat `llm-wiki/1`).
 
 ## Installation
 
@@ -539,7 +539,7 @@ The flowchart shows:
 | [**@equationalapplications/react-llm-wiki**](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/react/README.md) | Persistent episodic memory for Web |
 | [@equationalapplications/prisma-outbox](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/prisma-outbox/README.md) | Sync SQLite outbox events to Prisma |
 | [@equationalapplications/core-llm-tools](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core-llm-tools/README.md) | Gemini tool schemas and capability injector |
-| [@equationalapplications/core-okf](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/okf/README.md) | Zero-dependency Open Knowledge Format (OKF) v0.1 primitives — parse and produce interoperable knowledge bundles. |
+| [@equationalapplications/core-okf](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/okf/README.md) | Zero-dependency Open Knowledge Format (OKF) v0.1 + v0.2 primitives — parse and produce interoperable knowledge bundles. |
 | [@equationalapplications/schema-org-llm-wiki](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/schema-org/README.md) | Curated schema.org warm-agent ontology manifest |
 
 ## License
