@@ -573,9 +573,9 @@ export function safeErrorToString(e: unknown): string {
  * throwing, even if a subclass installs a hostile getter. Internal helper
  * for `safeErrorToString`.
  */
-function readErrorField(e: unknown, key: 'message' | 'name'): unknown {
+function readErrorField(e: Error, key: 'message' | 'name'): unknown {
   try {
-    return (e as Record<string, unknown>)[key];
+    return (e as unknown as Record<string, unknown>)[key];
   } catch {
     return undefined;
   }
@@ -585,54 +585,26 @@ export function sanitizeRankerError(err: unknown, sanitizeRankerErrors: boolean 
   // `err instanceof Error` invokes the `getPrototypeOf` trap on `err`. A
   // hostile Proxy (e.g. an injected VectorRanker returning one) whose trap
   // rejects would otherwise escape this "sanitize" function. Compute the
-  // guard once — the property accesses below share the same hostile-input
-  // surface and need their own guards.
+  // guard once — three checks below share it.
   let isErrorLike = false;
   try {
     isErrorLike = err instanceof Error;
   } catch {
-    /* hostile Proxy — treat as non-Error */
+    /* already false — relies on the declaration's initializer */
   }
   if (sanitizeRankerErrors === false) {
-    // `String(err)` invokes the `toString` / `Symbol.toPrimitive` trap on
-    // `err`; a hostile Proxy whose trap rejects would throw out of this
-    // function, defeating the non-throwing contract. Delegate to the
-    // hardened `safeErrorToString` helper which converges all coercion
-    // paths onto the static `[unstringifiable error]` marker on throw.
-    return isErrorLike ? (err as Error) : new Error(safeErrorToString(err));
+    return isErrorLike ? err : new Error(String(err));
   }
-  // `errLike.constructor?.name` and `.cause` access can also throw on a
-  // hostile Error subclass with throwing getters (optional chaining `?.`
-  // only short-circuits null/undefined, not trap throws). Wrap each access
-  // so the function's documented non-throwing contract holds for all
-  // attacker-controlled inputs.
-  let errLike: Error | null = null;
-  if (isErrorLike) errLike = err as Error;
-  let typeName: string;
-  try {
-    typeName = errLike ? (errLike.constructor?.name ?? 'Error') : typeof err;
-  } catch {
-    typeName = isErrorLike ? 'Error' : typeof err;
-  }
-  let innerCause: Error | undefined;
-  if (errLike) {
-    let cause: unknown;
-    try { cause = errLike.cause; } catch { cause = undefined; }
-    if (cause !== undefined) {
-      let causeName: string;
-      try {
-        causeName = (cause as Error)?.constructor?.name ?? typeof cause;
-      } catch {
-        causeName = typeof cause;
-      }
-      innerCause = new Error(`Caused by: ${causeName}`);
-    }
-  }
+  const typeName = isErrorLike ? (err.constructor?.name ?? 'Error') : typeof err;
+  const innerCause =
+    isErrorLike && err.cause !== undefined
+      ? new Error(`Caused by: ${(err.cause as Error)?.constructor?.name ?? typeof err.cause}`)
+      : undefined;
   const sanitized = new Error(
     `VectorRanker ${typeName} (message scrubbed for security)`,
     innerCause ? { cause: innerCause } : undefined,
   );
-  try { sanitized.name = typeName; } catch { /* hostile name setter — leave default */ }
+  sanitized.name = typeName;
   return sanitized;
 }
 
