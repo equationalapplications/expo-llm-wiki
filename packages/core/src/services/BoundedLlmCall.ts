@@ -83,8 +83,20 @@ export interface BuiltPrompt {
 
 export interface RunBatchedArgs<TItem, TResult> {
   items: TItem[];
-  /** May be async: heal selects anchors per batch via a search + repository read. */
-  buildPrompt: (batch: TItem[]) => BuiltPrompt | Promise<BuiltPrompt>;
+  /**
+   * May be async: heal selects anchors per batch via a search + repository read.
+   *
+   * `attemptLevel` is the escalation level at which this build is being asked
+   * to produce a prompt. trim()'s speculatives always pass `0` (they only
+   * measure length). Real attempts pass the current escalation level: `0`
+   * (normal), `1` (less shared context), `2` (less again), or `3` (last
+   * resort — caller is expected to shrink or truncate the prompt itself).
+   * Defaults to `0` so callers that don't care about the level are unchanged.
+   */
+  buildPrompt: (
+    batch: TItem[],
+    attemptLevel?: 0 | 1 | 2 | 3,
+  ) => BuiltPrompt | Promise<BuiltPrompt>;
   call: (prompts: BuiltPrompt) => Promise<string>;
   /** Receives the batch so the caller can pair a response with the exact items
    * that produced it without this module knowing any domain shape. Throwing is
@@ -100,8 +112,14 @@ export interface RunBatchedArgs<TItem, TResult> {
 
 export interface RunBatchedOutcome<TItem, TResult> {
   results: TResult[];
-  /** Items that failed even alone. Returned, never thrown. */
-  skipped: TItem[];
+  /**
+   * Items that could not converge after the helper's full escalation path.
+   * `reason` is currently always `'non_convergent'` — terminal give-up at
+   * attemptLevel 3, parse error, or a non-truncation call error. The
+   * discriminator is here so future failure modes (e.g. caller policy
+   * rejection) can extend the union without another shape change.
+   */
+  skipped: Array<{ item: TItem; reason: 'non_convergent' }>;
   /** Number of `call` attempts made, including failed ones. */
   batches: number;
 }
@@ -127,7 +145,7 @@ export async function runBatched<TItem, TResult>(
   const { items, buildPrompt, call, parse, maxPromptChars, maxOutputTokens, onSkip } = args;
 
   const results: TResult[] = [];
-  const skipped: TItem[] = [];
+  const skipped: Array<{ item: TItem; reason: 'non_convergent' }> = [];
   let batches = 0;
 
   /**
@@ -184,14 +202,36 @@ export async function runBatched<TItem, TResult>(
     return { batch: single, prompts: await buildPrompt(single) };
   };
 
-  const onFailure = async (batch: TItem[], err: unknown): Promise<void> => {
-    if (batch.length <= 1) {
-      if (batch.length === 1) {
-        skipped.push(batch[0]);
+  const onFailure = async (
+    batch: TItem[],
+    err: unknown,
+    attemptLevel: 0 | 1 | 2 | 3,
+    fromCall: boolean,
+  ): Promise<void> => {
+    if (batch.length === 1) {
+      // Gate: escalation only on a truncation-shaped error at the lowest batch
+      // size, and only while the ladder has levels left. Anything else at this
+      // point — parse error, exceeds-limit config error, network, auth — is a
+      // terminal give-up. A parse error is not retryable by context-shedding
+      // (the JSON desync shape is the same at L1, L2, and L3); escalating
+      // would burn three calls before reaching skip. The gate prevents that.
+      if (isTruncationError(err) && attemptLevel < 3) {
+        // Bypass trim: its prebuilt prompt is the L0 form, invalid at the new
+        // level. attempt() will call buildPrompt(batch, attemptLevel + 1) to
+        // produce the level-appropriate prompt.
+        await attempt(batch, undefined, (attemptLevel + 1) as 0 | 1 | 2 | 3);
+      } else {
+        skipped.push({ item: batch[0], reason: 'non_convergent' });
         onSkip?.(batch[0], err);
       }
       return;
     }
+    // Non-truncation call errors at batch.length > 1 are real errors (network,
+    // auth) and must propagate rather than silently split/skip the corpus.
+    // Parse errors always split — the JSON may parse after shedding context.
+    if (fromCall && !isTruncationError(err)) throw err;
+    // batch.length > 1: split path, unchanged. Sticky-down batchSize
+    // adaptation and the inner trim/attempt loop at level 0 are preserved.
     const mid = Math.ceil(batch.length / 2);
     if (mid < batchSize) batchSize = mid;
     // Re-reads batchSize on every chunk rather than fixing it once: a nested
@@ -215,19 +255,28 @@ export async function runBatched<TItem, TResult>(
     }
   };
 
-  const attempt = async (batch: TItem[], prebuilt?: BuiltPrompt): Promise<void> => {
+  const attempt = async (
+    batch: TItem[],
+    prebuilt?: BuiltPrompt,
+    attemptLevel: 0 | 1 | 2 | 3 = 0,
+  ): Promise<void> => {
     if (batch.length === 0) return;
-    const prompts = prebuilt ?? (await buildPrompt(batch));
+    // prebuilt is the L0 form from trim(); only valid at attemptLevel === 0.
+    // The level-advance path in onFailure passes `undefined` to force a rebuild.
+    const prompts =
+      prebuilt && attemptLevel === 0
+        ? prebuilt
+        : (await buildPrompt(batch, attemptLevel));
 
     batches++;
     let responseText: string;
     try {
       responseText = await call(prompts);
     } catch (err) {
-      // Only truncation-shaped failures are retryable by splitting. Anything
-      // else (network, auth) is a real error and must surface.
-      if (!isTruncationError(err)) throw err;
-      await onFailure(batch, err);
+      // Non-truncation call errors: hand to onFailure (skips at batch.length===1,
+      // throws at batch.length>1). Truncation errors also go to onFailure for
+      // potential ladder escalation.
+      await onFailure(batch, err, attemptLevel, true);
       return;
     }
 
@@ -237,7 +286,9 @@ export async function runBatched<TItem, TResult>(
     } catch (err) {
       // A response truncated mid-JSON surfaces here rather than as a thrown
       // call error, depending on where the cut landed in the grammar.
-      await onFailure(batch, err);
+      // Parse errors always split, never throw — the JSON may parse after
+      // shedding context. The gate inside onFailure handles ladder escalation.
+      await onFailure(batch, err, attemptLevel, false);
       return;
     }
 
@@ -248,7 +299,7 @@ export async function runBatched<TItem, TResult>(
   while (index < items.length) {
     const { batch, prompts } = await trim(items.slice(index, index + batchSize));
     index += batch.length;
-    await attempt(batch, prompts);
+    await attempt(batch, prompts, 0);
   }
 
   return { results, skipped, batches };
