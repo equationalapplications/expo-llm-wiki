@@ -473,6 +473,10 @@ const result = await wiki.ingestDocument('entity-123', {
   promptOverride: `Extract strict technical requirements: {{documentChunk}}
 
 Return JSON: {"facts": [{"title": "...", "body": "...", "tags": ["..."], "confidence": "certain|tentative|inferred"}]}`,
+}, {
+  // Optional third-argument opts — control behavior when a different live
+  // sourceRef already holds this hash.
+  onDuplicateHash: 'ingest',          // 'ingest' (default) | 'skip' | 'throw'
 });
 // result: {
 //   truncated: boolean;          // true if at least one hard-split was required (no sentence boundary)
@@ -490,6 +494,34 @@ Return JSON: {"facts": [{"title": "...", "body": "...", "tags": ["..."], "confid
 ```
 
 **Hosts must update**: a host that today treats `ingestDocument` throwing as the only failure signal will, after release 5.4.1, see a successful return with `parseFailures[]` set when a subset of chunks failed. Inspect `result.failedChunks` and surface `result.parseFailures[]` for observability — do not rely on the throw for partial failures. Only `WikiIngestEmptyError` (every chunk failed) still throws.
+
+**Duplicate hash handling:** When the same `sourceHash` is already held live under a *different* `sourceRef` (e.g., the same document ingested at another path), `onDuplicateHash` (a third-argument option, not a params field) controls behavior:
+- `'ingest'` (default): No duplicate pre-check; extraction proceeds as before this option existed. A collision detected at commit time (concurrent-writer race caught by the source-ref unique index) still throws `WikiDuplicateHashError`.
+- `'skip'`: Pre-check before any LLM call; if a different live `sourceRef` already holds the hash, return a zero-chunk result without writing.
+- `'throw'`: Pre-check before any LLM call; throw `WikiDuplicateHashError` (carries the canonical `sourceRef`).
+- The guard only considers **live** references — soft-deleted refs do not trigger it in any mode.
+
+### Direct Graph Write
+
+Write structured graph data directly without LLM extraction — useful for programmatic fact ingestion, parsers, and deterministic pipelines:
+
+```typescript
+import { WikiMemory } from '@equationalapplications/core-llm-wiki';
+
+const { nodesWritten, edgesWritten, superseded } = await wiki.upsertGraph('entity-123', {
+  sourceRef: 'codebase_main.ts',
+  sourceHash: sha256(sourceCode),
+  nodes: [
+    { id: 'fn_processData', type: 'function', title: 'processData', body: 'Processes user data' },
+    { id: 'class_UserService', type: 'class', title: 'UserService', body: 'User management service' },
+  ],
+  edges: [
+    { type: 'calls', sourceId: 'fn_processData', targetId: 'class_UserService' },
+  ],
+}, adapter); // SQLiteAdapter from your platform driver — writes join the caller's transaction
+```
+
+`upsertGraph` is "the tail of `ingestDocument` with the middle (LLM extraction) step removed" — it accepts caller-supplied nodes (`{ id, type, title, body? }`) and edges (`{ type, sourceId, targetId, id? }`) and writes them under the same `(sourceRef, sourceHash)` semantics. If a *different* live `sourceRef` already holds the same `sourceHash`, it throws `WikiSourceRefHashCollision`; re-writing the identical `(sourceRef, sourceHash)` is a no-op returning zero counts. The adapter parameter is required so writes participate in the caller's transaction.
 
 ### Background Maintenance
 
@@ -574,6 +606,32 @@ Advanced Prompting: For full details on `{{mustache}}` prompt templating, hydrat
 
 Facts are ranked by a weighted score combining confidence tier, access frequency, and recency. Returns an empty string for an empty bundle.
 
+### Entity Enumeration
+
+List all entities that have stored data in the wiki:
+
+```typescript
+const entityIds = await wiki.listEntityIds();
+// Returns all entity_ids with at least one row (including soft-deleted-only entities)
+// Optional prefix filter: await wiki.listEntityIds({ prefix: 'tier_' });
+```
+
+Use this for maintenance scheduling, multi-entity operations, or discovering which namespaces exist. Includes entities with only soft-deleted rows so prune operations can reclaim orphaned storage.
+
+### Source Reference Enumeration
+
+List all documents currently stored for an entity:
+
+```typescript
+const sourceRefs = await wiki.listSourceRefs('entity-123');
+// One row per live sourceRef (soft-deleted rows are excluded):
+// Array<{ sourceRef: string; sourceHash: string | null; factCount: number; lastIngestedAt: number }>
+// factCount — number of live facts under that sourceRef
+// lastIngestedAt — Unix timestamp in ms from the most recently updated live entry
+```
+
+Use this to audit stored documents, validate external sync state, or preview the blast radius before `forget()` operations.
+
 ### Forget
 
 ```typescript
@@ -584,6 +642,14 @@ await wiki.forget('entity-123', { taskId: 'task_xyz' });     // single task
 // sourceRef is normalized the same way as in ingestDocument (slashes stripped)
 await wiki.forget('entity-123', { sourceRef: 'x.md' }); // all facts from a document
 await wiki.forget('entity-123', { clearAll: true });          // wipe entity
+```
+
+**Dry-run mode** — preview deletion impact without writing:
+
+```typescript
+const preview = await wiki.forget('entity-123', { sourceRef: 'doc.md' }, { dryRun: true });
+// preview: { deleted: { entries: number; tasks: number } }
+// No database writes performed; safe for blast-radius validation
 ```
 
 Throws `Error` if `sourceRef` or `sourceHash` is provided but invalid. Soft-deletes are idempotent — calling again with the same parameters returns `{ deleted: { entries: 0; tasks: 0 } }`.
@@ -600,6 +666,21 @@ if (changed) {
 ```
 
 Returns `true` if the document has never been ingested, all prior ingest results were forgotten, or the stored hash differs from the supplied one. Returns `false` if the stored hash matches exactly.
+
+**Batch overload** — check multiple documents in one query:
+
+```typescript
+const batch = [
+  { sourceRef: 'doc1.md', sourceHash: sha256(content1) },
+  { sourceRef: 'doc2.md', sourceHash: sha256(content2) },
+  { sourceRef: 'doc3.md', sourceHash: sha256(content3) },
+];
+const changes = await wiki.hasChanged('entity-123', batch);
+// changes: Array<{ sourceRef: string; changed: boolean; duplicateOf?: string }>
+// duplicateOf — when present, the canonical stored different sourceRef holding
+// the same hash (DB-normalized spelling; sourceRef echoes the raw caller value).
+// Per-document change detection; internally batched across queries
+```
 
 Throws `Error` if `sourceRef` or `sourceHash` is invalid (same rules as `ingestDocument`).
 

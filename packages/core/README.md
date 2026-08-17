@@ -827,6 +827,100 @@ configureRandomSource(getRandomValues);
 
 `@equationalapplications/expo-llm-wiki` does this automatically on import (main entry and `/factory` subpath). If you use `@equationalapplications/core-llm-wiki` directly on React Native without the expo package, you must call `configureRandomSource()` yourself or polyfill `globalThis.crypto.getRandomValues`.
 
+## Entity Enumeration
+
+List all entities that have stored data in the wiki:
+
+```typescript
+const entityIds = await wikiMemory.listEntityIds();
+// Returns all entity_ids with at least one row (including soft-deleted-only entities)
+// Optional prefix filter: await wikiMemory.listEntityIds({ prefix: 'tier_' });
+```
+
+Use this for maintenance scheduling, multi-entity operations, or discovering which namespaces exist. Includes entities with only soft-deleted rows so `runPrune()` can reclaim orphaned storage.
+
+## Source Reference Enumeration
+
+List all documents currently stored for an entity:
+
+```typescript
+const sourceRefs = await wikiMemory.listSourceRefs('user-123');
+// One row per live sourceRef (soft-deleted rows are excluded):
+// Array<{ sourceRef: string; sourceHash: string | null; factCount: number; lastIngestedAt: number }>
+// factCount — number of live facts under that sourceRef
+// lastIngestedAt — Unix timestamp in ms from the most recently updated live entry
+```
+
+Use this to audit stored documents, validate external sync state, or preview the blast radius before `forget()` operations.
+
+## Direct Graph Write
+
+Write structured graph data directly without LLM extraction — useful for programmatic fact ingestion, parsers, and deterministic pipelines:
+
+```typescript
+const { nodesWritten, edgesWritten, superseded } = await wikiMemory.upsertGraph('entity-123', {
+  sourceRef: 'codebase_main.ts',
+  sourceHash: sha256(sourceCode),
+  nodes: [
+    { id: 'fn_processData', type: 'function', title: 'processData', body: 'Processes user data' },
+    { id: 'class_UserService', type: 'class', title: 'UserService', body: 'User management service' },
+  ],
+  edges: [
+    { type: 'calls', sourceId: 'fn_processData', targetId: 'class_UserService' },
+  ],
+}, adapter); // SQLiteAdapter from your platform driver — writes join the caller's transaction
+```
+
+`upsertGraph` is "the tail of `ingestDocument` with the middle (LLM extraction) step removed" — it accepts caller-supplied nodes (`{ id, type, title, body? }`) and edges (`{ type, sourceId, targetId, id? }`) and writes them under the same `(sourceRef, sourceHash)` semantics. If a *different* live `sourceRef` already holds the same `sourceHash`, it throws `WikiSourceRefHashCollision`; re-writing the identical `(sourceRef, sourceHash)` is a no-op returning zero counts. The adapter parameter is required so writes participate in the caller's transaction.
+
+## Duplicate Hash Detection
+
+Control behavior when a different live `sourceRef` already holds the same `sourceHash`. The option is passed as a third argument to `ingestDocument`, not inside the params object:
+
+```typescript
+await wikiMemory.ingestDocument(
+  'entity-123',
+  {
+    sourceRef: 'doc.md',
+    sourceHash: sha256(content),
+    documentChunk: content,
+  },
+  { onDuplicateHash: 'ingest' }  // 'ingest' (default) | 'skip' | 'throw'
+);
+```
+
+- `'ingest'` (default): No duplicate pre-check; extraction proceeds as before this option existed. If a different live `sourceRef` is found holding the same hash at commit time (a concurrent-writer race caught by the source-ref unique index), the call still throws `WikiDuplicateHashError`.
+- `'skip'`: Pre-check before any LLM call; if a different live `sourceRef` already holds the hash, return a zero-chunk result without writing.
+- `'throw'`: Pre-check before any LLM call; throw `WikiDuplicateHashError` (carries the canonical `sourceRef`).
+- The guard only considers **live** references — soft-deleted refs do not trigger it in any mode.
+
+## Batch Change Detection
+
+Check multiple documents for changes in one call:
+
+```typescript
+const batch = [
+  { sourceRef: 'doc1.md', sourceHash: sha256(content1) },
+  { sourceRef: 'doc2.md', sourceHash: sha256(content2) },
+  { sourceRef: 'doc3.md', sourceHash: sha256(content3) },
+];
+const changes = await wikiMemory.hasChanged('entity-123', batch);
+// changes: Array<{ sourceRef: string; changed: boolean; duplicateOf?: string }>
+// duplicateOf — when present, the canonical stored different sourceRef holding
+// the same hash (DB-normalized spelling; sourceRef echoes the raw caller value).
+// Per-document change detection; internally batched across queries
+```
+
+## Dry-Run Deletion
+
+Preview deletion impact without writing:
+
+```typescript
+const preview = await wikiMemory.forget('entity-123', { sourceRef: 'doc.md' }, { dryRun: true });
+// preview: { deleted: { entries: number; tasks: number } }
+// No database writes performed; safe for blast-radius validation
+```
+
 ## Chunking Utilities
 
 `ingestDocument()` splits a document into chunks before extraction. That same chunking is exported as a pure function, so a consumer can reproduce ingest-time chunk boundaries exactly — useful for recovering the passage a fact was extracted from, by re-chunking the source and ranking chunks against the fact's stored embedding.
