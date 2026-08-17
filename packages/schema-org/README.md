@@ -27,7 +27,7 @@ This manifest is designed as the canonical taxonomy bundle for warm-agent GraphR
 The librarian and ingest LLM passes that write `llm_wiki_edges` only see this manifest's node types and edge properties in their prompt context. Without that constraint, an unconstrained LLM will invent edge types and node types on every call — producing a noisy graph where `WITH RECURSIVE` walks return orphaned nodes and arbitrary relationships.
 
 With the manifest:
-- **Every edge has a valid `(type, source_type, target_type)` triple** — the recursive CTE's JOINs return dense, connected subgraphs instead of dead-ends.
+- **Every edge has a valid `(type, source_type, target_type)` triple** — the manifest validates edge structure and reduces invalid relationships.
 - **Polymorphic edges** (`knows`, `about`, `itemReviewed`, `object`, `agent`) cover the cases where a single property name applies to many source/target type combinations.
 - **Token budget stays small** — ~2 KB serialized, vs ~50 KB for the full schema.org catalog. Edge classification accuracy stays high.
 

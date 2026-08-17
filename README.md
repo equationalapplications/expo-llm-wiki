@@ -128,10 +128,11 @@ flowchart TB
     entries --> MSFallback
     CosineSim --> Bundle
     MSFallback --> Bundle
-    read --> GraphTraversal
-    GraphTraversal --> Bundle
     tasks --> Bundle
     events --> Bundle
+    %% Graph traversal is a separate API (traverseGraph) — not a side-effect of read()
+    traverseGraphAPI(["traverseGraph()"]) --> GraphTraversal
+    GraphTraversal --> Bundle
 ```
 
 ## GraphRAG: SQL-only graph retrieval
@@ -143,11 +144,46 @@ GraphRAG (Graph Retrieval-Augmented Generation) runs entirely on SQLite — no N
 ```typescript
 import { createWiki } from '@equationalapplications/core-llm-wiki';
 import Database from 'better-sqlite3';
+import type { SQLiteAdapter } from '@equationalapplications/core-llm-wiki';
+import { schemaOrgWarmAgentManifest } from '@equationalapplications/schema-org-llm-wiki';
 
 const db = new Database('memory.db');
-const wiki = createWiki(db, { llmProvider: { generateText } });
 
-// 1. Ingest a document — librarian/ingest writes edges automatically.
+// Wrap raw Database in SQLiteAdapter (canonical pattern)
+const adapter: SQLiteAdapter = {
+  async execAsync(sql) { db.exec(sql); },
+  async runAsync(sql, params = []) {
+    const info = db.prepare(sql).run(...(params as any[]));
+    return { changes: info.changes, lastInsertRowId: Number(info.lastInsertid) };
+  },
+  async getAllAsync<T>(sql, params = []) {
+    return db.prepare(sql).all(...(params as any[])) as T[];
+  },
+  async getFirstAsync<T>(sql, params = []) {
+    return (db.prepare(sql).get(...(params as any[])) ?? null) as T | null;
+  },
+  async withTransactionAsync(fn) {
+    db.exec('BEGIN');
+    try { const r = await fn(); db.exec('COMMIT'); return r; }
+    catch (e) { db.exec('ROLLBACK'); throw e; }
+  },
+  async closeAsync() { db.close(); },
+};
+
+// Enable strict GraphRAG ontology extraction
+const wiki = createWiki(adapter, {
+  llmProvider: { generateText },
+  config: {
+    ontology: {
+      mode: 'strict',
+      seedManifests: {
+        'user-123': { mode: 'strict', manifest: schemaOrgWarmAgentManifest },
+      },
+    },
+  },
+});
+
+// 1. Ingest a document — strict-mode librarian writes edges automatically
 await wiki.ingestDocument('user-123', {
   sourceRef: 'onboarding-doc.md',
   sourceHash: '<sha256-of-onboarding-doc>',

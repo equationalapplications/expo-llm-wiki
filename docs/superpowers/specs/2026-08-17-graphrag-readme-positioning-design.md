@@ -99,7 +99,7 @@ GraphTraversal --> Bundle
 
 Insert between the mermaid block and the current `## Monorepo Ecosystem` heading.
 
-```markdown
+````markdown
 ## GraphRAG: SQL-only graph retrieval
 
 GraphRAG (Graph Retrieval-Augmented Generation) runs entirely on SQLite — no Neo4j, no separate graph database. Every fact becomes a node, every librarian/ingest pass writes typed edges into `llm_wiki_edges`, and `traverseGraph()` walks the resulting structure with one recursive CTE.
@@ -183,7 +183,7 @@ LIMIT /* maxNodes */;
 ```
 
 > *Note: For clarity, the snippet above shows the final hydrated output in a single query. In the actual `expo-llm-wiki` codebase, the recursive CTE strictly calculates the `(node_id, distance)` graph traversal, and `GraphTraversalService` handles hydration in a subsequent optimized batch lookup.*
-```
+````
 
 #### 1d. Monorepo Ecosystem table footnote
 
@@ -199,7 +199,7 @@ In the existing package table, append `*` to the `core-llm-wiki` and `schema-org
 
 Insert between the existing `## Features` block (ending at line 53) and the existing `## Installation` heading.
 
-```markdown
+````markdown
 ## GraphRAG & Multi-Modal Retrieval
 
 `@equationalapplications/core-llm-wiki` exposes three complementary retrieval modes, each addressing a different shape of query:
@@ -252,7 +252,7 @@ await wikiMemory.upsertGraph('user-123', {
 ```
 
 This is the GraphRAG seed path: load a corpus, walk it.
-```
+````
 
 ---
 
@@ -260,7 +260,7 @@ This is the GraphRAG seed path: load a corpus, walk it.
 
 Insert between `## Why curated?` (ends at line 19) and `## Requirements` (starts at line 21).
 
-```markdown
+````markdown
 ## Why this is the GraphRAG ontology
 
 This manifest is designed as the canonical taxonomy bundle for warm-agent GraphRAG: the 9 node types and 28 polymorphic edges cover the people, places, organizations, projects, events, and creative works that dominate personal and professional knowledge graphs. Pair it with `core-llm-wiki`'s `traverseGraph()` and you get a SQL-only GraphRAG stack with no Neo4j.
@@ -295,7 +295,7 @@ const wiki = createWiki(db, {
 // After ingestDocument / runLibrarian populate edges:
 const graph = await wiki.traverseGraph(entityId, { sourceId, maxDepth: 2 });
 ```
-```
+````
 
 ---
 
@@ -330,7 +330,7 @@ Append a bullet to the Features list (or wherever the existing tool-schemas bull
 In the existing intro paragraph (line 60 already mentions "knowledge graph edges"), append:
 
 ```markdown
-> **GraphRAG compatibility:** OKF v0.2 bundles import directly into `llm_wiki_edges`, populating the GraphRAG graph for `traverseGraph()`. See [root README: GraphRAG](../../README.md#graphrag-sql-only-graph-retrieval).
+> **GraphRAG compatibility:** core-okf is database-agnostic. The adapter that can populate `llm_wiki_edges` for `traverseGraph()` lives in `@equationalapplications/core-llm-wiki`. See [root README: GraphRAG](../../README.md#graphrag-sql-only-graph-retrieval).
 ```
 
 ### 8. `packages/prisma-outbox/README.md` — one-line cross-link
@@ -361,17 +361,23 @@ For sections 2 (`core`) and 3 (`schema-org`), the placement is precise (line num
 
 ## CI Guardrail (drift protection)
 
-Add to `.github/workflows/*.yml` (the existing test/ci workflow). This guards the SQL snippet in the main README against source drift:
+Add to `.github/workflows/*.yml` (the existing test/ci workflow). This guards the SQL snippet in the main README against source drift by verifying both sides of the contract:
 
 ```yaml
       - name: Verify README GraphRAG SQL is in sync with EdgeRepository
         run: |
+          # Check WITH RECURSIVE in both EdgeRepository.ts and README.md
           grep -q "WITH RECURSIVE" packages/core/src/repositories/EdgeRepository.ts || { echo "Missing WITH RECURSIVE in EdgeRepository"; exit 1; }
+          grep -q "WITH RECURSIVE" README.md || { echo "Missing WITH RECURSIVE in README.md"; exit 1; }
+          # Check cycle guard in both EdgeRepository.ts and README.md
           grep -q "instr(w.visited" packages/core/src/repositories/EdgeRepository.ts || { echo "Missing cycle guard in EdgeRepository"; exit 1; }
+          grep -q "instr(w.visited" README.md || { echo "Missing cycle guard in README.md"; exit 1; }
+          # Check confidence CASE in both EdgeRepository.ts and README.md
           grep -q "WHEN 'certain' THEN 2" packages/core/src/repositories/EdgeRepository.ts || { echo "Missing confidence CASE in EdgeRepository"; exit 1; }
+          grep -q "WHEN 'certain' THEN 2" README.md || { echo "Missing confidence CASE in README.md"; exit 1; }
 ```
 
-**What this guards:** the three structural pillars of the recursive CTE (the recursion, the string-based cycle guard, and the manual confidence weight mapping). If any disappear, the SQL snippet in the README needs to be updated in the same PR.
+**What this guards:** the three structural pillars of the recursive CTE (the recursion, the string-based cycle guard, and the manual confidence weight mapping) are present in both the source code and the documentation. If any disappear from either side, the PR fails.
 
 **What this does NOT guard:** filter clause details (edge type filter, exclude source types), parameter binding order, or the hydration strategy. Those can change without the README needing to update.
 

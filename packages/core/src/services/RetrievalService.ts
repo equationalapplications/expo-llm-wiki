@@ -526,7 +526,14 @@ export class RetrievalService {
           }
           // If Phase 2 failed and there's a pending ranker error, include it as cause
           if (pendingRankerFallbackError) {
-            (error as any).cause = pendingRankerFallbackError;
+            // Guard against hostile Proxy set trap on error.cause
+            try {
+              (error as any).cause = pendingRankerFallbackError;
+            } catch {
+              // If the cause assignment throws, convert to a fresh Error
+              // with the stringified pending fallback value as the cause
+              (error as any).cause = new Error(String(pendingRankerFallbackError));
+            }
             pendingRankerFallbackError = undefined;
           }
           // Always notify of Phase 2 errors (ranker error attached as cause if present)
