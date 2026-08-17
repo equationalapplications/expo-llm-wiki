@@ -1,6 +1,6 @@
 # Defensive `instanceof Error` Guards for Hostile Proxies
 
-Status: Approved.
+Status: Implemented (PR open — awaiting merge).
 Originates: Issue #96 (follow-up to PR #95, which was docs-only after #93 squash-merged onto `main`).
 
 ## Problem
@@ -146,7 +146,7 @@ try {
 - For each Tier-A function, imports it and asserts:
   1. The call does not throw.
   2. The return value is well-typed (`string` for the string-returning helpers; `Error` instance for `sanitizeRankerError`; `boolean` for `isTruncationError`).
-  3. The specific observable return value for the hostile-Proxy case matches the function's contract — e.g. `_sanitizeRankerError` returns `new Error('VectorRanker object (message scrubbed for security)')`, `isTruncationError` returns `false`, `formatSkipError` returns its `[unstringifiable error]` marker. This locks the observable contract and catches silent regressions where the function starts returning a different non-throwing value.
+  3. The specific observable return value for the hostile-Proxy case matches the function's contract — e.g. `_sanitizeRankerError` returns `new Error('VectorRanker object (message scrubbed for security)')`, `isTruncationError` returns `false`, `formatSkipError` returns `'{}'` (via the `JSON.stringify` branch — `JSON.stringify(hostileProxy)` returns the empty-object literal because the Proxy has no own enumerable properties and does not invoke `getPrototypeOf`). This locks the observable contract and catches silent regressions where the function starts returning a different non-throwing value.
 
 This file is the single grep target for future audits of the same vulnerability class.
 
@@ -155,7 +155,7 @@ This file is the single grep target for future audits of the same vulnerability 
 | Test file                                                | New test                                                                                                              |
 | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | `packages/core/__tests__/formatSkipError.test.ts`        | `does not throw on a Proxy whose getPrototypeOf trap rejects` (the literal issue #96 case)                            |
-| `packages/core/__tests__/safeErrorToString.test.ts`      | `does not throw on a Proxy whose getPrototypeOf trap rejects` — assert returns the `[unstringifiable error]` marker (both `String(e)` and `Object.prototype.toString.call(e)` throw under the hostile `getPrototypeOf` trap, so the static marker is the final fallback) |
+| `packages/core/__tests__/safeErrorToString.test.ts`      | `does not throw on a Proxy whose getPrototypeOf trap rejects` — assert returns `'[object Object]'` (`String(e)` and `Object.prototype.toString.call(e)` do NOT invoke `getPrototypeOf`, so both return `'[object Object]'` under the hostile `getPrototypeOf`-only trap; the `[unstringifiable error]` marker is reserved for inputs where both throw) |
 | `packages/core/__tests__/BoundedLlmCall.test.ts`         | `isTruncationError returns false on a Proxy whose getPrototypeOf trap rejects`                                         |
 | `packages/core/__tests__/vectorRanker.test.ts`           | `_sanitizeRankerError returns an Error instance on a hostile Proxy` (covers RetrievalService call sites transitively) |
 
@@ -182,15 +182,17 @@ After implementation:
 
 1. `pnpm --filter @equationalapplications/core-llm-wiki test` — full suite green.
 2. ```bash
-   # Total instanceof Error sites in core
-   TOTAL=$(grep -rn 'instanceof Error' packages/core/src | wc -l)
+   # Total instanceof Error code sites in core (filter out documentation
+   # comment lines that mention the pattern; the fix's comments do, which
+   # would otherwise inflate the count).
+   TOTAL=$(grep -rn 'instanceof Error' packages/core/src | grep -vE ':\s*(//|\*)' | wc -l)
    # Sites protected with try/catch — covers both inline `try { ... instanceof Error ... }`
    # and the canonical multi-line `try {` ... `instanceof Error` (preceding line) pattern.
-   PROTECTED=$(grep -rn -B1 'instanceof Error' packages/core/src | grep -c 'try {' || true)
+   PROTECTED=$(grep -rn -B1 'instanceof Error' packages/core/src | grep -vE ':\s*(//|\*)' | grep -c 'try {' || true)
    echo "Protected: $PROTECTED / $TOTAL"
    test "$PROTECTED" = "$TOTAL"
    ```
-   Asserts `$PROTECTED == $TOTAL` — every `instanceof Error` site is wrapped in a `try` block. Sites listed as out-of-scope (Tier-B) should be excluded from this count via additional filtering.
+   Asserts `$PROTECTED == $TOTAL` — every `instanceof Error` code site is wrapped in a `try` block. The comment filter is required: the fix patches themselves add comments that mention `instanceof Error` to document the rationale, which would otherwise inflate `TOTAL`. Sites listed as out-of-scope (Tier-B) should be excluded via additional filtering.
 3. The dedicated regression test fails on every Tier-A function before the fix and passes after.
 4. The new `formatSkipError` smoke test fails on `main` before the source fix lands and passes after.
 
