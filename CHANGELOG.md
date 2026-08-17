@@ -1,3 +1,10 @@
+## [5.5.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v5.5.0...v5.5.1) (2026-08-17)
+
+
+### Bug Fixes
+
+* **core:** harden eight Tier-A instanceof Error checks against hostile Proxy getPrototypeOf traps (closes [#96](https://github.com/equationalapplications/expo-llm-wiki/issues/96)) ([#97](https://github.com/equationalapplications/expo-llm-wiki/issues/97)) ([213d56e](https://github.com/equationalapplications/expo-llm-wiki/commit/213d56e1eeb3bf170a0d5b71da275ff22a9bed2d)), closes [hi#effort](https://github.com/hi/issues/effort)
+
 # [5.5.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v5.4.0...v5.5.0) (2026-08-16)
 
 
