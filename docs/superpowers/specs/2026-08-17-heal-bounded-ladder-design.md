@@ -1,5 +1,7 @@
 # Heal Output-Bounded Convergence Ladder
 
+Status: Implemented
+
 Closes the non-convergent path in `doRunHeal` whose `runBatched` bisect can only shrink the candidate list. A new `attemptLevel` ladder lets `runBatched` shed shared context when candidate count is already at its minimum, and lets heal bound the one remaining unbounded input — `allTasks` — at L0.
 
 Follows the #67 ("Maintenance Output Bounding") and #96 ("instanceof Error Proxy guard") specs. Fixes the regression reported in #101.
