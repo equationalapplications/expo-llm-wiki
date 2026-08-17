@@ -32,16 +32,16 @@ All take `unknown` (or `unknown`-shaped values from plugin callbacks) and rely o
 
 | #   | File:line                                       | Function                          | Source of `err`                          |
 | --- | ----------------------------------------------- | --------------------------------- | ---------------------------------------- |
-| 1   | `packages/core/src/utils/pure.ts:538`           | `safeErrorToString`               | callers (provider errors, parse errors)  |
-| 2   | `packages/core/src/utils/pure.ts:575`           | `sanitizeRankerError`             | VectorRanker plugin                      |
-| 3   | `packages/core/src/utils/pure.ts:577`           | `sanitizeRankerError`             | VectorRanker plugin                      |
-| 4   | `packages/core/src/utils/pure.ts:579`           | `sanitizeRankerError`             | VectorRanker plugin                      |
-| 5   | `packages/core/src/services/MaintenanceService.ts:117` | `formatSkipError`            | `onSkip` callback (provider errors)      |
-| 6   | `packages/core/src/services/BoundedLlmCall.ts:60`     | `isTruncationError`          | LLM provider, called from `runBatched`   |
-| 7   | `packages/core/src/services/RetrievalService.ts:343`  | (inline in ranker fallback)  | VectorRanker plugin                      |
-| 8   | `packages/core/src/services/RetrievalService.ts:489`  | (inline in catch block)      | caught from inner try                    |
+| 1   | `packages/core/src/utils/pure.ts:545`           | `safeErrorToString`               | callers (provider errors, parse errors)  |
+| 2   | `packages/core/src/utils/pure.ts:591`           | `sanitizeRankerError`             | VectorRanker plugin                      |
+| 3   | `packages/core/src/utils/pure.ts:591`           | `sanitizeRankerError`             | VectorRanker plugin                      |
+| 4   | `packages/core/src/utils/pure.ts:591`           | `sanitizeRankerError`             | VectorRanker plugin                      |
+| 5   | `packages/core/src/services/MaintenanceService.ts:125` | `formatSkipError`            | `onSkip` callback (provider errors)      |
+| 6   | `packages/core/src/services/BoundedLlmCall.ts:70`     | `isTruncationError`          | LLM provider, called from `runBatched`   |
+| 7   | `packages/core/src/services/RetrievalService.ts:350`  | (inline in ranker fallback)  | VectorRanker plugin                      |
+| 8   | `packages/core/src/services/RetrievalService.ts:506`  | (inline in catch block)      | caught from inner try                    |
 
-Sites 2–4 share one function and one boolean (`sanitizeRankerError` runs three `instanceof Error` checks against the same value). Sites 7–8 share a similar shape inside one method.
+Sites 2–4 collapse to one boolean (`sanitizeRankerError` runs three `instanceof Error` checks against the same value; the fix hoists them into a single `try { isErrorLike = err instanceof Error } catch {}` at `utils/pure.ts:591`). Sites 7–8 share a similar shape inside one method.
 
 ### Out of scope — Tier-B sites
 
@@ -61,7 +61,7 @@ The bug is a structural property of the `instanceof` operator, not of the data f
 Three properties make inline `try/catch` the right shape:
 
 1. **Locality of intent.** Each site already has a docstring contract ("never throw", "non-throwing by construction", "sanitize"). The fix lives next to that contract.
-2. **One primitive, no new surface.** `try { return x instanceof Y } catch { return false }` is four lines, no exports, no API to version. `safeErrorToString` already uses this exact pattern (`readErrorField` at `utils/pure.ts:565–571`) — matching the local convention rather than introducing a new one.
+2. **One primitive, no new surface.** `try { return x instanceof Y } catch { return false }` is four lines, no exports, no API to version. `safeErrorToString` already uses this exact pattern (`readErrorField` at `utils/pure.ts:576–582`) — matching the local convention rather than introducing a new one.
 3. **Per-site control of the fallback.** A helper forces one policy; inline lets each site pick. In practice all eight sites want `false`-on-throw (treat as non-Error, fall through), but keeping them inline means future divergence is one edit, not one helper signature.
 
 ### Alternatives considered
@@ -186,11 +186,26 @@ After implementation:
    # comment lines that mention the pattern; the fix's comments do, which
    # would otherwise inflate the count).
    TOTAL=$(grep -rn 'instanceof Error' packages/core/src | grep -vE ':\s*(//|\*)' | wc -l)
-   # Sites protected with try/catch — covers both inline `try { ... instanceof Error ... }`
-   # and the canonical multi-line `try {` ... `instanceof Error` (preceding line) pattern.
-   PROTECTED=$(grep -rn -B1 'instanceof Error' packages/core/src | grep -vE ':\s*(//|\*)' | grep -c 'try {' || true)
+   # Sites protected with try/catch — handles both forms:
+   #   - multi-line:  `try {` on the line(s) above `instanceof Error`
+   #   - single-line: `try { ... instanceof Error ... } catch {}` on one line
+   # A simple `grep -B1` only matches the multi-line form, so this script
+   # uses awk to track whether a `try {` has been seen on any recent line.
+   PROTECTED=$(awk -F: '
+     {
+       line = $0
+       sub(/^[^:]+:/, "", line)
+       sub(/^[0-9]+:/, "", line)
+       if (line ~ /try \{/) has_try = 1
+       if (line ~ /instanceof Error/) {
+         if (has_try) count++
+         has_try = 0
+       }
+     }
+     END { print count+0 }
+   ' <(grep -rn -E 'instanceof Error|try \{' packages/core/src | grep -vE ':\s*(//|\*)'))
    echo "Protected: $PROTECTED / $TOTAL"
-   test "$PROTECTED" = "$TOTAL"
+   test "$PROTECTED" -eq "$TOTAL"
    ```
    Asserts `$PROTECTED == $TOTAL` — every `instanceof Error` code site is wrapped in a `try` block. The comment filter is required: the fix patches themselves add comments that mention `instanceof Error` to document the rationale, which would otherwise inflate `TOTAL`. Sites listed as out-of-scope (Tier-B) should be excluded via additional filtering.
 3. The dedicated regression test fails on every Tier-A function before the fix and passes after.
