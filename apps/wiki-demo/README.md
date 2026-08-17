@@ -9,6 +9,7 @@ An interactive playground for learning and exploring the `@equationalapplication
 - **Ingest** — Parse documents into facts with `useWikiIngest`
 - **Maintenance** — Run Librarian, Heal, Prune jobs with `useWikiMaintenance`
 - **Export** — Dump and inspect memory with `useWikiExport`
+- **GraphRAG retrieval** — Exercise the `traverseGraph` + `formatGraphContext` path against a seeded schema.org ontology; see [root README: GraphRAG](../../README.md#graphrag-sql-only-graph-retrieval).
 
 All data stays in-browser using sql.js (WebAssembly SQLite) — no backend required.
 
