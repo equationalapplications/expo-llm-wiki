@@ -99,6 +99,7 @@ const onFailure = async (
   batch: TItem[],
   err: unknown,
   attemptLevel: 0 | 1 | 2 | 3,
+  fromCall: boolean,  // true → error came from `call()`; false → from `parse()`. See note below.
 ): Promise<void> => {
   if (batch.length === 1) {
     if (isTruncationError(err) && attemptLevel < 3) {
@@ -110,6 +111,11 @@ const onFailure = async (
     }
     return;
   }
+  // batch.length > 1: non-truncation call errors (network, auth) must propagate
+  // rather than silently absorb into a pile of skipped items — that's the #67
+  // contract this helper is built around. Parse errors split, the same way
+  // they've always split, because the JSON may parse after shedding context.
+  if (fromCall && !isTruncationError(err)) throw err;
   // batch.length > 1: split path, unchanged. Sticky-down batchSize adaptation
   // and the inner trim/attempt loop at level 0 are preserved.
   ...
@@ -132,7 +138,7 @@ The top-level loop is unchanged in shape — it calls `attempt(batch, prompts, 0
 
 A parse error at `batch.length === 1` does not advance the level. The same prompt — same truncation — would produce the same parse error at L1, L2, and L3: shedding context does not fix a JSON desync (#92's bug shape). Advancing the level would burn three calls before giving up. The gate prevents that.
 
-**Pre-existing behavior preserved at `batch.length > 1`:** a parse error still splits the batch. This is wasteful (splitting cannot help a parse desync) but is unchanged from #67's release and is not in scope for this fix. See [Future work](#future-work).
+**Pre-existing behavior preserved at `batch.length > 1`:** a parse error still splits the batch. This is wasteful (splitting cannot help a parse desync) but is unchanged from #67's release and is not in scope for this fix. The split-vs-propagate decision at `batch.length > 1` is what the `fromCall` flag discriminates: parse errors split (the JSON may parse after shedding context), non-truncation call errors (network, auth, EXCEEDS_LIMIT) propagate. See [Future work](#future-work).
 
 **`MAX_BATCH_ATTEMPT_LEVEL` is *not* exported.** The cap is a `runBatched` internal; the closed literal `0|1|2|3` union is the contract. No caller does arithmetic against the cap, so a runtime constant would be a second source of truth that can drift from the type.
 
