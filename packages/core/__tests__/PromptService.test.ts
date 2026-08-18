@@ -135,7 +135,10 @@ describe('PromptService.buildHealPrompt — ladder interpretation', () => {
     //
     // Body shape: 3999 ASCII 'a' chars + one 😀 (surrogate pair = 2 UTF-16 units).
     // Total body length: 4001 chars. bodyTruncationChars: 4000. The cut at
-    // index 4000 lands between the ASCII region and the high surrogate.
+    // index 4000 lands between the high surrogate (3999) and the low surrogate
+    // (4000), so safeSlice backs safeEnd off to 3999 — the truncatedBodyChars
+    // recorded on the DegradedRecord is the actual retained prefix length,
+    // not the requested limit.
     const svc = newService();
     const body = 'a'.repeat(3999) + '😀';
     const candidates = [makeCandidate('c0', body)];
@@ -143,7 +146,7 @@ describe('PromptService.buildHealPrompt — ladder interpretation', () => {
       candidates, [], allTasks, recentEvents, undefined, 3, HEAL_MAX_FACT_BODY_CHARS_L3,
     );
     expect(degraded).toEqual([
-      { id: 'c0', originalBodyChars: 4001, truncatedBodyChars: HEAL_MAX_FACT_BODY_CHARS_L3 },
+      { id: 'c0', originalBodyChars: 4001, truncatedBodyChars: 3999 },
     ]);
     const userPrompt: string = (prompts as BuiltPrompt).userPrompt;
     // The 3999 ASCII chars must be preserved in full.
@@ -156,7 +159,39 @@ describe('PromptService.buildHealPrompt — ladder interpretation', () => {
     // marker text contains no surrogates — any match here is from the body.
     expect(userPrompt).not.toMatch(/[\uD800-\uDBFF]/);
     expect(userPrompt).not.toMatch(/[\uDC00-\uDFFF]/);
-    // Marker is correct.
-    expect(userPrompt).toContain(`…[truncated at ${HEAL_MAX_FACT_BODY_CHARS_L3} chars, original was 4001]`);
+    // Marker uses the actual retained length (3999), not the requested limit.
+    expect(userPrompt).toContain('…[truncated at 3999 chars, original was 4001]');
+  });
+
+  it('L3 candidate without a string id passes through untruncated (no DegradedRecord emitted)', () => {
+    // The invariant `HealResult.degraded` ⊥ `HealResult.skipped` on id means
+    // every truncated candidate must produce a DegradedRecord. A candidate
+    // whose id is not a string cannot be reconciled by MaintenanceService, so
+    // the body passes through unchanged and degraded is empty — the model
+    // sees the full body, which is no worse than the pre-L3 outcome for that
+    // candidate, and the upstream-validation contract on `WikiFact.id`
+    // (TEXT PRIMARY KEY) keeps this branch off the happy path.
+    const svc = newService();
+    const longBody = 'x'.repeat(8_000);
+    const candidates: unknown[] = [
+      { id: undefined, title: 'no-id fact', body: longBody, tags: [] },
+      { id: 42, title: 'numeric-id fact', body: longBody, tags: [] },
+      { id: 'good', title: 'string-id fact', body: longBody, tags: [] },
+    ];
+    const { prompts, degraded } = svc.buildHealPrompt(
+      candidates, [], allTasks, recentEvents, undefined, 3, 500,
+    );
+    // Only the string-id candidate is truncated and recorded.
+    expect(degraded).toEqual([
+      { id: 'good', originalBodyChars: 8_000, truncatedBodyChars: 500 },
+    ]);
+    const userPrompt: string = (prompts as BuiltPrompt).userPrompt;
+    // The two non-string-id candidates pass through with their full body
+    // (no truncation marker, no safeSlice back-off).
+    expect(userPrompt).toContain('no-id fact');
+    expect(userPrompt).toContain('numeric-id fact');
+    expect(userPrompt).toContain('x'.repeat(8_000));
+    // The string-id candidate is truncated.
+    expect(userPrompt).toContain('…[truncated at 500 chars, original was 8000]');
   });
 });

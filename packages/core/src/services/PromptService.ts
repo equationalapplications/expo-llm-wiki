@@ -202,6 +202,13 @@ export class PromptService {
  * trailing marker is what the post-reconcile log line references — an
  * operator scanning the log sees the truncation magnitude without
  * re-querying the fact.
+ *
+ * A candidate that needs truncation but lacks a string id passes through
+ * untruncated: the upstream contract (`WikiFact.id` is a `TEXT PRIMARY KEY`)
+ * guarantees string ids in practice, and truncating without an id would
+ * emit a body the model can verdict under but with no DegradedRecord for
+ * `MaintenanceService.doRunHeal` to reconcile — violating the
+ * degraded ⊥ skipped invariant on id.
  */
 function applyBodyTruncation(
   candidates: unknown[],
@@ -224,17 +231,31 @@ function applyBodyTruncation(
       shapedCandidates.push(c);
       continue;
     }
+    // A candidate that needs L3 truncation must carry a string id so
+    // doRunHeal can reconcile the truncation back to the source row
+    // (`HealResult.degraded` is keyed by id, and degraded ⊥ skipped on id).
+    // Without one the candidate passes through untruncated — the invariant
+    // "every truncated candidate has a DegradedRecord" holds, and the
+    // upstream contract (WikiFact.id is a TEXT PRIMARY KEY) means this
+    // branch is defensive against future schema drift, not a happy path.
+    if (typeof fact.id !== 'string') {
+      shapedCandidates.push(c);
+      continue;
+    }
     const originalBodyChars = body.length;
     // `safeSlice` (utils/pure) keeps the boundary inside a UTF-16 surrogate
     // pair intact — a bare `String.prototype.slice` can land mid-codepoint and
     // emit a lone high surrogate that JSON.stringify turns into U+FFFD. The
     // same hazard is handled for `formatSkipError` log lines in
-    // MaintenanceService. Bodies can be emoji-heavy.
-    const truncated = `${safeSlice(body, 0, bodyTruncationChars)}…[truncated at ${bodyTruncationChars} chars, original was ${originalBodyChars}]`;
+    // MaintenanceService. Bodies can be emoji-heavy. The returned prefix may
+    // be one or two chars shorter than `bodyTruncationChars` when the cut
+    // backs off the surrogate boundary, so `truncatedBodyChars` reads from
+    // `prefix.length` rather than the requested limit.
+    const prefix = safeSlice(body, 0, bodyTruncationChars);
+    const truncatedBodyChars = prefix.length;
+    const truncated = `${prefix}…[truncated at ${truncatedBodyChars} chars, original was ${originalBodyChars}]`;
     shapedCandidates.push({ ...fact, body: truncated });
-    if (typeof fact.id === 'string') {
-      degraded.push({ id: fact.id, originalBodyChars, truncatedBodyChars: bodyTruncationChars });
-    }
+    degraded.push({ id: fact.id, originalBodyChars, truncatedBodyChars });
   }
   return { shapedCandidates, degraded };
 }
