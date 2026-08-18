@@ -1,3 +1,18 @@
+# [6.0.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v5.5.1...v6.0.0) (2026-08-18)
+
+
+### Bug Fixes
+
+* **core:** heal bounded convergence ladder (closes [#101](https://github.com/equationalapplications/expo-llm-wiki/issues/101)) ([#102](https://github.com/equationalapplications/expo-llm-wiki/issues/102)) ([c7a4b2a](https://github.com/equationalapplications/expo-llm-wiki/commit/c7a4b2aaafad2345833107ca9a65f8a94566dfe8)), closes [#96](https://github.com/equationalapplications/expo-llm-wiki/issues/96)
+
+
+### BREAKING CHANGES
+
+* **core:** HealResult.skipped changes from number to
+Array<{id: string, reason: 'non_convergent'}>. A new
+HealResult.degraded field is added:
+Array<{id: string, originalBodyChars: number, truncatedBodyChars: number}>.
+
 ## [5.5.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v5.5.0...v5.5.1) (2026-08-17)
 
 
