@@ -64,14 +64,18 @@ const EXCEEDS_LIMIT_PATTERN = /exceed[a-z]*[^.]{0,40}\b(model|context)?[ _-]?lim
  * fall back to `false` (treat as not a truncation error): the consequence
  * is at most one wasted batch split, which is the correct trade-off.
  */
-export function isTruncationError(err: unknown): boolean {
-  let message: string;
+function getErrorMessage(err: unknown): string | undefined {
   try {
-    message = err instanceof Error ? err.message : String(err ?? '');
+    return err instanceof Error ? err.message : String(err ?? '');
   } catch {
-    // hostile Proxy whose getPrototypeOf trap rejects — fall back to false
-    return false;
+    // hostile Proxy whose getPrototypeOf trap rejects
+    return undefined;
   }
+}
+
+export function isTruncationError(err: unknown): boolean {
+  const message = getErrorMessage(err);
+  if (message === undefined) return false;
   if (EXCEEDS_LIMIT_PATTERN.test(message)) return false;
   return TRUNCATION_PATTERNS.some((pattern) => pattern.test(message));
 }
@@ -90,12 +94,8 @@ export function isTruncationError(err: unknown): boolean {
  * `getPrototypeOf` trap must not propagate out of this function.
  */
 export function isConfigError(err: unknown): boolean {
-  let message: string;
-  try {
-    message = err instanceof Error ? err.message : String(err ?? '');
-  } catch {
-    return false;
-  }
+  const message = getErrorMessage(err);
+  if (message === undefined) return false;
   return EXCEEDS_LIMIT_PATTERN.test(message);
 }
 
