@@ -457,6 +457,103 @@ Target release: **6.0.0**. `HealResult.skipped: number → Array<{id, reason: 'n
    - The 10k-char fact is in `degraded: [{id, originalBodyChars: 10000, truncatedBodyChars: 4000}]` and not in `skipped: []`.
    - Console output contains exactly one `heal healed under degraded context` warning for the 10k-char fact's id, and no skip warning for it.
 
+## Revision 1 — `call_error` subreason (post-implementation extension)
+
+Status: Implemented
+
+The original ladder spec listed "network / auth failure" at `batch.length === 1` as a terminal give-up with `reason: 'non_convergent'`. That was correct as far as it went — the helper had no way to distinguish a transient Bedrock 5xx from a fact the model genuinely could not converge on — but it conflated two failure domains inside the same bucket, and the conflation reaches the database: `doRunHeal` and `doRunOntologyBackfill` stamp every entry passed to `markHealChecked` / `markOntologyChecked` with `HEAL_RECHECK_MS` / `ONTOLOGY_BACKFILL_RECHECK_MS`, so a momentary provider hiccup would lock a fact out of heals for a full cooldown window.
+
+This revision extends the union with a `'call_error'` subreason, and gives the two orchestration sites the discriminator they need to keep transient failures from consuming the cooldown stamp.
+
+### What changed
+
+**`RunBatchedOutcome.skipped` reason union.**
+
+```ts
+// before
+skipped: Array<{ item: TItem; reason: 'non_convergent' }>;
+
+// after
+skipped: Array<{ item: TItem; reason: 'non_convergent' | 'call_error' }>;
+```
+
+`HealResult.skipped: Array<{ id, reason: 'non_convergent' | 'call_error' }>` widens by the same one-position union and stays non-breaking for callers that switch on `'non_convergent'` (the new variant is the second arm of an `if/else`, never silently indistinguishable from the first).
+
+**`onFailure` singleton-bucket discriminator** (`packages/core/src/services/BoundedLlmCall.ts`):
+
+```ts
+} else {
+  const reason: 'non_convergent' | 'call_error' =
+    fromCall && !isTruncationError(err) ? 'call_error' : 'non_convergent';
+  skipped.push({ item: batch[0], reason });
+  onSkip?.(batch[0], err);
+}
+```
+
+The discriminator matches the existing pre-`attemptLevel === 3` give-up path with one carve-out: a non-truncation error that *originated* in `call()` (the `fromCall` flag) is `'call_error'`; everything else at `batch.length === 1` (truncation that gave up at L3, parse error, `EXCEEDS_LIMIT` config error) stays `'non_convergent'`. The `fromCall === true && !isTruncationError(err)` shape is the same one already used in the `batch.length > 1` propagation branch, so the gate is the same shape at both batch sizes.
+
+**The `attemptLevel` table, restated:**
+
+| Cause | `isTruncationError(err)` | `fromCall` | Action | reason |
+|---|---|---|---|---|
+| Provider truncated L0/L1/L2 response | `true` | `true` | escalate | — |
+| Provider truncated L3 response | `true` | `true` | skip | `'non_convergent'` |
+| Parse error (any level, length===1) | `false` | `false` | skip | `'non_convergent'` |
+| `EXCEEDS_LIMIT_PATTERN` config error (length===1) | `false` | `true` | skip | `'non_convergent'` |
+| **Network / auth failure (length===1)** | **`false`** | **`true`** | **skip** | **`'call_error'`** |
+
+The `EXCEEDS_LIMIT_PATTERN` row stays `'non_convergent'`: a model-config error is a host bug, not a transient provider issue, and re-running it every pass until the host fixes the config is the right outcome. Same for parse errors — re-running a JSON desync every pass produces the same garbage, and "non_convergent" signals that the model could not reason about the candidate regardless of provider state.
+
+**`batch.length > 1` behaviour is unchanged.** Non-truncation call errors propagate; parse errors split; the `'call_error'` subreason is only introduced at length 1 because that's the only bucket that previously *absorbed* a non-truncation call error.
+
+**`doRunHeal` cooldown filter** (`packages/core/src/services/MaintenanceService.ts`):
+
+```ts
+const callErrorIds = new Set(
+  outcome.skipped.filter((s) => s.reason === 'call_error').map((s) => s.item.id),
+);
+
+await this.entryRepo.markHealChecked(
+  [
+    ...healCandidates.map((f) => f.id).filter((id) => !callErrorIds.has(id)),
+    ...insertedFacts.map((f) => f.id),
+  ],
+  entityId,
+  now,
+  tx,
+);
+```
+
+A transient-error fact is omitted from the cooldown stamp, so `findHealCandidatesByEntityId`'s `heal_checked_at IS NULL OR heal_checked_at <= ?` clause picks it up on the next pass. The fact is *not* implicitly re-attempted in this same pass — that would require a retry loop inside `doRunHeal`, which is out of scope — but it becomes eligible as soon as the host's scheduler runs heal again.
+
+The `Non-convergent facts get stamped too` comment on `markHealChecked` now reads "non-`call_error` skipped facts" rather than "all skipped facts"; the order-`updated_at ASC` starvation guarantee still holds for the genuinely non-convergent cases.
+
+**`doRunOntologyBackfill` cooldown filter**: same shape, applied to `markOntologyChecked` on `outcome.skipped`.
+
+`OntologyBackfillResult.skipped: number` does not surface the reason discriminator — the type was always an int, and surfacing a discriminator there would be a wider API change than this revision is willing to take. The operator still observes the cooldown behavior change via the absence of a stamp on those ids.
+
+### Test surface
+
+- `BoundedLlmCall.test.ts`: a singleton-bucket call error asserts `skipped: [{ item, reason: 'call_error' }]`. The pre-existing 7-case ladder block plus the 9 cases from revision 0 keep passing.
+- `healBounding.test.ts`: a new case seeds three facts, drives one of them into `reason: 'call_error'` via the LLM mock (network-shaped error, `batchSize: 1`, all four levels), and asserts:
+  - `result.skipped.map((s) => s.id)` contains the call_error fact with `reason: 'call_error'`.
+  - The fact's `heal_checked_at` column is `NULL` after `runHeal` returns.
+  - A second `runHeal` immediately re-attempts the fact (it shows up in candidates for the next pass).
+- `doRunOntologyBackfill` analog (if present) extends the cooldown filter to backfill.
+
+### What this revision does *not* change
+
+- `batch.length > 1` behavior is preserved (#67 contract).
+- The pre-existing five `non_convergent` causes remain `'non_convergent'`.
+- `findAllPending([entityId], HEAL_MAX_TASKS)`, the anchor cap, the body truncation cap, the ladder climb — all unchanged. This revision narrows one bucket's reason discriminator, nothing else.
+
+### Files touched
+
+- `packages/core/src/services/BoundedLlmCall.ts` — union widened, `onFailure` singleton else-branch rewritten to set `reason` from `fromCall && !isTruncationError(err)`.
+- `packages/core/src/services/MaintenanceService.ts` — `doRunHeal` filters `call_error` ids out of `markHealChecked`'s input; same in `doRunOntologyBackfill` for `markOntologyChecked`.
+- `packages/core/__tests__/BoundedLlmCall.test.ts` — one new test for the singleton call-error reason.
+- `packages/core/__tests__/healBounding.test.ts` — one new test pinning down the cooldown-stamp omission and immediate re-eligibility.
+
 ## Future work
 
 - **Parse-error handling at `batch.length > 1`.** Today, a parse error at `batch.length > 1` causes the batch to split — which cannot help a JSON desync but doesn't make it worse. A dedicated fix for #92's parse-desync shape would belong in `parse` itself (or as a separate path inside `runBatched` that distinguishes parse failures from truncation). Out of scope here because conflating it with this fix would obscure which bug the change addresses.
