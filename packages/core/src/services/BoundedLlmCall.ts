@@ -242,7 +242,7 @@ export async function runBatched<TItem, TResult>(
       // context-shedding (the JSON desync shape is the same at L1, L2, and L3);
       // escalating would burn three calls before reaching skip. The gate
       // prevents that.
-      if (isTruncationError(err) && attemptLevel < 3) {
+      if (fromCall && isTruncationError(err) && attemptLevel < 3) {
         // Bypass trim: its prebuilt prompt is the L0 form, invalid at the new
         // level. attempt() will call buildPrompt(batch, attemptLevel + 1) to
         // produce the level-appropriate prompt.
