@@ -172,11 +172,13 @@ describe('PromptService.buildHealPrompt — ladder interpretation', () => {
     // candidate, and the upstream-validation contract on `WikiFact.id`
     // (TEXT PRIMARY KEY) keeps this branch off the happy path.
     const svc = newService();
-    const longBody = 'x'.repeat(8_000);
+    const noIdBody = 'n'.repeat(8_000);
+    const numericIdBody = 'm'.repeat(8_000);
+    const stringIdBody = 's'.repeat(8_000);
     const candidates: unknown[] = [
-      { id: undefined, title: 'no-id fact', body: longBody, tags: [] },
-      { id: 42, title: 'numeric-id fact', body: longBody, tags: [] },
-      { id: 'good', title: 'string-id fact', body: longBody, tags: [] },
+      { id: undefined, title: 'no-id fact', body: noIdBody, tags: [] },
+      { id: 42, title: 'numeric-id fact', body: numericIdBody, tags: [] },
+      { id: 'good', title: 'string-id fact', body: stringIdBody, tags: [] },
     ];
     const { prompts, degraded } = svc.buildHealPrompt(
       candidates, [], allTasks, recentEvents, undefined, 3, 500,
@@ -190,7 +192,8 @@ describe('PromptService.buildHealPrompt — ladder interpretation', () => {
     // (no truncation marker, no safeSlice back-off).
     expect(userPrompt).toContain('no-id fact');
     expect(userPrompt).toContain('numeric-id fact');
-    expect(userPrompt).toContain('x'.repeat(8_000));
+    expect(userPrompt).toContain(noIdBody);
+    expect(userPrompt).toContain(numericIdBody);
     // The string-id candidate is truncated.
     expect(userPrompt).toContain('…[truncated at 500 chars, original was 8000]');
   });
