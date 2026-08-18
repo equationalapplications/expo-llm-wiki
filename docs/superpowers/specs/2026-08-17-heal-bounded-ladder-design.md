@@ -477,7 +477,11 @@ skipped: Array<{ item: TItem; reason: 'non_convergent' }>;
 skipped: Array<{ item: TItem; reason: 'non_convergent' | 'call_error' }>;
 ```
 
-`HealResult.skipped: Array<{ id, reason: 'non_convergent' | 'call_error' }>` widens by the same one-position union and stays non-breaking for callers that switch on `'non_convergent'` (the new variant is the second arm of an `if/else`, never silently indistinguishable from the first).
+`HealResult.skipped: Array<{ id, reason: 'non_convergent' | 'call_error' }>` widens by the same one-position union.
+
+**Compatibility.** Widening a string literal union is a TypeScript type-level breaking change for callers using an exhaustive `switch` on `reason` (the compiler will report `'call_error'` as not handled) and for narrowing patterns where the else branch was previously inferred as `never` (after a `reason === 'non_convergent'` check, the else branch is now `'call_error'`). Such callers must either handle `'call_error'` explicitly or add a `default` branch. Callers that only read `reason === 'non_convergent'` continue to compile without changes — the new variant is the second arm of an `if/else`, not silently indistinguishable from the first.
+
+This change rides in the same **6.0.0** release as the original `HealResult.skipped: number → Array<{id, reason: 'non_convergent'}>` break (see the spec body above); the implementation commit must keep the `BREAKING CHANGE:` footer / `feat!:` syntax so semantic-release surfaces both breaks in the changelog together.
 
 **`onFailure` singleton-bucket discriminator** (`packages/core/src/services/BoundedLlmCall.ts`):
 
