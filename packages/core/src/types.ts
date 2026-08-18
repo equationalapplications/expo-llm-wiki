@@ -113,6 +113,21 @@ export interface OntologyBackfillResult {
   skipped: number;
 }
 
+/**
+ * L3 heal-success record: a fact the model emitted a verdict for under a
+ * truncated view of its own body. `originalBodyChars` lets an operator flag
+ * the fact for re-inspection; `truncatedBodyChars` is the L3 cap actually
+ * applied. Emitted by `PromptService.buildHealPrompt`, surfaced via
+ * `HealResult.degraded`, mutually exclusive with `HealResult.skipped` on
+ * `id` (a fact can be either healed-under-degradation or dropped — never
+ * both).
+ */
+export interface DegradedRecord {
+  id: string;
+  originalBodyChars: number;
+  truncatedBodyChars: number;
+}
+
 /** Result of a single heal run. */
 export interface HealResult {
   /**
@@ -149,7 +164,7 @@ export interface HealResult {
    * whose id also appears in `skipped` (a contradiction: degraded means
    * healed, skipped means dropped).
    */
-  degraded: Array<{ id: string; originalBodyChars: number; truncatedBodyChars: number }>;
+  degraded: Array<DegradedRecord>;
   /**
    * Heal candidates still eligible after this run — convergence signal: loop while > 0.
    *

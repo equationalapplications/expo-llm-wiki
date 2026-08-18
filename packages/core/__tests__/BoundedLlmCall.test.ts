@@ -547,7 +547,8 @@ describe('attempt level ladder', () => {
       parse: parseIds,
       maxPromptChars: NO_CHAR_CAP,
     });
-    // 4 splits to 2+2, both 2-batches parse OK.
+    // Call sequence: 4 (parse fails, batch.length>2 → invalid JSON) → split →
+    // 2 (parses) + 2 (parses). sizes records [4, 2, 2]; sorted is [2, 2, 4].
     expect(out.skipped).toEqual([]);
     expect(out.results.flatMap((r) => r.ids).sort()).toEqual(['i0', 'i1', 'i2', 'i3']);
     expect(sizes.sort()).toEqual([2, 2, 4]);

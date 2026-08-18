@@ -6,7 +6,7 @@ import { generateId } from '../utils/ids';
 import { parseEmbedding } from '../utils/embedding';
 import { PrunePartialFailureError } from '../types';
 import { HOOK_TIMEOUT_MARKER } from '../types';
-import type { WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedTask, ExtractedFactWithOntology, WikiFact, WikiTask, OntologyUpdates, OntologyBackfillResult, HealResult } from '../types';
+import type { WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedTask, ExtractedFactWithOntology, WikiFact, WikiTask, OntologyUpdates, OntologyBackfillResult, HealResult, DegradedRecord } from '../types';
 import type { SQLiteAdapter } from '../types';
 import type { EntryRepository } from '../repositories/EntryRepository';
 import type { SourceRefIndexRepository } from '../repositories/SourceRefIndexRepository';
@@ -17,6 +17,12 @@ import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
 import { runBatched } from './BoundedLlmCall';
+import {
+  HEAL_ANCHORS_PER_CANDIDATE,
+  HEAL_MAX_ANCHORS,
+  HEAL_MAX_FACT_BODY_CHARS_L3,
+  HEAL_MAX_TASKS,
+} from '../utils/healConstants';
 
 const FUZZY_THRESHOLD = 0.5;
 const MIN_TOKENS_TO_QUALIFY = 3;
@@ -25,12 +31,12 @@ export const ONTOLOGY_BACKFILL_BATCH_SIZE = 25;
 export const ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS = 40_000;
 export const ONTOLOGY_BACKFILL_RECHECK_MS = 7 * 24 * 60 * 60 * 1000;
 
-/**
- * Anchors offered per heal call. Anchors exist only for contradiction
- * detection; on a document-heavy corpus they outnumbered the candidates the
- * model actually reasons about by ~80x and were the direct cause of #63.
- */
-export const HEAL_MAX_ANCHORS = 50;
+// Heal constants live in `utils/healConstants` so PromptService and
+// MaintenanceService cannot drift apart on the anchor cap formula
+// (spec: "values must match"). Re-exported here to preserve the existing
+// `MaintenanceService.HEAL_*` public surface that index.ts and other
+// downstream consumers already import.
+export { HEAL_MAX_ANCHORS, HEAL_ANCHORS_PER_CANDIDATE, HEAL_MAX_FACT_BODY_CHARS_L3, HEAL_MAX_TASKS } from '../utils/healConstants';
 
 /** Search hits requested before the immutable_document filter is applied.
  * Overfetched because the index holds every fact, not only anchors. */
@@ -50,22 +56,6 @@ export const HEAL_BATCH_SIZE = 25;
 
 /** Cooldown before an already-healed fact is offered again. Matches ontology backfill. */
 export const HEAL_RECHECK_MS = 7 * 24 * 60 * 60 * 1000;
-
-/** Body truncation cap applied at L3 only. A fact whose body is at or
- * below this cap passes through unchanged. A fact whose body exceeds it is
- * sliced to this length with a '...[truncated at N chars, original was M]'
- * marker and emits one `degraded` record. */
-export const HEAL_MAX_FACT_BODY_CHARS_L3 = 4_000;
-
-/** Hard ceiling on the allTasks slice fed to the heal prompt at L0.
- * Tasks are entity-global (not batch-local), so this is a constant, not
- * a function of batch length. The repo method findAllPending already
- * accepts a limit; this is the one call site that wasn't using it. */
-export const HEAL_MAX_TASKS = 50;
-
-/** Per-candidate anchor ratio used at L0 to size the anchor slice:
- * `min(HEAL_MAX_ANCHORS, batch.length * HEAL_ANCHORS_PER_CANDIDATE)`. */
-export const HEAL_ANCHORS_PER_CANDIDATE = 4;
 
 /** One parsed ontology-backfill response, paired with the facts that produced it. */
 interface OntologyBackfillBatch {
@@ -756,7 +746,7 @@ export class MaintenanceService {
     // any record whose id also ended up in outcome.skipped is a
     // contradiction (degraded = healed, skipped = dropped) and is dropped.
     // The post-reconcile log line fires for the survivors only.
-    const degraded: Array<{ id: string; originalBodyChars: number; truncatedBodyChars: number }> = [];
+    const degraded: DegradedRecord[] = [];
 
     // L0 anchor cap: a single fact's prompt has no need for 50 anchors.
     // The level-aware buildHealPrompt receives the per-batch slice we

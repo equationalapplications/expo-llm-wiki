@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { PromptService } from '../src/services/PromptService';
 import type { BuiltPrompt } from '../src/services/BoundedLlmCall';
-
-const HEAL_ANCHORS_PER_CANDIDATE = 4;
-const HEAL_MAX_ANCHORS = 50;
-const HEAL_MAX_FACT_BODY_CHARS_L3 = 4_000;
-
-type DegradedRecord = { id: string; originalBodyChars: number; truncatedBodyChars: number };
+import type { DegradedRecord } from '../src/types';
+import {
+  HEAL_ANCHORS_PER_CANDIDATE,
+  HEAL_MAX_ANCHORS,
+  HEAL_MAX_FACT_BODY_CHARS_L3,
+} from '../src/utils/healConstants';
 
 function makeCandidate(id: string, body: string) {
   return { id, title: `title ${id}`, body, tags: [] };
@@ -123,5 +123,40 @@ describe('PromptService.buildHealPrompt — ladder interpretation', () => {
     const userPrompt: string = (prompts as BuiltPrompt).userPrompt;
     expect(userPrompt).toContain('z'.repeat(500));
     expect(userPrompt).not.toContain('[truncated');
+  });
+
+  it('L3 truncation does not split a UTF-16 surrogate pair at the cut boundary', () => {
+    // Regression lock for the boundary hazard the same way `formatSkipError`
+    // handles its log lines: a naive `body.slice(0, n)` would emit a lone high
+    // surrogate when the cut lands between a high surrogate (e.g. 😀 U+1F600's
+    // first code unit, 0xD83D) and its paired low surrogate (0xDE00). `safeSlice`
+    // recognizes the boundary is mid-pair and trims back so the prompt never
+    // carries an invalid codepoint.
+    //
+    // Body shape: 3999 ASCII 'a' chars + one 😀 (surrogate pair = 2 UTF-16 units).
+    // Total body length: 4001 chars. bodyTruncationChars: 4000. The cut at
+    // index 4000 lands between the ASCII region and the high surrogate.
+    const svc = newService();
+    const body = 'a'.repeat(3999) + '😀';
+    const candidates = [makeCandidate('c0', body)];
+    const { prompts, degraded } = svc.buildHealPrompt(
+      candidates, [], allTasks, recentEvents, undefined, 3, 4000,
+    );
+    expect(degraded).toEqual([
+      { id: 'c0', originalBodyChars: 4001, truncatedBodyChars: 4000 },
+    ]);
+    const userPrompt: string = (prompts as BuiltPrompt).userPrompt;
+    // The 3999 ASCII chars must be preserved in full.
+    expect(userPrompt).toContain('a'.repeat(3999));
+    // The emoji was at the boundary; safeSlice dropped it rather than emit a
+    // lone surrogate. A naive `String.prototype.slice` would have left a
+    // high surrogate (0xD83D) sitting in front of the marker.
+    expect(userPrompt).not.toContain('😀');
+    // No lone surrogate (high or low) anywhere in the rendered prompt. The
+    // marker text contains no surrogates — any match here is from the body.
+    expect(userPrompt).not.toMatch(/[\uD800-\uDBFF]/);
+    expect(userPrompt).not.toMatch(/[\uDC00-\uDFFF]/);
+    // Marker is correct.
+    expect(userPrompt).toContain('…[truncated at 4000 chars, original was 4001]');
   });
 });

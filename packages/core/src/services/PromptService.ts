@@ -4,9 +4,12 @@ import {
   HEAL_SYSTEM_PROMPT,
   ONTOLOGY_BACKFILL_SYSTEM_PROMPT,
 } from '../prompts';
-import type { PromptOverrides, OntologyPromptContext } from '../types';
-
-export type DegradedRecord = { id: string; originalBodyChars: number; truncatedBodyChars: number };
+import type { DegradedRecord, PromptOverrides, OntologyPromptContext } from '../types';
+import {
+  HEAL_ANCHORS_PER_CANDIDATE,
+  HEAL_MAX_ANCHORS,
+} from '../utils/healConstants';
+import { safeSlice } from '../utils/pure';
 
 export class PromptService {
   constructor(private globalOverrides?: PromptOverrides) {}
@@ -125,12 +128,12 @@ export class PromptService {
     const effectiveTasks = attemptLevel >= 1 ? [] : allTasks;
     const effectiveEvents = attemptLevel >= 2 ? [] : recentEvents;
 
-    // L0 anchor cap: min(HEAL_MAX_ANCHORS=50, batch.length * 4). The caller
-    // is responsible for sizing the documentAnchors slice; we re-cap here
-    // in case the caller passed a superset (e.g. from _selectHealAnchors cache).
-    const HEAL_MAX_ANCHORS = 50;
-    const HEAL_ANCHORS_PER_CANDIDATE = 4;
-    const maxAnchors = Math.min(HEAL_MAX_ANCHORS, healCandidates.length * HEAL_ANCHORS_PER_CANDIDATE);
+    // L0 anchor cap: min(HEAL_MAX_ANCHORS, batch.length * HEAL_ANCHORS_PER_CANDIDATE).
+    // The caller is responsible for sizing the documentAnchors slice; we re-cap
+    // here in case the caller passed a superset (e.g. from _selectHealAnchors
+    // cache). Constants live in utils/healConstants so PromptService and
+    // MaintenanceService cannot drift apart (spec: "values must match").
+    const maxAnchors = Math.max(1, Math.min(HEAL_MAX_ANCHORS, healCandidates.length * HEAL_ANCHORS_PER_CANDIDATE));
     const effectiveAnchors = documentAnchors.slice(0, maxAnchors);
 
     // L3: truncate each candidate's body independently. A fact whose body
@@ -221,7 +224,12 @@ function applyBodyTruncation(
       continue;
     }
     const originalBodyChars = body.length;
-    const truncated = `${body.slice(0, bodyTruncationChars)}…[truncated at ${bodyTruncationChars} chars, original was ${originalBodyChars}]`;
+    // `safeSlice` (utils/pure) keeps the boundary inside a UTF-16 surrogate
+    // pair intact — a bare `String.prototype.slice` can land mid-codepoint and
+    // emit a lone high surrogate that JSON.stringify turns into U+FFFD. The
+    // same hazard is handled for `formatSkipError` log lines in
+    // MaintenanceService. Bodies can be emoji-heavy.
+    const truncated = `${safeSlice(body, 0, bodyTruncationChars)}…[truncated at ${bodyTruncationChars} chars, original was ${originalBodyChars}]`;
     shapedCandidates.push({ ...fact, body: truncated });
     if (typeof fact.id === 'string') {
       degraded.push({ id: fact.id, originalBodyChars, truncatedBodyChars: bodyTruncationChars });
