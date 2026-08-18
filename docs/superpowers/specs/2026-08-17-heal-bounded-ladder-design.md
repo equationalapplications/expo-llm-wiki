@@ -80,7 +80,7 @@ const attempt = async (
     responseText = await call(prompts);
   } catch (err) {
     if (!isTruncationError(err)) throw err;
-    await onFailure(batch, err, attemptLevel);
+    await onFailure(batch, err, attemptLevel, true);  // fromCall=true: the throw came from `call()`, the gate inside onFailure re-throws when batch.length > 1 and the error is not a truncation.
     return;
   }
   let result: TResult;
@@ -88,8 +88,9 @@ const attempt = async (
     result = parse(responseText, batch);
   } catch (err) {
     // The parse catch reaches onFailure unconditionally; the gate inside
-    // onFailure decides whether the error is ladder-escalable.
-    await onFailure(batch, err, attemptLevel);
+    // onFailure decides whether the error is ladder-escalable. fromCall=false:
+    // parse errors always split, never propagate.
+    await onFailure(batch, err, attemptLevel, false);
     return;
   }
   results.push(result);
@@ -223,7 +224,13 @@ const allTasks = await this.taskRepo.findAllPending([entityId], HEAL_MAX_TASKS);
 
 ```ts
 buildPrompt: async (batch, attemptLevel = 0) => {
-  const documentAnchors = await this._selectHealAnchors(entityId, batch, anchorCache);
+  const documentAnchors = await this._selectHealAnchors(
+    entityId,
+    batch,
+    // Per-batch anchor cap; `batch.length * HEAL_ANCHORS_PER_CANDIDATE` capped at HEAL_MAX_ANCHORS.
+    Math.min(HEAL_MAX_ANCHORS, batch.length * HEAL_ANCHORS_PER_CANDIDATE),
+    anchorCache,
+  );
   const { prompts, degraded: batchDegraded } =
     await this.promptService.buildHealPrompt(
       batch.map(toPromptShape),
