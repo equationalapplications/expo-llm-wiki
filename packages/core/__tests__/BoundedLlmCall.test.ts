@@ -498,7 +498,7 @@ describe('attempt level ladder', () => {
     expect(out.batches).toBe(1);
   });
 
-  it('network error at L0, batch.length === 1: skipped, no level advance', async () => {
+  it('network error at L0, batch.length === 1: skipped with reason call_error, no level advance', async () => {
     const items = makeItems(1);
     const out = await runBatched<Item, { batch: Item[]; ids: string[] }>({
       items,
@@ -507,7 +507,7 @@ describe('attempt level ladder', () => {
       parse: parseIds,
       maxPromptChars: NO_CHAR_CAP,
     });
-    expect(out.skipped).toEqual([{ item: items[0], reason: 'non_convergent' }]);
+    expect(out.skipped).toEqual([{ item: items[0], reason: 'call_error' }]);
     expect(out.batches).toBe(1);
   });
 
@@ -532,5 +532,73 @@ describe('attempt level ladder', () => {
     expect(out.skipped).toEqual([]);
     expect(out.results.flatMap((r) => r.ids).sort()).toEqual(['i0', 'i1', 'i2', 'i3']);
     expect(sizes.sort()).toEqual([2, 2, 4]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `call_error` subreason (ladder spec Revision 1).
+//
+// Discriminates transient provider failures at `batch.length === 1` from
+// terminal give-up at L3 and from model-config errors. Lets orchestration
+// callers (doRunHeal, doRunOntologyBackfill) omit the fact from the cooldown
+// stamp so a momentary 5xx / network blip doesn't lock it out for a week.
+// ---------------------------------------------------------------------------
+
+describe('call_error subreason', () => {
+  it('singleton batch, non-truncation call error: reason "call_error"', async () => {
+    const items = makeItems(1);
+    const out = await runBatched<Item, { batch: Item[]; ids: string[] }>({
+      items,
+      buildPrompt,
+      call: async () => { throw new Error('Bedrock request failed: 502 Bad Gateway'); },
+      parse: parseIds,
+      maxPromptChars: NO_CHAR_CAP,
+    });
+    expect(out.skipped).toEqual([{ item: items[0], reason: 'call_error' }]);
+    expect(out.batches).toBe(1);
+  });
+
+  it('singleton batch, EXCEEDS_LIMIT (model-config) error: stays "non_convergent"', async () => {
+    // Regression lock: model-config errors retry identically every pass, so
+    // they must NOT be eligible for the next pass. They keep the cooldown
+    // stamp.
+    const items = makeItems(1);
+    const out = await runBatched<Item, { batch: Item[]; ids: string[] }>({
+      items,
+      buildPrompt,
+      call: async () => { throw new Error('The maximum tokens you requested exceeds the model limit of 4096'); },
+      parse: parseIds,
+      maxPromptChars: NO_CHAR_CAP,
+    });
+    expect(out.skipped).toEqual([{ item: items[0], reason: 'non_convergent' }]);
+    expect(out.batches).toBe(1);
+  });
+
+  it('singleton batch, parse error at L0: "non_convergent", not "call_error"', async () => {
+    // Parse errors come from `parse()`, never from `call()` (fromCall=false),
+    // so they don't qualify as transient call failures and stay terminal.
+    const items = makeItems(1);
+    const out = await runBatched<Item, { batch: Item[]; ids: string[] }>({
+      items,
+      buildPrompt,
+      call: async (prompts) => prompts.userPrompt, // pass through to parse
+      parse: () => { throw new Error('JSON desync at offset 42'); },
+      maxPromptChars: NO_CHAR_CAP,
+    });
+    expect(out.skipped).toEqual([{ item: items[0], reason: 'non_convergent' }]);
+    expect(out.batches).toBe(1);
+  });
+
+  it('singleton batch, all four levels truncate: "non_convergent" (gave up at L3, not a transient call error)', async () => {
+    const items = makeItems(1);
+    const out = await runBatched<Item, { batch: Item[]; ids: string[] }>({
+      items,
+      buildPrompt,
+      call: async () => { throw new Error('Model response truncated at the 16384-token limit'); },
+      parse: parseIds,
+      maxPromptChars: NO_CHAR_CAP,
+    });
+    expect(out.skipped).toEqual([{ item: items[0], reason: 'non_convergent' }]);
+    expect(out.batches).toBe(4);
   });
 });

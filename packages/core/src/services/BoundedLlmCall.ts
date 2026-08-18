@@ -76,6 +76,29 @@ export function isTruncationError(err: unknown): boolean {
   return TRUNCATION_PATTERNS.some((pattern) => pattern.test(message));
 }
 
+/**
+ * Whether a thrown error looks like a model-config error — the caller
+ * requested more output than the model allows, and re-running it in the
+ * next pass produces the same failure. Distinguished from transient
+ * provider failures (`ECONNRESET`, auth blip, 5xx) so the cooldown-stamp
+ * filter in `doRunHeal` / `doRunOntologyBackfill` does not exclude these
+ * facts from eligibility: a model-config bug is the host's problem to
+ * fix, and a fact that errored this way can recover only when the host
+ * does, so the cooldown stamp is the right behavior.
+ *
+ * Same Proxy-safety contract as `isTruncationError`: hostile
+ * `getPrototypeOf` trap must not propagate out of this function.
+ */
+export function isConfigError(err: unknown): boolean {
+  let message: string;
+  try {
+    message = err instanceof Error ? err.message : String(err ?? '');
+  } catch {
+    return false;
+  }
+  return EXCEEDS_LIMIT_PATTERN.test(message);
+}
+
 export interface BuiltPrompt {
   systemPrompt: string;
   userPrompt: string;
@@ -114,12 +137,15 @@ export interface RunBatchedOutcome<TItem, TResult> {
   results: TResult[];
   /**
    * Items that could not converge after the helper's full escalation path.
-   * `reason` is currently always `'non_convergent'` — terminal give-up at
-   * attemptLevel 3, parse error, or a non-truncation call error. The
-   * discriminator is here so future failure modes (e.g. caller policy
-   * rejection) can extend the union without another shape change.
+   * The discriminator separates genuine non-convergence (`'non_convergent'`
+   * — terminal give-up at L3, parse error, or a model-config error) from
+   * transient provider failures (`'call_error'` — non-truncation error
+   * originating in `call()` at `batch.length === 1`). Callers that stamp a
+   * cooldown on skipped facts (e.g. `doRunHeal`) must filter out the
+   * `'call_error'` ids so a momentary 5xx doesn't lock the fact out for a
+   * week.
    */
-  skipped: Array<{ item: TItem; reason: 'non_convergent' }>;
+  skipped: Array<{ item: TItem; reason: 'non_convergent' | 'call_error' }>;
   /** Number of `call` attempts made, including failed ones. */
   batches: number;
 }
@@ -145,7 +171,7 @@ export async function runBatched<TItem, TResult>(
   const { items, buildPrompt, call, parse, maxPromptChars, maxOutputTokens, onSkip } = args;
 
   const results: TResult[] = [];
-  const skipped: Array<{ item: TItem; reason: 'non_convergent' }> = [];
+  const skipped: Array<{ item: TItem; reason: 'non_convergent' | 'call_error' }> = [];
   let batches = 0;
 
   /**
@@ -211,17 +237,30 @@ export async function runBatched<TItem, TResult>(
     if (batch.length === 1) {
       // Gate: escalation only on a truncation-shaped error at the lowest batch
       // size, and only while the ladder has levels left. Anything else at this
-      // point — parse error, exceeds-limit config error, network, auth — is a
-      // terminal give-up. A parse error is not retryable by context-shedding
-      // (the JSON desync shape is the same at L1, L2, and L3); escalating
-      // would burn three calls before reaching skip. The gate prevents that.
+      // point — parse error, exceeds-limit config error, or a non-truncation
+      // call error — is a terminal give-up. A parse error is not retryable by
+      // context-shedding (the JSON desync shape is the same at L1, L2, and L3);
+      // escalating would burn three calls before reaching skip. The gate
+      // prevents that.
       if (isTruncationError(err) && attemptLevel < 3) {
         // Bypass trim: its prebuilt prompt is the L0 form, invalid at the new
         // level. attempt() will call buildPrompt(batch, attemptLevel + 1) to
         // produce the level-appropriate prompt.
         await attempt(batch, undefined, (attemptLevel + 1) as 0 | 1 | 2 | 3);
       } else {
-        skipped.push({ item: batch[0], reason: 'non_convergent' });
+        // Subreason: a non-truncation error originating in `call()` is a
+        // transient provider failure (5xx, network reset, auth blip), not a
+        // model capability failure or a model-config bug. Distinguishing it
+        // lets orchestration callers (doRunHeal, doRunOntologyBackfill)
+        // refuse to apply a recheck cooldown stamp to facts whose skip is
+        // operationally reversible. EXCEEDS_LIMIT-shaped errors are
+        // model-config bugs that retry identically every pass, so they stay
+        // `'non_convergent'` and receive the cooldown stamp. See
+        // docs/superpowers/specs/2026-08-17-...-design.md §"Revision 1 —
+        // call_error subreason".
+        const reason: 'non_convergent' | 'call_error' =
+          fromCall && !isTruncationError(err) && !isConfigError(err) ? 'call_error' : 'non_convergent';
+        skipped.push({ item: batch[0], reason });
         onSkip?.(batch[0], err);
       }
       return;

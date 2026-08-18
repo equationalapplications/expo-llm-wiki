@@ -147,13 +147,16 @@ export interface HealResult {
   newFactsCreated: number;
   /**
    * Candidates that could not converge after the helper's full escalation
-   * path (terminal give-up at attemptLevel 3, parse error, or non-truncation
-   * call error). Each entry's `reason` discriminates the cause; today every
-   * value is `'non_convergent'` but the field is here so future failure
-   * modes can extend the union without another shape change. Mutually
-   * exclusive with `degraded` on `id`.
+   * path. `reason` distinguishes genuine non-convergence
+   * (`'non_convergent'` — terminal give-up at attemptLevel 3, parse error,
+   * or model-config error) from transient provider failures
+   * (`'call_error'` — non-truncation error originating in `call()` at
+   * `batch.length === 1`). `doRunHeal` excludes `'call_error'` ids from
+   * `markHealChecked`'s cooldown stamp so a momentary provider hiccup does
+   * not lock the fact out for `HEAL_RECHECK_MS`. Mutually exclusive with
+   * `degraded` on `id`.
    */
-  skipped: Array<{ id: string; reason: 'non_convergent' }>;
+  skipped: Array<{ id: string; reason: 'non_convergent' | 'call_error' }>;
   /**
    * L3 heal successes: facts the model emitted a verdict for under a
    * truncated view of their own body. Each entry carries the truncation

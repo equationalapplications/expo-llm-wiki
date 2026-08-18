@@ -880,10 +880,22 @@ export class MaintenanceService {
       // Facts heal just created are stamped too — without this each synthesized
       // fact is immediately an eligible candidate again and a host
       // `while (remaining > 0)` loop feeds on heal's own output.
-      // markHealChecked skips rows soft-deleted above, which is correct: a
-      // deleted row is not a candidate under any future pass.
+      //
+      // Transient-error ids (`reason: 'call_error'` from the runBatched helper,
+      // added in Revision 1 of the ladder spec) are excluded from the stamp:
+      // a momentary provider hiccup would otherwise lock a fact out of heals
+      // for the full HEAL_RECHECK_MS window. The fact is reattempted as soon
+      // as the host's scheduler runs heal again — `markHealChecked` skips
+      // soft-deleted rows above, which is also correct (a deleted row is not
+      // a candidate under any future pass).
+      const callErrorIds = new Set(
+        outcome.skipped.filter((s) => s.reason === 'call_error').map((s) => s.item.id),
+      );
       await this.entryRepo.markHealChecked(
-        [...healCandidates.map(f => f.id), ...insertedFacts.map(f => f.id)],
+        [
+          ...healCandidates.map((f) => f.id).filter((id) => !callErrorIds.has(id)),
+          ...insertedFacts.map((f) => f.id),
+        ],
         entityId,
         now,
         tx,
@@ -1063,12 +1075,22 @@ export class MaintenanceService {
       };
     }
 
-    // Skipped facts get the same cooldown stamp as processed ones. Without it
-    // they stay at the head of the updated_at ASC queue and every later pass
-    // re-attempts them first, starving everything behind them.
+    // Skipped facts get the same cooldown stamp as processed ones — except
+    // transient-error ids (`reason: 'call_error'` from the runBatched helper,
+    // added in Revision 1 of the ladder spec), which are excluded so a
+    // momentary provider hiccup doesn't lock them out of backfill for a full
+    // ONTOLOGY_BACKFILL_RECHECK_MS window. Without the stamp on the non-
+    // transient cases, those would stay at the head of the updated_at ASC
+    // queue and every later pass would re-attempt them first, starving
+    // everything behind them.
     if (outcome.skipped.length > 0) {
+      const callErrorIds = new Set(
+        outcome.skipped.filter((s) => s.reason === 'call_error').map((s) => s.item.id),
+      );
       await this.entryRepo.markOntologyChecked(
-        outcome.skipped.map(({ item }) => item.id),
+        outcome.skipped
+          .filter(({ item }) => !callErrorIds.has(item.id))
+          .map(({ item }) => item.id),
         entityId,
         now,
         this.db,

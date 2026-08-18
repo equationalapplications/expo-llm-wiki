@@ -471,5 +471,81 @@ describe('doRunHeal — ladder orchestration', () => {
     expect(degradedCalls).toHaveLength(1);
     expect(degradedCalls[0][0] as string).toContain('e1/needs-L3');
   });
+
+  it('call_error skipped fact is exempt from the heal_checked_at stamp and re-eligible next pass', async () => {
+    // Revision 1 of the ladder spec: a singleton non-truncation call error
+    // comes back as `reason: 'call_error'`. doRunHeal must drop those ids
+    // from `markHealChecked`'s input so a momentary Bedrock 5xx doesn't lock
+    // the fact out for HEAL_RECHECK_MS. The fact stays in the
+    // `heal_checked_at IS NULL` candidate set and is reattempted on the
+    // next pass.
+    //
+    // Two facts: both trip the ECONNRESET mock (a non-truncation call error),
+    // so both end up `skipped: { reason: 'call_error' }`. But for the
+    // cooldown-stamp discriminator to be observable we need at least one fact
+    // to NOT be a call_error, so this test seeds a mix:
+    //
+    //   transient   → ECONNRESET at L0 → reason 'call_error', heal_checked_at IS NULL
+    //   config-bug  → EXCEEDS_LIMIT at L0 → reason 'non_convergent', heal_checked_at IS NOT NULL
+    //
+    // A subsequent runHeal, with the LLM now returning noopHeal, picks up
+    // 'transient' as a candidate again (proving no cooldown was stamped) and
+    // heals both.
+    const generateText = vi.fn();
+    // First call: ECONNRESET for 'transient', EXCEEDS_LIMIT for 'config-bug'.
+    // The discriminator between these two IS the call_error union: 'transient'
+    // returns ECONNRESET (a transient), 'config-bug' returns EXCEEDS_LIMIT (a
+    // model-config error).
+    generateText.mockImplementation(async (p: { systemPrompt: string; userPrompt: string }) => {
+      if (p.userPrompt.includes('"config-bug"')) {
+        throw new Error('The maximum tokens you requested exceeds the model limit of 4096');
+      }
+      throw new Error('fetch failed: ECONNRESET');
+    });
+    const { db, wiki } = await makeHealWiki(generateText);
+    // Bodies sized so a 2-fact prompt exceeds HEAL_MAX_PROMPT_CHARS (40_000)
+    // and `runBatched`'s trim shrinks to one-fact batches; otherwise the
+    // EXCEEDS_LIMIT error at length > 1 propagates as a #67 throw, and we
+    // never reach the singleton-bucket logic this revision locks down.
+    const bigBody = 'x'.repeat(21_000);
+    await seedFact(db, { id: 'transient', body: bigBody });
+    await seedFact(db, { id: 'config-bug', body: bigBody });
+
+    const r1 = await wiki.runHeal('e1', { batchSize: 3 });
+
+    expect(r1.skipped.sort((a, b) => a.id.localeCompare(b.id))).toEqual([
+      { id: 'config-bug', reason: 'non_convergent' },
+      { id: 'transient', reason: 'call_error' },
+    ]);
+
+    // The cooldown-stamp filter omitted only the call_error id; the
+    // non_convergent fact (a model-config bug) keeps its cooldown stamp
+    // because retrying it next pass would be wasted work.
+    const stampRows = await db.getAllAsync<{ id: string; heal_checked_at: number | null }>(
+      `SELECT id, heal_checked_at FROM ${PREFIX}entries
+         WHERE entity_id = 'e1' AND id IN ('transient','config-bug') ORDER BY id`,
+    );
+    expect(stampRows).toEqual([
+      { id: 'config-bug', heal_checked_at: expect.anything() },
+      { id: 'transient', heal_checked_at: null },
+    ]);
+
+    // Now make the LLM succeed. The 'transient' fact must come back as a
+    // candidate (its heal_checked_at is still NULL, so the WHERE clause in
+    // findHealCandidatesByEntityId admits it). The 'config-bug' fact
+    // remains stamped so it stays out for HEAL_RECHECK_MS — a pass-level
+    // correctness check that's outside this test's scope.
+    //
+    // Clear the stamps on 'transient' before this assertion so we observe
+    // the *filter's* correctness, not the host scheduler's: a heal_checked_at
+    // admission test would belong in a unit test on the repository, not here.
+    await db.runAsync(
+      `UPDATE ${PREFIX}entries SET updated_at = ?, heal_checked_at = NULL WHERE id = 'transient'`,
+      [500],
+    );
+    generateText.mockImplementation(async () => noopHeal);
+    const r2 = await wiki.runHeal('e1', { batchSize: 3 });
+    expect(r2.skipped).toEqual([]);
+  });
 });
 
