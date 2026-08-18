@@ -6,7 +6,7 @@ import { generateId } from '../utils/ids';
 import { parseEmbedding } from '../utils/embedding';
 import { PrunePartialFailureError } from '../types';
 import { HOOK_TIMEOUT_MARKER } from '../types';
-import type { WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedTask, ExtractedFactWithOntology, WikiFact, WikiTask, OntologyUpdates, OntologyBackfillResult, HealResult } from '../types';
+import type { WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedTask, ExtractedFactWithOntology, WikiFact, WikiTask, OntologyUpdates, OntologyBackfillResult, HealResult, DegradedRecord } from '../types';
 import type { SQLiteAdapter } from '../types';
 import type { EntryRepository } from '../repositories/EntryRepository';
 import type { SourceRefIndexRepository } from '../repositories/SourceRefIndexRepository';
@@ -17,6 +17,12 @@ import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
 import { runBatched } from './BoundedLlmCall';
+import {
+  HEAL_ANCHORS_PER_CANDIDATE,
+  HEAL_MAX_ANCHORS,
+  HEAL_MAX_FACT_BODY_CHARS_L3,
+  HEAL_MAX_TASKS,
+} from '../utils/healConstants';
 
 const FUZZY_THRESHOLD = 0.5;
 const MIN_TOKENS_TO_QUALIFY = 3;
@@ -25,12 +31,12 @@ export const ONTOLOGY_BACKFILL_BATCH_SIZE = 25;
 export const ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS = 40_000;
 export const ONTOLOGY_BACKFILL_RECHECK_MS = 7 * 24 * 60 * 60 * 1000;
 
-/**
- * Anchors offered per heal call. Anchors exist only for contradiction
- * detection; on a document-heavy corpus they outnumbered the candidates the
- * model actually reasons about by ~80x and were the direct cause of #63.
- */
-export const HEAL_MAX_ANCHORS = 50;
+// Heal constants live in `utils/healConstants` so PromptService and
+// MaintenanceService cannot drift apart on the anchor cap formula
+// (spec: "values must match"). Re-exported here to preserve the existing
+// `MaintenanceService.HEAL_*` public surface that index.ts and other
+// downstream consumers already import.
+export { HEAL_MAX_ANCHORS, HEAL_ANCHORS_PER_CANDIDATE, HEAL_MAX_FACT_BODY_CHARS_L3, HEAL_MAX_TASKS } from '../utils/healConstants';
 
 /** Search hits requested before the immutable_document filter is applied.
  * Overfetched because the index holds every fact, not only anchors. */
@@ -266,7 +272,7 @@ export class MaintenanceService {
 
   async runHeal(
     entityId: string,
-    options?: { promptOverride?: string; batchSize?: number },
+    options?: { promptOverride?: string; batchSize?: number; bodyTruncationChars?: number },
   ): Promise<HealResult> {
     this.jobManager.acquireLock('heal', entityId);
     try {
@@ -649,12 +655,21 @@ export class MaintenanceService {
    */
   async doRunHeal(
     entityId: string,
-    options?: { promptOverride?: string; batchSize?: number },
+    options?: {
+      promptOverride?: string;
+      batchSize?: number;
+      bodyTruncationChars?: number;
+    },
   ): Promise<HealResult> {
     const promptOverride = options?.promptOverride;
     const batchSize = options?.batchSize ?? HEAL_BATCH_SIZE;
     if (!Number.isInteger(batchSize) || batchSize < 1) {
       throw new Error('Invalid batchSize: must be an integer >= 1');
+    }
+
+    const bodyTruncationChars = options?.bodyTruncationChars ?? HEAL_MAX_FACT_BODY_CHARS_L3;
+    if (!Number.isInteger(bodyTruncationChars) || bodyTruncationChars < 1) {
+      throw new Error('Invalid bodyTruncationChars: must be an integer >= 1');
     }
 
     const now = Date.now();
@@ -708,10 +723,14 @@ export class MaintenanceService {
         downgraded: staleDowngradedIds.length,
         deleted: orphanedIds.length,
         newFactsCreated: 0,
-        skipped: 0, remaining: counts.eligible, deferred: counts.deferred,
+        skipped: [], degraded: [], remaining: counts.eligible, deferred: counts.deferred,
       };
     }
-    const allTasks = await this.taskRepo.findAllPending([entityId]);
+    // Cap applied once at fetch time. The bound is the one remaining
+    // unbounded input to the heal prompt (#101's L0 fix). AllTasks is
+    // entity-global; we don't re-fetch per level. L1+ levels omit the
+    // array via buildHealPrompt's level logic.
+    const allTasks = await this.taskRepo.findAllPending([entityId], HEAL_MAX_TASKS);
     const recentEvents = await this.eventRepo.getRecent(entityId, 20);
 
     const toPromptShape = (f: WikiFact) => {
@@ -727,17 +746,39 @@ export class MaintenanceService {
     // index and the anchor rows can both change between heal runs.
     const anchorCache = new Map<string, HealAnchor[]>();
 
+    // Captured in the doRunHeal scope so the buildPrompt lambda can push
+    // L3 truncation records into it. Reconcile after runBatched returns:
+    // any record whose id also ended up in outcome.skipped is a
+    // contradiction (degraded = healed, skipped = dropped) and is dropped.
+    // The post-reconcile log line fires for the survivors only.
+    const degraded: DegradedRecord[] = [];
+
     const outcome = await runBatched<WikiFact, HealBatch>({
       items: healCandidates,
-      buildPrompt: async (batch) => {
-        const documentAnchors = await this._selectHealAnchors(entityId, batch, anchorCache);
-        return this.promptService.buildHealPrompt(
+      buildPrompt: async (batch, attemptLevel = 0) => {
+        const documentAnchors = await this._selectHealAnchors(
+          entityId,
+          batch,
+          // Per-batch anchor cap: `batch.length * HEAL_ANCHORS_PER_CANDIDATE` (capped at
+          // HEAL_MAX_ANCHORS) right-sizes the anchor lookup so a 1-fact batch does
+          // not overfetch the same 200 keyword hits a 25-fact batch once did.
+          // buildHealPrompt applies the matching cap on its side — values must match.
+          Math.min(HEAL_MAX_ANCHORS, batch.length * HEAL_ANCHORS_PER_CANDIDATE),
+          anchorCache,
+        );
+        const { prompts, degraded: batchDegraded } = await this.promptService.buildHealPrompt(
           batch.map(toPromptShape),
           documentAnchors,
           allTasks,
           recentEvents,
           promptOverride,
+          attemptLevel,
+          bodyTruncationChars,
         );
+        // L0 calls (including trim's speculatives) return degraded: [].
+        // Only L3 real attempts can push here.
+        degraded.push(...batchDegraded);
+        return prompts;
       },
       call: (prompts) => this.options.llmProvider.generateText(prompts),
       parse: (responseText, batch) => {
@@ -839,10 +880,22 @@ export class MaintenanceService {
       // Facts heal just created are stamped too — without this each synthesized
       // fact is immediately an eligible candidate again and a host
       // `while (remaining > 0)` loop feeds on heal's own output.
-      // markHealChecked skips rows soft-deleted above, which is correct: a
-      // deleted row is not a candidate under any future pass.
+      //
+      // Transient-error ids (`reason: 'call_error'` from the runBatched helper,
+      // added in Revision 1 of the ladder spec) are excluded from the stamp:
+      // a momentary provider hiccup would otherwise lock a fact out of heals
+      // for the full HEAL_RECHECK_MS window. The fact is reattempted as soon
+      // as the host's scheduler runs heal again — `markHealChecked` skips
+      // soft-deleted rows above, which is also correct (a deleted row is not
+      // a candidate under any future pass).
+      const callErrorIds = new Set(
+        outcome.skipped.filter((s) => s.reason === 'call_error').map((s) => s.item.id),
+      );
       await this.entryRepo.markHealChecked(
-        [...healCandidates.map(f => f.id), ...insertedFacts.map(f => f.id)],
+        [
+          ...healCandidates.map((f) => f.id).filter((id) => !callErrorIds.has(id)),
+          ...insertedFacts.map((f) => f.id),
+        ],
         entityId,
         now,
         tx,
@@ -865,6 +918,24 @@ export class MaintenanceService {
 
     this.searchService.evictCache(entityId);
 
+    // Reconcile: a degraded record for an id in outcome.skipped is a
+    // contradiction (degraded = healed, skipped = dropped). Drop the
+    // contradiction. The reconciliation makes the two arrays mutually
+    // exclusive on id, which is the contract HealResult promises.
+    const skippedIds = new Set(outcome.skipped.map(({ item }) => item.id));
+    const healedDegraded = degraded.filter((d) => !skippedIds.has(d.id));
+
+    // Post-reconcile log. A naive implementation that logs inside the
+    // buildPrompt lambda would emit this warning for facts whose L3
+    // attempt still failed; that warning is a property of the log
+    // stream, not just the data shape, and the test suite locks it.
+    for (const d of healedDegraded) {
+      console.warn(
+        `[WikiMemory] heal healed under degraded context ${entityId}/${d.id}: ` +
+        `body truncated from ${d.originalBodyChars} to ${d.truncatedBodyChars} chars`,
+      );
+    }
+
     // Skipped candidates were sent to the provider too — they just came back
     // unusable, possibly after being split down to a batch of one. Counting
     // only successful batches would under-report provider exposure, which is
@@ -884,7 +955,8 @@ export class MaintenanceService {
       downgraded: allDowngraded.size,
       deleted: allDeleted.size,
       newFactsCreated: insertedFacts.length,
-      skipped: outcome.skipped.length,
+      skipped: outcome.skipped.map(({ item, reason }) => ({ id: item.id, reason })),
+      degraded: healedDegraded,
       remaining: counts.eligible,
       deferred: counts.deferred,
     };
@@ -1003,11 +1075,26 @@ export class MaintenanceService {
       };
     }
 
-    // Skipped facts get the same cooldown stamp as processed ones. Without it
-    // they stay at the head of the updated_at ASC queue and every later pass
-    // re-attempts them first, starving everything behind them.
+    // Skipped facts get the same cooldown stamp as processed ones — except
+    // transient-error ids (`reason: 'call_error'` from the runBatched helper,
+    // added in Revision 1 of the ladder spec), which are excluded so a
+    // momentary provider hiccup doesn't lock them out of backfill for a full
+    // ONTOLOGY_BACKFILL_RECHECK_MS window. Without the stamp on the non-
+    // transient cases, those would stay at the head of the updated_at ASC
+    // queue and every later pass would re-attempt them first, starving
+    // everything behind them.
     if (outcome.skipped.length > 0) {
-      await this.entryRepo.markOntologyChecked(outcome.skipped.map(f => f.id), entityId, now, this.db);
+      const callErrorIds = new Set(
+        outcome.skipped.filter((s) => s.reason === 'call_error').map((s) => s.item.id),
+      );
+      await this.entryRepo.markOntologyChecked(
+        outcome.skipped
+          .filter(({ item }) => !callErrorIds.has(item.id))
+          .map(({ item }) => item.id),
+        entityId,
+        now,
+        this.db,
+      );
     }
 
     this.searchService.evictCache(entityId);
@@ -1146,6 +1233,7 @@ export class MaintenanceService {
   private async _selectHealAnchors(
     entityId: string,
     batch: WikiFact[],
+    cap: number = HEAL_MAX_ANCHORS,
     cache?: Map<string, HealAnchor[]>,
   ): Promise<HealAnchor[]> {
     const query = batch.map(f => f.title).join(' ').trim();
@@ -1154,10 +1242,12 @@ export class MaintenanceService {
     const cached = cache?.get(query);
     if (cached) return cached;
 
+    // Overfetch is sized off the cap we were given, not the global max —
+    // a single-candidate query asks for fewer search hits.
     const hits = this.searchService.searchKeyword(
       query,
       [entityId],
-      HEAL_MAX_ANCHORS * HEAL_ANCHOR_SEARCH_OVERFETCH,
+      cap * HEAL_ANCHOR_SEARCH_OVERFETCH,
     );
     const hitIds = hits.map(h => h.id as string);
 
@@ -1170,7 +1260,7 @@ export class MaintenanceService {
         const row = byId.get(id);
         if (!row) continue;
         anchors.push(row);
-        if (anchors.length >= HEAL_MAX_ANCHORS) break;
+        if (anchors.length >= cap) break;
       }
     }
 

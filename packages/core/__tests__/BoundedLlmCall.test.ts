@@ -304,7 +304,8 @@ describe('runBatched — splitting', () => {
       onSkip,
     });
 
-    expect(out.skipped.map((i) => i.id)).toEqual(['i2']);
+    expect(out.skipped.map(({ item }) => item.id)).toEqual(['i2']);
+    expect(out.skipped.every((s) => s.reason === 'non_convergent')).toBe(true);
     expect(out.results.flatMap((r) => r.ids).sort()).toEqual(['i0', 'i1', 'i3']);
     expect(onSkip).toHaveBeenCalledTimes(1);
     expect(onSkip).toHaveBeenCalledWith(
@@ -346,5 +347,258 @@ describe('runBatched — splitting', () => {
     const firstSuccessIndex = sizes.findIndex((s) => s <= 3);
     expect(firstSuccessIndex).toBeGreaterThan(0);
     expect(Math.max(...sizes.slice(firstSuccessIndex))).toBeLessThanOrEqual(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// attemptLevel ladder (issue #101).
+//
+// Each case builds its own `buildPrompt` and `call` so the failure schedule
+// stays adjacent to the assertion that locks it in. A shared helper that
+// recorded the level centrally looked attractive while the ladder was being
+// shaped; once the cases diverged (some test L0 prompts, some test L1,
+// etc.) the helper stopped carrying its weight, and `runBatched` invokes
+// `call(prompts)` with a single argument, so any helper that claimed to
+// read a "level" parameter would silently never see one. Keeping helpers
+// next to their consumer avoids that future-author trap.
+// ---------------------------------------------------------------------------
+
+describe('attempt level ladder', () => {
+  it('L0 success: no escalation', async () => {
+    const items = makeItems(3);
+    const trace: Array<{ level: number; batchSize: number }> = [];
+    const out = await runBatched<Item, { batch: Item[]; ids: string[] }>({
+      items,
+      buildPrompt: (batch, level = 0) => {
+        trace.push({ level, batchSize: batch.length });
+        return buildPrompt(batch);
+      },
+      call: async (prompts) => {
+        const batch = JSON.parse(prompts.userPrompt) as Item[];
+        trace.push({ level: 0, batchSize: batch.length });
+        return JSON.stringify({ ids: batch.map((b) => b.id) });
+      },
+      parse: parseIds,
+      maxPromptChars: NO_CHAR_CAP,
+    });
+    expect(out.skipped).toEqual([]);
+    expect(out.batches).toBe(1);
+    expect(trace.filter((t) => t.level === 0)).toHaveLength(2);
+  });
+
+  it('L0 truncates, L1 success: 2 calls, fresh L1 build', async () => {
+    const items = makeItems(1); // batch.length === 1 from the start
+    const trace: Array<{ level: number; batchSize: number }> = [];
+    const out = await runBatched<Item, { batch: Item[]; ids: string[] }>({
+      items,
+      buildPrompt: (batch, level = 0) => {
+        trace.push({ level, batchSize: batch.length });
+        return { systemPrompt: 'SYS', userPrompt: JSON.stringify(batch) };
+      },
+      call: async (prompts) => {
+        const batch = JSON.parse(prompts.userPrompt) as Item[];
+        const last = trace[trace.length - 1];
+        if (last.level === 0) throw new Error('Model response truncated at the 8192-token limit');
+        return JSON.stringify({ ids: batch.map((b) => b.id) });
+      },
+      parse: parseIds,
+      maxPromptChars: NO_CHAR_CAP,
+    });
+    expect(out.skipped).toEqual([]);
+    expect(out.batches).toBe(2);
+    expect(trace.find((t) => t.level === 1)).toBeTruthy();
+  });
+
+  it('L0 truncates, L1 truncates, L2 success: 3 calls', async () => {
+    const items = makeItems(1);
+    const trace: Array<{ level: number; batchSize: number }> = [];
+    const out = await runBatched<Item, { batch: Item[]; ids: string[] }>({
+      items,
+      buildPrompt: (batch, level = 0) => {
+        trace.push({ level, batchSize: batch.length });
+        return { systemPrompt: 'SYS', userPrompt: JSON.stringify(batch) };
+      },
+      call: async (prompts) => {
+        const last = trace[trace.length - 1];
+        if (last.level < 2) throw new Error('Model response truncated at the 8192-token limit');
+        return JSON.stringify({ ids: JSON.parse(prompts.userPrompt).map((b: Item) => b.id) });
+      },
+      parse: parseIds,
+      maxPromptChars: NO_CHAR_CAP,
+    });
+    expect(out.skipped).toEqual([]);
+    expect(out.batches).toBe(3);
+  });
+
+  it('L0–L2 truncate, L3 success: 4 calls, L3 attempt bypasses trim', async () => {
+    const items = makeItems(1);
+    const trace: Array<{ level: number; batchSize: number }> = [];
+    const out = await runBatched<Item, { batch: Item[]; ids: string[] }>({
+      items,
+      buildPrompt: (batch, level = 0) => {
+        trace.push({ level, batchSize: batch.length });
+        return { systemPrompt: 'SYS', userPrompt: JSON.stringify(batch) };
+      },
+      call: async (prompts) => {
+        const last = trace[trace.length - 1];
+        if (last.level < 3) throw new Error('Model response truncated at the 8192-token limit');
+        return JSON.stringify({ ids: JSON.parse(prompts.userPrompt).map((b: Item) => b.id) });
+      },
+      parse: parseIds,
+      maxPromptChars: NO_CHAR_CAP,
+    });
+    expect(out.skipped).toEqual([]);
+    expect(out.batches).toBe(4);
+    expect(trace.filter((t) => t.level === 3)).toHaveLength(1);
+  });
+
+  it('L0–L3 all truncate: skipped with reason non_convergent, no further escalation', async () => {
+    const items = makeItems(1);
+    const trace: Array<{ level: number; batchSize: number }> = [];
+    const out = await runBatched<Item, { batch: Item[]; ids: string[] }>({
+      items,
+      buildPrompt: (batch, level = 0) => {
+        trace.push({ level, batchSize: batch.length });
+        return { systemPrompt: 'SYS', userPrompt: JSON.stringify(batch) };
+      },
+      call: async () => {
+        throw new Error('Model response truncated at the 8192-token limit');
+      },
+      parse: parseIds,
+      maxPromptChars: NO_CHAR_CAP,
+    });
+    expect(out.skipped).toEqual([{ item: items[0], reason: 'non_convergent' }]);
+    expect(out.batches).toBe(4); // L0, L1, L2, L3 — never a 5th
+    expect(trace.filter((t) => t.level === 3)).toHaveLength(1);
+  });
+
+  it('parse error at L0, batch.length === 1: skipped, no level advance', async () => {
+    const items = makeItems(1);
+    const out = await runBatched<Item, { batch: Item[]; ids: string[] }>({
+      items,
+      buildPrompt,
+      call: async () => '{not valid json', // parse throws
+      parse: parseIds,
+      maxPromptChars: NO_CHAR_CAP,
+    });
+    expect(out.skipped).toEqual([{ item: items[0], reason: 'non_convergent' }]);
+    expect(out.batches).toBe(1);
+  });
+
+  it('EXCEEDS_LIMIT error at L0, batch.length === 1: skipped, no level advance', async () => {
+    const items = makeItems(1);
+    const out = await runBatched<Item, { batch: Item[]; ids: string[] }>({
+      items,
+      buildPrompt,
+      call: async () => { throw new Error('The maximum tokens you requested exceeds the model limit of 4096'); },
+      parse: parseIds,
+      maxPromptChars: NO_CHAR_CAP,
+    });
+    expect(out.skipped).toEqual([{ item: items[0], reason: 'non_convergent' }]);
+    expect(out.batches).toBe(1);
+  });
+
+  it('network error at L0, batch.length === 1: skipped with reason call_error, no level advance', async () => {
+    const items = makeItems(1);
+    const out = await runBatched<Item, { batch: Item[]; ids: string[] }>({
+      items,
+      buildPrompt,
+      call: async () => { throw new Error('fetch failed: ECONNRESET'); },
+      parse: parseIds,
+      maxPromptChars: NO_CHAR_CAP,
+    });
+    expect(out.skipped).toEqual([{ item: items[0], reason: 'call_error' }]);
+    expect(out.batches).toBe(1);
+  });
+
+  it('parse error at batch.length > 1: still splits (pre-existing #67 behavior, regression-locked)', async () => {
+    const items = makeItems(4);
+    const sizes: number[] = [];
+    const out = await runBatched<Item, { batch: Item[]; ids: string[] }>({
+      items,
+      buildPrompt: (batch) => {
+        return { systemPrompt: 'SYS', userPrompt: JSON.stringify(batch) };
+      },
+      call: async (prompts) => {
+        const batch = JSON.parse(prompts.userPrompt) as Item[];
+        sizes.push(batch.length);
+        return batch.length > 2 ? '{not valid json' : JSON.stringify({ ids: batch.map((b) => b.id) });
+      },
+      parse: parseIds,
+      maxPromptChars: NO_CHAR_CAP,
+    });
+    // Call sequence: 4 (parse fails, batch.length>2 → invalid JSON) → split →
+    // 2 (parses) + 2 (parses). sizes records [4, 2, 2]; sorted is [2, 2, 4].
+    expect(out.skipped).toEqual([]);
+    expect(out.results.flatMap((r) => r.ids).sort()).toEqual(['i0', 'i1', 'i2', 'i3']);
+    expect(sizes.sort()).toEqual([2, 2, 4]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `call_error` subreason (ladder spec Revision 1).
+//
+// Discriminates transient provider failures at `batch.length === 1` from
+// terminal give-up at L3 and from model-config errors. Lets orchestration
+// callers (doRunHeal, doRunOntologyBackfill) omit the fact from the cooldown
+// stamp so a momentary 5xx / network blip doesn't lock it out for a week.
+// ---------------------------------------------------------------------------
+
+describe('call_error subreason', () => {
+  it('singleton batch, non-truncation call error: reason "call_error"', async () => {
+    const items = makeItems(1);
+    const out = await runBatched<Item, { batch: Item[]; ids: string[] }>({
+      items,
+      buildPrompt,
+      call: async () => { throw new Error('Bedrock request failed: 502 Bad Gateway'); },
+      parse: parseIds,
+      maxPromptChars: NO_CHAR_CAP,
+    });
+    expect(out.skipped).toEqual([{ item: items[0], reason: 'call_error' }]);
+    expect(out.batches).toBe(1);
+  });
+
+  it('singleton batch, EXCEEDS_LIMIT (model-config) error: stays "non_convergent"', async () => {
+    // Regression lock: model-config errors retry identically every pass, so
+    // they must NOT be eligible for the next pass. They keep the cooldown
+    // stamp.
+    const items = makeItems(1);
+    const out = await runBatched<Item, { batch: Item[]; ids: string[] }>({
+      items,
+      buildPrompt,
+      call: async () => { throw new Error('The maximum tokens you requested exceeds the model limit of 4096'); },
+      parse: parseIds,
+      maxPromptChars: NO_CHAR_CAP,
+    });
+    expect(out.skipped).toEqual([{ item: items[0], reason: 'non_convergent' }]);
+    expect(out.batches).toBe(1);
+  });
+
+  it('singleton batch, parse error at L0: "non_convergent", not "call_error"', async () => {
+    // Parse errors come from `parse()`, never from `call()` (fromCall=false),
+    // so they don't qualify as transient call failures and stay terminal.
+    const items = makeItems(1);
+    const out = await runBatched<Item, { batch: Item[]; ids: string[] }>({
+      items,
+      buildPrompt,
+      call: async (prompts) => prompts.userPrompt, // pass through to parse
+      parse: () => { throw new Error('JSON desync at offset 42'); },
+      maxPromptChars: NO_CHAR_CAP,
+    });
+    expect(out.skipped).toEqual([{ item: items[0], reason: 'non_convergent' }]);
+    expect(out.batches).toBe(1);
+  });
+
+  it('singleton batch, all four levels truncate: "non_convergent" (gave up at L3, not a transient call error)', async () => {
+    const items = makeItems(1);
+    const out = await runBatched<Item, { batch: Item[]; ids: string[] }>({
+      items,
+      buildPrompt,
+      call: async () => { throw new Error('Model response truncated at the 16384-token limit'); },
+      parse: parseIds,
+      maxPromptChars: NO_CHAR_CAP,
+    });
+    expect(out.skipped).toEqual([{ item: items[0], reason: 'non_convergent' }]);
+    expect(out.batches).toBe(4);
   });
 });

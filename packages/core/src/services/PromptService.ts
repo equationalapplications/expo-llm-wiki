@@ -4,7 +4,13 @@ import {
   HEAL_SYSTEM_PROMPT,
   ONTOLOGY_BACKFILL_SYSTEM_PROMPT,
 } from '../prompts';
-import type { PromptOverrides, OntologyPromptContext } from '../types';
+import type { DegradedRecord, PromptOverrides, OntologyPromptContext } from '../types';
+import {
+  HEAL_ANCHORS_PER_CANDIDATE,
+  HEAL_MAX_ANCHORS,
+  HEAL_MAX_FACT_BODY_CHARS_L3,
+} from '../utils/healConstants';
+import { safeSlice } from '../utils/pure';
 
 export class PromptService {
   constructor(private globalOverrides?: PromptOverrides) {}
@@ -88,13 +94,59 @@ export class PromptService {
     };
   }
 
+  /**
+   * Heal-prompt level interpretation for the `attemptLevel` ladder.
+   *
+   * Caller contract: `documentAnchors` may be a slice sized for `batch.length`
+   * or a larger set (e.g. a cache hit from `_selectHealAnchors`). This function
+   * applies the prompt-side anchor cap `min(HEAL_MAX_ANCHORS=50, batch.length
+   * * HEAL_ANCHORS_PER_CANDIDATE=4)` so the rendered prompt is bounded
+   * regardless of caller input. `HEAL_MAX_ANCHORS` and
+   * `HEAL_ANCHORS_PER_CANDIDATE` live here too — keeping the formula
+   * co-located with its application avoids a "MaintenanceService policy"
+   * import cycle (`PromptService` is constructed before `MaintenanceService`
+   * exists) and makes the cap testable without a `MaintenanceService`
+   * instance. Task 3 exports the same two constants from `MaintenanceService`
+   * for caller-side overfetch sizing; the values must match.
+   *
+   * Level semantics:
+   * - L0: allTasks + recentEvents + full candidate bodies; anchors re-capped
+   * - L1: drop allTasks; recentEvents present; candidate bodies full
+   * - L2: drop allTasks and recentEvents; candidate bodies full
+   * - L3: drop allTasks and recentEvents; truncate each candidate body to
+   *   `bodyTruncationChars` and emit a `degraded` record per truncated fact
+   */
   buildHealPrompt(
     healCandidates: unknown[],
     documentAnchors: unknown[],
     allTasks: unknown[],
     recentEvents: unknown[],
-    runtimeOverride?: string,
-  ): { systemPrompt: string; userPrompt: string } {
+    runtimeOverride: string | undefined,
+    attemptLevel: 0 | 1 | 2 | 3,
+    bodyTruncationChars: number = HEAL_MAX_FACT_BODY_CHARS_L3,
+  ): { prompts: { systemPrompt: string; userPrompt: string }; degraded: DegradedRecord[] } {
+    // L0: all context. L1: drop allTasks. L2: also drop recentEvents.
+    const effectiveTasks = attemptLevel >= 1 ? [] : allTasks;
+    const effectiveEvents = attemptLevel >= 2 ? [] : recentEvents;
+
+    // L0 anchor cap: min(HEAL_MAX_ANCHORS, batch.length * HEAL_ANCHORS_PER_CANDIDATE).
+    // The caller is responsible for sizing the documentAnchors slice; we re-cap
+    // here in case the caller passed a superset (e.g. from _selectHealAnchors
+    // cache). Constants live in utils/healConstants so PromptService and
+    // MaintenanceService cannot drift apart (spec: "values must match").
+    const maxAnchors = Math.max(1, Math.min(HEAL_MAX_ANCHORS, healCandidates.length * HEAL_ANCHORS_PER_CANDIDATE));
+    const effectiveAnchors = documentAnchors.slice(0, maxAnchors);
+
+    // L3: truncate each candidate's body independently. A fact whose body
+    // is already <= bodyTruncationChars passes through unchanged; the
+    // caller sees that fact is absent from `degraded` and can treat the
+    // result as if no truncation had occurred.
+    const { shapedCandidates, degraded } = applyBodyTruncation(
+      healCandidates,
+      attemptLevel,
+      bodyTruncationChars,
+    );
+
     const template = runtimeOverride ?? this.globalOverrides?.healSystemPrompt ?? HEAL_SYSTEM_PROMPT;
     if (
       /\{\{\s*healCandidates\s*\}\}/.test(template) ||
@@ -103,13 +155,24 @@ export class PromptService {
       /\{\{\s*recentEvents\s*\}\}/.test(template)
     ) {
       return {
-        systemPrompt: this.hydrate(template, { healCandidates, documentAnchors, allTasks, recentEvents }),
-        userPrompt: 'Please heal the memory graph.',
+        prompts: {
+          systemPrompt: this.hydrate(template, {
+            healCandidates: shapedCandidates,
+            documentAnchors: effectiveAnchors,
+            allTasks: effectiveTasks,
+            recentEvents: effectiveEvents,
+          }),
+          userPrompt: 'Please heal the memory graph.',
+        },
+        degraded,
       };
     }
     return {
-      systemPrompt: template,
-      userPrompt: `Heal Candidates:\n${JSON.stringify(healCandidates, null, 2)}\nDocument Anchors (DO NOT MODIFY OR DELETE):\n${JSON.stringify(documentAnchors, null, 2)}\nAll Tasks:\n${JSON.stringify(allTasks, null, 2)}\nRecent Events:\n${JSON.stringify(recentEvents, null, 2)}\nThe following document anchors are provided for contradiction detection only. Do not include them in \`downgraded\`, \`deleted\`, or \`newFacts\`.`,
+      prompts: {
+        systemPrompt: template,
+        userPrompt: `Heal Candidates:\n${JSON.stringify(shapedCandidates, null, 2)}\nDocument Anchors (DO NOT MODIFY OR DELETE):\n${JSON.stringify(effectiveAnchors, null, 2)}\nAll Tasks:\n${JSON.stringify(effectiveTasks, null, 2)}\nRecent Events:\n${JSON.stringify(effectiveEvents, null, 2)}\nThe following document anchors are provided for contradiction detection only. Do not include them in \`downgraded\`, \`deleted\`, or \`newFacts\`.`,
+      },
+      degraded,
     };
   }
 
@@ -131,4 +194,68 @@ export class PromptService {
       userPrompt: `Facts:\n${JSON.stringify(facts, null, 2)}`,
     };
   }
+}
+
+/**
+ * Truncate candidate bodies at L3 only. Each fact is sliced independently;
+ * a fact whose body is at or below the cap passes through unchanged. The
+ * trailing marker is what the post-reconcile log line references — an
+ * operator scanning the log sees the truncation magnitude without
+ * re-querying the fact.
+ *
+ * A candidate that needs truncation but lacks a string id passes through
+ * untruncated: the upstream contract (`WikiFact.id` is a `TEXT PRIMARY KEY`)
+ * guarantees string ids in practice, and truncating without an id would
+ * emit a body the model can verdict under but with no DegradedRecord for
+ * `MaintenanceService.doRunHeal` to reconcile — violating the
+ * degraded ⊥ skipped invariant on id.
+ */
+function applyBodyTruncation(
+  candidates: unknown[],
+  attemptLevel: 0 | 1 | 2 | 3,
+  bodyTruncationChars: number,
+): { shapedCandidates: unknown[]; degraded: DegradedRecord[] } {
+  if (attemptLevel < 3) {
+    return { shapedCandidates: candidates, degraded: [] };
+  }
+  const shapedCandidates: unknown[] = [];
+  const degraded: DegradedRecord[] = [];
+  for (const c of candidates) {
+    if (typeof c !== 'object' || c === null) {
+      shapedCandidates.push(c);
+      continue;
+    }
+    const fact = c as { id?: unknown; body?: unknown };
+    const body = typeof fact.body === 'string' ? fact.body : '';
+    if (body.length <= bodyTruncationChars) {
+      shapedCandidates.push(c);
+      continue;
+    }
+    // A candidate that needs L3 truncation must carry a string id so
+    // doRunHeal can reconcile the truncation back to the source row
+    // (`HealResult.degraded` is keyed by id, and degraded ⊥ skipped on id).
+    // Without one the candidate passes through untruncated — the invariant
+    // "every truncated candidate has a DegradedRecord" holds, and the
+    // upstream contract (WikiFact.id is a TEXT PRIMARY KEY) means this
+    // branch is defensive against future schema drift, not a happy path.
+    if (typeof fact.id !== 'string') {
+      shapedCandidates.push(c);
+      continue;
+    }
+    const originalBodyChars = body.length;
+    // `safeSlice` (utils/pure) keeps the boundary inside a UTF-16 surrogate
+    // pair intact — a bare `String.prototype.slice` can land mid-codepoint and
+    // emit a lone high surrogate that JSON.stringify turns into U+FFFD. The
+    // same hazard is handled for `formatSkipError` log lines in
+    // MaintenanceService. Bodies can be emoji-heavy. The returned prefix may
+    // be one or two chars shorter than `bodyTruncationChars` when the cut
+    // backs off the surrogate boundary, so `truncatedBodyChars` reads from
+    // `prefix.length` rather than the requested limit.
+    const prefix = safeSlice(body, 0, bodyTruncationChars);
+    const truncatedBodyChars = prefix.length;
+    const truncated = `${prefix}…[truncated at ${truncatedBodyChars} chars, original was ${originalBodyChars}]`;
+    shapedCandidates.push({ ...fact, body: truncated });
+    degraded.push({ id: fact.id, originalBodyChars, truncatedBodyChars });
+  }
+  return { shapedCandidates, degraded };
 }

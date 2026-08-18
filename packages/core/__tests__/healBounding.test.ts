@@ -1,8 +1,14 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 import { setupDatabase } from '../src/db/schema';
 import { MIGRATIONS } from '../src/db/migrations';
 import type { SQLiteAdapter } from '../src/types';
+
+const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+beforeEach(() => {
+  consoleWarnSpy.mockClear();
+});
 
 const PREFIX = 'llm_wiki_';
 
@@ -42,7 +48,6 @@ describe('migration v8 — heal_checked_at', () => {
 
 import { createWiki } from '../src/index';
 import { HEAL_BATCH_SIZE } from '../src/services/MaintenanceService';
-import { vi } from 'vitest';
 
 async function seedFact(db: SQLiteAdapter, opts: {
   id: string; entityId?: string; title?: string; body?: string;
@@ -118,7 +123,7 @@ describe('doRunHeal — per-pass call bounding (#67)', () => {
     expect(generateText).not.toHaveBeenCalled();
     expect(result).toEqual({
       scanned: 0, downgraded: 0, deleted: 0, newFactsCreated: 0,
-      skipped: 0, remaining: 0, deferred: 1,
+      skipped: [], degraded: [], remaining: 0, deferred: 1,
     });
   });
 
@@ -238,7 +243,9 @@ describe('doRunHeal — per-pass call bounding (#67)', () => {
 
     const result = await wiki.runHeal('e1', { batchSize: 2 });
 
-    expect(result.skipped).toBe(2);
+    expect(result.skipped.map((s) => s.id).sort()).toEqual(['c0', 'c1']);
+    expect(result.skipped.every((s) => s.reason === 'non_convergent')).toBe(true);
+    expect(result.degraded).toEqual([]);
     expect(result.scanned).toBe(2);
   });
 
@@ -308,3 +315,237 @@ describe('doRunHeal — per-pass call bounding (#67)', () => {
     expect(rows[0].c).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// attemptLevel ladder: orchestration in doRunHeal (issue #101).
+// ---------------------------------------------------------------------------
+
+describe('doRunHeal — ladder orchestration', () => {
+  it('happy path at L0: degraded empty, skipped empty', async () => {
+    const generateText = vi.fn(async () => noopHeal);
+    const { db, wiki } = await makeHealWiki(generateText);
+    await seedFact(db, { id: 'happy', body: 'short body' });
+
+    const result = await wiki.runHeal('e1', { batchSize: 1 });
+
+    expect(result.degraded).toEqual([]);
+    expect(result.skipped).toEqual([]);
+    // The degraded-context warning is never emitted.
+    expect(consoleWarnSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining('heal healed under degraded context'),
+    );
+  });
+
+  it('single fact overflows at L0, converges at L3: degraded has the truncation detail, skipped empty, log fired once', async () => {
+    // The synthetic LLM provider is the only thing we can vary. We make it
+    // emit a max-output error on the first call (L0), a parseable but
+    // empty-ish response on the second (L1 truncates too), a still-truncating
+    // response on the third (L2), and finally a successful noopHeal on
+    // the fourth (L3 succeeds). Each call carries a different prompt —
+    // we can't observe the level directly, but we can count attempts.
+    let call = 0;
+    const generateText = vi.fn(async (prompts: { systemPrompt: string; userPrompt: string }) => {
+      call += 1;
+      // 1st call (L0) and 2nd (L1) and 3rd (L2) all fail with a
+      // truncation-shaped error. 4th call (L3) succeeds.
+      if (call <= 3) {
+        throw new Error('Model response truncated at the 16384-token limit');
+      }
+      // L3 succeeded — the body in the prompt will have been truncated.
+      // The noopHeal response emits a no-op verdict that doRunHeal will
+      // accept. We don't assert on the prompt content here; the assertion
+      // is on the resulting degraded record.
+      return noopHeal;
+    });
+    const { db, wiki } = await makeHealWiki(generateText);
+    // body length 12000 > HEAL_MAX_FACT_BODY_CHARS_L3 (4000), so L3 truncates.
+    await seedFact(db, { id: 'pathological', body: 'x'.repeat(12_000) });
+
+    const result = await wiki.runHeal('e1', { batchSize: 1 });
+
+    expect(result.skipped).toEqual([]);
+    expect(result.degraded).toEqual([
+      { id: 'pathological', originalBodyChars: 12_000, truncatedBodyChars: 4_000 },
+    ]);
+    // The log line fired exactly once for the converged-at-L3 fact.
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('heal healed under degraded context e1/pathological'),
+    );
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('body truncated from 12000 to 4000 chars'),
+    );
+    const degradedCalls = consoleWarnSpy.mock.calls.filter((args) =>
+      typeof args[0] === 'string' && args[0].includes('heal healed under degraded context'),
+    );
+    expect(degradedCalls).toHaveLength(1);
+  });
+
+  it('single fact fails at L0–L3: skipped has the record, degraded empty, no degraded-context warning', async () => {
+    const generateText = vi.fn(async () => {
+      throw new Error('Model response truncated at the 16384-token limit');
+    });
+    const { db, wiki } = await makeHealWiki(generateText);
+    await seedFact(db, { id: 'unhealable', body: 'x'.repeat(12_000) });
+
+    const result = await wiki.runHeal('e1', { batchSize: 1 });
+
+    expect(result.skipped).toEqual([
+      { id: 'unhealable', reason: 'non_convergent' },
+    ]);
+    expect(result.degraded).toEqual([]);
+    // Reconciliation: even though L3's buildHealPrompt produced a degraded
+    // record, the L3 call still failed, so the record is dropped.
+    expect(consoleWarnSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining('heal healed under degraded context'),
+    );
+    // Ordinary skip warning fired.
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('heal skipped e1/unhealable'),
+    );
+  });
+
+  it('mixed: mutually exclusive on id and exhaustive partition of candidates', async () => {
+    // Three facts, each climbing its own ladder because batchSize === 1.
+    // The LLM fates are driven from the prompt: the candidate's id appears
+    // in the userPrompt JSON, and L3 truncates bodies with a
+    // `[truncated at N chars, original was M]` marker so the L3 attempt can
+    // be distinguished by string match.
+    //
+    //   heals-at-L0    — long body, succeeds at L0 → ends in `degraded` is false,
+    //                    `skipped` is false, must reconcile to a "healed" bucket.
+    //   needs-L3       — long body, truncates at L0/L1/L2, succeeds at L3 only
+    //                    → ends in `degraded`, NOT in `skipped`, log fires once.
+    //   non-convergent — long body, truncates at every level → ends in `skipped`,
+    //                    NOT in `degraded`, no degraded-context log fires.
+    const generateText = vi.fn(async (p: { systemPrompt: string; userPrompt: string }) => {
+      const isL3 = p.userPrompt.includes('[truncated at');
+      if (p.userPrompt.includes('"heals-at-L0"')) return noopHeal;
+      if (p.userPrompt.includes('"needs-L3"') && isL3) return noopHeal;
+      throw new Error('Model response truncated at the 16384-token limit');
+    });
+    const { db, wiki } = await makeHealWiki(generateText);
+    // Bodies are sized so that even a 2-fact prompt exceeds
+    // HEAL_MAX_PROMPT_CHARS (40_000) and forces the LLM-level batch loop in
+    // `runBatched` to split down to one fact at a time via `trim`'s
+    // binary-search fallback. Without this overflow a 2-fact prompt fits,
+    // the mock sees multiple ids in one prompt, and the per-fact fate the
+    // test is asserting cannot be driven.
+    const longBody = 'x'.repeat(21_000);
+    await seedFact(db, { id: 'heals-at-L0', body: longBody });
+    await seedFact(db, { id: 'needs-L3', body: longBody });
+    await seedFact(db, { id: 'non-convergent', body: longBody });
+
+    // batchSize: 3 ensures all three seeded facts are loaded as candidates —
+    // passing 1 would short-circuit at `findHealCandidatesByEntityId` and only
+    // attempt the oldest one.
+    const result = await wiki.runHeal('e1', { batchSize: 3 });
+
+    // Per-bucket exact membership.
+    expect(result.skipped.map((s) => s.id)).toEqual(['non-convergent']);
+    expect(result.degraded.map((d) => d.id)).toEqual(['needs-L3']);
+    // The "healed" bucket is derived as the candidates that did not land in
+    // either of the other two; that's the invariant the test pins down.
+    const healedIds = new Set(['heals-at-L0', 'needs-L3', 'non-convergent']);
+    for (const s of result.skipped) healedIds.delete(s.id);
+    for (const d of result.degraded) healedIds.delete(d.id);
+    expect([...healedIds]).toEqual(['heals-at-L0']);
+
+    // Mutually exclusive on id: skipped ∩ degraded = ∅ (the partition
+    // property the reconciliation step guarantees).
+    const skippedIds = new Set(result.skipped.map((s) => s.id));
+    const degradedIds = new Set(result.degraded.map((d) => d.id));
+    const overlap = [...skippedIds].filter((id) => degradedIds.has(id));
+    expect(overlap).toEqual([]);
+
+    // Exhaustive partition: scanned counts every candidate that was
+    // actually offered to a call, regardless of fate.
+    expect(result.scanned).toBe(3);
+
+    // The degraded-context warning fired exactly once — for needs-L3, not
+    // for non-convergent (whose L3 buildHealPrompt call also produced a
+    // record, but the reconciliation step drops it before the log line
+    // fires).
+    const degradedCalls = consoleWarnSpy.mock.calls.filter((args) =>
+      typeof args[0] === 'string' && args[0].includes('heal healed under degraded context'),
+    );
+    expect(degradedCalls).toHaveLength(1);
+    expect(degradedCalls[0][0] as string).toContain('e1/needs-L3');
+  });
+
+  it('call_error skipped fact is exempt from the heal_checked_at stamp and re-eligible next pass', async () => {
+    // Revision 1 of the ladder spec: a singleton non-truncation call error
+    // comes back as `reason: 'call_error'`. doRunHeal must drop those ids
+    // from `markHealChecked`'s input so a momentary Bedrock 5xx doesn't lock
+    // the fact out for HEAL_RECHECK_MS. The fact stays in the
+    // `heal_checked_at IS NULL` candidate set and is reattempted on the
+    // next pass.
+    //
+    // Two facts: both trip the ECONNRESET mock (a non-truncation call error),
+    // so both end up `skipped: { reason: 'call_error' }`. But for the
+    // cooldown-stamp discriminator to be observable we need at least one fact
+    // to NOT be a call_error, so this test seeds a mix:
+    //
+    //   transient   → ECONNRESET at L0 → reason 'call_error', heal_checked_at IS NULL
+    //   config-bug  → EXCEEDS_LIMIT at L0 → reason 'non_convergent', heal_checked_at IS NOT NULL
+    //
+    // A subsequent runHeal, with the LLM now returning noopHeal, picks up
+    // 'transient' as a candidate again (proving no cooldown was stamped) and
+    // heals both.
+    const generateText = vi.fn();
+    // First call: ECONNRESET for 'transient', EXCEEDS_LIMIT for 'config-bug'.
+    // The discriminator between these two IS the call_error union: 'transient'
+    // returns ECONNRESET (a transient), 'config-bug' returns EXCEEDS_LIMIT (a
+    // model-config error).
+    generateText.mockImplementation(async (p: { systemPrompt: string; userPrompt: string }) => {
+      if (p.userPrompt.includes('"config-bug"')) {
+        throw new Error('The maximum tokens you requested exceeds the model limit of 4096');
+      }
+      throw new Error('fetch failed: ECONNRESET');
+    });
+    const { db, wiki } = await makeHealWiki(generateText);
+    // Bodies sized so a 2-fact prompt exceeds HEAL_MAX_PROMPT_CHARS (40_000)
+    // and `runBatched`'s trim shrinks to one-fact batches; otherwise the
+    // EXCEEDS_LIMIT error at length > 1 propagates as a #67 throw, and we
+    // never reach the singleton-bucket logic this revision locks down.
+    const bigBody = 'x'.repeat(21_000);
+    await seedFact(db, { id: 'transient', body: bigBody });
+    await seedFact(db, { id: 'config-bug', body: bigBody });
+
+    const r1 = await wiki.runHeal('e1', { batchSize: 3 });
+
+    expect(r1.skipped.sort((a, b) => a.id.localeCompare(b.id))).toEqual([
+      { id: 'config-bug', reason: 'non_convergent' },
+      { id: 'transient', reason: 'call_error' },
+    ]);
+
+    // The cooldown-stamp filter omitted only the call_error id; the
+    // non_convergent fact (a model-config bug) keeps its cooldown stamp
+    // because retrying it next pass would be wasted work.
+    const stampRows = await db.getAllAsync<{ id: string; heal_checked_at: number | null }>(
+      `SELECT id, heal_checked_at FROM ${PREFIX}entries
+         WHERE entity_id = 'e1' AND id IN ('transient','config-bug') ORDER BY id`,
+    );
+    expect(stampRows).toEqual([
+      { id: 'config-bug', heal_checked_at: expect.anything() },
+      { id: 'transient', heal_checked_at: null },
+    ]);
+
+    // Now make the LLM succeed. The 'transient' fact must come back as a
+    // candidate (its heal_checked_at is still NULL, so the WHERE clause in
+    // findHealCandidatesByEntityId admits it). The 'config-bug' fact
+    // remains stamped so it stays out for HEAL_RECHECK_MS — a pass-level
+    // correctness check that's outside this test's scope.
+    //
+    // Clear the stamps on 'transient' before this assertion so we observe
+    // the *filter's* correctness, not the host scheduler's: a heal_checked_at
+    // admission test would belong in a unit test on the repository, not here.
+    await db.runAsync(
+      `UPDATE ${PREFIX}entries SET updated_at = ?, heal_checked_at = NULL WHERE id = 'transient'`,
+      [500],
+    );
+    generateText.mockImplementation(async () => noopHeal);
+    const r2 = await wiki.runHeal('e1', { batchSize: 3 });
+    expect(r2.skipped).toEqual([]);
+  });
+});
+

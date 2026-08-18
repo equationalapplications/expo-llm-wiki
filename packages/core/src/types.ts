@@ -113,6 +113,21 @@ export interface OntologyBackfillResult {
   skipped: number;
 }
 
+/**
+ * L3 heal-success record: a fact the model emitted a verdict for under a
+ * truncated view of its own body. `originalBodyChars` lets an operator flag
+ * the fact for re-inspection; `truncatedBodyChars` is the L3 cap actually
+ * applied. Emitted by `PromptService.buildHealPrompt`, surfaced via
+ * `HealResult.degraded`, mutually exclusive with `HealResult.skipped` on
+ * `id` (a fact can be either healed-under-degradation or dropped — never
+ * both).
+ */
+export interface DegradedRecord {
+  id: string;
+  originalBodyChars: number;
+  truncatedBodyChars: number;
+}
+
 /** Result of a single heal run. */
 export interface HealResult {
   /**
@@ -130,8 +145,29 @@ export interface HealResult {
   deleted: number;
   /** New facts synthesized by heal. */
   newFactsCreated: number;
-  /** Candidates a batch could not process even alone, skipped so the pass could finish. */
-  skipped: number;
+  /**
+   * Candidates that could not converge after the helper's full escalation
+   * path. `reason` distinguishes genuine non-convergence
+   * (`'non_convergent'` — terminal give-up at attemptLevel 3, parse error,
+   * or model-config error) from transient provider failures
+   * (`'call_error'` — non-truncation error originating in `call()` at
+   * `batch.length === 1`). `doRunHeal` excludes `'call_error'` ids from
+   * `markHealChecked`'s cooldown stamp so a momentary provider hiccup does
+   * not lock the fact out for `HEAL_RECHECK_MS`. Mutually exclusive with
+   * `degraded` on `id`.
+   */
+  skipped: Array<{ id: string; reason: 'non_convergent' | 'call_error' }>;
+  /**
+   * L3 heal successes: facts the model emitted a verdict for under a
+   * truncated view of their own body. Each entry carries the truncation
+   * magnitude so an operator can flag the fact for re-inspection. The
+   * corresponding log line `[WikiMemory] heal healed under degraded
+   * context ...` fires for each entry. Mutually exclusive with `skipped`
+   * on `id` — the reconciliation step in doRunHeal drops any record
+   * whose id also appears in `skipped` (a contradiction: degraded means
+   * healed, skipped means dropped).
+   */
+  degraded: Array<DegradedRecord>;
   /**
    * Heal candidates still eligible after this run — convergence signal: loop while > 0.
    *
