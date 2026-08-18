@@ -488,13 +488,13 @@ This change rides in the same **6.0.0** release as the original `HealResult.skip
 ```ts
 } else {
   const reason: 'non_convergent' | 'call_error' =
-    fromCall && !isTruncationError(err) ? 'call_error' : 'non_convergent';
+    fromCall && !isTruncationError(err) && !isConfigError(err) ? 'call_error' : 'non_convergent';
   skipped.push({ item: batch[0], reason });
   onSkip?.(batch[0], err);
 }
 ```
 
-The discriminator matches the existing pre-`attemptLevel === 3` give-up path with one carve-out: a non-truncation error that *originated* in `call()` (the `fromCall` flag) is `'call_error'`; everything else at `batch.length === 1` (truncation that gave up at L3, parse error, `EXCEEDS_LIMIT` config error) stays `'non_convergent'`. The `fromCall === true && !isTruncationError(err)` shape is the same one already used in the `batch.length > 1` propagation branch, so the gate is the same shape at both batch sizes.
+The discriminator matches the existing pre-`attemptLevel === 3` give-up path with one carve-out: a non-truncation, non-config error that *originated* in `call()` (the `fromCall` flag) is `'call_error'`; everything else at `batch.length === 1` (truncation that gave up at L3, parse error, `EXCEEDS_LIMIT` config error) stays `'non_convergent'`. The `isConfigError(err)` guard keeps the `EXCEEDS_LIMIT_PATTERN` case out of `'call_error'` even though it satisfies `fromCall && !isTruncationError(err)` — a model-config error is a host bug, not a transient one, so it must not skip the cooldown stamp.
 
 **The `attemptLevel` table, restated:**
 
@@ -553,7 +553,7 @@ The `Non-convergent facts get stamped too` comment on `markHealChecked` now read
 
 ### Files touched
 
-- `packages/core/src/services/BoundedLlmCall.ts` — union widened, `onFailure` singleton else-branch rewritten to set `reason` from `fromCall && !isTruncationError(err)`.
+- `packages/core/src/services/BoundedLlmCall.ts` — union widened, `onFailure` singleton else-branch rewritten to set `reason` from `fromCall && !isTruncationError(err) && !isConfigError(err)`.
 - `packages/core/src/services/MaintenanceService.ts` — `doRunHeal` filters `call_error` ids out of `markHealChecked`'s input; same in `doRunOntologyBackfill` for `markOntologyChecked`.
 - `packages/core/__tests__/BoundedLlmCall.test.ts` — one new test for the singleton call-error reason.
 - `packages/core/__tests__/healBounding.test.ts` — one new test pinning down the cooldown-stamp omission and immediate re-eligibility.
