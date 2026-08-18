@@ -353,35 +353,15 @@ describe('runBatched — splitting', () => {
 // ---------------------------------------------------------------------------
 // attemptLevel ladder (issue #101).
 //
-// Synthetic call has a per-level failure schedule. `failUntilLevel` is the
-// highest level at which `call` throws a truncation error; calls at the
-// specified level (and below) succeed. `failUntilLevel: 4` means always fail.
-// `failUntilLevel: 0` means always succeed (no truncation).
+// Each case builds its own `buildPrompt` and `call` so the failure schedule
+// stays adjacent to the assertion that locks it in. A shared helper that
+// recorded the level centrally looked attractive while the ladder was being
+// shaped; once the cases diverged (some test L0 prompts, some test L1,
+// etc.) the helper stopped carrying its weight, and `runBatched` invokes
+// `call(prompts)` with a single argument, so any helper that claimed to
+// read a "level" parameter would silently never see one. Keeping helpers
+// next to their consumer avoids that future-author trap.
 // ---------------------------------------------------------------------------
-
-type Level = 0 | 1 | 2 | 3;
-
-function makeLeveledCall(
-  failUntilLevel: number,
-  trace: Array<{ level: number; batchSize: number }>,
-) {
-  return async (prompts: { systemPrompt: string; userPrompt: string }, level: number) => {
-    const batch = JSON.parse(prompts.userPrompt) as Item[];
-    trace.push({ level, batchSize: batch.length });
-    if (level <= failUntilLevel) {
-      throw new Error(`Model response truncated at the 8192-token limit`);
-    }
-    return JSON.stringify({ ids: batch.map((b) => b.id) });
-  };
-}
-
-const buildPromptRecordingLevel: (
-  trace: Array<{ level: number; batchSize: number }>,
-) => (batch: Item[], level?: number) => { systemPrompt: string; userPrompt: string } =
-  (trace) => (batch, level = 0) => {
-    trace.push({ level, batchSize: batch.length });
-    return { systemPrompt: 'SYS', userPrompt: JSON.stringify(batch) };
-  };
 
 describe('attempt level ladder', () => {
   it('L0 success: no escalation', async () => {

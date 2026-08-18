@@ -405,52 +405,71 @@ describe('doRunHeal — ladder orchestration', () => {
   });
 
   it('mixed: mutually exclusive on id and exhaustive partition of candidates', async () => {
-    // Three facts: one heals at L0, one needs L3, one skips at L3.
-    // We can't easily drive different fates per fact from a single LLM,
-    // so this test instead exercises the structural property on a fully
-    // successful run (every fact healed at L0): the three buckets are
-    // empty (skipped and degraded) and the candidate set was processed
-    // (scanned counts the successful facts).
-    const generateText = vi.fn(async () => noopHeal);
+    // Three facts, each climbing its own ladder because batchSize === 1.
+    // The LLM fates are driven from the prompt: the candidate's id appears
+    // in the userPrompt JSON, and L3 truncates bodies with a
+    // `[truncated at N chars, original was M]` marker so the L3 attempt can
+    // be distinguished by string match.
+    //
+    //   heals-at-L0    — long body, succeeds at L0 → ends in `degraded` is false,
+    //                    `skipped` is false, must reconcile to a "healed" bucket.
+    //   needs-L3       — long body, truncates at L0/L1/L2, succeeds at L3 only
+    //                    → ends in `degraded`, NOT in `skipped`, log fires once.
+    //   non-convergent — long body, truncates at every level → ends in `skipped`,
+    //                    NOT in `degraded`, no degraded-context log fires.
+    const generateText = vi.fn(async (p: { systemPrompt: string; userPrompt: string }) => {
+      const isL3 = p.userPrompt.includes('[truncated at');
+      if (p.userPrompt.includes('"heals-at-L0"')) return noopHeal;
+      if (p.userPrompt.includes('"needs-L3"') && isL3) return noopHeal;
+      throw new Error('Model response truncated at the 16384-token limit');
+    });
     const { db, wiki } = await makeHealWiki(generateText);
-    await seedFact(db, { id: 'a', body: 'short' });
-    await seedFact(db, { id: 'b', body: 'short' });
-    await seedFact(db, { id: 'c', body: 'short' });
+    // Bodies are sized so that even a 2-fact prompt exceeds
+    // HEAL_MAX_PROMPT_CHARS (40_000) and forces the LLM-level batch loop in
+    // `runBatched` to split down to one fact at a time via `trim`'s
+    // binary-search fallback. Without this overflow a 2-fact prompt fits,
+    // the mock sees multiple ids in one prompt, and the per-fact fate the
+    // test is asserting cannot be driven.
+    const longBody = 'x'.repeat(21_000);
+    await seedFact(db, { id: 'heals-at-L0', body: longBody });
+    await seedFact(db, { id: 'needs-L3', body: longBody });
+    await seedFact(db, { id: 'non-convergent', body: longBody });
 
+    // batchSize: 3 ensures all three seeded facts are loaded as candidates —
+    // passing 1 would short-circuit at `findHealCandidatesByEntityId` and only
+    // attempt the oldest one.
     const result = await wiki.runHeal('e1', { batchSize: 3 });
 
-    // Exhaustive: scanned = Σ results.batch.length = 3.
-    expect(result.scanned).toBe(3);
-    // Mutually exclusive: skipped ∩ degraded = ∅.
+    // Per-bucket exact membership.
+    expect(result.skipped.map((s) => s.id)).toEqual(['non-convergent']);
+    expect(result.degraded.map((d) => d.id)).toEqual(['needs-L3']);
+    // The "healed" bucket is derived as the candidates that did not land in
+    // either of the other two; that's the invariant the test pins down.
+    const healedIds = new Set(['heals-at-L0', 'needs-L3', 'non-convergent']);
+    for (const s of result.skipped) healedIds.delete(s.id);
+    for (const d of result.degraded) healedIds.delete(d.id);
+    expect([...healedIds]).toEqual(['heals-at-L0']);
+
+    // Mutually exclusive on id: skipped ∩ degraded = ∅ (the partition
+    // property the reconciliation step guarantees).
     const skippedIds = new Set(result.skipped.map((s) => s.id));
     const degradedIds = new Set(result.degraded.map((d) => d.id));
     const overlap = [...skippedIds].filter((id) => degradedIds.has(id));
     expect(overlap).toEqual([]);
-    // No double-push: skipped ids and degraded ids don't overlap with
-    // each other OR with a hypothetical third bucket.
-    expect(result.skipped).toEqual([]);
-    expect(result.degraded).toEqual([]);
-  });
 
-  it('regression lock: a fact whose L3 buildHealPrompt produced a degraded record but whose L3 call failed is in skipped and not in degraded', async () => {
-    // This is the case the reconciliation-then-log fix protects. The
-    // synthetic LLM truncates L0, L1, L2, and L3 — so the L3 buildHealPrompt
-    // call emits a degraded record, but the L3 call still throws.
-    // The expected outcome: skipped has the record, degraded is empty,
-    // and the degraded-context warning is NOT emitted.
-    const generateText = vi.fn(async () => {
-      throw new Error('Model response truncated at the 16384-token limit');
-    });
-    const { db, wiki } = await makeHealWiki(generateText);
-    await seedFact(db, { id: 'recon-target', body: 'x'.repeat(12_000) });
+    // Exhaustive partition: scanned counts every candidate that was
+    // actually offered to a call, regardless of fate.
+    expect(result.scanned).toBe(3);
 
-    const result = await wiki.runHeal('e1', { batchSize: 1 });
-
-    expect(result.skipped.map((s) => s.id)).toEqual(['recon-target']);
-    expect(result.degraded).toEqual([]); // the would-have-been-L3 record is reconciled out
-    expect(consoleWarnSpy).not.toHaveBeenCalledWith(
-      expect.stringMatching(/heal healed under degraded context.*recon-target/),
+    // The degraded-context warning fired exactly once — for needs-L3, not
+    // for non-convergent (whose L3 buildHealPrompt call also produced a
+    // record, but the reconciliation step drops it before the log line
+    // fires).
+    const degradedCalls = consoleWarnSpy.mock.calls.filter((args) =>
+      typeof args[0] === 'string' && args[0].includes('heal healed under degraded context'),
     );
+    expect(degradedCalls).toHaveLength(1);
+    expect(degradedCalls[0][0] as string).toContain('e1/needs-L3');
   });
 });
 

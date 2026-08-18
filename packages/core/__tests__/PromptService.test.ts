@@ -77,10 +77,10 @@ describe('PromptService.buildHealPrompt — ladder interpretation', () => {
       candidates, anchors, allTasks, recentEvents, undefined, 3,
     );
     expect(degraded).toEqual([
-      { id: 'c0', originalBodyChars: 12_345, truncatedBodyChars: 4_000 },
+      { id: 'c0', originalBodyChars: 12_345, truncatedBodyChars: HEAL_MAX_FACT_BODY_CHARS_L3 },
     ]);
     const userPrompt: string = (prompts as BuiltPrompt).userPrompt;
-    expect(userPrompt).toContain('…[truncated at 4000 chars, original was 12345]');
+    expect(userPrompt).toContain(`…[truncated at ${HEAL_MAX_FACT_BODY_CHARS_L3} chars, original was 12345]`);
     expect(userPrompt.length).toBeLessThan(longBody.length);
   });
 
@@ -140,10 +140,10 @@ describe('PromptService.buildHealPrompt — ladder interpretation', () => {
     const body = 'a'.repeat(3999) + '😀';
     const candidates = [makeCandidate('c0', body)];
     const { prompts, degraded } = svc.buildHealPrompt(
-      candidates, [], allTasks, recentEvents, undefined, 3, 4000,
+      candidates, [], allTasks, recentEvents, undefined, 3, HEAL_MAX_FACT_BODY_CHARS_L3,
     );
     expect(degraded).toEqual([
-      { id: 'c0', originalBodyChars: 4001, truncatedBodyChars: 4000 },
+      { id: 'c0', originalBodyChars: 4001, truncatedBodyChars: HEAL_MAX_FACT_BODY_CHARS_L3 },
     ]);
     const userPrompt: string = (prompts as BuiltPrompt).userPrompt;
     // The 3999 ASCII chars must be preserved in full.
@@ -157,6 +157,6 @@ describe('PromptService.buildHealPrompt — ladder interpretation', () => {
     expect(userPrompt).not.toMatch(/[\uD800-\uDBFF]/);
     expect(userPrompt).not.toMatch(/[\uDC00-\uDFFF]/);
     // Marker is correct.
-    expect(userPrompt).toContain('…[truncated at 4000 chars, original was 4001]');
+    expect(userPrompt).toContain(`…[truncated at ${HEAL_MAX_FACT_BODY_CHARS_L3} chars, original was 4001]`);
   });
 });

@@ -8,6 +8,7 @@ import type { DegradedRecord, PromptOverrides, OntologyPromptContext } from '../
 import {
   HEAL_ANCHORS_PER_CANDIDATE,
   HEAL_MAX_ANCHORS,
+  HEAL_MAX_FACT_BODY_CHARS_L3,
 } from '../utils/healConstants';
 import { safeSlice } from '../utils/pure';
 
@@ -122,7 +123,7 @@ export class PromptService {
     recentEvents: unknown[],
     runtimeOverride: string | undefined,
     attemptLevel: 0 | 1 | 2 | 3,
-    bodyTruncationChars: number = 4_000,
+    bodyTruncationChars: number = HEAL_MAX_FACT_BODY_CHARS_L3,
   ): { prompts: { systemPrompt: string; userPrompt: string }; degraded: DegradedRecord[] } {
     // L0: all context. L1: drop allTasks. L2: also drop recentEvents.
     const effectiveTasks = attemptLevel >= 1 ? [] : allTasks;

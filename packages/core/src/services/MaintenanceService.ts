@@ -272,7 +272,7 @@ export class MaintenanceService {
 
   async runHeal(
     entityId: string,
-    options?: { promptOverride?: string; batchSize?: number },
+    options?: { promptOverride?: string; batchSize?: number; bodyTruncationChars?: number },
   ): Promise<HealResult> {
     this.jobManager.acquireLock('heal', entityId);
     try {
@@ -667,6 +667,11 @@ export class MaintenanceService {
       throw new Error('Invalid batchSize: must be an integer >= 1');
     }
 
+    const bodyTruncationChars = options?.bodyTruncationChars ?? HEAL_MAX_FACT_BODY_CHARS_L3;
+    if (!Number.isInteger(bodyTruncationChars) || bodyTruncationChars < 1) {
+      throw new Error('Invalid bodyTruncationChars: must be an integer >= 1');
+    }
+
     const now = Date.now();
     const recheckCutoff = now - HEAL_RECHECK_MS;
     const orphanAfterDays = this.options.config?.orphanAfterDays !== undefined ? this.options.config?.orphanAfterDays : 30;
@@ -748,18 +753,17 @@ export class MaintenanceService {
     // The post-reconcile log line fires for the survivors only.
     const degraded: DegradedRecord[] = [];
 
-    // L0 anchor cap: a single fact's prompt has no need for 50 anchors.
-    // The level-aware buildHealPrompt receives the per-batch slice we
-    // computed here.
-    const bodyTruncationChars = options?.bodyTruncationChars ?? HEAL_MAX_FACT_BODY_CHARS_L3;
-
     const outcome = await runBatched<WikiFact, HealBatch>({
       items: healCandidates,
       buildPrompt: async (batch, attemptLevel = 0) => {
         const documentAnchors = await this._selectHealAnchors(
           entityId,
           batch,
-          HEAL_MAX_ANCHORS,  // buildHealPrompt applies the per-batch cap; overfetch in _selectHealAnchors is sized off this
+          // Per-batch anchor cap: `batch.length * HEAL_ANCHORS_PER_CANDIDATE` (capped at
+          // HEAL_MAX_ANCHORS) right-sizes the anchor lookup so a 1-fact batch does
+          // not overfetch the same 200 keyword hits a 25-fact batch once did.
+          // buildHealPrompt applies the matching cap on its side — values must match.
+          Math.min(HEAL_MAX_ANCHORS, batch.length * HEAL_ANCHORS_PER_CANDIDATE),
           anchorCache,
         );
         const { prompts, degraded: batchDegraded } = await this.promptService.buildHealPrompt(
