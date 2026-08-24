@@ -5,7 +5,7 @@
 Please **do not** report security vulnerabilities through public GitHub issues.
 
 1. **Private Vulnerability Reporting (Preferred):** Go to the **Security** tab of this repository, click **Advisories**, and submit a **New draft advisory**.
-2. **Email Fallback:** If you cannot use GitHub Security Advisories, please send an email to **[EMAIL]** with a clear reproduction script or steps.
+2. **Email Fallback:** If you cannot use GitHub Security Advisories, please send an email to **admin@equationalapplications.com** with a clear reproduction script or steps.
 
 We will acknowledge your report within 48 hours and provide a detailed response within 5 business days indicating next steps.
 
