@@ -44,7 +44,13 @@ const DEFAULTS: StoredConfig = {
 import { loadSessionConfig, saveSessionConfig } from './lib/sessionConfig'
 
 function loadConfig(): StoredConfig {
-  return loadSessionConfig(DEFAULTS)
+  const cfg = loadSessionConfig(DEFAULTS)
+  // Fail-closed: an unknown/corrupted providerType from storage falls back to
+  // the default rather than reaching provider creation code.
+  if (cfg.providerType !== 'anthropic' && cfg.providerType !== 'openai-compat') {
+    cfg.providerType = DEFAULTS.providerType
+  }
+  return cfg
 }
 
 function saveConfig(cfg: StoredConfig, persist: boolean): boolean {

@@ -63,14 +63,16 @@ describe('chatWithMemory — Gemini auth header (H-2)', () => {
 
   it('surfaces generic errors without embedding provider response bodies', async () => {
     fetchMock.mockResolvedValueOnce(new Response('{"error":"account project-abc quota"}', { status: 403 }))
-    await expect(
-      chatWithMemory({
-        userMessage: 'hi',
-        tools: [searchTool],
-        enabledScopes: [],
-        apiKey: 'k',
-        wiki: mockWiki(),
-      }),
-    ).rejects.toThrow(/HTTP 403/)
+    const error = await chatWithMemory({
+      userMessage: 'hi',
+      tools: [searchTool],
+      enabledScopes: [],
+      apiKey: 'test-key-123',
+      wiki: mockWiki(),
+    }).catch(e => e)
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toMatch(/HTTP 403/)
+    expect((error as Error).message).not.toContain('project-abc')
+    expect((error as Error).message).not.toContain('quota')
   })
 })

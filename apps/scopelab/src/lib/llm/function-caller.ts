@@ -48,7 +48,7 @@ export async function chatWithMemory({
   if (!response.ok) {
     // Generic message only: provider bodies can contain account/project
     // identifiers. Raw body available behind DEBUG_LLM_RAW_ERRORS.
-    if (process.env.DEBUG_LLM_RAW_ERRORS) {
+    if (import.meta.env.VITE_DEBUG_LLM_RAW_ERRORS === 'true') {
       const errorText = await response.text()
       console.error(`Gemini API error body: ${errorText.slice(0, 500)}`)
     }
@@ -87,7 +87,7 @@ export async function chatWithMemory({
       )
 
       if (!followup.ok) {
-        if (process.env.DEBUG_LLM_RAW_ERRORS) {
+        if (import.meta.env.VITE_DEBUG_LLM_RAW_ERRORS === 'true') {
           const errorText = await followup.text()
           console.error(`Gemini API follow-up error body: ${errorText.slice(0, 500)}`)
         }

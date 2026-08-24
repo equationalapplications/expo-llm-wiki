@@ -49,6 +49,14 @@ describe('sessionConfig (H-3)', () => {
     expect(local!.getItem('llm-config')).toBeNull()
   })
 
+  it('opting out (persist=false) removes a previously persisted session config', () => {
+    saveSessionConfig({ providerType: 'anthropic', anthropicKey: 'sk-secret' }, true)
+    expect(session!.getItem('llm-config')).not.toBeNull()
+    expect(saveSessionConfig({ providerType: 'anthropic', anthropicKey: '' }, false)).toBe(true)
+    expect(session!.getItem('llm-config')).toBeNull()
+    expect(loadSessionConfig(DEFAULTS)).toEqual(DEFAULTS)
+  })
+
   it('save with persist=true writes sessionStorage only, and round-trips', () => {
     expect(saveSessionConfig({ providerType: 'openai-compat', anthropicKey: 'sk-x' }, true)).toBe(true)
     expect(local!.getItem('llm-config')).toBeNull()

@@ -61,7 +61,13 @@ export function loadSessionConfig<T extends object>(defaults: T): T {
  */
 export function saveSessionConfig(cfg: object, persist: boolean): boolean {
   purgeLegacyPlaintextKeys()
-  if (!persist) return true // memory-only by design
+  if (!persist) {
+    // Opt-out must also evict any config saved earlier in this tab session
+    // (it may contain an API key).
+    const storage = getStorage()
+    try { storage?.removeItem(STORE_KEY) } catch { /* ignore */ }
+    return true // memory-only by design
+  }
   const storage = getStorage()
   if (!storage) return false
   try {
