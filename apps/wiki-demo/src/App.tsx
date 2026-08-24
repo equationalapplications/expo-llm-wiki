@@ -41,46 +41,21 @@ const DEFAULTS: StoredConfig = {
   openaiEmbedModel: 'text-embedding-3-small',
 }
 
+import { loadSessionConfig, saveSessionConfig } from './lib/sessionConfig'
+
 function loadConfig(): StoredConfig {
-  try {
-    const raw = localStorage.getItem('llm-config')
-    if (raw) {
-      const parsed: unknown = JSON.parse(raw)
-      if (typeof parsed === 'object' && parsed !== null) {
-        const p = parsed as Record<string, unknown>
-        const merged: StoredConfig = { ...DEFAULTS }
-        for (const key of Object.keys(DEFAULTS) as Array<keyof StoredConfig>) {
-          if (typeof p[key] === typeof DEFAULTS[key]) {
-            (merged as unknown as Record<string, unknown>)[key] = p[key]
-          }
-        }
-        if (merged.providerType !== 'anthropic' && merged.providerType !== 'openai-compat') {
-          merged.providerType = DEFAULTS.providerType
-        }
-        return merged
-      }
-    }
-    // migrate legacy key
-    const legacy = localStorage.getItem('anthropic-key')
-    if (legacy) return { ...DEFAULTS, anthropicKey: legacy }
-  } catch { /* ignore JSON.parse errors */ }
-  return { ...DEFAULTS }
+  return loadSessionConfig(DEFAULTS)
 }
 
-function saveConfig(cfg: StoredConfig) {
-  try {
-    localStorage.setItem('llm-config', JSON.stringify(cfg))
-  } catch {
-    throw new Error(
-      'Unable to save your configuration in this browser. Storage may be disabled or full. Please check your browser settings and try again.',
-    )
-  }
+function saveConfig(cfg: StoredConfig, persist: boolean): boolean {
+  return saveSessionConfig(cfg, persist)
 }
 
 function SetupScreen({ onReady }: { onReady: (wiki: WikiMemory) => void }) {
   const [cfg, setCfg] = useState<StoredConfig>(loadConfig)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [persist, setPersist] = useState(false)
 
   const set = (patch: Partial<StoredConfig>) => setCfg(prev => ({ ...prev, ...patch }))
 
@@ -94,7 +69,11 @@ function SetupScreen({ onReady }: { onReady: (wiki: WikiMemory) => void }) {
     setLoading(true)
     setError('')
     try {
-      saveConfig(cfg)
+      const stored = saveConfig(cfg, persist)
+      if (!stored) {
+        // Non-fatal: continue with in-memory config for this session.
+        console.warn('Session storage unavailable — configuration will not persist beyond this session.')
+      }
       const adapter = await createSqlJsAdapter()
       const llmProvider =
         cfg.providerType === 'anthropic'
@@ -185,8 +164,16 @@ function SetupScreen({ onReady }: { onReady: (wiki: WikiMemory) => void }) {
                 onKeyDown={e => e.key === 'Enter' && handleStart()}
               />
               <p className="hint" style={{ color: 'var(--yellow)' }}>
-                ⚠ API key is saved in browser localStorage (plaintext) and sent directly from your browser to Anthropic. Use a browser profile you trust, avoid shared machines, and do not use a key with broad permissions.
+                ⚠ API key is kept in memory for this tab session only and sent directly from your browser to Anthropic. Optionally persisted to sessionStorage (cleared when the tab closes) — still plaintext. Use a browser profile you trust, avoid shared machines, and do not use a key with broad permissions.
               </p>
+              <label className="hint" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={persist}
+                  onChange={e => setPersist(e.target.checked)}
+                />
+                Remember config for this browser session (sessionStorage)
+              </label>
               <label>Model</label>
               <input
                 type="text"
@@ -227,7 +214,7 @@ function SetupScreen({ onReady }: { onReady: (wiki: WikiMemory) => void }) {
               />
               {cfg.openaiApiKey && (
                 <p className="hint" style={{ color: 'var(--yellow)' }}>
-                  ⚠ API key is saved in browser localStorage (plaintext). Use a browser profile you trust and avoid shared machines.
+                  ⚠ API key is kept in memory for this tab session only; optionally persisted to sessionStorage (plaintext, cleared on tab close). Use a browser profile you trust and avoid shared machines.
                 </p>
               )}
 
