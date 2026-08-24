@@ -8,10 +8,6 @@
 
 const STORE_KEY = 'llm-config'
 
-interface StoredConfig {
-  [k: string]: unknown
-}
-
 function getStorage(): Storage | null {
   try {
     if (typeof sessionStorage !== 'undefined') {
@@ -49,13 +45,13 @@ function loadPersisted(): Record<string, unknown> | null {
 export function loadSessionConfig<T extends object>(defaults: T): T {
   purgeLegacyPlaintextKeys()
   const stored = loadPersisted()
-  const merged: Record<string, unknown> = { ...defaults }
+  const merged: Record<string, unknown> = { ...(defaults as Record<string, unknown>) }
   if (stored) {
     for (const key of Object.keys(defaults) as Array<keyof T & string>) {
       if (typeof stored[key] === typeof defaults[key]) merged[key] = stored[key]
     }
   }
-  return merged as unknown as T
+  return merged as T
 }
 
 /**

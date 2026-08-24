@@ -48,6 +48,28 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Supply-chain gate (audit 2026-08-24, L-4). Fails the build on new
+      # high/critical advisories. Known-unpatched exceptions are allowlisted
+      # by GHSA id below with a tracking comment — keep this list minimal.
+      - name: pnpm audit (high+, allowlisted exceptions)
+        env:
+          # Allowlisted GHSA ids, comma-separated. Keep minimal + commented.
+          AUDIT_ALLOWLIST: "GHSA-5p2g-fcmc-qvqq,GHSA-w3rx-r6r6-pgpr" # image-size DoS (<=2.0.2), ICNS + JXL/HEIF parsers — no patched release yet as of 2026-08-24
+        run: |
+          set -o pipefail
+          pnpm audit --prod --audit-level=high --json > /tmp/audit.json || true
+          node -e '
+            const data = require("/tmp/audit.json");
+            const advisories = Object.values(data.advisories ?? {});
+            const allow = process.env.AUDIT_ALLOWLIST.split(",");
+            const unhandled = advisories.filter(a => !allow.includes(a.github_advisory_id));
+            if (unhandled.length) {
+              for (const a of unhandled) console.error("AUDIT FAIL: " + a.github_advisory_id + " " + a.module_name + " " + a.severity + " - " + a.title);
+              process.exit(1);
+            }
+            console.log("Audit clean (allowlisted: " + allow.join(", ") + ")");
+          '
+
       - run: pnpm run build
 
       - run: pnpm run typecheck
