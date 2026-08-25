@@ -1,3 +1,13 @@
+## [6.0.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v6.0.0...v6.0.1) (2026-08-25)
+
+
+### Bug Fixes
+
+* **scopelab,wiki-demo:** address CodeRabbit review findings ([d8b8874](https://github.com/equationalapplications/expo-llm-wiki/commit/d8b88740c8724b09a716b4cd6410f2c87e6a2fb3))
+* **scopelab:** escape retrieved-memory delimiters to prevent prompt injection ([35532be](https://github.com/equationalapplications/expo-llm-wiki/commit/35532be1b2ea8e0149557067e5409e4c593e02a1))
+* **scopelab:** send gemini key via x-goog-api-key header ([56755ea](https://github.com/equationalapplications/expo-llm-wiki/commit/56755eae19db91d32b551241e6db80fb270a139e))
+* **wiki-demo:** session-only api key storage with opt-in persistence ([2e470c1](https://github.com/equationalapplications/expo-llm-wiki/commit/2e470c13dc330f5f3e2026b033a15ecb5dfdd275)), closes [#2](https://github.com/equationalapplications/expo-llm-wiki/issues/2)
+
 # [6.0.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v5.5.1...v6.0.0) (2026-08-18)
 
 
