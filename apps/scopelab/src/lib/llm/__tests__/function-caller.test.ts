@@ -233,11 +233,12 @@ describe('chatWithMemory — fail-closed scope authorization (M-2)', () => {
   it('rejects a tool whose name is not in the advertised schemas', async () => {
     fetchMock.mockResolvedValueOnce(geminiFunctionCall('search_memory', { query: 'q' }))
     // Tool with scope `core` (so buildAuthorizedSchemaArray advertises it)
-    // but the schema name diverges from the manifest name. The model
-    // invokes the manifest name, which is not in advertisedNames.
+    // but the schema name diverges from the manifest name. The manifest
+    // name IS advertised, so the manifest-name check passes and the
+    // advertised-schema check must be what rejects the invocation.
     await chatWithMemory({
       userMessage: 'hi',
-      tools: [makeTool({ name: 'alias_only', scope: 'core', schemaName: 'real_name' })],
+      tools: [makeTool({ name: 'search_memory', scope: 'core', schemaName: 'real_name' })],
       enabledScopes: [],
       apiKey: 'k',
       wiki: mockWiki(),
