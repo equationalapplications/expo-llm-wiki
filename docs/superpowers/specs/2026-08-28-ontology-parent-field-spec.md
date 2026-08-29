@@ -59,7 +59,8 @@ edge's declared type?"
 
 `validateInlineEdges` checks whether a concrete `source_type` satisfies an
 edge's declared `source_type` by looking up the concrete type's `parent`.
-Same for `target_type`. One-hop lookup, not recursive.
+One-hop lookup, not recursive. (Target types are not checked at this layer
+since the LLM provides an entity title as the target, not a type slug.)
 
 ### D4: No schema migration
 
@@ -128,9 +129,7 @@ const match = defs.find(d => {
 });
 ```
 
-Note: `manifest` is not currently passed to `validateInlineEdges`. Add it as
-a parameter. The only caller is `OntologyService.validateAndNormalizeFact`
-which already has `manifest` in scope.
+Note: `manifest` is already passed to `validateInlineEdges`, so no signature change is needed. The `OntologyService.validateAndNormalizeFact` caller remains unchanged.
 
 **`mergeOntologyUpdates`** — **no change.** Nodes with `parent` are pushed
 as-is. The `parent` field is just another string property.
@@ -148,16 +147,7 @@ const EXAMPLE_JSON = `{
 
 ### `packages/core/src/services/OntologyService.ts`
 
-**`validateAndNormalizeFact`** — pass `manifest` to `validateInlineEdges`:
-
-```ts
-// Before:
-const edges = validateInlineEdges(canonical, null, fact.edges ?? [], manifest, opts);
-// After (same call — just ensure manifest reaches the function):
-const edges = validateInlineEdges(canonical, null, fact.edges ?? [], manifest, opts);
-```
-
-The function signature change handles the rest.
+**`validateAndNormalizeFact`** — **no change needed.** Call site already passes `manifest` correctly.
 
 ---
 
