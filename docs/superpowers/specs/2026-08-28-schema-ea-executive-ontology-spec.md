@@ -1,7 +1,7 @@
 # @equationalapplications/schema-ea — Spec
 
 **Date:** 2026-08-28
-**Status:** Draft (rev 3 — 2026-08-30)
+**Status:** Draft (rev 4 — 2026-08-30)
 **Packages:** `@equationalapplications/schema-ea` (new)
 **Depends on:** `@equationalapplications/core-llm-wiki` at the first release
 shipping `OntologyNodeType.parent_type` (see
@@ -63,6 +63,10 @@ Because copying invites drift, `schema-org-llm-wiki` is a **devDependency**
 and a parity test asserts the copied rows deep-equal
 `schemaOrgWarmAgentManifest`'s. Runtime stays dependency-free (D1); drift
 fails CI instead of silently degrading classification.
+
+The catalog tables in this document are held to the same standard: they must
+reproduce the same text as the manifest block, not a summary of it. Two
+different values for one row is how rev 1 and rev 2 both went wrong.
 
 The test exists to catch *accidental* drift, so it carries an explicit
 allowlist of *intentional* divergences — currently one row, `product` (D8).
@@ -221,9 +225,9 @@ test's allowlist with this reason; anything else that diverges is a bug.
 | `workLocation` | person → place | Workplace or primary work location. |
 | `location` | event → place | Venue or geographic location of an event. |
 | `location` | organization → place | Physical headquarters or primary location. |
-| `containedInPlace` | place → place | Hierarchical location containment. |
-| `subOrganization` | project → project | Nested project hierarchy. |
-| `object` | action → project | Project this task belongs to. |
+| `containedInPlace` | place → place | Hierarchical location: the source place is inside the target place (e.g., Paris is contained in France). |
+| `subOrganization` | project → project | Nested project hierarchy: the target is a sub-project contained in the source project. |
+| `object` | action → project | Project this task belongs to; the object the action advances. |
 | `agent` | action → person | Person responsible for or performing the action. |
 | `attendee` | event → person | Person attending or participating in the event. |
 | `organizer` | event → person | Person who organized the event. |
@@ -232,14 +236,14 @@ test's allowlist with this reason; anything else that diverges is a bug.
 | `publisher` | creativework → organization | Publisher, platform, studio, or distributor. |
 | `about` | creativework → person | Content centered on a specific person. |
 | `about` | creativework → organization | Content centered on a company, institution, or group. |
-| `about` | creativework → place | Content centered on a location. |
-| `about` | creativework → event | Content centered on an event. |
-| `itemReviewed` | review → creativework | The work this review evaluates. |
-| `itemReviewed` | review → organization | The business this review evaluates. |
-| `itemReviewed` | review → place | The venue this review evaluates. |
+| `about` | creativework → place | Content centered on a location (travel guide, history). |
+| `about` | creativework → event | Content centered on an event (documentary, article). |
+| `itemReviewed` | review → creativework | The book, movie, article, or other work this review evaluates. |
+| `itemReviewed` | review → organization | The business, restaurant, or institution this review evaluates. |
+| `itemReviewed` | review → place | The venue, park, or location this review evaluates. |
 | `itemReviewed` | review → event | The event this review evaluates. |
-| `itemReviewed` | review → product | The product this review evaluates. |
-| `owns` | person → product | Item owned by the person. |
+| `itemReviewed` | review → product | The tool, device, or product this review evaluates. |
+| `owns` | person → product | Item owned by the person (electronics, vehicles, etc.). |
 
 Note: the `about`, `author`, and `publisher` rows are declared on
 `creativework` as **source**, so all five concrete subtypes satisfy them via
@@ -550,3 +554,9 @@ D2 parity test.
   deployed dependency. D2 gains an override allowlist — reason required, and
   the test asserts each entry still diverges so a stale exception cannot mask
   real drift. `product` is the only sanctioned entry.
+- **Rev 4 (2026-08-30)** — PR #111 review: rev 2 restored the warm-agent rows
+  verbatim in the manifest code block but left 10 of the 28 edge rows
+  abbreviated in the catalog *table*, so the document still defined two
+  different values for one row — the exact defect rev 2 set out to fix. Table
+  rows are now verbatim, and D2 states that the tables are held to the same
+  standard as the manifest.
