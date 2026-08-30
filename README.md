@@ -227,7 +227,7 @@ LIMIT ?                                                -- opts.maxTraversalNodes
 
 ## Monorepo Ecosystem
 
-`expo-llm-wiki` is organized as a monorepo with seven packages:
+`expo-llm-wiki` is organized as a monorepo with eight packages:
 
 | Package | Purpose | Platform |
 |---------|---------|----------|

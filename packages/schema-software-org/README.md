@@ -1,6 +1,6 @@
 # @equationalapplications/schema-software-org
 
-A custom minimal ontology manifest for an executive agent operating on behalf of a software organization — 17 node types, 40 edges, a verbatim superset of the warm-agent manifest, data-only with no runtime code.
+A custom minimal ontology manifest for an executive agent operating on behalf of a software organization — 17 node types, 40 edges, a superset of the warm-agent manifest in which the warm-agent rows are copied verbatim except for one intentional override of `product` (which delegates to `software_application` / `service`), data-only with no runtime code.
 
 [![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fschema-software-org?label=schema-software-org)](https://www.npmjs.com/package/@equationalapplications/schema-software-org) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fschema-software-org?label=downloads)](https://www.npmjs.com/package/@equationalapplications/schema-software-org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -126,7 +126,7 @@ The organization's own backend illustrates the split: it is a `software_applicat
 
 Requires `@equationalapplications/core-llm-wiki` **>= 6.1.0** — that is the release that shipped `OntologyNodeType.parent_type`, which the five `creativework` subtypes rely on. This manifest does **not** validate against 6.0.1.
 
-`@equationalapplications/schema-org-llm-wiki` is **not** a runtime dependency. This package is a verbatim superset of the warm-agent manifest and stands alone — there is no need to install `schema-org-llm-wiki` to use `schema-software-org`.
+`@equationalapplications/schema-org-llm-wiki` is **not** a runtime dependency. This package is a verbatim superset of the warm-agent manifest except for one intentional override of `product` (which delegates to `software_application` / `service`), and stands alone — there is no need to install `schema-org-llm-wiki` to use `schema-software-org`.
 
 ## License
 

@@ -513,6 +513,7 @@ solely for the D2 parity test.
 > are kept because they name the specific invariants this manifest depends on
 > and fail with a precise message instead of a generic throw, but they are
 > documentation of core's guarantees, not independent coverage.
+>
 
 1. **Manifest validates** — `validateManifest(schemaSoftwareOrgManifest)` does not
    throw (requires the core release with `parent_type`).
