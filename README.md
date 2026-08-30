@@ -9,7 +9,8 @@
 [![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fcore-llm-wiki?label=@equationalapplications/core-llm-wiki)](https://www.npmjs.com/package/@equationalapplications/core-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fcore-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/core-llm-wiki)<br>
 [![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fcore-llm-tools?label=@equationalapplications/core-llm-tools)](https://www.npmjs.com/package/@equationalapplications/core-llm-tools) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fcore-llm-tools?label=downloads)](https://www.npmjs.com/package/@equationalapplications/core-llm-tools)<br>
 [![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fcore-okf?label=@equationalapplications/core-okf)](https://www.npmjs.com/package/@equationalapplications/core-okf) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fcore-okf?label=downloads)](https://www.npmjs.com/package/@equationalapplications/core-okf)<br>
-[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fschema-org-llm-wiki?label=@equationalapplications/schema-org-llm-wiki)](https://www.npmjs.com/package/@equationalapplications/schema-org-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fschema-org-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/schema-org-llm-wiki)
+[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fschema-org-llm-wiki?label=@equationalapplications/schema-org-llm-wiki)](https://www.npmjs.com/package/@equationalapplications/schema-org-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fschema-org-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/schema-org-llm-wiki)<br>
+[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fschema-software-org?label=@equationalapplications/schema-software-org)](https://www.npmjs.com/package/@equationalapplications/schema-software-org) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fschema-software-org?label=downloads)](https://www.npmjs.com/package/@equationalapplications/schema-software-org)
 
 **[GitHub](https://github.com/equationalapplications/expo-llm-wiki)** · **[ScopeLab](https://equationalapplications.github.io/expo-llm-wiki/scopelab/)** · **[WikiDemo](https://equationalapplications.github.io/expo-llm-wiki/wiki-demo/)** · **[Changelog](https://github.com/equationalapplications/expo-llm-wiki/blob/main/CHANGELOG.md)** · **[Issues](https://github.com/equationalapplications/expo-llm-wiki/issues)**
 
@@ -226,7 +227,7 @@ LIMIT ?                                                -- opts.maxTraversalNodes
 
 ## Monorepo Ecosystem
 
-`expo-llm-wiki` is organized as a monorepo with seven packages:
+`expo-llm-wiki` is organized as a monorepo with eight packages:
 
 | Package | Purpose | Platform |
 |---------|---------|----------|
@@ -237,6 +238,7 @@ LIMIT ?                                                -- opts.maxTraversalNodes
 | **`@equationalapplications/core-llm-tools`** | Platform-agnostic Gemini tool schemas and capability-based scope injector | Node.js, browser, React Native |
 | **`@equationalapplications/core-okf`** | Zero-dependency Open Knowledge Format (OKF) v0.1 + v0.2 primitives — parse and produce interoperable knowledge bundles. | Node.js, browser, React Native |
 | **`@equationalapplications/schema-org-llm-wiki`** | Curated schema.org warm-agent ontology manifest — 9 node types, 28 polymorphic edges, data-only* | Node.js, browser, React Native |
+| **`@equationalapplications/schema-software-org`** | Software-organization executive ontology manifest — 17 node types, 40 edges, warm-agent superset, data-only | Node.js, browser, React Native |
 
 **\*** *These packages provide the core GraphRAG surface area and canonical ontology for warm-agent graph retrieval. See [GraphRAG: SQL-only graph retrieval](#graphrag-sql-only-graph-retrieval) above.*
 
