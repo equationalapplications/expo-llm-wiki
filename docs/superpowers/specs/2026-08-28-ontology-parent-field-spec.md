@@ -1,7 +1,7 @@
 # Ontology Single-Level Parent Inheritance — Spec
 
 **Date:** 2026-08-28
-**Status:** Draft (rev 5 — 2026-08-30)
+**Status:** Draft (rev 6 — 2026-08-30)
 **Packages:** `@equationalapplications/core-llm-wiki`
 **Depends on:** None
 
@@ -104,10 +104,17 @@ identically. No SQLite column changes, no migration scripts.
 
 ### D6: Emergent proposals are untrusted — drop bad parents, never throw
 
-`mergeOntologyUpdates` preserves a proposed `parent_type` **only if** the
-referenced slug resolves within the merged node set and that parent does not
-itself have a `parent_type`. Otherwise the field is dropped and the node merges
-as a top-level type.
+`mergeOntologyUpdates` preserves a proposed `parent_type` **only if** it is a
+non-empty string, it is not the node's own slug, the referenced slug resolves
+within the merged node set, and that parent declares no `parent_type` key of
+its own. Otherwise the field is dropped and the node merges as a top-level type.
+
+**Every read of untrusted input is type-guarded.** `updates` is `JSON.parse`
+output, so `parent_type` can arrive as a number, an object, or `null`. Calling
+`.trim()` on a non-string throws a `TypeError` out of the merge and aborts the
+caller's transaction — precisely the failure this decision exists to prevent, so
+a guard that only handles *wrong slugs* and not *wrong types* leaves the hole
+open. A non-string is unusable input: dropped, never thrown on.
 
 **Rationale:** `mergeManifestUpdates` → `setManifest` → `validateManifest`
 (`MetadataRepository.ts:176`), and all three `mergeEmergentUpdates` call sites
@@ -119,8 +126,16 @@ malformed `ontology_updates` are silently skipped — the edge loop `continue`s
 on unknown source/target types (`utils/ontology.ts:99`). D6 keeps `parent_type`
 on that same lenient contract.
 
-Two consequences, both accepted:
+Three consequences, all accepted:
 
+- The parent test is **declared-key presence, not usability**. A node carrying a
+  `parent_type` key cannot serve as anyone's parent, whatever that value is — a
+  real parent, a hallucinated slug, blank, or a non-string. Testing usability
+  instead would split one input class across opposite outcomes: `b` with
+  `parent_type: 'hallucinated'` would reject a child (the value is truthy),
+  while `b` with `parent_type: 123` would accept one (the value normalizes
+  away), even though both are malformed proposals that merge as top-level.
+  Presence keeps a single rule.
 - The check is deliberately conservative. If updates propose `b` with an
   unresolvable parent and `a` with `parent_type: 'b'`, `a`'s parent is dropped
   even though `b` will itself merge as top-level and would have been a legal
@@ -156,12 +171,20 @@ so `parent_type` reaches the LLM with no prompt-template change. The only
 prompt edit needed is advertising the field in the *propose-a-type* schema so
 emergent mode can suggest children.
 
-### D10: A present-but-blank `parent_type` is an error
+### D10: A present-but-unusable `parent_type` is an error
 
 `parent_type: ''` (or whitespace) is malformed authorship, not "no parent".
 Treating it as absent would silently disable inheritance on a type the author
 meant to nest. `validateManifest` throws; absence (`undefined`) stays valid and
 means exactly what it says.
+
+The same throw covers a **non-string** `parent_type`. The field is typed
+`string | undefined`, but `validateManifest` runs on `JSON.parse` output from
+`entity_manifests.manifest_json` on every read (`MetadataRepository.ts:164`), so
+a legacy or hand-edited row can hold a number, an object, or `null`. Unguarded,
+`.trim()` on those raises a bare `TypeError` instead of the manifest error the
+caller can act on — hence
+`Ontology parent_type must be a non-empty string when present`.
 
 This matches how core already treats blank slugs elsewhere — `validateManifest`
 throws `Ontology node type slug must be non-empty` and the equivalent for edge
@@ -226,15 +249,22 @@ resolve):
 ```ts
 const parentOf = new Map<string, string | undefined>();
 for (const node of manifest.node_types ?? []) {
-  parentOf.set(node.type.trim().toLowerCase(), node.parent_type?.trim().toLowerCase());
+  const parent = typeof node.parent_type === 'string'
+    ? node.parent_type.trim().toLowerCase()
+    : undefined;
+  parentOf.set(node.type.trim().toLowerCase(), parent);
 }
 for (const node of manifest.node_types ?? []) {
   // D10: absent means "no parent"; present-but-blank is malformed.
   if (node.parent_type === undefined) continue;
-  const p = node.parent_type.trim().toLowerCase();
-  if (!p) {
-    throw new Error(`Ontology parent_type must be non-empty when present: ${node.type}`);
+  // Typed `string | undefined`, but this runs on JSON.parse output from
+  // `entity_manifests.manifest_json` on every read — a legacy or hand-edited
+  // row can carry a number or `null`, and `.trim()` on those throws a bare
+  // TypeError instead of this manifest error.
+  if (typeof node.parent_type !== 'string' || !node.parent_type.trim()) {
+    throw new Error(`Ontology parent_type must be a non-empty string when present: ${node.type}`);
   }
+  const p = node.parent_type.trim().toLowerCase();
   if (p === node.type.trim().toLowerCase()) {
     throw new Error(`Self-parent: ${node.type}`);
   }
@@ -262,12 +292,19 @@ export function typeSatisfies(
   if (!concrete || !declared) return false;
   if (declared === concrete) return true;
   // `node_types` is typed non-optional but arrives from JSON.parse of a DB
-  // row at runtime, so guard it the way validateManifest already does.
+  // row at runtime, so guard it the way validateManifest already does — and
+  // for the same reason, `typeof`-check the fields rather than calling .trim()
+  // on them. This runs inside the caller's transaction, so a TypeError here
+  // aborts an ingest exactly like one in the merge path. Manifests reaching
+  // this point have already passed validateManifest (getManifest:164, and
+  // seeds via D11), so this is defense in depth, not the primary guard.
   const def = (manifest.node_types ?? []).find(
-    n => n?.type?.trim().toLowerCase() === concrete,
+    n => typeof n?.type === 'string' && n.type.trim().toLowerCase() === concrete,
   );
-  const parent = def?.parent_type?.trim().toLowerCase();
-  return !!parent && parent === declared;
+  const parent = typeof def?.parent_type === 'string'
+    ? def.parent_type.trim().toLowerCase()
+    : '';
+  return parent !== '' && parent === declared;
 }
 ```
 
@@ -294,24 +331,42 @@ current + proposed nodes with first-seen-wins (mirroring the dedup below), then
 gate the field:
 
 ```ts
-// Guarded against malformed updates: an LLM may emit a node with no `type`.
-const parentOf = new Map<string, string | undefined>();
+// `updates` is JSON.parse output: every field is `unknown` at runtime whatever
+// the TS types say. Each read below is type-guarded — `.trim()` on a number or
+// an object throws a TypeError straight out of the caller's transaction.
+//
+// Value: did this slug declare a `parent_type` key at all? Presence, not
+// usability — see D6. `false` means "top-level, may serve as a parent".
+const declaresParent = new Map<string, boolean>();
 for (const n of [...current.node_types, ...(updates.node_types ?? [])]) {
-  const slug = n?.type?.trim().toLowerCase();
-  if (!slug || parentOf.has(slug)) continue;
-  parentOf.set(slug, n.parent_type?.trim().toLowerCase() || undefined);
+  const slug = typeof n?.type === 'string' ? n.type.trim().toLowerCase() : '';
+  if (!slug || declaresParent.has(slug)) continue; // first-seen wins
+  declaresParent.set(slug, n?.parent_type !== undefined);
 }
 
 // …inside the existing node loop, replacing the `node_types.push` at :86:
-const rawParent = node.parent_type?.trim();
-const p = rawParent?.toLowerCase();
-const keepParent = !!p && p !== key && parentOf.has(p) && !parentOf.get(p);
+const rawParent = typeof node?.parent_type === 'string' ? node.parent_type.trim() : '';
+const parentSlug = rawParent.toLowerCase();
+const keepParent = parentSlug !== ''
+  && parentSlug !== key
+  && declaresParent.get(parentSlug) === false;
 node_types.push({
   type,
   description: String(node.description ?? ''),
   ...(keepParent ? { parent_type: rawParent } : {}),
 });
 ```
+
+`declaresParent.get(...) === false` is the whole gate, written explicitly:
+`undefined` means the slug is unknown (dangling parent), `true` means that node
+declared a `parent_type` of its own and so cannot be a parent, `false` means a
+known top-level type. `rawParent` keeps the proposer's original casing, which
+the manifest stores verbatim.
+
+The node loop below still reads `node?.type?.trim()` (`:83`) and carries the
+same latent `TypeError` on a non-string `type`. That line ships today and is
+unchanged by this work, so it is **not** fixed here — but the new index loop
+above must not add a second copy of the bug, hence the guard on `n?.type`.
 
 Conditional spread keeps `parent_type` absent rather than `undefined`, matching
 the existing serialization shape.
@@ -430,9 +485,28 @@ receives already carries `parent_type` via D9.
     `{ type, description }`, with no `parent_type` key.
 
 14b. **`validateManifest` rejects a present-but-blank `parent_type`** (D10) —
-     `''` and `'   '` both throw `must be non-empty`; an absent field does not.
+     `''` and `'   '` both throw `must be a non-empty string`; an absent field
+     does not.
 14c. **`mergeOntologyUpdates` drops a blank `parent_type`** without throwing —
      the untrusted path stays lenient (D6/D10).
+14d. **`validateManifest` rejects a non-string `parent_type`** with the same
+     manifest error, not a `TypeError` — `0`, `123`, `true`, `{}`, and `null`
+     each throw `must be a non-empty string` (D10). `0` and `false` matter
+     independently of `123`: a falsy non-string must not slip through a
+     truthiness check.
+14e. **`mergeOntologyUpdates` drops a non-string `parent_type`** without
+     throwing (D6) — `123`, `null`, `{}`, and `[]` each merge the node as
+     top-level, and the result passes `validateManifest`. This is the
+     transaction-abort regression guard: unguarded, `.trim()` on any of them
+     raises a `TypeError` out of `withTransactionAsync`.
+14f. **`mergeOntologyUpdates` survives a non-string `type`** in the new index
+     loop — a node with `type: 42` is skipped, and well-formed nodes in the
+     same batch still merge.
+14g. **A node that declared an unusable `parent_type` cannot serve as a
+     parent** (D6 presence rule) — updates proposing `b` with
+     `parent_type: 123` and `a` with `parent_type: 'b'` merge `b` as top-level
+     and drop `a`'s parent, matching the treatment of `b` with a hallucinated
+     string parent.
 
 ### Service — `packages/core/__tests__/services/`
 
@@ -485,6 +559,7 @@ receives already carries `parent_type` via D9.
 | Extra `find()` over `node_types` per non-exact edge candidate | Exact matches short-circuit before the lookup; `find()` over ~18 types |
 | A future developer adds recursive resolution | `Parent chain too deep` makes D1 enforceable at every manifest read *and* write |
 | Hallucinated parents in emergent mode abort an ingest | D6: drop the field in merge; `validateManifest` never sees an invalid parent from the LLM path |
+| A non-string `parent_type` aborts an ingest via `TypeError` | D6: every read of `updates` is `typeof`-guarded before `.trim()`, so a number/object/`null` is dropped like any other unusable value (tests 14e-14g). D10 gives the persisted path the same guard, throwing a manifest error rather than a `TypeError` (test 14d) |
 | Parent-satisfied edges validate but never persist | D4: one primitive across all four gates; integration-proven through `upsertGraph` and the backfill path |
 | Both an exact and a parent-derived def match one target | Exact-first two-pass resolution (D3): the narrower pass runs first, so order never decides which pass wins. Ties *within* a pass are possible (the source filter is many-to-one) but immaterial — only `def.type` is read, and `validateManifest` enforces one casing per edge name |
 | A dangling seed is fatal via `getEffectiveState` but visible via `getOntologyManifest` | Accepted and documented in D11 — the getter drives no matching |
@@ -539,3 +614,19 @@ receives already carries `parent_type` via D9.
   validation is lazy at first `getEffectiveState`, not eager at construction
   (rev 4 said "failing fast at construction"), and
   `WikiMemory.getOntologyManifest`'s own seed fallback stays unvalidated.
+- **Rev 6 (2026-08-30)** — PR #110 review (CodeRabbit). **Type-safety hole in
+  the D6 recipe**: it called `.trim()` on `parent_type` straight off
+  `JSON.parse` output, so a proposal carrying a number, an object, or `null`
+  raised a `TypeError` out of `mergeOntologyUpdates` and aborted the ingest
+  transaction — the exact failure D6 was written to prevent, reachable through
+  a type rather than a bad slug. Every untrusted read is now `typeof`-guarded.
+  D6's parent gate also changes from *usability* to **declared-key presence**,
+  so a node proposing `parent_type: 123` and one proposing
+  `parent_type: 'hallucinated'` are treated alike; previously the first could
+  still serve as another node's parent and the second could not. The same guard
+  is applied to D10's `validateManifest` snippet, which had the identical
+  defect on the persisted path (`manifest_json` is `JSON.parse`d on every
+  read), so a legacy row yields a manifest error instead of a `TypeError`; its
+  message becomes `must be a non-empty string when present`. Tests 14d-14g
+  added. The pre-existing unguarded `node?.type?.trim()` in the shipped merge
+  loop (`utils/ontology.ts:83`) is noted but deliberately left alone.
