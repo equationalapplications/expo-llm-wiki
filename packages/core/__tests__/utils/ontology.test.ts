@@ -8,6 +8,7 @@ import {
   validateInlineEdges,
   resolveEdgeDefinitions,
   typeSatisfies,
+  buildDeclaresParentIndex,
 } from '../../src/utils/ontology';
 import { WikiStrictOntologyViolation } from '../../src/index';
 import type { OntologyManifest, OntologyNodeType } from '../../src/types';
@@ -454,5 +455,152 @@ describe('ontology parent inheritance', () => {
       expect(typeSatisfies('creativework', 'design_spec', badTypes)).toBe(false);
       expect(() => typeSatisfies('creativework', 'design_spec', badTypes)).not.toThrow();
     });
+  });
+
+  it('mergeOntologyUpdates preserves parent_type when the parent is in the same batch', () => {
+    const merged = mergeOntologyUpdates(emptyManifest(), {
+      node_types: [
+        { type: 'creativework', description: 'Parent.' },
+        { type: 'design_spec', description: 'Child.', parent_type: 'creativework' },
+      ],
+      edge_types: [],
+    });
+    expect(merged.node_types.find(n => n.type === 'design_spec')?.parent_type).toBe('creativework');
+    expect(() => validateManifest(merged)).not.toThrow();
+  });
+
+  it('mergeOntologyUpdates preserves parent_type when the parent already exists', () => {
+    const merged = mergeOntologyUpdates(
+      { node_types: [{ type: 'creativework', description: 'Parent.' }], edge_types: [] },
+      {
+        node_types: [{ type: 'design_spec', description: 'Child.', parent_type: 'CreativeWork' }],
+        edge_types: [],
+      },
+    );
+    expect(merged.node_types.find(n => n.type === 'design_spec')?.parent_type).toBe('CreativeWork');
+    expect(() => validateManifest(merged)).not.toThrow();
+  });
+
+  it('mergeOntologyUpdates drops an unresolvable parent_type instead of yielding a throwing manifest (D6)', () => {
+    const merged = mergeOntologyUpdates(emptyManifest(), {
+      node_types: [{ type: 'design_spec', description: 'Child.', parent_type: 'hallucinated' }],
+      edge_types: [],
+    });
+    expect(merged.node_types.find(n => n.type === 'design_spec'))
+      .toEqual({ type: 'design_spec', description: 'Child.' });
+    expect(() => validateManifest(merged)).not.toThrow();
+  });
+
+  it('mergeOntologyUpdates drops a parent_type whose target is itself a child (D1/D6)', () => {
+    const merged = mergeOntologyUpdates(
+      {
+        node_types: [
+          { type: 'thing', description: 'root' },
+          { type: 'creativework', description: 'mid', parent_type: 'thing' },
+        ],
+        edge_types: [],
+      },
+      {
+        node_types: [{ type: 'design_spec', description: 'leaf', parent_type: 'creativework' }],
+        edge_types: [],
+      },
+    );
+    expect(merged.node_types.find(n => n.type === 'design_spec')?.parent_type).toBeUndefined();
+    expect(() => validateManifest(merged)).not.toThrow();
+  });
+
+  it('mergeOntologyUpdates drops a self-referential parent_type', () => {
+    const merged = mergeOntologyUpdates(emptyManifest(), {
+      node_types: [{ type: 'design_spec', description: 'x', parent_type: 'Design_Spec' }],
+      edge_types: [],
+    });
+    expect(merged.node_types[0]).toEqual({ type: 'design_spec', description: 'x' });
+  });
+
+  it('mergeOntologyUpdates survives a malformed proposed node with no type field', () => {
+    const merged = mergeOntologyUpdates(emptyManifest(), {
+      node_types: [
+        { description: 'no type at all' } as unknown as OntologyNodeType,
+        { type: 'person', description: 'A person.' },
+      ],
+      edge_types: [],
+    });
+    expect(merged.node_types).toEqual([{ type: 'person', description: 'A person.' }]);
+  });
+
+  it('mergeOntologyUpdates drops a blank parent_type without throwing (D6/D10)', () => {
+    // validateManifest throws on a blank parent_type; the untrusted merge path
+    // must stay lenient and drop it, or an LLM emitting `""` aborts an ingest.
+    for (const blank of ['', '   ']) {
+      const merged = mergeOntologyUpdates(emptyManifest(), {
+        node_types: [{ type: 'design_spec', description: 'x', parent_type: blank }],
+        edge_types: [],
+      });
+      expect(merged.node_types[0]).toEqual({ type: 'design_spec', description: 'x' });
+      expect(() => validateManifest(merged)).not.toThrow();
+    }
+  });
+
+  // The transaction-abort regression guard. Unguarded, `.trim()` on any of
+  // these raises a TypeError out of mergeOntologyUpdates — before
+  // validateManifest is ever reached — and kills the caller's ingest.
+  it.each([['number', 123], ['zero', 0], ['boolean', true], ['null', null],
+           ['object', {}], ['array', []]])(
+    'mergeOntologyUpdates drops a non-string parent_type (%s) without throwing (D6)',
+    (_label, bad) => {
+      const merged = mergeOntologyUpdates(
+        { node_types: [{ type: 'creativework', description: 'Parent.' }], edge_types: [] },
+        {
+          node_types: [{
+            type: 'design_spec',
+            description: 'Child.',
+            parent_type: bad as unknown as string,
+          }],
+          edge_types: [],
+        },
+      );
+      expect(merged.node_types.find(n => n.type === 'design_spec'))
+        .toEqual({ type: 'design_spec', description: 'Child.' });
+      expect(() => validateManifest(merged)).not.toThrow();
+    },
+  );
+
+  it('buildDeclaresParentIndex skips a non-string type', () => {
+    // Asserts the new index helper's untrusted-input contract directly. The
+    // shipped mergeOntologyUpdates node loop (utils/ontology.ts:82) still
+    // throws on a non-string `type`, so going through mergeOntologyUpdates
+    // would never reach an assertion — see spec rev 7 test 14f.
+    const index = buildDeclaresParentIndex([
+      { type: 42 as unknown as string, description: 'bogus' },
+      { type: 'person', description: 'A person.' },
+    ] as unknown as Parameters<typeof buildDeclaresParentIndex>[0]);
+    expect(index.get('person')).toBe(false); // no parent_type key declared
+    expect(index.has('42')).toBe(false); // bogus slug omitted
+    expect(index.size).toBe(1);
+  });
+
+  it('a node that declared an unusable parent_type cannot itself be a parent (D6)', () => {
+    // Presence, not usability: `b` declared a parent_type key, so it cannot
+    // serve as `a`'s parent — same outcome as `b` declaring a hallucinated
+    // string parent, which the test above already covers.
+    const merged = mergeOntologyUpdates(emptyManifest(), {
+      node_types: [
+        { type: 'b', description: 'malformed', parent_type: 123 as unknown as string },
+        { type: 'a', description: 'child', parent_type: 'b' },
+      ],
+      edge_types: [],
+    });
+    expect(merged.node_types.find(n => n.type === 'b')).toEqual({ type: 'b', description: 'malformed' });
+    expect(merged.node_types.find(n => n.type === 'a')?.parent_type).toBeUndefined();
+    expect(() => validateManifest(merged)).not.toThrow();
+  });
+
+  it('mergeOntologyUpdates leaves parent_type absent for plain nodes (no key churn)', () => {
+    const merged = mergeOntologyUpdates(emptyManifest(), {
+      node_types: [{ type: 'person', description: 'A person.' }],
+      edge_types: [],
+    });
+    expect(merged.node_types[0]).toEqual({ type: 'person', description: 'A person.' });
+    expect('parent_type' in merged.node_types[0]).toBe(false);
   });
 });

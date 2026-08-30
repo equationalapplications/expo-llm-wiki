@@ -1,5 +1,6 @@
 import type {
   OntologyManifest,
+  OntologyNodeType,
   OntologyUpdates,
   ExtractedFactEdge,
 } from '../types';
@@ -132,6 +133,26 @@ export function validateManifest(manifest: OntologyManifest): void {
   }
 }
 
+// D6: emergent updates are untrusted. `updates` is JSON.parse output, so
+// every field is `unknown` at runtime whatever the TS types say — `.trim()`
+// on a number or an object throws a TypeError straight out of the caller's
+// transaction, which is the failure D6 exists to prevent. Guard every read.
+//
+// Exported so the test suite can exercise the index's untrusted-input
+// contract directly, without going through mergeOntologyUpdates — whose
+// pre-existing node loop (utils/ontology.ts:82) is unchanged by this work.
+export function buildDeclaresParentIndex(
+  nodes: ReadonlyArray<OntologyNodeType>,
+): Map<string, boolean> {
+  const declaresParent = new Map<string, boolean>();
+  for (const n of nodes) {
+    const slug = typeof n?.type === 'string' ? n.type.trim().toLowerCase() : '';
+    if (!slug || declaresParent.has(slug)) continue;
+    declaresParent.set(slug, n?.parent_type !== undefined);
+  }
+  return declaresParent;
+}
+
 export function mergeOntologyUpdates(
   current: OntologyManifest,
   updates: OntologyUpdates,
@@ -142,12 +163,34 @@ export function mergeOntologyUpdates(
   const edgeKeys = new Set(edge_types.map(e => edgeTripleKey(e.type, e.source_type, e.target_type)));
   const edgeNames = new Map(edge_types.map(e => [e.type.trim().toLowerCase(), e.type.trim()]));
 
+  // Index over current + proposed nodes, first-seen wins (mirrors the dedup in
+  // the loop below). Value: did this slug declare a `parent_type` key at all?
+  // Presence, not usability — a node that declared one cannot serve as a
+  // parent, whether it is a real child or a malformed proposal.
+  const declaresParent = buildDeclaresParentIndex([
+    ...current.node_types,
+    ...(updates.node_types ?? []),
+  ]);
+
   for (const node of updates.node_types ?? []) {
     const type = node?.type?.trim();
     if (!type) continue;
     const key = type.toLowerCase();
     if (nodeSlugs.has(key)) continue;
-    node_types.push({ type, description: String(node.description ?? '') });
+    // Drop a non-string, blank, unresolvable, self-referential, or two-deep
+    // parent rather than letting it throw inside the caller's transaction (D6).
+    // `declaresParent.get(...) === false` is the whole gate: `undefined` means
+    // the slug is unknown, `true` means that node declared a parent of its own.
+    const rawParent = typeof node?.parent_type === 'string' ? node.parent_type.trim() : '';
+    const parentSlug = rawParent.toLowerCase();
+    const keepParent = parentSlug !== ''
+      && parentSlug !== key
+      && declaresParent.get(parentSlug) === false;
+    node_types.push({
+      type,
+      description: String(node.description ?? ''),
+      ...(keepParent ? { parent_type: rawParent } : {}),
+    });
     nodeSlugs.add(key);
   }
   for (const edge of updates.edge_types ?? []) {
