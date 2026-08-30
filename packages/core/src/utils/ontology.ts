@@ -1,5 +1,6 @@
 import type {
   OntologyManifest,
+  OntologyNodeType,
   OntologyUpdates,
   ExtractedFactEdge,
 } from '../types';
@@ -33,6 +34,38 @@ function edgeTripleKey(type: string, sourceType: string, targetType: string): st
   return `${type.trim().toLowerCase()}|${sourceType.trim().toLowerCase()}|${targetType.trim().toLowerCase()}`;
 }
 
+/**
+ * True when `concreteType` satisfies a declared type: an exact
+ * (case-insensitive) match, or a one-hop parent match — the concrete type's
+ * `parent_type` equals the declared type. Never recursive (D1). Exact matches
+ * short-circuit before the node lookup, so manifests with no `parent_type`
+ * behave bit-for-bit as before.
+ */
+export function typeSatisfies(
+  declaredType: string,
+  concreteType: string,
+  manifest: OntologyManifest,
+): boolean {
+  const concrete = concreteType.trim().toLowerCase();
+  const declared = declaredType.trim().toLowerCase();
+  if (!concrete || !declared) return false;
+  if (declared === concrete) return true;
+  // `node_types` is typed non-optional but arrives from JSON.parse of a DB row
+  // at runtime, so guard it the way validateManifest already does — and for the
+  // same reason, `typeof`-check the fields rather than calling .trim() on them.
+  // This runs inside the caller's transaction, so a TypeError here aborts an
+  // ingest exactly like one in the merge path. Manifests reaching this point
+  // have already passed validateManifest (getManifest:164, and seeds via D11),
+  // so this is defense in depth, not the primary guard.
+  const def = (manifest.node_types ?? []).find(
+    n => typeof n?.type === 'string' && n.type.trim().toLowerCase() === concrete,
+  );
+  const parent = typeof def?.parent_type === 'string'
+    ? def.parent_type.trim().toLowerCase()
+    : '';
+  return parent !== '' && parent === declared;
+}
+
 export function validateManifest(manifest: OntologyManifest): void {
   const nodeSlugs = new Set<string>();
   for (const node of manifest.node_types ?? []) {
@@ -41,6 +74,38 @@ export function validateManifest(manifest: OntologyManifest): void {
     const key = type.toLowerCase();
     if (nodeSlugs.has(key)) throw new Error(`Duplicate node type: ${type}`);
     nodeSlugs.add(key);
+  }
+  // D1: optional one-level parent inheritance. A parent must be a real,
+  // distinct node in the same manifest, and must not itself have a parent.
+  // The chain check also rejects 2-cycles, which self-parent alone misses.
+  const parentOf = new Map<string, string | undefined>();
+  for (const node of manifest.node_types ?? []) {
+    const parent = typeof node.parent_type === 'string'
+      ? node.parent_type.trim().toLowerCase()
+      : undefined;
+    parentOf.set(node.type.trim().toLowerCase(), parent);
+  }
+  for (const node of manifest.node_types ?? []) {
+    // D10: absent means "no parent"; present-but-unusable is malformed.
+    if (node.parent_type === undefined) continue;
+    // Typed `string | undefined`, but this runs on JSON.parse output from
+    // `entity_manifests.manifest_json` on every read (MetadataRepository:164),
+    // so a legacy or hand-edited row can carry a number or `null`. Unguarded,
+    // `.trim()` on those raises a bare TypeError instead of this error.
+    if (typeof node.parent_type !== 'string' || !node.parent_type.trim()) {
+      throw new Error(`Ontology parent_type must be a non-empty string when present: ${node.type}`);
+    }
+    const parentSlug = node.parent_type.trim().toLowerCase();
+    if (parentSlug === node.type.trim().toLowerCase()) {
+      throw new Error(`Self-parent: ${node.type}`);
+    }
+    if (!nodeSlugs.has(parentSlug)) {
+      throw new Error(`Parent type not found: ${node.parent_type}`);
+    }
+    const grandparent = parentOf.get(parentSlug);
+    if (grandparent) {
+      throw new Error(`Parent chain too deep: ${node.type} → ${node.parent_type} → ${grandparent}`);
+    }
   }
   const edgeKeys = new Set<string>();
   const edgeNames = new Map<string, string>();
@@ -68,6 +133,26 @@ export function validateManifest(manifest: OntologyManifest): void {
   }
 }
 
+// D6: emergent updates are untrusted. `updates` is JSON.parse output, so
+// every field is `unknown` at runtime whatever the TS types say — `.trim()`
+// on a number or an object throws a TypeError straight out of the caller's
+// transaction, which is the failure D6 exists to prevent. Guard every read.
+//
+// Exported so the test suite can exercise the index's untrusted-input
+// contract directly, without going through mergeOntologyUpdates — whose
+// pre-existing node loop (utils/ontology.ts:176) is unchanged by this work.
+export function buildDeclaresParentIndex(
+  nodes: ReadonlyArray<OntologyNodeType>,
+): Map<string, boolean> {
+  const declaresParent = new Map<string, boolean>();
+  for (const n of nodes) {
+    const slug = typeof n?.type === 'string' ? n.type.trim().toLowerCase() : '';
+    if (!slug || declaresParent.has(slug)) continue;
+    declaresParent.set(slug, n?.parent_type !== undefined);
+  }
+  return declaresParent;
+}
+
 export function mergeOntologyUpdates(
   current: OntologyManifest,
   updates: OntologyUpdates,
@@ -78,12 +163,34 @@ export function mergeOntologyUpdates(
   const edgeKeys = new Set(edge_types.map(e => edgeTripleKey(e.type, e.source_type, e.target_type)));
   const edgeNames = new Map(edge_types.map(e => [e.type.trim().toLowerCase(), e.type.trim()]));
 
+  // Index over current + proposed nodes, first-seen wins (mirrors the dedup in
+  // the loop below). Value: did this slug declare a `parent_type` key at all?
+  // Presence, not usability — a node that declared one cannot serve as a
+  // parent, whether it is a real child or a malformed proposal.
+  const declaresParent = buildDeclaresParentIndex([
+    ...current.node_types,
+    ...(updates.node_types ?? []),
+  ]);
+
   for (const node of updates.node_types ?? []) {
     const type = node?.type?.trim();
     if (!type) continue;
     const key = type.toLowerCase();
     if (nodeSlugs.has(key)) continue;
-    node_types.push({ type, description: String(node.description ?? '') });
+    // Drop a non-string, blank, unresolvable, self-referential, or two-deep
+    // parent rather than letting it throw inside the caller's transaction (D6).
+    // `declaresParent.get(...) === false` is the whole gate: `undefined` means
+    // the slug is unknown, `true` means that node declared a parent of its own.
+    const rawParent = typeof node?.parent_type === 'string' ? node.parent_type.trim() : '';
+    const parentSlug = rawParent.toLowerCase();
+    const keepParent = parentSlug !== ''
+      && parentSlug !== key
+      && declaresParent.get(parentSlug) === false;
+    node_types.push({
+      type,
+      description: String(node.description ?? ''),
+      ...(keepParent ? { parent_type: rawParent } : {}),
+    });
     nodeSlugs.add(key);
   }
   for (const edge of updates.edge_types ?? []) {
@@ -129,7 +236,7 @@ export function validateInlineEdges(
       continue;
     }
     const defs = resolveEdgeDefinitions(edge.edge_type, manifest);
-    const match = defs.find(d => d.source_type.toLowerCase() === sourceType.toLowerCase());
+    const match = defs.find(d => typeSatisfies(d.source_type, sourceType, manifest));
     if (!match) {
       if (strict) throw new WikiStrictOntologyViolation(entityId, 'edge', edge.edge_type);
       continue;

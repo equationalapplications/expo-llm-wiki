@@ -1,5 +1,5 @@
 import { chunkText, withConcurrency, validateFact, parseJsonResponse, normalizeSourceRef, normalizeSourceHash, safeErrorToString } from '../utils/pure';
-import { normalizeTitleKey } from '../utils/ontology';
+import { normalizeTitleKey, typeSatisfies } from '../utils/ontology';
 import { generateId } from '../utils/ids';
 import { WikiParseError, WikiIngestEmptyError, WikiDuplicateHashError, WikiTransactionError, WikiStrictOntologyViolation } from '../types';
 import type { ChunkFailure, WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedFactWithOntology, WikiFact, OntologyUpdates, WikiEdge, IngestDocumentResult } from '../types';
@@ -471,7 +471,7 @@ export class IngestionService {
       const sourceType = sourceIdToType.get(edge.sourceId);
       const candidates = (manifest.edge_types ?? []).filter(d =>
         d.type.toLowerCase() === edge.type.toLowerCase()
-        && d.source_type.toLowerCase() === (sourceType ?? '').toLowerCase(),
+        && typeSatisfies(d.source_type, sourceType ?? '', manifest),
       );
       const match = candidates[0];
       if (!match) {
