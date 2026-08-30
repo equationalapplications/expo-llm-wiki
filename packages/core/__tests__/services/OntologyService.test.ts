@@ -480,6 +480,8 @@ describe('OntologyService', () => {
         seedManifests: { e1: { mode: 'strict' as const, manifest: parentEdgeManifest } },
       } as any);
       await expect(svc.getEffectiveState('e1')).resolves.toMatchObject({ mode: 'strict' });
+      // tx branch: skips the cache and validates/persists the seed via setManifest.
+      await expect(svc.getEffectiveState('e1', {} as any)).resolves.toMatchObject({ mode: 'strict' });
     });
 
     it('child source does not satisfy an edge declared on an unrelated type', () => {
