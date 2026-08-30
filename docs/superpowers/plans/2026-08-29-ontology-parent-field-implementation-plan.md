@@ -1,8 +1,8 @@
 # Ontology Single-Level Parent Inheritance — Implementation Plan
 
-**Date:** 2026-08-29 (revised 2026-08-30 for spec rev 6)
+**Date:** 2026-08-29 (revised 2026-08-30 for spec rev 8)
 **Status:** PLAN (execution)
-**Spec:** `docs/superpowers/specs/2026-08-28-ontology-parent-field-spec.md` (rev 6)
+**Spec:** `docs/superpowers/specs/2026-08-28-ontology-parent-field-spec.md` (rev 8)
 **Author:** Tessera
 **Estimated Effort:** Small (~2–4 hours)
 **Branch:** `docs/ontology-parent-field-spec` (spec branch; implement on a feature branch cut from `main`)
@@ -69,7 +69,7 @@ All four route through the single `typeSatisfies` primitive defined in Task 1.
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `packages/core/__tests__/utils/ontology.test.ts`. `validateManifest`, `resolveNodeType`, `mergeOntologyUpdates`, `validateInlineEdges` and `emptyManifest` are already imported at the top of that file; add `typeSatisfies` to that same import block, and `OntologyNodeType` to the existing `import type { OntologyManifest }` line (Task 2's malformed-node test casts through it):
+Append to `packages/core/__tests__/utils/ontology.test.ts`. `validateManifest`, `resolveNodeType`, `mergeOntologyUpdates`, `validateInlineEdges` and `emptyManifest` are already imported at the top of that file; add `typeSatisfies` and `buildDeclaresParentIndex` to that same import block, and `OntologyNodeType` to the existing `import type { OntologyManifest }` line (Task 2's malformed-node test casts through it, and test 14f's `as unknown as Parameters<...>[0]` resolves against it):
 
 ```ts
 const parentManifest: OntologyManifest = {
@@ -515,17 +515,18 @@ Append to the `ontology parent inheritance` describe block:
     },
   );
 
-  it('mergeOntologyUpdates survives a non-string type in the parent index loop', () => {
-    // The new index loop reads `type` before the existing node loop does; it
-    // must not become a second place a numeric `type` can throw.
-    const merged = mergeOntologyUpdates(emptyManifest(), {
-      node_types: [
-        { type: 42 as unknown as string, description: 'bogus' },
-        { type: 'person', description: 'A person.' },
-      ],
-      edge_types: [],
-    });
-    expect(merged.node_types).toEqual([{ type: 'person', description: 'A person.' }]);
+  it('buildDeclaresParentIndex skips a non-string type', () => {
+    // Asserts the new index helper's untrusted-input contract directly. The
+    // shipped mergeOntologyUpdates node loop (utils/ontology.ts:82) still
+    // throws on a non-string `type`, so going through mergeOntologyUpdates
+    // would never reach an assertion — see spec rev 7 test 14f.
+    const index = buildDeclaresParentIndex([
+      { type: 42 as unknown as string, description: 'bogus' },
+      { type: 'person', description: 'A person.' },
+    ] as unknown as Parameters<typeof buildDeclaresParentIndex>[0]);
+    expect(index.get('person')).toBe(false); // no parent_type key declared
+    expect(index.has('42')).toBe(false); // bogus slug omitted
+    expect(index.size).toBe(1);
   });
 
   it('a node that declared an unusable parent_type cannot itself be a parent (D6)', () => {
@@ -557,28 +558,49 @@ Append to the `ontology parent inheritance` describe block:
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `pnpm --filter @equationalapplications/core-llm-wiki test -- ontology.test`
-Expected: FAIL — the preservation tests get `parent_type === undefined` (line 86 rebuilds `{ type, description }`, stripping the field). The non-string tests fail differently and importantly: they throw `TypeError: node.parent_type.trim is not a function` out of the merge, which is the abort this task exists to prevent.
+Expected: FAIL — the preservation tests get `parent_type === undefined` (line 86 rebuilds `{ type, description }`, stripping the field). The non-string tests fail differently and importantly: they throw `TypeError: node.parent_type.trim is not a function` out of the merge, which is the abort this task exists to prevent. The `buildDeclaresParentIndex` test (14f) fails at import time — the helper does not exist yet.
 
 - [ ] **Step 3: Write the minimal implementation**
 
-In `mergeOntologyUpdates`, insert after the `edgeNames` declaration (line 79) and before the node loop:
+In `packages/core/src/utils/ontology.ts`, add the helper above `mergeOntologyUpdates` (export it — the test suite and any internal module that needs the index use the same primitive):
 
 ```ts
-  // D6: emergent updates are untrusted. `updates` is JSON.parse output, so
-  // every field is `unknown` at runtime whatever the TS types say — `.trim()`
-  // on a number or an object throws a TypeError straight out of the caller's
-  // transaction, which is the failure D6 exists to prevent. Guard every read.
-  //
-  // Index over current + proposed nodes, first-seen wins (mirrors the dedup in
-  // the loop below). Value: did this slug declare a `parent_type` key at all?
-  // Presence, not usability — a node that declared one cannot serve as a
-  // parent, whether it is a real child or a malformed proposal.
+// D6: emergent updates are untrusted. `updates` is JSON.parse output, so
+// every field is `unknown` at runtime whatever the TS types say — `.trim()`
+// on a number or an object throws a TypeError straight out of the caller's
+// transaction, which is the failure D6 exists to prevent. Guard every read.
+//
+// Exported so the test suite can exercise the index's untrusted-input
+// contract directly, without going through mergeOntologyUpdates — whose
+// pre-existing node loop (utils/ontology.ts:82) is unchanged by this work.
+export function buildDeclaresParentIndex(
+  nodes: ReadonlyArray<OntologyNodeType>,
+): Map<string, boolean> {
   const declaresParent = new Map<string, boolean>();
-  for (const n of [...current.node_types, ...(updates.node_types ?? [])]) {
+  for (const n of nodes) {
     const slug = typeof n?.type === 'string' ? n.type.trim().toLowerCase() : '';
     if (!slug || declaresParent.has(slug)) continue;
     declaresParent.set(slug, n?.parent_type !== undefined);
   }
+  return declaresParent;
+}
+```
+
+(Add `OntologyNodeType` to the existing `import type { ... } from '../types'`
+line — it is not imported today.)
+
+In `mergeOntologyUpdates`, replace the inline index loop (insert after the
+`edgeNames` declaration at line 79 and before the node loop):
+
+```ts
+  // Index over current + proposed nodes, first-seen wins (mirrors the dedup in
+  // the loop below). Value: did this slug declare a `parent_type` key at all?
+  // Presence, not usability — a node that declared one cannot serve as a
+  // parent, whether it is a real child or a malformed proposal.
+  const declaresParent = buildDeclaresParentIndex([
+    ...current.node_types,
+    ...(updates.node_types ?? []),
+  ]);
 ```
 
 Then replace line 86:
@@ -1128,7 +1150,7 @@ git commit -m "test(ontology): end-to-end parent inheritance coverage"
 
 ## Testing Strategy
 
-- **Unit:** `packages/core/__tests__/utils/ontology.test.ts` — validation matrix (accept/no-parent, accept/valid-parent, reject self, reject missing, reject chain, reject 2-cycle, reject blank, accept absent), `typeSatisfies` matrix (exact, one-hop up, unrelated miss, no downward match, no grandparent hop, blank/missing-input guards), `validateInlineEdges` matrix (parent hit, wrong-parent miss, unknown-edge miss, strict no-throw), `resolveNodeType` exact-match regression (D2), merge matrix (preserve valid × 2, drop unresolvable, drop two-deep, drop self, drop blank, drop non-string, survive malformed nodes and non-string `type`, presence rule, no key churn).
+- **Unit:** `packages/core/__tests__/utils/ontology.test.ts` — validation matrix (accept/no-parent, accept/valid-parent, reject self, reject missing, reject chain, reject 2-cycle, reject blank, accept absent), `typeSatisfies` matrix (exact, one-hop up, unrelated miss, no downward match, no grandparent hop, blank/missing-input guards), `validateInlineEdges` matrix (parent hit, wrong-parent miss, unknown-edge miss, strict no-throw), `resolveNodeType` exact-match regression (D2), merge matrix (preserve valid × 2, drop unresolvable, drop two-deep, drop self, drop blank, drop non-string, survive malformed nodes with no `type`, presence rule, no key churn), `buildDeclaresParentIndex` (non-string `type` skipped, well-formed peers still register).
 - **Service:** `packages/core/__tests__/services/OntologyService.test.ts` — `resolveEdges` source child/exact/unrelated matrix, target parent-resolution + exact-first-regardless-of-order + untyped-skip, and seed validation on both `getEffectiveState` branches (D11); `packages/core/__tests__/services/PromptService.test.ts` — prompt advertisement.
 
 > Note: nothing in CI typechecks `__tests__/`. `typecheck` is `tsc --noEmit` against a tsconfig with `"include": ["src"]`, and vitest strips types without checking them. Test-file type errors surface only in an editor — so every test here must fail for a *behavioral* reason, never a type one.
