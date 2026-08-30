@@ -1,7 +1,7 @@
 # Ontology Single-Level Parent Inheritance — Spec
 
 **Date:** 2026-08-28
-**Status:** Approved
+**Status:** Implemented
 **Packages:** `@equationalapplications/core-llm-wiki`
 **Depends on:** None
 
