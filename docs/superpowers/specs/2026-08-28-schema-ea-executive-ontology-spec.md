@@ -1,8 +1,8 @@
-# @equationalapplications/schema-ea — Spec
+# @equationalapplications/schema-software-org — Spec
 
 **Date:** 2026-08-28
 **Status:** Approved
-**Packages:** `@equationalapplications/schema-ea` (new)
+**Packages:** `@equationalapplications/schema-software-org` (new)
 **Depends on:** `@equationalapplications/core-llm-wiki` **>= 6.1.0** — the
 release that shipped `OntologyNodeType.parent_type` (see
 `2026-08-28-ontology-parent-field-spec.md`, rev 8 — Implemented). This
@@ -14,29 +14,43 @@ publish time; no manual pin is needed.
 
 ## Executive Summary
 
-A new data-only package shipping a custom minimal ontology manifest for
-Equational Applications' executive agent (Tessera). Merges the existing
-warm-agent schema (9 types, 28 edges) with new software-company types
+A new data-only package shipping a custom minimal ontology manifest for an
+executive agent operating on behalf of a software organization. Merges the
+existing warm-agent schema (9 types, 28 edges) with new software-company types
 (3 base types, 5 concrete types, 12 edges) into a single 17-type,
 40-edge manifest. Properties are baked into type descriptions (zero code
 changes to core). Inspired by CodeMeta's property naming conventions but
 fully custom — no external dependency.
 
+The manifest is organization-neutral: descriptions say "the organization",
+never a specific company name, so any software org can adopt it unmodified.
+Equational Applications' executive agent (Tessera) is the first consumer and
+the source of the requirements, not the audience limit.
+
+**Accepted cost (D3).** Serializing this manifest costs ~11.3 KB
+(~2.9k tokens) in every extraction prompt, against ~6.7 KB (~1.7k tokens) for
+`schema-org-llm-wiki` — a ~68% increase per ingest call, permanently. That is
+the price of D3 (properties live in descriptions) plus D2 (warm-agent rows
+copied verbatim rather than abridged), and what it buys is zero code changes to
+core. Measured over the manifest block below as
+`JSON.stringify(manifest, null, 2)` — the exact form
+`OntologyService.buildPromptContext` sends.
+
 ---
 
 ## Problem Statement
 
-Tessera operates as an executive agent for Equational Applications LLC,
-managing products, services, procedures, and operational knowledge. The
-current warm-agent schema (`schema-org-llm-wiki`) covers personal-life
-concepts (friends, restaurants, events) but has no types for design specs,
-handoffs, procedures, software products, or infrastructure services. A
-separate executive schema is needed that:
+An executive agent for a software organization manages products, services,
+procedures, and operational knowledge. The current warm-agent schema
+(`schema-org-llm-wiki`) covers personal-life concepts (friends, restaurants,
+events) but has no types for design specs, handoffs, procedures, software
+products, or infrastructure services. A separate executive schema is needed
+that:
 
 1. Extends (does not replace) the warm-agent types.
 2. Supports polymorphic queries via 2-level inheritance (parent spec).
 3. Uses CodeMeta-shaped property conventions in frontmatter.
-4. Stays minimal — only types Tessera actually traverses.
+4. Stays minimal — only types an executive agent actually traverses.
 
 ---
 
@@ -44,14 +58,15 @@ separate executive schema is needed that:
 
 ### D1: Single merged manifest, not two separate manifests
 
-The warm-agent types and EA executive types live in one `schemaEaManifest`
-export. A host that only wants warm-agent types can import
-`schema-org-llm-wiki` instead. Tessera uses this merged manifest in strict
-mode.
+The warm-agent types and the software-org types live in one
+`schemaSoftwareOrgManifest` export. A host that only wants warm-agent types can
+import `schema-org-llm-wiki` instead. Tessera uses this merged manifest in
+strict mode.
 
-`schema-ea` takes **no runtime dependency** on `schema-org-llm-wiki`: one
-package, one manifest, no version skew between two manifest packages for a
-consumer to reconcile. The warm-agent rows are copied.
+`schema-software-org` takes **no runtime dependency** on
+`schema-org-llm-wiki`: one package, one manifest, no version skew between two
+manifest packages for a consumer to reconcile. The warm-agent rows are
+copied.
 
 ### D2: Copied rows are byte-identical, and a test proves it
 
@@ -140,20 +155,21 @@ links, single-word keys) but we define our own property set. No import of
 
 The warm-agent `product` description ends "Covers electronics, vehicles,
 household items, **and software**." Fed to the model alongside
-`software_application`, that clause pulls EA's own repositories into
-`product` on the word "software" alone. An executive agent's notion of
+`software_application`, that clause pulls the organization's own repositories
+into `product` on the word "software" alone. An executive agent's notion of
 "product" is not a warm personal agent's.
 
-So `schema-ea` overrides that one row: the trailing "and software" is dropped
-and the description hands off explicitly — "For software EA builds, ships, or
-maintains, use software_application instead; for a hosted capability EA
-consumes or operates, use service." `software_application` and `service` name
-each other back, so the disambiguation is mutual rather than one-way.
+So `schema-software-org` overrides that one row: the trailing "and software" is
+dropped and the description hands off explicitly — "For software the
+organization builds, ships, or maintains, use software_application instead; for
+a hosted capability it consumes or operates, use service."
+`software_application` and `service` name each other back, so the
+disambiguation is mutual rather than one-way.
 
 **Rationale:** the alternatives are worse. Injecting the rule into the system
 prompt requires profile-specific classification logic in core, which is the
 code change D3 exists to avoid. Renaming `software_application` to something
-like `ea_portfolio_product` dodges the collision by making the slug clunky
+like `org_portfolio_product` dodges the collision by making the slug clunky
 while leaving the misleading `product` text in the prompt unchanged. Putting
 the rule where the model makes the decision is the only fix that acts on the
 actual input.
@@ -177,17 +193,17 @@ test's allowlist with this reason; anything else that diverges is a bug.
 | `action` | An individual task, chore, step, or completed action. Links to a parent Project and assigns responsibility to a Person. |
 | `creativework` | A book, movie, article, song, recipe, blog post, or other creative content. Captures media the user consumes, learns from, or creates. |
 | `review` | A personal review, opinion, or evaluation. The implicit subject is always the owning character—use to review a book, restaurant, place, product, or experience. Rating values stay inside the fact content. |
-| `product` | A physical item, software tool, or device owned or under consideration. Covers electronics, vehicles, and household items. For software EA builds, ships, or maintains, use software_application instead; for a hosted capability EA consumes or operates, use service. **(D8: diverges from upstream.)** |
+| `product` | A physical item, software tool, or device owned or under consideration. Covers electronics, vehicles, and household items. For software the organization builds, ships, or maintains, use software_application instead; for a hosted capability it consumes or operates, use service. **(D8: diverges from upstream.)** |
 
-### EA Executive Base Types (3, no parent, no children)
+### Software-Org Base Types (3, no parent, no children)
 
 | Type | Description |
 |------|------------|
-| `software_application` | Software EA itself builds, ships, or maintains — the EA portfolio codebase. Not third-party software EA merely uses (that is `product`), and not a running hosted capability (that is `service`). Expected frontmatter properties: `repo_url`, `version`, `install_path`, `status` (active/deprecated/in_dev). |
-| `service` | A running hosted capability EA consumes or operates, vendor-run or EA-run — databases, APIs, CI, auth, monitoring. Distinct from `software_application` (the codebase EA ships) and `product` (third-party tools EA owns). EA's own backend is a `software_application` as source and a `service` as a deployed dependency. Expected frontmatter properties: `provider`, `dashboard_url`, `status`, `tier` (critical/important/optional). |
-| `role` | A functional role a person fills within EA. Expected frontmatter properties: `role_name`, `scope`, `capabilities`. |
+| `software_application` | Software the organization itself builds, ships, or maintains — its own portfolio codebase. Not third-party software the organization merely uses (that is `product`), and not a running hosted capability (that is `service`). Expected frontmatter properties: `repo_url`, `version`, `install_path`, `status` (active/deprecated/in_dev). |
+| `service` | A running hosted capability the organization consumes or operates, vendor-run or self-run — databases, APIs, CI, auth, monitoring. Distinct from `software_application` (the codebase the organization ships) and `product` (third-party tools it owns). The organization's own backend is a `software_application` as source and a `service` as a deployed dependency. Expected frontmatter properties: `provider`, `dashboard_url`, `status`, `tier` (critical/important/optional). |
+| `role` | A functional role a person fills within the organization. Expected frontmatter properties: `role_name`, `scope`, `capabilities`. |
 
-### EA Executive Concrete Types (5, all `parent_type: 'creativework'`)
+### Software-Org Concrete Types (5, all `parent_type: 'creativework'`)
 
 | Type | Parent | Description |
 |------|--------|------------|
@@ -201,14 +217,15 @@ test's allowlist with this reason; anything else that diverges is a bug.
 > The manifest resolves this inline, in the descriptions the model actually
 > reads, rather than by convention (D8):
 >
-> - `product` — a thing EA **owns or evaluates**. Explicitly hands off software
->   EA builds to `software_application`.
-> - `software_application` — a codebase EA **builds, ships, or maintains**.
+> - `product` — a thing the organization **owns or evaluates**. Explicitly
+>   hands off software it builds to `software_application`.
+> - `software_application` — a codebase the organization **builds, ships, or
+>   maintains**.
 > - `service` — a **running hosted capability** something depends on, whether
->   vendor-run or EA-run.
+>   vendor-run or self-run.
 >
-> EA's own backend is a `software_application` as source and a `service` as a
-> deployed dependency — which is exactly what `dependsOn`
+> The organization's own backend is a `software_application` as source and a
+> `service` as a deployed dependency — which is exactly what `dependsOn`
 > (software_application → service) is for.
 
 ---
@@ -252,7 +269,7 @@ Note: the `about`, `author`, and `publisher` rows are declared on
 `creativework` as **source**, so all five concrete subtypes satisfy them via
 `parent_type` (D6). No enumeration needed on that side.
 
-### EA Executive Edges (12, new)
+### Software-Org Edges (12, new)
 
 | Edge | Source → Target | Description |
 |------|----------------|------------|
@@ -274,15 +291,16 @@ Note: the `about`, `author`, and `publisher` rows are declared on
 ## Package Structure
 
 ```text
-packages/schema-ea/
-├── package.json          # @equationalapplications/schema-ea
+packages/schema-software-org/
+├── package.json          # @equationalapplications/schema-software-org
 ├── tsconfig.json         # extends monorepo root
 ├── tsup.config.ts        # mirrors packages/schema-org
 ├── vitest.config.ts      # mirrors packages/schema-org
 ├── src/
-│   └── index.ts          # exports schemaEaManifest
+│   └── index.ts          # exports schemaSoftwareOrgManifest
 ├── __tests__/
-│   └── manifest.test.ts  # validation + warm-agent parity (D2)
+│   ├── manifest.test.ts  # validation + warm-agent parity (D2)
+│   └── __snapshots__/    # content drift guard for the 8 new rows (Test 10)
 └── README.md             # type catalog (nodes/edges), usage, conventions
 ```
 
@@ -292,18 +310,58 @@ packages/schema-ea/
 `bugs`, `homepage`, scripts `build` (tsup) / `dev` / `typecheck` / `test` /
 `test:watch`, `engines: { "node": ">=20" }`,
 `publishConfig.access: "public"`, and
-`repository.directory: "packages/schema-ea"`.
+`repository.directory: "packages/schema-software-org"`.
 
 - **dependencies:** `@equationalapplications/core-llm-wiki` (workspace:\*)
 - **devDependencies:** `@equationalapplications/schema-org-llm-wiki`
   (workspace:\*, for the D2 parity test only), `tsup`, `typescript`, `vitest`
+
+---
+
+## Monorepo Integration
+
+Creating the package directory is not enough to ship it. Two files carry
+**hardcoded package lists** that a `packages/*` glob does not cover, and a new
+package is invisible to the release pipeline until it appears in both. Missing
+either fails silently — no error, just a package that never reaches npm.
+
+1. **`.releaserc.json`** — the `@semantic-release/exec` `prepareCmd` inlines
+   the list `['core','react','expo','prisma-outbox','core-llm-tools','okf',
+   'schema-org']`. Add `schema-software-org`. This is the step that writes
+   `nextRelease.version` into each `packages/*/package.json`; omitted, the new
+   package's version is never bumped and it publishes stale or not at all.
+
+2. **`.github/workflows/release.yml`** — the `publish_if_needed` block
+   (currently seven explicit lines). Add:
+
+   ```bash
+   publish_if_needed "./packages/schema-software-org/package.json" \
+     pnpm --filter "./packages/schema-software-org" publish --no-git-checks --access public
+   ```
+
+   Order matters — the block is commented "Publish in dependency order so each
+   package exists on npm before dependents are published", and `pnpm publish`
+   replaces `workspace:*` with the real version at pack time. This package
+   depends on `core`, so its line goes **after** the `core` line. Placing it
+   next to `schema-org` satisfies that.
+
+3. **npm trusted publishing** — configure it for the new package name on
+   npmjs.com before the first release. Publishing is OIDC-based here; an
+   unconfigured package name fails at publish time, after the tag exists.
+
+4. **Root `README.md`** — two hand-maintained lists: the npm badge row (~line
+   12) and the package table (~line 239). Neither is generated.
+
+No change is needed to `pnpm-workspace.yaml` (`packages/*` already globs it),
+the root `build`/`typecheck`/`test` scripts (`pnpm -r`), or `tsconfig.json`
+(no project references, no `paths`).
 
 ### `src/index.ts`
 
 ```ts
 import type { OntologyManifest } from '@equationalapplications/core-llm-wiki';
 
-export const schemaEaManifest: OntologyManifest = {
+export const schemaSoftwareOrgManifest: OntologyManifest = {
   node_types: [
     // Warm-agent types — copied verbatim from schemaOrgWarmAgentManifest.
     // Do not abridge: descriptions are the classification signal (D2/D3).
@@ -316,13 +374,13 @@ export const schemaEaManifest: OntologyManifest = {
     { type: 'creativework', description: 'A book, movie, article, song, recipe, blog post, or other creative content. Captures media the user consumes, learns from, or creates.' },
     { type: 'review', description: 'A personal review, opinion, or evaluation. The implicit subject is always the owning character—use to review a book, restaurant, place, product, or experience. Rating values stay inside the fact content.' },
     // D8: intentional divergence from the warm-agent original — the upstream
-    // row claims "and software", which pulls EA's own repositories here.
-    { type: 'product', description: 'A physical item, software tool, or device owned or under consideration. Covers electronics, vehicles, and household items. For software EA builds, ships, or maintains, use software_application instead; for a hosted capability EA consumes or operates, use service.' },
-    // EA executive base types (no parent_type, no children — D5)
-    { type: 'software_application', description: 'Software EA itself builds, ships, or maintains — the EA portfolio codebase. Not third-party software EA merely uses (that is product), and not a running hosted capability (that is service). Expected frontmatter properties: repo_url, version, install_path, status (active/deprecated/in_dev).' },
-    { type: 'service', description: "A running hosted capability EA consumes or operates, vendor-run or EA-run — databases, APIs, CI, auth, monitoring. Distinct from software_application (the codebase EA ships) and product (third-party tools EA owns). EA's own backend is a software_application as source and a service as a deployed dependency. Expected frontmatter properties: provider, dashboard_url, status, tier (critical/important/optional)." },
-    { type: 'role', description: 'A functional role a person fills within EA. Expected frontmatter properties: role_name, scope, capabilities.' },
-    // EA executive concrete types (one level under creativework)
+    // row claims "and software", which pulls the org's own repositories here.
+    { type: 'product', description: 'A physical item, software tool, or device owned or under consideration. Covers electronics, vehicles, and household items. For software the organization builds, ships, or maintains, use software_application instead; for a hosted capability it consumes or operates, use service.' },
+    // Software-org base types (no parent_type, no children — D5)
+    { type: 'software_application', description: 'Software the organization itself builds, ships, or maintains — its own portfolio codebase. Not third-party software the organization merely uses (that is product), and not a running hosted capability (that is service). Expected frontmatter properties: repo_url, version, install_path, status (active/deprecated/in_dev).' },
+    { type: 'service', description: "A running hosted capability the organization consumes or operates, vendor-run or self-run — databases, APIs, CI, auth, monitoring. Distinct from software_application (the codebase the organization ships) and product (third-party tools it owns). The organization's own backend is a software_application as source and a service as a deployed dependency. Expected frontmatter properties: provider, dashboard_url, status, tier (critical/important/optional)." },
+    { type: 'role', description: 'A functional role a person fills within the organization. Expected frontmatter properties: role_name, scope, capabilities.' },
+    // Software-org concrete types (one level under creativework)
     { type: 'design_spec', parent_type: 'creativework', description: 'A technical or product design specification. Expected frontmatter properties: status (draft/approved/implemented/superseded), spec_for (software_application or service slug), branch.' },
     { type: 'handoff', parent_type: 'creativework', description: 'An operational handoff or session transition document. Expected frontmatter properties: session_id, outcome (pending/complete/blocked), open_items.' },
     { type: 'procedure', parent_type: 'creativework', description: 'A checklist, workflow, or how-to document. Expected frontmatter properties: trigger (when to use it), last_reviewed, applies_to (software_application or service slug).' },
@@ -359,7 +417,7 @@ export const schemaEaManifest: OntologyManifest = {
     { type: 'itemReviewed', source_type: 'review', target_type: 'event', description: 'The event this review evaluates.' },
     { type: 'itemReviewed', source_type: 'review', target_type: 'product', description: 'The tool, device, or product this review evaluates.' },
     { type: 'owns', source_type: 'person', target_type: 'product', description: 'Item owned by the person (electronics, vehicles, etc.).' },
-    // EA executive edges (12, new)
+    // Software-org edges (12, new)
     { type: 'dependsOn', source_type: 'software_application', target_type: 'service', description: 'This software application depends on this service.' },
     { type: 'specifies', source_type: 'design_spec', target_type: 'software_application', description: 'Spec is about this software application.' },
     { type: 'specifies', source_type: 'design_spec', target_type: 'service', description: 'Spec is about this service.' },
@@ -388,8 +446,8 @@ Sections, in order:
 - **Edge Catalog** — every edge type, its `(source, target)`, and description
 - **Property Conventions** — CodeMeta-shaped naming, status enums,
   no-inheritance note (D4)
-- **Usage** — `import { schemaEaManifest } from
-  '@equationalapplications/schema-ea'` and a one-paragraph note on handing it
+- **Usage** — `import { schemaSoftwareOrgManifest } from
+  '@equationalapplications/schema-software-org'` and a one-paragraph note on handing it
   to `WikiMemory`, either at construction via
   `config.ontology.seedManifests[entityId] = { manifest, mode }`
   (`OntologyConfig` in core's `types.ts`) or at runtime via
@@ -433,40 +491,55 @@ from anything in this manifest. Do not describe that as inheritance.
 `schema-org-llm-wiki` ships the warm-agent manifest (9 types, 28 edges) for
 personal-life knowledge graphs. It stays unchanged.
 
-`schema-ea` is the superset: it copies the warm-agent rows verbatim and adds
-the executive types. A consumer importing `schema-ea` does NOT need
-`schema-org-llm-wiki` at runtime — it is a devDependency here solely for the
-D2 parity test.
+`schema-software-org` is the superset: it copies the warm-agent rows verbatim
+and adds the software-org types. A consumer importing `schema-software-org`
+does NOT need `schema-org-llm-wiki` at runtime — it is a devDependency here
+solely for the D2 parity test.
 
 ---
 
 ## Tests
 
-1. **Manifest validates** — `validateManifest(schemaEaManifest)` does not
+> **Build order.** The D2 parity test imports `schemaOrgWarmAgentManifest` by
+> package name, which resolves to `packages/schema-org/dist` — this repo has no
+> tsconfig `paths` and no cross-package `src` imports. CI is fine (`test.yml`
+> runs `pnpm run build` before `pnpm test`), but on a clean checkout a bare
+> `pnpm --filter schema-software-org test` fails on a missing `dist` rather
+> than on anything real. Run `pnpm build` first.
+
+> **Overlap with Test 1.** Tests 3, 4, and 5 re-assert invariants
+> `validateManifest` already enforces — duplicate node slugs, duplicate edge
+> triples, unresolvable parents, and 2-deep chains all throw in Test 1. They
+> are kept because they name the specific invariants this manifest depends on
+> and fail with a precise message instead of a generic throw, but they are
+> documentation of core's guarantees, not independent coverage.
+
+1. **Manifest validates** — `validateManifest(schemaSoftwareOrgManifest)` does not
    throw (requires the core release with `parent_type`).
 2. **Counts are what the spec claims** — 17 node types, 40 edge types.
    The count alone is not enough: a dropped type is masked by any unique
    replacement, and warm-agent parity (Test 6) only covers the 9 upstream
-   rows, so the 8 EA additions are otherwise unguarded. Assert the exact
+   rows, so the 8 software-org additions are otherwise unguarded. Assert the
+   exact
    slug set:
 
    ```ts
    it('ships exactly the 17 declared node types', () => {
-     expect(new Set(schemaEaManifest.node_types.map(n => n.type))).toEqual(
+     expect(new Set(schemaSoftwareOrgManifest.node_types.map(n => n.type))).toEqual(
        new Set([
          // 9 warm-agent (D2)
          'person', 'organization', 'place', 'event', 'project', 'action',
          'creativework', 'review', 'product',
-         // 3 EA base types (D5)
+         // 3 software-org base types (D5)
          'software_application', 'service', 'role',
-         // 5 EA creativework subtypes
+         // 5 software-org creativework subtypes
          'design_spec', 'handoff', 'procedure', 'session_recap',
          'reference_doc',
        ]),
      );
    });
    ```
-3. **No duplicate node slugs** across warm-agent + EA types.
+3. **No duplicate node slugs** across warm-agent + software-org types.
 4. **Edge triples are unique** — polymorphic edges (`specifies`, `documents`,
    `handoffFor`, `supersedes`, `about`, `itemReviewed`, `location`,
    `organizer`) appear as distinct `(type, source, target)` rows.
@@ -484,21 +557,22 @@ D2 parity test.
     */
    const INTENTIONAL_NODE_OVERRIDES: Record<string, string> = {
      // D8: upstream says "Covers electronics, vehicles, household items, and
-     // software", which pulls EA's own repositories into `product`. The EA
-     // row drops that clause and hands off to software_application/service.
+     // software", which pulls the organization's own repositories into
+     // `product`. This row drops that clause and hands off to
+     // software_application/service.
      product:
        'A physical item, software tool, or device owned or under consideration. '
-       + 'Covers electronics, vehicles, and household items. For software EA '
-       + 'builds, ships, or maintains, use software_application instead; for a '
-       + 'hosted capability EA consumes or operates, use service.',
+       + 'Covers electronics, vehicles, and household items. For software the '
+       + 'organization builds, ships, or maintains, use software_application '
+       + 'instead; for a hosted capability it consumes or operates, use service.',
    };
 
    describe('warm-agent parity (D2)', () => {
-     const eaByType = new Map(schemaEaManifest.node_types.map(n => [n.type, n]));
+     const manifestByType = new Map(schemaSoftwareOrgManifest.node_types.map(n => [n.type, n]));
 
      for (const original of schemaOrgWarmAgentManifest.node_types) {
        it(`node "${original.type}" tracks the warm-agent original`, () => {
-         const copied = eaByType.get(original.type);
+         const copied = manifestByType.get(original.type);
          expect(copied).toBeDefined();
          const override = INTENTIONAL_NODE_OVERRIDES[original.type];
          if (override) {
@@ -521,12 +595,12 @@ D2 parity test.
      });
 
      it('warm-agent edges are copied with no exceptions', () => {
-       // Order is part of the contract: `copied` preserves EA-manifest order,
+       // Order is part of the contract: `copied` preserves this manifest's order,
        // so this fails on any reshuffle of the warm block, not just on
        // description drift. Keep the 28 warm rows first and in upstream order.
        const triples = new Set(schemaOrgWarmAgentManifest.edge_types.map(
          e => `${e.type}|${e.source_type}|${e.target_type}`));
-       const copied = schemaEaManifest.edge_types.filter(
+       const copied = schemaSoftwareOrgManifest.edge_types.filter(
          e => triples.has(`${e.type}|${e.source_type}|${e.target_type}`));
        expect(copied).toEqual(schemaOrgWarmAgentManifest.edge_types);
      });
@@ -538,17 +612,24 @@ D2 parity test.
 8. **`supersedes` stays declared on the parent** — the single
    `creativework → creativework` row is what lets core's exact-first symmetric
    matching cover a `design_spec → design_spec` pair (shape guard for D6).
-   This asserts the manifest's declared shape, not the resolution itself:
-   `typeSatisfies` is internal to core (`utils/ontology.ts`) and is not
-   exported from its index, so a DB-free matching assertion is unavailable
-   without a core change — which D3 rules out. Resolution is core's own
-   tested behavior; this row is what the spec owns:
+   This asserts the manifest's declared shape, not the resolution itself.
+   `typeSatisfies` is exported from `core/src/utils/ontology.ts` but not
+   re-exported from core's index (which exposes only `validateManifest` from
+   that module), so a *unit*-level matching assertion inside this package would
+   require a core change — which D3 rules out. An *integration*-level assertion
+   is available and needs no core change: `packages/integration` already drives
+   a manifest end-to-end through `WikiMemory` with a scripted LLM in
+   `__tests__/ontologySchemaOrg.test.ts`, and already takes
+   `schema-org-llm-wiki` as a dependency. A `design_spec → design_spec`
+   `supersedes` round-trip belongs there if we want the combination proven.
+   Core's own `ontologyParentInheritance.test.ts` covers the mechanism, so
+   this is optional; the declared row below is what this spec owns:
 
    ```ts
    it('supersedes stays declared on the parent (D6 shape guard)', () => {
      // exact-first symmetric matching in core means this single parent row
      // covers a design_spec -> design_spec relationship.
-     const edge = schemaEaManifest.edge_types.find(e => e.type === 'supersedes');
+     const edge = schemaSoftwareOrgManifest.edge_types.find(e => e.type === 'supersedes');
      expect(edge?.source_type).toBe('creativework');
      expect(edge?.target_type).toBe('creativework');
    });
@@ -557,6 +638,25 @@ D2 parity test.
    end in "and software"; all three (`product`, `software_application`,
    `service`) name each other in their descriptions. Cheap guard against
    someone "restoring" the upstream row.
+10. **Snapshot of the whole manifest (drift guard for the 8 new rows)** —
+    D2's parity test protects only the 9 copied rows, and Tests 2, 7, and 9
+    check the new rows for *slug presence*, *property substrings*, and *mutual
+    naming* respectively. None of that stops someone halving
+    `software_application`'s or `service`'s description — the longest and most
+    load-bearing text in the manifest, where all of D8's disambiguation lives.
+    That is precisely the failure D2 exists to prevent, left open on the rows
+    that have no upstream to compare against. `packages/schema-org` already
+    solves this the same way (`__tests__/manifest.test.ts`, "matches snapshot
+    (content drift guard)"), so follow the established convention:
+
+    ```ts
+    it('matches snapshot (content drift guard)', () => {
+      expect(schemaSoftwareOrgManifest).toMatchSnapshot();
+    });
+    ```
+
+    An intentional wording change then shows up as a reviewable snapshot diff
+    rather than passing silently.
 
 ---
 
@@ -572,7 +672,8 @@ D2 parity test.
 - No profile-specific classification rules injected into core prompts —
   disambiguation lives in the manifest descriptions (D8)
 - No dependency on CodeMeta (inspired by, not imported from)
-- No narrowing of warm-agent polymorphic edges against EA concrete subtypes
+- No narrowing of warm-agent polymorphic edges against the new concrete
+  subtypes
   — verbatim copy (D2) means `author`, `publisher`, `about`, `itemReviewed`
   declared on `creativework` now reach every `creativework` child
   (`design_spec`, `session_recap`, `handoff`, `procedure`, `reference_doc`).
@@ -673,3 +774,45 @@ D2 parity test.
   named `memory`, renamed to `session_recap` in rev 6 — same staleness, but
   the gap it points at was real.) D4's wording also tidied to name both
   sides explicitly.
+- **Rev 9 (2026-08-30)** — review pass against source; six findings, plus a
+  rename. **Renamed** `@equationalapplications/schema-ea` →
+  `@equationalapplications/schema-software-org` (export `schemaEaManifest` →
+  `schemaSoftwareOrgManifest`, directory `packages/schema-software-org`) and
+  **generalized the text to match the name**: the four rows that hard-coded
+  "EA" (`product`'s D8 override, `software_application`, `service`, `role`)
+  now say "the organization", so the manifest is adoptable unmodified by any
+  software org rather than promising generality its contents did not deliver.
+  Tessera is recorded as the first consumer, not the audience limit. The
+  concatenated `INTENTIONAL_NODE_OVERRIDES.product` string in Test 6 was
+  updated in lockstep — it must equal the manifest description byte-for-byte
+  or the parity test fails on its own allowlist. Note the spec *filename*
+  keeps its `schema-ea` slug: it is tied to the branch and PR history.
+  **New `## Monorepo Integration` section** — the blocker. `.releaserc.json`'s
+  `prepareCmd` and `release.yml`'s `publish_if_needed` block both carry
+  hardcoded package lists that `packages/*` globs do not cover; a package
+  absent from either never gets its version bumped or never publishes, with no
+  error. Also records npm trusted publishing and the two hand-maintained root
+  `README.md` lists, and states what needs no change (workspace glob, root
+  scripts, tsconfig). **New Test 10** — a `toMatchSnapshot()` drift guard, the
+  convention `packages/schema-org` already uses. D2's parity test covers only
+  the 9 copied rows, so the 8 new ones — carrying the longest and most
+  load-bearing descriptions, where D8's disambiguation lives — could be
+  abridged with every existing test still green. That is the exact failure D2
+  exists to prevent, left open on the rows with no upstream to compare
+  against; rev 8 closed the slug gap CodeRabbit found and left this one.
+  **Accepted cost recorded** in the Executive Summary: this manifest costs
+  ~11.3 KB (~2.9k tokens) per extraction prompt against `schema-org-llm-wiki`'s
+  ~6.7 KB (~1.7k), a ~68% permanent increase per ingest call — the measured
+  price of D3 plus D2, previously undocumented. **Test 8 corrected**: it
+  claimed a matching assertion needs a core change, true only at unit level.
+  `packages/integration` already drives a manifest end-to-end through
+  `WikiMemory` and depends on `schema-org-llm-wiki`, so an integration-level
+  `design_spec → design_spec` round-trip is available with no core change;
+  noted as optional since core's `ontologyParentInheritance.test.ts` covers the
+  mechanism. Added a **Tests preamble** noting that Tests 3/4/5 are structurally
+  guaranteed by `validateManifest` (kept for precise failure messages, not
+  independent coverage), and that `pnpm build` must precede `pnpm test` on a
+  clean checkout because the parity test resolves `schema-org` through `dist`.
+  Verified unchanged: all 37 warm-agent rows still byte-identical to
+  `packages/schema-org/src/index.ts` except `product` (D8), all 57 catalog-table
+  rows still equal to the manifest block, counts still 17/40.
