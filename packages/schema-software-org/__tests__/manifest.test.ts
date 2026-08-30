@@ -25,6 +25,13 @@ describe('schemaSoftwareOrgManifest', () => {
   });
 });
 
+// Single-source lookup for description-substring assertions across describes.
+const descriptionOf = (slug: string) => {
+  const node = schemaSoftwareOrgManifest.node_types.find(n => n.type === slug);
+  expect(node, slug).toBeDefined();
+  return node!.description;
+};
+
 describe('warm-agent parity (D2)', () => {
   const manifestByType = new Map(
     schemaSoftwareOrgManifest.node_types.map(n => [n.type, n]),
@@ -138,12 +145,6 @@ describe('shape and counts', () => {
 });
 
 describe('property conventions (D3)', () => {
-  const descriptionOf = (slug: string) => {
-    const node = schemaSoftwareOrgManifest.node_types.find(n => n.type === slug);
-    expect(node, slug).toBeDefined();
-    return node!.description;
-  };
-
   it.each([
     ['software_application', ['repo_url', 'version', 'install_path', 'status']],
     ['service', ['provider', 'dashboard_url', 'status', 'tier']],
@@ -177,9 +178,6 @@ describe('D6 shape guard', () => {
 });
 
 describe('disambiguation text (D8)', () => {
-  const descriptionOf = (slug: string) =>
-    schemaSoftwareOrgManifest.node_types.find(n => n.type === slug)!.description;
-
   it('product no longer claims software', () => {
     const product = descriptionOf('product');
     expect(product).not.toContain('household items, and software');
