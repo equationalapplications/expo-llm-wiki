@@ -11,7 +11,7 @@
       "npmPublish": false
     }],
     ["@semantic-release/exec", {
-      "prepareCmd": "node -e \"const fs=require('fs'); ['core','react','expo','prisma-outbox','core-llm-tools','okf','schema-org'].forEach(pkg => { const p=JSON.parse(fs.readFileSync('packages/'+pkg+'/package.json')); p.version='${nextRelease.version}'; fs.writeFileSync('packages/'+pkg+'/package.json', JSON.stringify(p,null,2)+'\\n'); });\""
+      "prepareCmd": "node -e \"const fs=require('fs'); ['core','react','expo','prisma-outbox','core-llm-tools','okf','schema-org','schema-software-org'].forEach(pkg => { const p=JSON.parse(fs.readFileSync('packages/'+pkg+'/package.json')); p.version='${nextRelease.version}'; fs.writeFileSync('packages/'+pkg+'/package.json', JSON.stringify(p,null,2)+'\\n'); });\""
     }]
   ]
 }
