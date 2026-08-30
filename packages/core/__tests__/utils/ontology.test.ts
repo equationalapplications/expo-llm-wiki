@@ -567,7 +567,7 @@ describe('ontology parent inheritance', () => {
 
   it('buildDeclaresParentIndex skips a non-string type', () => {
     // Asserts the new index helper's untrusted-input contract directly. The
-    // shipped mergeOntologyUpdates node loop (utils/ontology.ts:82) still
+    // shipped mergeOntologyUpdates node loop (utils/ontology.ts:176) still
     // throws on a non-string `type`, so going through mergeOntologyUpdates
     // would never reach an assertion — see spec rev 7 test 14f.
     const index = buildDeclaresParentIndex([

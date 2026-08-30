@@ -140,7 +140,7 @@ export function validateManifest(manifest: OntologyManifest): void {
 //
 // Exported so the test suite can exercise the index's untrusted-input
 // contract directly, without going through mergeOntologyUpdates — whose
-// pre-existing node loop (utils/ontology.ts:82) is unchanged by this work.
+// pre-existing node loop (utils/ontology.ts:176) is unchanged by this work.
 export function buildDeclaresParentIndex(
   nodes: ReadonlyArray<OntologyNodeType>,
 ): Map<string, boolean> {
