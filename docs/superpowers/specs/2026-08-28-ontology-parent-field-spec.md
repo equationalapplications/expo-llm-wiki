@@ -1,7 +1,7 @@
 # Ontology Single-Level Parent Inheritance — Spec
 
 **Date:** 2026-08-28
-**Status:** Draft (rev 4 — 2026-08-30)
+**Status:** Draft (rev 5 — 2026-08-30)
 **Packages:** `@equationalapplications/core-llm-wiki`
 **Depends on:** None
 
@@ -66,9 +66,17 @@ that type exactly, or when its one-hop `parent_type` equals it. One primitive
 **Targets resolve exact-first.** `OntologyService.resolveEdges` runs two passes
 over the candidate defs: first for a def whose `target_type` equals the target
 fact's `okf_type` exactly, then — only if none matched — for one whose
-`target_type` is the target's `parent_type`. Triples are unique on
-`(type, source_type, target_type)`, so at most one def matches per pass and the
-outcome never depends on array order (the dependence D2 objects to).
+`target_type` is the target's `parent_type`. Exact always beats parent-derived,
+so *which pass* wins never depends on array order.
+
+Within a single pass, more than one def can match. The source filter is now
+many-to-one: `about design_spec → person` and `about creativework → person` are
+two distinct legal triples that a `design_spec` source satisfies at once, and
+both match a `person` target exactly, so `find` picks by array order. That is
+immaterial rather than lucky — the only field read off the winning def is
+`def.type`, and `validateManifest` already rejects a manifest whose triples
+spell one edge name with different casing, so every candidate within a pass
+yields a byte-identical edge row.
 
 Exact-first preserves precision: a manifest declaring both
 `about creativework → creativework` and `about creativework → design_spec`
@@ -172,11 +180,24 @@ and the seed is never checked.
 That gap predates this work but `parent_type` makes it dangerous: a seed with a
 dangling parent reference would drive classification and edge matching, and
 `typeSatisfies` would follow a pointer to a type that does not exist. Seeds are
-host-supplied config, so failing fast at construction is right — unlike D6's
-LLM input, there is no one to be lenient toward.
+host-supplied config, so failing fast is right — unlike D6's LLM input, there is
+no one to be lenient toward.
 
 `validateManifest(seed.manifest)` runs before either branch. Pre-`parent_type`
 seeds that validate today still validate.
+
+Two scope notes:
+
+- The check is **lazy, not eager**: it fires on the first `getEffectiveState`
+  that falls through to the seed, not at `WikiMemory` construction. Validating
+  every configured seed up front would move the throw to `setup()` and is a
+  larger behavior change than this work needs.
+- `WikiMemory.getOntologyManifest` (`WikiMemory.ts:657-671`) has its own seed
+  fallback and stays **unvalidated**. It is a read-only accessor that feeds no
+  classification or edge matching, so a dangling parent cannot do damage
+  through it, and making a getter throw would surprise hosts inspecting their
+  own config. Accepted asymmetry: a bad seed is visible via
+  `getOntologyManifest` and fatal via `getEffectiveState`.
 
 ---
 
@@ -322,7 +343,30 @@ one. `typeSatisfies` returns false for an empty `concreteType`, so an untyped
 target (`okf_type === null`) still matches nothing and the edge is skipped —
 unchanged from today.
 
+**`getEffectiveState`** — validate the seed before either branch (D11):
+
+```ts
+const seed = this.ontologyConfig?.seedManifests?.[entityId];
+if (seed) {
+  // The `tx` branch validates via setManifest; the cache branch did not.
+  validateManifest(seed.manifest);
+  const state = { … };
+```
+
+**Imports** — the `'../utils/ontology'` block (`:16-22`) currently pulls
+`emptyManifest`, `normalizeTitleKey`, `resolveNodeType`,
+`resolveEdgeDefinitions`, `validateInlineEdges`. This work adds **two** names:
+`typeSatisfies` (for `resolveEdges`) and `validateManifest` (for
+`getEffectiveState`).
+
 **`validateAndNormalizeFact`** — no change. It already passes `manifest`.
+
+**Export scope** — `typeSatisfies` is exported from `utils/ontology.ts` for the
+other modules in `packages/core`, but is **not** added to `src/index.ts`, which
+today re-exports only `validateManifest` from that module (`index.ts:14`). No
+host needs the primitive to author or validate a manifest; publishing it would
+freeze an internal matching rule into the package's public surface. Adding it
+later is additive and cheap; removing it would not be.
 
 ### `packages/core/src/services/IngestionService.ts`
 
@@ -427,6 +471,8 @@ receives already carries `parent_type` via D9.
 - No changes to `traverseGraph` (it walks edges, not types)
 - No `is-a` inference on read queries — only on edge matching
 - No ability for emergent updates to re-parent an existing type (D6)
+- No `typeSatisfies` on the package's public surface (`src/index.ts`)
+- No eager validation of every configured seed at construction (D11)
 - No UI changes
 
 ---
@@ -440,7 +486,8 @@ receives already carries `parent_type` via D9.
 | A future developer adds recursive resolution | `Parent chain too deep` makes D1 enforceable at every manifest read *and* write |
 | Hallucinated parents in emergent mode abort an ingest | D6: drop the field in merge; `validateManifest` never sees an invalid parent from the LLM path |
 | Parent-satisfied edges validate but never persist | D4: one primitive across all four gates; integration-proven through `upsertGraph` and the backfill path |
-| Both an exact and a parent-derived def match one target | Exact-first two-pass resolution (D3); triples are unique, so at most one def matches per pass and order never decides |
+| Both an exact and a parent-derived def match one target | Exact-first two-pass resolution (D3): the narrower pass runs first, so order never decides which pass wins. Ties *within* a pass are possible (the source filter is many-to-one) but immaterial — only `def.type` is read, and `validateManifest` enforces one casing per edge name |
+| A dangling seed is fatal via `getEffectiveState` but visible via `getOntologyManifest` | Accepted and documented in D11 — the getter drives no matching |
 | A `→ parent` def silently admits every child | Accepted and documented in D3; a type needing an exact-only target must not be given children |
 | A malformed seed manifest drives classification unvalidated | D11: `validateManifest(seed.manifest)` before either branch of `getEffectiveState` |
 
@@ -478,3 +525,17 @@ receives already carries `parent_type` via D9.
   persists them — the no-`tx` branch cached them unchecked, so a seed with a
   dangling parent would drive classification with `typeSatisfies` following a
   pointer to nothing.
+- **Rev 5 (2026-08-30)** — accuracy pass, no design change. **D3's
+  order-independence argument was wrong**: it claimed triple uniqueness left at
+  most one def matching per pass, but the parent-aware source filter is
+  many-to-one, so two legal triples (`about design_spec → person` and
+  `about creativework → person`) can both match one target in the same pass.
+  The outcome is still order-independent, for a different reason now stated —
+  only `def.type` is read and casing is already enforced manifest-wide. The
+  **Changes** section gained the `getEffectiveState` edit D11 decided but never
+  specified, the second import D11 requires (`validateManifest`, not just
+  `typeSatisfies`), and an explicit export-scope decision keeping
+  `typeSatisfies` off `src/index.ts`. D11 now states its two real boundaries:
+  validation is lazy at first `getEffectiveState`, not eager at construction
+  (rev 4 said "failing fast at construction"), and
+  `WikiMemory.getOntologyManifest`'s own seed fallback stays unvalidated.
