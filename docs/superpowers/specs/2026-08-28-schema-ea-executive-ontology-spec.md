@@ -293,7 +293,7 @@ Note: the `about`, `author`, and `publisher` rows are declared on
 ```text
 packages/schema-software-org/
 ├── package.json          # @equationalapplications/schema-software-org
-├── tsconfig.json         # extends monorepo root
+├── tsconfig.json         # standalone, mirrors packages/schema-org
 ├── tsup.config.ts        # mirrors packages/schema-org
 ├── vitest.config.ts      # mirrors packages/schema-org
 ├── src/
@@ -352,9 +352,18 @@ either fails silently — no error, just a package that never reaches npm.
 4. **Root `README.md`** — two hand-maintained lists: the npm badge row (~line
    12) and the package table (~line 239). Neither is generated.
 
+5. **Per-package `README.md` files** — every one of the eight
+   `packages/*/README.md` files carries its own `## Monorepo Ecosystem`
+   table with bolded own-package row and a one-line purpose for each of
+   the eight packages. These are hand-maintained (no generator), so adding
+   a new package requires adding the same row to every README in lockstep
+   with the root table and `.releaserc.json` / `release.yml` updates above.
+
 No change is needed to `pnpm-workspace.yaml` (`packages/*` already globs it),
-the root `build`/`typecheck`/`test` scripts (`pnpm -r`), or `tsconfig.json`
-(no project references, no `paths`).
+the root `build`/`typecheck`/`test` scripts (`pnpm -r`), or the package's own
+`tsconfig.json` (standalone configuration mirroring `packages/schema-org`,
+intentionally absent from the root tsconfig's `references` array — the root
+references already cover the packages that participate in `tsc -b`).
 
 ### `src/index.ts`
 
