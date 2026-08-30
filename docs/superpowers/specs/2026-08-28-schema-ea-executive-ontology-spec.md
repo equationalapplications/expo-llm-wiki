@@ -3,11 +3,12 @@
 **Date:** 2026-08-28
 **Status:** Approved
 **Packages:** `@equationalapplications/schema-ea` (new)
-**Depends on:** `@equationalapplications/core-llm-wiki` at the first release
-shipping `OntologyNodeType.parent_type` (see
-`2026-08-28-ontology-parent-field-spec.md`, rev 8 — Implemented). Pin the
-exact version in `package.json` once that release lands — this manifest
-does not validate against 6.0.1.
+**Depends on:** `@equationalapplications/core-llm-wiki` **>= 6.1.0** — the
+release that shipped `OntologyNodeType.parent_type` (see
+`2026-08-28-ontology-parent-field-spec.md`, rev 8 — Implemented). This
+manifest does not validate against 6.0.1. In-repo the dependency is
+`workspace:*`, which resolves to the current workspace version (6.1.0) at
+publish time; no manual pin is needed.
 
 ---
 
@@ -92,7 +93,8 @@ nothing is expanded: the text is literally the field value.
 
 ### D4: Inheritance is a matching rule, not a property mechanism
 
-`parent_type` affects **edge source matching only**. It does not merge,
+`parent_type` affects **edge matching only** (both sides — see D6). It
+does not merge,
 expand, or inherit descriptions or properties anywhere in core.
 
 A concrete type's description must therefore be self-contained. Any property
@@ -193,7 +195,7 @@ test's allowlist with this reason; anything else that diverges is a bug.
 | `handoff` | `creativework` | An operational handoff or session transition document. Expected frontmatter properties: `session_id`, `outcome` (pending/complete/blocked), `open_items`. |
 | `procedure` | `creativework` | A checklist, workflow, or how-to document. Expected frontmatter properties: `trigger` (when to use it), `last_reviewed`, `applies_to` (`software_application` or `service` slug). |
 | `session_recap` | `creativework` | A dated recap of one working session. Use only for session records — ordinary facts are not memories. Expected frontmatter properties: `session_date`, `key_decisions` (comma-separated list). |
-| `reference_doc` | `creativework` | A product doc, service description, or architecture reference. Expected frontmatter properties: `source_url`, `product` (`software_application` slug). |
+| `reference_doc` | `creativework` | A product doc, service description, or architecture reference. Expected frontmatter properties: `source_url`, `application` (`software_application` slug). |
 
 > **Disambiguation.** Three types could plausibly claim a piece of software.
 > The manifest resolves this inline, in the descriptions the model actually
@@ -254,18 +256,18 @@ Note: the `about`, `author`, and `publisher` rows are declared on
 
 | Edge | Source → Target | Description |
 |------|----------------|------------|
-| `dependsOn` | software_application → service | Product depends on this service. |
-| `specifies` | design_spec → software_application | Spec is about this product. |
+| `dependsOn` | software_application → service | This software application depends on this service. |
+| `specifies` | design_spec → software_application | Spec is about this software application. |
 | `specifies` | design_spec → service | Spec is about this service. |
-| `documents` | procedure → software_application | Procedure applies to this product. |
+| `documents` | procedure → software_application | Procedure applies to this software application. |
 | `documents` | procedure → service | Procedure applies to this service. |
-| `handoffFor` | handoff → software_application | Handoff is for this product. |
+| `handoffFor` | handoff → software_application | Handoff is for this software application. |
 | `handoffFor` | handoff → service | Handoff is for this service. |
 | `supersedes` | creativework → creativework | This document replaces an older one. |
 | `hasRole` | person → role | Person fills this role. |
 | `operates` | role → software_application | Role operates this software application. |
 | `provides` | organization → service | Organization provides this service. |
-| `maintains` | person → software_application | Person maintains this product. |
+| `maintains` | person → software_application | Person maintains this software application. |
 
 ---
 
@@ -325,7 +327,7 @@ export const schemaEaManifest: OntologyManifest = {
     { type: 'handoff', parent_type: 'creativework', description: 'An operational handoff or session transition document. Expected frontmatter properties: session_id, outcome (pending/complete/blocked), open_items.' },
     { type: 'procedure', parent_type: 'creativework', description: 'A checklist, workflow, or how-to document. Expected frontmatter properties: trigger (when to use it), last_reviewed, applies_to (software_application or service slug).' },
     { type: 'session_recap', parent_type: 'creativework', description: 'A dated recap of one working session. Use only for session records — ordinary facts are not memories. Expected frontmatter properties: session_date, key_decisions (comma-separated list).' },
-    { type: 'reference_doc', parent_type: 'creativework', description: 'A product doc, service description, or architecture reference. Expected frontmatter properties: source_url, product (software_application slug).' },
+    { type: 'reference_doc', parent_type: 'creativework', description: 'A product doc, service description, or architecture reference. Expected frontmatter properties: source_url, application (software_application slug).' },
   ],
   edge_types: [
     // Warm-agent edges — copied verbatim from schemaOrgWarmAgentManifest (D2).
@@ -358,12 +360,12 @@ export const schemaEaManifest: OntologyManifest = {
     { type: 'itemReviewed', source_type: 'review', target_type: 'product', description: 'The tool, device, or product this review evaluates.' },
     { type: 'owns', source_type: 'person', target_type: 'product', description: 'Item owned by the person (electronics, vehicles, etc.).' },
     // EA executive edges (12, new)
-    { type: 'dependsOn', source_type: 'software_application', target_type: 'service', description: 'Product depends on this service.' },
-    { type: 'specifies', source_type: 'design_spec', target_type: 'software_application', description: 'Spec is about this product.' },
+    { type: 'dependsOn', source_type: 'software_application', target_type: 'service', description: 'This software application depends on this service.' },
+    { type: 'specifies', source_type: 'design_spec', target_type: 'software_application', description: 'Spec is about this software application.' },
     { type: 'specifies', source_type: 'design_spec', target_type: 'service', description: 'Spec is about this service.' },
-    { type: 'documents', source_type: 'procedure', target_type: 'software_application', description: 'Procedure applies to this product.' },
+    { type: 'documents', source_type: 'procedure', target_type: 'software_application', description: 'Procedure applies to this software application.' },
     { type: 'documents', source_type: 'procedure', target_type: 'service', description: 'Procedure applies to this service.' },
-    { type: 'handoffFor', source_type: 'handoff', target_type: 'software_application', description: 'Handoff is for this product.' },
+    { type: 'handoffFor', source_type: 'handoff', target_type: 'software_application', description: 'Handoff is for this software application.' },
     { type: 'handoffFor', source_type: 'handoff', target_type: 'service', description: 'Handoff is for this service.' },
     // One row covers every creativework subtype on both sides: matching is
     // parent-aware on source and target alike, exact-first (D6).
@@ -371,7 +373,7 @@ export const schemaEaManifest: OntologyManifest = {
     { type: 'hasRole', source_type: 'person', target_type: 'role', description: 'Person fills this role.' },
     { type: 'operates', source_type: 'role', target_type: 'software_application', description: 'Role operates this software application.' },
     { type: 'provides', source_type: 'organization', target_type: 'service', description: 'Organization provides this service.' },
-    { type: 'maintains', source_type: 'person', target_type: 'software_application', description: 'Person maintains this product.' },
+    { type: 'maintains', source_type: 'person', target_type: 'software_application', description: 'Person maintains this software application.' },
   ],
 };
 ```
@@ -387,8 +389,12 @@ Sections, in order:
 - **Property Conventions** — CodeMeta-shaped naming, status enums,
   no-inheritance note (D4)
 - **Usage** — `import { schemaEaManifest } from
-  '@equationalapplications/schema-ea'` and a one-paragraph note on passing it
-  into `WikiMemory`'s `ontologyConfig.manifest`
+  '@equationalapplications/schema-ea'` and a one-paragraph note on handing it
+  to `WikiMemory`, either at construction via
+  `config.ontology.seedManifests[entityId] = { manifest, mode }`
+  (`OntologyConfig` in core's `types.ts`) or at runtime via
+  `WikiMemory.setOntologyManifest(entityId, manifest, { mode })`. There is no
+  `ontologyConfig.manifest` field — do not invent one.
 - **Disambiguation** (D8) — three-way cross-reference among `product`,
   `software_application`, and `service`
 
@@ -403,7 +409,7 @@ Sections, in order:
 
 ### No property inheritance
 
-Per D4, `parent_type` is a matching rule for edge sources. Core does not
+Per D4, `parent_type` is a matching rule for edge matching. Core does not
 merge, expand, or inherit descriptions, and nothing propagates a parent's
 properties to a subtype's prompt text.
 
@@ -494,6 +500,9 @@ D2 parity test.
      });
 
      it('warm-agent edges are copied with no exceptions', () => {
+       // Order is part of the contract: `copied` preserves EA-manifest order,
+       // so this fails on any reshuffle of the warm block, not just on
+       // description drift. Keep the 28 warm rows first and in upstream order.
        const triples = new Set(schemaOrgWarmAgentManifest.edge_types.map(
          e => `${e.type}|${e.source_type}|${e.target_type}`));
        const copied = schemaEaManifest.edge_types.filter(
@@ -505,14 +514,19 @@ D2 parity test.
 7. **Type descriptions contain expected property names** — `repo_url`,
    `spec_for`, `session_id`, `dashboard_url`, `role_name`, `source_url`,
    `trigger`, `session_date`.
-8. **`supersedes` resolves for a concrete pair** — with the core release in
-   place, a `design_spec → design_spec` edge resolves against the single
-   `creativework → creativework` row (regression guard for D6):
+8. **`supersedes` stays declared on the parent** — the single
+   `creativework → creativework` row is what lets core's exact-first symmetric
+   matching cover a `design_spec → design_spec` pair (shape guard for D6).
+   This asserts the manifest's declared shape, not the resolution itself:
+   `typeSatisfies` is internal to core (`utils/ontology.ts`) and is not
+   exported from its index, so a DB-free matching assertion is unavailable
+   without a core change — which D3 rules out. Resolution is core's own
+   tested behavior; this row is what the spec owns:
 
    ```ts
-   it('supersedes resolves for a concrete pair (D6 regression guard)', () => {
-     // exact-first symmetric matching means this single parent row
-     // correctly covers a design_spec -> design_spec relationship.
+   it('supersedes stays declared on the parent (D6 shape guard)', () => {
+     // exact-first symmetric matching in core means this single parent row
+     // covers a design_spec -> design_spec relationship.
      const edge = schemaEaManifest.edge_types.find(e => e.type === 'supersedes');
      expect(edge?.source_type).toBe('creativework');
      expect(edge?.target_type).toBe('creativework');
@@ -604,3 +618,26 @@ D2 parity test.
   Added Test 8's implementation snippet. Documented the polymorphic-edge
   expansion under "What This Does NOT Include". Corrected the stale
   `// EA executive edges (17, new)` comment to `(12, new)`.
+- **Rev 7 (2026-08-30)** — review pass, no design changes. The dependency
+  header was stale: core 6.1.0 shipped that day and *is* the `parent_type`
+  release, so the "pin once it lands" instruction both named a release that
+  had already arrived and contradicted the `workspace:*` dependency two
+  sections down. Header now states `>= 6.1.0` and explains that
+  `workspace:*` resolves to it. D4 still said `parent_type` affects "edge
+  source matching only" — pre-rev-5 wording that rev 5's symmetric D6
+  contradicted two sections later; corrected in D4 and in Property
+  Conventions. Five of the twelve EA edge descriptions (`dependsOn`,
+  `specifies`, `documents`, `handoffFor`, `maintains`) still called their
+  `software_application` endpoint "this product", which per D3 ships that
+  word into the classification prompt and undercuts the entire point of D8;
+  rev 6 fixed `operates` and missed these. `reference_doc.product` renamed to
+  `reference_doc.application` for the same reason — a frontmatter key named
+  `product` holding a `software_application` slug reintroduced the collision
+  D8 removes. The README outline cited a nonexistent `ontologyConfig.manifest`
+  API; the real surfaces are `config.ontology.seedManifests[entityId]` and
+  `WikiMemory.setOntologyManifest`. Test 8's prose claimed it exercised
+  resolution when the snippet only asserts the declared row — retitled as a
+  shape guard, with a note that `typeSatisfies` is not exported from core so
+  a DB-free matching assertion would require a core change D3 rules out.
+  Added a comment to the edge parity test recording that row order is part of
+  the contract.
