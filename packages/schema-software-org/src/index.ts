@@ -32,6 +32,16 @@ export const schemaSoftwareOrgManifest: OntologyManifest = {
     // D8: intentional divergence from the warm-agent original — the upstream
     // row claims "and software", which pulls the org's own repositories here.
     { type: 'product', description: 'A physical item, software tool, or device owned or under consideration. Covers electronics, vehicles, and household items. For software the organization builds, ships, or maintains, use software_application instead; for a hosted capability it consumes or operates, use service.' },
+    // Software-org base types (no parent_type, no children — D5)
+    { type: 'software_application', description: 'Software the organization itself builds, ships, or maintains — its own portfolio codebase. Not third-party software the organization merely uses (that is product), and not a running hosted capability (that is service). Expected frontmatter properties: repo_url, version, install_path, status (active/deprecated/in_dev).' },
+    { type: 'service', description: "A running hosted capability the organization consumes or operates, vendor-run or self-run — databases, APIs, CI, auth, monitoring. Distinct from software_application (the codebase the organization ships) and product (third-party tools it owns). The organization's own backend is a software_application as source and a service as a deployed dependency. Expected frontmatter properties: provider, dashboard_url, status, tier (critical/important/optional)." },
+    { type: 'role', description: 'A functional role a person fills within the organization. Expected frontmatter properties: role_name, scope, capabilities.' },
+    // Software-org concrete types (one level under creativework)
+    { type: 'design_spec', parent_type: 'creativework', description: 'A technical or product design specification. Expected frontmatter properties: status (draft/approved/implemented/superseded), spec_for (software_application or service slug), branch.' },
+    { type: 'handoff', parent_type: 'creativework', description: 'An operational handoff or session transition document. Expected frontmatter properties: session_id, outcome (pending/complete/blocked), open_items.' },
+    { type: 'procedure', parent_type: 'creativework', description: 'A checklist, workflow, or how-to document. Expected frontmatter properties: trigger (when to use it), last_reviewed, applies_to (software_application or service slug).' },
+    { type: 'session_recap', parent_type: 'creativework', description: 'A dated recap of one working session. Use only for session records — ordinary facts are not memories. Expected frontmatter properties: session_date, key_decisions (comma-separated list).' },
+    { type: 'reference_doc', parent_type: 'creativework', description: 'A product doc, service description, or architecture reference. Expected frontmatter properties: source_url, application (software_application slug).' },
   ],
   edge_types: [
     // Warm-agent edges — copied verbatim from schemaOrgWarmAgentManifest (D2).
@@ -63,5 +73,20 @@ export const schemaSoftwareOrgManifest: OntologyManifest = {
     { type: 'itemReviewed', source_type: 'review', target_type: 'event', description: 'The event this review evaluates.' },
     { type: 'itemReviewed', source_type: 'review', target_type: 'product', description: 'The tool, device, or product this review evaluates.' },
     { type: 'owns', source_type: 'person', target_type: 'product', description: 'Item owned by the person (electronics, vehicles, etc.).' },
+    // Software-org edges (12, new)
+    { type: 'dependsOn', source_type: 'software_application', target_type: 'service', description: 'This software application depends on this service.' },
+    { type: 'specifies', source_type: 'design_spec', target_type: 'software_application', description: 'Spec is about this software application.' },
+    { type: 'specifies', source_type: 'design_spec', target_type: 'service', description: 'Spec is about this service.' },
+    { type: 'documents', source_type: 'procedure', target_type: 'software_application', description: 'Procedure applies to this software application.' },
+    { type: 'documents', source_type: 'procedure', target_type: 'service', description: 'Procedure applies to this service.' },
+    { type: 'handoffFor', source_type: 'handoff', target_type: 'software_application', description: 'Handoff is for this software application.' },
+    { type: 'handoffFor', source_type: 'handoff', target_type: 'service', description: 'Handoff is for this service.' },
+    // One row covers every creativework subtype on both sides: matching is
+    // parent-aware on source and target alike, exact-first (D6).
+    { type: 'supersedes', source_type: 'creativework', target_type: 'creativework', description: 'This document replaces an older one.' },
+    { type: 'hasRole', source_type: 'person', target_type: 'role', description: 'Person fills this role.' },
+    { type: 'operates', source_type: 'role', target_type: 'software_application', description: 'Role operates this software application.' },
+    { type: 'provides', source_type: 'organization', target_type: 'service', description: 'Organization provides this service.' },
+    { type: 'maintains', source_type: 'person', target_type: 'software_application', description: 'Person maintains this software application.' },
   ],
 };
