@@ -1,7 +1,7 @@
 # Ontology Single-Level Parent Inheritance — Spec
 
 **Date:** 2026-08-28
-**Status:** Draft (rev 6 — 2026-08-30)
+**Status:** Draft (rev 7 — 2026-08-30)
 **Packages:** `@equationalapplications/core-llm-wiki`
 **Depends on:** None
 
@@ -499,9 +499,13 @@ receives already carries `parent_type` via D9.
      top-level, and the result passes `validateManifest`. This is the
      transaction-abort regression guard: unguarded, `.trim()` on any of them
      raises a `TypeError` out of `withTransactionAsync`.
-14f. **`mergeOntologyUpdates` survives a non-string `type`** in the new index
-     loop — a node with `type: 42` is skipped, and well-formed nodes in the
-     same batch still merge.
+14f. **The parent-satisfies index skips a non-string `type`** — when the
+     index loop that builds `declaresParent` at the top of `mergeOntologyUpdates`
+     processes a node with `type: 42`, that slug is omitted from the map rather
+     than throwing `TypeError`, and well-formed nodes in the same batch still
+     register. The existing node loop's behavior on a non-string `type` is
+     unchanged (lines 366-369 above), so this test asserts the index loop's
+     contribution directly, not via a full `mergeOntologyUpdates` call.
 14g. **A node that declared an unusable `parent_type` cannot serve as a
      parent** (D6 presence rule) — updates proposing `b` with
      `parent_type: 123` and `a` with `parent_type: 'b'` merge `b` as top-level
@@ -630,3 +634,11 @@ receives already carries `parent_type` via D9.
   message becomes `must be a non-empty string when present`. Tests 14d-14g
   added. The pre-existing unguarded `node?.type?.trim()` in the shipped merge
   loop (`utils/ontology.ts:83`) is noted but deliberately left alone.
+- **Rev 7 (2026-08-30)** — PR #110 review (CodeRabbit). Test 14f's title
+  claimed `mergeOntologyUpdates` survives a non-string `type`, but the shipped
+  node loop still calls `node?.type?.trim()` and throws on a non-string `type`
+  (the line Rev 6 deliberately left alone). Scoped 14f to the new index
+  loop's contribution — the parent-satisfies index omits a `type: 42` slug
+  rather than throwing, and well-formed peers still register — so the test
+  asserts the guarded loop's behavior directly instead of making a false
+  claim about the full merge.
