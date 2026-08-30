@@ -1,7 +1,7 @@
 # @equationalapplications/schema-software-org — Spec
 
 **Date:** 2026-08-28
-**Status:** Approved
+**Status:** Implemented (rev 9, 2026-08-30 — implementation landed in PR #111, commits `d988406`..`9c048f4` on branch `docs/schema-ea-executive-ontology-spec`)
 **Packages:** `@equationalapplications/schema-software-org` (new)
 **Depends on:** `@equationalapplications/core-llm-wiki` **>= 6.1.0** — the
 release that shipped `OntologyNodeType.parent_type` (see
