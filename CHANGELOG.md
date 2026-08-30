@@ -1,3 +1,18 @@
+# [6.2.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v6.1.0...v6.2.0) (2026-08-30)
+
+
+### Bug Fixes
+
+* **ci:** skip publish_if_needed when package.json is missing on older tag checkouts ([dce4458](https://github.com/equationalapplications/expo-llm-wiki/commit/dce4458e2ec57d8f958b97fa48d30be672350bb6))
+* **schema-software-org:** hoist descriptionOf helper + README trailing newline ([1c3cfc7](https://github.com/equationalapplications/expo-llm-wiki/commit/1c3cfc764ed8c7641b93b01f83f3cd5de8279eb1))
+* **schema-software-org:** tighten 6.0.1 claim + add reverse parity length assertion ([64a4c1a](https://github.com/equationalapplications/expo-llm-wiki/commit/64a4c1ad6499d264d51952a10e12e2f650988029)), closes [#111](https://github.com/equationalapplications/expo-llm-wiki/issues/111)
+
+
+### Features
+
+* **schema-software-org:** add software-org types, edges, and drift guards ([4e74c24](https://github.com/equationalapplications/expo-llm-wiki/commit/4e74c24dbda6aa17ef55a2e0245d374ffe4e212a))
+* **schema-software-org:** scaffold package with warm-agent rows and parity guard ([d988406](https://github.com/equationalapplications/expo-llm-wiki/commit/d9884060a85ab733ade087b82e95d2d0e1f58f0b))
+
 # [6.1.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v6.0.1...v6.1.0) (2026-08-30)
 
 

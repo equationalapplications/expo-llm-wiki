@@ -1,6 +1,6 @@
 {
   "name": "@equationalapplications/core-llm-wiki",
-  "version": "6.1.0",
+  "version": "6.2.0",
   "description": "Platform-agnostic TypeScript engine for hybrid LLM memory. OKF v0.2 (llm-wiki/2) conformance with back-compat to v0.1 (llm-wiki/1) and profile-0 bundles. Episodic fact extraction, semantic vector search, multi-agent architectures over SQLite. Bring your own adapter.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
