@@ -93,9 +93,9 @@ nothing is expanded: the text is literally the field value.
 
 ### D4: Inheritance is a matching rule, not a property mechanism
 
-`parent_type` affects **edge matching only** (both sides — see D6). It
-does not merge,
-expand, or inherit descriptions or properties anywhere in core.
+`parent_type` affects **edge matching only** — source *and* target, per D6.
+It does not merge, expand, or inherit descriptions or properties anywhere in
+core.
 
 A concrete type's description must therefore be self-contained. Any property
 a subtype needs the LLM to populate is listed on that subtype, even if the
@@ -445,6 +445,27 @@ D2 parity test.
 1. **Manifest validates** — `validateManifest(schemaEaManifest)` does not
    throw (requires the core release with `parent_type`).
 2. **Counts are what the spec claims** — 17 node types, 40 edge types.
+   The count alone is not enough: a dropped type is masked by any unique
+   replacement, and warm-agent parity (Test 6) only covers the 9 upstream
+   rows, so the 8 EA additions are otherwise unguarded. Assert the exact
+   slug set:
+
+   ```ts
+   it('ships exactly the 17 declared node types', () => {
+     expect(new Set(schemaEaManifest.node_types.map(n => n.type))).toEqual(
+       new Set([
+         // 9 warm-agent (D2)
+         'person', 'organization', 'place', 'event', 'project', 'action',
+         'creativework', 'review', 'product',
+         // 3 EA base types (D5)
+         'software_application', 'service', 'role',
+         // 5 EA creativework subtypes
+         'design_spec', 'handoff', 'procedure', 'session_recap',
+         'reference_doc',
+       ]),
+     );
+   });
+   ```
 3. **No duplicate node slugs** across warm-agent + EA types.
 4. **Edge triples are unique** — polymorphic edges (`specifies`, `documents`,
    `handoffFor`, `supersedes`, `about`, `itemReviewed`, `location`,
@@ -641,3 +662,14 @@ D2 parity test.
   a DB-free matching assertion would require a core change D3 rules out.
   Added a comment to the edge parity test recording that row order is part of
   the contract.
+- **Rev 8 (2026-08-30)** — CodeRabbit review on PR. Two of its three findings
+  were already fixed at HEAD: the `// EA executive edges (17, new)` comment
+  was corrected to `(12, new)` in rev 6, and D4's "source matching only"
+  wording in rev 7 — the bot reviewed the merge commit, two revisions behind.
+  Its third finding stands: Test 2 asserted only a node *count*, so dropping
+  a type and adding any other unique one passes, and Test 6's parity check
+  covers only the 9 warm-agent rows, leaving the 8 EA additions unguarded.
+  Test 2 now asserts exact set equality over all 17 slugs. (The bot's example
+  named `memory`, renamed to `session_recap` in rev 6 — same staleness, but
+  the gap it points at was real.) D4's wording also tidied to name both
+  sides explicitly.
