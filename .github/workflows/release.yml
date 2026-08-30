@@ -458,6 +458,14 @@ jobs:
             PACKAGE_JSON_PATH="$1"
             shift
 
+            # Older tag checkouts (v4.x / pre-monorepo-expansion) do not carry
+            # every packages/*/package.json. Skip cleanly instead of failing
+            # `node -p ...` on a missing file.
+            if [ ! -f "${PACKAGE_JSON_PATH}" ]; then
+              echo "Skipping: ${PACKAGE_JSON_PATH} not found (likely an older tag checkout)."
+              return 0
+            fi
+
             PACKAGE_NAME=$(package_name "$PACKAGE_JSON_PATH")
             PACKAGE_VERSION="${RELEASE_VERSION}"
 
