@@ -1,7 +1,7 @@
 # @equationalapplications/schema-ea — Spec
 
 **Date:** 2026-08-28
-**Status:** Draft (rev 4 — 2026-08-30)
+**Status:** Draft (rev 5 — 2026-08-30)
 **Packages:** `@equationalapplications/schema-ea` (new)
 **Depends on:** `@equationalapplications/core-llm-wiki` at the first release
 shipping `OntologyNodeType.parent_type` (see
@@ -16,8 +16,8 @@ against 6.0.1.
 A new data-only package shipping a custom minimal ontology manifest for
 Equational Applications' executive agent (Tessera). Merges the existing
 warm-agent schema (9 types, 28 edges) with new software-company types
-(3 base types, 5 concrete types, 17 edges) into a single 17-type,
-45-edge manifest. Properties are baked into type descriptions (zero code
+(3 base types, 5 concrete types, 12 edges) into a single 17-type,
+40-edge manifest. Properties are baked into type descriptions (zero code
 changes to core). Inspired by CodeMeta's property naming conventions but
 fully custom — no external dependency.
 
@@ -106,25 +106,26 @@ parent lists it too. There is no property inheritance to rely on.
 `mobile_app` under `software_application`), add one level — never deeper than
 2 total, which `validateManifest` enforces.
 
-### D6: Target matching is exact — enumerate the pairs you need
+### D6: Matching is parent-aware on both sides — declare on the parent
 
-Parent inheritance is **source-side only**. `OntologyService.resolveEdges`
-matches `def.target_type` against the resolved target fact's `okf_type` with
-an exact comparison, and the dependency spec's D3 keeps it that way.
+Core matches a concrete type against an edge definition's declared type on
+**both** sides via a one-hop `parent_type` lookup, with targets resolved
+**exact-first** (`OntologyService.resolveEdges` runs an exact `target_type`
+pass, then a parent pass). See the dependency spec's D3.
 
-Consequence: an edge declared `… → creativework` will **not** resolve to a
-`design_spec`, `handoff`, `procedure`, `memory`, or `reference_doc` target.
-It silently drops — `resolveEdges` skips the edge when no def's `target_type`
-matches.
+So an edge declared on `creativework` covers all five concrete subtypes as
+source *and* as target, and each polymorphic relationship needs exactly one
+row. `supersedes` is declared once as `creativework → creativework` and
+resolves a `design_spec → design_spec` pair; `itemReviewed review →
+creativework` reaches every subtype the same way, with no extra rows.
 
-`supersedes` therefore cannot be declared once as `creativework →
-creativework`; spec-supersedes-spec is its whole purpose and that row would
-never resolve. It is enumerated as one row per concrete type instead (6 rows).
+**Accepted cost:** declaring `→ creativework` admits every child, with no way
+to mean "the parent type only". Where a narrower target is wanted, declare the
+concrete row explicitly — the exact-first pass makes it win over the broad one.
 
-**Known limitation, accepted:** `itemReviewed review → creativework` likewise
-cannot reach the five concrete subtypes. Reviewing a design spec is not a
-Tessera workflow, so those rows are not enumerated. If that changes, add them
-the same way.
+*Rev 2 of this spec enumerated `supersedes` per concrete type, because target
+matching was exact at the time. The dependency spec's rev 4 made matching
+symmetric, so the enumeration is gone.*
 
 ### D7: CodeMeta as template, not dependency
 
@@ -210,7 +211,7 @@ test's allowlist with this reason; anything else that diverges is a bug.
 
 ---
 
-## Edge Types (45)
+## Edge Types (40)
 
 ### Warm-Agent Edges (28, verbatim from schema-org-llm-wiki)
 
@@ -249,7 +250,7 @@ Note: the `about`, `author`, and `publisher` rows are declared on
 `creativework` as **source**, so all five concrete subtypes satisfy them via
 `parent_type` (D6). No enumeration needed on that side.
 
-### EA Executive Edges (17, new)
+### EA Executive Edges (12, new)
 
 | Edge | Source → Target | Description |
 |------|----------------|------------|
@@ -261,11 +262,6 @@ Note: the `about`, `author`, and `publisher` rows are declared on
 | `handoffFor` | handoff → software_application | Handoff is for this product. |
 | `handoffFor` | handoff → service | Handoff is for this service. |
 | `supersedes` | creativework → creativework | This document replaces an older one. |
-| `supersedes` | design_spec → design_spec | This spec replaces an older spec. |
-| `supersedes` | handoff → handoff | This handoff replaces an older handoff. |
-| `supersedes` | procedure → procedure | This procedure replaces an older procedure. |
-| `supersedes` | memory → memory | This recap replaces an older recap. |
-| `supersedes` | reference_doc → reference_doc | This reference replaces an older one. |
 | `hasRole` | person → role | Person fills this role. |
 | `operates` | role → software_application | Role is responsible for this product. |
 | `provides` | organization → service | Organization provides this service. |
@@ -367,15 +363,9 @@ export const schemaEaManifest: OntologyManifest = {
     { type: 'documents', source_type: 'procedure', target_type: 'service', description: 'Procedure applies to this service.' },
     { type: 'handoffFor', source_type: 'handoff', target_type: 'software_application', description: 'Handoff is for this product.' },
     { type: 'handoffFor', source_type: 'handoff', target_type: 'service', description: 'Handoff is for this service.' },
-    // supersedes is enumerated per concrete type: target matching is exact,
-    // so a lone creativework -> creativework row never resolves for a
-    // design_spec -> design_spec pair (D6).
+    // One row covers every creativework subtype on both sides: matching is
+    // parent-aware on source and target alike, exact-first (D6).
     { type: 'supersedes', source_type: 'creativework', target_type: 'creativework', description: 'This document replaces an older one.' },
-    { type: 'supersedes', source_type: 'design_spec', target_type: 'design_spec', description: 'This spec replaces an older spec.' },
-    { type: 'supersedes', source_type: 'handoff', target_type: 'handoff', description: 'This handoff replaces an older handoff.' },
-    { type: 'supersedes', source_type: 'procedure', target_type: 'procedure', description: 'This procedure replaces an older procedure.' },
-    { type: 'supersedes', source_type: 'memory', target_type: 'memory', description: 'This recap replaces an older recap.' },
-    { type: 'supersedes', source_type: 'reference_doc', target_type: 'reference_doc', description: 'This reference replaces an older one.' },
     { type: 'hasRole', source_type: 'person', target_type: 'role', description: 'Person fills this role.' },
     { type: 'operates', source_type: 'role', target_type: 'software_application', description: 'Role is responsible for this product.' },
     { type: 'provides', source_type: 'organization', target_type: 'service', description: 'Organization provides this service.' },
@@ -430,7 +420,7 @@ D2 parity test.
 
 1. **Manifest validates** — `validateManifest(schemaEaManifest)` does not
    throw (requires the core release with `parent_type`).
-2. **Counts are what the spec claims** — 17 node types, 45 edge types.
+2. **Counts are what the spec claims** — 17 node types, 40 edge types.
 3. **No duplicate node slugs** across warm-agent + EA types.
 4. **Edge triples are unique** — polymorphic edges (`specifies`, `documents`,
    `handoffFor`, `supersedes`, `about`, `itemReviewed`, `location`,
@@ -498,8 +488,8 @@ D2 parity test.
    `spec_for`, `session_id`, `dashboard_url`, `role_name`, `source_url`,
    `trigger`, `session_date`.
 8. **`supersedes` resolves for a concrete pair** — with the core release in
-   place, a `design_spec → design_spec` supersedes edge survives
-   `resolveEdges` (regression guard for D6).
+   place, a `design_spec → design_spec` edge resolves against the single
+   `creativework → creativework` row (regression guard for D6).
 9. **Disambiguation text is present (D8)** — `product`'s description does not
    end in "and software", and names `software_application`;
    `software_application` and `service` each name the other two. Cheap guard
@@ -513,14 +503,12 @@ D2 parity test.
   `OntologyManifest` fields
 - No property inheritance (D4) — core has none, and this spec does not ask
   for it
-- No parent-aware target matching (D6) — pairs are enumerated instead
 - No runtime logic — purely a data package
 - No runtime dependency on `schema-org-llm-wiki` (devDependency only, for the
   parity test)
 - No profile-specific classification rules injected into core prompts —
   disambiguation lives in the manifest descriptions (D8)
 - No dependency on CodeMeta (inspired by, not imported from)
-- No `itemReviewed` rows for the concrete `creativework` subtypes (D6)
 
 ---
 
@@ -560,3 +548,10 @@ D2 parity test.
   different values for one row — the exact defect rev 2 set out to fix. Table
   rows are now verbatim, and D2 states that the tables are held to the same
   standard as the manifest.
+- **Rev 5 (2026-08-30)** — the dependency spec (#110 rev 4) made type matching
+  symmetric: targets are now parent-aware too, resolved exact-first. Rev 2's
+  six enumerated `supersedes` rows collapse back to the single
+  `creativework → creativework` row they were expanded from, and the accepted
+  `itemReviewed → creativework` limitation is gone — it reaches every subtype
+  natively. Edge count 45 → 40. D6 rewritten from "enumerate the pairs you
+  need" to "declare on the parent".
