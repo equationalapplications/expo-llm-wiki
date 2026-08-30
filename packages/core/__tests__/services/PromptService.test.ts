@@ -215,3 +215,19 @@ describe('PromptService', () => {
     });
   });
 });
+
+describe('ontology prompt — parent_type advertisement', () => {
+  it('emergent ontology_updates schema advertises the optional parent_type field', () => {
+    const { ontologyModeInstructions } = buildOntologyPromptAppendix(
+      'emergent', '{"node_types":[],"edge_types":[]}',
+    );
+    expect(ontologyModeInstructions).toContain('"parent_type"');
+  });
+
+  it('strict mode instructions do not propose types (unchanged)', () => {
+    const { ontologyModeInstructions } = buildOntologyPromptAppendix(
+      'strict', '{"node_types":[],"edge_types":[]}',
+    );
+    expect(ontologyModeInstructions).not.toContain('ontology_updates');
+  });
+});

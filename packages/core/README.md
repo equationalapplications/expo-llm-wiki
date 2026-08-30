@@ -582,6 +582,86 @@ In **Strict** and **Emergent** modes, librarian and ingest JSON may include type
 
 See the design spec: [`docs/superpowers/specs/2026-06-23-per-entity-seeded-ontology-design.md`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/docs/superpowers/specs/2026-06-23-per-entity-seeded-ontology-design.md).
 
+### Ontology type inheritance
+
+`OntologyNodeType` accepts an optional `parent_type` field for **one-level type inheritance** — the building block for polymorphic queries like "all CreativeWorks" without deep, multi-level hierarchies.
+
+```ts
+// packages/core/src/types.ts
+export interface OntologyNodeType {
+  type: string;
+  description: string;
+  /** Optional parent type slug. One level only — the parent must exist in the
+   *  same manifest and must not itself declare a `parent_type`. */
+  parent_type?: string;
+}
+```
+
+A concrete type declares `parent_type: '<parent-slug>'`; the parent must be a top-level node in the same manifest. A `design_spec` node with `parent_type: 'creativework'` is treated as both itself *and* a `creativework` during edge matching.
+
+#### Inheritance rules (strictly enforced)
+
+`validateManifest` enforces the **one-level invariant** at every persist and read (`entity_manifests.manifest_json` is `JSON.parse`d on every read, so validation runs on the read path too). Violations throw:
+
+| Condition | Error |
+|-----------|-------|
+| `parent_type` references an unknown slug | `Parent type not found: <slug>` |
+| `parent_type` equals the node's own slug | `Self-parent: <type>` |
+| The referenced parent also declares a `parent_type` | `Parent chain too deep: <a> → <b> → <grandparent>` |
+| `parent_type` is present but blank (`''` / whitespace) or non-string (`number`, `null`, `object`) | `Ontology parent_type must be a non-empty string when present: <type>` |
+
+Two consequences worth knowing:
+
+- The depth check rejects **2-cycles** (`a → b → a`) which a self-parent check alone would miss.
+- A *present* `parent_type` key is required to be a usable string; an *absent* key (`undefined`) is fine and means "no parent". This is the same rule core applies to blank slugs elsewhere (`Ontology node type slug must be non-empty`).
+
+Parent types are **instantiable** — a fact may be classified as bare `creativework`, and `resolveNodeType('creativework')` returns `'creativework'` normally. There is no `abstract` flag; if you want a parent to stay abstract, write the description to steer classification toward the concrete children.
+
+#### Edge matching (symmetric, exact-first)
+
+Edge matching is parent-aware on **both** sides and routes through a single primitive, `typeSatisfies(declaredType, concreteType, manifest)`:
+
+- `declaredType === concreteType` (case-insensitive) → **exact match**, short-circuits before the node lookup. Manifests with no `parent_type` behave bit-for-bit as before.
+- Otherwise: looks up `concreteType`'s definition in the manifest and returns `true` if its `parent_type` equals `declaredType`. One hop only — `typeSatisfies` never recurses.
+
+`typeSatisfies` is used at four gates — `validateInlineEdges` (source), `OntologyService.resolveEdges` (source and target, via two-pass), `IngestionService.upsertGraph` (source) — so a parent-satisfied edge that validates will also persist.
+
+**Targets resolve exact-first.** When resolving an edge against a target fact, `OntologyService.resolveEdges` runs two passes over candidate defs:
+
+```ts
+// Packages/core/src/services/OntologyService.ts (abridged)
+const targetType = (target.okf_type ?? '').trim().toLowerCase();
+const def = candidates.find(d => d.target_type.trim().toLowerCase() === targetType)
+  ?? candidates.find(d => typeSatisfies(d.target_type, targetType, manifest));
+```
+
+The exact pass runs first, so a `design_spec` target with both `about creativework → creativework` and `about creativework → design_spec` declared resolves to the **narrower** row — array order never decides which pass wins. Ties within a single pass are immaterial: only `def.type` is read off the winning def, and `validateManifest` already rejects a manifest whose triples spell one edge name with different casing, so every candidate within a pass yields a byte-identical edge row.
+
+> **Accepted cost:** declaring `→ creativework` now admits every child of `creativework`, and there is no way to say "the parent type only." A type that needs an exact-only target must not be given children.
+
+#### Emergent prompt schema
+
+In `emergent` mode the LLM may propose new types via `ontology_updates`. The prompt schema (`EMERGENT_EXTRA` in `packages/core/src/prompts/ontology.ts`) advertises the optional `parent_type` so emergent proposals can suggest children of an existing type:
+
+```json
+"ontology_updates": {
+  "node_types": [{ "type": "slug", "description": "...", "parent_type": "optional existing slug" }],
+  "edge_types": [{ "type": "slug", "source_type": "...", "target_type": "...", "description": "..." }]
+}
+```
+
+The rest of the manifest reaches the LLM unchanged — `buildPromptContext` does `JSON.stringify(manifest, null, 2)`, so an established manifest's `parent_type` fields appear verbatim alongside `type` and `description`.
+
+Emergent proposals are **untrusted input**: `mergeOntologyUpdates` drops any `parent_type` (rather than throwing) when it is a non-string, blank, unresolvable, self-referential, or whose referenced parent already declares its own parent. The lenient merge contract keeps malformed LLM proposals from aborting an ingest transaction. Changing an established type's parent is a `setOntologyManifest` operation.
+
+#### Backwards compatibility
+
+`parent_type` is optional and manifests persist as a whole JSON blob in `entity_manifests.manifest_json`. Existing manifests without the field validate identically; no SQLite migration is needed. `setOntologyManifest` rejects a two-level chain at the public API boundary, so callers cannot accidentally introduce an unenforced chain through a typo.
+
+`typeSatisfies` is intentionally **not** re-exported from the package's public surface (`packages/core/src/index.ts`). No host needs the primitive to author or validate a manifest; publishing it would freeze an internal matching rule into the package's public surface.
+
+See the design spec: [`docs/superpowers/specs/2026-08-28-ontology-parent-field-spec.md`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/docs/superpowers/specs/2026-08-28-ontology-parent-field-spec.md).
+
 ### Ontology backfill
 
 Facts that enter the store without passing through the librarian (synced-down

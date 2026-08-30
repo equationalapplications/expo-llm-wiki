@@ -40,6 +40,9 @@ export type OntologyMode = 'strict' | 'emergent' | 'off';
 export interface OntologyNodeType {
   type: string;
   description: string;
+  /** Optional parent type slug. One level only — the parent must exist in the
+   *  same manifest and must not itself declare a `parent_type`. */
+  parent_type?: string;
 }
 
 export interface OntologyEdgeType {

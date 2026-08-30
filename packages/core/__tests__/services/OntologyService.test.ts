@@ -361,4 +361,147 @@ describe('OntologyService', () => {
       expect(state.mode).toBe('emergent');
     });
   });
+
+  describe('OntologyService.resolveEdges — parent inheritance', () => {
+    const parentEdgeManifest: OntologyManifest = {
+      node_types: [
+        { type: 'creativework', description: 'Parent.' },
+        { type: 'design_spec', description: 'Child.', parent_type: 'creativework' },
+        { type: 'person', description: 'Person.' },
+      ],
+      edge_types: [
+        { type: 'about', source_type: 'creativework', target_type: 'person', description: 'x' },
+      ],
+    };
+
+    it('child source type satisfies an edge declared for its parent', () => {
+      const { metadataRepo, edgeRepo } = makeMocks();
+      const svc = new OntologyService(metadataRepo, edgeRepo);
+      const titleIndex = new Map([['jane doe', { id: 'p1', okf_type: 'person' }]]);
+      const edges = svc.resolveEdges(
+        'e1', 'f1', 'design_spec',
+        [{ edge_type: 'about', target_title: 'Jane Doe' }],
+        parentEdgeManifest, titleIndex, 1000,
+      );
+      expect(edges).toHaveLength(1);
+      expect(edges[0]).toMatchObject({
+        entity_id: 'e1', source_id: 'f1', target_id: 'p1', edge_type: 'about',
+      });
+    });
+
+    it('exact source match and parent-derived match are both candidates; target_type disambiguates', () => {
+      const { metadataRepo, edgeRepo } = makeMocks();
+      const svc = new OntologyService(metadataRepo, edgeRepo);
+      const manifest: OntologyManifest = {
+        node_types: parentEdgeManifest.node_types,
+        edge_types: [
+          { type: 'about', source_type: 'creativework', target_type: 'person', description: 'parent-def' },
+          { type: 'about', source_type: 'design_spec', target_type: 'creativework', description: 'exact-def' },
+        ],
+      };
+      // Target 'person' → parent-def wins; target 'the spec' → exact-def wins.
+      const toPerson = svc.resolveEdges('e1', 'f1', 'design_spec',
+        [{ edge_type: 'about', target_title: 'Jane Doe' }], manifest,
+        new Map([['jane doe', { id: 'p1', okf_type: 'person' }]]), 1000);
+      expect(toPerson[0]?.edge_type).toBe('about');
+      expect(toPerson[0]?.target_id).toBe('p1');
+      const toWork = svc.resolveEdges('e1', 'f1', 'design_spec',
+        [{ edge_type: 'about', target_title: 'The Spec' }], manifest,
+        new Map([['the spec', { id: 'c1', okf_type: 'creativework' }]]), 1000);
+      expect(toWork[0]?.target_id).toBe('c1');
+    });
+
+    it('resolves a target through its parent_type (D3)', () => {
+      const { metadataRepo, edgeRepo } = makeMocks();
+      const svc = new OntologyService(metadataRepo, edgeRepo);
+      const manifest: OntologyManifest = {
+        node_types: parentEdgeManifest.node_types,
+        edge_types: [
+          { type: 'supersedes', source_type: 'creativework', target_type: 'creativework', description: 'x' },
+        ],
+      };
+      const edges = svc.resolveEdges('e1', 'f1', 'design_spec',
+        [{ edge_type: 'supersedes', target_title: 'Old Spec' }], manifest,
+        new Map([['old spec', { id: 'd0', okf_type: 'design_spec' }]]), 1000);
+      expect(edges).toHaveLength(1);
+      expect(edges[0]).toMatchObject({ target_id: 'd0', edge_type: 'supersedes' });
+    });
+
+    it('prefers an exact target def over a parent-derived one, whatever the order', () => {
+      const { metadataRepo, edgeRepo } = makeMocks();
+      const svc = new OntologyService(metadataRepo, edgeRepo);
+      const rows = [
+        { type: 'about', source_type: 'creativework', target_type: 'creativework', description: 'broad' },
+        { type: 'about', source_type: 'creativework', target_type: 'design_spec', description: 'narrow' },
+      ];
+      for (const edge_types of [rows, [...rows].reverse()]) {
+        const edges = svc.resolveEdges('e1', 'f1', 'design_spec',
+          [{ edge_type: 'about', target_title: 'Other Spec' }],
+          { node_types: parentEdgeManifest.node_types, edge_types },
+          new Map([['other spec', { id: 'd9', okf_type: 'design_spec' }]]), 1000);
+        expect(edges).toHaveLength(1);
+        expect(edges[0]!.target_id).toBe('d9');
+      }
+    });
+
+    it('still skips a target with no okf_type', () => {
+      const { metadataRepo, edgeRepo } = makeMocks();
+      const svc = new OntologyService(metadataRepo, edgeRepo);
+      const edges = svc.resolveEdges('e1', 'f1', 'design_spec',
+        [{ edge_type: 'about', target_title: 'Untyped' }], parentEdgeManifest,
+        new Map([['untyped', { id: 'u1', okf_type: null }]]), 1000);
+      expect(edges).toEqual([]);
+    });
+
+    it('validates a seed manifest on both branches of getEffectiveState (D11)', async () => {
+      const danglingSeed = {
+        mode: 'strict' as const,
+        manifest: {
+          node_types: [{ type: 'design_spec', description: 'x', parent_type: 'nonexistent' }],
+          edge_types: [],
+        },
+      };
+      const make = () => {
+        const { metadataRepo, edgeRepo } = makeMocks();
+        // No persisted row, so getEffectiveState falls through to the seed.
+        (metadataRepo.getManifest as any).mockResolvedValue(null);
+        return new OntologyService(metadataRepo, edgeRepo, { seedManifests: { e1: danglingSeed } } as any);
+      };
+      // no-tx branch: previously did a bare cache.set and never validated.
+      await expect(make().getEffectiveState('e1')).rejects.toThrow(/Parent type not found/);
+      // tx branch: validated via setManifest, but must not depend on that.
+      await expect(make().getEffectiveState('e1', {} as any)).rejects.toThrow(/Parent type not found/);
+    });
+
+    it('accepts a valid parent-bearing seed on both branches (D11 regression guard)', async () => {
+      const { metadataRepo, edgeRepo } = makeMocks();
+      (metadataRepo.getManifest as any).mockResolvedValue(null);
+      const svc = new OntologyService(metadataRepo, edgeRepo, {
+        seedManifests: { e1: { mode: 'strict' as const, manifest: parentEdgeManifest } },
+      } as any);
+      await expect(svc.getEffectiveState('e1')).resolves.toMatchObject({ mode: 'strict' });
+      // tx branch: skips the cache and validates/persists the seed via setManifest.
+      await expect(svc.getEffectiveState('e1', {} as any)).resolves.toMatchObject({ mode: 'strict' });
+    });
+
+    it('child source does not satisfy an edge declared on an unrelated type', () => {
+      const { metadataRepo, edgeRepo } = makeMocks();
+      const svc = new OntologyService(metadataRepo, edgeRepo);
+      const manifest: OntologyManifest = {
+        node_types: [
+          { type: 'creativework', description: 'Parent.' },
+          { type: 'software_application', description: 'App.' },
+          { type: 'design_spec', description: 'Child.', parent_type: 'creativework' },
+          { type: 'person', description: 'Person.' },
+        ],
+        edge_types: [
+          { type: 'assigns', source_type: 'software_application', target_type: 'person', description: 'x' },
+        ],
+      };
+      const edges = svc.resolveEdges('e1', 'f1', 'design_spec',
+        [{ edge_type: 'assigns', target_title: 'Jane Doe' }], manifest,
+        new Map([['jane doe', { id: 'p1', okf_type: 'person' }]]), 1000);
+      expect(edges).toEqual([]);
+    });
+  });
 });

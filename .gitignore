@@ -5,6 +5,7 @@ dist/
 .codegraph/
 .superpowers/
 .worktrees/
+.qwen/
 docs/superpowers/plans
 *.tsbuildinfo
 

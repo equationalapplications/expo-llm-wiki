@@ -546,3 +546,41 @@ describe('upsertGraph contract — seedManifests honored before first persist', 
     expect(row).toBeNull();
   });
 });
+
+describe('upsertGraph — parent-inherited source matching', () => {
+  let db: SQLiteAdapter;
+  let wiki: WikiMemory;
+
+  beforeEach(async () => {
+    db = openTestDatabase();
+    await setupDatabase(db, 'llm_wiki_');
+    wiki = new WikiMemory(db, { llmProvider: { generateText: async () => '{}' } });
+    await wiki.setup();
+  });
+
+  it('persists an edge whose source type satisfies the declared type via parent (strict mode does not throw)', async () => {
+    await wiki.setOntologyManifest('entity-1', {
+      node_types: [
+        { type: 'creativework', description: 'Parent.' },
+        { type: 'design_spec', description: 'Child.', parent_type: 'creativework' },
+        { type: 'person', description: 'Person.' },
+      ],
+      edge_types: [
+        { type: 'about', source_type: 'creativework', target_type: 'person', description: 'x' },
+      ],
+    }, { mode: 'strict' });
+
+    const result = await db.withTransactionAsync(tx =>
+      wiki.upsertGraph('entity-1', {
+        sourceRef: 'spec.md',
+        sourceHash: 'b'.repeat(64),
+        nodes: [
+          { id: 'f1', type: 'design_spec', title: 'Spec' },
+          { id: 'f2', type: 'person', title: 'Jane Doe' },
+        ],
+        edges: [{ sourceId: 'f1', type: 'about', targetId: 'f2' }],
+      }, tx),
+    );
+    expect(result).toMatchObject({ nodesWritten: 2, edgesWritten: 1 });
+  });
+});
