@@ -1,13 +1,13 @@
 # @equationalapplications/schema-ea — Spec
 
 **Date:** 2026-08-28
-**Status:** Draft (rev 5 — 2026-08-30)
+**Status:** Draft (rev 6 — 2026-08-30)
 **Packages:** `@equationalapplications/schema-ea` (new)
 **Depends on:** `@equationalapplications/core-llm-wiki` at the first release
 shipping `OntologyNodeType.parent_type` (see
-`2026-08-28-ontology-parent-field-spec.md`, rev 3). Pin the exact version in
-`package.json` once that release lands — this manifest does not validate
-against 6.0.1.
+`2026-08-28-ontology-parent-field-spec.md`, rev 8 — Implemented). Pin the
+exact version in `package.json` once that release lands — this manifest
+does not validate against 6.0.1.
 
 ---
 
@@ -182,18 +182,18 @@ test's allowlist with this reason; anything else that diverges is a bug.
 | Type | Description |
 |------|------------|
 | `software_application` | Software EA itself builds, ships, or maintains — the EA portfolio codebase. Not third-party software EA merely uses (that is `product`), and not a running hosted capability (that is `service`). Expected frontmatter properties: `repo_url`, `version`, `install_path`, `status` (active/deprecated/in_dev). |
-| `service` | A running hosted capability EA consumes or operates, vendor-run or EA-run — databases, APIs, CI, auth, monitoring. Distinct from `software_application`, which is the codebase EA ships. Expected frontmatter properties: `provider`, `dashboard_url`, `status`, `tier` (critical/important/optional). |
+| `service` | A running hosted capability EA consumes or operates, vendor-run or EA-run — databases, APIs, CI, auth, monitoring. Distinct from `software_application` (the codebase EA ships) and `product` (third-party tools EA owns). EA's own backend is a `software_application` as source and a `service` as a deployed dependency. Expected frontmatter properties: `provider`, `dashboard_url`, `status`, `tier` (critical/important/optional). |
 | `role` | A functional role a person fills within EA. Expected frontmatter properties: `role_name`, `scope`, `capabilities`. |
 
 ### EA Executive Concrete Types (5, all `parent_type: 'creativework'`)
 
 | Type | Parent | Description |
 |------|--------|------------|
-| `design_spec` | `creativework` | A technical or product design specification. Expected frontmatter properties: `status` (draft/approved/implemented/superseded), `spec_for` (product or service slug), `branch`. |
+| `design_spec` | `creativework` | A technical or product design specification. Expected frontmatter properties: `status` (draft/approved/implemented/superseded), `spec_for` (`software_application` or `service` slug), `branch`. |
 | `handoff` | `creativework` | An operational handoff or session transition document. Expected frontmatter properties: `session_id`, `outcome` (pending/complete/blocked), `open_items`. |
-| `procedure` | `creativework` | A checklist, workflow, or how-to document. Expected frontmatter properties: `trigger` (when to use it), `last_reviewed`, `applies_to` (product or service slug). |
-| `memory` | `creativework` | A dated recap of one working session. Use only for session records — ordinary facts are not memories. Expected frontmatter properties: `session_date`, `key_decisions` (comma-separated list). |
-| `reference_doc` | `creativework` | A product doc, service description, or architecture reference. Expected frontmatter properties: `source_url`, `product` (slug). |
+| `procedure` | `creativework` | A checklist, workflow, or how-to document. Expected frontmatter properties: `trigger` (when to use it), `last_reviewed`, `applies_to` (`software_application` or `service` slug). |
+| `session_recap` | `creativework` | A dated recap of one working session. Use only for session records — ordinary facts are not memories. Expected frontmatter properties: `session_date`, `key_decisions` (comma-separated list). |
+| `reference_doc` | `creativework` | A product doc, service description, or architecture reference. Expected frontmatter properties: `source_url`, `product` (`software_application` slug). |
 
 > **Disambiguation.** Three types could plausibly claim a piece of software.
 > The manifest resolves this inline, in the descriptions the model actually
@@ -263,7 +263,7 @@ Note: the `about`, `author`, and `publisher` rows are declared on
 | `handoffFor` | handoff → service | Handoff is for this service. |
 | `supersedes` | creativework → creativework | This document replaces an older one. |
 | `hasRole` | person → role | Person fills this role. |
-| `operates` | role → software_application | Role is responsible for this product. |
+| `operates` | role → software_application | Role operates this software application. |
 | `provides` | organization → service | Organization provides this service. |
 | `maintains` | person → software_application | Person maintains this product. |
 
@@ -281,13 +281,15 @@ packages/schema-ea/
 │   └── index.ts          # exports schemaEaManifest
 ├── __tests__/
 │   └── manifest.test.ts  # validation + warm-agent parity (D2)
-└── README.md             # type catalog, usage, property conventions
+└── README.md             # type catalog (nodes/edges), usage, conventions
 ```
 
 `package.json` mirrors `packages/schema-org/package.json`: `main`/`module`/
 `types` pointing into `dist`, the `exports` map, `files: ["dist", "LICENSE",
-"README.md"]`, scripts `build` (tsup) / `dev` / `typecheck` / `test` /
-`test:watch`, `publishConfig.access: "public"`, and
+"README.md"]`, `description` and `keywords` for npm search, `license`,
+`bugs`, `homepage`, scripts `build` (tsup) / `dev` / `typecheck` / `test` /
+`test:watch`, `engines: { "node": ">=20" }`,
+`publishConfig.access: "public"`, and
 `repository.directory: "packages/schema-ea"`.
 
 - **dependencies:** `@equationalapplications/core-llm-wiki` (workspace:\*)
@@ -316,14 +318,14 @@ export const schemaEaManifest: OntologyManifest = {
     { type: 'product', description: 'A physical item, software tool, or device owned or under consideration. Covers electronics, vehicles, and household items. For software EA builds, ships, or maintains, use software_application instead; for a hosted capability EA consumes or operates, use service.' },
     // EA executive base types (no parent_type, no children — D5)
     { type: 'software_application', description: 'Software EA itself builds, ships, or maintains — the EA portfolio codebase. Not third-party software EA merely uses (that is product), and not a running hosted capability (that is service). Expected frontmatter properties: repo_url, version, install_path, status (active/deprecated/in_dev).' },
-    { type: 'service', description: "A running hosted capability EA consumes or operates, vendor-run or EA-run — databases, APIs, CI, auth, monitoring. Distinct from software_application, which is the codebase EA ships; EA's own backend is a software_application as source and a service as a deployed dependency. Expected frontmatter properties: provider, dashboard_url, status, tier (critical/important/optional)." },
+    { type: 'service', description: "A running hosted capability EA consumes or operates, vendor-run or EA-run — databases, APIs, CI, auth, monitoring. Distinct from software_application (the codebase EA ships) and product (third-party tools EA owns). EA's own backend is a software_application as source and a service as a deployed dependency. Expected frontmatter properties: provider, dashboard_url, status, tier (critical/important/optional)." },
     { type: 'role', description: 'A functional role a person fills within EA. Expected frontmatter properties: role_name, scope, capabilities.' },
     // EA executive concrete types (one level under creativework)
-    { type: 'design_spec', parent_type: 'creativework', description: 'A technical or product design specification. Expected frontmatter properties: status (draft/approved/implemented/superseded), spec_for (product or service slug), branch.' },
+    { type: 'design_spec', parent_type: 'creativework', description: 'A technical or product design specification. Expected frontmatter properties: status (draft/approved/implemented/superseded), spec_for (software_application or service slug), branch.' },
     { type: 'handoff', parent_type: 'creativework', description: 'An operational handoff or session transition document. Expected frontmatter properties: session_id, outcome (pending/complete/blocked), open_items.' },
-    { type: 'procedure', parent_type: 'creativework', description: 'A checklist, workflow, or how-to document. Expected frontmatter properties: trigger (when to use it), last_reviewed, applies_to (product or service slug).' },
-    { type: 'memory', parent_type: 'creativework', description: 'A dated recap of one working session. Use only for session records — ordinary facts are not memories. Expected frontmatter properties: session_date, key_decisions (comma-separated list).' },
-    { type: 'reference_doc', parent_type: 'creativework', description: 'A product doc, service description, or architecture reference. Expected frontmatter properties: source_url, product (slug).' },
+    { type: 'procedure', parent_type: 'creativework', description: 'A checklist, workflow, or how-to document. Expected frontmatter properties: trigger (when to use it), last_reviewed, applies_to (software_application or service slug).' },
+    { type: 'session_recap', parent_type: 'creativework', description: 'A dated recap of one working session. Use only for session records — ordinary facts are not memories. Expected frontmatter properties: session_date, key_decisions (comma-separated list).' },
+    { type: 'reference_doc', parent_type: 'creativework', description: 'A product doc, service description, or architecture reference. Expected frontmatter properties: source_url, product (software_application slug).' },
   ],
   edge_types: [
     // Warm-agent edges — copied verbatim from schemaOrgWarmAgentManifest (D2).
@@ -355,7 +357,7 @@ export const schemaEaManifest: OntologyManifest = {
     { type: 'itemReviewed', source_type: 'review', target_type: 'event', description: 'The event this review evaluates.' },
     { type: 'itemReviewed', source_type: 'review', target_type: 'product', description: 'The tool, device, or product this review evaluates.' },
     { type: 'owns', source_type: 'person', target_type: 'product', description: 'Item owned by the person (electronics, vehicles, etc.).' },
-    // EA executive edges (17, new)
+    // EA executive edges (12, new)
     { type: 'dependsOn', source_type: 'software_application', target_type: 'service', description: 'Product depends on this service.' },
     { type: 'specifies', source_type: 'design_spec', target_type: 'software_application', description: 'Spec is about this product.' },
     { type: 'specifies', source_type: 'design_spec', target_type: 'service', description: 'Spec is about this service.' },
@@ -367,12 +369,28 @@ export const schemaEaManifest: OntologyManifest = {
     // parent-aware on source and target alike, exact-first (D6).
     { type: 'supersedes', source_type: 'creativework', target_type: 'creativework', description: 'This document replaces an older one.' },
     { type: 'hasRole', source_type: 'person', target_type: 'role', description: 'Person fills this role.' },
-    { type: 'operates', source_type: 'role', target_type: 'software_application', description: 'Role is responsible for this product.' },
+    { type: 'operates', source_type: 'role', target_type: 'software_application', description: 'Role operates this software application.' },
     { type: 'provides', source_type: 'organization', target_type: 'service', description: 'Organization provides this service.' },
     { type: 'maintains', source_type: 'person', target_type: 'software_application', description: 'Person maintains this product.' },
   ],
 };
 ```
+
+### `README.md`
+
+Sections, in order:
+
+- Title + one-sentence description of what the package ships
+- **Node Catalog** — every node type and its description, with the property
+  list from each description
+- **Edge Catalog** — every edge type, its `(source, target)`, and description
+- **Property Conventions** — CodeMeta-shaped naming, status enums,
+  no-inheritance note (D4)
+- **Usage** — `import { schemaEaManifest } from
+  '@equationalapplications/schema-ea'` and a one-paragraph note on passing it
+  into `WikiMemory`'s `ontologyConfig.manifest`
+- **Disambiguation** (D8) — three-way cross-reference among `product`,
+  `software_application`, and `service`
 
 ---
 
@@ -489,11 +507,21 @@ D2 parity test.
    `trigger`, `session_date`.
 8. **`supersedes` resolves for a concrete pair** — with the core release in
    place, a `design_spec → design_spec` edge resolves against the single
-   `creativework → creativework` row (regression guard for D6).
+   `creativework → creativework` row (regression guard for D6):
+
+   ```ts
+   it('supersedes resolves for a concrete pair (D6 regression guard)', () => {
+     // exact-first symmetric matching means this single parent row
+     // correctly covers a design_spec -> design_spec relationship.
+     const edge = schemaEaManifest.edge_types.find(e => e.type === 'supersedes');
+     expect(edge?.source_type).toBe('creativework');
+     expect(edge?.target_type).toBe('creativework');
+   });
+   ```
 9. **Disambiguation text is present (D8)** — `product`'s description does not
-   end in "and software", and names `software_application`;
-   `software_application` and `service` each name the other two. Cheap guard
-   against someone "restoring" the upstream row.
+   end in "and software"; all three (`product`, `software_application`,
+   `service`) name each other in their descriptions. Cheap guard against
+   someone "restoring" the upstream row.
 
 ---
 
@@ -509,6 +537,12 @@ D2 parity test.
 - No profile-specific classification rules injected into core prompts —
   disambiguation lives in the manifest descriptions (D8)
 - No dependency on CodeMeta (inspired by, not imported from)
+- No narrowing of warm-agent polymorphic edges against EA concrete subtypes
+  — verbatim copy (D2) means `author`, `publisher`, `about`, `itemReviewed`
+  declared on `creativework` now reach every `creativework` child
+  (`design_spec`, `session_recap`, `handoff`, `procedure`, `reference_doc`).
+  Narrowing would force a divergence from upstream; deferred until
+  classification evidence shows it is actually misclassifying.
 
 ---
 
@@ -555,3 +589,18 @@ D2 parity test.
   `itemReviewed → creativework` limitation is gone — it reaches every subtype
   natively. Edge count 45 → 40. D6 rewritten from "enumerate the pairs you
   need" to "declare on the parent".
+- **Rev 6 (2026-08-30)** — review pass. Updated the `service` description to
+  name `product` and `software_application` mutually — fixing the
+  table/code-block divergence D2 was supposed to prevent and the false claim
+  in rev 5's Test 9 about which descriptions name which. Renamed `memory` →
+  `session_recap` to avoid namespace collision with `WikiMemory` in core.
+  Disambiguated `design_spec.spec_for`, `procedure.applies_to`, and
+  `reference_doc.product` — all refer to `software_application` (or
+  `service`) slugs in EA, not the `product` ontology type. Aligned the
+  `operates` edge description with its verb. Pinned the
+  dependency reference to the parent spec's implemented (rev 8) revision.
+  Expanded the `package.json` outline (`description`, `keywords`, `license`,
+  `bugs`, `homepage`, `engines`) and outlined the `README.md` sections.
+  Added Test 8's implementation snippet. Documented the polymorphic-edge
+  expansion under "What This Does NOT Include". Corrected the stale
+  `// EA executive edges (17, new)` comment to `(12, new)`.
