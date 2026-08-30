@@ -18,7 +18,9 @@ import {
   normalizeTitleKey,
   resolveNodeType,
   resolveEdgeDefinitions,
+  typeSatisfies,
   validateInlineEdges,
+  validateManifest,
 } from '../utils/ontology';
 import { generateId } from '../utils/ids';
 
@@ -63,6 +65,8 @@ export class OntologyService {
 
     const seed = this.ontologyConfig?.seedManifests?.[entityId];
     if (seed) {
+      // D11: the tx branch validates via setManifest; the cache branch did not.
+      validateManifest(seed.manifest);
       const state = {
         mode: this.resolveMode(seed.mode),
         manifest: seed.manifest,
@@ -131,16 +135,16 @@ export class OntologyService {
     const out: WikiEdge[] = [];
     for (const edge of edges) {
       const candidates = resolveEdgeDefinitions(edge.edge_type, manifest)
-        .filter(d => d.source_type.toLowerCase() === sourceType.toLowerCase());
+        .filter(d => typeSatisfies(d.source_type, sourceType, manifest));
       if (candidates.length === 0) continue;
 
       const targetKey = normalizeTitleKey(edge.target_title);
       const target = titleIndex.get(targetKey);
       if (!target) continue;
 
-      const def = candidates.find(
-        d => d.target_type.toLowerCase() === (target.okf_type ?? '').toLowerCase(),
-      );
+      const targetType = (target.okf_type ?? '').trim().toLowerCase();
+      const def = candidates.find(d => d.target_type.trim().toLowerCase() === targetType)
+        ?? candidates.find(d => typeSatisfies(d.target_type, targetType, manifest));
       if (!def) continue;
 
       out.push({
