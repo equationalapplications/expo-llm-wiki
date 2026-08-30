@@ -64,6 +64,17 @@ describe('warm-agent parity (D2)', () => {
       e => triples.has(`${e.type}|${e.source_type}|${e.target_type}`));
     expect(copied).toEqual(schemaOrgWarmAgentManifest.edge_types);
   });
+
+  it('no stale rows are left behind if upstream removed one', () => {
+    // Reverse audit of the test above. The filter checks the upstream rows it
+    // knows about and silently drops any row that is no longer upstream. This
+    // assertion catches the inverse: a total length that drops (upstream
+    // shrank) or grows (a stale row got resurrected) without affecting the
+    // 28 warm-agent rows the filter compares.
+    expect(schemaSoftwareOrgManifest.edge_types).toHaveLength(
+      schemaOrgWarmAgentManifest.edge_types.length + 12,
+    );
+  });
 });
 
 describe('shape and counts', () => {

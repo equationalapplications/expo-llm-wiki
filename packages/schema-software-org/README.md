@@ -124,9 +124,22 @@ The organization's own backend illustrates the split: it is a `software_applicat
 
 ## Requirements
 
-Requires `@equationalapplications/core-llm-wiki` **>= 6.1.0** — that is the release that shipped `OntologyNodeType.parent_type`, which the five `creativework` subtypes rely on. This manifest does **not** validate against 6.0.1.
+Requires `@equationalapplications/core-llm-wiki` **>= 6.1.0** — that is the release that shipped `OntologyNodeType.parent_type`, which the five `creativework` subtypes rely on. This manifest will validate against 6.0.1, but will silently fail at ingest edge matching because 6.0.1 ignores the `parent_type` field.
 
 `@equationalapplications/schema-org-llm-wiki` is **not** a runtime dependency. This package is a verbatim superset of the warm-agent manifest except for one intentional override of `product` (which delegates to `software_application` / `service`), and stands alone — there is no need to install `schema-org-llm-wiki` to use `schema-software-org`.
+
+## Monorepo Ecosystem
+
+| Package | Purpose |
+| ----- | ----- |
+| [**@equationalapplications/schema-software-org**](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/schema-software-org/README.md) | Software-organization executive ontology manifest — 17 node types, 40 edges, warm-agent superset, data-only |
+| [@equationalapplications/core-llm-wiki](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md) | Persistent episodic memory |
+| [@equationalapplications/expo-llm-wiki](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/expo/README.md) | Persistent episodic memory for Expo/React Native |
+| [@equationalapplications/react-llm-wiki](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/react/README.md) | Persistent episodic memory for Web |
+| [@equationalapplications/prisma-outbox](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/prisma-outbox/README.md) | Sync SQLite outbox events to Prisma |
+| [@equationalapplications/core-llm-tools](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core-llm-tools/README.md) | Gemini tool schemas and capability injector |
+| [@equationalapplications/core-okf](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/okf/README.md) | Zero-dependency Open Knowledge Format (OKF) v0.1 + v0.2 primitives — parse and produce interoperable knowledge bundles. |
+| [@equationalapplications/schema-org-llm-wiki](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/schema-org/README.md) | Curated schema.org warm-agent ontology manifest |
 
 ## License
 
