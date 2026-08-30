@@ -9,7 +9,7 @@ Each fact may optionally include:
 const EMERGENT_EXTRA = `
 You may also return "ontology_updates" to propose new types:
 "ontology_updates": {
-  "node_types": [{ "type": "slug", "description": "..." }],
+  "node_types": [{ "type": "slug", "description": "...", "parent_type": "optional existing slug" }],
   "edge_types": [{ "type": "slug", "source_type": "...", "target_type": "...", "description": "..." }]
 }
 Only propose types not already in the manifest. Do not redefine existing types.`;
