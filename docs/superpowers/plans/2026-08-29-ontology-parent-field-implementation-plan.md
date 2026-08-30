@@ -11,7 +11,7 @@
 
 **Goal:** Add an optional `parent_type` field to `OntologyNodeType` so a concrete type (e.g. `design_spec`) satisfies edge definitions declared for its parent type (e.g. `creativework`) — one level only, validation and persistence, no schema migration.
 
-**Architecture:** Pure TypeScript change in `@equationalapplications/core-llm-wiki`. `parent_type` rides on the existing JSON manifest (persisted in `entity_manifests.manifest_json`), so no SQLite/migration work. Source matching gets a single shared helper (`edgeDefMatchesSourceType`) used by the one validation gate and all three persistence gates. Prompt text advertises the field so the LLM can propose children with parents; the merge path treats those proposals as untrusted.
+**Architecture:** Pure TypeScript change in `@equationalapplications/core-llm-wiki`. `parent_type` rides on the existing JSON manifest (persisted in `entity_manifests.manifest_json`), so no SQLite/migration work. Type matching gets a single primitive (`typeSatisfies`) used by all four gates — three source-side, one target-side. Prompt text advertises the field so the LLM can propose children with parents; the merge path treats those proposals as untrusted.
 
 **Tech Stack:** TypeScript (strict), vitest, pnpm workspace, tsup build.
 
@@ -24,12 +24,14 @@
 - `tsconfig.json` has `"strict": true` (no `exactOptionalPropertyTypes`) — conditional-spread is the pattern for optional fields.
 - **D1:** One level only. `validateManifest` **rejects** parent chains deeper than 1.
 - **D2:** `resolveNodeType` is NOT parent-aware — exact 1:1 match, unchanged.
-- **D3:** Parent-aware on the **source** side only. Target matching stays exact everywhere.
-- **D4:** All four source-matching gates route through one shared helper.
+- **D3:** Parent-aware on **both** sides. Targets resolve exact-first (two-pass).
+- **D4:** All four gates route through the `typeSatisfies` primitive.
 - **D5:** No SQLite schema, migration, `WikiFact`/`WikiEdge`, or persisted-type changes.
 - **D6:** Emergent proposals are untrusted — `mergeOntologyUpdates` drops a bad `parent_type` rather than letting `validateManifest` throw inside a caller's transaction.
 - **D7:** Parent types are instantiable. No `abstract` flag.
 - **D8:** The field is `parent_type` — plain `parent` collides with the shipped `parent` edge type in the warm-agent manifest.
+- **D10:** A present-but-blank `parent_type` throws; absent stays valid.
+- **D11:** `getEffectiveState` validates seed manifests before use, on both branches.
 - Merge convention (all Equational repos): regular merge commits, never squash.
 - Commit style: conventional commits (`feat:`, `fix:`, `test:`), as used on this branch (`docs(spec): rev 3 — …`).
 
@@ -59,8 +61,8 @@ The four source-matching gates (D4), found by an exhaustive `source_type.toLower
 - Consumes: existing `validateManifest(manifest): void`, `validateInlineEdges(sourceType, _targetType, edges, manifest, opts?): ExtractedFactEdge[]`.
 - Produces (used by later tasks):
   - `OntologyNodeType.parent_type?: string` — trimmed parent slug; must exist in the same manifest and must not itself have a `parent_type`.
-  - `edgeDefMatchesSourceType(def: { source_type: string }, concreteType: string, manifest: OntologyManifest): boolean` — true if `concreteType` equals `def.source_type` exactly (case-insensitive) OR `concreteType`'s `parent_type` equals `def.source_type` (case-insensitive). One hop, never recursive.
-  - `validateManifest` throws, in order: `Self-parent: <type>`, `Parent type not found: <slug>`, `Parent chain too deep: <a> → <b> → <c>`.
+  - `typeSatisfies(declaredType: string, concreteType: string, manifest: OntologyManifest): boolean` — true if `concreteType` equals `declaredType` exactly (case-insensitive) OR `concreteType`'s `parent_type` equals it. One hop, never recursive. Guards `manifest.node_types`.
+  - `validateManifest` throws, in order: `Ontology parent_type must be non-empty when present: <type>` (D10), `Self-parent: <type>`, `Parent type not found: <slug>`, `Parent chain too deep: <a> → <b> → <c>`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -185,23 +187,28 @@ export interface OntologyNodeType {
 
 ```ts
 /**
- * True when `concreteType` satisfies an edge definition's declared source_type:
- * either an exact (case-insensitive) match, or a one-hop parent match — the
- * concrete type's `parent_type` equals the declared source_type. Never
- * recursive (D1). Exact matches short-circuit before the node lookup, so
- * manifests with no `parent_type` behave bit-for-bit as before.
+ * True when `concreteType` satisfies a declared type: an exact
+ * (case-insensitive) match, or a one-hop parent match — the concrete type's
+ * `parent_type` equals the declared type. Never recursive (D1). Exact matches
+ * short-circuit before the node lookup, so manifests with no `parent_type`
+ * behave bit-for-bit as before.
  */
-export function edgeDefMatchesSourceType(
-  def: { source_type: string },
+export function typeSatisfies(
+  declaredType: string,
   concreteType: string,
   manifest: OntologyManifest,
 ): boolean {
   const concrete = concreteType.trim().toLowerCase();
-  if (!concrete) return false;
-  if (def.source_type.trim().toLowerCase() === concrete) return true;
-  const srcDef = manifest.node_types.find(n => n.type.trim().toLowerCase() === concrete);
-  const parent = srcDef?.parent_type?.trim().toLowerCase();
-  return !!parent && parent === def.source_type.trim().toLowerCase();
+  const declared = declaredType.trim().toLowerCase();
+  if (!concrete || !declared) return false;
+  if (declared === concrete) return true;
+  // `node_types` is typed non-optional but arrives from JSON.parse of a DB row
+  // at runtime; guard it the way validateManifest already does.
+  const def = (manifest.node_types ?? []).find(
+    n => n?.type?.trim().toLowerCase() === concrete,
+  );
+  const parent = def?.parent_type?.trim().toLowerCase();
+  return !!parent && parent === declared;
 }
 ```
 
@@ -216,8 +223,12 @@ Inside `validateManifest`, insert after the `nodeSlugs` loop (line 44, before th
     parentOf.set(node.type.trim().toLowerCase(), node.parent_type?.trim().toLowerCase());
   }
   for (const node of manifest.node_types ?? []) {
-    const parentSlug = node.parent_type?.trim().toLowerCase();
-    if (!parentSlug) continue;
+    // D10: absent means "no parent"; present-but-blank is malformed.
+    if (node.parent_type === undefined) continue;
+    const parentSlug = node.parent_type.trim().toLowerCase();
+    if (!parentSlug) {
+      throw new Error(`Ontology parent_type must be non-empty when present: ${node.type}`);
+    }
     if (parentSlug === node.type.trim().toLowerCase()) {
       throw new Error(`Self-parent: ${node.type}`);
     }
@@ -234,7 +245,7 @@ Inside `validateManifest`, insert after the `nodeSlugs` loop (line 44, before th
 In `validateInlineEdges`, replace line 132 (`const match = defs.find(...)`):
 
 ```ts
-    const match = defs.find(d => edgeDefMatchesSourceType(d, sourceType, manifest));
+    const match = defs.find(d => typeSatisfies(d.source_type, sourceType, manifest));
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -422,17 +433,19 @@ git commit -m "fix(ontology): preserve valid parent_type on merge, drop untruste
 
 ---
 
-### Task 3: Parent-aware source matching at the persistence gates
+### Task 3: Parent-aware matching at the persistence gates (source + target)
 
 **Files:**
-- Modify: `packages/core/src/services/OntologyService.ts:134` (`resolveEdges` filter)
+- Modify: `packages/core/src/services/OntologyService.ts:134` (`resolveEdges` source filter)
+- Modify: `packages/core/src/services/OntologyService.ts:141` (`resolveEdges` target lookup → two-pass, D3)
+- Modify: `packages/core/src/services/OntologyService.ts` `getEffectiveState` (validate seeds, D11)
 - Modify: `packages/core/src/services/IngestionService.ts:472-475` (`upsertGraph` edge filter)
 - Test: `packages/core/__tests__/services/OntologyService.test.ts` (append to existing `OntologyService` describe)
 - Test: `packages/core/__tests__/upsertGraphContract.test.ts` (append a new `describe`)
 
 **Interfaces:**
-- Consumes: `edgeDefMatchesSourceType(def, concreteType, manifest)` from Task 1.
-- Produces: `resolveEdges(...)` and `upsertGraph(...)` persist edges whose source type satisfies the declared `source_type` via one-hop parent match. Exact-match defs and parent-derived defs are both candidates; `target_type` (exact, unchanged — D3) disambiguates when several defs share an edge name. Signatures unchanged.
+- Consumes: `typeSatisfies(declaredType, concreteType, manifest)` from Task 1.
+- Produces: `resolveEdges(...)` and `upsertGraph(...)` persist edges whose source type satisfies the declared `source_type` via one-hop parent match, and `resolveEdges` additionally resolves a target through its `parent_type` when no def matches the target exactly (D3). `getEffectiveState` validates a seed manifest on both branches (D11). Signatures unchanged.
 
 Without this task the feature is inert: `validateInlineEdges` admits the edge and both persistence gates silently discard it. In strict mode `upsertGraph` does worse — it **throws** `WikiStrictOntologyViolation` on a parent-satisfied edge.
 
@@ -488,6 +501,48 @@ describe('OntologyService.resolveEdges — parent inheritance', () => {
       [{ edge_type: 'about', target_title: 'The Spec' }], manifest,
       new Map([['the spec', { id: 'c1', okf_type: 'creativework' }]]), 1000);
     expect(toWork[0]?.target_id).toBe('c1');
+  });
+
+  it('resolves a target through its parent_type (D3)', () => {
+    const { metadataRepo, edgeRepo } = makeMocks();
+    const svc = new OntologyService(metadataRepo, edgeRepo);
+    const manifest: OntologyManifest = {
+      node_types: parentEdgeManifest.node_types,
+      edge_types: [
+        { type: 'supersedes', source_type: 'creativework', target_type: 'creativework', description: 'x' },
+      ],
+    };
+    const edges = svc.resolveEdges('e1', 'f1', 'design_spec',
+      [{ edge_type: 'supersedes', target_title: 'Old Spec' }], manifest,
+      new Map([['old spec', { id: 'd0', okf_type: 'design_spec' }]]), 1000);
+    expect(edges).toHaveLength(1);
+    expect(edges[0]).toMatchObject({ target_id: 'd0', edge_type: 'supersedes' });
+  });
+
+  it('prefers an exact target def over a parent-derived one, whatever the order', () => {
+    const { metadataRepo, edgeRepo } = makeMocks();
+    const svc = new OntologyService(metadataRepo, edgeRepo);
+    const rows = [
+      { type: 'about', source_type: 'creativework', target_type: 'creativework', description: 'broad' },
+      { type: 'about', source_type: 'creativework', target_type: 'design_spec', description: 'narrow' },
+    ];
+    for (const edge_types of [rows, [...rows].reverse()]) {
+      const edges = svc.resolveEdges('e1', 'f1', 'design_spec',
+        [{ edge_type: 'about', target_title: 'Other Spec' }],
+        { node_types: parentEdgeManifest.node_types, edge_types },
+        new Map([['other spec', { id: 'd9', okf_type: 'design_spec' }]]), 1000);
+      expect(edges).toHaveLength(1);
+      expect(edges[0]!.target_id).toBe('d9');
+    }
+  });
+
+  it('still skips a target with no okf_type', () => {
+    const { metadataRepo, edgeRepo } = makeMocks();
+    const svc = new OntologyService(metadataRepo, edgeRepo);
+    const edges = svc.resolveEdges('e1', 'f1', 'design_spec',
+      [{ edge_type: 'about', target_title: 'Untyped' }], parentEdgeManifest,
+      new Map([['untyped', { id: 'u1', okf_type: null }]]), 1000);
+    expect(edges).toEqual([]);
   });
 
   it('child source does not satisfy an edge declared on an unrelated type', () => {
@@ -561,26 +616,53 @@ Expected: FAIL — `resolveEdges` child test gets `[]`; the `upsertGraph` test t
 
 - [ ] **Step 3: Write the minimal implementation**
 
-`packages/core/src/services/OntologyService.ts` — add `edgeDefMatchesSourceType` to the import block from `'../utils/ontology'` (lines 16-22). Then replace line 134:
+`packages/core/src/services/OntologyService.ts` — add `typeSatisfies` to the import block from `'../utils/ontology'` (lines 16-22). Then replace line 134:
 
 ```ts
       const candidates = resolveEdgeDefinitions(edge.edge_type, manifest)
-        .filter(d => edgeDefMatchesSourceType(d, sourceType, manifest));
+        .filter(d => typeSatisfies(d.source_type, sourceType, manifest));
 ```
 
-`packages/core/src/services/IngestionService.ts` — import `edgeDefMatchesSourceType` from `'../utils/ontology'` (add to the existing import from that module if present, otherwise add a new import). Replace lines 472-475:
+Then the target lookup at line 141 becomes the exact-first two-pass of D3:
+
+```ts
+      // Before:
+      const def = candidates.find(
+        d => d.target_type.toLowerCase() === (target.okf_type ?? '').toLowerCase(),
+      );
+      // After:
+      const targetType = (target.okf_type ?? '').trim().toLowerCase();
+      const def = candidates.find(d => d.target_type.trim().toLowerCase() === targetType)
+        ?? candidates.find(d => typeSatisfies(d.target_type, targetType, manifest));
+```
+
+The exact pass runs first so a narrower def always beats a parent-derived one.
+`typeSatisfies` returns false for an empty `concreteType`, so an untyped target
+(`okf_type === null`) still matches nothing — unchanged from today.
+
+And in `getEffectiveState`, validate the seed before either branch (D11):
+
+```ts
+    const seed = this.ontologyConfig?.seedManifests?.[entityId];
+    if (seed) {
+      // D11: the tx branch validates via setManifest; the cache branch did not.
+      validateManifest(seed.manifest);
+      const state = {
+```
+
+`packages/core/src/services/IngestionService.ts` — import `typeSatisfies` from `'../utils/ontology'` (add to the existing import from that module if present, otherwise add a new import). Replace lines 472-475:
 
 ```ts
       const candidates = (manifest.edge_types ?? []).filter(d =>
         d.type.toLowerCase() === edge.type.toLowerCase()
-        && edgeDefMatchesSourceType(d, sourceType ?? '', manifest),
+        && typeSatisfies(d.source_type, sourceType ?? '', manifest),
       );
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `pnpm --filter @equationalapplications/core-llm-wiki test -- OntologyService.test upsertGraphContract ingest.test`
-Expected: PASS — including the pre-existing ingest tests (exact-match behavior is preserved: `edgeDefMatchesSourceType` short-circuits true on exact match before any parent lookup).
+Expected: PASS — including the pre-existing ingest tests (exact-match behavior is preserved: `typeSatisfies` short-circuits true on exact match before any parent lookup).
 
 - [ ] **Step 5: Typecheck**
 
@@ -852,6 +934,9 @@ git commit -m "test(ontology): end-to-end parent inheritance coverage"
 - [ ] `resolveNodeType` behavior unchanged (exact 1:1)
 - [ ] `mergeOntologyUpdates` preserves valid `parent_type`, drops unresolvable/two-deep/self ones without throwing, and survives malformed nodes
 - [ ] `resolveEdges` and `upsertGraph` persist parent-satisfied edges (integration-proven, strict mode does not throw)
+- [ ] `resolveEdges` resolves a parent-declared target, prefers an exact def over a parent-derived one regardless of array order, and still skips untyped targets
+- [ ] `validateManifest` rejects a present-but-blank `parent_type`; `mergeOntologyUpdates` drops one without throwing
+- [ ] `getEffectiveState` validates a seed manifest on both the `tx` and no-`tx` paths
 - [ ] Emergent prompt advertises optional `parent_type`; strict prompt unchanged
 - [ ] Backfill end-to-end: fact typed as child + parent-declared edge persisted
 - [ ] A hallucinated emergent `parent_type` does not abort the run

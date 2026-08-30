@@ -1,7 +1,7 @@
 # Ontology Single-Level Parent Inheritance — Spec
 
 **Date:** 2026-08-28
-**Status:** Draft (rev 3 — 2026-08-30)
+**Status:** Draft (rev 4 — 2026-08-30)
 **Packages:** `@equationalapplications/core-llm-wiki`
 **Depends on:** None
 
@@ -57,25 +57,36 @@ make return values depend on array order.
 where we ask a different question: "does this concrete type satisfy this
 edge's declared source type?"
 
-### D3: Edge matching is parent-aware on the SOURCE side only
+### D3: Edge matching is parent-aware on both sides, exact-first
 
-A concrete `source_type` satisfies an edge definition's declared `source_type`
-via a one-hop `parent_type` lookup. **Target matching stays exact everywhere.**
+A concrete type satisfies an edge definition's declared type when it equals
+that type exactly, or when its one-hop `parent_type` equals it. One primitive
+(`typeSatisfies`) answers the question for sources and targets alike.
 
-Target types are not checked at all in `validateInlineEdges` (the LLM supplies
-an entity title, not a type slug). They *are* checked in
-`OntologyService.resolveEdges`, which matches `def.target_type` against the
-resolved target fact's `okf_type` — that comparison remains exact. When both an
-exact-source def and a parent-derived def share an edge name, exact target
-matching is what disambiguates them.
+**Targets resolve exact-first.** `OntologyService.resolveEdges` runs two passes
+over the candidate defs: first for a def whose `target_type` equals the target
+fact's `okf_type` exactly, then — only if none matched — for one whose
+`target_type` is the target's `parent_type`. Triples are unique on
+`(type, source_type, target_type)`, so at most one def matches per pass and the
+outcome never depends on array order (the dependence D2 objects to).
 
-### D4: Parent-aware matching applies to every source-matching gate
+Exact-first preserves precision: a manifest declaring both
+`about creativework → creativework` and `about creativework → design_spec`
+still routes a `design_spec` target to the narrower row.
 
-There are four places that ask "does this source type satisfy this edge def":
-one validation gate and three persistence gates. All four route through a
-single shared helper. Making only the validation gate parent-aware would admit
-an edge and then silently fail to persist it — the feature would appear to
-work and write nothing.
+Target types are not checked at all in `validateInlineEdges` — the LLM supplies
+an entity title there, not a type slug — so this applies only at resolution.
+
+**Accepted cost:** declaring `→ creativework` now admits every child of
+`creativework`, and there is no way to say "the parent type only". A type that
+needs an exact-only target must not be given children.
+
+### D4: Matching applies at every gate, through one primitive
+
+Four places ask whether a concrete type satisfies a declared one — three on the
+source side, one on the target side. All four call `typeSatisfies`. Updating
+only some of them would admit an edge at validation and then silently discard
+it at persistence, so the feature would appear to work and write nothing.
 
 ### D5: No schema migration
 
@@ -137,6 +148,36 @@ so `parent_type` reaches the LLM with no prompt-template change. The only
 prompt edit needed is advertising the field in the *propose-a-type* schema so
 emergent mode can suggest children.
 
+### D10: A present-but-blank `parent_type` is an error
+
+`parent_type: ''` (or whitespace) is malformed authorship, not "no parent".
+Treating it as absent would silently disable inheritance on a type the author
+meant to nest. `validateManifest` throws; absence (`undefined`) stays valid and
+means exactly what it says.
+
+This matches how core already treats blank slugs elsewhere — `validateManifest`
+throws `Ontology node type slug must be non-empty` and the equivalent for edge
+types.
+
+The untrusted merge path (D6) stays lenient: a blank `parent_type` from the LLM
+is dropped like any other unusable value, never thrown.
+
+### D11: Seed manifests are validated before use
+
+`OntologyService.getEffectiveState` validates a seed manifest only on the
+branch that persists it — with a `tx` it calls `metadataRepo.setManifest`,
+which validates; without one it does a bare `this.cache.set(entityId, state)`
+and the seed is never checked.
+
+That gap predates this work but `parent_type` makes it dangerous: a seed with a
+dangling parent reference would drive classification and edge matching, and
+`typeSatisfies` would follow a pointer to a type that does not exist. Seeds are
+host-supplied config, so failing fast at construction is right — unlike D6's
+LLM input, there is no one to be lenient toward.
+
+`validateManifest(seed.manifest)` runs before either branch. Pre-`parent_type`
+seeds that validate today still validate.
+
 ---
 
 ## Changes
@@ -167,8 +208,12 @@ for (const node of manifest.node_types ?? []) {
   parentOf.set(node.type.trim().toLowerCase(), node.parent_type?.trim().toLowerCase());
 }
 for (const node of manifest.node_types ?? []) {
-  const p = node.parent_type?.trim().toLowerCase();
-  if (!p) continue;
+  // D10: absent means "no parent"; present-but-blank is malformed.
+  if (node.parent_type === undefined) continue;
+  const p = node.parent_type.trim().toLowerCase();
+  if (!p) {
+    throw new Error(`Ontology parent_type must be non-empty when present: ${node.type}`);
+  }
   if (p === node.type.trim().toLowerCase()) {
     throw new Error(`Self-parent: ${node.type}`);
   }
@@ -182,26 +227,31 @@ for (const node of manifest.node_types ?? []) {
 }
 ```
 
-**New shared helper** — the single definition of source satisfaction, used by
-all four gates (D4):
+**New shared primitive** — the single definition of "does this concrete type
+satisfy that declared type", used by all four gates (D4):
 
 ```ts
-export function edgeDefMatchesSourceType(
-  def: { source_type: string },
+export function typeSatisfies(
+  declaredType: string,
   concreteType: string,
   manifest: OntologyManifest,
 ): boolean {
   const concrete = concreteType.trim().toLowerCase();
-  if (!concrete) return false;
-  if (def.source_type.trim().toLowerCase() === concrete) return true;
-  const srcDef = manifest.node_types.find(n => n.type.trim().toLowerCase() === concrete);
-  const parent = srcDef?.parent_type?.trim().toLowerCase();
-  return !!parent && parent === def.source_type.trim().toLowerCase();
+  const declared = declaredType.trim().toLowerCase();
+  if (!concrete || !declared) return false;
+  if (declared === concrete) return true;
+  // `node_types` is typed non-optional but arrives from JSON.parse of a DB
+  // row at runtime, so guard it the way validateManifest already does.
+  const def = (manifest.node_types ?? []).find(
+    n => n?.type?.trim().toLowerCase() === concrete,
+  );
+  const parent = def?.parent_type?.trim().toLowerCase();
+  return !!parent && parent === declared;
 }
 ```
 
-Exact match short-circuits first, so existing exact-match behavior is
-bit-for-bit preserved for manifests with no `parent_type`.
+Exact match short-circuits before the node lookup, so manifests with no
+`parent_type` behave bit-for-bit as before.
 
 **`validateInlineEdges`** (`:112`) — replace the source check at `:132`:
 
@@ -209,7 +259,7 @@ bit-for-bit preserved for manifests with no `parent_type`.
 // Before:
 const match = defs.find(d => d.source_type.toLowerCase() === sourceType.toLowerCase());
 // After:
-const match = defs.find(d => edgeDefMatchesSourceType(d, sourceType, manifest));
+const match = defs.find(d => typeSatisfies(d.source_type, sourceType, manifest));
 ```
 
 `manifest` is already a parameter, so no signature change. Only `match.type` is
@@ -247,14 +297,30 @@ the existing serialization shape.
 
 ### `packages/core/src/services/OntologyService.ts`
 
-**`resolveEdges`** — replace the source filter at `:134`:
+**`resolveEdges`** — the source filter at `:134`:
 
 ```ts
-.filter(d => edgeDefMatchesSourceType(d, sourceType, manifest));
+.filter(d => typeSatisfies(d.source_type, sourceType, manifest));
 ```
 
-The target check at `:141` (`d.target_type` vs the resolved target's
-`okf_type`) stays exact (D3).
+and the target lookup at `:141`, which becomes the two-pass exact-first
+resolution of D3:
+
+```ts
+// Before:
+const def = candidates.find(
+  d => d.target_type.toLowerCase() === (target.okf_type ?? '').toLowerCase(),
+);
+// After:
+const targetType = (target.okf_type ?? '').trim().toLowerCase();
+const def = candidates.find(d => d.target_type.trim().toLowerCase() === targetType)
+  ?? candidates.find(d => typeSatisfies(d.target_type, targetType, manifest));
+```
+
+The exact pass runs first so a narrower def always wins over a parent-derived
+one. `typeSatisfies` returns false for an empty `concreteType`, so an untyped
+target (`okf_type === null`) still matches nothing and the edge is skipped —
+unchanged from today.
 
 **`validateAndNormalizeFact`** — no change. It already passes `manifest`.
 
@@ -265,7 +331,7 @@ The target check at `:141` (`d.target_type` vs the resolved target's
 ```ts
 const candidates = (manifest.edge_types ?? []).filter(d =>
   d.type.toLowerCase() === edge.type.toLowerCase()
-  && edgeDefMatchesSourceType(d, sourceType ?? '', manifest),
+  && typeSatisfies(d.source_type, sourceType ?? '', manifest),
 );
 ```
 
@@ -298,10 +364,13 @@ receives already carries `parent_type` via D9.
 3. **Rejects self-parent** — throws `Self-parent`.
 4. **Rejects missing parent** — throws `Parent type not found`.
 5. **Rejects a two-level chain** (D1) — `a→b→c` throws `Parent chain too deep`.
-6. **`edgeDefMatchesSourceType` parent hit** — def `source_type: 'creativework'`
-   matches `design_spec`.
-7. **`edgeDefMatchesSourceType` wrong-parent miss** — def
-   `source_type: 'software_application'` does not match `design_spec`.
+6. **`typeSatisfies` parent hit** — declared `creativework` is satisfied by
+   `design_spec`.
+7. **`typeSatisfies` wrong-parent miss** — declared `software_application` is
+   not satisfied by `design_spec`.
+7b. **`typeSatisfies` blank/guard cases** — empty `concreteType`, empty
+    `declaredType`, and a manifest whose `node_types` is `undefined` all return
+    `false` rather than throwing.
 8. **`validateInlineEdges` accepts a parent-satisfied edge**; non-strict mode
    still drops (not throws) an unmatched one.
 9. **`resolveNodeType` unchanged** (D2) — exact match or null; a parent slug
@@ -316,12 +385,27 @@ receives already carries `parent_type` via D9.
 14. **No key churn** — a plain node merges to exactly
     `{ type, description }`, with no `parent_type` key.
 
+14b. **`validateManifest` rejects a present-but-blank `parent_type`** (D10) —
+     `''` and `'   '` both throw `must be non-empty`; an absent field does not.
+14c. **`mergeOntologyUpdates` drops a blank `parent_type`** without throwing —
+     the untrusted path stays lenient (D6/D10).
+
 ### Service — `packages/core/__tests__/services/`
 
 15. **`resolveEdges` persists a parent-satisfied edge**, and drops one whose
     parent does not match.
-16. **`resolveEdges` disambiguates by exact `target_type`** when an
-    exact-source def and a parent-derived def share an edge name (D3).
+16. **`resolveEdges` resolves a parent-declared target** (D3) — a
+    `design_spec → design_spec` edge matches a def declared
+    `creativework → creativework`.
+16b. **`resolveEdges` prefers an exact target def over a parent-derived one** —
+     with both `about creativework → creativework` and
+     `about creativework → design_spec` declared, a `design_spec` target
+     resolves to the narrower row regardless of array order.
+16c. **`resolveEdges` still skips an untyped target** — `okf_type === null`
+     matches no def on either pass.
+16d. **Seed manifests are validated (D11)** — a `seedManifests` entry whose
+     `parent_type` dangles throws on first `getEffectiveState`, on both the
+     `tx` and no-`tx` paths.
 17. **Prompt advertises `parent_type`** in emergent mode.
 
 ### Contract / integration
@@ -341,8 +425,7 @@ receives already carries `parent_type` via D9.
 - No `abstract` flag (D7)
 - No changes to SQLite schema, WikiFact, WikiEdge, or persisted types
 - No changes to `traverseGraph` (it walks edges, not types)
-- No `is-a` inference on read queries — only on edge source matching
-- No parent-aware **target** matching (D3)
+- No `is-a` inference on read queries — only on edge matching
 - No ability for emergent updates to re-parent an existing type (D6)
 - No UI changes
 
@@ -356,7 +439,10 @@ receives already carries `parent_type` via D9.
 | Extra `find()` over `node_types` per non-exact edge candidate | Exact matches short-circuit before the lookup; `find()` over ~18 types |
 | A future developer adds recursive resolution | `Parent chain too deep` makes D1 enforceable at every manifest read *and* write |
 | Hallucinated parents in emergent mode abort an ingest | D6: drop the field in merge; `validateManifest` never sees an invalid parent from the LLM path |
-| Parent-satisfied edges validate but never persist | D4: one shared helper across all four gates; integration-proven through `upsertGraph` and the backfill path |
+| Parent-satisfied edges validate but never persist | D4: one primitive across all four gates; integration-proven through `upsertGraph` and the backfill path |
+| Both an exact and a parent-derived def match one target | Exact-first two-pass resolution (D3); triples are unique, so at most one def matches per pass and order never decides |
+| A `→ parent` def silently admits every child | Accepted and documented in D3; a type needing an exact-only target must not be given children |
+| A malformed seed manifest drives classification unvalidated | D11: `validateManifest(seed.manifest)` before either branch of `getEffectiveState` |
 
 ---
 
@@ -375,3 +461,20 @@ receives already carries `parent_type` via D9.
   enforces the depth limit the rev-1 risk table only asserted. Corrected the
   prompt target: `EMERGENT_EXTRA` in `prompts/ontology.ts`, not a
   nonexistent `EXAMPLE_JSON` in the backfill prompt.
+- **Rev 4 (2026-08-30)** — PR #110 review. **D3 reversed**: target matching is
+  now parent-aware too, resolved exact-first via a two-pass lookup in
+  `resolveEdges`, so a `creativework → creativework` def serves a
+  `design_spec → design_spec` edge. Rev 3's source-only rule forced consumers
+  to enumerate one row per concrete type for every edge targeting a parent —
+  an unbounded burden, and an asymmetry that surprised every reviewer. The
+  source-only helper is replaced by one primitive,
+  `typeSatisfies(declaredType, concreteType, manifest)`, used by all four
+  gates; it now guards `manifest.node_types`, which is typed non-optional but
+  `JSON.parse`d from a DB row at runtime and already guarded that way in
+  `validateManifest` and `IngestionService`. Added **D10**: a present-but-blank
+  `parent_type` throws rather than silently meaning "no parent", matching
+  core's existing treatment of blank slugs. Added **D11**:
+  `getEffectiveState` validated seed manifests only on the branch that
+  persists them — the no-`tx` branch cached them unchecked, so a seed with a
+  dangling parent would drive classification with `typeSatisfies` following a
+  pointer to nothing.
