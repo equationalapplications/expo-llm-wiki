@@ -1,7 +1,7 @@
 # Ontology Single-Level Parent Inheritance — Spec
 
 **Date:** 2026-08-28
-**Status:** Draft (rev 7 — 2026-08-30)
+**Status:** Approved
 **Packages:** `@equationalapplications/core-llm-wiki`
 **Depends on:** None
 
@@ -311,6 +311,33 @@ export function typeSatisfies(
 Exact match short-circuits before the node lookup, so manifests with no
 `parent_type` behave bit-for-bit as before.
 
+**`buildDeclaresParentIndex`** — extracted helper used by `mergeOntologyUpdates`
+and exported for the test suite (test 14f). The helper builds the same
+parent-presence map that the merge function needs, but does not run the
+existing node loop — so a test can exercise the index's untrusted-input
+contract without tripping the pre-existing `node?.type?.trim()` (line 82),
+which Rev 6 deliberately left alone:
+
+```ts
+export function buildDeclaresParentIndex(
+  nodes: ReadonlyArray<OntologyNodeType>,
+): Map<string, boolean> {
+  // First-seen wins, same as the dedup in mergeOntologyUpdates. Value:
+  // declared-key presence, not usability — see D6.
+  const declaresParent = new Map<string, boolean>();
+  for (const n of nodes) {
+    const slug = typeof n?.type === 'string' ? n.type.trim().toLowerCase() : '';
+    if (!slug || declaresParent.has(slug)) continue;
+    declaresParent.set(slug, n?.parent_type !== undefined);
+  }
+  return declaresParent;
+}
+```
+
+Following the same export rule as `typeSatisfies` (line 419): exported from
+`utils/ontology.ts` for internal use and the test suite, **not** re-exported
+from `src/index.ts`. No host needs the index to author or validate a manifest.
+
 **`validateInlineEdges`** (`:112`) — replace the source check at `:132`:
 
 ```ts
@@ -326,23 +353,18 @@ candidate wins is immaterial here.
 
 **`mergeOntologyUpdates`** (`:71`) — must preserve `parent_type` *defensively*
 (D6). The current node loop rebuilds each node as `{ type, description }`
-(`:86`), which would silently strip the field. Build the parent index over
-current + proposed nodes with first-seen-wins (mirroring the dedup below), then
-gate the field:
+(`:86`), which would silently strip the field. Build the parent index via the
+helper above with first-seen-wins (mirroring the dedup below), then gate the
+field:
 
 ```ts
 // `updates` is JSON.parse output: every field is `unknown` at runtime whatever
 // the TS types say. Each read below is type-guarded — `.trim()` on a number or
 // an object throws a TypeError straight out of the caller's transaction.
-//
-// Value: did this slug declare a `parent_type` key at all? Presence, not
-// usability — see D6. `false` means "top-level, may serve as a parent".
-const declaresParent = new Map<string, boolean>();
-for (const n of [...current.node_types, ...(updates.node_types ?? [])]) {
-  const slug = typeof n?.type === 'string' ? n.type.trim().toLowerCase() : '';
-  if (!slug || declaresParent.has(slug)) continue; // first-seen wins
-  declaresParent.set(slug, n?.parent_type !== undefined);
-}
+const declaresParent = buildDeclaresParentIndex([
+  ...current.node_types,
+  ...(updates.node_types ?? []),
+]);
 
 // …inside the existing node loop, replacing the `node_types.push` at :86:
 const rawParent = typeof node?.parent_type === 'string' ? node.parent_type.trim() : '';
@@ -499,13 +521,12 @@ receives already carries `parent_type` via D9.
      top-level, and the result passes `validateManifest`. This is the
      transaction-abort regression guard: unguarded, `.trim()` on any of them
      raises a `TypeError` out of `withTransactionAsync`.
-14f. **The parent-satisfies index skips a non-string `type`** — when the
-     index loop that builds `declaresParent` at the top of `mergeOntologyUpdates`
-     processes a node with `type: 42`, that slug is omitted from the map rather
-     than throwing `TypeError`, and well-formed nodes in the same batch still
-     register. The existing node loop's behavior on a non-string `type` is
-     unchanged (lines 366-369 above), so this test asserts the index loop's
-     contribution directly, not via a full `mergeOntologyUpdates` call.
+14f. **`buildDeclaresParentIndex` skips a non-string `type`** — calling the
+     helper with `[ { type: 42, description: 'bogus' }, { type: 'person', ... } ]`
+     returns a map that contains `'person' → false` and omits the bogus slug
+     entirely (no `TypeError` from `.trim()`). Asserts the new index helper's
+     untrusted-input contract directly. The existing `mergeOntologyUpdates`
+     node loop's behavior on a non-string `type` is unchanged and out of scope.
 14g. **A node that declared an unusable `parent_type` cannot serve as a
      parent** (D6 presence rule) — updates proposing `b` with
      `parent_type: 123` and `a` with `parent_type: 'b'` merge `b` as top-level
@@ -642,3 +663,13 @@ receives already carries `parent_type` via D9.
   rather than throwing, and well-formed peers still register — so the test
   asserts the guarded loop's behavior directly instead of making a false
   claim about the full merge.
+- **Rev 8 (2026-08-30)** — plan alignment for rev 7. Test 14f scoped to
+  "asserts the index loop's contribution directly, not via a full
+  `mergeOntologyUpdates` call," but the index loop was inlined inside the
+  merge function — no surface to call. Extracted it as `buildDeclaresParentIndex`,
+  exported from `utils/ontology.ts` (same internal-only rule as `typeSatisfies`),
+  and rewrote 14f to call the helper directly. `mergeOntologyUpdates` now
+  delegates to the helper; observable behavior is unchanged. The plan
+  (`2026-08-29-ontology-parent-field-implementation-plan.md`) was rewritten
+  against rev 8 in lockstep — test 14f, the implementation step, the
+  expected-failure step, and the test matrix.
