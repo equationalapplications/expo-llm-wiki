@@ -1,3 +1,17 @@
+# [6.1.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v6.0.1...v6.1.0) (2026-08-30)
+
+
+### Bug Fixes
+
+* **ontology:** preserve valid parent_type on merge, drop untrusted ones ([8e296b8](https://github.com/equationalapplications/expo-llm-wiki/commit/8e296b841e844b0dc4756ac4af9a087183434841))
+
+
+### Features
+
+* **ontology:** advertise optional parent_type in emergent prompt schema ([4ee03d3](https://github.com/equationalapplications/expo-llm-wiki/commit/4ee03d37a3fac4ca014ef3e44c5a0b82546583c4))
+* **ontology:** optional parent_type with one-level manifest validation ([cd8e03a](https://github.com/equationalapplications/expo-llm-wiki/commit/cd8e03a45f0b578c5ee51c9a9a670fe340f34a3d))
+* **ontology:** parent-aware source matching when persisting edges ([f4f4390](https://github.com/equationalapplications/expo-llm-wiki/commit/f4f4390d99ffd02b463d65980a69c579fa1223ba))
+
 ## [6.0.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v6.0.0...v6.0.1) (2026-08-25)
 
 
