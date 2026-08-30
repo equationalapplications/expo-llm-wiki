@@ -1,7 +1,7 @@
 # @equationalapplications/schema-ea — Spec
 
 **Date:** 2026-08-28
-**Status:** Draft (rev 2 — 2026-08-30)
+**Status:** Draft (rev 3 — 2026-08-30)
 **Packages:** `@equationalapplications/schema-ea` (new)
 **Depends on:** `@equationalapplications/core-llm-wiki` at the first release
 shipping `OntologyNodeType.parent_type` (see
@@ -64,6 +64,12 @@ and a parity test asserts the copied rows deep-equal
 `schemaOrgWarmAgentManifest`'s. Runtime stays dependency-free (D1); drift
 fails CI instead of silently degrading classification.
 
+The test exists to catch *accidental* drift, so it carries an explicit
+allowlist of *intentional* divergences — currently one row, `product` (D8).
+An entry in that allowlist must state its reason, and the test asserts each
+entry still actually diverges from upstream, so a stale exception cannot sit
+there masking real drift.
+
 **Rationale:** rev 1 of this spec abridged every warm-agent description by
 roughly half (`product` lost "Covers electronics, vehicles, household items,
 and software"; `creativework` lost "Captures media the user consumes, learns
@@ -123,11 +129,36 @@ links, single-word keys) but we define our own property set. No import of
 `codemeta` terms or crosswalk. Properties live in OKF frontmatter, not in the
 `OntologyManifest` type system.
 
+### D8: `product` diverges from upstream, deliberately
+
+The warm-agent `product` description ends "Covers electronics, vehicles,
+household items, **and software**." Fed to the model alongside
+`software_application`, that clause pulls EA's own repositories into
+`product` on the word "software" alone. An executive agent's notion of
+"product" is not a warm personal agent's.
+
+So `schema-ea` overrides that one row: the trailing "and software" is dropped
+and the description hands off explicitly — "For software EA builds, ships, or
+maintains, use software_application instead; for a hosted capability EA
+consumes or operates, use service." `software_application` and `service` name
+each other back, so the disambiguation is mutual rather than one-way.
+
+**Rationale:** the alternatives are worse. Injecting the rule into the system
+prompt requires profile-specific classification logic in core, which is the
+code change D3 exists to avoid. Renaming `software_application` to something
+like `ea_portfolio_product` dodges the collision by making the slug clunky
+while leaving the misleading `product` text in the prompt unchanged. Putting
+the rule where the model makes the decision is the only fix that acts on the
+actual input.
+
+This is the one sanctioned exception to D2. It is registered in the parity
+test's allowlist with this reason; anything else that diverges is a bug.
+
 ---
 
 ## Node Types (17)
 
-### Warm-Agent Types (9, verbatim from schema-org-llm-wiki)
+### Warm-Agent Types (9, verbatim from schema-org-llm-wiki except `product` — D8)
 
 | Type | Description |
 |------|------------|
@@ -139,14 +170,14 @@ links, single-word keys) but we define our own property set. No import of
 | `action` | An individual task, chore, step, or completed action. Links to a parent Project and assigns responsibility to a Person. |
 | `creativework` | A book, movie, article, song, recipe, blog post, or other creative content. Captures media the user consumes, learns from, or creates. |
 | `review` | A personal review, opinion, or evaluation. The implicit subject is always the owning character—use to review a book, restaurant, place, product, or experience. Rating values stay inside the fact content. |
-| `product` | A physical item, software tool, or device owned or under consideration. Covers electronics, vehicles, household items, and software. |
+| `product` | A physical item, software tool, or device owned or under consideration. Covers electronics, vehicles, and household items. For software EA builds, ships, or maintains, use software_application instead; for a hosted capability EA consumes or operates, use service. **(D8: diverges from upstream.)** |
 
 ### EA Executive Base Types (3, no parent, no children)
 
 | Type | Description |
 |------|------------|
-| `software_application` | A software product EA builds, ships, or maintains. Expected frontmatter properties: `repo_url`, `version`, `install_path`, `status` (active/deprecated/in_dev). |
-| `service` | An external or internal service EA consumes or operates. Expected frontmatter properties: `provider`, `dashboard_url`, `status`, `tier` (critical/important/optional). |
+| `software_application` | Software EA itself builds, ships, or maintains — the EA portfolio codebase. Not third-party software EA merely uses (that is `product`), and not a running hosted capability (that is `service`). Expected frontmatter properties: `repo_url`, `version`, `install_path`, `status` (active/deprecated/in_dev). |
+| `service` | A running hosted capability EA consumes or operates, vendor-run or EA-run — databases, APIs, CI, auth, monitoring. Distinct from `software_application`, which is the codebase EA ships. Expected frontmatter properties: `provider`, `dashboard_url`, `status`, `tier` (critical/important/optional). |
 | `role` | A functional role a person fills within EA. Expected frontmatter properties: `role_name`, `scope`, `capabilities`. |
 
 ### EA Executive Concrete Types (5, all `parent_type: 'creativework'`)
@@ -159,14 +190,19 @@ links, single-word keys) but we define our own property set. No import of
 | `memory` | `creativework` | A dated recap of one working session. Use only for session records — ordinary facts are not memories. Expected frontmatter properties: `session_date`, `key_decisions` (comma-separated list). |
 | `reference_doc` | `creativework` | A product doc, service description, or architecture reference. Expected frontmatter properties: `source_url`, `product` (slug). |
 
-> **`software_application` vs `product` overlap.** The warm-agent `product`
-> description covers "software tool" and "software." In strict mode both types
-> compete for the same fact and nothing disambiguates them. The copy stays
-> verbatim (D2), so the boundary is a prompt-level convention: `product` is
-> something EA *owns or evaluates*; `software_application` is something EA
-> *builds, ships, or maintains*. Watch classification output for drift here —
-> if it misclassifies in practice, the fix is a description override on
-> `product` (which then breaks D2's parity test deliberately, with a comment).
+> **Disambiguation.** Three types could plausibly claim a piece of software.
+> The manifest resolves this inline, in the descriptions the model actually
+> reads, rather than by convention (D8):
+>
+> - `product` — a thing EA **owns or evaluates**. Explicitly hands off software
+>   EA builds to `software_application`.
+> - `software_application` — a codebase EA **builds, ships, or maintains**.
+> - `service` — a **running hosted capability** something depends on, whether
+>   vendor-run or EA-run.
+>
+> EA's own backend is a `software_application` as source and a `service` as a
+> deployed dependency — which is exactly what `dependsOn`
+> (software_application → service) is for.
 
 ---
 
@@ -275,10 +311,12 @@ export const schemaEaManifest: OntologyManifest = {
     { type: 'action', description: 'An individual task, chore, step, or completed action. Links to a parent Project and assigns responsibility to a Person.' },
     { type: 'creativework', description: 'A book, movie, article, song, recipe, blog post, or other creative content. Captures media the user consumes, learns from, or creates.' },
     { type: 'review', description: 'A personal review, opinion, or evaluation. The implicit subject is always the owning character—use to review a book, restaurant, place, product, or experience. Rating values stay inside the fact content.' },
-    { type: 'product', description: 'A physical item, software tool, or device owned or under consideration. Covers electronics, vehicles, household items, and software.' },
+    // D8: intentional divergence from the warm-agent original — the upstream
+    // row claims "and software", which pulls EA's own repositories here.
+    { type: 'product', description: 'A physical item, software tool, or device owned or under consideration. Covers electronics, vehicles, and household items. For software EA builds, ships, or maintains, use software_application instead; for a hosted capability EA consumes or operates, use service.' },
     // EA executive base types (no parent_type, no children — D5)
-    { type: 'software_application', description: 'A software product EA builds, ships, or maintains. Expected frontmatter properties: repo_url, version, install_path, status (active/deprecated/in_dev).' },
-    { type: 'service', description: 'An external or internal service EA consumes or operates. Expected frontmatter properties: provider, dashboard_url, status, tier (critical/important/optional).' },
+    { type: 'software_application', description: 'Software EA itself builds, ships, or maintains — the EA portfolio codebase. Not third-party software EA merely uses (that is product), and not a running hosted capability (that is service). Expected frontmatter properties: repo_url, version, install_path, status (active/deprecated/in_dev).' },
+    { type: 'service', description: "A running hosted capability EA consumes or operates, vendor-run or EA-run — databases, APIs, CI, auth, monitoring. Distinct from software_application, which is the codebase EA ships; EA's own backend is a software_application as source and a service as a deployed dependency. Expected frontmatter properties: provider, dashboard_url, status, tier (critical/important/optional)." },
     { type: 'role', description: 'A functional role a person fills within EA. Expected frontmatter properties: role_name, scope, capabilities.' },
     // EA executive concrete types (one level under creativework)
     { type: 'design_spec', parent_type: 'creativework', description: 'A technical or product design specification. Expected frontmatter properties: status (draft/approved/implemented/superseded), spec_for (product or service slug), branch.' },
@@ -395,15 +433,73 @@ D2 parity test.
    `organizer`) appear as distinct `(type, source, target)` rows.
 5. **All `parent_type` references resolve** to a node in the same manifest,
    and no parent itself has a `parent_type` (one level — D5).
-6. **Warm-agent parity (D2)** — the 9 node rows and 28 edge rows copied from
-   `schemaOrgWarmAgentManifest` deep-equal their originals. This is the drift
-   guard; it fails if anyone abridges a description.
+6. **Warm-agent parity (D2/D8)** — the 9 node rows and 28 edge rows copied
+   from `schemaOrgWarmAgentManifest` deep-equal their originals, except rows
+   named in an explicit override allowlist. This is the drift guard; it fails
+   if anyone abridges a description. Shape:
+
+   ```ts
+   /**
+    * Intentional divergences from the warm-agent original. Every entry needs
+    * a reason. Anything not listed here must match byte-for-byte (D2).
+    */
+   const INTENTIONAL_NODE_OVERRIDES: Record<string, string> = {
+     // D8: upstream says "Covers electronics, vehicles, household items, and
+     // software", which pulls EA's own repositories into `product`. The EA
+     // row drops that clause and hands off to software_application/service.
+     product:
+       'A physical item, software tool, or device owned or under consideration. '
+       + 'Covers electronics, vehicles, and household items. For software EA '
+       + 'builds, ships, or maintains, use software_application instead; for a '
+       + 'hosted capability EA consumes or operates, use service.',
+   };
+
+   describe('warm-agent parity (D2)', () => {
+     const eaByType = new Map(schemaEaManifest.node_types.map(n => [n.type, n]));
+
+     for (const original of schemaOrgWarmAgentManifest.node_types) {
+       it(`node "${original.type}" tracks the warm-agent original`, () => {
+         const copied = eaByType.get(original.type);
+         expect(copied).toBeDefined();
+         const override = INTENTIONAL_NODE_OVERRIDES[original.type];
+         if (override) {
+           // A stale exception that no longer diverges would silently mask
+           // real drift, so assert the divergence is still real.
+           expect(original.description).not.toBe(override);
+           expect(copied!.description).toBe(override);
+         } else {
+           expect(copied).toEqual(original);
+         }
+         expect(copied!.parent_type).toBeUndefined();
+       });
+     }
+
+     it('every override still names an upstream type', () => {
+       const upstream = new Set(schemaOrgWarmAgentManifest.node_types.map(n => n.type));
+       for (const slug of Object.keys(INTENTIONAL_NODE_OVERRIDES)) {
+         expect(upstream.has(slug)).toBe(true);
+       }
+     });
+
+     it('warm-agent edges are copied with no exceptions', () => {
+       const triples = new Set(schemaOrgWarmAgentManifest.edge_types.map(
+         e => `${e.type}|${e.source_type}|${e.target_type}`));
+       const copied = schemaEaManifest.edge_types.filter(
+         e => triples.has(`${e.type}|${e.source_type}|${e.target_type}`));
+       expect(copied).toEqual(schemaOrgWarmAgentManifest.edge_types);
+     });
+   });
+   ```
 7. **Type descriptions contain expected property names** — `repo_url`,
    `spec_for`, `session_id`, `dashboard_url`, `role_name`, `source_url`,
    `trigger`, `session_date`.
 8. **`supersedes` resolves for a concrete pair** — with the core release in
    place, a `design_spec → design_spec` supersedes edge survives
    `resolveEdges` (regression guard for D6).
+9. **Disambiguation text is present (D8)** — `product`'s description does not
+   end in "and software", and names `software_application`;
+   `software_application` and `service` each name the other two. Cheap guard
+   against someone "restoring" the upstream row.
 
 ---
 
@@ -417,6 +513,8 @@ D2 parity test.
 - No runtime logic — purely a data package
 - No runtime dependency on `schema-org-llm-wiki` (devDependency only, for the
   parity test)
+- No profile-specific classification rules injected into core prompts —
+  disambiguation lives in the manifest descriptions (D8)
 - No dependency on CodeMeta (inspired by, not imported from)
 - No `itemReviewed` rows for the concrete `creativework` subtypes (D6)
 
@@ -440,3 +538,15 @@ D2 parity test.
   removed). Renamed "Parent Types" → "Base Types" (they have no children).
   Filled out the package skeleton (tsup/vitest configs, scripts, deps) to
   mirror `packages/schema-org`. Pinned the core dependency statement.
+- **Rev 3 (2026-08-30)** — resolved the `software_application` / `product`
+  overlap structurally instead of by convention (D8). Rev 2 documented it as a
+  prompt-level understanding, which the model never reads: fed both rows, it
+  would classify EA repositories as `product` on the word "software" alone.
+  `product` now drops upstream's "and software" and hands off explicitly, and
+  `software_application` / `service` name each other back so the
+  disambiguation is mutual. `service` was retitled to a running hosted
+  capability (vendor- or EA-run) to settle the same ambiguity for EA's own
+  backends, which are a `software_application` as source and a `service` as a
+  deployed dependency. D2 gains an override allowlist — reason required, and
+  the test asserts each entry still diverges so a stale exception cannot mask
+  real drift. `product` is the only sanctioned entry.
