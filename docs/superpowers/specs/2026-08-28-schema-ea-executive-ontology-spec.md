@@ -1,7 +1,7 @@
 # @equationalapplications/schema-ea — Spec
 
 **Date:** 2026-08-28
-**Status:** Draft (rev 6 — 2026-08-30)
+**Status:** Approved
 **Packages:** `@equationalapplications/schema-ea` (new)
 **Depends on:** `@equationalapplications/core-llm-wiki` at the first release
 shipping `OntologyNodeType.parent_type` (see
