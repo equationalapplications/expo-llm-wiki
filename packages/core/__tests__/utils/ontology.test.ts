@@ -7,9 +7,10 @@ import {
   mergeOntologyUpdates,
   validateInlineEdges,
   resolveEdgeDefinitions,
+  typeSatisfies,
 } from '../../src/utils/ontology';
 import { WikiStrictOntologyViolation } from '../../src/index';
-import type { OntologyManifest } from '../../src/types';
+import type { OntologyManifest, OntologyNodeType } from '../../src/types';
 
 const manifest: OntologyManifest = {
   node_types: [
@@ -257,5 +258,201 @@ describe('validateInlineEdges strict mode', () => {
       'Function', null, 'not-an-array' as unknown as never,
       manifest,
     )).toEqual([]);
+  });
+});
+
+const parentManifest: OntologyManifest = {
+  node_types: [
+    { type: 'creativework', description: 'Parent content type.' },
+    { type: 'design_spec', description: 'A design spec.', parent_type: 'creativework' },
+    { type: 'software_application', description: 'An app.' },
+    // Required: both edge_types below target `person`, and validateManifest
+    // rejects an edge whose endpoints are not declared node types.
+    { type: 'person', description: 'A person.' },
+  ],
+  edge_types: [
+    { type: 'about', source_type: 'creativework', target_type: 'person', description: 'subject matter' },
+    { type: 'assigns', source_type: 'software_application', target_type: 'person', description: 'owner' },
+  ],
+};
+
+describe('ontology parent inheritance', () => {
+  it('validateManifest accepts manifests without any parent_type fields', () => {
+    expect(() => validateManifest(manifest)).not.toThrow(); // existing top-level `manifest`
+  });
+
+  it('validateManifest accepts a valid parent reference', () => {
+    expect(() => validateManifest(parentManifest)).not.toThrow();
+  });
+
+  it('validateManifest rejects self-parent (case-insensitive)', () => {
+    expect(() => validateManifest({
+      node_types: [
+        { type: 'design_spec', description: 'x', parent_type: 'Design_Spec' },
+      ],
+      edge_types: [],
+    })).toThrow(/Self-parent/);
+  });
+
+  it('validateManifest rejects a parent slug that does not exist', () => {
+    expect(() => validateManifest({
+      node_types: [
+        { type: 'design_spec', description: 'x', parent_type: 'nonexistent' },
+      ],
+      edge_types: [],
+    })).toThrow(/Parent type not found/);
+  });
+
+  it('validateManifest rejects parent chains deeper than one level (D1)', () => {
+    expect(() => validateManifest({
+      node_types: [
+        { type: 'thing', description: 'root' },
+        { type: 'creativework', description: 'mid', parent_type: 'thing' },
+        { type: 'design_spec', description: 'leaf', parent_type: 'creativework' },
+      ],
+      edge_types: [],
+    })).toThrow(/Parent chain too deep/);
+  });
+
+  it('validateManifest rejects a two-cycle (caught by the chain check, not self-parent)', () => {
+    expect(() => validateManifest({
+      node_types: [
+        { type: 'a', description: 'x', parent_type: 'b' },
+        { type: 'b', description: 'y', parent_type: 'a' },
+      ],
+      edge_types: [],
+    })).toThrow(/Parent chain too deep/);
+  });
+
+  it('validateInlineEdges accepts a child source for an edge declared on the parent', () => {
+    const valid = validateInlineEdges('design_spec', null, [
+      { edge_type: 'about', target_title: 'Jane Doe' },
+    ], parentManifest);
+    expect(valid).toEqual([{ edge_type: 'about', target_title: 'Jane Doe' }]);
+  });
+
+  it('validateInlineEdges strict mode does not throw for a parent-matched source', () => {
+    expect(() => validateInlineEdges('design_spec', null, [
+      { edge_type: 'about', target_title: 'Jane Doe' },
+    ], parentManifest, { strict: true, entityId: 'e1' })).not.toThrow();
+  });
+
+  it('validateInlineEdges does not accept a child whose parent is a different type', () => {
+    const valid = validateInlineEdges('design_spec', null, [
+      { edge_type: 'assigns', target_title: 'Jane Doe' },
+    ], parentManifest);
+    expect(valid).toEqual([]); // assigns is declared on software_application, not creativework
+  });
+
+  it('validateInlineEdges still rejects unknown edge types', () => {
+    const valid = validateInlineEdges('design_spec', null, [
+      { edge_type: 'nonexistent_edge', target_title: 'x' },
+    ], parentManifest);
+    expect(valid).toEqual([]);
+  });
+
+  it('resolveNodeType stays exact 1:1 — parent_type is never consulted (D2)', () => {
+    expect(resolveNodeType('design_spec', parentManifest)).toBe('design_spec');
+    expect(resolveNodeType('CreativeWork', parentManifest)).toBe('creativework');
+    expect(resolveNodeType('thing', parentManifest)).toBeNull(); // not in manifest at all
+  });
+
+  // D10: absence means "no parent"; present-but-unusable is malformed.
+  it.each([['empty string', ''], ['whitespace only', '   ']])(
+    'validateManifest rejects a present-but-blank parent_type (%s)',
+    (_label, blank) => {
+      expect(() => validateManifest({
+        node_types: [
+          { type: 'creativework', description: 'p' },
+          { type: 'design_spec', description: 'x', parent_type: blank },
+        ],
+        edge_types: [],
+      })).toThrow(/must be a non-empty string/);
+    },
+  );
+
+  // D10: validateManifest runs on JSON.parse output from manifest_json on
+  // every read, so a legacy or hand-edited row can hold a non-string. It must
+  // surface as a manifest error, never as a bare TypeError from .trim().
+  // 0 and false are listed on purpose: a falsy non-string must not slip
+  // through a truthiness check into the slug path.
+  it.each([['number', 123], ['zero', 0], ['boolean', true], ['false', false],
+           ['null', null], ['object', {}], ['array', []]])(
+    'validateManifest rejects a non-string parent_type (%s) with a manifest error',
+    (_label, bad) => {
+      const run = () => validateManifest({
+        node_types: [
+          { type: 'creativework', description: 'p' },
+          { type: 'design_spec', description: 'x', parent_type: bad as unknown as string },
+        ],
+        edge_types: [],
+      });
+      expect(run).toThrow(/must be a non-empty string/);
+      expect(run).not.toThrow(TypeError);
+    },
+  );
+
+  it('validateManifest accepts an absent parent_type (D10 — absence is not blankness)', () => {
+    expect(() => validateManifest({
+      node_types: [{ type: 'design_spec', description: 'x' }],
+      edge_types: [],
+    })).not.toThrow();
+  });
+
+  describe('typeSatisfies', () => {
+    it('matches exactly, case- and whitespace-insensitively', () => {
+      expect(typeSatisfies('design_spec', 'design_spec', parentManifest)).toBe(true);
+      expect(typeSatisfies('Design_Spec', '  design_spec ', parentManifest)).toBe(true);
+    });
+
+    it('matches one hop up via parent_type', () => {
+      expect(typeSatisfies('creativework', 'design_spec', parentManifest)).toBe(true);
+    });
+
+    it('does not match an unrelated declared type', () => {
+      expect(typeSatisfies('software_application', 'design_spec', parentManifest)).toBe(false);
+    });
+
+    it('does not match downward — a parent does not satisfy its child', () => {
+      expect(typeSatisfies('design_spec', 'creativework', parentManifest)).toBe(false);
+    });
+
+    it('never recurses (D1): a grandparent is not satisfied', () => {
+      // Not a manifest validateManifest would accept — typeSatisfies must still
+      // stop at one hop if a chain ever reaches it from a persisted row.
+      const chain: OntologyManifest = {
+        node_types: [
+          { type: 'thing', description: 'root' },
+          { type: 'creativework', description: 'mid', parent_type: 'thing' },
+          { type: 'design_spec', description: 'leaf', parent_type: 'creativework' },
+        ],
+        edge_types: [],
+      };
+      expect(typeSatisfies('creativework', 'design_spec', chain)).toBe(true);
+      expect(typeSatisfies('thing', 'design_spec', chain)).toBe(false);
+    });
+
+    it('returns false rather than throwing on blank or missing inputs', () => {
+      expect(typeSatisfies('creativework', '', parentManifest)).toBe(false);
+      expect(typeSatisfies('creativework', '   ', parentManifest)).toBe(false);
+      expect(typeSatisfies('', 'design_spec', parentManifest)).toBe(false);
+      // node_types is typed non-optional but is JSON.parse'd from a DB row at
+      // runtime — the guard must hold for a malformed manifest.
+      const noNodes = { edge_types: [] } as unknown as OntologyManifest;
+      expect(typeSatisfies('creativework', 'design_spec', noNodes)).toBe(false);
+      const malformed = { node_types: [{}], edge_types: [] } as unknown as OntologyManifest;
+      expect(typeSatisfies('creativework', 'design_spec', malformed)).toBe(false);
+      // Non-string fields must return false, not throw: typeSatisfies runs
+      // inside the caller's transaction, so a TypeError here aborts an ingest.
+      const badTypes = {
+        node_types: [
+          { type: 42, description: 'x' },
+          { type: 'design_spec', description: 'x', parent_type: 123 },
+        ],
+        edge_types: [],
+      } as unknown as OntologyManifest;
+      expect(typeSatisfies('creativework', 'design_spec', badTypes)).toBe(false);
+      expect(() => typeSatisfies('creativework', 'design_spec', badTypes)).not.toThrow();
+    });
   });
 });
