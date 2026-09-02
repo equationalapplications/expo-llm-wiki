@@ -205,7 +205,7 @@ unchanged, including the leading `validateManifest(data.manifest)`.
 
 ### `WikiMemory.setOntologyManifests`
 
-```
+```text
 1. if entries is empty            -> return { written: [], skipped: [] }
 2. reject duplicate entityIds     -> throw, naming the id
 3. validateManifest(each)         -> throw on the first failure
