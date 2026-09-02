@@ -687,6 +687,52 @@ export class WikiMemory {
     this.ontologyService.invalidateCache(entityId);
   }
 
+  /**
+   * Write several entities' ontology manifests in a single transaction.
+   *
+   * All succeed or none do. The transaction is opened on this instance's
+   * serialized adapter — callers pass data, never a transaction handle, because
+   * a consumer holds the unwrapped adapter and a transaction opened on it would
+   * bypass the serialization mutex applied in the constructor.
+   *
+   * Returns which entities were written. `skipped` is only ever non-empty under
+   * `opts.ifAbsent`.
+   */
+  async setOntologyManifests(
+    entries: Array<{
+      entityId: string;
+      manifest: OntologyManifest;
+      mode?: OntologyMode;
+    }>,
+    opts?: { ifAbsent?: boolean },
+  ): Promise<{ written: string[]; skipped: string[] }> {
+    const written: string[] = [];
+    const skipped: string[] = [];
+
+    await this.db.withTransactionAsync(async (tx) => {
+      for (const entry of entries) {
+        const mode = entry.mode ?? this.ontologyService.resolveMode();
+        const wrote = await this.metadataRepo.setManifest(
+          entry.entityId,
+          { mode, manifest: entry.manifest },
+          tx,
+        );
+        (wrote ? written : skipped).push(entry.entityId);
+      }
+    });
+
+    // After commit, and for EVERY entry: a skipped entry means another writer
+    // won the race, so this instance's cached copy may be stale — dropping it
+    // is more correct than keeping it. Invalidation is safe regardless of the
+    // transaction's outcome, because it only removes a cached copy and the next
+    // read goes to the database.
+    for (const entry of entries) {
+      this.ontologyService.invalidateCache(entry.entityId);
+    }
+
+    return { written, skipped };
+  }
+
   /** Append a verification event to a fact. Does NOT touch `updated_at`. */
   async writeOkfTrust(entryId: string, entityId: string, verified: { by: string; at: string }[]): Promise<void> {
     return this.okfTrustWrites.writeOkfTrust(entryId, entityId, verified);
