@@ -559,6 +559,30 @@ await wikiMemory.setOntologyManifest('team-alpha', {
 }, { mode: 'strict' });
 ```
 
+Seed several entities atomically — all manifests are written in one transaction,
+so a failure partway through leaves none of them behind:
+
+```typescript
+const { written, skipped } = await wikiMemory.setOntologyManifests(
+  [
+    { entityId: 'tier_fact', manifest, mode: 'strict' },
+    { entityId: 'tier_wisdom', manifest, mode: 'strict' },
+  ],
+  { ifAbsent: true },
+);
+// written: entities whose manifest this call wrote
+// skipped: entities that already had one (only under `ifAbsent`)
+```
+
+`ifAbsent` makes each write create-if-absent rather than an upsert, so a
+concurrent initializer loses the race by writing nothing instead of overwriting
+a manifest it never read. Omit it for replace-on-conflict, which is what
+`setOntologyManifest` does.
+
+The method takes data, never a transaction handle: `WikiMemory` serializes
+transactions on the adapter it is given, so a transaction opened on the adapter
+you passed to `createWiki` would not participate in that serialization.
+
 ### Fact Shape Extensions
 
 In **Strict** and **Emergent** modes, librarian and ingest JSON may include typed facts with inline edges:
