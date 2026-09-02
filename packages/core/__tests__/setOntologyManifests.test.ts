@@ -142,4 +142,70 @@ describe('WikiMemory.setOntologyManifests', () => {
     expect(spy).toHaveBeenCalledWith('tier_wisdom');
     expect(spy).toHaveBeenCalledTimes(2);
   });
+
+  /** Wrap an adapter to count how many transactions were opened. */
+  function countingTransactions(inner: SQLiteAdapter): {
+    adapter: SQLiteAdapter;
+    count: () => number;
+  } {
+    let opened = 0;
+    const adapter: SQLiteAdapter = {
+      ...inner,
+      async withTransactionAsync<T>(fn: (tx: SQLiteAdapter) => Promise<T>): Promise<T> {
+        opened += 1;
+        return inner.withTransactionAsync(fn);
+      },
+    };
+    return { adapter, count: () => opened };
+  }
+
+  it('returns empty lists for an empty batch without opening a transaction', async () => {
+    const counting = countingTransactions(db);
+    const wiki = await makeWiki(counting.adapter);
+    const before = counting.count();
+
+    const result = await wiki.setOntologyManifests([]);
+
+    expect(result).toEqual({ written: [], skipped: [] });
+    expect(counting.count()).toBe(before);
+  });
+
+  it('rejects a duplicate entityId before touching the database', async () => {
+    const wiki = await makeWiki(db);
+
+    await expect(
+      wiki.setOntologyManifests([
+        { entityId: 'tier_fact', manifest: manifestA, mode: 'strict' },
+        { entityId: 'tier_fact', manifest: manifestB, mode: 'strict' },
+      ]),
+    ).rejects.toThrow(/duplicate entityid.*tier_fact/i);
+
+    expect(await manifestCount(db)).toBe(0);
+  });
+
+  it('rejects an invalid manifest before opening a transaction', async () => {
+    const counting = countingTransactions(db);
+    const wiki = await makeWiki(counting.adapter);
+    const before = counting.count();
+
+    await expect(
+      wiki.setOntologyManifests([
+        { entityId: 'tier_fact', manifest: manifestA, mode: 'strict' },
+        {
+          entityId: 'tier_wisdom',
+          // edge endpoint references a node type this manifest never declares
+          manifest: {
+            node_types: [],
+            edge_types: [
+              { type: 'x', source_type: 'ghost', target_type: 'ghost', description: '' },
+            ],
+          },
+          mode: 'strict',
+        },
+      ]),
+    ).rejects.toThrow(/unknown node type/i);
+
+    expect(counting.count()).toBe(before);
+    expect(await manifestCount(db)).toBe(0);
+  });
 });

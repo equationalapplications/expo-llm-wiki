@@ -32,6 +32,7 @@ import { PromptService } from './services/PromptService';
 import { OntologyService } from './services/OntologyService';
 import { GraphTraversalService } from './services/GraphTraversalService';
 import { OkfTrustWritesRepository } from './db/okf-trust-writes';
+import { validateManifest } from './utils/ontology';
 import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighborhood, OntologyBackfillResult, HealResult, IngestDocumentResult } from './types';
 
 export { WikiBusyError, WikiTransactionError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER, WikiStrictOntologyViolation, WikiSourceRefHashCollision, WikiParseError, WikiIngestEmptyError } from './types';
@@ -706,6 +707,29 @@ export class WikiMemory {
     }>,
     opts?: { ifAbsent?: boolean },
   ): Promise<{ written: string[]; skipped: string[] }> {
+    // Nothing to do — and deliberately no transaction, so an empty batch never
+    // takes the serialization mutex.
+    if (entries.length === 0) return { written: [], skipped: [] };
+
+    // Two entries naming one entity express ambiguous intent. Applying the last
+    // one silently would hide a caller bug whose symptom — a manifest that is
+    // not the one the caller believed it wrote — surfaces far from its cause.
+    const seen = new Set<string>();
+    for (const entry of entries) {
+      if (seen.has(entry.entityId)) {
+        throw new Error(`Duplicate entityId in batch: ${entry.entityId}`);
+      }
+      seen.add(entry.entityId);
+    }
+
+    // Validate every manifest BEFORE opening the transaction, so a doomed batch
+    // never reaches the database and never takes the mutex. `setManifest`
+    // validates again inside the transaction; that is the invariant protecting
+    // every other repository caller, and is not redundant with this gate.
+    for (const entry of entries) {
+      validateManifest(entry.manifest);
+    }
+
     const written: string[] = [];
     const skipped: string[] = [];
 
