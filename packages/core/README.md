@@ -535,7 +535,11 @@ const wikiMemory = new WikiMemory(db, {
 });
 ```
 
-`seedManifests` entries are written to SQLite on first access when no row exists for that entity.
+`seedManifests` entries are written to SQLite the first time an entity's ontology is
+resolved *inside a transaction* (ingest, heal) and no row exists for it. A read outside a
+transaction — including `getOntologyManifest` — resolves the seed without persisting it, so
+a configured entity can report a manifest while still having no row in `entity_manifests`.
+That distinction matters for `ifAbsent` below.
 
 ### Public API
 
@@ -558,6 +562,37 @@ await wikiMemory.setOntologyManifest('team-alpha', {
   }],
 }, { mode: 'strict' });
 ```
+
+Seed several entities atomically — all manifests are written in one transaction,
+so a failure partway through leaves none of them behind:
+
+```typescript
+const { written, skipped } = await wikiMemory.setOntologyManifests(
+  [
+    { entityId: 'tier_fact', manifest, mode: 'strict' },
+    { entityId: 'tier_wisdom', manifest, mode: 'strict' },
+  ],
+  { ifAbsent: true },
+);
+// written: entities whose manifest this call wrote
+// skipped: entities that already had a persisted manifest (only under `ifAbsent`)
+```
+
+`ifAbsent` makes each write create-if-absent rather than an upsert, so a
+concurrent initializer loses the race by writing nothing instead of overwriting
+a manifest it never read. Omit it for replace-on-conflict, which is what
+`setOntologyManifest` does.
+
+**`ifAbsent` tests for a persisted row, not for an effective manifest.** An entity
+whose manifest comes from `WikiConfig.ontology.seedManifests` has no row until an
+ingest materializes one, so `ifAbsent` writes over the configured seed and reports
+the entity in `written`; after an ingest has run for that entity the same call
+reports it in `skipped`. Don't mix the two seeding routes for one entity: seed it
+through the config, or through this method, not both.
+
+The method takes data, never a transaction handle: `WikiMemory` serializes
+transactions on the adapter it is given, so a transaction opened on the adapter
+you passed to `createWiki` would not participate in that serialization.
 
 ### Fact Shape Extensions
 

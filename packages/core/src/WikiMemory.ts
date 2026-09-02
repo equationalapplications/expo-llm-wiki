@@ -32,6 +32,7 @@ import { PromptService } from './services/PromptService';
 import { OntologyService } from './services/OntologyService';
 import { GraphTraversalService } from './services/GraphTraversalService';
 import { OkfTrustWritesRepository } from './db/okf-trust-writes';
+import { validateManifest } from './utils/ontology';
 import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighborhood, OntologyBackfillResult, HealResult, IngestDocumentResult } from './types';
 
 export { WikiBusyError, WikiTransactionError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER, WikiStrictOntologyViolation, WikiSourceRefHashCollision, WikiParseError, WikiIngestEmptyError } from './types';
@@ -674,17 +675,99 @@ export class WikiMemory {
    * Seeds or replaces an entity's ontology manifest and optional mode override.
    * Validates manifest invariants (unique type slugs, edge endpoints reference node types).
    * Invalidates the in-memory ontology cache for this entity.
+   *
+   * Delegates to `setOntologyManifests` so there is a single write path. The
+   * observable contract is unchanged: same upsert semantics, same cache
+   * invalidation, same `void` result.
    */
   async setOntologyManifest(
     entityId: string,
     manifest: OntologyManifest,
     options?: { mode?: OntologyMode },
   ): Promise<void> {
-    const mode = options?.mode ?? this.ontologyService.resolveMode();
-    await this.db.withTransactionAsync(tx =>
-      this.metadataRepo.setManifest(entityId, { mode, manifest }, tx),
-    );
-    this.ontologyService.invalidateCache(entityId);
+    await this.setOntologyManifests([{ entityId, manifest, mode: options?.mode }]);
+  }
+
+  /**
+   * Write several entities' ontology manifests in a single transaction.
+   *
+   * All succeed or none do. The transaction is opened on this instance's
+   * serialized adapter — callers pass data, never a transaction handle, because
+   * a consumer holds the unwrapped adapter and a transaction opened on it would
+   * bypass the serialization mutex applied in the constructor.
+   *
+   * Returns which entities were written. `skipped` is only ever non-empty under
+   * `opts.ifAbsent`.
+   *
+   * Sharp edge: `ifAbsent` checks for a PERSISTED row, not for an effective
+   * manifest. An entity whose manifest currently comes from
+   * `WikiConfig.ontology.seedManifests` has no row until the seed is
+   * materialized on first access that supplies a transaction (in practice, an
+   * ingest). Until then `ifAbsent` treats the entity as absent, writes the new
+   * manifest over the configured seed, and reports it in `written`; the same
+   * call after the seed has been materialized reports it in `skipped`. See the
+   * `ifAbsent` notes in the package README.
+   */
+  async setOntologyManifests(
+    entries: Array<{
+      entityId: string;
+      manifest: OntologyManifest;
+      mode?: OntologyMode;
+    }>,
+    opts?: { ifAbsent?: boolean },
+  ): Promise<{ written: string[]; skipped: string[] }> {
+    // Nothing to do — and deliberately no transaction, so an empty batch never
+    // takes the serialization mutex.
+    if (entries.length === 0) return { written: [], skipped: [] };
+
+    // Two entries naming one entity express ambiguous intent. Applying the last
+    // one silently would hide a caller bug whose symptom — a manifest that is
+    // not the one the caller believed it wrote — surfaces far from its cause.
+    const seen = new Set<string>();
+    for (const entry of entries) {
+      if (seen.has(entry.entityId)) {
+        throw new Error(`Duplicate entityId in batch: ${entry.entityId}`);
+      }
+      seen.add(entry.entityId);
+    }
+
+    // Validate every manifest BEFORE opening the transaction, so a doomed batch
+    // never reaches the database and never takes the mutex. `setManifest`
+    // validates again inside the transaction; that is the invariant protecting
+    // every other repository caller, and is not redundant with this gate.
+    for (const entry of entries) {
+      validateManifest(entry.manifest);
+    }
+
+    const written: string[] = [];
+    const skipped: string[] = [];
+
+    await this.db.withTransactionAsync(async (tx) => {
+      for (const entry of entries) {
+        const mode = entry.mode ?? this.ontologyService.resolveMode();
+        const wrote = await this.metadataRepo.setManifest(
+          entry.entityId,
+          { mode, manifest: entry.manifest },
+          tx,
+          { ifAbsent: opts?.ifAbsent === true },
+        );
+        (wrote ? written : skipped).push(entry.entityId);
+      }
+    });
+
+    // After a successful commit, and for EVERY entry rather than just the
+    // written ones: under `ifAbsent` a skipped entry means another writer won
+    // the race, so this instance's cached copy may be stale and dropping it is
+    // more correct than keeping it. A failed transaction throws above and never
+    // reaches this loop, which is fine — a rolled-back batch changed nothing,
+    // so the cache is still consistent with the database. Invalidating is cheap
+    // either way: it only drops a cached copy, and the next read reloads from
+    // the database.
+    for (const entry of entries) {
+      this.ontologyService.invalidateCache(entry.entityId);
+    }
+
+    return { written, skipped };
   }
 
   /** Append a verification event to a fact. Does NOT touch `updated_at`. */
