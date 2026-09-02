@@ -60,4 +60,91 @@ describe('MetadataRepository — entity manifests', () => {
       expect(merged.edge_types.find(e => e.type === 'supplies')).toBeDefined();
     });
   });
+
+  const otherManifest: OntologyManifest = {
+    node_types: [{ type: 'team', description: 'A team.' }],
+    edge_types: [],
+  };
+
+  it('setManifest returns true when it writes a new row', async () => {
+    const wrote = await db.withTransactionAsync(async (tx) =>
+      repo.setManifest('entity1', { mode: 'strict', manifest: sampleManifest }, tx),
+    );
+    expect(wrote).toBe(true);
+  });
+
+  it('setManifest upserts by default and returns true', async () => {
+    await db.withTransactionAsync(async (tx) => {
+      await repo.setManifest('entity1', { mode: 'strict', manifest: sampleManifest }, tx);
+    });
+
+    const wrote = await db.withTransactionAsync(async (tx) =>
+      repo.setManifest('entity1', { mode: 'emergent', manifest: otherManifest }, tx),
+    );
+
+    expect(wrote).toBe(true);
+    expect(await repo.getManifest('entity1')).toEqual({
+      mode: 'emergent',
+      manifest: otherManifest,
+    });
+  });
+
+  it('setManifest with ifAbsent leaves an existing row alone and returns false', async () => {
+    await db.withTransactionAsync(async (tx) => {
+      await repo.setManifest('entity1', { mode: 'strict', manifest: sampleManifest }, tx);
+    });
+
+    const wrote = await db.withTransactionAsync(async (tx) =>
+      repo.setManifest(
+        'entity1',
+        { mode: 'emergent', manifest: otherManifest },
+        tx,
+        { ifAbsent: true },
+      ),
+    );
+
+    expect(wrote).toBe(false);
+    expect(await repo.getManifest('entity1')).toEqual({
+      mode: 'strict',
+      manifest: sampleManifest,
+    });
+  });
+
+  it('setManifest with ifAbsent writes when no row exists and returns true', async () => {
+    const wrote = await db.withTransactionAsync(async (tx) =>
+      repo.setManifest(
+        'entity2',
+        { mode: 'strict', manifest: sampleManifest },
+        tx,
+        { ifAbsent: true },
+      ),
+    );
+
+    expect(wrote).toBe(true);
+    expect(await repo.getManifest('entity2')).toEqual({
+      mode: 'strict',
+      manifest: sampleManifest,
+    });
+  });
+
+  it('setManifest still validates the manifest under ifAbsent', async () => {
+    await expect(
+      db.withTransactionAsync(async (tx) =>
+        repo.setManifest(
+          'entity3',
+          {
+            mode: 'strict',
+            manifest: {
+              node_types: [],
+              edge_types: [
+                { type: 'x', source_type: 'ghost', target_type: 'ghost', description: '' },
+              ],
+            },
+          },
+          tx,
+          { ifAbsent: true },
+        ),
+      ),
+    ).rejects.toThrow(/unknown node type/i);
+  });
 });

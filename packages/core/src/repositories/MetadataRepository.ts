@@ -168,19 +168,36 @@ export class MetadataRepository extends BaseRepository {
     };
   }
 
+  /**
+   * Write an entity's manifest.
+   *
+   * `opts.ifAbsent` selects the conflict behaviour:
+   * - omitted / `false` — upsert. An existing row is replaced.
+   * - `true` — create-if-absent. An existing row is left exactly as it is.
+   *
+   * Returns whether this call actually wrote a row. Under `ifAbsent` a `false`
+   * result means another writer got there first; the check and the write are one
+   * statement, so there is no window between them.
+   */
   async setManifest(
     entityId: string,
     data: { mode: OntologyMode; manifest: OntologyManifest },
     tx: SQLiteAdapter,
-  ): Promise<void> {
+    opts?: { ifAbsent?: boolean },
+  ): Promise<boolean> {
     validateManifest(data.manifest);
     const executor = this.getExecutor(tx);
-    await executor.runAsync(
+    const conflictClause = opts?.ifAbsent
+      ? 'ON CONFLICT(entity_id) DO NOTHING'
+      : `ON CONFLICT(entity_id) DO UPDATE SET
+           mode = excluded.mode, manifest_json = excluded.manifest_json, updated_at = excluded.updated_at`;
+    const result = await executor.runAsync(
       `INSERT INTO ${this.prefix}entity_manifests (entity_id, mode, manifest_json, updated_at)
        VALUES (?, ?, ?, ?)
-       ON CONFLICT(entity_id) DO UPDATE SET mode = excluded.mode, manifest_json = excluded.manifest_json, updated_at = excluded.updated_at`,
+       ${conflictClause}`,
       [entityId, data.mode, JSON.stringify(data.manifest), Date.now()],
     );
+    return result.changes > 0;
   }
 
   async mergeManifestUpdates(
