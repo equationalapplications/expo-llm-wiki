@@ -1,3 +1,18 @@
+# [6.3.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v6.2.0...v6.3.0) (2026-09-02)
+
+
+### Bug Fixes
+
+* **deps:** bump fast-uri override to 3.1.6 to clear high advisories ([bec2843](https://github.com/equationalapplications/expo-llm-wiki/commit/bec28439b4ebd7e77dd3487defe64d99cc606e59)), closes [hi#severity](https://github.com/hi/issues/severity)
+
+
+### Features
+
+* **core:** add setOntologyManifests, atomic across entities ([ca87dfa](https://github.com/equationalapplications/expo-llm-wiki/commit/ca87dfa022c15c48ecdefdba59b9f8a8fc6c6303))
+* **core:** setManifest gains ifAbsent option and reports whether it wrote ([6ba333c](https://github.com/equationalapplications/expo-llm-wiki/commit/6ba333c1f1a0011ccf72adeb3e23338d0aa241d6))
+* **core:** thread ifAbsent through setOntologyManifests for conflict-safe seeding ([c6be7bd](https://github.com/equationalapplications/expo-llm-wiki/commit/c6be7bd41bc5c6c02750d570772847e788e5a8ca))
+* **core:** validate setOntologyManifests input before opening a transaction ([0e9cb69](https://github.com/equationalapplications/expo-llm-wiki/commit/0e9cb693dbf40578f71072007620c4dfe6eba0c3))
+
 # [6.2.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v6.1.0...v6.2.0) (2026-08-30)
 
 
