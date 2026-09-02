@@ -281,7 +281,12 @@ describe('WikiMemory.setOntologyManifests', () => {
     });
   });
 
-  it('two concurrent ifAbsent batches converge on one manifest set, neither erroring', async () => {
+  it('two overlapping ifAbsent batches on ONE instance converge, neither erroring', async () => {
+    // Scope note: both calls go through the same WikiMemory, so the per-instance
+    // mutex in `withSerializedTransactions` runs them back to back — this pins
+    // idempotent convergence, NOT a cross-instance race. It cannot distinguish
+    // the atomic `DO NOTHING` write from a check-then-write; the test below
+    // ('decides the conflict in a single statement') is what pins that.
     const wiki = await makeWiki(db);
     const entries = [
       { entityId: 'tier_fact', manifest: manifestA, mode: 'strict' as const },
@@ -293,13 +298,80 @@ describe('WikiMemory.setOntologyManifests', () => {
       wiki.setOntologyManifests(entries, { ifAbsent: true }),
     ]);
 
-    // Serialized by the transaction mutex: one batch writes both, the other
-    // skips both. Neither throws, and the loser destroys nothing.
+    // One batch writes both, the other skips both. Neither throws, and the
+    // loser destroys nothing.
     const written = [...first.written, ...second.written].sort();
     const skipped = [...first.skipped, ...second.skipped].sort();
     expect(written).toEqual(['tier_fact', 'tier_wisdom']);
     expect(skipped).toEqual(['tier_fact', 'tier_wisdom']);
     expect(await manifestCount(db)).toBe(2);
+  });
+
+  /**
+   * Wrap an adapter to count reads of `entity_manifests`.
+   *
+   * `withTransactionAsync` is overridden for the same reason as in
+   * `failOnNthManifestWrite`: the base test adapter hands ITSELF to the
+   * callback, so without this the repository would receive the unwrapped
+   * adapter and the counters would never move.
+   */
+  function countingReads(inner: SQLiteAdapter): {
+    adapter: SQLiteAdapter;
+    reads: () => number;
+  } {
+    let reads = 0;
+    const count = (sql: string) => {
+      if (sql.includes('entity_manifests') && sql.trimStart().toUpperCase().startsWith('SELECT')) {
+        reads += 1;
+      }
+    };
+    const wrapped: SQLiteAdapter = {
+      ...inner,
+      async getFirstAsync<T>(sql: string, args?: unknown[]) {
+        count(sql);
+        return inner.getFirstAsync<T>(sql, args);
+      },
+      async getAllAsync<T>(sql: string, args?: unknown[]) {
+        count(sql);
+        return inner.getAllAsync<T>(sql, args);
+      },
+      async withTransactionAsync<T>(fn: (tx: SQLiteAdapter) => Promise<T>): Promise<T> {
+        return inner.withTransactionAsync(() => fn(wrapped));
+      },
+    };
+    return { adapter: wrapped, reads: () => reads };
+  }
+
+  it('ifAbsent decides the conflict in a single statement, with no prior read', async () => {
+    // THE atomicity guarantee. `ifAbsent` must compile to one
+    // `INSERT ... ON CONFLICT DO NOTHING`, letting SQLite decide the winner —
+    // never a read-then-write, which reopens the TOCTOU window that `ifAbsent`
+    // exists to close. A separate-connection race can't be simulated on the
+    // single shared in-memory connection these tests use (a second concurrent
+    // BEGIN just errors), so pin the property that makes such a race safe:
+    // the write consults no prior read.
+    const counting = countingReads(db);
+    const wiki = await makeWiki(counting.adapter);
+
+    // Pre-existing row, so the second call is the conflict case: a
+    // check-then-write implementation MUST read here to learn it should skip.
+    await wiki.setOntologyManifests([
+      { entityId: 'tier_fact', manifest: manifestA, mode: 'strict' },
+    ]);
+    const before = counting.reads();
+
+    const result = await wiki.setOntologyManifests(
+      [{ entityId: 'tier_fact', manifest: manifestB, mode: 'emergent' }],
+      { ifAbsent: true },
+    );
+
+    expect(result).toEqual({ written: [], skipped: ['tier_fact'] });
+    expect(counting.reads() - before).toBe(0);
+    // And the losing write left the existing row untouched.
+    expect(await wiki.getOntologyManifest('tier_fact')).toEqual({
+      mode: 'strict',
+      manifest: manifestA,
+    });
   });
 
   it('invalidates the cache for SKIPPED entries too, not just written ones', async () => {
