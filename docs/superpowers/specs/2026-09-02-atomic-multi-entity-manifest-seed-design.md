@@ -2,6 +2,9 @@
 
 **Date:** 2026-09-02
 **Status:** Implemented (2026-09-02) — branch `spec/atomic-multi-entity-manifest-seed`
+**Revised:** 2026-09-02 — review found §3 assumed `entity_manifests` is the only
+source of a manifest; it is not. See *`ifAbsent` and config-seeded manifests* under
+Cross-cutting. Documentation-only amendment; no code changed.
 **Issues:** none filed; raised from consumer review (see Consumer context)
 **Packages:** `@equationalapplications/core-llm-wiki`
 **Consumer context:** `equationalapplications/curated-thoughts` — spec
@@ -270,6 +273,28 @@ This deletes its `getOntology` pre-read loop, its compensating-rollback block,
 and its local empty-manifest constant. Its never-throws contract is preserved by
 catching and reporting failure; it no longer has to *undo* anything, because the
 engine rolled back.
+
+**`ifAbsent` and config-seeded manifests.** §3 defines "already present" as a row in
+`entity_manifests`, and the implementation is faithful to that. But a manifest can
+also come from `WikiConfig.ontology.seedManifests`, and that route persists lazily:
+`OntologyService.getEffectiveState` writes the seed to the table only when resolved
+with a `tx` (ingest, heal); resolved without one it caches in memory, and
+`WikiMemory.getOntologyManifest` returns the seed without persisting it. So for an
+entity configured that way, `ifAbsent` reports `written` and replaces the seed
+before any ingest has run, and reports `skipped` after — the same call, the same
+config, opposite outcomes depending on unrelated activity. A consumer that
+pre-checked with `getOntologyManifest` would see a manifest "present" and then watch
+`ifAbsent` overwrite it.
+
+This does not affect the motivating consumer, which seeds through the API and not
+through `seedManifests`, and it is not worth closing in code: making `ifAbsent`
+consult the config seed would mean the batch could skip an entity that has no row,
+leaving the "seeded" state observable only through configuration — a worse
+invariant than the one it replaces. The rule is instead a documented one: seed an
+entity through the config or through this method, not both. `packages/core/README.md`
+states it at the point of use, alongside a correction to its claim that
+`seedManifests` entries are written "on first access" (only tx-scoped access
+persists them).
 
 **A caveat the consumer must record.** That consumer seeds its two fixed tiers
 during startup and its workspace tier later, once the workspace id resolves —
