@@ -296,4 +296,56 @@ describe('WikiMemory.setOntologyManifests', () => {
     expect(spy).toHaveBeenCalledWith('tier_wisdom');
     expect(spy).toHaveBeenCalledTimes(2);
   });
+
+  describe('setOntologyManifest (singular) back-compat', () => {
+    it('writes a manifest with an explicit mode', async () => {
+      const wiki = await makeWiki(db);
+
+      await wiki.setOntologyManifest('tier_fact', manifestA, { mode: 'strict' });
+
+      expect(await wiki.getOntologyManifest('tier_fact')).toEqual({
+        mode: 'strict',
+        manifest: manifestA,
+      });
+    });
+
+    it('falls back to the resolved mode when options are omitted', async () => {
+      const wiki = await makeWiki(db);
+
+      await wiki.setOntologyManifest('tier_fact', manifestA);
+
+      expect((await wiki.getOntologyManifest('tier_fact'))?.mode).toBe('off');
+    });
+
+    it('overwrites an existing manifest (upsert semantics, unchanged)', async () => {
+      const wiki = await makeWiki(db);
+      await wiki.setOntologyManifest('tier_fact', manifestA, { mode: 'strict' });
+
+      await wiki.setOntologyManifest('tier_fact', manifestB, { mode: 'emergent' });
+
+      expect(await wiki.getOntologyManifest('tier_fact')).toEqual({
+        mode: 'emergent',
+        manifest: manifestB,
+      });
+    });
+
+    it('rejects an invalid manifest', async () => {
+      const wiki = await makeWiki(db);
+
+      await expect(
+        wiki.setOntologyManifest('tier_fact', {
+          node_types: [],
+          edge_types: [
+            { type: 'x', source_type: 'ghost', target_type: 'ghost', description: '' },
+          ],
+        }),
+      ).rejects.toThrow(/unknown node type/i);
+    });
+
+    it('resolves to undefined', async () => {
+      const wiki = await makeWiki(db);
+      const result = await wiki.setOntologyManifest('tier_fact', manifestA);
+      expect(result).toBeUndefined();
+    });
+  });
 });

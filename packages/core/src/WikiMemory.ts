@@ -675,17 +675,17 @@ export class WikiMemory {
    * Seeds or replaces an entity's ontology manifest and optional mode override.
    * Validates manifest invariants (unique type slugs, edge endpoints reference node types).
    * Invalidates the in-memory ontology cache for this entity.
+   *
+   * Delegates to `setOntologyManifests` so there is a single write path. The
+   * observable contract is unchanged: same upsert semantics, same cache
+   * invalidation, same `void` result.
    */
   async setOntologyManifest(
     entityId: string,
     manifest: OntologyManifest,
     options?: { mode?: OntologyMode },
   ): Promise<void> {
-    const mode = options?.mode ?? this.ontologyService.resolveMode();
-    await this.db.withTransactionAsync(tx =>
-      this.metadataRepo.setManifest(entityId, { mode, manifest }, tx),
-    );
-    this.ontologyService.invalidateCache(entityId);
+    await this.setOntologyManifests([{ entityId, manifest, mode: options?.mode }]);
   }
 
   /**
