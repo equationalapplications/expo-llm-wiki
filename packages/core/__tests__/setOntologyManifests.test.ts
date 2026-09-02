@@ -30,6 +30,22 @@ async function makeWiki(db: SQLiteAdapter): Promise<WikiMemory> {
   return wiki;
 }
 
+/**
+ * Read the raw `mode` column for an entity, bypassing the engine.
+ *
+ * Deliberately not `getOntologyManifest`: that reader pipes the row through
+ * `OntologyService.resolveMode(row.mode)`, so asserting on its result conflates
+ * what the WRITE persisted with what the READ resolved. These mode-fallback
+ * tests are about the write path, so they assert on the column itself.
+ */
+async function storedMode(db: SQLiteAdapter, entityId: string): Promise<string | undefined> {
+  const row = await db.getFirstAsync<{ mode: string }>(
+    `SELECT mode FROM ${PREFIX}entity_manifests WHERE entity_id = ?`,
+    [entityId],
+  );
+  return row?.mode;
+}
+
 /** Count manifest rows without going through the engine. */
 async function manifestCount(db: SQLiteAdapter): Promise<number> {
   const row = await db.getFirstAsync<{ n: number }>(
@@ -93,13 +109,29 @@ describe('WikiMemory.setOntologyManifests', () => {
   });
 
   it('falls back to the resolved mode when an entry omits one', async () => {
+    // No ontologyConfig: resolveMode() yields 'off'.
     const wiki = await makeWiki(db);
 
     await wiki.setOntologyManifests([{ entityId: 'tier_fact', manifest: manifestA }]);
 
-    const stored = await wiki.getOntologyManifest('tier_fact');
-    // No ontologyConfig is supplied, so resolveMode() yields 'off'.
-    expect(stored?.mode).toBe('off');
+    expect(await storedMode(db, 'tier_fact')).toBe('off');
+  });
+
+  it('falls back to ontologyConfig.mode (not just to "off") when an entry omits one', async () => {
+    // ontologyConfig.mode overrides the hard-coded 'off' default — the entry
+    // inherits the configured mode instead of 'off'.
+    const wiki = new WikiMemory(db, {
+      config: { ontology: { mode: 'strict' } },
+      llmProvider: {
+        generateText: async () => JSON.stringify({ facts: [] }),
+        embed: async () => new Float32Array([0]),
+      },
+    });
+    await wiki.setup();
+
+    await wiki.setOntologyManifests([{ entityId: 'tier_fact', manifest: manifestA }]);
+
+    expect(await storedMode(db, 'tier_fact')).toBe('strict');
   });
 
   it('is atomic: a failure partway through leaves ZERO manifests', async () => {

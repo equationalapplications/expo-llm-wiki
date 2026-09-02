@@ -698,6 +698,15 @@ export class WikiMemory {
    *
    * Returns which entities were written. `skipped` is only ever non-empty under
    * `opts.ifAbsent`.
+   *
+   * Sharp edge: `ifAbsent` checks for a PERSISTED row, not for an effective
+   * manifest. An entity whose manifest currently comes from
+   * `WikiConfig.ontology.seedManifests` has no row until the seed is
+   * materialized on first access that supplies a transaction (in practice, an
+   * ingest). Until then `ifAbsent` treats the entity as absent, writes the new
+   * manifest over the configured seed, and reports it in `written`; the same
+   * call after the seed has been materialized reports it in `skipped`. See the
+   * `ifAbsent` notes in the package README.
    */
   async setOntologyManifests(
     entries: Array<{
@@ -746,11 +755,14 @@ export class WikiMemory {
       }
     });
 
-    // After commit, and for EVERY entry: a skipped entry means another writer
-    // won the race, so this instance's cached copy may be stale — dropping it
-    // is more correct than keeping it. Invalidation is safe regardless of the
-    // transaction's outcome, because it only removes a cached copy and the next
-    // read goes to the database.
+    // After a successful commit, and for EVERY entry rather than just the
+    // written ones: under `ifAbsent` a skipped entry means another writer won
+    // the race, so this instance's cached copy may be stale and dropping it is
+    // more correct than keeping it. A failed transaction throws above and never
+    // reaches this loop, which is fine — a rolled-back batch changed nothing,
+    // so the cache is still consistent with the database. Invalidating is cheap
+    // either way: it only drops a cached copy, and the next read reloads from
+    // the database.
     for (const entry of entries) {
       this.ontologyService.invalidateCache(entry.entityId);
     }
