@@ -208,4 +208,92 @@ describe('WikiMemory.setOntologyManifests', () => {
     expect(counting.count()).toBe(before);
     expect(await manifestCount(db)).toBe(0);
   });
+
+  it('ifAbsent leaves an existing manifest alone and reports it as skipped', async () => {
+    const wiki = await makeWiki(db);
+    await wiki.setOntologyManifests([
+      { entityId: 'tier_fact', manifest: manifestA, mode: 'strict' },
+    ]);
+
+    const result = await wiki.setOntologyManifests(
+      [
+        { entityId: 'tier_fact', manifest: manifestB, mode: 'emergent' },
+        { entityId: 'tier_wisdom', manifest: manifestB, mode: 'emergent' },
+      ],
+      { ifAbsent: true },
+    );
+
+    expect(result).toEqual({ written: ['tier_wisdom'], skipped: ['tier_fact'] });
+    // The pre-existing manifest is untouched, mode included.
+    expect(await wiki.getOntologyManifest('tier_fact')).toEqual({
+      mode: 'strict',
+      manifest: manifestA,
+    });
+  });
+
+  it('without ifAbsent an existing manifest is still overwritten', async () => {
+    const wiki = await makeWiki(db);
+    await wiki.setOntologyManifests([
+      { entityId: 'tier_fact', manifest: manifestA, mode: 'strict' },
+    ]);
+
+    const result = await wiki.setOntologyManifests([
+      { entityId: 'tier_fact', manifest: manifestB, mode: 'emergent' },
+    ]);
+
+    expect(result).toEqual({ written: ['tier_fact'], skipped: [] });
+    expect(await wiki.getOntologyManifest('tier_fact')).toEqual({
+      mode: 'emergent',
+      manifest: manifestB,
+    });
+  });
+
+  it('two concurrent ifAbsent batches converge on one manifest set, neither erroring', async () => {
+    const wiki = await makeWiki(db);
+    const entries = [
+      { entityId: 'tier_fact', manifest: manifestA, mode: 'strict' as const },
+      { entityId: 'tier_wisdom', manifest: manifestB, mode: 'strict' as const },
+    ];
+
+    const [first, second] = await Promise.all([
+      wiki.setOntologyManifests(entries, { ifAbsent: true }),
+      wiki.setOntologyManifests(entries, { ifAbsent: true }),
+    ]);
+
+    // Serialized by the transaction mutex: one batch writes both, the other
+    // skips both. Neither throws, and the loser destroys nothing.
+    const written = [...first.written, ...second.written].sort();
+    const skipped = [...first.skipped, ...second.skipped].sort();
+    expect(written).toEqual(['tier_fact', 'tier_wisdom']);
+    expect(skipped).toEqual(['tier_fact', 'tier_wisdom']);
+    expect(await manifestCount(db)).toBe(2);
+  });
+
+  it('invalidates the cache for SKIPPED entries too, not just written ones', async () => {
+    // A skipped entry means another writer won the race, so this instance's
+    // cached copy may be stale — dropping it is more correct than keeping it.
+    // This pins that decision, which is otherwise invisible.
+    const wiki = await makeWiki(db);
+    await wiki.setOntologyManifests([
+      { entityId: 'tier_fact', manifest: manifestA, mode: 'strict' },
+    ]);
+
+    const ontologyService = (wiki as unknown as {
+      ontologyService: { invalidateCache: (entityId: string) => void };
+    }).ontologyService;
+    const spy = vi.spyOn(ontologyService, 'invalidateCache');
+
+    const result = await wiki.setOntologyManifests(
+      [
+        { entityId: 'tier_fact', manifest: manifestB, mode: 'emergent' },
+        { entityId: 'tier_wisdom', manifest: manifestB, mode: 'emergent' },
+      ],
+      { ifAbsent: true },
+    );
+
+    expect(result.skipped).toEqual(['tier_fact']);
+    expect(spy).toHaveBeenCalledWith('tier_fact');   // skipped, still invalidated
+    expect(spy).toHaveBeenCalledWith('tier_wisdom');
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
 });

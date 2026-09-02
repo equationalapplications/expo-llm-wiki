@@ -740,6 +740,7 @@ export class WikiMemory {
           entry.entityId,
           { mode, manifest: entry.manifest },
           tx,
+          { ifAbsent: opts?.ifAbsent === true },
         );
         (wrote ? written : skipped).push(entry.entityId);
       }
