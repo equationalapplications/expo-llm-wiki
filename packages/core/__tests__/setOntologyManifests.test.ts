@@ -18,6 +18,7 @@ const manifestB: OntologyManifest = {
   edge_types: [],
 };
 
+/** Spin up a `WikiMemory` against an in-memory test DB with a stub LLM provider. */
 async function makeWiki(db: SQLiteAdapter): Promise<WikiMemory> {
   const wiki = new WikiMemory(db, {
     llmProvider: {
