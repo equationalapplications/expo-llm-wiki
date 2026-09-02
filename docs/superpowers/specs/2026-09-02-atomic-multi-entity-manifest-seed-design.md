@@ -1,7 +1,7 @@
 # Spec: Atomic Multi-Entity Manifest Seeding — `WikiMemory.setOntologyManifests`
 
 **Date:** 2026-09-02
-**Status:** Design approved — not yet implemented
+**Status:** Implemented (2026-09-02) — branch `spec/atomic-multi-entity-manifest-seed`
 **Issues:** none filed; raised from consumer review (see Consumer context)
 **Packages:** `@equationalapplications/core-llm-wiki`
 **Consumer context:** `equationalapplications/curated-thoughts` — spec
