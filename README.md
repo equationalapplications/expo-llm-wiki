@@ -29,7 +29,7 @@ Supports [Open Knowledge Format (OKF) v0.2](https://github.com/GoogleCloudPlatfo
 
 - **Bring Your Own Inference (BYOI):** Provide one `generateText` function. The package owns prompt construction, JSON parsing, and database writes.
 - **Namespace Safe:** All tables are prefixed (default: `llm_wiki_`) — no collisions with your existing database.
-- **Multi-Entity:** Multiple independent "brains" in one database. `read()` accepts a single `entityId` string or an array for cross-namespace retrieval with per-entity `tierWeights` and result floors (`tierFloors`) guaranteeing a minimum contribution per namespace.
+- **Multi-Entity:** Multiple independent "brains" in one database. `read()` accepts a single `entityId` string or an array for cross-namespace retrieval with per-entity `tierWeights` and result floors (`tierFloors`) reserving each namespace's top-N matching results.
 - **Semantic Retrieval:** Supply an optional `embed()` function on `LLMProvider` to rank facts by vector cosine similarity. Falls back to MiniSearch keyword search when `embed` is absent or offline.
 - **GraphRAG:** SQL-only graph retrieval without the need for external databases such as neo4j.
 - **Seeded ontology:** Optional per-entity taxonomies (Strict, Emergent, or Off) guide librarian and ingest passes to classify facts with `okf_type` and persist structured graph edges alongside semantic and episodic memory.
