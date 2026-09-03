@@ -68,6 +68,12 @@ export function validateTierFloors(
 
   const known = new Set(entityIds);
   for (const key of Object.keys(tierFloors)) {
+    // Per §4.2: non-finite values are sanitized away as absent. Filtering them
+    // before key validation matches the documented rule and lets a typo like
+    // { typo: NaN } fall through cleanly instead of tripping the "key is not
+    // one of the entity IDs" check on a value the caller did not actually set.
+    const raw = tierFloors[key];
+    if (raw === undefined || !Number.isFinite(raw)) continue;
     if (!known.has(key)) {
       throw new WikiInvalidReadOptions(
         'tierFloors',

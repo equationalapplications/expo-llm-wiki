@@ -51,7 +51,12 @@ export class RetrievalService {
     const maxResults = Number.isFinite(rawMaxResults)
       ? Math.max(0, Math.trunc(rawMaxResults))
       : 10;
-    const sanitizedTierFloors = exposeMetadata
+    const trimmedQuery = query.trim();
+    // §3.3 — tierFloors is ignored on the empty-query recency path. Skipping
+    // validation here keeps the public contract honest: an empty-query call
+    // with floors that would otherwise be invalid must not throw, since the
+    // floors are dropped before the cut anyway.
+    const sanitizedTierFloors = trimmedQuery && exposeMetadata
       ? validateTierFloors(
           entityIds,
           options?.tierFloors,
@@ -76,7 +81,6 @@ export class RetrievalService {
       : undefined;
     const skipEmbed = weight === 0;
     const embedFn = this.options.llmProvider.embed;
-    const trimmedQuery = query.trim();
 
     let facts: WikiFact[] = [];
     let scoreByFactId: Map<string, number> | undefined;
@@ -402,9 +406,19 @@ export class RetrievalService {
                     skipSort: true, // read() re-sorts after applying tier weights
                   });
                 } else if (policy === 'keyword') {
-                  // Fall back to keyword-only results from MiniSearch
+                  // Fall back to keyword-only results from MiniSearch. When
+                  // preFilterLimit was active, candidateRows was already
+                  // narrowed to the pre-filtered IDs (§3.5); restrict this
+                  // keyword call to that same set so a floor cannot resurrect
+                  // a fact excluded by preFilterLimit.
                   const keywordOversampledLimit = Math.max(maxResults * 2, maxResults + 50);
-                  const topResults = this.searchService.searchKeyword(trimmedQuery, scoredEntityIds, keywordOversampledLimit);
+                  const preFilteredIds = effectivePreFilterLimit !== undefined
+                    ? new Set((candidateRows as ReadCandidateRowMetadata[]).map(r => r.id))
+                    : undefined;
+                  const keywordResults = this.searchService.searchKeyword(trimmedQuery, scoredEntityIds, keywordOversampledLimit);
+                  const topResults = preFilteredIds === undefined
+                    ? keywordResults
+                    : keywordResults.filter(r => preFilteredIds.has(r.id));
                   const topResultIds = new Set(topResults.map(r => r.id));
                   const candidateMap = new Map(candidateRows.filter(r => topResultIds.has(r.id)).map(row => [row.id, row]));
                   scored = topResults.map(result => {
@@ -556,8 +570,17 @@ export class RetrievalService {
       }
 
       if (!usedEmbed && scoredEntityIds.length > 0) {
-        // embed absent or threw — fall back to MiniSearch with tier weight application
-        const fallbackOversampledLimit = Math.max(maxResults * 2, maxResults + 50);
+        // embed absent or threw — fall back to MiniSearch with tier weight application.
+        // Active floors force full materialization: selectWithFloors can only
+        // reserve a starved entity's rows if they survive the keyword
+        // oversampling limit, and a pre-truncated top-K is exactly the starved
+        // window the floor exists to correct. Mirrors the JS-cosine path's
+        // `jsCosineNeedsTierSort` widening.
+        const hasActiveFloors = sanitizedTierFloors !== undefined &&
+          Object.values(sanitizedTierFloors).some(f => f > 0);
+        const fallbackOversampledLimit = hasActiveFloors
+          ? Number.MAX_SAFE_INTEGER
+          : Math.max(maxResults * 2, maxResults + 50);
         const results = this.searchService.searchKeyword(trimmedQuery, scoredEntityIds, fallbackOversampledLimit);
         const candidates = results.map(r => ({
           id: r.id as string,

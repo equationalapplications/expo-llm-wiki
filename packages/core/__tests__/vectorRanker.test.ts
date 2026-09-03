@@ -476,6 +476,40 @@ describe('VectorRanker integration', () => {
       });
     });
 
+    it('keyword fallback respects preFilterLimit when ranker fails', async () => {
+      // Regression: when preFilterLimit is set, candidateRows is narrowed to
+      // the pre-filtered IDs. The keyword-rank fallback must restrict its
+      // MiniSearch call to that same set, so a tierFloor cannot resurrect a
+      // fact that preFilterLimit excluded (§3.5).
+      const db = openTestDatabase();
+      const mockRanker: VectorRanker = {
+        rankBySimilarity: async () => {
+          throw new Error('Ranker service unavailable');
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        config: { preFilterLimit: 1 },
+        llmProvider: {
+          generateText: async () => '{}',
+          embed: async (t) => keywordEmbed(t),
+        },
+        vectorRanker: mockRanker,
+        vectorRankerFallback: 'keyword',
+      });
+      await wiki.setup();
+      // Three apple facts: MiniSearch ranks them so fact-a wins the top-1.
+      // Without the fix the fallback would search all three and return >1.
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+        { id: 'fact-b', title: 'apple orchard', body: 'trees and bees' },
+        { id: 'fact-c', title: 'apple juice', body: 'fresh pressed' },
+      ]));
+
+      const result = await wiki.read('user-1', 'apple', { maxResults: 5 });
+      expect(result.facts.map(f => f.id)).toEqual(['fact-a']);
+    });
+
     it('should return empty results when policy is "empty"', async () => {
       const db = openTestDatabase();
       const onVectorRankerFallback = vi.fn();

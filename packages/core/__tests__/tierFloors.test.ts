@@ -55,6 +55,20 @@ describe('validateTierFloors', () => {
     expect(validateTierFloors(ids, { a: NaN, b: Infinity }, undefined, undefined, 10)).toEqual({});
   });
 
+  it('treats a non-finite floor on an unknown key as absent, not a typo throw', () => {
+    // Regression: the documented sanitization rule (§4.2) is that non-finite
+    // values are treated as absent. A typo'd key carrying NaN should fall
+    // through cleanly, not surface as "typo is not one of the entity IDs".
+    expect(validateTierFloors(ids, { typo: NaN }, undefined, undefined, 10)).toEqual({});
+    expect(validateTierFloors(ids, { typo: Infinity }, undefined, undefined, 10)).toEqual({});
+  });
+
+  it('still throws for a finite floor keyed to an unknown entity', () => {
+    // Sanity: the fix must not soften the typo-detection guard for finite values.
+    expect(() => validateTierFloors(ids, { typo: 2 }, undefined, undefined, 10))
+      .toThrow(WikiInvalidReadOptions);
+  });
+
   it('retains a floor of 0 as a no-op', () => {
     expect(validateTierFloors(ids, { a: 0 }, undefined, undefined, 10)).toEqual({ a: 0 });
   });

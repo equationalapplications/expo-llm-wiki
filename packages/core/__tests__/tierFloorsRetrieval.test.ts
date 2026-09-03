@@ -128,4 +128,55 @@ describe('tierFloors in read()', () => {
       wiki.read(['big', 'small'], 'shared', { maxResults: 5, tierFloors: { typo: 1 } }),
     ).rejects.toThrow(WikiInvalidReadOptions);
   });
+
+  it('skips tierFloors validation on an empty query, even when floors exceed maxResults', async () => {
+    // Regression: §3.3 says the empty-query recency path ignores tierFloors.
+    // Validation must not run before the recency fallback, so a floors-exceed-
+    // maxResults configuration on an empty query returns recency results
+    // rather than throwing.
+    const { wiki, db } = makeWiki(async () => [1, 0, 0]);
+    await wiki.setup();
+    await seedStarvedCorpus(wiki, db);
+
+    const result = await wiki.read(
+      ['big', 'small'],
+      '',
+      { maxResults: 3, tierFloors: { big: 2, small: 2 } },
+    );
+    expect(result.facts).toHaveLength(3);
+  });
+
+  it('still validates floors on non-empty queries', async () => {
+    // Sanity: the empty-query bypass must not extend to non-empty queries.
+    const { wiki, db } = makeWiki(async () => [1, 0, 0]);
+    await wiki.setup();
+    await seedStarvedCorpus(wiki, db);
+
+    await expect(
+      wiki.read(['big', 'small'], 'shared', { maxResults: 3, tierFloors: { big: 2, small: 2 } }),
+    ).rejects.toThrow(WikiInvalidReadOptions);
+  });
+
+  it('honors a keyword-fallback floor when the floored entity sits beyond the oversampling window', async () => {
+    // Regression: when `embed` is unavailable the keyword fallback uses an
+    // oversampled limit (max(maxResults*2, maxResults+50)). A floored entity
+    // whose matches sit beyond that window used to be silently starved.
+    // Fix: materialize the full candidate set when any positive floor is
+    // active, mirroring the JS-cosine path's `jsCosineNeedsTierSort` widening.
+    const { wiki, db } = makeWiki(async () => { throw new Error('embed unavailable'); });
+    await wiki.setup();
+
+    // 60 `big` matches plus 2 `small` matches. With maxResults=5 the
+    // oversampled limit is 60; the small matches sit just past it.
+    await db.runAsync(`INSERT OR REPLACE INTO llm_wiki_meta (key, value) VALUES ('embedding_dimension', '3')`);
+    for (let i = 0; i < 60; i++) await insertFact(db, `big${i}`, 'big', 2000 + i, [1, 0, 0]);
+    for (let i = 0; i < 2; i++) await insertFact(db, `small${i}`, 'small', 1000 + i, [0.2, 0.9, 0]);
+    await wiki.__testAccess.searchService.sync();
+
+    const result = await wiki.read(['big', 'small'], 'shared', {
+      maxResults: 5,
+      tierFloors: { small: 2 },
+    });
+    expect(result.facts.filter(f => f.entity_id === 'small')).toHaveLength(2);
+  });
 });
