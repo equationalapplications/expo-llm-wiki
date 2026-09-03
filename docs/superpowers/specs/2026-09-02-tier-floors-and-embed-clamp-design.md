@@ -2,6 +2,7 @@
 
 **Date:** 2026-09-02
 **Status:** Draft
+**Status (revised 2026-09-02):** Implemented — branch `spec/tier-floors-and-embed-clamp`
 **Issues:** [#109](https://github.com/equationalapplications/expo-llm-wiki/issues/109) (`tierFloors`), [#104](https://github.com/equationalapplications/expo-llm-wiki/issues/104) (embed input guard)
 **Packages:** `@equationalapplications/core-llm-wiki`
 **Baseline:** 6.3.0
