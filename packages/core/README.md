@@ -16,8 +16,8 @@ Platform-agnostic TypeScript engine for hybrid LLM memory. Features episodic fac
 - **Platform-agnostic** — Zero runtime dependencies; works with any SQLite driver via the `SQLiteAdapter` interface
 - **Semantic search** — Vector embeddings via your LLM's `embed` function, ranked by cosine similarity
 - **Keyword fallback** — [MiniSearch](https://github.com/lucaong/minisearch) in-memory index for offline/degraded scenarios when embeddings unavailable
-- **Retrieval tuning** — Per-call overrides for `maxResults`, `preFilterLimit`, `hybridWeight`, `tierWeights`, and `includeZeroWeightEntities`
-- **Multi-entity reads** — Search across multiple `entity_id` namespaces in one pass with per-entity score multipliers (`tierWeights`); optional `factScores` and `metadata` for explainability
+- **Retrieval tuning** — Per-call overrides for `maxResults`, `preFilterLimit`, `hybridWeight`, `tierWeights`, `tierFloors`, and `includeZeroWeightEntities`
+- **Multi-entity reads** — Search across multiple `entity_id` namespaces in one pass with per-entity score multipliers (`tierWeights`); `tierFloors` reserves each namespace's top-N matching results; optional `factScores` and `metadata` for explainability
 - **Immutable vs mutable facts** — Use `WikiFact.source_type` to distinguish document-sourced facts (`immutable_document`) from derived or user-provided facts (`librarian_inferred`, `user_stated`, `user_confirmed`). Immutable document facts are not rewritten by `runLibrarian()` or `runHeal()` and can only be removed by `forget()` or re-ingesting.
 - **Full-featured memory** — Facts, tasks, events, maintenance jobs (librarian, heal, reembed, prune)
 - **Type-safe** — Built with TypeScript, full type exports
@@ -135,6 +135,7 @@ const wikiMemory = new WikiMemory(db, {
     maxChunkLength: 12000,             // default: 12000 (char count per ingestDocument chunk; exported as DEFAULT_MAX_CHUNK_LENGTH)
     chunkOverlap: 400,                 // default: 400 (overlap between chunks in characters; exported as DEFAULT_CHUNK_OVERLAP)
     chunkConcurrency: 1,               // default: 1 (parallel LLM calls per ingestDocument)
+    maxEmbedChars: 6000,               // default: 6000 (chars of title+body+tags sent to embed(); hard ceiling 16000; exported as DEFAULT_MAX_EMBED_CHARS)
     pruneRetainSoftDeletedFor: 7,      // default: 7 (days before hard-deleting soft-deleted facts)
     pruneEventsAfter: 30,              // default: 30 (days before hard-deleting old events)
     orphanAfterDays: 30,               // default: 30 (days before runHeal flags sourceless facts; null to disable)
@@ -261,7 +262,7 @@ const multiMemory = await wikiMemory.read(['tier_wisdom', 'tier_fact', 'tier_wor
   // includeZeroWeightEntities: true — include 0-weight entities as bottom-ranked filler
 });
 // multiMemory.factScores — optional Record<factId, weightedScore> for returned facts; may be absent/undefined
-// multiMemory.metadata  — optional { query, entityIds, tierWeights }; may be absent/undefined
+// multiMemory.metadata  — optional { query, entityIds, tierWeights, tierFloors }; may be absent/undefined
 ```
 
 **Hybrid scoring blends:**
@@ -276,6 +277,7 @@ True cosine-range pure semantic ranking (including negative cosine values) is us
 - Missing weights default to `1.0`. Negative weights clamp to `0`. Non-finite weights default to `1.0`.
 - `tierWeights[entity] = 0` skips that entity's scored retrieval branch (no compute cost).
 - `includeZeroWeightEntities: true` includes zero-weight entities as bottom-ranked filler instead of skipping them.
+- `tierFloors: Record<string, number>` reserves that entity's top-N scored results before the global `maxResults` cut — a floor on entity `X` means at least `N` of the returned facts come from `X`. Floors apply *after* scoring (including `tierWeights`) and *after* `preFilterLimit`'s candidate selection, so a row excluded by `preFilterLimit` cannot be resurrected by a floor. An entity with fewer matching facts than its floor contributes what it has — this is not an error. Only meaningful when `entityId` is an array; ignored for single-string calls and for empty-query ("recent facts") reads. Throws `WikiInvalidReadOptions` when a floor cannot be satisfied by construction: floors summing above `maxResults`, a floor keyed to an entity not in `entityId`, or a floor on an entity excluded by `tierWeights: 0` when `includeZeroWeightEntities` is not set. With an external `vectorRanker`, ranker-omitted rows (typically un-embedded facts) for a floored entity are pre-reserved before the global backfill budget is spent, so an unembedded floored entity still satisfies its floor.
 - `factScores` is present for array-shaped `entityId` calls only when the query is non-empty and at least one fact is scored; empty-query ("recent facts") reads leave it absent even when `entityId` is an array. Plain string calls never expose it. `metadata` is present for all array-shaped calls regardless of query.
 - `maxResults` applies globally across all requested entities.
 - Tasks are capped at `min(20 × entityCount, 200)`; events at `min(10 × entityCount, 100)` for multi-entity reads.

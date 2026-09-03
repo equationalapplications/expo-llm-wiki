@@ -476,6 +476,211 @@ describe('VectorRanker integration', () => {
       });
     });
 
+    it('keyword fallback respects preFilterLimit when ranker fails', async () => {
+      // Regression: when preFilterLimit is set, candidateRows is narrowed to
+      // the pre-filtered IDs. The keyword-rank fallback must restrict its
+      // MiniSearch call to that same set, so a tierFloor cannot resurrect a
+      // fact that preFilterLimit excluded (§3.5).
+      const db = openTestDatabase();
+      const mockRanker: VectorRanker = {
+        rankBySimilarity: async () => {
+          throw new Error('Ranker service unavailable');
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        config: { preFilterLimit: 1 },
+        llmProvider: {
+          generateText: async () => '{}',
+          embed: async (t) => keywordEmbed(t),
+        },
+        vectorRanker: mockRanker,
+        vectorRankerFallback: 'keyword',
+      });
+      await wiki.setup();
+      // Three apple facts: MiniSearch ranks them so fact-a wins the top-1.
+      // Without the fix the fallback would search all three and return >1.
+      await wiki.importDump(makeDump([
+        { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
+        { id: 'fact-b', title: 'apple orchard', body: 'trees and bees' },
+        { id: 'fact-c', title: 'apple juice', body: 'fresh pressed' },
+      ]));
+
+      const result = await wiki.read('user-1', 'apple', { maxResults: 5 });
+      expect(result.facts.map(f => f.id)).toEqual(['fact-a']);
+    });
+
+    it('keyword fallback honors a tier floor beyond the oversampling window when ranker fails', async () => {
+      // Regression: when the external ranker fails and `vectorRankerFallback`
+      // is `'keyword'`, the fallback's MiniSearch call used a fixed
+      // oversampling limit (max(maxResults*2, maxResults+50)). A floored
+      // entity whose matches sit past that window used to be silently
+      // starved. The fix widens the limit to the full candidate set when any
+      // positive floor is active, mirroring the JS-cosine path's widening
+      // and the ordinary keyword fallback's `hasActiveFloors` widening.
+      const db = openTestDatabase();
+      const mockRanker: VectorRanker = {
+        rankBySimilarity: async () => {
+          throw new Error('Ranker service unavailable');
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        llmProvider: {
+          generateText: async () => '{}',
+          embed: async (t) => keywordEmbed(t),
+        },
+        vectorRanker: mockRanker,
+        vectorRankerFallback: 'keyword',
+      });
+      await wiki.setup();
+      await db.runAsync(`INSERT OR REPLACE INTO llm_wiki_meta (key, value) VALUES ('embedding_dimension', '3')`);
+      const insertFact = async (id: string, entityId: string, updatedAt: number, vector: number[]) => {
+        const blob = new Uint8Array(new Float32Array(vector).buffer);
+        await db.runAsync(
+          `INSERT INTO llm_wiki_entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at, embedding_blob)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [id, entityId, `title-${id}`, 'apple', '[]', 'certain', 'user_stated', updatedAt, updatedAt, blob],
+        );
+      };
+      // 60 big facts (higher keyword rank, fill the oversampled window of 55),
+      // then 2 small facts past the cutoff.
+      for (let i = 0; i < 60; i++) await insertFact(`big-${i}`, 'big', 2000 + i, [1, 0, 0]);
+      await insertFact('small-0', 'small', 1000, [0.2, 0.9, 0]);
+      await insertFact('small-1', 'small', 1001, [0.2, 0.9, 0]);
+      await wiki.__testAccess.searchService.sync();
+
+      const result = await wiki.read(['big', 'small'], 'apple', {
+        maxResults: 5,
+        tierFloors: { small: 2 },
+      });
+      expect(result.facts.filter(f => f.entity_id === 'small')).toHaveLength(2);
+    });
+
+    it('ranker backfill reservation honors a floor when the ranker omits an entire entity', async () => {
+      // Regression: with an external vectorRanker, pure-semantic mode computed
+      // maxBackfill = max(0, maxResults - scored.length) which became 0 the
+      // moment another entity filled maxResults via ranker output. The fix
+      // reserves each floored entity's shortfall from the omitted pool before
+      // the global budget is spent, so a floor is honored even when the
+      // ranker returns no scores for the floored entity.
+      const db = openTestDatabase();
+      const mockRanker: VectorRanker = {
+        rankBySimilarity: async ({ entityId }) => {
+          if (entityId === 'big') {
+            return [
+              { id: 'big-0', semanticScore: 0.95 },
+              { id: 'big-1', semanticScore: 0.90 },
+              { id: 'big-2', semanticScore: 0.85 },
+              { id: 'big-3', semanticScore: 0.80 },
+              { id: 'big-4', semanticScore: 0.75 },
+            ];
+          }
+          // Omit the small entity entirely (ranker has no scores for it).
+          return [];
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        config: { hybridWeight: 1 }, // pure semantic — no keyword blending
+        llmProvider: {
+          generateText: async () => '{}',
+          embed: async (t) => keywordEmbed(t),
+        },
+        vectorRanker: mockRanker,
+      });
+      await wiki.setup();
+      const insertFact = async (id: string, entityId: string, title: string, body: string, vector: number[] | null) => {
+        const ts = 2000 + Math.floor(Math.random() * 1000);
+        const blob = vector ? new Uint8Array(new Float32Array(vector).buffer) : null;
+        await db.runAsync(
+          `INSERT INTO llm_wiki_entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at, embedding_blob)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [id, entityId, title, body, '[]', 'certain', 'user_stated', ts, ts, blob],
+        );
+      };
+      await db.runAsync(`INSERT OR REPLACE INTO llm_wiki_meta (key, value) VALUES ('embedding_dimension', '3')`);
+      // 5 big facts (ranker returns all), 2 small facts (ranker returns nothing).
+      for (let i = 0; i < 5; i++) await insertFact(`big-${i}`, 'big', `apple fruit ${i}`, 'red', [1, 0, 0]);
+      await insertFact('small-0', 'small', 'apple small 0', 'tiny red', [0.2, 0.9, 0]);
+      await insertFact('small-1', 'small', 'apple small 1', 'tiny green', [0.2, 0.9, 0]);
+      await wiki.__testAccess.searchService.sync();
+
+      const result = await wiki.read(['big', 'small'], 'apple', {
+        maxResults: 5,
+        tierFloors: { small: 2 },
+      });
+      expect(result.facts).toHaveLength(5);
+      expect(result.facts.filter(f => f.entity_id === 'small')).toHaveLength(2);
+    });
+
+    it('ranker backfill reservation honors a floor in hybrid mode too', async () => {
+      // Hybrid-mode companion to the pure-semantic test above. In hybrid mode
+      // the backfill budget is a global top-K of `maxResults` selected by
+      // keyword score, so a floored entity whose omitted rows score *worse*
+      // on keywords than the dominant entity's omitted rows is pushed out of
+      // that top-K entirely — a different starvation mechanism than the
+      // pure-semantic `maxResults - scored.length` budget going to zero.
+      //
+      // Setup that isolates it: 20 `big` facts all matching the query, of
+      // which the ranker scores only 5. That leaves 15 omitted `big` rows
+      // with kwScore > 0 competing for a backfill budget of 5, against 2
+      // `small` rows that do not match the query at all (kwScore 0). Without
+      // reservation the top-K is 5 `big` rows and no `small` row ever reaches
+      // selectWithFloors.
+      const db = openTestDatabase();
+      const mockRanker: VectorRanker = {
+        rankBySimilarity: async ({ entityId }) => {
+          if (entityId === 'big') {
+            return [
+              { id: 'big-0', semanticScore: 0.95 },
+              { id: 'big-1', semanticScore: 0.90 },
+              { id: 'big-2', semanticScore: 0.85 },
+              { id: 'big-3', semanticScore: 0.80 },
+              { id: 'big-4', semanticScore: 0.75 },
+            ];
+          }
+          // Omit the small entity entirely (ranker has no scores for it).
+          return [];
+        },
+      };
+
+      const wiki = new WikiMemory(db, {
+        config: { hybridWeight: 0.5 },
+        llmProvider: {
+          generateText: async () => '{}',
+          embed: async (t) => keywordEmbed(t),
+        },
+        vectorRanker: mockRanker,
+      });
+      await wiki.setup();
+      const insertFact = async (id: string, entityId: string, title: string, body: string, vector: number[]) => {
+        const ts = 2000 + Number(id.split('-')[1]);
+        const blob = new Uint8Array(new Float32Array(vector).buffer);
+        await db.runAsync(
+          `INSERT INTO llm_wiki_entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at, embedding_blob)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [id, entityId, title, body, '[]', 'certain', 'user_stated', ts, ts, blob],
+        );
+      };
+      await db.runAsync(`INSERT OR REPLACE INTO llm_wiki_meta (key, value) VALUES ('embedding_dimension', '3')`);
+      // 20 big facts match 'apple'; only big-0..big-4 are returned by the ranker,
+      // so 15 keyword-matching big rows remain in the omitted pool.
+      for (let i = 0; i < 20; i++) await insertFact(`big-${i}`, 'big', `apple fruit ${i}`, 'red apple', [1, 0, 0]);
+      // The small facts do not contain 'apple', so their kwScore is 0 and they
+      // lose the global backfill top-K to every omitted big row.
+      await insertFact('small-0', 'small', 'kiwi orchard', 'rare', [0.2, 0.9, 0]);
+      await insertFact('small-1', 'small', 'kiwi grove', 'rare', [0.2, 0.9, 0]);
+      await wiki.__testAccess.searchService.sync();
+
+      const result = await wiki.read(['big', 'small'], 'apple', {
+        maxResults: 5,
+        tierFloors: { small: 2 },
+      });
+      expect(result.facts).toHaveLength(5);
+      expect(result.facts.filter(f => f.entity_id === 'small')).toHaveLength(2);
+    });
+
     it('should return empty results when policy is "empty"', async () => {
       const db = openTestDatabase();
       const onVectorRankerFallback = vi.fn();

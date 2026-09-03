@@ -3,6 +3,7 @@ import { HOOK_TIMEOUT_MARKER } from '../types';
 import type { EntryRepository } from '../repositories/EntryRepository';
 import type { MetadataRepository } from '../repositories/MetadataRepository';
 import { clip } from '../utils/pure';
+import { DEFAULT_MAX_EMBED_CHARS, EMBED_CHARS_CEILING } from '../utils/embedDefaults';
 
 export class EmbeddingService {
   constructor(
@@ -63,7 +64,11 @@ export class EmbeddingService {
         tagsStr = fact.tags;
       }
     }
-    const text = clip(`${fact.title} ${fact.body} ${tagsStr}`.trim(), 16_000);
+    const configuredMaxEmbedChars = this.options.config?.maxEmbedChars;
+    const maxEmbedChars = Number.isFinite(configuredMaxEmbedChars)
+      ? Math.min(Math.max(0, Math.trunc(configuredMaxEmbedChars as number)), EMBED_CHARS_CEILING)
+      : DEFAULT_MAX_EMBED_CHARS;
+    const text = clip(`${fact.title} ${fact.body} ${tagsStr}`.trim(), maxEmbedChars);
     try {
       const vector = await embedFn(text);
       if (vector.length === 0 || !vector.every(v => typeof v === 'number' && isFinite(v))) {

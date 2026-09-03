@@ -29,7 +29,7 @@ Supports [Open Knowledge Format (OKF) v0.2](https://github.com/GoogleCloudPlatfo
 
 - **Bring Your Own Inference (BYOI):** Provide one `generateText` function. The package owns prompt construction, JSON parsing, and database writes.
 - **Namespace Safe:** All tables are prefixed (default: `llm_wiki_`) — no collisions with your existing database.
-- **Multi-Entity:** Multiple independent "brains" in one database. `read()` accepts a single `entityId` string or an array for cross-namespace retrieval with per-entity `tierWeights`.
+- **Multi-Entity:** Multiple independent "brains" in one database. `read()` accepts a single `entityId` string or an array for cross-namespace retrieval with per-entity `tierWeights` and result floors (`tierFloors`) reserving each namespace's top-N matching results.
 - **Semantic Retrieval:** Supply an optional `embed()` function on `LLMProvider` to rank facts by vector cosine similarity. Falls back to MiniSearch keyword search when `embed` is absent or offline.
 - **GraphRAG:** SQL-only graph retrieval without the need for external databases such as neo4j.
 - **Seeded ontology:** Optional per-entity taxonomies (Strict, Emergent, or Off) guide librarian and ingest passes to classify facts with `okf_type` and persist structured graph edges alongside semantic and episodic memory.
@@ -524,11 +524,12 @@ const multiResult = await wiki.read(
       tier_fact: 1,        // neutral baseline
       tier_working: 0.25,  // downrank unvetted working memory
     },
+    // tierFloors: { tier_wisdom: 1, tier_fact: 1 } — reserve at least N results per entity
     // includeZeroWeightEntities: true — include 0-weight entities as bottom filler
   }
 );
 // multiResult.factScores — Record<factId, weightedScore> | undefined (array entityId only, populated when query is non-empty and at least one fact scored)
-// multiResult.metadata  — { query, entityIds, tierWeights }
+// multiResult.metadata  — { query, entityIds, tierWeights, tierFloors }
 // tasks capped at min(20 × entityCount, 200); events at min(10 × entityCount, 100)
 ```
 
