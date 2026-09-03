@@ -105,3 +105,48 @@ export function validateTierFloors(
 
   return sanitized;
 }
+
+/**
+ * Selects up to `maxResults` rows, reserving each entity's top-N first.
+ *
+ * PRECONDITION: `sortedRows` must already be in final rank order (the caller's
+ * tie-break sort). Selection order is restored from each row's position in the
+ * input, so unsorted input yields silently wrong output rather than an error.
+ *
+ * Floors change which rows are selected, never the order they are returned in.
+ */
+export function selectWithFloors<T extends { id: string; entity_id: string }>(
+  sortedRows: readonly T[],
+  floors: Record<string, number> | undefined,
+  maxResults: number,
+): T[] {
+  if (maxResults <= 0) return [];
+  if (floors === undefined || Object.keys(floors).length === 0) {
+    return sortedRows.slice(0, maxResults);
+  }
+
+  const selected = new Set<number>();
+  const taken = Object.create(null) as Record<string, number>;
+
+  // Pass 1 — reserve each entity's top-N. Bounded by sum(floors) <= maxResults,
+  // which validateTierFloors guarantees, so this cannot overflow the window.
+  for (let i = 0; i < sortedRows.length; i++) {
+    const entityId = sortedRows[i].entity_id;
+    const floor = floors[entityId] ?? 0;
+    if (floor <= 0) continue;
+    const count = taken[entityId] ?? 0;
+    if (count >= floor) continue;
+    taken[entityId] = count + 1;
+    selected.add(i);
+  }
+
+  // Pass 2 — fill the remaining slots in rank order.
+  for (let i = 0; i < sortedRows.length && selected.size < maxResults; i++) {
+    if (!selected.has(i)) selected.add(i);
+  }
+
+  // Restore global rank order: input was sorted, so index order is rank order.
+  return Array.from(selected)
+    .sort((a, b) => a - b)
+    .map(i => sortedRows[i]);
+}
