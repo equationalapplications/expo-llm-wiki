@@ -1,3 +1,5 @@
+import { WikiInvalidReadOptions } from './types';
+
 export function normalizeEntityIds(entityId: string | string[]): string[] {
   const input = Array.isArray(entityId) ? entityId : [entityId];
   const seen = new Set<string>();
@@ -46,4 +48,60 @@ export function shouldExposeReadMetadata(
   entityId: string | string[],
 ): boolean {
   return Array.isArray(entityId);
+}
+
+/**
+ * Validates and sanitizes `ReadOptions.tierFloors`.
+ *
+ * Throws `WikiInvalidReadOptions` for contradictions detectable without touching
+ * data. Sanitizes value-shape noise. Never throws for data-dependent shortfalls —
+ * an entity with fewer facts than its floor simply contributes what it has.
+ */
+export function validateTierFloors(
+  entityIds: readonly string[],
+  tierFloors: Record<string, number> | undefined,
+  sanitizedTierWeights: Record<string, number> | undefined,
+  includeZeroWeightEntities: boolean | undefined,
+  maxResults: number,
+): Record<string, number> | undefined {
+  if (tierFloors === undefined) return undefined;
+
+  const known = new Set(entityIds);
+  for (const key of Object.keys(tierFloors)) {
+    if (!known.has(key)) {
+      throw new WikiInvalidReadOptions(
+        'tierFloors',
+        `"${key}" is not one of the entity IDs passed to read(); ` +
+          `a floor on an unrequested entity can never be satisfied`,
+      );
+    }
+  }
+
+  const sanitized = Object.create(null) as Record<string, number>;
+  let total = 0;
+  for (const entityId of entityIds) {
+    const raw = tierFloors[entityId];
+    if (raw === undefined || !Number.isFinite(raw)) continue;
+    const floor = Math.max(0, Math.trunc(raw));
+
+    if (floor > 0 && includeZeroWeightEntities !== true && sanitizedTierWeights?.[entityId] === 0) {
+      throw new WikiInvalidReadOptions(
+        'tierFloors',
+        `"${entityId}" has tierWeight 0 and includeZeroWeightEntities is not set, ` +
+          `so it is excluded from retrieval and its floor of ${floor} can never be met`,
+      );
+    }
+
+    sanitized[entityId] = floor;
+    total += floor;
+  }
+
+  if (total > maxResults) {
+    throw new WikiInvalidReadOptions(
+      'tierFloors',
+      `floors sum to ${total}, which exceeds maxResults (${maxResults})`,
+    );
+  }
+
+  return sanitized;
 }
