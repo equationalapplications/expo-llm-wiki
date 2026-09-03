@@ -241,23 +241,98 @@ export class RetrievalService {
                 // Backfill ranker-omitted rows per VectorRanker contract:
                 // treat missing ids as "no embedding" (pure semantic: -2, hybrid: keyword-only)
 
-                // Compute backfill budget up-front.
-                // Hybrid mode: allow up to maxResults keyword-only rows to compete.
-                // Pure semantic: only fill the remaining result slots.
+                // Reserve per-entity floor shortfalls from omitted rows BEFORE
+                // the global backfill pass. Without this reservation, the global
+                // backfill budget caps at `maxResults - scored.length` (pure
+                // semantic) or `maxResults` selected by kwScore (hybrid), and
+                // either cap can silently drop every row from a floored entity
+                // when the ranker returned no scores for it. selectWithFloors
+                // cannot reserve a starved entity's floor from a `scored`
+                // array that does not contain enough of its rows.
+                type CandidateRow = typeof candidateRows[number];
+                const floorShortfallByEntity: Record<string, number> = Object.create(null);
+                let totalFloorShortfall = 0;
+                if (sanitizedTierFloors) {
+                  const scoredCounts = new Map<string, number>();
+                  for (const s of scored) {
+                    scoredCounts.set(s.entity_id, (scoredCounts.get(s.entity_id) ?? 0) + 1);
+                  }
+                  for (const [entityId, floor] of Object.entries(sanitizedTierFloors)) {
+                    if (floor <= 0) continue;
+                    const currentCount = scoredCounts.get(entityId) ?? 0;
+                    const shortfall = Math.max(0, floor - currentCount);
+                    if (shortfall > 0) {
+                      floorShortfallByEntity[entityId] = shortfall;
+                      totalFloorShortfall += shortfall;
+                    }
+                  }
+                }
+
+                const reservedIds = new Set<string>();
+                const reserved: Array<{ row: CandidateRow; kwScore: number }> = [];
+                if (totalFloorShortfall > 0) {
+                  for (const [entityId, shortfall] of Object.entries(floorShortfallByEntity)) {
+                    const entityOmitted: Array<{ row: CandidateRow; kwScore: number }> = [];
+                    for (const row of candidateRows) {
+                      if (scoredIds.has(row.id) || reservedIds.has(row.id)) continue;
+                      if (row.entity_id !== entityId) continue;
+                      const kwScore = miniSearchScores?.get(row.id) ?? 0;
+                      entityOmitted.push({ row, kwScore });
+                    }
+                    // Sort within the floored entity by kwScore desc with the
+                    // shared tie-break. Within a single entity the kwScore
+                    // pool is small, so a full sort is fine here.
+                    entityOmitted.sort((a, b) => this._compareScoredRows(
+                      { id: a.row.id, score: a.kwScore, updated_at: a.row.updated_at, access_count: a.row.access_count },
+                      { id: b.row.id, score: b.kwScore, updated_at: b.row.updated_at, access_count: b.row.access_count },
+                    ));
+                    for (let i = 0; i < Math.min(shortfall, entityOmitted.length); i++) {
+                      reserved.push(entityOmitted[i]);
+                      reservedIds.add(entityOmitted[i].row.id);
+                    }
+                  }
+                }
+
+                // Compute backfill budget AFTER reservation. Hybrid keeps the
+                // global top-K of `maxResults`; pure semantic fills whatever
+                // slots remain after reserved rows have been pre-admitted.
                 const isHybrid = weight !== undefined && weight < 1;
                 const maxBackfill = isHybrid
                   ? maxResults
                   : Math.max(0, maxResults - scored.length);
 
+                if (reserved.length > 0) {
+                  if (isHybrid) {
+                    for (const { row, kwScore } of reserved) {
+                      scored.push({
+                        id: row.id,
+                        entity_id: row.entity_id,
+                        score: (1 - weight) * kwScore,
+                        updated_at: row.updated_at,
+                        access_count: row.access_count,
+                      });
+                    }
+                  } else {
+                    for (const { row } of reserved) {
+                      scored.push({
+                        id: row.id,
+                        entity_id: row.entity_id,
+                        score: -2,
+                        updated_at: row.updated_at,
+                        access_count: row.access_count,
+                      });
+                    }
+                  }
+                }
+
                 if (maxBackfill > 0) {
                   if (isHybrid) {
                     // Hybrid mode: prioritize by keyword score using O(N log K) top-K selection
                     // instead of O(N log N) full sort, since K (maxBackfill) is typically << N.
-                    type CandidateRow = typeof candidateRows[number];
                     const topK: Array<{ row: CandidateRow; kwScore: number }> = [];
 
                     for (const row of candidateRows) {
-                      if (scoredIds.has(row.id)) continue;
+                      if (scoredIds.has(row.id) || reservedIds.has(row.id)) continue;
                       const kwScore = miniSearchScores?.get(row.id) ?? 0;
                       const candidate = { row, kwScore };
 
@@ -343,7 +418,7 @@ export class RetrievalService {
                     // Tie-break omitted rows deterministically before truncating.
                     const omitted: Array<{ id: string; entity_id: string; score: number; updated_at: number | null; access_count: number | null }> = [];
                     for (const row of candidateRows) {
-                      if (scoredIds.has(row.id)) continue;
+                      if (scoredIds.has(row.id) || reservedIds.has(row.id)) continue;
                       omitted.push({ id: row.id, entity_id: row.entity_id, score: -2, updated_at: row.updated_at, access_count: row.access_count });
                     }
                     if (omitted.length > 0) {
@@ -411,7 +486,19 @@ export class RetrievalService {
                   // narrowed to the pre-filtered IDs (§3.5); restrict this
                   // keyword call to that same set so a floor cannot resurrect
                   // a fact excluded by preFilterLimit.
-                  const keywordOversampledLimit = Math.max(maxResults * 2, maxResults + 50);
+                  //
+                  // Active floors force full materialization here too, mirroring
+                  // the JS-cosine path's `jsCosineNeedsTierSort` widening and
+                  // the ordinary keyword fallback's `hasActiveFloors` widening:
+                  // selectWithFloors can only reserve a starved entity's rows
+                  // if they survive this keyword call's oversampling limit, and
+                  // a pre-truncated top-K is exactly the starved window the
+                  // floor exists to correct.
+                  const hasActiveFloorsKeywordFallback = sanitizedTierFloors !== undefined &&
+                    Object.values(sanitizedTierFloors).some(f => f > 0);
+                  const keywordOversampledLimit = hasActiveFloorsKeywordFallback
+                    ? Number.MAX_SAFE_INTEGER
+                    : Math.max(maxResults * 2, maxResults + 50);
                   const preFilteredIds = effectivePreFilterLimit !== undefined
                     ? new Set((candidateRows as ReadCandidateRowMetadata[]).map(r => r.id))
                     : undefined;
