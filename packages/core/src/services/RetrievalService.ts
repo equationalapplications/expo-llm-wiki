@@ -293,13 +293,7 @@ export class RetrievalService {
                   }
                 }
 
-                // Compute backfill budget AFTER reservation. Hybrid keeps the
-                // global top-K of `maxResults`; pure semantic fills whatever
-                // slots remain after reserved rows have been pre-admitted.
                 const isHybrid = weight !== undefined && weight < 1;
-                const maxBackfill = isHybrid
-                  ? maxResults
-                  : Math.max(0, maxResults - scored.length);
 
                 if (reserved.length > 0) {
                   if (isHybrid) {
@@ -324,6 +318,15 @@ export class RetrievalService {
                     }
                   }
                 }
+
+                // Compute the backfill budget AFTER the reserved rows have been
+                // pushed into `scored`, so pure semantic fills only the slots the
+                // reservation left over rather than over-materializing by
+                // `reserved.length`. Hybrid keeps a global top-K of `maxResults`
+                // selected by keyword score, unchanged.
+                const maxBackfill = isHybrid
+                  ? maxResults
+                  : Math.max(0, maxResults - scored.length);
 
                 if (maxBackfill > 0) {
                   if (isHybrid) {

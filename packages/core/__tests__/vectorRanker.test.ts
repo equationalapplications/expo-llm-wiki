@@ -615,11 +615,19 @@ describe('VectorRanker integration', () => {
     });
 
     it('ranker backfill reservation honors a floor in hybrid mode too', async () => {
-      // Hybrid-mode companion: with hybridWeight < 1 the global top-K picks
-      // maxResults keyword-best rows, which can leave a floored entity's
-      // rows out if its keyword scores are weaker than the dominant
-      // entity's. Reservation must run before that top-K so the floor is
-      // honored in hybrid mode as well.
+      // Hybrid-mode companion to the pure-semantic test above. In hybrid mode
+      // the backfill budget is a global top-K of `maxResults` selected by
+      // keyword score, so a floored entity whose omitted rows score *worse*
+      // on keywords than the dominant entity's omitted rows is pushed out of
+      // that top-K entirely — a different starvation mechanism than the
+      // pure-semantic `maxResults - scored.length` budget going to zero.
+      //
+      // Setup that isolates it: 20 `big` facts all matching the query, of
+      // which the ranker scores only 5. That leaves 15 omitted `big` rows
+      // with kwScore > 0 competing for a backfill budget of 5, against 2
+      // `small` rows that do not match the query at all (kwScore 0). Without
+      // reservation the top-K is 5 `big` rows and no `small` row ever reaches
+      // selectWithFloors.
       const db = openTestDatabase();
       const mockRanker: VectorRanker = {
         rankBySimilarity: async ({ entityId }) => {
@@ -632,6 +640,7 @@ describe('VectorRanker integration', () => {
               { id: 'big-4', semanticScore: 0.75 },
             ];
           }
+          // Omit the small entity entirely (ranker has no scores for it).
           return [];
         },
       };
@@ -646,7 +655,7 @@ describe('VectorRanker integration', () => {
       });
       await wiki.setup();
       const insertFact = async (id: string, entityId: string, title: string, body: string, vector: number[]) => {
-        const ts = 2000 + Math.floor(Math.random() * 1000);
+        const ts = 2000 + Number(id.split('-')[1]);
         const blob = new Uint8Array(new Float32Array(vector).buffer);
         await db.runAsync(
           `INSERT INTO llm_wiki_entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at, embedding_blob)
@@ -655,13 +664,16 @@ describe('VectorRanker integration', () => {
         );
       };
       await db.runAsync(`INSERT OR REPLACE INTO llm_wiki_meta (key, value) VALUES ('embedding_dimension', '3')`);
-      for (let i = 0; i < 5; i++) await insertFact(`big-${i}`, 'big', `apple fruit ${i}`, 'red', [1, 0, 0]);
-      // Use distinctive token so big facts don't out-keyword small facts.
-      await insertFact('small-0', 'small', 'kiwi orchard 0', 'rare fruit', [0.2, 0.9, 0]);
-      await insertFact('small-1', 'small', 'kiwi orchard 1', 'rare fruit', [0.2, 0.9, 0]);
+      // 20 big facts match 'apple'; only big-0..big-4 are returned by the ranker,
+      // so 15 keyword-matching big rows remain in the omitted pool.
+      for (let i = 0; i < 20; i++) await insertFact(`big-${i}`, 'big', `apple fruit ${i}`, 'red apple', [1, 0, 0]);
+      // The small facts do not contain 'apple', so their kwScore is 0 and they
+      // lose the global backfill top-K to every omitted big row.
+      await insertFact('small-0', 'small', 'kiwi orchard', 'rare', [0.2, 0.9, 0]);
+      await insertFact('small-1', 'small', 'kiwi grove', 'rare', [0.2, 0.9, 0]);
       await wiki.__testAccess.searchService.sync();
 
-      const result = await wiki.read(['big', 'small'], 'kiwi', {
+      const result = await wiki.read(['big', 'small'], 'apple', {
         maxResults: 5,
         tierFloors: { small: 2 },
       });
