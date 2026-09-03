@@ -207,6 +207,16 @@ export interface WikiConfig {
   chunkOverlap?: number;
   chunkConcurrency?: number;
   /**
+   * Maximum characters of `title + body + tags` passed to `llmProvider.embed()`
+   * when embedding a fact. Longer input is clipped, not rejected.
+   *
+   * Default 6000 (~1,500 tokens), which fits common embedding windows including
+   * nomic-embed-text's 2,048 tokens with headroom. Values above the 16,000
+   * hard ceiling are clamped to it; the ceiling is a security control and
+   * configuration cannot raise it.
+   */
+  maxEmbedChars?: number;
+  /**
    * Max MiniSearch candidates passed to cosine scoring.
    * When set, MiniSearch pre-filters before the cosine scan.
    * Only applies when embed is provided and succeeds.
@@ -262,6 +272,23 @@ export interface ReadOptions {
    * Only meaningful when `entityId` is an array; ignored for single-string calls.
    */
   includeZeroWeightEntities?: boolean;
+  /**
+   * Minimum number of results to retain from each named entity before the global
+   * `maxResults` cut. Applied after scoring: the top-N scored results from each
+   * named entity are reserved, then remaining slots fill by score as usual.
+   *
+   * An entity with fewer than N matching results contributes what it has — this is
+   * not an error. Floors cannot resurrect a result excluded by `preFilterLimit`.
+   *
+   * Only meaningful when `entityId` is an array; ignored for single-string calls.
+   * Ignored when `query` is empty — that path uses recency ordering and ignores
+   * `tierWeights` as well.
+   *
+   * Throws `WikiInvalidReadOptions` when a floor cannot be satisfied by
+   * construction: floors summing above `maxResults`, a floor on an entity excluded
+   * by `tierWeights: 0`, or a floor keyed to an entity not in `entityId`.
+   */
+  tierFloors?: Record<string, number>;
 }
 
 export interface WikiFact {
@@ -621,6 +648,8 @@ export interface MemoryBundle {
     query: string;
     entityIds: string[];
     tierWeights?: Record<string, number>;
+    /** Sanitized per-entity result floors, when `tierFloors` was supplied and non-empty. */
+    tierFloors?: Record<string, number>;
   };
 }
 
@@ -899,6 +928,23 @@ export class WikiIngestEmptyError extends Error {
     this.parseFailures = params.parseFailures;
     this.sourceRef = params.sourceRef;
     this.chunks = params.chunks;
+  }
+}
+
+/**
+ * Thrown by `read()` when `ReadOptions` contains a request that cannot be
+ * satisfied by construction — as opposed to one that merely finds no data.
+ */
+export class WikiInvalidReadOptions extends Error {
+  readonly field: string;
+  readonly reason: string;
+
+  constructor(field: string, reason: string) {
+    super(`Invalid ReadOptions.${field}: ${reason}`);
+    this.name = 'WikiInvalidReadOptions';
+    this.field = field;
+    this.reason = reason;
+    Object.setPrototypeOf(this, WikiInvalidReadOptions.prototype);
   }
 }
 
