@@ -1,8 +1,7 @@
 # Spec: Per-Entity Result Floors (`tierFloors`) and Configurable Embed Input Clamp
 
 **Date:** 2026-09-02
-**Status:** Draft
-**Status (revised 2026-09-02):** Implemented — branch `spec/tier-floors-and-embed-clamp`
+**Status:** Implemented (2026-09-02) — branch `spec/tier-floors-and-embed-clamp`. Revised from Draft on 2026-09-02: implemented as specified with two recorded deviations — §3.4 step 3 restores rank order by original input index rather than re-sorting with the private `_compareScoredRows` (provably equivalent for already-sorted input, avoids a second copy of the tie-break rule), and the JS-cosine ranker's `limit` now materializes all candidates when floors are active (§2 did not account for that ranker's own pre-truncation, which would otherwise have made floors unsatisfiable). Core suite 1226/1226 green, `pnpm typecheck` clean across all 11 packages.
 **Issues:** [#109](https://github.com/equationalapplications/expo-llm-wiki/issues/109) (`tierFloors`), [#104](https://github.com/equationalapplications/expo-llm-wiki/issues/104) (embed input guard)
 **Packages:** `@equationalapplications/core-llm-wiki`
 **Baseline:** 6.3.0
@@ -110,6 +109,18 @@ facts = await this.entryRepo.findRecentByEntityIds(entityIds, maxResults);
 Paths A and B share a row shape — `{ id, entity_id, score, updated_at, access_count }` —
 and both have ordering already applied at the point of the cut. That is the seam this
 design uses. Path C is excluded (§3.3).
+
+**Correction (implementation, 2026-09-02).** The analysis above is necessary but not
+sufficient for Path A. `scored` does not always contain the full candidate set at the
+cut: the JS-cosine call passes `limit: jsCosineNeedsTierSort ? candidateRows.length :
+maxResults`, and that flag was previously true only when some tier weight was `!== 1`.
+With floors set but no non-unit weights, `scored` arrived **already truncated to the
+starved top-K**, leaving `selectWithFloors` no low-ranked rows to reserve. Honoring a
+floor therefore requires widening that flag to also fire when any sanitized floor is
+`> 0`. Floors now pay the same full-materialization cost that non-unit weights already
+did (bounded by `preFilterLimit`); with neither active the flag stays false and the hot
+path is unchanged. The general rule this exposes: a cut site is only a valid seam for
+floors if nothing upstream has already applied a ranking-order truncation.
 
 Honoring a floor on one scored path but not the other would reintroduce the exact
 failure mode under a different trigger: a host whose `embed` throws would silently
