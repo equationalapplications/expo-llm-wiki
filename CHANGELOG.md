@@ -1,3 +1,21 @@
+# [6.4.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v6.3.0...v6.4.0) (2026-09-03)
+
+
+### Bug Fixes
+
+* **core:** address tierFloors review findings ([7c14bc6](https://github.com/equationalapplications/expo-llm-wiki/commit/7c14bc6836cc554f9607464f95a6c7f99d2485e0))
+* **core:** clamp embedFact input to configurable maxEmbedChars (closes [#104](https://github.com/equationalapplications/expo-llm-wiki/issues/104)) ([ef740fc](https://github.com/equationalapplications/expo-llm-wiki/commit/ef740fc45ab8b742b3b573e6832eaa9f1610bdf2))
+* **core:** close vectorRanker tierFloors gap (closes [#117](https://github.com/equationalapplications/expo-llm-wiki/issues/117)) ([c844176](https://github.com/equationalapplications/expo-llm-wiki/commit/c8441763e6545f991710cf9fdfb0c720ba39e058))
+* **core:** make hybrid floor-reservation test actually reproduce the gap ([86fa686](https://github.com/equationalapplications/expo-llm-wiki/commit/86fa68673fb5aac2b6fde2eac0230f0ca928a442))
+
+
+### Features
+
+* **core:** add selectWithFloors reservation selection ([eb8207d](https://github.com/equationalapplications/expo-llm-wiki/commit/eb8207dda2b2c5ac6e0898c6dcfee13644e53ad4))
+* **core:** add tierFloors, maxEmbedChars, and WikiInvalidReadOptions types ([5e2b7bb](https://github.com/equationalapplications/expo-llm-wiki/commit/5e2b7bb758b0791822678922f7efdd29cfea5b9f))
+* **core:** add validateTierFloors option validation ([c614a0c](https://github.com/equationalapplications/expo-llm-wiki/commit/c614a0c2155c32a5a49c7f00adea42900dc63f11))
+* **core:** honor tierFloors on both scored retrieval paths (closes [#109](https://github.com/equationalapplications/expo-llm-wiki/issues/109)) ([c83eeda](https://github.com/equationalapplications/expo-llm-wiki/commit/c83eeda66cfcda4867753c96b34743b5f502e88c))
+
 # [6.3.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v6.2.0...v6.3.0) (2026-09-02)
 
 
