@@ -5,7 +5,7 @@ import type { TaskRepository } from '../repositories/TaskRepository';
 import type { EventRepository } from '../repositories/EventRepository';
 import type { MetadataRepository } from '../repositories/MetadataRepository';
 import type { SearchService } from './SearchService';
-import { applyTierWeight, normalizeEntityIds, sanitizeTierWeights, shouldExposeReadMetadata } from '../readOptions';
+import { applyTierWeight, normalizeEntityIds, sanitizeTierWeights, selectWithFloors, shouldExposeReadMetadata, validateTierFloors } from '../readOptions';
 import { sanitizeRankerError, safeErrorToString } from '../utils/pure';
 
 type ReadCandidateRowMetadata = EntryRowMetadata;
@@ -51,6 +51,15 @@ export class RetrievalService {
     const maxResults = Number.isFinite(rawMaxResults)
       ? Math.max(0, Math.trunc(rawMaxResults))
       : 10;
+    const sanitizedTierFloors = exposeMetadata
+      ? validateTierFloors(
+          entityIds,
+          options?.tierFloors,
+          sanitizedTierWeights,
+          options?.includeZeroWeightEntities,
+          maxResults,
+        )
+      : undefined;
     const rawPreFilterLimit =
       options?.preFilterLimit === null
         ? undefined
@@ -429,8 +438,13 @@ export class RetrievalService {
               // Materialize all candidates only when tier weights will actually change ranking —
               // i.e., at least one entity has a weight other than 1. A no-op weights object
               // (all values === 1, or empty after sanitization) preserves the hot-path behavior.
-              const jsCosineNeedsTierSort = sanitizedTierWeights !== undefined &&
-                Object.values(sanitizedTierWeights).some(w => w !== 1);
+              // Active floors force materialization too: selectWithFloors can only reserve a
+              // starved entity's rows if they survive the ranker's own limit, and a pre-truncated
+              // top-K is exactly the starved window the floor exists to correct.
+              const jsCosineNeedsTierSort = (sanitizedTierWeights !== undefined &&
+                Object.values(sanitizedTierWeights).some(w => w !== 1)) ||
+                (sanitizedTierFloors !== undefined &&
+                  Object.values(sanitizedTierFloors).some(f => f > 0));
               scored = await this.searchService.rankSemantic({
                 entityId: entityCacheKey,
                 queryVec,
@@ -455,7 +469,7 @@ export class RetrievalService {
               this._tieBreakSort(scored);
 
               // Phase 2: fetch full rows only for the top results
-              const selectedScored = scored.slice(0, maxResults);
+              const selectedScored = selectWithFloors(scored, sanitizedTierFloors, maxResults);
               const topIds = selectedScored.map(s => s.id);
 
               // Capture scores for exposure in metadata
@@ -553,7 +567,7 @@ export class RetrievalService {
           access_count: null as number | null,
         }));
         this._tieBreakSort(candidates);
-        const topCandidates = candidates.slice(0, maxResults);
+        const topCandidates = selectWithFloors(candidates, sanitizedTierFloors, maxResults);
         const topIds = topCandidates.map(c => c.id);
         if (topIds.length > 0) {
           facts = await this._hydrateFactsByIds(topIds, entityIds);
@@ -592,6 +606,7 @@ export class RetrievalService {
     if (exposeMetadata) {
       bundle.metadata = { query, entityIds };
       if (sanitizedTierWeights && Object.keys(sanitizedTierWeights).length > 0) bundle.metadata.tierWeights = sanitizedTierWeights;
+      if (sanitizedTierFloors && Object.keys(sanitizedTierFloors).length > 0) bundle.metadata.tierFloors = sanitizedTierFloors;
       if (factScores && Object.keys(factScores).length > 0) bundle.factScores = factScores;
     }
 
