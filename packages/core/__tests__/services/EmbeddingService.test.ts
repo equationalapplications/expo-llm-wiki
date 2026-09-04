@@ -26,6 +26,7 @@ describe('EmbeddingService', () => {
 
     mockEntryRepo = {
       updateEmbeddingBlob: vi.fn().mockResolvedValue(undefined),
+      markEmbeddingFailure: vi.fn().mockResolvedValue(undefined),
       countStaleEmbeddings: vi.fn().mockResolvedValue(0),
     };
 
@@ -88,6 +89,88 @@ describe('EmbeddingService', () => {
 
       const calledWith = (mockOptions.llmProvider.embed as any).mock.calls[0][0] as string;
       expect(calledWith.length).toBeLessThanOrEqual(16_000);
+    });
+  });
+
+  describe('tryEmbedFact (classified failures)', () => {
+    const fact = { id: 'f1', entity_id: 'e1', title: 'T', body: 'B', tags: [] };
+
+    it('no_provider: returns kind and persists NO marker', async () => {
+      // Service constructed without an embed fn.
+      const providerWithoutEmbed = { generateText: vi.fn().mockResolvedValue('{}') };
+      const noEmbedOptions: WikiOptions = {
+        llmProvider: providerWithoutEmbed,
+        vectorRanker: mockOptions.vectorRanker,
+      };
+      const svc = new EmbeddingService(mockDb as any, noEmbedOptions, mockEntryRepo, mockMetadataRepo);
+      const res = await svc.tryEmbedFact(fact);
+      expect(res).toEqual({ ok: false, kind: 'no_provider' });
+      expect(mockEntryRepo.markEmbeddingFailure).not.toHaveBeenCalled();
+      expect(mockEntryRepo.updateEmbeddingBlob).not.toHaveBeenCalled();
+    });
+
+    it('invalid_vector: empty array is classified and marked', async () => {
+      mockOptions.llmProvider.embed!.mockResolvedValue([]);
+      const res = await embeddingService.tryEmbedFact(fact);
+      expect(res).toEqual({ ok: false, kind: 'invalid_vector' });
+      expect(mockEntryRepo.markEmbeddingFailure).toHaveBeenCalledWith('f1', 'invalid_vector', expect.any(Number));
+      expect(mockEntryRepo.updateEmbeddingBlob).not.toHaveBeenCalled();
+    });
+
+    it('float32_overflow: values beyond float32 range are classified and marked', async () => {
+      // 1e39 is a finite double that overflows float32 — the pre-check
+      // (every value is finite) passes, and the Float32Array conversion
+      // turns it into +Infinity.
+      mockOptions.llmProvider.embed!.mockResolvedValue([0.1, 1e39, 0.5]);
+      const res = await embeddingService.tryEmbedFact(fact);
+      expect(res).toEqual({ ok: false, kind: 'float32_overflow' });
+      expect(mockEntryRepo.markEmbeddingFailure).toHaveBeenCalledWith('f1', 'float32_overflow', expect.any(Number));
+      expect(mockEntryRepo.updateEmbeddingBlob).not.toHaveBeenCalled();
+    });
+
+    it('provider_error: a throwing embed is classified and marked', async () => {
+      mockOptions.llmProvider.embed!.mockImplementation(async () => {
+        throw new Error('503');
+      });
+      const res = await embeddingService.tryEmbedFact(fact);
+      expect(res).toEqual({ ok: false, kind: 'provider_error' });
+      expect(mockEntryRepo.markEmbeddingFailure).toHaveBeenCalledWith('f1', 'provider_error', expect.any(Number));
+      expect(mockEntryRepo.updateEmbeddingBlob).not.toHaveBeenCalled();
+    });
+
+    it('storage_error: a failing blob write is classified but NOT marked', async () => {
+      // Good vector from the provider, but the persistence layer throws.
+      mockOptions.llmProvider.embed!.mockResolvedValue([0.1, 0.2, 0.3]);
+      mockEntryRepo.updateEmbeddingBlob.mockRejectedValueOnce(new Error('disk full'));
+      const res = await embeddingService.tryEmbedFact(fact);
+      expect(res).toEqual({ ok: false, kind: 'storage_error' });
+      // Storage errors do not write a marker — see spec D3.
+      expect(mockEntryRepo.markEmbeddingFailure).not.toHaveBeenCalled();
+    });
+
+    it('success returns the dimension', async () => {
+      mockOptions.llmProvider.embed!.mockResolvedValue([0.1, 0.2, 0.3]);
+      const res = await embeddingService.tryEmbedFact(fact);
+      expect(res).toEqual({ ok: true, dimension: 3 });
+      expect(mockEntryRepo.markEmbeddingFailure).not.toHaveBeenCalled();
+      expect(mockEntryRepo.updateEmbeddingBlob).toHaveBeenCalledWith('f1', expect.any(Uint8Array));
+    });
+
+    it('embedFact still returns plain booleans (delegates to tryEmbedFact)', async () => {
+      await expect(embeddingService.embedFact(fact)).resolves.toBe(true);
+
+      // Failing provider — embedFact returns false via delegation.
+      const failingOptions: WikiOptions = {
+        llmProvider: {
+          generateText: vi.fn().mockResolvedValue('{}'),
+          embed: vi.fn().mockImplementation(async () => {
+            throw new Error('503');
+          }),
+        },
+        vectorRanker: mockOptions.vectorRanker,
+      };
+      const failingSvc = new EmbeddingService(mockDb as any, failingOptions, mockEntryRepo, mockMetadataRepo);
+      await expect(failingSvc.embedFact(fact)).resolves.toBe(false);
     });
   });
 

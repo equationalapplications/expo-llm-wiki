@@ -5,6 +5,17 @@ import type { MetadataRepository } from '../repositories/MetadataRepository';
 import { clip } from '../utils/pure';
 import { DEFAULT_MAX_EMBED_CHARS, EMBED_CHARS_CEILING } from '../utils/embedDefaults';
 
+export type EmbedFailureKind =
+  | 'no_provider'
+  | 'invalid_vector'
+  | 'float32_overflow'
+  | 'provider_error'
+  | 'storage_error';
+
+export type EmbedFactResult =
+  | { ok: true; dimension: number }
+  | { ok: false; kind: EmbedFailureKind };
+
 export class EmbeddingService {
   constructor(
     private db: SQLiteAdapter,
@@ -44,15 +55,15 @@ export class EmbeddingService {
     }
   }
 
-  async embedFact(fact: {
+  async tryEmbedFact(fact: {
     id: string;
     entity_id: string;
     title: string;
     body: string;
     tags: string | string[];
-  }): Promise<boolean> {
+  }): Promise<EmbedFactResult> {
     const embedFn = this.options.llmProvider.embed;
-    if (!embedFn) return false;
+    if (!embedFn) return { ok: false, kind: 'no_provider' };
     let tagsStr: string;
     if (Array.isArray(fact.tags)) {
       tagsStr = fact.tags.join(' ');
@@ -69,13 +80,15 @@ export class EmbeddingService {
       ? Math.min(Math.max(0, Math.trunc(configuredMaxEmbedChars as number)), EMBED_CHARS_CEILING)
       : DEFAULT_MAX_EMBED_CHARS;
     const text = clip(`${fact.title} ${fact.body} ${tagsStr}`.trim(), maxEmbedChars);
+    let float32Vector: Float32Array;
     try {
       const vector = await embedFn(text);
       if (vector.length === 0 || !vector.every(v => typeof v === 'number' && isFinite(v))) {
         console.warn(`[WikiMemory] embedFact: embed() returned an invalid vector for ${fact.id}; skipping.`);
-        return false;
+        await this.markFailure(fact.id, 'invalid_vector');
+        return { ok: false, kind: 'invalid_vector' };
       }
-      const float32Vector = new Float32Array(vector);
+      float32Vector = new Float32Array(vector);
       let hasNonFinite = false;
       for (let i = 0; i < float32Vector.length; i++) {
         if (!isFinite(float32Vector[i])) {
@@ -85,21 +98,57 @@ export class EmbeddingService {
       }
       if (hasNonFinite) {
         console.warn(`[WikiMemory] embedFact: embed() returned values that overflow float32 for ${fact.id}; skipping.`);
-        return false;
+        await this.markFailure(fact.id, 'float32_overflow');
+        return { ok: false, kind: 'float32_overflow' };
       }
+    } catch (err) {
+      console.warn(`[WikiMemory] embedFact failed for ${fact.id}:`, err);
+      await this.markFailure(fact.id, 'provider_error');
+      return { ok: false, kind: 'provider_error' };
+    }
+
+    // Storage is a separate failure domain: a DB error here is NOT an
+    // embedding failure and must not be marked as one (spec §3.2, D3).
+    try {
       await this.storeEmbeddingDimension(float32Vector.length);
       const blob = new Uint8Array(float32Vector.buffer);
       await this.entryRepo.updateEmbeddingBlob(fact.id, blob);
-      try {
-        await this.notifyEmbeddingPersisted(fact.entity_id, fact.id, float32Vector);
-      } catch (hookErr) {
-        console.warn(`[WikiMemory] onEmbeddingPersisted hook failed for ${fact.id}:`, hookErr);
-      }
-      return true;
     } catch (err) {
-      console.warn(`[WikiMemory] embedFact failed for ${fact.id}:`, err);
-      return false;
+      console.warn(`[WikiMemory] embedFact: persisting embedding failed for ${fact.id}:`, err);
+      return { ok: false, kind: 'storage_error' };
     }
+
+    try {
+      await this.notifyEmbeddingPersisted(fact.entity_id, fact.id, float32Vector);
+    } catch (hookErr) {
+      console.warn(`[WikiMemory] onEmbeddingPersisted hook failed for ${fact.id}:`, hookErr);
+    }
+    return { ok: true, dimension: float32Vector.length };
+  }
+
+  /** Marker writes must never fail the caller. */
+  private async markFailure(id: string, kind: EmbedFailureKind): Promise<void> {
+    try {
+      await this.entryRepo.markEmbeddingFailure(id, kind, Date.now());
+    } catch (err) {
+      console.warn(`[WikiMemory] failed to record embedding failure for ${id}:`, err);
+    }
+  }
+
+  /**
+   * Back-compatible boolean form. Kept because callers such as
+   * ImportExportService branch on `if (!embedded)`; a discriminated result
+   * object is always truthy and would silently disable that branch.
+   */
+  async embedFact(fact: {
+    id: string;
+    entity_id: string;
+    title: string;
+    body: string;
+    tags: string | string[];
+  }): Promise<boolean> {
+    const result = await this.tryEmbedFact(fact);
+    return result.ok;
   }
 
   async notifyEmbeddingPersisted(entityId: string, factId: string, vector: Float32Array | null): Promise<void> {
