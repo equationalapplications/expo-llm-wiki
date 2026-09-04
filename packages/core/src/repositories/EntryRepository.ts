@@ -1,4 +1,4 @@
-import type { SQLiteAdapter, WikiFact } from '../types';
+import type { SQLiteAdapter, WikiFact, EmbeddingMarkerKind } from '../types';
 import { BaseRepository } from './BaseRepository';
 import { OutboxRepository } from './OutboxRepository';
 import { parseJsonArray, parseJsonObject } from './rowMappers';
@@ -885,8 +885,41 @@ export class EntryRepository extends BaseRepository {
   async updateEmbeddingBlob(id: string, blob: Uint8Array, tx?: SQLiteAdapter): Promise<void> {
     const executor = this.getExecutor(tx);
     await executor.runAsync(
-      `UPDATE ${this.prefix}entries SET embedding_blob = ?, embedding = NULL WHERE id = ?`,
+      `UPDATE ${this.prefix}entries
+         SET embedding_blob = ?,
+             embedding = NULL,
+             embedding_failed_at = NULL,
+             embedding_failure_kind = NULL,
+             embedding_attempts = 0
+       WHERE id = ?`,
       [blob, id],
+    );
+  }
+
+  /**
+   * Record a failed embedding attempt. Deliberately does NOT touch updated_at
+   * (import merge is last-write-wins on it) and pushes no outbox event —
+   * embedding lifecycle is local state, not replicated. Same discipline as
+   * updateEmbeddingBlob. See spec §3.5.
+   *
+   * Only marker-eligible kinds (spec §3.3) are accepted: `no_provider` never
+   * marks and `storage_error` never marks, so retry/permanent-failure policy
+   * built on these rows only ever sees real embed failures.
+   */
+  async markEmbeddingFailure(
+    id: string,
+    kind: EmbeddingMarkerKind,
+    now: number,
+    tx?: SQLiteAdapter,
+  ): Promise<void> {
+    const executor = this.getExecutor(tx);
+    await executor.runAsync(
+      `UPDATE ${this.prefix}entries
+         SET embedding_failed_at = ?,
+             embedding_failure_kind = ?,
+             embedding_attempts = embedding_attempts + 1
+       WHERE id = ?`,
+      [now, kind, id],
     );
   }
 

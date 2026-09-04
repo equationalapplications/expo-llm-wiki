@@ -845,6 +845,18 @@ export class PrunePartialFailureError extends Error {
 export const HOOK_TIMEOUT_MARKER = Symbol('WikiMemoryHookTimeout');
 
 /**
+ * Failure kinds eligible for a persisted embedding failure marker (spec §3.3).
+ * `no_provider` never marks (nothing to retry against), and `storage_error`
+ * never marks (D3 — a marker is itself a DB write). Defined here, neutral
+ * between repositories and services, so EntryRepository can type-narrow the
+ * marker kind without importing from services.
+ */
+export type EmbeddingMarkerKind =
+  | 'invalid_vector'
+  | 'float32_overflow'
+  | 'provider_error';
+
+/**
  * Failure record for a single chunk that could not be ingested. Produced by
  * `IngestionService.ingestDocument` and surfaced on the result's `parseFailures`
  * array. `source === 'parse'` for `WikiParseError`-shaped failures (then `tier`

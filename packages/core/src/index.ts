@@ -18,6 +18,7 @@ export { DEFAULT_MAX_CHUNK_LENGTH, DEFAULT_CHUNK_OVERLAP } from './utils/chunkin
 export { DEFAULT_MAX_EMBED_CHARS, EMBED_CHARS_CEILING } from './utils/embedDefaults';
 export * from './librarianPrompt';
 export { PromptService } from './services/PromptService';
+export type { EmbedFactResult, EmbedFailureKind } from './services/EmbeddingService';
 export {
   ONTOLOGY_BACKFILL_BATCH_SIZE,
   ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS,
