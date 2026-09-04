@@ -116,6 +116,27 @@ export interface OntologyBackfillResult {
   skipped: number;
 }
 
+/** Result of a single `runReembed` sweep. */
+export interface ReembedResult {
+  /** Facts successfully (re-)embedded this sweep. */
+  embedded: number;
+  /** Facts with a valid existing embedding left untouched because
+   * `skipExisting` was in effect (and no dimension mismatch forced a re-embed). */
+  skipped: number;
+  /** Facts whose embed attempt ran and failed this sweep. Includes
+   * `storage_error` failures, which are not backoff-tracked (a marker is
+   * itself a DB write — see the reembed README section). Convergence loops
+   * should test this counter, never `deferred`. */
+  failed: number;
+  /** Previously failed facts still inside their exponential backoff window
+   * (60s doubling, capped at 24h), not attempted this sweep. Not an error;
+   * a later sweep retries them once the window elapses. */
+  deferred: number;
+  /** Facts excluded for good: a `float32_overflow` failure or 5 failed
+   * lifetime attempts. `{ force: true }` retries these anyway. */
+  permanentlyFailed: number;
+}
+
 /**
  * L3 heal-success record: a fact the model emitted a verdict for under a
  * truncated view of its own body. `originalBodyChars` lets an operator flag

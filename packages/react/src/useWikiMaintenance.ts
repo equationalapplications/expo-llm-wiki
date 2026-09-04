@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { useWiki } from './WikiContext';
-import type { HealResult } from '@equationalapplications/core-llm-wiki';
+import type { HealResult, ReembedResult } from '@equationalapplications/core-llm-wiki';
 
 export type MaintenanceResult =
   | { operation: 'librarian'; result: undefined }
@@ -89,7 +89,7 @@ export function useWikiMaintenance() {
     []
   );
 
-  const runReembed = useCallback(async (entityId?: string, opts?: { force?: boolean; skipExisting?: boolean }): Promise<{ embedded: number; skipped: number; failed: number }> => {
+  const runReembed = useCallback(async (entityId?: string, opts?: { force?: boolean; skipExisting?: boolean }): Promise<ReembedResult> => {
     setError(null);
     pendingCount.current += 1;
     setIsPending(true);

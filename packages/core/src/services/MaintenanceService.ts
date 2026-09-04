@@ -6,7 +6,7 @@ import { generateId } from '../utils/ids';
 import { parseEmbedding } from '../utils/embedding';
 import { PrunePartialFailureError } from '../types';
 import { HOOK_TIMEOUT_MARKER } from '../types';
-import type { WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedTask, ExtractedFactWithOntology, WikiFact, WikiTask, OntologyUpdates, OntologyBackfillResult, HealResult, DegradedRecord } from '../types';
+import type { WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedTask, ExtractedFactWithOntology, WikiFact, WikiTask, OntologyUpdates, OntologyBackfillResult, HealResult, DegradedRecord, ReembedResult } from '../types';
 import type { SQLiteAdapter } from '../types';
 import type { EntryRepository } from '../repositories/EntryRepository';
 import type { SourceRefIndexRepository } from '../repositories/SourceRefIndexRepository';
@@ -341,13 +341,7 @@ export class MaintenanceService {
   async runReembed(
     entityId?: string,
     opts?: { force?: boolean; skipExisting?: boolean },
-  ): Promise<{
-    embedded: number;
-    skipped: number;
-    failed: number;
-    deferred: number;
-    permanentlyFailed: number;
-  }> {
+  ): Promise<ReembedResult> {
     const embedFn = this.options.llmProvider.embed;
     if (!embedFn) return { embedded: 0, skipped: 0, failed: 0, deferred: 0, permanentlyFailed: 0 };
 

@@ -33,7 +33,7 @@ import { OntologyService } from './services/OntologyService';
 import { GraphTraversalService } from './services/GraphTraversalService';
 import { OkfTrustWritesRepository } from './db/okf-trust-writes';
 import { validateManifest } from './utils/ontology';
-import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighborhood, OntologyBackfillResult, HealResult, IngestDocumentResult } from './types';
+import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighborhood, OntologyBackfillResult, HealResult, IngestDocumentResult, ReembedResult } from './types';
 
 export { WikiBusyError, WikiTransactionError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER, WikiStrictOntologyViolation, WikiSourceRefHashCollision, WikiParseError, WikiIngestEmptyError } from './types';
 
@@ -499,13 +499,7 @@ export class WikiMemory {
   async runReembed(
     entityId?: string,
     opts?: { force?: boolean; skipExisting?: boolean },
-  ): Promise<{
-    embedded: number;
-    skipped: number;
-    failed: number;
-    deferred: number;
-    permanentlyFailed: number;
-  }> {
+  ): Promise<ReembedResult> {
     return this.maintenanceService.runReembed(entityId, opts);
   }
 
