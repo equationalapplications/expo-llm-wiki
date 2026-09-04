@@ -1,4 +1,4 @@
-import type { SQLiteAdapter, WikiFact } from '../types';
+import type { SQLiteAdapter, WikiFact, EmbeddingMarkerKind } from '../types';
 import { BaseRepository } from './BaseRepository';
 import { OutboxRepository } from './OutboxRepository';
 import { parseJsonArray, parseJsonObject } from './rowMappers';
@@ -901,10 +901,14 @@ export class EntryRepository extends BaseRepository {
    * (import merge is last-write-wins on it) and pushes no outbox event —
    * embedding lifecycle is local state, not replicated. Same discipline as
    * updateEmbeddingBlob. See spec §3.5.
+   *
+   * Only marker-eligible kinds (spec §3.3) are accepted: `no_provider` never
+   * marks and `storage_error` never marks, so retry/permanent-failure policy
+   * built on these rows only ever sees real embed failures.
    */
   async markEmbeddingFailure(
     id: string,
-    kind: string,
+    kind: EmbeddingMarkerKind,
     now: number,
     tx?: SQLiteAdapter,
   ): Promise<void> {

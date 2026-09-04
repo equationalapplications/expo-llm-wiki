@@ -1,15 +1,15 @@
-import type { SQLiteAdapter, WikiOptions } from '../types';
+import type { SQLiteAdapter, WikiOptions, EmbeddingMarkerKind } from '../types';
 import { HOOK_TIMEOUT_MARKER } from '../types';
 import type { EntryRepository } from '../repositories/EntryRepository';
 import type { MetadataRepository } from '../repositories/MetadataRepository';
 import { clip } from '../utils/pure';
 import { DEFAULT_MAX_EMBED_CHARS, EMBED_CHARS_CEILING } from '../utils/embedDefaults';
 
+export type { EmbeddingMarkerKind };
+
 export type EmbedFailureKind =
+  | EmbeddingMarkerKind
   | 'no_provider'
-  | 'invalid_vector'
-  | 'float32_overflow'
-  | 'provider_error'
   | 'storage_error';
 
 export type EmbedFactResult =
@@ -126,8 +126,8 @@ export class EmbeddingService {
     return { ok: true, dimension: float32Vector.length };
   }
 
-  /** Marker writes must never fail the caller. */
-  private async markFailure(id: string, kind: EmbedFailureKind): Promise<void> {
+  /** Marker writes must never fail the caller. Only marker-eligible kinds reach here. */
+  private async markFailure(id: string, kind: EmbeddingMarkerKind): Promise<void> {
     try {
       await this.entryRepo.markEmbeddingFailure(id, kind, Date.now());
     } catch (err) {
