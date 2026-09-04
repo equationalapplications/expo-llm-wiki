@@ -40,7 +40,7 @@ function makeTool(over: Partial<{ name: string; scope: string; schemaName: strin
     name,
     description: 'd',
     parameters: { type: 'object', properties: { query: { type: 'string' } } },
-    scope: over.scope ?? 'core',
+    scope: over.scope ?? AUTHORIZED_SCOPES[0],
     schema: {
       name: over.schemaName ?? name,
       description: 'd',
