@@ -885,8 +885,37 @@ export class EntryRepository extends BaseRepository {
   async updateEmbeddingBlob(id: string, blob: Uint8Array, tx?: SQLiteAdapter): Promise<void> {
     const executor = this.getExecutor(tx);
     await executor.runAsync(
-      `UPDATE ${this.prefix}entries SET embedding_blob = ?, embedding = NULL WHERE id = ?`,
+      `UPDATE ${this.prefix}entries
+         SET embedding_blob = ?,
+             embedding = NULL,
+             embedding_failed_at = NULL,
+             embedding_failure_kind = NULL,
+             embedding_attempts = 0
+       WHERE id = ?`,
       [blob, id],
+    );
+  }
+
+  /**
+   * Record a failed embedding attempt. Deliberately does NOT touch updated_at
+   * (import merge is last-write-wins on it) and pushes no outbox event —
+   * embedding lifecycle is local state, not replicated. Same discipline as
+   * updateEmbeddingBlob. See spec §3.5.
+   */
+  async markEmbeddingFailure(
+    id: string,
+    kind: string,
+    now: number,
+    tx?: SQLiteAdapter,
+  ): Promise<void> {
+    const executor = this.getExecutor(tx);
+    await executor.runAsync(
+      `UPDATE ${this.prefix}entries
+         SET embedding_failed_at = ?,
+             embedding_failure_kind = ?,
+             embedding_attempts = embedding_attempts + 1
+       WHERE id = ?`,
+      [now, kind, id],
     );
   }
 
