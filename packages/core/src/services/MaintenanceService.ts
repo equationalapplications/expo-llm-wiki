@@ -57,6 +57,50 @@ export const HEAL_BATCH_SIZE = 25;
 /** Cooldown before an already-healed fact is offered again. Matches ontology backfill. */
 export const HEAL_RECHECK_MS = 7 * 24 * 60 * 60 * 1000;
 
+/** Attempts after which a fact is considered permanently un-embeddable. */
+export const MAX_EMBED_ATTEMPTS = 5;
+/** First retry delay after a recoverable embedding failure. */
+export const EMBED_RETRY_BASE_MS = 60_000;
+/** Upper bound on the exponential retry delay. */
+export const EMBED_RETRY_CAP_MS = 24 * 60 * 60 * 1000;
+
+/** Exponential backoff: base * 2^(attempts-1), capped. */
+export function embedRetryDelayMs(attempts: number): number {
+  const n = Math.max(1, Math.trunc(attempts || 0));
+  const delay = EMBED_RETRY_BASE_MS * Math.pow(2, n - 1);
+  return Math.min(delay, EMBED_RETRY_CAP_MS);
+}
+
+export type ReembedDisposition = 'attempt' | 'defer' | 'permanent';
+
+/**
+ * Decide what to do with one candidate row. Pure: no DB, no clock.
+ *
+ * `float32_overflow` is terminal because it is deterministic arithmetic on the
+ * same vector — retrying can only produce the same overflow.
+ */
+export function classifyReembedRow(
+  row: {
+    embedding_failed_at?: number | null;
+    embedding_failure_kind?: string | null;
+    embedding_attempts?: number | null;
+  },
+  now: number,
+  force: boolean,
+): ReembedDisposition {
+  if (force) return 'attempt';
+
+  const failedAt = row.embedding_failed_at;
+  if (failedAt === null || failedAt === undefined) return 'attempt';
+
+  if (row.embedding_failure_kind === 'float32_overflow') return 'permanent';
+
+  const attempts = row.embedding_attempts ?? 0;
+  if (attempts >= MAX_EMBED_ATTEMPTS) return 'permanent';
+
+  return now - failedAt >= embedRetryDelayMs(attempts) ? 'attempt' : 'defer';
+}
+
 /** One parsed ontology-backfill response, paired with the facts that produced it. */
 interface OntologyBackfillBatch {
   batch: WikiFact[];
