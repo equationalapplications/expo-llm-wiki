@@ -3,6 +3,20 @@ import { loadSessionConfig, saveSessionConfig } from '../sessionConfig'
 
 const DEFAULTS = { providerType: 'anthropic', anthropicKey: '' }
 
+// Capture the pristine property descriptors before any test stubs them, so
+// every restore returns the host's original property — not the previous
+// describe's stub (without this, the H-3 suite's undefined-returning stub
+// would leak into the purge suite's "original" and outlive the file).
+const PRISTINE_SESSION = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage')
+const PRISTINE_LOCAL = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+
+function restorePristine() {
+  if (PRISTINE_SESSION) Object.defineProperty(globalThis, 'sessionStorage', PRISTINE_SESSION)
+  else delete (globalThis as { sessionStorage?: Storage }).sessionStorage
+  if (PRISTINE_LOCAL) Object.defineProperty(globalThis, 'localStorage', PRISTINE_LOCAL)
+  else delete (globalThis as { localStorage?: Storage }).localStorage
+}
+
 function mockStorage() {
   const map = new Map<string, string>()
   return {
@@ -31,7 +45,7 @@ describe('sessionConfig (H-3)', () => {
   afterEach(() => {
     session = undefined
     local = undefined
-    vi_stub()
+    restorePristine()
   })
 
   it('default load returns defaults (legacy purge is no longer per-call)', () => {
@@ -81,7 +95,6 @@ describe('legacy-key purge runs once per page load (issue #107)', () => {
       clear: () => {},
     } as unknown as Storage
 
-    const original = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
     Object.defineProperty(globalThis, 'localStorage', {
       configurable: true,
       get: () => recording,
@@ -103,8 +116,7 @@ describe('legacy-key purge runs once per page load (issue #107)', () => {
       mod.saveSessionConfig({ providerType: 'anthropic', anthropicKey: '' }, false)
       expect(removed).toEqual([])
     } finally {
-      if (original) Object.defineProperty(globalThis, 'localStorage', original)
-      else delete (globalThis as { localStorage?: Storage }).localStorage
+      restorePristine()
     }
   })
 })
