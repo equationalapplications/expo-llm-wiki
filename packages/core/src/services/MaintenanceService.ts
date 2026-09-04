@@ -381,6 +381,10 @@ export class MaintenanceService {
       let deferred = 0;
       let permanentlyFailed = 0;
       const force = opts?.force ?? false;
+      // One clock snapshot for the whole sweep: backoff eligibility is decided
+      // against sweep-start time, so rows whose window elapses mid-sweep stay
+      // deferred until the next sweep. Keeps classifyReembedRow pure and the
+      // sweep's deferral decisions deterministic for a single invocation.
       const now = Date.now();
 
       try {
