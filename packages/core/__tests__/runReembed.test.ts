@@ -216,4 +216,53 @@ describe('runReembed() retry orchestration', () => {
     expect(second.failed).toBe(0);
     expect(second.deferred).toBe(1);
   });
+
+  it('decides backoff eligibility against sweep-start time, not per-row time', async () => {
+    // Pins the sweep-wide clock snapshot in runReembed: eligibility is decided
+    // against the sweep-start Date.now(), so a backoff window that elapses
+    // mid-sweep does NOT become eligible until the next sweep. Under a
+    // regression to per-row Date.now() inside the loop, the marked fact below
+    // would be re-attempted in the first sweep and this test fails.
+    //
+    // findAllForReembed has no ORDER BY; a SQLite full scan returns rowid
+    // (insertion) order, so f-first is swept before f-marked — the clock
+    // advance in its embed is what makes the two semantics differ.
+    const t0 = 1_700_000_000_000;
+    let advanced = false;
+    const embed = vi.fn(async () => {
+      // Advance the fake clock past f-marked's 60s base window mid-sweep,
+      // on the first embed call only.
+      if (!advanced) { advanced = true; vi.advanceTimersByTime(60_000); }
+      return [1, 0, 0];
+    });
+    const { wiki, db } = makeWiki(embed as unknown as (text: string) => Promise<number[]>);
+    await wiki.setup();
+    await insertFact(db, 'f-first', entityId);
+    await insertFact(db, 'f-marked', entityId);
+    const entryRepo = wiki.__testAccess.entryRepo;
+    // Marked 30s before the sweep: inside the 60s window at sweep start.
+    await entryRepo.markEmbeddingFailure('f-marked', 'provider_error', t0 - 30_000);
+
+    try {
+      vi.useFakeTimers();
+      vi.setSystemTime(t0);
+
+      const res = await wiki.runReembed(entityId);
+      expect(embed).toHaveBeenCalledTimes(1);   // only f-first
+      expect(res.embedded).toBe(1);
+      expect(res.deferred).toBe(1);             // snapshot: still deferred
+      expect(res.failed).toBe(0);
+
+      // The deferral is snapshot-based, not permanent: an immediate second
+      // sweep — clock unchanged since the first — now sees the elapsed window
+      // and retries the marked fact. skipExisting so f-first is skipped.
+      const res2 = await wiki.runReembed(entityId, { skipExisting: true });
+      expect(embed).toHaveBeenCalledTimes(2);
+      expect(res2.embedded).toBe(1);
+      expect(res2.deferred).toBe(0);
+      expect(res2.skipped).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
