@@ -1,6 +1,6 @@
 # Embedding Failure Persistence & Scope Hygiene — Design
 
-**Status:** Draft (2026-09-04)
+**Status:** Implemented (2026-09-04)
 
 **Issues addressed:** #118 (embedding failure persistence), #106 (AUTHORIZED_SCOPES drift), #107 (legacy-key purge), #86 (`upsertGraph` — verify & close, no code)
 
@@ -302,3 +302,16 @@ semantic-release changelogs in this repo. Spec and code land in separate commits
 Each PR is green on `pnpm --filter <pkg> test` before review. Full-repo test
 run before PR-4 merges, since it is the only PR that changes retry behavior
 observable by hosts.
+
+---
+
+> **Closure (2026-09-04):** all four branches merged to main as merge commits,
+> resolving the "pending merge" notes above — §3.1–§3.5 via #125
+> (`feat/embedding-failure-markers`), §3.6 via #126
+> (`feat/reembed-retry-orchestration`, including post-review follow-ups:
+> `ReembedResult` exported and consumed by `useWikiMaintenance`; fake-timer
+> test pinning the sweep-wide clock snapshot), §4 via #127
+> (`fix/centralize-authorized-scopes`), §5 via #128
+> (`fix/purge-legacy-keys-once`, including post-review pristine-descriptor
+> test restoration). Issues #118, #106, #107 closed by merge. Deferred
+> self-review findings tracked in #129; scoped follow-ups in #121–#124.
