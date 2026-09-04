@@ -30,6 +30,9 @@ export function purgeLegacyPlaintextKeys(): void {
       localStorage.removeItem('anthropic-key')
     }
   } catch { /* ignore */ }
+  // Set even when a removeItem threw partway through: the purge runs once per
+  // page load, so a partially-completed sweep finishes on the next reload
+  // (a fresh module registry resets this guard).
   alreadyPurged = true
 }
 
