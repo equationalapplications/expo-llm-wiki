@@ -464,6 +464,11 @@ The cache is also automatically invalidated on any mutation (`runLibrarian`, `ru
 
 Convergence loops should test `failed`, never `deferred` — deferred rows clear themselves once their backoff elapses.
 
+Two caveats on that guidance:
+
+- A `storage_error` failure counts in `failed` but is never marked for backoff — a failure marker is itself a DB write, which is exactly what is broken. While DB writes fail, every sweep re-attempts every row, so a loop testing `failed` can spin without converging. Treat repeated `storage_error` failures as an infrastructure signal to fix, not a retry window to wait out.
+- `{ force: true }` bypasses more than `permanentlyFailed`: it also skips the backoff window, so rows that would otherwise be `deferred` are re-attempted immediately.
+
 ## Entity Status
 
 `WikiMemory` exposes the in-flight job state for a single entity through two complementary APIs.
