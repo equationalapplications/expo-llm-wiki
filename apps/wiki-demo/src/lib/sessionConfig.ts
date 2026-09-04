@@ -21,13 +21,19 @@ function getStorage(): Storage | null {
 }
 
 /** One-time cleanup of legacy plaintext localStorage keys (pre-hardening). */
+let alreadyPurged = false
 export function purgeLegacyPlaintextKeys(): void {
+  if (alreadyPurged) return
   try {
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem('llm-config')
       localStorage.removeItem('anthropic-key')
     }
   } catch { /* ignore */ }
+  // Set even when a removeItem threw partway through: the purge runs once per
+  // page load, so a partially-completed sweep finishes on the next reload
+  // (a fresh module registry resets this guard).
+  alreadyPurged = true
 }
 
 function loadPersisted(): Record<string, unknown> | null {
@@ -43,7 +49,6 @@ function loadPersisted(): Record<string, unknown> | null {
 }
 
 export function loadSessionConfig<T extends object>(defaults: T): T {
-  purgeLegacyPlaintextKeys()
   const stored = loadPersisted()
   const merged: Record<string, unknown> = { ...(defaults as Record<string, unknown>) }
   if (stored) {
@@ -60,7 +65,6 @@ export function loadSessionConfig<T extends object>(defaults: T): T {
  * that the config will last only for this session instead of throwing.
  */
 export function saveSessionConfig(cfg: object, persist: boolean): boolean {
-  purgeLegacyPlaintextKeys()
   if (!persist) {
     // Opt-out must also evict any config saved earlier in this tab session
     // (it may contain an API key).
@@ -77,3 +81,8 @@ export function saveSessionConfig(cfg: object, persist: boolean): boolean {
     return false
   }
 }
+
+// Issue #107: sweep legacy plaintext keys once per page load, at import time,
+// rather than on every load/save call. The only import chain is
+// main.tsx -> App.tsx -> sessionConfig.ts, so import time is boot time.
+purgeLegacyPlaintextKeys()
