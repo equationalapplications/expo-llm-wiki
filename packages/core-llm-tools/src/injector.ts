@@ -5,6 +5,7 @@ import type {
   BuiltInToolName,
   FunctionToolManifest,
 } from './types';
+import { isAuthorizedScope } from './scopes';
 
 /**
  * @deprecated Use buildAuthorizedToolsArray instead — it returns the full Gemini
@@ -18,7 +19,7 @@ export function buildAuthorizedSchemaArray(
   return availableManifests
     .filter(
       (manifest) =>
-        manifest.scope === 'core' || userGrantedScopes.includes(manifest.scope)
+        isAuthorizedScope(manifest.scope) || userGrantedScopes.includes(manifest.scope)
     )
     .filter(
       (manifest): manifest is FunctionToolManifest => 'schema' in manifest
@@ -42,7 +43,7 @@ export function buildAuthorizedToolsArray(
 ): GeminiToolEntry[] {
   const authorized = availableManifests.filter(
     (manifest) =>
-      manifest.scope === 'core' || userGrantedScopes.includes(manifest.scope)
+      isAuthorizedScope(manifest.scope) || userGrantedScopes.includes(manifest.scope)
   );
 
   const entries: GeminiToolEntry[] = [];
