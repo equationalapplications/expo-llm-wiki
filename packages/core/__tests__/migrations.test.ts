@@ -101,7 +101,7 @@ describe('schema migrations', () => {
     // Should have written schema_version
     const versionWrite = db.runCalls.find(
       c => (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
-           (c.args[0] === '10' || c.args[1] === '10')
+           (c.args[0] === '11' || c.args[1] === '11')
     );
     expect(versionWrite).toBeDefined();
 

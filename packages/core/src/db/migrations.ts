@@ -269,6 +269,28 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 11,
+    description: 'Add embedding_failed_at, embedding_failure_kind, embedding_attempts to entries for embed retry state',
+    run: async (db, prefix) => {
+      // ALTER TABLE ADD COLUMN must run outside any explicit transaction —
+      // SQLite (and expo-sqlite) do not permit schema alterations inside
+      // a BEGIN...COMMIT block. Same pattern as v2/v3/v5/v7/v8/v10.
+      // Only the entries table gets these columns — tasks are never embedded.
+      const cols = await db.getAllAsync<{ name: string }>(
+        `PRAGMA table_info(${prefix}entries)`
+      );
+      const existing = new Set(cols.map((c) => c.name));
+      const adds: Array<[string, string]> = [
+        ['embedding_failed_at', `ALTER TABLE ${prefix}entries ADD COLUMN embedding_failed_at INTEGER`],
+        ['embedding_failure_kind', `ALTER TABLE ${prefix}entries ADD COLUMN embedding_failure_kind TEXT`],
+        ['embedding_attempts', `ALTER TABLE ${prefix}entries ADD COLUMN embedding_attempts INTEGER NOT NULL DEFAULT 0`],
+      ];
+      for (const [name, sql] of adds) {
+        if (!existing.has(name)) await db.execAsync(sql);
+      }
+    },
+  },
 ];
 
 // Verify MIGRATIONS are in strictly ascending version order at module load time.

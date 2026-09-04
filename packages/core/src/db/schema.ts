@@ -29,7 +29,10 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
       last_verified_by TEXT,
       okf_sources TEXT,
       okf_verified TEXT,
-      okf_usage_window TEXT
+      okf_usage_window TEXT,
+      embedding_failed_at INTEGER,
+      embedding_failure_kind TEXT,
+      embedding_attempts INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE INDEX IF NOT EXISTS ${prefix}entries_entity_idx ON ${prefix}entries(entity_id);
