@@ -81,19 +81,30 @@ describe('legacy-key purge runs once per page load (issue #107)', () => {
       clear: () => {},
     } as unknown as Storage
 
+    const original = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
     Object.defineProperty(globalThis, 'localStorage', {
       configurable: true,
       get: () => recording,
     })
+    try {
+      // Fresh module registry == a fresh page load, so the module body re-runs
+      // with the recording stub visible.
+      vi.resetModules()
+      const mod = await import('../sessionConfig')
+      expect(removed).toEqual(['llm-config', 'anthropic-key'])
 
-    // Fresh module registry == a fresh page load, so the module body re-runs
-    // with the recording stub visible.
-    vi.resetModules()
-    const mod = await import('../sessionConfig')
-    expect(removed).toEqual(['llm-config', 'anthropic-key'])
+      // Same (cached) module instance: the guard must suppress a second sweep.
+      mod.purgeLegacyPlaintextKeys()
+      expect(removed).toEqual(['llm-config', 'anthropic-key'])
 
-    // Same (cached) module instance: the guard must suppress a second sweep.
-    mod.purgeLegacyPlaintextKeys()
-    expect(removed).toEqual(['llm-config', 'anthropic-key'])
+      // load/save must not sweep — the purge is import-time only (#107).
+      removed.length = 0
+      mod.loadSessionConfig(DEFAULTS)
+      mod.saveSessionConfig({ providerType: 'anthropic', anthropicKey: '' }, false)
+      expect(removed).toEqual([])
+    } finally {
+      if (original) Object.defineProperty(globalThis, 'localStorage', original)
+      else delete (globalThis as { localStorage?: Storage }).localStorage
+    }
   })
 })

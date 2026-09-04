@@ -24,13 +24,13 @@ function getStorage(): Storage | null {
 let alreadyPurged = false
 export function purgeLegacyPlaintextKeys(): void {
   if (alreadyPurged) return
-  alreadyPurged = true
   try {
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem('llm-config')
       localStorage.removeItem('anthropic-key')
     }
   } catch { /* ignore */ }
+  alreadyPurged = true
 }
 
 function loadPersisted(): Record<string, unknown> | null {
