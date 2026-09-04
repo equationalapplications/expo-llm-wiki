@@ -53,6 +53,8 @@ returns `{0,0,N}`) and for duplicate node ids within one call (last write wins,
 
 ## 3. #118 — Embedding failure persistence
 
+> **Status update (2026-09-04):** §3.1–§3.5 implemented via `feat/embedding-failure-markers`, pending merge.
+
 ### 3.1 Problem
 
 `EmbeddingService.embedFact` (`packages/core/src/services/EmbeddingService.ts:53-103`)
@@ -146,6 +148,8 @@ push **no outbox events**, following the `updateEmbeddingBlob` precedent
 
 ### 3.6 `runReembed` orchestration
 
+> **Status update (2026-09-04):** implemented via `feat/reembed-retry-orchestration`, pending merge.
+
 At `MaintenanceService.ts:297-358`. Candidate classification per row:
 
 - valid blob → `skipped` (existing logic `:330-340`, unchanged)
@@ -172,6 +176,8 @@ Decision (D1, §7): rows inside the backoff window count as **`deferred`**, not
 ---
 
 ## 4. #106 — Centralize AUTHORIZED_SCOPES
+
+> **Status update (2026-09-04):** implemented via `fix/centralize-authorized-scopes`, pending merge.
 
 Three executable scope-check sites, not two (the issue's "presumably" is confirmed):
 
@@ -215,6 +221,8 @@ Public API addition to a published package → `feat(core-llm-tools):` (minor).
 ---
 
 ## 5. #107 — One-shot legacy-key purge
+
+> **Status update (2026-09-04):** implemented via `fix/purge-legacy-keys-once`, pending merge.
 
 `purgeLegacyPlaintextKeys()` (`apps/wiki-demo/src/lib/sessionConfig.ts:24-31`) is
 called from `loadSessionConfig` (`:46`) and `saveSessionConfig` (`:63`); after the
