@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { loadSessionConfig, saveSessionConfig } from '../sessionConfig'
 
 const DEFAULTS = { providerType: 'anthropic', anthropicKey: '' }
@@ -34,13 +34,11 @@ describe('sessionConfig (H-3)', () => {
     vi_stub()
   })
 
-  it('default load returns defaults and purges legacy localStorage keys', () => {
+  it('default load returns defaults (legacy purge is no longer per-call)', () => {
     local!.setItem('llm-config', '{"anthropicKey":"legacy"}')
     local!.setItem('anthropic-key', 'sk-legacy')
     const cfg = loadSessionConfig(DEFAULTS)
     expect(cfg).toEqual(DEFAULTS)
-    expect(local!.getItem('llm-config')).toBeNull()
-    expect(local!.getItem('anthropic-key')).toBeNull()
   })
 
   it('save with persist=false writes nothing anywhere', () => {
@@ -70,5 +68,32 @@ describe('sessionConfig (H-3)', () => {
     expect(saveSessionConfig({ a: 1 }, true)).toBe(false)
     expect(() => loadSessionConfig(DEFAULTS)).not.toThrow()
     expect(loadSessionConfig(DEFAULTS)).toEqual(DEFAULTS)
+  })
+})
+
+describe('legacy-key purge runs once per page load (issue #107)', () => {
+  it('purges at module import and not again on a second call', async () => {
+    const removed: string[] = []
+    const recording = {
+      getItem: () => null,
+      setItem: () => {},
+      removeItem: (k: string) => { removed.push(k) },
+      clear: () => {},
+    } as unknown as Storage
+
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      get: () => recording,
+    })
+
+    // Fresh module registry == a fresh page load, so the module body re-runs
+    // with the recording stub visible.
+    vi.resetModules()
+    const mod = await import('../sessionConfig')
+    expect(removed).toEqual(['llm-config', 'anthropic-key'])
+
+    // Same (cached) module instance: the guard must suppress a second sweep.
+    mod.purgeLegacyPlaintextKeys()
+    expect(removed).toEqual(['llm-config', 'anthropic-key'])
   })
 })
