@@ -496,7 +496,16 @@ export class WikiMemory {
     return this.maintenanceService.runOntologyBackfill(entityId, options);
   }
 
-  async runReembed(entityId?: string, opts?: { force?: boolean; skipExisting?: boolean }): Promise<{ embedded: number; skipped: number; failed: number }> {
+  async runReembed(
+    entityId?: string,
+    opts?: { force?: boolean; skipExisting?: boolean },
+  ): Promise<{
+    embedded: number;
+    skipped: number;
+    failed: number;
+    deferred: number;
+    permanentlyFailed: number;
+  }> {
     return this.maintenanceService.runReembed(entityId, opts);
   }
 

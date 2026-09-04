@@ -338,9 +338,18 @@ export class MaintenanceService {
     }
   }
 
-  async runReembed(entityId?: string, opts?: { force?: boolean; skipExisting?: boolean }): Promise<{ embedded: number; skipped: number; failed: number }> {
+  async runReembed(
+    entityId?: string,
+    opts?: { force?: boolean; skipExisting?: boolean },
+  ): Promise<{
+    embedded: number;
+    skipped: number;
+    failed: number;
+    deferred: number;
+    permanentlyFailed: number;
+  }> {
     const embedFn = this.options.llmProvider.embed;
-    if (!embedFn) return { embedded: 0, skipped: 0, failed: 0 };
+    if (!embedFn) return { embedded: 0, skipped: 0, failed: 0, deferred: 0, permanentlyFailed: 0 };
 
     const op = entityId ? 'reembed' : 'global_reembed';
     this.jobManager.acquireLock(op, entityId ?? '*');
@@ -369,6 +378,10 @@ export class MaintenanceService {
       let embedded = 0;
       let skipped = 0;
       let failed = 0;
+      let deferred = 0;
+      let permanentlyFailed = 0;
+      const force = opts?.force ?? false;
+      const now = Date.now();
 
       try {
         for (const row of rows) {
@@ -383,8 +396,20 @@ export class MaintenanceService {
             }
           }
 
-          const success = await this.embeddingService.embedFact(row);
-          if (success) embedded++;
+          const disposition = classifyReembedRow(
+            row as unknown as {
+              embedding_failed_at?: number | null;
+              embedding_failure_kind?: string | null;
+              embedding_attempts?: number | null;
+            },
+            now,
+            force,
+          );
+          if (disposition === 'defer') { deferred++; continue; }
+          if (disposition === 'permanent') { permanentlyFailed++; continue; }
+
+          const result = await this.embeddingService.tryEmbedFact(row);
+          if (result.ok) embedded++;
           else failed++;
         }
 
@@ -395,7 +420,7 @@ export class MaintenanceService {
         this.searchService.evictCache(entityId);
       }
 
-      return { embedded, skipped, failed };
+      return { embedded, skipped, failed, deferred, permanentlyFailed };
     } finally {
       this.jobManager.releaseLock(op, entityId ?? '*');
     }
