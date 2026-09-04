@@ -1,4 +1,4 @@
-import { buildAuthorizedSchemaArray } from '@equationalapplications/core-llm-tools'
+import { buildAuthorizedSchemaArray, isAuthorizedScope } from '@equationalapplications/core-llm-tools'
 import type { AgentToolManifest } from '@equationalapplications/core-llm-tools'
 import { executeTool } from './tool-executor'
 import { WikiService } from '../memory/wiki-service'
@@ -70,16 +70,15 @@ export async function chatWithMemory({
   const functionCall = candidate?.content?.parts?.[0]?.functionCall
 
   if (functionCall) {
-    // Fail-closed: a tool is executable only if its scope is explicitly
-    // always-on (AUTHORIZED_SCOPES) or in the user's enabledScopes. Tools
-    // with missing/unknown scopes are rejected.
-    const AUTHORIZED_SCOPES = ['core']
+    // Fail-closed: a tool is executable only if its scope is always-on
+    // (AUTHORIZED_SCOPES, imported from core-llm-tools) or in the user's
+    // enabledScopes. Tools with missing/unknown scopes are rejected.
     const advertisedNames = new Set(authorizedScopes.map((s: any) => s.name ?? s.function?.name))
     const tool = tools.find(t => {
       if (t.name !== functionCall.name) return false
       if (!advertisedNames.has(t.name)) return false
       if (!t.scope) return false
-      return AUTHORIZED_SCOPES.includes(t.scope) || enabledScopes.includes(t.scope)
+      return isAuthorizedScope(t.scope) || enabledScopes.includes(t.scope)
     })
     if (tool) {
       const result = await executeTool(tool, functionCall.args || {})
