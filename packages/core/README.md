@@ -454,6 +454,16 @@ wikiMemory.clearVectorCache();
 
 The cache is also automatically invalidated on any mutation (`runLibrarian`, `runHeal`, `runPrune`, `runReembed`, `ingestDocument`, `importDump`, `forget`).
 
+## Re-Embedding & Retry Behavior
+
+`runReembed(entityId?, opts?)` returns `{ embedded, skipped, failed, deferred, permanentlyFailed }`.
+
+- `failed` — attempted this sweep and failed.
+- `deferred` — previously failed and still inside its exponential backoff window (60s doubling, capped at 24h). Not an error; a later sweep will retry.
+- `permanentlyFailed` — excluded for good: a `float32_overflow` failure, or 5 failed attempts. Pass `{ force: true }` to retry these anyway.
+
+Convergence loops should test `failed`, never `deferred` — deferred rows clear themselves once their backoff elapses.
+
 ## Entity Status
 
 `WikiMemory` exposes the in-flight job state for a single entity through two complementary APIs.
