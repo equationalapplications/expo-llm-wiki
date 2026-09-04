@@ -6,7 +6,7 @@ import { generateId } from '../utils/ids';
 import { parseEmbedding } from '../utils/embedding';
 import { PrunePartialFailureError } from '../types';
 import { HOOK_TIMEOUT_MARKER } from '../types';
-import type { WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedTask, ExtractedFactWithOntology, WikiFact, WikiTask, OntologyUpdates, OntologyBackfillResult, HealResult, DegradedRecord } from '../types';
+import type { WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedTask, ExtractedFactWithOntology, WikiFact, WikiTask, OntologyUpdates, OntologyBackfillResult, HealResult, DegradedRecord, ReembedResult } from '../types';
 import type { SQLiteAdapter } from '../types';
 import type { EntryRepository } from '../repositories/EntryRepository';
 import type { SourceRefIndexRepository } from '../repositories/SourceRefIndexRepository';
@@ -56,6 +56,50 @@ export const HEAL_BATCH_SIZE = 25;
 
 /** Cooldown before an already-healed fact is offered again. Matches ontology backfill. */
 export const HEAL_RECHECK_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Attempts after which a fact is considered permanently un-embeddable. */
+export const MAX_EMBED_ATTEMPTS = 5;
+/** First retry delay after a recoverable embedding failure. */
+export const EMBED_RETRY_BASE_MS = 60_000;
+/** Upper bound on the exponential retry delay. */
+export const EMBED_RETRY_CAP_MS = 24 * 60 * 60 * 1000;
+
+/** Exponential backoff: base * 2^(attempts-1), capped. */
+export function embedRetryDelayMs(attempts: number): number {
+  const n = Math.max(1, Math.trunc(attempts || 0));
+  const delay = EMBED_RETRY_BASE_MS * Math.pow(2, n - 1);
+  return Math.min(delay, EMBED_RETRY_CAP_MS);
+}
+
+export type ReembedDisposition = 'attempt' | 'defer' | 'permanent';
+
+/**
+ * Decide what to do with one candidate row. Pure: no DB, no clock.
+ *
+ * `float32_overflow` is terminal because it is deterministic arithmetic on the
+ * same vector — retrying can only produce the same overflow.
+ */
+export function classifyReembedRow(
+  row: {
+    embedding_failed_at?: number | null;
+    embedding_failure_kind?: string | null;
+    embedding_attempts?: number | null;
+  },
+  now: number,
+  force: boolean,
+): ReembedDisposition {
+  if (force) return 'attempt';
+
+  const failedAt = row.embedding_failed_at;
+  if (failedAt === null || failedAt === undefined) return 'attempt';
+
+  if (row.embedding_failure_kind === 'float32_overflow') return 'permanent';
+
+  const attempts = row.embedding_attempts ?? 0;
+  if (attempts >= MAX_EMBED_ATTEMPTS) return 'permanent';
+
+  return now - failedAt >= embedRetryDelayMs(attempts) ? 'attempt' : 'defer';
+}
 
 /** One parsed ontology-backfill response, paired with the facts that produced it. */
 interface OntologyBackfillBatch {
@@ -294,9 +338,12 @@ export class MaintenanceService {
     }
   }
 
-  async runReembed(entityId?: string, opts?: { force?: boolean; skipExisting?: boolean }): Promise<{ embedded: number; skipped: number; failed: number }> {
+  async runReembed(
+    entityId?: string,
+    opts?: { force?: boolean; skipExisting?: boolean },
+  ): Promise<ReembedResult> {
     const embedFn = this.options.llmProvider.embed;
-    if (!embedFn) return { embedded: 0, skipped: 0, failed: 0 };
+    if (!embedFn) return { embedded: 0, skipped: 0, failed: 0, deferred: 0, permanentlyFailed: 0 };
 
     const op = entityId ? 'reembed' : 'global_reembed';
     this.jobManager.acquireLock(op, entityId ?? '*');
@@ -325,6 +372,14 @@ export class MaintenanceService {
       let embedded = 0;
       let skipped = 0;
       let failed = 0;
+      let deferred = 0;
+      let permanentlyFailed = 0;
+      const force = opts?.force ?? false;
+      // One clock snapshot for the whole sweep: backoff eligibility is decided
+      // against sweep-start time, so rows whose window elapses mid-sweep stay
+      // deferred until the next sweep. Keeps classifyReembedRow pure and the
+      // sweep's deferral decisions deterministic for a single invocation.
+      const now = Date.now();
 
       try {
         for (const row of rows) {
@@ -339,8 +394,20 @@ export class MaintenanceService {
             }
           }
 
-          const success = await this.embeddingService.embedFact(row);
-          if (success) embedded++;
+          const disposition = classifyReembedRow(
+            row as unknown as {
+              embedding_failed_at?: number | null;
+              embedding_failure_kind?: string | null;
+              embedding_attempts?: number | null;
+            },
+            now,
+            force,
+          );
+          if (disposition === 'defer') { deferred++; continue; }
+          if (disposition === 'permanent') { permanentlyFailed++; continue; }
+
+          const result = await this.embeddingService.tryEmbedFact(row);
+          if (result.ok) embedded++;
           else failed++;
         }
 
@@ -351,7 +418,7 @@ export class MaintenanceService {
         this.searchService.evictCache(entityId);
       }
 
-      return { embedded, skipped, failed };
+      return { embedded, skipped, failed, deferred, permanentlyFailed };
     } finally {
       this.jobManager.releaseLock(op, entityId ?? '*');
     }
