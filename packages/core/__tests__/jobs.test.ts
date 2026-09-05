@@ -174,3 +174,32 @@ describe('ontologyBackfill lock', () => {
     }
   });
 });
+
+describe('isAnyReembedActive', () => {
+  it('is false on a fresh JobManager', () => {
+    const jm = new JobManager('llm_wiki_');
+    expect(jm.isAnyReembedActive()).toBe(false);
+  });
+
+  it('is true while a per-entity reembed lock is held, false after release', () => {
+    const jm = new JobManager('llm_wiki_');
+    jm.acquireLock('reembed', 'e1');
+    expect(jm.isAnyReembedActive()).toBe(true);
+    jm.releaseLock('reembed', 'e1');
+    expect(jm.isAnyReembedActive()).toBe(false);
+  });
+
+  it('is true while a global reembed lock is held, false after release', () => {
+    const jm = new JobManager('llm_wiki_');
+    jm.acquireLock('global_reembed', '*');
+    expect(jm.isAnyReembedActive()).toBe(true);
+    jm.releaseLock('global_reembed', '*');
+    expect(jm.isAnyReembedActive()).toBe(false);
+  });
+
+  it('ignores non-reembed maintenance locks', () => {
+    const jm = new JobManager('llm_wiki_');
+    jm.acquireLock('prune', 'e1');
+    expect(jm.isAnyReembedActive()).toBe(false);
+  });
+});

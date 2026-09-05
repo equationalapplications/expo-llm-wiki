@@ -117,6 +117,24 @@ export class JobManager {
            this.activeMaintenanceJobs.has(this._globalReembedKey());
   }
 
+  /**
+   * True while any reembed sweep is in flight — per-entity or global.
+   *
+   * Read-only; acquires nothing. Callers that mutate embedding failure
+   * markers across ALL entities (the dimension-promotion clear) must gate on
+   * this and defer, rather than resurrect rows an in-flight sweep already
+   * classified. See spec 2026-09-05-reembed-lock-scope-design.md §2.
+   *
+   * The global key `${prefix}:reembed` also ends in ':reembed', so the suffix
+   * scan alone would already match it. The explicit check is kept because it
+   * documents the intent and survives any future change to the global key's
+   * format.
+   */
+  isAnyReembedActive(): boolean {
+    return this.activeMaintenanceJobs.has(this._globalReembedKey()) ||
+           this._isAnyMaintenanceActiveWithSuffix(':reembed');
+  }
+
   private _isImportActiveFor(entityId: string): boolean {
     return this.activeMaintenanceJobs.has(this._importKey(entityId)) ||
            this.activeMaintenanceJobs.has(this._globalImportKey());
