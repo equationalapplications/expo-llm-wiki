@@ -338,6 +338,19 @@ export class MaintenanceService {
     }
   }
 
+  /**
+   * Re-embed facts, honouring per-row failure markers and exponential backoff.
+   *
+   * Marker lifecycle (spec §2): markers are cleared by a successful embed, by
+   * an upsert carrying a valid blob, and by an embedding-dimension promotion.
+   * A promotion revives rows for the NEXT sweep, not this one — reconciliation
+   * runs after candidates were already classified.
+   *
+   * Residual, by design: swapping to a provider with the SAME dimension never
+   * sets embedding_dimension_mismatch, so promotion never fires and markers
+   * survive the swap. Use `runReembed({ force: true })` to clear that state —
+   * `force` bypasses classification entirely and retries every row.
+   */
   async runReembed(
     entityId?: string,
     opts?: { force?: boolean; skipExisting?: boolean },
