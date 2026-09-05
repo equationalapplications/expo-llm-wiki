@@ -1,3 +1,32 @@
+# [6.5.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v6.4.0...v6.5.0) (2026-09-05)
+
+
+### Bug Fixes
+
+* **ci:** merge release PRs with merge commits, not squashes ([4a1576d](https://github.com/equationalapplications/expo-llm-wiki/commit/4a1576d9101708e5365a6fbed0d3dd34c9d4fc56)), closes [#136](https://github.com/equationalapplications/expo-llm-wiki/issues/136) [pre-#137](https://github.com/pre-/issues/137) [0563fb3/#133](https://github.com/equationalapplications/expo-llm-wiki/issues/133) [#137](https://github.com/equationalapplications/expo-llm-wiki/issues/137)
+* **ci:** name the specific corrupt tag in the stale-baseline error ([45094dc](https://github.com/equationalapplications/expo-llm-wiki/commit/45094dca4b8377b77062e28f2ca772a533c8b63b))
+* **ci:** scope tag guard to release tags, fix missing-tag diagnosis ([1643d32](https://github.com/equationalapplications/expo-llm-wiki/commit/1643d3242233753e6266121d0a590841f3811036))
+* **ci:** stop the orphan-tag guard from deleting real release tags ([f8020f6](https://github.com/equationalapplications/expo-llm-wiki/commit/f8020f6523b314cae2a332ff51a91428c0473bd2)), closes [#131](https://github.com/equationalapplications/expo-llm-wiki/issues/131) [#132](https://github.com/equationalapplications/expo-llm-wiki/issues/132) [#133](https://github.com/equationalapplications/expo-llm-wiki/issues/133) [#112](https://github.com/equationalapplications/expo-llm-wiki/issues/112)
+* **core-llm-tools:** freeze AUTHORIZED_SCOPES so it cannot be widened at runtime ([ae08012](https://github.com/equationalapplications/expo-llm-wiki/commit/ae08012f9425c3ca15bdaae613fadf0820801815))
+* **core:** clear stale embedding markers when an upsert brings a valid blob ([020cdaf](https://github.com/equationalapplications/expo-llm-wiki/commit/020cdafbe43d1ee83926268f34d470f6019f0cbf))
+* **core:** commit the dimension promotion in one transaction ([8d86af9](https://github.com/equationalapplications/expo-llm-wiki/commit/8d86af9c8f44e87c8f7f07cc4de5072887fd3b0b))
+* **core:** treat a non-callable embed as no_provider, not provider_error ([12b5de8](https://github.com/equationalapplications/expo-llm-wiki/commit/12b5de8f5c35554ed21797e1c6a5bc3abe31cbfa))
+* **core:** type-narrow markEmbeddingFailure to marker-eligible kinds ([d12cf89](https://github.com/equationalapplications/expo-llm-wiki/commit/d12cf897721aae73ea7732c51d95a2f35f75922c))
+* **scopelab:** resolve workspace deps to source in tests ([1cd088f](https://github.com/equationalapplications/expo-llm-wiki/commit/1cd088fe354fe2c61e6f52156344fd1f3eaf6c6b))
+* **wiki-demo:** purge legacy plaintext keys once per page load ([ceb033e](https://github.com/equationalapplications/expo-llm-wiki/commit/ceb033ecb715fea0bc7e8ae01c249b566df63a05))
+
+
+### Features
+
+* **core-llm-tools:** export AUTHORIZED_SCOPES as single source of truth ([4d85359](https://github.com/equationalapplications/expo-llm-wiki/commit/4d8535963fa3ddc85ab0c733217031ad4adb6fc3))
+* **core:** add clearEmbeddingFailureMarkers DAO method ([e689359](https://github.com/equationalapplications/expo-llm-wiki/commit/e689359c2677669c4f96b636e8fd65d8ac25935e))
+* **core:** add embedding retry backoff policy ([5f621c6](https://github.com/equationalapplications/expo-llm-wiki/commit/5f621c610ef99dc5e0aed7af3654ab821d15f6c0))
+* **core:** clear embedding failure markers on dimension promotion ([b3babae](https://github.com/equationalapplications/expo-llm-wiki/commit/b3babaef4c0c3ca318d4b8884354bf899391e12c))
+* **core:** EntryRepository marks and clears embedding failure state ([4d944b6](https://github.com/equationalapplications/expo-llm-wiki/commit/4d944b628113ee7da79f3e59300b01d6e4319d21))
+* **core:** migration v11 adds embedding failure marker columns ([4184b51](https://github.com/equationalapplications/expo-llm-wiki/commit/4184b51dcabb71843194c26d5f440deb12daa1c7))
+* **core:** runReembed retries failures with backoff ([c530572](https://github.com/equationalapplications/expo-llm-wiki/commit/c53057225e8322335f911d2c56a10f7f0c7f53ec))
+* **core:** tryEmbedFact classifies and persists embedding failures ([9c9ef58](https://github.com/equationalapplications/expo-llm-wiki/commit/9c9ef58624c96098b1d9bb52804181ada3789fa6))
+
 # [6.4.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v6.3.0...v6.4.0) (2026-09-03)
 
 
