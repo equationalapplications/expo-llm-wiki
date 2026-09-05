@@ -1,3 +1,14 @@
+## [7.1.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.0.0...v7.1.0) (2026-09-05)
+
+### Features
+
+* **core:** add JobManager.isAnyReembedActive() ([443f659](https://github.com/equationalapplications/expo-llm-wiki/commit/443f6597343e106b221c7192f85aabf104e892de)), closes [#134](https://github.com/equationalapplications/expo-llm-wiki/issues/134)
+
+### Bug Fixes
+
+* **core:** defer importDump dimension promotion during a reembed sweep ([04c4f75](https://github.com/equationalapplications/expo-llm-wiki/commit/04c4f751535bcac9b5b14ac33f17010c7bf69a1a)), closes [#134](https://github.com/equationalapplications/expo-llm-wiki/issues/134)
+* **core:** refuse auto-heal locks while a reembed sweep is in flight ([a89c6e6](https://github.com/equationalapplications/expo-llm-wiki/commit/a89c6e68222d7a69d28476bac47bdbb70c5b98db)), closes [#134](https://github.com/equationalapplications/expo-llm-wiki/issues/134)
+
 ## [7.0.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v6.5.1...v7.0.0) (2026-09-05)
 
 ### ⚠ BREAKING CHANGES
