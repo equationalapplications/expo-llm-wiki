@@ -76,7 +76,11 @@ export class EmbeddingService {
     tags: string | string[];
   }): Promise<EmbedFactResult> {
     const embedFn = this.options.llmProvider.embed;
-    if (!embedFn) return { ok: false, kind: 'no_provider' };
+    // Callability, not truthiness: a truthy non-function would pass a `!embedFn`
+    // guard, throw TypeError at the call, and be marked `provider_error` —
+    // burning an attempt per sweep until a host config error permanently
+    // excluded the fact. `no_provider` never marks. (spec §2.4)
+    if (typeof embedFn !== 'function') return { ok: false, kind: 'no_provider' };
     let tagsStr: string;
     if (Array.isArray(fact.tags)) {
       tagsStr = fact.tags.join(' ');

@@ -287,4 +287,27 @@ describe('EmbeddingService', () => {
       expect(mockEntryRepo.clearEmbeddingFailureMarkers).not.toHaveBeenCalled();
     });
   });
+
+  describe('non-callable embed provider (spec §2.4)', () => {
+    it('returns no_provider and writes NO marker when embed is a truthy non-function', async () => {
+      (mockOptions.llmProvider as any).embed = { not: 'a function' };
+      const fact = { id: 'f1', entity_id: 'e1', title: 'T', body: 'B', tags: [] };
+
+      const res = await embeddingService.tryEmbedFact(fact);
+
+      expect(res).toEqual({ ok: false, kind: 'no_provider' });
+      expect(mockEntryRepo.markEmbeddingFailure).not.toHaveBeenCalled();
+      expect(mockEntryRepo.updateEmbeddingBlob).not.toHaveBeenCalled();
+    });
+
+    it('still returns no_provider when embed is undefined', async () => {
+      (mockOptions.llmProvider as any).embed = undefined;
+      const fact = { id: 'f1', entity_id: 'e1', title: 'T', body: 'B', tags: [] };
+
+      const res = await embeddingService.tryEmbedFact(fact);
+
+      expect(res).toEqual({ ok: false, kind: 'no_provider' });
+      expect(mockEntryRepo.markEmbeddingFailure).not.toHaveBeenCalled();
+    });
+  });
 });

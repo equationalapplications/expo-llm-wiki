@@ -343,7 +343,12 @@ export class MaintenanceService {
     opts?: { force?: boolean; skipExisting?: boolean },
   ): Promise<ReembedResult> {
     const embedFn = this.options.llmProvider.embed;
-    if (!embedFn) return { embedded: 0, skipped: 0, failed: 0, deferred: 0, permanentlyFailed: 0 };
+    // Same callability guard as EmbeddingService.tryEmbedFact (spec §2.4): a
+    // misconfigured provider short-circuits the sweep instead of iterating and
+    // marking every row.
+    if (typeof embedFn !== 'function') {
+      return { embedded: 0, skipped: 0, failed: 0, deferred: 0, permanentlyFailed: 0 };
+    }
 
     const op = entityId ? 'reembed' : 'global_reembed';
     this.jobManager.acquireLock(op, entityId ?? '*');

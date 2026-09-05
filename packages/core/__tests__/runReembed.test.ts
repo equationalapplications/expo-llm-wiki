@@ -173,6 +173,22 @@ describe('runReembed()', () => {
     );
     expect(blobRow?.embedding_blob).not.toBeNull();
   });
+
+  it('a non-callable embed short-circuits the sweep without marking anything', async () => {
+    const { wiki, db } = makeWiki(undefined);
+    (wiki as any).options.llmProvider.embed = {} as any;
+    await wiki.setup();
+    await insertFact(db, 'f1', 'user-1');
+
+    const result = await wiki.runReembed();
+
+    expect(result).toEqual({ embedded: 0, skipped: 0, failed: 0, deferred: 0, permanentlyFailed: 0 });
+    const row = await db.getFirstAsync<{ embedding_failed_at: number | null; embedding_attempts: number }>(
+      `SELECT embedding_failed_at, embedding_attempts FROM llm_wiki_entries WHERE id = 'f1'`,
+    );
+    expect(row?.embedding_failed_at).toBeNull();
+    expect(row?.embedding_attempts).toBe(0);
+  });
 });
 
 describe('runReembed() retry orchestration', () => {
