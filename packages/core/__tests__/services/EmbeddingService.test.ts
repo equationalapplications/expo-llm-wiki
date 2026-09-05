@@ -149,6 +149,20 @@ describe('EmbeddingService', () => {
       expect(mockEntryRepo.markEmbeddingFailure).not.toHaveBeenCalled();
     });
 
+    it('storage_error: a failing dimension write is classified but NOT marked', async () => {
+      // Good vector from the provider, but storeEmbeddingDimension's metadata
+      // write throws. Same failure domain as the blob write (spec §4.3, D3).
+      mockOptions.llmProvider.embed!.mockResolvedValue([0.1, 0.2, 0.3]);
+      mockMetadataRepo.getMeta.mockResolvedValue(null);
+      mockMetadataRepo.setMeta.mockRejectedValueOnce(new Error('meta write failed'));
+
+      const res = await embeddingService.tryEmbedFact({ id: 'f1', entity_id: 'e1', title: 'T', body: 'B', tags: [] });
+
+      expect(res).toEqual({ ok: false, kind: 'storage_error' });
+      expect(mockEntryRepo.markEmbeddingFailure).not.toHaveBeenCalled();
+      expect(mockEntryRepo.updateEmbeddingBlob).not.toHaveBeenCalled();
+    });
+
     it('success returns the dimension', async () => {
       mockOptions.llmProvider.embed!.mockResolvedValue([0.1, 0.2, 0.3]);
       const res = await embeddingService.tryEmbedFact(fact);
