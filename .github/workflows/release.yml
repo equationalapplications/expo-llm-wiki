@@ -59,8 +59,36 @@ jobs:
           # drop a release PR that was created earlier but merged most
           # recently), and removes the need to bind github.sha into a jq
           # filter via shell interpolation.
-          MATCH=$(gh api "repos/${REPO}/commits/${COMMIT_SHA}/pulls" \
-            --jq '[.[] | select(.merged_at != null) | select(.base.ref == "main") | select(.head.ref | test("^release/v")) | .head.ref] | .[0] // empty')
+          #
+          # GitHub populates the merge-commit -> PR association
+          # asynchronously: on the 6.5.0 release (issue #140) the first
+          # query ran ~2s after the merge push, missed the association, and
+          # Phase 2 was skipped entirely - the workflow went green while
+          # publishing nothing. Retry while NO merged-into-main PR is
+          # associated with the commit yet; once any PR appears the
+          # association table has caught up, so a non-release answer is
+          # final. Direct (non-merge) pushes never gain associations, so
+          # they skip the retry window instead of burning it.
+          IS_MERGE=$(gh api "repos/${REPO}/commits/${COMMIT_SHA}" --jq 'if (.parents | length) >= 2 then "true" else "false" end')
+          MATCH=""
+          QUERY_START=$(date +%s)
+          while true; do
+            RESULT=$(gh api "repos/${REPO}/commits/${COMMIT_SHA}/pulls" \
+              --jq '{associated: [.[] | select(.merged_at != null) | select(.base.ref == "main") | .head.ref], release: ([.[] | select(.merged_at != null) | select(.base.ref == "main") | select(.head.ref | test("^release/v")) | .head.ref] | .[0] // "")}')
+            MATCH=$(echo "$RESULT" | jq -r '.release')
+            if [ "$(echo "$RESULT" | jq '.associated | length')" -gt 0 ]; then
+              break
+            fi
+            if [ "$IS_MERGE" != "true" ]; then
+              break
+            fi
+            if [ $(( $(date +%s) - QUERY_START )) -ge 60 ]; then
+              echo "::warning::No merged-PR association for ${COMMIT_SHA} after 60s; classifying as phase 1. If this was a release PR merge, re-run the workflow once the association exists (see issue #140)."
+              break
+            fi
+            echo "Commit ${COMMIT_SHA} is a merge commit with no PR association yet (GitHub association lag) - retrying in 5s."
+            sleep 5
+          done
 
           if [ -n "$MATCH" ]; then
             echo "phase=2" >> "$GITHUB_OUTPUT"
