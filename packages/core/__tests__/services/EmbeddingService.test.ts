@@ -11,7 +11,13 @@ describe('EmbeddingService', () => {
   let embeddingService: EmbeddingService;
 
   beforeEach(() => {
-    mockDb = {}; // Pass-through for tx queries
+    // withTransactionAsync runs the callback with the adapter itself as the tx
+    // handle: these unit tests assert call arguments, not commit semantics, and
+    // the real rollback behaviour is covered against a live SQLite adapter in
+    // __tests__/embeddingFailureMarkers.test.ts.
+    mockDb = {
+      withTransactionAsync: async (fn: (tx: unknown) => Promise<unknown>) => fn(mockDb),
+    };
 
     mockOptions = {
       llmProvider: {
@@ -28,6 +34,7 @@ describe('EmbeddingService', () => {
       updateEmbeddingBlob: vi.fn().mockResolvedValue(undefined),
       markEmbeddingFailure: vi.fn().mockResolvedValue(undefined),
       countStaleEmbeddings: vi.fn().mockResolvedValue(0),
+      clearEmbeddingFailureMarkers: vi.fn().mockResolvedValue(0),
     };
 
     mockMetadataRepo = {
@@ -148,6 +155,20 @@ describe('EmbeddingService', () => {
       expect(mockEntryRepo.markEmbeddingFailure).not.toHaveBeenCalled();
     });
 
+    it('storage_error: a failing dimension write is classified but NOT marked', async () => {
+      // Good vector from the provider, but storeEmbeddingDimension's metadata
+      // write throws. Same failure domain as the blob write (spec §4.3, D3).
+      mockOptions.llmProvider.embed!.mockResolvedValue([0.1, 0.2, 0.3]);
+      mockMetadataRepo.getMeta.mockResolvedValue(null);
+      mockMetadataRepo.setMeta.mockRejectedValueOnce(new Error('meta write failed'));
+
+      const res = await embeddingService.tryEmbedFact({ id: 'f1', entity_id: 'e1', title: 'T', body: 'B', tags: [] });
+
+      expect(res).toEqual({ ok: false, kind: 'storage_error' });
+      expect(mockEntryRepo.markEmbeddingFailure).not.toHaveBeenCalled();
+      expect(mockEntryRepo.updateEmbeddingBlob).not.toHaveBeenCalled();
+    });
+
     it('success returns the dimension', async () => {
       mockOptions.llmProvider.embed!.mockResolvedValue([0.1, 0.2, 0.3]);
       const res = await embeddingService.tryEmbedFact(fact);
@@ -253,6 +274,60 @@ describe('EmbeddingService', () => {
       await embeddingService.notifyEmbeddingPersistedOrThrow('e1', 'f1', null);
 
       expect(mockOptions.vectorRanker!.onEmbeddingPersisted).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('reconcileEmbeddingDimension marker reset (spec §2.3)', () => {
+    it('clears markers when the new dimension is promoted', async () => {
+      mockMetadataRepo.getMeta.mockResolvedValue('1536');
+      mockEntryRepo.countStaleEmbeddings.mockResolvedValue(0);
+
+      await embeddingService.reconcileEmbeddingDimension();
+
+      expect(mockMetadataRepo.setMeta).toHaveBeenCalledWith('embedding_dimension', '1536', expect.anything());
+      expect(mockMetadataRepo.clearDimensionMismatch).toHaveBeenCalled();
+      expect(mockEntryRepo.clearEmbeddingFailureMarkers).toHaveBeenCalledTimes(1);
+    });
+
+    it('does NOT clear markers when promotion is blocked by residual stale rows', async () => {
+      mockMetadataRepo.getMeta.mockResolvedValue('1536');
+      mockEntryRepo.countStaleEmbeddings.mockResolvedValue(3);
+
+      await embeddingService.reconcileEmbeddingDimension();
+
+      expect(mockMetadataRepo.setMeta).not.toHaveBeenCalledWith('embedding_dimension', '1536', expect.anything());
+      expect(mockEntryRepo.clearEmbeddingFailureMarkers).not.toHaveBeenCalled();
+    });
+
+    it('does NOT clear markers when no mismatch key is set', async () => {
+      mockMetadataRepo.getMeta.mockResolvedValue(null);
+
+      await embeddingService.reconcileEmbeddingDimension();
+
+      expect(mockEntryRepo.clearEmbeddingFailureMarkers).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('non-callable embed provider (spec §2.4)', () => {
+    it('returns no_provider and writes NO marker when embed is a truthy non-function', async () => {
+      (mockOptions.llmProvider as any).embed = { not: 'a function' };
+      const fact = { id: 'f1', entity_id: 'e1', title: 'T', body: 'B', tags: [] };
+
+      const res = await embeddingService.tryEmbedFact(fact);
+
+      expect(res).toEqual({ ok: false, kind: 'no_provider' });
+      expect(mockEntryRepo.markEmbeddingFailure).not.toHaveBeenCalled();
+      expect(mockEntryRepo.updateEmbeddingBlob).not.toHaveBeenCalled();
+    });
+
+    it('still returns no_provider when embed is undefined', async () => {
+      (mockOptions.llmProvider as any).embed = undefined;
+      const fact = { id: 'f1', entity_id: 'e1', title: 'T', body: 'B', tags: [] };
+
+      const res = await embeddingService.tryEmbedFact(fact);
+
+      expect(res).toEqual({ ok: false, kind: 'no_provider' });
+      expect(mockEntryRepo.markEmbeddingFailure).not.toHaveBeenCalled();
     });
   });
 });

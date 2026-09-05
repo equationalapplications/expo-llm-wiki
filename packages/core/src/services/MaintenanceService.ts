@@ -338,12 +338,30 @@ export class MaintenanceService {
     }
   }
 
+  /**
+   * Re-embed facts, honouring per-row failure markers and exponential backoff.
+   *
+   * Marker lifecycle (spec §2): markers are cleared by a successful embed, by
+   * an upsert carrying a valid blob, and by an embedding-dimension promotion.
+   * A promotion revives rows for the NEXT sweep, not this one — reconciliation
+   * runs after candidates were already classified.
+   *
+   * Residual, by design: swapping to a provider with the SAME dimension never
+   * sets embedding_dimension_mismatch, so promotion never fires and markers
+   * survive the swap. Use `runReembed({ force: true })` to clear that state —
+   * `force` bypasses classification entirely and retries every row.
+   */
   async runReembed(
     entityId?: string,
     opts?: { force?: boolean; skipExisting?: boolean },
   ): Promise<ReembedResult> {
     const embedFn = this.options.llmProvider.embed;
-    if (!embedFn) return { embedded: 0, skipped: 0, failed: 0, deferred: 0, permanentlyFailed: 0 };
+    // Same callability guard as EmbeddingService.tryEmbedFact (spec §2.4): a
+    // misconfigured provider short-circuits the sweep instead of iterating and
+    // marking every row.
+    if (typeof embedFn !== 'function') {
+      return { embedded: 0, skipped: 0, failed: 0, deferred: 0, permanentlyFailed: 0 };
+    }
 
     const op = entityId ? 'reembed' : 'global_reembed';
     this.jobManager.acquireLock(op, entityId ?? '*');
@@ -383,7 +401,7 @@ export class MaintenanceService {
 
       try {
         for (const row of rows) {
-          const existingBlob = (row as WikiFact & { embedding_blob?: Uint8Array | null }).embedding_blob;
+          const existingBlob = row.embedding_blob;
           const blobIsValid = !!existingBlob && existingBlob.byteLength > 0 && existingBlob.byteLength % 4 === 0;
 
           if (effectiveSkip && blobIsValid) {
@@ -394,15 +412,7 @@ export class MaintenanceService {
             }
           }
 
-          const disposition = classifyReembedRow(
-            row as unknown as {
-              embedding_failed_at?: number | null;
-              embedding_failure_kind?: string | null;
-              embedding_attempts?: number | null;
-            },
-            now,
-            force,
-          );
+          const disposition = classifyReembedRow(row, now, force);
           if (disposition === 'defer') { deferred++; continue; }
           if (disposition === 'permanent') { permanentlyFailed++; continue; }
 

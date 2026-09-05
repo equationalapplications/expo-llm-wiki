@@ -16,6 +16,19 @@ export type EntryRowWithEmbeddings = EntryRowMetadata & {
   embedding: string | null;
 };
 
+/**
+ * One row of the reembed candidate scan. `findAllForReembed` does `SELECT *`,
+ * so the marker columns come back at runtime; naming them here makes that
+ * dependency visible to the compiler instead of hiding it behind a cast in
+ * MaintenanceService.runReembed (spec §4.4).
+ */
+export type ReembedCandidateRow = WikiFact & {
+  embedding_blob?: Uint8Array | null;
+  embedding_failed_at?: number | null;
+  embedding_failure_kind?: string | null;
+  embedding_attempts?: number | null;
+};
+
 function mapRowToFact(row: any): WikiFact {
   const tags: string[] = (() => {
     if (Array.isArray(row.tags)) return row.tags;
@@ -150,6 +163,13 @@ export class EntryRepository extends BaseRepository {
    * New-row INSERTs still bind a value so the column is populated; if the
    * caller supplied nothing, the schema DEFAULT 'stable' applies when the
    * bind is bound as 'stable' explicitly here.
+   *
+   * Marker discipline (spec §4.1): a conflict carrying a real
+   * `embedding_blob` clears the embedding failure markers, because the row now
+   * HAS a valid embedding and a surviving marker would be a self-contradictory
+   * diagnostic that inflates runReembed's permanentlyFailed counter. A conflict
+   * with no blob leaves marker state alone, matching the "absent means don't
+   * touch" semantics used for embedding_blob itself.
    */
   async upsert(fact: WikiFact, tx: SQLiteAdapter): Promise<{ changes: number; lastInsertRowId: number }> {
     const executor = this.getExecutor(tx);
@@ -199,6 +219,9 @@ export class EntryRepository extends BaseRepository {
         deleted_at = excluded.deleted_at,
         embedding_blob = CASE WHEN excluded.embedding_blob IS NULL THEN embedding_blob ELSE excluded.embedding_blob END,
         embedding = NULL,
+        embedding_failed_at = CASE WHEN excluded.embedding_blob IS NOT NULL THEN NULL ELSE embedding_failed_at END,
+        embedding_failure_kind = CASE WHEN excluded.embedding_blob IS NOT NULL THEN NULL ELSE embedding_failure_kind END,
+        embedding_attempts = CASE WHEN excluded.embedding_blob IS NOT NULL THEN 0 ELSE embedding_attempts END,
         okf_type = excluded.okf_type`,
       [
         fact.id,
@@ -356,6 +379,9 @@ export class EntryRepository extends BaseRepository {
         deleted_at = excluded.deleted_at,
         embedding_blob = excluded.embedding_blob,
         embedding = NULL,
+        embedding_failed_at = CASE WHEN excluded.embedding_blob IS NOT NULL THEN NULL ELSE embedding_failed_at END,
+        embedding_failure_kind = CASE WHEN excluded.embedding_blob IS NOT NULL THEN NULL ELSE embedding_failure_kind END,
+        embedding_attempts = CASE WHEN excluded.embedding_blob IS NOT NULL THEN 0 ELSE embedding_attempts END,
         okf_type = excluded.okf_type,
         lifecycle_status = excluded.lifecycle_status,
         stale_after = excluded.stale_after,
@@ -923,6 +949,28 @@ export class EntryRepository extends BaseRepository {
     );
   }
 
+  /**
+   * Clear marker state for every marked row. Called when the embedding
+   * dimension is promoted: a new model produces different vectors, so past
+   * failures — including `float32_overflow`, which is otherwise terminal —
+   * no longer predict future ones (spec §2.3).
+   *
+   * Same discipline as markEmbeddingFailure: no `updated_at` touch and no
+   * outbox event, because embedding lifecycle is local state, not replicated.
+   * Returns the number of rows cleared.
+   */
+  async clearEmbeddingFailureMarkers(tx?: SQLiteAdapter): Promise<number> {
+    const executor = this.getExecutor(tx);
+    const result = await executor.runAsync(
+      `UPDATE ${this.prefix}entries
+          SET embedding_failed_at = NULL,
+              embedding_failure_kind = NULL,
+              embedding_attempts = 0
+        WHERE embedding_failed_at IS NOT NULL`,
+    );
+    return result.changes;
+  }
+
   async hasLegacySourceTypes(tx?: SQLiteAdapter): Promise<boolean> {
     const executor = this.getExecutor(tx);
     const row = await executor.getFirstAsync<{ one: number }>(
@@ -941,7 +989,7 @@ export class EntryRepository extends BaseRepository {
     return row?.count ?? 0;
   }
 
-  async findAllForReembed(entityId?: string, tx?: SQLiteAdapter): Promise<Array<WikiFact & { embedding_blob?: Uint8Array | null }>> {
+  async findAllForReembed(entityId?: string, tx?: SQLiteAdapter): Promise<ReembedCandidateRow[]> {
     const executor = this.getExecutor(tx);
     if (entityId !== undefined) {
       return executor.getAllAsync(

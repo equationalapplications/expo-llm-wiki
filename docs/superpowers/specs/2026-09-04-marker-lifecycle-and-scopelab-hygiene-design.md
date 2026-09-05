@@ -6,6 +6,8 @@
 **Status (2026-09-04):** §5 implemented via `refactor/scopelab-executor`,
 pending merge. §2/§4 and §6 pending in their own PRs.
 
+**Status (2026-09-04):** §2, §4.1, §4.3, §4.4 implemented via `feat/marker-lifecycle` (2026-09-04), pending merge. §5, §6 pending in their own PRs.
+
 **Issues addressed:** #121 (markers survive provider/dimension change), #129
 (deferred #125/#126 self-review findings), #123 (executor off deprecated
 injector helper), #122 (scopelab suite needs built dist), #124 (index on
@@ -79,15 +81,26 @@ fires, and the reset hung off it actually runs.
 `EmbeddingService.reconcileEmbeddingDimension`
 (`packages/core/src/services/EmbeddingService.ts:46-56`) currently promotes and
 clears the mismatch key. Add a marker reset to the promotion branch, so the
-three writes are one logical event:
+three writes are one logical event — and commit them in one transaction, so
+they are one event in the database too:
 
 ```ts
 if (residualCount === 0) {
-  await this.metadataRepo.setMeta('embedding_dimension', mismatchValue, this.db);
-  await this.metadataRepo.clearDimensionMismatch(this.db);
-  await this.entryRepo.clearEmbeddingFailureMarkers();
+  await this.db.withTransactionAsync(async (tx) => {
+    await this.metadataRepo.setMeta('embedding_dimension', mismatchValue, tx);
+    await this.metadataRepo.clearDimensionMismatch(tx);
+    await this.entryRepo.clearEmbeddingFailureMarkers(tx);
+  });
 }
 ```
+
+**Why one transaction.** Committed separately, a failure after
+`clearDimensionMismatch` succeeds would leave the markers set with no
+`embedding_dimension_mismatch` key left to re-trigger promotion — the rows
+strand until someone runs `runReembed({ force: true })`. Opening a transaction
+here is safe because both callers — `runReembed` and `importDump`'s dimension
+reconciliation — invoke `reconcileEmbeddingDimension` outside their own
+transactions, and the adapter does not support nesting (`types.ts:25`).
 
 New DAO method on `EntryRepository`, mirroring `markEmbeddingFailure`'s
 discipline (no `updated_at` touch, no outbox event — embedding lifecycle is
@@ -411,8 +424,11 @@ attention that scopelab plumbing would dilute. PR-B and PR-C both touch
 `apps/scopelab` but disjoint files (`function-caller.ts` + `scope-sync.test.ts`
 vs. a new `vitest.config.ts`), so they can run as parallel worktrees. PR-B is
 the only one that changes a published package's API surface (removing the
-deprecated export from `core-llm-tools`), which is a semver-minor concern worth
-isolating.
+deprecated export from `core-llm-tools`), which is a **semver-major** concern
+worth isolating: `buildAuthorizedSchemaArray` was a public export, so removing
+it breaks any consumer still importing it. PR-B lands as a `!`-marked
+Conventional Commit (`refactor(core-llm-tools)!:`) so semantic-release cuts a
+major for the package rather than a minor.
 
 #129's five items are deliberately **not** their own PR: items 1, 3 and 4 are
 marker-lifecycle correctness that belongs beside #121's reset in one reviewer

@@ -94,4 +94,141 @@ describe('EntryRepository embedding failure markers', () => {
     const after = await getMarkerRow(db, 'f5');
     expect(after?.updated_at).toBe(before?.updated_at);
   });
+
+  it('clearEmbeddingFailureMarkers resets all three columns on marked rows', async () => {
+    const { repo, db } = await makeWikiWithFact('f1');
+    await repo.markEmbeddingFailure('f1', 'float32_overflow', 1000);
+
+    const changed = await repo.clearEmbeddingFailureMarkers();
+
+    expect(changed).toBe(1);
+    const row = await getMarkerRow(db, 'f1');
+    expect(row?.embedding_failed_at).toBeNull();
+    expect(row?.embedding_failure_kind).toBeNull();
+    expect(row?.embedding_attempts).toBe(0);
+  });
+
+  it('clearEmbeddingFailureMarkers leaves unmarked rows untouched and reports 0', async () => {
+    const { repo, db } = await makeWikiWithFact('f1');
+    const before = await getMarkerRow(db, 'f1');
+
+    const changed = await repo.clearEmbeddingFailureMarkers();
+
+    expect(changed).toBe(0);
+    const after = await getMarkerRow(db, 'f1');
+    expect(after?.updated_at).toBe(before?.updated_at);
+  });
+
+  it('clearEmbeddingFailureMarkers does not touch updated_at on a marked row', async () => {
+    const { repo, db } = await makeWikiWithFact('f1');
+    const before = await getMarkerRow(db, 'f1');
+    await repo.markEmbeddingFailure('f1', 'provider_error', 1000);
+
+    await repo.clearEmbeddingFailureMarkers();
+
+    const after = await getMarkerRow(db, 'f1');
+    expect(after?.updated_at).toBe(before?.updated_at);
+  });
+
+  it('dimension promotion commits all three writes atomically', async () => {
+    // The promotion is one logical event: canonical dimension, mismatch key,
+    // and marker clear. If the marker clear fails after the mismatch key is
+    // gone, nothing is left to re-trigger promotion and the markers strand
+    // until `force: true`. Pin the rollback, not just the happy path.
+    const { wiki, db, repo } = await makeWikiWithFact('f1');
+    await repo.markEmbeddingFailure('f1', 'float32_overflow', 1000);
+
+    const metadataRepo = (wiki as any).metadataRepo;
+    const embeddingService = (wiki as any).embeddingService;
+    await metadataRepo.setMeta('embedding_dimension', '3', db);
+    await metadataRepo.setMeta('embedding_dimension_mismatch', '4', db);
+
+    const original = repo.clearEmbeddingFailureMarkers.bind(repo);
+    repo.clearEmbeddingFailureMarkers = async () => {
+      throw new Error('boom');
+    };
+
+    await expect(embeddingService.reconcileEmbeddingDimension()).rejects.toThrow('boom');
+
+    // Every write rolled back: mismatch key intact, dimension un-promoted,
+    // markers still set — so the next promotion attempt still has its trigger.
+    expect(await metadataRepo.getMeta('embedding_dimension_mismatch')).toBe('4');
+    expect(await metadataRepo.getMeta('embedding_dimension')).toBe('3');
+    const row = await getMarkerRow(db, 'f1');
+    expect(row?.embedding_failure_kind).toBe('float32_overflow');
+
+    // And the same promotion succeeds once the failure clears.
+    repo.clearEmbeddingFailureMarkers = original;
+    await embeddingService.reconcileEmbeddingDimension();
+    expect(await metadataRepo.getMeta('embedding_dimension_mismatch')).toBeNull();
+    expect(await metadataRepo.getMeta('embedding_dimension')).toBe('4');
+    expect((await getMarkerRow(db, 'f1'))?.embedding_failure_kind).toBeNull();
+  });
+
+  it('upsert with a valid blob clears stale markers', async () => {
+    const { repo, db } = await makeWikiWithFact('f1');
+    await repo.markEmbeddingFailure('f1', 'provider_error', 1000);
+
+    const fact = {
+      id: 'f1', entity_id: 'e1', title: 'T2', body: 'B2', tags: [],
+      confidence: 'certain', source_type: 'user_stated',
+      source_hash: null, source_ref: null,
+      created_at: 1_700_000_000_000, updated_at: 1_700_000_000_000,
+      last_accessed_at: null, access_count: 0, deleted_at: null, okf_type: 'fact',
+      embedding_blob: new Uint8Array(new Float32Array([1, 0, 0]).buffer),
+    } as any;
+    await db.withTransactionAsync(async (tx) => { await repo.upsert(fact, tx); });
+
+    const row = await getMarkerRow(db, 'f1');
+    expect(row?.embedding_failed_at).toBeNull();
+    expect(row?.embedding_failure_kind).toBeNull();
+    expect(row?.embedding_attempts).toBe(0);
+  });
+
+  it('upsert WITHOUT a blob leaves existing markers intact', async () => {
+    const { repo, db } = await makeWikiWithFact('f1');
+    await repo.markEmbeddingFailure('f1', 'provider_error', 1000);
+
+    const fact = {
+      id: 'f1', entity_id: 'e1', title: 'T3', body: 'B3', tags: [],
+      confidence: 'certain', source_type: 'user_stated',
+      source_hash: null, source_ref: null,
+      created_at: 1_700_000_000_000, updated_at: 1_700_000_000_000,
+      last_accessed_at: null, access_count: 0, deleted_at: null, okf_type: 'fact',
+      embedding_blob: null,
+    } as any;
+    await db.withTransactionAsync(async (tx) => { await repo.upsert(fact, tx); });
+
+    const row = await getMarkerRow(db, 'f1');
+    expect(row?.embedding_failed_at).toBe(1000);
+    expect(row?.embedding_failure_kind).toBe('provider_error');
+    expect(row?.embedding_attempts).toBe(1);
+  });
+
+  it('importDump carrying a valid blob clears a stale marker (upsertForImport)', async () => {
+    const { wiki, repo, db } = await makeWikiWithFact('f1');
+    await repo.markEmbeddingFailure('f1', 'float32_overflow', 1000);
+
+    await wiki.importDump({
+      generatedAt: 1_700_000_001_000,
+      entities: {
+        e1: {
+          facts: [{
+            id: 'f1', entity_id: 'e1', title: 'T', body: 'B', tags: [],
+            confidence: 'certain', source_type: 'user_stated',
+            source_hash: null, source_ref: null,
+            created_at: 1_700_000_000_000, updated_at: 1_700_000_001_000,
+            last_accessed_at: null, access_count: 0, deleted_at: null, okf_type: 'fact',
+            embedding_blob: new Uint8Array(new Float32Array([1, 0, 0]).buffer),
+          }],
+          tasks: [], events: [], edges: [], summary: '',
+        },
+      },
+    } as any);
+
+    const row = await getMarkerRow(db, 'f1');
+    expect(row?.embedding_failed_at).toBeNull();
+    expect(row?.embedding_failure_kind).toBeNull();
+    expect(row?.embedding_attempts).toBe(0);
+  });
 });

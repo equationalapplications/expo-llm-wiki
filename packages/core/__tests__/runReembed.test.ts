@@ -139,6 +139,56 @@ describe('runReembed()', () => {
     expect(err).toBeInstanceOf(WikiBusyError);
     expect(err.operation).toBe('forget');
   });
+
+  it('a permanently-failed row does not block dimension promotion, and is revived by it', async () => {
+    // Provider returns 3-d vectors; a stored dimension of 4 forces a mismatch.
+    const { wiki, db } = makeWiki(async () => [1, 0, 0]);
+    await wiki.setup();
+    await insertFact(db, 'f-ok', 'user-1');
+    await insertFact(db, 'f-dead', 'user-1');
+    await db.runAsync(`INSERT OR REPLACE INTO llm_wiki_meta (key, value) VALUES ('embedding_dimension', '4')`);
+    // f-dead is terminally marked: float32_overflow is permanent by classification.
+    await db.runAsync(
+      `UPDATE llm_wiki_entries
+          SET embedding_failed_at = 1, embedding_failure_kind = 'float32_overflow', embedding_attempts = 1
+        WHERE id = 'f-dead'`,
+    );
+
+    // Sweep 1: f-ok embeds (setting the mismatch key), f-dead is classified permanent.
+    const first = await wiki.runReembed();
+    expect(first.permanentlyFailed).toBe(1);
+    expect(first.embedded).toBe(1);
+
+    // Promotion happened despite the marked row, and cleared its marker.
+    const markerRow = await db.getFirstAsync<{ embedding_failed_at: number | null }>(
+      `SELECT embedding_failed_at FROM llm_wiki_entries WHERE id = 'f-dead'`,
+    );
+    expect(markerRow?.embedding_failed_at).toBeNull();
+
+    // Sweep 2: the revived row is attempted and embeds.
+    const second = await wiki.runReembed();
+    expect(second.permanentlyFailed).toBe(0);
+    const blobRow = await db.getFirstAsync<{ embedding_blob: Uint8Array | null }>(
+      `SELECT embedding_blob FROM llm_wiki_entries WHERE id = 'f-dead'`,
+    );
+    expect(blobRow?.embedding_blob).not.toBeNull();
+  });
+
+  it('a non-callable embed short-circuits the sweep without marking anything', async () => {
+    const { wiki, db } = makeWiki(undefined);
+    (wiki as any).options.llmProvider.embed = {} as any;
+    await wiki.setup();
+    await insertFact(db, 'f1', 'user-1');
+
+    const result = await wiki.runReembed();
+
+    expect(result).toEqual({ embedded: 0, skipped: 0, failed: 0, deferred: 0, permanentlyFailed: 0 });
+    const row = await db.getFirstAsync<{ embedding_failed_at: number | null; embedding_attempts: number }>(
+      `SELECT embedding_failed_at, embedding_attempts FROM llm_wiki_entries WHERE id = 'f1'`,
+    );
+    expect(row?.embedding_failed_at).toBeNull();
+    expect(row?.embedding_attempts).toBe(0);
+  });
 });
 
 describe('runReembed() retry orchestration', () => {

@@ -42,7 +42,21 @@ export class EmbeddingService {
     }
   }
 
-  /** Promotes embedding_dimension_mismatch to canonical embedding_dimension when safe. */
+  /**
+   * Promotes embedding_dimension_mismatch to canonical embedding_dimension when
+   * safe, and clears embedding failure markers as part of the same event.
+   *
+   * Marker reset (spec §2.3): a promoted dimension means a different model is
+   * producing the vectors, so prior failures no longer predict future ones.
+   * `float32_overflow` is cleared too — it is terminal only because retrying is
+   * the same arithmetic on the same vector, and after a model change it is not.
+   *
+   * All three writes commit atomically; see the transaction note inline.
+   *
+   * Revived rows are NOT embedded here. They become eligible and are picked up
+   * by the NEXT sweep, because runReembed calls this after its candidates were
+   * already classified; same-sweep revival would be re-entrant.
+   */
   async reconcileEmbeddingDimension(): Promise<void> {
     const mismatchValue = await this.metadataRepo.getMeta('embedding_dimension_mismatch');
     if (!mismatchValue) return;
@@ -50,8 +64,18 @@ export class EmbeddingService {
     const newDim = parseInt(mismatchValue, 10);
     const residualCount = await this.entryRepo.countStaleEmbeddings(newDim);
     if (residualCount === 0) {
-      await this.metadataRepo.setMeta('embedding_dimension', mismatchValue, this.db);
-      await this.metadataRepo.clearDimensionMismatch(this.db);
+      // One transaction for the whole promotion (spec §2.3): the three writes
+      // are a single logical event. Committed separately, a failure after
+      // clearDimensionMismatch would leave markers set with no mismatch key
+      // left to re-trigger promotion, stranding those rows until `force: true`.
+      // Safe to open here — both callers (runReembed, importDump's dimension
+      // reconciliation) invoke this outside their own transactions, and the
+      // adapter does not support nesting.
+      await this.db.withTransactionAsync(async (tx) => {
+        await this.metadataRepo.setMeta('embedding_dimension', mismatchValue, tx);
+        await this.metadataRepo.clearDimensionMismatch(tx);
+        await this.entryRepo.clearEmbeddingFailureMarkers(tx);
+      });
     }
   }
 
@@ -63,7 +87,11 @@ export class EmbeddingService {
     tags: string | string[];
   }): Promise<EmbedFactResult> {
     const embedFn = this.options.llmProvider.embed;
-    if (!embedFn) return { ok: false, kind: 'no_provider' };
+    // Callability, not truthiness: a truthy non-function would pass a `!embedFn`
+    // guard, throw TypeError at the call, and be marked `provider_error` —
+    // burning an attempt per sweep until a host config error permanently
+    // excluded the fact. `no_provider` never marks. (spec §2.4)
+    if (typeof embedFn !== 'function') return { ok: false, kind: 'no_provider' };
     let tagsStr: string;
     if (Array.isArray(fact.tags)) {
       tagsStr = fact.tags.join(' ');
