@@ -16,6 +16,19 @@ export type EntryRowWithEmbeddings = EntryRowMetadata & {
   embedding: string | null;
 };
 
+/**
+ * One row of the reembed candidate scan. `findAllForReembed` does `SELECT *`,
+ * so the marker columns come back at runtime; naming them here makes that
+ * dependency visible to the compiler instead of hiding it behind a cast in
+ * MaintenanceService.runReembed (spec §4.4).
+ */
+export type ReembedCandidateRow = WikiFact & {
+  embedding_blob?: Uint8Array | null;
+  embedding_failed_at?: number | null;
+  embedding_failure_kind?: string | null;
+  embedding_attempts?: number | null;
+};
+
 function mapRowToFact(row: any): WikiFact {
   const tags: string[] = (() => {
     if (Array.isArray(row.tags)) return row.tags;
@@ -976,7 +989,7 @@ export class EntryRepository extends BaseRepository {
     return row?.count ?? 0;
   }
 
-  async findAllForReembed(entityId?: string, tx?: SQLiteAdapter): Promise<Array<WikiFact & { embedding_blob?: Uint8Array | null }>> {
+  async findAllForReembed(entityId?: string, tx?: SQLiteAdapter): Promise<ReembedCandidateRow[]> {
     const executor = this.getExecutor(tx);
     if (entityId !== undefined) {
       return executor.getAllAsync(

@@ -388,7 +388,7 @@ export class MaintenanceService {
 
       try {
         for (const row of rows) {
-          const existingBlob = (row as WikiFact & { embedding_blob?: Uint8Array | null }).embedding_blob;
+          const existingBlob = row.embedding_blob;
           const blobIsValid = !!existingBlob && existingBlob.byteLength > 0 && existingBlob.byteLength % 4 === 0;
 
           if (effectiveSkip && blobIsValid) {
@@ -399,15 +399,7 @@ export class MaintenanceService {
             }
           }
 
-          const disposition = classifyReembedRow(
-            row as unknown as {
-              embedding_failed_at?: number | null;
-              embedding_failure_kind?: string | null;
-              embedding_attempts?: number | null;
-            },
-            now,
-            force,
-          );
+          const disposition = classifyReembedRow(row, now, force);
           if (disposition === 'defer') { deferred++; continue; }
           if (disposition === 'permanent') { permanentlyFailed++; continue; }
 
