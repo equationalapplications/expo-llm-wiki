@@ -1,6 +1,6 @@
 {
   "name": "@equationalapplications/core-llm-tools",
-  "version": "6.5.0",
+  "version": "6.5.1",
   "description": "Zero-dependency Gemini function-calling schemas and capability-scoped tool injection for edge AI agents. Works in Node.js, browser, and React Native (Hermes).",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
