@@ -127,9 +127,10 @@ The rule this spec records (also to be stated in `runReembed`'s docstring):
 
 Deferral works because `embedding_dimension_mismatch` is sticky: skipping
 the promotion leaves the key set, and the promotion deterministically
-completes at the next sweep tail (`runReembed` calls
-`reconcileEmbeddingDimension` after its loop, `MaintenanceService.ts:424-426`)
-or the next importDump reconciliation. No state is lost by waiting; a
+completes at the next *productive* sweep tail (`runReembed` calls
+`reconcileEmbeddingDimension` after its loop, and only when it embedded
+> 0 rows — a sweep that embeds nothing runs no tail reconciliation,
+`MaintenanceService.ts:424-426`) or the next importDump reconciliation. No state is lost by waiting; a
 promotion that lands one sweep later has identical semantics to one that
 lands mid-sweep, minus the resurrected-row race.
 
@@ -170,7 +171,8 @@ deferred; a reembed sweep is in flight`.
 
 Deferring is safe in both of the states reachable at that line, for two
 different reasons. Where `embedding_dimension_mismatch` is set, the key is
-sticky and the promotion fires at the next sweep tail or import. Where it is
+sticky and the promotion fires at the next *productive* sweep tail or
+import. Where it is
 *not* set — the `canonicalDim === null` fresh-DB branch, in which
 `storeEmbeddingDimension` writes the canonical dimension and the
 `staleMismatchValue` guard writes nothing — `reconcileEmbeddingDimension`
