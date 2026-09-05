@@ -1,0 +1,1 @@
+if('serviceWorker' in navigator) {window.addEventListener('load', () => {navigator.serviceWorker.register('/expo-llm-wiki/scopelab/sw.js', { scope: '/expo-llm-wiki/scopelab/' })})}
