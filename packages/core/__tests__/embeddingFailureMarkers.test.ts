@@ -94,4 +94,39 @@ describe('EntryRepository embedding failure markers', () => {
     const after = await getMarkerRow(db, 'f5');
     expect(after?.updated_at).toBe(before?.updated_at);
   });
+
+  it('clearEmbeddingFailureMarkers resets all three columns on marked rows', async () => {
+    const { repo, db } = await makeWikiWithFact('f1');
+    await repo.markEmbeddingFailure('f1', 'float32_overflow', 1000);
+
+    const changed = await repo.clearEmbeddingFailureMarkers();
+
+    expect(changed).toBe(1);
+    const row = await getMarkerRow(db, 'f1');
+    expect(row?.embedding_failed_at).toBeNull();
+    expect(row?.embedding_failure_kind).toBeNull();
+    expect(row?.embedding_attempts).toBe(0);
+  });
+
+  it('clearEmbeddingFailureMarkers leaves unmarked rows untouched and reports 0', async () => {
+    const { repo, db } = await makeWikiWithFact('f1');
+    const before = await getMarkerRow(db, 'f1');
+
+    const changed = await repo.clearEmbeddingFailureMarkers();
+
+    expect(changed).toBe(0);
+    const after = await getMarkerRow(db, 'f1');
+    expect(after?.updated_at).toBe(before?.updated_at);
+  });
+
+  it('clearEmbeddingFailureMarkers does not touch updated_at on a marked row', async () => {
+    const { repo, db } = await makeWikiWithFact('f1');
+    const before = await getMarkerRow(db, 'f1');
+    await repo.markEmbeddingFailure('f1', 'provider_error', 1000);
+
+    await repo.clearEmbeddingFailureMarkers();
+
+    const after = await getMarkerRow(db, 'f1');
+    expect(after?.updated_at).toBe(before?.updated_at);
+  });
 });

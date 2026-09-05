@@ -923,6 +923,28 @@ export class EntryRepository extends BaseRepository {
     );
   }
 
+  /**
+   * Clear marker state for every marked row. Called when the embedding
+   * dimension is promoted: a new model produces different vectors, so past
+   * failures — including `float32_overflow`, which is otherwise terminal —
+   * no longer predict future ones (spec §2.3).
+   *
+   * Same discipline as markEmbeddingFailure: no `updated_at` touch and no
+   * outbox event, because embedding lifecycle is local state, not replicated.
+   * Returns the number of rows cleared.
+   */
+  async clearEmbeddingFailureMarkers(tx?: SQLiteAdapter): Promise<number> {
+    const executor = this.getExecutor(tx);
+    const result = await executor.runAsync(
+      `UPDATE ${this.prefix}entries
+          SET embedding_failed_at = NULL,
+              embedding_failure_kind = NULL,
+              embedding_attempts = 0
+        WHERE embedding_failed_at IS NOT NULL`,
+    );
+    return result.changes;
+  }
+
   async hasLegacySourceTypes(tx?: SQLiteAdapter): Promise<boolean> {
     const executor = this.getExecutor(tx);
     const row = await executor.getFirstAsync<{ one: number }>(
