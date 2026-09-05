@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { AUTHORIZED_SCOPES, buildAuthorizedSchemaArray } from '@equationalapplications/core-llm-tools'
+import { AUTHORIZED_SCOPES, buildAuthorizedToolsArray } from '@equationalapplications/core-llm-tools'
 import { chatWithMemory } from '../function-caller'
 import type { AgentToolManifest } from '@equationalapplications/core-llm-tools'
 
@@ -33,7 +33,7 @@ function geminiText(text: string) {
   return geminiResponse({ candidates: candidates })
 }
 
-/** A manifest that buildAuthorizedSchemaArray will actually advertise (has `schema`). */
+/** A manifest that buildAuthorizedToolsArray will actually advertise (has `schema`). */
 function makeTool(over: Partial<{ name: string; scope: string; schemaName: string }> = {}) {
   const name = over.name ?? 'search_memory'
   return {
@@ -52,8 +52,9 @@ function makeTool(over: Partial<{ name: string; scope: string; schemaName: strin
 describe('injector/executor scope parity (issue #106)', () => {
   it('advertises exactly the always-on scopes when nothing is granted', () => {
     const manifests = AUTHORIZED_SCOPES.map((scope) => makeTool({ scope }))
-    const advertised = buildAuthorizedSchemaArray(manifests, [])
-    expect(advertised).toHaveLength(AUTHORIZED_SCOPES.length)
+    const entries = buildAuthorizedToolsArray(manifests, [])
+    const declared = entries.flatMap((e) => ('functionDeclarations' in e ? e.functionDeclarations : []))
+    expect(declared).toHaveLength(AUTHORIZED_SCOPES.length)
   })
 
   // Looped, not indexed: with a one-member list an indexed test cannot tell a

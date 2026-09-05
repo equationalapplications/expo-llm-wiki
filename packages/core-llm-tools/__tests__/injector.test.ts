@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildAuthorizedSchemaArray, buildAuthorizedToolsArray } from '../src/injector';
+import { buildAuthorizedToolsArray } from '../src/injector';
 import type { AgentToolManifest, AnyAgentToolManifest, BuiltInToolManifest } from '../src/types';
 
 const coreTool: AgentToolManifest = {
@@ -33,59 +33,6 @@ const googleSearchTool: BuiltInToolManifest = {
   kind: 'built_in',
   builtIn: 'google_search',
 };
-
-describe('buildAuthorizedSchemaArray', () => {
-  it('always includes core-scoped tools regardless of granted scopes', () => {
-    const result = buildAuthorizedSchemaArray([coreTool, calendarReadTool], []);
-    expect(result).toHaveLength(1);
-    expect(result[0]).toEqual(coreTool.schema);
-  });
-
-  it('includes non-core tool when its scope is granted', () => {
-    const result = buildAuthorizedSchemaArray(
-      [coreTool, calendarReadTool],
-      ['calendar:read']
-    );
-    expect(result).toHaveLength(2);
-    expect(result).toContainEqual(calendarReadTool.schema);
-  });
-
-  it('excludes non-core tool when its scope is not granted', () => {
-    const result = buildAuthorizedSchemaArray(
-      [coreTool, calendarReadTool, messagesSendTool],
-      ['calendar:read']
-    );
-    expect(result).toHaveLength(2);
-    expect(result).not.toContainEqual(messagesSendTool.schema);
-  });
-
-  it('returns raw schema objects, not manifest wrappers', () => {
-    const result = buildAuthorizedSchemaArray([coreTool], []);
-    expect(result[0]).not.toHaveProperty('scope');
-    expect(result[0]).toHaveProperty('name');
-    expect(result[0]).toHaveProperty('description');
-  });
-
-  it('returns empty array when manifests list is empty', () => {
-    const result = buildAuthorizedSchemaArray([], ['calendar:read']);
-    expect(result).toHaveLength(0);
-  });
-
-  it('includes multiple granted scopes', () => {
-    const result = buildAuthorizedSchemaArray(
-      [coreTool, calendarReadTool, messagesSendTool],
-      ['calendar:read', 'messages:send']
-    );
-    expect(result).toHaveLength(3);
-  });
-
-  it('ignores built-in manifests at runtime when callers bypass types', () => {
-    const mixedTools = [coreTool, googleSearchTool] as unknown as AgentToolManifest[];
-    const result = buildAuthorizedSchemaArray(mixedTools, []);
-    expect(result).toHaveLength(1);
-    expect(result[0]).toEqual(coreTool.schema);
-  });
-});
 
 describe('buildAuthorizedToolsArray', () => {
   const mixedTools: AnyAgentToolManifest[] = [coreTool, googleSearchTool];

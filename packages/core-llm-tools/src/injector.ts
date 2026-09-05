@@ -7,26 +7,6 @@ import type {
 } from './types';
 import { isAuthorizedScope } from './scopes';
 
-/**
- * @deprecated Use buildAuthorizedToolsArray instead — it returns the full Gemini
- * tools[] array, including built-in tools like google_search. This function only
- * ever returns function-declaration schemas; built-in manifests are ignored.
- */
-export function buildAuthorizedSchemaArray(
-  availableManifests: AgentToolManifest[],
-  userGrantedScopes: string[]
-): AgentToolSchema[] {
-  return availableManifests
-    .filter(
-      (manifest) =>
-        isAuthorizedScope(manifest.scope) || userGrantedScopes.includes(manifest.scope)
-    )
-    .filter(
-      (manifest): manifest is FunctionToolManifest => 'schema' in manifest
-    )
-    .map((manifest) => manifest.schema);
-}
-
 /** One entry of a Gemini `tools[]` array: a function-declarations group, or a built-in tool. */
 export type GeminiToolEntry =
   | { functionDeclarations: AgentToolSchema[] }

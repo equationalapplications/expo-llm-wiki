@@ -3,9 +3,9 @@ import type { AgentScope } from './types';
 /**
  * Scopes that are ALWAYS authorized, with no user grant required.
  *
- * Single source of truth: tool *injection* (buildAuthorizedToolsArray /
- * buildAuthorizedSchemaArray) and tool *execution* (scopelab's function-caller)
- * must agree on this list. Never write the 'core' literal in scope-check code.
+ * Single source of truth: tool *injection* (buildAuthorizedToolsArray) and tool
+ * *execution* (scopelab's function-caller) must agree on this list. Never write
+ * the 'core' literal in scope-check code.
  *
  * `satisfies readonly AgentScope[]` makes drift from the AgentScope union a
  * compile error.
