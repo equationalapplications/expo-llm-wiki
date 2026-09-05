@@ -2,6 +2,8 @@
 
 **Status:** Approved, not yet implemented (2026-09-04)
 
+**Status (2026-09-04):** §2, §4.1, §4.3, §4.4 implemented via `feat/marker-lifecycle` (2026-09-04), pending merge. §5, §6 pending in their own PRs.
+
 **Issues addressed:** #121 (markers survive provider/dimension change), #129
 (deferred #125/#126 self-review findings), #123 (executor off deprecated
 injector helper), #122 (scopelab suite needs built dist), #124 (index on
