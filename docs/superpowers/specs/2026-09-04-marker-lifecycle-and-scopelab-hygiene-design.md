@@ -408,8 +408,11 @@ attention that scopelab plumbing would dilute. PR-B and PR-C both touch
 `apps/scopelab` but disjoint files (`function-caller.ts` + `scope-sync.test.ts`
 vs. a new `vitest.config.ts`), so they can run as parallel worktrees. PR-B is
 the only one that changes a published package's API surface (removing the
-deprecated export from `core-llm-tools`), which is a semver-minor concern worth
-isolating.
+deprecated export from `core-llm-tools`), which is a **semver-major** concern
+worth isolating: `buildAuthorizedSchemaArray` was a public export, so removing
+it breaks any consumer still importing it. PR-B lands as a `!`-marked
+Conventional Commit (`refactor(core-llm-tools)!:`) so semantic-release cuts a
+major for the package rather than a minor.
 
 #129's five items are deliberately **not** their own PR: items 1, 3 and 4 are
 marker-lifecycle correctness that belongs beside #121's reset in one reviewer
