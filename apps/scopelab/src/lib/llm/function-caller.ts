@@ -1,4 +1,4 @@
-import { buildAuthorizedSchemaArray, isAuthorizedScope } from '@equationalapplications/core-llm-tools'
+import { buildAuthorizedToolsArray, isAuthorizedScope } from '@equationalapplications/core-llm-tools'
 import type { AgentToolManifest } from '@equationalapplications/core-llm-tools'
 import { executeTool } from './tool-executor'
 import { WikiService } from '../memory/wiki-service'
@@ -30,7 +30,7 @@ export async function chatWithMemory({
 }): Promise<{ response: string; toolCalls?: any[] }> {
   await wiki.remember(userMessage, { timestamp: Date.now() })
   const memoryContext = await wiki.getContext(userMessage)
-  const authorizedScopes = buildAuthorizedSchemaArray(tools, enabledScopes)
+  const authorizedTools = buildAuthorizedToolsArray(tools, enabledScopes)
   const GEMINI_URL =
     'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent'
   // Auth goes in a lower-case header (never the URL) so web/Expo fetch
@@ -49,7 +49,7 @@ export async function chatWithMemory({
       headers,
       body: JSON.stringify({
         contents: messages.map(m => ({ role: m.role === 'system' ? 'user' : m.role, parts: [{ text: m.content }] })),
-        tools: authorizedScopes.length ? [{ functionDeclarations: authorizedScopes }] : undefined,
+        tools: authorizedTools.length ? authorizedTools : undefined,
         tool_config: { function_calling_config: { mode: 'AUTO' } },
       }),
     },
@@ -73,7 +73,11 @@ export async function chatWithMemory({
     // Fail-closed: a tool is executable only if its scope is always-on
     // (AUTHORIZED_SCOPES, imported from core-llm-tools) or in the user's
     // enabledScopes. Tools with missing/unknown scopes are rejected.
-    const advertisedNames = new Set(authorizedScopes.map((s: any) => s.name ?? s.function?.name))
+    const advertisedNames = new Set(
+      authorizedTools.flatMap(entry =>
+        'functionDeclarations' in entry ? entry.functionDeclarations.map(d => d.name) : []
+      )
+    )
     const tool = tools.find(t => {
       if (t.name !== functionCall.name) return false
       if (!advertisedNames.has(t.name)) return false

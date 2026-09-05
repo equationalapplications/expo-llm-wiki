@@ -60,10 +60,10 @@ export const getCalendarEventsManifest: AgentToolManifest = {
 
 ### 2. Injecting Authorized Tools
 
-At runtime, use `buildAuthorizedSchemaArray` to filter your tool library against the user's granted permissions before passing them to the LLM.
+At runtime, use `buildAuthorizedToolsArray` to filter your tool library against the user's granted permissions. It returns the full Gemini `tools[]` array: at most one `functionDeclarations` group containing every authorized function tool's schema, plus one entry per authorized built-in tool (e.g. Google Search grounding).
 
 ```typescript
-import { buildAuthorizedSchemaArray, escalateToCloudManifest } from '@equationalapplications/core-llm-tools';
+import { buildAuthorizedToolsArray, escalateToCloudManifest } from '@equationalapplications/core-llm-tools';
 
 // 1. Gather all manifests known to your app
 const allAppTools = [escalateToCloudManifest, getCalendarEventsManifest];
@@ -71,14 +71,16 @@ const allAppTools = [escalateToCloudManifest, getCalendarEventsManifest];
 // 2. Fetch the user's authorized scopes from your DB (e.g., SQLite/Postgres)
 const userGrantedScopes = ['calendar:read'];
 
-// 3. The injector automatically includes 'core' tools and authorized scoped tools
-const schemasForLlm = buildAuthorizedSchemaArray(allAppTools, userGrantedScopes);
+// 3. The injector automatically includes 'core' tools and authorized scoped tools,
+//    collapsing all authorized function tools into a single functionDeclarations group
+const tools = buildAuthorizedToolsArray(allAppTools, userGrantedScopes);
+// => [{ functionDeclarations: [get_calendar_events, escalate_to_cloud] }]
 
 // 4. Pass safely to Gemini
 const response = await ai.models.generateContent({
   model: 'gemini-2.5-flash',
   contents: userInput,
-  tools: [{ functionDeclarations: schemasForLlm }],
+  tools,
 });
 ```
 
@@ -113,9 +115,6 @@ const response = await ai.models.generateContent({
 > **Note:** When the model uses `google_search`, Gemini returns a `groundingMetadata` object
 > (search queries, source citations, etc.) on the response. Parsing that metadata is the
 > caller's responsibility — this package only handles the request-side tool declaration.
-
-`buildAuthorizedSchemaArray` is still available for callers that only ever use function tools,
-but is deprecated in favor of `buildAuthorizedToolsArray`.
 
 ## Helpful Resources & Links
 

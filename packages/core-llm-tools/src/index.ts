@@ -7,10 +7,7 @@ export type {
   BuiltInToolManifest,
   BuiltInToolName,
 } from './types';
-export {
-  buildAuthorizedSchemaArray,
-  buildAuthorizedToolsArray,
-} from './injector';
+export { buildAuthorizedToolsArray } from './injector';
 export { AUTHORIZED_SCOPES, isAuthorizedScope } from './scopes';
 export type { AuthorizedScope } from './scopes';
 export type { GeminiToolEntry } from './injector';

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { AUTHORIZED_SCOPES, buildAuthorizedSchemaArray } from '@equationalapplications/core-llm-tools'
+import { AUTHORIZED_SCOPES, buildAuthorizedToolsArray } from '@equationalapplications/core-llm-tools'
 import { chatWithMemory } from '../function-caller'
 import type { AgentToolManifest } from '@equationalapplications/core-llm-tools'
 
@@ -33,7 +33,7 @@ function geminiText(text: string) {
   return geminiResponse({ candidates: candidates })
 }
 
-/** A manifest that buildAuthorizedSchemaArray will actually advertise (has `schema`). */
+/** A manifest that buildAuthorizedToolsArray will actually advertise (has `schema`). */
 function makeTool(over: Partial<{ name: string; scope: string; schemaName: string }> = {}) {
   const name = over.name ?? 'search_memory'
   return {
@@ -52,31 +52,36 @@ function makeTool(over: Partial<{ name: string; scope: string; schemaName: strin
 describe('injector/executor scope parity (issue #106)', () => {
   it('advertises exactly the always-on scopes when nothing is granted', () => {
     const manifests = AUTHORIZED_SCOPES.map((scope) => makeTool({ scope }))
-    const advertised = buildAuthorizedSchemaArray(manifests, [])
-    expect(advertised).toHaveLength(AUTHORIZED_SCOPES.length)
+    const entries = buildAuthorizedToolsArray(manifests, [])
+    const declared = entries.flatMap((e) => ('functionDeclarations' in e ? e.functionDeclarations : []))
+    expect(declared).toHaveLength(AUTHORIZED_SCOPES.length)
   })
 
-  it('executes an always-on tool with empty enabledScopes', async () => {
-    const scope = AUTHORIZED_SCOPES[0]
-    const fetchMock = vi.fn()
-    fetchMock
-      .mockResolvedValueOnce(geminiFunctionCall('search_memory', { query: 'q' }))
-      .mockResolvedValueOnce(geminiText('done'))
-    vi.stubGlobal('fetch', fetchMock)
-    try {
-      await chatWithMemory({
-        userMessage: 'hi',
-        tools: [makeTool({ scope })],
-        enabledScopes: [],
-        apiKey: 'k',
-        wiki: mockWiki('ctx'),
-      })
-      // initial + follow-up = 2 fetches → tool ran
-      expect(fetchMock).toHaveBeenCalledTimes(2)
-    } finally {
-      vi.unstubAllGlobals()
-    }
-  })
+  // Looped, not indexed: with a one-member list an indexed test cannot tell a
+  // re-hardcoded literal from the imported guard. Growth is covered for free.
+  for (const scope of AUTHORIZED_SCOPES) {
+    it(`executes an always-on tool with empty enabledScopes (scope: ${scope})`, async () => {
+      const fetchMock = vi.fn()
+      fetchMock
+        .mockResolvedValueOnce(geminiFunctionCall('search_memory', { query: 'q' }))
+        .mockResolvedValueOnce(geminiText('done'))
+      vi.stubGlobal('fetch', fetchMock)
+      try {
+        await chatWithMemory({
+          userMessage: 'hi',
+          tools: [makeTool({ scope })],
+          enabledScopes: [],
+          apiKey: 'k',
+          wiki: mockWiki('ctx'),
+          history: [],
+        })
+        // initial + follow-up = 2 fetches → tool ran
+        expect(fetchMock).toHaveBeenCalledTimes(2)
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    })
+  }
 
   it('rejects a tool whose scope is neither always-on nor enabled', async () => {
     const fetchMock = vi.fn()

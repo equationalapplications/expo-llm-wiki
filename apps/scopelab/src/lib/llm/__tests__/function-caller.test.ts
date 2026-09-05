@@ -35,7 +35,7 @@ function geminiText(text: string) {
   return geminiResponse({ candidates: candidates })
 }
 
-/** A manifest that buildAuthorizedSchemaArray will actually advertise (has `schema`). */
+/** A manifest that buildAuthorizedToolsArray will actually advertise (has `schema`). */
 function makeTool(over: Partial<{ name: string; scope: string; schemaName: string }> = {}) {
   const name = over.name ?? 'search_memory'
   return {
@@ -232,7 +232,7 @@ describe('chatWithMemory — fail-closed scope authorization (M-2)', () => {
 
   it('rejects a tool whose name is not in the advertised schemas', async () => {
     fetchMock.mockResolvedValueOnce(geminiFunctionCall('search_memory', { query: 'q' }))
-    // Tool with scope `core` (so buildAuthorizedSchemaArray advertises it)
+    // Tool with scope `core` (so buildAuthorizedToolsArray advertises it)
     // but the schema name diverges from the manifest name. The manifest
     // name IS advertised, so the manifest-name check passes and the
     // advertised-schema check must be what rejects the invocation.

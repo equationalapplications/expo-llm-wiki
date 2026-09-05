@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { AUTHORIZED_SCOPES, isAuthorizedScope } from '../src/scopes';
-import { buildAuthorizedSchemaArray, buildAuthorizedToolsArray } from '../src/injector';
+import { buildAuthorizedToolsArray } from '../src/injector';
 import type { AgentToolManifest } from '../src/types';
 
 describe('AUTHORIZED_SCOPES', () => {
@@ -32,13 +32,35 @@ describe('injector honors AUTHORIZED_SCOPES without a grant', () => {
 
   it('advertises every always-on scope when userGrantedScopes is empty', () => {
     const manifests = AUTHORIZED_SCOPES.map((s) => manifestFor(s));
-    expect(buildAuthorizedSchemaArray(manifests, [])).toHaveLength(AUTHORIZED_SCOPES.length);
-    expect(buildAuthorizedToolsArray(manifests, [])).toHaveLength(AUTHORIZED_SCOPES.length);
+    const entries = buildAuthorizedToolsArray(manifests, []);
+    const declared = entries.flatMap((e) => ('functionDeclarations' in e ? e.functionDeclarations : []));
+    expect(declared).toHaveLength(AUTHORIZED_SCOPES.length);
   });
 
   it('excludes an ungranted scope that is not always-on', () => {
     const manifests = [manifestFor('memory:write')];
-    expect(buildAuthorizedSchemaArray(manifests, [])).toHaveLength(0);
+    const entries = buildAuthorizedToolsArray(manifests, []);
+    const declared = entries.flatMap((e) => ('functionDeclarations' in e ? e.functionDeclarations : []));
+    expect(declared).toHaveLength(0);
     expect(buildAuthorizedToolsArray(manifests, [])).toHaveLength(0);
+  });
+});
+
+describe('AUTHORIZED_SCOPES runtime immutability', () => {
+  it('is frozen, so a consumer cannot widen always-on authorization', () => {
+    expect(Object.isFrozen(AUTHORIZED_SCOPES)).toBe(true);
+  });
+
+  it('does not widen when a consumer attempts to push', () => {
+    const before = [...AUTHORIZED_SCOPES];
+    // A non-strict-mode JS consumer gets a silent no-op; strict mode throws.
+    // Either way the array must not grow, and the guard must not widen.
+    try {
+      (AUTHORIZED_SCOPES as unknown as string[]).push('attacker:scope');
+    } catch {
+      // TypeError in strict mode is the acceptable outcome.
+    }
+    expect([...AUTHORIZED_SCOPES]).toEqual(before);
+    expect(isAuthorizedScope('attacker:scope')).toBe(false);
   });
 });
