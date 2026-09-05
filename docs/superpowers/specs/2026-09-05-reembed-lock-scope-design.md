@@ -2,6 +2,13 @@
 
 **Status:** Approved, not yet implemented (2026-09-05)
 
+**Status (2026-09-05, self-review):** Corrected before implementation. §1.2
+gained the per-entity-sweep confinement finding; §3.2's deferral-safety
+argument was wrong as first written (the mismatch key is *not* set on every
+path) and now argues both reachable states; §3.2 records why the gate has no
+TOCTOU; §5 test 2 dropped an unreachable global-reembed variant. No decision
+changed — §2's rule and §3's changes stand as approved.
+
 **Issue addressed:** #134 (marker clear during dimension promotion is not
 transactional with a concurrent sweep)
 
@@ -69,6 +76,14 @@ Verification against the code (2026-09-05) materially narrows the issue:
   promotion then erases A's rows — including classifications the in-flight
   sweep just made. **Both issue gaps collapse into this one granularity
   mismatch.**
+- **The defect is confined to per-entity sweeps.** `_isReembedActive` returns
+  true for the *global* reembed key regardless of entity
+  (`JobManager.ts:115-118`), so `acquireImportLocks` already throws
+  `WikiBusyError` for any import attempted during a `runReembed()` with no
+  entityId. Only `runReembed(entityId)` — which holds solely `reembed:<A>` —
+  leaves the window open, and only for an import of some entity B ≠ A. This
+  boundary matters for testing: an importDump-level test of the global
+  variant cannot reach the promotion call site at all (§5).
 - **Latent hole (not in the issue):** `tryAcquireAutoHealLock`
   (`JobManager.ts:359-365`) checks only the heal self-key, so an auto-heal
   pass can run during a sweep. It is benign today only because heal upserts
@@ -125,7 +140,9 @@ any `<prefix>:<entity>:reembed` key is held. Implementation is a thin public
 wrapper over the existing `_isAnyMaintenanceActiveWithSuffix(':reembed')`
 (`JobManager.ts:129-135`) plus the global-key check — the same predicate
 `global_reembed` acquisition already uses (`JobManager.ts:210`). No new lock
-types, no lock widening, no side effects.
+types, no lock widening, no side effects. `JobManager` is not re-exported
+from `packages/core/src/index.ts`, so the new method adds no public API
+surface and `publicExports.test.ts` needs no update.
 
 ### 3.2 Gate the `importDump` promotion call site
 
@@ -133,9 +150,26 @@ types, no lock widening, no side effects.
 `this.embeddingService.reconcileEmbeddingDimension()`, check
 `this.jobManager.isAnyReembedActive()`. If true, skip the call and log at
 info level: `[WikiMemory] importDump: embedding-dimension promotion
-deferred; a reembed sweep is in flight`. The
-mismatch key is already set at that point in every path that reaches the
-call, so the deferred promotion is guaranteed to fire later.
+deferred; a reembed sweep is in flight`.
+
+Deferring is safe in both of the states reachable at that line, for two
+different reasons. Where `embedding_dimension_mismatch` is set, the key is
+sticky and the promotion fires at the next sweep tail or import. Where it is
+*not* set — the `canonicalDim === null` fresh-DB branch, in which
+`storeEmbeddingDimension` writes the canonical dimension and the
+`staleMismatchValue` guard writes nothing — `reconcileEmbeddingDimension`
+returns immediately at its own `if (!mismatchValue) return;`
+(`EmbeddingService.ts:61-62`). Skipping it there defers a no-op. Nothing is
+lost in either case.
+
+**The gate is free of a TOCTOU of its own, non-obviously.** Line 524 executes
+inside `doImportEntity`, within the `try` block that holds the global import
+key (`ImportExportService.ts:65-72`), and `acquireLock` rejects every
+operation except `global_import` while that key is held
+(`JobManager.ts:168-170`). No sweep can therefore start between the
+`isAnyReembedActive()` check and the promotion transaction. Do not add
+re-checking or locking here on suspicion of a race; there is none while that
+invariant holds.
 
 The gate lives at the call site, not inside `reconcileEmbeddingDimension`:
 the sweep's own tail call would see its *own* lock and defer forever unless a
@@ -183,11 +217,17 @@ Unit tests (vitest, `packages/core`):
 1. `isAnyReembedActive()` — false when idle; true for per-entity reembed
    key; true for global reembed key; false again after release; true when
    only a non-reembed maintenance key (e.g. prune) is held.
-2. importDump promotion deferral — with a reembed lock held (per-entity and
-   global variants), importDump's reconciliation leaves
-   `embedding_dimension_mismatch` set and leaves pre-existing failure
+2. importDump promotion deferral — hold a **per-entity** reembed lock for
+   entity A, then importDump entity B: the reconciliation leaves
+   `embedding_dimension_mismatch` set and leaves A's pre-existing failure
    markers intact; after the lock is released and a sweep tail runs, the
    promotion completes and markers clear.
+
+   Do **not** write the global-reembed variant of this test at the importDump
+   level: `acquireImportLocks` throws `WikiBusyError` before the promotion
+   call site is reached (§1.2), so such a test would assert on an unreachable
+   path. Cover the global key through test 1 instead, which exercises
+   `isAnyReembedActive()` directly.
 3. Sweep tail promotion unaffected — `runReembed` holding its own lock still
    promotes in the same call (guards against the §3.2 gate ever migrating
    into `reconcileEmbeddingDimension` and self-deadlocking).
@@ -204,7 +244,7 @@ Unit tests (vitest, `packages/core`):
 - Same-dimension provider swap leaving markers stranded — documented
   residual of spec §2, still escaped via `runReembed({ force: true })`.
 - Any change to `storeEmbeddingDimension`'s mismatch bookkeeping
-  (`EmbeddingService.ts:27-50`); the metadata writes it performs during a
+  (`EmbeddingService.ts:27-42`); the metadata writes it performs during a
   sweep are per-dimension values, not marker mutations, and are outside the
   §2 rule.
 
