@@ -1,6 +1,6 @@
 {
   "name": "@equationalapplications/schema-software-org",
-  "version": "6.4.0",
+  "version": "6.5.0",
   "description": "Custom minimal ontology manifest for an executive agent operating on behalf of a software organization: 17 node types, 40 edges, warm-agent superset. Data-only.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
