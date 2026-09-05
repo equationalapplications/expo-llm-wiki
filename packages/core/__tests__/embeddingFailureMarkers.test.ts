@@ -193,6 +193,7 @@ describe('EntryRepository embedding failure markers', () => {
 
     const row = await getMarkerRow(db, 'f1');
     expect(row?.embedding_failed_at).toBeNull();
+    expect(row?.embedding_failure_kind).toBeNull();
     expect(row?.embedding_attempts).toBe(0);
   });
 });
