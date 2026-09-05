@@ -10,7 +10,10 @@ import type { AgentScope } from './types';
  * `satisfies readonly AgentScope[]` makes drift from the AgentScope union a
  * compile error.
  */
-export const AUTHORIZED_SCOPES = ['core'] as const satisfies readonly AgentScope[];
+// Object.freeze, not just `as const`: the latter is compile-time only, so a JS
+// consumer (or TS via `any`) could push() at runtime and silently widen
+// always-on authorization for every downstream check in the process.
+export const AUTHORIZED_SCOPES = Object.freeze(['core'] as const) satisfies readonly AgentScope[];
 
 export type AuthorizedScope = (typeof AUTHORIZED_SCOPES)[number];
 

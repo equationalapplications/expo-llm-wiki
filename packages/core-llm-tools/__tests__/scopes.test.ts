@@ -46,3 +46,22 @@ describe('injector honors AUTHORIZED_SCOPES without a grant', () => {
     expect(buildAuthorizedToolsArray(manifests, [])).toHaveLength(0);
   });
 });
+
+describe('AUTHORIZED_SCOPES runtime immutability', () => {
+  it('is frozen, so a consumer cannot widen always-on authorization', () => {
+    expect(Object.isFrozen(AUTHORIZED_SCOPES)).toBe(true);
+  });
+
+  it('does not widen when a consumer attempts to push', () => {
+    const before = [...AUTHORIZED_SCOPES];
+    // A non-strict-mode JS consumer gets a silent no-op; strict mode throws.
+    // Either way the array must not grow, and the guard must not widen.
+    try {
+      (AUTHORIZED_SCOPES as unknown as string[]).push('attacker:scope');
+    } catch {
+      // TypeError in strict mode is the acceptable outcome.
+    }
+    expect([...AUTHORIZED_SCOPES]).toEqual(before);
+    expect(isAuthorizedScope('attacker:scope')).toBe(false);
+  });
+});
