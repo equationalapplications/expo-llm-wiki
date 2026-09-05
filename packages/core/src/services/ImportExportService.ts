@@ -521,7 +521,19 @@ export class ImportExportService {
               this.db,
             );
           }
-          await this.embeddingService.reconcileEmbeddingDimension();
+          // Dimension promotion clears embedding failure markers for EVERY
+          // entity, but this import holds only entity-scoped locks — so it can
+          // erase classifications a concurrent runReembed(otherEntity) just
+          // made. Defer instead of widening the lock: the mismatch key is
+          // sticky, so the next sweep tail or import completes the promotion.
+          // Spec 2026-09-05-reembed-lock-scope-design.md §3.2.
+          if (this.jobManager.isAnyReembedActive()) {
+            console.info(
+              '[WikiMemory] importDump: embedding-dimension promotion deferred; a reembed sweep is in flight',
+            );
+          } else {
+            await this.embeddingService.reconcileEmbeddingDimension();
+          }
         } else {
           await this.metadataRepo.setMeta(
             'embedding_dimension_mismatch',
