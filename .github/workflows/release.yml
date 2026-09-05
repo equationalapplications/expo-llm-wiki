@@ -26,7 +26,7 @@ permissions:
 
 jobs:
   # Determines whether this run is Phase 1 (an ordinary push to main that may
-  # contain releasable commits) or Phase 2 (a release PR's squash-merge commit
+  # contain releasable commits) or Phase 2 (a release PR's merge commit
   # landing on main, or a manual workflow_dispatch republish).
   detect:
     name: Detect release phase
@@ -71,9 +71,10 @@ jobs:
           fi
 
   # Phase 1: compute the next version with semantic-release, open (or reuse) a
-  # release PR carrying the version-bump commit, and request squash auto-merge.
-  # This lets the Test workflow validate the release commit via a normal PR
-  # before anything is tagged-and-published, closing the branch-protection gap.
+  # release PR carrying the version-bump commit, and request auto-merge as a
+  # merge commit. This lets the Test workflow validate the release commit via
+  # a normal PR before anything is tagged-and-published, closing the
+  # branch-protection gap.
   phase1:
     name: Phase 1 - Prepare release PR
     needs: detect
@@ -129,8 +130,10 @@ jobs:
           # 'vX.Y.Z' already exists` if a same-named tag is already present,
           # so any such orphan must be deleted before semantic-release runs
           # (this bit us with v5.2.1 on 2026-08-08, see PR #82 / #84).
-          # Real historical release tags remain untouched: they were reached
-          # via a squash-merge onto main, so they ARE ancestors of HEAD.
+          # Real historical release tags remain untouched: they point at
+          # main-line commits (merge commits since #137, pre-#137 squash
+          # commits relocated onto main by Phase 2), so they ARE ancestors
+          # of HEAD.
           for tag in $(git tag); do
             if ! git merge-base --is-ancestor "$tag" HEAD 2>/dev/null; then
               echo "Deleting orphaned local tag: $tag"
@@ -145,34 +148,61 @@ jobs:
           RELEASE_BOT_PAT: ${{ secrets.RELEASE_BOT_PAT }}
         run: |
           # A second orphan-tag class is not reachable by the local prune
-          # above: a tag that points AT HEAD (or at a commit reachable from
-          # HEAD) but at a non-chore(release) commit. semantic-release's
-          # findLastRelease sees the tag, computes "0 commits since last
-          # release", and Phase 1 silently exits with has_changes=false —
-          # the exact failure mode that produced the v5.3.0 ghost tag at
-          # the PR #84 merge commit (fa9e9bb) on 2026-08-14. The tag was
-          # reachable from HEAD so the local prune above did nothing.
+          # above: a tag that points AT HEAD but at a non-chore(release)
+          # commit. semantic-release's findLastRelease sees the tag, computes
+          # "0 commits since last release", and Phase 1 silently exits with
+          # has_changes=false — the exact failure mode that produced the
+          # v5.3.0 ghost tag at the PR #84 merge commit (fa9e9bb) on
+          # 2026-08-14. The tag was reachable from HEAD so the local prune
+          # above did nothing.
           #
-          # Detection: the latest tag must agree with main's package.json
-          # version. If they disagree, the tag is from a feature merge (or
-          # any non-chore commit) and must be removed so semantic-release
-          # can compute the next release cleanly.
+          # Scope this to tags pointing EXACTLY at HEAD. `git describe
+          # --abbrev=0` returns the nearest reachable ANCESTOR tag, which on
+          # an ordinary feature push to main is a legitimate older release
+          # whose version differs from main's package.json BY CONSTRUCTION —
+          # main carries the last released version, and the nearest ancestor
+          # tag is often an earlier release than that. The old ancestor-based
+          # check therefore fired on nearly every feature merge and deleted a
+          # real release tag from origin each time.
+          #
+          # That is not hypothetical: on 2026-09-05 the merges of #131, #132
+          # and #133 destroyed v6.2.0 and v6.3.0 on origin and left v6.1.0
+          # force-moved onto main HEAD. semantic-release's baseline walked
+          # back to v6.0.1, it recomputed 6.1.0 (already released as PR #112),
+          # Phase 1 exited "already merged; nothing to do", Phase 2 never ran,
+          # and nothing was published for three merged PRs.
+          #
+          # Only a tag AT HEAD can cause the "0 commits since last release"
+          # stall this step exists to prevent, so only those are candidates.
+          # A legitimate post-release HEAD (the relocated release commit) has
+          # tag version == package.json version and is left alone.
           #
           # Use RELEASE_BOT_PAT to delete the remote tag — pushing via
           # GITHUB_TOKEN is suppressed by GitHub's anti-recursion guard
           # for GITHUB_TOKEN-triggered synchronize events, and a ref delete
           # still counts as a synchronize event for that guard.
-          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
-          if [ -n "$LATEST_TAG" ] && git merge-base --is-ancestor "$LATEST_TAG" HEAD 2>/dev/null; then
-            TAG_VERSION=${LATEST_TAG#v}
-            HEAD_VERSION=$(node -p "require('./package.json').version")
+          HEAD_VERSION=$(node -p "require('./package.json').version")
+          for TAG_AT_HEAD in $(git tag --points-at HEAD); do
+            # Only release-format tags (vN...) are candidates. --points-at
+            # returns every tag namespace, and any other tag sitting at
+            # HEAD (e.g. a deploy-2026-09-05 marker) would otherwise be
+            # swept into the ghost-tag deletion below despite being none
+            # of semantic-release's business.
+            case "$TAG_AT_HEAD" in
+              v[0-9]*) ;;
+              *)
+                echo "Ignoring non-release tag at HEAD: $TAG_AT_HEAD"
+                continue
+                ;;
+            esac
+            TAG_VERSION=${TAG_AT_HEAD#v}
             if [ "$TAG_VERSION" != "$HEAD_VERSION" ]; then
-              echo "::warning::Latest tag $LATEST_TAG points at a commit whose package.json does not match main ($HEAD_VERSION). Treating as orphan and deleting (local + remote) so semantic-release can recompute."
-              git tag -d "$LATEST_TAG" || true
-              git push "https://x-access-token:${RELEASE_BOT_PAT}@github.com/${REPO}.git" ":refs/tags/${LATEST_TAG}" 2>&1 \
-                || echo "::warning::Could not delete remote tag $LATEST_TAG — clean it up manually before re-running."
+              echo "::warning::Tag $TAG_AT_HEAD points at HEAD but main's package.json is $HEAD_VERSION. Treating as a ghost tag and deleting (local + remote) so semantic-release can recompute."
+              git tag -d "$TAG_AT_HEAD" || true
+              git push "https://x-access-token:${RELEASE_BOT_PAT}@github.com/${REPO}.git" ":refs/tags/${TAG_AT_HEAD}" 2>&1 \
+                || echo "::warning::Could not delete remote tag $TAG_AT_HEAD — clean it up manually before re-running."
             fi
-          fi
+          done
 
       - name: Run semantic-release (--no-ci, dry local mutation only)
         env:
@@ -245,7 +275,57 @@ jobs:
           MERGED_PR=$(echo "$EXISTING" | node -e "const a=JSON.parse(require('fs').readFileSync(0,'utf8'));const p=a.find(x=>x.state==='MERGED');console.log(p?p.url:'')")
 
           if [ -n "$MERGED_PR" ]; then
+            # semantic-release recomputed a version whose release PR is already
+            # merged. Immediately after that PR lands this is benign — Phase 2
+            # owns publication and this Phase 1 run has nothing to add.
+            #
+            # But it is ALSO the signature of a corrupted tag baseline: if
+            # release tags are missing from origin or point at commits that are
+            # not reachable from main, semantic-release walks back to an older
+            # tag and recomputes a version that shipped long ago. That is what
+            # silently swallowed the #131/#132/#133 releases on 2026-09-05.
+            #
+            # Distinguish the two: benign means the merged release PR's commit
+            # is at (or very near) HEAD. If main has moved on past it, the
+            # baseline is stale and a human needs to look.
+            MERGED_SHA=$(gh pr view "$MERGED_PR" --json mergeCommitSha --jq .mergeCommitSha 2>/dev/null || true)
             echo "Release PR for ${BRANCH} is already merged: ${MERGED_PR}"
+            if [ -n "$MERGED_SHA" ] && [ "$MERGED_SHA" != "$(git rev-parse HEAD)" ] \
+               && git merge-base --is-ancestor "$MERGED_SHA" HEAD 2>/dev/null; then
+              # Diagnose the SPECIFIC tag damage before failing, so the log
+              # names which tag is wrong and how — not just the class of
+              # problem. The local tag state is NOT a mirror of origin here:
+              # the "Prune orphaned local tags" step earlier in this job
+              # deletes locally-unreachable tags (a v6.4.0 pointing at an
+              # orphaned release-branch commit is pruned locally while still
+              # living on origin). So when the local lookup misses, ask
+              # origin before calling the tag missing.
+              if EXPECTED_SHA=$(git rev-parse -q --verify "v${RELEASE_VERSION}^{commit}"); then
+                if git merge-base --is-ancestor "$EXPECTED_SHA" HEAD 2>/dev/null; then
+                  EXPECTED_STATE="tag v${RELEASE_VERSION} exists and is reachable (points at ${EXPECTED_SHA}) - state looks healthy; inspect manually"
+                else
+                  EXPECTED_STATE="tag v${RELEASE_VERSION} points at ${EXPECTED_SHA}, which is NOT reachable from main (orphaned on a release-branch commit)"
+                fi
+              else
+                # grep -v '\^{}' skips the peeled-annotated-tag rows ls-remote
+                # emits; the remaining row's SHA is the ref the tag points at
+                # (the tag object for annotated tags - still enough to locate
+                # the damage).
+                ORIGIN_SHA=$(git ls-remote --tags origin "refs/tags/v${RELEASE_VERSION}" | grep -v '\^{}' | awk '{print $1}')
+                if [ -n "$ORIGIN_SHA" ]; then
+                  EXPECTED_STATE="tag v${RELEASE_VERSION} exists on origin (ref target ${ORIGIN_SHA}) but is unreachable from main - it was pruned from this local clone by the earlier orphan-tag prune; it is an orphaned release-branch tag that must be relocated or deleted on origin"
+                else
+                  EXPECTED_STATE="tag v${RELEASE_VERSION} is MISSING from both this clone and origin - deleted or never pushed"
+                fi
+              fi
+              BASELINE_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
+              echo "Tag baseline diagnostics:"
+              echo "  - ${EXPECTED_STATE}"
+              echo "  - semantic-release baseline (nearest reachable tag from HEAD): ${BASELINE_TAG:-<none found>}"
+              echo "  - merged release PR commit: ${MERGED_SHA} (behind main HEAD $(git rev-parse HEAD))"
+              echo "::error::semantic-release recomputed ${RELEASE_VERSION}, but that version's release PR (${MERGED_PR}) merged at ${MERGED_SHA}, which is behind main. The release tag baseline is corrupted - ${EXPECTED_STATE}; semantic-release computed from a stale baseline. Nothing will publish until the tags are repaired (see the diagnostics above and PR #136's 'Not in this PR' section). Verify against origin: git ls-remote --tags origin"
+              exit 1
+            fi
             echo "Phase 2 owns publication for this version; nothing to do here."
             exit 0
           fi
@@ -295,7 +375,11 @@ jobs:
           if [ -n "$OPEN_PR" ]; then
             echo "Release PR already open for ${BRANCH}: ${OPEN_PR}"
             echo "Idempotent rerun - nothing to commit/push, just ensure auto-merge is requested."
-            gh pr merge --auto --squash "$OPEN_PR" \
+            # --merge (not --squash): a merge commit makes the tagged
+            # release-branch commit an ancestor of main directly, so the
+            # Phase 2 tag relocation is a safety net instead of the only
+            # thing keeping release tags reachable (issue #137).
+            gh pr merge --auto --merge "$OPEN_PR" \
               || echo "::warning::Could not enable auto-merge on ${OPEN_PR}; merge it manually."
             exit 0
           fi
@@ -303,15 +387,17 @@ jobs:
           if [ -n "$CLOSED_PR" ]; then
             echo "Reopening previously closed release PR: ${CLOSED_PR}"
             gh pr reopen "$CLOSED_PR"
-            gh pr merge --auto --squash "$CLOSED_PR" \
+            gh pr merge --auto --merge "$CLOSED_PR" \
               || echo "::warning::Could not enable auto-merge on ${CLOSED_PR}; merge it manually."
             exit 0
           fi
 
           # No PR exists yet: create the release branch from current main HEAD,
           # commit the semantic-release mutations, tag it, and push branch+tag
-          # together so a subsequent Phase 2 run can find the tag it needs to
-          # relocate onto the eventual squash-merge commit.
+          # together so a subsequent Phase 2 run can find the tag. Merging the
+          # PR with a merge commit (below) makes the tagged commit an ancestor
+          # of main directly; Phase 2's relocation then just normalizes the
+          # tag onto the main-line merge commit.
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
@@ -323,7 +409,7 @@ jobs:
           # (branches: [main]), so the branch push itself triggers no
           # workflow. Adding [skip ci] would propagate to the PR's HEAD
           # commit and prevent the pull_request-triggered Test workflow
-          # from running - the very check we need to gate the squash-merge.
+          # from running - the very check we need to gate the merge.
           git commit -m "chore(release): ${RELEASE_VERSION}"
           # Annotated tag so `git push` actually transmits the ref. A
           # lightweight tag is a ref without an object, and `git push --follow-tags`
@@ -358,13 +444,13 @@ jobs:
 
           PR_URL=$(gh pr create --base main --head "$BRANCH" \
             --title "chore(release): ${RELEASE_VERSION}" \
-            --body "Automated release PR. Merging this via squash will trigger Phase 2 (publish + GitHub Release).")
+            --body "Automated release PR. Merging this via a merge commit will trigger Phase 2 (publish + GitHub Release).")
 
-          gh pr merge --auto --squash "$PR_URL"
+          gh pr merge --auto --merge "$PR_URL"
 
-  # Phase 2: the release PR's squash-merge commit has landed on main (or this
-  # is a manual workflow_dispatch republish). Relocate the release tag onto the
-  # new commit, publish all packages, and create the GitHub Release.
+  # Phase 2: the release PR's merge commit has landed on main (or this
+  # is a manual workflow_dispatch republish). Normalize the release tag onto
+  # the main-line commit, publish all packages, and create the GitHub Release.
   phase2:
     name: Phase 2 - Publish release
     needs: detect
@@ -387,7 +473,7 @@ jobs:
           # Do NOT set persist-credentials: false here - this job needs to
           # force-push the relocated release tag using the workflow's own
           # GITHUB_TOKEN.
-          # On a push event (release PR squash-merge landing on main),
+          # On a push event (release PR merge landing on main),
           # checkout the exact commit SHA that triggered the workflow —
           # `github.ref` resolves to refs/heads/main and would advance to
           # any commit that landed between the merge and this job starting,
@@ -439,10 +525,14 @@ jobs:
               exit 1
             fi
 
-            # A squash merge always produces a brand-new commit SHA on main,
-            # even though the tree content matches what Phase 1 tagged on the
-            # release branch. Move the tag so it points at the commit that is
-            # actually reachable from main.
+            # Since #137 the release PR merges with a merge commit, so the
+            # commit Phase 1 tagged (the release-branch head) is already an
+            # ancestor of main and semantic-release can see the tag without
+            # this step. Keep the relocation as a normalization safety net:
+            # it points the tag at the main-line merge commit (consistent
+            # with every historical release tag) and still heals the
+            # pre-#137 squash layout where the tag sat on an orphaned
+            # release-branch commit.
             git tag -f "v${RELEASE_VERSION}" HEAD
             # Force-push only the tag ref - never force-push branches.
             git push origin "v${RELEASE_VERSION}" --force
