@@ -56,27 +56,31 @@ describe('injector/executor scope parity (issue #106)', () => {
     expect(advertised).toHaveLength(AUTHORIZED_SCOPES.length)
   })
 
-  it('executes an always-on tool with empty enabledScopes', async () => {
-    const scope = AUTHORIZED_SCOPES[0]
-    const fetchMock = vi.fn()
-    fetchMock
-      .mockResolvedValueOnce(geminiFunctionCall('search_memory', { query: 'q' }))
-      .mockResolvedValueOnce(geminiText('done'))
-    vi.stubGlobal('fetch', fetchMock)
-    try {
-      await chatWithMemory({
-        userMessage: 'hi',
-        tools: [makeTool({ scope })],
-        enabledScopes: [],
-        apiKey: 'k',
-        wiki: mockWiki('ctx'),
-      })
-      // initial + follow-up = 2 fetches → tool ran
-      expect(fetchMock).toHaveBeenCalledTimes(2)
-    } finally {
-      vi.unstubAllGlobals()
-    }
-  })
+  // Looped, not indexed: with a one-member list an indexed test cannot tell a
+  // re-hardcoded literal from the imported guard. Growth is covered for free.
+  for (const scope of AUTHORIZED_SCOPES) {
+    it(`executes an always-on tool with empty enabledScopes (scope: ${scope})`, async () => {
+      const fetchMock = vi.fn()
+      fetchMock
+        .mockResolvedValueOnce(geminiFunctionCall('search_memory', { query: 'q' }))
+        .mockResolvedValueOnce(geminiText('done'))
+      vi.stubGlobal('fetch', fetchMock)
+      try {
+        await chatWithMemory({
+          userMessage: 'hi',
+          tools: [makeTool({ scope })],
+          enabledScopes: [],
+          apiKey: 'k',
+          wiki: mockWiki('ctx'),
+          history: [],
+        })
+        // initial + follow-up = 2 fetches → tool ran
+        expect(fetchMock).toHaveBeenCalledTimes(2)
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    })
+  }
 
   it('rejects a tool whose scope is neither always-on nor enabled', async () => {
     const fetchMock = vi.fn()
