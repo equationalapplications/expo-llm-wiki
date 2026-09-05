@@ -56,6 +56,19 @@ export class EmbeddingService {
    * Revived rows are NOT embedded here. They become eligible and are picked up
    * by the NEXT sweep, because runReembed calls this after its candidates were
    * already classified; same-sweep revival would be re-entrant.
+   *
+   * Caller contract (spec 2026-09-05 §3.2): callers must not invoke this while
+   * a reembed sweep is in flight unless they hold that sweep's lock, because
+   * the marker clear spans every entity. `runReembed`'s tail call is exempt —
+   * by the tail, the sweep's classification phase is complete, so the clear
+   * cannot resurrect a row THIS sweep classified; any overlap with a
+   * concurrent import's entity-scoped, blob-guarded writes (an importDump of a
+   * different entity can run during a per-entity sweep) is bounded redundant
+   * work. External callers
+   * gate on `JobManager.isAnyReembedActive()` and defer. This service
+   * deliberately holds no `JobManager` reference: gating here instead of at
+   * the call site would make `runReembed`'s own tail call see its own lock and
+   * defer forever.
    */
   async reconcileEmbeddingDimension(): Promise<void> {
     const mismatchValue = await this.metadataRepo.getMeta('embedding_dimension_mismatch');

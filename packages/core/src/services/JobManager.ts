@@ -117,6 +117,24 @@ export class JobManager {
            this.activeMaintenanceJobs.has(this._globalReembedKey());
   }
 
+  /**
+   * True while any reembed sweep is in flight — per-entity or global.
+   *
+   * Read-only; acquires nothing. Callers that mutate embedding failure
+   * markers across ALL entities (the dimension-promotion clear) must gate on
+   * this and defer, rather than resurrect rows an in-flight sweep already
+   * classified. See spec 2026-09-05-reembed-lock-scope-design.md §2.
+   *
+   * The global key `${prefix}:reembed` also ends in ':reembed', so the suffix
+   * scan alone would already match it. The explicit check is kept because it
+   * documents the intent and survives any future change to the global key's
+   * format.
+   */
+  isAnyReembedActive(): boolean {
+    return this.activeMaintenanceJobs.has(this._globalReembedKey()) ||
+           this._isAnyMaintenanceActiveWithSuffix(':reembed');
+  }
+
   private _isImportActiveFor(entityId: string): boolean {
     return this.activeMaintenanceJobs.has(this._importKey(entityId)) ||
            this.activeMaintenanceJobs.has(this._globalImportKey());
@@ -353,10 +371,23 @@ export class JobManager {
   }
 
   /**
-   * Auto-heal historically only gated on the heal self-key. Keep that behavior
-   * for write() auto-trigger paths while preserving stricter checks in acquireLock().
+   * Auto-heal historically only gated on the heal self-key. Keep that
+   * permissiveness for write() auto-trigger paths — stricter checks stay in
+   * acquireLock() — with one exception: reembed sweeps, which are excluded
+   * structurally rather than by accident (see below).
    */
   tryAcquireAutoHealLock(entityId: string): boolean {
+    // Heal must not run during a sweep. It is safe today only because heal
+    // upserts blob-less facts and the marker clear is guarded by
+    // `CASE WHEN excluded.embedding_blob IS NOT NULL` — an accident of the
+    // current SQL, not a stated rule. Make the exclusion structural so a
+    // future heal that carries blobs cannot silently resurrect rows an
+    // in-flight sweep classified. Spec 2026-09-05 §3.3.
+    //
+    // A refused pass is not lost work: WriteService.maybeRunHeal holds its
+    // checkpoint back, so the next write retries.
+    if (this.isAnyReembedActive()) return false;
+
     const healKey = this._healKey(entityId);
     if (this.activeMaintenanceJobs.has(healKey)) return false;
     this.activeMaintenanceJobs.add(healKey);

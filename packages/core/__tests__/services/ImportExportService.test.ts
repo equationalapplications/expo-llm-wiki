@@ -65,6 +65,7 @@ describe('ImportExportService', () => {
     mockJobManager = {
       acquireImportLocks: vi.fn(),
       releaseImportLocks: vi.fn(),
+      isAnyReembedActive: vi.fn().mockReturnValue(false),
     };
 
     mockEmbeddingService = {

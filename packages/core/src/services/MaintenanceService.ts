@@ -350,6 +350,15 @@ export class MaintenanceService {
    * sets embedding_dimension_mismatch, so promotion never fires and markers
    * survive the swap. Use `runReembed({ force: true })` to clear that state —
    * `force` bypasses classification entirely and retries every row.
+   *
+   * Lock scope (spec 2026-09-05 §2): a marker mutation is legal while a sweep
+   * is in flight if and only if it cannot resurrect a row the sweep has
+   * classified. Mutations scoped to entities not under an active sweep key are
+   * legal — the entity-scoped ingest/import lock checks enforce that. The one
+   * mutation that spans every entity, `reconcileEmbeddingDimension`'s marker
+   * clear, is made legal by DEFERRING (importDump gates on
+   * `JobManager.isAnyReembedActive()`), never by widening a lock. Auto-heal is
+   * excluded from sweeps for the same reason.
    */
   async runReembed(
     entityId?: string,

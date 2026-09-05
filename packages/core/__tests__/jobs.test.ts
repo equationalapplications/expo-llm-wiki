@@ -174,3 +174,56 @@ describe('ontologyBackfill lock', () => {
     }
   });
 });
+
+describe('isAnyReembedActive', () => {
+  it('is false on a fresh JobManager', () => {
+    const jm = new JobManager('llm_wiki_');
+    expect(jm.isAnyReembedActive()).toBe(false);
+  });
+
+  it('is true while a per-entity reembed lock is held, false after release', () => {
+    const jm = new JobManager('llm_wiki_');
+    jm.acquireLock('reembed', 'e1');
+    expect(jm.isAnyReembedActive()).toBe(true);
+    jm.releaseLock('reembed', 'e1');
+    expect(jm.isAnyReembedActive()).toBe(false);
+  });
+
+  it('is true while a global reembed lock is held, false after release', () => {
+    const jm = new JobManager('llm_wiki_');
+    jm.acquireLock('global_reembed', '*');
+    expect(jm.isAnyReembedActive()).toBe(true);
+    jm.releaseLock('global_reembed', '*');
+    expect(jm.isAnyReembedActive()).toBe(false);
+  });
+
+  it('ignores non-reembed maintenance locks', () => {
+    const jm = new JobManager('llm_wiki_');
+    jm.acquireLock('prune', 'e1');
+    expect(jm.isAnyReembedActive()).toBe(false);
+  });
+});
+
+describe('tryAcquireAutoHealLock vs reembed sweeps', () => {
+  it('refuses the lock while a per-entity sweep is in flight', () => {
+    const jm = new JobManager('llm_wiki_');
+    jm.acquireLock('reembed', 'e1');
+    expect(jm.tryAcquireAutoHealLock('e1')).toBe(false);
+    jm.releaseLock('reembed', 'e1');
+    expect(jm.tryAcquireAutoHealLock('e1')).toBe(true);
+  });
+
+  it('refuses the lock during a global sweep, for any entity', () => {
+    const jm = new JobManager('llm_wiki_');
+    jm.acquireLock('global_reembed', '*');
+    expect(jm.tryAcquireAutoHealLock('e-other')).toBe(false);
+    jm.releaseLock('global_reembed', '*');
+    expect(jm.tryAcquireAutoHealLock('e-other')).toBe(true);
+  });
+
+  it('still refuses a second concurrent auto-heal on the same entity', () => {
+    const jm = new JobManager('llm_wiki_');
+    expect(jm.tryAcquireAutoHealLock('e1')).toBe(true);
+    expect(jm.tryAcquireAutoHealLock('e1')).toBe(false);
+  });
+});
