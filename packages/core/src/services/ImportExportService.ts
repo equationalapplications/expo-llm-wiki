@@ -525,7 +525,9 @@ export class ImportExportService {
           // entity, but this import holds only entity-scoped locks — so it can
           // erase classifications a concurrent runReembed(otherEntity) just
           // made. Defer instead of widening the lock: the mismatch key is
-          // sticky, so the next sweep tail or import completes the promotion.
+          // sticky, so a later import or a productive sweep tail (one that
+          // embeds > 0 rows — MaintenanceService runs the tail reconciliation
+          // only `if (embedded > 0)`) completes the promotion.
           // Spec 2026-09-05-reembed-lock-scope-design.md §3.2.
           if (this.jobManager.isAnyReembedActive()) {
             console.info(

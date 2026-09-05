@@ -13,6 +13,18 @@ changed — §2's rule and §3's changes stand as approved.
 gate, §3.3 auto-heal exclusion, §3.4 docstrings all landed with tests in
 `__tests__/jobs.test.ts` and `__tests__/reembedLockScope.test.ts`.
 
+**Status (2026-09-05, post-implementation review):** Corrected docs, no code
+change. §2's "the promotion deterministically completes at the next sweep
+tail" overstates liveness: the tail is conditional — `runReembed` calls
+`reconcileEmbeddingDimension` only `if (embedded > 0)`, so a sweep that
+embeds nothing (all rows skipped/deferred/permanently-failed) runs no tail
+reconciliation. The accurate promise: a deferred promotion completes at a
+later importDump reconciliation or at the next *productive* sweep tail (one
+that embeds > 0 rows). The pending state is harmless — it is exactly the
+pre-import state — and the sticky mismatch key preserves promotion intent
+through any number of unproductive sweeps. §2's original text stands as the
+approved record; importDump's gate comment now states the condition.
+
 **Issue addressed:** #134 (marker clear during dimension promotion is not
 transactional with a concurrent sweep)
 

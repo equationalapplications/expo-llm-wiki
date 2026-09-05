@@ -93,6 +93,9 @@ describe('reembed lock scope — importDump promotion deferral', () => {
   it('defers promotion while a per-entity sweep on another entity is in flight', async () => {
     const { wiki, db, metadataRepo, jobManager } = await primed();
 
+    // Deliberate simulation: holding the raw lock instead of running a real
+    // runReembed — the importDump gate reads only the lock table, so an
+    // acquired 'reembed' lock is indistinguishable from a live sweep to it.
     jobManager.acquireLock('reembed', 'A');
     try {
       await wiki.importDump(dumpFor('B', BLOB_3D));
