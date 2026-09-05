@@ -48,6 +48,17 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Fresh-clone gate for scopelab's vitest source aliases (#131, issue
+      # #135): this is the ONLY test run that executes before `pnpm run
+      # build`, so it is the only place where the workspace deps resolve
+      # through apps/scopelab/vitest.config.ts aliases rather than built
+      # dist/ output. If a future change reintroduces a workspace import
+      # that is not source-aliased there, this step fails the way it
+      # failed pre-#131 ("Failed to resolve entry" from unresolved dist/
+      # imports) instead of shipping broken for real fresh clones while
+      # every CI run stays green on the pre-built tree.
+      - run: pnpm --filter scopelab test
+
       # Supply-chain gate (audit 2026-08-24, L-4). Fails the build on new
       # high/critical advisories. Known-unpatched exceptions are allowlisted
       # by GHSA id below with a tracking comment — keep this list minimal.
