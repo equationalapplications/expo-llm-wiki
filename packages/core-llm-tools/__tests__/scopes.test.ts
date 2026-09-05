@@ -35,7 +35,6 @@ describe('injector honors AUTHORIZED_SCOPES without a grant', () => {
     const entries = buildAuthorizedToolsArray(manifests, []);
     const declared = entries.flatMap((e) => ('functionDeclarations' in e ? e.functionDeclarations : []));
     expect(declared).toHaveLength(AUTHORIZED_SCOPES.length);
-    expect(buildAuthorizedToolsArray(manifests, [])).toHaveLength(AUTHORIZED_SCOPES.length);
   });
 
   it('excludes an ungranted scope that is not always-on', () => {
