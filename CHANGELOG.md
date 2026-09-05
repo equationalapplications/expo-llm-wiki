@@ -1,3 +1,10 @@
+## [6.5.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v6.5.0...v6.5.1) (2026-09-05)
+
+
+### Bug Fixes
+
+* **ci:** retry release-phase detection through GitHub's merge-commit association lag ([30b2887](https://github.com/equationalapplications/expo-llm-wiki/commit/30b28877e989d4dcd22213543aa831eb02c38b3f)), closes [#140](https://github.com/equationalapplications/expo-llm-wiki/issues/140) [#140](https://github.com/equationalapplications/expo-llm-wiki/issues/140)
+
 # [6.5.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v6.4.0...v6.5.0) (2026-09-05)
 
 
