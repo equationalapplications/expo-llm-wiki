@@ -9,6 +9,10 @@ path) and now argues both reachable states; §3.2 records why the gate has no
 TOCTOU; §5 test 2 dropped an unreachable global-reembed variant. No decision
 changed — §2's rule and §3's changes stand as approved.
 
+**Status (2026-09-05):** Implemented. §3.1 `isAnyReembedActive`, §3.2 importDump
+gate, §3.3 auto-heal exclusion, §3.4 docstrings all landed with tests in
+`__tests__/jobs.test.ts` and `__tests__/reembedLockScope.test.ts`.
+
 **Issue addressed:** #134 (marker clear during dimension promotion is not
 transactional with a concurrent sweep)
 
