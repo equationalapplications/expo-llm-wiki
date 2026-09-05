@@ -347,7 +347,8 @@ scopelab suite is not in a `pnpm -r` build-then-test ordering.
 
 ### 6.2 Change (issue option 2)
 
-Add `apps/scopelab/vitest.config.ts` aliasing both workspace deps to source:
+Add `apps/scopelab/vitest.config.ts` aliasing all required workspace packages
+to source:
 
 ```ts
 import { defineConfig } from 'vitest/config'
@@ -358,11 +359,22 @@ export default defineConfig({
     alias: {
       '@equationalapplications/core-llm-tools': resolve(__dirname, '../../packages/core-llm-tools/src/index.ts'),
       '@equationalapplications/core-llm-wiki': resolve(__dirname, '../../packages/core/src/index.ts'),
+      // Transitive, and required: packages/core's source imports core-okf, so
+      // once the alias above pulls core in from source, okf still resolves
+      // through its exports map into the missing dist/ without this entry.
+      '@equationalapplications/core-okf': resolve(__dirname, '../../packages/okf/src/index.ts'),
     },
   },
   test: { environment: 'node' },
 })
 ```
+
+**The alias set is the import closure, not just the direct deps.** The rule is
+to alias every workspace package reachable from a test's import graph. Verified
+for this closure: `packages/core/src` imports exactly one workspace package
+(`@equationalapplications/core-okf`) and `packages/okf/src` imports none, so
+these three are complete and minimal. A future workspace-to-workspace import
+extends the set — a fresh-clone test run is what catches an omission.
 
 Chosen over a `pretest` build script: it removes the dist dependency entirely
 rather than papering over it, eliminates stale-dist false positives (a suite
