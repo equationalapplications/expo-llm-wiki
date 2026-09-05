@@ -277,7 +277,27 @@ jobs:
             echo "Release PR for ${BRANCH} is already merged: ${MERGED_PR}"
             if [ -n "$MERGED_SHA" ] && [ "$MERGED_SHA" != "$(git rev-parse HEAD)" ] \
                && git merge-base --is-ancestor "$MERGED_SHA" HEAD 2>/dev/null; then
-              echo "::error::semantic-release recomputed ${RELEASE_VERSION}, but that version's release PR (${MERGED_PR}) merged at ${MERGED_SHA}, which is behind main. This means the release tag baseline is corrupted — a tag for an already-published version is missing from origin or unreachable from main, so semantic-release is computing from a stale baseline. Nothing will publish until the tags are repaired. Check: git ls-remote --tags origin"
+              # Diagnose the SPECIFIC tag damage before failing, so the log
+              # names which tag is wrong and how — not just the class of
+              # problem. The local clone mirrors origin's tags (checkout used
+              # fetch-depth: 0, which fetches tags), so this needs no extra
+              # network round-trip; `git ls-remote --tags origin` below is
+              # still suggested for confirming against live origin.
+              if EXPECTED_SHA=$(git rev-parse -q --verify "v${RELEASE_VERSION}^{commit}"); then
+                if git merge-base --is-ancestor "$EXPECTED_SHA" HEAD 2>/dev/null; then
+                  EXPECTED_STATE="tag v${RELEASE_VERSION} exists and is reachable (points at ${EXPECTED_SHA}) - state looks healthy; inspect manually"
+                else
+                  EXPECTED_STATE="tag v${RELEASE_VERSION} points at ${EXPECTED_SHA}, which is NOT reachable from main (orphaned on a release-branch commit)"
+                fi
+              else
+                EXPECTED_STATE="tag v${RELEASE_VERSION} is MISSING - deleted from origin or never pushed"
+              fi
+              BASELINE_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
+              echo "Tag baseline diagnostics:"
+              echo "  - ${EXPECTED_STATE}"
+              echo "  - semantic-release baseline (nearest reachable tag from HEAD): ${BASELINE_TAG:-<none found>}"
+              echo "  - merged release PR commit: ${MERGED_SHA} (behind main HEAD $(git rev-parse HEAD))"
+              echo "::error::semantic-release recomputed ${RELEASE_VERSION}, but that version's release PR (${MERGED_PR}) merged at ${MERGED_SHA}, which is behind main. The release tag baseline is corrupted - ${EXPECTED_STATE}; semantic-release computed from a stale baseline. Nothing will publish until the tags are repaired (see the diagnostics above and PR #136's 'Not in this PR' section). Verify against origin: git ls-remote --tags origin"
               exit 1
             fi
             echo "Phase 2 owns publication for this version; nothing to do here."
