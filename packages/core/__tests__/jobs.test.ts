@@ -203,3 +203,27 @@ describe('isAnyReembedActive', () => {
     expect(jm.isAnyReembedActive()).toBe(false);
   });
 });
+
+describe('tryAcquireAutoHealLock vs reembed sweeps', () => {
+  it('refuses the lock while a per-entity sweep is in flight', () => {
+    const jm = new JobManager('llm_wiki_');
+    jm.acquireLock('reembed', 'e1');
+    expect(jm.tryAcquireAutoHealLock('e1')).toBe(false);
+    jm.releaseLock('reembed', 'e1');
+    expect(jm.tryAcquireAutoHealLock('e1')).toBe(true);
+  });
+
+  it('refuses the lock during a global sweep, for any entity', () => {
+    const jm = new JobManager('llm_wiki_');
+    jm.acquireLock('global_reembed', '*');
+    expect(jm.tryAcquireAutoHealLock('e-other')).toBe(false);
+    jm.releaseLock('global_reembed', '*');
+    expect(jm.tryAcquireAutoHealLock('e-other')).toBe(true);
+  });
+
+  it('still refuses a second concurrent auto-heal on the same entity', () => {
+    const jm = new JobManager('llm_wiki_');
+    expect(jm.tryAcquireAutoHealLock('e1')).toBe(true);
+    expect(jm.tryAcquireAutoHealLock('e1')).toBe(false);
+  });
+});

@@ -371,10 +371,23 @@ export class JobManager {
   }
 
   /**
-   * Auto-heal historically only gated on the heal self-key. Keep that behavior
-   * for write() auto-trigger paths while preserving stricter checks in acquireLock().
+   * Auto-heal historically only gated on the heal self-key. Keep that
+   * permissiveness for write() auto-trigger paths — stricter checks stay in
+   * acquireLock() — with one exception: reembed sweeps, which are excluded
+   * structurally rather than by accident (see below).
    */
   tryAcquireAutoHealLock(entityId: string): boolean {
+    // Heal must not run during a sweep. It is safe today only because heal
+    // upserts blob-less facts and the marker clear is guarded by
+    // `CASE WHEN excluded.embedding_blob IS NOT NULL` — an accident of the
+    // current SQL, not a stated rule. Make the exclusion structural so a
+    // future heal that carries blobs cannot silently resurrect rows an
+    // in-flight sweep classified. Spec 2026-09-05 §3.3.
+    //
+    // A refused pass is not lost work: WriteService.maybeRunHeal holds its
+    // checkpoint back, so the next write retries.
+    if (this.isAnyReembedActive()) return false;
+
     const healKey = this._healKey(entityId);
     if (this.activeMaintenanceJobs.has(healKey)) return false;
     this.activeMaintenanceJobs.add(healKey);
