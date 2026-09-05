@@ -130,6 +130,41 @@ describe('EntryRepository embedding failure markers', () => {
     expect(after?.updated_at).toBe(before?.updated_at);
   });
 
+  it('dimension promotion commits all three writes atomically', async () => {
+    // The promotion is one logical event: canonical dimension, mismatch key,
+    // and marker clear. If the marker clear fails after the mismatch key is
+    // gone, nothing is left to re-trigger promotion and the markers strand
+    // until `force: true`. Pin the rollback, not just the happy path.
+    const { wiki, db, repo } = await makeWikiWithFact('f1');
+    await repo.markEmbeddingFailure('f1', 'float32_overflow', 1000);
+
+    const metadataRepo = (wiki as any).metadataRepo;
+    const embeddingService = (wiki as any).embeddingService;
+    await metadataRepo.setMeta('embedding_dimension', '3', db);
+    await metadataRepo.setMeta('embedding_dimension_mismatch', '4', db);
+
+    const original = repo.clearEmbeddingFailureMarkers.bind(repo);
+    repo.clearEmbeddingFailureMarkers = async () => {
+      throw new Error('boom');
+    };
+
+    await expect(embeddingService.reconcileEmbeddingDimension()).rejects.toThrow('boom');
+
+    // Every write rolled back: mismatch key intact, dimension un-promoted,
+    // markers still set — so the next promotion attempt still has its trigger.
+    expect(await metadataRepo.getMeta('embedding_dimension_mismatch')).toBe('4');
+    expect(await metadataRepo.getMeta('embedding_dimension')).toBe('3');
+    const row = await getMarkerRow(db, 'f1');
+    expect(row?.embedding_failure_kind).toBe('float32_overflow');
+
+    // And the same promotion succeeds once the failure clears.
+    repo.clearEmbeddingFailureMarkers = original;
+    await embeddingService.reconcileEmbeddingDimension();
+    expect(await metadataRepo.getMeta('embedding_dimension_mismatch')).toBeNull();
+    expect(await metadataRepo.getMeta('embedding_dimension')).toBe('4');
+    expect((await getMarkerRow(db, 'f1'))?.embedding_failure_kind).toBeNull();
+  });
+
   it('upsert with a valid blob clears stale markers', async () => {
     const { repo, db } = await makeWikiWithFact('f1');
     await repo.markEmbeddingFailure('f1', 'provider_error', 1000);

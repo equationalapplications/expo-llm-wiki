@@ -11,7 +11,13 @@ describe('EmbeddingService', () => {
   let embeddingService: EmbeddingService;
 
   beforeEach(() => {
-    mockDb = {}; // Pass-through for tx queries
+    // withTransactionAsync runs the callback with the adapter itself as the tx
+    // handle: these unit tests assert call arguments, not commit semantics, and
+    // the real rollback behaviour is covered against a live SQLite adapter in
+    // __tests__/embeddingFailureMarkers.test.ts.
+    mockDb = {
+      withTransactionAsync: async (fn: (tx: unknown) => Promise<unknown>) => fn(mockDb),
+    };
 
     mockOptions = {
       llmProvider: {

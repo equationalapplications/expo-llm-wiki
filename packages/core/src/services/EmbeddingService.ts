@@ -51,6 +51,8 @@ export class EmbeddingService {
    * `float32_overflow` is cleared too — it is terminal only because retrying is
    * the same arithmetic on the same vector, and after a model change it is not.
    *
+   * All three writes commit atomically; see the transaction note inline.
+   *
    * Revived rows are NOT embedded here. They become eligible and are picked up
    * by the NEXT sweep, because runReembed calls this after its candidates were
    * already classified; same-sweep revival would be re-entrant.
@@ -62,9 +64,18 @@ export class EmbeddingService {
     const newDim = parseInt(mismatchValue, 10);
     const residualCount = await this.entryRepo.countStaleEmbeddings(newDim);
     if (residualCount === 0) {
-      await this.metadataRepo.setMeta('embedding_dimension', mismatchValue, this.db);
-      await this.metadataRepo.clearDimensionMismatch(this.db);
-      await this.entryRepo.clearEmbeddingFailureMarkers();
+      // One transaction for the whole promotion (spec §2.3): the three writes
+      // are a single logical event. Committed separately, a failure after
+      // clearDimensionMismatch would leave markers set with no mismatch key
+      // left to re-trigger promotion, stranding those rows until `force: true`.
+      // Safe to open here — both callers (runReembed, importDump's dimension
+      // reconciliation) invoke this outside their own transactions, and the
+      // adapter does not support nesting.
+      await this.db.withTransactionAsync(async (tx) => {
+        await this.metadataRepo.setMeta('embedding_dimension', mismatchValue, tx);
+        await this.metadataRepo.clearDimensionMismatch(tx);
+        await this.entryRepo.clearEmbeddingFailureMarkers(tx);
+      });
     }
   }
 

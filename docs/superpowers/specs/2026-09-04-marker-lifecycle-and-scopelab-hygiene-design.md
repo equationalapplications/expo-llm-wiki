@@ -77,15 +77,26 @@ fires, and the reset hung off it actually runs.
 `EmbeddingService.reconcileEmbeddingDimension`
 (`packages/core/src/services/EmbeddingService.ts:46-56`) currently promotes and
 clears the mismatch key. Add a marker reset to the promotion branch, so the
-three writes are one logical event:
+three writes are one logical event — and commit them in one transaction, so
+they are one event in the database too:
 
 ```ts
 if (residualCount === 0) {
-  await this.metadataRepo.setMeta('embedding_dimension', mismatchValue, this.db);
-  await this.metadataRepo.clearDimensionMismatch(this.db);
-  await this.entryRepo.clearEmbeddingFailureMarkers();
+  await this.db.withTransactionAsync(async (tx) => {
+    await this.metadataRepo.setMeta('embedding_dimension', mismatchValue, tx);
+    await this.metadataRepo.clearDimensionMismatch(tx);
+    await this.entryRepo.clearEmbeddingFailureMarkers(tx);
+  });
 }
 ```
+
+**Why one transaction.** Committed separately, a failure after
+`clearDimensionMismatch` succeeds would leave the markers set with no
+`embedding_dimension_mismatch` key left to re-trigger promotion — the rows
+strand until someone runs `runReembed({ force: true })`. Opening a transaction
+here is safe because both callers — `runReembed` and `importDump`'s dimension
+reconciliation — invoke `reconcileEmbeddingDimension` outside their own
+transactions, and the adapter does not support nesting (`types.ts:25`).
 
 New DAO method on `EntryRepository`, mirroring `markEmbeddingFailure`'s
 discipline (no `updated_at` touch, no outbox event — embedding lifecycle is
