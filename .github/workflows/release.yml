@@ -26,7 +26,7 @@ permissions:
 
 jobs:
   # Determines whether this run is Phase 1 (an ordinary push to main that may
-  # contain releasable commits) or Phase 2 (a release PR's squash-merge commit
+  # contain releasable commits) or Phase 2 (a release PR's merge commit
   # landing on main, or a manual workflow_dispatch republish).
   detect:
     name: Detect release phase
@@ -71,9 +71,10 @@ jobs:
           fi
 
   # Phase 1: compute the next version with semantic-release, open (or reuse) a
-  # release PR carrying the version-bump commit, and request squash auto-merge.
-  # This lets the Test workflow validate the release commit via a normal PR
-  # before anything is tagged-and-published, closing the branch-protection gap.
+  # release PR carrying the version-bump commit, and request auto-merge as a
+  # merge commit. This lets the Test workflow validate the release commit via
+  # a normal PR before anything is tagged-and-published, closing the
+  # branch-protection gap.
   phase1:
     name: Phase 1 - Prepare release PR
     needs: detect
@@ -129,8 +130,10 @@ jobs:
           # 'vX.Y.Z' already exists` if a same-named tag is already present,
           # so any such orphan must be deleted before semantic-release runs
           # (this bit us with v5.2.1 on 2026-08-08, see PR #82 / #84).
-          # Real historical release tags remain untouched: they were reached
-          # via a squash-merge onto main, so they ARE ancestors of HEAD.
+          # Real historical release tags remain untouched: they point at
+          # main-line commits (merge commits since #137, pre-#137 squash
+          # commits relocated onto main by Phase 2), so they ARE ancestors
+          # of HEAD.
           for tag in $(git tag); do
             if ! git merge-base --is-ancestor "$tag" HEAD 2>/dev/null; then
               echo "Deleting orphaned local tag: $tag"
@@ -372,7 +375,11 @@ jobs:
           if [ -n "$OPEN_PR" ]; then
             echo "Release PR already open for ${BRANCH}: ${OPEN_PR}"
             echo "Idempotent rerun - nothing to commit/push, just ensure auto-merge is requested."
-            gh pr merge --auto --squash "$OPEN_PR" \
+            # --merge (not --squash): a merge commit makes the tagged
+            # release-branch commit an ancestor of main directly, so the
+            # Phase 2 tag relocation is a safety net instead of the only
+            # thing keeping release tags reachable (issue #137).
+            gh pr merge --auto --merge "$OPEN_PR" \
               || echo "::warning::Could not enable auto-merge on ${OPEN_PR}; merge it manually."
             exit 0
           fi
@@ -380,15 +387,17 @@ jobs:
           if [ -n "$CLOSED_PR" ]; then
             echo "Reopening previously closed release PR: ${CLOSED_PR}"
             gh pr reopen "$CLOSED_PR"
-            gh pr merge --auto --squash "$CLOSED_PR" \
+            gh pr merge --auto --merge "$CLOSED_PR" \
               || echo "::warning::Could not enable auto-merge on ${CLOSED_PR}; merge it manually."
             exit 0
           fi
 
           # No PR exists yet: create the release branch from current main HEAD,
           # commit the semantic-release mutations, tag it, and push branch+tag
-          # together so a subsequent Phase 2 run can find the tag it needs to
-          # relocate onto the eventual squash-merge commit.
+          # together so a subsequent Phase 2 run can find the tag. Merging the
+          # PR with a merge commit (below) makes the tagged commit an ancestor
+          # of main directly; Phase 2's relocation then just normalizes the
+          # tag onto the main-line merge commit.
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
@@ -400,7 +409,7 @@ jobs:
           # (branches: [main]), so the branch push itself triggers no
           # workflow. Adding [skip ci] would propagate to the PR's HEAD
           # commit and prevent the pull_request-triggered Test workflow
-          # from running - the very check we need to gate the squash-merge.
+          # from running - the very check we need to gate the merge.
           git commit -m "chore(release): ${RELEASE_VERSION}"
           # Annotated tag so `git push` actually transmits the ref. A
           # lightweight tag is a ref without an object, and `git push --follow-tags`
@@ -435,13 +444,13 @@ jobs:
 
           PR_URL=$(gh pr create --base main --head "$BRANCH" \
             --title "chore(release): ${RELEASE_VERSION}" \
-            --body "Automated release PR. Merging this via squash will trigger Phase 2 (publish + GitHub Release).")
+            --body "Automated release PR. Merging this via a merge commit will trigger Phase 2 (publish + GitHub Release).")
 
-          gh pr merge --auto --squash "$PR_URL"
+          gh pr merge --auto --merge "$PR_URL"
 
-  # Phase 2: the release PR's squash-merge commit has landed on main (or this
-  # is a manual workflow_dispatch republish). Relocate the release tag onto the
-  # new commit, publish all packages, and create the GitHub Release.
+  # Phase 2: the release PR's merge commit has landed on main (or this
+  # is a manual workflow_dispatch republish). Normalize the release tag onto
+  # the main-line commit, publish all packages, and create the GitHub Release.
   phase2:
     name: Phase 2 - Publish release
     needs: detect
@@ -464,7 +473,7 @@ jobs:
           # Do NOT set persist-credentials: false here - this job needs to
           # force-push the relocated release tag using the workflow's own
           # GITHUB_TOKEN.
-          # On a push event (release PR squash-merge landing on main),
+          # On a push event (release PR merge landing on main),
           # checkout the exact commit SHA that triggered the workflow —
           # `github.ref` resolves to refs/heads/main and would advance to
           # any commit that landed between the merge and this job starting,
@@ -516,10 +525,14 @@ jobs:
               exit 1
             fi
 
-            # A squash merge always produces a brand-new commit SHA on main,
-            # even though the tree content matches what Phase 1 tagged on the
-            # release branch. Move the tag so it points at the commit that is
-            # actually reachable from main.
+            # Since #137 the release PR merges with a merge commit, so the
+            # commit Phase 1 tagged (the release-branch head) is already an
+            # ancestor of main and semantic-release can see the tag without
+            # this step. Keep the relocation as a normalization safety net:
+            # it points the tag at the main-line merge commit (consistent
+            # with every historical release tag) and still heals the
+            # pre-#137 squash layout where the tag sat on an orphaned
+            # release-branch commit.
             git tag -f "v${RELEASE_VERSION}" HEAD
             # Force-push only the tag ref - never force-push branches.
             git push origin "v${RELEASE_VERSION}" --force
