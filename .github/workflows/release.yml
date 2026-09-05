@@ -180,6 +180,18 @@ jobs:
           # still counts as a synchronize event for that guard.
           HEAD_VERSION=$(node -p "require('./package.json').version")
           for TAG_AT_HEAD in $(git tag --points-at HEAD); do
+            # Only release-format tags (vN...) are candidates. --points-at
+            # returns every tag namespace, and any other tag sitting at
+            # HEAD (e.g. a deploy-2026-09-05 marker) would otherwise be
+            # swept into the ghost-tag deletion below despite being none
+            # of semantic-release's business.
+            case "$TAG_AT_HEAD" in
+              v[0-9]*) ;;
+              *)
+                echo "Ignoring non-release tag at HEAD: $TAG_AT_HEAD"
+                continue
+                ;;
+            esac
             TAG_VERSION=${TAG_AT_HEAD#v}
             if [ "$TAG_VERSION" != "$HEAD_VERSION" ]; then
               echo "::warning::Tag $TAG_AT_HEAD points at HEAD but main's package.json is $HEAD_VERSION. Treating as a ghost tag and deleting (local + remote) so semantic-release can recompute."
@@ -279,10 +291,12 @@ jobs:
                && git merge-base --is-ancestor "$MERGED_SHA" HEAD 2>/dev/null; then
               # Diagnose the SPECIFIC tag damage before failing, so the log
               # names which tag is wrong and how — not just the class of
-              # problem. The local clone mirrors origin's tags (checkout used
-              # fetch-depth: 0, which fetches tags), so this needs no extra
-              # network round-trip; `git ls-remote --tags origin` below is
-              # still suggested for confirming against live origin.
+              # problem. The local tag state is NOT a mirror of origin here:
+              # the "Prune orphaned local tags" step earlier in this job
+              # deletes locally-unreachable tags (a v6.4.0 pointing at an
+              # orphaned release-branch commit is pruned locally while still
+              # living on origin). So when the local lookup misses, ask
+              # origin before calling the tag missing.
               if EXPECTED_SHA=$(git rev-parse -q --verify "v${RELEASE_VERSION}^{commit}"); then
                 if git merge-base --is-ancestor "$EXPECTED_SHA" HEAD 2>/dev/null; then
                   EXPECTED_STATE="tag v${RELEASE_VERSION} exists and is reachable (points at ${EXPECTED_SHA}) - state looks healthy; inspect manually"
@@ -290,7 +304,16 @@ jobs:
                   EXPECTED_STATE="tag v${RELEASE_VERSION} points at ${EXPECTED_SHA}, which is NOT reachable from main (orphaned on a release-branch commit)"
                 fi
               else
-                EXPECTED_STATE="tag v${RELEASE_VERSION} is MISSING - deleted from origin or never pushed"
+                # grep -v '\^{}' skips the peeled-annotated-tag rows ls-remote
+                # emits; the remaining row's SHA is the ref the tag points at
+                # (the tag object for annotated tags - still enough to locate
+                # the damage).
+                ORIGIN_SHA=$(git ls-remote --tags origin "refs/tags/v${RELEASE_VERSION}" | grep -v '\^{}' | awk '{print $1}')
+                if [ -n "$ORIGIN_SHA" ]; then
+                  EXPECTED_STATE="tag v${RELEASE_VERSION} exists on origin (ref target ${ORIGIN_SHA}) but is unreachable from main - it was pruned from this local clone by the earlier orphan-tag prune; it is an orphaned release-branch tag that must be relocated or deleted on origin"
+                else
+                  EXPECTED_STATE="tag v${RELEASE_VERSION} is MISSING from both this clone and origin - deleted or never pushed"
+                fi
               fi
               BASELINE_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
               echo "Tag baseline diagnostics:"
