@@ -1,3 +1,14 @@
+## [7.0.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v6.5.1...v7.0.0) (2026-09-05)
+
+### ⚠ BREAKING CHANGES
+
+* **release:** only), so 'refactor(core-llm-tools)!:' commits parse
+as type-undefined and contribute nothing to the version computation —
+
+### Build System
+
+* **release:** recognize '!' breaking-change markers via conventionalcommits preset ([8985b52](https://github.com/equationalapplications/expo-llm-wiki/commit/8985b52d758d80bae002c54dafb0c2d06b678533)), closes [#138](https://github.com/equationalapplications/expo-llm-wiki/issues/138) [#138](https://github.com/equationalapplications/expo-llm-wiki/issues/138)
+
 ## [6.5.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v6.5.0...v6.5.1) (2026-09-05)
 
 
