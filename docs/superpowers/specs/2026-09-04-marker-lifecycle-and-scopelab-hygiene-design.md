@@ -1,6 +1,7 @@
 # Embedding Marker Lifecycle & Scopelab Test Hygiene — Design
 
 **Status:** Approved, not yet implemented (2026-09-04)
+**Status (2026-09-04):** §6 implemented via `fix/scopelab-vitest-source` (2026-09-04), pending merge. §2/§4 and §5 pending in their own PRs.
 
 **Issues addressed:** #121 (markers survive provider/dimension change), #129
 (deferred #125/#126 self-review findings), #123 (executor off deprecated
