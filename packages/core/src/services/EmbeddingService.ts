@@ -42,7 +42,19 @@ export class EmbeddingService {
     }
   }
 
-  /** Promotes embedding_dimension_mismatch to canonical embedding_dimension when safe. */
+  /**
+   * Promotes embedding_dimension_mismatch to canonical embedding_dimension when
+   * safe, and clears embedding failure markers as part of the same event.
+   *
+   * Marker reset (spec §2.3): a promoted dimension means a different model is
+   * producing the vectors, so prior failures no longer predict future ones.
+   * `float32_overflow` is cleared too — it is terminal only because retrying is
+   * the same arithmetic on the same vector, and after a model change it is not.
+   *
+   * Revived rows are NOT embedded here. They become eligible and are picked up
+   * by the NEXT sweep, because runReembed calls this after its candidates were
+   * already classified; same-sweep revival would be re-entrant.
+   */
   async reconcileEmbeddingDimension(): Promise<void> {
     const mismatchValue = await this.metadataRepo.getMeta('embedding_dimension_mismatch');
     if (!mismatchValue) return;
@@ -52,6 +64,7 @@ export class EmbeddingService {
     if (residualCount === 0) {
       await this.metadataRepo.setMeta('embedding_dimension', mismatchValue, this.db);
       await this.metadataRepo.clearDimensionMismatch(this.db);
+      await this.entryRepo.clearEmbeddingFailureMarkers();
     }
   }
 

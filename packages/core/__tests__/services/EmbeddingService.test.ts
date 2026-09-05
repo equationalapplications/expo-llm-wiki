@@ -28,6 +28,7 @@ describe('EmbeddingService', () => {
       updateEmbeddingBlob: vi.fn().mockResolvedValue(undefined),
       markEmbeddingFailure: vi.fn().mockResolvedValue(undefined),
       countStaleEmbeddings: vi.fn().mockResolvedValue(0),
+      clearEmbeddingFailureMarkers: vi.fn().mockResolvedValue(0),
     };
 
     mockMetadataRepo = {
@@ -253,6 +254,37 @@ describe('EmbeddingService', () => {
       await embeddingService.notifyEmbeddingPersistedOrThrow('e1', 'f1', null);
 
       expect(mockOptions.vectorRanker!.onEmbeddingPersisted).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('reconcileEmbeddingDimension marker reset (spec §2.3)', () => {
+    it('clears markers when the new dimension is promoted', async () => {
+      mockMetadataRepo.getMeta.mockResolvedValue('1536');
+      mockEntryRepo.countStaleEmbeddings.mockResolvedValue(0);
+
+      await embeddingService.reconcileEmbeddingDimension();
+
+      expect(mockMetadataRepo.setMeta).toHaveBeenCalledWith('embedding_dimension', '1536', expect.anything());
+      expect(mockMetadataRepo.clearDimensionMismatch).toHaveBeenCalled();
+      expect(mockEntryRepo.clearEmbeddingFailureMarkers).toHaveBeenCalledTimes(1);
+    });
+
+    it('does NOT clear markers when promotion is blocked by residual stale rows', async () => {
+      mockMetadataRepo.getMeta.mockResolvedValue('1536');
+      mockEntryRepo.countStaleEmbeddings.mockResolvedValue(3);
+
+      await embeddingService.reconcileEmbeddingDimension();
+
+      expect(mockMetadataRepo.setMeta).not.toHaveBeenCalledWith('embedding_dimension', '1536', expect.anything());
+      expect(mockEntryRepo.clearEmbeddingFailureMarkers).not.toHaveBeenCalled();
+    });
+
+    it('does NOT clear markers when no mismatch key is set', async () => {
+      mockMetadataRepo.getMeta.mockResolvedValue(null);
+
+      await embeddingService.reconcileEmbeddingDimension();
+
+      expect(mockEntryRepo.clearEmbeddingFailureMarkers).not.toHaveBeenCalled();
     });
   });
 });
