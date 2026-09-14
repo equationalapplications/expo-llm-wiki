@@ -1,3 +1,10 @@
+## [7.1.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.1.0...v7.1.1) (2026-09-14)
+
+### Bug Fixes
+
+* **deps:** bump vitest to 4.1.11 across workspace for GHSA-82fw-gwwq-j7x9 ([a70f917](https://github.com/equationalapplications/expo-llm-wiki/commit/a70f917064e8bcafc820c312b5e2d8a5a7265fac))
+* **deps:** raise js-yaml override to 4.3.2 for GHSA-2883-xcg3-v3hh ([d33249b](https://github.com/equationalapplications/expo-llm-wiki/commit/d33249bfdeb837fbe693cc90e2a20bb28d70c3fb))
+
 ## [7.1.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.0.0...v7.1.0) (2026-09-05)
 
 ### Features
