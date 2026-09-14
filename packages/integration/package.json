@@ -18,6 +18,6 @@
     "fastembed": "^2.1.0",
     "tsx": "^4.23.5",
     "typescript": "^5.9.3",
-    "vitest": "4.1.5"
+    "vitest": "4.1.11"
   }
 }
