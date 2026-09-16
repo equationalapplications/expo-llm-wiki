@@ -123,7 +123,7 @@ jobs:
           # Do NOT set persist-credentials: false here - this job needs to push
           # a new release branch and tag using the workflow's own GITHUB_TOKEN.
 
-      - uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d # v4.0.0
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v4.0.0
 
       - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
@@ -510,7 +510,7 @@ jobs:
           # `v<version>` ref to check out the tag's commit for republish.
           ref: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.release_version) || github.sha }}
 
-      - uses: pnpm/action-setup@a3252b78c470c02df07e9d59298aecedc3ccdd6d # v4.0.0
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v4.0.0
 
       - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
