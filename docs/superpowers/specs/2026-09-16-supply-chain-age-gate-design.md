@@ -274,9 +274,13 @@ listed here so Kurt can pick follow-ups.
 ## §5 — Verification plan (acceptance criteria for the Phase 1+2 PR)
 
 0. **Pins applied (Phase 2):** a script over root + `packages/*`
-   manifests reports zero `devDependencies` specifiers starting with
-   `^`/`~` (runtime `dependencies` — i.e. `minisearch` — and
-   `peerDependencies` excluded), and the lockfile importer `specifier`
+   manifests reports zero `devDependencies` specifiers that are not an
+   exact version (`/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/`), so ranges, `*`,
+   dist-tags and non-registry protocols all fail — not merely `^`/`~`.
+   The only allowlisted non-exact form is `workspace:*` (intentional local
+   links, e.g. `@equationalapplications/core-llm-wiki`). Runtime
+   `dependencies` (i.e. `minisearch`) and `peerDependencies` are
+   excluded. The lockfile importer `specifier`
    fields match the new exact pins (`pnpm install --frozen-lockfile`
    passing is the enforcement of that match).
 1. On the branch, **with the pins applied**, **force a full re-resolution** (review Finding 2 — a
@@ -298,7 +302,11 @@ listed here so Kurt can pick follow-ups.
    the gate silently falls back to the newest *mature* version instead of
    failing. Never a hardcoded version: it ages out.
    1. Scratch dir with a minimal `package.json` and **no** gate. `pnpm add
-      typescript@<exact nightly>` → lockfile now contains a young version.
+      --save-exact typescript@<exact nightly>` → lockfile now contains a
+      young version, and the manifest pins it exactly. pnpm 10.33.2 already
+      saves an exact spec verbatim; the flag guards against a user-level
+      `save-prefix` that would widen it to `^`, which step 4 could then
+      resolve past.
    2. Add `minimumReleaseAge: 20160` to the scratch `pnpm-workspace.yaml`.
    3. `rm -rf node_modules && pnpm install --frozen-lockfile` → expect
       **success** (gate not evaluated under frozen; this is the accepted
