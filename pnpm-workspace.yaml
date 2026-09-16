@@ -15,9 +15,17 @@ nodeLinker: hoisted
 # Supply-chain gate: reject versions published < 14 days ago at any
 # lockfile-regen resolution (mirrors curated-thoughts; external guidance:
 # "only accept dependencies older than 2 weeks"). Not evaluated under
-# --frozen-lockfile. Deliberately NO first-party exclusion — see
-# docs/superpowers/specs/2026-09-16-supply-chain-age-gate-design.md §3.1.
+# --frozen-lockfile.
 minimumReleaseAge: 20160          # minutes; 14 days
+
+# CT-parity first-party exclusion. All current first-party lockfile entries
+# are workspace:* links (never registry-resolved), so this is
+# defense-in-depth, not a deadlock fix; it only becomes load-bearing if a
+# first-party dep is ever consumed from the registry. Removed post-approval
+# in PR #152 (CodeRabbit Finding), restored by Kurt's decision 2026-09-16 —
+# see docs/superpowers/specs/2026-09-16-supply-chain-age-gate-design.md §3.1.
+minimumReleaseAgeExclude:
+  - '@equationalapplications/*'
 
 # Single source of truth for overrides. Do NOT add `pnpm.overrides` to the root
 # package.json: when both exist, pnpm 10 silently applies only the package.json
