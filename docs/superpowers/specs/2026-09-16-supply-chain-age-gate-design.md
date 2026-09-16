@@ -14,6 +14,14 @@ bump every transitive to its newest mature version — added churn and
 exposure) — the committed lockfile is the minimal pin update, the full
 regen is scratch-only proof; pins-before-gate ordering now carries its
 empirical reason (§3 Phase 2).
+**Status revision (2026-09-16, implementation):** IMPLEMENTED via PR #152 on
+branch `spec/supply-chain-age-gate` (head 4be288b): 43 root + packages/*
+devDependencies exact-pinned to already-locked versions (a61398a),
+`minimumReleaseAge: 20160` gate added with no exclusions (2738607),
+Dependabot 14-day cooldown config (6082202), deploy.yml frozen install
+(4be288b). Full verification (gate reject/bypass proofs, minimal lockfile
+diff checks, clean-install build + typecheck + 41/41 root suite) recorded in
+the PR description.
 **Requested by:** Kurt VanDusen, 2026-09-16 (Discord): "create a PR for
 expo-llm-wiki to create a similar age gate as Curated Thoughts has, for
 security purposes. And if there are other security features from Curated
