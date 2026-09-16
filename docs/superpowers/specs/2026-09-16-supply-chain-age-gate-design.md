@@ -3,6 +3,10 @@
 **Status:** APPROVED — all decisions recorded 2026-09-16 (Phase 2 pin
 devDeps now; all §4 follow-ups; deploy.yml frozen 1a; security bypass
 accepted 2a). Zero open questions. Ready to merge + implement.
+**Status revision (2026-09-16, post-approval, CodeRabbit review):** removed
+the `@equationalapplications/*` age-gate exclusion (§3.1); replaced the
+§5 age-gate recipe with an empirically verified deterministic one; aligned
+§5 with the combined Phase 1+2 PR. No approved decision changed.
 **Requested by:** Kurt VanDusen, 2026-09-16 (Discord): "create a PR for
 expo-llm-wiki to create a similar age gate as Curated Thoughts has, for
 security purposes. And if there are other security features from Curated
@@ -105,10 +109,6 @@ after this spec is written.
 # lockfile-regen resolution (mirrors curated-thoughts; external guidance:
 # "only accept dependencies older than 2 weeks").
 minimumReleaseAge: 20160          # minutes; 14 days
-minimumReleaseAgeExclude:
-  # First-party packages are consumed/published same-day during the
-  # semantic-release flow — the gate would deadlock releases without this.
-  - '@equationalapplications/*'
 ```
 
 Notes (verified mechanics — including empirically by the GLM 5.3 spec
@@ -119,13 +119,17 @@ review, see PR #152 review; see parent policy):
   resolution is skipped entirely). CI is therefore unaffected; the gate
   bites exactly where risk concentrates (adds, updates, Dependabot
   regens).
-- `minimumReleaseAgeExclude: '@equationalapplications/*'` is kept as
-  defense-in-depth and CT-parity. Correction from review (Finding 9): in
-  ELW's current topology it is NOT load-bearing for releases — first-party
-  cross-deps are `workspace:*` (never registry-resolved), both
-  release-phase installs are frozen, and the semantic-release commit does
-  not touch the lockfile. It future-proofs against first-party deps ever
-  becoming registry-ranged (CT's situation).
+- **No first-party exclusion** (deliberate divergence from CT; removed
+  post-approval per CodeRabbit review). In ELW's topology a
+  `'@equationalapplications/*'` exclusion is inert — all 17 first-party
+  lockfile entries are `link:` (`workspace:*`, never registry-resolved),
+  both release-phase installs are frozen, and the semantic-release commit
+  does not touch the lockfile (review Finding 9). Keeping it "for the
+  future" is backwards: if a first-party dep ever becomes
+  registry-resolved, a stolen npm publish token is the most plausible
+  attack on it, and a blanket exclusion would let exactly that version
+  skip the gate. If such a dep is ever added and a same-day release
+  deadlocks, add an exact `pkg@version` exclusion for that release only.
 - The `metro@0.84.6` family should need no exclusions (§2.3). If
   verification (§5) runs while any entry is still inside the window, add
   exact `pkg@version` entries under `minimumReleaseAgeExclude` in ONE edit
@@ -240,23 +244,45 @@ or elsewhere has that ELW lacks, in priority order:
 Items 2–4 are deliberately OUT of this spec's scope (one concern per PR);
 listed here so Kurt can pick follow-ups.
 
-## §5 — Verification plan (acceptance criteria for the Phase 1 PR)
+## §5 — Verification plan (acceptance criteria for the Phase 1+2 PR)
 
-1. On the branch, **force a full re-resolution** (review Finding 2 — a
+0. **Pins applied (Phase 2):** a script over root + `packages/*`
+   manifests reports zero `devDependencies` specifiers starting with
+   `^`/`~` (runtime `dependencies` — i.e. `minisearch` — and
+   `peerDependencies` excluded), and the lockfile importer `specifier`
+   fields match the new exact pins (`pnpm install --frozen-lockfile`
+   passing is the enforcement of that match).
+1. On the branch, **with the pins applied**, **force a full re-resolution** (review Finding 2 — a
    plain `pnpm install` over an up-to-date lockfile skips resolution and
    proves nothing about the gate): in a scratch clone,
    `rm pnpm-lock.yaml && pnpm install` with the gate active — all ~1,308
    entries resolve through the gate. If it deadlocks on young versions,
-   add one-edit exclusions per §3.1; if it succeeds, verify the
-   regenerated lockfile is byte-identical to the committed one
-   (`git diff --exit-code pnpm-lock.yaml`) and keep the commit as-is.
-2. `pnpm install --frozen-lockfile` unchanged (CI parity).
-3. Age-gate test recipe (isolated, ~30 s, per parent policy): scratch dir,
-   pinned `pnpm@10.33.2`, `pnpm add <pkg published < 14d ago>` → expect
-   `ERR_PNPM_NO_MATURE_MATCHING_VERSION`; `--frozen-lockfile` install in
-   the same dir → expect success.
-4. `pnpm -r typecheck && pnpm test` green (no dependency versions changed by
-   Phase 1, so this is a formality that proves the workspace is untouched).
+   add one-edit exclusions per §3.1; if it succeeds, commit the
+   regenerated lockfile (the pin edit changes importer specifiers, and
+   transitive drift at this one-time regen is expected — §3 Phase 2), then
+   confirm a second `rm pnpm-lock.yaml && pnpm install` reproduces it
+   (`git diff --exit-code pnpm-lock.yaml`).
+2. `pnpm install --frozen-lockfile` passes (CI parity).
+3. Age-gate test recipe (isolated, ~30 s, pinned `pnpm@10.33.2`; verified
+   empirically 2026-09-16). Use a **dynamically chosen, exact** young
+   version — `npm view typescript dist-tags.next` (daily nightly, always
+   < 14 d old). Never a range or dist-tag: `pnpm add typescript@next` under
+   the gate silently falls back to the newest *mature* version instead of
+   failing. Never a hardcoded version: it ages out.
+   1. Scratch dir with a minimal `package.json` and **no** gate. `pnpm add
+      typescript@<exact nightly>` → lockfile now contains a young version.
+   2. Add `minimumReleaseAge: 20160` to the scratch `pnpm-workspace.yaml`.
+   3. `rm -rf node_modules && pnpm install --frozen-lockfile` → expect
+      **success** (gate not evaluated under frozen; this is the accepted
+      bypass boundary, §6 Q4).
+   4. `rm pnpm-lock.yaml && pnpm install` → expect
+      `ERR_PNPM_NO_MATURE_MATCHING_VERSION`.
+   The naive recipe (gate on, `pnpm add` young → fail, then frozen install)
+   is vacuous: the failed add writes neither lockfile nor manifest entry,
+   so the frozen step passes with "Already up to date" and proves nothing.
+4. `pnpm -r typecheck && pnpm test` green (Phase 2 changed devDep
+   specifiers and possibly transitive versions, so this is a real check,
+   not a formality).
 5. Dependabot config: syntax sanity via GitHub (config errors surface as a
    repo-level "Dependabot can't parse" notification after merge — check the
    next scheduled run created PRs).
