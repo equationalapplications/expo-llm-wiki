@@ -1,6 +1,6 @@
 {
   "name": "@equationalapplications/schema-org-llm-wiki",
-  "version": "7.1.0",
+  "version": "7.1.1",
   "description": "Curated schema.org warm-agent ontology manifest for LLM Wiki Memory: 9 node types, 28 edges, fully schema.org-standard. Data-only.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -56,6 +56,6 @@
   "devDependencies": {
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",
-    "vitest": "4.1.5"
+    "vitest": "4.1.11"
   }
 }

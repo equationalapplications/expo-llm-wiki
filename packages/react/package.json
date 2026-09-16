@@ -1,6 +1,6 @@
 {
   "name": "@equationalapplications/react-llm-wiki",
-  "version": "7.1.0",
+  "version": "7.1.1",
   "description": "In-browser LLM memory for React web apps. Bring your own SQLite adapter (e.g., sql.js WebAssembly) for a complete, zero-server RAG experience.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -81,6 +81,6 @@
     "react-dom": "19.2.8",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",
-    "vitest": "4.1.5"
+    "vitest": "4.1.11"
   }
 }
