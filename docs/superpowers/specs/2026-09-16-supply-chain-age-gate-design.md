@@ -7,6 +7,13 @@ accepted 2a). Zero open questions. Ready to merge + implement.
 the `@equationalapplications/*` age-gate exclusion (§3.1); replaced the
 §5 age-gate recipe with an empirically verified deterministic one; aligned
 §5 with the combined Phase 1+2 PR. No approved decision changed.
+**Status revision (2026-09-16, plan-writing verification):** dependabot
+`directory` + `directories` in one entry is schema-invalid → `directories`
+only (§3.2); §5.1 no longer commits a from-scratch lockfile regen (it would
+bump every transitive to its newest mature version — added churn and
+exposure) — the committed lockfile is the minimal pin update, the full
+regen is scratch-only proof; pins-before-gate ordering now carries its
+empirical reason (§3 Phase 2).
 **Requested by:** Kurt VanDusen, 2026-09-16 (Discord): "create a PR for
 expo-llm-wiki to create a similar age gate as Curated Thoughts has, for
 security purposes. And if there are other security features from Curated
@@ -143,13 +150,13 @@ review, see PR #152 review; see parent policy):
 ```yaml
 version: 2
 updates:
-  # NOTE: the npm ecosystem handles pnpm-lock.yaml too. `directory: "/"` keys
+  # NOTE: the npm ecosystem handles pnpm-lock.yaml too. A root-only entry keys
   # updates off the ROOT manifest only — the packages/* and apps/* sub-manifests
-  # are listed explicitly so their ~66 ranged specifiers get update PRs (the
-  # single workspace lockfile is what the PRs regenerate).
+  # are listed explicitly so their specifiers get update PRs (the single
+  # workspace lockfile is what the PRs regenerate). `directory` and
+  # `directories` are mutually exclusive in one entry (schema oneOf).
   - package-ecosystem: npm
-    directory: /
-    directories: ["/packages/*", "/apps/*"]
+    directories: ["/", "/packages/*", "/apps/*"]
     schedule:
       interval: weekly
     cooldown:
@@ -227,6 +234,18 @@ regen (accept, don't block); pins-before-gate task ordering is MANDATORY
 same branch, but if verification hits the gate on young versions,
 grandfathering exclusions go in ONE edit).
 
+Pin values = the version the lockfile already resolves for each importer
+(so `^25.0.8` → `25.0.9`, `^4.23.5` → `4.23.11`), which makes the pin a
+specifier-only lockfile change. Verified 2026-09-16 in a scratch worktree
+of main: without the gate, the pin update changes only importer
+specifiers plus pnpm pruning ~300 lines of already-orphaned entries
+(stale `@rollup/rollup-*@4.62.4` etc.). WITH the gate already active, the
+same non-frozen lockfile write silently re-resolved already-locked young
+entries (it downgraded the in-window `metro@0.84.6` family) — the gate
+re-evaluates locked versions whenever the lockfile is rewritten. Hence:
+write the pinned lockfile first, add the gate second; with the gate then
+added, `pnpm install --lockfile-only` leaves the lockfile byte-identical.
+
 ## §4 — Suggested additional security features (Kurt's ask #2)
 
 Inventory-based: §2.1 lists what ELW already has (it is in better shape
@@ -257,10 +276,11 @@ listed here so Kurt can pick follow-ups.
    proves nothing about the gate): in a scratch clone,
    `rm pnpm-lock.yaml && pnpm install` with the gate active — all ~1,308
    entries resolve through the gate. If it deadlocks on young versions,
-   add one-edit exclusions per §3.1; if it succeeds, commit the
-   regenerated lockfile (the pin edit changes importer specifiers, and
-   transitive drift at this one-time regen is expected — §3 Phase 2), then
-   confirm a second `rm pnpm-lock.yaml && pnpm install` reproduces it
+   add one-edit exclusions per §3.1. The scratch regen is **proof only —
+   do not commit it** (it would move every transitive to its newest mature
+   version). The committed lockfile is the minimal pin update (§3 Phase
+   2), and in the branch itself `pnpm install --lockfile-only` with the
+   gate active must leave it byte-identical
    (`git diff --exit-code pnpm-lock.yaml`).
 2. `pnpm install --frozen-lockfile` passes (CI parity).
 3. Age-gate test recipe (isolated, ~30 s, pinned `pnpm@10.33.2`; verified
