@@ -1,8 +1,8 @@
 # Supply-chain age gate + security posture for expo-llm-wiki
 
-**Status:** Phase 2 approved by Kurt 2026-09-16 (pin devDeps, now).
-All §4 follow-ups approved (provenance, CodeQL, push protection).
-Spec under review — PR #152.
+**Status:** APPROVED — all decisions recorded 2026-09-16 (Phase 2 pin
+devDeps now; all §4 follow-ups; deploy.yml frozen 1a; security bypass
+accepted 2a). Zero open questions. Ready to merge + implement.
 **Requested by:** Kurt VanDusen, 2026-09-16 (Discord): "create a PR for
 expo-llm-wiki to create a similar age gate as Curated Thoughts has, for
 security purposes. And if there are other security features from Curated
@@ -195,14 +195,15 @@ updates:
 - No release-please entry: this repo uses semantic-release, not
   release-please.
 
-**3. deploy.yml note (review Finding 5):** `.github/workflows/deploy.yml:46`
-runs a plain (non-frozen) `pnpm install` on every push to main. The gate is
-a practical no-op there only because the lockfile arrives in-sync (PR CI's
-frozen install blocks out-of-sync lockfiles from merging, and the
-semantic-release commit bumps package.json versions without touching the
-lockfile, so resolution is skipped). This holds unless someone pushes
-directly to main with a changed manifest — frozen-parity for deploy.yml is
-raised as open question 2 rather than folded into this PR's scope.
+**3. deploy.yml frozen install (review Finding 5; IN SCOPE per Kurt's
+1a, 2026-09-16):** `.github/workflows/deploy.yml:46` runs a plain
+(non-frozen) `pnpm install` on every push to main. Change it to
+`pnpm install --frozen-lockfile` so deploy builds exactly the lockfile PR
+CI tested, matching every other install in the repo. Today's semantic-
+release commit only bumps versions and never touches the lockfile, so
+frozen passes on normal merges; if the lockfile ever arrives out of sync,
+deploy now fails loudly at step 1 instead of silently re-resolving.
+Validated on the first post-merge push to main.
 
 ### Phase 2 (APPROVED by Kurt 2026-09-16: pin dev dependencies NOW)
 
@@ -268,18 +269,16 @@ listed here so Kurt can pick follow-ups.
    ALL THREE** — (2) npm publish provenance, (3) CodeQL workflow, (4)
    secret-scanning push protection — to be scheduled as follow-up PRs
    after Phases 1+2 merge. Not blocking this spec or the implementation PR.
-3. **NEW (review Finding 5, needs a yes/no):** should `deploy.yml`'s plain
-   `pnpm install` be made frozen-parity in this PR, or accepted as-is
-   (risk only materializes on a direct-to-main manifest push; branch
-   protection already forces PR CI)? Default: leave as-is, note added to
-   the workflow comment. Blocks merge only if Kurt wants the change.
-4. **NEW (review Finding 4, needs a yes/no):** Dependabot security updates
-   bypass both the cooldown and the age gate (GitHub exempts security
-   updates from cooldown; frozen CI installs skip gate evaluation). Accept
-   as the desired fast path for security fixes, or add a CI
-   lockfile-maturity audit step as a compensating control? Default:
-   accept the bypass (matches CT's posture today). Blocks merge only if
-   Kurt wants the compensating control.
+3. ~~**deploy.yml install parity:**~~ **ANSWERED 2026-09-16: Kurt chose
+   1a — fold `--frozen-lockfile` parity into the implementation PR** (see
+   §3 item 3). Rationale: deploy should build exactly what PR CI tested;
+   the non-frozen "self-heal" is the same property that lets unvetted
+   versions into the build.
+4. ~~**Security-update bypass lane:**~~ **ANSWERED 2026-09-16: Kurt chose
+   2a — accept the bypass as-is** (CT parity; speed is the point of
+   security fixes; Dependabot security PRs still pass the full review
+   gauntlet). No CI maturity-audit step. The bypass is documented in §3
+   item 2 so future maintainers know the gate's real boundary.
 
 **Review provenance:** GLM 5.3 frontier review (session
 `20260916_101355_51b1e7`, full report archived at PR #152 review comment)
