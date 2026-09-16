@@ -13,11 +13,11 @@
     "@equationalapplications/schema-org-llm-wiki": "workspace:*"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
-    "better-sqlite3": "^12.11.1",
-    "fastembed": "^2.1.0",
-    "tsx": "^4.23.5",
-    "typescript": "^5.9.3",
+    "@types/better-sqlite3": "7.6.13",
+    "better-sqlite3": "12.11.1",
+    "fastembed": "2.1.0",
+    "tsx": "4.23.11",
+    "typescript": "5.9.3",
     "vitest": "4.1.11"
   }
 }
