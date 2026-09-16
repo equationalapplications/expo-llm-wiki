@@ -1,3 +1,9 @@
+## [7.1.2](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.1.1...v7.1.2) (2026-09-16)
+
+### Bug Fixes
+
+* **supply-chain:** restore @equationalapplications/* age-gate exclusion ([0da9d6c](https://github.com/equationalapplications/expo-llm-wiki/commit/0da9d6c60ccbe420122c480569f1d853a972c172))
+
 ## [7.1.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.1.0...v7.1.1) (2026-09-14)
 
 ### Bug Fixes
