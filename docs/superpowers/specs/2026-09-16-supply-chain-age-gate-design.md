@@ -1,6 +1,7 @@
 # Supply-chain age gate + security posture for expo-llm-wiki
 
-**Status:** Draft — awaiting Kurt's approval (spec PR).
+**Status:** Phase 2 approved by Kurt 2026-09-16 (pin devDeps, now).
+Spec under review — PR #152.
 **Requested by:** Kurt VanDusen, 2026-09-16 (Discord): "create a PR for
 expo-llm-wiki to create a similar age gate as Curated Thoughts has, for
 security purposes. And if there are other security features from Curated
@@ -15,9 +16,11 @@ Thoughts or other places that we can apply, suggest them."
 We are changing the **expo-llm-wiki GitHub repo only** — no local-filesystem
 behavior, no published-package API changes. Phase 1 adds pnpm's 14-day
 release-age gate (the same control Curated Thoughts has) plus a Dependabot
-config with a matching cooldown. Phase 2 (separate decision, see open
-question 1) would exact-pin dev dependencies. The published runtime API of
-`@equationalapplications/*` packages is untouched in both phases.
+config with a matching cooldown. Phase 2 exact-pins dev dependencies —
+**APPROVED by Kurt 2026-09-16 ("1" = pin them now, devDeps-only)**; both
+phases land in the single implementation PR that follows this spec. The
+published runtime API of `@equationalapplications/*` packages is untouched
+in both phases.
 
 ---
 
@@ -142,20 +145,19 @@ updates:
   entry covers the workspace graph via the single lockfile. No
   release-please entry: this repo uses semantic-release, not release-please.
 
-### Phase 2 (open question 1 — Kurt's call before implementation)
+### Phase 2 (APPROVED by Kurt 2026-09-16: pin dev dependencies NOW)
 
 **Exact-pin dev dependencies** (the 34 `^` entries; devDeps execute the
-build/publish path — §1 surface 1). Recommendation if approved: pin
-devDependencies exactly (root + packages), leave `^` on **published runtime
-dependencies** (library semver convention; consumer lockfiles govern real
-resolution, and forcing exact runtime pins on published packages degrades
-consumer dedup without adding protection). Verified acceptance criteria
-from the CT implementation carry over: transitive drift is EXPECTED at the
-one-time regen (accept, don't block); pins-before-gate task ordering is
-MANDATORY (deadlock pitfall — though here Phase 1 already ships the gate,
-so Phase 2 verification must confirm `pnpm install` still resolves, with
-grandfathering exclusions added in one edit if the regen pulls anything
-young).
+build/publish path — §1 surface 1). Scope confirmed: devDependencies in
+root + `packages/*` only; `^` stays on **published runtime dependencies**
+(library semver convention; consumer lockfiles govern real resolution, and
+forcing exact runtime pins on published packages degrades consumer dedup
+without adding protection). Verified acceptance criteria from the CT
+implementation carry over: transitive drift is EXPECTED at the one-time
+regen (accept, don't block); pins-before-gate task ordering is MANDATORY
+(deadlock pitfall — implement the pins edit and the Phase 1 gate in the
+same branch, but if verification hits the gate on young versions,
+grandfathering exclusions go in ONE edit).
 
 ## §4 — Suggested additional security features (Kurt's ask #2)
 
@@ -192,7 +194,9 @@ listed here so Kurt can pick follow-ups.
 
 ## §6 — Open questions
 
-1. **Phase 2 exact-pinning:** (a) devDeps only — recommended; (b) all
-   direct deps CT-style; (c) skip Phase 2. Answer before implementation.
+1. ~~**Phase 2 exact-pinning:**~~ **ANSWERED 2026-09-16:** Kurt approved
+   devDeps-only exact-pinning, landing WITH Phase 1 (see §3 Phase 2).
 2. **Follow-up picks from §4:** provenance (2), CodeQL (3), push protection
    (4) — any/all can be scheduled as separate PRs after Phase 1 merges.
+   *Not blocking — Kurt can pick these any time; implementation proceeds
+   for Phases 1+2 regardless.*
