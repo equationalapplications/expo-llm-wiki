@@ -1,6 +1,7 @@
 # Supply-chain age gate + security posture for expo-llm-wiki
 
 **Status:** Phase 2 approved by Kurt 2026-09-16 (pin devDeps, now).
+All §4 follow-ups approved (provenance, CodeQL, push protection).
 Spec under review — PR #152.
 **Requested by:** Kurt VanDusen, 2026-09-16 (Discord): "create a PR for
 expo-llm-wiki to create a similar age gate as Curated Thoughts has, for
@@ -196,7 +197,7 @@ listed here so Kurt can pick follow-ups.
 
 1. ~~**Phase 2 exact-pinning:**~~ **ANSWERED 2026-09-16:** Kurt approved
    devDeps-only exact-pinning, landing WITH Phase 1 (see §3 Phase 2).
-2. **Follow-up picks from §4:** provenance (2), CodeQL (3), push protection
-   (4) — any/all can be scheduled as separate PRs after Phase 1 merges.
-   *Not blocking — Kurt can pick these any time; implementation proceeds
-   for Phases 1+2 regardless.*
+2. ~~**Follow-up picks from §4:**~~ **ANSWERED 2026-09-16: Kurt approved
+   ALL THREE** — (2) npm publish provenance, (3) CodeQL workflow, (4)
+   secret-scanning push protection — to be scheduled as follow-up PRs
+   after Phases 1+2 merge. Not blocking this spec or the implementation PR.
