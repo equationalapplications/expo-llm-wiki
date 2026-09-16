@@ -22,6 +22,10 @@ Dependabot 14-day cooldown config (6082202), deploy.yml frozen install
 (4be288b). Full verification (gate reject/bypass proofs, minimal lockfile
 diff checks, clean-install build + typecheck + 41/41 root suite) recorded in
 the PR description.
+**Status revision (2026-09-16, exclusion-restoration PR):** Kurt directed
+restoring the `@equationalapplications/*` exclusion for CT parity; §3.1
+rewritten accordingly (mechanics unchanged — inert today in `workspace:*`
+topology, standing defense-in-depth posture).
 **Requested by:** Kurt VanDusen, 2026-09-16 (Discord): "create a PR for
 expo-llm-wiki to create a similar age gate as Curated Thoughts has, for
 security purposes. And if there are other security features from Curated
@@ -134,17 +138,20 @@ review, see PR #152 review; see parent policy):
   resolution is skipped entirely). CI is therefore unaffected; the gate
   bites exactly where risk concentrates (adds, updates, Dependabot
   regens).
-- **No first-party exclusion** (deliberate divergence from CT; removed
-  post-approval per CodeRabbit review). In ELW's topology a
-  `'@equationalapplications/*'` exclusion is inert — all 17 first-party
-  lockfile entries are `link:` (`workspace:*`, never registry-resolved),
-  both release-phase installs are frozen, and the semantic-release commit
-  does not touch the lockfile (review Finding 9). Keeping it "for the
-  future" is backwards: if a first-party dep ever becomes
-  registry-resolved, a stolen npm publish token is the most plausible
-  attack on it, and a blanket exclusion would let exactly that version
-  skip the gate. If such a dep is ever added and a same-day release
-  deadlocks, add an exact `pkg@version` exclusion for that release only.
+- **First-party exclusion: `'@equationalapplications/*'` (restored
+  2026-09-16, this PR).** Removed post-approval per the CodeRabbit review
+  and restored by Kurt's explicit decision on the same day, for parity
+  with CT's policy file. Honest framing (both rounds agree on the
+  mechanics): in ELW's topology the exclusion is inert today — all 17
+  first-party lockfile entries are `link:` (`workspace:*`, never
+  registry-resolved), both release-phase installs are frozen, and the
+  semantic-release commit does not touch the lockfile (review Finding 9).
+  The removed-draft's stolen-publish-token concern stands: if a first-party
+  dep ever becomes registry-resolved, a stolen npm publish token is the
+  most plausible attack on it, and this blanket exclusion would let that
+  version skip the gate. Accepted as the standing CT-parity posture; if a
+  first-party dep is ever added from the registry, re-evaluate the blanket
+  entry and prefer an exact `pkg@version` exclusion for that release only.
 - The `metro@0.84.6` family should need no exclusions (§2.3). If
   verification (§5) runs while any entry is still inside the window, add
   exact `pkg@version` entries under `minimumReleaseAgeExclude` in ONE edit
