@@ -12,6 +12,13 @@ allowBuilds:
 
 nodeLinker: hoisted
 
+# Supply-chain gate: reject versions published < 14 days ago at any
+# lockfile-regen resolution (mirrors curated-thoughts; external guidance:
+# "only accept dependencies older than 2 weeks"). Not evaluated under
+# --frozen-lockfile. Deliberately NO first-party exclusion — see
+# docs/superpowers/specs/2026-09-16-supply-chain-age-gate-design.md §3.1.
+minimumReleaseAge: 20160          # minutes; 14 days
+
 # Single source of truth for overrides. Do NOT add `pnpm.overrides` to the root
 # package.json: when both exist, pnpm 10 silently applies only the package.json
 # set, which left every advisory pin below inert.
