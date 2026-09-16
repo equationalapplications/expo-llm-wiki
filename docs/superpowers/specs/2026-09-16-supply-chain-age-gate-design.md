@@ -28,7 +28,7 @@ in both phases.
 ## §1 — Context and threat model
 
 expo-llm-wiki is a **published library monorepo** consumed by Curated
-Thoughts (pinned exact at 7.1.0) and Clanker AI. Two distinct supply-chain
+Thoughts (pinned exact at 7.1.1) and Clanker AI. Two distinct supply-chain
 surfaces exist:
 
 1. **This repo's build/publish pipeline.** Dev dependencies here execute
@@ -52,7 +52,7 @@ This spec hardens surface 1 and standardizes change hygiene (Dependabot).
 |---|---|
 | Frozen-lockfile CI installs | `test.yml` (`pnpm install --frozen-lockfile`) |
 | pnpm audit gates (prod high+ w/ GHSA allowlist; full high+ failing only on fixable) | `test.yml`, two steps |
-| SHA-pinned third-party actions + version comments | all three workflows |
+| SHA-pinned third-party actions + version comments | `test.yml` only — deploy.yml (actions/cache@v4 :37, peaceiris/actions-gh-pages@v4 :80) and release.yml (actions/cache@v4 :138,:525) have tag-pinned actions; fixing those is a §4-adjacent hardening candidate |
 | `persist-credentials: false` on checkout | `test.yml` |
 | Least-privilege `permissions:` blocks | all workflows |
 | Postinstall-script allowlist (`allowBuilds`) | `pnpm-workspace.yaml` |
@@ -67,9 +67,15 @@ This spec hardens surface 1 and standardizes change hygiene (Dependabot).
   into since it pins 10.33.2).
 - **`.github/dependabot.yml`** — absent. No version-update PRs and no
   cooldown mechanism exist.
-- Direct-dependency specifiers: **34 `^`-ranged** entries across root +
-  `packages/*` (tsup, typescript, better-sqlite3, fastembed, expo-crypto,
-  minisearch, jsdom, etc.). CT exact-pins all direct deps; ELW pins none.
+- Direct-dependency specifiers: **44 `^`-ranged** entries across root +
+  `packages/*` (counting rule: `dependencies` + `devDependencies` whose
+  spec starts with `^`/`~`, excluding `peerDependencies` — verified
+  programmatically per-manifest; 43 of them are devDeps, the lone ranged
+  runtime dep is `minisearch` in core). A further 22 ranged entries exist
+  under `apps/*`. CT exact-pins all direct deps; ELW pins none of these.
+- A `pnpm 11` default figure was mentioned here previously and is
+  UNVERIFIED (review Finding 10) — irrelevant while `packageManager`
+  pins 10.33.2; do not rely on any default existing.
 
 ### 2.3 Lockfile maturity scan (scan-first — the PR 127 lesson)
 
@@ -77,9 +83,11 @@ All 1,308 `pkg@version` entries (1,096 unique packages) extracted from
 `pnpm-lock.yaml`; publish dates verified in bulk against full registry
 packuments on 2026-09-16:
 
-- **Inside a 14-day window: 15** — the `metro@0.84.6` family (13 `metro-*`
-  packages + `ob1@0.84.6`), all published 13.9 days ago, i.e. **maturing
-  2026-09-17**. Pulled in transitively via expo → `@expo/metro`.
+- **Inside a 14-day window: 15** — the `metro@0.84.6` family (14 `metro*`
+  packages — `metro` itself + 13 scoped `metro-*` deps — plus `ob1@0.84.6`),
+  all published ~2026-09-02 ~16:07 UTC, i.e. the 14-day boundary falls
+  **2026-09-16 ~16:07 UTC (same day as this scan)**. Pulled in transitively
+  via expo → `@expo/metro`.
 - Everything else: 14 days or older. Zero packages with unknown publish data.
 
 Implication: the gate as configured below will NOT require grandfathering
@@ -103,54 +111,108 @@ minimumReleaseAgeExclude:
   - '@equationalapplications/*'
 ```
 
-Notes (verified mechanics, see parent policy):
+Notes (verified mechanics — including empirically by the GLM 5.3 spec
+review, see PR #152 review; see parent policy):
 - The gate is evaluated at EVERY resolution that regenerates the lockfile,
   not only when the tree changes, and is NOT evaluated under
-  `--frozen-lockfile` — so CI is unaffected; the gate bites exactly where
-  risk concentrates (adds, updates, Dependabot regens, release flow).
-- `minimumReleaseAgeExclude: '@equationalapplications/*'` is REQUIRED:
-  semantic-release bumps first-party versions and consumes them
-  same-day; without the exclusion the release flow deadlocks.
+  `--frozen-lockfile` (nor on a plain install over an up-to-date lockfile —
+  resolution is skipped entirely). CI is therefore unaffected; the gate
+  bites exactly where risk concentrates (adds, updates, Dependabot
+  regens).
+- `minimumReleaseAgeExclude: '@equationalapplications/*'` is kept as
+  defense-in-depth and CT-parity. Correction from review (Finding 9): in
+  ELW's current topology it is NOT load-bearing for releases — first-party
+  cross-deps are `workspace:*` (never registry-resolved), both
+  release-phase installs are frozen, and the semantic-release commit does
+  not touch the lockfile. It future-proofs against first-party deps ever
+  becoming registry-ranged (CT's situation).
 - The `metro@0.84.6` family should need no exclusions (§2.3). If
   verification (§5) runs while any entry is still inside the window, add
   exact `pkg@version` entries under `minimumReleaseAgeExclude` in ONE edit
-  (wildcard-with-version syntax is INVALID in pnpm 10) with a maturity
-  comment; entries self-neutralize past the window and can be swept in the
-  next routine dependency PR — no cron needed for a one-day tail.
+  (wildcard-with-version syntax hard-fails with
+  `ERR_PNPM_INVALID_MINIMUM_RELEASE_AGE_EXCLUDE` — good: a bad entry
+  cannot slip through) with a maturity comment; entries self-neutralize
+  past the window and can be swept in the next routine dependency PR.
 
 **2. `.github/dependabot.yml` (new):**
 
 ```yaml
 version: 2
 updates:
+  # NOTE: the npm ecosystem handles pnpm-lock.yaml too. `directory: "/"` keys
+  # updates off the ROOT manifest only — the packages/* and apps/* sub-manifests
+  # are listed explicitly so their ~66 ranged specifiers get update PRs (the
+  # single workspace lockfile is what the PRs regenerate).
   - package-ecosystem: npm
     directory: /
+    directories: ["/packages/*", "/apps/*"]
     schedule:
       interval: weekly
     cooldown:
+      # Aligns Dependabot version updates with the pnpm age gate (policy
+      # alignment, not enforcement — Dependabot does not consult
+      # minimumReleaseAge). KNOWN BYPASS LANE (review Finding 4): security
+      # updates are exempt from cooldown AND their lockfile regen is never
+      # gate-evaluated in CI (frozen installs skip resolution). Accepted here
+      # as the desired fast path for security fixes; a lockfile-maturity audit
+      # step in CI is the compensating control if Kurt wants it (open question 3).
       default-days: 14
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    open-pull-requests-limit: 10
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
     cooldown:
       default-days: 14
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
 ```
 
-- Mirrors CT's cooldown policy; GitHub's default is 3 days. Security
-  updates are never delayed by cooldown (GitHub behavior).
-- Version-update PRs will regenerate the lockfile and therefore hit the
-  age gate — the two controls reinforce each other instead of fighting
-  (Dependabot picks versions the gate accepts, or its PR fails visibly).
-- `packages/*` sub-manifests are workspace members; Dependabot's root npm
-  entry covers the workspace graph via the single lockfile. No
-  release-please entry: this repo uses semantic-release, not release-please.
+- Mirrors CT's cooldown policy (14 days); GitHub's default is 3 days.
+  Security updates are never delayed by cooldown (GitHub behavior).
+- **Directory coverage** (review Finding 3 — corrected): the earlier draft
+  claimed a root-only entry covers the workspace graph; that is NOT how
+  Dependabot keys npm updates — it keys off the manifests it is pointed
+  at. The config above explicitly targets `/packages/*` and `/apps/*`.
+  Demo-app coverage (`apps/wiki-demo`, `apps/scopelab`) is included
+  deliberately; exclude them in a follow-up if the PR volume is unwanted.
+- **Grouping + PR limit** ported from CT's config to prevent a first-run
+  PR storm (CT's release-toolchain group exists because of real breakage,
+  CT PR #155; ELW's equivalent — if its semantic-release toolchain shows
+  the same coupled-transitive pattern — gets its own `ignore`/group in the
+  implementation PR, informed by the first Dependabot run).
+- Version-update PRs regenerate the lockfile through the age gate;
+  cooldown (14 d) makes them approximately gate-compatible. This is
+  policy alignment, not enforcement (see bypass-lane note above).
+- No release-please entry: this repo uses semantic-release, not
+  release-please.
+
+**3. deploy.yml note (review Finding 5):** `.github/workflows/deploy.yml:46`
+runs a plain (non-frozen) `pnpm install` on every push to main. The gate is
+a practical no-op there only because the lockfile arrives in-sync (PR CI's
+frozen install blocks out-of-sync lockfiles from merging, and the
+semantic-release commit bumps package.json versions without touching the
+lockfile, so resolution is skipped). This holds unless someone pushes
+directly to main with a changed manifest — frozen-parity for deploy.yml is
+raised as open question 2 rather than folded into this PR's scope.
 
 ### Phase 2 (APPROVED by Kurt 2026-09-16: pin dev dependencies NOW)
 
-**Exact-pin dev dependencies** (the 34 `^` entries; devDeps execute the
-build/publish path — §1 surface 1). Scope confirmed: devDependencies in
-root + `packages/*` only; `^` stays on **published runtime dependencies**
+**Exact-pin dev dependencies** (review Finding 6 corrected count: **43**
+`^`-ranged devDeps of the 44 total ranged entries in root + `packages/*`
+— verified programmatically; the lone ranged runtime dep, `minisearch` in
+core, stays `^`. The 22 ranged entries under `apps/*` are out of Phase 2
+scope per the devDeps-only approval). devDeps execute the build/publish
+path — §1 surface 1. Scope confirmed: devDependencies in root +
+`packages/*` only; `^` stays on **published runtime dependencies**
 (library semver convention; consumer lockfiles govern real resolution, and
 forcing exact runtime pins on published packages degrades consumer dedup
 without adding protection). Verified acceptance criteria from the CT
@@ -179,9 +241,14 @@ listed here so Kurt can pick follow-ups.
 
 ## §5 — Verification plan (acceptance criteria for the Phase 1 PR)
 
-1. On the branch, `pnpm install` (lockfile-regen, expected no-op) succeeds
-   with the gate active — proves no young-version deadlock at merge time;
-   add one-edit exclusions per §3.1 if it fails.
+1. On the branch, **force a full re-resolution** (review Finding 2 — a
+   plain `pnpm install` over an up-to-date lockfile skips resolution and
+   proves nothing about the gate): in a scratch clone,
+   `rm pnpm-lock.yaml && pnpm install` with the gate active — all ~1,308
+   entries resolve through the gate. If it deadlocks on young versions,
+   add one-edit exclusions per §3.1; if it succeeds, verify the
+   regenerated lockfile is byte-identical to the committed one
+   (`git diff --exit-code pnpm-lock.yaml`) and keep the commit as-is.
 2. `pnpm install --frozen-lockfile` unchanged (CI parity).
 3. Age-gate test recipe (isolated, ~30 s, per parent policy): scratch dir,
    pinned `pnpm@10.33.2`, `pnpm add <pkg published < 14d ago>` → expect
@@ -201,3 +268,22 @@ listed here so Kurt can pick follow-ups.
    ALL THREE** — (2) npm publish provenance, (3) CodeQL workflow, (4)
    secret-scanning push protection — to be scheduled as follow-up PRs
    after Phases 1+2 merge. Not blocking this spec or the implementation PR.
+3. **NEW (review Finding 5, needs a yes/no):** should `deploy.yml`'s plain
+   `pnpm install` be made frozen-parity in this PR, or accepted as-is
+   (risk only materializes on a direct-to-main manifest push; branch
+   protection already forces PR CI)? Default: leave as-is, note added to
+   the workflow comment. Blocks merge only if Kurt wants the change.
+4. **NEW (review Finding 4, needs a yes/no):** Dependabot security updates
+   bypass both the cooldown and the age gate (GitHub exempts security
+   updates from cooldown; frozen CI installs skip gate evaluation). Accept
+   as the desired fast path for security fixes, or add a CI
+   lockfile-maturity audit step as a compensating control? Default:
+   accept the bypass (matches CT's posture today). Blocks merge only if
+   Kurt wants the compensating control.
+
+**Review provenance:** GLM 5.3 frontier review (session
+`20260916_101355_51b1e7`, full report archived at PR #152 review comment)
+— verdict APPROVE-WITH-CHANGES; Findings 2, 3, 5, 6, 9, 10 addressed in
+this revision; Findings 7–8 (action SHA-parity, tag-pinned) folded into
+§2 table + §4 queue; all repo-state corrections verified independently
+against the checkout before acceptance.
