@@ -1,0 +1,33 @@
+version: 2
+updates:
+  # The npm ecosystem also maintains pnpm-lock.yaml. Sub-manifests are listed
+  # explicitly: a root-only entry would never open PRs for packages/* or
+  # apps/* specifiers. `directory` and `directories` are mutually exclusive.
+  - package-ecosystem: npm
+    directories: ["/", "/packages/*", "/apps/*"]
+    schedule:
+      interval: weekly
+    cooldown:
+      # Matches the 14-day pnpm minimumReleaseAge gate (policy alignment, not
+      # enforcement; Dependabot does not read minimumReleaseAge). KNOWN BYPASS
+      # (accepted, spec §6 Q4): security updates skip cooldown, and their
+      # lockfile is never gate-checked in CI because frozen installs skip
+      # resolution.
+      default-days: 14
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    open-pull-requests-limit: 10
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
