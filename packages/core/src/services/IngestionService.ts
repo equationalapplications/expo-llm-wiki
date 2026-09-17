@@ -1,7 +1,7 @@
 import { chunkText, withConcurrency, validateFact, parseJsonResponse, normalizeSourceRef, normalizeSourceHash, safeErrorToString } from '../utils/pure';
 import { normalizeTitleKey, typeSatisfies } from '../utils/ontology';
 import { generateId } from '../utils/ids';
-import { WikiParseError, WikiIngestEmptyError, WikiDuplicateHashError, WikiTransactionError, WikiStrictOntologyViolation } from '../types';
+import { WikiParseError, WikiIngestEmptyError, WikiDuplicateHashError, WikiTransactionError, WikiStrictOntologyViolation, WikiGraphNodeOwnershipConflict } from '../types';
 import type { ChunkFailure, WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedFactWithOntology, WikiFact, OntologyUpdates, WikiEdge, IngestDocumentResult } from '../types';
 import type { SQLiteAdapter } from '../types';
 import { extractSqliteCode } from '../db/sqliteCodes';
@@ -342,6 +342,33 @@ export class IngestionService {
   }
 
   /**
+   * Reject the whole write when any incoming node ID is already owned by a
+   * different entity. Runs entirely inside the supplied `tx`, through the
+   * repository abstraction, and — being the first thing `upsertGraphCore`
+   * does — before ontology resolution, which can itself persist a configured
+   * seed manifest.
+   *
+   * The lookup has no deleted-row filter, so a soft-deleted foreign row keeps
+   * its ID reserved. Only the lookup IDs are deduplicated; `params.nodes` and
+   * the later write loops keep their ordering and counts.
+   *
+   * The error is deliberately contextless — see WikiGraphNodeOwnershipConflict.
+   */
+  private async assertGraphNodeOwnership(
+    entityId: string,
+    nodes: readonly { id: string }[],
+    tx: SQLiteAdapter,
+  ): Promise<void> {
+    const ids = [...new Set(nodes.map(node => node.id))];
+    const existing = await this.entryRepo.findExistingMetadataByIds(ids, tx);
+    for (const row of existing) {
+      if (row.entity_id !== entityId) {
+        throw new WikiGraphNodeOwnershipConflict();
+      }
+    }
+  }
+
+  /**
    * Implements spec §2 data flow steps a–j with the host-facing
    * `{sourceRef, sourceHash, nodes, edges}` parameter shape. Shared between
    * `ingestDocument` (with `{ strict: false }` to preserve current behavior)
@@ -371,6 +398,12 @@ export class IngestionService {
     tx: SQLiteAdapter,
     opts?: { strict?: boolean },
   ): Promise<{ nodesWritten: number; edgesWritten: number; superseded: number }> {
+    // Node-ownership pre-flight FIRST — before ontology resolution and every
+    // persistent mutation, so a rejected write leaves no seeded manifest
+    // behind. Shared with ingestDocument's full path via runFullUpsertGraph;
+    // that is intended. No bypass flag exists by design.
+    await this.assertGraphNodeOwnership(entityId, params.nodes, tx);
+
     const now = Date.now();
 
     // (a) Resolve the effective ontology state through OntologyService rather

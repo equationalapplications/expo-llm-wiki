@@ -12,6 +12,18 @@ import type {
  */
 export interface SQLiteAdapter {
   execAsync(sql: string): Promise<void>;
+  /**
+   * `changes` must report the number of rows the statement actually wrote.
+   * It must be 0 when a conflict clause suppresses a write (INSERT OR IGNORE,
+   * or ON CONFLICT DO UPDATE ... WHERE), and must never be nonzero for a
+   * suppressed write. A permitted write that modifies no column value still
+   * counts the row, as SQLite does.
+   *
+   * This count is load-bearing beyond ownership checks: edge insertion
+   * (and therefore upsertGraph's public edgesWritten), metadata compare-and-set,
+   * soft-delete success reporting, and maintenance sweep counts all read it.
+   * An adapter that under-reports silently corrupts those results.
+   */
   runAsync(sql: string, params?: unknown[]): Promise<{ changes: number; lastInsertRowId: number }>;
   getAllAsync<T>(sql: string, params?: unknown[]): Promise<T[]>;
   getFirstAsync<T>(sql: string, params?: unknown[]): Promise<T | null>;
@@ -816,6 +828,30 @@ export class WikiSourceRefHashCollision extends Error {
     this.existingSourceRef = params.existingSourceRef;
     this.attemptedSourceRef = params.attemptedSourceRef;
     this.name = 'WikiSourceRefHashCollision';
+  }
+}
+
+/**
+ * Thrown when a graph node ID is already owned by another entity.
+ *
+ * Raised by `WikiMemory.upsertGraph`'s node-ownership pre-flight and,
+ * independently, by `EntryRepository.upsert` for every caller — which is why
+ * `ingestDocument` can surface it too (it shares `upsertGraphCore` on its full
+ * path and `EntryRepository.upsert` on its partial path).
+ *
+ * Deliberately carries NO context: no owner entity, node ID, stored content,
+ * provenance, or `cause`. A rejection is reachable by whatever supplies the
+ * node IDs, so the error must not become a channel for reading another
+ * entity's identifiers. The `WIKI_`-prefixed code and fixed message also keep
+ * it clear of `extractSqliteCode`, so it passes through the serialized
+ * transaction wrapper unwrapped.
+ */
+export class WikiGraphNodeOwnershipConflict extends Error {
+  readonly code = 'WIKI_GRAPH_NODE_OWNERSHIP_CONFLICT' as const;
+
+  constructor() {
+    super('Graph write rejected because a node ID is unavailable for this entity.');
+    this.name = 'WikiGraphNodeOwnershipConflict';
   }
 }
 

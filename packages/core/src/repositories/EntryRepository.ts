@@ -1,4 +1,5 @@
 import type { SQLiteAdapter, WikiFact, EmbeddingMarkerKind } from '../types';
+import { WikiGraphNodeOwnershipConflict } from '../types';
 import { BaseRepository } from './BaseRepository';
 import { OutboxRepository } from './OutboxRepository';
 import { parseJsonArray, parseJsonObject } from './rowMappers';
@@ -179,6 +180,7 @@ export class EntryRepository extends BaseRepository {
 
     const existingRow = await executor.getFirstAsync<{
       id: string;
+      entity_id: string;
       lifecycle_status: string;
       stale_after: number | null;
       generated_by: string | null;
@@ -188,12 +190,21 @@ export class EntryRepository extends BaseRepository {
       last_verified_at: number | null;
       last_verified_by: string | null;
     }>(
-      `SELECT id, lifecycle_status, stale_after, generated_by,
+      `SELECT id, entity_id, lifecycle_status, stale_after, generated_by,
               okf_sources, okf_verified, okf_usage_window,
               last_verified_at, last_verified_by
          FROM ${this.prefix}entries WHERE id = ?`,
       [fact.id],
     );
+
+    // Entry IDs share one global namespace, so an ID stays owned by its
+    // existing entity for as long as the row exists — soft deletion included.
+    // Reject here, before any write or outbox payload construction. This costs
+    // one extra column on a SELECT the method already ran, not a new query.
+    if (existingRow && existingRow.entity_id !== fact.entity_id) {
+      throw new WikiGraphNodeOwnershipConflict();
+    }
+
     const operation = fact.deleted_at ? 'DELETE' : (existingRow ? 'UPDATE' : 'INSERT');
 
     const result = await executor.runAsync(
@@ -205,7 +216,6 @@ export class EntryRepository extends BaseRepository {
         okf_sources, okf_verified, okf_usage_window
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
-        entity_id = excluded.entity_id,
         title = excluded.title,
         body = excluded.body,
         tags = excluded.tags,
@@ -222,7 +232,8 @@ export class EntryRepository extends BaseRepository {
         embedding_failed_at = CASE WHEN excluded.embedding_blob IS NOT NULL THEN NULL ELSE embedding_failed_at END,
         embedding_failure_kind = CASE WHEN excluded.embedding_blob IS NOT NULL THEN NULL ELSE embedding_failure_kind END,
         embedding_attempts = CASE WHEN excluded.embedding_blob IS NOT NULL THEN 0 ELSE embedding_attempts END,
-        okf_type = excluded.okf_type`,
+        okf_type = excluded.okf_type
+      WHERE ${this.prefix}entries.entity_id = excluded.entity_id`,
       [
         fact.id,
         fact.entity_id,
@@ -254,6 +265,20 @@ export class EntryRepository extends BaseRepository {
         fact.okf_usage_window ? JSON.stringify(fact.okf_usage_window) : null,
       ],
     );
+
+    // A suppressed conflict-update reports 0 (see the SQLiteAdapter contract).
+    // A permitted write that an adapter under-reports as 0 also lands here, so
+    // confirm ownership from the stored row rather than inferring it from the
+    // count. Only a foreign owner rejects; anything else proceeds normally.
+    if (result.changes === 0) {
+      const stored = await tx.getFirstAsync<{ entity_id: string }>(
+        `SELECT entity_id FROM ${this.prefix}entries WHERE id = ?`,
+        [fact.id],
+      );
+      if (stored && stored.entity_id !== fact.entity_id) {
+        throw new WikiGraphNodeOwnershipConflict();
+      }
+    }
 
     // Outbox payload mirrors what is actually persisted. On UPDATE, the SET
     // clause intentionally omits the OKF metadata columns so the prior row
