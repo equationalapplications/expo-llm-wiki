@@ -9,6 +9,16 @@
 **Status revision 2026-09-17-c:** Second review round, against revision -b. Design decision still unchanged. Four corrections: the suppression detector's adapter contract is now stated rather than assumed, resolving a gap where an over-reporting adapter could report success for a write it did not perform (§4, test 14); the zero-write preflight guarantee is scoped to `upsertGraph`, because full document ingestion persists ontology state before reaching `upsertGraphCore` (§3); an inaccurate claim that an ownership predicate would break import is replaced with the actual reason import stays out of scope (§4); and §8's premature assertion that revision -b had been committed is corrected (§8). Revisions -b and -c are committed together as one spec-only commit.
 
 **Status revision 2026-09-17-d:** Plan review clarified the affected-row contract (§4, test 14). Accurate counts remain mandatory for adapters; a permitted write reported as zero violates that contract. `upsert`'s ownership re-read is local defensive behavior, not permission for adapter under-reporting. The implementation plan also separates ontology-valid preservation tests from ontology-precedence tests and replaces its unsafe stash mutation recipe with an intact-file backup and byte-exact restoration. Historical statuses remain unchanged; implementation has not started.
+**Status revision 2026-09-17-e:** Implementation complete on this branch. Commit `1aa087c` lands the code change; this revision is recorded separately as the spec closure. Verification (all run from `dev/graph-entity-isolation` at `1aa087c`):
+- `pnpm --filter @equationalapplications/core-llm-wiki build` -- clean.
+- `pnpm --filter @equationalapplications/core-llm-wiki typecheck` -- clean.
+- `pnpm --filter @equationalapplications/core-llm-wiki test` -- 1,317/1,317 across 103 files (targeted full-core regression; no skips).
+- `pnpm --filter @equationalapplications/expo-llm-wiki test` -- 12/12.
+- `git diff --check` -- clean.
+- New suites asserted green: `__tests__/graphOwnershipExports.test.ts` (2), `__tests__/graphOwnership.test.ts` (15 real-SQLite repo/preflight tests), `__tests__/graphOwnershipIngest.test.ts` (3 routing + rollback), `__tests__/adapterContract.test.ts` (integration + Expo driver forwarding), `__tests__/ingest.test.ts` (1 spec contract assertion, no behavior change).
+- Pre-merge CI deltas: README `withTransactionAsync` example signatures corrected so host callbacks receive the active `tx` handle (interface at line 1145 plus sql.js / better-sqlite3 example impls at lines 1189 and 1218 -- previously declared `fn: () => Promise<T>` which would silently drop the host into writing on the outer connection); `WikiGraphNodeOwnershipConflict` constructor carries an explicit privacy-preserving JSDoc; the 5 functions touched by the diff (`WikiMemory.ingestDocument`, `EntryRepository.upsert`, `IngestionService.upsertGraphCore`, `IngestionService.assertGraphNodeOwnership`, the new error class) now have complete JSDoc satisfying the 80% docstring-coverage threshold.
+Historical statuses -a through -d remain unchanged; they describe the design as approved before implementation, which is the record. This revision is the closure: design approved, implementation complete, verification recorded.
+
 
 **Branch:** `dev/graph-entity-isolation`
 
