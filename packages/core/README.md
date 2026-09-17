@@ -1142,7 +1142,7 @@ export interface SQLiteAdapter {
   runAsync(sql: string, params?: unknown[]): Promise<{ changes: number; lastInsertRowId: number }>;
   getAllAsync<T>(sql: string, params?: unknown[]): Promise<T[]>;
   getFirstAsync<T>(sql: string, params?: unknown[]): Promise<T | null>;
-  withTransactionAsync<T>(fn: () => Promise<T>): Promise<T>;
+  withTransactionAsync<T>(fn: (tx: SQLiteAdapter) => Promise<T>): Promise<T>;
   closeAsync(): Promise<void>;
 }
 ```
@@ -1188,7 +1188,7 @@ const adapter: SQLiteAdapter = {
   },
   async withTransactionAsync(fn) {
     sqlDb.run('BEGIN');
-    try { const r = await fn(); sqlDb.run('COMMIT'); return r; }
+    try { const r = await fn(this); sqlDb.run('COMMIT'); return r; }
     catch (e) { sqlDb.run('ROLLBACK'); throw e; }
   },
   async closeAsync() { sqlDb.close(); },
@@ -1217,7 +1217,7 @@ const adapter: SQLiteAdapter = {
   },
   async withTransactionAsync(fn) {
     db.exec('BEGIN');
-    try { const r = await fn(); db.exec('COMMIT'); return r; }
+    try { const r = await fn(this); db.exec('COMMIT'); return r; }
     catch (e) { db.exec('ROLLBACK'); throw e; }
   },
   async closeAsync() { db.close(); },

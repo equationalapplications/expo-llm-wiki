@@ -849,6 +849,15 @@ export class WikiSourceRefHashCollision extends Error {
 export class WikiGraphNodeOwnershipConflict extends Error {
   readonly code = 'WIKI_GRAPH_NODE_OWNERSHIP_CONFLICT' as const;
 
+  /**
+   * Privacy-preserving constructor: accepts no arguments, so neither the foreign
+   * owner, the conflicting node ID, the stored content, nor any provenance can
+   * leak through this error. The fixed message and `code` are the entire signal.
+   *
+   * @returns a contextless `WikiGraphNodeOwnershipConflict` instance. See the
+   *   class-level JSDoc for the privacy rationale.
+   */
+
   constructor() {
     super('Graph write rejected because a node ID is unavailable for this entity.');
     this.name = 'WikiGraphNodeOwnershipConflict';

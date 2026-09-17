@@ -171,6 +171,26 @@ export class EntryRepository extends BaseRepository {
    * diagnostic that inflates runReembed's permanentlyFailed counter. A conflict
    * with no blob leaves marker state alone, matching the "absent means don't
    * touch" semantics used for embedding_blob itself.
+   *
+   * Graph node ownership (spec §2.4 + §3, REQ-OWN-01 + REQ-GRAPH-01): entry
+   * IDs share one database-wide namespace, so an ID stays owned by its
+   * existing entity for as long as the row exists — soft deletion included.
+   * The pre-write lookup already reads the existing row for OKF metadata; we
+   * project `entity_id` off that same SELECT and reject the write before
+   * any outbox payload construction when the stored owner differs from
+   * `fact.entity_id`. Soft-deleted foreign rows keep their IDs reserved;
+   * permanent reservation is NOT introduced, so a physically absent ID may
+   * still be inserted under the requested entity. The ON CONFLICT UPDATE SET
+   * clause carries a final `WHERE entries.entity_id = excluded.entity_id`
+   * guard so the database itself refuses a cross-owner row overwrite even if
+   * a future caller bypasses the pre-write check. When `runAsync` reports
+   * 0 changes (a legitimate conflict-suppressed write, OR an adapter that
+   * under-reports a permitted write) we re-read the stored owner; only a
+   * foreign owner throws — this is local defensive behavior, not permission
+   * for adapters to under-report. The thrown error is
+   * `WikiGraphNodeOwnershipConflict` (no owner, node ID, or stored content
+   * is disclosed). Upserts that pass both gates retain existing same-entity
+   * update + resurrection semantics.
    */
   async upsert(fact: WikiFact, tx: SQLiteAdapter): Promise<{ changes: number; lastInsertRowId: number }> {
     const executor = this.getExecutor(tx);

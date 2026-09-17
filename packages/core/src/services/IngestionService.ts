@@ -353,6 +353,14 @@ export class IngestionService {
    * the later write loops keep their ordering and counts.
    *
    * The error is deliberately contextless — see WikiGraphNodeOwnershipConflict.
+   *
+   * @param entityId - the entity the caller is writing on behalf of. Foreign
+   *   rows under a different entity trigger the rejection.
+   * @param nodes - incoming node set; only the IDs are inspected, so callers
+   *   may pass the public `params.nodes` shape directly without slicing.
+   * @param tx - the open transaction. Reuses the same handle every later
+   *   statement in `upsertGraphCore` runs against, so atomicity is enforced
+   *   by the host transaction's commit/rollback, not by this method.
    */
   private async assertGraphNodeOwnership(
     entityId: string,
@@ -386,6 +394,16 @@ export class IngestionService {
    * @returns Counts: nodesWritten (validated nodes persisted), edgesWritten
    *   (manifest-valid edges persisted), superseded (prior facts soft-deleted
    *   plus prior source-ref edges hard-deleted).
+   *
+   * Node-ownership pre-flight (spec §3, REQ-GRAPH-01): the first statement
+   * is `assertGraphNodeOwnership(entityId, params.nodes, tx)`, which runs
+   * before ontology resolution, seed-manifest persistence, and every other
+   * write. A foreign-owned ID throws `WikiGraphNodeOwnershipConflict` with
+   * no disclosed owner, node ID, or content; the caller's transaction
+   * remains open and must be rolled back by the host. Soft-deleted foreign
+   * rows keep their IDs reserved. Duplicate incoming IDs are deduplicated
+   * only for the lookup; `params.nodes` and the write loops keep their
+   * ordering and counts so success counts match the pre-change contract.
    */
   async upsertGraphCore(
     entityId: string,
