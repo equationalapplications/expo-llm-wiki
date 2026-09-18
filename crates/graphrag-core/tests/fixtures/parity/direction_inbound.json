@@ -1,0 +1,24 @@
+{
+  "description": "inbound only: b->a and a->c, expect [a,b]",
+  "category": "parity",
+  "entityId": "entity1",
+  "sourceId": "a",
+  "config": {},
+  "options": {
+    "sourceId": "a",
+    "maxDepth": 1,
+    "direction": "inbound"
+  },
+  "expectedNodeIds": [
+    "a",
+    "b"
+  ],
+  "expectedEdges": [
+    {
+      "id": "e1",
+      "source_id": "b",
+      "target_id": "a",
+      "edge_type": "mentions"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "description": "soft-deleted sourceId returns empty",
+  "category": "parity",
+  "entityId": "entity1",
+  "sourceId": "a",
+  "config": {},
+  "options": {
+    "sourceId": "a",
+    "maxDepth": 1
+  },
+  "expectedNodeIds": [],
+  "expectedEdges": []
+}

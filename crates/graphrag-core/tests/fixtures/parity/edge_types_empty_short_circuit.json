@@ -1,0 +1,17 @@
+{
+  "description": "edgeTypes [] short-circuits to anchor-only",
+  "category": "parity",
+  "entityId": "entity1",
+  "sourceId": "a",
+  "config": {},
+  "options": {
+    "sourceId": "a",
+    "maxDepth": 1,
+    "direction": "both",
+    "edgeTypes": []
+  },
+  "expectedNodeIds": [
+    "a"
+  ],
+  "expectedEdges": []
+}

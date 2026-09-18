@@ -1,0 +1,33 @@
+{
+  "description": "persisted out-of-enum source_type is opaque text (exclusion by exact equality only)",
+  "category": "parity",
+  "entityId": "entity1",
+  "sourceId": "a",
+  "config": {},
+  "options": {
+    "sourceId": "a",
+    "maxDepth": 3,
+    "excludeSourceTypes": [
+      "immutable_document"
+    ]
+  },
+  "expectedNodeIds": [
+    "a",
+    "b",
+    "c"
+  ],
+  "expectedEdges": [
+    {
+      "id": "e1",
+      "source_id": "a",
+      "target_id": "b",
+      "edge_type": "mentions"
+    },
+    {
+      "id": "e2",
+      "source_id": "b",
+      "target_id": "c",
+      "edge_type": "mentions"
+    }
+  ]
+}
