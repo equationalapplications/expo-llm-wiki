@@ -1,0 +1,38 @@
+{
+  "description": "three-hop chain a->b->c->d at maxDepth 3",
+  "category": "parity",
+  "entityId": "entity1",
+  "sourceId": "a",
+  "config": {},
+  "options": {
+    "sourceId": "a",
+    "maxDepth": 3,
+    "direction": "outbound"
+  },
+  "expectedNodeIds": [
+    "a",
+    "b",
+    "c",
+    "d"
+  ],
+  "expectedEdges": [
+    {
+      "id": "e1",
+      "source_id": "a",
+      "target_id": "b",
+      "edge_type": "mentions"
+    },
+    {
+      "id": "e2",
+      "source_id": "b",
+      "target_id": "c",
+      "edge_type": "mentions"
+    },
+    {
+      "id": "e3",
+      "source_id": "c",
+      "target_id": "d",
+      "edge_type": "mentions"
+    }
+  ]
+}

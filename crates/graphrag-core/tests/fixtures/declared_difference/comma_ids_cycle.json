@@ -1,0 +1,25 @@
+{
+  "description": "ids containing commas with a cycle: baseline visited-string delimiter vs native set guard",
+  "category": "declared_difference",
+  "entityId": "entity1",
+  "sourceId": "a,b",
+  "config": {},
+  "options": {
+    "sourceId": "a,b",
+    "maxDepth": 3,
+    "direction": "both"
+  },
+  "notes": "Baseline guard instr(visited, ',id,') may over-suppress when ids contain commas (delimiters collide). Native uses a collision-free visited set. expectedNativeNodeIds: [a,b] both returned, traversal terminates. Record baselineObservedNodeIds.",
+  "expectedNodeIds": [
+    "a,b",
+    "b,a"
+  ],
+  "expectedEdges": [
+    {
+      "id": "e1",
+      "source_id": "a,b",
+      "target_id": "b,a",
+      "edge_type": "mentions"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "description": "missing sourceId returns empty",
+  "category": "parity",
+  "entityId": "entity1",
+  "sourceId": "ghost",
+  "config": {},
+  "options": {
+    "sourceId": "ghost",
+    "maxDepth": 1
+  },
+  "expectedNodeIds": [],
+  "expectedEdges": []
+}

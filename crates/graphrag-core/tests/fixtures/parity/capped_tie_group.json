@@ -1,0 +1,28 @@
+{
+  "description": "cap 2 with tied children: anchor prefix guaranteed; tied group membership validated, exact tie order not",
+  "category": "parity",
+  "entityId": "entity1",
+  "sourceId": "a",
+  "config": {},
+  "options": {
+    "sourceId": "a",
+    "maxDepth": 1,
+    "maxTraversalNodes": 2
+  },
+  "expectedNodeIds": [
+    "a"
+  ],
+  "eligibleTiedIds": [
+    "b",
+    "c"
+  ],
+  "notes": "Tie at the cap boundary: expectedNodeIds pins only the guaranteed anchor prefix; native must return exactly one member of eligibleTiedIds as the second node. Per REQ-SLICE-02 the engines need not choose the same tied subset.",
+  "expectedEdges": [
+    {
+      "id": "e_b",
+      "source_id": "a",
+      "target_id": "b",
+      "edge_type": "mentions"
+    }
+  ]
+}

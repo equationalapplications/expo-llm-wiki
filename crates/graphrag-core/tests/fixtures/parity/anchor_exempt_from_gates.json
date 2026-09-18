@@ -1,0 +1,19 @@
+{
+  "description": "anchor returned despite failing confidence+source_type gates",
+  "category": "parity",
+  "entityId": "entity1",
+  "sourceId": "a",
+  "config": {},
+  "options": {
+    "sourceId": "a",
+    "maxDepth": 1,
+    "minTraversalConfidence": "certain",
+    "excludeSourceTypes": [
+      "immutable_document"
+    ]
+  },
+  "expectedNodeIds": [
+    "a"
+  ],
+  "expectedEdges": []
+}

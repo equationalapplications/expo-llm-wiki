@@ -1,0 +1,29 @@
+{
+  "description": "maxTraversalNodes 9007199254740993 (2^53+1): f64 decode rounds to 2^53 in both engines",
+  "category": "parity",
+  "entityId": "entity1",
+  "sourceId": "a",
+  "config": {},
+  "options": {
+    "sourceId": "a",
+    "maxDepth": 1,
+    "maxTraversalNodes": 9007199254740992
+  },
+  "expectedNodeIds": [
+    "a",
+    "b"
+  ],
+  "notes": "Pins the f64-then-floor decode: JS Number(9007199254740993) === 9007199254740992; native serde f64 must round identically, then floor and accept (within i64 range). Native test asserts acceptance and the floor value, not the traversal output.",
+  "expectedEdges": [
+    {
+      "id": "e1",
+      "source_id": "a",
+      "target_id": "b",
+      "edge_type": "mentions"
+    }
+  ],
+  "baselineObservedNodeIds": [
+    "a",
+    "b"
+  ]
+}

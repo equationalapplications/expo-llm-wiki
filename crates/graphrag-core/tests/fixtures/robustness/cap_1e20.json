@@ -1,0 +1,15 @@
+{
+  "description": "maxTraversalNodes 1e20: native rejects unsupported_limit; baseline may accept or throw",
+  "category": "robustness",
+  "entityId": "entity1",
+  "sourceId": "a",
+  "config": {},
+  "options": {
+    "sourceId": "a",
+    "maxDepth": 1,
+    "maxTraversalNodes": 100000000000000000000
+  },
+  "notes": "Native: UnsupportedLimit (1e20 floor far exceeds i64::MAX). Baseline behavior recorded in notes/baselineObservedNodeIds. | baseline threw: datatype mismatch",
+  "expectedNodeIds": null,
+  "expectedEdges": null
+}

@@ -1,0 +1,31 @@
+{
+  "description": "cap 3: anchor + best-two children by updated_at DESC within depth",
+  "category": "parity",
+  "entityId": "entity1",
+  "sourceId": "a",
+  "config": {},
+  "options": {
+    "sourceId": "a",
+    "maxDepth": 1,
+    "maxTraversalNodes": 3
+  },
+  "expectedNodeIds": [
+    "a",
+    "b",
+    "c"
+  ],
+  "expectedEdges": [
+    {
+      "id": "e_b",
+      "source_id": "a",
+      "target_id": "b",
+      "edge_type": "mentions"
+    },
+    {
+      "id": "e_c",
+      "source_id": "a",
+      "target_id": "c",
+      "edge_type": "mentions"
+    }
+  ]
+}

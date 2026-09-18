@@ -1,0 +1,24 @@
+{
+  "description": "maxTraversalNodes 9.2e18 accepted and floored by both engines",
+  "category": "parity",
+  "entityId": "entity1",
+  "sourceId": "a",
+  "config": {},
+  "options": {
+    "sourceId": "a",
+    "maxDepth": 1,
+    "maxTraversalNodes": 9200000000000000000
+  },
+  "expectedNodeIds": [
+    "a",
+    "b"
+  ],
+  "expectedEdges": [
+    {
+      "id": "e1",
+      "source_id": "a",
+      "target_id": "b",
+      "edge_type": "mentions"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "description": "single outbound hop a->b",
+  "category": "parity",
+  "entityId": "entity1",
+  "sourceId": "a",
+  "config": {},
+  "options": {
+    "sourceId": "a",
+    "maxDepth": 1,
+    "direction": "outbound"
+  },
+  "expectedNodeIds": [
+    "a",
+    "b"
+  ],
+  "expectedEdges": [
+    {
+      "id": "e1",
+      "source_id": "a",
+      "target_id": "b",
+      "edge_type": "mentions"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "description": "tentative node dead-ends traversal past it",
+  "category": "parity",
+  "entityId": "entity1",
+  "sourceId": "a",
+  "config": {
+    "minTraversalConfidence": "inferred"
+  },
+  "options": {
+    "sourceId": "a",
+    "maxDepth": 3,
+    "minTraversalConfidence": "inferred"
+  },
+  "expectedNodeIds": [
+    "a"
+  ],
+  "expectedEdges": []
+}

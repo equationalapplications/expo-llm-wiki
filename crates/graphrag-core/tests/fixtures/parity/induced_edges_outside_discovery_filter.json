@@ -1,0 +1,32 @@
+{
+  "description": "induced edges include both-endpoint pairs regardless of discovery filter",
+  "category": "parity",
+  "entityId": "entity1",
+  "sourceId": "a",
+  "config": {},
+  "options": {
+    "sourceId": "a",
+    "maxDepth": 1,
+    "edgeTypes": [
+      "mentions"
+    ]
+  },
+  "expectedNodeIds": [
+    "a",
+    "b"
+  ],
+  "expectedEdges": [
+    {
+      "id": "e1",
+      "source_id": "a",
+      "target_id": "b",
+      "edge_type": "mentions"
+    },
+    {
+      "id": "e2",
+      "source_id": "a",
+      "target_id": "b",
+      "edge_type": "reports_to"
+    }
+  ]
+}

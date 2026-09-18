@@ -1,0 +1,15 @@
+{
+  "description": "maxTraversalNodes 9.3e18: native rejects unsupported_limit (floor exceeds i64::MAX)",
+  "category": "robustness",
+  "entityId": "entity1",
+  "sourceId": "a",
+  "config": {},
+  "options": {
+    "sourceId": "a",
+    "maxDepth": 1,
+    "maxTraversalNodes": 9300000000000000000
+  },
+  "notes": "Native: UnsupportedLimit. 9.3e18 floors above i64::MAX (9.223372036854775807e18). | baseline threw: datatype mismatch",
+  "expectedNodeIds": null,
+  "expectedEdges": null
+}

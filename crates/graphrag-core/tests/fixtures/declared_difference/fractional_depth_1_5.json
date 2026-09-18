@@ -1,0 +1,31 @@
+{
+  "description": "fractional maxDepth 1.5: native unrounded bound reaches depth 2; baseline CTE expansion stops earlier",
+  "category": "declared_difference",
+  "entityId": "entity1",
+  "sourceId": "a",
+  "config": {},
+  "options": {
+    "sourceId": "a",
+    "maxDepth": 1.5
+  },
+  "notes": "Native (BFS, real-valued bound d=1.5): frontiers expand while k-1 < d, so depth-2 nodes are reached. Baseline CTE: w.depth < 1.5 admits expansion from depth 1, so depth-2 can also be reached — record baselineObservedNodeIds; native must reach a SUPERSET that includes depth-2 nodes. See plan declared-difference DD-2.",
+  "expectedNodeIds": [
+    "a",
+    "b",
+    "c"
+  ],
+  "expectedEdges": [
+    {
+      "id": "e1",
+      "source_id": "a",
+      "target_id": "b",
+      "edge_type": "mentions"
+    },
+    {
+      "id": "e2",
+      "source_id": "b",
+      "target_id": "c",
+      "edge_type": "mentions"
+    }
+  ]
+}

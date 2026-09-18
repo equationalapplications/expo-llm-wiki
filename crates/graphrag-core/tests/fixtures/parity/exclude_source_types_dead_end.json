@@ -1,0 +1,18 @@
+{
+  "description": "excluded source_type dead-ends traversal",
+  "category": "parity",
+  "entityId": "entity1",
+  "sourceId": "a",
+  "config": {},
+  "options": {
+    "sourceId": "a",
+    "maxDepth": 3,
+    "excludeSourceTypes": [
+      "immutable_document"
+    ]
+  },
+  "expectedNodeIds": [
+    "a"
+  ],
+  "expectedEdges": []
+}

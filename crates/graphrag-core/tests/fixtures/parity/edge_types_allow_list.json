@@ -1,0 +1,27 @@
+{
+  "description": "edgeTypes allow-list filters non-matching types",
+  "category": "parity",
+  "entityId": "entity1",
+  "sourceId": "a",
+  "config": {},
+  "options": {
+    "sourceId": "a",
+    "maxDepth": 1,
+    "direction": "both",
+    "edgeTypes": [
+      "reports_to"
+    ]
+  },
+  "expectedNodeIds": [
+    "a",
+    "b"
+  ],
+  "expectedEdges": [
+    {
+      "id": "e1",
+      "source_id": "a",
+      "target_id": "b",
+      "edge_type": "reports_to"
+    }
+  ]
+}
