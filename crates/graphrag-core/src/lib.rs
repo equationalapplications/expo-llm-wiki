@@ -5,8 +5,7 @@
 //! lifecycle (REQ-OWN-01).
 pub mod error;
 
-// `types` lands with Task 2; kept commented so the scaffold stays green.
-// pub mod types;
+pub mod types;
 
 #[cfg(test)]
 mod tests {
