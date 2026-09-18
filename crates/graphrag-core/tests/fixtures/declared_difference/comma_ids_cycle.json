@@ -9,11 +9,8 @@
     "maxDepth": 3,
     "direction": "both"
   },
+  "expectedNodeIds": null,
   "notes": "Baseline guard instr(visited, ',id,') may over-suppress when ids contain commas (delimiters collide). Native uses a collision-free visited set. expectedNativeNodeIds: [a,b] both returned, traversal terminates. Record baselineObservedNodeIds.",
-  "expectedNodeIds": [
-    "a,b",
-    "b,a"
-  ],
   "expectedEdges": [
     {
       "id": "e1",
@@ -21,5 +18,9 @@
       "target_id": "b,a",
       "edge_type": "mentions"
     }
+  ],
+  "baselineObservedNodeIds": [
+    "a,b",
+    "b,a"
   ]
 }

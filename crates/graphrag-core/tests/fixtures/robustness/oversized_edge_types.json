@@ -160,11 +160,8 @@
       "type_149"
     ]
   },
+  "expectedNodeIds": null,
   "notes": "Native: chunked IN-lists preserve union semantics. Baseline binds 150 variables in one query — record observed behavior.",
-  "expectedNodeIds": [
-    "a",
-    "b"
-  ],
   "expectedEdges": [
     {
       "id": "e1",
@@ -172,5 +169,9 @@
       "target_id": "b",
       "edge_type": "type_0"
     }
+  ],
+  "baselineObservedNodeIds": [
+    "a",
+    "b"
   ]
 }

@@ -103,7 +103,15 @@ async function makeService(
   return new GraphTraversalService(edgeRepo, entryRepo, config);
 }
 
-/** Run a scenario against the real baseline and emit its fixture. */
+/** Run a scenario against the real baseline and emit its fixture.
+ *
+ * Envelope contract (CodeRabbit PR 191 -fa): `expectedNodeIds` pins the NATIVE
+ * expectation only. It is filled from the baseline run solely for PARITY
+ * scenarios (where native must match baseline exactly). Declared-difference
+ * and robustness scenarios must pass `expectedNodeIds: null` explicitly; the
+ * baseline's actual output lands in `baselineObservedNodeIds` for the native
+ * tests to compare against with their own declared-difference logic.
+ */
 async function capture(
   name: string,
   fx: Omit<FixtureEnvelope, 'expectedEdges' | 'expectedNodeIds'> & { expectedNodeIds?: string[] | null },
@@ -121,12 +129,21 @@ async function capture(
     writeFixture(name, fixture);
     return fixture;
   }
+  if (fx.category !== 'parity' && fx.expectedNodeIds === undefined) {
+    throw new Error(
+      `${name}: ${fx.category} scenarios must set expectedNodeIds explicitly ` +
+        `(null = defer to baselineObservedNodeIds; a list = narrower native contract)`,
+    );
+  }
+  const isParity = fx.category === 'parity';
   const expectedEdges = edgesExpected
     ? neighborhood.edges.map((e) => ({ id: e.id, source_id: e.source_id, target_id: e.target_id, edge_type: e.edge_type }))
     : null;
   const fixture: FixtureEnvelope = {
     ...fx,
-    expectedNodeIds: fx.expectedNodeIds ?? neighborhood.nodes.map((n) => n.id),
+    // Parity only: native expectation == baseline output. Other categories
+    // keep null (or the explicit list the scenario declared).
+    expectedNodeIds: isParity ? (fx.expectedNodeIds ?? neighborhood.nodes.map((n) => n.id)) : (fx.expectedNodeIds ?? null),
     expectedEdges,
   };
   if (fx.expectedNodeIds === null && neighborhood.nodes.length > 0) {
@@ -141,10 +158,32 @@ async function capture(
   return fixture;
 }
 
+/** Deferred fixture writes (see the drift check at the bottom of the test):
+ *  every capture records its serialized envelope here; the test then either
+ *  drift-checks the committed bytes (default) or rewrites (UPDATE_FIXTURES=1).
+ *  `jsonLiteralOverrides` splices exact JSON literals (e.g. the 2^53+1 cap,
+ *  which JS Number cannot represent) after serialization. */
+const written: Array<{ path: string; serialized: string }> = [];
+const jsonLiteralOverrides: Record<string, Array<[string, string]>> = {
+  'parity/cap_2to53_band': [
+    // 9007199254740993 (2^53+1) is not Number-representable; JS rounds the
+    // option to 2^53 before the baseline ever sees it, but the fixture must
+    // store the +1 literal so native serde f64 rounding is actually exercised.
+    ['"maxTraversalNodes": 9007199254740992', '"maxTraversalNodes": 9007199254740993'],
+  ],
+};
+
 function writeFixture(name: string, fixture: FixtureEnvelope): void {
   const dir = join(FIXTURE_DIR, fixture.category);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, `${name}.json`), JSON.stringify(fixture, null, 2) + '\n');
+  let serialized = JSON.stringify(fixture, null, 2) + '\n';
+  for (const [from, to] of jsonLiteralOverrides[`${fixture.category}/${name}`] ?? []) {
+    if (!serialized.includes(from)) {
+      throw new Error(`jsonLiteralOverride target missing in ${name}: ${from}`);
+    }
+    serialized = serialized.replace(from, to);
+  }
+  written.push({ path: join(dir, `${name}.json`), serialized });
 }
 
 describe('compatibility fixture generator (REQ-SLICE-02)', () => {
@@ -410,6 +449,7 @@ describe('compatibility fixture generator (REQ-SLICE-02)', () => {
       category: 'declared_difference',
       entityId: 'entity1', sourceId: 'a', config: {},
       options: { sourceId: 'a', maxDepth: 1.5 },
+      expectedNodeIds: null,
 
       notes: 'Native (BFS, real-valued bound d=1.5): frontiers expand while k-1 < d, so depth-2 nodes are reached. Baseline CTE: w.depth < 1.5 admits expansion from depth 1, so depth-2 can also be reached — record baselineObservedNodeIds; native must reach a SUPERSET that includes depth-2 nodes. See plan declared-difference DD-2.',
     }, async (db) => {
@@ -423,6 +463,7 @@ describe('compatibility fixture generator (REQ-SLICE-02)', () => {
       category: 'declared_difference',
       entityId: 'entity1', sourceId: 'a,b', config: {},
       options: { sourceId: 'a,b', maxDepth: 3, direction: 'both' },
+      expectedNodeIds: null,
 
       notes: 'Baseline guard instr(visited, \',id,\') may over-suppress when ids contain commas (delimiters collide). Native uses a collision-free visited set. expectedNativeNodeIds: [a,b] both returned, traversal terminates. Record baselineObservedNodeIds.',
     }, async (db) => {
@@ -436,6 +477,7 @@ describe('compatibility fixture generator (REQ-SLICE-02)', () => {
       category: 'robustness',
       entityId: 'entity1', sourceId: 'a', config: {},
       options: { sourceId: 'a', maxDepth: 1, maxTraversalNodes: 1e20 },
+      expectedNodeIds: null,
 
       notes: 'Native: UnsupportedLimit (1e20 floor far exceeds i64::MAX). Baseline behavior recorded in notes/baselineObservedNodeIds.',
     }, async (db) => {
@@ -448,6 +490,7 @@ describe('compatibility fixture generator (REQ-SLICE-02)', () => {
       category: 'robustness',
       entityId: 'entity1', sourceId: 'a', config: {},
       options: { sourceId: 'a', maxDepth: 1, maxTraversalNodes: 9.3e18 },
+      expectedNodeIds: null,
 
       notes: 'Native: UnsupportedLimit. 9.3e18 floors above i64::MAX (9.223372036854775807e18).',
     }, async (db) => {
@@ -463,6 +506,7 @@ describe('compatibility fixture generator (REQ-SLICE-02)', () => {
         sourceId: 'a', maxDepth: 1,
         edgeTypes: Array.from({ length: 150 }, (_, i) => `type_${i}`),
       },
+      expectedNodeIds: null,
 
       notes: 'Native: chunked IN-lists preserve union semantics. Baseline binds 150 variables in one query — record observed behavior.',
     }, async (db) => {
@@ -474,6 +518,20 @@ describe('compatibility fixture generator (REQ-SLICE-02)', () => {
     expect(counts.parity).toBe(22);
     expect(counts.declared_difference).toBe(2);
     expect(counts.robustness).toBe(3);
+
+    // Opt-in regeneration (CodeRabbit PR 191 -fi): writes only when
+    // UPDATE_FIXTURES=1, so ordinary `vitest run` never rewrites fixtures.
+    // Without it, the run is a DRIFT CHECK: every freshly captured envelope
+    // must byte-match what is committed.
+    const updateMode = process.env.UPDATE_FIXTURES === '1';
+    for (const f of written) {
+      const onDisk = readFileSync(f.path, 'utf8');
+      if (!updateMode) {
+        expect(onDisk, `fixture drift: ${f.path} (run with UPDATE_FIXTURES=1 to regenerate)`).toBe(f.serialized);
+      } else if (onDisk !== f.serialized) {
+        writeFileSync(f.path, f.serialized);
+      }
+    }
 
     let total = 0;
     for (const cat of ['parity', 'declared_difference', 'robustness'] as const) {

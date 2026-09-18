@@ -654,11 +654,31 @@ fn replay_explicit_empty_exclude_source_types() {
 
 // ---- declared differences ----------------------------------------------------
 
-/// DD-2: native real-valued bound d=1.5 reaches depth-2 nodes.
+/// Baseline observation from the fixture envelope (baselineObservedNodeIds —
+/// never expectedNodeIds, which pins the NATIVE contract only).
+fn observed_ids(fx: &Value) -> Vec<String> {
+    fx["baselineObservedNodeIds"]
+        .as_array()
+        .expect("declared-difference fixture must record baselineObservedNodeIds")
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect()
+}
+
+/// DD-2: native real-valued bound d=1.5 reaches depth-2 nodes. Native must be
+/// a SUPERSET of the baseline observation (equal here; superset semantics).
 #[test]
 fn replay_declared_fractional_depth_1_5() {
     let (fx, out) = run_fixture("declared_difference", "fractional_depth_1_5");
-    assert_eq!(out.node_ids, expected_ids(&fx));
+    let baseline = observed_ids(&fx);
+    for id in &baseline {
+        assert!(
+            out.node_ids.contains(id),
+            "native must reach baseline node {id}; got {:?}",
+            out.node_ids
+        );
+    }
+    assert!(fx["expectedNodeIds"].is_null());
 }
 
 /// DD-1: collision-free visited set — comma-containing ids both returned,
@@ -666,7 +686,16 @@ fn replay_declared_fractional_depth_1_5() {
 #[test]
 fn replay_declared_comma_ids_cycle() {
     let (fx, out) = run_fixture("declared_difference", "comma_ids_cycle");
-    assert_eq!(out.node_ids, expected_ids(&fx));
+    let baseline = observed_ids(&fx);
+    for id in &baseline {
+        assert!(
+            out.node_ids.contains(id),
+            "native must reach baseline node {id}; got {:?}",
+            out.node_ids
+        );
+    }
+    assert_eq!(out.node_ids.len(), 2);
+    assert!(fx["expectedNodeIds"].is_null());
 }
 
 // ---- non-fixture unit coverage ------------------------------------------------

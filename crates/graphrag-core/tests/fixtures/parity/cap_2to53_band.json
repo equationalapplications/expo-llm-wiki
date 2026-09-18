@@ -7,7 +7,7 @@
   "options": {
     "sourceId": "a",
     "maxDepth": 1,
-    "maxTraversalNodes": 9007199254740992
+    "maxTraversalNodes": 9007199254740993
   },
   "expectedNodeIds": [
     "a",

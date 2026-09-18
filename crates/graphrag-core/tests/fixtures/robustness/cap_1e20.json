@@ -9,7 +9,7 @@
     "maxDepth": 1,
     "maxTraversalNodes": 100000000000000000000
   },
-  "notes": "Native: UnsupportedLimit (1e20 floor far exceeds i64::MAX). Baseline behavior recorded in notes/baselineObservedNodeIds. | baseline threw: datatype mismatch",
   "expectedNodeIds": null,
+  "notes": "Native: UnsupportedLimit (1e20 floor far exceeds i64::MAX). Baseline behavior recorded in notes/baselineObservedNodeIds. | baseline threw: datatype mismatch",
   "expectedEdges": null
 }

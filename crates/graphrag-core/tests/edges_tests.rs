@@ -79,9 +79,16 @@ fn seed_fixture_edges(conn: &Connection, fx: &Value) {
 }
 
 fn fixture_node_ids(fx: &Value) -> Vec<String> {
-    fx["expectedNodeIds"]
+    // expectedNodeIds pins the NATIVE contract; declared-difference/robustness
+    // fixtures leave it null and record the baseline run instead.
+    let source = if fx["expectedNodeIds"].is_null() {
+        &fx["baselineObservedNodeIds"]
+    } else {
+        &fx["expectedNodeIds"]
+    };
+    source
         .as_array()
-        .expect("fixture must pin expectedNodeIds")
+        .expect("fixture must pin expectedNodeIds or baselineObservedNodeIds")
         .iter()
         .map(|v| v.as_str().unwrap().to_string())
         .collect()
