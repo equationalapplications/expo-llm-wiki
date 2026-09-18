@@ -1,0 +1,25 @@
+{
+  "description": "excludeSourceTypes [] excludes nothing (baseline NOT IN () is always-true)",
+  "category": "parity",
+  "entityId": "entity1",
+  "sourceId": "a",
+  "config": {},
+  "options": {
+    "sourceId": "a",
+    "maxDepth": 1,
+    "excludeSourceTypes": []
+  },
+  "expectedNodeIds": [
+    "a",
+    "b"
+  ],
+  "notes": "REQ-SLICE-02 explicit-empty case: [] must be a no-op, distinct from listing types. Native may omit the predicate instead of binding an empty NOT IN.",
+  "expectedEdges": [
+    {
+      "id": "e1",
+      "source_id": "a",
+      "target_id": "b",
+      "edge_type": "mentions"
+    }
+  ]
+}

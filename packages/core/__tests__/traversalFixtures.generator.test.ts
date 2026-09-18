@@ -49,6 +49,9 @@ interface FixtureEnvelope {
   expectedNodeIds: string[] | null;
   eligibleTiedIds?: string[];
   baselineObservedNodeIds?: string[];
+  /** REQ-SLICE-02 time-derived pin: project {id, isStale, trustTier} per returned node. */
+  captureFactProjections?: boolean;
+  expectedFactProjections?: Array<{ id: string; isStale: boolean; trustTier: string }>;
   expectedEdges: Array<{ id: string; source_id: string; target_id: string; edge_type: string }> | null;
   notes?: string;
 }
@@ -128,6 +131,11 @@ async function capture(
   };
   if (fx.expectedNodeIds === null && neighborhood.nodes.length > 0) {
     fixture.baselineObservedNodeIds = neighborhood.nodes.map((n) => n.id);
+  }
+  if (fx.captureFactProjections) {
+    fixture.expectedFactProjections = neighborhood.nodes.map((n) => ({
+      id: n.id, isStale: n.isStale === true, trustTier: n.trustTier ?? 'unverified',
+    }));
   }
   writeFixture(name, fixture);
   return fixture;
@@ -258,7 +266,7 @@ describe('compatibility fixture generator (REQ-SLICE-02)', () => {
       description: 'cap 3: anchor + best-two children by updated_at DESC within depth', category: 'parity',
       entityId: 'entity1', sourceId: 'a', config: {},
       options: { sourceId: 'a', maxDepth: 1, maxTraversalNodes: 3 },
-      expectedNodeIds: ['a', 'b', 'c'], expectedEdges: undefined as never,
+      expectedNodeIds: ['a', 'b', 'c'],
     }, async (db) => {
       await seedEntry(db, { id: 'a', updated_at: 1 });
       await seedEntry(db, { id: 'b', updated_at: 400 });
@@ -366,6 +374,36 @@ describe('compatibility fixture generator (REQ-SLICE-02)', () => {
       await seedEdge(db, 'e1', 'entity1', 'a', 'b');
     }, true); counts.parity++;
 
+    await capture('explicit_empty_exclude_source_types', {
+      description: 'excludeSourceTypes [] excludes nothing (baseline NOT IN () is always-true)',
+      category: 'parity',
+      entityId: 'entity1', sourceId: 'a', config: {},
+      options: { sourceId: 'a', maxDepth: 1, excludeSourceTypes: [] },
+      expectedNodeIds: ['a', 'b'],
+      notes: 'REQ-SLICE-02 explicit-empty case: [] must be a no-op, distinct from listing types. Native may omit the predicate instead of binding an empty NOT IN.',
+    }, async (db) => {
+      await seedEntry(db, { id: 'a' }); await seedEntry(db, { id: 'b', source_type: 'immutable_document' });
+      await seedEdge(db, 'e1', 'entity1', 'a', 'b');
+    }, true); counts.parity++;
+
+    await capture('time_derived_fact_fields', {
+      description: 'hydration surfaces isStale/trustTier derived at read time',
+      category: 'parity',
+      entityId: 'entity1', sourceId: 'a', config: {},
+      options: { sourceId: 'a', maxDepth: 1 },
+      expectedNodeIds: ['a', 'b'],
+      captureFactProjections: true,
+      notes: 'REQ-SLICE-02 time-derived fields: fixture pins the derived projection only ({id, isStale, trustTier}); full fact DTO parity is Task 9. stale_after 2020-01-01 epoch ms keeps isStale true for any current clock; okf_verified human: reviewer pins trustTier human-reviewed.',
+    }, async (db) => {
+      await seedEntry(db, { id: 'a' });
+      await db.runAsync(
+        `UPDATE llm_wiki_entries SET stale_after = ?, okf_verified = ? WHERE id = 'a'`,
+        [1577836800000, JSON.stringify([{ by: 'human:reviewer-1', at: '2026-01-01T00:00:00.000Z' }])],
+      );
+      await seedEntry(db, { id: 'b' });
+      await seedEdge(db, 'e1', 'entity1', 'a', 'b');
+    }, true); counts.parity++;
+
     // --- declared differences --------------------------------------------
     await capture('fractional_depth_1_5', {
       description: 'fractional maxDepth 1.5: native unrounded bound reaches depth 2; baseline CTE expansion stops earlier',
@@ -433,7 +471,7 @@ describe('compatibility fixture generator (REQ-SLICE-02)', () => {
     }, true); counts.robustness++;
 
     // --- invariants over what was written ---------------------------------
-    expect(counts.parity).toBe(20);
+    expect(counts.parity).toBe(22);
     expect(counts.declared_difference).toBe(2);
     expect(counts.robustness).toBe(3);
 
@@ -452,6 +490,6 @@ describe('compatibility fixture generator (REQ-SLICE-02)', () => {
         total++;
       }
     }
-    expect(total).toBe(25);
+    expect(total).toBe(27);
   });
 });

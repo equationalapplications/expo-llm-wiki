@@ -1,0 +1,37 @@
+{
+  "description": "hydration surfaces isStale/trustTier derived at read time",
+  "category": "parity",
+  "entityId": "entity1",
+  "sourceId": "a",
+  "config": {},
+  "options": {
+    "sourceId": "a",
+    "maxDepth": 1
+  },
+  "expectedNodeIds": [
+    "a",
+    "b"
+  ],
+  "captureFactProjections": true,
+  "notes": "REQ-SLICE-02 time-derived fields: fixture pins the derived projection only ({id, isStale, trustTier}); full fact DTO parity is Task 9. stale_after 2020-01-01 epoch ms keeps isStale true for any current clock; okf_verified human: reviewer pins trustTier human-reviewed.",
+  "expectedEdges": [
+    {
+      "id": "e1",
+      "source_id": "a",
+      "target_id": "b",
+      "edge_type": "mentions"
+    }
+  ],
+  "expectedFactProjections": [
+    {
+      "id": "a",
+      "isStale": true,
+      "trustTier": "human-reviewed"
+    },
+    {
+      "id": "b",
+      "isStale": false,
+      "trustTier": "unverified"
+    }
+  ]
+}
