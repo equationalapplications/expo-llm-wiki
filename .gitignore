@@ -16,3 +16,6 @@ package-lock.json
 
 # Unrelated binaries must never be committed
 *.deb
+
+# Rust build artifacts (Cargo.lock IS committed — locked app dependency set)
+target/
