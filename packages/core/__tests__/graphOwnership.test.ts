@@ -170,6 +170,29 @@ describe('repository ownership', () => {
     expect(await db.getAllAsync('SELECT operation FROM llm_wiki_outbox ORDER BY rowid'))
       .toEqual([{ operation: 'INSERT' }, { operation: 'UPDATE' }, { operation: 'UPDATE' }]);
   });
+
+  // An adapter that drops the write AND reports 0 leaves no stored row. Real
+  // SQLite cannot produce this (an unconflicted INSERT always lands), so the
+  // throw cannot fire spuriously; it keeps the outbox from describing a row
+  // that does not exist.
+  it('throws instead of publishing when the write left no stored row', async () => {
+    await db.withTransactionAsync(async realTx => {
+      const tx = new Proxy(realTx, {
+        get(target, key) {
+          if (key === 'runAsync') return async (sql: string, params?: unknown[]) =>
+            sql.includes('ON CONFLICT(id) DO UPDATE')
+              ? { changes: 0, lastInsertRowId: 0 }
+              : target.runAsync(sql, params);
+          const value = Reflect.get(target, key);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      }) as SQLiteAdapter;
+      const error = await rejected(() => repo.upsert(fact(), tx));
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(WikiGraphNodeOwnershipConflict);
+      expect(await tx.getAllAsync('SELECT * FROM llm_wiki_outbox')).toEqual([]);
+    });
+  });
 });
 
 describe('graph preflight', () => {

@@ -289,13 +289,18 @@ export class EntryRepository extends BaseRepository {
     // A suppressed conflict-update reports 0 (see the SQLiteAdapter contract).
     // A permitted write that an adapter under-reports as 0 also lands here, so
     // confirm ownership from the stored row rather than inferring it from the
-    // count. Only a foreign owner rejects; anything else proceeds normally.
+    // count. A foreign owner rejects; a missing row means the adapter dropped
+    // the write (impossible under real SQLite), so fail rather than publish an
+    // outbox event for state that does not exist.
     if (result.changes === 0) {
       const stored = await tx.getFirstAsync<{ entity_id: string }>(
         `SELECT entity_id FROM ${this.prefix}entries WHERE id = ?`,
         [fact.id],
       );
-      if (stored && stored.entity_id !== fact.entity_id) {
+      if (!stored) {
+        throw new Error('Entry upsert reported no change and stored no row; the SQLiteAdapter did not perform the write');
+      }
+      if (stored.entity_id !== fact.entity_id) {
         throw new WikiGraphNodeOwnershipConflict();
       }
     }
@@ -400,6 +405,11 @@ export class EntryRepository extends BaseRepository {
     // the prior row's value. The previous CASE WHEN IS NULL guards preserved
     // the old database values instead, so an "absent in dump" never cleared.
     // Direct `= excluded.X` ensures the dump is authoritative.
+    //
+    // WARNING: unlike `upsert`, this SQL re-parents a conflicting row
+    // (`entity_id = excluded.entity_id`, no owner predicate). It is safe only
+    // because ImportExportService skips foreign-owned IDs before calling it.
+    // Do not model a new write path on this method; use `upsert`.
     const result = await executor.runAsync(
       `INSERT INTO ${this.prefix}entries (
         id, entity_id, title, body, tags, confidence, source_type,
