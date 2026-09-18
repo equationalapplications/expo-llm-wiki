@@ -27,6 +27,7 @@ describe('IngestionService — PromptService injection', () => {
     };
     mockOptions = { llmProvider: { generateText: vi.fn().mockResolvedValue(fakeLlmResponse) } };
     mockEntryRepo = {
+      findExistingMetadataByIds: vi.fn().mockResolvedValue([]),
       findIdsBySource: vi.fn().mockResolvedValue([]),
       softDeleteBySource: vi.fn().mockResolvedValue(undefined),
       findRecentByEntityId: vi.fn().mockResolvedValue([]),

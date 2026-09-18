@@ -59,6 +59,20 @@ describe('createExpoAdapter', () => {
     expect(db.runAsync).toHaveBeenCalledWith('INSERT INTO t VALUES (?)', ['x']);
   });
 
+  // Driver mocks verify forwarding, not native SQLite execution semantics.
+  it.each([0, 1])('preserves the driver conflict-write count: changes=%s', async changes => {
+    const db = makeDb();
+    db.runAsync.mockResolvedValue({ changes, lastInsertRowId: 99 });
+    const adapter = createExpoAdapter(db as any);
+    const sql = `INSERT INTO ownership_adapter_contract(id, entity_id) VALUES (?, ?)
+      ON CONFLICT(id) DO UPDATE SET entity_id = excluded.entity_id
+      WHERE ownership_adapter_contract.entity_id = excluded.entity_id`;
+    const params = ['shared', changes === 0 ? 'A' : 'B'];
+    const result = await adapter.runAsync(sql, params);
+    expect(result).toEqual({ changes, lastInsertRowId: 99 });
+    expect(db.runAsync).toHaveBeenCalledWith(sql, params);
+  });
+
   it('runAsync uses empty array when no params supplied', async () => {
     const db = makeDb();
     const adapter = createExpoAdapter(db as any);
