@@ -510,6 +510,41 @@ fn replay_out_of_enum_source_type() {
     assert_eq!(out.node_ids, expected_ids(&fx));
 }
 
+/// Unknown confidence text ranks below every tier (baseline CASE ELSE −1):
+/// a 'weird' node dead-ends traversal even at the lowest min_confidence.
+#[test]
+fn unknown_confidence_dead_ends() {
+    let conn = Connection::open_in_memory().unwrap();
+    create_valid_db(&conn);
+    e(&conn, "a");
+    eo(
+        &conn,
+        SeedEntry {
+            id: "b",
+            confidence: Some("weird"),
+            ..Default::default()
+        },
+    );
+    e(&conn, "c");
+    ed(&conn, "e1", "a", "b");
+    ed(&conn, "e2", "b", "c");
+    let req = TraversalRequest {
+        entity_id: "entity1".to_string(),
+        source_id: "a".to_string(),
+        options: TraversalOptions {
+            max_depth: Some(3.0),
+            direction: None,
+            edge_types: None,
+            max_traversal_nodes: None,
+            min_traversal_confidence: None,
+            exclude_source_types: None,
+        },
+    };
+    let resolved = validate_request(&req, &EngineConfig::default()).expect("inputs must resolve");
+    let out = walk_req(&conn, PREFIX, &resolved, &req).expect("walk must succeed");
+    assert_eq!(out.node_ids, vec!["a".to_string()]);
+}
+
 #[test]
 fn replay_node_cap_ordering() {
     let (fx, out) = run_fixture("parity", "node_cap_ordering");
