@@ -23,7 +23,7 @@ use rusqlite::Connection;
 
 /// Nodes in the seeded graph (plan Task 12: N=1000).
 const NODES: usize = 1000;
-/// Edges: a forward chain plus one skip edge per node ≈ 2 per node (~2000).
+/// Traversal repetitions for the mean.
 const RUNS: usize = 50;
 
 /// Schema-accurate `llm_wiki_entries` DDL (same shape as examples/proof.rs).
@@ -140,7 +140,8 @@ fn main() {
         entity_id: "bench-entity".to_string(),
         source_id: "fact-0000".to_string(),
         options: TraversalOptions {
-            // Unbounded-ish depth so the walk can reach the whole chain;
+            // Engine clamps maxDepth to 3; the hub-and-leaf topology puts every
+            // node within depth 2 of the anchor, so the walk covers the graph.
             // max_traversal_nodes caps it at the seeded population.
             max_depth: Some(f64::from(NODES as u32)),
             direction: Some(Direction::Outbound),
