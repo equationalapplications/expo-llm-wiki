@@ -1,3 +1,26 @@
+## [7.2.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.1.3...v7.2.0) (2026-09-18)
+
+### Features
+
+* **native:** bench-traversal harness scaffold (REQ-PERF-01) ([bb2698a](https://github.com/equationalapplications/expo-llm-wiki/commit/bb2698a6728e9c59e4b6d5883f46574b85e51af2))
+* **native:** bounded BFS walk (REQ-SLICE-01) ([b4b33da](https://github.com/equationalapplications/expo-llm-wiki/commit/b4b33da0c710c0f074c0de34ee8e2c92a51af968))
+* **native:** CI rust-test job for graphrag-core ([d517636](https://github.com/equationalapplications/expo-llm-wiki/commit/d5176361842adae6172167f10276a0fbb1786343))
+* **native:** headless proof example + crate README (REQ-SLICE-03) ([5a5e5f2](https://github.com/equationalapplications/expo-llm-wiki/commit/5a5e5f26378b2da3a28c0c8a8aac2368e2f150ba))
+* **native:** input validation matrix (REQ-INPUT-01) ([3679a7e](https://github.com/equationalapplications/expo-llm-wiki/commit/3679a7e1de05a5a882e8c092d38e7c7b7cfbad84))
+* **native:** OKF trust-tier and staleness helpers (REQ-SLICE-01) ([62449aa](https://github.com/equationalapplications/expo-llm-wiki/commit/62449aad6142ccef8f711380169c2b07292eb079))
+* **native:** ordered chunked hydration (REQ-SLICE-01) ([4344676](https://github.com/equationalapplications/expo-llm-wiki/commit/4344676259671ec0e960d3ad88068d70bb12febe))
+* **native:** pinned DTO and option types (REQ-SLICE-01) ([400b578](https://github.com/equationalapplications/expo-llm-wiki/commit/400b5786fdd5610ec73c75ae28f5f845c64931f9))
+* **native:** public engine with dual host entry paths (REQ-SQL-01) ([104a3cb](https://github.com/equationalapplications/expo-llm-wiki/commit/104a3cbdc8a53176fe11d0816b400e1486635069))
+* **native:** scaffold graphrag-core crate (REQ-OWN-01) ([90abcb4](https://github.com/equationalapplications/expo-llm-wiki/commit/90abcb448e3e7a36555b20bff4fb5bbaa5c8bee5))
+* **native:** schema contract check (REQ-SQL-04) ([bf75609](https://github.com/equationalapplications/expo-llm-wiki/commit/bf7560998a011a9e1c32526b5c78a2cd20d386e8))
+* **native:** variable-limit-safe induced-edge fetch (REQ-SCALE-01) ([ccabaaf](https://github.com/equationalapplications/expo-llm-wiki/commit/ccabaaf2f02deacf7af685b842859b95900e405b))
+
+### Bug Fixes
+
+* **native:** accept camelCase keys on TraversalOptions (REQ-INPUT-01) ([8fda5c8](https://github.com/equationalapplications/expo-llm-wiki/commit/8fda5c8f12bf05928563ef81f31f8290e4413a13))
+* **native:** edge-type filter sees all rows per neighbor; strict 2^63 cap bound (PR 191 review) ([2e9e8a8](https://github.com/equationalapplications/expo-llm-wiki/commit/2e9e8a8886664830de49a3b7a376ea95e540223e))
+* **native:** separate baseline observations from native expectations in fixtures; opt-in regeneration + drift check; 2^53+1 literal (PR 191 review) ([dd8af19](https://github.com/equationalapplications/expo-llm-wiki/commit/dd8af19ccf3b3ce4b8efe69f6867434e0fd75ecc))
+
 ## [7.1.3](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.1.2...v7.1.3) (2026-09-18)
 
 ### Bug Fixes
