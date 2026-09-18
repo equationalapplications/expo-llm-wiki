@@ -44,7 +44,9 @@ fn resolve_cap(call: Option<f64>, config: Option<f64>) -> Result<u64, GraphragEr
     let eff = sanitize_cap(call.unwrap_or(f64::NAN))
         .or_else(|| sanitize_cap(config.unwrap_or(f64::NAN)))
         .unwrap_or(20.0);
-    if eff > i64::MAX as f64 {
+    // `i64::MAX as f64` rounds UP to 2^63, so a plain `>` would admit exactly
+    // 2^63 (which floors to itself, above i64::MAX). Strict lower bound:
+    if eff >= 9_223_372_036_854_775_808.0 {
         Err(GraphragError::UnsupportedLimit {
             field: "maxTraversalNodes".into(),
             value: eff,

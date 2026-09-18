@@ -545,6 +545,33 @@ fn unknown_confidence_dead_ends() {
     assert_eq!(out.node_ids, vec!["a".to_string()]);
 }
 
+/// A neighbor connected by two edge types (supports + refutes) must be
+/// discovered when the allow-list names the NON-first row's type. Regression
+/// for CodeRabbit PR 191 Major: neighbors() previously deduped rows by id
+/// before the edge_type filter, letting row order decide discovery.
+#[test]
+fn edge_type_filter_sees_all_types_per_neighbor() {
+    let conn = Connection::open_in_memory().unwrap();
+    create_valid_db(&conn);
+    e(&conn, "a");
+    e(&conn, "b");
+    // Insert order guarantees the first row returned is 'supports'.
+    ed(&conn, "e1", "a", "b");
+    edt(&conn, "e2", "a", "b", "refutes");
+    let req = TraversalRequest {
+        entity_id: "entity1".to_string(),
+        source_id: "a".to_string(),
+        options: TraversalOptions {
+            max_depth: Some(1.0),
+            edge_types: Some(vec!["refutes".to_string()]),
+            ..Default::default()
+        },
+    };
+    let resolved = validate_request(&req, &EngineConfig::default()).expect("inputs must resolve");
+    let out = walk_req(&conn, PREFIX, &resolved, &req).expect("walk must succeed");
+    assert_eq!(out.node_ids, vec!["a".to_string(), "b".to_string()]);
+}
+
 #[test]
 fn replay_node_cap_ordering() {
     let (fx, out) = run_fixture("parity", "node_cap_ordering");

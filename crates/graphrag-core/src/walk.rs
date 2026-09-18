@@ -62,7 +62,6 @@ fn neighbors(
         Direction::Both => ("target_id", "source_id"),
     };
     let mut out: Vec<NeighborRow> = Vec::new();
-    let mut seen: HashSet<String> = HashSet::new();
 
     let directions: [(&str, &str); 1] = [(dir_side, dir_fixed)];
     let all: Vec<(&str, &str)> = if direction == Direction::Both {
@@ -83,11 +82,19 @@ fn neighbors(
         let mut rows = stmt
             .query(rusqlite::params![entity_id, node_id])
             .map_err(GraphragError::Sql)?;
+        // Return EVERY edge row — do not dedupe by neighbor id here. Multiple
+        // edge types may connect the same pair (edge_type is part of the UNIQUE
+        // key); the edge_type allow-list must see all of them so a neighbor is
+        // admitted if ANY of its edges matches (baseline filters edge_type in
+        // SQL before any dedup). The walk's `visited` set dedupes nodes.
         while let Some(row) = rows.next().map_err(GraphragError::Sql)? {
-            let id: String = row.get(0)?;
-            if seen.insert(id.clone()) {
-                out.push((id, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?));
-            }
+            out.push((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ));
         }
     }
     Ok(out)
