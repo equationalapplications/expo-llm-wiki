@@ -296,19 +296,22 @@ fn resolve_cap(call: Option<f64>, config: Option<f64>) -> Result<u64, GraphragEr
 ```rust
 pub const REQUIRED_SCHEMA_VERSION: i64 = 11; // core 7.1.3 CURRENT_SCHEMA_VERSION (migrations.ts)
 
-pub fn validate_schema(tx: &rusqlite::Transaction, prefix: &str) -> Result<(), GraphragError> {
-    let version: Result<Option<i64>, _> = tx
-        .query_row(&format!("SELECT value FROM {prefix}meta WHERE key = 'schema_version'"), [], |r| {
-            r.get::<_, String>(0).map(|s| s.parse::<i64>().ok())
-        })
-        .map(Some)
-        .or_else(|e| match e { rusqlite::Error::QueryReturnedNoRows => Ok(None), other => Err(other) });
-    match version {
-        Ok(Some(Some(v))) if v == REQUIRED_SCHEMA_VERSION => Ok(()),
-        Ok(_) => Err(GraphragError::SchemaMismatch(format!(
-            "expected {prefix}meta.schema_version = {REQUIRED_SCHEMA_VERSION}"))),
-        Err(e) => Err(GraphragError::SchemaMismatch(format!("marker unreadable: {e}"))),
-    }
+fn read_schema_version(conn: &rusqlite::Connection, prefix: &str) -> Result<i64, GraphragError> {
+    // Missing table or row, unparseable value, or read error are ALL SchemaMismatch:
+    // the contract is violated in each case and the DB must not be touched.
+    let row: String = conn
+        .query_row(
+            &format!("SELECT value FROM {prefix}meta WHERE key = 'schema_version'"),
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| GraphragError::SchemaMismatch(format!("schema_version marker unreadable: {e}")))?;
+    row.parse::<i64>().map_err(|_| {
+        GraphragError::SchemaMismatch(format!(
+            "schema_version marker not an integer: {row:?}"
+        ))
+    })
+    // caller compares to REQUIRED_SCHEMA_VERSION and produces SchemaMismatch on mismatch
     // plus PRAGMA table_info checks for required columns of {prefix}entries and {prefix}edges
 }
 ```
