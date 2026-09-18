@@ -5,6 +5,7 @@
 //! lifecycle (REQ-OWN-01).
 pub mod edges;
 pub mod error;
+pub mod hydrate;
 pub mod okf;
 pub mod schema_check;
 pub mod types;
