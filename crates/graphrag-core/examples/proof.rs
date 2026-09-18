@@ -14,9 +14,8 @@ use graphrag_core::engine::GraphRagEngine;
 use graphrag_core::types::{EngineConfig, TraversalOptions, TraversalRequest};
 use rusqlite::Connection;
 
-/// Verbatim `llm_wiki_entries` DDL from packages/core/src/db/schema.ts
-/// (trimmed to the columns the pipeline reads; embedding_blob stays NULL and
-/// is excluded from the projection).
+/// Schema-accurate `llm_wiki_entries` DDL (all columns present; embedding_blob
+/// stays NULL and is excluded from the engine's read projection).
 const ENTRIES_DDL: &str = "CREATE TABLE IF NOT EXISTS llm_wiki_entries (
       id TEXT PRIMARY KEY,
       entity_id TEXT NOT NULL,

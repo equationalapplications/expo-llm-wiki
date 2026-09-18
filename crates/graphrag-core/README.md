@@ -76,8 +76,17 @@ baseline. Regenerate by running that vitest file; do **not** hand-edit them.
 The benchmark harness scaffold lands with the CI task. Published numbers are
 an adoption gate; none are claimed here.
 
+## Host responsibilities
+
+`rusqlite::Connection` and `Transaction` are `!Sync`: a host must not share one
+across threads — keep each connection on its owning execution context and
+serialize access host-side (REQ-SQL-01). The engine holds only `EngineConfig`
+(trusted `table_prefix`, traversal defaults), which is `Clone` and freely
+shareable.
+
 ## Tests
 
 ```sh
 cargo test -p graphrag-core
+cargo run -p graphrag-core --example proof   # REQ-SLICE-03 headless proof
 ```
