@@ -8,6 +8,7 @@ pub mod okf;
 pub mod schema_check;
 pub mod types;
 pub mod validation;
+pub mod walk;
 
 #[cfg(test)]
 mod tests {
