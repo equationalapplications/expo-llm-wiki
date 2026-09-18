@@ -161,3 +161,42 @@ jobs:
               sys.exit(1)
           PYEOF
           python3 /tmp/audit-classify.py && echo "No fixable high-severity advisories." || exit 1
+  # Rust side of the native GraphRAG vertical slice (crates/graphrag-core).
+  # Sibling job, NOT needs: test — runs in parallel with the pnpm job so a
+  # JS regression never gates a Rust one (or vice versa).
+  rust-test:
+    name: rust-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      # Respect crates/graphrag-core/rust-toolchain.toml (channel 1.96.0).
+      # SHA is the head of dtolnay/rust-toolchain@master at the time of
+      # writing (2026-09-18) — @master has no stable tag to pin instead.
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: 1.96.0
+
+      # SHA = Swatinem/rust-cache@v2.9.2 (verified via GitHub tags API).
+      # TODO(SHA-pin follow-up): verify this pin in a periodic supply-chain
+      # review, same as the other pinned actions above.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: crates/graphrag-core
+
+      - name: cargo test (graphrag-core)
+        working-directory: crates/graphrag-core
+        run: cargo test --locked
+
+      # Smoke: the headless proof example must keep running end-to-end.
+      - name: cargo run --example proof (smoke)
+        working-directory: crates/graphrag-core
+        run: cargo run --locked --example proof
+
+      # Smoke: the REQ-PERF-01 bench harness scaffold runs and exits 0
+      # (timing values are machine-dependent and are NOT asserted).
+      - name: bench-traversal harness smoke (REQ-PERF-01)
+        working-directory: crates/graphrag-core
+        run: cargo run --locked --bin bench-traversal
