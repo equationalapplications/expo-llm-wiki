@@ -56,7 +56,7 @@
   "devDependencies": {
     "@equationalapplications/core-llm-wiki": "workspace:*",
     "@prisma/client": "5.22.0",
-    "prisma": "5.22.0",
+    "prisma": "7.10.0",
     "tsup": "8.5.1",
     "typescript": "5.9.3",
     "vitest": "4.1.11"
