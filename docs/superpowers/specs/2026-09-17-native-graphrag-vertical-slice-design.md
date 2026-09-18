@@ -1,11 +1,11 @@
 # Native GraphRAG Engine: Vertical Slice & Boundary Design
 
 **Date:** 2026-09-17
-**Status:** Draft revision 4 — review rounds 1–3 incorporated; ready for plan on approval; native direction accepted, implementation not started
+**Status:** Draft revision 5 — review rounds 1–3 plus post-merge baseline review incorporated; ready for plan on approval; native direction accepted, implementation not started
 **Builds on:** [Knowledge Graph Traversal API](./2026-06-23-graph-traversal-api-design.md) (implemented); precedence is defined in REQ-DOC-01.
 **Branch:** `spec/native-graphrag-vertical-slice`
 **Repository:** `expo-llm-wiki` (authoritative shared contract)
-**Source baseline:** `2e7d9bacbf1f5128a3021a48b1f138f44c7c057f` (core 7.1.1)
+**Source baseline:** `453e5c8d18843f186b0cf153ddb23382bad4b7ba` (core 7.1.3; re-pinned from `2e7d9bacbf1f5128a3021a48b1f138f44c7c057f` / 7.1.1 — see revision 5)
 
 ## 1. Decision and scope
 
@@ -38,7 +38,7 @@ CT's current headless binaries do not require a running desktop, but their build
 
 ### Contract [REQ-SLICE-01]
 
-Implement `traverse_graph_neighborhood` as the native equivalent of core 7.1.1's public `WikiMemory.traverseGraph` operation. Its input/output mapping is defined by the pinned baseline's `GraphTraversalOptions`, `GraphNeighborhood`, `WikiFact`, and `WikiEdge` declarations in `packages/core/src/types.ts`, and by:
+Implement `traverse_graph_neighborhood` as the native equivalent of core 7.1.3's public `WikiMemory.traverseGraph` operation (unchanged since 7.1.1; see revision 5). Its input/output mapping is defined by the pinned baseline's `GraphTraversalOptions`, `GraphNeighborhood`, `WikiFact`, and `WikiEdge` declarations in `packages/core/src/types.ts`, and by:
 
 - `packages/core/src/services/GraphTraversalService.ts`
 - `packages/core/src/repositories/EdgeRepository.ts` (`getNeighborhood`)
@@ -57,7 +57,7 @@ The compatibility contract is:
 - After discovery, unique nodes are ordered by shortest discovered depth ascending, then `updated_at` descending, and only then capped. Equal-depth/equal-timestamp ties are unspecified. The cap is a result limit, not an early traversal-work limit.
 - Returned edges form the induced subgraph on the selected nodes within the entity: the final edge query does **not** reapply discovery direction or `edgeTypes`. Reverse, nonrequested-type, cycle-closing, and self-loop edges may be returned. Preserve this distinction and the explicit-empty-filter exception. Edges have no baseline ordering guarantee.
 - Hydration preserves selected node order and returns the full `WikiFact` DTO, not raw database rows or a reduced node type. Missing facts are omitted without refill; edges whose endpoints did not hydrate are dropped. The DTO excludes `embedding_blob`, normalizes metadata, and derives staleness/trust fields. Baseline `findByIds` deterministically maps rows in selected-node order, sampling the clock once per row at mapping time; native must map and sample in the same order. Native tests use an injectable clock, never JS-controlled production time: a fixed clock for ordinary fixtures, and a scripted advancing clock for staleness boundaries — which becomes a deterministic test under this ordering contract. This pins today's single-threaded mapper; a future parallel hydration design must preserve the contract or be revised explicitly.
-- The root, traversed edges, discovered nodes, final edges, and hydrated facts remain in the single requested entity. There is no cross-partition mode in this operation.
+- The root, traversed edges, discovered nodes, final edges, and hydrated facts remain in the single requested entity. There is no cross-partition mode in this operation. Entity scoping is also a disclosure boundary, not only a semantic filter: per the [2026-09-17 graph entity isolation design](./2026-09-17-graph-entity-isolation-design.md) §6, the baseline scopes the walk’s edge join, neighbor-node join, and neighborhood edge fetch with `entity_id = ?`, so a cross-entity dangling edge stays an unresolvable ID rather than leaking the target’s content. Every native SQL statement in this operation (walk, induced-edge fetch, hydration) must bind the entity the same way; a native rewrite that joins entries globally would create a new disclosure path and violate this contract.
 
 The baseline cycle guard uses a comma-delimited visited string although IDs are API strings. A root `a,b` can incorrectly suppress a distinct neighbor `a`. Native traversal must treat IDs as opaque strings and use collision-free identity tracking; this is a declared baseline-defect correction, covered by separate expected native results, not silently called parity.
 
@@ -214,6 +214,7 @@ Downstream specs are written after this shared contract is reviewed. CT covers d
 Each repository keeps its spec, implementation plan, code, and tests on the same implementation branch/PR. This upstream branch name does not authorize a spec-only PR. Cross-repository PRs record dependency commits/releases and distinguish 'upstream ready' from 'all consumer gates passed'. There is no assumption of an atomic cross-repository merge.
 
 ### Revision history
+**Revision 5 (2026-09-17, post-merge baseline review):** re-pinned the source baseline to `453e5c8` (core 7.1.3) after merging graph entity isolation (#188, shipped 7.1.3) and the 7.1.2 release; verified by diff that `EdgeRepository`, `GraphTraversalService`, `WikiMemory.traverseGraph`, and the `EntryRepository` hydration path are unchanged since `2e7d9ba`, so no REQ-SLICE-01 contract changed — the isolation work touches write paths only (`upsert`, `upsertDirect`, ingestion). Added the entity-scoping disclosure rationale and the cross-reference to the entity-isolation spec in REQ-SLICE-01, answering that spec §6’s request to reconfirm scoping if traversal is ever rewritten.
 
 **Revision 4 (2026-09-17, review round 3):** pinned `maxTraversalNodes` decode to binary64 (JS `Number` semantics, f64-then-floor) so the 2⁵³-band fixture is unambiguous; scoped the `SQLITE_MISMATCH` characterization to the measured desktop adapter; added the mobile boundary probe to REQ-SQL-03 evidence.
 
