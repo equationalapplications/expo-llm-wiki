@@ -122,7 +122,12 @@ impl<'de> Deserialize<'de> for Confidence {
     }
 }
 
+// REQ-INPUT-01 binds the TS input shape: the TS side sends camelCase keys
+// (maxDepth, direction, edgeTypes, ...). Container-level rename_all maps
+// them onto snake_case Rust fields. snake_case JSON keys are therefore
+// *not* recognized and fall through as ignored unknown keys.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TraversalOptions {
     #[serde(default)]
     pub max_depth: Option<f64>,
@@ -347,27 +352,38 @@ mod tests {
     }
 
     #[test]
-    fn traversal_options_defaults_are_none_and_unknown_keys_ignored() {
-        // REQ-INPUT-01: unknown keys ignored; omitted keys default to None.
-        let opts: TraversalOptions = serde_json::from_str(
+    fn traversal_options_camelcase_keys_bind_and_defaults_are_none() {
+        // REQ-INPUT-01 (amended, commit 72d8964): the TS side sends camelCase
+        // keys. Partial payload binds what it carries; the rest stay None.
+        let opts: TraversalOptions =
+            serde_json::from_str(r#"{"maxDepth":2,"edgeTypes":[]}"#).expect("deserialize");
+        assert_eq!(opts.max_depth, Some(2.0));
+        assert_eq!(opts.edge_types, Some(vec![]));
+        assert_eq!(opts.direction, None);
+        assert_eq!(opts.max_traversal_nodes, None);
+        assert_eq!(opts.min_traversal_confidence, None);
+        assert_eq!(opts.exclude_source_types, None);
+
+        // All six camelCase keys map correctly in one payload.
+        let full: TraversalOptions = serde_json::from_str(
             r#"{
-                "max_depth": 2,
+                "maxDepth": 3,
                 "direction": "outbound",
-                "edge_types": ["supports"],
-                "max_traversal_nodes": 50,
-                "min_traversal_confidence": "inferred",
-                "exclude_source_types": ["legacy_note"],
+                "edgeTypes": ["supports"],
+                "maxTraversalNodes": 50,
+                "minTraversalConfidence": "inferred",
+                "excludeSourceTypes": ["legacy_note"],
                 "futureUnknownKey": { "nested": true }
             }"#,
         )
         .expect("deserialize");
-        assert_eq!(opts.max_depth, Some(2.0));
-        assert_eq!(opts.direction, Some(Direction::Outbound));
-        assert_eq!(opts.edge_types, Some(vec!["supports".to_string()]));
-        assert_eq!(opts.max_traversal_nodes, Some(50.0));
-        assert_eq!(opts.min_traversal_confidence, Some(Confidence::Inferred));
+        assert_eq!(full.max_depth, Some(3.0));
+        assert_eq!(full.direction, Some(Direction::Outbound));
+        assert_eq!(full.edge_types, Some(vec!["supports".to_string()]));
+        assert_eq!(full.max_traversal_nodes, Some(50.0));
+        assert_eq!(full.min_traversal_confidence, Some(Confidence::Inferred));
         assert_eq!(
-            opts.exclude_source_types,
+            full.exclude_source_types,
             Some(vec!["legacy_note".to_string()])
         );
 
@@ -379,6 +395,32 @@ mod tests {
         assert_eq!(empty.max_traversal_nodes, None);
         assert_eq!(empty.min_traversal_confidence, None);
         assert_eq!(empty.exclude_source_types, None);
+    }
+
+    #[test]
+    fn traversal_options_snake_case_keys_are_ignored_as_unknown() {
+        // REQ-INPUT-01: only the camelCase TS input shape is accepted.
+        // Multi-word snake_case keys are not recognized and fall through as
+        // ignored unknown keys, leaving those fields None. `direction` is a
+        // single word, so its key is identical in both conventions and still
+        // binds.
+        let opts: TraversalOptions = serde_json::from_str(
+            r#"{
+                "max_depth": 2,
+                "direction": "outbound",
+                "edge_types": ["supports"],
+                "max_traversal_nodes": 50,
+                "min_traversal_confidence": "inferred",
+                "exclude_source_types": ["legacy_note"]
+            }"#,
+        )
+        .expect("deserialize");
+        assert_eq!(opts.max_depth, None);
+        assert_eq!(opts.direction, Some(Direction::Outbound));
+        assert_eq!(opts.edge_types, None);
+        assert_eq!(opts.max_traversal_nodes, None);
+        assert_eq!(opts.min_traversal_confidence, None);
+        assert_eq!(opts.exclude_source_types, None);
     }
 
     #[test]
