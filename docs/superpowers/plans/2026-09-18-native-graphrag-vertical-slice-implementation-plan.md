@@ -196,13 +196,14 @@ pub struct WikiFact {
 pub enum Direction { Inbound, Outbound, Both }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TraversalOptions {
-    #[serde(default)] pub max_depth: Option<f64>,
+    #[serde(default)] pub max_depth: Option<f64>, // JSON: maxDepth (camelCase, TS shape binding)
     #[serde(default)] pub direction: Option<Direction>, // custom Deserialize: exact strings
-    #[serde(default)] pub edge_types: Option<Vec<String>>,
-    #[serde(default)] pub max_traversal_nodes: Option<f64>,
-    #[serde(default)] pub min_traversal_confidence: Option<Confidence>,
-    #[serde(default)] pub exclude_source_types: Option<Vec<String>>,
+    #[serde(default)] pub edge_types: Option<Vec<String>>,        // JSON: edgeTypes
+    #[serde(default)] pub max_traversal_nodes: Option<f64>,       // JSON: maxTraversalNodes
+    #[serde(default)] pub min_traversal_confidence: Option<Confidence>, // JSON: minTraversalConfidence
+    #[serde(default)] pub exclude_source_types: Option<Vec<String>>, // JSON: excludeSourceTypes
     // Unknown keys ignored: serde's default behavior. Required by REQ-INPUT-01.
 }
 
@@ -257,7 +258,7 @@ pub struct ResolvedInputs {
 }
 ```
 
-- [ ] **Step 1: Write failing tests** covering the full matrix: missing/empty `entity_id`/`source_id` → `InvalidArgument` naming the field; `max_depth` = `NaN`, `∞`, `−∞` → `InvalidArgument` (direct-API hardening; JSON cannot carry them); `max_depth` 0 → 1, 4 → 3, 1.5 → 1.5 (unrounded); unknown `direction`/confidence strings → `InvalidArgument`; `edge_types` `Some([])` preserved; `exclude_source_types` opaque values preserved (no enum check); cap resolution `None,None→20`, per-call `1.9→1`, per-call invalid (`NaN`) → config `5`, both invalid → 20, per-call `1e20` → `UnsupportedLimit`, per-call `9.3e18` (within i64 after floor) → accepted.
+- [ ] **Step 1: Write failing tests** covering the full matrix: missing/empty `entity_id`/`source_id` → `InvalidArgument` naming the field; `max_depth` = `NaN`, `∞`, `−∞` → `InvalidArgument` (direct-API hardening; JSON cannot carry them); `max_depth` 0 → 1, 4 → 3, 1.5 → 1.5 (unrounded); unknown `direction`/confidence strings → `InvalidArgument`; `edge_types` `Some([])` preserved; `exclude_source_types` opaque values preserved (no enum check); cap resolution `None,None→20`, per-call `1.9→1`, per-call invalid (`NaN`) → config `5`, both invalid → 20, per-call `1e20` → `UnsupportedLimit`, per-call `9.3e18` (within i64 after floor) → accepted; JSON with camelCase keys (`{"maxDepth":2,"edgeTypes":[]}`) deserializes to the expected fields — REQ-INPUT-01 pins the TS input shape, so camelCase is the binding form and snake_case keys are ignored as unknown.
 - [ ] **Step 2: Run** `cargo test --test validation_tests` — expected FAIL (not implemented).
 - [ ] **Step 3: Implement** per Global Constraints. Cap logic:
 
