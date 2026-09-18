@@ -35,7 +35,7 @@ import { OkfTrustWritesRepository } from './db/okf-trust-writes';
 import { validateManifest } from './utils/ontology';
 import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighborhood, OntologyBackfillResult, HealResult, IngestDocumentResult, ReembedResult } from './types';
 
-export { WikiBusyError, WikiTransactionError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER, WikiStrictOntologyViolation, WikiSourceRefHashCollision, WikiParseError, WikiIngestEmptyError } from './types';
+export { WikiBusyError, WikiTransactionError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER, WikiStrictOntologyViolation, WikiSourceRefHashCollision, WikiParseError, WikiIngestEmptyError, WikiGraphNodeOwnershipConflict } from './types';
 
 const TABLE_PREFIX_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,30}_$/;
 
@@ -540,6 +540,11 @@ export class WikiMemory {
   }
 
   /**
+   * Full and partial ingestion both reject foreign-owned generated fact IDs with
+   * `WikiGraphNodeOwnershipConflict`. Such collisions are unexpected. Ingestion
+   * may already have persisted ontology or other state before rejection; unlike
+   * direct graph preflight, it relies on transaction rollback for atomicity.
+   *
    * @param params.promptOverride - Overrides the system prompt for this ingest call only.
    * For persistent customization, set `options.config.prompts.ingestSystemPrompt` at
    * WikiMemory construction time.
@@ -583,6 +588,19 @@ export class WikiMemory {
    * - C4: under persisted ontology mode `'strict'`, an out-of-manifest node
    *   or edge `type` throws `WikiStrictOntologyViolation` (pre-flight,
    *   all-or-nothing — NONE written on failure).
+   *
+   * Entry IDs share one database-wide namespace. Existing rows, including
+   * soft-deleted rows, reserve their IDs for their entity; same-entity updates
+   * and resurrection remain supported. Hosts authenticate callers and select
+   * the authorized entity ID; entity-qualified IDs are optional, not required.
+   * After the live-only C2 probe above, a foreign node ID throws the fixed,
+   * privacy-preserving `WikiGraphNodeOwnershipConflict` before persistent writes
+   * (including seed manifests). Deleted source mappings do not trigger C2.
+   *
+   * Propagate later failures to roll back the host transaction. In particular,
+   * foreign edge-ID collisions remain late bare `Error`s: the foreign edge is
+   * not overwritten, but catching and committing can retain earlier writes.
+   * This method neither commits nor rolls back the caller's transaction.
    *
    * @returns Counts: nodesWritten (validated nodes persisted), edgesWritten
    *   (manifest-valid edges persisted), superseded (prior facts soft-deleted

@@ -1016,6 +1016,33 @@ const { nodesWritten, edgesWritten, superseded } = await wikiMemory.upsertGraph(
 
 `upsertGraph` is "the tail of `ingestDocument` with the middle (LLM extraction) step removed" — it accepts caller-supplied nodes (`{ id, type, title, body? }`) and edges (`{ type, sourceId, targetId, id? }`) and writes them under the same `(sourceRef, sourceHash)` semantics. If a *different* live `sourceRef` already holds the same `sourceHash`, it throws `WikiSourceRefHashCollision`; re-writing the identical `(sourceRef, sourceHash)` is a no-op returning zero counts. The adapter parameter is required so writes participate in the caller's transaction.
 
+Entry IDs occupy one globally shared namespace within a database. An ID belongs
+to its existing entity while its row exists, including after soft deletion.
+Same-entity updates and resurrection retain their existing behavior; physically
+absent IDs may be inserted. Hosts remain responsible for authenticating callers
+and selecting the authorized entity ID. Entity-qualified deterministic IDs can
+avoid accidental collisions, but are not required by the API.
+
+A foreign node ID rejects the entire non-no-op graph write with
+`WikiGraphNodeOwnershipConflict` (code `WIKI_GRAPH_NODE_OWNERSHIP_CONFLICT`).
+The error does not identify the owner, conflicting node, or stored details.
+A collision visible to node preflight performs no persistent writes, including
+seed-manifest writes. The live source-hash probe still runs first: an identical
+mapping is a zero-count no-op; a different live reference retains its hash
+collision error. Deleted source-reference mappings do not trigger that probe.
+
+Call `upsertGraph` inside the host transaction and pass that callback's `tx`.
+It neither starts nor ends a transaction. Propagate later failures so the host
+transaction rolls back partial writes; catching a late error and committing is
+not atomic. Foreign edge-ID collisions retain their existing late bare `Error`
+and require host rollback, even though the foreign edge is never overwritten.
+
+`ingestDocument` shares ownership enforcement on both its full and partial paths
+and may also throw `WikiGraphNodeOwnershipConflict`. It normally generates new
+IDs, so collisions are unexpected. Unlike direct graph preflight, ingestion may
+already have persisted ontology or other state when rejection occurs; its
+transaction rollback, not a zero-write preflight guarantee, protects atomicity.
+
 ## Duplicate Hash Detection
 
 Control behavior when a different live `sourceRef` already holds the same `sourceHash`. The option is passed as a third argument to `ingestDocument`, not inside the params object:
@@ -1115,10 +1142,16 @@ export interface SQLiteAdapter {
   runAsync(sql: string, params?: unknown[]): Promise<{ changes: number; lastInsertRowId: number }>;
   getAllAsync<T>(sql: string, params?: unknown[]): Promise<T[]>;
   getFirstAsync<T>(sql: string, params?: unknown[]): Promise<T | null>;
-  withTransactionAsync<T>(fn: () => Promise<T>): Promise<T>;
+  withTransactionAsync<T>(fn: (tx: SQLiteAdapter) => Promise<T>): Promise<T>;
   closeAsync(): Promise<void>;
 }
 ```
+
+`runAsync().changes` must accurately count written rows: a conflict-suppressed
+write reports 0, while a permitted value-identical update still counts its row.
+Host adapters are responsible for this contract; see the full affected-row
+requirements on [`SQLiteAdapter.runAsync`](src/types.ts). Ownership checks,
+edge counts, metadata compare-and-set, and maintenance depend on accurate counts.
 
 `@equationalapplications/expo-llm-wiki` provides a pre-built adapter for Expo/React Native. For web and Node.js, implement the interface yourself — examples below.
 
@@ -1155,7 +1188,7 @@ const adapter: SQLiteAdapter = {
   },
   async withTransactionAsync(fn) {
     sqlDb.run('BEGIN');
-    try { const r = await fn(); sqlDb.run('COMMIT'); return r; }
+    try { const r = await fn(this); sqlDb.run('COMMIT'); return r; }
     catch (e) { sqlDb.run('ROLLBACK'); throw e; }
   },
   async closeAsync() { sqlDb.close(); },
@@ -1184,7 +1217,7 @@ const adapter: SQLiteAdapter = {
   },
   async withTransactionAsync(fn) {
     db.exec('BEGIN');
-    try { const r = await fn(); db.exec('COMMIT'); return r; }
+    try { const r = await fn(this); db.exec('COMMIT'); return r; }
     catch (e) { db.exec('ROLLBACK'); throw e; }
   },
   async closeAsync() { db.close(); },

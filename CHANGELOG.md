@@ -1,3 +1,17 @@
+## [7.1.3](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.1.2...v7.1.3) (2026-09-18)
+
+### Bug Fixes
+
+* **core,docs:** withTransactionAsync README examples + JSDoc coverage ([5e2e063](https://github.com/equationalapplications/expo-llm-wiki/commit/5e2e063e69a86060e9e0a1551dde2968dbfff2a0))
+* **core:** reject entry upsert that stored no row ([72653c7](https://github.com/equationalapplications/expo-llm-wiki/commit/72653c74a50c69d648d0752ee15236595ac09101))
+* **core:** reject foreign-owned graph node writes ([1aa087c](https://github.com/equationalapplications/expo-llm-wiki/commit/1aa087c19a94e1d31762478c3457e91d521137b3))
+
+## [7.1.2](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.1.1...v7.1.2) (2026-09-16)
+
+### Bug Fixes
+
+* **supply-chain:** restore @equationalapplications/* age-gate exclusion ([0da9d6c](https://github.com/equationalapplications/expo-llm-wiki/commit/0da9d6c60ccbe420122c480569f1d853a972c172))
+
 ## [7.1.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.1.0...v7.1.1) (2026-09-14)
 
 ### Bug Fixes
