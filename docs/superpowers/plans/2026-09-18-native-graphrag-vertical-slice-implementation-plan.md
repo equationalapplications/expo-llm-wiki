@@ -26,7 +26,8 @@
 - **REQ-SQL-04:** read-only slice — no migrations, no schema creation. Validate required tables/columns and `${prefix}meta` key `schema_version` = **11** (core 7.1.3 `CURRENT_SCHEMA_VERSION`); explicit failure leaves the DB unchanged. Table prefix from trusted host config, default `llm_wiki_`, never per-request.
 - **REQ-COMPAT-01:** no TS rewrite, no mutation engine, no production switch; the pinned TS baseline stays byte-identical except for the fixture-generator test file (additive).
 - **REQ-DOC-01:** this plan, code, and tests travel on the same branch/PR as the spec. Merge convention: regular merge commit (never squash).
-- Out of scope for this PR (gates, not slice): mobile binding evidence (REQ-SQL-02/03 on-device), CT renderer boundary proof (REQ-SLICE-03.2), clanker proof (REQ-SLICE-03.3), benchmark *execution/publication* (REQ-PERF-01 run). This PR ships the crate, the headless proof (REQ-SLICE-03.1 via `cargo test`), fixtures, CI, and the benchmark harness scaffold.
+- **REQ-SQL-03 (desktop lifecycle subset, in scope):** `lifecycle_tests.rs` covers the non-mobile bullets that apply to the engine itself — snapshot consistency across walk/hydration (synchronization hooks, no timing sleeps), no observation of uncommitted host writes, caller-owned transaction survives engine errors, and bounded busy handling with surfaced errors. The mobile-binding bullets (on-device write-await, boundary probe through the binding, iOS/Android evidence) are adoption-gate work.
+- Out of scope for this PR (gates, not slice): mobile binding evidence (REQ-SQL-02 and REQ-SQL-03's mobile portions on-device), CT renderer boundary proof (REQ-SLICE-03.2), clanker proof (REQ-SLICE-03.3), benchmark *execution/publication* (REQ-PERF-01 run). This PR ships the crate, the headless proof (REQ-SLICE-03.1 via `cargo test`), fixtures, CI, and the benchmark harness scaffold.
 
 ## File Structure
 
@@ -482,7 +483,7 @@ pub fn traverse_graph_neighborhood_in_tx(
 
 ## Self-Review
 
-**Spec coverage map:** REQ-SLICE-01 → Tasks 2, 3, 7, 9, 10 · REQ-SLICE-02 → Task 6 (+ 7–10 fixture runs) · REQ-SLICE-03 → Task 11 (proof 1; proofs 2–3 are downstream-repo work, documented in README) · REQ-INPUT-01 → Task 3 · REQ-SCALE-01 → Task 8 · REQ-SQL-01 → Task 10 · REQ-SQL-02/03 → out of scope (documented Global Constraint; mobile probe behavior for `unsupported_limit` is already native-deterministic) · REQ-SQL-04 → Task 4 · REQ-GATE-01 → partial by design (1, 2 achievable in-PR; 3–7 are adoption gates) · REQ-PERF-01 → Task 12 scaffold, execution deferred · REQ-DOC-01 → plan travels on the implementation branch/PR; TS baseline untouched (frozen reference).
+**Spec coverage map:** REQ-SLICE-01 → Tasks 2, 3, 7, 9, 10 · REQ-SLICE-02 → Task 6 (+ 7–10 fixture runs) · REQ-SLICE-03 → Task 11 (proof 1; proofs 2–3 are downstream-repo work, documented in README) · REQ-INPUT-01 → Task 3 · REQ-SCALE-01 → Task 8 · REQ-SQL-01 → Task 10 · REQ-SQL-02 → out of scope (adoption gate, documented Global Constraint) · REQ-SQL-03 → desktop lifecycle subset in scope via `lifecycle_tests.rs` (Task 10 tests); mobile bullets out of scope (adoption gate) · REQ-SQL-04 → Task 4 · REQ-GATE-01 → partial by design (evidence items 1–2 achievable in-PR; 3–7 are adoption gates) · REQ-PERF-01 → Task 12 scaffold, execution deferred · REQ-COMPAT-01 → TS baseline untouched (frozen reference; only additive fixture-generator test) · REQ-DOC-01 → plan travels on the implementation branch/PR.
 
 **Placeholder scan:** none — every code step has real code or an exact file/constant source; the one explicit latitude ("bump rusqlite to latest 0.x at scaffold time, record in Cargo.lock") is a pinned-artifact instruction, not a TBD.
 
