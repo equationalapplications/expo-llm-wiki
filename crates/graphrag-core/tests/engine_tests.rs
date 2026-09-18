@@ -165,9 +165,11 @@ fn connection_path_schema_mismatch_leaves_db_unchanged() {
     assert_eq!(n, 1);
 }
 
-/// (c) Transaction path: engine reads inside the caller's transaction; a row
-/// inserted after the engine returns but before commit does not affect the
-/// engine's result, and the commit succeeds.
+/// (c) Transaction path: engine reads inside the caller's transaction; the
+/// caller can insert and commit after the engine returns (the in-memory
+/// result was materialized before those inserts, so re-asserting it proves
+/// nothing about isolation — the value here is that the caller's txn stays
+/// writable and commits cleanly after engine reads).
 #[test]
 fn transaction_path_snapshot_isolation_and_commit() {
     let conn = Connection::open_in_memory().unwrap();

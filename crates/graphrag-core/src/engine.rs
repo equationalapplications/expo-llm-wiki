@@ -65,7 +65,7 @@ impl GraphRagEngine {
         };
         match result {
             Ok(hood) => {
-                snapshot.commit()?;
+                snapshot.end()?;
                 Ok(hood)
             }
             Err(err) => {
@@ -133,7 +133,7 @@ pub fn filter_induced_edges(edges: Vec<WikiEdge>, hydrated_ids: &[String]) -> Ve
 /// RAII guard for the connection path's snapshot read transaction.
 ///
 /// Begins a deferred transaction via `unchecked_transaction` (read-only in
-/// intent: the pipeline only SELECTs). `commit` ends the snapshot on success;
+/// intent: the pipeline only SELECTs). `end` finishes the snapshot on success;
 /// `Drop` rolls back whatever is left, so an early `?` or panic can never
 /// leave a transaction open on the host's connection.
 struct SnapshotGuard<'conn> {
@@ -146,7 +146,10 @@ impl<'conn> SnapshotGuard<'conn> {
         Ok(SnapshotGuard { tx: Some(tx) })
     }
 
-    fn commit(mut self) -> Result<(), GraphragError> {
+    /// Ends the snapshot. Read-only pipeline: `finish()` yields the guard's
+    /// default Rollback drop behavior, which is behaviorally identical to
+    /// COMMIT for a transaction that only SELECTed — and strictly safer.
+    fn end(mut self) -> Result<(), GraphragError> {
         if let Some(tx) = self.tx.take() {
             tx.finish().map_err(GraphragError::Sql)?;
         }
