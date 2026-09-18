@@ -15,8 +15,11 @@ updates:
       # resolution.
       default-days: 14
     groups:
-      minor-and-patch:
+      # Group ALL update types (major included) into a single PR per cycle so
+      # major bumps no longer arrive as individual PRs per dependency.
+      npm-all:
         update-types:
+          - major
           - minor
           - patch
     open-pull-requests-limit: 10
@@ -27,7 +30,9 @@ updates:
     cooldown:
       default-days: 14
     groups:
-      minor-and-patch:
+      # Same full grouping for GitHub Actions.
+      actions-all:
         update-types:
+          - major
           - minor
           - patch
