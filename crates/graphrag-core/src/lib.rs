@@ -4,6 +4,7 @@
 //! Node, or React Native dependency. Hosts own connections, credentials, and
 //! lifecycle (REQ-OWN-01).
 pub mod edges;
+pub mod engine;
 pub mod error;
 pub mod hydrate;
 pub mod okf;
