@@ -3,6 +3,9 @@
 //! Owns graph algorithms, graph SQL, and typed results. No Tauri, windowing,
 //! Node, or React Native dependency. Hosts own connections, credentials, and
 //! lifecycle (REQ-OWN-01).
+//!
+//! See `README.md` for contracts and declared differences, and
+//! `examples/proof.rs` for a runnable headless end-to-end demo.
 pub mod edges;
 pub mod engine;
 pub mod error;
