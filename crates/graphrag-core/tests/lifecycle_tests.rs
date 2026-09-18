@@ -96,6 +96,23 @@ fn missing_meta_row_fails() {
 }
 
 #[test]
+fn non_numeric_marker_fails() {
+    let conn = Connection::open_in_memory().unwrap();
+    create_valid_db(&conn);
+    conn.execute(
+        &format!("UPDATE {PREFIX}meta SET value = 'eleven' WHERE key = 'schema_version'"),
+        [],
+    )
+    .unwrap();
+    let tx = conn.unchecked_transaction().unwrap();
+    let err = validate_schema(&tx, PREFIX).expect_err("non-numeric marker must fail");
+    assert!(
+        matches!(err, graphrag_core::error::GraphragError::SchemaMismatch(_)),
+        "expected SchemaMismatch, got {err:?}"
+    );
+}
+
+#[test]
 fn wrong_version_fails() {
     let conn = Connection::open_in_memory().unwrap();
     create_valid_db(&conn);
