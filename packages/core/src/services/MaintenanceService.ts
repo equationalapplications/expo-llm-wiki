@@ -1344,6 +1344,22 @@ export class MaintenanceService {
       }
     }
 
+    const diagBuffer = new DiagnosticBuffer();
+    const diagBase = { entityId, operation: 'ontologyBackfill' as const, trigger: 'call' as const };
+    for (const o of outcomes) {
+      if (o.kind === 'low_confidence') {
+        diagBuffer.push({ ...diagBase, code: 'classification_low_confidence', detail: { factId: o.fact.id, reason: 'below_threshold' } });
+      } else if (o.kind === 'invalid') {
+        diagBuffer.push({ ...diagBase, code: 'classification_invalid', detail: { factId: o.fact.id, reason: o.reason } });
+      } else if (o.kind === 'threw') {
+        diagBuffer.push({ ...diagBase, code: 'classification_invalid', detail: { factId: o.fact.id, reason: 'classify_threw' } });
+      }
+    }
+    // After the apply transaction committed (spec §4.2.4). Classifier answers
+    // are reported even on an ontology-off abort: they describe the provider,
+    // not a write.
+    diagBuffer.flush(this.options);
+
     const counts = await this.entryRepo.countUntypedByEntityId(entityId, recheckCutoff);
     if (aborted) {
       // Mirrors the LLM path: nothing from the aborted batch was written; the host loop terminates.
