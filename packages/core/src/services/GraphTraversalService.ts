@@ -30,6 +30,7 @@ export class GraphTraversalService {
       edgeTypes: options.edgeTypes,
       minConfidence: options.minTraversalConfidence ?? this.config.minTraversalConfidence ?? 'tentative',
       excludeSourceTypes: options.excludeSourceTypes ?? this.config.excludeSourceTypes ?? [],
+      excludeDrafts: options.excludeDrafts ?? this.config.excludeDrafts ?? false,
       maxNodes,
     };
 

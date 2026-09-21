@@ -8,6 +8,14 @@ export interface NeighborhoodQueryOptions {
   minConfidence: 'certain' | 'inferred' | 'tentative';
   excludeSourceTypes: string[];
   maxNodes: number;
+  /**
+   * When true, draft facts are dead-ends for *discovered* nodes — the recursive
+   * walk will not step onto a draft, and will not step *past* one either, since
+   * a draft's neighbours are unreachable through it. The anchor node is exempt
+   * (it is validated up-front and never gated by this flag), so callers can
+   * intentionally start from a draft. Default false (drafts visible).
+   */
+  excludeDrafts?: boolean;
 }
 
 const CONFIDENCE_RANK: Record<'tentative' | 'inferred' | 'certain', number> = {
@@ -171,6 +179,7 @@ export class EdgeRepository extends BaseRepository {
             END
           ) >= ?
           AND n.source_type NOT IN (${excludeSourceTypesPlaceholders})
+          AND (? = 0 OR n.lifecycle_status != 'draft')
         WHERE w.depth < ?
           AND instr(w.visited, ',' || (CASE WHEN e.source_id = w.node_id THEN e.target_id ELSE e.source_id END) || ',') = 0
       )
@@ -189,6 +198,7 @@ export class EdgeRepository extends BaseRepository {
       entityId,
       minConfidenceRank,
       ...opts.excludeSourceTypes,
+      opts.excludeDrafts === true ? 1 : 0,
       opts.maxDepth,
       opts.maxNodes,
     ];

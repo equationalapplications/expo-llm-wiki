@@ -1355,15 +1355,66 @@ export class EntryRepository extends BaseRepository {
     ].join('\n');
   }
 
-  async findRecentByEntityIds(entityIds: readonly string[], limit: number, tx?: SQLiteAdapter): Promise<WikiFact[]> {
+  async findRecentByEntityIds(
+    entityIds: readonly string[],
+    limit: number,
+    tx?: SQLiteAdapter,
+    opts?: { excludeDrafts?: boolean },
+  ): Promise<WikiFact[]> {
     if (entityIds.length === 0) return [];
     const executor = this.getExecutor(tx);
     const placeholders = entityIds.map(() => '?').join(',');
+    const draftClause = opts?.excludeDrafts === true ? ` AND lifecycle_status != 'draft'` : '';
     const rows = await executor.getAllAsync<any>(
-      `SELECT * FROM ${this.prefix}entries WHERE entity_id IN (${placeholders}) AND deleted_at IS NULL ORDER BY updated_at DESC LIMIT ?`,
+      `SELECT * FROM ${this.prefix}entries WHERE entity_id IN (${placeholders}) AND deleted_at IS NULL${draftClause} ORDER BY updated_at DESC LIMIT ?`,
       [...entityIds, limit],
     );
     return rows.map(mapRowToFact);
+  }
+
+  /** IDs of live draft facts for the given entities (spec §5.1). Callers pass ≤ 100 entity ids. */
+  async findDraftIdsByEntityIds(entityIds: readonly string[], tx?: SQLiteAdapter): Promise<Set<string>> {
+    if (entityIds.length === 0) return new Set();
+    const executor = this.getExecutor(tx);
+    const placeholders = entityIds.map(() => '?').join(',');
+    const rows = await executor.getAllAsync<{ id: string }>(
+      `SELECT id FROM ${this.prefix}entries
+       WHERE entity_id IN (${placeholders}) AND deleted_at IS NULL AND lifecycle_status = 'draft'`,
+      [...entityIds],
+    );
+    return new Set(rows.map((r) => r.id));
+  }
+
+  /** Live drafts for one entity, newest first, keyset-paged by (created_at, id). */
+  async listDraftsByEntityId(
+    entityId: string,
+    limit: number,
+    after: { createdAt: number; id: string } | null,
+    tx?: SQLiteAdapter,
+  ): Promise<WikiFact[]> {
+    const executor = this.getExecutor(tx);
+    const afterClause = after ? ` AND (created_at < ? OR (created_at = ? AND id < ?))` : '';
+    const args: unknown[] = after
+      ? [entityId, after.createdAt, after.createdAt, after.id, limit]
+      : [entityId, limit];
+    const rows = await executor.getAllAsync<any>(
+      `SELECT * FROM ${this.prefix}entries
+       WHERE entity_id = ? AND deleted_at IS NULL AND lifecycle_status = 'draft'${afterClause}
+       ORDER BY created_at DESC, id DESC LIMIT ?`,
+      args,
+    );
+    return rows.map(mapRowToFact);
+  }
+
+  /** True iff `entryId` is a live draft owned by `entityId`. */
+  async isLiveDraft(entryId: string, entityId: string, tx?: SQLiteAdapter): Promise<boolean> {
+    const executor = this.getExecutor(tx);
+    const row = await executor.getFirstAsync<{ id: string }>(
+      `SELECT id FROM ${this.prefix}entries
+       WHERE id = ? AND entity_id = ? AND deleted_at IS NULL AND lifecycle_status = 'draft'`,
+      [entryId, entityId],
+    );
+    return row != null;
   }
 
   /**
