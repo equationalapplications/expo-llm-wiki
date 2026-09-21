@@ -425,7 +425,7 @@ export class MaintenanceService {
           if (disposition === 'defer') { deferred++; continue; }
           if (disposition === 'permanent') { permanentlyFailed++; continue; }
 
-          const result = await this.embeddingService.tryEmbedFact(row);
+          const result = await this.embeddingService.tryEmbedFact(row, { operation: 'reembed', trigger: 'call' });
           if (result.ok) embedded++;
           else failed++;
         }

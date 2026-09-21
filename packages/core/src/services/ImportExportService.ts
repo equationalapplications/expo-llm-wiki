@@ -449,7 +449,7 @@ export class ImportExportService {
             Array.isArray(fact.tags) || typeof fact.tags === 'string'
               ? fact.tags
               : [],
-        });
+        }, { operation: 'importDump', trigger: 'call' });
         if (!embedded) {
           await this.embeddingService.notifyEmbeddingPersisted(entityId, fact.id, null);
         }

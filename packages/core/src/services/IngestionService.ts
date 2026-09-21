@@ -367,7 +367,7 @@ export class IngestionService {
       }
 
       for (const fact of insertedFacts) {
-        await this.embeddingService.embedFact(fact);
+        await this.embeddingService.embedFact(fact, { operation: 'ingest', trigger: 'call' });
       }
 
       this.searchService.evictCache(entityId);
