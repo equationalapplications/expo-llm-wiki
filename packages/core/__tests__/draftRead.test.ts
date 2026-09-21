@@ -79,6 +79,11 @@ describe('read() excludeDrafts', () => {
     const r = await wiki.read('e1', 'apple', { maxResults: 10, excludeDrafts: true });
     expect(limits).toEqual([60, 63]);
     expect(ids(r)).toEqual(STABLE);
+    // The padded ranker limit is an oversample: the final cut still honours maxResults.
+    const one = await wiki.read('e1', 'apple', { maxResults: 1, excludeDrafts: true });
+    expect(limits[2]).toBe(Math.max(1 * 2, 1 + 50) + 3);
+    expect(one.facts).toHaveLength(1);
+    expect(STABLE).toContain(one.facts[0].id);
   });
 
   it('empty-query recency path filters in SQL', async () => {
