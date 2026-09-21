@@ -17,6 +17,7 @@ import type { EmbeddingService } from './EmbeddingService';
 import type { OntologyService, TitleIndexEntry } from './OntologyService';
 import { PromptService } from './PromptService';
 import { DEFAULT_MAX_CHUNK_LENGTH, DEFAULT_CHUNK_OVERLAP } from '../utils/chunkingDefaults';
+import { resolveGrounding } from '../utils/grounding';
 
 type ChunkResult =
   | { status: 'ok'; facts: ExtractedFact[]; ontology_updates?: OntologyUpdates }
@@ -57,7 +58,7 @@ export class IngestionService {
     private ontologyService?: OntologyService,
   ) {
     // Fallback for direct instantiation outside WikiMemory facade (e.g. isolated tests).
-    this.promptService = promptService ?? new PromptService(this.options.config?.prompts);
+    this.promptService = promptService ?? new PromptService(this.options.config?.prompts, resolveGrounding(this.options.config?.grounding));
   }
 
   async ingestDocument(
