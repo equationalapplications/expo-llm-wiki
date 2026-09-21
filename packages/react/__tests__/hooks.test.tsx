@@ -172,6 +172,26 @@ describe('useMemoryRead', () => {
     expect(wiki.read).toHaveBeenLastCalledWith('user-1', 'q', { maxResults: 7 });
   });
 
+  it('re-fetches when excludeDrafts toggles, including undefined → explicit false', async () => {
+    const { rerender } = renderHook(
+      ({ opts }: { opts: ReadOptions }) => useMemoryRead('user-1', 'q', opts),
+      { wrapper: wrapper(wiki), initialProps: { opts: {} as ReadOptions } }
+    );
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(1));
+
+    // Explicit false overrides a config-level excludeDrafts: true, so it is a real change.
+    rerender({ opts: { excludeDrafts: false } });
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(2));
+
+    rerender({ opts: { excludeDrafts: true } });
+    await waitFor(() => expect(wiki.read).toHaveBeenCalledTimes(3));
+    expect(wiki.read).toHaveBeenLastCalledWith('user-1', 'q', { excludeDrafts: true });
+
+    rerender({ opts: { excludeDrafts: true } });
+    await act(async () => {});
+    expect(wiki.read).toHaveBeenCalledTimes(3);
+  });
+
   it('does not re-fetch when only the options reference changes on re-render', async () => {
     const { rerender } = renderHook(
       ({ opts }: { opts: { maxResults: number } }) => useMemoryRead('user-1', 'q', opts),
@@ -1139,6 +1159,27 @@ describe('useWikiTraversal', () => {
 
     expect(wiki.traverseGraph).toHaveBeenCalledTimes(2);
     expect(wiki.traverseGraph).toHaveBeenLastCalledWith('e2', { sourceId: 'a' });
+  });
+
+  it('re-fetches when excludeDrafts toggles', async () => {
+    const { result, rerender } = renderHook(
+      ({ excludeDrafts }: { excludeDrafts?: boolean }) =>
+        useWikiTraversal('e1', { sourceId: 'a', ...(excludeDrafts === undefined ? {} : { excludeDrafts }) }),
+      { initialProps: {} as { excludeDrafts?: boolean }, wrapper: wrapper(wiki) },
+    );
+    await waitFor(() => expect(result.current.isPending).toBe(false));
+    expect(wiki.traverseGraph).toHaveBeenCalledTimes(1);
+
+    rerender({ excludeDrafts: false });
+    await waitFor(() => expect(wiki.traverseGraph).toHaveBeenCalledTimes(2));
+
+    rerender({ excludeDrafts: true });
+    await waitFor(() => expect(wiki.traverseGraph).toHaveBeenCalledTimes(3));
+    expect(wiki.traverseGraph).toHaveBeenLastCalledWith('e1', { sourceId: 'a', excludeDrafts: true });
+
+    rerender({ excludeDrafts: true });
+    await act(async () => {});
+    expect(wiki.traverseGraph).toHaveBeenCalledTimes(3);
   });
 
   it('re-fetches when options change in value but not on equivalent re-renders', async () => {
