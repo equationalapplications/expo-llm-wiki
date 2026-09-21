@@ -227,6 +227,24 @@ export interface HealResult {
   deferred: number;
 }
 
+/**
+ * Opt-in evidence check for LLM-authored facts (spec §6). Default off: 7.x
+ * write behavior is unchanged. In `'draft'` mode, writers in `writers` must
+ * quote their source; a fact whose quotes are missing or not found is stored
+ * as a `draft` instead of being rejected.
+ */
+export interface GroundingConfig {
+  mode: 'off' | 'draft';
+  /** Default `['ingest']`. The librarian and heal synthesize across events; measure their pass rates before opting them in. */
+  writers?: Array<'ingest' | 'librarian' | 'heal'>;
+  /** Quotes shorter than this (after whitespace normalization) count as absent. Default 20. */
+  minEvidenceChars?: number;
+  /** Quotes retained per fact. Retention only; every quote is checked. Default 3. */
+  maxEvidence?: number;
+  /** Characters retained per quote. Default 300. */
+  maxEvidenceChars?: number;
+}
+
 export interface WikiConfig {
   /**
    * Prefix applied to every SQL table/index/trigger name. Must match
@@ -294,6 +312,8 @@ export interface WikiConfig {
    * `GraphTraversalOptions.excludeDrafts`. Default false (drafts visible).
    */
   excludeDrafts?: boolean;
+  /** Evidence check for LLM-authored facts (spec §6). Default off. */
+  grounding?: GroundingConfig;
 }
 
 export interface ReadOptions {
@@ -513,6 +533,8 @@ export interface ExtractedFact {
   body: string;
   tags: string[];
   confidence: 'certain' | 'inferred' | 'tentative';
+  /** Quotes the model copied from its source; see `WikiConfig.grounding`. Never persisted. */
+  evidence?: string[];
 }
 
 export interface ExtractedFactWithOntology extends ExtractedFact {
