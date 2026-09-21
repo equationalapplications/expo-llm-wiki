@@ -11,7 +11,9 @@ import {
   EntityStatus,
   ReadOptions,
   WikiSourceRefHashCollision,
+  WikiDraftNotFound,
 } from './types';
+import type { DraftPage } from './types';
 import { EntryRepository } from './repositories/EntryRepository';
 import { OutboxRepository } from './repositories/OutboxRepository';
 import { SourceRefIndexRepository } from './repositories/SourceRefIndexRepository';
@@ -54,6 +56,17 @@ export interface WikiMemoryTestAccess {
   sourceRefIndexRepo: SourceRefIndexRepository;
   metadataRepo: MetadataRepository;
   jobManager: JobManager;
+}
+
+/** `listDrafts` cursors are `${created_at}:${id}`; opaque to callers. */
+function decodeDraftCursor(cursor: unknown): { createdAt: number; id: string } {
+  const sep = typeof cursor === 'string' ? cursor.indexOf(':') : -1;
+  const createdAt = sep > 0 ? Number((cursor as string).slice(0, sep)) : Number.NaN;
+  const id = sep > 0 ? (cursor as string).slice(sep + 1) : '';
+  if (!Number.isSafeInteger(createdAt) || id.length === 0) {
+    throw new TypeError('Invalid listDrafts cursor.');
+  }
+  return { createdAt, id };
 }
 
 export class WikiMemory {
@@ -804,6 +817,47 @@ export class WikiMemory {
   /** Set a fact's OKF v0.2 lifecycle status. Does NOT touch `updated_at`. */
   async setLifecycleStatus(entryId: string, entityId: string, status: 'draft' | 'stable' | 'deprecated'): Promise<void> {
     return this.okfTrustWrites.setLifecycleStatus(entryId, entityId, status);
+  }
+
+  /**
+   * Live draft facts for one entity, newest first (spec §5.2). Default page
+   * size 50, clamped to [1, 500]. Pass `nextCursor` back unchanged for the next page.
+   */
+  async listDrafts(entityId: string, options?: { limit?: number; cursor?: string }): Promise<DraftPage> {
+    const rawLimit = options?.limit;
+    const limit = typeof rawLimit === 'number' && Number.isFinite(rawLimit)
+      ? Math.min(500, Math.max(1, Math.floor(rawLimit)))
+      : 50;
+    const after = options?.cursor === undefined ? null : decodeDraftCursor(options.cursor);
+    const rows = await this.entryRepo.listDraftsByEntityId(entityId, limit + 1, after);
+    const facts = rows.slice(0, limit);
+    const last = facts[facts.length - 1];
+    return {
+      facts,
+      nextCursor: rows.length > limit && last ? `${last.created_at}:${last.id}` : null,
+    };
+  }
+
+  /**
+   * Promote a draft to `stable` and record who reviewed it, atomically
+   * (spec §5.2). Metadata writes only: `updated_at` is not bumped and no
+   * outbox event is pushed. Pass `by: 'human:<id>'` so `trustTier` becomes
+   * `'human-reviewed'`.
+   *
+   * @throws WikiDraftNotFound when no live draft with that id exists for the entity.
+   */
+  async promoteDraft(entryId: string, entityId: string, reviewer: { by: string }): Promise<void> {
+    const by = reviewer?.by;
+    if (typeof by !== 'string' || by.trim().length === 0) {
+      throw new TypeError('promoteDraft requires reviewer.by to be a non-empty string.');
+    }
+    await this.db.withTransactionAsync(async (tx) => {
+      if (!(await this.entryRepo.isLiveDraft(entryId, entityId, tx))) {
+        throw new WikiDraftNotFound();
+      }
+      await this.okfTrustWrites.setLifecycleStatus(entryId, entityId, 'stable', tx);
+      await this.okfTrustWrites.writeOkfTrust(entryId, entityId, [{ by, at: new Date().toISOString() }], tx);
+    });
   }
 
   /** Set a fact's stale_after (epoch ms) or clear it. Does NOT touch `updated_at`. */
