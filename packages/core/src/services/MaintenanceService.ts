@@ -1,12 +1,13 @@
-import { parseJsonResponse, validateFact, validateTask, titleTokens, jaccardScore, normalizeSourceRef, normalizeSourceHash, sanitizeRankerError, safeErrorToString, safeSlice } from '../utils/pure';
+import { parseJsonResponse, validateFact, validateTask, titleTokens, jaccardScore, normalizeSourceRef, normalizeSourceHash, sanitizeRankerError, safeErrorToString, safeSlice, withConcurrency } from '../utils/pure';
 import { normalizeTitleKey } from '../utils/ontology';
+import { validateClassifierAnswer, classifierStateForFact, type ClassifierRejection } from '../utils/classifier';
 import { PromptService } from './PromptService';
 import type { OntologyService, TitleIndexEntry } from './OntologyService';
 import { generateId } from '../utils/ids';
 import { parseEmbedding } from '../utils/embedding';
 import { PrunePartialFailureError } from '../types';
 import { HOOK_TIMEOUT_MARKER } from '../types';
-import type { WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedTask, ExtractedFactWithOntology, WikiFact, WikiTask, OntologyUpdates, OntologyBackfillResult, HealResult, DegradedRecord, ReembedResult } from '../types';
+import type { WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedTask, ExtractedFactWithOntology, WikiFact, WikiTask, OntologyUpdates, OntologyBackfillResult, HealResult, DegradedRecord, ReembedResult, ClassifierQuestion, OntologyManifest } from '../types';
 import type { SQLiteAdapter } from '../types';
 import type { EntryRepository } from '../repositories/EntryRepository';
 import type { SourceRefIndexRepository } from '../repositories/SourceRefIndexRepository';
@@ -328,7 +329,7 @@ export class MaintenanceService {
 
   async runOntologyBackfill(
     entityId: string,
-    options?: { promptOverride?: string; batchSize?: number },
+    options?: { promptOverride?: string; batchSize?: number; classifier?: 'auto' | 'llm' },
   ): Promise<OntologyBackfillResult> {
     this.jobManager.acquireLock('ontologyBackfill', entityId);
     try {
@@ -1051,7 +1052,7 @@ export class MaintenanceService {
   /** Core ontology backfill pass (locks handled by {@link runOntologyBackfill}). Package-internal orchestration hook. */
   async doRunOntologyBackfill(
     entityId: string,
-    options?: { promptOverride?: string; batchSize?: number },
+    options?: { promptOverride?: string; batchSize?: number; classifier?: 'auto' | 'llm' },
   ): Promise<OntologyBackfillResult> {
     const batchSize = options?.batchSize ?? ONTOLOGY_BACKFILL_BATCH_SIZE;
     if (!Number.isInteger(batchSize) || batchSize < 1) {
@@ -1067,7 +1068,7 @@ export class MaintenanceService {
       return { ...zeroed, remaining: 0, deferred: 0 };
     }
 
-    const { mode } = await ontologyService.getEffectiveState(entityId);
+    const { mode, manifest: effectiveManifest } = await ontologyService.getEffectiveState(entityId);
     if (mode === 'off') {
       // remaining stays 0: with ontology off nothing is eligible for typing, and
       // a host convergence loop (while remaining > 0) must terminate.
@@ -1079,6 +1080,16 @@ export class MaintenanceService {
     if (candidates.length === 0) {
       const counts = await this.entryRepo.countUntypedByEntityId(entityId, recheckCutoff);
       return { ...zeroed, remaining: counts.eligible, deferred: counts.deferred };
+    }
+
+    // Spec §7.3 / REQ-COMPAT-01.5: capability alone never switches paths.
+    const classifierMode = options?.classifier ?? this.options.config?.ontology?.backfillClassifier ?? 'llm';
+    const classify = this.options.llmProvider.classify;
+    if (classifierMode === 'auto' && typeof classify === 'function') {
+      const slugs = effectiveManifest.node_types.map((n) => n.type);
+      if (slugs.length > 0 && slugs.length <= 255) {
+        return this._runClassifierBackfill(entityId, candidates, effectiveManifest, now, recheckCutoff);
+      }
     }
 
     const ontologyContext = await ontologyService.buildPromptContext(entityId);
@@ -1192,6 +1203,100 @@ export class MaintenanceService {
       failedValidation,
       edgesAdded,
       skipped: outcome.skipped.length,
+      remaining: counts.eligible,
+      deferred: counts.deferred,
+    };
+  }
+
+  /**
+   * Classifier-mode backfill (spec §7.3): one `choice` question per untyped
+   * fact over the effective manifest's node-type slugs. Accepted answers go
+   * through `_applyOntologyBackfillBatch` exactly like LLM classifications.
+   * No edges are proposed.
+   */
+  private async _runClassifierBackfill(
+    entityId: string,
+    candidates: WikiFact[],
+    manifest: OntologyManifest,
+    now: number,
+    recheckCutoff: number,
+  ): Promise<OntologyBackfillResult> {
+    const classify = this.options.llmProvider.classify!;
+    const rawMin = this.options.config?.ontology?.classifyMinConfidence;
+    const minConfidence = typeof rawMin === 'number' && Number.isFinite(rawMin) && rawMin >= 0 && rawMin <= 1 ? rawMin : 0.5;
+    const rawConcurrency = this.options.config?.chunkConcurrency ?? 1;
+    const concurrency = Number.isFinite(rawConcurrency) && rawConcurrency >= 1 ? Math.floor(rawConcurrency) : 1;
+
+    // Manifest descriptions are host-authored ontology vocabulary, not fact content.
+    const question: ClassifierQuestion = {
+      kind: 'choice',
+      options: manifest.node_types.map((n) => n.type),
+      instructions:
+        'Choose the ontology node type that best describes this fact.\n' +
+        manifest.node_types.map((n) => `- ${n.type}: ${n.description}`).join('\n'),
+    };
+
+    type Outcome =
+      | { fact: WikiFact; kind: 'accepted'; okfType: string }
+      | { fact: WikiFact; kind: 'low_confidence' }
+      | { fact: WikiFact; kind: 'invalid'; reason: ClassifierRejection }
+      | { fact: WikiFact; kind: 'threw' };
+
+    const outcomes = await withConcurrency<Outcome>(
+      candidates.map((fact) => async (): Promise<Outcome> => {
+        let response: unknown;
+        try {
+          response = await classify({ state: classifierStateForFact(fact), questions: { okf_type: question } });
+        } catch {
+          return { fact, kind: 'threw' };
+        }
+        const checked = validateClassifierAnswer(response, 'okf_type', question);
+        if (!checked.ok) return { fact, kind: 'invalid', reason: checked.reason };
+        if (checked.answer.kind !== 'choice') return { fact, kind: 'invalid', reason: 'kind_mismatch' };
+        if (checked.answer.confidence < minConfidence) return { fact, kind: 'low_confidence' };
+        return { fact, kind: 'accepted', okfType: checked.answer.choice };
+      }),
+      concurrency,
+    );
+
+    // Thrown calls are transient (like `call_error`): no cooldown stamp.
+    const attempted = outcomes.filter((o) => o.kind !== 'threw').map((o) => o.fact);
+    const skipped = outcomes.length - attempted.length;
+    const classifications = outcomes
+      .filter((o): o is Extract<Outcome, { kind: 'accepted' }> => o.kind === 'accepted')
+      .map((o) => ({ id: o.fact.id, okf_type: o.okfType }));
+    const invalidCount = outcomes.filter((o) => o.kind === 'invalid').length;
+
+    let typed = 0;
+    let failedValidation = 0;
+    let edgesAdded = 0;
+    let aborted = false;
+    if (attempted.length > 0) {
+      const applied = await this._applyOntologyBackfillBatch(
+        entityId,
+        { batch: attempted, classifications, ontologyUpdates: undefined },
+        now,
+      );
+      aborted = applied.abortedOntologyOff;
+      if (!aborted) {
+        typed = applied.typed;
+        failedValidation = invalidCount + applied.failedValidation;
+        edgesAdded = applied.edgesAdded;
+      }
+    }
+
+    const counts = await this.entryRepo.countUntypedByEntityId(entityId, recheckCutoff);
+    if (aborted) {
+      // Mirrors the LLM path: nothing from the aborted batch was written; the host loop terminates.
+      return { scanned: 0, typed: 0, failedValidation: 0, edgesAdded: 0, skipped, remaining: 0, deferred: counts.deferred };
+    }
+    this.searchService.evictCache(entityId);
+    return {
+      scanned: candidates.length,
+      typed,
+      failedValidation,
+      edgesAdded,
+      skipped,
       remaining: counts.eligible,
       deferred: counts.deferred,
     };

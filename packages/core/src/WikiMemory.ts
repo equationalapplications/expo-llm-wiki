@@ -491,7 +491,7 @@ export class WikiMemory {
    */
   async runOntologyBackfill(
     entityId: string,
-    options?: { promptOverride?: string; batchSize?: number },
+    options?: { promptOverride?: string; batchSize?: number; classifier?: 'auto' | 'llm' },
   ): Promise<OntologyBackfillResult> {
     return this.maintenanceService.runOntologyBackfill(entityId, options);
   }
