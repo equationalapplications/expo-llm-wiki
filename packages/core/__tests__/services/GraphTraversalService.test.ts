@@ -61,6 +61,7 @@ describe('GraphTraversalService', () => {
       edgeTypes: undefined,
       minConfidence: 'tentative',
       excludeSourceTypes: [],
+      excludeDrafts: false,
       maxNodes: 20,
     });
   });
@@ -85,6 +86,7 @@ describe('GraphTraversalService', () => {
       edgeTypes: undefined,
       minConfidence: 'certain',
       excludeSourceTypes: ['immutable_document'],
+      excludeDrafts: false,
       maxNodes: 5,
     });
   });
@@ -116,6 +118,7 @@ describe('GraphTraversalService', () => {
       edgeTypes: undefined,
       minConfidence: 'tentative',
       excludeSourceTypes: ['user_stated'],
+      excludeDrafts: false,
       maxNodes: 8,
     });
   });

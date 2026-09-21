@@ -20,6 +20,8 @@ import { useWiki } from './WikiContext';
  *      · tierWeights: {} or fully-filtered/all-default result is omitted (same as undefined)
  *      · includeZeroWeightEntities: false/undefined are equivalent (both skip zero-weight
  *        entities); only true is keyed, matching core's default behavior
+ *      · excludeDrafts: keyed whenever set, as a boolean — core resolves it call → config →
+ *        false, so an explicit false overrides a config-level true and differs from undefined
  *  - Keys are sorted so insertion-order differences never cause spurious refetches
  */
 function normalizeReadOptionsKey(entityId: string | string[], opts?: ReadOptions): string {
@@ -87,6 +89,13 @@ function normalizeReadOptionsKey(entityId: string | string[], opts?: ReadOptions
   // undefined → false does not cause a spurious refetch.
   if (opts.includeZeroWeightEntities === true) {
     normalized.includeZeroWeightEntities = true;
+  }
+
+  // excludeDrafts: core resolves `options.excludeDrafts ?? config.excludeDrafts ?? false`,
+  // so undefined/null defer to config while an explicit false overrides it. Key both
+  // booleans so every toggle refetches.
+  if (opts.excludeDrafts !== undefined && opts.excludeDrafts !== null) {
+    normalized.excludeDrafts = opts.excludeDrafts === true;
   }
 
   const sortedKeys = Object.keys(normalized).sort();

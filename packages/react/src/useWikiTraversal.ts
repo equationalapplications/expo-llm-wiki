@@ -24,6 +24,11 @@ function normalizeTraversalOptionsKey(options: GraphTraversalOptions): string {
   if (options.maxTraversalNodes !== undefined) normalized.maxTraversalNodes = options.maxTraversalNodes;
   if (options.minTraversalConfidence !== undefined) normalized.minTraversalConfidence = options.minTraversalConfidence;
   if (options.excludeSourceTypes !== undefined) normalized.excludeSourceTypes = [...options.excludeSourceTypes].sort();
+  // Keyed whenever set: core resolves call → config → false, so an explicit false
+  // overrides a config-level true and must not collapse into undefined.
+  if (options.excludeDrafts !== undefined && options.excludeDrafts !== null) {
+    normalized.excludeDrafts = options.excludeDrafts === true;
+  }
 
   const sortedKeys = Object.keys(normalized).sort();
   const sorted: Record<string, unknown> = {};

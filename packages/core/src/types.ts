@@ -289,6 +289,11 @@ export interface WikiConfig {
   traversalDirection?: 'inbound' | 'outbound' | 'both';
   /** Default source_type dead-end list for discovered traversal nodes. Default []. */
   excludeSourceTypes?: Array<WikiFact['source_type']>;
+  /**
+   * Engine default for `ReadOptions.excludeDrafts` and
+   * `GraphTraversalOptions.excludeDrafts`. Default false (drafts visible).
+   */
+  excludeDrafts?: boolean;
 }
 
 export interface ReadOptions {
@@ -330,6 +335,12 @@ export interface ReadOptions {
    * by `tierWeights: 0`, or a floor keyed to an entity not in `entityId`.
    */
   tierFloors?: Record<string, number>;
+  /**
+   * When true, facts whose `lifecycle_status` is `'draft'` are excluded before
+   * `maxResults`, `tierFloors` and every other cut, on every read path.
+   * Resolves call → `WikiConfig.excludeDrafts` → false.
+   */
+  excludeDrafts?: boolean;
 }
 
 export interface WikiFact {
@@ -476,6 +487,12 @@ export interface GraphTraversalOptions {
   minTraversalConfidence?: 'certain' | 'inferred' | 'tentative';
   /** source_type values to dead-end on for *discovered* nodes. Does not gate the anchor. Default []. */
   excludeSourceTypes?: Array<WikiFact['source_type']>;
+  /**
+   * When true, draft facts are dead ends for *discovered* nodes (not
+   * discovered, not traversed through). Does not gate the anchor.
+   * Resolves call → `WikiConfig.excludeDrafts` → false.
+   */
+  excludeDrafts?: boolean;
 }
 
 export interface GraphNeighborhood {
@@ -1132,5 +1149,28 @@ export class WikiInvalidReadOptions extends Error {
     this.reason = reason;
     Object.setPrototypeOf(this, WikiInvalidReadOptions.prototype);
   }
+}
+
+/**
+ * Thrown by `promoteDraft` when no live draft with that id exists for the
+ * entity: missing, soft-deleted, owned by another entity, or not a draft.
+ * Contextless for the same reason as {@link WikiGraphNodeOwnershipConflict}.
+ * The `WIKI_` code keeps it clear of `extractSqliteCode`, so it passes through
+ * the serialized transaction wrapper unwrapped.
+ */
+export class WikiDraftNotFound extends Error {
+  readonly code = 'WIKI_DRAFT_NOT_FOUND' as const;
+
+  constructor() {
+    super('No draft fact with that id exists for this entity.');
+    this.name = 'WikiDraftNotFound';
+    Object.setPrototypeOf(this, WikiDraftNotFound.prototype);
+  }
+}
+
+/** One page of `listDrafts`. `nextCursor` is opaque; pass it back unchanged. */
+export interface DraftPage {
+  facts: WikiFact[];
+  nextCursor: string | null;
 }
 
