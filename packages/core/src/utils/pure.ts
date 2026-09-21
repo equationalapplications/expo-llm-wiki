@@ -863,6 +863,21 @@ export function validateTask(task: any): ExtractedTask | null {
   };
 }
 
+/** Why `validateFact` rejected `raw`. Only meaningful when `validateFact(raw)` returned null. */
+export function factRejectionReason(raw: unknown): 'invalid_shape' | 'missing_title' | 'missing_body' {
+  const fact = raw as { title?: unknown; body?: unknown } | null | undefined;
+  if (typeof fact?.title !== 'string' || typeof fact?.body !== 'string') return 'invalid_shape';
+  if (!clip(fact.title, 80)) return 'missing_title';
+  return 'missing_body';
+}
+
+/** Why `validateTask` rejected `raw`. Only meaningful when `validateTask(raw)` returned null. */
+export function taskRejectionReason(raw: unknown): 'invalid_shape' | 'missing_description' {
+  const task = raw as { description?: unknown } | null | undefined;
+  if (typeof task?.description !== 'string') return 'invalid_shape';
+  return 'missing_description';
+}
+
 export function normalizeSourceRef(value: string): string | null {
   if (typeof value !== 'string') return null;
   const cleaned = value.replace(/[^A-Za-z0-9._\- ]/g, '').trim().slice(0, 255);

@@ -271,6 +271,10 @@ describe('ImportExportService', () => {
           title: 'T'.repeat(500),
           body: 'B'.repeat(8000),
         }),
+        expect.objectContaining({
+          operation: 'importDump',
+          trigger: 'call',
+        }),
       );
     });
   });
