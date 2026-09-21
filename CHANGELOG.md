@@ -1,3 +1,16 @@
+## [7.4.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.3.0...v7.4.0) (2026-09-21)
+
+### Features
+
+* **core:** add draft options, WikiDraftNotFound and draft queries ([f725826](https://github.com/equationalapplications/expo-llm-wiki/commit/f7258262d78a440720067ee6870af3825a5a0143))
+* **core:** add listDrafts and promoteDraft review API ([c917a78](https://github.com/equationalapplications/expo-llm-wiki/commit/c917a782871f4a37197c0a6a9cfba87a2ee4e96f))
+* **core:** excludeDrafts dead-ends drafts in traverseGraph ([6474da3](https://github.com/equationalapplications/expo-llm-wiki/commit/6474da3c67b28c36a8dba5ceffaf3998df8632af))
+* **core:** excludeDrafts on every read() path ([f91126a](https://github.com/equationalapplications/expo-llm-wiki/commit/f91126a4ce47d22715ff5260c20b961fb9faf21f))
+
+### Bug Fixes
+
+* **react:** refetch when excludeDrafts changes in read and traversal hooks ([defbf2a](https://github.com/equationalapplications/expo-llm-wiki/commit/defbf2a8fd0b20617a8fbea765a99703f25e265b))
+
 ## [7.3.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.2.1...v7.3.0) (2026-09-21)
 
 ### Features
