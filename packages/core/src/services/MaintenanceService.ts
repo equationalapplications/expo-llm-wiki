@@ -922,12 +922,18 @@ export class MaintenanceService {
     const safeDowngradedSet = new Set<string>();
     const safeDeletedSet = new Set<string>();
     const newFacts: ExtractedFact[] = [];
+    // Position within the producing batch's response, not the merged list, so
+    // a diagnostic's itemIndex points into an array the model actually returned.
+    const newFactItemIndexes: number[] = [];
 
     for (const batchResult of outcome.results) {
       const mutableIds = new Set(batchResult.batch.map(f => f.id));
       for (const id of batchResult.downgraded) if (mutableIds.has(id)) safeDowngradedSet.add(id);
       for (const id of batchResult.deleted) if (mutableIds.has(id)) safeDeletedSet.add(id);
-      newFacts.push(...batchResult.newFacts);
+      batchResult.newFacts.forEach((raw, itemIndex) => {
+        newFacts.push(raw);
+        newFactItemIndexes.push(itemIndex);
+      });
     }
 
     const safeDowngraded = Array.from(safeDowngradedSet);
@@ -935,7 +941,8 @@ export class MaintenanceService {
     const diagBuffer = new DiagnosticBuffer();
     const validNewFacts: ExtractedFact[] = [];
     const validNewFactItemIndexes: number[] = [];
-    newFacts.forEach((raw, itemIndex) => {
+    newFacts.forEach((raw, k) => {
+      const itemIndex = newFactItemIndexes[k];
       const valid = validateFact(raw);
       if (valid) {
         validNewFacts.push(valid);

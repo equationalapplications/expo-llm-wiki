@@ -72,6 +72,37 @@ describe('heal diagnostics', () => {
     ]);
     expectNoContent(diagnostics, ['candidate body', 'provider down']);
   });
+
+  it('numbers itemIndex within each heal batch response, not across batches', async () => {
+    const recent = Date.now();
+    const fact = (title: string) => ({ title, body: 'healed body', tags: [], confidence: 'inferred' });
+    const { wiki, db, diagnostics } = await makeDiagnosticWiki({
+      generateText: async ({ userPrompt }) => {
+        if (userPrompt.includes('"h1"')) {
+          return JSON.stringify({ downgraded: [], deleted: [], newFacts: [{ title: 7, body: 'bad one' }, fact('Alpha river')] });
+        }
+        return JSON.stringify({
+          downgraded: [], deleted: [],
+          newFacts: [fact('Beta mountain'), fact('Gamma forest'), { title: 8, body: 'bad two' }],
+        });
+      },
+    });
+    // Bodies sized so a 2-candidate prompt exceeds HEAL_MAX_PROMPT_CHARS and
+    // runBatched sends one candidate per call (see healBounding.test.ts).
+    const longBody = 'x'.repeat(21_000);
+    for (const id of ['h1', 'h2']) {
+      await db.runAsync(
+        `INSERT INTO llm_wiki_entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at)
+         VALUES (?, 'e1', ?, ?, '[]', 'inferred', 'librarian_inferred', ?, ?)`,
+        [id, `Candidate ${id}`, longBody, recent, recent],
+      );
+    }
+    await wiki.runHeal('e1', { batchSize: 2 });
+    const rejected = ofCode(diagnostics, 'fact_rejected');
+    expect(rejected.map((d) => d.detail?.itemIndex).sort()).toEqual([0, 2]);
+    for (const d of rejected) expect(d).toMatchObject({ operation: 'heal', trigger: 'call', detail: { reason: 'invalid_shape' } });
+    expectNoContent(diagnostics, ['bad one', 'bad two', 'healed body', 'Alpha river']);
+  });
 });
 
 describe('ontology backfill diagnostics', () => {
