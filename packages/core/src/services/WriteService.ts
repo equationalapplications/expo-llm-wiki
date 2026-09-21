@@ -8,6 +8,7 @@ import type { JobManager } from './JobManager';
 import type { MaintenanceService } from './MaintenanceService';
 import { generateId } from '../utils/ids';
 import { clip } from '../utils/pure';
+import { emitDiagnostic } from '../utils/diagnostics';
 
 export class WriteService {
   constructor(
@@ -98,8 +99,12 @@ export class WriteService {
     if (shouldRunLibrarian) {
       try {
         this.jobManager.acquireLock('librarian', entityId);
-        this.runLibrarianThenMaybeHeal(entityId, librarianCount, prevMemoryCheckpoint)
-          .catch(console.error)
+        const stage: { job: 'librarian' | 'heal' } = { job: 'librarian' };
+        this.runLibrarianThenMaybeHeal(entityId, librarianCount, prevMemoryCheckpoint, stage)
+          .catch((err: unknown) => {
+            console.error(err);
+            this.reportBackgroundFailure(entityId, stage.job);
+          })
           .finally(() => {
             this.jobManager.releaseLock('librarian', entityId);
           });
@@ -123,13 +128,16 @@ export class WriteService {
       // heal's dedupe read being inside its transaction (#69).
       // tryAcquireAutoHealLock inside maybeRunHeal prevents a burst of writes
       // from stacking passes.
-      this.maybeRunHeal(entityId, eventCount).catch(console.error);
+      this.maybeRunHeal(entityId, eventCount).catch((err: unknown) => {
+        console.error(err);
+        this.reportBackgroundFailure(entityId, 'heal');
+      });
     }
   }
 
-  private async runLibrarianThenMaybeHeal(entityId: string, currentEventCount: number, prevCheckpoint: number): Promise<void> {
+  private async runLibrarianThenMaybeHeal(entityId: string, currentEventCount: number, prevCheckpoint: number, stage: { job: 'librarian' | 'heal' }): Promise<void> {
     try {
-      await this.maintenanceService.doRunLibrarian(entityId);
+      await this.maintenanceService.doRunLibrarian(entityId, undefined, 'auto');
       // Only advance checkpoint after successful librarian run
       await this.metadataRepo.updateCheckpoint(entityId, { memory: currentEventCount }, this.db);
     } catch (e) {
@@ -138,6 +146,7 @@ export class WriteService {
       throw e;
     }
 
+    stage.job = 'heal';
     await this.maybeRunHeal(entityId, currentEventCount);
   }
 
@@ -157,7 +166,7 @@ export class WriteService {
 
     if (shouldRunHeal && this.jobManager.tryAcquireAutoHealLock(entityId)) {
       try {
-        const result = await this.maintenanceService.doRunHeal(entityId);
+        const result = await this.maintenanceService.doRunHeal(entityId, { trigger: 'auto' });
         // Advance only when the pass converged. doRunHeal is bounded to
         // HEAL_BATCH_SIZE candidates (#67); advancing unconditionally would cap
         // auto-heal at one batch per autoHealThreshold events and leave most of
@@ -174,5 +183,12 @@ export class WriteService {
         this.jobManager.releaseLock('heal', entityId);
       }
     }
+  }
+
+  private reportBackgroundFailure(entityId: string, job: 'librarian' | 'heal'): void {
+    emitDiagnostic(this.options, {
+      code: 'background_job_failed', operation: job, trigger: 'auto', entityId,
+      detail: { reason: 'unhandled_rejection' },
+    });
   }
 }
