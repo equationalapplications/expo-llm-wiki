@@ -105,12 +105,11 @@ export class EmbeddingService {
     body: string;
     tags: string | string[];
   }, ctx?: EmbedDiagnosticContext): Promise<EmbedFactResult> {
-    const embedFn = this.options.llmProvider.embed;
     // Callability, not truthiness: a truthy non-function would pass a `!embedFn`
     // guard, throw TypeError at the call, and be marked `provider_error` —
     // burning an attempt per sweep until a host config error permanently
     // excluded the fact. `no_provider` never marks. (spec §2.4)
-    if (typeof embedFn !== 'function') return { ok: false, kind: 'no_provider' };
+    if (typeof this.options.llmProvider.embed !== 'function') return { ok: false, kind: 'no_provider' };
     let tagsStr: string;
     if (Array.isArray(fact.tags)) {
       tagsStr = fact.tags.join(' ');
@@ -129,8 +128,7 @@ export class EmbeddingService {
     const text = clip(`${fact.title} ${fact.body} ${tagsStr}`.trim(), maxEmbedChars);
     let float32Vector: Float32Array;
     try {
-      // .call keeps `this` for class-based providers.
-      const vector = await embedFn.call(this.options.llmProvider, text);
+      const vector = await this.options.llmProvider.embed(text);
       if (vector.length === 0 || !vector.every(v => typeof v === 'number' && isFinite(v))) {
         console.warn(`[WikiMemory] embedFact: embed() returned an invalid vector for ${fact.id}; skipping.`);
         this.reportEmbed(ctx, fact, 'embedding_failed', 'invalid_vector');
