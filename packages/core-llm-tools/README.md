@@ -86,6 +86,8 @@ const response = await ai.models.generateContent({
 
 ### 3. Built-In Tools (Grounding)
 
+> "Grounding" here means Gemini's server-side Google Search tool. It is unrelated to `core-llm-wiki`'s evidence grounding check (`WikiConfig.grounding`), which verifies that facts quote their source.
+
 Some Gemini capabilities, like [Google Search grounding](https://ai.google.dev/gemini-api/docs/google-search),
 are built-in tools executed server-side by Google rather than function declarations your code
 implements. These are declared with `kind: 'built_in'` and flow through the same

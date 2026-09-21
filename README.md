@@ -37,6 +37,9 @@ Supports [Open Knowledge Format (OKF) v0.2](https://github.com/GoogleCloudPlatfo
 - **Offline First:** The MiniSearch fallback runs entirely in-process with no network required. The cosine similarity path requires `embed()` to vectorise the query (typically a cloud API call) but falls back to MiniSearch automatically when offline or when `embed` throws.
 - **Full Unicode Support:** UTF-8 and UTF-16 (including surrogate pairs for emoji) are fully supported. Chunks are split safely at sentence boundaries; surrogate pairs are never fragmented.
 - **Immutable vs mutable memory:** Every fact includes `source_type`. Facts from `ingestDocument()` are stored as `immutable_document` and are preserved from librarian/heal rewriting; they can only be removed with `forget()` or replaced via re-ingest. Derived or user assertions are mutable (`librarian_inferred`, `user_stated`, `user_confirmed`) and can be updated by healer/librarian workflows.
+- **No silent failures:** An optional `onDiagnostic` hook reports what core would otherwise drop or only log, such as failed chunks, rejected facts, dropped edges and background-job failures. Reports are typed and content-free.
+- **Review tier:** Facts can be `draft` until someone reviews them. Reads and traversal can exclude drafts (`excludeDrafts`), and `listDrafts` / `promoteDraft` handle review.
+- **Optional classifier:** A non-generative `LLMProvider.classify` (e.g. a System-One classifier such as Jev) can type facts during ontology backfill. It is opt-in: adding it to the provider changes nothing until you enable it.
 - **Cross-Platform:** Choose the right package for your platform: Expo, React Native, React web, vanilla JS, or Node.js. The core logic is framework-agnostic with platform-specific adapters.
 
 ## How It Works
@@ -798,6 +801,33 @@ const result = await wiki.runPrune('entity-123', {
 Defaults: `retainSoftDeletedFor = config.pruneRetainSoftDeletedFor ?? 7`, `retainEventsFor = config.pruneEventsAfter ?? 30`, `vacuum = false`.
 
 Throws `WikiBusyError` if librarian, heal, ingest, prune, or reembed is in-flight for the same entity. `ingestDocument`, `runLibrarian`, `runHeal`, and `runReembed` reciprocally throw `WikiBusyError` if a prune is in-flight.
+
+### Diagnostics
+
+Pass `onDiagnostic` beside `llmProvider` to get a typed, content-free report each time core drops something or a background job fails:
+
+```typescript
+const wiki = createWiki(db, {
+  llmProvider,
+  onDiagnostic: (d) => telemetry.record(d), // d.code, d.severity, d.operation, d.trigger, d.entityId, d.detail
+});
+```
+
+Diagnostics carry IDs, counts and reason slugs, never fact text or LLM output. They are delivered after the operation commits. A hook that throws never affects the operation. See [core: Diagnostics](packages/core/README.md#diagnostics) for every code.
+
+### Draft Review
+
+```typescript
+await wiki.read('entity-123', 'deploy process', { excludeDrafts: true }); // or config: { excludeDrafts: true }
+const { facts, nextCursor } = await wiki.listDrafts('entity-123', { limit: 50 });
+await wiki.promoteDraft(facts[0].id, 'entity-123', { by: 'human:alice' }); // → stable, trustTier 'human-reviewed'
+```
+
+Drafts stay visible unless you exclude them. See [core: Draft Review](packages/core/README.md#draft-review).
+
+### Ontology Backfill with a Classifier
+
+Add an optional `classify` function to your `LLMProvider` and set `config.ontology.backfillClassifier: 'auto'`. `runOntologyBackfill` then types facts with one classifier question per fact instead of a generative call. Classifier mode proposes no edges. Pass `{ classifier: 'llm' }` to force the generative path for one run. See [core: Ontology backfill](packages/core/README.md#ontology-backfill).
 
 ---
 

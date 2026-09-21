@@ -123,6 +123,7 @@ const wiki = createWiki(adapter, {
     staleInferredAfterDays: 60,        // default: 60 (days before runHeal downgrades inferred facts; null to disable)
     preFilterLimit: 50,                // default: undefined — MiniSearch pre-filter before cosine scan; recommended for >500 facts
     hybridWeight: 0.7,                 // default: undefined — blend semantic (1.0) ↔ keyword (0.0); pure semantic when unset
+    excludeDrafts: false,              // default: false — hide unreviewed draft facts from reads and traversal
 
     // Global prompt overrides — librarianSystemPrompt and healSystemPrompt apply to write() auto-runs;
     // ingestSystemPrompt applies only to explicit ingestDocument() calls.
@@ -136,6 +137,8 @@ const wiki = createWiki(adapter, {
   },
 });
 ```
+
+**Diagnostics and draft review.** Pass `onDiagnostic` beside `llmProvider` (not inside `config`) to receive typed, content-free reports of dropped chunks, facts, edges and failed background jobs. There are no dedicated hooks for draft review yet: call `listDrafts` / `promoteDraft` on the instance from `useWiki()`. See [core: Diagnostics](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md#diagnostics) and [core: Draft Review](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md#draft-review). Other `WikiConfig` fields, such as `ontology`, are documented in the [core README](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md#configuration).
 
 ## Retrieval Tuning
 
