@@ -14,7 +14,7 @@ import {
   WikiDraftNotFound,
 } from './types';
 import type { DraftPage } from './types';
-import type { PendingSourceStatus, WikiLintReport } from './types';
+import type { PendingSourceStatus, WikiLintReport, WikiInstructions } from './types';
 import { EntryRepository } from './repositories/EntryRepository';
 import { OutboxRepository } from './repositories/OutboxRepository';
 import { SourceRefIndexRepository } from './repositories/SourceRefIndexRepository';
@@ -405,6 +405,16 @@ export class WikiMemory {
   /** Read-only maintenance report for one entity (spec §8.1). Reports, never repairs. */
   async lint(entityId: string): Promise<WikiLintReport> {
     return this.lintService.lint(entityId);
+  }
+
+  /**
+   * Effective system prompts for ingest, librarian, heal and ontology backfill
+   * (spec §8.3). Backs the `wiki_get_instructions` tool. Templates only;
+   * overrides are returned verbatim, so keep secrets out of `WikiConfig.prompts`.
+   */
+  async getInstructions(entityId: string): Promise<WikiInstructions> {
+    const ontologyContext = await this.ontologyService.buildPromptContext(entityId);
+    return this.promptService.buildInstructionTemplates(ontologyContext);
   }
 
   /**

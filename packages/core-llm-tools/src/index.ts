@@ -20,3 +20,4 @@ export {
   wikiGetOntologyManifest,
   wikiTraverseGraphManifest,
 } from './manifests/graph';
+export { wikiGetInstructionsManifest } from './manifests/instructions';

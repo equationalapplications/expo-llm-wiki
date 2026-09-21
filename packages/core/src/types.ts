@@ -1201,3 +1201,17 @@ export interface WikiLintReport {
   sample: { danglingEdgeIds: string[]; manifestViolationEdgeIds: string[] };
 }
 
+/**
+ * Effective system prompts (spec §8.3): defaults with `WikiConfig.prompts`
+ * overrides applied and the ontology block appended. Templates only: data
+ * placeholders such as `{{documentChunk}}` stay verbatim, and no events,
+ * chunks or facts are ever included. Overrides are returned as written, so
+ * never put secrets or private data in `WikiConfig.prompts`.
+ */
+export interface WikiInstructions {
+  ingest: string;
+  librarian: string;
+  heal: string;
+  ontologyBackfill: string;
+}
+
