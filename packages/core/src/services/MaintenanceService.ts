@@ -1,12 +1,14 @@
-import { parseJsonResponse, validateFact, validateTask, titleTokens, jaccardScore, normalizeSourceRef, normalizeSourceHash, sanitizeRankerError, safeErrorToString, safeSlice } from '../utils/pure';
+import { parseJsonResponse, validateFact, validateTask, titleTokens, jaccardScore, normalizeSourceRef, normalizeSourceHash, sanitizeRankerError, safeErrorToString, safeSlice, factRejectionReason, taskRejectionReason } from '../utils/pure';
 import { normalizeTitleKey } from '../utils/ontology';
+import { DiagnosticBuffer, emitDiagnostic, edgeDropDiagnostic } from '../utils/diagnostics';
+import type { EdgeDrop } from '../utils/ontology';
 import { PromptService } from './PromptService';
 import type { OntologyService, TitleIndexEntry } from './OntologyService';
 import { generateId } from '../utils/ids';
 import { parseEmbedding } from '../utils/embedding';
 import { PrunePartialFailureError } from '../types';
 import { HOOK_TIMEOUT_MARKER } from '../types';
-import type { WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedTask, ExtractedFactWithOntology, WikiFact, WikiTask, OntologyUpdates, OntologyBackfillResult, HealResult, DegradedRecord, ReembedResult } from '../types';
+import type { WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedTask, ExtractedFactWithOntology, WikiFact, WikiTask, OntologyUpdates, OntologyBackfillResult, HealResult, DegradedRecord, ReembedResult, WikiDiagnosticTrigger } from '../types';
 import type { SQLiteAdapter } from '../types';
 import type { EntryRepository } from '../repositories/EntryRepository';
 import type { SourceRefIndexRepository } from '../repositories/SourceRefIndexRepository';
@@ -603,7 +605,7 @@ export class MaintenanceService {
   }
 
   /** Core librarian pass (locks handled by {@link runLibrarian}). Package-internal orchestration hook. */
-  async doRunLibrarian(entityId: string, promptOverride?: string): Promise<void> {
+  async doRunLibrarian(entityId: string, promptOverride?: string, trigger: WikiDiagnosticTrigger = 'call'): Promise<void> {
     const events = await this.eventRepo.getRecent(entityId, 50);
     const currentFactsRows = await this.entryRepo.findRecentByEntityId(entityId, 100);
 
@@ -635,8 +637,25 @@ export class MaintenanceService {
     const tasks = Array.isArray(result.tasks) ? result.tasks : [];
     const ontologyUpdates = result.ontology_updates;
 
-    const validFacts = facts.map(validateFact).filter((f): f is ExtractedFact => f !== null);
-    const validTasks = tasks.map(validateTask).filter((t): t is ExtractedTask => t !== null);
+    const diagBuffer = new DiagnosticBuffer();
+    const diagBase = { entityId, operation: 'librarian' as const, trigger };
+    const validFacts: ExtractedFact[] = [];
+    const validFactItemIndexes: number[] = [];
+    facts.forEach((raw, itemIndex) => {
+      const valid = validateFact(raw);
+      if (valid) {
+        validFacts.push(valid);
+        validFactItemIndexes.push(itemIndex);
+      } else {
+        diagBuffer.push({ ...diagBase, code: 'fact_rejected', detail: { itemIndex, reason: factRejectionReason(raw) } });
+      }
+    });
+    const validTasks: ExtractedTask[] = [];
+    tasks.forEach((raw, itemIndex) => {
+      const valid = validateTask(raw);
+      if (valid) validTasks.push(valid);
+      else diagBuffer.push({ ...diagBase, code: 'task_rejected', detail: { itemIndex, reason: taskRejectionReason(raw) } });
+    });
 
     const now = Date.now();
     const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
@@ -665,7 +684,7 @@ export class MaintenanceService {
         edges: ExtractedFactWithOntology['edges'];
       }> = [];
 
-      for (const fact of validFacts) {
+      for (const [k, fact] of validFacts.entries()) {
         const newTokens = titleTokens(fact.title);
         let skip = false;
 
@@ -682,13 +701,18 @@ export class MaintenanceService {
           }
         }
 
-        if (skip) continue;
+        if (skip) {
+          diagBuffer.push({ ...diagBase, code: 'fact_deduplicated', detail: { itemIndex: validFactItemIndexes[k], reason: 'fuzzy_title' } });
+          continue;
+        }
 
         const ontologyFact = fact as ExtractedFactWithOntology;
-        const normalized = this.ontologyService?.validateAndNormalizeFact(ontologyFact, manifest, { strict: false })
-          ?? { okf_type: null, edges: [] };
-
         const id = generateId('fact_');
+        const validationDrops: EdgeDrop[] = [];
+        const normalized = this.ontologyService?.validateAndNormalizeFact(ontologyFact, manifest, { strict: false, drops: validationDrops })
+          ?? { okf_type: null, edges: [] };
+        for (const drop of validationDrops) diagBuffer.push(edgeDropDiagnostic(drop, { ...diagBase, factId: id }));
+
         const factObj: WikiFact = {
           id, entity_id: entityId, title: fact.title, body: fact.body, tags: fact.tags, confidence: fact.confidence,
           source_type: 'librarian_inferred', source_hash: null, source_ref: null,
@@ -708,9 +732,11 @@ export class MaintenanceService {
       }
 
       for (const item of pendingEdges) {
+        const resolveDrops: EdgeDrop[] = [];
         await this.ontologyService?.resolveAndPersistEdges(
-          entityId, item.sourceId, item.sourceType, item.edges ?? [], manifest, titleIndex, tx, now,
+          entityId, item.sourceId, item.sourceType, item.edges ?? [], manifest, titleIndex, tx, now, resolveDrops,
         );
+        for (const drop of resolveDrops) diagBuffer.push(edgeDropDiagnostic(drop, diagBase));
       }
 
       for (const task of validTasks) {
@@ -723,10 +749,12 @@ export class MaintenanceService {
       }
     });
 
+    diagBuffer.flush(this.options);
+
     await this.searchService.sync(entityId);
 
     for (const fact of insertedFacts) {
-      await this.embeddingService.embedFact(fact);
+      await this.embeddingService.embedFact(fact, { operation: 'librarian', trigger });
     }
 
     this.searchService.evictCache(entityId);
@@ -745,10 +773,13 @@ export class MaintenanceService {
       promptOverride?: string;
       batchSize?: number;
       bodyTruncationChars?: number;
+      trigger?: WikiDiagnosticTrigger;
     },
   ): Promise<HealResult> {
     const promptOverride = options?.promptOverride;
     const batchSize = options?.batchSize ?? HEAL_BATCH_SIZE;
+    const trigger: WikiDiagnosticTrigger = options?.trigger ?? 'call';
+    const diagBase = { entityId, operation: 'heal' as const, trigger };
     if (!Number.isInteger(batchSize) || batchSize < 1) {
       throw new Error('Invalid batchSize: must be an integer >= 1');
     }
@@ -793,6 +824,7 @@ export class MaintenanceService {
         await this.embeddingService.notifyEmbeddingPersisted(entityId, factId, null);
       } catch (hookErr) {
         console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during heal orphan pass for ${factId}:`, hookErr);
+        emitDiagnostic(this.options, { ...diagBase, code: 'hook_failed', detail: { factId, reason: 'on_embedding_persisted' } });
       }
     }
 
@@ -900,7 +932,18 @@ export class MaintenanceService {
 
     const safeDowngraded = Array.from(safeDowngradedSet);
     const safeDeleted = Array.from(safeDeletedSet);
-    const validNewFacts = newFacts.map(validateFact).filter((f): f is ExtractedFact => f !== null);
+    const diagBuffer = new DiagnosticBuffer();
+    const validNewFacts: ExtractedFact[] = [];
+    const validNewFactItemIndexes: number[] = [];
+    newFacts.forEach((raw, itemIndex) => {
+      const valid = validateFact(raw);
+      if (valid) {
+        validNewFacts.push(valid);
+        validNewFactItemIndexes.push(itemIndex);
+      } else {
+        diagBuffer.push({ ...diagBase, code: 'fact_rejected', detail: { itemIndex, reason: factRejectionReason(raw) } });
+      }
+    });
 
     const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
     const uniqueDeletedFactIds = Array.from(new Set(safeDeleted));
@@ -928,7 +971,7 @@ export class MaintenanceService {
       const healFactsForDedupe: Array<{ id: string; title: string }> =
         await this.entryRepo.findInferredTitlesByEntityId(entityId, tx);
 
-      for (const fact of validNewFacts) {
+      for (const [k, fact] of validNewFacts.entries()) {
         const newTokens = titleTokens(fact.title);
         let skip = false;
 
@@ -946,7 +989,10 @@ export class MaintenanceService {
           }
         }
 
-        if (skip) continue;
+        if (skip) {
+          diagBuffer.push({ ...diagBase, code: 'fact_deduplicated', detail: { itemIndex: validNewFactItemIndexes[k], reason: 'fuzzy_title' } });
+          continue;
+        }
 
         const id = generateId('fact_');
         const factObj: WikiFact = {
@@ -988,6 +1034,11 @@ export class MaintenanceService {
       );
     });
 
+    for (const { item, reason } of outcome.skipped) {
+      diagBuffer.push({ ...diagBase, code: 'heal_skipped', detail: { factId: item.id, reason } });
+    }
+    diagBuffer.flush(this.options);
+
     await this.searchService.sync(entityId);
 
     for (const factId of uniqueDeletedFactIds) {
@@ -995,11 +1046,12 @@ export class MaintenanceService {
         await this.embeddingService.notifyEmbeddingPersisted(entityId, factId, null);
       } catch (hookErr) {
         console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during heal for ${factId}:`, hookErr);
+        emitDiagnostic(this.options, { ...diagBase, code: 'hook_failed', detail: { factId, reason: 'on_embedding_persisted' } });
       }
     }
 
     for (const fact of insertedFacts) {
-      await this.embeddingService.embedFact(fact);
+      await this.embeddingService.embedFact(fact, { operation: 'heal', trigger });
     }
 
     this.searchService.evictCache(entityId);
@@ -1215,6 +1267,8 @@ export class MaintenanceService {
     let failedValidation = 0;
     let edgesAdded = 0;
     let abortedOntologyOff = false;
+    const diagBuffer = new DiagnosticBuffer();
+    const diagBase = { entityId, operation: 'ontologyBackfill' as const, trigger: 'call' as const };
 
     await this.db.withTransactionAsync(async (tx) => {
       let { mode: txMode, manifest } = await ontologyService.getEffectiveState(entityId, tx);
@@ -1251,14 +1305,18 @@ export class MaintenanceService {
         }
         applied.add(fact.id);
 
+        const validationDrops: EdgeDrop[] = [];
         const normalized = ontologyService.validateAndNormalizeFact(
           {
             title: fact.title, body: fact.body, tags: fact.tags, confidence: fact.confidence,
             okf_type: classification.okf_type as string | undefined, edges: classification.edges as ExtractedFactEdge[] | undefined,
           } as ExtractedFactWithOntology,
           manifest,
-          { strict: false },
+          { strict: false, drops: validationDrops },
         );
+        for (const drop of validationDrops) {
+          diagBuffer.push(edgeDropDiagnostic(drop, { ...diagBase, factId: fact.id }));
+        }
         if (!normalized.okf_type) {
           failedValidation++;
           continue;
@@ -1279,13 +1337,20 @@ export class MaintenanceService {
       // Two-phase: edges resolve only after every batch fact has its new type,
       // so intra-batch targets pass the target-type check.
       for (const item of pendingEdges) {
-        edgesAdded += await ontologyService.resolveAndPersistEdges(
-          entityId, item.sourceId, item.sourceType, item.edges, manifest, titleIndex, tx, now,
+        const resolveDrops: EdgeDrop[] = [];
+        const added = await ontologyService.resolveAndPersistEdges(
+          entityId, item.sourceId, item.sourceType, item.edges, manifest, titleIndex, tx, now, resolveDrops,
         );
+        edgesAdded += added;
+        for (const drop of resolveDrops) {
+          diagBuffer.push(edgeDropDiagnostic(drop, diagBase));
+        }
       }
 
       await this.entryRepo.markOntologyChecked(batch.map(f => f.id), entityId, now, tx);
     });
+
+    diagBuffer.flush(this.options);
 
     return { typed, failedValidation, edgesAdded, abortedOntologyOff };
   }
