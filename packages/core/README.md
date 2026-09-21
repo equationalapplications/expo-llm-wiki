@@ -799,6 +799,47 @@ const result = await wiki.runOntologyBackfill(entityId);
   `config.prompts.ontologyBackfillSystemPrompt` (template may use `{{facts}}`
   and the ontology placeholders).
 
+#### Classifier mode (optional)
+
+A System-One classifier (for example TypeSafe's Jev, an OpenJev-style open model, or a local ONNX classifier) can type facts during backfill without generating text. Add `classify` to your provider and opt in:
+
+```ts
+const wiki = createWiki(db, {
+  llmProvider: { generateText, classify },
+  config: { ontology: { backfillClassifier: 'auto', classifyMinConfidence: 0.5 } },
+});
+await wiki.runOntologyBackfill('user-1');                        // uses classify
+await wiki.runOntologyBackfill('user-1', { classifier: 'llm' }); // force the generative path
+```
+
+- Providing `classify` changes nothing by itself. The default is `'llm'`.
+- Each untyped fact gets one `choice` question over the entity manifest's node types. Answers below `classifyMinConfidence` (default 0.5) are left untyped and retried after the cooldown.
+- **No edges are proposed in classifier mode** (`edgesAdded: 0`): a classifier cannot extract edge targets. Run with `classifier: 'llm'` when you want edges.
+- Manifests with more than 255 node types, or providers without `classify`, use the generative path.
+- Answers are validated as untrusted. Off-list choices and out-of-range probabilities count toward `failedValidation`. A thrown `classify` counts toward `skipped` and is retried on the next pass.
+
+Example adapter for Cloudflare Workers AI's `typesafe/jev`. This is illustrative, not a supported package; check the provider's current API reference before use.
+
+```ts
+const classify: LLMProvider['classify'] = async ({ state, questions }) => {
+  const jevQuestions = Object.fromEntries(Object.entries(questions).map(([key, q]) => [key,
+    q.kind === 'choice' ? { type: 'choice', instructions: q.instructions, criteria: Object.fromEntries(q.options.map((o) => [o, o])) }
+    : q.kind === 'score' ? { type: 'score', instructions: q.instructions, criteria: q.levels }
+    : { type: 'noul', instructions: q.instructions },
+  ]));
+  const res = await env.AI.run('typesafe/jev', { state, questions: jevQuestions });
+  const answers = Object.fromEntries(Object.entries(res.answers).map(([key, a]: [string, any]) => [key,
+    a.type === 'choice' ? { kind: 'choice', choice: a.choice, confidence: a.confidence, probabilities: a.probabilities }
+    : a.type === 'score' ? {
+        kind: 'score', score: a.score, confidence: a.confidence,
+        probabilities: Object.keys(a.probabilities).sort((x, y) => Number(x) - Number(y)).map((k) => a.probabilities[k]),
+      }
+    : { kind: 'binary', probability: a.noul },
+  ]));
+  return { answers };
+};
+```
+
 ## OKF Import/Export
 
 The core package integrates with `@equationalapplications/core-okf` to seamlessly adapt wiki data dumps to and from Open Knowledge Format (OKF) bundles (v0.1 and v0.2; `formatOkfBundle` defaults to the v0.2 / `llm-wiki/2` profile).
