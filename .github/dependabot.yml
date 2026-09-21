@@ -22,6 +22,13 @@ updates:
           - major
           - minor
           - patch
+    ignore:
+      # conventionalcommits preset >=9 requires conventional-changelog-writer@9,
+      # but @semantic-release/release-notes-generator 14.x still pins writer@8
+      # and the release job fails at generateNotes ("Missing helper"). Unpin
+      # once release-notes-generator 15 ships stable.
+      - dependency-name: conventional-changelog-conventionalcommits
+        update-types: ["version-update:semver-major"]
     open-pull-requests-limit: 10
   - package-ecosystem: github-actions
     directory: /
