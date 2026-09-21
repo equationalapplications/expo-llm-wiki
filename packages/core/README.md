@@ -285,6 +285,31 @@ True cosine-range pure semantic ranking (including negative cosine values) is us
 **Pre-filtering optimization:**
 When `preFilterLimit: 50` is set with 1000 facts, cosine similarity is computed only for the top 50 MiniSearch keyword matches, reducing O(N) scoring to O(50).
 
+## Draft Review
+
+Facts can carry `lifecycle_status: 'draft'`, for example when a host marks model output as unreviewed. Drafts stay visible by default. To keep them out of results:
+
+```ts
+await wiki.read('user-1', 'deploy process', { excludeDrafts: true });
+await wiki.traverseGraph('user-1', { sourceId, excludeDrafts: true });
+// or engine-wide:
+createWiki(db, { llmProvider, config: { excludeDrafts: true } });
+```
+
+- On every `read()` path, drafts are removed **before** `maxResults`, `tierFloors`, and pre-filter cuts, so they never take slots from reviewed facts.
+- In traversal, drafts are dead ends. The starting fact is always returned.
+- Status is read from SQLite on every call. A promotion is visible immediately, with no re-indexing.
+
+Review API:
+
+```ts
+const { facts, nextCursor } = await wiki.listDrafts('user-1', { limit: 50 });
+await wiki.promoteDraft(facts[0].id, 'user-1', { by: 'human:alice' }); // → stable, trustTier 'human-reviewed'
+// Reject with setLifecycleStatus(id, entityId, 'deprecated') or forget().
+```
+
+`promoteDraft` throws `WikiDraftNotFound` when no live draft with that id exists for the entity. The error is contextless by design. Promotion does not change `updated_at`, so a promoted fact keeps its recency position.
+
 ## Pluggable Vector Retrieval
 
 When your entity corpus grows, in-process cosine similarity scoring becomes a bottleneck. The optional **`VectorRanker`** interface lets you delegate semantic ranking to [**sqlite-vec**](https://github.com/asg017/sqlite-vec), [**sqlite-vss**](https://github.com/asg017/sqlite-vss), or an external vector database while `WikiMemory` handles embedding validation, hybrid scoring, and tier-2 row hydration.
