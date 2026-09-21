@@ -1,7 +1,7 @@
 # Grounding, Diagnostics & Classifier Hook: Design
 
 **Date:** 2026-09-21
-**Status:** Draft revision 4 — review rounds 1–3 incorporated; not implemented
+**Status:** Draft revision 5 — review rounds 1–4 incorporated; ready for PR 0; not implemented
 **Branch:** `spec/grounding-diagnostics-classify`
 **Source baseline:** `ab68b73` (core 7.1.3 + consolidated dependency bumps, #194)
 **Delivery:** one docs PR (this spec), then five code PRs (§9). Every code PR is a `feat` minor release; no PR in this series may carry a breaking-change footer.
@@ -86,7 +86,8 @@ export type WikiDiagnosticSeverity = 'info' | 'warn' | 'error';
 
 export type WikiDiagnosticCode =
   | 'ingest_chunk_failed'          // per failed chunk (parse or llm)
-  | 'fact_rejected'                // validateFact/validateTask returned null
+  | 'fact_rejected'                // validateFact returned null
+  | 'task_rejected'                // validateTask returned null
   | 'fact_deduplicated'            // fuzzy/title dedupe skipped a new fact
   | 'edge_dropped'                 // resolveEdges / upsertGraphCore dropped an edge
   | 'embedding_failed'             // embedFact failure or invalid vector
@@ -155,7 +156,8 @@ Diagnostics are an exfiltration surface if they carry content. `message` is a fi
 | Site | Code | Reason slugs |
 |---|---|---|
 | `IngestionService` chunk catch | `ingest_chunk_failed` | `parse`, `llm` |
-| `validateFact`/`validateTask` null (ingest, librarian, heal) | `fact_rejected` | `missing_title`, `missing_body`, `invalid_shape` |
+| `validateFact` null (ingest, librarian, heal) | `fact_rejected` | `missing_title`, `missing_body`, `invalid_shape` |
+| `validateTask` null (librarian) | `task_rejected` | `missing_description`, `invalid_shape` |
 | Jaccard dedupe skip (librarian, heal); ingest title dedupe | `fact_deduplicated` | `fuzzy_title`, `exact_title` |
 | `OntologyService.resolveEdges` | `edge_dropped` | `no_source_type`, `type_not_in_manifest`, `target_not_found`, `target_type_mismatch` |
 | non-strict `upsertGraphCore` manifest drop | `edge_dropped` | `manifest_violation` |
@@ -165,7 +167,7 @@ Diagnostics are an exfiltration surface if they carry content. `message` is a fi
 
 ### 4.5 Tests
 
-- Each row of §4.4 has a test asserting code, severity, operation, entityId, and absence of content (assert serialized diagnostic contains no fixture title/body strings).
+- Each row of §4.4 has a test asserting code, severity, operation, `trigger` (both `'call'` and `'auto'` where the site can be reached both ways), entityId, the reason slug, every locator field the site emits (`factId`, `sourceRef`, `chunkIndex`, `itemIndex`, `edgeType`, `sourceNodeType`, `targetNodeType`), and absence of content (assert serialized diagnostic contains no fixture title/body strings).
 - Throwing hook, async-rejecting hook: operation result identical to no-hook run.
 - Rolled-back transaction: no buffered diagnostics delivered.
 - No-hook run: console output byte-identical to baseline for a fixed fixture (snapshot).
@@ -229,7 +231,7 @@ Default `'off'` keeps 7.x write behavior identical (lifecycle of LLM-authored fa
 
 ### 6.2 Prompt contract
 
-When mode is `'draft'`, `PromptService` appends an evidence instruction block, after any override, to the system prompt of **each writer listed in `grounding.writers` and no other**. Writers outside that list get no block and their facts are written exactly as today. Ingest and librarian can reuse the path that appends ontology context (`appendOntology`, reached from `buildIngestPrompt`/`buildLibrarianPrompt`). Heal has no such mechanism: `buildHealPrompt` takes no ontology context and returns the template unchanged in both branches (`PromptService.ts:119-178`), so PR 3 adds a direct append there, covering both the placeholder and the non-placeholder branch. The block requires each fact to carry:
+When mode is `'draft'`, `PromptService` appends an evidence instruction block, after any override, to the system prompt of **each writer listed in `grounding.writers` and no other**. Writers outside that list get no block and their facts are written exactly as today. Ingest and librarian can reuse the path that appends ontology context (`appendOntology`, reached from `buildIngestPrompt`/`buildLibrarianPrompt`). Heal has no such mechanism: `buildHealPrompt` takes no ontology context; its placeholder branch only hydrates the template and its default branch returns it as-is (`PromptService.ts:119-178`), so PR 3 adds a direct append there, covering both the placeholder and the non-placeholder branch. The block requires each fact to carry:
 
 ```json
 "evidence": ["exact substring copied from the SOURCE section"]
@@ -408,3 +410,7 @@ PRs 1, 2 and 4 may proceed in parallel worktrees from `main`. Each PR merges as 
   - §4.4: finer `fact_rejected` reasons.
   - §8.1: lint ignores `source_hash`.
   - Rejected from that review: a code sketch that puts the hook on `WikiConfig`, drops `entityId`/`message`, uses `Record<string, any>`, and adds a console line for every diagnostic (breaks REQ-COMPAT-01.4); a claim that PR 4 routes `resolveEdges` through `classify` (deferred, §7.4); a generative `classify` fallback (rejected in rev 1); "SQLite migrations" for PR 2 (the `lifecycle_status` column already exists).
+- **rev 5 (2026-09-21):** review round 4.
+  - §4.1/§4.4: `task_rejected` split out from `fact_rejected`, with reasons `missing_description` and `invalid_shape`. `validateTask` rejects on description, not title/body.
+  - §4.5: tests assert `trigger`, the reason slug, and every emitted locator field.
+  - §6.2: heal placeholder-branch wording corrected.
