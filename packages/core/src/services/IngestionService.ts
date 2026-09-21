@@ -17,10 +17,11 @@ import type { EmbeddingService } from './EmbeddingService';
 import type { OntologyService, TitleIndexEntry } from './OntologyService';
 import { PromptService } from './PromptService';
 import { DEFAULT_MAX_CHUNK_LENGTH, DEFAULT_CHUNK_OVERLAP } from '../utils/chunkingDefaults';
-import { resolveGrounding } from '../utils/grounding';
+import { resolveGrounding, buildGroundingCorpus, checkGrounding, groundingOutcome } from '../utils/grounding';
+import type { GroundingTrust, GroundingVerdict } from '../utils/grounding';
 
 type ChunkResult =
-  | { status: 'ok'; facts: ExtractedFact[]; ontology_updates?: OntologyUpdates }
+  | { status: 'ok'; facts: ExtractedFact[]; itemIndexes: number[]; rejected: Array<{ itemIndex: number; reason: ReturnType<typeof factRejectionReason> }>; verdicts: GroundingVerdict[]; ontology_updates?: OntologyUpdates }
   | { status: 'failed'; error: ChunkFailure };
 
 /** Shape returned by {@link IngestionService.ingestDocument} when no chunks
@@ -134,6 +135,7 @@ export class IngestionService {
       // surfaces before any LLM tokens are spent, not buried under
       // `WikiIngestEmptyError` after the first LLM call. See spec §3.
       const ontologyContext = await this.ontologyService?.buildPromptContext(entityId) ?? null;
+      const ingestGrounding = this.promptService.groundingFor('ingest');
 
       const chunkResults = await withConcurrency(
         chunks.map((chunk, chunkIndex) => async () => {
@@ -165,11 +167,20 @@ export class IngestionService {
                 rejected.push({ itemIndex, reason: factRejectionReason(raw) });
               }
             });
+            // Spec §6.3: the ingest corpus is exactly the chunk the model was shown.
+            const verdicts: GroundingVerdict[] = ingestGrounding
+              ? (() => {
+                  const corpus = buildGroundingCorpus([chunk]);
+                  return facts.map((f) => checkGrounding(f.evidence, corpus, ingestGrounding));
+                })()
+              : [];
+
             return {
               status: 'ok' as const,
               facts,
               itemIndexes,
               rejected,
+              verdicts,
               ontology_updates: result.ontology_updates,
             };
           } catch (e) {
@@ -231,6 +242,9 @@ export class IngestionService {
       const failures: ChunkFailure[] = [];
       const seen = new Set<string>();
       const orderedChunkFacts: Array<{ facts: ExtractedFact[]; ontology_updates?: OntologyUpdates }> = [];
+      // Keyed by fact object identity: the same objects flow through dedupe,
+      // the full path and the partial path. Empty when grounding is off.
+      const groundingLedger = new Map<ExtractedFact, { verdict: GroundingVerdict; chunkIndex: number; itemIndex: number }>();
       const diagBuffer = new DiagnosticBuffer();
       const diagBase = { entityId, operation: 'ingest' as const, trigger: 'call' as const };
       for (const [chunkIndex, slot] of chunkResults.entries()) {
@@ -249,6 +263,7 @@ export class IngestionService {
           if (!seen.has(normalizedTitle)) {
             seen.add(normalizedTitle);
             dedupedFacts.push(fact);
+            if (ingestGrounding) groundingLedger.set(fact, { verdict: slot.verdicts[k], chunkIndex, itemIndex: slot.itemIndexes[k] });
           } else {
             diagBuffer.push({
               ...diagBase, code: 'fact_deduplicated',
@@ -288,7 +303,7 @@ export class IngestionService {
         if (failedChunks === 0) {
           // Happy path — full upsertGraphCore supersession + ownership.
           const fullResult = await this.db.withTransactionAsync(async (tx) => {
-            return await this.runFullUpsertGraph(entityId, sourceRef, sourceHash, orderedChunkFacts, tx, diagBuffer);
+            return await this.runFullUpsertGraph(entityId, sourceRef, sourceHash, orderedChunkFacts, tx, diagBuffer, groundingLedger);
           });
           deletedSourceFactIds.push(...fullResult.deletedSourceFactIds);
           insertedFacts.push(...fullResult.insertedFacts);
@@ -304,7 +319,7 @@ export class IngestionService {
           const partialResult = await this.db.withTransactionAsync(async (tx) => {
             const flat: ExtractedFact[] = [];
             for (const slot of orderedChunkFacts) flat.push(...slot.facts);
-            return await this.appendPartialFacts(entityId, sourceRef, flat, tx, diagBuffer);
+            return await this.appendPartialFacts(entityId, sourceRef, flat, tx, diagBuffer, groundingLedger);
           });
           insertedFacts.push(...partialResult.insertedDescriptors);
         }
@@ -460,7 +475,12 @@ export class IngestionService {
       edges: readonly { type: string; sourceId: string; targetId: string; id?: string }[];
     },
     tx: SQLiteAdapter,
-    opts?: { strict?: boolean; diag?: { buffer: DiagnosticBuffer; operation: 'ingest' | 'upsertGraph' } },
+    opts?: {
+      strict?: boolean;
+      diag?: { buffer: DiagnosticBuffer; operation: 'ingest' | 'upsertGraph' };
+      /** Insert-time trust by node id. Ingest-only (spec §6.5); the public upsertGraph never passes it, so host nodes are never grounded. */
+      nodeTrust?: ReadonlyMap<string, GroundingTrust>;
+    },
   ): Promise<{ nodesWritten: number; edgesWritten: number; superseded: number }> {
     // Node-ownership pre-flight FIRST — before ontology resolution and every
     // persistent mutation, so a rejected write leaves no seeded manifest
@@ -520,6 +540,7 @@ export class IngestionService {
         access_count: 0,
         deleted_at: null,
         okf_type: normalized.okf_type,
+        ...opts?.nodeTrust?.get(node.id),
       };
       wikiFacts.push(wikiFact);
     }
@@ -649,9 +670,11 @@ export class IngestionService {
     orderedChunkFacts: Array<{ facts: ExtractedFact[]; ontology_updates?: OntologyUpdates }>,
     tx: SQLiteAdapter,
     diagBuffer: DiagnosticBuffer,
+    groundingLedger: ReadonlyMap<ExtractedFact, { verdict: GroundingVerdict; chunkIndex: number; itemIndex: number }> = new Map(),
   ): Promise<{ deletedSourceFactIds: string[]; insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> }> {
     const deletedSourceFactIds: string[] = [];
     const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
+    const nodeTrust = new Map<string, GroundingTrust>();
 
     // Capture the IDs of facts about to be soft-deleted so we can fire
     // onEmbeddingPersisted hooks AFTER the transaction commits. The
@@ -729,6 +752,17 @@ export class IngestionService {
           tags: fact.tags,
           confidence: fact.confidence,
         });
+        const grounding = groundingLedger.get(fact);
+        if (grounding) {
+          const outcome = groundingOutcome(grounding.verdict, now);
+          nodeTrust.set(id, outcome.trust);
+          if (outcome.diagnostic) {
+            diagBuffer.push({
+              entityId, operation: 'ingest', trigger: 'call', code: outcome.diagnostic.code,
+              detail: { factId: id, sourceRef, chunkIndex: grounding.chunkIndex, itemIndex: grounding.itemIndex, reason: outcome.diagnostic.reason },
+            });
+          }
+        }
         insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
 
         titleIndex.set(normalizeTitleKey(fact.title), { id, okf_type: normalized.okf_type });
@@ -762,7 +796,7 @@ export class IngestionService {
       entityId,
       { sourceRef, sourceHash, nodes: hostNodes, edges: hostEdges },
       tx,
-      { strict: false, diag: { buffer: diagBuffer, operation: 'ingest' } },
+      { strict: false, diag: { buffer: diagBuffer, operation: 'ingest' }, ...(nodeTrust.size > 0 ? { nodeTrust } : {}) },
     );
 
     return { deletedSourceFactIds, insertedFacts };
@@ -794,6 +828,7 @@ export class IngestionService {
     dedupedFacts: ExtractedFact[],
     tx: SQLiteAdapter,
     diagBuffer: DiagnosticBuffer,
+    groundingLedger: ReadonlyMap<ExtractedFact, { verdict: GroundingVerdict; chunkIndex: number; itemIndex: number }> = new Map(),
   ): Promise<{
     inserted: number;
     skippedDuplicate: number;
@@ -836,6 +871,14 @@ export class IngestionService {
       liveTitles.add(normalizedTitle);
 
       const id = generateId('fact_');
+      const grounding = groundingLedger.get(fact);
+      const outcome = grounding ? groundingOutcome(grounding.verdict, now) : null;
+      if (grounding && outcome?.diagnostic) {
+        diagBuffer.push({
+          entityId, operation: 'ingest', trigger: 'call', code: outcome.diagnostic.code,
+          detail: { factId: id, sourceRef, chunkIndex: grounding.chunkIndex, itemIndex: grounding.itemIndex, reason: outcome.diagnostic.reason },
+        });
+      }
       const wikiFact: WikiFact = {
         id,
         entity_id: entityId,
@@ -855,6 +898,7 @@ export class IngestionService {
         access_count: 0,
         deleted_at: null,
         okf_type: null,
+        ...outcome?.trust,
       };
       await this.entryRepo.upsert(wikiFact, tx);
       // Mirror the shape `runFullUpsertGraph` returns so the caller's
