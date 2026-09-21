@@ -14,6 +14,7 @@ import {
   WikiDraftNotFound,
 } from './types';
 import type { DraftPage } from './types';
+import type { PendingSourceStatus } from './types';
 import { EntryRepository } from './repositories/EntryRepository';
 import { OutboxRepository } from './repositories/OutboxRepository';
 import { SourceRefIndexRepository } from './repositories/SourceRefIndexRepository';
@@ -362,6 +363,36 @@ export class WikiMemory {
       // above. Non-ASCII sourceRefs are still compared by the DB's
       // source_ref index, so the canonical matches the DB ordering.
       return { sourceRef: e.rawSourceRef, changed, duplicateOf: canonical };
+    });
+  }
+
+  /**
+   * Batch pending state per source (spec §8.2). `current` exactly when
+   * `hasChanged` is false; `partial` when live rows exist but none carries a
+   * hash (a partial ingest's retry state). Validation and raw-ref echo match
+   * batched `hasChanged`. Input order and duplicates are preserved.
+   */
+  async pendingSources(
+    entityId: string,
+    sources: Array<{ sourceRef: string; sourceHash: string }>,
+  ): Promise<Array<{ sourceRef: string; status: PendingSourceStatus }>> {
+    if (sources.length === 0) return [];
+    const normalized = sources.map((s) => {
+      const sourceRef = normalizeSourceRef(s.sourceRef);
+      if (!sourceRef) throw new Error(`Invalid sourceRef: ${JSON.stringify(s.sourceRef)}`);
+      const sourceHash = normalizeSourceHash(s.sourceHash);
+      if (!sourceHash) throw new Error('Invalid sourceHash: must be a 64-character hex string (normalized to lowercase)');
+      return { rawSourceRef: s.sourceRef, sourceRef, sourceHash };
+    });
+    const states = await this.entryRepo.findSourceStates(entityId, normalized.map((n) => n.sourceRef));
+    return normalized.map((n) => {
+      const state = states.get(n.sourceRef);
+      let status: PendingSourceStatus;
+      if (!state) status = 'new';
+      else if (!state.anyHashed) status = 'partial';
+      else if (state.latestHash !== null && normalizeSourceHash(state.latestHash) === n.sourceHash) status = 'current';
+      else status = 'changed';
+      return { sourceRef: n.rawSourceRef, status };
     });
   }
 

@@ -1178,3 +1178,10 @@ export interface DraftPage {
   nextCursor: string | null;
 }
 
+/**
+ * `pendingSources` status (spec §8.2). `partial`: live rows exist for the ref
+ * but none carries a hash, which is the intended retry state after a partial
+ * ingest. `current` is exactly the case where `hasChanged` returns false.
+ */
+export type PendingSourceStatus = 'new' | 'changed' | 'partial' | 'current';
+
