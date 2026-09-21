@@ -129,7 +129,8 @@ export class EmbeddingService {
     const text = clip(`${fact.title} ${fact.body} ${tagsStr}`.trim(), maxEmbedChars);
     let float32Vector: Float32Array;
     try {
-      const vector = await embedFn(text);
+      // .call keeps `this` for class-based providers.
+      const vector = await embedFn.call(this.options.llmProvider, text);
       if (vector.length === 0 || !vector.every(v => typeof v === 'number' && isFinite(v))) {
         console.warn(`[WikiMemory] embedFact: embed() returned an invalid vector for ${fact.id}; skipping.`);
         this.reportEmbed(ctx, fact, 'embedding_failed', 'invalid_vector');

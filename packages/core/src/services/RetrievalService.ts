@@ -110,7 +110,8 @@ export class RetrievalService {
         let rankerShouldRethrow = false;
         let pendingRankerFallbackError: Error | undefined;
         try {
-          const queryVec = await embedFn(trimmedQuery);
+          // .call keeps `this` for class-based providers.
+          const queryVec = await embedFn.call(this.options.llmProvider, trimmedQuery);
 
           // Validate that the provider returned a well-formed vector. An empty vector
           // would cause all facts to score 0 (silently bypassing the fallback), and
