@@ -521,6 +521,8 @@ export interface LLMProvider {
   /**
    * Generates text using the developer's LLM of choice.
    * Expected to return the raw text response (typically a JSON string).
+   * Called with the provider as `this`, so class-based adapters may keep
+   * SDK handles and config on the instance.
    */
   generateText: (params: { systemPrompt: string; userPrompt: string }) => Promise<string>;
   /**
@@ -528,6 +530,8 @@ export interface LLMProvider {
    * Must return a stable-dimension float array for any input text.
    * Called once per fact on creation/update, and once per `read()` query.
    * When absent or throws, `read()` falls back to MiniSearch.
+   * Called with the provider as `this` (never detached), same as
+   * `generateText`, so class-based adapters may read their own state.
    */
   embed?: (text: string) => Promise<number[]>;
   /**

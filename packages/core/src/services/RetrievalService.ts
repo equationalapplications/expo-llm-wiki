@@ -83,7 +83,6 @@ export class RetrievalService {
       ? Math.max(0, Math.min(1, hybridWeight))
       : undefined;
     const skipEmbed = weight === 0;
-    const embedFn = this.options.llmProvider.embed;
 
     let facts: WikiFact[] = [];
     let scoreByFactId: Map<string, number> | undefined;
@@ -102,15 +101,15 @@ export class RetrievalService {
       const draftPad = draftIds.size;
       const padLimit = (n: number): number => (n >= Number.MAX_SAFE_INTEGER ? n : n + draftPad);
 
-      // Fast-path: all entities zero-weight — skip embedFn, DB mismatch query, and
+      // Fast-path: all entities zero-weight — skip embed(), DB mismatch query, and
       // cosine work entirely. usedEmbed=true suppresses the keyword fallback below.
       if (scoredEntityIds.length === 0) {
         usedEmbed = true;
-      } else if (!skipEmbed && embedFn) {
+      } else if (!skipEmbed && typeof this.options.llmProvider.embed === 'function') {
         let rankerShouldRethrow = false;
         let pendingRankerFallbackError: Error | undefined;
         try {
-          const queryVec = await embedFn(trimmedQuery);
+          const queryVec = await this.options.llmProvider.embed(trimmedQuery);
 
           // Validate that the provider returned a well-formed vector. An empty vector
           // would cause all facts to score 0 (silently bypassing the fallback), and
