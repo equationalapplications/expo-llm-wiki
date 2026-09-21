@@ -238,12 +238,13 @@ Evidence is checked only against the source material the model was shown, never 
 |---|---|
 | Ingest (full and partial paths) | the chunk text passed to `buildIngestPrompt` |
 | Librarian | the event contents included in the prompt |
-| Heal `newFacts` | the event contents included in the prompt |
+| Heal `newFacts` | the recent-event contents actually included at the attempt's degradation level, plus the bodies of document anchors whose `lifecycle_status` is not `draft` |
 
 Normative rules:
 
-- **Raw values, never serialized prompt text.** The librarian and heal prompts embed events and facts as `JSON.stringify(..., null, 2)` (`PromptService.ts:88-93`, and the heal builder likewise). The corpus is built from the in-memory string values that were serialized, joined with a newline separator, so JSON escape sequences (`\"`, `\n`) in the prompt do not cause false `grounding_failed`. Tests must include events containing quotes, backslashes and newlines.
-- **No circular grounding.** Both prompts also show existing facts ("Current Facts" / the heal dump). Fact bodies are excluded from the corpus: otherwise a new inference could be grounded by quoting an earlier, possibly ungrounded, inference. A quote copied from a shown fact is therefore not found and fails.
+- **Raw values, never serialized prompt text.** The librarian and heal prompts embed events and facts as `JSON.stringify(..., null, 2)` (`PromptService.ts:88-93`; heal `:170`). The corpus is built from the in-memory string values that were serialized, joined with a newline separator, so JSON escape sequences (`\"`, `\n`) in the prompt do not cause false `grounding_failed`. Tests must include events containing quotes, backslashes and newlines.
+- **No circular grounding.** Both prompts also show existing facts ("Current Facts" / the heal dump). Fact bodies are excluded from the corpus: otherwise a new inference could be grounded by quoting an earlier, possibly ungrounded, inference. A quote copied from a shown fact is therefore not found and fails. The one exception is heal's document anchors (`immutable_document` facts), which stand in for source text; only non-draft anchors count.
+- **Degradation.** Heal drops recent events from L2 upward (`PromptService.ts:128-130`). At those levels only anchors remain in the corpus, so the expected result is more `draft` facts, not an error. The heal result's existing `degraded` reporting covers the attempt level.
 - **Writer scope.** `grounding.writers` defaults to `['ingest']`, whose corpus is the document itself. The librarian and heal synthesize across events, so their pass rates are unknown. Hosts may opt them in; before recommending that, a follow-up must measure pass rates on a representative event log.
 
 ### 6.4 Check
@@ -384,4 +385,4 @@ PRs 1, 2 and 4 may proceed in parallel worktrees from `main`. Each PR merges as 
 ## 11. Revision log
 
 - **rev 1 (2026-09-21):** initial draft. Corrects an external draft proposal that (a) keyed grounding on a nonexistent `verbatimQuote` field and failed open, (b) proposed downgrading all automated facts, (c) used a single-question, vendor-named `classify` shape and a generative fallback module, (d) referenced nonexistent files/types (`types/provider.ts`, `InferredFact`, index files), and (e) imported a specific ontology package into core.
-- **rev 2 (2026-09-21):** review round 1. §6.3: the corpus is built from raw values, not serialized prompt JSON; fact bodies are excluded (circular grounding); `grounding.writers` defaults to ingest only, pending a librarian/heal pass-rate evaluation. §6.2: every quote is checked before retention caps apply. §7.3 + REQ-COMPAT-01.5: backfill defaults to `'llm'`; provider capability alone never changes behavior. §4.2: `ingest_chunk_failed` is aggregated. §5.5: pin promoted-draft recency. §8.1: manifest-violation computation note. §8.3: override disclosure caveat.
+- **rev 2 (2026-09-21):** review round 1. §6.3: the corpus is built from raw values, not serialized prompt JSON; fact bodies are excluded (circular grounding); `grounding.writers` defaults to ingest only, pending a librarian/heal pass-rate evaluation. §6.2: every quote is checked before retention caps apply. §7.3 + REQ-COMPAT-01.5: backfill defaults to `'llm'`; provider capability alone never changes behavior. §4.2: `ingest_chunk_failed` is aggregated. §5.5: pin promoted-draft recency. §8.1: manifest-violation computation note. §8.3: override disclosure caveat. Heal corpus: events at the attempt's degradation level plus non-draft document anchors.
