@@ -525,7 +525,7 @@ const wiki = createWiki(db, {
 - **After commit.** Transactional diagnostics are delivered after the operation's transaction commits. An operation that throws delivers none; the exception is the signal. `upsertGraph` runs in your transaction, so its diagnostics are delivered when it resolves. Disregard them if you roll back.
 - **`trigger`.** `'auto'` marks work started by `autoLibrarianThreshold` / `autoHealThreshold`. A failed background job is reported as `background_job_failed` with `operation` set to the job.
 - **Forward-compatible.** New codes may be added in minor releases; ignore codes you don't recognize.
-- **Console output is unchanged** whether or not a hook is set.
+- **Console output is unchanged** when a hook is set and succeeds: every existing core line is identical. A throwing or rejecting hook adds only its own `console.warn`, and a non-function `onDiagnostic` warns once.
 
 ## Per-Entity Seeded Ontology
 
