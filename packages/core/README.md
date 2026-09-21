@@ -504,6 +504,29 @@ Notes:
 - A throwing callback is caught (logged via `console.error`) and does not block other subscribers or the underlying job.
 - Subscriptions are scoped to a single `entityId`. There is no wildcard or "all entities" form.
 
+## Diagnostics
+
+Pass `onDiagnostic` to receive typed, content-free reports of events core used to drop silently or only log: failed chunks, rejected facts and tasks, dedupe drops, dropped edges, embedding and host-hook failures, heal skips, and background-job failures.
+
+```ts
+const wiki = createWiki(db, {
+  llmProvider,
+  onDiagnostic: (d) => {
+    // d.code, d.severity ('info' | 'warn' | 'error'), d.operation, d.trigger ('call' | 'auto'),
+    // d.entityId, d.at, d.message, d.detail?: { factId, sourceRef, chunkIndex, itemIndex,
+    // edgeType, sourceNodeType, targetNodeType, reason, count, chunkIndexes }
+    telemetry.record(d);
+  },
+});
+```
+
+- **Content-free.** Diagnostics carry IDs, indexes, counts, ontology slugs and reason slugs only. They never carry titles, bodies, LLM output, provider error messages, or hashes of content.
+- **Isolated.** The hook is called synchronously. A throwing or rejecting hook never affects the operation, and its failure is logged with `console.warn`.
+- **After commit.** Transactional diagnostics are delivered after the operation's transaction commits. An operation that throws delivers none; the exception is the signal. `upsertGraph` runs in your transaction, so its diagnostics are delivered when it resolves. Disregard them if you roll back.
+- **`trigger`.** `'auto'` marks work started by `autoLibrarianThreshold` / `autoHealThreshold`. A failed background job is reported as `background_job_failed` with `operation` set to the job.
+- **Forward-compatible.** New codes may be added in minor releases; ignore codes you don't recognize.
+- **Console output is unchanged** whether or not a hook is set.
+
 ## Per-Entity Seeded Ontology
 
 Control how librarian and ingest passes classify facts and extract graph relationships. The system defaults to **`off`** so existing deployments behave unchanged.
