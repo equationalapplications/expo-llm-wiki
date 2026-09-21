@@ -1,7 +1,7 @@
 # Grounding, Diagnostics & Classifier Hook: Design
 
 **Date:** 2026-09-21
-**Status:** Draft revision 1 — not implemented
+**Status:** Draft revision 2 — review round 1 incorporated; not implemented
 **Branch:** `spec/grounding-diagnostics-classify`
 **Source baseline:** `ab68b73` (core 7.1.3 + consolidated dependency bumps, #194)
 **Delivery:** one docs PR (this spec), then five code PRs (§9). Every code PR is a `feat` minor release; no PR in this series may carry a breaking-change footer.
@@ -33,6 +33,7 @@ Close the four gaps found when comparing this repository against practitioner le
 2. New `WikiOptions`/`WikiConfig`/`ReadOptions`/`GraphTraversalOptions` fields are optional.
 3. New `LLMProvider` members are optional; `generateText` remains the only required member.
 4. Existing `console.warn`/`console.error` lines are retained whether or not `onDiagnostic` is registered. Removing them would be a behavior change for hosts that scrape logs; a later major may revisit.
+5. Capability never implies behavior. Adding an optional provider member (e.g. `classify`) must not change any existing operation's output unless the host also opts in through configuration or a call option (see §7.3).
 
 ## 2. Background
 
@@ -116,6 +117,7 @@ export interface WikiDiagnostic {
     chunkIndex?: number;
     edgeType?: string;
     reason?: string;   // machine-readable sub-reason, e.g. 'target_not_found'
+    chunkIndexes?: number[]; // aggregated ingest_chunk_failed only; first 20
     count?: number;    // for aggregated emissions
   };
 }
@@ -135,7 +137,7 @@ The union is closed for this series; adding a code later is a minor change, so h
 2. **Isolated.** The hook is invoked inside `try/catch`. A throwing or non-function hook never alters the calling operation's result, never aborts ingest/heal, and is itself reported only to `console.warn` (no recursive diagnostic).
 3. **Synchronous, non-awaited.** A returned promise is ignored; a rejected returned promise is caught and swallowed to `console.warn`.
 4. **Post-commit for transactional work.** Diagnostics describing writes inside `withTransactionAsync` (edge drops, dedupe, grounding) are buffered per operation and flushed after commit. If the transaction rolls back, buffered diagnostics are discarded — the operation throws and that exception is the signal.
-5. **Aggregation.** Per-item codes emitted in bulk (e.g. 40 edges dropped for `target_not_found` in one ingest) may be aggregated into one diagnostic per `(code, reason)` with `detail.count`. Per-fact codes that a reviewer would act on (`grounding_*`) are never aggregated.
+5. **Aggregation.** Per-item codes emitted in bulk (e.g. 40 edges dropped for `target_not_found` in one ingest) may be aggregated into one diagnostic per `(code, reason)` with `detail.count`. `ingest_chunk_failed` is aggregated per `(reason)` per ingest call so a large all-fail ingest cannot flood a synchronous hook. Per-fact codes that a reviewer would act on (`grounding_*`) are never aggregated.
 
 ### 4.3 Disclosure [REQ-DIAG-03]
 
@@ -199,6 +201,7 @@ promoteDraft(entryId: string, entityId: string, reviewer: { by: string }): Promi
 - `tierFloors` with an entity whose only matches are drafts → existing `WikiInvalidReadOptions` semantics unchanged when excluded (floor counts only eligible rows; verify behavior at plan time and pin it).
 - Traversal: draft interior node blocks discovery; draft root retained.
 - Promote → next `read({excludeDrafts:true})` includes the fact without re-indexing.
+- Promotion does not bump `updated_at` (DAO discipline), so a promoted draft keeps its original position in the empty-query recency path. Pin this with a test.
 - `listDrafts` cross-entity isolation and cursor stability.
 
 ## 6. PR 3 — Grounding check
@@ -208,6 +211,7 @@ promoteDraft(entryId: string, entityId: string, reviewer: { by: string }): Promi
 ```ts
 WikiConfig.grounding?: {
   mode: 'off' | 'draft';     // default 'off'
+  writers?: Array<'ingest' | 'librarian' | 'heal'>; // default ['ingest']
   minEvidenceChars?: number; // default 20
   maxEvidence?: number;      // default 3 per fact
   maxEvidenceChars?: number; // default 300 per quote
@@ -224,7 +228,7 @@ When mode is `'draft'`, `PromptService` appends an evidence instruction block to
 "evidence": ["exact substring copied from the SOURCE section"]
 ```
 
-`validateFact` gains evidence validation: must be an array of strings; entries trimmed; entries shorter than `minEvidenceChars` or longer than `maxEvidenceChars` discarded; at most `maxEvidence` retained. A fact whose evidence is absent or empty after validation is **ungrounded** — it is not rejected.
+`validateFact` gains evidence validation: must be an array of strings; entries trimmed; non-string entries are ignored. **Every** string quote (up to a hard ceiling of 10) is checked under §6.4 before any retention cap applies, so a fabricated quote cannot hide beyond a cap; more than 10 quotes makes the fact ungrounded (`grounding_failed`, reason `too_many_quotes`). Quotes shorter than `minEvidenceChars` count as absent, not as passes. `maxEvidence`/`maxEvidenceChars` limit only what is retained. A fact with no qualifying quote is **ungrounded** — it is not rejected.
 
 ### 6.3 Evidence corpus [REQ-GROUND-02]
 
@@ -233,8 +237,14 @@ Evidence is checked only against the source material the model was shown, never 
 | Writer | Corpus |
 |---|---|
 | Ingest (full and partial paths) | the chunk text passed to `buildIngestPrompt` |
-| Librarian | concatenation of the event contents included in the prompt |
-| Heal `newFacts` | event contents plus the bodies of the facts included in the dump |
+| Librarian | the event contents included in the prompt |
+| Heal `newFacts` | the event contents included in the prompt |
+
+Normative rules:
+
+- **Raw values, never serialized prompt text.** The librarian and heal prompts embed events and facts as `JSON.stringify(..., null, 2)` (`PromptService.ts:88-93`, and the heal builder likewise). The corpus is built from the in-memory string values that were serialized, joined with a newline separator, so JSON escape sequences (`\"`, `\n`) in the prompt do not cause false `grounding_failed`. Tests must include events containing quotes, backslashes and newlines.
+- **No circular grounding.** Both prompts also show existing facts ("Current Facts" / the heal dump). Fact bodies are excluded from the corpus: otherwise a new inference could be grounded by quoting an earlier, possibly ungrounded, inference. A quote copied from a shown fact is therefore not found and fails.
+- **Writer scope.** `grounding.writers` defaults to `['ingest']`, whose corpus is the document itself. The librarian and heal synthesize across events, so their pass rates are unknown. Hosts may opt them in; before recommending that, a follow-up must measure pass rates on a representative event log.
 
 ### 6.4 Check
 
@@ -299,7 +309,7 @@ Core treats provider output as untrusted. An answer is invalid (→ `classificat
 
 ### 7.3 Ontology backfill
 
-- `runOntologyBackfill(entityId, options)` gains `options.classifier?: 'auto' | 'llm'` (default `'auto'`).
+- `runOntologyBackfill(entityId, options)` gains `options.classifier?: 'auto' | 'llm'`, with engine default `WikiConfig.ontology.backfillClassifier` (default `'llm'`). Resolution: call → config → `'llm'`. Adding `classify` to a provider alone never changes backfill (REQ-COMPAT-01.5).
 - `'auto'` with `provider.classify` present: per untyped fact, one request with `state` = title + body (tags appended), one `choice` question whose options are the effective manifest's node-type slugs. Accept when `confidence >= WikiConfig.ontology.classifyMinConfidence` (default 0.5); otherwise leave untyped and emit `classification_low_confidence`.
 - More than 255 node types, or `classify` absent, or `'llm'`: existing generative path, unchanged.
 - **Edges are not proposed in classifier mode** — a classifier cannot extract target titles. Result reports `edgesProposed: 0`; hosts wanting edges run with `classifier: 'llm'`. Documented explicitly.
@@ -335,7 +345,7 @@ interface WikiLintReport {
 }
 ```
 
-Read-only, entity-scoped in every statement, counts via SQL aggregates. Dangling targets remain stored (baseline decision); lint reports, never repairs.
+Read-only, entity-scoped in every statement. Counts use SQL aggregates, except `manifestViolations`, which needs the effective manifest (a JS object): compute it by streaming the entity's edges joined to endpoint `okf_type` in pages and checking in JS, or by binding the manifest's allowed triples as a temporary table. The plan picks one. Dangling targets remain stored (baseline decision); lint reports, never repairs.
 
 ### 8.2 `pendingSources` [REQ-PENDING-01]
 
@@ -348,7 +358,7 @@ Batch equivalent of `hasChanged` with one distinction: `partial` = live rows exi
 
 ### 8.3 `wiki_get_instructions` tool
 
-`core-llm-tools` manifest returning the effective system prompts (defaults with `WikiConfig.prompts` overrides applied, ontology and grounding blocks appended) for `ingest`, `librarian`, `heal`, `ontologyBackfill`. Scope `memory:read`. Returns templates only, never hydrated prompts containing events or chunks.
+`core-llm-tools` manifest returning the effective system prompts (defaults with `WikiConfig.prompts` overrides applied, ontology and grounding blocks appended) for `ingest`, `librarian`, `heal`, `ontologyBackfill`. Scope `memory:read`. Returns templates only, never hydrated prompts containing events or chunks. Override templates are returned verbatim: docs must warn hosts not to embed secrets or private data in `WikiConfig.prompts`, because any `memory:read` client can read them.
 
 ## 9. Delivery sequence
 
@@ -374,3 +384,4 @@ PRs 1, 2 and 4 may proceed in parallel worktrees from `main`. Each PR merges as 
 ## 11. Revision log
 
 - **rev 1 (2026-09-21):** initial draft. Corrects an external draft proposal that (a) keyed grounding on a nonexistent `verbatimQuote` field and failed open, (b) proposed downgrading all automated facts, (c) used a single-question, vendor-named `classify` shape and a generative fallback module, (d) referenced nonexistent files/types (`types/provider.ts`, `InferredFact`, index files), and (e) imported a specific ontology package into core.
+- **rev 2 (2026-09-21):** review round 1. §6.3: the corpus is built from raw values, not serialized prompt JSON; fact bodies are excluded (circular grounding); `grounding.writers` defaults to ingest only, pending a librarian/heal pass-rate evaluation. §6.2: every quote is checked before retention caps apply. §7.3 + REQ-COMPAT-01.5: backfill defaults to `'llm'`; provider capability alone never changes behavior. §4.2: `ingest_chunk_failed` is aggregated. §5.5: pin promoted-draft recency. §8.1: manifest-violation computation note. §8.3: override disclosure caveat.
