@@ -2,9 +2,12 @@ import type {
   WikiDiagnostic,
   WikiDiagnosticCode,
   WikiDiagnosticDetail,
+  WikiDiagnosticOperation,
   WikiDiagnosticSeverity,
+  WikiDiagnosticTrigger,
   WikiOptions,
 } from '../types';
+import type { EdgeDrop } from './ontology';
 
 /** What a call site supplies; severity, message and timestamp are derived from `code`. */
 export type WikiDiagnosticInput = Omit<WikiDiagnostic, 'severity' | 'message' | 'at'>;
@@ -114,4 +117,25 @@ export class DiagnosticBuffer {
   discard(): void {
     this.items = [];
   }
+}
+
+/** Map an `EdgeDrop` to an `edge_dropped` diagnostic input. Omits unknown locators instead of sending nulls. */
+export function edgeDropDiagnostic(
+  drop: EdgeDrop,
+  ctx: {
+    entityId: string;
+    operation: WikiDiagnosticOperation;
+    trigger: WikiDiagnosticTrigger;
+    sourceRef?: string;
+    factId?: string;
+  },
+): WikiDiagnosticInput {
+  const detail: WikiDiagnosticDetail = { reason: drop.reason };
+  const factId = ctx.factId ?? drop.sourceId;
+  if (factId) detail.factId = factId;
+  if (drop.edgeType) detail.edgeType = drop.edgeType;
+  if (drop.sourceNodeType) detail.sourceNodeType = drop.sourceNodeType;
+  if (drop.targetNodeType) detail.targetNodeType = drop.targetNodeType;
+  if (ctx.sourceRef) detail.sourceRef = ctx.sourceRef;
+  return { code: 'edge_dropped', operation: ctx.operation, trigger: ctx.trigger, entityId: ctx.entityId, detail };
 }
