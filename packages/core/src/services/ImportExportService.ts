@@ -449,7 +449,7 @@ export class ImportExportService {
             Array.isArray(fact.tags) || typeof fact.tags === 'string'
               ? fact.tags
               : [],
-        });
+        }, { operation: 'importDump', trigger: 'call' });
         if (!embedded) {
           await this.embeddingService.notifyEmbeddingPersisted(entityId, fact.id, null);
         }
@@ -475,6 +475,11 @@ export class ImportExportService {
             `[WikiMemory] onEmbeddingPersisted hook failed for preserved-blob fact ${fact.id}:`,
             hookErr,
           );
+          this.embeddingService.reportHookFailed(
+            { operation: 'importDump', trigger: 'call' },
+            entityId,
+            fact.id,
+          );
         }
       }
     }
@@ -491,6 +496,11 @@ export class ImportExportService {
           console.warn(
             `[WikiMemory] onEmbeddingPersisted(vector=null) hook failed for soft-deleted fact ${factId}:`,
             hookErr,
+          );
+          this.embeddingService.reportHookFailed(
+            { operation: 'importDump', trigger: 'call' },
+            entityId,
+            factId,
           );
         }
       }

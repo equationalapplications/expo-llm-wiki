@@ -121,7 +121,7 @@ describe('WriteService', () => {
 
       // Ensure job locks and execution occurred
       expect(mockJobManager.acquireLock).toHaveBeenCalledWith('librarian', 'user_1');
-      expect(mockMaintenanceService.doRunLibrarian).toHaveBeenCalledWith('user_1');
+      expect(mockMaintenanceService.doRunLibrarian).toHaveBeenCalledWith('user_1', undefined, 'auto');
     });
 
     it('triggers Auto-Heal if the Librarian runs and the heal threshold is met', async () => {
@@ -140,7 +140,7 @@ describe('WriteService', () => {
 
       expect(mockMaintenanceService.doRunLibrarian).toHaveBeenCalled();
       expect(mockJobManager.tryAcquireAutoHealLock).toHaveBeenCalledWith('user_1');
-      expect(mockMaintenanceService.doRunHeal).toHaveBeenCalledWith('user_1');
+      expect(mockMaintenanceService.doRunHeal).toHaveBeenCalledWith('user_1', { trigger: 'auto' });
       expect(mockMetadataRepo.updateCheckpoint).toHaveBeenCalledWith('user_1', { heal: 120 }, mockDb);
     });
 
@@ -156,7 +156,7 @@ describe('WriteService', () => {
       await writeService.write('user_1', { summary: 'test', event_type: 'observation' });
       await new Promise<void>((r) => setImmediate(r));
 
-      expect(mockMaintenanceService.doRunHeal).toHaveBeenCalledWith('user_1');
+      expect(mockMaintenanceService.doRunHeal).toHaveBeenCalledWith('user_1', { trigger: 'auto' });
       // Held back so the next write re-satisfies the threshold and runs another
       // bounded pass — a large corpus converges across writes, not inside one call.
       expect(mockMetadataRepo.updateCheckpoint).not.toHaveBeenCalledWith(

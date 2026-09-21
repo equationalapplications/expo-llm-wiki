@@ -1,9 +1,10 @@
-import type { SQLiteAdapter, WikiOptions, EmbeddingMarkerKind } from '../types';
+import type { SQLiteAdapter, WikiOptions, EmbeddingMarkerKind, WikiDiagnosticOperation, WikiDiagnosticTrigger } from '../types';
 import { HOOK_TIMEOUT_MARKER } from '../types';
 import type { EntryRepository } from '../repositories/EntryRepository';
 import type { MetadataRepository } from '../repositories/MetadataRepository';
 import { clip } from '../utils/pure';
 import { DEFAULT_MAX_EMBED_CHARS, EMBED_CHARS_CEILING } from '../utils/embedDefaults';
+import { emitDiagnostic } from '../utils/diagnostics';
 
 export type { EmbeddingMarkerKind };
 
@@ -15,6 +16,11 @@ export type EmbedFailureKind =
 export type EmbedFactResult =
   | { ok: true; dimension: number }
   | { ok: false; kind: EmbedFailureKind };
+
+export interface EmbedDiagnosticContext {
+  operation: WikiDiagnosticOperation;
+  trigger: WikiDiagnosticTrigger;
+}
 
 export class EmbeddingService {
   constructor(
@@ -98,7 +104,7 @@ export class EmbeddingService {
     title: string;
     body: string;
     tags: string | string[];
-  }): Promise<EmbedFactResult> {
+  }, ctx?: EmbedDiagnosticContext): Promise<EmbedFactResult> {
     const embedFn = this.options.llmProvider.embed;
     // Callability, not truthiness: a truthy non-function would pass a `!embedFn`
     // guard, throw TypeError at the call, and be marked `provider_error` —
@@ -126,6 +132,7 @@ export class EmbeddingService {
       const vector = await embedFn(text);
       if (vector.length === 0 || !vector.every(v => typeof v === 'number' && isFinite(v))) {
         console.warn(`[WikiMemory] embedFact: embed() returned an invalid vector for ${fact.id}; skipping.`);
+        this.reportEmbed(ctx, fact, 'embedding_failed', 'invalid_vector');
         await this.markFailure(fact.id, 'invalid_vector');
         return { ok: false, kind: 'invalid_vector' };
       }
@@ -139,11 +146,13 @@ export class EmbeddingService {
       }
       if (hasNonFinite) {
         console.warn(`[WikiMemory] embedFact: embed() returned values that overflow float32 for ${fact.id}; skipping.`);
+        this.reportEmbed(ctx, fact, 'embedding_failed', 'float32_overflow');
         await this.markFailure(fact.id, 'float32_overflow');
         return { ok: false, kind: 'float32_overflow' };
       }
     } catch (err) {
       console.warn(`[WikiMemory] embedFact failed for ${fact.id}:`, err);
+      this.reportEmbed(ctx, fact, 'embedding_failed', 'embed_threw');
       await this.markFailure(fact.id, 'provider_error');
       return { ok: false, kind: 'provider_error' };
     }
@@ -156,6 +165,7 @@ export class EmbeddingService {
       await this.entryRepo.updateEmbeddingBlob(fact.id, blob);
     } catch (err) {
       console.warn(`[WikiMemory] embedFact: persisting embedding failed for ${fact.id}:`, err);
+      this.reportEmbed(ctx, fact, 'embedding_failed', 'persist_failed');
       return { ok: false, kind: 'storage_error' };
     }
 
@@ -163,8 +173,27 @@ export class EmbeddingService {
       await this.notifyEmbeddingPersisted(fact.entity_id, fact.id, float32Vector);
     } catch (hookErr) {
       console.warn(`[WikiMemory] onEmbeddingPersisted hook failed for ${fact.id}:`, hookErr);
+      this.reportEmbed(ctx, fact, 'hook_failed', 'on_embedding_persisted');
     }
     return { ok: true, dimension: float32Vector.length };
+  }
+
+  private reportEmbed(
+    ctx: EmbedDiagnosticContext | undefined,
+    fact: { id: string; entity_id: string },
+    code: 'embedding_failed' | 'hook_failed',
+    reason: 'invalid_vector' | 'float32_overflow' | 'embed_threw' | 'persist_failed' | 'on_embedding_persisted',
+  ): void {
+    if (!ctx) return;
+    emitDiagnostic(this.options, {
+      code, operation: ctx.operation, trigger: ctx.trigger, entityId: fact.entity_id,
+      detail: { factId: fact.id, reason },
+    });
+  }
+
+  /** For callers that invoke `notifyEmbeddingPersisted` directly and catch its failure. */
+  reportHookFailed(ctx: EmbedDiagnosticContext, entityId: string, factId: string): void {
+    this.reportEmbed(ctx, { id: factId, entity_id: entityId }, 'hook_failed', 'on_embedding_persisted');
   }
 
   /** Marker writes must never fail the caller. Only marker-eligible kinds reach here. */
@@ -187,8 +216,8 @@ export class EmbeddingService {
     title: string;
     body: string;
     tags: string | string[];
-  }): Promise<boolean> {
-    const result = await this.tryEmbedFact(fact);
+  }, ctx?: EmbedDiagnosticContext): Promise<boolean> {
+    const result = await this.tryEmbedFact(fact, ctx);
     return result.ok;
   }
 

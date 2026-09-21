@@ -632,6 +632,68 @@ export interface VectorRanker {
  */
 export type VectorRankerFallback = 'js-cosine' | 'keyword' | 'empty' | 'throw';
 
+/** Severity is fixed per code (spec §4.2.6). */
+export type WikiDiagnosticSeverity = 'info' | 'warn' | 'error';
+
+/**
+ * Closed for this release series, but new codes are added in minor versions:
+ * hosts must tolerate codes they do not recognize.
+ */
+export type WikiDiagnosticCode =
+  | 'ingest_chunk_failed'
+  | 'fact_rejected'
+  | 'task_rejected'
+  | 'fact_deduplicated'
+  | 'edge_dropped'
+  | 'embedding_failed'
+  | 'hook_failed'
+  | 'background_job_failed'
+  | 'heal_skipped'
+  | 'grounding_missing'
+  | 'grounding_failed'
+  | 'classification_low_confidence'
+  | 'classification_invalid';
+
+/** The service run that emitted the diagnostic. */
+export type WikiDiagnosticOperation =
+  | 'ingest' | 'upsertGraph' | 'librarian' | 'heal' | 'ontologyBackfill' | 'reembed' | 'importDump' | 'write';
+
+/** `'auto'` when a write threshold started the run (auto-librarian / auto-heal); `'call'` when the host did. */
+export type WikiDiagnosticTrigger = 'call' | 'auto';
+
+/** Identifiers only — never titles, bodies, quotes, LLM output, provider messages, or hashes of content. */
+export interface WikiDiagnosticDetail {
+  factId?: string;
+  sourceRef?: string;
+  chunkIndex?: number;
+  edgeType?: string;
+  /** Manifest slug of the edge source, when resolved. */
+  sourceNodeType?: string;
+  /** Manifest slug of the edge target, when resolved. */
+  targetNodeType?: string;
+  /** Position of a rejected item in the LLM response array. */
+  itemIndex?: number;
+  /** Machine-readable sub-reason, e.g. `'target_not_found'`. */
+  reason?: string;
+  /** Aggregated `ingest_chunk_failed` only; the first 20 failed chunk indexes. */
+  chunkIndexes?: number[];
+  /** Aggregated emissions only. */
+  count?: number;
+}
+
+export interface WikiDiagnostic {
+  code: WikiDiagnosticCode;
+  severity: WikiDiagnosticSeverity;
+  operation: WikiDiagnosticOperation;
+  trigger: WikiDiagnosticTrigger;
+  entityId: string;
+  /** Epoch ms, sampled at emission. */
+  at: number;
+  /** Fixed template per code. Never contains content. */
+  message: string;
+  detail?: WikiDiagnosticDetail;
+}
+
 export interface WikiOptions {
   config?: WikiConfig;
   llmProvider: LLMProvider;
@@ -704,6 +766,15 @@ export interface WikiOptions {
    * NOT GDPR-safe for live indexes. Default false.
    */
   forceDeleteIgnoreRankerHook?: boolean;
+
+  /**
+   * Receives typed, content-free diagnostics for events core previously
+   * dropped silently or only logged (spec §4). Synchronous; a returned promise
+   * is ignored. A throwing or rejecting hook never affects the operation that
+   * emitted the diagnostic. Existing console output is unchanged whether or
+   * not this is set.
+   */
+  onDiagnostic?: (diagnostic: WikiDiagnostic) => void;
 }
 
 export interface MemoryBundle {

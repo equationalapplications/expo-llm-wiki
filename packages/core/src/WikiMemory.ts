@@ -33,6 +33,7 @@ import { OntologyService } from './services/OntologyService';
 import { GraphTraversalService } from './services/GraphTraversalService';
 import { OkfTrustWritesRepository } from './db/okf-trust-writes';
 import { validateManifest } from './utils/ontology';
+import { DiagnosticBuffer } from './utils/diagnostics';
 import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighborhood, OntologyBackfillResult, HealResult, IngestDocumentResult, ReembedResult } from './types';
 
 export { WikiBusyError, WikiTransactionError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER, WikiStrictOntologyViolation, WikiSourceRefHashCollision, WikiParseError, WikiIngestEmptyError, WikiGraphNodeOwnershipConflict } from './types';
@@ -638,11 +639,18 @@ export class WikiMemory {
     // Delegate to upsertGraphCore for steps a–j (manifest read, validation,
     // supersession, writes, returns counts). No opts.strict override — let
     // the persisted ontology mode drive strictness per the spec.
-    return this.ingestionService.upsertGraphCore(
+    // The host owns this transaction and core never sees its commit, so
+    // diagnostics are delivered when upsertGraph resolves (spec §4.2.4).
+    // Hosts that roll back should disregard them.
+    const diagBuffer = new DiagnosticBuffer();
+    const result = await this.ingestionService.upsertGraphCore(
       entityId,
       { sourceRef, sourceHash, nodes: params.nodes, edges: params.edges },
       adapter,
+      { diag: { buffer: diagBuffer, operation: 'upsertGraph' } },
     );
+    diagBuffer.flush(this.options);
+    return result;
   }
 
   /**

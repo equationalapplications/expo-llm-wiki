@@ -21,6 +21,7 @@ import {
   typeSatisfies,
   validateInlineEdges,
   validateManifest,
+  type EdgeDrop,
 } from '../utils/ontology';
 import { generateId } from '../utils/ids';
 
@@ -102,13 +103,24 @@ export class OntologyService {
   validateAndNormalizeFact(
     fact: ExtractedFactWithOntology,
     manifest: OntologyManifest,
-    opts?: { strict?: boolean; entityId?: string },
+    opts?: { strict?: boolean; entityId?: string; drops?: EdgeDrop[] },
   ): { okf_type: string | null; edges: ExtractedFactEdge[] } {
     const rawType = typeof fact.okf_type === 'string' ? fact.okf_type : '';
     const strict = opts?.strict === true;
     const canonical = resolveNodeType(rawType, manifest);
     if (!canonical) {
       if (strict) throw new WikiStrictOntologyViolation(opts?.entityId ?? '', 'node', rawType);
+      if (opts?.drops && Array.isArray(fact.edges)) {
+        for (const edge of fact.edges) {
+          opts.drops.push({
+            reason: 'no_source_type',
+            sourceId: null,
+            edgeType: typeof edge?.edge_type === 'string' ? edge.edge_type : null,
+            sourceNodeType: null,
+            targetNodeType: null,
+          });
+        }
+      }
       return { okf_type: null, edges: [] };
     }
     const edges = validateInlineEdges(canonical, null, fact.edges ?? [], manifest, opts);
@@ -130,22 +142,41 @@ export class OntologyService {
     manifest: OntologyManifest,
     titleIndex: Map<string, TitleIndexEntry>,
     now: number,
+    drops?: EdgeDrop[],
   ): WikiEdge[] {
-    if (!sourceType || edges.length === 0) return [];
+    if (edges.length === 0) return [];
+    if (!sourceType) {
+      for (const edge of edges) {
+        drops?.push({ reason: 'no_source_type', sourceId, edgeType: edge.edge_type, sourceNodeType: null, targetNodeType: null });
+      }
+      return [];
+    }
     const out: WikiEdge[] = [];
     for (const edge of edges) {
       const candidates = resolveEdgeDefinitions(edge.edge_type, manifest)
         .filter(d => typeSatisfies(d.source_type, sourceType, manifest));
-      if (candidates.length === 0) continue;
+      if (candidates.length === 0) {
+        drops?.push({ reason: 'type_not_in_manifest', sourceId, edgeType: edge.edge_type, sourceNodeType: sourceType, targetNodeType: null });
+        continue;
+      }
 
       const targetKey = normalizeTitleKey(edge.target_title);
       const target = titleIndex.get(targetKey);
-      if (!target) continue;
+      if (!target) {
+        drops?.push({ reason: 'target_not_found', sourceId, edgeType: edge.edge_type, sourceNodeType: sourceType, targetNodeType: null });
+        continue;
+      }
 
       const targetType = (target.okf_type ?? '').trim().toLowerCase();
       const def = candidates.find(d => d.target_type.trim().toLowerCase() === targetType)
         ?? candidates.find(d => typeSatisfies(d.target_type, targetType, manifest));
-      if (!def) continue;
+      if (!def) {
+        drops?.push({
+          reason: 'target_type_mismatch', sourceId, edgeType: edge.edge_type,
+          sourceNodeType: sourceType, targetNodeType: target.okf_type ?? null,
+        });
+        continue;
+      }
 
       out.push({
         id: generateId(),
@@ -175,8 +206,9 @@ export class OntologyService {
     titleIndex: Map<string, TitleIndexEntry>,
     tx: SQLiteAdapter,
     now: number,
+    drops?: EdgeDrop[],
   ): Promise<number> {
-    const resolved = this.resolveEdges(entityId, sourceId, sourceType, edges, manifest, titleIndex, now);
+    const resolved = this.resolveEdges(entityId, sourceId, sourceType, edges, manifest, titleIndex, now, drops);
     let persisted = 0;
     for (const edge of resolved) {
       const inserted = await this.edgeRepo.addIgnoreDuplicate(edge, tx);

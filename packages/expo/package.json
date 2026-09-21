@@ -1,6 +1,6 @@
 {
   "name": "@equationalapplications/expo-llm-wiki",
-  "version": "7.2.0",
+  "version": "7.2.1",
   "description": "Local-first LLM memory for Expo and React Native. Combines the core semantic search and extraction engine with expo-sqlite and ready-to-use React hooks.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -71,7 +71,7 @@
     "react": ">=17"
   },
   "devDependencies": {
-    "expo-crypto": "56.0.5",
+    "expo-crypto": "57.0.2",
     "tsup": "8.5.1",
     "typescript": "5.9.3",
     "vitest": "5.0.0"

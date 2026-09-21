@@ -216,29 +216,53 @@ export function mergeOntologyUpdates(
   return { node_types, edge_types };
 }
 
+export type EdgeDropReason =
+  | 'no_source_type'
+  | 'invalid_shape'
+  | 'type_not_in_manifest'
+  | 'target_not_found'
+  | 'target_type_mismatch';
+
+/** A dropped LLM-proposed edge. Slugs only — `target_title` is content and is never recorded. */
+export interface EdgeDrop {
+  reason: EdgeDropReason;
+  /** Source fact id when known; null while validating before the fact has an id. */
+  sourceId: string | null;
+  edgeType: string | null;
+  sourceNodeType: string | null;
+  targetNodeType: string | null;
+}
+
 export function validateInlineEdges(
   sourceType: string,
   _targetType: string | null,
   edges: ExtractedFactEdge[],
   manifest: OntologyManifest,
-  opts?: { strict?: boolean; entityId?: string },
+  opts?: { strict?: boolean; entityId?: string; drops?: EdgeDrop[] },
 ): ExtractedFactEdge[] {
   const strict = opts?.strict === true;
   const entityId = opts?.entityId ?? '';
+  const drops = opts?.drops;
+  const drop = (reason: EdgeDropReason, edgeType: string | null): void => {
+    drops?.push({ reason, sourceId: null, edgeType, sourceNodeType: sourceType, targetNodeType: null });
+  };
   if (!Array.isArray(edges)) {
     if (strict) throw new WikiStrictOntologyViolation(entityId, 'edge', '');
+    drop('invalid_shape', null);
     return [];
   }
   const valid: ExtractedFactEdge[] = [];
   for (const edge of edges) {
     if (typeof edge?.edge_type !== 'string' || typeof edge?.target_title !== 'string') {
       if (strict) throw new WikiStrictOntologyViolation(entityId, 'edge', String(edge?.edge_type ?? ''));
+      drop('invalid_shape', typeof edge?.edge_type === 'string' ? edge.edge_type : null);
       continue;
     }
     const defs = resolveEdgeDefinitions(edge.edge_type, manifest);
     const match = defs.find(d => typeSatisfies(d.source_type, sourceType, manifest));
     if (!match) {
       if (strict) throw new WikiStrictOntologyViolation(entityId, 'edge', edge.edge_type);
+      drop('type_not_in_manifest', edge.edge_type);
       continue;
     }
     valid.push({ edge_type: match.type, target_title: edge.target_title });
