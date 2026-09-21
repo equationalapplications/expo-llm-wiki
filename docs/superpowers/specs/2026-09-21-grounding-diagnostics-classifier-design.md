@@ -1,7 +1,7 @@
 # Grounding, Diagnostics & Classifier Hook: Design
 
 **Date:** 2026-09-21
-**Status:** Draft revision 2 — review round 1 incorporated; not implemented
+**Status:** Draft revision 3 — review rounds 1–2 incorporated; not implemented
 **Branch:** `spec/grounding-diagnostics-classify`
 **Source baseline:** `ab68b73` (core 7.1.3 + consolidated dependency bumps, #194)
 **Delivery:** one docs PR (this spec), then five code PRs (§9). Every code PR is a `feat` minor release; no PR in this series may carry a breaking-change footer.
@@ -222,13 +222,13 @@ Default `'off'` keeps 7.x write behavior identical (lifecycle of LLM-authored fa
 
 ### 6.2 Prompt contract
 
-When mode is `'draft'`, `PromptService` appends an evidence instruction block to the ingest, librarian and heal system prompts — after overrides, by the same mechanism that appends ontology context — requiring each fact to carry:
+When mode is `'draft'`, `PromptService` appends an evidence instruction block, after any override, to the system prompt of **each writer listed in `grounding.writers` and no other**. Writers outside that list get no block and their facts are written exactly as today. Ingest and librarian can reuse the path that appends ontology context (`appendOntology`, reached from `buildIngestPrompt`/`buildLibrarianPrompt`). Heal has no such mechanism: `buildHealPrompt` takes no ontology context and returns the template unchanged in both branches (`PromptService.ts:119-178`), so PR 3 adds a direct append there, covering both the placeholder and the non-placeholder branch. The block requires each fact to carry:
 
 ```json
 "evidence": ["exact substring copied from the SOURCE section"]
 ```
 
-`validateFact` gains evidence validation: must be an array of strings; entries trimmed; non-string entries are ignored. **Every** string quote (up to a hard ceiling of 10) is checked under §6.4 before any retention cap applies, so a fabricated quote cannot hide beyond a cap; more than 10 quotes makes the fact ungrounded (`grounding_failed`, reason `too_many_quotes`). Quotes shorter than `minEvidenceChars` count as absent, not as passes. `maxEvidence`/`maxEvidenceChars` limit only what is retained. A fact with no qualifying quote is **ungrounded** — it is not rejected.
+`validateFact` gains evidence validation: must be an array of strings; entries trimmed; non-string entries are ignored. **Every** string quote (up to a hard ceiling of 10) is checked under §6.4 before any retention cap applies, so a fabricated quote cannot hide beyond a cap; more than 10 quotes makes the fact ungrounded (`grounding_failed`, reason `too_many_quotes`). The ceiling counts every non-empty string entry after trimming, including entries shorter than `minEvidenceChars`. Quotes shorter than `minEvidenceChars` count as absent, not as passes. `maxEvidence`/`maxEvidenceChars` limit only what is retained. A fact with no qualifying quote is **ungrounded** — it is not rejected.
 
 ### 6.3 Evidence corpus [REQ-GROUND-02]
 
@@ -273,7 +273,14 @@ Deterministic, no LLM:
 - Quote copied from instructions or manifest text → fails (corpus excludes them).
 - Whitespace and NFKC normalization cases; case mismatch fails.
 - Partial ingest path grounds identically.
-- `promptOverride` without evidence wording still receives the appended block.
+- `promptOverride` without evidence wording still receives the appended block, for in-scope writers only.
+- Heal: block appended in both the placeholder and non-placeholder template branches.
+- Writer not in `grounding.writers` → no evidence block in its prompt; its facts land `stable` with `okf_verified` unchanged.
+- Quote copied from a shown fact (librarian "Current Facts", heal candidates) → `grounding_failed` (no circular grounding).
+- Quote copied from a non-draft heal anchor → passes; from a draft anchor → fails.
+- Heal at L2+ (no events) → only anchors form the corpus.
+- Events containing quotes, backslashes and newlines → no false `grounding_failed` (raw-values rule).
+- 11 quotes → `grounding_failed` with reason `too_many_quotes`, including when some are short.
 - Mode `'off'` snapshot equals baseline.
 
 ## 7. PR 4 — Optional classifier provider
@@ -380,9 +387,11 @@ PRs 1, 2 and 4 may proceed in parallel worktrees from `main`. Each PR merges as 
 2. **Persisting evidence.** Store accepted quotes (e.g. in `okf_sources` extra keys) so reviewers see why a fact was accepted? Needs a size cap and an OKF round-trip check; deferred.
 3. **Task drafts.** Librarian-authored tasks could receive the same treatment; deferred.
 4. **Re-ingest reconciliation.** A changed source currently supersedes every live fact for its `sourceRef` (soft-delete, then insert with new IDs; `IngestionService.ts:608`). Once PR 2/3 exist, this discards human promotions and `okf_verified` history on every document edit, and leaves inbound edges from other sources pointing at retired IDs. Candidate follow-up (opt-in): match new extractions to prior facts; keep ID and trust only when the prior fact is re-extracted with unchanged body and its evidence still appears in the new source; otherwise supersede as today, but deprecate (not delete) human-reviewed facts and emit a diagnostic. Depends on open question 2 (persisted evidence).
-5. **React surface.** `react-llm-wiki` exposure of diagnostics and drafts (e.g. `useWikiDiagnostics`, `useDrafts`) is left to a follow-up.
+5. **Second-order anchor grounding.** Heal facts may be grounded against document-anchor bodies, which are LLM-extracted text rather than the source document. Only non-draft anchors count, which is defensible. If this needs tightening, require anchors to carry `okf_verified` (for example, from the ingest grounding check).
+6. **React surface.** `react-llm-wiki` exposure of diagnostics and drafts (e.g. `useWikiDiagnostics`, `useDrafts`) is left to a follow-up.
 
 ## 11. Revision log
 
 - **rev 1 (2026-09-21):** initial draft. Corrects an external draft proposal that (a) keyed grounding on a nonexistent `verbatimQuote` field and failed open, (b) proposed downgrading all automated facts, (c) used a single-question, vendor-named `classify` shape and a generative fallback module, (d) referenced nonexistent files/types (`types/provider.ts`, `InferredFact`, index files), and (e) imported a specific ontology package into core.
 - **rev 2 (2026-09-21):** review round 1. §6.3: the corpus is built from raw values, not serialized prompt JSON; fact bodies are excluded (circular grounding); `grounding.writers` defaults to ingest only, pending a librarian/heal pass-rate evaluation. §6.2: every quote is checked before retention caps apply. §7.3 + REQ-COMPAT-01.5: backfill defaults to `'llm'`; provider capability alone never changes behavior. §4.2: `ingest_chunk_failed` is aggregated. §5.5: pin promoted-draft recency. §8.1: manifest-violation computation note. §8.3: override disclosure caveat. Heal corpus: events at the attempt's degradation level plus non-draft document anchors.
+- **rev 3 (2026-09-21):** review round 2. §6.2: the evidence block is appended only for writers in `grounding.writers` (it previously contradicted §6.3's ingest-only default). It also records that heal has no ontology-append mechanism (`buildHealPrompt` returns the template as-is), so PR 3 adds a direct append. The quote ceiling is pinned to count all non-empty entries. §6.6: tests added for writer scoping, circular grounding, anchors, degradation, escapes and `too_many_quotes`. Open question 5 records the second-order anchor-grounding tradeoff.
