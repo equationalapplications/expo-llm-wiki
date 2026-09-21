@@ -1,7 +1,7 @@
 # Grounding, Diagnostics & Classifier Hook: Design
 
 **Date:** 2026-09-21
-**Status:** Draft revision 3 — review rounds 1–2 incorporated; not implemented
+**Status:** Draft revision 4 — review rounds 1–3 incorporated; not implemented
 **Branch:** `spec/grounding-diagnostics-classify`
 **Source baseline:** `ab68b73` (core 7.1.3 + consolidated dependency bumps, #194)
 **Delivery:** one docs PR (this spec), then five code PRs (§9). Every code PR is a `feat` minor release; no PR in this series may carry a breaking-change footer.
@@ -105,6 +105,8 @@ export interface WikiDiagnostic {
   code: WikiDiagnosticCode;
   severity: WikiDiagnosticSeverity;
   operation: WikiDiagnosticOperation;
+  /** 'auto' when the operation was started by a write threshold (auto-librarian / auto-heal), 'call' when the host invoked it. */
+  trigger: 'call' | 'auto';
   entityId: string;
   /** Epoch ms, sampled at emission. */
   at: number;
@@ -116,6 +118,9 @@ export interface WikiDiagnostic {
     sourceRef?: string;
     chunkIndex?: number;
     edgeType?: string;
+    sourceNodeType?: string; // manifest slug of the edge source, when resolved
+    targetNodeType?: string; // manifest slug of the edge target, when resolved
+    itemIndex?: number;      // position of a rejected item in the LLM response array
     reason?: string;   // machine-readable sub-reason, e.g. 'target_not_found'
     chunkIndexes?: number[]; // aggregated ingest_chunk_failed only; first 20
     count?: number;    // for aggregated emissions
@@ -141,19 +146,21 @@ The union is closed for this series; adding a code later is a minor change, so h
 
 ### 4.3 Disclosure [REQ-DIAG-03]
 
-Diagnostics are an exfiltration surface if they carry content. `message` is a fixed template per code; `detail` carries IDs, counts and reason slugs only. Titles, bodies, evidence quotes, target titles, LLM responses and provider error messages are forbidden. Every diagnostic carries exactly one `entityId`; an operation spanning entities emits per entity.
+Diagnostics are an exfiltration surface if they carry content. `message` is a fixed template per code; `detail` carries IDs, counts and reason slugs only. Titles, bodies, evidence quotes, target titles, LLM responses and provider error messages are forbidden. Manifest slugs (`okf_type`, edge types) are ontology vocabulary rather than content, so they are allowed. Hashes of content are forbidden as well: a hash of a short string such as a title can be reversed by dictionary attack. Location comes from IDs instead (`factId`, `sourceRef` + `chunkIndex` + `itemIndex`).
+
+`operation` names the service run that emitted the diagnostic (for example, an edge dropped during ingest reports `'ingest'`; one dropped by the librarian reports `'librarian'`). `trigger` separates host-invoked runs from write-threshold runs. `background_job_failed` reports the failed job as its `operation` with `trigger: 'auto'`. Every diagnostic carries exactly one `entityId`; an operation spanning entities emits per entity.
 
 ### 4.4 Emission sites (minimum)
 
 | Site | Code | Reason slugs |
 |---|---|---|
 | `IngestionService` chunk catch | `ingest_chunk_failed` | `parse`, `llm` |
-| `validateFact`/`validateTask` null (ingest, librarian, heal) | `fact_rejected` | `invalid_shape` |
+| `validateFact`/`validateTask` null (ingest, librarian, heal) | `fact_rejected` | `missing_title`, `missing_body`, `invalid_shape` |
 | Jaccard dedupe skip (librarian, heal); ingest title dedupe | `fact_deduplicated` | `fuzzy_title`, `exact_title` |
 | `OntologyService.resolveEdges` | `edge_dropped` | `no_source_type`, `type_not_in_manifest`, `target_not_found`, `target_type_mismatch` |
 | non-strict `upsertGraphCore` manifest drop | `edge_dropped` | `manifest_violation` |
 | `EmbeddingService` warn sites | `embedding_failed` / `hook_failed` | `invalid_vector`, `float32_overflow`, `embed_threw`, `persist_failed` |
-| `WriteService` auto-librarian / auto-heal `.catch` | `background_job_failed` | `librarian`, `heal` |
+| `WriteService` auto-librarian / auto-heal `.catch` | `background_job_failed` (operation = job, trigger `auto`) | `unhandled_rejection` |
 | heal `onSkip` | `heal_skipped` | existing skip reason |
 
 ### 4.5 Tests
@@ -353,7 +360,7 @@ interface WikiLintReport {
 }
 ```
 
-Read-only, entity-scoped in every statement. Counts use SQL aggregates, except `manifestViolations`, which needs the effective manifest (a JS object): compute it by streaming the entity's edges joined to endpoint `okf_type` in pages and checking in JS, or by binding the manifest's allowed triples as a temporary table. The plan picks one. Dangling targets remain stored (baseline decision); lint reports, never repairs.
+Read-only, entity-scoped in every statement. Counts use SQL aggregates, except `manifestViolations`, which needs the effective manifest (a JS object): compute it by streaming the entity's edges joined to endpoint `okf_type` in pages and checking in JS, or by binding the manifest's allowed triples as a temporary table. The plan picks one. Dangling targets remain stored (baseline decision); lint reports, never repairs. Lint does not inspect `source_hash`: a null hash on partial-ingest rows is the intended retry state (§3), reported only by `pendingSources` as `partial`, never as an inconsistency.
 
 ### 8.2 `pendingSources` [REQ-PENDING-01]
 
@@ -395,3 +402,9 @@ PRs 1, 2 and 4 may proceed in parallel worktrees from `main`. Each PR merges as 
 - **rev 1 (2026-09-21):** initial draft. Corrects an external draft proposal that (a) keyed grounding on a nonexistent `verbatimQuote` field and failed open, (b) proposed downgrading all automated facts, (c) used a single-question, vendor-named `classify` shape and a generative fallback module, (d) referenced nonexistent files/types (`types/provider.ts`, `InferredFact`, index files), and (e) imported a specific ontology package into core.
 - **rev 2 (2026-09-21):** review round 1. §6.3: the corpus is built from raw values, not serialized prompt JSON; fact bodies are excluded (circular grounding); `grounding.writers` defaults to ingest only, pending a librarian/heal pass-rate evaluation. §6.2: every quote is checked before retention caps apply. §7.3 + REQ-COMPAT-01.5: backfill defaults to `'llm'`; provider capability alone never changes behavior. §4.2: `ingest_chunk_failed` is aggregated. §5.5: pin promoted-draft recency. §8.1: manifest-violation computation note. §8.3: override disclosure caveat. Heal corpus: events at the attempt's degradation level plus non-draft document anchors.
 - **rev 3 (2026-09-21):** review round 2. §6.2: the evidence block is appended only for writers in `grounding.writers` (it previously contradicted §6.3's ingest-only default). It also records that heal has no ontology-append mechanism (`buildHealPrompt` returns the template as-is), so PR 3 adds a direct append. The quote ceiling is pinned to count all non-empty entries. §6.6: tests added for writer scoping, circular grounding, anchors, degradation, escapes and `too_many_quotes`. Open question 5 records the second-order anchor-grounding tradeoff.
+- **rev 4 (2026-09-21):** review round 3.
+  - §4.1: added `trigger` and non-content locator fields (`sourceNodeType`, `targetNodeType`, `itemIndex`).
+  - §4.3: manifest slugs allowed; content hashes forbidden (short strings can be reversed by dictionary attack); `operation` and `trigger` semantics pinned.
+  - §4.4: finer `fact_rejected` reasons.
+  - §8.1: lint ignores `source_hash`.
+  - Rejected from that review: a code sketch that puts the hook on `WikiConfig`, drops `entityId`/`message`, uses `Record<string, any>`, and adds a console line for every diagnostic (breaks REQ-COMPAT-01.4); a claim that PR 4 routes `resolveEdges` through `classify` (deferred, §7.4); a generative `classify` fallback (rejected in rev 1); "SQLite migrations" for PR 2 (the `lifecycle_status` column already exists).
