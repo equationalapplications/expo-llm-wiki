@@ -131,3 +131,44 @@ describe('runOntologyBackfill classifier mode', () => {
     expect(generateText).toHaveBeenCalled();
   });
 });
+
+describe('classifier backfill — edge cases', () => {
+  it('aborts without writes when ontology is disabled while classify is in flight', async () => {
+    let wikiRef: typeof wiki | undefined;
+    const { db, wiki } = await makeWiki({
+      classify: async () => {
+        await wikiRef!.setOntologyManifest('e1', MANIFEST, { mode: 'off' });
+        return choice('person');
+      },
+    });
+    wikiRef = wiki;
+    const result = await wiki.runOntologyBackfill('e1', { classifier: 'auto' });
+    expect(result).toMatchObject({ scanned: 0, typed: 0, failedValidation: 0, remaining: 0, skipped: 0, deferred: 0 });
+    expect((await row(db, 'f_ada'))!.okf_type).toBeNull();
+    expect((await row(db, 'f_ada'))!.ontology_checked_at).toBeNull();
+  });
+
+  it('honors chunkConcurrency as the classify concurrency limit', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const db = openTestDatabase();
+    const generateText = vi.fn(async () => JSON.stringify({ classifications: [] }));
+    const wiki = createWiki(db, {
+      llmProvider: {
+        generateText,
+        classify: async () => {
+          inFlight++; peak = Math.max(peak, inFlight);
+          await new Promise((r) => setTimeout(r, 5));
+          inFlight--;
+          return choice('person');
+        },
+      },
+      config: { chunkConcurrency: 2, ontology: { backfillClassifier: 'auto' } },
+    });
+    await wiki.setup();
+    await wiki.setOntologyManifest('e1', MANIFEST, { mode: 'strict' });
+    for (let i = 0; i < 6; i++) await seed(db, `f${i}`, `Fact ${i}`, i);
+    await wiki.runOntologyBackfill('e1');
+    expect(peak).toBe(2);
+  });
+});
