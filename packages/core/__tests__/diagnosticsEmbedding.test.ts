@@ -52,6 +52,38 @@ describe('embedding diagnostics', () => {
     ]);
   });
 
+  it('importDump reports preserved-blob and soft-deleted hook failures', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let hookThrows = false;
+    const { wiki, diagnostics } = await makeDiagnosticWiki({
+      generateText: oneFact,
+      embed: async () => [0.1, 0.2],
+      extra: {
+        vectorRanker: {
+          rankBySimilarity: async () => [],
+          onEmbeddingPersisted: () => { if (hookThrows) throw new Error('ann down'); },
+        } as never,
+      },
+    });
+    await wiki.ingestDocument('e1', { sourceRef: 'doc.md', sourceHash: HASH_A, documentChunk: 'content' });
+    const bundle = await wiki.__testAccess.importExportService.getFullBundle('e1', { includeBlobs: true });
+    const oldId = bundle.facts[0].id;
+    expect((bundle.facts[0] as { embedding_blob?: Uint8Array }).embedding_blob).toBeDefined();
+
+    hookThrows = true;
+    await wiki.importDump({
+      generatedAt: Date.now(),
+      entities: { e1: { ...bundle, facts: [{ ...bundle.facts[0], id: 'fact_imported' }] } },
+    });
+
+    const hookFailed = ofCode(diagnostics, 'hook_failed');
+    expect(hookFailed.map((d) => [d.operation, d.trigger, d.detail?.factId, d.detail?.reason])).toEqual([
+      ['importDump', 'call', 'fact_imported', 'on_embedding_persisted'],
+      ['importDump', 'call', oldId, 'on_embedding_persisted'],
+    ]);
+    expectNoContent(diagnostics, ['Embed me', 'secret body', 'ann down']);
+  });
+
   it('runReembed reports operation reembed', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     let fail = false;

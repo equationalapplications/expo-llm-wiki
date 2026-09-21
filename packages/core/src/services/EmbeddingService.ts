@@ -191,6 +191,11 @@ export class EmbeddingService {
     });
   }
 
+  /** For callers that invoke `notifyEmbeddingPersisted` directly and catch its failure. */
+  reportHookFailed(ctx: EmbedDiagnosticContext, entityId: string, factId: string): void {
+    this.reportEmbed(ctx, { id: factId, entity_id: entityId }, 'hook_failed', 'on_embedding_persisted');
+  }
+
   /** Marker writes must never fail the caller. Only marker-eligible kinds reach here. */
   private async markFailure(id: string, kind: EmbeddingMarkerKind): Promise<void> {
     try {
