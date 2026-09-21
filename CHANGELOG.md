@@ -1,3 +1,17 @@
+## [7.5.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.4.0...v7.5.0) (2026-09-21)
+
+### Features
+
+* **core:** add optional LLMProvider.classify types and answer validation ([e4e72dc](https://github.com/equationalapplications/expo-llm-wiki/commit/e4e72dcf509a998823cd5d6262d397e668742b06))
+* **core:** classifier-mode ontology backfill behind backfillClassifier ([2c5fbc9](https://github.com/equationalapplications/expo-llm-wiki/commit/2c5fbc956bbcca71b3e8db6a84328e748effdf46))
+* **core:** emit classification diagnostics from classifier backfill ([6c8836b](https://github.com/equationalapplications/expo-llm-wiki/commit/6c8836b05fc2b04236682ff9de574bdc8eaa1fdb))
+
+### Bug Fixes
+
+* **core:** call classify through the provider to keep its this binding ([021b577](https://github.com/equationalapplications/expo-llm-wiki/commit/021b577aca256a035e70e734b7f6291cd225f1e6))
+* **core:** call embed through the provider and guard by callability ([bb2fd31](https://github.com/equationalapplications/expo-llm-wiki/commit/bb2fd31b7a83b3d8133c3195452ab45b9363853a))
+* **core:** call llmProvider.embed with the provider as this ([6c847b6](https://github.com/equationalapplications/expo-llm-wiki/commit/6c847b69b2077c487cbfd1b7845909ed05715246))
+
 ## [7.4.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.3.0...v7.4.0) (2026-09-21)
 
 ### Features
