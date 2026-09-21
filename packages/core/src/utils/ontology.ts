@@ -66,6 +66,25 @@ export function typeSatisfies(
   return parent !== '' && parent === declared;
 }
 
+/**
+ * True iff some manifest edge type matches `edgeType` (case-insensitive) and
+ * accepts the concrete endpoint types, parent types included. An empty
+ * endpoint type never satisfies (the triple cannot be in the manifest).
+ */
+export function edgeTripleAllowed(
+  manifest: OntologyManifest,
+  edgeType: string,
+  sourceType: string,
+  targetType: string,
+): boolean {
+  const wanted = edgeType.trim().toLowerCase();
+  return (manifest.edge_types ?? []).some((d) =>
+    typeof d?.type === 'string'
+    && d.type.trim().toLowerCase() === wanted
+    && typeof d.source_type === 'string' && typeSatisfies(d.source_type, sourceType, manifest)
+    && typeof d.target_type === 'string' && typeSatisfies(d.target_type, targetType, manifest));
+}
+
 export function validateManifest(manifest: OntologyManifest): void {
   const nodeSlugs = new Set<string>();
   for (const node of manifest.node_types ?? []) {

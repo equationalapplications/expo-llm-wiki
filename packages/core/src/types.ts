@@ -1185,3 +1185,19 @@ export interface DraftPage {
  */
 export type PendingSourceStatus = 'new' | 'changed' | 'partial' | 'current';
 
+/** Read-only maintenance report for one entity (spec §8.1). Counts cover live rows only. */
+export interface WikiLintReport {
+  /** Edges whose source or target is missing, soft-deleted, or owned by another entity. */
+  danglingEdges: number;
+  /** Live-endpoint edges whose (source type, edge type, target type) is not in the effective manifest. 0 when ontology is off or the manifest is empty. */
+  manifestViolations: number;
+  /** Live facts with `okf_type` NULL. */
+  untypedFacts: number;
+  /** Live facts with `lifecycle_status = 'draft'`. */
+  drafts: number;
+  /** Live `librarian_inferred` facts with an empty `okf_verified`. */
+  unverifiedInferred: number;
+  /** Up to 20 ids each, ascending. */
+  sample: { danglingEdgeIds: string[]; manifestViolationEdgeIds: string[] };
+}
+

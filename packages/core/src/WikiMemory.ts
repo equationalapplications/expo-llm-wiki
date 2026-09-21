@@ -14,7 +14,7 @@ import {
   WikiDraftNotFound,
 } from './types';
 import type { DraftPage } from './types';
-import type { PendingSourceStatus } from './types';
+import type { PendingSourceStatus, WikiLintReport } from './types';
 import { EntryRepository } from './repositories/EntryRepository';
 import { OutboxRepository } from './repositories/OutboxRepository';
 import { SourceRefIndexRepository } from './repositories/SourceRefIndexRepository';
@@ -34,6 +34,8 @@ import { WriteService } from './services/WriteService';
 import { PromptService } from './services/PromptService';
 import { OntologyService } from './services/OntologyService';
 import { GraphTraversalService } from './services/GraphTraversalService';
+import { LintRepository } from './repositories/LintRepository';
+import { LintService } from './services/LintService';
 import { OkfTrustWritesRepository } from './db/okf-trust-writes';
 import { validateManifest } from './utils/ontology';
 import { DiagnosticBuffer } from './utils/diagnostics';
@@ -96,6 +98,8 @@ export class WikiMemory {
   private promptService: PromptService;
   private ontologyService: OntologyService;
   private graphTraversalService: GraphTraversalService;
+  private lintRepo: LintRepository;
+  private lintService: LintService;
   private readonly okfTrustWrites: OkfTrustWritesRepository;
 
   constructor(db: SQLiteAdapter, options: WikiOptions) {
@@ -117,11 +121,13 @@ export class WikiMemory {
     this.eventRepo = new EventRepository(this.db, this.prefix);
     this.edgeRepo = new EdgeRepository(this.db, this.prefix);
     this.metadataRepo = new MetadataRepository(this.db, this.prefix);
+    this.lintRepo = new LintRepository(this.db, this.prefix);
     this.ontologyService = new OntologyService(
       this.metadataRepo,
       this.edgeRepo,
       options.config?.ontology,
     );
+    this.lintService = new LintService(this.lintRepo, this.ontologyService);
     this.embeddingService = new EmbeddingService(this.db, this.options, this.entryRepo, this.metadataRepo);
     this.searchService = new SearchService(this.entryRepo);
     this.jobManager = new JobManager(this.prefix);
@@ -394,6 +400,11 @@ export class WikiMemory {
       else status = 'changed';
       return { sourceRef: n.rawSourceRef, status };
     });
+  }
+
+  /** Read-only maintenance report for one entity (spec §8.1). Reports, never repairs. */
+  async lint(entityId: string): Promise<WikiLintReport> {
+    return this.lintService.lint(entityId);
   }
 
   /**
