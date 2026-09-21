@@ -1,3 +1,19 @@
+## [7.3.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.2.1...v7.3.0) (2026-09-21)
+
+### Features
+
+* **core:** add onDiagnostic types, emitter and operation buffer ([8ab9b3f](https://github.com/equationalapplications/expo-llm-wiki/commit/8ab9b3fed234540f2cda91179e78efb4035d7f30))
+* **core:** emit embedding and hook diagnostics ([d2e3bc3](https://github.com/equationalapplications/expo-llm-wiki/commit/d2e3bc37bc76f517b40c55d0b3c7dd37144cc7d9))
+* **core:** emit ingest and upsertGraph diagnostics ([69f7e05](https://github.com/equationalapplications/expo-llm-wiki/commit/69f7e055fd3878ad8f50727de991bb94b188b245))
+* **core:** emit librarian, heal and backfill diagnostics ([335fc09](https://github.com/equationalapplications/expo-llm-wiki/commit/335fc095c5b1d718e41d8f2e641d9bb551b93369))
+* **core:** record rejection reasons and dropped edges for diagnostics ([aef52f3](https://github.com/equationalapplications/expo-llm-wiki/commit/aef52f3adceb806f1fc0739bd4e1e903cce1ae8d))
+* **core:** report background job failures and tag auto-triggered runs ([e2af077](https://github.com/equationalapplications/expo-llm-wiki/commit/e2af077eaaad850cbb48f258770dc1c6c914c6a2))
+
+### Bug Fixes
+
+* **core:** number heal diagnostic itemIndex within its batch response ([1232c4c](https://github.com/equationalapplications/expo-llm-wiki/commit/1232c4c870c0c9a633dce9650d245518f1e58bf4))
+* **core:** report importDump preserved-blob and soft-delete hook failures ([9925d72](https://github.com/equationalapplications/expo-llm-wiki/commit/9925d72f03cc9f1a1cc3372fc9607de54363ee13))
+
 ## [7.2.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.2.0...v7.2.1) (2026-09-21)
 
 ### Bug Fixes
