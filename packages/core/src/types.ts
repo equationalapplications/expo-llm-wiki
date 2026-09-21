@@ -89,6 +89,14 @@ export interface OntologyConfig {
     manifest: OntologyManifest;
     mode?: OntologyMode;
   }>;
+  /**
+   * Engine default for `runOntologyBackfill`'s `classifier` option.
+   * `'auto'` uses `llmProvider.classify` for node typing when present
+   * (no edges are proposed); `'llm'` always uses `generateText`. Default `'llm'`.
+   */
+  backfillClassifier?: 'auto' | 'llm';
+  /** Minimum classifier confidence to apply a node type. Finite, in [0, 1]. Default 0.5. */
+  classifyMinConfidence?: number;
 }
 
 export interface ExtractedFactEdge {
@@ -524,6 +532,35 @@ export interface LLMProvider {
    * never trusted as a guarantee.
    */
   maxOutputTokens?: number;
+  /**
+   * Optional non-generative classifier (System-One models such as Jev,
+   * OpenJev, or a local ONNX classifier). Core never calls it unless the host
+   * opts in (e.g. `WikiConfig.ontology.backfillClassifier: 'auto'`); merely
+   * providing it changes nothing (REQ-COMPAT-01.5). Output is validated as
+   * untrusted.
+   */
+  classify?: (request: ClassifyRequest) => Promise<ClassifyResponse>;
+}
+
+/** One typed question for a classifier. Vendor-neutral (Jev `noul` ↔ `binary`). */
+export type ClassifierQuestion =
+  | { kind: 'choice'; options: string[]; instructions?: string }
+  | { kind: 'binary'; instructions: string }
+  | { kind: 'score'; levels: string[]; instructions?: string };
+
+/** One state evaluated against a map of questions (many questions per state, one state per call). */
+export interface ClassifyRequest {
+  state: string;
+  questions: Record<string, ClassifierQuestion>;
+}
+
+export type ClassifierAnswer =
+  | { kind: 'choice'; choice: string; confidence: number; probabilities: Record<string, number> }
+  | { kind: 'binary'; probability: number }
+  | { kind: 'score'; score: number; confidence: number; probabilities: number[] };
+
+export interface ClassifyResponse {
+  answers: Record<string, ClassifierAnswer>;
 }
 
 /**
