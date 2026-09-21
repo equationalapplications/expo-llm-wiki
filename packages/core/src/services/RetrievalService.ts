@@ -713,8 +713,8 @@ export class RetrievalService {
       }
     } else {
       // Empty query: use global recency ordering, ignore tier weights.
-      // Pass `excludeDrafts` opts only when true so the default-path call
-      // signature stays unchanged (existing tests assert the 2-arg call).
+      // Pass `excludeDrafts` opts only when true; the default path keeps its
+      // 2-arg call signature for callers that prefer the strict form.
       facts = excludeDrafts
         ? await this.entryRepo.findRecentByEntityIds(entityIds, maxResults, undefined, { excludeDrafts: true })
         : await this.entryRepo.findRecentByEntityIds(entityIds, maxResults);
