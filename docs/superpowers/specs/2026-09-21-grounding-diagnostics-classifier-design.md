@@ -1,7 +1,7 @@
 # Grounding, Diagnostics & Classifier Hook: Design
 
 **Date:** 2026-09-21
-**Status:** Draft revision 5 — review rounds 1–4 incorporated; ready for PR 0; not implemented
+**Status:** Approved — revision 6 (plan-time amendments); not implemented
 **Branch:** `spec/grounding-diagnostics-classify`
 **Source baseline:** `ab68b73` (core 7.1.3 + consolidated dependency bumps, #194)
 **Delivery:** one docs PR (this spec), then five code PRs (§9). Every code PR is a `feat` minor release; no PR in this series may carry a breaking-change footer.
@@ -100,7 +100,7 @@ export type WikiDiagnosticCode =
   | 'classification_invalid';      // PR 4
 
 export type WikiDiagnosticOperation =
-  | 'ingest' | 'upsertGraph' | 'librarian' | 'heal' | 'ontologyBackfill' | 'reembed' | 'write';
+  | 'ingest' | 'upsertGraph' | 'librarian' | 'heal' | 'ontologyBackfill' | 'reembed' | 'importDump' | 'write';
 
 export interface WikiDiagnostic {
   code: WikiDiagnosticCode;
@@ -142,8 +142,10 @@ The union is closed for this series; adding a code later is a minor change, so h
 1. **Additive.** Existing console output is unchanged (REQ-COMPAT-01.4).
 2. **Isolated.** The hook is invoked inside `try/catch`. A throwing or non-function hook never alters the calling operation's result, never aborts ingest/heal, and is itself reported only to `console.warn` (no recursive diagnostic).
 3. **Synchronous, non-awaited.** A returned promise is ignored; a rejected returned promise is caught and swallowed to `console.warn`.
-4. **Post-commit for transactional work.** Diagnostics describing writes inside `withTransactionAsync` (edge drops, dedupe, grounding) are buffered per operation and flushed after commit. If the transaction rolls back, buffered diagnostics are discarded — the operation throws and that exception is the signal.
-5. **Aggregation.** Per-item codes emitted in bulk (e.g. 40 edges dropped for `target_not_found` in one ingest) may be aggregated into one diagnostic per `(code, reason)` with `detail.count`. `ingest_chunk_failed` is aggregated per `(reason)` per ingest call so a large all-fail ingest cannot flood a synchronous hook. Per-fact codes that a reviewer would act on (`grounding_*`) are never aggregated.
+4. **Post-commit for transactional work.** Each operation collects its diagnostics in an operation-scoped buffer and flushes it right after its own transaction commits. Sites that already run after commit (embedding, host-hook failures) emit directly. If the operation throws before commit, the buffer is discarded and the exception is the signal. **Exception — `upsertGraph`:** the host owns that transaction and core never sees its commit, so the buffer is flushed when `upsertGraph` resolves. The docs tell hosts that roll back to disregard those diagnostics.
+5. **Aggregation.** In this series only `ingest_chunk_failed` is aggregated; every other code is emitted once per item so its locator fields survive. `ingest_chunk_failed` is aggregated per `(reason)` per ingest call so a large all-fail ingest cannot flood a synchronous hook. Per-fact codes that a reviewer would act on (`grounding_*`) are never aggregated.
+
+6. **Fixed severity.** Severity is a function of the code: `info` for `fact_deduplicated` and `classification_low_confidence`; `error` for `background_job_failed`; `warn` for every other code.
 
 ### 4.3 Disclosure [REQ-DIAG-03]
 
@@ -159,11 +161,12 @@ Diagnostics are an exfiltration surface if they carry content. `message` is a fi
 | `validateFact` null (ingest, librarian, heal) | `fact_rejected` | `missing_title`, `missing_body`, `invalid_shape` |
 | `validateTask` null (librarian) | `task_rejected` | `missing_description`, `invalid_shape` |
 | Jaccard dedupe skip (librarian, heal); ingest title dedupe | `fact_deduplicated` | `fuzzy_title`, `exact_title` |
-| `OntologyService.resolveEdges` | `edge_dropped` | `no_source_type`, `type_not_in_manifest`, `target_not_found`, `target_type_mismatch` |
+| `OntologyService.validateAndNormalizeFact` + `resolveEdges` | `edge_dropped` | `no_source_type`, `invalid_shape`, `type_not_in_manifest`, `target_not_found`, `target_type_mismatch` |
 | non-strict `upsertGraphCore` manifest drop | `edge_dropped` | `manifest_violation` |
-| `EmbeddingService` warn sites | `embedding_failed` / `hook_failed` | `invalid_vector`, `float32_overflow`, `embed_threw`, `persist_failed` |
+| `EmbeddingService.tryEmbedFact` | `embedding_failed` | `invalid_vector`, `float32_overflow`, `embed_threw` (kind `provider_error`), `persist_failed` (kind `storage_error`) |
+| `onEmbeddingPersisted` failures (embed success path; ingest, heal orphan and heal delete loops) | `hook_failed` | `on_embedding_persisted` |
 | `WriteService` auto-librarian / auto-heal `.catch` | `background_job_failed` (operation = job, trigger `auto`) | `unhandled_rejection` |
-| heal `onSkip` | `heal_skipped` | existing skip reason |
+| heal `outcome.skipped` (after commit) | `heal_skipped` | `non_convergent`, `call_error` |
 
 ### 4.5 Tests
 
@@ -182,6 +185,7 @@ Diagnostics are an exfiltration surface if they carry content. `message` is a fi
 - Status is read from SQLite at query time, not from an in-memory index. `setLifecycleStatus` does not bump `updated_at` or refresh MiniSearch, so any cached status would make promotions invisible.
 - Traversal: drafts are dead ends like `excludeSourceTypes` (not discovered, not traversed through). A valid draft **root** is retained, consistent with the existing root exemptions. The induced-edge rule is unchanged.
 - `getMemoryBundle`, `exportDump`, and `formatGraphContext` are unchanged.
+- Implementation shape (plan-time): one SQLite query per `read()` fetches the draft IDs of the scored entities. Candidate rows and MiniSearch pre-filter results are filtered by that set before any cut. Vector-ranker and keyword limits are padded by the set's size, and the merged `scored` list is filtered before `selectWithFloors`. The empty-query recency path filters in SQL.
 
 ### 5.2 Review API [REQ-DRAFT-02]
 
@@ -193,12 +197,12 @@ promoteDraft(entryId: string, entityId: string, reviewer: { by: string }): Promi
 ```
 
 - `listDrafts` is entity-scoped in SQL (disclosure boundary), excludes soft-deleted rows, orders by `created_at DESC, id DESC`, default limit 50, max 500, opaque cursor. Returns hydrated `WikiFact` (no `embedding_blob`).
-- `promoteDraft` in one transaction: `setLifecycleStatus(entryId, entityId, 'stable')` then `writeOkfTrust(entryId, entityId, [{ by, at: now ISO }])`. Both are metadata writes (no `updated_at` bump, no outbox — existing DAO discipline). `by` must be a non-empty string; hosts should pass `human:<id>` so `trustTier` becomes `human-reviewed` (documented, not enforced). Promoting a non-draft or missing/foreign fact throws a typed `WikiNotFoundError`-style error (reuse the existing not-found error class; verify name at plan time).
+- `promoteDraft` in one transaction: `setLifecycleStatus(entryId, entityId, 'stable')` then `writeOkfTrust(entryId, entityId, [{ by, at: now ISO }])`. Both are metadata writes (no `updated_at` bump, no outbox — existing DAO discipline). `by` must be a non-empty string; hosts should pass `human:<id>` so `trustTier` becomes `human-reviewed` (documented, not enforced). Promoting a fact that is missing, soft-deleted, owned by another entity, or not a draft throws a new `WikiDraftNotFound` error (`code: 'WIKI_DRAFT_NOT_FOUND'`, no constructor arguments, fixed message). Core has no existing not-found class. The error is contextless for the same reason as `WikiGraphNodeOwnershipConflict`.
 - Rejection needs no new API: `setLifecycleStatus(..., 'deprecated')` or `forget`.
 
 ### 5.3 Tool manifests
 
-`core-llm-tools`: add optional `excludeDrafts` to the read and traverse manifests' input schemas. No review tools in this series (review is a human action; hosts wire their own UI).
+`core-llm-tools`: add optional `excludeDrafts` to the `wiki_traverse_graph` manifest's input schema. The package has no read manifest. No review tools in this series (review is a human action; hosts wire their own UI).
 
 ### 5.4 Native slice coordination
 
@@ -329,7 +333,9 @@ Core treats provider output as untrusted. An answer is invalid (→ `classificat
 - `runOntologyBackfill(entityId, options)` gains `options.classifier?: 'auto' | 'llm'`, with engine default `WikiConfig.ontology.backfillClassifier` (default `'llm'`). Resolution: call → config → `'llm'`. Adding `classify` to a provider alone never changes backfill (REQ-COMPAT-01.5).
 - `'auto'` with `provider.classify` present: per untyped fact, one request with `state` = title + body (tags appended), one `choice` question whose options are the effective manifest's node-type slugs. Accept when `confidence >= WikiConfig.ontology.classifyMinConfidence` (default 0.5); otherwise leave untyped and emit `classification_low_confidence`.
 - More than 255 node types, or `classify` absent, or `'llm'`: existing generative path, unchanged.
-- **Edges are not proposed in classifier mode** — a classifier cannot extract target titles. Result reports `edgesProposed: 0`; hosts wanting edges run with `classifier: 'llm'`. Documented explicitly.
+- Accepted answers become ordinary backfill classifications and go through the existing per-batch apply step, unchanged (manifest normalization, cooldown stamping, abort-on-off).
+- Counting: an invalid answer counts toward `failedValidation`. A low-confidence answer is an omission (not typed, cooldown-stamped). A thrown `classify` counts toward `skipped` and is **not** cooldown-stamped, matching `call_error`.
+- **Edges are not proposed in classifier mode** — a classifier cannot extract target titles. Result reports `edgesAdded: 0`; hosts wanting edges run with `classifier: 'llm'`. Documented explicitly.
 - Concurrency reuses `chunkConcurrency`.
 - Core does not import any ontology package; options come from the effective manifest (`OntologyConfig`).
 
@@ -388,7 +394,7 @@ Batch equivalent of `hasChanged` with one distinction: `partial` = live rows exi
 | 4 | Classifier hook + backfill (§7) | minor | 1 |
 | 5 | Lint, pending, instructions tool (§8) | minor | 1 (3 for the grounding block in 8.3) |
 
-PRs 1, 2 and 4 may proceed in parallel worktrees from `main`. Each PR merges as a merge commit. Each PR updates the README/API docs for the surface it adds, with signatures grepped from source.
+PRs 1, 2 and 4 may proceed in parallel worktrees. PR 4 is built independently; its `classification_*` diagnostic emissions are the last task of its plan, gated on PR 1 being merged to `main` (merge `main` into the PR 4 branch first). Each PR merges as a merge commit. Each PR updates the README/API docs for the surface it adds, with signatures grepped from source.
 
 ## 10. Open questions
 
@@ -414,3 +420,12 @@ PRs 1, 2 and 4 may proceed in parallel worktrees from `main`. Each PR merges as 
   - §4.1/§4.4: `task_rejected` split out from `fact_rejected`, with reasons `missing_description` and `invalid_shape`. `validateTask` rejects on description, not title/body.
   - §4.5: tests assert `trigger`, the reason slug, and every emitted locator field.
   - §6.2: heal placeholder-branch wording corrected.
+- **rev 6 (2026-09-21):** plan-time amendments found while mapping the code; approved spec.
+  - §4.1: operation `'importDump'` added (`importDump` embeds facts).
+  - §4.2: buffer and flush rule per operation; `upsertGraph` flushes on resolve because the host owns its transaction; only `ingest_chunk_failed` aggregates; severity fixed per code.
+  - §4.4: `edge_dropped` also covers `validateAndNormalizeFact` (reason `invalid_shape`); embedding kind-to-reason mapping; `hook_failed` reason `on_embedding_persisted`; heal skip reasons named.
+  - §5.1: implementation shape for draft filtering.
+  - §5.2: new `WikiDraftNotFound` (no existing not-found class).
+  - §5.3: only the traverse manifest exists.
+  - §7.3: the result field is `edgesAdded`; classifier answers reuse the batch apply step; counting rules.
+  - §9: PR 4 diagnostics gated on PR 1.
