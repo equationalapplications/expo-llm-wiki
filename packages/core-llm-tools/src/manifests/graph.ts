@@ -37,6 +37,10 @@ export const wikiTraverseGraphManifest: AgentToolManifest = {
         },
         direction: { type: 'string', enum: ['inbound', 'outbound', 'both'], description: "The direction of relationships to follow. Default 'both'." },
         edgeTypes: { type: 'array', items: { type: 'string' }, description: 'Optional filter. If provided, traversal only follows these edge types (e.g. ["reports_to", "depends_on"]).' },
+        excludeDrafts: {
+          type: 'boolean',
+          description: 'When true, unreviewed draft facts are not discovered or traversed through. The starting fact is always returned. Default false.',
+        },
       },
       required: ['entityId', 'sourceId'],
     },

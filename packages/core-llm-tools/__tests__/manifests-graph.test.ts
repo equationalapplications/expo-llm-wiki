@@ -44,4 +44,10 @@ describe('wikiTraverseGraphManifest', () => {
     expect(props.maxDepth).toMatchObject({ type: 'integer', minimum: 1, maximum: 3 });
     expect(props.direction).toMatchObject({ type: 'string', enum: ['inbound', 'outbound', 'both'] });
   });
+
+  it('declares optional boolean excludeDrafts', () => {
+    const props = wikiTraverseGraphManifest.schema.parameters?.properties as Record<string, any>;
+    expect(props.excludeDrafts).toMatchObject({ type: 'boolean' });
+    expect(wikiTraverseGraphManifest.schema.parameters?.required).not.toContain('excludeDrafts');
+  });
 });
