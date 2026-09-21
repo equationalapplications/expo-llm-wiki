@@ -55,6 +55,21 @@ describe('runOntologyBackfill classifier mode', () => {
     expect(classify).not.toHaveBeenCalled();
   });
 
+  it("classifier: 'auto' calls classify with the provider as `this` (class-based provider)", async () => {
+    class ClassProvider {
+      private readonly byState = byTitle;
+      async generateText(): Promise<string> { return JSON.stringify({ classifications: [] }); }
+      async classify(r: ClassifyRequest): Promise<ClassifyResponse> { return this.byState(r); }
+    }
+    const db = openTestDatabase();
+    const wiki = createWiki(db, { llmProvider: new ClassProvider() });
+    await wiki.setup();
+    await wiki.setOntologyManifest('e1', MANIFEST, { mode: 'strict' });
+    await seed(db, 'f_ada', 'Ada', 100);
+    await wiki.runOntologyBackfill('e1', { classifier: 'auto' });
+    expect((await row(db, 'f_ada'))?.okf_type).toBe('person');
+  });
+
   it("classifier: 'auto' types each fact with one choice question over the manifest slugs", async () => {
     const { db, wiki, generateText, classify } = await makeWiki({ classify: byTitle });
     const result = await wiki.runOntologyBackfill('e1', { classifier: 'auto' });

@@ -1280,7 +1280,8 @@ export class MaintenanceService {
     now: number,
     recheckCutoff: number,
   ): Promise<OntologyBackfillResult> {
-    const classify = this.options.llmProvider.classify!;
+    // Call through the provider so a class-based provider keeps its `this`.
+    const provider = this.options.llmProvider;
     const rawMin = this.options.config?.ontology?.classifyMinConfidence;
     const minConfidence = typeof rawMin === 'number' && Number.isFinite(rawMin) && rawMin >= 0 && rawMin <= 1 ? rawMin : 0.5;
     const rawConcurrency = this.options.config?.chunkConcurrency ?? 1;
@@ -1305,7 +1306,7 @@ export class MaintenanceService {
       candidates.map((fact) => async (): Promise<Outcome> => {
         let response: unknown;
         try {
-          response = await classify({ state: classifierStateForFact(fact), questions: { okf_type: question } });
+          response = await provider.classify!({ state: classifierStateForFact(fact), questions: { okf_type: question } });
         } catch {
           return { fact, kind: 'threw' };
         }
