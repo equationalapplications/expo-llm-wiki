@@ -1,5 +1,7 @@
-import { chunkText, withConcurrency, validateFact, parseJsonResponse, normalizeSourceRef, normalizeSourceHash, safeErrorToString } from '../utils/pure';
+import { chunkText, withConcurrency, validateFact, factRejectionReason, parseJsonResponse, normalizeSourceRef, normalizeSourceHash, safeErrorToString } from '../utils/pure';
 import { normalizeTitleKey, typeSatisfies } from '../utils/ontology';
+import { DiagnosticBuffer, emitDiagnostic, edgeDropDiagnostic } from '../utils/diagnostics';
+import type { EdgeDrop } from '../utils/ontology';
 import { generateId } from '../utils/ids';
 import { WikiParseError, WikiIngestEmptyError, WikiDuplicateHashError, WikiTransactionError, WikiStrictOntologyViolation, WikiGraphNodeOwnershipConflict } from '../types';
 import type { ChunkFailure, WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedFactWithOntology, WikiFact, OntologyUpdates, WikiEdge, IngestDocumentResult } from '../types';
@@ -149,11 +151,24 @@ export class IngestionService {
           try {
             const responseText = await this.options.llmProvider.generateText({ systemPrompt, userPrompt });
             const result = parseJsonResponse<{ facts: ExtractedFact[]; ontology_updates?: OntologyUpdates }>(responseText);
+            const rawFacts: unknown[] = Array.isArray(result.facts) ? result.facts : [];
+            const facts: ExtractedFact[] = [];
+            const itemIndexes: number[] = [];
+            const rejected: Array<{ itemIndex: number; reason: ReturnType<typeof factRejectionReason> }> = [];
+            rawFacts.forEach((raw, itemIndex) => {
+              const valid = validateFact(raw);
+              if (valid) {
+                facts.push(valid);
+                itemIndexes.push(itemIndex);
+              } else {
+                rejected.push({ itemIndex, reason: factRejectionReason(raw) });
+              }
+            });
             return {
               status: 'ok' as const,
-              facts: (Array.isArray(result.facts) ? result.facts : [])
-                .map(validateFact)
-                .filter((f): f is ExtractedFact => f !== null),
+              facts,
+              itemIndexes,
+              rejected,
               ontology_updates: result.ontology_updates,
             };
           } catch (e) {
@@ -215,22 +230,44 @@ export class IngestionService {
       const failures: ChunkFailure[] = [];
       const seen = new Set<string>();
       const orderedChunkFacts: Array<{ facts: ExtractedFact[]; ontology_updates?: OntologyUpdates }> = [];
-      for (const slot of chunkResults) {
+      const diagBuffer = new DiagnosticBuffer();
+      const diagBase = { entityId, operation: 'ingest' as const, trigger: 'call' as const };
+      for (const [chunkIndex, slot] of chunkResults.entries()) {
         if (slot.status === 'failed') {
           failedChunks++;
           failures.push(slot.error);
           continue;
         }
         ingestedChunks++;
+        for (const r of slot.rejected) {
+          diagBuffer.push({ ...diagBase, code: 'fact_rejected', detail: { sourceRef, chunkIndex, itemIndex: r.itemIndex, reason: r.reason } });
+        }
         const dedupedFacts: ExtractedFact[] = [];
-        for (const fact of slot.facts) {
+        slot.facts.forEach((fact, k) => {
           const normalizedTitle = normalizeTitleKey(fact.title);
           if (!seen.has(normalizedTitle)) {
             seen.add(normalizedTitle);
             dedupedFacts.push(fact);
+          } else {
+            diagBuffer.push({
+              ...diagBase, code: 'fact_deduplicated',
+              detail: { sourceRef, chunkIndex, itemIndex: slot.itemIndexes[k], reason: 'exact_title' },
+            });
           }
-        }
+        });
         orderedChunkFacts.push({ facts: dedupedFacts, ontology_updates: slot.ontology_updates });
+      }
+
+      for (const reason of ['parse', 'llm'] as const) {
+        const ofReason = failures.filter((f) => f.source === reason);
+        if (ofReason.length === 0) continue;
+        diagBuffer.push({
+          ...diagBase, code: 'ingest_chunk_failed',
+          detail: {
+            sourceRef, reason, count: ofReason.length,
+            chunkIndexes: ofReason.map((f) => f.chunkIndex).sort((a, b) => a - b).slice(0, 20),
+          },
+        });
       }
 
       // Total failure: throw WikiIngestEmptyError before any persistence runs.
@@ -250,7 +287,7 @@ export class IngestionService {
         if (failedChunks === 0) {
           // Happy path — full upsertGraphCore supersession + ownership.
           const fullResult = await this.db.withTransactionAsync(async (tx) => {
-            return await this.runFullUpsertGraph(entityId, sourceRef, sourceHash, orderedChunkFacts, tx);
+            return await this.runFullUpsertGraph(entityId, sourceRef, sourceHash, orderedChunkFacts, tx, diagBuffer);
           });
           deletedSourceFactIds.push(...fullResult.deletedSourceFactIds);
           insertedFacts.push(...fullResult.insertedFacts);
@@ -266,7 +303,7 @@ export class IngestionService {
           const partialResult = await this.db.withTransactionAsync(async (tx) => {
             const flat: ExtractedFact[] = [];
             for (const slot of orderedChunkFacts) flat.push(...slot.facts);
-            return await this.appendPartialFacts(entityId, sourceRef, flat, tx);
+            return await this.appendPartialFacts(entityId, sourceRef, flat, tx, diagBuffer);
           });
           insertedFacts.push(...partialResult.insertedDescriptors);
         }
@@ -298,6 +335,10 @@ export class IngestionService {
         return zeroChunkResult(canonical);
       }
 
+      // Post-commit (spec §4.2.4). The duplicate-hash `return zeroChunkResult(...)`
+      // paths in the catch above leave without flushing: nothing was committed.
+      diagBuffer.flush(this.options);
+
       await this.searchService.sync(entityId);
 
       // Post-commit hook loop. `notifyEmbeddingPersisted(entityId, factId, null)`
@@ -317,6 +358,10 @@ export class IngestionService {
             await this.embeddingService.notifyEmbeddingPersisted(entityId, factId, null);
           } catch (hookErr) {
             console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during ingest for ${factId}:`, hookErr);
+            emitDiagnostic(this.options, {
+              entityId, operation: 'ingest', trigger: 'call', code: 'hook_failed',
+              detail: { factId, reason: 'on_embedding_persisted' },
+            });
           }
         }
       }
@@ -414,7 +459,7 @@ export class IngestionService {
       edges: readonly { type: string; sourceId: string; targetId: string; id?: string }[];
     },
     tx: SQLiteAdapter,
-    opts?: { strict?: boolean },
+    opts?: { strict?: boolean; diag?: { buffer: DiagnosticBuffer; operation: 'ingest' | 'upsertGraph' } },
   ): Promise<{ nodesWritten: number; edgesWritten: number; superseded: number }> {
     // Node-ownership pre-flight FIRST — before ontology resolution and every
     // persistent mutation, so a rejected write leaves no seeded manifest
@@ -527,6 +572,13 @@ export class IngestionService {
       const match = candidates[0];
       if (!match) {
         if (strictEffective) throw new WikiStrictOntologyViolation(entityId, 'edge', edge.type);
+        opts?.diag?.buffer.push({
+          entityId, operation: opts.diag.operation, trigger: 'call', code: 'edge_dropped',
+          detail: {
+            reason: 'manifest_violation', factId: edge.sourceId, edgeType: edge.type,
+            ...(sourceType ? { sourceNodeType: sourceType } : {}), sourceRef: params.sourceRef,
+          },
+        });
         continue;
       }
       validEdges.push({
@@ -595,6 +647,7 @@ export class IngestionService {
     sourceHash: string,
     orderedChunkFacts: Array<{ facts: ExtractedFact[]; ontology_updates?: OntologyUpdates }>,
     tx: SQLiteAdapter,
+    diagBuffer: DiagnosticBuffer,
   ): Promise<{ deletedSourceFactIds: string[]; insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> }> {
     const deletedSourceFactIds: string[] = [];
     const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
@@ -652,10 +705,14 @@ export class IngestionService {
 
       for (const fact of facts) {
         const ontologyFact = fact as ExtractedFactWithOntology;
-        const normalized = this.ontologyService?.validateAndNormalizeFact(ontologyFact, manifest, { strict: false })
-          ?? { okf_type: null, edges: [] };
-
         const id = generateId('fact_');
+        const validationDrops: EdgeDrop[] = [];
+        const normalized = this.ontologyService?.validateAndNormalizeFact(ontologyFact, manifest, { strict: false, drops: validationDrops })
+          ?? { okf_type: null, edges: [] };
+        for (const drop of validationDrops) {
+          diagBuffer.push(edgeDropDiagnostic(drop, { entityId, operation: 'ingest', trigger: 'call', sourceRef, factId: id }));
+        }
+
         hostNodes.push({
           id,
           type: ontologyFact.okf_type ?? '',
@@ -688,9 +745,13 @@ export class IngestionService {
     // resolved edge points at a fact that's about to be soft-deleted.
     const hostEdges: { type: string; sourceId: string; targetId: string }[] = [];
     for (const req of rawEdgeRequests) {
+      const resolveDrops: EdgeDrop[] = [];
       const resolved = this.ontologyService?.resolveEdges(
-        entityId, req.sourceId, req.sourceType, req.edges, manifest, titleIndex, now,
+        entityId, req.sourceId, req.sourceType, req.edges, manifest, titleIndex, now, resolveDrops,
       ) ?? [];
+      for (const drop of resolveDrops) {
+        diagBuffer.push(edgeDropDiagnostic(drop, { entityId, operation: 'ingest', trigger: 'call', sourceRef }));
+      }
       for (const e of resolved) {
         hostEdges.push({ type: e.edge_type, sourceId: e.source_id, targetId: e.target_id });
       }
@@ -700,7 +761,7 @@ export class IngestionService {
       entityId,
       { sourceRef, sourceHash, nodes: hostNodes, edges: hostEdges },
       tx,
-      { strict: false },
+      { strict: false, diag: { buffer: diagBuffer, operation: 'ingest' } },
     );
 
     return { deletedSourceFactIds, insertedFacts };
@@ -731,6 +792,7 @@ export class IngestionService {
     sourceRef: string,
     dedupedFacts: ExtractedFact[],
     tx: SQLiteAdapter,
+    diagBuffer: DiagnosticBuffer,
   ): Promise<{
     inserted: number;
     skippedDuplicate: number;
@@ -763,6 +825,10 @@ export class IngestionService {
     for (const fact of dedupedFacts) {
       const normalizedTitle = normalizeTitleKey(fact.title);
       if (liveTitles.has(normalizedTitle)) {
+        diagBuffer.push({
+          entityId, operation: 'ingest', trigger: 'call', code: 'fact_deduplicated',
+          detail: { sourceRef, reason: 'exact_title' },
+        });
         skippedDuplicate++;
         continue;
       }
