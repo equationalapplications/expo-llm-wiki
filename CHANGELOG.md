@@ -1,3 +1,9 @@
+## [7.2.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.2.0...v7.2.1) (2026-09-21)
+
+### Bug Fixes
+
+* **deps:** override vulnerable deepmerge-ts <8 / mysql2 <3.22 pulled in by prisma 7 (GHSA-ggr8-5vv4-36mx, GHSA-3f6p-5ww8-9rcr) ([3c78ae3](https://github.com/equationalapplications/expo-llm-wiki/commit/3c78ae3f0d119736c562332f3106588317420ea3))
+
 ## [7.2.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.1.3...v7.2.0) (2026-09-18)
 
 ### Features
