@@ -11,6 +11,8 @@ import { sanitizeRankerError, safeErrorToString } from '../utils/pure';
 type ReadCandidateRowMetadata = EntryRowMetadata;
 type ReadCandidateRowWithEmbeddings = EntryRowWithEmbeddings;
 
+const EMPTY_ID_SET: ReadonlySet<string> = new Set<string>();
+
 export class RetrievalService {
   constructor(
     private options: WikiOptions,
@@ -51,6 +53,7 @@ export class RetrievalService {
     const maxResults = Number.isFinite(rawMaxResults)
       ? Math.max(0, Math.trunc(rawMaxResults))
       : 10;
+    const excludeDrafts = (options?.excludeDrafts ?? config?.excludeDrafts ?? false) === true;
     const trimmedQuery = query.trim();
     // §3.3 — tierFloors is ignored on the empty-query recency path. Skipping
     // validation here keeps the public contract honest: an empty-query call
@@ -91,6 +94,13 @@ export class RetrievalService {
     } else if (trimmedQuery) {
       let usedEmbed = false;
       const scoredEntityIds = this._filterScoredEntities(entityIds, sanitizedTierWeights, options?.includeZeroWeightEntities);
+
+      // Spec §5.1: one SQLite read per call; status is never taken from an index.
+      const draftIds: ReadonlySet<string> = excludeDrafts && scoredEntityIds.length > 0
+        ? await this.entryRepo.findDraftIdsByEntityIds(scoredEntityIds)
+        : EMPTY_ID_SET;
+      const draftPad = draftIds.size;
+      const padLimit = (n: number): number => (n >= Number.MAX_SAFE_INTEGER ? n : n + draftPad);
 
       // Fast-path: all entities zero-weight — skip embedFn, DB mismatch query, and
       // cosine work entirely. usedEmbed=true suppresses the keyword fallback below.
@@ -145,7 +155,9 @@ export class RetrievalService {
 
           if (effectivePreFilterLimit !== undefined) {
             populateCache = false; // partial scan — do not populate cache
-            const preResults = this.searchService.searchKeyword(trimmedQuery, scoredEntityIds, Number.MAX_SAFE_INTEGER);
+            const preResults = this.searchService
+              .searchKeyword(trimmedQuery, scoredEntityIds, Number.MAX_SAFE_INTEGER)
+              .filter((r) => !draftIds.has(r.id));
             if (preResults.length === 0) {
               candidateRows = null; // empty pre-filter
             } else {
@@ -172,9 +184,9 @@ export class RetrievalService {
             // If vectorRanker is configured, skip embedding load for now (ranker will provide ranking)
             // Otherwise fetch embeddings for JS cosine ranking
             if (useRanker) {
-              candidateRows = await this.entryRepo.findMetadataByEntityIds(scoredEntityIds);
+              candidateRows = this._withoutDrafts(await this.entryRepo.findMetadataByEntityIds(scoredEntityIds), draftIds);
             } else {
-              candidateRows = await this.entryRepo.findWithEmbeddingsByEntityIds(scoredEntityIds);
+              candidateRows = this._withoutDrafts(await this.entryRepo.findWithEmbeddingsByEntityIds(scoredEntityIds), draftIds);
             }
             // Collect MiniSearch scores for hybrid blend if weight is set and <1
             if (weight !== undefined && weight < 1) {
@@ -213,7 +225,7 @@ export class RetrievalService {
                       candidateRows: rowsForEntity,
                       weight,
                       miniSearchScores,
-                      limit: Math.max(maxResults * 2, maxResults + 50),
+                      limit: padLimit(Math.max(maxResults * 2, maxResults + 50)),
                     });
                     return ranked.map(row => ({ ...row, entity_id: scopedEntityId }));
                   }),
@@ -501,7 +513,7 @@ export class RetrievalService {
                     Object.values(sanitizedTierFloors).some(f => f > 0);
                   const keywordOversampledLimit = hasActiveFloorsKeywordFallback
                     ? Number.MAX_SAFE_INTEGER
-                    : Math.max(maxResults * 2, maxResults + 50);
+                    : padLimit(Math.max(maxResults * 2, maxResults + 50));
                   const preFilteredIds = effectivePreFilterLimit !== undefined
                     ? new Set((candidateRows as ReadCandidateRowMetadata[]).map(r => r.id))
                     : undefined;
@@ -560,6 +572,8 @@ export class RetrievalService {
                 skipSort: jsCosineNeedsTierSort, // read() re-sorts after applying tier weights
               });
             }
+
+            if (draftPad > 0) scored = scored.filter((s) => !draftIds.has(s.id));
 
             if (scored.length > 0) {
               // Apply tier weights before global sort and slice
@@ -670,8 +684,10 @@ export class RetrievalService {
           Object.values(sanitizedTierFloors).some(f => f > 0);
         const fallbackOversampledLimit = hasActiveFloors
           ? Number.MAX_SAFE_INTEGER
-          : Math.max(maxResults * 2, maxResults + 50);
-        const results = this.searchService.searchKeyword(trimmedQuery, scoredEntityIds, fallbackOversampledLimit);
+          : padLimit(Math.max(maxResults * 2, maxResults + 50));
+        const results = this.searchService
+          .searchKeyword(trimmedQuery, scoredEntityIds, fallbackOversampledLimit)
+          .filter((r) => !draftIds.has(r.id as string));
         const candidates = results.map(r => ({
           id: r.id as string,
           entity_id: (r as unknown as { entity_id: string }).entity_id,
@@ -697,7 +713,11 @@ export class RetrievalService {
       }
     } else {
       // Empty query: use global recency ordering, ignore tier weights.
-      facts = await this.entryRepo.findRecentByEntityIds(entityIds, maxResults);
+      // Pass `excludeDrafts` opts only when true so the default-path call
+      // signature stays unchanged (existing tests assert the 2-arg call).
+      facts = excludeDrafts
+        ? await this.entryRepo.findRecentByEntityIds(entityIds, maxResults, undefined, { excludeDrafts: true })
+        : await this.entryRepo.findRecentByEntityIds(entityIds, maxResults);
     }
 
     const eventsLimit = Math.min(10 * entityIds.length, 100);
@@ -746,6 +766,10 @@ export class RetrievalService {
    */
   private _tieBreakSort<T extends { id: string; score: number; updated_at?: number | null; access_count?: number | null }>(items: T[]): void {
     items.sort((a, b) => this._compareScoredRows(a, b));
+  }
+
+  private _withoutDrafts<T extends { id: string }>(rows: T[], draftIds: ReadonlySet<string>): T[] {
+    return draftIds.size === 0 ? rows : rows.filter((row) => !draftIds.has(row.id));
   }
 
   /**
