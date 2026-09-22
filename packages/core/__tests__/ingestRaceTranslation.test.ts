@@ -294,11 +294,56 @@ describe('IngestionService — diagnostics on a lost duplicate-hash race (#221)'
       expect(outcome.ok).toBe(false);
       expect((outcome as { error: unknown }).error).toBeInstanceOf(WikiDuplicateHashError);
       // What the host learns about the LLM response does not depend on which
-      // duplicate-hash mode it chose.
+      // duplicate-hash mode it chose — including the locators, not just the
+      // set of codes.
       expect(diagnostics.map((d) => d.code).sort()).toEqual(['fact_deduplicated', 'fact_rejected']);
+      const detail = (code: string) => diagnostics.find((d) => d.code === code)?.detail;
+      expect(detail('fact_rejected')).toMatchObject({ sourceRef: 'racer.md', chunkIndex: 0, itemIndex: 0 });
+      expect(detail('fact_deduplicated')).toMatchObject({ sourceRef: 'racer.md', chunkIndex: 0, itemIndex: 2, reason: 'exact_title' });
       expect(diagnostics.filter((d) => d.detail?.factId !== undefined)).toEqual([]);
     },
   );
+
+  it('a UNIQUE violation with no live canonical ref still reports the LLM pass, then re-throws the original error', async () => {
+    // The racing writer's own row was rolled back or soft-deleted before we
+    // looked, so we cannot name a canonical ref. The race still happened —
+    // source_ref_index is the only UNIQUE that can raise in this transaction —
+    // so the LLM-pass diagnostics are still true and must reach the host even
+    // though the host gets the raw error rather than WikiDuplicateHashError.
+    const diagnostics: WikiDiagnostic[] = [];
+    const { wiki, db } = await makeWiki({
+      generateText: RACE_LLM,
+      config: { grounding: { mode: 'draft' } },
+      onDiagnostic: (d) => { diagnostics.push(d); },
+    });
+    const repo = (wiki as any).sourceRefIndexRepo;
+    const original = repo.findActiveByEntityAndHash.bind(repo);
+    let call = 0;
+    repo.findActiveByEntityAndHash = async (entityId: string, hash: string, tx?: SQLiteAdapter) => {
+      call++;
+      // 1st call is the pre-check: inject the collision so our write trips the
+      // UNIQUE index. 2nd is the catch-block lookup: report the winner gone.
+      if (call === 1) {
+        await insertSourceRefIndexRow(db, { entityId, sourceRef: 'canonical.md', sourceHash: hash });
+        return null;
+      }
+      if (call === 2) return null;
+      return original(entityId, hash, tx);
+    };
+    try {
+      await expect(
+        wiki.ingestDocument(
+          'entity-1',
+          { sourceRef: 'racer.md', sourceHash: VALID_HASH_A, documentChunk: 'hello world' },
+          { onDuplicateHash: 'skip' },
+        ),
+      ).rejects.not.toBeInstanceOf(WikiDuplicateHashError);
+    } finally {
+      repo.findActiveByEntityAndHash = original;
+    }
+    expect(diagnostics.map((d) => d.code).sort()).toEqual(['fact_deduplicated', 'fact_rejected']);
+    expect(diagnostics.filter((d) => d.detail?.factId !== undefined)).toEqual([]);
+  });
 
   it('a non-racing ingest still flushes the full buffer, grounding diagnostics included', async () => {
     const diagnostics: WikiDiagnostic[] = [];

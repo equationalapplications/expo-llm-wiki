@@ -392,21 +392,28 @@ export class IngestionService {
           : extractSqliteCode(err);
         if (sqliteCode !== 'SQLITE_CONSTRAINT_UNIQUE') throw err;
 
-        const canonical = await this.sourceRefIndexRepo.findActiveByEntityAndHash(entityId, sourceHash);
-        // No other live ref holds this hash (e.g. a different constraint
-        // fired, or the racing writer's row was itself rolled back) — the
-        // UNIQUE violation isn't explained by a duplicate-hash race; surface
-        // the original error rather than a misleading result.
-        if (canonical === null) throw err;
-
-        // The race is confirmed: our transaction rolled back, but the LLM pass
-        // already ran for every chunk and the host paid for it. Emit the
-        // diagnostics that describe that work and drop the ones tied to the
-        // aborted write — those carry `factId`s that were never committed and
-        // would point at rows that do not exist (#221). Applies to all three
-        // modes, so what the host learns about the LLM response does not
-        // depend on which duplicate-hash mode it chose.
+        // Our write lost a race, and that much is already certain here:
+        // `source_ref_index` is the only UNIQUE that can raise inside this
+        // transaction (the edges UNIQUE is insert-OR-IGNORE, and the
+        // entries-level one went away in migration v9), so a UNIQUE violation
+        // means another writer claimed this hash first. The transaction rolled
+        // back, but the LLM pass already ran for every chunk and the host paid
+        // for it — emit the diagnostics that describe that work, and drop the
+        // ones tied to the aborted write, which carry `factId`s that were
+        // never committed (#221).
+        //
+        // This sits ABOVE the canonical lookup on purpose. Whether we can
+        // still name the winner below does not change what the LLM pass did,
+        // so all three modes and the re-thrown original error leave through
+        // the same flush.
         diagBuffer.flushOnly(this.options, LLM_PASS_DIAGNOSTIC_CODES);
+
+        const canonical = await this.sourceRefIndexRepo.findActiveByEntityAndHash(entityId, sourceHash);
+        // No other live ref holds this hash any more — the racing writer's own
+        // row was rolled back or soft-deleted in the meantime. We cannot name
+        // a canonical ref, so surface the original error rather than a
+        // misleading duplicate-hash result.
+        if (canonical === null) throw err;
 
         if (onDuplicateHash === 'throw' || onDuplicateHash === 'ingest') {
           throw new WikiDuplicateHashError({ canonical, sourceHash, entityId });
