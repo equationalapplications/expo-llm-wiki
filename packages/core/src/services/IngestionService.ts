@@ -1,6 +1,7 @@
 import { chunkText, withConcurrency, validateFact, factRejectionReason, parseJsonResponse, normalizeSourceRef, normalizeSourceHash, safeErrorToString } from '../utils/pure';
 import { normalizeTitleKey, typeSatisfies } from '../utils/ontology';
 import { DiagnosticBuffer, emitDiagnostic, edgeDropDiagnostic } from '../utils/diagnostics';
+import type { WikiDiagnosticInput } from '../utils/diagnostics';
 import type { EdgeDrop } from '../utils/ontology';
 import { generateId } from '../utils/ids';
 import { WikiParseError, WikiIngestEmptyError, WikiDuplicateHashError, WikiTransactionError, WikiStrictOntologyViolation, WikiGraphNodeOwnershipConflict } from '../types';
@@ -45,6 +46,25 @@ type ReadonlyFactLedger = ReadonlyMap<ExtractedFact, { verdict: GroundingVerdict
  * never claims the hash and so never races. Listing it keeps the set defined
  * by category rather than by that incidental reachability. */
 const LLM_PASS_DIAGNOSTIC_CODES = ['ingest_chunk_failed', 'fact_rejected', 'fact_deduplicated'] as const;
+
+/** Build the `fact_deduplicated` input for an ingest title dedupe. Both ingest
+ * sites — the cross-chunk dedupe and the partial path's dedupe against
+ * already-stored facts — go through here, so one code from one operation
+ * cannot drift back into two shapes (#220). A caller with no ledger entry for
+ * the fact omits the locators rather than sending undefined, matching
+ * `edgeDropDiagnostic`'s rule for unknown locators. */
+function dedupDiagnostic(
+  entityId: string,
+  sourceRef: string,
+  locator?: { chunkIndex: number; itemIndex: number },
+): WikiDiagnosticInput {
+  return {
+    entityId, operation: 'ingest', trigger: 'call', code: 'fact_deduplicated',
+    detail: locator
+      ? { sourceRef, chunkIndex: locator.chunkIndex, itemIndex: locator.itemIndex, reason: 'exact_title' }
+      : { sourceRef, reason: 'exact_title' },
+  };
+}
 
 /** Shape returned by {@link IngestionService.ingestDocument} when no chunks
  * ran — used for both the `chunks.length === 0` early-return and the
@@ -270,10 +290,7 @@ export class IngestionService {
       const diagBuffer = new DiagnosticBuffer();
       const diagBase = { entityId, operation: 'ingest' as const, trigger: 'call' as const };
       const pushDeduplicated = (chunkIndex: number, itemIndex: number) => {
-        diagBuffer.push({
-          ...diagBase, code: 'fact_deduplicated',
-          detail: { sourceRef, chunkIndex, itemIndex, reason: 'exact_title' },
-        });
+        diagBuffer.push(dedupDiagnostic(entityId, sourceRef, { chunkIndex, itemIndex }));
       };
       for (const [chunkIndex, slot] of chunkResults.entries()) {
         if (slot.status === 'failed') {
@@ -941,14 +958,9 @@ export class IngestionService {
         // locators whether or not grounding ran (#220), so a grounding-off
         // partial retry reports them too.
         // A missing ledger entry is only reachable when a caller invokes this
-        // helper directly without one; omit the locators rather than send
-        // undefined, matching `edgeDropDiagnostic`'s rule for unknown locators.
-        diagBuffer.push({
-          entityId, operation: 'ingest', trigger: 'call', code: 'fact_deduplicated',
-          detail: locator
-            ? { sourceRef, chunkIndex: locator.chunkIndex, itemIndex: locator.itemIndex, reason: 'exact_title' }
-            : { sourceRef, reason: 'exact_title' },
-        });
+        // helper directly without one; `dedupDiagnostic` then omits the
+        // locators rather than sending undefined.
+        diagBuffer.push(dedupDiagnostic(entityId, sourceRef, locator));
         skippedDuplicate++;
         continue;
       }
@@ -956,7 +968,7 @@ export class IngestionService {
 
       const id = generateId('fact_');
       const outcome = locator?.verdict ? groundingOutcome(locator.verdict, now) : null;
-      if (locator && outcome?.diagnostic) {
+      if (locator?.verdict && outcome?.diagnostic) {
         diagBuffer.push({
           entityId, operation: 'ingest', trigger: 'call', code: outcome.diagnostic.code,
           detail: { factId: id, sourceRef, chunkIndex: locator.chunkIndex, itemIndex: locator.itemIndex, reason: outcome.diagnostic.reason },
