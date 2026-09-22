@@ -97,7 +97,7 @@ export class PromptService {
     currentFacts: unknown[],
     runtimeOverride?: string,
     ontologyContext?: OntologyPromptContext | null,
-  ): { systemPrompt: string; userPrompt: string; groundingCorpus?: string } {
+  ): { systemPrompt: string; userPrompt: string; groundingCorpus?: string[] } {
     const template = runtimeOverride ?? this.globalOverrides?.librarianSystemPrompt ?? LIBRARIAN_SYSTEM_PROMPT;
     const hasEvents = /\{\{\s*events\s*\}\}/.test(template);
     const hasCurrentFacts = /\{\{\s*currentFacts\s*\}\}/.test(template);
@@ -155,7 +155,7 @@ export class PromptService {
     runtimeOverride: string | undefined,
     attemptLevel: 0 | 1 | 2 | 3,
     bodyTruncationChars: number = HEAL_MAX_FACT_BODY_CHARS_L3,
-  ): { prompts: { systemPrompt: string; userPrompt: string }; degraded: DegradedRecord[]; groundingCorpus?: string } {
+  ): { prompts: { systemPrompt: string; userPrompt: string }; degraded: DegradedRecord[]; groundingCorpus?: string[] } {
     // L0: all context. L1: drop allTasks. L2: also drop recentEvents.
     const effectiveTasks = attemptLevel >= 1 ? [] : allTasks;
     const effectiveEvents = attemptLevel >= 2 ? [] : recentEvents;

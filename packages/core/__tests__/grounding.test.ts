@@ -43,8 +43,8 @@ describe('normalizeForGrounding / buildGroundingCorpus', () => {
     expect(normalizeForGrounding('  The ﬁrst  engine\n\n\tran  ')).toBe('The first engine ran');
   });
 
-  it('joins string parts with a newline and ignores non-strings', () => {
-    expect(buildGroundingCorpus(['alpha  beta', 42, undefined, 'gamma\ndelta'])).toBe('alpha beta gamma delta');
+  it('normalizes each string part on its own and ignores non-strings', () => {
+    expect(buildGroundingCorpus(['alpha  beta', 42, undefined, 'gamma\ndelta'])).toEqual(['alpha beta', 'gamma delta']);
   });
 });
 
@@ -72,6 +72,17 @@ describe('checkGrounding', () => {
     expect(checkGrounding(['designed by Ada Lovelace in 1843'], corpus, cfg)).toEqual({ status: 'failed', reason: 'quote_not_found' });
     expect(checkGrounding(['designed by Charles Babbage in 1837', 'designed by Ada Lovelace in 1843'], corpus, cfg))
       .toEqual({ status: 'failed', reason: 'quote_not_found' });
+  });
+
+  it('rejects a quote stitched across two corpus parts', () => {
+    const twoSources = buildGroundingCorpus(['The compressor failed on Tuesday', 'Maintenance replaced the valve']);
+    expect(checkGrounding(['failed on Tuesday Maintenance replaced'], twoSources, cfg))
+      .toEqual({ status: 'failed', reason: 'quote_not_found' });
+  });
+
+  it('grounds a quote contained within a single part of a multi-part corpus', () => {
+    const twoSources = buildGroundingCorpus(['The compressor failed on Tuesday', 'Maintenance replaced the valve']);
+    expect(checkGrounding(['compressor failed on Tuesday', 'Maintenance replaced the valve'], twoSources, cfg).status).toBe('grounded');
   });
 
   it('is case-sensitive and whitespace/NFKC-insensitive', () => {

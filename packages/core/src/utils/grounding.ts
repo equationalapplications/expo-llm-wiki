@@ -42,11 +42,14 @@ export function normalizeForGrounding(text: string): string {
 
 /**
  * Build the normalized corpus from the raw in-memory values the model was
- * shown (spec §6.3). Never pass serialized prompt text: JSON escapes would
- * cause false `quote_not_found`. Non-string parts are ignored.
+ * shown (spec §6.3), one normalized string per part. Never pass serialized
+ * prompt text: JSON escapes would cause false `quote_not_found`. Non-string
+ * parts are ignored. Parts stay separate so a quote can only ground inside
+ * a single source — joining them would let a quote stitched across the
+ * boundary of two sources pass.
  */
-export function buildGroundingCorpus(parts: readonly unknown[]): string {
-  return normalizeForGrounding(parts.filter((p): p is string => typeof p === 'string').join('\n'));
+export function buildGroundingCorpus(parts: readonly unknown[]): string[] {
+  return parts.filter((p): p is string => typeof p === 'string').map(normalizeForGrounding);
 }
 
 export type GroundingReason = 'no_evidence' | 'evidence_too_short' | 'quote_not_found' | 'too_many_quotes';
@@ -59,11 +62,12 @@ export type GroundingVerdict =
 /**
  * Deterministic check (spec §6.2, §6.4). `evidence` is `validateFact`'s
  * normalized list; `normalizedCorpus` comes from {@link buildGroundingCorpus}.
- * Every quote is checked before any retention cap applies.
+ * A quote passes only inside a single corpus part; it cannot span two
+ * sources. Every quote is checked before any retention cap applies.
  */
 export function checkGrounding(
   evidence: readonly string[] | undefined,
-  normalizedCorpus: string,
+  normalizedCorpus: readonly string[],
   cfg: ResolvedGrounding,
 ): GroundingVerdict {
   const quotes = evidence ?? [];
@@ -71,7 +75,9 @@ export function checkGrounding(
   if (quotes.length === 0) return { status: 'missing', reason: 'no_evidence' };
   const qualifying = quotes.map(normalizeForGrounding).filter((q) => q.length >= cfg.minEvidenceChars);
   if (qualifying.length === 0) return { status: 'missing', reason: 'evidence_too_short' };
-  if (qualifying.some((q) => !normalizedCorpus.includes(q))) return { status: 'failed', reason: 'quote_not_found' };
+  if (qualifying.some((q) => !normalizedCorpus.some((part) => part.includes(q)))) {
+    return { status: 'failed', reason: 'quote_not_found' };
+  }
   return {
     status: 'grounded',
     retained: qualifying.slice(0, cfg.maxEvidence).map((q) => safeSlice(q, 0, cfg.maxEvidenceChars)),

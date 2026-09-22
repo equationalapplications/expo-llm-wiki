@@ -123,7 +123,7 @@ interface HealBatch {
   deleted: string[];
   newFacts: ExtractedFact[];
   /** Corpus of the prompt that produced this response; null when heal is not a grounding writer. */
-  corpus: string | null;
+  corpus: string[] | null;
 }
 
 /**
@@ -629,7 +629,7 @@ export class MaintenanceService {
 
     // groundingCorpus (spec §6.3) is built with the prompt, from the event
     // summaries that prompt actually shows.
-    const { systemPrompt, userPrompt, groundingCorpus: librarianCorpus = '' } = this.promptService.buildLibrarianPrompt(
+    const { systemPrompt, userPrompt, groundingCorpus: librarianCorpus = [] } = this.promptService.buildLibrarianPrompt(
       promptEvents,
       currentFacts,
       promptOverride,
@@ -891,7 +891,7 @@ export class MaintenanceService {
 
     // runBatched rebuilds prompts while trimming, splitting and escalating, so
     // the corpus is keyed to the exact prompt object each response came from.
-    const corpusByPrompt = new WeakMap<BuiltPrompt, string>();
+    const corpusByPrompt = new WeakMap<BuiltPrompt, string[]>();
 
     // Captured in the doRunHeal scope so the buildPrompt lambda can push
     // L3 truncation records into it. Reconcile after runBatched returns:
@@ -957,7 +957,7 @@ export class MaintenanceService {
     // Position within the producing batch's response, not the merged list, so
     // a diagnostic's itemIndex points into an array the model actually returned.
     const newFactItemIndexes: number[] = [];
-    const newFactCorpora: Array<string | null> = [];
+    const newFactCorpora: Array<string[] | null> = [];
 
     for (const batchResult of outcome.results) {
       const mutableIds = new Set(batchResult.batch.map(f => f.id));
@@ -975,7 +975,7 @@ export class MaintenanceService {
     const diagBuffer = new DiagnosticBuffer();
     const validNewFacts: ExtractedFact[] = [];
     const validNewFactItemIndexes: number[] = [];
-    const validNewFactCorpora: Array<string | null> = [];
+    const validNewFactCorpora: Array<string[] | null> = [];
     newFacts.forEach((raw, k) => {
       const itemIndex = newFactItemIndexes[k];
       const valid = validateFact(raw);
@@ -1040,7 +1040,7 @@ export class MaintenanceService {
         const id = generateId('fact_');
         // A missing corpus is treated as empty, so every quote fails: fail closed.
         const grounding = healGrounding
-          ? groundingOutcome(checkGrounding(fact.evidence, validNewFactCorpora[k] ?? '', healGrounding), now)
+          ? groundingOutcome(checkGrounding(fact.evidence, validNewFactCorpora[k] ?? [], healGrounding), now)
           : null;
         if (grounding?.diagnostic) {
           diagBuffer.push({ ...diagBase, code: grounding.diagnostic.code, detail: { factId: id, itemIndex: validNewFactItemIndexes[k], reason: grounding.diagnostic.reason } });

@@ -16,6 +16,10 @@ const anchors = [
   { id: 'a2', title: 'Draft anchor', source_ref: 'doc.md', body: 'draft anchor body sentence here', lifecycle_status: 'draft' },
 ];
 
+// Corpus parts are normalized (no newlines), so joining on '\n' keeps
+// substring assertions per-part: a hit can never span two parts.
+const joinedCorpus = (corpus: readonly string[] | undefined) => corpus?.join('\n') ?? '';
+
 function allPrompts(svc: PromptService) {
   return [
     svc.buildIngestPrompt('chunk', undefined, ctx),
@@ -76,17 +80,17 @@ describe('heal grounding prompt and corpus', () => {
 
   it('builds the corpus from event summaries and non-draft anchor bodies only', () => {
     const { groundingCorpus } = svc.buildHealPrompt(candidates, anchors, [], events, undefined, 0);
-    expect(groundingCorpus).toContain('Operator observed the engine printing tables');
-    expect(groundingCorpus).toContain('x'.repeat(HEAL_ANCHOR_BODY_CHARS));
-    expect(groundingCorpus).not.toContain('draft anchor body');
-    expect(groundingCorpus).not.toContain('candidate body text');
-    expect(groundingCorpus).not.toContain('evt_1');
-    expect(groundingCorpus).not.toContain('observation');
+    expect(joinedCorpus(groundingCorpus)).toContain('Operator observed the engine printing tables');
+    expect(joinedCorpus(groundingCorpus)).toContain('x'.repeat(HEAL_ANCHOR_BODY_CHARS));
+    expect(joinedCorpus(groundingCorpus)).not.toContain('draft anchor body');
+    expect(joinedCorpus(groundingCorpus)).not.toContain('candidate body text');
+    expect(joinedCorpus(groundingCorpus)).not.toContain('evt_1');
+    expect(joinedCorpus(groundingCorpus)).not.toContain('observation');
   });
 
   it('drops events from the corpus at L2 and above', () => {
-    expect(svc.buildHealPrompt(candidates, anchors, [], events, undefined, 1).groundingCorpus).toContain('Operator observed');
-    expect(svc.buildHealPrompt(candidates, anchors, [], events, undefined, 2).groundingCorpus).not.toContain('Operator observed');
+    expect(joinedCorpus(svc.buildHealPrompt(candidates, anchors, [], events, undefined, 1).groundingCorpus)).toContain('Operator observed');
+    expect(joinedCorpus(svc.buildHealPrompt(candidates, anchors, [], events, undefined, 2).groundingCorpus)).not.toContain('Operator observed');
   });
 });
 
@@ -97,15 +101,15 @@ describe('librarian grounding corpus', () => {
   it('is event summaries only, in the default and {{events}} templates', () => {
     for (const tpl of [undefined, 'Lib {{events}} {{currentFacts}}', 'Lib {{ontologyManifest}}']) {
       const { groundingCorpus } = svc.buildLibrarianPrompt(events, facts, tpl, ctx);
-      expect(groundingCorpus).toContain('Operator observed the engine printing tables');
-      expect(groundingCorpus).not.toContain('earlier inference');
+      expect(joinedCorpus(groundingCorpus)).toContain('Operator observed the engine printing tables');
+      expect(joinedCorpus(groundingCorpus)).not.toContain('earlier inference');
     }
   });
 
   it('excludes events a {{currentFacts}}-only template never shows', () => {
     const { systemPrompt, userPrompt, groundingCorpus } = svc.buildLibrarianPrompt(events, facts, 'Lib {{currentFacts}}', null);
     expect(`${systemPrompt}${userPrompt}`).not.toContain('Operator observed');
-    expect(groundingCorpus).toBe('');
+    expect(groundingCorpus).toEqual([]);
   });
 
   it('is absent when librarian is not a grounding writer', () => {
@@ -118,14 +122,14 @@ describe('heal grounding corpus with partial placeholder templates', () => {
 
   it('includes only the sources the template places', () => {
     const candidatesOnly = svc.buildHealPrompt(candidates, anchors, [], events, 'Heal {{healCandidates}}', 0);
-    expect(candidatesOnly.groundingCorpus).toBe('');
+    expect(candidatesOnly.groundingCorpus).toEqual([]);
 
     const eventsOnly = svc.buildHealPrompt(candidates, anchors, [], events, 'Heal {{recentEvents}}', 0).groundingCorpus;
-    expect(eventsOnly).toContain('Operator observed');
-    expect(eventsOnly).not.toContain('x'.repeat(20));
+    expect(joinedCorpus(eventsOnly)).toContain('Operator observed');
+    expect(joinedCorpus(eventsOnly)).not.toContain('x'.repeat(20));
 
     const anchorsOnly = svc.buildHealPrompt(candidates, anchors, [], events, 'Heal {{documentAnchors}}', 0).groundingCorpus;
-    expect(anchorsOnly).toContain('x'.repeat(HEAL_ANCHOR_BODY_CHARS));
-    expect(anchorsOnly).not.toContain('Operator observed');
+    expect(joinedCorpus(anchorsOnly)).toContain('x'.repeat(HEAL_ANCHOR_BODY_CHARS));
+    expect(joinedCorpus(anchorsOnly)).not.toContain('Operator observed');
   });
 });
