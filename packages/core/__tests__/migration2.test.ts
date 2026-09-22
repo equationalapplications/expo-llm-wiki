@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { WikiMemory } from '../src/WikiMemory';
+import { CURRENT_SCHEMA_VERSION } from '../src/db/migrations';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 import type { WikiOptions } from '../src/types';
 
@@ -60,7 +61,7 @@ async function makeV1Db() {
   return db;
 }
 
-describe('migrations v2–v6: FTS removal, embeddings, outbox, okf edges, entity manifests; setup ends at version 11', () => {
+describe('migrations v2–v6: FTS removal, embeddings, outbox, okf edges, entity manifests; setup ends at CURRENT_SCHEMA_VERSION', () => {
   it('fresh install: embedding column exists, FTS5 table absent', async () => {
     const db = openTestDatabase();
     const wiki = new WikiMemory(db, stubOptions);
@@ -77,10 +78,10 @@ describe('migrations v2–v6: FTS removal, embeddings, outbox, okf edges, entity
     const meta = await db.getFirstAsync<{ value: string }>(
       `SELECT value FROM llm_wiki_meta WHERE key = 'schema_version'`
     );
-    expect(meta?.value).toBe('11');
+    expect(meta?.value).toBe(String(CURRENT_SCHEMA_VERSION));
   });
 
-  it('v1 DB: FTS5 table + triggers dropped, embedding column added, version becomes 11', async () => {
+  it('v1 DB: FTS5 table + triggers dropped, embedding column added, version becomes CURRENT_SCHEMA_VERSION', async () => {
     const db = await makeV1Db();
     const wiki = new WikiMemory(db, stubOptions);
     await wiki.setup();
@@ -101,7 +102,7 @@ describe('migrations v2–v6: FTS removal, embeddings, outbox, okf edges, entity
     const meta = await db.getFirstAsync<{ value: string }>(
       `SELECT value FROM llm_wiki_meta WHERE key = 'schema_version'`
     );
-    expect(meta?.value).toBe('11');
+    expect(meta?.value).toBe(String(CURRENT_SCHEMA_VERSION));
   });
 
   it('running setup() twice is idempotent: embedding column appears once', async () => {
