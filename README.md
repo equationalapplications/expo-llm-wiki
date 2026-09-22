@@ -42,7 +42,7 @@ Supports [Open Knowledge Format (OKF) v0.2](https://github.com/GoogleCloudPlatfo
 - **Evidence grounding:** Opt-in `grounding` makes the writers you choose quote the source they were shown. A deterministic check stores a fact whose quotes are missing or not found as a `draft` instead of rejecting it. Off by default.
 - **Optional classifier:** A non-generative `LLMProvider.classify` (e.g. a System-One classifier such as Jev) can type facts during ontology backfill. It is opt-in: adding it to the provider changes nothing until you enable it.
 - **Health checks:** `lint(entityId)` reports dangling edges, manifest violations, untyped facts, drafts and unverified inferences. Read-only; it never repairs. `pendingSources` flags refs whose live facts have no stored hash (typically a partial first ingest) alongside the changed/current signal from `hasChanged`.
-- **Effective instructions:** `getInstructions(entityId)` returns the system prompt each writer will send, with `WikiConfig.prompts` overrides and the entity's ontology block applied, plus the evidence block for each writer in `grounding.writers` when grounding is on. `core-llm-tools` exposes this as the `wiki_get_instructions` tool (`memory:read`) so agents can see the engine's output format and constraints before proposing writes.
+- **Effective instructions:** `getInstructions(entityId)` returns the system prompt each writer will send, with `WikiConfig.prompts` overrides and the entity's ontology block applied (heal gets no ontology block), plus the evidence block for each writer in `grounding.writers` when grounding is on. `core-llm-tools` exposes this as the `wiki_get_instructions` tool (`memory:read`) so agents can see the engine's output format and constraints before proposing writes.
 - **Cross-Platform:** Choose the right package for your platform: Expo, React Native, React web, vanilla JS, or Node.js. The core logic is framework-agnostic with platform-specific adapters.
 
 ## How It Works
@@ -873,7 +873,7 @@ Manifest violations are 0 when ontology is off or the manifest is empty. An edge
 
 ### Effective Instructions (`getInstructions`)
 
-The system prompt each writer sends, with `WikiConfig.prompts` overrides and the entity's ontology block applied. When `config.grounding` is on, the evidence block is appended for each writer in `grounding.writers`, exactly as sent. Useful for agents to see the engine's output format and constraints before proposing writes:
+The system prompt each writer sends, with `WikiConfig.prompts` overrides applied. Ingest, librarian and ontology backfill also get the entity's ontology block; heal gets none, as at runtime. When `config.grounding` is on, the evidence block is appended for each writer in `grounding.writers`, exactly as sent. Useful for agents to see the engine's output format and constraints before proposing writes:
 
 ```typescript
 const { ingest, librarian, heal, ontologyBackfill } = await wiki.getInstructions('entity-123');
