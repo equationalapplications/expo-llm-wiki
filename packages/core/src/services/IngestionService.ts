@@ -24,6 +24,15 @@ type ChunkResult =
   | { status: 'ok'; facts: ExtractedFact[]; itemIndexes: number[]; rejected: Array<{ itemIndex: number; reason: ReturnType<typeof factRejectionReason> }>; verdicts: GroundingVerdict[]; ontology_updates?: OntologyUpdates }
   | { status: 'failed'; error: ChunkFailure };
 
+/** Where a kept fact sat in the LLM response, plus its grounding verdict when
+ * grounding ran. Keyed by fact object identity; the same objects flow through
+ * the full path and the partial path, so both can report the position a
+ * diagnostic refers to. `verdict` is null when grounding is off — that means
+ * "no grounding ran", NOT "ungrounded", so consumers gate on the verdict and
+ * never on the entry's presence. */
+type FactLedger = Map<ExtractedFact, { verdict: GroundingVerdict | null; chunkIndex: number; itemIndex: number }>;
+type ReadonlyFactLedger = ReadonlyMap<ExtractedFact, { verdict: GroundingVerdict | null; chunkIndex: number; itemIndex: number }>;
+
 /** Shape returned by {@link IngestionService.ingestDocument} when no chunks
  * ran — used for both the `chunks.length === 0` early-return and the
  * `onDuplicateHash: 'skip'` early-return. `duplicateOf` is present as an own
@@ -284,8 +293,13 @@ export class IngestionService {
       // with the chunk whose manifest additions it may depend on.
       const orderedChunkFacts: Array<{ facts: ExtractedFact[]; ontology_updates?: OntologyUpdates }> = [];
       // Keyed by fact object identity: the same objects flow through the
-      // full path and the partial path. Empty when grounding is off.
-      const groundingLedger = new Map<ExtractedFact, { verdict: GroundingVerdict; chunkIndex: number; itemIndex: number }>();
+      // full path and the partial path. Populated for every kept fact
+      // whether grounding is on or off — the locators are what the dedup
+      // diagnostics report (#220), and they exist independently of
+      // grounding. `verdict` is null when grounding is off; a null verdict
+      // means "no grounding ran", never "ungrounded", so every consumer
+      // gates on the verdict rather than on the entry's presence.
+      const factLedger: FactLedger = new Map();
       for (const [chunkIndex, slot] of chunkResults.entries()) {
         if (slot.status === 'failed') continue;
         const keptFacts: ExtractedFact[] = [];
@@ -293,7 +307,11 @@ export class IngestionService {
           const winner = winners.get(normalizeTitleKey(fact.title));
           if (winner?.chunkIndex !== chunkIndex || winner.k !== k) return;
           keptFacts.push(fact);
-          if (ingestGrounding) groundingLedger.set(fact, { verdict: slot.verdicts[k], chunkIndex, itemIndex: winner.itemIndex });
+          factLedger.set(fact, {
+            verdict: ingestGrounding ? slot.verdicts[k] : null,
+            chunkIndex,
+            itemIndex: winner.itemIndex,
+          });
         });
         orderedChunkFacts.push({ facts: keptFacts, ontology_updates: slot.ontology_updates });
       }
@@ -327,7 +345,7 @@ export class IngestionService {
         if (failedChunks === 0) {
           // Happy path — full upsertGraphCore supersession + ownership.
           const fullResult = await this.db.withTransactionAsync(async (tx) => {
-            return await this.runFullUpsertGraph(entityId, sourceRef, sourceHash, orderedChunkFacts, tx, diagBuffer, groundingLedger);
+            return await this.runFullUpsertGraph(entityId, sourceRef, sourceHash, orderedChunkFacts, tx, diagBuffer, factLedger);
           });
           deletedSourceFactIds.push(...fullResult.deletedSourceFactIds);
           insertedFacts.push(...fullResult.insertedFacts);
@@ -343,7 +361,7 @@ export class IngestionService {
           const partialResult = await this.db.withTransactionAsync(async (tx) => {
             const flat: ExtractedFact[] = [];
             for (const slot of orderedChunkFacts) flat.push(...slot.facts);
-            return await this.appendPartialFacts(entityId, sourceRef, flat, tx, diagBuffer, groundingLedger);
+            return await this.appendPartialFacts(entityId, sourceRef, flat, tx, diagBuffer, factLedger);
           });
           insertedFacts.push(...partialResult.insertedDescriptors);
         }
@@ -694,7 +712,7 @@ export class IngestionService {
     orderedChunkFacts: Array<{ facts: ExtractedFact[]; ontology_updates?: OntologyUpdates }>,
     tx: SQLiteAdapter,
     diagBuffer: DiagnosticBuffer,
-    groundingLedger: ReadonlyMap<ExtractedFact, { verdict: GroundingVerdict; chunkIndex: number; itemIndex: number }> = new Map(),
+    factLedger: ReadonlyFactLedger = new Map(),
   ): Promise<{ deletedSourceFactIds: string[]; insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> }> {
     const deletedSourceFactIds: string[] = [];
     const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
@@ -776,14 +794,16 @@ export class IngestionService {
           tags: fact.tags,
           confidence: fact.confidence,
         });
-        const grounding = groundingLedger.get(fact);
-        if (grounding) {
-          const outcome = groundingOutcome(grounding.verdict, now);
+        const locator = factLedger.get(fact);
+        // Gate on the verdict, not on the entry: the ledger now holds an
+        // entry for every kept fact, with a null verdict when grounding is off.
+        if (locator?.verdict) {
+          const outcome = groundingOutcome(locator.verdict, now);
           nodeTrust.set(id, outcome.trust);
           if (outcome.diagnostic) {
             diagBuffer.push({
               entityId, operation: 'ingest', trigger: 'call', code: outcome.diagnostic.code,
-              detail: { factId: id, sourceRef, chunkIndex: grounding.chunkIndex, itemIndex: grounding.itemIndex, reason: outcome.diagnostic.reason },
+              detail: { factId: id, sourceRef, chunkIndex: locator.chunkIndex, itemIndex: locator.itemIndex, reason: outcome.diagnostic.reason },
             });
           }
         }
@@ -852,7 +872,7 @@ export class IngestionService {
     dedupedFacts: ExtractedFact[],
     tx: SQLiteAdapter,
     diagBuffer: DiagnosticBuffer,
-    groundingLedger: ReadonlyMap<ExtractedFact, { verdict: GroundingVerdict; chunkIndex: number; itemIndex: number }> = new Map(),
+    factLedger: ReadonlyFactLedger = new Map(),
   ): Promise<{
     inserted: number;
     skippedDuplicate: number;
@@ -884,10 +904,20 @@ export class IngestionService {
     const insertedDescriptors: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
     for (const fact of dedupedFacts) {
       const normalizedTitle = normalizeTitleKey(fact.title);
+      const locator = factLedger.get(fact);
       if (liveTitles.has(normalizedTitle)) {
+        // Same code, same shape as the cross-chunk dedup in `ingestDocument`:
+        // both name a position in the LLM response. The ledger carries the
+        // locators whether or not grounding ran (#220), so a grounding-off
+        // partial retry reports them too.
+        // A missing ledger entry is only reachable when a caller invokes this
+        // helper directly without one; omit the locators rather than send
+        // undefined, matching `edgeDropDiagnostic`'s rule for unknown locators.
         diagBuffer.push({
           entityId, operation: 'ingest', trigger: 'call', code: 'fact_deduplicated',
-          detail: { sourceRef, reason: 'exact_title' },
+          detail: locator
+            ? { sourceRef, chunkIndex: locator.chunkIndex, itemIndex: locator.itemIndex, reason: 'exact_title' }
+            : { sourceRef, reason: 'exact_title' },
         });
         skippedDuplicate++;
         continue;
@@ -895,12 +925,11 @@ export class IngestionService {
       liveTitles.add(normalizedTitle);
 
       const id = generateId('fact_');
-      const grounding = groundingLedger.get(fact);
-      const outcome = grounding ? groundingOutcome(grounding.verdict, now) : null;
-      if (grounding && outcome?.diagnostic) {
+      const outcome = locator?.verdict ? groundingOutcome(locator.verdict, now) : null;
+      if (locator && outcome?.diagnostic) {
         diagBuffer.push({
           entityId, operation: 'ingest', trigger: 'call', code: outcome.diagnostic.code,
-          detail: { factId: id, sourceRef, chunkIndex: grounding.chunkIndex, itemIndex: grounding.itemIndex, reason: outcome.diagnostic.reason },
+          detail: { factId: id, sourceRef, chunkIndex: locator.chunkIndex, itemIndex: locator.itemIndex, reason: outcome.diagnostic.reason },
         });
       }
       const wikiFact: WikiFact = {
