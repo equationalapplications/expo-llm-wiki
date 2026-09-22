@@ -1,3 +1,13 @@
+## [7.7.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.7.0...v7.7.1) (2026-09-22)
+
+### Bug Fixes
+
+* **core:** keep the best-grounded duplicate when ingest titles match ([cab5909](https://github.com/equationalapplications/expo-llm-wiki/commit/cab5909ca52b0c6267e59a00745ecf8d6f51b922)), closes [#214](https://github.com/equationalapplications/expo-llm-wiki/issues/214)
+
+### Performance Improvements
+
+* **core:** composite edges(entity_id, id) index for lint keyset paging ([d58f089](https://github.com/equationalapplications/expo-llm-wiki/commit/d58f089fc197f2a7bb42d91ee700801248e8942b)), closes [#217](https://github.com/equationalapplications/expo-llm-wiki/issues/217)
+
 ## [7.7.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.6.0...v7.7.0) (2026-09-22)
 
 ### Features
