@@ -1,3 +1,9 @@
+## [7.7.2](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.7.1...v7.7.2) (2026-09-22)
+
+### Bug Fixes
+
+* **gitignore:** correct swapped root and app .gitignore content ([fb58379](https://github.com/equationalapplications/expo-llm-wiki/commit/fb5837908e33ff3fc96366c6fa2c20968a7d9e7b))
+
 ## [7.7.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.7.0...v7.7.1) (2026-09-22)
 
 ### Bug Fixes
