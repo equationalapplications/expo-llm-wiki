@@ -1,3 +1,9 @@
+## [7.7.3](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.7.2...v7.7.3) (2026-09-22)
+
+### Bug Fixes
+
+* **deps:** raise mysql2 advisory pin to 3.23.1 ([d026803](https://github.com/equationalapplications/expo-llm-wiki/commit/d0268037f237dfcf40f2b711443e115fc9cfbb09))
+
 ## [7.7.2](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.7.1...v7.7.2) (2026-09-22)
 
 ### Bug Fixes
