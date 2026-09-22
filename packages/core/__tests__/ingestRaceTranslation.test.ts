@@ -3,18 +3,25 @@ import { WikiMemory } from '../src/WikiMemory';
 import { WikiDuplicateHashError } from '../src/types';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 import { setupDatabase } from '../src/db/schema';
-import type { SQLiteAdapter } from '../src/types';
+import type { SQLiteAdapter, WikiConfig, WikiDiagnostic } from '../src/types';
 
 const VALID_HASH_A = 'a'.repeat(64);
 
-async function makeWiki(): Promise<{ wiki: WikiMemory; db: SQLiteAdapter }> {
+async function makeWiki(opts: {
+  generateText?: () => Promise<string>;
+  config?: WikiConfig;
+  onDiagnostic?: (d: WikiDiagnostic) => void;
+} = {}): Promise<{ wiki: WikiMemory; db: SQLiteAdapter }> {
   const db = openTestDatabase();
   await setupDatabase(db, 'llm_wiki_');
   const wiki = new WikiMemory(db, {
     llmProvider: {
-      generateText: async () => JSON.stringify({ facts: [{ title: 'T', body: 'B', tags: [], confidence: 'certain' }] }),
+      generateText: opts.generateText
+        ?? (async () => JSON.stringify({ facts: [{ title: 'T', body: 'B', tags: [], confidence: 'certain' }] })),
       embed: async () => new Float32Array([0]),
     },
+    ...(opts.config ? { config: opts.config } : {}),
+    ...(opts.onDiagnostic ? { onDiagnostic: opts.onDiagnostic } : {}),
   });
   await wiki.setup();
   return { wiki, db };
@@ -58,7 +65,7 @@ async function insertSourceRefIndexRow(
 async function ingestWithRaceInjected(
   wiki: WikiMemory,
   db: SQLiteAdapter,
-  args: { sourceRef: string; sourceHash: string; canonicalRef: string; onDuplicateHash?: 'ingest' | 'skip' | 'throw' },
+  args: { sourceRef: string; sourceHash: string; canonicalRef: string; onDuplicateHash?: 'ingest' | 'skip' | 'throw'; documentChunk?: string },
 ) {
   const sourceRefIndexRepo = (wiki as any).sourceRefIndexRepo;
   const original = sourceRefIndexRepo.findActiveByEntityAndHash.bind(sourceRefIndexRepo);
@@ -96,7 +103,7 @@ async function ingestWithRaceInjected(
   try {
     return await wiki.ingestDocument(
       'entity-1',
-      { sourceRef: args.sourceRef, sourceHash: args.sourceHash, documentChunk: 'hello world' },
+      { sourceRef: args.sourceRef, sourceHash: args.sourceHash, documentChunk: args.documentChunk ?? 'hello world' },
       { onDuplicateHash: args.onDuplicateHash },
     );
   } finally {
@@ -223,4 +230,85 @@ describe('IngestionService — N=10 concurrent race-cloaking (v9 source_ref_inde
       expect(refs).toEqual([winnerRef]);
     }
   }, 60_000);
+});
+
+describe('IngestionService — diagnostics on a lost duplicate-hash race (#221)', () => {
+  // One chunk yielding, in order: an invalid item (fact_rejected at itemIndex 0),
+  // 'T' (kept, and ungrounded under draft mode -> grounding_missing carrying the
+  // factId minted inside the transaction), and a second 'T' (fact_deduplicated
+  // at itemIndex 2). The write then loses the race and rolls back.
+  const RACE_LLM = async () => JSON.stringify({
+    facts: [
+      { nope: 1 },
+      { title: 'T', body: 'B', tags: [], confidence: 'certain' },
+      { title: 'T', body: 'B2', tags: [], confidence: 'certain' },
+    ],
+  });
+
+  async function raceWithDiagnostics(mode: 'ingest' | 'skip' | 'throw') {
+    const diagnostics: WikiDiagnostic[] = [];
+    const { wiki, db } = await makeWiki({
+      generateText: RACE_LLM,
+      config: { grounding: { mode: 'draft' } },
+      onDiagnostic: (d) => { diagnostics.push(d); },
+    });
+    const run = ingestWithRaceInjected(wiki, db, {
+      sourceRef: 'racer.md',
+      sourceHash: VALID_HASH_A,
+      canonicalRef: 'canonical.md',
+      onDuplicateHash: mode,
+      documentChunk: 'hello world',
+    });
+    const outcome = await run.then(
+      (value) => ({ ok: true as const, value }),
+      (error: unknown) => ({ ok: false as const, error }),
+    );
+    return { diagnostics, outcome };
+  }
+
+  it("mode 'skip': the host receives the LLM-pass diagnostics for the work it paid for", async () => {
+    const { diagnostics, outcome } = await raceWithDiagnostics('skip');
+    expect(outcome.ok).toBe(true);
+    expect(diagnostics.map((d) => d.code).sort()).toEqual(['fact_deduplicated', 'fact_rejected']);
+  });
+
+  it('a racing skip emits no diagnostic naming a fact that was never committed', async () => {
+    const { diagnostics } = await raceWithDiagnostics('skip');
+    // The grounding_missing for 'T' was buffered inside the transaction and
+    // carries a factId that rolled back; it must not reach the host.
+    expect(diagnostics.filter((d) => d.code.startsWith('grounding_'))).toEqual([]);
+    expect(diagnostics.filter((d) => d.detail?.factId !== undefined)).toEqual([]);
+  });
+
+  it('the surviving diagnostics keep their locators into the LLM response', async () => {
+    const { diagnostics } = await raceWithDiagnostics('skip');
+    const detail = (code: string) => diagnostics.find((d) => d.code === code)?.detail;
+    expect(detail('fact_rejected')).toMatchObject({ sourceRef: 'racer.md', chunkIndex: 0, itemIndex: 0 });
+    expect(detail('fact_deduplicated')).toMatchObject({ sourceRef: 'racer.md', chunkIndex: 0, itemIndex: 2, reason: 'exact_title' });
+  });
+
+  it.each(['throw', 'ingest'] as const)(
+    "mode '%s': the same subset is flushed before WikiDuplicateHashError is raised",
+    async (mode) => {
+      const { diagnostics, outcome } = await raceWithDiagnostics(mode);
+      expect(outcome.ok).toBe(false);
+      expect((outcome as { error: unknown }).error).toBeInstanceOf(WikiDuplicateHashError);
+      // What the host learns about the LLM response does not depend on which
+      // duplicate-hash mode it chose.
+      expect(diagnostics.map((d) => d.code).sort()).toEqual(['fact_deduplicated', 'fact_rejected']);
+      expect(diagnostics.filter((d) => d.detail?.factId !== undefined)).toEqual([]);
+    },
+  );
+
+  it('a non-racing ingest still flushes the full buffer, grounding diagnostics included', async () => {
+    const diagnostics: WikiDiagnostic[] = [];
+    const { wiki } = await makeWiki({
+      generateText: RACE_LLM,
+      config: { grounding: { mode: 'draft' } },
+      onDiagnostic: (d) => { diagnostics.push(d); },
+    });
+    await wiki.ingestDocument('entity-1', { sourceRef: 'solo.md', sourceHash: VALID_HASH_A, documentChunk: 'hello world' });
+    expect(diagnostics.map((d) => d.code).sort()).toEqual(['fact_deduplicated', 'fact_rejected', 'grounding_missing']);
+    expect(diagnostics.find((d) => d.code === 'grounding_missing')?.detail?.factId).toEqual(expect.any(String));
+  });
 });

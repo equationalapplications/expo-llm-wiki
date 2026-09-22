@@ -33,6 +33,19 @@ type ChunkResult =
 type FactLedger = Map<ExtractedFact, { verdict: GroundingVerdict | null; chunkIndex: number; itemIndex: number }>;
 type ReadonlyFactLedger = ReadonlyMap<ExtractedFact, { verdict: GroundingVerdict | null; chunkIndex: number; itemIndex: number }>;
 
+/** Diagnostics that describe the LLM pass rather than the database write.
+ * When the write loses a duplicate-hash race the transaction is rolled back,
+ * but these are still true: the extraction ran and the host paid for it. Any
+ * buffered code outside this set carries a `factId` minted inside the aborted
+ * transaction and would point at a row that does not exist (#221).
+ *
+ * `ingest_chunk_failed` is listed for completeness but cannot currently reach
+ * a racing flush: only `runFullUpsertGraph` writes `source_ref_index`, so only
+ * a `failedChunks === 0` ingest can trip its UNIQUE index. A partial ingest
+ * never claims the hash and so never races. Listing it keeps the set defined
+ * by category rather than by that incidental reachability. */
+const LLM_PASS_DIAGNOSTIC_CODES = ['ingest_chunk_failed', 'fact_rejected', 'fact_deduplicated'] as const;
+
 /** Shape returned by {@link IngestionService.ingestDocument} when no chunks
  * ran — used for both the `chunks.length === 0` early-return and the
  * `onDuplicateHash: 'skip'` early-return. `duplicateOf` is present as an own
@@ -386,6 +399,15 @@ export class IngestionService {
         // the original error rather than a misleading result.
         if (canonical === null) throw err;
 
+        // The race is confirmed: our transaction rolled back, but the LLM pass
+        // already ran for every chunk and the host paid for it. Emit the
+        // diagnostics that describe that work and drop the ones tied to the
+        // aborted write — those carry `factId`s that were never committed and
+        // would point at rows that do not exist (#221). Applies to all three
+        // modes, so what the host learns about the LLM response does not
+        // depend on which duplicate-hash mode it chose.
+        diagBuffer.flushOnly(this.options, LLM_PASS_DIAGNOSTIC_CODES);
+
         if (onDuplicateHash === 'throw' || onDuplicateHash === 'ingest') {
           throw new WikiDuplicateHashError({ canonical, sourceHash, entityId });
         }
@@ -393,8 +415,9 @@ export class IngestionService {
         return zeroChunkResult(canonical);
       }
 
-      // Post-commit (spec §4.2.4). The duplicate-hash `return zeroChunkResult(...)`
-      // paths in the catch above leave without flushing: nothing was committed.
+      // Post-commit (spec §4.2.4). The duplicate-hash paths in the catch above
+      // leave through `flushOnly`: nothing was committed, so only the
+      // LLM-pass subset goes out there.
       diagBuffer.flush(this.options);
 
       await this.searchService.sync(entityId);
