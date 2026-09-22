@@ -20,6 +20,8 @@
 
 ## Global Constraints
 
+> **Historical:** the separate-worktree and separate-branch workflow below was not used. Both changes were delivered on one branch (`spec/dedup-grounding-edge-index`) as PR #219. See spec rev 2.
+
 - **PR A and PR B are independent.** Separate worktrees and branches, both based on `origin/main` @ `4ebf1bb` (or later `main`). Either can merge first.
   - PR A: worktree `.worktrees/dedup-grounded`, branch `fix/ingest-grounded-dedup`.
   - PR B: worktree `.worktrees/edges-index`, branch `perf/edges-entity-id-index`.

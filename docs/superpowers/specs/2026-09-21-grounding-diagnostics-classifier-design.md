@@ -1,7 +1,7 @@
 # Grounding, Diagnostics & Classifier Hook: Design
 
 **Date:** 2026-09-21
-**Status:** Implemented — revision 10; PRs 1–5 implemented (#198, #202, #213, #197, #216); docs #209. Follow-ups: #214, #217
+**Status:** Implemented — revision 10; PRs 1–5 implemented (#198, #202, #213, #197, #216); docs #209. Follow-ups #214 and #217 implemented in #219 (see `2026-09-22-ingest-grounded-dedup-and-edge-index-design.md`)
 **Branch:** `spec/grounding-diagnostics-classify`
 **Source baseline:** `ab68b73` (core 7.1.3 + consolidated dependency bumps, #194)
 **Delivery:** one docs PR (this spec), then five code PRs (§9). Every code PR is a `feat` minor release; no PR in this series may carry a breaking-change footer.

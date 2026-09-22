@@ -124,6 +124,8 @@ No query text changes. Every edges query filters on `entity_id =` (baseline fact
 
 PR A and PR B don't depend on each other and can merge in either order. Merge every PR as a merge commit; never squash.
 
+> **As delivered (rev 2):** the planned separate PRs were not used. At the user's request, the docs, PR A and PR B commits all landed on one branch (`spec/dedup-grounding-edge-index`) as one PR (#219). The commits stay separate: `cab5909` (PR A), `d58f089` (PR B), `43c914b` (grounding amendment).
+
 ## 6. Revision log
 
 - **rev 1 (2026-09-22):** initial approved design, with pre-PR review fixes folded in: §3.3 buffer-order wording, §3.6 regression gate, and the `migration2.test.ts` title in §4.2. `fix(core)` for PR A was kept after review: #214 is a dedup-quality bug that grounding exposed, and the change only affects ingests with grounding on and duplicate titles. Decisions made with the user: one spec for two PRs, and drop the redundant `edges_entity_idx` in v12 instead of keeping it. The kept duplicate stays in its own chunk's slot because of emergent-mode manifest ordering (baseline fact 4).
