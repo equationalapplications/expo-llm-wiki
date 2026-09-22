@@ -290,7 +290,11 @@ export interface WikiConfig {
    * Default: undefined (pure semantic when embed provided).
    */
   hybridWeight?: number;
-  /** Global prompt overrides for text generation calls (`ingestDocument`, `runLibrarian`, `runHeal`). Does not affect embedding generation. Runtime overrides on individual method calls take precedence. */
+  /**
+   * Global prompt overrides for text generation calls (`ingestDocument`, `runLibrarian`, `runHeal`). Does not affect embedding generation. Runtime overrides on individual method calls take precedence.
+   *
+   * Returned verbatim by `getInstructions` and the `wiki_get_instructions` tool (`memory:read`): never put secrets, API keys or private data here.
+   */
   prompts?: PromptOverrides;
   /**
    * When true, entry and task mutations append an event to the internal outbox table.

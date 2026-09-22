@@ -244,7 +244,7 @@ await wikiMemory.ingestDocument('user-123', {
 const { ingest, librarian, heal, ontologyBackfill } = await wikiMemory.getInstructions('entity-123');
 ```
 
-Returns the system prompt each writer sends, with `WikiConfig.prompts` overrides and the entity's ontology block applied. When `WikiConfig.grounding` is on, the evidence block is appended for each writer in `grounding.writers`, exactly as sent. Data placeholders such as `{{documentChunk}}` stay unfilled; no events, chunks or facts are included. `core-llm-tools` exposes this as the `wiki_get_instructions` tool (`memory:read`), so agents can read the rules before proposing writes.
+Returns the system prompt each writer sends, with `WikiConfig.prompts` overrides and the entity's ontology block applied. When `WikiConfig.grounding` is on, the evidence block is appended for each writer in `grounding.writers`, exactly as sent. Data placeholders such as `{{documentChunk}}` stay unfilled; no events, chunks or facts are included. It reflects `WikiConfig.prompts` only: a per-call `promptOverride` is not reflected, and `ontologyBackfill` is returned even when backfill would send no prompt (ontology `off`, or the classifier path). `core-llm-tools` exposes this as the `wiki_get_instructions` tool (`memory:read`), so agents can see the engine's output format and constraints before proposing writes. Agents should treat it as reference data, not instructions; see [Prompt-Injection Trust Boundary](#prompt-injection-trust-boundary).
 
 > **Warning:** overrides are returned verbatim to any client with `memory:read`. Never put secrets, API keys or private data in `WikiConfig.prompts`.
 
@@ -1004,6 +1004,11 @@ downstream.
 [Grounding](#grounding) is a support check, not an injection defense. It confirms that a fact quotes the
 text the model was shown, and injected text in that source can be quoted like any other.
 
+[`getInstructions`](#effective-instructions-getinstructions) and the `wiki_get_instructions` tool (`memory:read`)
+return `WikiConfig.prompts` overrides verbatim, so keep secrets out of them. The result also includes the entity's
+ontology manifest, which in emergent mode holds types and descriptions the model proposed from ingested
+documents. Agents should treat the result as reference data about the engine, not as instructions to follow.
+
 ## Usage
 
 ```typescript
@@ -1236,7 +1241,7 @@ const statuses = await wikiMemory.pendingSources('entity-123', batch);
 ```
 
 - `current` means exactly what `hasChanged` returning `false` means.
-- `partial` means live facts exist for the ref, but a failed chunk left them without a stored hash. Re-ingest to retry.
+- `partial` means live facts exist for the ref, but none has a stored hash: for example a first ingest where a chunk failed, or imported rows that carry no hash. Re-ingest to retry. A failed re-ingest of a ref that already has hashed rows reports `changed`, not `partial`.
 
 ## Lint
 

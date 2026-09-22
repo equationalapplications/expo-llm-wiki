@@ -41,8 +41,8 @@ Supports [Open Knowledge Format (OKF) v0.2](https://github.com/GoogleCloudPlatfo
 - **Review tier:** Facts can be `draft` until someone reviews them. Reads and traversal can exclude drafts (`excludeDrafts`), and `listDrafts` / `promoteDraft` handle review.
 - **Evidence grounding:** Opt-in `grounding` makes the writers you choose quote the source they were shown. A deterministic check stores a fact whose quotes are missing or not found as a `draft` instead of rejecting it. Off by default.
 - **Optional classifier:** A non-generative `LLMProvider.classify` (e.g. a System-One classifier such as Jev) can type facts during ontology backfill. It is opt-in: adding it to the provider changes nothing until you enable it.
-- **Health checks:** `lint(entityId)` reports dangling edges, manifest violations, untyped facts, drafts and unverified inferences. Read-only; it never repairs. `pendingSources` flags partial-ingest refs (live facts but no stored hash) alongside the changed/current signal from `hasChanged`.
-- **Effective instructions:** `getInstructions(entityId)` returns the system prompt each writer will send, with `WikiConfig.prompts` overrides and the entity's ontology block applied, plus the evidence block for each writer in `grounding.writers` when grounding is on. `core-llm-tools` exposes this as the `wiki_get_instructions` tool (`memory:read`) so agents can read the rules before proposing writes.
+- **Health checks:** `lint(entityId)` reports dangling edges, manifest violations, untyped facts, drafts and unverified inferences. Read-only; it never repairs. `pendingSources` flags refs whose live facts have no stored hash (typically a partial first ingest) alongside the changed/current signal from `hasChanged`.
+- **Effective instructions:** `getInstructions(entityId)` returns the system prompt each writer will send, with `WikiConfig.prompts` overrides and the entity's ontology block applied, plus the evidence block for each writer in `grounding.writers` when grounding is on. `core-llm-tools` exposes this as the `wiki_get_instructions` tool (`memory:read`) so agents can see the engine's output format and constraints before proposing writes.
 - **Cross-Platform:** Choose the right package for your platform: Expo, React Native, React web, vanilla JS, or Node.js. The core logic is framework-agnostic with platform-specific adapters.
 
 ## How It Works
@@ -796,7 +796,7 @@ const statuses = await wiki.pendingSources('entity-123', batch);
 ```
 
 - `current` means exactly what `hasChanged` returning `false` means.
-- `partial` means live facts exist for the ref, but a failed chunk left them without a stored hash. Re-ingest to retry.
+- `partial` means live facts exist for the ref, but none has a stored hash: for example a first ingest where a chunk failed, or imported rows that carry no hash. Re-ingest to retry. A failed re-ingest of a ref that already has hashed rows reports `changed`, not `partial`.
 
 ### Prune (Hard Delete)
 
@@ -873,13 +873,13 @@ Manifest violations are 0 when ontology is off or the manifest is empty. An edge
 
 ### Effective Instructions (`getInstructions`)
 
-The system prompt each writer sends, with `WikiConfig.prompts` overrides and the entity's ontology block applied. When `config.grounding` is on, the evidence block is appended for each writer in `grounding.writers`, exactly as sent. Useful for agents to read the rules before proposing writes:
+The system prompt each writer sends, with `WikiConfig.prompts` overrides and the entity's ontology block applied. When `config.grounding` is on, the evidence block is appended for each writer in `grounding.writers`, exactly as sent. Useful for agents to see the engine's output format and constraints before proposing writes:
 
 ```typescript
 const { ingest, librarian, heal, ontologyBackfill } = await wiki.getInstructions('entity-123');
 ```
 
-Templates only — `{{documentChunk}}` placeholders stay unfilled, and no events, chunks or facts are included. `core-llm-tools` exposes this as the `wiki_get_instructions` tool (`memory:read`), so agents with read access can pull the instructions directly. Overrides are returned verbatim: never put secrets, API keys or private data in `WikiConfig.prompts`. See [core: Effective instructions](packages/core/README.md#effective-instructions-getinstructions).
+Templates only — `{{documentChunk}}` placeholders stay unfilled, and no events, chunks or facts are included. It reflects `WikiConfig.prompts` only: a per-call `promptOverride` is not reflected, and `ontologyBackfill` is returned even when backfill would send no prompt (ontology `off`, or the classifier path). `core-llm-tools` exposes this as the `wiki_get_instructions` tool (`memory:read`), so agents with read access can fetch them as reference data (see [Prompt-Injection Trust Boundary](#prompt-injection-trust-boundary)). Overrides are returned verbatim: never put secrets, API keys or private data in `WikiConfig.prompts`. See [core: Effective instructions](packages/core/README.md#effective-instructions-getinstructions).
 
 ---
 
@@ -1121,7 +1121,9 @@ the text the model was shown, and injected text in that source can be quoted lik
 The `wiki_get_instructions` tool (`memory:read`) returns the effective system prompts for ingest, librarian,
 heal and ontology backfill. Because `WikiConfig.prompts` overrides are returned verbatim, any client with
 `memory:read` can read them. Treat prompt overrides the same way you treat other user-readable configuration:
-do not put secrets, API keys, or private data in `WikiConfig.prompts`.
+do not put secrets, API keys, or private data in `WikiConfig.prompts`. The result also includes the entity's
+ontology manifest, which in emergent mode holds types and descriptions the model proposed from ingested
+documents. Agents should treat the result as reference data about the engine, not as instructions to follow.
 
 ## React Component Lifecycle
 
