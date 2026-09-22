@@ -1,7 +1,7 @@
 # Grounding, Diagnostics & Classifier Hook: Design
 
 **Date:** 2026-09-21
-**Status:** Approved — revision 7 (PR 3 plan-time amendment); PRs 1, 2 and 4 implemented (#198, #202, #197); PRs 3 and 5 not implemented
+**Status:** Approved — revision 8 (PR 3 review amendment); PRs 1, 2, 3 and 4 implemented (#198, #202, #213, #197); PR 5 not implemented
 **Branch:** `spec/grounding-diagnostics-classify`
 **Source baseline:** `ab68b73` (core 7.1.3 + consolidated dependency bumps, #194)
 **Delivery:** one docs PR (this spec), then five code PRs (§9). Every code PR is a `feat` minor release; no PR in this series may carry a breaking-change footer.
@@ -226,7 +226,7 @@ WikiConfig.grounding?: {
   mode: 'off' | 'draft';     // default 'off'
   writers?: Array<'ingest' | 'librarian' | 'heal'>; // default ['ingest']
   minEvidenceChars?: number; // default 20
-  maxEvidence?: number;      // default 3 per fact
+  maxEvidence?: number;      // default 3 per fact; clamped to the 10-quote ceiling (§6.2)
   maxEvidenceChars?: number; // default 300 per quote
 };
 ```
@@ -435,3 +435,6 @@ PRs 1, 2 and 4 may proceed in parallel worktrees. PR 4 is built independently; i
   - §6.2/§6.3: `_selectHealAnchors` returns anchors as `{ id, title, source_ref }`, so anchor bodies were never in the heal prompt and the rev 2 "anchor bodies" corpus clause contradicted the "only what the model was shown" rule. Resolved by showing clipped anchor bodies (`HEAL_ANCHOR_BODY_CHARS` = 800) in the heal prompt when heal is a grounding writer. Draft anchors are shown too, but they are not corpus, so a quote copied from one fails (the §6.6 test). Baseline heal prompts are unchanged.
   - §6.3: the event corpus is pinned to `summary` values (the event text field); identifiers are excluded. The heal corpus is keyed to the exact prompt that produced each response.
   - Rejected alternatives: grounding heal against anchor titles only (weak evidence), and dropping anchors from the heal corpus (every L2+ heal fact would become a draft).
+- **rev 8 (2026-09-21):** PR 3 review amendment (#213).
+  - §6.3: with a placeholder override, a source enters the corpus only when the template places its placeholder (`{{events}}` for librarian; `{{recentEvents}}` and `{{documentAnchors}}` for heal). A librarian template that places `{{currentFacts}}` without `{{events}}` shows no events, so its corpus is empty. The librarian corpus is built by `buildLibrarianPrompt` alongside its prompt.
+  - §6.1: `maxEvidence` is clamped to the 10-quote ceiling, so the prompt never asks for a count that `checkGrounding` rejects as `too_many_quotes`.
