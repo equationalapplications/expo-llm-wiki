@@ -118,6 +118,10 @@ const response = await ai.models.generateContent({
 > (search queries, source citations, etc.) on the response. Parsing that metadata is the
 > caller's responsibility — this package only handles the request-side tool declaration.
 
+### Memory manifests
+
+`wiki_get_ontology` (`wikiGetOntologyManifest`), `wiki_traverse_graph` (`wikiTraverseGraphManifest`), and `wiki_get_instructions` (`wikiGetInstructionsManifest`) are schema-only `memory:read` tools. Dispatch them to `WikiMemory.getOntologyManifest`, `traverseGraph`, and `getInstructions`. `wiki_get_instructions` returns your `WikiConfig.prompts` overrides verbatim, so keep secrets out of them.
+
 ## Helpful Resources & Links
 
 - [Google Gen AI: Function Calling Tutorial](https://ai.google.dev/gemini-api/docs/function-calling) — Official docs on how the JSON schemas in this package interact with Gemini models.

@@ -1228,6 +1228,36 @@ const changes = await wikiMemory.hasChanged('entity-123', batch);
 // Per-document change detection; internally batched across queries
 ```
 
+`pendingSources` returns one status per input, in order, and adds the partial-ingest state:
+
+```typescript
+const statuses = await wikiMemory.pendingSources('entity-123', batch);
+// Array<{ sourceRef: string; status: 'new' | 'changed' | 'partial' | 'current' }>
+```
+
+- `current` means exactly what `hasChanged` returning `false` means.
+- `partial` means live facts exist for the ref, but a failed chunk left them without a stored hash. Re-ingest to retry.
+
+## Lint
+
+Read-only health report for one entity. It reports problems and never repairs them.
+
+```typescript
+const report = await wikiMemory.lint('entity-123');
+// {
+//   danglingEdges,       // source or target missing, soft-deleted, or another entity's
+//   manifestViolations,  // (source type, edge type, target type) not in the effective manifest
+//   untypedFacts,        // okf_type is null
+//   drafts,              // lifecycle_status = 'draft' (see Draft Review)
+//   unverifiedInferred,  // librarian_inferred facts with no okf_verified entry
+//   sample: { danglingEdgeIds, manifestViolationEdgeIds }, // up to 20 each
+// }
+```
+
+- Manifest violations are 0 when ontology is off or the manifest is empty.
+- An edge with an untyped endpoint counts as a violation.
+- Partial-ingest rows are not reported here; use `pendingSources`.
+
 ## Dry-Run Deletion
 
 Preview deletion impact without writing:
