@@ -9,6 +9,11 @@ dist/
 docs/superpowers/plans
 *.tsbuildinfo
 
+# Copied from the installed sql.js on every Vite start by each app's
+# copy-sql-wasm plugin (vite.config.ts). A committed copy goes stale on every
+# sql.js bump and churns whenever a local install resolves a different version.
+apps/*/public/sql-wasm.wasm
+
 # pnpm is the only supported package manager for this workspace (see root
 # package.json "packageManager"). npm lockfiles here are dead weight and get
 # scanned by Dependabot as if they were real.
