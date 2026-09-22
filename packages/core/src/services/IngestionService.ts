@@ -1,6 +1,7 @@
 import { chunkText, withConcurrency, validateFact, factRejectionReason, parseJsonResponse, normalizeSourceRef, normalizeSourceHash, safeErrorToString } from '../utils/pure';
 import { normalizeTitleKey, typeSatisfies } from '../utils/ontology';
 import { DiagnosticBuffer, emitDiagnostic, edgeDropDiagnostic } from '../utils/diagnostics';
+import type { WikiDiagnosticInput } from '../utils/diagnostics';
 import type { EdgeDrop } from '../utils/ontology';
 import { generateId } from '../utils/ids';
 import { WikiParseError, WikiIngestEmptyError, WikiDuplicateHashError, WikiTransactionError, WikiStrictOntologyViolation, WikiGraphNodeOwnershipConflict } from '../types';
@@ -23,6 +24,47 @@ import type { GroundingTrust, GroundingVerdict } from '../utils/grounding';
 type ChunkResult =
   | { status: 'ok'; facts: ExtractedFact[]; itemIndexes: number[]; rejected: Array<{ itemIndex: number; reason: ReturnType<typeof factRejectionReason> }>; verdicts: GroundingVerdict[]; ontology_updates?: OntologyUpdates }
   | { status: 'failed'; error: ChunkFailure };
+
+/** Where a kept fact sat in the LLM response, plus its grounding verdict when
+ * grounding ran. Keyed by fact object identity; the same objects flow through
+ * the full path and the partial path, so both can report the position a
+ * diagnostic refers to. `verdict` is null when grounding is off — that means
+ * "no grounding ran", NOT "ungrounded", so consumers gate on the verdict and
+ * never on the entry's presence. */
+type FactLedger = Map<ExtractedFact, { verdict: GroundingVerdict | null; chunkIndex: number; itemIndex: number }>;
+type ReadonlyFactLedger = ReadonlyMap<ExtractedFact, { verdict: GroundingVerdict | null; chunkIndex: number; itemIndex: number }>;
+
+/** Diagnostics that describe the LLM pass rather than the database write.
+ * When the write loses a duplicate-hash race the transaction is rolled back,
+ * but these are still true: the extraction ran and the host paid for it. Any
+ * buffered code outside this set carries a `factId` minted inside the aborted
+ * transaction and would point at a row that does not exist (#221).
+ *
+ * `ingest_chunk_failed` is listed for completeness but cannot currently reach
+ * a racing flush: only `runFullUpsertGraph` writes `source_ref_index`, so only
+ * a `failedChunks === 0` ingest can trip its UNIQUE index. A partial ingest
+ * never claims the hash and so never races. Listing it keeps the set defined
+ * by category rather than by that incidental reachability. */
+const LLM_PASS_DIAGNOSTIC_CODES = ['ingest_chunk_failed', 'fact_rejected', 'fact_deduplicated'] as const;
+
+/** Build the `fact_deduplicated` input for an ingest title dedupe. Both ingest
+ * sites — the cross-chunk dedupe and the partial path's dedupe against
+ * already-stored facts — go through here, so one code from one operation
+ * cannot drift back into two shapes (#220). A caller with no ledger entry for
+ * the fact omits the locators rather than sending undefined, matching
+ * `edgeDropDiagnostic`'s rule for unknown locators. */
+function dedupDiagnostic(
+  entityId: string,
+  sourceRef: string,
+  locator?: { chunkIndex: number; itemIndex: number },
+): WikiDiagnosticInput {
+  return {
+    entityId, operation: 'ingest', trigger: 'call', code: 'fact_deduplicated',
+    detail: locator
+      ? { sourceRef, chunkIndex: locator.chunkIndex, itemIndex: locator.itemIndex, reason: 'exact_title' }
+      : { sourceRef, reason: 'exact_title' },
+  };
+}
 
 /** Shape returned by {@link IngestionService.ingestDocument} when no chunks
  * ran — used for both the `chunks.length === 0` early-return and the
@@ -248,10 +290,7 @@ export class IngestionService {
       const diagBuffer = new DiagnosticBuffer();
       const diagBase = { entityId, operation: 'ingest' as const, trigger: 'call' as const };
       const pushDeduplicated = (chunkIndex: number, itemIndex: number) => {
-        diagBuffer.push({
-          ...diagBase, code: 'fact_deduplicated',
-          detail: { sourceRef, chunkIndex, itemIndex, reason: 'exact_title' },
-        });
+        diagBuffer.push(dedupDiagnostic(entityId, sourceRef, { chunkIndex, itemIndex }));
       };
       for (const [chunkIndex, slot] of chunkResults.entries()) {
         if (slot.status === 'failed') {
@@ -284,8 +323,13 @@ export class IngestionService {
       // with the chunk whose manifest additions it may depend on.
       const orderedChunkFacts: Array<{ facts: ExtractedFact[]; ontology_updates?: OntologyUpdates }> = [];
       // Keyed by fact object identity: the same objects flow through the
-      // full path and the partial path. Empty when grounding is off.
-      const groundingLedger = new Map<ExtractedFact, { verdict: GroundingVerdict; chunkIndex: number; itemIndex: number }>();
+      // full path and the partial path. Populated for every kept fact
+      // whether grounding is on or off — the locators are what the dedup
+      // diagnostics report (#220), and they exist independently of
+      // grounding. `verdict` is null when grounding is off; a null verdict
+      // means "no grounding ran", never "ungrounded", so every consumer
+      // gates on the verdict rather than on the entry's presence.
+      const factLedger: FactLedger = new Map();
       for (const [chunkIndex, slot] of chunkResults.entries()) {
         if (slot.status === 'failed') continue;
         const keptFacts: ExtractedFact[] = [];
@@ -293,7 +337,11 @@ export class IngestionService {
           const winner = winners.get(normalizeTitleKey(fact.title));
           if (winner?.chunkIndex !== chunkIndex || winner.k !== k) return;
           keptFacts.push(fact);
-          if (ingestGrounding) groundingLedger.set(fact, { verdict: slot.verdicts[k], chunkIndex, itemIndex: winner.itemIndex });
+          factLedger.set(fact, {
+            verdict: ingestGrounding ? slot.verdicts[k] : null,
+            chunkIndex,
+            itemIndex: winner.itemIndex,
+          });
         });
         orderedChunkFacts.push({ facts: keptFacts, ontology_updates: slot.ontology_updates });
       }
@@ -327,7 +375,7 @@ export class IngestionService {
         if (failedChunks === 0) {
           // Happy path — full upsertGraphCore supersession + ownership.
           const fullResult = await this.db.withTransactionAsync(async (tx) => {
-            return await this.runFullUpsertGraph(entityId, sourceRef, sourceHash, orderedChunkFacts, tx, diagBuffer, groundingLedger);
+            return await this.runFullUpsertGraph(entityId, sourceRef, sourceHash, orderedChunkFacts, tx, diagBuffer, factLedger);
           });
           deletedSourceFactIds.push(...fullResult.deletedSourceFactIds);
           insertedFacts.push(...fullResult.insertedFacts);
@@ -343,7 +391,7 @@ export class IngestionService {
           const partialResult = await this.db.withTransactionAsync(async (tx) => {
             const flat: ExtractedFact[] = [];
             for (const slot of orderedChunkFacts) flat.push(...slot.facts);
-            return await this.appendPartialFacts(entityId, sourceRef, flat, tx, diagBuffer, groundingLedger);
+            return await this.appendPartialFacts(entityId, sourceRef, flat, tx, diagBuffer, factLedger);
           });
           insertedFacts.push(...partialResult.insertedDescriptors);
         }
@@ -361,11 +409,27 @@ export class IngestionService {
           : extractSqliteCode(err);
         if (sqliteCode !== 'SQLITE_CONSTRAINT_UNIQUE') throw err;
 
+        // Our write lost a race, and that much is already certain here:
+        // `source_ref_index` is the only UNIQUE that can raise inside this
+        // transaction (the edges UNIQUE is insert-OR-IGNORE, and the
+        // entries-level one went away in migration v9), so a UNIQUE violation
+        // means another writer claimed this hash first. The transaction rolled
+        // back, but the LLM pass already ran for every chunk and the host paid
+        // for it — emit the diagnostics that describe that work, and drop the
+        // ones tied to the aborted write, which carry `factId`s that were
+        // never committed (#221).
+        //
+        // This sits ABOVE the canonical lookup on purpose. Whether we can
+        // still name the winner below does not change what the LLM pass did,
+        // so all three modes and the re-thrown original error leave through
+        // the same flush.
+        diagBuffer.flushOnly(this.options, LLM_PASS_DIAGNOSTIC_CODES);
+
         const canonical = await this.sourceRefIndexRepo.findActiveByEntityAndHash(entityId, sourceHash);
-        // No other live ref holds this hash (e.g. a different constraint
-        // fired, or the racing writer's row was itself rolled back) — the
-        // UNIQUE violation isn't explained by a duplicate-hash race; surface
-        // the original error rather than a misleading result.
+        // No other live ref holds this hash any more — the racing writer's own
+        // row was rolled back or soft-deleted in the meantime. We cannot name
+        // a canonical ref, so surface the original error rather than a
+        // misleading duplicate-hash result.
         if (canonical === null) throw err;
 
         if (onDuplicateHash === 'throw' || onDuplicateHash === 'ingest') {
@@ -375,8 +439,9 @@ export class IngestionService {
         return zeroChunkResult(canonical);
       }
 
-      // Post-commit (spec §4.2.4). The duplicate-hash `return zeroChunkResult(...)`
-      // paths in the catch above leave without flushing: nothing was committed.
+      // Post-commit (spec §4.2.4). The duplicate-hash paths in the catch above
+      // leave through `flushOnly`: nothing was committed, so only the
+      // LLM-pass subset goes out there.
       diagBuffer.flush(this.options);
 
       await this.searchService.sync(entityId);
@@ -694,7 +759,7 @@ export class IngestionService {
     orderedChunkFacts: Array<{ facts: ExtractedFact[]; ontology_updates?: OntologyUpdates }>,
     tx: SQLiteAdapter,
     diagBuffer: DiagnosticBuffer,
-    groundingLedger: ReadonlyMap<ExtractedFact, { verdict: GroundingVerdict; chunkIndex: number; itemIndex: number }> = new Map(),
+    factLedger: ReadonlyFactLedger = new Map(),
   ): Promise<{ deletedSourceFactIds: string[]; insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> }> {
     const deletedSourceFactIds: string[] = [];
     const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
@@ -776,14 +841,16 @@ export class IngestionService {
           tags: fact.tags,
           confidence: fact.confidence,
         });
-        const grounding = groundingLedger.get(fact);
-        if (grounding) {
-          const outcome = groundingOutcome(grounding.verdict, now);
+        const locator = factLedger.get(fact);
+        // Gate on the verdict, not on the entry: the ledger now holds an
+        // entry for every kept fact, with a null verdict when grounding is off.
+        if (locator?.verdict) {
+          const outcome = groundingOutcome(locator.verdict, now);
           nodeTrust.set(id, outcome.trust);
           if (outcome.diagnostic) {
             diagBuffer.push({
               entityId, operation: 'ingest', trigger: 'call', code: outcome.diagnostic.code,
-              detail: { factId: id, sourceRef, chunkIndex: grounding.chunkIndex, itemIndex: grounding.itemIndex, reason: outcome.diagnostic.reason },
+              detail: { factId: id, sourceRef, chunkIndex: locator.chunkIndex, itemIndex: locator.itemIndex, reason: outcome.diagnostic.reason },
             });
           }
         }
@@ -852,7 +919,7 @@ export class IngestionService {
     dedupedFacts: ExtractedFact[],
     tx: SQLiteAdapter,
     diagBuffer: DiagnosticBuffer,
-    groundingLedger: ReadonlyMap<ExtractedFact, { verdict: GroundingVerdict; chunkIndex: number; itemIndex: number }> = new Map(),
+    factLedger: ReadonlyFactLedger = new Map(),
   ): Promise<{
     inserted: number;
     skippedDuplicate: number;
@@ -884,23 +951,27 @@ export class IngestionService {
     const insertedDescriptors: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
     for (const fact of dedupedFacts) {
       const normalizedTitle = normalizeTitleKey(fact.title);
+      const locator = factLedger.get(fact);
       if (liveTitles.has(normalizedTitle)) {
-        diagBuffer.push({
-          entityId, operation: 'ingest', trigger: 'call', code: 'fact_deduplicated',
-          detail: { sourceRef, reason: 'exact_title' },
-        });
+        // Same code, same shape as the cross-chunk dedup in `ingestDocument`:
+        // both name a position in the LLM response. The ledger carries the
+        // locators whether or not grounding ran (#220), so a grounding-off
+        // partial retry reports them too.
+        // A missing ledger entry is only reachable when a caller invokes this
+        // helper directly without one; `dedupDiagnostic` then omits the
+        // locators rather than sending undefined.
+        diagBuffer.push(dedupDiagnostic(entityId, sourceRef, locator));
         skippedDuplicate++;
         continue;
       }
       liveTitles.add(normalizedTitle);
 
       const id = generateId('fact_');
-      const grounding = groundingLedger.get(fact);
-      const outcome = grounding ? groundingOutcome(grounding.verdict, now) : null;
-      if (grounding && outcome?.diagnostic) {
+      const outcome = locator?.verdict ? groundingOutcome(locator.verdict, now) : null;
+      if (locator?.verdict && outcome?.diagnostic) {
         diagBuffer.push({
           entityId, operation: 'ingest', trigger: 'call', code: outcome.diagnostic.code,
-          detail: { factId: id, sourceRef, chunkIndex: grounding.chunkIndex, itemIndex: grounding.itemIndex, reason: outcome.diagnostic.reason },
+          detail: { factId: id, sourceRef, chunkIndex: locator.chunkIndex, itemIndex: locator.itemIndex, reason: outcome.diagnostic.reason },
         });
       }
       const wikiFact: WikiFact = {

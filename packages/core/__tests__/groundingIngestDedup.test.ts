@@ -179,6 +179,33 @@ describe('ingest title dedup, partial path', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ lifecycle_status: 'draft' });
     expect(await bodyOf(h.db, 'X')).toBe('stored draft');
-    expect(ofCode(h.diagnostics, 'fact_deduplicated').map((d) => d.detail)).toEqual([{ sourceRef: 'doc.md', reason: 'exact_title' }]);
+    // #220: the partial-path dedup names a position in the LLM response, the
+    // same as the cross-chunk dedup. 'X' came from chunk 0, item 0.
+    expect(ofCode(h.diagnostics, 'fact_deduplicated').map((d) => d.detail)).toEqual([dedup(0, 0)]);
+  });
+
+  it('#220: the partial-path dedup carries locators with grounding OFF too', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let phase: 1 | 2 = 1;
+    // Chunk 0 yields a rejected item then 'X', so 'X' sits at itemIndex 1 —
+    // an itemIndex that differs from its position among the kept facts, which
+    // is what pins that the locator comes from the LLM response and not from
+    // the enumeration of survivors.
+    const h = await makeDiagnosticWiki({ config: OFF, generateText: async ({ userPrompt }) => {
+      if (userPrompt.includes('BROKEN')) return 'not json';
+      if (phase === 1) return JSON.stringify({ facts: [fact('X', 'stored first')] });
+      return JSON.stringify({ facts: [{ nope: 1 }, fact('X', 'new draft')] });
+    } });
+    await h.wiki.ingestDocument('e1', { sourceRef: 'doc.md', sourceHash: HASH_A, documentChunk: B_TEXT });
+    phase = 2;
+    h.diagnostics.length = 0;
+    await h.wiki.ingestDocument('e1', {
+      sourceRef: 'doc.md', sourceHash: HASH_B, documentChunk: `${B_TEXT}\n\nBROKEN chunk text here.`,
+    });
+    // The stored fact still wins (scenario 8b's rule, out of scope for #220).
+    expect(await bodyOf(h.db, 'X')).toBe('stored first');
+    expect(ofCode(h.diagnostics, 'fact_deduplicated').map((d) => d.detail)).toEqual([dedup(0, 1)]);
+    // Grounding is off, so no grounding diagnostics ride along with the locators.
+    expect(h.diagnostics.filter((d) => d.code.startsWith('grounding_'))).toEqual([]);
   });
 });

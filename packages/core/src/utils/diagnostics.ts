@@ -114,6 +114,24 @@ export class DiagnosticBuffer {
     for (const input of pending) emitDiagnostic(options, input);
   }
 
+  /**
+   * Emit only the buffered diagnostics whose code is in `codes` and discard
+   * the rest. The buffer is empty afterwards either way.
+   *
+   * For an operation that did real work before its write was rolled back:
+   * some buffered diagnostics describe that work and are still true, while
+   * others describe rows that no longer exist (anything carrying a `factId`
+   * minted inside the aborted transaction). `flush` would emit both and
+   * `discard` would drop both; this emits the first set only.
+   */
+  flushOnly(options: DiagnosticTarget, codes: readonly WikiDiagnosticCode[]): void {
+    const pending = this.items;
+    this.items = [];
+    for (const input of pending) {
+      if (codes.includes(input.code)) emitDiagnostic(options, input);
+    }
+  }
+
   discard(): void {
     this.items = [];
   }
