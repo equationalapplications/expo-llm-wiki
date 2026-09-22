@@ -1,7 +1,7 @@
 # Ingest Grounded Dedup & Edge Paging Index: Design
 
 **Date:** 2026-09-22
-**Status:** Approved — revision 1
+**Status:** Implemented — revision 2
 **Branch:** `spec/dedup-grounding-edge-index`
 **Source baseline:** `4ebf1bb` (core 7.7.0, after #216 merged)
 **Issues:** #214, #217
@@ -127,3 +127,4 @@ PR A and PR B don't depend on each other and can merge in either order. Merge ev
 ## 6. Revision log
 
 - **rev 1 (2026-09-22):** initial approved design, with pre-PR review fixes folded in: §3.3 buffer-order wording, §3.6 regression gate, and the `migration2.test.ts` title in §4.2. `fix(core)` for PR A was kept after review: #214 is a dedup-quality bug that grounding exposed, and the change only affects ingests with grounding on and duplicate titles. Decisions made with the user: one spec for two PRs, and drop the redundant `edges_entity_idx` in v12 instead of keeping it. The kept duplicate stays in its own chunk's slot because of emergent-mode manifest ordering (baseline fact 4).
+- **rev 2 (2026-09-22):** status — Implemented. PR A landed as commit `cab5909` (#214), PR B as `d58f089` (#217). Both delivered on a single branch (`spec/dedup-grounding-edge-index`) at the user's request; the spec amendment (grounding rev 10) landed in commit `43c914b`.
