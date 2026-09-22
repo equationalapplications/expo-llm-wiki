@@ -310,6 +310,36 @@ await wiki.promoteDraft(facts[0].id, 'user-1', { by: 'human:alice' }); // → st
 
 `promoteDraft` throws `WikiDraftNotFound` when no live draft with that id exists for the entity. The error is contextless by design. Promotion does not change `updated_at`, so a promoted fact keeps its recency position.
 
+## Grounding
+
+Opt-in, deterministic evidence check for LLM-authored facts. When on, writers you choose must quote the source they were shown. A fact whose quotes are missing or not found is stored as a `draft` (see [Draft Review](#draft-review)), not rejected. A fact whose quotes all check out is stored `stable` with a `process:grounding-check` verifier, so its `trustTier` is `machine-confirmed`. Default off: 7.x write behavior is unchanged.
+
+```ts
+new WikiMemory(db, {
+  llmProvider,
+  config: {
+    grounding: {
+      mode: 'draft',            // 'off' (default) | 'draft'
+      writers: ['ingest'],      // default ['ingest']; also 'librarian', 'heal'
+      minEvidenceChars: 20,     // shorter quotes count as absent
+      maxEvidence: 3,           // quotes asked for per fact
+      maxEvidenceChars: 300,
+    },
+  },
+});
+```
+
+- **What counts as source.**
+  - Ingest: the chunk text.
+  - Librarian: the `summary` of each event in the prompt.
+  - Heal: the `summary` of each recent event in the prompt, plus the bodies of non-draft document anchors. When heal is a writer, anchors are shown with their body clipped to 800 characters.
+  - Instructions, the ontology manifest, existing facts and identifiers never count, so a model cannot ground a claim by quoting them.
+- **The check.** Both sides are normalized with NFKC, whitespace runs collapse to one space, and matching is case-sensitive. A fact with more than 10 quotes, or any quote not found, fails.
+- **Diagnostics.** `grounding_missing` (reasons `no_evidence`, `evidence_too_short`) and `grounding_failed` (reasons `quote_not_found`, `too_many_quotes`), one per fact, with the new fact's `factId`. Quotes are never included.
+- **`upsertGraph`** nodes are host-supplied and never grounded.
+- **Librarian and heal** synthesize across events, so their pass rates are unknown. Measure them on your own event log before opting them in.
+- Evidence quotes are not stored.
+
 ## Pluggable Vector Retrieval
 
 When your entity corpus grows, in-process cosine similarity scoring becomes a bottleneck. The optional **`VectorRanker`** interface lets you delegate semantic ranking to [**sqlite-vec**](https://github.com/asg017/sqlite-vec), [**sqlite-vss**](https://github.com/asg017/sqlite-vss), or an external vector database while `WikiMemory` handles embedding validation, hybrid scoring, and tier-2 row hydration.
