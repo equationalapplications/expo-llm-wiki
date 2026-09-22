@@ -1,7 +1,7 @@
 # Grounding, Diagnostics & Classifier Hook: Design
 
 **Date:** 2026-09-21
-**Status:** Approved — revision 6 (plan-time amendments); not implemented
+**Status:** Approved — revision 9 (PR 3 review amendment); PRs 1, 2, 3 and 4 implemented (#198, #202, #213, #197); PR 5 not implemented
 **Branch:** `spec/grounding-diagnostics-classify`
 **Source baseline:** `ab68b73` (core 7.1.3 + consolidated dependency bumps, #194)
 **Delivery:** one docs PR (this spec), then five code PRs (§9). Every code PR is a `feat` minor release; no PR in this series may carry a breaking-change footer.
@@ -226,7 +226,7 @@ WikiConfig.grounding?: {
   mode: 'off' | 'draft';     // default 'off'
   writers?: Array<'ingest' | 'librarian' | 'heal'>; // default ['ingest']
   minEvidenceChars?: number; // default 20
-  maxEvidence?: number;      // default 3 per fact
+  maxEvidence?: number;      // default 3 per fact; clamped to the 10-quote ceiling (§6.2)
   maxEvidenceChars?: number; // default 300 per quote
 };
 ```
@@ -235,7 +235,7 @@ Default `'off'` keeps 7.x write behavior identical (lifecycle of LLM-authored fa
 
 ### 6.2 Prompt contract
 
-When mode is `'draft'`, `PromptService` appends an evidence instruction block, after any override, to the system prompt of **each writer listed in `grounding.writers` and no other**. Writers outside that list get no block and their facts are written exactly as today. Ingest and librarian can reuse the path that appends ontology context (`appendOntology`, reached from `buildIngestPrompt`/`buildLibrarianPrompt`). Heal has no such mechanism: `buildHealPrompt` takes no ontology context; its placeholder branch only hydrates the template and its default branch returns it as-is (`PromptService.ts:119-178`), so PR 3 adds a direct append there, covering both the placeholder and the non-placeholder branch. The block requires each fact to carry:
+When mode is `'draft'`, `PromptService` appends an evidence instruction block, after any override, to the system prompt of **each writer listed in `grounding.writers` and no other**. Writers outside that list get no block and their facts are written exactly as today. Ingest and librarian can reuse the path that appends ontology context (`appendOntology`, reached from `buildIngestPrompt`/`buildLibrarianPrompt`). Heal has no such mechanism: `buildHealPrompt` takes no ontology context; its placeholder branch only hydrates the template and its default branch returns it as-is (`PromptService.ts:119-178`), so PR 3 adds a direct append there, covering both the placeholder and the non-placeholder branch. The heal prompt shows document anchors as `{ id, title, source_ref }` only, so the model never sees an anchor body (rev 7). When heal is in `grounding.writers` (and only then), each anchor in the heal prompt also carries `body`, clipped to `HEAL_ANCHOR_BODY_CHARS` (800) with `safeSlice`, in both template branches. Outside that case the anchor shape is unchanged. The block requires each fact to carry:
 
 ```json
 "evidence": ["exact substring copied from the SOURCE section"]
@@ -250,12 +250,14 @@ Evidence is checked only against the source material the model was shown, never 
 | Writer | Corpus |
 |---|---|
 | Ingest (full and partial paths) | the chunk text passed to `buildIngestPrompt` |
-| Librarian | the event contents included in the prompt |
-| Heal `newFacts` | the recent-event contents actually included at the attempt's degradation level, plus the bodies of document anchors whose `lifecycle_status` is not `draft` |
+| Librarian | the `summary` of each event included in the prompt |
+| Heal `newFacts` | the `summary` of each recent event actually included at the attempt's degradation level, plus the prompt-visible (clipped) bodies of the document anchors in that prompt whose `lifecycle_status` is not `draft` |
+
+The corpus for a heal response is the one built with the exact prompt that produced it. `runBatched` rebuilds prompts while trimming, splitting and escalating, so the corpus is keyed to the prompt object, not to the batch. Event `id`, `event_type` and timestamps are not corpus: they are shown to the model, but they are identifiers, and quoting them would ground trivially.
 
 Normative rules:
 
-- **Raw values, never serialized prompt text.** The librarian and heal prompts embed events and facts as `JSON.stringify(..., null, 2)` (`PromptService.ts:88-93`; heal `:170`). The corpus is built from the in-memory string values that were serialized, joined with a newline separator, so JSON escape sequences (`\"`, `\n`) in the prompt do not cause false `grounding_failed`. Tests must include events containing quotes, backslashes and newlines.
+- **Raw values, never serialized prompt text.** The librarian and heal prompts embed events and facts as `JSON.stringify(..., null, 2)` (`PromptService.ts:88-93`; heal `:170`). The corpus is built from the in-memory string values that were serialized, kept as one normalized part per value and never concatenated into a single string, so JSON escape sequences (`\"`, `\n`) in the prompt do not cause false `grounding_failed`, and a quote cannot ground across the boundary of two sources. Tests must include events containing quotes, backslashes and newlines.
 - **No circular grounding.** Both prompts also show existing facts ("Current Facts" / the heal dump). Fact bodies are excluded from the corpus: otherwise a new inference could be grounded by quoting an earlier, possibly ungrounded, inference. A quote copied from a shown fact is therefore not found and fails. The one exception is heal's document anchors (`immutable_document` facts), which stand in for source text; only non-draft anchors count.
 - **Degradation.** Heal drops recent events from L2 upward (`PromptService.ts:128-130`). At those levels only anchors remain in the corpus, so the expected result is more `draft` facts, not an error. The heal result's existing `degraded` reporting covers the attempt level.
 - **Writer scope.** `grounding.writers` defaults to `['ingest']`, whose corpus is the document itself. The librarian and heal synthesize across events, so their pass rates are unknown. Hosts may opt them in; before recommending that, a follow-up must measure pass rates on a representative event log.
@@ -265,7 +267,7 @@ Normative rules:
 Deterministic, no LLM:
 
 1. Normalize corpus and quote identically: Unicode NFKC, collapse all whitespace runs to a single space, trim. Case-sensitive.
-2. Quote passes if it is a substring of the normalized corpus.
+2. Quote passes if it is a substring of one normalized corpus part. Parts are never concatenated for matching, so a quote spanning the end of one source and the start of the next fails.
 3. Fact is **grounded** iff at least one quote passes and no quote fails. (A fabricated quote alongside a real one is a poisoning signal, not noise.)
 
 ### 6.5 Outcomes
@@ -284,6 +286,7 @@ Deterministic, no LLM:
 
 - Grounded / missing / fabricated / mixed-quote facts on each writer.
 - Quote copied from instructions or manifest text → fails (corpus excludes them).
+- Quote stitched across two corpus parts (end of one source + start of the next) → `grounding_failed` (per-part containment).
 - Whitespace and NFKC normalization cases; case mismatch fails.
 - Partial ingest path grounds identically.
 - `promptOverride` without evidence wording still receives the appended block, for in-scope writers only.
@@ -429,3 +432,12 @@ PRs 1, 2 and 4 may proceed in parallel worktrees. PR 4 is built independently; i
   - §5.3: only the traverse manifest exists.
   - §7.3: the result field is `edgesAdded`; classifier answers reuse the batch apply step; counting rules.
   - §9: PR 4 diagnostics gated on PR 1.
+- **rev 7 (2026-09-21):** PR 3 plan-time amendment, found while mapping heal. The user chose the resolution.
+  - §6.2/§6.3: `_selectHealAnchors` returns anchors as `{ id, title, source_ref }`, so anchor bodies were never in the heal prompt and the rev 2 "anchor bodies" corpus clause contradicted the "only what the model was shown" rule. Resolved by showing clipped anchor bodies (`HEAL_ANCHOR_BODY_CHARS` = 800) in the heal prompt when heal is a grounding writer. Draft anchors are shown too, but they are not corpus, so a quote copied from one fails (the §6.6 test). Baseline heal prompts are unchanged.
+  - §6.3: the event corpus is pinned to `summary` values (the event text field); identifiers are excluded. The heal corpus is keyed to the exact prompt that produced each response.
+  - Rejected alternatives: grounding heal against anchor titles only (weak evidence), and dropping anchors from the heal corpus (every L2+ heal fact would become a draft).
+- **rev 8 (2026-09-21):** PR 3 review amendment (#213).
+  - §6.3: with a placeholder override, a source enters the corpus only when the template places its placeholder (`{{events}}` for librarian; `{{recentEvents}}` and `{{documentAnchors}}` for heal). A librarian template that places `{{currentFacts}}` without `{{events}}` shows no events, so its corpus is empty. The librarian corpus is built by `buildLibrarianPrompt` alongside its prompt.
+  - §6.1: `maxEvidence` is clamped to the 10-quote ceiling, so the prompt never asks for a count that `checkGrounding` rejects as `too_many_quotes`.
+- **rev 9 (2026-09-21):** PR 3 review amendment (#213), second review round.
+  - §6.3/§6.4: the corpus is per-part. Each source value is normalized as its own part and a quote passes only inside a single part. The rev 2 "joined with a newline separator" wording let a quote stitched across the boundary of two sources (end of one event summary and the start of the next, or a summary into an anchor body) pass `checkGrounding`, grounding a fact on text that appears in no one source. Whitespace normalization collapsed the newline join into a space, making the stitched quote a substring of the joined corpus. Ingest is unaffected (single-part corpus).

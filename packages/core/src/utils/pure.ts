@@ -828,6 +828,28 @@ export function validateTags(tags: any[]): string[] {
     .slice(0, 6);
 }
 
+/** Hard ceiling on evidence quotes per fact (spec §6.2). More than this makes the fact ungrounded. */
+export const MAX_EVIDENCE_QUOTES = 10;
+
+/**
+ * Normalize a fact's raw `evidence`: an array of strings, each trimmed, with
+ * non-strings and empty entries ignored. Collection stops one entry past the
+ * ceiling, which is enough to decide `too_many_quotes` without trimming an
+ * unbounded array. Returns undefined when `raw` is not an array.
+ */
+export function normalizeEvidence(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== 'string') continue;
+    const trimmed = entry.trim();
+    if (!trimmed) continue;
+    out.push(trimmed);
+    if (out.length > MAX_EVIDENCE_QUOTES) break;
+  }
+  return out;
+}
+
 export function validateFact(fact: any): ExtractedFact | null {
   if (typeof fact?.title !== 'string' || typeof fact?.body !== 'string') return null;
   const title = clip(fact.title, 80);
@@ -837,13 +859,17 @@ export function validateFact(fact: any): ExtractedFact | null {
   let confidence = fact.confidence;
   if (confidence !== 'certain' && confidence !== 'tentative') confidence = 'inferred';
 
-  return {
+  const valid: ExtractedFact = {
     ...fact,
     title,
     body,
     confidence,
     tags: validateTags(fact.tags)
   };
+  const evidence = normalizeEvidence(fact.evidence);
+  if (evidence) valid.evidence = evidence;
+  else delete valid.evidence;
+  return valid;
 }
 
 export function validateTask(task: any): ExtractedTask | null {
