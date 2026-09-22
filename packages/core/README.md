@@ -361,6 +361,7 @@ new WikiMemory(db, {
   - Instructions, the ontology manifest, existing facts and identifiers never count, so a model cannot ground a claim by quoting them.
 - **The check.** Both sides are normalized with NFKC, whitespace runs collapse to one space, and matching is case-sensitive. A fact with more than 10 quotes, or any quote not found, fails.
 - **Diagnostics.** `grounding_missing` (reasons `no_evidence`, `evidence_too_short`) and `grounding_failed` (reasons `quote_not_found`, `too_many_quotes`), one per fact, with the new fact's `factId`. Quotes are never included.
+- **Duplicate titles in one ingest.** When chunks yield facts with the same title, ingest keeps one: a grounded fact beats one with missing or failed evidence, and on a tie the first one wins. The others are reported as `fact_deduplicated`. A fact already stored for the same `sourceRef` is not replaced by a later partial ingest.
 - **`upsertGraph`** nodes are host-supplied and never grounded.
 - **Librarian and heal** synthesize across events, so their pass rates are unknown. Measure them on your own event log before opting them in.
 - Evidence quotes are not stored.

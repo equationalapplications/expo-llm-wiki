@@ -291,6 +291,23 @@ export const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 12,
+    description: 'Replace edges_entity_idx with composite edges(entity_id, id) for keyset paging',
+    run: async (db, prefix) => {
+      // lint() pages edges with `entity_id = ? AND id > ? ORDER BY id LIMIT ?`.
+      // With only (entity_id) indexed, every page read and sorted the entity's
+      // whole edge set. The composite index makes each page a bounded range
+      // scan, and its leading column serves every other `entity_id = ?` edges
+      // query, so the single-column index is redundant. Create before drop so
+      // edges is never without an entity_id index. Both statements are
+      // idempotent.
+      await db.execAsync(`
+        CREATE INDEX IF NOT EXISTS ${prefix}edges_entity_id_idx ON ${prefix}edges(entity_id, id);
+        DROP INDEX IF EXISTS ${prefix}edges_entity_idx;
+      `);
+    },
+  },
 ];
 
 // Verify MIGRATIONS are in strictly ascending version order at module load time.

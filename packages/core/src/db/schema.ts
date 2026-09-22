@@ -91,7 +91,7 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
       UNIQUE(entity_id, source_id, target_id, edge_type)
     );
 
-    CREATE INDEX IF NOT EXISTS ${prefix}edges_entity_idx ON ${prefix}edges(entity_id);
+    CREATE INDEX IF NOT EXISTS ${prefix}edges_entity_id_idx ON ${prefix}edges(entity_id, id);
 
     CREATE TABLE IF NOT EXISTS ${prefix}events (
       id TEXT PRIMARY KEY,

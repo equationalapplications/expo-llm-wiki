@@ -235,18 +235,24 @@ export class IngestionService {
         chunkConcurrency
       );
 
-      // Single pass: collect failures, dedup ok facts against the cross-chunk
-      // `seen` set, and count `ingestedChunks` / `failedChunks` together.
+      // Pass 1: collect failures, count chunks, and pick one winner per
+      // normalized title across chunks. A grounded duplicate beats an
+      // ungrounded one; on a tie the first seen wins. With grounding off
+      // every rank is 0, so the first seen always wins (the pre-grounding
+      // rule). Each loser gets exactly one `fact_deduplicated` carrying its
+      // own locators.
       let ingestedChunks = 0;
       let failedChunks = 0;
       const failures: ChunkFailure[] = [];
-      const seen = new Set<string>();
-      const orderedChunkFacts: Array<{ facts: ExtractedFact[]; ontology_updates?: OntologyUpdates }> = [];
-      // Keyed by fact object identity: the same objects flow through dedupe,
-      // the full path and the partial path. Empty when grounding is off.
-      const groundingLedger = new Map<ExtractedFact, { verdict: GroundingVerdict; chunkIndex: number; itemIndex: number }>();
+      const winners = new Map<string, { chunkIndex: number; k: number; itemIndex: number; rank: number }>();
       const diagBuffer = new DiagnosticBuffer();
       const diagBase = { entityId, operation: 'ingest' as const, trigger: 'call' as const };
+      const pushDeduplicated = (chunkIndex: number, itemIndex: number) => {
+        diagBuffer.push({
+          ...diagBase, code: 'fact_deduplicated',
+          detail: { sourceRef, chunkIndex, itemIndex, reason: 'exact_title' },
+        });
+      };
       for (const [chunkIndex, slot] of chunkResults.entries()) {
         if (slot.status === 'failed') {
           failedChunks++;
@@ -257,21 +263,39 @@ export class IngestionService {
         for (const r of slot.rejected) {
           diagBuffer.push({ ...diagBase, code: 'fact_rejected', detail: { sourceRef, chunkIndex, itemIndex: r.itemIndex, reason: r.reason } });
         }
-        const dedupedFacts: ExtractedFact[] = [];
         slot.facts.forEach((fact, k) => {
-          const normalizedTitle = normalizeTitleKey(fact.title);
-          if (!seen.has(normalizedTitle)) {
-            seen.add(normalizedTitle);
-            dedupedFacts.push(fact);
-            if (ingestGrounding) groundingLedger.set(fact, { verdict: slot.verdicts[k], chunkIndex, itemIndex: slot.itemIndexes[k] });
+          const key = normalizeTitleKey(fact.title);
+          const candidate = { chunkIndex, k, itemIndex: slot.itemIndexes[k], rank: slot.verdicts[k]?.status === 'grounded' ? 1 : 0 };
+          const current = winners.get(key);
+          if (!current) {
+            winners.set(key, candidate);
+          } else if (candidate.rank > current.rank) {
+            pushDeduplicated(current.chunkIndex, current.itemIndex);
+            winners.set(key, candidate);
           } else {
-            diagBuffer.push({
-              ...diagBase, code: 'fact_deduplicated',
-              detail: { sourceRef, chunkIndex, itemIndex: slot.itemIndexes[k], reason: 'exact_title' },
-            });
+            pushDeduplicated(candidate.chunkIndex, candidate.itemIndex);
           }
         });
-        orderedChunkFacts.push({ facts: dedupedFacts, ontology_updates: slot.ontology_updates });
+      }
+
+      // Pass 2: each winner stays in its own chunk's slot, never the slot of
+      // the duplicate it displaced. Emergent `ontology_updates` merge per
+      // slot before that slot's facts are validated, so a winner must sit
+      // with the chunk whose manifest additions it may depend on.
+      const orderedChunkFacts: Array<{ facts: ExtractedFact[]; ontology_updates?: OntologyUpdates }> = [];
+      // Keyed by fact object identity: the same objects flow through the
+      // full path and the partial path. Empty when grounding is off.
+      const groundingLedger = new Map<ExtractedFact, { verdict: GroundingVerdict; chunkIndex: number; itemIndex: number }>();
+      for (const [chunkIndex, slot] of chunkResults.entries()) {
+        if (slot.status === 'failed') continue;
+        const keptFacts: ExtractedFact[] = [];
+        slot.facts.forEach((fact, k) => {
+          const winner = winners.get(normalizeTitleKey(fact.title));
+          if (winner?.chunkIndex !== chunkIndex || winner.k !== k) return;
+          keptFacts.push(fact);
+          if (ingestGrounding) groundingLedger.set(fact, { verdict: slot.verdicts[k], chunkIndex, itemIndex: winner.itemIndex });
+        });
+        orderedChunkFacts.push({ facts: keptFacts, ontology_updates: slot.ontology_updates });
       }
 
       for (const reason of ['parse', 'llm'] as const) {
