@@ -1,3 +1,16 @@
+## [7.7.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.6.0...v7.7.0) (2026-09-22)
+
+### Features
+
+* **core:** add pendingSources batch status with a partial-ingest state ([da3678b](https://github.com/equationalapplications/expo-llm-wiki/commit/da3678b8d77d4502edad15451ca5a2c90d3f181e))
+* **core:** add read-only lint report for dangling edges, manifest violations and review backlog ([e4744e5](https://github.com/equationalapplications/expo-llm-wiki/commit/e4744e50833ae381e79e3aa34fc1744f7d355faa))
+* **core:** expose effective system prompts via getInstructions and wiki_get_instructions ([7bf7ff0](https://github.com/equationalapplications/expo-llm-wiki/commit/7bf7ff0a41bd11d12af52f326df23937a5837ac9))
+* **core:** include the grounding block in getInstructions ([1b9f400](https://github.com/equationalapplications/expo-llm-wiki/commit/1b9f4005ecb380556326f891e0204bb71502b7af))
+
+### Bug Fixes
+
+* **core:** validate input shape in pendingSources, lint and getInstructions ([40ba077](https://github.com/equationalapplications/expo-llm-wiki/commit/40ba077143a5ac1f52b0b08d7f063138564ae74d))
+
 ## [7.6.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.5.0...v7.6.0) (2026-09-22)
 
 ### Features
