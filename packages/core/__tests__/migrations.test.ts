@@ -80,6 +80,22 @@ function makeMockDb(opts: {
   return db;
 }
 
+// Locate the schema_version write in the mock's runCalls. setMeta is
+// parameterized (args = ['schema_version', value]); older literal SQL puts the
+// value first. Keeping the shape in one place so the four upgrade tests below
+// can't drift apart.
+function findVersionWrite(
+  db: ReturnType<typeof makeMockDb>,
+  version: number = CURRENT_SCHEMA_VERSION,
+) {
+  const expected = String(version);
+  return db.runCalls.find(
+    c =>
+      (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
+      (c.args[0] === expected || c.args[1] === expected),
+  );
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 import { WikiMemory } from '../src/WikiMemory';
@@ -100,10 +116,7 @@ describe('schema migrations', () => {
     await wiki.setup();
 
     // Should have written schema_version
-    const versionWrite = db.runCalls.find(
-      c => (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
-           (c.args[0] === String(CURRENT_SCHEMA_VERSION) || c.args[1] === String(CURRENT_SCHEMA_VERSION))
-    );
+    const versionWrite = findVersionWrite(db);
     expect(versionWrite).toBeDefined();
 
     // Migration 1 (porter rebuild with DROP TABLE) should NOT have run
@@ -121,10 +134,7 @@ describe('schema migrations', () => {
     expect(hasRebuild).toBe(true);
 
     // Version should have been written
-    const versionWrite = db.runCalls.find(
-      c => (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
-           (c.args[0] === String(CURRENT_SCHEMA_VERSION) || c.args[1] === String(CURRENT_SCHEMA_VERSION))
-    );
+    const versionWrite = findVersionWrite(db);
     expect(versionWrite).toBeDefined();
   });
 
@@ -138,10 +148,14 @@ describe('schema migrations', () => {
     const hasPorterRebuild = db.execCalls.some(s => s.includes('CREATE VIRTUAL TABLE'));
     expect(hasPorterRebuild).toBe(false);
 
-    // Version should still have been written
-    const versionWrite = db.runCalls.find(
-      c => c.sql.includes('schema_version') || c.args[0] === 'schema_version'
+    // Migration 2 is what actually ran: it drops the FTS5 triggers and table.
+    const hasFtsDrop = db.execCalls.some(
+      s => s.includes('DROP TABLE') && s.includes('entries_fts'),
     );
+    expect(hasFtsDrop).toBe(true);
+
+    // Version should still have been written
+    const versionWrite = findVersionWrite(db);
     expect(versionWrite).toBeDefined();
   });
 
@@ -169,10 +183,7 @@ describe('schema migrations', () => {
     );
     expect(hasEdgesTable).toBe(true);
 
-    const versionWrite = db.runCalls.find(
-      c => (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
-           (c.args[0] === String(CURRENT_SCHEMA_VERSION) || c.args[1] === String(CURRENT_SCHEMA_VERSION))
-    );
+    const versionWrite = findVersionWrite(db);
     expect(versionWrite).toBeDefined();
   });
 
@@ -186,10 +197,7 @@ describe('schema migrations', () => {
     );
     expect(hasManifestsTable).toBe(true);
 
-    const versionWrite = db.runCalls.find(
-      c => (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
-           (c.args[0] === String(CURRENT_SCHEMA_VERSION) || c.args[1] === String(CURRENT_SCHEMA_VERSION))
-    );
+    const versionWrite = findVersionWrite(db);
     expect(versionWrite).toBeDefined();
   });
 
