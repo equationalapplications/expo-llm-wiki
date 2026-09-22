@@ -1,4 +1,5 @@
 import { parseJsonResponse, validateFact, validateTask, titleTokens, jaccardScore, normalizeSourceRef, normalizeSourceHash, sanitizeRankerError, safeErrorToString, safeSlice, withConcurrency, factRejectionReason, taskRejectionReason } from '../utils/pure';
+import { buildGroundingCorpus, checkGrounding, groundingOutcome } from '../utils/grounding';
 import { normalizeTitleKey } from '../utils/ontology';
 import { validateClassifierAnswer, classifierStateForFact, type ClassifierRejection } from '../utils/classifier';
 import { DiagnosticBuffer, emitDiagnostic, edgeDropDiagnostic } from '../utils/diagnostics';
@@ -620,8 +621,14 @@ export class MaintenanceService {
 
     const ontologyContext = await this.ontologyService?.buildPromptContext(entityId) ?? null;
 
+    const promptEvents = events.reverse();
+    const librarianGrounding = this.promptService.groundingFor('librarian');
+    // Spec §6.3: event summaries only; the "Current Facts" shown beside them are
+    // excluded so a new inference cannot be grounded by an earlier one.
+    const librarianCorpus = librarianGrounding ? buildGroundingCorpus(promptEvents.map((e) => e.summary)) : '';
+
     const { systemPrompt, userPrompt } = this.promptService.buildLibrarianPrompt(
-      events.reverse(),
+      promptEvents,
       currentFacts,
       promptOverride,
       ontologyContext,
@@ -714,11 +721,19 @@ export class MaintenanceService {
           ?? { okf_type: null, edges: [] };
         for (const drop of validationDrops) diagBuffer.push(edgeDropDiagnostic(drop, { ...diagBase, factId: id }));
 
+        const grounding = librarianGrounding
+          ? groundingOutcome(checkGrounding(fact.evidence, librarianCorpus, librarianGrounding), now)
+          : null;
+        if (grounding?.diagnostic) {
+          diagBuffer.push({ ...diagBase, code: grounding.diagnostic.code, detail: { factId: id, itemIndex: validFactItemIndexes[k], reason: grounding.diagnostic.reason } });
+        }
+
         const factObj: WikiFact = {
           id, entity_id: entityId, title: fact.title, body: fact.body, tags: fact.tags, confidence: fact.confidence,
           source_type: 'librarian_inferred', source_hash: null, source_ref: null,
           created_at: now, updated_at: now, last_accessed_at: null, access_count: 0, deleted_at: null,
           okf_type: normalized.okf_type,
+          ...grounding?.trust,
         };
 
         await this.entryRepo.upsert(factObj, tx);
