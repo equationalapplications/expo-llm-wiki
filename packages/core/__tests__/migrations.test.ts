@@ -171,7 +171,7 @@ describe('schema migrations', () => {
 
     const versionWrite = db.runCalls.find(
       c => (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
-           (c.args[0] === '9' || c.args[1] === '9')
+           (c.args[0] === String(CURRENT_SCHEMA_VERSION) || c.args[1] === String(CURRENT_SCHEMA_VERSION))
     );
     expect(versionWrite).toBeDefined();
   });
@@ -188,7 +188,7 @@ describe('schema migrations', () => {
 
     const versionWrite = db.runCalls.find(
       c => (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
-           (c.args[0] === '9' || c.args[1] === '9')
+           (c.args[0] === String(CURRENT_SCHEMA_VERSION) || c.args[1] === String(CURRENT_SCHEMA_VERSION))
     );
     expect(versionWrite).toBeDefined();
   });
