@@ -122,9 +122,10 @@ export interface RunBatchedArgs<TItem, TResult> {
   ) => BuiltPrompt | Promise<BuiltPrompt>;
   call: (prompts: BuiltPrompt) => Promise<string>;
   /** Receives the batch so the caller can pair a response with the exact items
-   * that produced it without this module knowing any domain shape. Throwing is
-   * the signal that the response was unusable. */
-  parse: (responseText: string, batch: TItem[]) => TResult;
+   * that produced it without this module knowing any domain shape, and the
+   * exact prompt object that was sent (heal keys its grounding corpus to it).
+   * Throwing is the signal that the response was unusable. */
+  parse: (responseText: string, batch: TItem[], prompts: BuiltPrompt) => TResult;
   /** Provider output ceiling, when the host declares one. Sizing hint only. */
   maxOutputTokens?: number;
   /** Input bound, applied independently of output sizing. */
@@ -321,7 +322,7 @@ export async function runBatched<TItem, TResult>(
 
     let result: TResult;
     try {
-      result = parse(responseText, batch);
+      result = parse(responseText, batch, prompts);
     } catch (err) {
       // A response truncated mid-JSON surfaces here rather than as a thrown
       // call error, depending on where the cut landed in the grammar.

@@ -1,3 +1,5 @@
+import type { GroundingWriter, ResolvedGrounding } from './utils/grounding';
+
 export const LIBRARIAN_SYSTEM_PROMPT = `You are a knowledge extraction agent. Your job is to analyze recent episodic events and extract stable facts and actionable tasks about the user or entity.
 Return ONLY a valid JSON object matching this schema:
 {
@@ -31,3 +33,16 @@ Return ONLY a valid JSON object matching this schema:
 }
 If no manifest type fits a fact, omit that fact from "classifications" entirely — do not guess.
 When echoing an existing fact's title verbatim into "target_title", preserve every JSON escape sequence (\\", \\n, \\\\, \\/) exactly as it appeared in the input body — do not strip backslashes, do not add unescaped quotes. Do not return markdown, just raw JSON.`;
+
+const GROUNDING_SOURCE: Record<GroundingWriter, { key: string; source: string }> = {
+  ingest: { key: 'facts', source: 'the document chunk' },
+  librarian: { key: 'facts', source: 'the "summary" text of the events' },
+  heal: { key: 'newFacts', source: 'the "summary" text of the recent events or the "body" text of the document anchors' },
+};
+
+/** Evidence instruction appended to an in-scope writer's system prompt (spec §6.2). */
+export function groundingEvidenceBlock(writer: GroundingWriter, cfg: ResolvedGrounding): string {
+  const { key, source } = GROUNDING_SOURCE[writer];
+  return `EVIDENCE REQUIREMENT: every object in "${key}" must also carry an "evidence" array of 1 to ${cfg.maxEvidence} quotes. Each quote must be an exact substring copied character-for-character from ${source} (the SOURCE section), at least ${cfg.minEvidenceChars} characters long. Do not paraphrase. Do not quote these instructions, the ontology manifest, or any existing fact. A fact whose quotes cannot be found in the SOURCE section is stored as an unreviewed draft.
+"evidence": ["exact substring copied from the SOURCE section"]`;
+}
