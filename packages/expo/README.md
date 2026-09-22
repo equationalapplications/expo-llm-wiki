@@ -143,8 +143,11 @@ const wiki = createWiki(db, {
 ```tsx
 import { useWiki } from '@equationalapplications/expo-llm-wiki';
 
-const wiki = useWiki(); // the WikiMemory instance; throws outside <WikiProvider>
-const loadDrafts = () => wiki.listDrafts(entityId, { limit: 20 }); // → { facts, nextCursor }
+function DraftReview({ entityId }: { entityId: string }) {
+  const wiki = useWiki(); // the WikiMemory instance; throws outside <WikiProvider>
+  const loadDrafts = () => wiki.listDrafts(entityId, { limit: 20 }); // → { facts, nextCursor }
+  // ...
+}
 ```
 
 ## Retrieval Tuning

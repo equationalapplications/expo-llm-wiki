@@ -814,7 +814,7 @@ const wiki = createWiki(db, {
 });
 ```
 
-Diagnostics carry IDs, indexes, counts, ontology slugs and reason slugs, never fact text or LLM output. Transactional diagnostics are delivered after the operation's transaction commits, and an operation that throws delivers none. A hook that throws never affects the operation. See [core: Diagnostics](packages/core/README.md#diagnostics) for every code.
+Diagnostics carry IDs, indexes, counts, ontology slugs and reason slugs, never fact text or LLM output. Transactional diagnostics are delivered after the operation's transaction commits, and an operation that throws delivers none. A hook that throws never affects the operation. See [core: Diagnostics](packages/core/README.md#diagnostics) for details.
 
 ### Draft Review
 
@@ -835,11 +835,11 @@ const wiki = createWiki(db, {
 });
 ```
 
-When grounding is on, each chosen writer's prompt asks for exact quotes from the source it was shown. A fact whose quotes are all found is stored `stable` with trustTier `machine-confirmed`. A fact with missing or unmatched quotes is stored as a `draft` and reported as `grounding_missing` or `grounding_failed`. Prompt overrides keep the evidence instruction: it is appended after your override for every writer in `grounding.writers`. See [core: Grounding](packages/core/README.md#grounding).
+When grounding is on, each chosen writer's prompt asks for exact quotes from the source it was shown. A fact whose quotes check out is stored `stable` with trustTier `machine-confirmed`. A fact with no usable quotes (none, or all shorter than `minEvidenceChars`), a quote that isn't found, or more than 10 quotes is stored as a `draft` and reported as `grounding_missing` or `grounding_failed`. Prompt overrides keep the evidence instruction: it is appended after your override for every writer in `grounding.writers`. See [core: Grounding](packages/core/README.md#grounding).
 
 ### Ontology Backfill with a Classifier
 
-Add an optional `classify` function to your `LLMProvider` and set `config.ontology.backfillClassifier: 'auto'`. `runOntologyBackfill` then types facts with one classifier question per fact instead of a generative call. This needs an ontology mode other than `off` and a manifest with 1 to 255 node types; otherwise the generative path is used. Classifier mode proposes no edges. Pass `{ classifier: 'llm' }` to force the generative path for one run. See [core: Ontology backfill](packages/core/README.md#ontology-backfill).
+Add an optional `classify` function to your `LLMProvider` and set `config.ontology.backfillClassifier: 'auto'`. `runOntologyBackfill` then types facts with one classifier question per fact instead of a generative call. With ontology mode `off`, backfill types nothing on either path. A provider without `classify`, or a manifest with no node types or more than 255, uses the generative path. Classifier mode proposes no edges. Pass `{ classifier: 'llm' }` to force the generative path for one run. See [core: Classifier mode](packages/core/README.md#classifier-mode-optional).
 
 ---
 
