@@ -122,6 +122,8 @@ const wiki = createWiki(db, {
     staleInferredAfterDays: 60,        // default: 60 (days before runHeal downgrades inferred facts; null to disable)
     preFilterLimit: 50,                // default: undefined — MiniSearch pre-filter before cosine scan; recommended for >500 facts
     hybridWeight: 0.7,                 // default: undefined — blend semantic (1.0) ↔ keyword (0.0); pure semantic when unset
+    excludeDrafts: false,              // default: false — hide unreviewed drafts from reads; traversal skips discovered drafts (a draft start fact is still returned)
+    grounding: { mode: 'off' },        // default: off — 'draft' stores facts that don't quote their source as drafts
 
     // Global prompt overrides — librarianSystemPrompt and healSystemPrompt apply to write() auto-runs;
     // ingestSystemPrompt applies only to explicit ingestDocument() calls.
@@ -134,6 +136,18 @@ const wiki = createWiki(db, {
     },
   },
 });
+```
+
+**Diagnostics and draft review.** Pass `onDiagnostic` beside `llmProvider` (not inside `config`) to receive typed, content-free reports of dropped chunks, facts, edges and failed background jobs. `useMemoryRead` and `useWikiTraversal` accept `excludeDrafts` per call, which overrides the config default. There are no dedicated hooks for listing or promoting drafts yet: call `listDrafts` / `promoteDraft` on the `WikiMemory` instance from `useWiki()`, as shown below. With `grounding` on, facts that don't quote their source land as drafts; see [core: Grounding](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md#grounding). See [core: Diagnostics](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md#diagnostics) and [core: Draft Review](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md#draft-review). Other `WikiConfig` fields, such as `ontology`, are documented in the [core README](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md#configuration).
+
+```tsx
+import { useWiki } from '@equationalapplications/expo-llm-wiki';
+
+function DraftReview({ entityId }: { entityId: string }) {
+  const wiki = useWiki(); // the WikiMemory instance; throws outside <WikiProvider>
+  const loadDrafts = () => wiki.listDrafts(entityId, { limit: 20 }); // → { facts, nextCursor }
+  // ...
+}
 ```
 
 ## Retrieval Tuning
