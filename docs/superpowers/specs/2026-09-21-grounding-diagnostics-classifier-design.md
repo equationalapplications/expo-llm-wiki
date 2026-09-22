@@ -1,7 +1,7 @@
 # Grounding, Diagnostics & Classifier Hook: Design
 
 **Date:** 2026-09-21
-**Status:** Implemented — revision 9; PRs 1–5 implemented (#198, #202, #213, #197, #216); docs #209. Follow-ups: #214, #217
+**Status:** Implemented — revision 10; PRs 1–5 implemented (#198, #202, #213, #197, #216); docs #209. Follow-ups: #214, #217
 **Branch:** `spec/grounding-diagnostics-classify`
 **Source baseline:** `ab68b73` (core 7.1.3 + consolidated dependency bumps, #194)
 **Delivery:** one docs PR (this spec), then five code PRs (§9). Every code PR is a `feat` minor release; no PR in this series may carry a breaking-change footer.
@@ -281,6 +281,7 @@ Deterministic, no LLM:
 - Status and trust are written **at insert** in the same transaction as the fact (§3: every in-scope write path mints a new ID). For ingest this requires extending the internal `hostNodes` shape to carry `lifecycle_status` and a verified entry; the public `upsertGraph` signature does not change and `upsertGraph` callers are never grounded (host-supplied deterministic nodes).
 - Evidence quotes are not persisted in this series (open question §10.2).
 - Mode `'off'`: no prompt change, no evidence validation, no status/trust writes — byte-identical to baseline.
+- Duplicate titles within one ingest call (rev 10, #214): the fact with the best verdict is kept, `grounded` over `missing`/`failed`; on a tie the first seen is kept. The kept fact stays in its own chunk's slot. See `2026-09-22-ingest-grounded-dedup-and-edge-index-design.md` §3.
 
 ### 6.6 Tests
 
@@ -443,3 +444,5 @@ PRs 1, 2 and 4 may proceed in parallel worktrees. PR 4 is built independently; i
   - §6.3/§6.4: the corpus is per-part. Each source value is normalized as its own part and a quote passes only inside a single part. The rev 2 "joined with a newline separator" wording let a quote stitched across the boundary of two sources (end of one event summary and the start of the next, or a summary into an anchor body) pass `checkGrounding`, grounding a fact on text that appears in no one source. Whitespace normalization collapsed the newline join into a space, making the stitched quote a substring of the joined corpus. Ingest is unaffected (single-part corpus).
 - **Status revision (2026-09-22):** Implemented. PR 5 lands as #216, the last PR of the series, and the series docs landed as #209. No spec text changed.
   - Tracked outside this spec: #214 (when ingest dedupes by title, prefer a grounded duplicate) and #217 (index for lint's edge paging).
+- **rev 10 (2026-09-22):** post-series amendment (#214).
+  - §6.5: ingest title dedup now keeps the best-grounded duplicate instead of the first one seen. Before grounding the choice didn't matter; with `mode: 'draft'` it decided whether a fact landed `stable` or `draft` based only on chunk order. Grounding off is unchanged. Design: `2026-09-22-ingest-grounded-dedup-and-edge-index-design.md` §3.
