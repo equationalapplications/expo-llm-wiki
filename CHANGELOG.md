@@ -1,3 +1,11 @@
+## [7.7.4](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.7.3...v7.7.4) (2026-09-22)
+
+### Bug Fixes
+
+* **core:** carry LLM-response locators into the partial-path dedup diagnostic ([761c199](https://github.com/equationalapplications/expo-llm-wiki/commit/761c1994522fc31b2a6988d83a2d506e4e9c6dea))
+* **core:** flush LLM-pass diagnostics when an ingest write loses the hash race ([05545ee](https://github.com/equationalapplications/expo-llm-wiki/commit/05545ee78a498a7e027809e36c0ad0d11e10629d))
+* **core:** flush the LLM-pass subset on any raced UNIQUE, not only a named winner ([82902d4](https://github.com/equationalapplications/expo-llm-wiki/commit/82902d4ee2967340f6de1d2712f4fef5dbd19673))
+
 ## [7.7.3](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.7.2...v7.7.3) (2026-09-22)
 
 ### Bug Fixes
