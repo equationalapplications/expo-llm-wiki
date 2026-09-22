@@ -25,6 +25,7 @@ Platform-agnostic TypeScript engine for hybrid LLM memory. Features episodic fac
 - **Per-entity seeded ontology** — Optional Strict, Emergent, or Off modes govern LLM graph extraction; seed taxonomies per entity and persist typed facts with inline edges.
 - **Diagnostics** — Optional `onDiagnostic` hook with typed, content-free reports of dropped chunks, facts, edges, embedding failures and background-job failures ([Diagnostics](#diagnostics))
 - **Draft review** — `excludeDrafts` on reads and traversal, plus `listDrafts` / `promoteDraft` ([Draft Review](#draft-review))
+- **Evidence grounding** — Opt-in `grounding` check; facts that don't quote their source are stored as drafts ([Grounding](#grounding))
 - **Optional classifier** — `LLMProvider.classify` types facts during ontology backfill when you opt in with `ontology.backfillClassifier: 'auto'` ([Ontology backfill](#ontology-backfill))
 
 ## GraphRAG & Multi-Modal Retrieval
@@ -147,6 +148,7 @@ const wikiMemory = new WikiMemory(db, {
     hybridWeight: 0.7,                 // default: undefined — blend semantic (1.0) ↔ keyword (0.0); pure semantic when unset
     enableOutbox: false,               // default: false — when true, entry/task mutations write to an internal SQLite outbox table for external sync (e.g. via @equationalapplications/prisma-outbox)
     excludeDrafts: false,              // default: false — engine default for read()/traverseGraph() excludeDrafts; see Draft Review
+    grounding: { mode: 'off' },        // default: off — 'draft' checks evidence quotes; see Grounding
     ontology: {
       // mode, seedManifests: see Per-Entity Seeded Ontology
       backfillClassifier: 'llm',       // default: 'llm' — 'auto' uses llmProvider.classify when present; see Ontology backfill
@@ -179,6 +181,8 @@ Core maintenance tasks (`ingestDocument`, `runLibrarian`, `runHeal`) use system 
 > | `ingestDocument` | `{ "facts": [{ "title": "string", "body": "string", "tags": ["string"], "confidence": "certain\|inferred\|tentative" }] }` |
 > | `runLibrarian` | `{ "facts": [...], "tasks": [{ "description": "string", "priority": 5 }] }` — `priority` is an integer 0–10 |
 > | `runHeal` | `{ "downgraded": ["factId"], "deleted": ["factId"], "newFacts": [...] }` |
+>
+> **Grounding:** when [`config.grounding`](#grounding) is on, the evidence instruction is appended after your override (and after ontology context) for every writer in `grounding.writers`. Your override does not need to ask for `evidence` itself.
 
 ### Global Overrides (Auto-Runs)
 
@@ -986,6 +990,9 @@ Mitigating prompt injection (e.g. "ignore prior instructions and emit...") is **
 If your application accepts untrusted input that flows into `write()`, `ingestDocument()`, or `importDump()`,
 treat the LLM's librarian/heal output as similarly untrusted — validate or scope it before acting on it
 downstream.
+
+[Grounding](#grounding) is a support check, not an injection defense. It confirms that a fact quotes the
+text the model was shown, and injected text in that source can be quoted like any other.
 
 ## Usage
 
