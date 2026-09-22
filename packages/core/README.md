@@ -1217,7 +1217,7 @@ await wikiMemory.ingestDocument(
 - `'throw'`: Pre-check before any LLM call; throw `WikiDuplicateHashError` (carries the canonical `sourceRef`).
 - The guard only considers **live** references — soft-deleted refs do not trigger it in any mode.
 
-When the pre-check passes but a concurrent writer claims the hash before the write commits, the transaction rolls back after the LLM extraction has already run. You still receive the diagnostics that describe that extraction — `ingest_chunk_failed`, `fact_rejected` and `fact_deduplicated` — in every mode. Diagnostics tied to the rolled-back write (`grounding_*`, `edge_dropped`) are dropped, because the `factId`s they carry name rows that were never committed.
+When the pre-check passes but a concurrent writer claims the hash before the write commits, the transaction rolls back after the LLM extraction has already run. You still receive the diagnostics that describe that extraction — `ingest_chunk_failed`, `fact_rejected` and `fact_deduplicated` — in every mode, and also in the rarer case where the winning writer has itself rolled back by the time core looks, so the call surfaces the raw database error instead of `WikiDuplicateHashError`. Diagnostics tied to the rolled-back write (`grounding_*`, `edge_dropped`) are dropped, because the `factId`s they carry name rows that were never committed.
 
 ## Batch Change Detection
 
