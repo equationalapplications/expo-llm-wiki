@@ -25,17 +25,18 @@ lerna-debug.log*
 .qwen/
 docs/superpowers/plans
 
-# App build outputs (path-less patterns match anywhere)
-node_modules
-dist
-dist-ssr
+# App build outputs (path-less patterns match anywhere; trailing slash keeps
+# them directory-only, so a file of the same name is never silently ignored)
+node_modules/
+dist/
+dist-ssr/
 *.local
 *.tsbuildinfo
 
 # Copied from the installed sql.js on every Vite start by each app's
 # copy-sql-wasm plugin (vite.config.ts). A committed copy goes stale on every
 # sql.js bump and churns whenever a local install resolves a different version.
-apps/*/public/sql-wasm.wasm
+apps/**/public/sql-wasm.wasm
 
 # pnpm is the only supported package manager for this workspace (see root
 # package.json "packageManager"). npm lockfiles here are dead weight and get
