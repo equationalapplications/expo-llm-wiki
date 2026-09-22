@@ -123,7 +123,7 @@ const wiki = createWiki(adapter, {
     staleInferredAfterDays: 60,        // default: 60 (days before runHeal downgrades inferred facts; null to disable)
     preFilterLimit: 50,                // default: undefined — MiniSearch pre-filter before cosine scan; recommended for >500 facts
     hybridWeight: 0.7,                 // default: undefined — blend semantic (1.0) ↔ keyword (0.0); pure semantic when unset
-    excludeDrafts: false,              // default: false — hide unreviewed draft facts from reads and traversal
+    excludeDrafts: false,              // default: false — hide unreviewed drafts from reads; traversal skips discovered drafts (a draft start fact is still returned)
 
     // Global prompt overrides — librarianSystemPrompt and healSystemPrompt apply to write() auto-runs;
     // ingestSystemPrompt applies only to explicit ingestDocument() calls.
