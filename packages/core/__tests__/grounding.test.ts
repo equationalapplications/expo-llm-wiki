@@ -31,6 +31,11 @@ describe('resolveGrounding', () => {
     expect([r.minEvidenceChars, r.maxEvidence, r.maxEvidenceChars]).toEqual([20, 3, 300]);
     expect(resolveGrounding({ mode: 'draft', minEvidenceChars: 7.9 })!.minEvidenceChars).toBe(7);
   });
+
+  it('clamps maxEvidence to the hard quote ceiling checkGrounding enforces', () => {
+    expect(resolveGrounding({ mode: 'draft', maxEvidence: 11 })!.maxEvidence).toBe(10);
+    expect(resolveGrounding({ mode: 'draft', maxEvidence: 10 })!.maxEvidence).toBe(10);
+  });
 });
 
 describe('normalizeForGrounding / buildGroundingCorpus', () => {

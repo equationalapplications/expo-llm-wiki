@@ -97,21 +97,31 @@ export class PromptService {
     currentFacts: unknown[],
     runtimeOverride?: string,
     ontologyContext?: OntologyPromptContext | null,
-  ): { systemPrompt: string; userPrompt: string } {
+  ): { systemPrompt: string; userPrompt: string; groundingCorpus?: string } {
     const template = runtimeOverride ?? this.globalOverrides?.librarianSystemPrompt ?? LIBRARIAN_SYSTEM_PROMPT;
     const hasEvents = /\{\{\s*events\s*\}\}/.test(template);
     const hasCurrentFacts = /\{\{\s*currentFacts\s*\}\}/.test(template);
+    // grounding: spec §6.3, event summaries only — the "Current Facts" shown
+    // beside them are excluded so a new inference cannot be grounded by an
+    // earlier one. A template that places {{currentFacts}} without {{events}}
+    // never shows the events, so they are not in the corpus either.
+    const eventsShown = hasEvents || !hasCurrentFacts;
+    const corpusField = this.groundingFor('librarian')
+      ? { groundingCorpus: buildGroundingCorpus(eventsShown ? events.map(summaryOf) : []) }
+      : {};
     if (hasEvents || hasCurrentFacts || this.hasOntologyPlaceholders(template)) {
       return {
         systemPrompt: this.appendGrounding(this.buildSystemPrompt(template, { events, currentFacts }, ontologyContext), 'librarian'),
         userPrompt: (hasEvents || hasCurrentFacts)
           ? 'Please synthesize the context.'
           : `Events:\n${JSON.stringify(events, null, 2)}\n\nCurrent Facts:\n${JSON.stringify(currentFacts, null, 2)}`,
+        ...corpusField,
       };
     }
     return {
       systemPrompt: this.appendGrounding(this.appendOntology(template, ontologyContext), 'librarian'),
       userPrompt: `Events:\n${JSON.stringify(events, null, 2)}\n\nCurrent Facts:\n${JSON.stringify(currentFacts, null, 2)}`,
+      ...corpusField,
     };
   }
 
@@ -158,19 +168,33 @@ export class PromptService {
     const maxAnchors = Math.max(1, Math.min(HEAL_MAX_ANCHORS, healCandidates.length * HEAL_ANCHORS_PER_CANDIDATE));
     const effectiveAnchors = documentAnchors.slice(0, maxAnchors);
 
+    const template = runtimeOverride ?? this.globalOverrides?.healSystemPrompt ?? HEAL_SYSTEM_PROMPT;
+    const hasRecentEvents = /\{\{\s*recentEvents\s*\}\}/.test(template);
+    const hasDocumentAnchors = /\{\{\s*documentAnchors\s*\}\}/.test(template);
+    const usesPlaceholders =
+      /\{\{\s*healCandidates\s*\}\}/.test(template) ||
+      hasDocumentAnchors ||
+      /\{\{\s*allTasks\s*\}\}/.test(template) ||
+      hasRecentEvents;
+
     // grounding: only when heal is a grounding writer do anchors show a
     // clipped body, and the corpus is built from exactly what this prompt
-    // shows (spec §6.3, rev 7). lifecycle_status decides corpus membership
-    // but is never shown to the model.
+    // shows (spec §6.3, rev 7). A placeholder template shows a source only
+    // when it places that source's placeholder. lifecycle_status decides
+    // corpus membership but is never shown to the model.
     const healGrounding = this.groundingFor('heal');
     const promptAnchors = healGrounding ? effectiveAnchors.map(toGroundingAnchor) : effectiveAnchors;
+    const eventsShown = !usesPlaceholders || hasRecentEvents;
+    const anchorsShown = !usesPlaceholders || hasDocumentAnchors;
     const groundingCorpus = healGrounding
       ? buildGroundingCorpus([
-          ...effectiveEvents.map((e) => (e as { summary?: unknown } | null)?.summary),
-          ...effectiveAnchors
-            .map((a, i) => ({ status: (a as { lifecycle_status?: unknown } | null)?.lifecycle_status, shown: promptAnchors[i] }))
-            .filter((x) => x.status !== 'draft')
-            .map((x) => (x.shown as { body?: unknown } | null)?.body),
+          ...(eventsShown ? effectiveEvents.map(summaryOf) : []),
+          ...(anchorsShown
+            ? effectiveAnchors
+                .map((a, i) => ({ status: (a as { lifecycle_status?: unknown } | null)?.lifecycle_status, shown: promptAnchors[i] }))
+                .filter((x) => x.status !== 'draft')
+                .map((x) => (x.shown as { body?: unknown } | null)?.body)
+            : []),
         ])
       : null;
 
@@ -185,13 +209,7 @@ export class PromptService {
     );
     const corpusField = groundingCorpus !== null ? { groundingCorpus } : {}; // grounding
 
-    const template = runtimeOverride ?? this.globalOverrides?.healSystemPrompt ?? HEAL_SYSTEM_PROMPT;
-    if (
-      /\{\{\s*healCandidates\s*\}\}/.test(template) ||
-      /\{\{\s*documentAnchors\s*\}\}/.test(template) ||
-      /\{\{\s*allTasks\s*\}\}/.test(template) ||
-      /\{\{\s*recentEvents\s*\}\}/.test(template)
-    ) {
+    if (usesPlaceholders) {
       return {
         prompts: {
           systemPrompt: this.appendGrounding(this.hydrate(template, {
@@ -298,6 +316,11 @@ function applyBodyTruncation(
     degraded.push({ id: fact.id, originalBodyChars, truncatedBodyChars });
   }
   return { shapedCandidates, degraded };
+}
+
+/** An event's `summary` — the only event field that enters a grounding corpus (spec §6.3). */
+function summaryOf(event: unknown): unknown {
+  return (event as { summary?: unknown } | null)?.summary;
 }
 
 /** Prompt shape of a heal anchor when heal is a grounding writer: body clipped, lifecycle_status hidden. */

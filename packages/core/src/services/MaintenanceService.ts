@@ -1,5 +1,5 @@
 import { parseJsonResponse, validateFact, validateTask, titleTokens, jaccardScore, normalizeSourceRef, normalizeSourceHash, sanitizeRankerError, safeErrorToString, safeSlice, withConcurrency, factRejectionReason, taskRejectionReason } from '../utils/pure';
-import { buildGroundingCorpus, checkGrounding, groundingOutcome } from '../utils/grounding';
+import { checkGrounding, groundingOutcome } from '../utils/grounding';
 import { normalizeTitleKey } from '../utils/ontology';
 import { validateClassifierAnswer, classifierStateForFact, type ClassifierRejection } from '../utils/classifier';
 import { DiagnosticBuffer, emitDiagnostic, edgeDropDiagnostic } from '../utils/diagnostics';
@@ -626,11 +626,10 @@ export class MaintenanceService {
 
     const promptEvents = events.reverse();
     const librarianGrounding = this.promptService.groundingFor('librarian');
-    // Spec §6.3: event summaries only; the "Current Facts" shown beside them are
-    // excluded so a new inference cannot be grounded by an earlier one.
-    const librarianCorpus = librarianGrounding ? buildGroundingCorpus(promptEvents.map((e) => e.summary)) : '';
 
-    const { systemPrompt, userPrompt } = this.promptService.buildLibrarianPrompt(
+    // groundingCorpus (spec §6.3) is built with the prompt, from the event
+    // summaries that prompt actually shows.
+    const { systemPrompt, userPrompt, groundingCorpus: librarianCorpus = '' } = this.promptService.buildLibrarianPrompt(
       promptEvents,
       currentFacts,
       promptOverride,

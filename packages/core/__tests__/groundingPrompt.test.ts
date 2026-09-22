@@ -89,3 +89,43 @@ describe('heal grounding prompt and corpus', () => {
     expect(svc.buildHealPrompt(candidates, anchors, [], events, undefined, 2).groundingCorpus).not.toContain('Operator observed');
   });
 });
+
+describe('librarian grounding corpus', () => {
+  const svc = new PromptService(undefined, all);
+  const facts = [{ id: 'f1', title: 'Old fact', body: 'an earlier inference sentence' }];
+
+  it('is event summaries only, in the default and {{events}} templates', () => {
+    for (const tpl of [undefined, 'Lib {{events}} {{currentFacts}}', 'Lib {{ontologyManifest}}']) {
+      const { groundingCorpus } = svc.buildLibrarianPrompt(events, facts, tpl, ctx);
+      expect(groundingCorpus).toContain('Operator observed the engine printing tables');
+      expect(groundingCorpus).not.toContain('earlier inference');
+    }
+  });
+
+  it('excludes events a {{currentFacts}}-only template never shows', () => {
+    const { systemPrompt, userPrompt, groundingCorpus } = svc.buildLibrarianPrompt(events, facts, 'Lib {{currentFacts}}', null);
+    expect(`${systemPrompt}${userPrompt}`).not.toContain('Operator observed');
+    expect(groundingCorpus).toBe('');
+  });
+
+  it('is absent when librarian is not a grounding writer', () => {
+    expect('groundingCorpus' in new PromptService(undefined, ingestOnly).buildLibrarianPrompt(events, facts)).toBe(false);
+  });
+});
+
+describe('heal grounding corpus with partial placeholder templates', () => {
+  const svc = new PromptService(undefined, all);
+
+  it('includes only the sources the template places', () => {
+    const candidatesOnly = svc.buildHealPrompt(candidates, anchors, [], events, 'Heal {{healCandidates}}', 0);
+    expect(candidatesOnly.groundingCorpus).toBe('');
+
+    const eventsOnly = svc.buildHealPrompt(candidates, anchors, [], events, 'Heal {{recentEvents}}', 0).groundingCorpus;
+    expect(eventsOnly).toContain('Operator observed');
+    expect(eventsOnly).not.toContain('x'.repeat(20));
+
+    const anchorsOnly = svc.buildHealPrompt(candidates, anchors, [], events, 'Heal {{documentAnchors}}', 0).groundingCorpus;
+    expect(anchorsOnly).toContain('x'.repeat(HEAL_ANCHOR_BODY_CHARS));
+    expect(anchorsOnly).not.toContain('Operator observed');
+  });
+});

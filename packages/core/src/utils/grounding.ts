@@ -29,7 +29,8 @@ export function resolveGrounding(config: GroundingConfig | undefined): ResolvedG
   return {
     writers: new Set(writers),
     minEvidenceChars: positiveInt(config.minEvidenceChars, 20),
-    maxEvidence: positiveInt(config.maxEvidence, 3),
+    // Never ask for more quotes than checkGrounding accepts (MAX_EVIDENCE_QUOTES).
+    maxEvidence: Math.min(MAX_EVIDENCE_QUOTES, positiveInt(config.maxEvidence, 3)),
     maxEvidenceChars: positiveInt(config.maxEvidenceChars, 300),
   };
 }
