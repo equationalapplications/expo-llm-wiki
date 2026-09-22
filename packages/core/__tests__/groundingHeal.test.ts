@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { makeDiagnosticWiki, ofCode, expectNoContent, factRows, GROUNDED, HASH_A, HASH_B } from './helpers/groundingHarness';
-import type { LLMProvider } from '../src/types';
+import type { LLMProvider, WikiOptions } from '../src/types';
+import { MaintenanceService } from '../src/services/MaintenanceService';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -45,6 +46,8 @@ describe('heal grounding', () => {
     const off = await healWiki({}, (p) => { seen.push(p.userPrompt); return respond(); });
     await off.wiki.runHeal('e1');
     expect(seen[0]).not.toContain(ANCHOR_BODY);
+    // Off-mode candidates keep their pre-grounding shape, trust fields included.
+    expect(seen[0]).toContain('"lifecycle_status"');
     seen.length = 0;
     const on = await healWiki(HEAL_ON, (p) => { seen.push(p.userPrompt); return respond(); });
     await on.wiki.runHeal('e1');
@@ -112,5 +115,15 @@ describe('heal grounding', () => {
     const h = await healWiki({ grounding: { mode: 'draft' } }, () => respond(newFact('Ungated', [])));
     await h.wiki.runHeal('e1');
     expect(await healRow(h.db, 'Ungated')).toMatchObject({ lifecycle_status: 'stable', okf_verified: null });
+  });
+});
+
+describe('MaintenanceService fallback PromptService', () => {
+  it('honours config.grounding when constructed without a PromptService', () => {
+    const options = { config: { grounding: { mode: 'draft', writers: ['librarian', 'heal'] } } } as unknown as WikiOptions;
+    const args = [{}, 'llm_wiki_', options, {}, {}, {}, {}, {}, {}, {}, {}] as unknown as ConstructorParameters<typeof MaintenanceService>;
+    const svc = new MaintenanceService(...args) as unknown as { promptService: { groundingFor(w: string): unknown } };
+    expect(svc.promptService.groundingFor('heal')).not.toBeNull();
+    expect(svc.promptService.groundingFor('librarian')).not.toBeNull();
   });
 });

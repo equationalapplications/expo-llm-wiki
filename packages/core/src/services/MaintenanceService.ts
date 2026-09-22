@@ -1,5 +1,5 @@
 import { parseJsonResponse, validateFact, validateTask, titleTokens, jaccardScore, normalizeSourceRef, normalizeSourceHash, sanitizeRankerError, safeErrorToString, safeSlice, withConcurrency, factRejectionReason, taskRejectionReason } from '../utils/pure';
-import { checkGrounding, groundingOutcome } from '../utils/grounding';
+import { resolveGrounding, checkGrounding, groundingOutcome } from '../utils/grounding';
 import { normalizeTitleKey } from '../utils/ontology';
 import { validateClassifierAnswer, classifierStateForFact, type ClassifierRejection } from '../utils/classifier';
 import { DiagnosticBuffer, emitDiagnostic, edgeDropDiagnostic } from '../utils/diagnostics';
@@ -229,7 +229,7 @@ export class MaintenanceService {
     private ontologyService?: OntologyService,
   ) {
     // Fallback for direct instantiation outside WikiMemory facade (e.g. isolated tests).
-    this.promptService = promptService ?? new PromptService(this.options.config?.prompts);
+    this.promptService = promptService ?? new PromptService(this.options.config?.prompts, resolveGrounding(this.options.config?.grounding));
   }
 
   async runPrune(entityId: string, options?: { retainSoftDeletedFor?: number | null; retainEventsFor?: number | null; vacuum?: boolean }): Promise<{ entries: number; tasks: number; events: number }> {
@@ -869,9 +869,16 @@ export class MaintenanceService {
     const allTasks = await this.taskRepo.findAllPending([entityId], HEAL_MAX_TASKS);
     const recentEvents = await this.eventRepo.getRecent(entityId, 20);
 
+    const healGrounding = this.promptService.groundingFor('heal');
+
     const toPromptShape = (f: WikiFact) => {
-      const { embedding: _embedding, embedding_blob: _blob, lifecycle_status: _lifecycle, okf_verified: _verified, last_verified_at: _lva, last_verified_by: _lvb, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
-      return { ...rest, tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags };
+      const { embedding: _embedding, embedding_blob: _blob, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
+      // grounding: spec §6.2 hides trust fields from a grounding writer only;
+      // with heal outside grounding.writers the candidate shape is unchanged.
+      const shown = healGrounding
+        ? (({ lifecycle_status: _l, okf_verified: _v, last_verified_at: _a, last_verified_by: _b, ...r }) => r)(rest)
+        : rest;
+      return { ...shown, tags: typeof shown.tags === 'string' ? JSON.parse(shown.tags) : shown.tags };
     };
 
     // Anchor selection costs a keyword search plus a repository read, and
@@ -882,7 +889,6 @@ export class MaintenanceService {
     // index and the anchor rows can both change between heal runs.
     const anchorCache = new Map<string, HealAnchor[]>();
 
-    const healGrounding = this.promptService.groundingFor('heal');
     // runBatched rebuilds prompts while trimming, splitting and escalating, so
     // the corpus is keyed to the exact prompt object each response came from.
     const corpusByPrompt = new WeakMap<BuiltPrompt, string>();
