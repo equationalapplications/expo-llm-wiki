@@ -1,7 +1,7 @@
 # Grounding, Diagnostics & Classifier Hook: Design
 
 **Date:** 2026-09-21
-**Status:** Approved — revision 9 (PR 3 review amendment); PRs 1, 2, 3 and 4 implemented (#198, #202, #213, #197); PR 5 not implemented
+**Status:** Implemented — revision 9; PRs 1–5 implemented (#198, #202, #213, #197, #216); docs #209. Follow-ups: #214, #217
 **Branch:** `spec/grounding-diagnostics-classify`
 **Source baseline:** `ab68b73` (core 7.1.3 + consolidated dependency bumps, #194)
 **Delivery:** one docs PR (this spec), then five code PRs (§9). Every code PR is a `feat` minor release; no PR in this series may carry a breaking-change footer.
@@ -441,3 +441,5 @@ PRs 1, 2 and 4 may proceed in parallel worktrees. PR 4 is built independently; i
   - §6.1: `maxEvidence` is clamped to the 10-quote ceiling, so the prompt never asks for a count that `checkGrounding` rejects as `too_many_quotes`.
 - **rev 9 (2026-09-21):** PR 3 review amendment (#213), second review round.
   - §6.3/§6.4: the corpus is per-part. Each source value is normalized as its own part and a quote passes only inside a single part. The rev 2 "joined with a newline separator" wording let a quote stitched across the boundary of two sources (end of one event summary and the start of the next, or a summary into an anchor body) pass `checkGrounding`, grounding a fact on text that appears in no one source. Whitespace normalization collapsed the newline join into a space, making the stitched quote a substring of the joined corpus. Ingest is unaffected (single-part corpus).
+- **Status revision (2026-09-22):** Implemented. PR 5 lands as #216, the last PR of the series, and the series docs landed as #209. No spec text changed.
+  - Tracked outside this spec: #214 (when ingest dedupes by title, prefer a grounded duplicate) and #217 (index for lint's edge paging).
