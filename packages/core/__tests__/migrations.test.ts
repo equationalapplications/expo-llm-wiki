@@ -80,19 +80,16 @@ function makeMockDb(opts: {
   return db;
 }
 
-// Locate the schema_version write in the mock's runCalls. setMeta is
-// parameterized (args = ['schema_version', value]); older literal SQL puts the
-// value first. Keeping the shape in one place so the four upgrade tests below
-// can't drift apart.
+// Locate the schema_version write in the mock's runCalls. The only writer is
+// MetadataRepository.setMeta, which is parameterized:
+// runAsync('INSERT INTO ...meta (key, value) VALUES (?, ?)...', [key, value]).
+// Keeping that shape in one place so the upgrade tests below can't drift apart.
 function findVersionWrite(
   db: ReturnType<typeof makeMockDb>,
   version: number = CURRENT_SCHEMA_VERSION,
 ) {
-  const expected = String(version);
   return db.runCalls.find(
-    c =>
-      (c.sql.includes('schema_version') || c.args[0] === 'schema_version') &&
-      (c.args[0] === expected || c.args[1] === expected),
+    c => c.args[0] === 'schema_version' && c.args[1] === String(version),
   );
 }
 
@@ -138,17 +135,13 @@ describe('schema migrations', () => {
     expect(versionWrite).toBeDefined();
   });
 
-  it('legacy install with porter → migration 1 skipped; migration 2 runs to drop FTS5', async () => {
+  it('legacy install with porter → migration 2 drops FTS5 and the chain reaches the current version', async () => {
     const db = makeMockDb({ hasEntries: true, hasPorter: true, metaVersion: null });
     const wiki = createWiki(db);
     await wiki.setup();
 
-    // Migration 1 (porter FTS5 rebuild) should NOT run since porter is already present
-    // and migration 1 is a no-op. The FTS5 virtual table should never be recreated.
-    const hasPorterRebuild = db.execCalls.some(s => s.includes('CREATE VIRTUAL TABLE'));
-    expect(hasPorterRebuild).toBe(false);
-
-    // Migration 2 is what actually ran: it drops the FTS5 triggers and table.
+    // Migration 2 drops the FTS5 triggers and table. (Migration 1 is a no-op
+    // superseded by 2, so there is nothing of its own to assert here.)
     const hasFtsDrop = db.execCalls.some(
       s => s.includes('DROP TABLE') && s.includes('entries_fts'),
     );
@@ -159,13 +152,21 @@ describe('schema migrations', () => {
     expect(versionWrite).toBeDefined();
   });
 
-  it('already at current version → no migration runs', async () => {
-    const db = makeMockDb({ hasEntries: true, hasPorter: true, metaVersion: '7' });
+  it('already at current version → no migration runs and no version write', async () => {
+    const db = makeMockDb({
+      hasEntries: true,
+      hasPorter: true,
+      metaVersion: String(CURRENT_SCHEMA_VERSION),
+    });
     const wiki = createWiki(db);
     await wiki.setup();
 
     const hasRebuild = db.execCalls.some(s => s.includes('DROP TABLE') || s.includes('DROP TRIGGER'));
     expect(hasRebuild).toBe(false);
+
+    // Nothing to advance, so setMeta should not be called for schema_version at all.
+    const anyVersionWrite = db.runCalls.some(c => c.args[0] === 'schema_version');
+    expect(anyVersionWrite).toBe(false);
   });
 
   it('existing install at version 4 → migration 5 adds okf_type columns and creates edges table', async () => {
