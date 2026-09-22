@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { makeDiagnosticWiki } from './helpers/diagnosticsHarness';
 import { PromptService } from '../src/services/PromptService';
 import { HEAL_SYSTEM_PROMPT, INGEST_SYSTEM_PROMPT } from '../src/prompts';
+import { resolveGrounding } from '../src/utils/grounding';
 import type { OntologyManifest } from '../src/types';
 
 const MANIFEST: OntologyManifest = {
@@ -55,5 +56,24 @@ describe('getInstructions', () => {
     expect(t.librarian).toBe(svc.buildLibrarianPrompt([], [], undefined, ctx).systemPrompt);
     expect(t.heal).toBe(svc.buildHealPrompt([{ id: 'c' }], [], [], [], undefined, 0).prompts.systemPrompt);
     expect(t.ontologyBackfill).toBe(svc.buildOntologyBackfillPrompt([], undefined, ctx).systemPrompt);
+  });
+});
+
+describe('getInstructions with grounding', () => {
+  it('appends the evidence block for grounding writers only, identical to the runtime prompt', () => {
+    const svc = new PromptService(undefined, resolveGrounding({ mode: 'draft', writers: ['ingest', 'heal'] }));
+    const ctx = { ontologyManifest: '{}', ontologyModeInstructions: 'ONTOLOGY' };
+    const t = svc.buildInstructionTemplates(ctx);
+    expect(t.ingest).toContain('EVIDENCE REQUIREMENT');
+    expect(t.heal).toContain('EVIDENCE REQUIREMENT');
+    expect(t.librarian).not.toContain('EVIDENCE REQUIREMENT');
+    expect(t.ontologyBackfill).not.toContain('EVIDENCE REQUIREMENT');
+    expect(t.ingest).toBe(svc.buildIngestPrompt('chunk', undefined, ctx).systemPrompt);
+    expect(t.heal).toBe(svc.buildHealPrompt([{ id: 'c' }], [], [], [], undefined, 0).prompts.systemPrompt);
+  });
+
+  it('is unchanged when grounding is off', async () => {
+    const { wiki } = await makeDiagnosticWiki({ config: { grounding: { mode: 'off', writers: ['ingest', 'librarian', 'heal'] } } });
+    expect(JSON.stringify(await wiki.getInstructions('e1'))).not.toContain('EVIDENCE REQUIREMENT');
   });
 });

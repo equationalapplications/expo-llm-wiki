@@ -262,9 +262,9 @@ export class PromptService {
   buildInstructionTemplates(ontologyContext: OntologyPromptContext | null): WikiInstructions {
     const o = this.globalOverrides;
     return {
-      ingest: this.buildSystemPrompt(o?.ingestSystemPrompt ?? INGEST_SYSTEM_PROMPT, {}, ontologyContext),
-      librarian: this.buildSystemPrompt(o?.librarianSystemPrompt ?? LIBRARIAN_SYSTEM_PROMPT, {}, ontologyContext),
-      heal: o?.healSystemPrompt ?? HEAL_SYSTEM_PROMPT,
+      ingest: this.appendGrounding(this.buildSystemPrompt(o?.ingestSystemPrompt ?? INGEST_SYSTEM_PROMPT, {}, ontologyContext), 'ingest'),
+      librarian: this.appendGrounding(this.buildSystemPrompt(o?.librarianSystemPrompt ?? LIBRARIAN_SYSTEM_PROMPT, {}, ontologyContext), 'librarian'),
+      heal: this.appendGrounding(o?.healSystemPrompt ?? HEAL_SYSTEM_PROMPT, 'heal'),
       ontologyBackfill: this.buildSystemPrompt(o?.ontologyBackfillSystemPrompt ?? ONTOLOGY_BACKFILL_SYSTEM_PROMPT, {}, ontologyContext),
     };
   }

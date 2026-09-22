@@ -223,6 +223,16 @@ await wikiMemory.ingestDocument('user-123', {
 
 > **Important:** If your app relies on `write()` auto-runs and needs custom prompts for those runs, use `config.prompts` at construction time. Runtime `promptOverride` values are never forwarded to `WriteService`-triggered internal runs.
 
+### Effective instructions (`getInstructions`)
+
+```typescript
+const { ingest, librarian, heal, ontologyBackfill } = await wikiMemory.getInstructions('entity-123');
+```
+
+Returns the system prompt each writer sends, with `WikiConfig.prompts` overrides and the entity's ontology block applied. When `WikiConfig.grounding` is on, the evidence block is appended for each writer in `grounding.writers`, exactly as sent. Data placeholders such as `{{documentChunk}}` stay unfilled; no events, chunks or facts are included. `core-llm-tools` exposes this as the `wiki_get_instructions` tool (`memory:read`), so agents can read the rules before proposing writes.
+
+> **Warning:** overrides are returned verbatim to any client with `memory:read`. Never put secrets, API keys or private data in `WikiConfig.prompts`.
+
 ## Retrieval Tuning
 
 Optimize `read()` performance and blend retrieval strategies:
