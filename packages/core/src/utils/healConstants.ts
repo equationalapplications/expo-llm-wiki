@@ -40,3 +40,10 @@ export const HEAL_MAX_FACT_BODY_CHARS_L3 = 4_000;
  * function of batch length.
  */
 export const HEAL_MAX_TASKS = 50;
+
+/**
+ * Clip for a document anchor's body in the heal prompt. Bodies are shown only
+ * when heal is a grounding writer (spec §6.2, rev 7). Host `upsertGraph` nodes
+ * are anchors too and have no body limit, so the clip bounds the prompt.
+ */
+export const HEAL_ANCHOR_BODY_CHARS = 800;

@@ -1,4 +1,5 @@
 import { parseJsonResponse, validateFact, validateTask, titleTokens, jaccardScore, normalizeSourceRef, normalizeSourceHash, sanitizeRankerError, safeErrorToString, safeSlice, withConcurrency, factRejectionReason, taskRejectionReason } from '../utils/pure';
+import { resolveGrounding, checkGrounding, groundingOutcome } from '../utils/grounding';
 import { normalizeTitleKey } from '../utils/ontology';
 import { validateClassifierAnswer, classifierStateForFact, type ClassifierRejection } from '../utils/classifier';
 import { DiagnosticBuffer, emitDiagnostic, edgeDropDiagnostic } from '../utils/diagnostics';
@@ -20,6 +21,7 @@ import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
 import { runBatched } from './BoundedLlmCall';
+import type { BuiltPrompt } from './BoundedLlmCall';
 import {
   HEAL_ANCHORS_PER_CANDIDATE,
   HEAL_MAX_ANCHORS,
@@ -112,7 +114,7 @@ interface OntologyBackfillBatch {
 }
 
 /** An immutable_document fact offered to heal purely for contradiction detection. */
-type HealAnchor = { id: string; title: string; source_ref: string | null };
+type HealAnchor = { id: string; title: string; source_ref: string | null; body?: string; lifecycle_status?: string };
 
 /** One parsed heal response, paired with the candidates that produced it. */
 interface HealBatch {
@@ -120,6 +122,8 @@ interface HealBatch {
   downgraded: string[];
   deleted: string[];
   newFacts: ExtractedFact[];
+  /** Corpus of the prompt that produced this response; null when heal is not a grounding writer. */
+  corpus: string[] | null;
 }
 
 /**
@@ -225,7 +229,7 @@ export class MaintenanceService {
     private ontologyService?: OntologyService,
   ) {
     // Fallback for direct instantiation outside WikiMemory facade (e.g. isolated tests).
-    this.promptService = promptService ?? new PromptService(this.options.config?.prompts);
+    this.promptService = promptService ?? new PromptService(this.options.config?.prompts, resolveGrounding(this.options.config?.grounding));
   }
 
   async runPrune(entityId: string, options?: { retainSoftDeletedFor?: number | null; retainEventsFor?: number | null; vacuum?: boolean }): Promise<{ entries: number; tasks: number; events: number }> {
@@ -620,8 +624,13 @@ export class MaintenanceService {
 
     const ontologyContext = await this.ontologyService?.buildPromptContext(entityId) ?? null;
 
-    const { systemPrompt, userPrompt } = this.promptService.buildLibrarianPrompt(
-      events.reverse(),
+    const promptEvents = events.reverse();
+    const librarianGrounding = this.promptService.groundingFor('librarian');
+
+    // groundingCorpus (spec §6.3) is built with the prompt, from the event
+    // summaries that prompt actually shows.
+    const { systemPrompt, userPrompt, groundingCorpus: librarianCorpus = [] } = this.promptService.buildLibrarianPrompt(
+      promptEvents,
       currentFacts,
       promptOverride,
       ontologyContext,
@@ -714,11 +723,19 @@ export class MaintenanceService {
           ?? { okf_type: null, edges: [] };
         for (const drop of validationDrops) diagBuffer.push(edgeDropDiagnostic(drop, { ...diagBase, factId: id }));
 
+        const grounding = librarianGrounding
+          ? groundingOutcome(checkGrounding(fact.evidence, librarianCorpus, librarianGrounding), now)
+          : null;
+        if (grounding?.diagnostic) {
+          diagBuffer.push({ ...diagBase, code: grounding.diagnostic.code, detail: { factId: id, itemIndex: validFactItemIndexes[k], reason: grounding.diagnostic.reason } });
+        }
+
         const factObj: WikiFact = {
           id, entity_id: entityId, title: fact.title, body: fact.body, tags: fact.tags, confidence: fact.confidence,
           source_type: 'librarian_inferred', source_hash: null, source_ref: null,
           created_at: now, updated_at: now, last_accessed_at: null, access_count: 0, deleted_at: null,
           okf_type: normalized.okf_type,
+          ...grounding?.trust,
         };
 
         await this.entryRepo.upsert(factObj, tx);
@@ -852,9 +869,16 @@ export class MaintenanceService {
     const allTasks = await this.taskRepo.findAllPending([entityId], HEAL_MAX_TASKS);
     const recentEvents = await this.eventRepo.getRecent(entityId, 20);
 
+    const healGrounding = this.promptService.groundingFor('heal');
+
     const toPromptShape = (f: WikiFact) => {
       const { embedding: _embedding, embedding_blob: _blob, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
-      return { ...rest, tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags };
+      // grounding: spec §6.2 hides trust fields from a grounding writer only;
+      // with heal outside grounding.writers the candidate shape is unchanged.
+      const shown = healGrounding
+        ? (({ lifecycle_status: _l, okf_verified: _v, last_verified_at: _a, last_verified_by: _b, ...r }) => r)(rest)
+        : rest;
+      return { ...shown, tags: typeof shown.tags === 'string' ? JSON.parse(shown.tags) : shown.tags };
     };
 
     // Anchor selection costs a keyword search plus a repository read, and
@@ -864,6 +888,10 @@ export class MaintenanceService {
     // query the batch produces collapses the repeats. Scoped to this pass: the
     // index and the anchor rows can both change between heal runs.
     const anchorCache = new Map<string, HealAnchor[]>();
+
+    // runBatched rebuilds prompts while trimming, splitting and escalating, so
+    // the corpus is keyed to the exact prompt object each response came from.
+    const corpusByPrompt = new WeakMap<BuiltPrompt, string[]>();
 
     // Captured in the doRunHeal scope so the buildPrompt lambda can push
     // L3 truncation records into it. Reconcile after runBatched returns:
@@ -884,8 +912,9 @@ export class MaintenanceService {
           // buildHealPrompt applies the matching cap on its side — values must match.
           Math.min(HEAL_MAX_ANCHORS, batch.length * HEAL_ANCHORS_PER_CANDIDATE),
           anchorCache,
+          healGrounding !== null,
         );
-        const { prompts, degraded: batchDegraded } = await this.promptService.buildHealPrompt(
+        const { prompts, degraded: batchDegraded, groundingCorpus } = await this.promptService.buildHealPrompt(
           batch.map(toPromptShape),
           documentAnchors,
           allTasks,
@@ -897,16 +926,18 @@ export class MaintenanceService {
         // L0 calls (including trim's speculatives) return degraded: [].
         // Only L3 real attempts can push here.
         degraded.push(...batchDegraded);
+        if (groundingCorpus !== undefined) corpusByPrompt.set(prompts, groundingCorpus);
         return prompts;
       },
       call: (prompts) => this.options.llmProvider.generateText(prompts),
-      parse: (responseText, batch) => {
+      parse: (responseText, batch, prompts) => {
         const result = parseJsonResponse<{ downgraded: string[], deleted: string[], newFacts: ExtractedFact[] }>(responseText);
         return {
           batch,
           downgraded: Array.isArray(result.downgraded) ? result.downgraded : [],
           deleted: Array.isArray(result.deleted) ? result.deleted : [],
           newFacts: Array.isArray(result.newFacts) ? result.newFacts : [],
+          corpus: corpusByPrompt.get(prompts) ?? null,
         };
       },
       maxOutputTokens: this.options.llmProvider.maxOutputTokens,
@@ -926,6 +957,7 @@ export class MaintenanceService {
     // Position within the producing batch's response, not the merged list, so
     // a diagnostic's itemIndex points into an array the model actually returned.
     const newFactItemIndexes: number[] = [];
+    const newFactCorpora: Array<string[] | null> = [];
 
     for (const batchResult of outcome.results) {
       const mutableIds = new Set(batchResult.batch.map(f => f.id));
@@ -934,6 +966,7 @@ export class MaintenanceService {
       batchResult.newFacts.forEach((raw, itemIndex) => {
         newFacts.push(raw);
         newFactItemIndexes.push(itemIndex);
+        newFactCorpora.push(batchResult.corpus);
       });
     }
 
@@ -942,12 +975,14 @@ export class MaintenanceService {
     const diagBuffer = new DiagnosticBuffer();
     const validNewFacts: ExtractedFact[] = [];
     const validNewFactItemIndexes: number[] = [];
+    const validNewFactCorpora: Array<string[] | null> = [];
     newFacts.forEach((raw, k) => {
       const itemIndex = newFactItemIndexes[k];
       const valid = validateFact(raw);
       if (valid) {
         validNewFacts.push(valid);
         validNewFactItemIndexes.push(itemIndex);
+        validNewFactCorpora.push(newFactCorpora[k]);
       } else {
         diagBuffer.push({ ...diagBase, code: 'fact_rejected', detail: { itemIndex, reason: factRejectionReason(raw) } });
       }
@@ -1003,10 +1038,18 @@ export class MaintenanceService {
         }
 
         const id = generateId('fact_');
+        // A missing corpus is treated as empty, so every quote fails: fail closed.
+        const grounding = healGrounding
+          ? groundingOutcome(checkGrounding(fact.evidence, validNewFactCorpora[k] ?? [], healGrounding), now)
+          : null;
+        if (grounding?.diagnostic) {
+          diagBuffer.push({ ...diagBase, code: grounding.diagnostic.code, detail: { factId: id, itemIndex: validNewFactItemIndexes[k], reason: grounding.diagnostic.reason } });
+        }
         const factObj: WikiFact = {
           id, entity_id: entityId, title: fact.title, body: fact.body, tags: fact.tags, confidence: fact.confidence,
           source_type: 'librarian_inferred', source_hash: null, source_ref: null,
           created_at: now, updated_at: now, last_accessed_at: null, access_count: 0, deleted_at: null,
+          ...grounding?.trust,
         };
 
         await this.entryRepo.upsert(factObj, tx);
@@ -1515,6 +1558,7 @@ export class MaintenanceService {
     batch: WikiFact[],
     cap: number = HEAL_MAX_ANCHORS,
     cache?: Map<string, HealAnchor[]>,
+    withBodies: boolean = false,
   ): Promise<HealAnchor[]> {
     const query = batch.map(f => f.title).join(' ').trim();
     if (!query) return [];
@@ -1533,7 +1577,9 @@ export class MaintenanceService {
 
     const anchors: HealAnchor[] = [];
     if (hitIds.length > 0) {
-      const rows = await this.entryRepo.findAnchorRowsByIds(entityId, hitIds);
+      const rows = withBodies
+        ? await this.entryRepo.findAnchorRowsByIds(entityId, hitIds, undefined, { withBody: true })
+        : await this.entryRepo.findAnchorRowsByIds(entityId, hitIds);
       const byId = new Map(rows.map(r => [r.id, r]));
 
       for (const id of hitIds) {

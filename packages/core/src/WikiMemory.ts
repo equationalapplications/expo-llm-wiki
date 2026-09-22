@@ -25,6 +25,7 @@ import { MetadataRepository, entitySummaryMetaKey } from './repositories/Metadat
 import { SearchService } from './services/SearchService';
 import { JobManager } from './services/JobManager';
 import { normalizeSourceRef, normalizeSourceHash, validateFact, validateTask, clip, chunkText } from './utils/pure';
+import { resolveGrounding } from './utils/grounding';
 import { IngestionService } from './services/IngestionService';
 import { MaintenanceService } from './services/MaintenanceService';
 import { ImportExportService } from './services/ImportExportService';
@@ -131,7 +132,7 @@ export class WikiMemory {
     this.embeddingService = new EmbeddingService(this.db, this.options, this.entryRepo, this.metadataRepo);
     this.searchService = new SearchService(this.entryRepo);
     this.jobManager = new JobManager(this.prefix);
-    this.promptService = new PromptService(options.config?.prompts);
+    this.promptService = new PromptService(options.config?.prompts, resolveGrounding(options.config?.grounding));
     this.ingestionService = new IngestionService(
       this.db,
       this.prefix,

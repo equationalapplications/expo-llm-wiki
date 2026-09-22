@@ -1,3 +1,33 @@
+## [7.6.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.5.0...v7.6.0) (2026-09-22)
+
+### Features
+
+* **core:** add grounding config, evidence validation and deterministic check ([9a2ae80](https://github.com/equationalapplications/expo-llm-wiki/commit/9a2ae80f2503967312f44e0cdb4fad0b48bbb355))
+* **core:** append the evidence block for grounding writers and build the heal corpus ([66075d2](https://github.com/equationalapplications/expo-llm-wiki/commit/66075d201b2d981734a37fa3f337e3045a56d54b))
+* **core:** ground heal facts against the events and non-draft anchor bodies each prompt showed ([30c09f0](https://github.com/equationalapplications/expo-llm-wiki/commit/30c09f099c15feef9b5bf7256105e3bc2bf544c1))
+* **core:** ground ingest facts against their chunk and store ungrounded ones as drafts ([7ea01bc](https://github.com/equationalapplications/expo-llm-wiki/commit/7ea01bc1f4ab87735501bd05b8190f6bc3da9ea3))
+* **core:** ground librarian facts against event summaries when opted in ([8a9a925](https://github.com/equationalapplications/expo-llm-wiki/commit/8a9a925f4587291223b308b197d78e1dd29760a8))
+
+### Bug Fixes
+
+* **core:** build each grounding corpus from only the sources its prompt shows ([d25bc9a](https://github.com/equationalapplications/expo-llm-wiki/commit/d25bc9af81850087e15831bea88f1d758298b934))
+* **core:** ground each quote within a single corpus part ([156e765](https://github.com/equationalapplications/expo-llm-wiki/commit/156e76503b59b4816b64d9b47f5c61c02774e99f))
+* **core:** keep off-mode heal candidates unchanged and ground the fallback PromptService ([ed2a4fd](https://github.com/equationalapplications/expo-llm-wiki/commit/ed2a4fd8ba07ad4ce7497ec2b627613394e4b912))
+
+## [7.5.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.4.0...v7.5.0) (2026-09-21)
+
+### Features
+
+* **core:** add optional LLMProvider.classify types and answer validation ([e4e72dc](https://github.com/equationalapplications/expo-llm-wiki/commit/e4e72dcf509a998823cd5d6262d397e668742b06))
+* **core:** classifier-mode ontology backfill behind backfillClassifier ([2c5fbc9](https://github.com/equationalapplications/expo-llm-wiki/commit/2c5fbc956bbcca71b3e8db6a84328e748effdf46))
+* **core:** emit classification diagnostics from classifier backfill ([6c8836b](https://github.com/equationalapplications/expo-llm-wiki/commit/6c8836b05fc2b04236682ff9de574bdc8eaa1fdb))
+
+### Bug Fixes
+
+* **core:** call classify through the provider to keep its this binding ([021b577](https://github.com/equationalapplications/expo-llm-wiki/commit/021b577aca256a035e70e734b7f6291cd225f1e6))
+* **core:** call embed through the provider and guard by callability ([bb2fd31](https://github.com/equationalapplications/expo-llm-wiki/commit/bb2fd31b7a83b3d8133c3195452ab45b9363853a))
+* **core:** call llmProvider.embed with the provider as this ([6c847b6](https://github.com/equationalapplications/expo-llm-wiki/commit/6c847b69b2077c487cbfd1b7845909ed05715246))
+
 ## [7.4.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.3.0...v7.4.0) (2026-09-21)
 
 ### Features

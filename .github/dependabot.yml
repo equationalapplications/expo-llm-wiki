@@ -29,6 +29,14 @@ updates:
       # once release-notes-generator 15 ships stable.
       - dependency-name: conventional-changelog-conventionalcommits
         update-types: ["version-update:semver-major"]
+      # TypeScript 7 is the native (Go) port, and its npm package has no
+      # classic JS compiler API (ts.sys and ts.createProgram are undefined).
+      # tsup 8.5.1 bundles rollup-plugin-dts 6.1.1, which needs that API, so
+      # every `tsup --dts` build crashes ("reading 'useCaseSensitiveFileNames'").
+      # Unpin once the declaration build runs on TS 7: a tsup release with
+      # TS 7 support, or a move to a bundler that uses @typescript/typescript6.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
     open-pull-requests-limit: 10
   - package-ecosystem: github-actions
     directory: /

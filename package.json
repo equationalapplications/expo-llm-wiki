@@ -1,7 +1,7 @@
 {
   "name": "expo-llm-wiki",
   "private": true,
-  "version": "7.4.0",
+  "version": "7.6.0",
   "description": "Private workspace root. Published packages are under packages/. src/ contains backward-compat build aliases only.",
   "license": "MIT",
   "packageManager": "pnpm@10.33.2",
@@ -37,7 +37,7 @@
     "@semantic-release/exec": "7.1.0",
     "@semantic-release/git": "11.0.1",
     "@types/better-sqlite3": "9.6.0",
-    "@types/node": "26.4.1",
+    "@types/node": "26.5.0",
     "@types/react": "19.2.18",
     "@vitest/coverage-v8": "5.0.0",
     "better-sqlite3": "13.0.3",
