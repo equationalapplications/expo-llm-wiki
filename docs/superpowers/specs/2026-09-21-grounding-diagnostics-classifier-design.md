@@ -1,7 +1,7 @@
 # Grounding, Diagnostics & Classifier Hook: Design
 
 **Date:** 2026-09-21
-**Status:** Approved — revision 8 (PR 3 review amendment); PRs 1, 2, 3 and 4 implemented (#198, #202, #213, #197); PR 5 not implemented
+**Status:** Approved — revision 9 (PR 3 review amendment); PRs 1, 2, 3 and 4 implemented (#198, #202, #213, #197); PR 5 not implemented
 **Branch:** `spec/grounding-diagnostics-classify`
 **Source baseline:** `ab68b73` (core 7.1.3 + consolidated dependency bumps, #194)
 **Delivery:** one docs PR (this spec), then five code PRs (§9). Every code PR is a `feat` minor release; no PR in this series may carry a breaking-change footer.
@@ -257,7 +257,7 @@ The corpus for a heal response is the one built with the exact prompt that produ
 
 Normative rules:
 
-- **Raw values, never serialized prompt text.** The librarian and heal prompts embed events and facts as `JSON.stringify(..., null, 2)` (`PromptService.ts:88-93`; heal `:170`). The corpus is built from the in-memory string values that were serialized, joined with a newline separator, so JSON escape sequences (`\"`, `\n`) in the prompt do not cause false `grounding_failed`. Tests must include events containing quotes, backslashes and newlines.
+- **Raw values, never serialized prompt text.** The librarian and heal prompts embed events and facts as `JSON.stringify(..., null, 2)` (`PromptService.ts:88-93`; heal `:170`). The corpus is built from the in-memory string values that were serialized, kept as one normalized part per value and never concatenated into a single string, so JSON escape sequences (`\"`, `\n`) in the prompt do not cause false `grounding_failed`, and a quote cannot ground across the boundary of two sources. Tests must include events containing quotes, backslashes and newlines.
 - **No circular grounding.** Both prompts also show existing facts ("Current Facts" / the heal dump). Fact bodies are excluded from the corpus: otherwise a new inference could be grounded by quoting an earlier, possibly ungrounded, inference. A quote copied from a shown fact is therefore not found and fails. The one exception is heal's document anchors (`immutable_document` facts), which stand in for source text; only non-draft anchors count.
 - **Degradation.** Heal drops recent events from L2 upward (`PromptService.ts:128-130`). At those levels only anchors remain in the corpus, so the expected result is more `draft` facts, not an error. The heal result's existing `degraded` reporting covers the attempt level.
 - **Writer scope.** `grounding.writers` defaults to `['ingest']`, whose corpus is the document itself. The librarian and heal synthesize across events, so their pass rates are unknown. Hosts may opt them in; before recommending that, a follow-up must measure pass rates on a representative event log.
@@ -267,7 +267,7 @@ Normative rules:
 Deterministic, no LLM:
 
 1. Normalize corpus and quote identically: Unicode NFKC, collapse all whitespace runs to a single space, trim. Case-sensitive.
-2. Quote passes if it is a substring of the normalized corpus.
+2. Quote passes if it is a substring of one normalized corpus part. Parts are never concatenated for matching, so a quote spanning the end of one source and the start of the next fails.
 3. Fact is **grounded** iff at least one quote passes and no quote fails. (A fabricated quote alongside a real one is a poisoning signal, not noise.)
 
 ### 6.5 Outcomes
@@ -286,6 +286,7 @@ Deterministic, no LLM:
 
 - Grounded / missing / fabricated / mixed-quote facts on each writer.
 - Quote copied from instructions or manifest text → fails (corpus excludes them).
+- Quote stitched across two corpus parts (end of one source + start of the next) → `grounding_failed` (per-part containment).
 - Whitespace and NFKC normalization cases; case mismatch fails.
 - Partial ingest path grounds identically.
 - `promptOverride` without evidence wording still receives the appended block, for in-scope writers only.
@@ -438,3 +439,5 @@ PRs 1, 2 and 4 may proceed in parallel worktrees. PR 4 is built independently; i
 - **rev 8 (2026-09-21):** PR 3 review amendment (#213).
   - §6.3: with a placeholder override, a source enters the corpus only when the template places its placeholder (`{{events}}` for librarian; `{{recentEvents}}` and `{{documentAnchors}}` for heal). A librarian template that places `{{currentFacts}}` without `{{events}}` shows no events, so its corpus is empty. The librarian corpus is built by `buildLibrarianPrompt` alongside its prompt.
   - §6.1: `maxEvidence` is clamped to the 10-quote ceiling, so the prompt never asks for a count that `checkGrounding` rejects as `too_many_quotes`.
+- **rev 9 (2026-09-21):** PR 3 review amendment (#213), second review round.
+  - §6.3/§6.4: the corpus is per-part. Each source value is normalized as its own part and a quote passes only inside a single part. The rev 2 "joined with a newline separator" wording let a quote stitched across the boundary of two sources (end of one event summary and the start of the next, or a summary into an anchor body) pass `checkGrounding`, grounding a fact on text that appears in no one source. Whitespace normalization collapsed the newline join into a space, making the stitched quote a substring of the joined corpus. Ingest is unaffected (single-part corpus).
