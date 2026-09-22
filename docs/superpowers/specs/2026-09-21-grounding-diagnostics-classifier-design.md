@@ -142,7 +142,7 @@ The union is closed for this series; adding a code later is a minor change, so h
 1. **Additive.** Existing console output is unchanged (REQ-COMPAT-01.4).
 2. **Isolated.** The hook is invoked inside `try/catch`. A throwing or non-function hook never alters the calling operation's result, never aborts ingest/heal, and is itself reported only to `console.warn` (no recursive diagnostic).
 3. **Synchronous, non-awaited.** A returned promise is ignored; a rejected returned promise is caught and swallowed to `console.warn`.
-4. **Post-commit for transactional work.** Each operation collects its diagnostics in an operation-scoped buffer and flushes it right after its own transaction commits. Sites that already run after commit (embedding, host-hook failures) emit directly. If the operation throws before commit, the buffer is discarded and the exception is the signal. **Exception — `upsertGraph`:** the host owns that transaction and core never sees its commit, so the buffer is flushed when `upsertGraph` resolves. The docs tell hosts that roll back to disregard those diagnostics.
+4. **Post-commit for transactional work.** Each operation collects its diagnostics in an operation-scoped buffer and flushes it right after its own transaction commits. Sites that already run after commit (embedding, host-hook failures) emit directly. If the operation throws before commit, the buffer is discarded and the exception is the signal. **Exception — `upsertGraph`:** the host owns that transaction and core never sees its commit, so the buffer is flushed when `upsertGraph` resolves. The docs tell hosts that roll back to disregard those diagnostics. **Exception — a lost duplicate-hash race in `ingestDocument`:** the write rolls back, but the LLM pass already ran for every chunk and the host paid for it. The buffer is flushed selectively (`DiagnosticBuffer.flushOnly`) for the codes that describe the LLM response — `ingest_chunk_failed`, `fact_rejected`, `fact_deduplicated` — and everything else is dropped, because any other buffered code carries a `factId` minted inside the aborted transaction and would name a row that does not exist. This applies to all three `onDuplicateHash` modes, so what the host learns about the LLM response does not depend on the mode it chose (#221).
 5. **Aggregation.** In this series only `ingest_chunk_failed` is aggregated; every other code is emitted once per item so its locator fields survive. `ingest_chunk_failed` is aggregated per `(reason)` per ingest call so a large all-fail ingest cannot flood a synchronous hook. Per-fact codes that a reviewer would act on (`grounding_*`) are never aggregated.
 
 6. **Fixed severity.** Severity is a function of the code: `info` for `fact_deduplicated` and `classification_low_confidence`; `error` for `background_job_failed`; `warn` for every other code.
@@ -160,13 +160,16 @@ Diagnostics are an exfiltration surface if they carry content. `message` is a fi
 | `IngestionService` chunk catch | `ingest_chunk_failed` | `parse`, `llm` |
 | `validateFact` null (ingest, librarian, heal) | `fact_rejected` | `missing_title`, `missing_body`, `invalid_shape` |
 | `validateTask` null (librarian) | `task_rejected` | `missing_description`, `invalid_shape` |
-| Jaccard dedupe skip (librarian, heal); ingest title dedupe | `fact_deduplicated` | `fuzzy_title`, `exact_title` |
+| Jaccard dedupe skip (librarian, heal) | `fact_deduplicated` | `fuzzy_title` |
+| ingest title dedupe — cross-chunk, and partial-path against already-stored facts | `fact_deduplicated` | `exact_title` |
 | `OntologyService.validateAndNormalizeFact` + `resolveEdges` | `edge_dropped` | `no_source_type`, `invalid_shape`, `type_not_in_manifest`, `target_not_found`, `target_type_mismatch` |
 | non-strict `upsertGraphCore` manifest drop | `edge_dropped` | `manifest_violation` |
 | `EmbeddingService.tryEmbedFact` | `embedding_failed` | `invalid_vector`, `float32_overflow`, `embed_threw` (kind `provider_error`), `persist_failed` (kind `storage_error`) |
 | `onEmbeddingPersisted` failures (embed success path; ingest, heal orphan and heal delete loops) | `hook_failed` | `on_embedding_persisted` |
 | `WriteService` auto-librarian / auto-heal `.catch` | `background_job_failed` (operation = job, trigger `auto`) | `unhandled_rejection` |
 | heal `outcome.skipped` (after commit) | `heal_skipped` | `non_convergent`, `call_error` |
+
+**Ingest title dedupe locators.** Both ingest dedupe sites emit `{ sourceRef, chunkIndex, itemIndex, reason: 'exact_title' }`, where the indexes are the *skipped* fact's own position in the LLM response. One code from one operation must not come in two shapes, and the locators are positions rather than content (§4.3), so they are carried whether or not grounding is enabled: `IngestionService` keeps a per-fact ledger of `(chunkIndex, itemIndex)` for every kept fact, with the grounding verdict attached only when grounding ran (#220). The partial path emits this on every retry of a partially-ingested document, so an untraceable batch there is the common case, not an edge case.
 
 ### 4.5 Tests
 

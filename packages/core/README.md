@@ -361,7 +361,7 @@ new WikiMemory(db, {
   - Instructions, the ontology manifest, existing facts and identifiers never count, so a model cannot ground a claim by quoting them.
 - **The check.** Both sides are normalized with NFKC, whitespace runs collapse to one space, and matching is case-sensitive. A fact with more than 10 quotes, or any quote not found, fails.
 - **Diagnostics.** `grounding_missing` (reasons `no_evidence`, `evidence_too_short`) and `grounding_failed` (reasons `quote_not_found`, `too_many_quotes`), one per fact, with the new fact's `factId`. Quotes are never included.
-- **Duplicate titles in one ingest.** When chunks yield facts with the same title, ingest keeps one: a grounded fact beats one with missing or failed evidence, and on a tie the first one wins. The others are reported as `fact_deduplicated`. A fact already stored for the same `sourceRef` is not replaced by a later partial ingest.
+- **Duplicate titles in one ingest.** When chunks yield facts with the same title, ingest keeps one: a grounded fact beats one with missing or failed evidence, and on a tie the first one wins. The others are reported as `fact_deduplicated`. A fact already stored for the same `sourceRef` is not replaced by a later partial ingest, and that skip is reported the same way. Either way the diagnostic carries `{ sourceRef, chunkIndex, itemIndex }` for the skipped fact, whether or not grounding is enabled.
 - **`upsertGraph`** nodes are host-supplied and never grounded.
 - **Librarian and heal** synthesize across events, so their pass rates are unknown. Measure them on your own event log before opting them in.
 - Evidence quotes are not stored.
@@ -1216,6 +1216,8 @@ await wikiMemory.ingestDocument(
 - `'skip'`: Pre-check before any LLM call; if a different live `sourceRef` already holds the hash, return a zero-chunk result without writing.
 - `'throw'`: Pre-check before any LLM call; throw `WikiDuplicateHashError` (carries the canonical `sourceRef`).
 - The guard only considers **live** references — soft-deleted refs do not trigger it in any mode.
+
+When the pre-check passes but a concurrent writer claims the hash before the write commits, the transaction rolls back after the LLM extraction has already run. You still receive the diagnostics that describe that extraction — `ingest_chunk_failed`, `fact_rejected` and `fact_deduplicated` — in every mode. Diagnostics tied to the rolled-back write (`grounding_*`, `edge_dropped`) are dropped, because the `factId`s they carry name rows that were never committed.
 
 ## Batch Change Detection
 
