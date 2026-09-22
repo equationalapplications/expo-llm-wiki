@@ -290,7 +290,11 @@ export interface WikiConfig {
    * Default: undefined (pure semantic when embed provided).
    */
   hybridWeight?: number;
-  /** Global prompt overrides for text generation calls (`ingestDocument`, `runLibrarian`, `runHeal`). Does not affect embedding generation. Runtime overrides on individual method calls take precedence. */
+  /**
+   * Global prompt overrides for text generation calls (`ingestDocument`, `runLibrarian`, `runHeal`). Does not affect embedding generation. Runtime overrides on individual method calls take precedence.
+   *
+   * Returned verbatim by `getInstructions` and the `wiki_get_instructions` tool (`memory:read`): never put secrets, API keys or private data here.
+   */
   prompts?: PromptOverrides;
   /**
    * When true, entry and task mutations append an event to the internal outbox table.
@@ -1198,5 +1202,42 @@ export class WikiDraftNotFound extends Error {
 export interface DraftPage {
   facts: WikiFact[];
   nextCursor: string | null;
+}
+
+/**
+ * `pendingSources` status (spec §8.2). `partial`: live rows exist for the ref
+ * but none carries a hash, which is the intended retry state after a partial
+ * ingest. `current` is exactly the case where `hasChanged` returns false.
+ */
+export type PendingSourceStatus = 'new' | 'changed' | 'partial' | 'current';
+
+/** Read-only maintenance report for one entity (spec §8.1). Counts cover live rows only. */
+export interface WikiLintReport {
+  /** Edges whose source or target is missing, soft-deleted, or owned by another entity. */
+  danglingEdges: number;
+  /** Live-endpoint edges whose (source type, edge type, target type) is not in the effective manifest. 0 when ontology is off or the manifest is empty. */
+  manifestViolations: number;
+  /** Live facts with `okf_type` NULL. */
+  untypedFacts: number;
+  /** Live facts with `lifecycle_status = 'draft'`. */
+  drafts: number;
+  /** Live `librarian_inferred` facts with an empty `okf_verified`. */
+  unverifiedInferred: number;
+  /** Up to 20 ids each, ascending. */
+  sample: { danglingEdgeIds: string[]; manifestViolationEdgeIds: string[] };
+}
+
+/**
+ * Effective system prompts (spec §8.3): defaults with `WikiConfig.prompts`
+ * overrides applied and the ontology block appended. Templates only: data
+ * placeholders such as `{{documentChunk}}` stay verbatim, and no events,
+ * chunks or facts are ever included. Overrides are returned as written, so
+ * never put secrets or private data in `WikiConfig.prompts`.
+ */
+export interface WikiInstructions {
+  ingest: string;
+  librarian: string;
+  heal: string;
+  ontologyBackfill: string;
 }
 

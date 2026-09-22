@@ -14,6 +14,7 @@ import {
   WikiDraftNotFound,
 } from './types';
 import type { DraftPage } from './types';
+import type { PendingSourceStatus, WikiLintReport, WikiInstructions } from './types';
 import { EntryRepository } from './repositories/EntryRepository';
 import { OutboxRepository } from './repositories/OutboxRepository';
 import { SourceRefIndexRepository } from './repositories/SourceRefIndexRepository';
@@ -34,6 +35,8 @@ import { WriteService } from './services/WriteService';
 import { PromptService } from './services/PromptService';
 import { OntologyService } from './services/OntologyService';
 import { GraphTraversalService } from './services/GraphTraversalService';
+import { LintRepository } from './repositories/LintRepository';
+import { LintService } from './services/LintService';
 import { OkfTrustWritesRepository } from './db/okf-trust-writes';
 import { validateManifest } from './utils/ontology';
 import { DiagnosticBuffer } from './utils/diagnostics';
@@ -96,6 +99,8 @@ export class WikiMemory {
   private promptService: PromptService;
   private ontologyService: OntologyService;
   private graphTraversalService: GraphTraversalService;
+  private lintRepo: LintRepository;
+  private lintService: LintService;
   private readonly okfTrustWrites: OkfTrustWritesRepository;
 
   constructor(db: SQLiteAdapter, options: WikiOptions) {
@@ -117,11 +122,13 @@ export class WikiMemory {
     this.eventRepo = new EventRepository(this.db, this.prefix);
     this.edgeRepo = new EdgeRepository(this.db, this.prefix);
     this.metadataRepo = new MetadataRepository(this.db, this.prefix);
+    this.lintRepo = new LintRepository(this.db, this.prefix);
     this.ontologyService = new OntologyService(
       this.metadataRepo,
       this.edgeRepo,
       options.config?.ontology,
     );
+    this.lintService = new LintService(this.lintRepo, this.ontologyService);
     this.embeddingService = new EmbeddingService(this.db, this.options, this.entryRepo, this.metadataRepo);
     this.searchService = new SearchService(this.entryRepo);
     this.jobManager = new JobManager(this.prefix);
@@ -364,6 +371,69 @@ export class WikiMemory {
       // source_ref index, so the canonical matches the DB ordering.
       return { sourceRef: e.rawSourceRef, changed, duplicateOf: canonical };
     });
+  }
+
+  /**
+   * Batch pending state per source (spec §8.2). `current` exactly when
+   * `hasChanged` is false; `partial` when live rows exist but none carries a
+   * hash (a first ingest with a failed chunk, or imported rows without a
+   * hash). A failed re-ingest of an already-hashed ref reports `changed`. Validation and raw-ref echo match
+   * batched `hasChanged`. Input order and duplicates are preserved. A
+   * non-array `sources`, or an entry that is not an object (including a hole
+   * in a sparse array), throws a `TypeError` before any SQL runs.
+   */
+  async pendingSources(
+    entityId: string,
+    sources: Array<{ sourceRef: string; sourceHash: string }>,
+  ): Promise<Array<{ sourceRef: string; status: PendingSourceStatus }>> {
+    assertEntityId(entityId);
+    if (!Array.isArray(sources)) {
+      throw new TypeError('Invalid sources: must be an array of { sourceRef, sourceHash } objects.');
+    }
+    if (sources.length === 0) return [];
+    // Array.from visits holes as undefined, so a sparse array fails the entry check.
+    const normalized = Array.from(sources, (s: unknown, i) => {
+      if (s === null || typeof s !== 'object') {
+        throw new TypeError(`Invalid sources[${i}]: must be a { sourceRef, sourceHash } object.`);
+      }
+      const { sourceRef: rawSourceRef, sourceHash: rawSourceHash } = s as { sourceRef: string; sourceHash: string };
+      const sourceRef = normalizeSourceRef(rawSourceRef);
+      if (!sourceRef) {
+        // JSON.stringify throws on a bigint; name the type for non-strings instead.
+        const shown = typeof rawSourceRef === 'string' ? JSON.stringify(rawSourceRef) : `<${typeof rawSourceRef}>`;
+        throw new Error(`Invalid sourceRef: ${shown}`);
+      }
+      const sourceHash = normalizeSourceHash(rawSourceHash);
+      if (!sourceHash) throw new Error('Invalid sourceHash: must be a 64-character hex string (normalized to lowercase)');
+      return { rawSourceRef, sourceRef, sourceHash };
+    });
+    const states = await this.entryRepo.findSourceStates(entityId, normalized.map((n) => n.sourceRef));
+    return normalized.map((n) => {
+      const state = states.get(n.sourceRef);
+      let status: PendingSourceStatus;
+      if (!state) status = 'new';
+      else if (!state.anyHashed) status = 'partial';
+      else if (state.latestHash !== null && normalizeSourceHash(state.latestHash) === n.sourceHash) status = 'current';
+      else status = 'changed';
+      return { sourceRef: n.rawSourceRef, status };
+    });
+  }
+
+  /** Read-only maintenance report for one entity (spec §8.1). Reports, never repairs. */
+  async lint(entityId: string): Promise<WikiLintReport> {
+    assertEntityId(entityId);
+    return this.lintService.lint(entityId);
+  }
+
+  /**
+   * Effective system prompts for ingest, librarian, heal and ontology backfill
+   * (spec §8.3). Backs the `wiki_get_instructions` tool. Templates only;
+   * overrides are returned verbatim, so keep secrets out of `WikiConfig.prompts`.
+   */
+  async getInstructions(entityId: string): Promise<WikiInstructions> {
+    assertEntityId(entityId);
+    const ontologyContext = await this.ontologyService.buildPromptContext(entityId);
+    return this.promptService.buildInstructionTemplates(ontologyContext);
   }
 
   /**
@@ -894,6 +964,17 @@ export class WikiMemory {
   }
   async setGeneratedByTask(taskId: string, entityId: string, actor: string): Promise<void> {
     return this.okfTrustWrites.setGeneratedByTask(taskId, entityId, actor);
+  }
+}
+
+/**
+ * Shape check for the read-only reports. Deliberately looser than `write()`'s
+ * rule: ingestDocument and upsertGraph accept any string id, so a report must
+ * too. The value is never echoed; JSON.stringify throws on a bigint.
+ */
+function assertEntityId(entityId: unknown): asserts entityId is string {
+  if (typeof entityId !== 'string' || entityId.length === 0) {
+    throw new TypeError('Invalid entityId: must be a non-empty string.');
   }
 }
 

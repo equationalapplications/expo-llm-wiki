@@ -150,6 +150,29 @@ function DraftReview({ entityId }: { entityId: string }) {
 }
 ```
 
+`useWiki()` also exposes the read-only health and instruction APIs for components that need them:
+
+```tsx
+function HealthAndInstructions({ entityId, batch }: { entityId: string; batch: Array<{ sourceRef: string; sourceHash: string }> }) {
+  const wiki = useWiki();
+
+  // Lint: read-only health report for one entity (dangling edges, manifest violations, drafts, etc.)
+  const loadReport = () => wiki.lint(entityId);
+  // → { danglingEdges, manifestViolations, untypedFacts, drafts, unverifiedInferred,
+  //     sample: { danglingEdgeIds, manifestViolationEdgeIds } }
+
+  // pendingSources: per-input change status including the partial-ingest state.
+  const loadStatuses = () => wiki.pendingSources(entityId, batch);
+  // → Array<{ sourceRef: string; status: 'new' | 'changed' | 'partial' | 'current' }>
+
+  // getInstructions: effective system prompts for each writer, with overrides applied.
+  const loadInstructions = () => wiki.getInstructions(entityId);
+  // → { ingest, librarian, heal, ontologyBackfill }
+}
+```
+
+See [core: Lint](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md#lint), [core: Batch Change Detection](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md#batch-change-detection), and [core: Effective instructions](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md#effective-instructions-getinstructions).
+
 ## Retrieval Tuning
 
 Optimize `read()` performance and blend retrieval strategies:

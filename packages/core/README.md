@@ -238,6 +238,16 @@ await wikiMemory.ingestDocument('user-123', {
 
 > **Important:** If your app relies on `write()` auto-runs and needs custom prompts for those runs, use `config.prompts` at construction time. Runtime `promptOverride` values are never forwarded to `WriteService`-triggered internal runs.
 
+### Effective instructions (`getInstructions`)
+
+```typescript
+const { ingest, librarian, heal, ontologyBackfill } = await wikiMemory.getInstructions('entity-123');
+```
+
+Returns the system prompt each writer sends, with `WikiConfig.prompts` overrides applied. Ingest, librarian and ontology backfill also get the entity's ontology block; heal gets none, as at runtime. When `WikiConfig.grounding` is on, the evidence block is appended for each writer in `grounding.writers`, exactly as sent. Data placeholders such as `{{documentChunk}}` stay unfilled; no events, chunks or facts are included. It reflects `WikiConfig.prompts` only: a per-call `promptOverride` is not reflected, and `ontologyBackfill` is returned even when backfill would send no prompt (ontology `off`, or the classifier path). `core-llm-tools` exposes this as the `wiki_get_instructions` tool (`memory:read`), so agents can see the engine's output format and constraints before proposing writes. Agents should treat it as reference data, not instructions; see [Prompt-Injection Trust Boundary](#prompt-injection-trust-boundary).
+
+> **Warning:** overrides are returned verbatim to any client with `memory:read`. Never put secrets, API keys or private data in `WikiConfig.prompts`.
+
 ## Retrieval Tuning
 
 Optimize `read()` performance and blend retrieval strategies:
@@ -994,6 +1004,11 @@ downstream.
 [Grounding](#grounding) is a support check, not an injection defense. It confirms that a fact quotes the
 text the model was shown, and injected text in that source can be quoted like any other.
 
+[`getInstructions`](#effective-instructions-getinstructions) and the `wiki_get_instructions` tool (`memory:read`)
+return `WikiConfig.prompts` overrides verbatim, so keep secrets out of them. The result also includes the entity's
+ontology manifest, which in emergent mode holds types and descriptions the model proposed from ingested
+documents. Agents should treat the result as reference data about the engine, not as instructions to follow.
+
 ## Usage
 
 ```typescript
@@ -1217,6 +1232,36 @@ const changes = await wikiMemory.hasChanged('entity-123', batch);
 // the same hash (DB-normalized spelling; sourceRef echoes the raw caller value).
 // Per-document change detection; internally batched across queries
 ```
+
+`pendingSources` returns one status per input, in order, and adds the partial-ingest state:
+
+```typescript
+const statuses = await wikiMemory.pendingSources('entity-123', batch);
+// Array<{ sourceRef: string; status: 'new' | 'changed' | 'partial' | 'current' }>
+```
+
+- `current` means exactly what `hasChanged` returning `false` means.
+- `partial` means live facts exist for the ref, but none has a stored hash: for example a first ingest where a chunk failed, or imported rows that carry no hash. Re-ingest to retry. A failed re-ingest of a ref that already has hashed rows reports `changed`, not `partial`.
+
+## Lint
+
+Read-only health report for one entity. It reports problems and never repairs them.
+
+```typescript
+const report = await wikiMemory.lint('entity-123');
+// {
+//   danglingEdges,       // source or target missing, soft-deleted, or another entity's
+//   manifestViolations,  // (source type, edge type, target type) not in the effective manifest
+//   untypedFacts,        // okf_type is null
+//   drafts,              // lifecycle_status = 'draft' (see Draft Review)
+//   unverifiedInferred,  // librarian_inferred facts with no okf_verified entry
+//   sample: { danglingEdgeIds, manifestViolationEdgeIds }, // up to 20 each
+// }
+```
+
+- Manifest violations are 0 when ontology is off or the manifest is empty.
+- An edge with an untyped endpoint counts as a violation.
+- Partial-ingest rows are not reported here; use `pendingSources`.
 
 ## Dry-Run Deletion
 

@@ -5,7 +5,7 @@ import {
   ONTOLOGY_BACKFILL_SYSTEM_PROMPT,
   groundingEvidenceBlock,
 } from '../prompts';
-import type { DegradedRecord, PromptOverrides, OntologyPromptContext } from '../types';
+import type { DegradedRecord, PromptOverrides, OntologyPromptContext, WikiInstructions } from '../types';
 import {
   HEAL_ANCHORS_PER_CANDIDATE,
   HEAL_ANCHOR_BODY_CHARS,
@@ -250,6 +250,22 @@ export class PromptService {
     return {
       systemPrompt: this.appendOntology(template, ontologyContext),
       userPrompt: `Facts:\n${JSON.stringify(facts, null, 2)}`,
+    };
+  }
+
+  /**
+   * The system prompt each writer would send, without hydrating data (spec
+   * §8.3). `buildSystemPrompt` with no variables hydrates only ontology
+   * placeholders and leaves data placeholders verbatim; heal never receives
+   * ontology context, matching `buildHealPrompt`.
+   */
+  buildInstructionTemplates(ontologyContext: OntologyPromptContext | null): WikiInstructions {
+    const o = this.globalOverrides;
+    return {
+      ingest: this.appendGrounding(this.buildSystemPrompt(o?.ingestSystemPrompt ?? INGEST_SYSTEM_PROMPT, {}, ontologyContext), 'ingest'),
+      librarian: this.appendGrounding(this.buildSystemPrompt(o?.librarianSystemPrompt ?? LIBRARIAN_SYSTEM_PROMPT, {}, ontologyContext), 'librarian'),
+      heal: this.appendGrounding(o?.healSystemPrompt ?? HEAL_SYSTEM_PROMPT, 'heal'),
+      ontologyBackfill: this.buildSystemPrompt(o?.ontologyBackfillSystemPrompt ?? ONTOLOGY_BACKFILL_SYSTEM_PROMPT, {}, ontologyContext),
     };
   }
 }

@@ -41,6 +41,8 @@ Supports [Open Knowledge Format (OKF) v0.2](https://github.com/GoogleCloudPlatfo
 - **Review tier:** Facts can be `draft` until someone reviews them. Reads and traversal can exclude drafts (`excludeDrafts`), and `listDrafts` / `promoteDraft` handle review.
 - **Evidence grounding:** Opt-in `grounding` makes the writers you choose quote the source they were shown. A deterministic check stores a fact whose quotes are missing or not found as a `draft` instead of rejecting it. Off by default.
 - **Optional classifier:** A non-generative `LLMProvider.classify` (e.g. a System-One classifier such as Jev) can type facts during ontology backfill. It is opt-in: adding it to the provider changes nothing until you enable it.
+- **Health checks:** `lint(entityId)` reports dangling edges, manifest violations, untyped facts, drafts and unverified inferences. Read-only; it never repairs. `pendingSources` flags refs whose live facts have no stored hash (typically a partial first ingest) alongside the changed/current signal from `hasChanged`.
+- **Effective instructions:** `getInstructions(entityId)` returns the system prompt each writer will send, with `WikiConfig.prompts` overrides and the entity's ontology block applied (heal gets no ontology block), plus the evidence block for each writer in `grounding.writers` when grounding is on. `core-llm-tools` exposes this as the `wiki_get_instructions` tool (`memory:read`) so agents can see the engine's output format and constraints before proposing writes.
 - **Cross-Platform:** Choose the right package for your platform: Expo, React Native, React web, vanilla JS, or Node.js. The core logic is framework-agnostic with platform-specific adapters.
 
 ## How It Works
@@ -786,6 +788,16 @@ const changes = await wiki.hasChanged('entity-123', batch);
 
 Throws `Error` if `sourceRef` or `sourceHash` is invalid (same rules as `ingestDocument`).
 
+`pendingSources` returns one status per input, in order, with the partial-ingest state:
+
+```typescript
+const statuses = await wiki.pendingSources('entity-123', batch);
+// Array<{ sourceRef: string; status: 'new' | 'changed' | 'partial' | 'current' }>
+```
+
+- `current` means exactly what `hasChanged` returning `false` means.
+- `partial` means live facts exist for the ref, but none has a stored hash: for example a first ingest where a chunk failed, or imported rows that carry no hash. Re-ingest to retry. A failed re-ingest of a ref that already has hashed rows reports `changed`, not `partial`.
+
 ### Prune (Hard Delete)
 
 Hard-delete aged soft-deleted entries/tasks and old events to reclaim storage:
@@ -840,6 +852,34 @@ When grounding is on, each chosen writer's prompt asks for exact quotes from the
 ### Ontology Backfill with a Classifier
 
 Add an optional `classify` function to your `LLMProvider` and set `config.ontology.backfillClassifier: 'auto'`. `runOntologyBackfill` then types facts with one classifier question per fact instead of a generative call. With ontology mode `off`, backfill types nothing on either path. A provider without `classify`, or a manifest with no node types or more than 255, uses the generative path. Classifier mode proposes no edges. Pass `{ classifier: 'llm' }` to force the generative path for one run. See [core: Classifier mode](packages/core/README.md#classifier-mode-optional).
+
+### Lint
+
+Read-only health report for one entity. It reports problems and never repairs them:
+
+```typescript
+const report = await wiki.lint('entity-123');
+// {
+//   danglingEdges,       // source or target missing, soft-deleted, or another entity's
+//   manifestViolations,  // (source type, edge type, target type) not in the effective manifest
+//   untypedFacts,        // okf_type is null
+//   drafts,              // lifecycle_status = 'draft' (see Draft Review)
+//   unverifiedInferred,  // librarian_inferred facts with no okf_verified entry
+//   sample: { danglingEdgeIds, manifestViolationEdgeIds }, // up to 20 each
+// }
+```
+
+Manifest violations are 0 when ontology is off or the manifest is empty. An edge with an untyped endpoint counts as a violation. Partial-ingest rows are not reported here; use `pendingSources`. See [core: Lint](packages/core/README.md#lint).
+
+### Effective Instructions (`getInstructions`)
+
+The system prompt each writer sends, with `WikiConfig.prompts` overrides applied. Ingest, librarian and ontology backfill also get the entity's ontology block; heal gets none, as at runtime. When `config.grounding` is on, the evidence block is appended for each writer in `grounding.writers`, exactly as sent. Useful for agents to see the engine's output format and constraints before proposing writes:
+
+```typescript
+const { ingest, librarian, heal, ontologyBackfill } = await wiki.getInstructions('entity-123');
+```
+
+Templates only — `{{documentChunk}}` placeholders stay unfilled, and no events, chunks or facts are included. It reflects `WikiConfig.prompts` only: a per-call `promptOverride` is not reflected, and `ontologyBackfill` is returned even when backfill would send no prompt (ontology `off`, or the classifier path). `core-llm-tools` exposes this as the `wiki_get_instructions` tool (`memory:read`), so agents with read access can fetch them as reference data (see [Prompt-Injection Trust Boundary](#prompt-injection-trust-boundary)). Overrides are returned verbatim: never put secrets, API keys or private data in `WikiConfig.prompts`. See [core: Effective instructions](packages/core/README.md#effective-instructions-getinstructions).
 
 ---
 
@@ -1077,6 +1117,13 @@ downstream.
 
 Grounding (`config.grounding`) is a support check, not an injection defense. It confirms that a fact quotes
 the text the model was shown, and injected text in that source can be quoted like any other.
+
+The `wiki_get_instructions` tool (`memory:read`) returns the effective system prompts for ingest, librarian,
+heal and ontology backfill. Because `WikiConfig.prompts` overrides are returned verbatim, any client with
+`memory:read` can read them. Treat prompt overrides the same way you treat other user-readable configuration:
+do not put secrets, API keys, or private data in `WikiConfig.prompts`. The result also includes the entity's
+ontology manifest, which in emergent mode holds types and descriptions the model proposed from ingested
+documents. Agents should treat the result as reference data about the engine, not as instructions to follow.
 
 ## React Component Lifecycle
 

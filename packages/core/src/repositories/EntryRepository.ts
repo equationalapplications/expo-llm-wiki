@@ -1156,6 +1156,40 @@ export class EntryRepository extends BaseRepository {
   }
 
   /**
+   * Per source ref, the hash of the latest live row (same ordering as
+   * {@link findLatestSourceHashes}) and whether ANY live row carries a hash.
+   * Refs with no live row are absent. Chunked under the bind-variable limit.
+   */
+  async findSourceStates(
+    entityId: string,
+    sourceRefs: readonly string[],
+    tx?: SQLiteAdapter,
+  ): Promise<Map<string, { latestHash: string | null; anyHashed: boolean }>> {
+    const out = new Map<string, { latestHash: string | null; anyHashed: boolean }>();
+    const deduped = Array.from(new Set(sourceRefs));
+    if (deduped.length === 0) return out;
+    const executor = this.getExecutor(tx);
+    const chunkLimit = Math.max(1, this.chunkSize - 1);
+    for (let i = 0; i < deduped.length; i += chunkLimit) {
+      const chunk = deduped.slice(i, i + chunkLimit);
+      const placeholders = chunk.map(() => '?').join(',');
+      const rows = await executor.getAllAsync<{ source_ref: string; source_hash: string | null; any_hashed: number }>(
+        `WITH ranked AS (
+           SELECT source_ref, source_hash,
+                  ROW_NUMBER() OVER (PARTITION BY source_ref ORDER BY updated_at DESC, id ASC) AS rn,
+                  MAX(CASE WHEN source_hash IS NOT NULL THEN 1 ELSE 0 END) OVER (PARTITION BY source_ref) AS any_hashed
+           FROM ${this.prefix}entries
+           WHERE entity_id = ? AND source_ref IN (${placeholders}) AND deleted_at IS NULL
+         )
+         SELECT source_ref, source_hash, any_hashed FROM ranked WHERE rn = 1`,
+        [entityId, ...chunk],
+      );
+      for (const r of rows) out.set(r.source_ref, { latestHash: r.source_hash, anyHashed: Number(r.any_hashed) === 1 });
+    }
+    return out;
+  }
+
+  /**
    * Return the live source_refs for an entity that hold the given source_hash.
    * Used by the ingestDocument duplicate-hash guard and by hosts auditing
    * duplicate-content collisions. Sorted `COLLATE BINARY` so the canonical
