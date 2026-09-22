@@ -35,6 +35,22 @@ describe('getInstructions', () => {
     expect(JSON.stringify(out)).not.toContain('SECRET');
   });
 
+  it('gives heal no ontology block even with ontology on, matching the runtime heal prompt', async () => {
+    const { wiki } = await makeDiagnosticWiki();
+    await wiki.setOntologyManifest('e1', MANIFEST, { mode: 'strict' });
+    const out = await wiki.getInstructions('e1');
+    expect(out.ingest).toContain('## Ontology constraints');
+    expect(out.heal).not.toContain('## Ontology constraints');
+    expect(out.heal).toBe(HEAL_SYSTEM_PROMPT);
+  });
+
+  it('rejects a non-string or empty entityId', async () => {
+    const { wiki } = await makeDiagnosticWiki();
+    const get = wiki.getInstructions as (e: unknown) => Promise<unknown>;
+    await expect(get.call(wiki, {})).rejects.toThrow(/^Invalid entityId/);
+    await expect(get.call(wiki, '')).rejects.toThrow(/^Invalid entityId/);
+  });
+
   it('applies overrides verbatim and leaves data placeholders unhydrated', async () => {
     const { wiki } = await makeDiagnosticWiki({
       config: { prompts: {

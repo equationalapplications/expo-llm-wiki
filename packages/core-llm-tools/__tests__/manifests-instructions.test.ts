@@ -8,6 +8,7 @@ describe('wikiGetInstructionsManifest', () => {
     expect(wikiGetInstructionsManifest.scope).toBe('memory:read');
     expect(wikiGetInstructionsManifest.schema.name).toBe(wikiGetInstructionsManifest.name);
     expect(wikiGetInstructionsManifest.schema.parameters?.required).toEqual(['entityId']);
+    expect((wikiGetInstructionsManifest.schema.parameters?.properties as Record<string, { type: string }>).entityId.type).toBe('string');
   });
 
   it('is exported from the package entry point', () => {

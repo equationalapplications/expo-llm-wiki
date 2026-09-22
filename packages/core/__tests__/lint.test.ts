@@ -105,6 +105,41 @@ describe('lint', () => {
     expect(await db.getFirstAsync(`SELECT 1 AS x FROM llm_wiki_entity_manifests WHERE entity_id = 'e1' AND manifest_json IS NOT NULL`)).toBeFalsy();
   });
 
+  it('lets a child type satisfy the target side and matches edge types case-insensitively', async () => {
+    const { wiki, db } = await makeDiagnosticWiki();
+    await fact(db, 'p1');
+    await fact(db, 'emp', { type: 'employee' });
+    await edge(db, 'k1', 'p1', 'emp', 'knows');
+    await edge(db, 'k2', 'p1', 'emp', 'KNOWS');
+    const knows = { type: 'knows', source_type: 'person', target_type: 'person', description: 'Knows' };
+    await wiki.setOntologyManifest('e1', { ...MANIFEST, edge_types: [...MANIFEST.edge_types, knows] }, { mode: 'strict' });
+    expect((await wiki.lint('e1')).manifestViolations).toBe(0);
+  });
+
+  it('counts every live edge as a violation when the manifest has node types but no edge types', async () => {
+    const { wiki } = await fixture();
+    await wiki.setOntologyManifest('e1', { node_types: MANIFEST.node_types, edge_types: [] }, { mode: 'strict' });
+    const report = await wiki.lint('e1');
+    // Live, non-dangling edges only: e_ok, e_parent, e_badtype, e_badtarget, e_untyped.
+    expect(report.manifestViolations).toBe(5);
+    expect(report.danglingEdges).toBe(3);
+  });
+
+  it('counts okf_verified that is invalid JSON or not an array as unverified', async () => {
+    const { wiki, db } = await fixture();
+    await fact(db, 'inf5', { source: 'librarian_inferred', verified: 'not json' });
+    await fact(db, 'inf6', { source: 'librarian_inferred', verified: '{"by":"human:a"}' });
+    expect((await wiki.lint('e1')).unverifiedInferred).toBe(4);
+  });
+
+  it('rejects a non-string or empty entityId', async () => {
+    const { wiki } = await makeDiagnosticWiki();
+    const lint = wiki.lint as (e: unknown) => Promise<unknown>;
+    await expect(lint.call(wiki, {})).rejects.toThrow(/^Invalid entityId/);
+    await expect(lint.call(wiki, 123)).rejects.toThrow(/^Invalid entityId/);
+    await expect(lint.call(wiki, '')).rejects.toThrow(/^Invalid entityId/);
+  });
+
   it('returns zeros for an empty entity', async () => {
     const { wiki } = await makeDiagnosticWiki();
     expect(await wiki.lint('empty')).toEqual({

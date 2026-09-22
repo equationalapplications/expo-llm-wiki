@@ -70,6 +70,25 @@ describe('pendingSources', () => {
     await expect(wiki.pendingSources('e1', [{ sourceRef: 'a.md', sourceHash: 'xyz' }])).rejects.toThrow(/Invalid sourceHash/);
   });
 
+  it('rejects malformed input shapes with a TypeError before any SQL', async () => {
+    const { wiki, db } = await setup();
+    const spy = vi.spyOn(db, 'getAllAsync');
+    const call = (entityId: unknown, sources: unknown) =>
+      (wiki.pendingSources as (e: unknown, s: unknown) => Promise<unknown>).call(wiki, entityId, sources);
+    for (const sources of [null, 'abc', {}]) {
+      await expect(call('e1', sources)).rejects.toThrow(/^Invalid sources: must be an array/);
+    }
+    await expect(call('e1', [null])).rejects.toThrow(/^Invalid sources\[0\]/);
+    // A hole in a sparse array is an invalid entry, not a silent hole in the output.
+    // eslint-disable-next-line no-sparse-arrays
+    await expect(call('e1', [{ sourceRef: 'a.md', sourceHash: HASH_A }, , ])).rejects.toThrow(/^Invalid sources\[1\]/);
+    // A bigint ref is named by type; JSON.stringify would throw on it.
+    await expect(call('e1', [{ sourceRef: BigInt(5), sourceHash: HASH_A }])).rejects.toThrow('Invalid sourceRef: <bigint>');
+    await expect(call({}, [])).rejects.toThrow(TypeError);
+    await expect(call('', [])).rejects.toThrow(/^Invalid entityId/);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
   it('returns [] for empty input without querying', async () => {
     const { wiki, db } = await setup();
     const spy = vi.spyOn(db, 'getAllAsync');
