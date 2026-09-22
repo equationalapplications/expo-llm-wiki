@@ -823,7 +823,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Modify: `packages/core/README.md`:
   - extend `## Batch Change Detection` (~line 1156);
   - add `## Lint` directly after it;
-  - add `### Effective instructions (\`getInstructions\`)` at the end of `## Prompt Management & Overrides`, before `## Retrieval Tuning`.
+  - add ``### Effective instructions (`getInstructions`)`` at the end of `## Prompt Management & Overrides`, before `## Retrieval Tuning`.
 - Modify: `packages/core-llm-tools/README.md` (short `### Memory manifests` subsection under `## Quick Start`, after `### 3. Built-In Tools (Grounding)`)
 
 - [ ] **Step 1: Write the docs.** Grep each signature against source first (repo rule), and adjust the prose if anything differs.
