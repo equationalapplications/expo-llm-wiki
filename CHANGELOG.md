@@ -1,3 +1,10 @@
+## [7.7.5](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.7.4...v7.7.5) (2026-09-25)
+
+### Bug Fixes
+
+* **deps:** override image-size to ^2.0.3 (GHSA-5p2g-fcmc-qvqq / GHSA-w3rx-r6r6-pgpr; patched 2026-09-14, age-gate excluded) ([321b007](https://github.com/equationalapplications/expo-llm-wiki/commit/321b007d081e70c5a97a952940dc16fb5a1fe725))
+* **okf:** decode \N/\L/\P/\xNN/\uXXXX escapes in unescapeFrontmatterString (CT [#231](https://github.com/equationalapplications/expo-llm-wiki/issues/231)) ([f104175](https://github.com/equationalapplications/expo-llm-wiki/commit/f104175412cafb5a0d70fa01f23b7e7b812fcbd0))
+
 ## [7.7.4](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.7.3...v7.7.4) (2026-09-22)
 
 ### Bug Fixes
