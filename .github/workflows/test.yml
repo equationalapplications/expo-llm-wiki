@@ -144,39 +144,13 @@ jobs:
           import json, sys
           data = json.load(open("/tmp/audit.json", encoding="utf-8"))
           advisories = data.get("advisories") or {}
-          # "Fixable" must mean a patch that is actually INSTALLABLE.
-          # GHSA-5p2g-fcmc-qvqq / GHSA-w3rx-r6r6-pgpr (image-size) advertise
-          # patched ">=2.0.3", but image-size@2.0.3 was never published
-          # (upstream archived; see github/advisory-database#9028) — the
-          # maximum published version (2.0.2) is inside the vulnerable range.
-          # So alongside pnpm's "<0.0.0" sentinel, treat ">=X" ranges whose
-          # ceiling does not exist on the registry as unfixable: they are
-          # recorded as WARNING, not HIGH, and do not fail the build.
-          import re, urllib.request
-          def range_ceiling_published(module_name, pv):
-              # True iff a simple ">=X.Y.Z" ceiling actually exists on npm.
-              m = re.match(r"^>=\s*(\d+)\.(\d+)\.(\d+)$", (pv or "").strip())
-              if not m:
-                  return True  # not a simple >= range; assume actionable
-              ver = ".".join(m.groups())
-              req = urllib.request.Request(
-                  f"https://registry.npmjs.org/{module_name}%2F{ver}",
-                  method="GET",
-              )
-              try:
-                  with urllib.request.urlopen(req, timeout=10) as resp:
-                      return resp.status == 200
-              except urllib.error.HTTPError as e:
-                  if e.code == 404:
-                      return False  # ceiling version not published => unfixable
-                  return True  # other registry trouble: do not fail the build on it
-              except Exception:
-                  return True  # network down: do not fail the build on it
+          # pnpm's "no patch yet" sentinel: patched_versions is a placeholder
+          # like "<0.0.0" (an opening bracket followed by 0.0.0). Anything
+          # that doesn't match that prefix is a real version range and the
+          # advisory is considered fixable.
           def is_unfixable(a):
               pv = a.get("patched_versions") or ""
-              if pv.startswith("<0.0.0"):
-                  return True
-              return not range_ceiling_published(a.get("module_name", ""), pv)
+              return pv.startswith("<0.0.0")
           fixable = [a for a in advisories.values() if not is_unfixable(a)]
           unfixable = [a for a in advisories.values() if is_unfixable(a)]
           for a in unfixable:
