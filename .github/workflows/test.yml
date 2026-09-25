@@ -159,10 +159,8 @@ jobs:
               if not m:
                   return True  # not a simple >= range; assume actionable
               ver = ".".join(m.groups())
-              # NOTE: the "%2F" scoped-name form returns HTTP 405 on GET;
-              # the plain-slash form is the one the registry serves.
               req = urllib.request.Request(
-                  f"https://registry.npmjs.org/{module_name}/{ver}",
+                  f"https://registry.npmjs.org/{module_name}%2F{ver}",
                   method="GET",
               )
               try:
