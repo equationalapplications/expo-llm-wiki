@@ -175,6 +175,31 @@ function unescapeFrontmatterString(escaped: string): string {
       if (next === 't') { result += '\t'; i++; continue; }
       if (next === '"') { result += '"'; i++; continue; }
       if (next === '\\') { result += '\\'; i++; continue; }
+      // CT #231: decode the escape forms the Rust write path
+      // (curated-thoughts okf::quote_for_note) emits beyond the classics.
+      // YAML 1.1 double-quoted line-break escapes:
+      if (next === 'N') { result += '\u0085'; i++; continue; }
+      if (next === 'L') { result += '\u2028'; i++; continue; }
+      if (next === 'P') { result += '\u2029'; i++; continue; }
+      // \xNN — C0 controls + DEL as written by the Rust writer (2 hex digits).
+      if (next === 'x') {
+        const hex = escaped.slice(i + 2, i + 4);
+        if (/^[0-9a-fA-F]{2}$/.test(hex)) {
+          result += String.fromCharCode(parseInt(hex, 16));
+          i += 3;
+          continue;
+        }
+      }
+      // \uXXXX — remaining C1 and U+FFFE/U+FFFF (4 hex digits, lowercase from
+      // the writer; uppercase accepted too).
+      if (next === 'u') {
+        const hex = escaped.slice(i + 2, i + 6);
+        if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+          result += String.fromCharCode(parseInt(hex, 16));
+          i += 5;
+          continue;
+        }
+      }
     }
     result += ch;
   }
