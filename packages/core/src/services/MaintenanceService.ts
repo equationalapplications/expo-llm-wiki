@@ -274,8 +274,9 @@ export class MaintenanceService {
         // ids whose documents leave the index. Every pruned row was already
         // soft-deleted (and thus already absent from the live read), so this is
         // drift repair, not the primary removal mechanism — syncEntries still
-        // discards each id before re-reading it, so a stale document a
-        // pre-#233-style path left behind is scrubbed here (§2.2).
+        // discards each id before re-reading it, so a stale document left
+        // behind by a path that never passed ids to syncEntries is scrubbed
+        // here (§2.2).
         syncedIds = succeededIds;
 
         await this.db.withTransactionAsync(async (tx) => {
@@ -547,10 +548,10 @@ export class MaintenanceService {
       });
 
       // Every branch that soft-deletes entries also enumerates the ids into
-      // deletedEntryIds inside the same transaction: entryId at :507,
-      // findIdsBySource(..., true) at :511 (the by-source branch's predicate
-      // matches softDeleteBySource's exactly), and the clearAll branch at :477.
-      // So the index update is O(deleted), not O(entity) (spec §2.1).
+      // deletedEntryIds inside the same transaction: the entryId branch, the
+      // by-source branch (findIdsBySource(..., includeDeleted=true) — its
+      // predicate matches softDeleteBySource's exactly), and the clearAll
+      // branch. So the index update is O(deleted), not O(entity) (spec §2.1).
       const uniqueDeletedIds = Array.from(new Set(deletedEntryIds));
       await this.searchService.syncEntries(entityId, uniqueDeletedIds);
       for (const factId of uniqueDeletedIds) {
