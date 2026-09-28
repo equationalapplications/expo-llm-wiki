@@ -1484,6 +1484,44 @@ describe('syncEntries', () => {
     expect(repo.findMiniSearchRows).toHaveBeenCalledWith('e1');
   });
 
+  it('syncEntries does not clear a markStale() that lands during its own rebuild read', async () => {
+    // The counterpart to the case above, on syncEntries' own rebuild path: the
+    // epoch is snapshotted before rebuildIndex, and clearing the flag is gated
+    // on that snapshot surviving the read. A markStale landing mid-read belongs
+    // to rows the read cannot have seen, so the flag must outlive the turn.
+    const rows = [makeMiniSearchRow('f1', 'e1', 'apple')];
+    let releaseRead!: () => void;
+    const readGate = new Promise<void>((resolve) => { releaseRead = resolve; });
+    let signalFirstRead!: () => void;
+    const firstRead = new Promise<void>((resolve) => { signalFirstRead = resolve; });
+    const repo = {
+      findMiniSearchRows: vi.fn(async () => {
+        signalFirstRead();
+        await readGate;
+        return rows;
+      }),
+      findMiniSearchRowsByIds: vi.fn(async () => []),
+    } as unknown as EntryRepository;
+    const service = new SearchService(repo);
+
+    // Never indexed, so syncEntries falls back to the full-rebuild path.
+    const rebuilding = service.syncEntries('e1', ['f1']);
+    await firstRead; // the rebuild's read is in flight
+    service.markStale('e1'); // the host's upsertGraph marks stale mid-read
+    releaseRead();
+    await rebuilding;
+
+    expect((service as any).staleEntities.has('e1')).toBe(true);
+
+    // …so the next call still rebuilds in full rather than going incremental
+    // on an index that missed the host's rows.
+    (repo.findMiniSearchRows as ReturnType<typeof vi.fn>).mockClear();
+    (repo.findMiniSearchRowsByIds as ReturnType<typeof vi.fn>).mockClear();
+    await service.syncEntries('e1', ['f1']);
+    expect(repo.findMiniSearchRows).toHaveBeenCalledWith('e1');
+    expect(repo.findMiniSearchRowsByIds).not.toHaveBeenCalled();
+  });
+
   it('markStale forces one full rebuild; sync() clears the flag', async () => {
     const { repo, findMiniSearchRows, findMiniSearchRowsByIds } = makeLiveRepo([makeMiniSearchRow('f1', 'e1', 'apple')]);
     const service = new SearchService(repo);
