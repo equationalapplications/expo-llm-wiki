@@ -1206,3 +1206,231 @@ describe('sync() concurrency', () => {
     warn.mockRestore();
   });
 });
+
+// ---------------------------------------------------------------------------
+// syncEntries — incremental index updates (#232)
+// ---------------------------------------------------------------------------
+
+type MsRow = { id: string; entity_id: string; title: string; body: string; tags: string };
+
+/** In-memory "live rows" table; soft-deleting a row = removing it from `live.rows`. */
+function makeLiveRepo(initial: MsRow[]) {
+  const live = { rows: initial.slice() };
+  const findMiniSearchRows = vi.fn(async (entityId?: string) =>
+    live.rows.filter((r) => entityId === undefined || r.entity_id === entityId));
+  const findMiniSearchRowsByIds = vi.fn(async (entityId: string, ids: readonly string[]) =>
+    live.rows.filter((r) => r.entity_id === entityId && ids.includes(r.id)));
+  const repo = { findMiniSearchRows, findMiniSearchRowsByIds } as unknown as EntryRepository;
+  return { repo, live, findMiniSearchRows, findMiniSearchRowsByIds };
+}
+
+const hits = (service: SearchService, query: string, entityIds = ['e1']) =>
+  service.searchKeyword(query, entityIds, 100).map((r) => r.id).sort();
+
+describe('syncEntries', () => {
+  it('indexes new ids by reading only those rows', async () => {
+    const { repo, live, findMiniSearchRows, findMiniSearchRowsByIds } = makeLiveRepo([makeMiniSearchRow('f1', 'e1', 'apple')]);
+    const service = new SearchService(repo);
+    await service.sync('e1');
+    findMiniSearchRows.mockClear();
+
+    live.rows.push(makeMiniSearchRow('f2', 'e1', 'banana'));
+    await service.syncEntries('e1', ['f2']);
+
+    expect(findMiniSearchRowsByIds).toHaveBeenCalledWith('e1', ['f2']);
+    expect(findMiniSearchRows).not.toHaveBeenCalled();
+    expect(hits(service, 'banana')).toEqual(['f2']);
+    expect(hits(service, 'apple')).toEqual(['f1']);
+  });
+
+  it('replaces an updated row', async () => {
+    const { repo, live } = makeLiveRepo([makeMiniSearchRow('f1', 'e1', 'apple')]);
+    const service = new SearchService(repo);
+    await service.sync('e1');
+
+    live.rows[0] = makeMiniSearchRow('f1', 'e1', 'cherry');
+    await service.syncEntries('e1', ['f1']);
+
+    expect(hits(service, 'apple')).toEqual([]);
+    expect(hits(service, 'cherry')).toEqual(['f1']);
+  });
+
+  it('removes a soft-deleted row', async () => {
+    const { repo, live } = makeLiveRepo([makeMiniSearchRow('f1', 'e1', 'apple')]);
+    const service = new SearchService(repo);
+    await service.sync('e1');
+
+    live.rows = [];
+    await service.syncEntries('e1', ['f1']);
+
+    expect(hits(service, 'apple')).toEqual([]);
+  });
+
+  it('never touches an id indexed under another entity', async () => {
+    const { repo } = makeLiveRepo([makeMiniSearchRow('f1', 'e1', 'apple'), makeMiniSearchRow('g1', 'e2', 'apple')]);
+    const service = new SearchService(repo);
+    await service.sync();
+
+    await service.syncEntries('e1', ['g1']);
+
+    expect(hits(service, 'apple', ['e2'])).toEqual(['g1']);
+    expect(hits(service, 'apple', ['e1'])).toEqual(['f1']);
+  });
+
+  it('ignores ids that are neither indexed nor live', async () => {
+    const { repo } = makeLiveRepo([makeMiniSearchRow('f1', 'e1', 'apple')]);
+    const service = new SearchService(repo);
+    await service.sync('e1');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await expect(service.syncEntries('e1', ['nope'])).resolves.toBeUndefined();
+
+    expect(warn).not.toHaveBeenCalled();
+    expect(hits(service, 'apple')).toEqual(['f1']);
+    warn.mockRestore();
+  });
+
+  it('makes no repository call for an empty id list on a tracked entity', async () => {
+    const { repo, findMiniSearchRows, findMiniSearchRowsByIds } = makeLiveRepo([makeMiniSearchRow('f1', 'e1', 'apple')]);
+    const service = new SearchService(repo);
+    await service.sync('e1');
+    findMiniSearchRows.mockClear();
+
+    await service.syncEntries('e1', []);
+
+    expect(findMiniSearchRows).not.toHaveBeenCalled();
+    expect(findMiniSearchRowsByIds).not.toHaveBeenCalled();
+  });
+
+  it('falls back to a full entity rebuild for an entity it has never indexed', async () => {
+    const { repo, findMiniSearchRows, findMiniSearchRowsByIds } = makeLiveRepo([
+      makeMiniSearchRow('f0', 'e1', 'cherry'),
+      makeMiniSearchRow('f1', 'e1', 'apple'),
+    ]);
+    const service = new SearchService(repo);
+
+    await service.syncEntries('e1', ['f1']);
+
+    expect(findMiniSearchRows).toHaveBeenCalledWith('e1');
+    expect(findMiniSearchRowsByIds).not.toHaveBeenCalled();
+    expect(hits(service, 'apple')).toEqual(['f1']);
+    expect(hits(service, 'cherry')).toEqual(['f0']);
+  });
+
+  it('on a failed read: warns, leaves the index unchanged, and rebuilds the entity next time', async () => {
+    const { repo, live, findMiniSearchRows, findMiniSearchRowsByIds } = makeLiveRepo([makeMiniSearchRow('f1', 'e1', 'apple')]);
+    const service = new SearchService(repo);
+    await service.sync('e1');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    findMiniSearchRowsByIds.mockRejectedValueOnce(new Error('boom'));
+
+    live.rows.push(makeMiniSearchRow('f2', 'e1', 'banana'));
+    await expect(service.syncEntries('e1', ['f2'])).resolves.toBeUndefined();
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('search index incremental sync failed for e1'),
+      expect.any(Error),
+    );
+    expect(hits(service, 'apple')).toEqual(['f1']);
+    expect(hits(service, 'banana')).toEqual([]);
+
+    // Stale → the next call rebuilds the entity in full, even with no ids.
+    findMiniSearchRows.mockClear();
+    await service.syncEntries('e1', []);
+    expect(findMiniSearchRows).toHaveBeenCalledWith('e1');
+    expect(hits(service, 'banana')).toEqual(['f2']);
+
+    // …and after that it is incremental again.
+    findMiniSearchRows.mockClear();
+    await service.syncEntries('e1', ['f2']);
+    expect(findMiniSearchRows).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('markStale forces one full rebuild; sync() clears the flag', async () => {
+    const { repo, findMiniSearchRows, findMiniSearchRowsByIds } = makeLiveRepo([makeMiniSearchRow('f1', 'e1', 'apple')]);
+    const service = new SearchService(repo);
+    await service.sync('e1');
+
+    service.markStale('e1');
+    findMiniSearchRows.mockClear();
+    await service.syncEntries('e1', ['f1']);
+    expect(findMiniSearchRows).toHaveBeenCalledWith('e1');
+    expect(findMiniSearchRowsByIds).not.toHaveBeenCalled();
+
+    findMiniSearchRows.mockClear();
+    await service.syncEntries('e1', ['f1']);
+    expect(findMiniSearchRows).not.toHaveBeenCalled();
+    expect(findMiniSearchRowsByIds).toHaveBeenCalledTimes(1);
+
+    service.markStale('e1');
+    await service.sync('e1');
+    findMiniSearchRows.mockClear();
+    await service.syncEntries('e1', ['f1']);
+    expect(findMiniSearchRows).not.toHaveBeenCalled();
+  });
+
+  it('after clearAll(), takes the full-rebuild path instead of a duplicate-id addAll', async () => {
+    const { repo, findMiniSearchRows } = makeLiveRepo([makeMiniSearchRow('f1', 'e1', 'apple')]);
+    const service = new SearchService(repo);
+    await service.sync('e1');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    service.clearAll();
+    findMiniSearchRows.mockClear();
+    await service.syncEntries('e1', ['f1']);
+
+    expect(findMiniSearchRows).toHaveBeenCalledWith('e1');
+    expect(warn).not.toHaveBeenCalled();
+    expect(hits(service, 'apple')).toEqual(['f1']);
+    warn.mockRestore();
+  });
+
+  it('never overlaps a sync() turn', async () => {
+    const rows = [makeMiniSearchRow('f1', 'e1', 'apple')];
+    const inFlight = { now: 0, max: 0 };
+    const slow = async <T>(value: T, ms: number): Promise<T> => {
+      inFlight.now++;
+      inFlight.max = Math.max(inFlight.max, inFlight.now);
+      await new Promise((resolve) => setTimeout(resolve, ms));
+      inFlight.now--;
+      return value;
+    };
+    const repo = {
+      findMiniSearchRows: vi.fn((entityId?: string) => slow(rows.filter((r) => !entityId || r.entity_id === entityId), 15)),
+      findMiniSearchRowsByIds: vi.fn((entityId: string, ids: readonly string[]) =>
+        slow(rows.filter((r) => r.entity_id === entityId && ids.includes(r.id)), 5)),
+    } as unknown as EntryRepository;
+    const service = new SearchService(repo);
+    await service.sync('e1');
+
+    await Promise.all([
+      service.syncEntries('e1', ['f1']),
+      service.sync('e1'),
+      service.syncEntries('e1', ['f1']),
+      service.sync('e1'),
+    ]);
+
+    expect(inFlight.max).toBe(1);
+    expect(hits(service, 'apple')).toEqual(['f1']);
+  });
+
+  it('vacuums only once dirt passes the thresholds; auto-vacuum stays off', async () => {
+    const rows = Array.from({ length: 100 }, (_, i) => makeMiniSearchRow(`f${i}`, 'e1', `word${i}`));
+    const { repo } = makeLiveRepo(rows);
+    const service = new SearchService(repo);
+    await service.sync('e1');
+    const vacuumSpy = vi.spyOn(MiniSearch.prototype, 'vacuum').mockResolvedValue(undefined as never);
+
+    // 5 re-indexed rows = 5 discards: dirtCount 5 < 20.
+    await service.syncEntries('e1', rows.slice(0, 5).map((r) => r.id));
+    expect(vacuumSpy).not.toHaveBeenCalled();
+
+    // 30 more = dirtCount 35 >= 20, dirtFactor 35 / (1 + 100 + 35) ≈ 0.26 >= 0.1.
+    await service.syncEntries('e1', rows.slice(5, 35).map((r) => r.id));
+    expect(vacuumSpy).toHaveBeenCalledTimes(1);
+    expect((service as any).miniSearch._options.autoVacuum).toBe(false);
+
+    vacuumSpy.mockRestore();
+  });
+});

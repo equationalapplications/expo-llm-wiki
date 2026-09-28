@@ -44,6 +44,14 @@ export class SearchService {
    */
   private static readonly MAX_VECTOR_CACHE_FACTS_PER_ENTITY = 500;
 
+  /**
+   * MiniSearch 7's own `defaultVacuumConditions`. An incremental syncEntries
+   * turn vacuums only once both hold, so the O(index) vacuum is spread over at
+   * least 10% index churn instead of being paid on every write (#232).
+   */
+  private static readonly VACUUM_MIN_DIRT_COUNT = 20;
+  private static readonly VACUUM_MIN_DIRT_FACTOR = 0.1;
+
   private miniSearch: MiniSearch<{ id: string; entity_id: string; title: string; body: string; tags: string }>;
   private miniSearchEntryIdsByEntity = new Map<string, Set<string>>();
   private vectorCache: Map<string, Map<string, Float32Array>> = new Map();
@@ -57,6 +65,14 @@ export class SearchService {
    * auto-vacuum debt behind the TypeError in #64.
    */
   private syncChain: Promise<void> = Promise.resolve();
+
+  /**
+   * Entities whose index may have drifted from SQLite: an incremental update
+   * failed part-way, or core wrote rows it could not index (upsertGraph runs in
+   * the host's transaction). Their next syncEntries rebuilds the entity in full.
+   * See spec 2026-09-28 §5.
+   */
+  private staleEntities = new Set<string>();
 
   constructor(private entryRepo: EntryRepository) {
     this.miniSearch = new MiniSearch({
@@ -93,6 +109,8 @@ export class SearchService {
         // inner finally keeps eviction unconditional, as it was before.
         try {
           await this.rebuildIndex(entityId);
+          if (entityId) this.staleEntities.delete(entityId);
+          else this.staleEntities.clear();
           await this.miniSearch.vacuum();
         } finally {
           this.evictCache(entityId);
@@ -103,6 +121,75 @@ export class SearchService {
     });
     this.syncChain = work;
     return work;
+  }
+
+  /**
+   * Re-indexes only `ids` for `entityId`: drops each from the index, then
+   * re-adds the ones still live in SQLite, so soft-deleted or missing ids end
+   * up absent. Costs O(ids), where sync(entityId) costs O(entity) — callers that
+   * know what a write touched use this so chunked imports stay linear (#232).
+   *
+   * Serialized with sync() on the same chain and, like it, never rejects. An
+   * entity that is stale or has never been indexed gets a full rebuild instead.
+   */
+  async syncEntries(entityId: string, ids: Iterable<string>): Promise<void> {
+    const uniqueIds = [...new Set(ids)];
+    if (uniqueIds.length === 0 && !this.staleEntities.has(entityId)) return;
+
+    const work = this.syncChain.then(async () => {
+      try {
+        try {
+          const needsRebuild = () =>
+            this.staleEntities.has(entityId) || !this.miniSearchEntryIdsByEntity.has(entityId);
+
+          if (!needsRebuild()) {
+            // Read before mutating, so a failed read leaves the index as it was.
+            const rows = await this.entryRepo.findMiniSearchRowsByIds(entityId, uniqueIds);
+            // Re-check: clearAll() or markStale() may have run during the read.
+            const tracked = this.miniSearchEntryIdsByEntity.get(entityId);
+            if (tracked && !this.staleEntities.has(entityId)) {
+              // No await from here to addAll: the index never shows a half-applied
+              // update. Only ids tracked under this entity are discarded — each is
+              // in the index, so discard() cannot throw, and other entities'
+              // documents are never touched.
+              for (const id of uniqueIds) {
+                if (tracked.delete(id)) this.miniSearch.discard(id);
+              }
+              const documents = rows.map((row) => this.normalizeMiniSearchRow(row));
+              if (documents.length > 0) this.miniSearch.addAll(documents);
+              for (const document of documents) tracked.add(document.id);
+
+              if (
+                this.miniSearch.dirtCount >= SearchService.VACUUM_MIN_DIRT_COUNT &&
+                this.miniSearch.dirtFactor >= SearchService.VACUUM_MIN_DIRT_FACTOR
+              ) {
+                await this.miniSearch.vacuum();
+              }
+              return;
+            }
+          }
+
+          await this.rebuildIndex(entityId);
+          this.staleEntities.delete(entityId);
+          await this.miniSearch.vacuum();
+        } finally {
+          this.evictCache(entityId);
+        }
+      } catch (err) {
+        this.staleEntities.add(entityId);
+        console.warn(`[WikiMemory] search index incremental sync failed for ${entityId}:`, err);
+      }
+    });
+    this.syncChain = work;
+    return work;
+  }
+
+  /**
+   * Forces the entity's next syncEntries to rebuild it in full. For writes core
+   * cannot index itself, such as upsertGraph inside a host transaction.
+   */
+  markStale(entityId: string): void {
+    this.staleEntities.add(entityId);
   }
 
   /**
@@ -124,6 +211,7 @@ export class SearchService {
     this.vectorCache.clear();
     this.miniSearch.removeAll();
     this.miniSearchEntryIdsByEntity.clear();
+    this.staleEntities.clear();
   }
 
   /**
