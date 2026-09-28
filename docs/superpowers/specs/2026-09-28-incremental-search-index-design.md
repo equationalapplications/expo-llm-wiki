@@ -1,7 +1,7 @@
 # Incremental Keyword Search Index: Design
 
 **Date:** 2026-09-28
-**Status:** Draft — revision 1
+**Status:** Implemented — revision 2
 **Branch:** `fix/core-incremental-search-index-232`
 **Source baseline:** `854ac92` (core 7.7.5)
 **Issue:** #232
@@ -179,3 +179,4 @@ The issue's wall-clock benchmark (25/100/250/1000 fact chunks) is not a CI test.
 ## 9. Revision log
 
 - **r1 (2026-09-28):** initial design.
+- **r2 (2026-09-28):** implemented. Delivery deviations, decided while planning: (a) the real-SQLite acceptance tests live in the new `__tests__/incrementalSearchIndex.test.ts`, because `importDump.test.ts` and `ingest.test.ts` drive `WikiMemory` through a regex mock database that can't run keyword search. The unit-level assertions still live in `ImportExportService.test.ts` and `ingest.test.ts`. (b) The code ships as four commits: two `refactor(core)` commits (repository read, `syncEntries`), one `perf(core)` commit (call sites; the only changelog entry), and one `test(core)` commit. That replaces §8's single code commit. On-branch benchmark (1000 facts, 25/100/250/1000-fact chunks): 790 / 736 / 722 / 757 ms — within 1.04× across chunk sizes, well inside the ≤ 2× target. Baseline re-run was skipped during this session; the PR description carries the on-branch numbers only.
