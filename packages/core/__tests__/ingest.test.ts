@@ -90,9 +90,8 @@ describe('IngestionService — PromptService injection', () => {
     expect(mockSearchService.syncEntries).toHaveBeenCalledTimes(1);
     const [entityId, ids] = mockSearchService.syncEntries.mock.calls[0];
     expect(entityId).toBe('entity1');
-    expect(ids).toBeInstanceOf(Set);
-    expect(ids.has('old_fact')).toBe(true);
-    expect(ids.size).toBe(2); // old_fact + the one fact the mocked LLM extracted
+    expect(ids).toEqual(expect.arrayContaining(['old_fact']));
+    expect(ids).toHaveLength(2); // old_fact + the one fact the mocked LLM extracted
   });
 
   it('applies runtime promptOverride via PromptService', async () => {

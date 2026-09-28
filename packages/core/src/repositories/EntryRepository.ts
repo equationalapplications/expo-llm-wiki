@@ -106,6 +106,15 @@ function mapRowToFactWithBlobs(row: any): WikiFact {
 
 
 export class EntryRepository extends BaseRepository {
+  /**
+   * Column list and liveness predicate shared by findMiniSearchRows and
+   * findMiniSearchRowsByIds, so the full rebuild and the incremental read
+   * can never drift apart (spec 2026-09-28 §4.4: both must produce
+   * identical documents).
+   */
+  private static readonly MINI_SEARCH_COLUMNS = 'id, entity_id, title, body, tags';
+  private static readonly MINI_SEARCH_LIVE_WHERE = 'WHERE deleted_at IS NULL';
+
   private chunkSize = 500;
 
   constructor(db: SQLiteAdapter, prefix: string, private outbox: OutboxRepository) {
@@ -958,12 +967,12 @@ export class EntryRepository extends BaseRepository {
     const executor = this.getExecutor(tx);
     if (entityId !== undefined) {
       return executor.getAllAsync(
-        `SELECT id, entity_id, title, body, tags FROM ${this.prefix}entries WHERE deleted_at IS NULL AND entity_id = ?`,
+        `SELECT ${EntryRepository.MINI_SEARCH_COLUMNS} FROM ${this.prefix}entries ${EntryRepository.MINI_SEARCH_LIVE_WHERE} AND entity_id = ?`,
         [entityId],
       );
     }
     return executor.getAllAsync(
-      `SELECT id, entity_id, title, body, tags FROM ${this.prefix}entries WHERE deleted_at IS NULL`,
+      `SELECT ${EntryRepository.MINI_SEARCH_COLUMNS} FROM ${this.prefix}entries ${EntryRepository.MINI_SEARCH_LIVE_WHERE}`,
     );
   }
 
@@ -985,7 +994,7 @@ export class EntryRepository extends BaseRepository {
       const chunk = ids.slice(i, i + this.chunkSize);
       const placeholders = chunk.map(() => '?').join(',');
       rows.push(...(await executor.getAllAsync<{ id: string; entity_id: string; title: string; body: string; tags: string }>(
-        `SELECT id, entity_id, title, body, tags FROM ${this.prefix}entries WHERE deleted_at IS NULL AND entity_id = ? AND id IN (${placeholders})`,
+        `SELECT ${EntryRepository.MINI_SEARCH_COLUMNS} FROM ${this.prefix}entries ${EntryRepository.MINI_SEARCH_LIVE_WHERE} AND entity_id = ? AND id IN (${placeholders})`,
         [entityId, ...chunk],
       )));
     }

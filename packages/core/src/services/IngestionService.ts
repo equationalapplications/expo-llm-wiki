@@ -445,10 +445,11 @@ export class IngestionService {
       diagBuffer.flush(this.options);
 
       // Index only the rows this document retired or inserted (#232), not the
-      // whole entity. deletedSourceFactIds is empty on the partial path.
+      // whole entity. deletedSourceFactIds is empty on the partial path; the
+      // dedupe lives in syncEntries, the public API boundary (r3).
       await this.searchService.syncEntries(
         entityId,
-        new Set([...deletedSourceFactIds, ...insertedFacts.map((fact) => fact.id)]),
+        [...deletedSourceFactIds, ...insertedFacts.map((fact) => fact.id)],
       );
 
       // Post-commit hook loop. `notifyEmbeddingPersisted(entityId, factId, null)`
