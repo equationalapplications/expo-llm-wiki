@@ -244,6 +244,11 @@ export class MaintenanceService {
       this._validatePruneDuration(retainEventsFor, 'retainEventsFor');
 
       const now = Date.now();
+      // The full-entity rebuild is deferred until the touched-id set is known:
+      // prune always knows exactly which rows it removed, so the index update
+      // is O(touched) instead of O(entity) (spec 2026-09-28
+      // maintenance-incremental-sync §2.2).
+      let syncedIds: string[] = [];
       let deletedEntries = 0;
       let deletedTasks = 0;
       let deletedEvents = 0;
@@ -266,6 +271,12 @@ export class MaintenanceService {
         }
 
         const succeededIds = succeeded.map(r => r.id);
+        // ids whose documents leave the index. Every pruned row was already
+        // soft-deleted (and thus already absent from the live read), so this is
+        // drift repair, not the primary removal mechanism — syncEntries still
+        // discards each id before re-reading it, so a stale document a
+        // pre-#233-style path left behind is scrubbed here (§2.2).
+        syncedIds = succeededIds;
 
         await this.db.withTransactionAsync(async (tx) => {
           if (succeededIds.length > 0) {
@@ -275,7 +286,7 @@ export class MaintenanceService {
         });
 
         if (failure) {
-          await this.searchService.sync(entityId);
+          await this.searchService.syncEntries(entityId, syncedIds);
           const remaining = entriesToDelete.length - succeeded.length - 1;
           const isTimeout = (failure.cause as any)?.[HOOK_TIMEOUT_MARKER] === true;
 
@@ -305,7 +316,7 @@ export class MaintenanceService {
         await this.metadataRepo.vacuum();
       }
 
-      await this.searchService.sync(entityId);
+      await this.searchService.syncEntries(entityId, syncedIds);
       return { entries: deletedEntries, tasks: deletedTasks, events: deletedEvents };
     } finally {
       this.jobManager.releaseLock('prune', entityId);
@@ -535,9 +546,13 @@ export class MaintenanceService {
         }
       });
 
-      await this.searchService.sync(entityId);
-
+      // Every branch that soft-deletes entries also enumerates the ids into
+      // deletedEntryIds inside the same transaction: entryId at :507,
+      // findIdsBySource(..., true) at :511 (the by-source branch's predicate
+      // matches softDeleteBySource's exactly), and the clearAll branch at :477.
+      // So the index update is O(deleted), not O(entity) (spec §2.1).
       const uniqueDeletedIds = Array.from(new Set(deletedEntryIds));
+      await this.searchService.syncEntries(entityId, uniqueDeletedIds);
       for (const factId of uniqueDeletedIds) {
         try {
           await this.embeddingService.notifyEmbeddingPersistedOrThrow(entityId, factId, null);
@@ -769,7 +784,10 @@ export class MaintenanceService {
 
     diagBuffer.flush(this.options);
 
-    await this.searchService.sync(entityId);
+    // The transaction only inserts (fresh generateId('fact_') rows); tasks and
+    // edges are not indexed, so insertedFacts is the complete mutation set and
+    // the index update is O(inserted), not O(entity) (spec §2.3).
+    await this.searchService.syncEntries(entityId, insertedFacts.map((f) => f.id));
 
     for (const fact of insertedFacts) {
       await this.embeddingService.embedFact(fact, { operation: 'librarian', trigger });
@@ -850,8 +868,11 @@ export class MaintenanceService {
     if (healCandidates.length === 0) {
       // The orphan/stale SQL passes above may still have mutated rows, so the
       // search index sync must happen before returning — it did today, after
-      // runBatched no-oped on an empty candidate list.
-      await this.searchService.sync(entityId);
+      // runBatched no-oped on an empty candidate list. Both passes return the
+      // ids they touched (markOrphaned via RETURNING id, downgradeStaleInferred
+      // via select-then-update with the same predicate), so the sync stays
+      // O(touched) on the early-return path too (spec §2.4).
+      await this.searchService.syncEntries(entityId, Array.from(new Set([...orphanedIds, ...staleDowngradedIds])));
       this.searchService.evictCache(entityId);
       const counts = await this.entryRepo.countHealCandidatesByEntityId(entityId, recheckCutoff);
       return {
@@ -1090,7 +1111,19 @@ export class MaintenanceService {
     }
     diagBuffer.flush(this.options);
 
-    await this.searchService.sync(entityId);
+    // Union of every id heal's passes touched, all of which are enumerated by
+    // the passes themselves: markOrphaned (RETURNING id), downgradeStaleInferred
+    // (select-then-update, same predicate), the mutable-ids-guarded batch
+    // outcomes, and fresh-id inserts. There is no other `entries` write in this
+    // method, so the index update is O(touched), not O(entity) (spec §2.4).
+    const healSyncIds = Array.from(new Set([
+      ...orphanedIds,
+      ...staleDowngradedIds,
+      ...safeDowngraded,
+      ...uniqueDeletedFactIds,
+      ...insertedFacts.map((f) => f.id),
+    ]));
+    await this.searchService.syncEntries(entityId, healSyncIds);
 
     for (const factId of uniqueDeletedFactIds) {
       try {
