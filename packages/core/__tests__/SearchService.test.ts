@@ -1320,6 +1320,30 @@ describe('syncEntries', () => {
     expect(findMiniSearchRowsByIds).not.toHaveBeenCalled();
   });
 
+  it('on an empty id list for a never-indexed entity: rebuilds it in full and registers it', async () => {
+    const { repo, live, findMiniSearchRows, findMiniSearchRowsByIds } = makeLiveRepo([
+      makeMiniSearchRow('f0', 'e1', 'cherry'),
+      makeMiniSearchRow('f1', 'e1', 'apple'),
+    ]);
+    const service = new SearchService(repo);
+
+    await service.syncEntries('e1', []);
+
+    expect(findMiniSearchRows).toHaveBeenCalledWith('e1');
+    expect(findMiniSearchRowsByIds).not.toHaveBeenCalled();
+    expect(hits(service, 'apple')).toEqual(['f1']);
+    expect(hits(service, 'cherry')).toEqual(['f0']);
+
+    // The rebuild registered the entity, so the next sync stays incremental.
+    findMiniSearchRows.mockClear();
+    live.rows.push(makeMiniSearchRow('f2', 'e1', 'banana'));
+    await service.syncEntries('e1', ['f2']);
+
+    expect(findMiniSearchRowsByIds).toHaveBeenCalledWith('e1', ['f2']);
+    expect(findMiniSearchRows).not.toHaveBeenCalled();
+    expect(hits(service, 'banana')).toEqual(['f2']);
+  });
+
   it('falls back to a full entity rebuild for an entity it has never indexed', async () => {
     const { repo, findMiniSearchRows, findMiniSearchRowsByIds } = makeLiveRepo([
       makeMiniSearchRow('f0', 'e1', 'cherry'),

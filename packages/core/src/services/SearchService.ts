@@ -140,11 +140,22 @@ export class SearchService {
    * know what a write touched use this so chunked imports stay linear (#232).
    *
    * Serialized with sync() on the same chain and, like it, never rejects. An
-   * entity that is stale or has never been indexed gets a full rebuild instead.
+   * entity that is stale or has never been indexed gets a full rebuild instead
+   * — including on an empty `ids` list, which is a no-op only for an entity
+   * the index already tracks.
    */
   async syncEntries(entityId: string, ids: Iterable<string>): Promise<void> {
     const uniqueIds = [...new Set(ids)];
-    if (uniqueIds.length === 0 && !this.staleEntities.has(entityId)) return;
+    // The fast path requires a tracked entity, matching needsRebuild() below:
+    // otherwise an empty id set on a never-indexed entity would skip the
+    // full rebuild that registers it (#232 review finding).
+    if (
+      uniqueIds.length === 0 &&
+      !this.staleEntities.has(entityId) &&
+      this.miniSearchEntryIdsByEntity.has(entityId)
+    ) {
+      return;
+    }
 
     const work = this.syncChain.then(async () => {
       try {
