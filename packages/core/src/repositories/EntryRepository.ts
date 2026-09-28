@@ -967,6 +967,31 @@ export class EntryRepository extends BaseRepository {
     );
   }
 
+  /**
+   * Keyword-index rows for specific ids — the incremental counterpart of
+   * {@link findMiniSearchRows}, with identical columns. Soft-deleted rows and
+   * rows of other entities are omitted, so a caller can pass every id a write
+   * touched and get back exactly what should be indexed. Spec 2026-09-28 §4.4.
+   */
+  async findMiniSearchRowsByIds(
+    entityId: string,
+    ids: readonly string[],
+    tx?: SQLiteAdapter,
+  ): Promise<Array<{ id: string; entity_id: string; title: string; body: string; tags: string }>> {
+    if (ids.length === 0) return [];
+    const executor = this.getExecutor(tx);
+    const rows: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
+    for (let i = 0; i < ids.length; i += this.chunkSize) {
+      const chunk = ids.slice(i, i + this.chunkSize);
+      const placeholders = chunk.map(() => '?').join(',');
+      rows.push(...(await executor.getAllAsync<{ id: string; entity_id: string; title: string; body: string; tags: string }>(
+        `SELECT id, entity_id, title, body, tags FROM ${this.prefix}entries WHERE deleted_at IS NULL AND entity_id = ? AND id IN (${placeholders})`,
+        [entityId, ...chunk],
+      )));
+    }
+    return rows;
+  }
+
   async updateEmbeddingBlob(id: string, blob: Uint8Array, tx?: SQLiteAdapter): Promise<void> {
     const executor = this.getExecutor(tx);
     await executor.runAsync(

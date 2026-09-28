@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { openTestDatabase } from '../helpers/sqliteAdapter';
 import { setupDatabase } from '../../src/db/schema';
 import { MIGRATIONS } from '../../src/db/migrations';
@@ -265,5 +265,51 @@ describe('EntryRepository with OutboxRepository', () => {
 
     const [found] = await repo.findAllByEntityId('entity1');
     expect(found.okf_type).toBeNull();
+  });
+
+  describe('findMiniSearchRowsByIds', () => {
+    const insert = (id: string, entityId: string, title: string, deletedAt: number | null = null) =>
+      db.runAsync(
+        `INSERT INTO llm_wiki_entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at, access_count, deleted_at)
+         VALUES (?, ?, ?, 'B', '["t"]', 'certain', 'user_stated', 1, 1, 0, ?)`,
+        [id, entityId, title, deletedAt],
+      );
+
+    it('returns only live rows of the entity among the requested ids', async () => {
+      await insert('a', 'e1', 'A');
+      await insert('b', 'e1', 'B', 5); // soft-deleted
+      await insert('c', 'e2', 'C'); // other entity
+      await insert('d', 'e1', 'D'); // live but not requested
+
+      const rows = await repo.findMiniSearchRowsByIds('e1', ['a', 'b', 'c', 'missing']);
+
+      expect(rows).toEqual([{ id: 'a', entity_id: 'e1', title: 'A', body: 'B', tags: '["t"]' }]);
+    });
+
+    it('returns the same columns as findMiniSearchRows', async () => {
+      await insert('a', 'e1', 'A');
+      const byId = await repo.findMiniSearchRowsByIds('e1', ['a']);
+      const full = (await repo.findMiniSearchRows('e1')).filter((r) => r.id === 'a');
+      expect(byId).toEqual(full);
+    });
+
+    it('chunks id lists longer than 500', async () => {
+      const ids = Array.from({ length: 1200 }, (_, i) => `f${i}`);
+      for (const id of ids) await insert(id, 'e1', id);
+      const spy = vi.spyOn(db, 'getAllAsync');
+
+      const rows = await repo.findMiniSearchRowsByIds('e1', [...ids, 'missing']);
+
+      expect(rows).toHaveLength(1200);
+      expect(spy).toHaveBeenCalledTimes(3);
+      spy.mockRestore();
+    });
+
+    it('returns [] for no ids without querying', async () => {
+      const spy = vi.spyOn(db, 'getAllAsync');
+      expect(await repo.findMiniSearchRowsByIds('e1', [])).toEqual([]);
+      expect(spy).not.toHaveBeenCalled();
+      spy.mockRestore();
+    });
   });
 });
