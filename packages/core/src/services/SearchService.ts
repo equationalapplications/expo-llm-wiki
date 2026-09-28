@@ -168,11 +168,14 @@ export class SearchService {
             const tracked = this.miniSearchEntryIdsByEntity.get(entityId);
             if (tracked && !this.staleEntities.has(entityId)) {
               // No await from here to addAll: the index never shows a half-applied
-              // update. Only ids tracked under this entity are discarded — each is
-              // in the index, so discard() cannot throw, and other entities'
-              // documents are never touched.
+              // update. Only ids tracked under this entity are discarded, so other
+              // entities' documents are never touched. The tracked set normally
+              // matches the index exactly, but a rebuild that failed between its
+              // own discard pass and set replacement can leave it claiming ids
+              // the index no longer holds — and discard() throws on those — so
+              // miniSearch.has() is the membership test of record.
               for (const id of uniqueIds) {
-                if (tracked.delete(id)) this.miniSearch.discard(id);
+                if (tracked.delete(id) && this.miniSearch.has(id)) this.miniSearch.discard(id);
               }
               const documents = rows.map((row) => this.normalizeMiniSearchRow(row));
               if (documents.length > 0) this.miniSearch.addAll(documents);

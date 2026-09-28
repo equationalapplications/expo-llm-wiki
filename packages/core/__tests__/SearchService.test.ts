@@ -1285,6 +1285,25 @@ describe('syncEntries', () => {
     expect(hits(service, 'apple')).toEqual([]);
   });
 
+  it('skips a tracked id the index no longer holds instead of throwing at it', async () => {
+    // The drifted state a failed rebuild can leave behind: rebuildIndex
+    // discards the previous ids and only then replaces the tracked set, so a
+    // throw in between leaves the set claiming ids the index has already
+    // dropped. discard() on such an id throws ("it is not in the index").
+    const { repo } = makeLiveRepo([makeMiniSearchRow('f1', 'e1', 'apple')]);
+    const service = new SearchService(repo);
+    await service.sync('e1');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    (service as any).miniSearch.discard('f1'); // index loses f1; tracked set still has it
+
+    await expect(service.syncEntries('e1', ['f1'])).resolves.toBeUndefined();
+    expect(warn).not.toHaveBeenCalled();
+    expect(hits(service, 'apple')).toEqual(['f1']); // re-added from the live row
+
+    warn.mockRestore();
+  });
+
   it('never touches an id indexed under another entity', async () => {
     const { repo } = makeLiveRepo([makeMiniSearchRow('f1', 'e1', 'apple'), makeMiniSearchRow('g1', 'e2', 'apple')]);
     const service = new SearchService(repo);
