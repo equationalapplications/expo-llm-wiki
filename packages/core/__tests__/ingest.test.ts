@@ -47,6 +47,7 @@ describe('IngestionService — PromptService injection', () => {
     };
     mockSearchService = {
       sync: vi.fn().mockResolvedValue(undefined),
+      syncEntries: vi.fn().mockResolvedValue(undefined),
       evictCache: vi.fn(),
     };
     mockJobManager = {
@@ -77,6 +78,21 @@ describe('IngestionService — PromptService injection', () => {
         userPrompt: expect.stringContaining('hello world'),
       })
     );
+  });
+
+  it('re-indexes only the ids it retired or inserted, never the whole entity (#232)', async () => {
+    mockEntryRepo.findIdsBySource.mockResolvedValue(['old_fact']);
+    const svc = new IngestionService(mockDb, 'llm_wiki_', mockOptions, mockEntryRepo, mockSourceRefIndexRepo, mockMetadataRepo, mockEdgeRepo, mockSearchService, mockJobManager, mockEmbeddingService, new PromptService());
+
+    await svc.ingestDocument('entity1', { sourceRef: 'doc-232', sourceHash: 'a'.repeat(64), documentChunk: 'Some document text.' });
+
+    expect(mockSearchService.sync).not.toHaveBeenCalled();
+    expect(mockSearchService.syncEntries).toHaveBeenCalledTimes(1);
+    const [entityId, ids] = mockSearchService.syncEntries.mock.calls[0];
+    expect(entityId).toBe('entity1');
+    expect(ids).toBeInstanceOf(Set);
+    expect(ids.has('old_fact')).toBe(true);
+    expect(ids.size).toBe(2); // old_fact + the one fact the mocked LLM extracted
   });
 
   it('applies runtime promptOverride via PromptService', async () => {

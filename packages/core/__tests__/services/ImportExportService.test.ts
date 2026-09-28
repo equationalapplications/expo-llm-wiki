@@ -59,6 +59,7 @@ describe('ImportExportService', () => {
 
     mockSearchService = {
       sync: vi.fn().mockResolvedValue(undefined),
+      syncEntries: vi.fn().mockResolvedValue(undefined),
       evictCache: vi.fn(),
     };
 
@@ -169,6 +170,22 @@ describe('ImportExportService', () => {
 
       expect(mockEntryRepo.bulkSoftDeleteByEntityId).toHaveBeenCalledWith('user_1', mockDb);
       expect(mockEntryRepo.upsertForImport).toHaveBeenCalledTimes(1);
+    });
+
+    it('re-indexes only the facts it wrote (merge: true) (#232)', async () => {
+      await importExportService.importDump(mockDump, { merge: true });
+
+      expect(mockSearchService.syncEntries).toHaveBeenCalledWith('user_1', new Set(['fact_1']));
+      expect(mockSearchService.sync).not.toHaveBeenCalled();
+    });
+
+    it('re-indexes every previously live fact plus the bundle (merge: false) (#232)', async () => {
+      mockEntryRepo.findIdsBySource.mockResolvedValue(['old_1', 'fact_1']);
+
+      await importExportService.importDump(mockDump, { merge: false });
+
+      expect(mockSearchService.syncEntries).toHaveBeenCalledWith('user_1', new Set(['old_1', 'fact_1']));
+      expect(mockSearchService.sync).not.toHaveBeenCalled();
     });
 
     it('discards incoming facts if the existing DB row has a newer updated_at (LWW Merge)', async () => {

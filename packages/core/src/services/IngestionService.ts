@@ -444,7 +444,12 @@ export class IngestionService {
       // LLM-pass subset goes out there.
       diagBuffer.flush(this.options);
 
-      await this.searchService.sync(entityId);
+      // Index only the rows this document retired or inserted (#232), not the
+      // whole entity. deletedSourceFactIds is empty on the partial path.
+      await this.searchService.syncEntries(
+        entityId,
+        new Set([...deletedSourceFactIds, ...insertedFacts.map((fact) => fact.id)]),
+      );
 
       // Post-commit hook loop. `notifyEmbeddingPersisted(entityId, factId, null)`
       // is the embedding-lifecycle retirement signal — only relevant on the
