@@ -75,7 +75,17 @@ export class SearchService {
   private staleEntities = new Set<string>();
 
   constructor(private entryRepo: EntryRepository) {
-    this.miniSearch = new MiniSearch({
+    this.miniSearch = this.createMiniSearch();
+  }
+
+  /**
+   * A fresh index with the production options. clearAll() swaps one in because
+   * MiniSearch.removeAll() empties the index but leaves dirtCount (and its
+   * vacuum bookkeeping) at its old value, which would trip syncEntries'
+   * conditional vacuum early after a clear.
+   */
+  private createMiniSearch() {
+    return new MiniSearch({
       fields: ['title', 'body', 'tags'],
       storeFields: ['entity_id'],
       // Vacuuming is driven explicitly at the end of each serialized rebuild
@@ -209,7 +219,9 @@ export class SearchService {
    */
   clearAll(): void {
     this.vectorCache.clear();
-    this.miniSearch.removeAll();
+    // A fresh instance, not removeAll(): that empties the index but keeps
+    // dirtCount and vacuum bookkeeping (minisearch 7.2.0).
+    this.miniSearch = this.createMiniSearch();
     this.miniSearchEntryIdsByEntity.clear();
     this.staleEntities.clear();
   }

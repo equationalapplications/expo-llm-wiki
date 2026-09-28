@@ -368,6 +368,24 @@ describe('clearAll()', () => {
 
     parseSpy.mockRestore();
   });
+
+  it('resets the minisearch dirt counter that removeAll() leaves behind', async () => {
+    const rows = Array.from({ length: 5 }, (_, i) => makeMiniSearchRow(`f${i}`, 'e1', `word${i}`));
+    const { repo } = makeLiveRepo(rows);
+    const service = new SearchService(repo);
+    await service.sync('e1');
+
+    // 5 re-indexed rows accrue 5 discards — below the vacuum thresholds, so
+    // no vacuum fires and dirtCount survives at 5.
+    await service.syncEntries('e1', rows.map((r) => r.id));
+    expect((service as any).miniSearch.dirtCount).toBe(5);
+
+    // minisearch 7.2.0's removeAll() does not reset dirtCount (or its vacuum
+    // bookkeeping); clearAll must swap in a fresh index so "fully resets"
+    // holds and the next conditional vacuum is not triggered early.
+    service.clearAll();
+    expect((service as any).miniSearch.dirtCount).toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
