@@ -1,3 +1,19 @@
+## [7.7.6](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.7.5...v7.7.6) (2026-09-28)
+
+### Bug Fixes
+
+* **core:** empty-id syncEntries waits for rebuilds already on the chain ([#232](https://github.com/equationalapplications/expo-llm-wiki/issues/232)) ([59c47c6](https://github.com/equationalapplications/expo-llm-wiki/commit/59c47c6e3d711a8f9bebc67b96f32fb76a792971))
+* **core:** epoch-guard stale-flag clearing against mid-read markStale ([#232](https://github.com/equationalapplications/expo-llm-wiki/issues/232)) ([633e918](https://github.com/equationalapplications/expo-llm-wiki/commit/633e9184e16bed2e2fabf0e3bcb0abd514770b87))
+* **core:** guard incremental discards with miniSearch.has ([#232](https://github.com/equationalapplications/expo-llm-wiki/issues/232)) ([13ec701](https://github.com/equationalapplications/expo-llm-wiki/commit/13ec7013ce55abd6624af7812747cde9d9d243ea))
+* **core:** keep keyword scores and tie order stable under incremental sync ([#232](https://github.com/equationalapplications/expo-llm-wiki/issues/232)) ([5366aa7](https://github.com/equationalapplications/expo-llm-wiki/commit/5366aa74f1fe1bfa2288ddead9d8fcd6ae543127))
+* **core:** rebuild never-indexed entities on empty-id syncEntries ([#232](https://github.com/equationalapplications/expo-llm-wiki/issues/232)) ([90a737e](https://github.com/equationalapplications/expo-llm-wiki/commit/90a737e61358ea413f42fcaf1e945407d48fe741))
+* **core:** reset minisearch dirt counters in clearAll via fresh index ([#232](https://github.com/equationalapplications/expo-llm-wiki/issues/232)) ([2b359e2](https://github.com/equationalapplications/expo-llm-wiki/commit/2b359e2d4c8da8a2d8312e7de16b482372e40b08))
+
+### Performance Improvements
+
+* **core:** index only the rows importDump and ingestDocument touch ([#232](https://github.com/equationalapplications/expo-llm-wiki/issues/232)) ([5939bb3](https://github.com/equationalapplications/expo-llm-wiki/commit/5939bb3fd3f3e816bcea8a090a30fde1e7efd532))
+* **core:** whole-entity rebuild for merge=false imports ([#232](https://github.com/equationalapplications/expo-llm-wiki/issues/232)) ([68ec370](https://github.com/equationalapplications/expo-llm-wiki/commit/68ec370ab4d0527042db99c449e703fc46238829))
+
 ## [7.7.5](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.7.4...v7.7.5) (2026-09-25)
 
 ### Bug Fixes
