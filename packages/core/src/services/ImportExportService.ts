@@ -432,9 +432,15 @@ export class ImportExportService {
     });
 
     // Index only what this call wrote (#232): a whole-entity rebuild here made
-    // chunked imports quadratic. softDeletedFactIds is non-empty only on
-    // merge=false, where it holds every previously live fact.
-    await this.searchService.syncEntries(entityId, new Set([...softDeletedFactIds, ...upsertedFactIds]));
+    // chunked imports quadratic. merge=false replaces the entity, so its
+    // touched set is every previously live fact plus the bundle — O(entity)
+    // either way — and sync()'s single entity scan beats feeding those same
+    // ids back through chunked id-parameterized reads.
+    if (merge) {
+      await this.searchService.syncEntries(entityId, [...upsertedFactIds]);
+    } else {
+      await this.searchService.sync(entityId);
+    }
 
     for (const fact of bundle.facts) {
       if (

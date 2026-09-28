@@ -175,17 +175,20 @@ describe('ImportExportService', () => {
     it('re-indexes only the facts it wrote (merge: true) (#232)', async () => {
       await importExportService.importDump(mockDump, { merge: true });
 
-      expect(mockSearchService.syncEntries).toHaveBeenCalledWith('user_1', new Set(['fact_1']));
+      expect(mockSearchService.syncEntries).toHaveBeenCalledWith('user_1', ['fact_1']);
       expect(mockSearchService.sync).not.toHaveBeenCalled();
     });
 
-    it('re-indexes every previously live fact plus the bundle (merge: false) (#232)', async () => {
+    it('rebuilds the whole entity in replace mode (merge: false) (#232)', async () => {
       mockEntryRepo.findIdsBySource.mockResolvedValue(['old_1', 'fact_1']);
 
       await importExportService.importDump(mockDump, { merge: false });
 
-      expect(mockSearchService.syncEntries).toHaveBeenCalledWith('user_1', new Set(['old_1', 'fact_1']));
-      expect(mockSearchService.sync).not.toHaveBeenCalled();
+      // merge=false touches every previously live fact plus the bundle, so the
+      // id list is the whole entity anyway — sync()'s one entity scan beats a
+      // chunked id-parameterized read of those same ids.
+      expect(mockSearchService.sync).toHaveBeenCalledWith('user_1');
+      expect(mockSearchService.syncEntries).not.toHaveBeenCalled();
     });
 
     it('discards incoming facts if the existing DB row has a newer updated_at (LWW Merge)', async () => {
