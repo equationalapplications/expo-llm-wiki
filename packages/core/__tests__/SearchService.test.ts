@@ -375,14 +375,15 @@ describe('clearAll()', () => {
     const service = new SearchService(repo);
     await service.sync('e1');
 
-    // 5 re-indexed rows accrue 5 discards — below the vacuum thresholds, so
-    // no vacuum fires and dirtCount survives at 5.
-    await service.syncEntries('e1', rows.map((r) => r.id));
-    expect((service as any).miniSearch.dirtCount).toBe(5);
+    // Accrue dirt with a raw discard: syncEntries vacuums its own discards
+    // away (see the syncEntries suite), so the private index is the honest
+    // way to leave dirtCount > 0 behind.
+    (service as any).miniSearch.discard('f3');
+    expect((service as any).miniSearch.dirtCount).toBe(1);
 
     // minisearch 7.2.0's removeAll() does not reset dirtCount (or its vacuum
     // bookkeeping); clearAll must swap in a fresh index so "fully resets"
-    // holds and the next conditional vacuum is not triggered early.
+    // holds.
     service.clearAll();
     expect((service as any).miniSearch.dirtCount).toBe(0);
   });
@@ -1457,21 +1458,58 @@ describe('syncEntries', () => {
     expect(hits(service, 'apple')).toEqual(['f1']);
   });
 
-  it('vacuums only once dirt passes the thresholds; auto-vacuum stays off', async () => {
-    const rows = Array.from({ length: 100 }, (_, i) => makeMiniSearchRow(`f${i}`, 'e1', `word${i}`));
+  it('equal-score results survive a limit identically before and after an incremental re-index', async () => {
+    // Ten identical rows score identically, so the only thing distinguishing
+    // them is MiniSearch's internal insertion order — which syncEntries
+    // changes by discarding and re-adding the touched id. Callers truncate to
+    // a limit, so the ids surviving the tie must not depend on write history.
+    const rows = Array.from({ length: 10 }, (_, i) => makeMiniSearchRow(`f${i}`, 'e1', 'same', 'same', '[]'));
     const { repo } = makeLiveRepo(rows);
     const service = new SearchService(repo);
     await service.sync('e1');
-    const vacuumSpy = vi.spyOn(MiniSearch.prototype, 'vacuum').mockResolvedValue(undefined as never);
 
-    // 5 re-indexed rows = 5 discards: dirtCount 5 < 20.
-    await service.syncEntries('e1', rows.slice(0, 5).map((r) => r.id));
+    const before = service.searchKeyword('same', ['e1'], 5).map((r) => r.id);
+    await service.syncEntries('e1', ['f3']);
+    const after = service.searchKeyword('same', ['e1'], 5).map((r) => r.id);
+
+    expect(before).toEqual(['f0', 'f1', 'f2', 'f3', 'f4']);
+    expect(after).toEqual(before);
+  });
+
+  it('getMiniSearchScores truncates equal scores by id, not insertion order', async () => {
+    const rows = Array.from({ length: 10 }, (_, i) => makeMiniSearchRow(`f${i}`, 'e1', 'same', 'same', '[]'));
+    const { repo } = makeLiveRepo(rows);
+    const service = new SearchService(repo);
+    await service.sync('e1');
+
+    const before = [...service.getMiniSearchScores('same', ['e1'], 5).keys()];
+    await service.syncEntries('e1', ['f3']);
+    const after = [...service.getMiniSearchScores('same', ['e1'], 5).keys()];
+
+    expect(before).toEqual(['f0', 'f1', 'f2', 'f3', 'f4']);
+    expect(after).toEqual(before);
+  });
+
+  it('vacuums after a turn that discarded, never after an add-only turn', async () => {
+    const rows = Array.from({ length: 30 }, (_, i) => makeMiniSearchRow(`f${i}`, 'e1', `word${i}`));
+    const { repo, live } = makeLiveRepo(rows);
+    const service = new SearchService(repo);
+    await service.sync('e1');
+    const vacuumSpy = vi.spyOn(MiniSearch.prototype, 'vacuum'); // spy-through: the real vacuum must run
+    vacuumSpy.mockClear(); // sync()'s own unconditional vacuum
+
+    // Add-only: appending a fresh fact accrues no dirt, so the #232 fast path
+    // (chunked merge imports) pays no O(index) vacuum.
+    live.rows.push(makeMiniSearchRow('fnew', 'e1', 'brandnew'));
+    await service.syncEntries('e1', ['fnew']);
     expect(vacuumSpy).not.toHaveBeenCalled();
 
-    // 30 more = dirtCount 35 >= 20, dirtFactor 35 / (1 + 100 + 35) ≈ 0.26 >= 0.1.
-    await service.syncEntries('e1', rows.slice(5, 35).map((r) => r.id));
+    // A discard leaves dirt, and dirt inverts term-sharing scores until a
+    // vacuum — so the turn that discarded must vacuum it away.
+    live.rows[0] = makeMiniSearchRow('f0', 'e1', 'rewritten');
+    await service.syncEntries('e1', ['f0']);
     expect(vacuumSpy).toHaveBeenCalledTimes(1);
-    expect((service as any).miniSearch._options.autoVacuum).toBe(false);
+    expect((service as any).miniSearch.dirtCount).toBe(0);
 
     vacuumSpy.mockRestore();
   });

@@ -44,14 +44,6 @@ export class SearchService {
    */
   private static readonly MAX_VECTOR_CACHE_FACTS_PER_ENTITY = 500;
 
-  /**
-   * MiniSearch 7's own `defaultVacuumConditions`. An incremental syncEntries
-   * turn vacuums only once both hold, so the O(index) vacuum is spread over at
-   * least 10% index churn instead of being paid on every write (#232).
-   */
-  private static readonly VACUUM_MIN_DIRT_COUNT = 20;
-  private static readonly VACUUM_MIN_DIRT_FACTOR = 0.1;
-
   private miniSearch: MiniSearch<{ id: string; entity_id: string; title: string; body: string; tags: string }>;
   private miniSearchEntryIdsByEntity = new Map<string, Set<string>>();
   private vectorCache: Map<string, Map<string, Float32Array>> = new Map();
@@ -180,10 +172,15 @@ export class SearchService {
               if (documents.length > 0) this.miniSearch.addAll(documents);
               for (const document of documents) tracked.add(document.id);
 
-              if (
-                this.miniSearch.dirtCount >= SearchService.VACUUM_MIN_DIRT_COUNT &&
-                this.miniSearch.dirtFactor >= SearchService.VACUUM_MIN_DIRT_FACTOR
-              ) {
+              // A turn that discarded must vacuum before returning: in
+              // minisearch 7.2.0, a single un-vacuumed discard inverts the
+              // relative scores of term-sharing documents — ids indexed before
+              // the discarded one drop below ids indexed after, at any index
+              // size — silently reordering truncated search results. The
+              // vacuum is O(index), but only discard-bearing turns pay it:
+              // add-only turns (chunked merge imports) accrue no dirt and
+              // never vacuum, which is where #232's win lives.
+              if (this.miniSearch.dirtCount > 0) {
                 await this.miniSearch.vacuum();
               }
               return;
@@ -246,7 +243,7 @@ export class SearchService {
       filter: (r) => entityIdSet.has(r.entity_id as string),
       combineWith: 'OR',
     });
-    return results.slice(0, limit);
+    return results.sort((a, b) => this._compareSearchResults(a, b)).slice(0, limit);
   }
 
   /**
@@ -257,7 +254,7 @@ export class SearchService {
     let results = this.miniSearch.search(query, {
       filter: (r) => entityIdSet.has(r.entity_id as string),
       combineWith: 'OR',
-    });
+    }).sort((a, b) => this._compareSearchResults(a, b));
 
     if (preFilterLimit !== undefined) {
       results = results.slice(0, preFilterLimit);
@@ -417,6 +414,19 @@ export class SearchService {
     const updatedAtDiff = (b.updated_at ?? 0) - (a.updated_at ?? 0);
     if (updatedAtDiff !== 0) return updatedAtDiff;
 
+    return a.id.localeCompare(b.id);
+  }
+
+  /**
+   * MiniSearch breaks equal-score ties by internal insertion order, which
+   * syncEntries changes: a discarded-and-re-added id moves to the end. Every
+   * caller truncates these results to a limit, so which ids survive a tie at
+   * the boundary must not depend on write history. Re-sort exact score ties
+   * by id — the same final tie-break _compareScoredRows applies.
+   */
+  private _compareSearchResults(a: SearchResult, b: SearchResult): number {
+    const scoreDiff = b.score - a.score;
+    if (!Number.isNaN(scoreDiff) && scoreDiff !== 0) return scoreDiff;
     return a.id.localeCompare(b.id);
   }
 }
