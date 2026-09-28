@@ -66,6 +66,15 @@ export class SearchService {
    */
   private staleEntities = new Set<string>();
 
+  /**
+   * Per-entity count of markStale() calls. A rebuild clears an entity's stale
+   * flag only when the count it snapshotted before its read still holds
+   * afterwards: markStale() runs inside the host's still-open transaction, so
+   * a call landing mid-read belongs to rows the read cannot have seen, and
+   * its flag must outlive the turn (#233 review).
+   */
+  private staleEpochs = new Map<string, number>();
+
   constructor(private entryRepo: EntryRepository) {
     this.miniSearch = this.createMiniSearch();
   }
@@ -110,9 +119,20 @@ export class SearchService {
         // exactly the unhandled rejection this method exists to prevent. The
         // inner finally keeps eviction unconditional, as it was before.
         try {
+          const epochsBefore = new Map(this.staleEpochs);
           await this.rebuildIndex(entityId);
-          if (entityId) this.staleEntities.delete(entityId);
-          else this.staleEntities.clear();
+          // Clear only flags whose epoch survived the read (see staleEpochs).
+          if (entityId) {
+            if ((this.staleEpochs.get(entityId) ?? 0) === (epochsBefore.get(entityId) ?? 0)) {
+              this.staleEntities.delete(entityId);
+            }
+          } else {
+            for (const id of [...this.staleEntities]) {
+              if ((this.staleEpochs.get(id) ?? 0) === (epochsBefore.get(id) ?? 0)) {
+                this.staleEntities.delete(id);
+              }
+            }
+          }
           await this.miniSearch.vacuum();
         } finally {
           this.evictCache(entityId);
@@ -158,6 +178,7 @@ export class SearchService {
     const work = this.syncChain.then(async () => {
       try {
         try {
+          const epochsBefore = new Map(this.staleEpochs);
           const needsRebuild = () =>
             this.staleEntities.has(entityId) || !this.miniSearchEntryIdsByEntity.has(entityId);
 
@@ -197,7 +218,12 @@ export class SearchService {
           }
 
           await this.rebuildIndex(entityId);
-          this.staleEntities.delete(entityId);
+          // Clear only if no markStale() landed during the rebuild's read
+          // (see staleEpochs) — one that did belongs to rows this rebuild's
+          // read could not have seen.
+          if ((this.staleEpochs.get(entityId) ?? 0) === (epochsBefore.get(entityId) ?? 0)) {
+            this.staleEntities.delete(entityId);
+          }
           await this.miniSearch.vacuum();
         } finally {
           this.evictCache(entityId);
@@ -217,6 +243,7 @@ export class SearchService {
    */
   markStale(entityId: string): void {
     this.staleEntities.add(entityId);
+    this.staleEpochs.set(entityId, (this.staleEpochs.get(entityId) ?? 0) + 1);
   }
 
   /**
@@ -241,6 +268,7 @@ export class SearchService {
     this.miniSearch = this.createMiniSearch();
     this.miniSearchEntryIdsByEntity.clear();
     this.staleEntities.clear();
+    this.staleEpochs.clear();
   }
 
   /**

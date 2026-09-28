@@ -1448,6 +1448,42 @@ describe('syncEntries', () => {
     warn.mockRestore();
   });
 
+  it('a markStale() landing mid-rebuild-read is not cleared by that rebuild', async () => {
+    // markStale fires inside the host's still-open transaction, so a rebuild
+    // whose read is in flight when it lands cannot have seen those rows —
+    // completing the rebuild must not clear the flag, or the rows stay
+    // unindexed until some unrelated full rebuild.
+    const rows = [makeMiniSearchRow('f1', 'e1', 'apple')];
+    let releaseRead!: () => void;
+    const readGate = new Promise<void>((resolve) => { releaseRead = resolve; });
+    let signalFirstRead!: () => void;
+    const firstRead = new Promise<void>((resolve) => { signalFirstRead = resolve; });
+    const repo = {
+      findMiniSearchRows: vi.fn(async () => {
+        signalFirstRead();
+        await readGate;
+        return rows;
+      }),
+      findMiniSearchRowsByIds: vi.fn(async () => []),
+    } as unknown as EntryRepository;
+    const service = new SearchService(repo);
+
+    const rebuilding = service.sync('e1');
+    await firstRead; // the rebuild's read is in flight
+    service.markStale('e1'); // the host's upsertGraph marks stale mid-read
+    releaseRead();
+    await rebuilding;
+
+    // The turn completed, but the flag set during its read survives…
+    expect((service as any).staleEntities.has('e1')).toBe(true);
+
+    // …so the next syncEntries still rebuilds in full instead of going
+    // incremental on an index that missed the host's rows.
+    (repo.findMiniSearchRows as ReturnType<typeof vi.fn>).mockClear();
+    await service.syncEntries('e1', []);
+    expect(repo.findMiniSearchRows).toHaveBeenCalledWith('e1');
+  });
+
   it('markStale forces one full rebuild; sync() clears the flag', async () => {
     const { repo, findMiniSearchRows, findMiniSearchRowsByIds } = makeLiveRepo([makeMiniSearchRow('f1', 'e1', 'apple')]);
     const service = new SearchService(repo);
