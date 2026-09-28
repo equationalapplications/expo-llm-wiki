@@ -733,6 +733,10 @@ export class WikiMemory {
       adapter,
       { diag: { buffer: diagBuffer, operation: 'upsertGraph' } },
     );
+    // Core never sees this commit, so it can't index the nodes itself. Marking
+    // the entity stale makes its next import or ingest rebuild the entity's
+    // index in full, which is how these nodes reached search before #232.
+    this.searchService.markStale(entityId);
     diagBuffer.flush(this.options);
     return result;
   }

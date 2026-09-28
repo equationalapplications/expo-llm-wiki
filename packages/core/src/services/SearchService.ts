@@ -58,8 +58,35 @@ export class SearchService {
    */
   private syncChain: Promise<void> = Promise.resolve();
 
+  /**
+   * Entities whose index may have drifted from SQLite: an incremental update
+   * failed part-way, or core wrote rows it could not index (upsertGraph runs in
+   * the host's transaction). Their next syncEntries rebuilds the entity in full.
+   * See spec 2026-09-28 §5.
+   */
+  private staleEntities = new Set<string>();
+
+  /**
+   * Per-entity count of markStale() calls. A rebuild clears an entity's stale
+   * flag only when the count it snapshotted before its read still holds
+   * afterwards: markStale() runs inside the host's still-open transaction, so
+   * a call landing mid-read belongs to rows the read cannot have seen, and
+   * its flag must outlive the turn (#233 review).
+   */
+  private staleEpochs = new Map<string, number>();
+
   constructor(private entryRepo: EntryRepository) {
-    this.miniSearch = new MiniSearch({
+    this.miniSearch = this.createMiniSearch();
+  }
+
+  /**
+   * A fresh index with the production options. clearAll() swaps one in because
+   * MiniSearch.removeAll() empties the index but leaves dirtCount (and its
+   * vacuum bookkeeping) at its old value, which would trip syncEntries'
+   * conditional vacuum early after a clear.
+   */
+  private createMiniSearch() {
+    return new MiniSearch({
       fields: ['title', 'body', 'tags'],
       storeFields: ['entity_id'],
       // Vacuuming is driven explicitly at the end of each serialized rebuild
@@ -92,7 +119,20 @@ export class SearchService {
         // exactly the unhandled rejection this method exists to prevent. The
         // inner finally keeps eviction unconditional, as it was before.
         try {
+          const epochsBefore = new Map(this.staleEpochs);
           await this.rebuildIndex(entityId);
+          // Clear only flags whose epoch survived the read (see staleEpochs).
+          if (entityId) {
+            if ((this.staleEpochs.get(entityId) ?? 0) === (epochsBefore.get(entityId) ?? 0)) {
+              this.staleEntities.delete(entityId);
+            }
+          } else {
+            for (const id of [...this.staleEntities]) {
+              if ((this.staleEpochs.get(id) ?? 0) === (epochsBefore.get(id) ?? 0)) {
+                this.staleEntities.delete(id);
+              }
+            }
+          }
           await this.miniSearch.vacuum();
         } finally {
           this.evictCache(entityId);
@@ -103,6 +143,107 @@ export class SearchService {
     });
     this.syncChain = work;
     return work;
+  }
+
+  /**
+   * Re-indexes only `ids` for `entityId`: drops each from the index, then
+   * re-adds the ones still live in SQLite, so soft-deleted or missing ids end
+   * up absent. Costs O(ids), where sync(entityId) costs O(entity) — callers that
+   * know what a write touched use this so chunked imports stay linear (#232).
+   *
+   * Serialized with sync() on the same chain and, like it, never rejects. An
+   * entity that is stale or has never been indexed gets a full rebuild instead
+   * — including on an empty `ids` list, which is a no-op only for an entity
+   * the index already tracks, and even then one that waits for rebuilds
+   * already queued on the chain.
+   */
+  async syncEntries(entityId: string, ids: Iterable<string>): Promise<void> {
+    const uniqueIds = [...new Set(ids)];
+    // The fast path requires a tracked entity, matching needsRebuild() below:
+    // otherwise an empty id set on a never-indexed entity would skip the
+    // full rebuild that registers it (#232 review finding).
+    if (
+      uniqueIds.length === 0 &&
+      !this.staleEntities.has(entityId) &&
+      this.miniSearchEntryIdsByEntity.has(entityId)
+    ) {
+      // Nothing to do, but still wait for rebuilds already on the chain: the
+      // sync(entityId) this call replaced awaited its own chained turn, so a
+      // host that writes (and dedups down to nothing) while a forget() or
+      // global sync() is mid-rebuild must not read a pre-rebuild index on
+      // its next search.
+      return this.syncChain;
+    }
+
+    const work = this.syncChain.then(async () => {
+      try {
+        try {
+          const epochsBefore = new Map(this.staleEpochs);
+          const needsRebuild = () =>
+            this.staleEntities.has(entityId) || !this.miniSearchEntryIdsByEntity.has(entityId);
+
+          if (!needsRebuild()) {
+            // Read before mutating, so a failed read leaves the index as it was.
+            const rows = await this.entryRepo.findMiniSearchRowsByIds(entityId, uniqueIds);
+            // Re-check: clearAll() or markStale() may have run during the read.
+            const tracked = this.miniSearchEntryIdsByEntity.get(entityId);
+            if (tracked && !this.staleEntities.has(entityId)) {
+              // No await from here to addAll: the index never shows a half-applied
+              // update. Only ids tracked under this entity are discarded, so other
+              // entities' documents are never touched. The tracked set normally
+              // matches the index exactly, but a rebuild that failed between its
+              // own discard pass and set replacement can leave it claiming ids
+              // the index no longer holds — and discard() throws on those — so
+              // miniSearch.has() is the membership test of record.
+              for (const id of uniqueIds) {
+                if (tracked.delete(id) && this.miniSearch.has(id)) this.miniSearch.discard(id);
+              }
+              const documents = rows.map((row) => this.normalizeMiniSearchRow(row));
+              if (documents.length > 0) this.miniSearch.addAll(documents);
+              for (const document of documents) tracked.add(document.id);
+
+              // A turn that discarded must vacuum before returning: in
+              // minisearch 7.2.0, a single un-vacuumed discard inverts the
+              // relative scores of term-sharing documents — ids indexed before
+              // the discarded one drop below ids indexed after, at any index
+              // size — silently reordering truncated search results. The
+              // vacuum is O(index), but only discard-bearing turns pay it:
+              // add-only turns (chunked merge imports) accrue no dirt and
+              // never vacuum, which is where #232's win lives.
+              if (this.miniSearch.dirtCount > 0) {
+                await this.miniSearch.vacuum();
+              }
+              return;
+            }
+          }
+
+          await this.rebuildIndex(entityId);
+          // Clear only if no markStale() landed during the rebuild's read
+          // (see staleEpochs) — one that did belongs to rows this rebuild's
+          // read could not have seen.
+          if ((this.staleEpochs.get(entityId) ?? 0) === (epochsBefore.get(entityId) ?? 0)) {
+            this.staleEntities.delete(entityId);
+          }
+          await this.miniSearch.vacuum();
+        } finally {
+          this.evictCache(entityId);
+        }
+      } catch (err) {
+        this.staleEntities.add(entityId);
+        console.warn(`[WikiMemory] search index incremental sync failed for ${entityId}:`, err);
+      }
+    });
+    this.syncChain = work;
+    return work;
+  }
+
+  /**
+   * Forces the entity's next syncEntries to rebuild it in full. For writes core
+   * cannot index itself, such as upsertGraph inside a host transaction.
+   */
+  markStale(entityId: string): void {
+    this.staleEntities.add(entityId);
+    this.staleEpochs.set(entityId, (this.staleEpochs.get(entityId) ?? 0) + 1);
   }
 
   /**
@@ -122,8 +263,12 @@ export class SearchService {
    */
   clearAll(): void {
     this.vectorCache.clear();
-    this.miniSearch.removeAll();
+    // A fresh instance, not removeAll(): that empties the index but keeps
+    // dirtCount and vacuum bookkeeping (minisearch 7.2.0).
+    this.miniSearch = this.createMiniSearch();
     this.miniSearchEntryIdsByEntity.clear();
+    this.staleEntities.clear();
+    this.staleEpochs.clear();
   }
 
   /**
@@ -135,7 +280,7 @@ export class SearchService {
       filter: (r) => entityIdSet.has(r.entity_id as string),
       combineWith: 'OR',
     });
-    return results.slice(0, limit);
+    return results.sort((a, b) => this._compareSearchResults(a, b)).slice(0, limit);
   }
 
   /**
@@ -146,7 +291,7 @@ export class SearchService {
     let results = this.miniSearch.search(query, {
       filter: (r) => entityIdSet.has(r.entity_id as string),
       combineWith: 'OR',
-    });
+    }).sort((a, b) => this._compareSearchResults(a, b));
 
     if (preFilterLimit !== undefined) {
       results = results.slice(0, preFilterLimit);
@@ -306,6 +451,19 @@ export class SearchService {
     const updatedAtDiff = (b.updated_at ?? 0) - (a.updated_at ?? 0);
     if (updatedAtDiff !== 0) return updatedAtDiff;
 
+    return a.id.localeCompare(b.id);
+  }
+
+  /**
+   * MiniSearch breaks equal-score ties by internal insertion order, which
+   * syncEntries changes: a discarded-and-re-added id moves to the end. Every
+   * caller truncates these results to a limit, so which ids survive a tie at
+   * the boundary must not depend on write history. Re-sort exact score ties
+   * by id — the same final tie-break _compareScoredRows applies.
+   */
+  private _compareSearchResults(a: SearchResult, b: SearchResult): number {
+    const scoreDiff = b.score - a.score;
+    if (!Number.isNaN(scoreDiff) && scoreDiff !== 0) return scoreDiff;
     return a.id.localeCompare(b.id);
   }
 }
