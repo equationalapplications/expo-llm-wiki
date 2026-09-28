@@ -1321,6 +1321,45 @@ describe('syncEntries', () => {
     expect(findMiniSearchRowsByIds).not.toHaveBeenCalled();
   });
 
+  it('an empty-id early return still waits for an already-queued rebuild', async () => {
+    // A forget() or global sync() rebuild is queued and mid-read when a write
+    // dedups down to an empty id set. The old `await sync(entityId)` tail
+    // waited for that rebuild; the early return must not skip past it, or the
+    // host's next search reads a pre-rebuild index (read-after-write).
+    const rows = [makeMiniSearchRow('f1', 'e1', 'apple')];
+    let releaseRead!: () => void;
+    const readGate = new Promise<void>((resolve) => { releaseRead = resolve; });
+    let signalFirstRead!: () => void;
+    const firstRead = new Promise<void>((resolve) => { signalFirstRead = resolve; });
+    const repo = {
+      findMiniSearchRows: vi.fn(async () => {
+        if (readCount++ === 0) return rows; // initial sync completes, entity tracked
+        signalFirstRead();
+        await readGate; // the queued rebuild's read hangs
+        return rows;
+      }),
+      findMiniSearchRowsByIds: vi.fn(async () => []),
+    } as unknown as EntryRepository;
+    const service = new SearchService(repo);
+    let readCount = 0;
+
+    await service.sync('e1'); // registers the entity
+
+    const queued = service.sync('e1');
+    await firstRead; // the rebuild's read is in flight
+
+    const empty = service.syncEntries('e1', []);
+    let resolved = false;
+    void empty.then(() => { resolved = true; });
+    await Promise.resolve();
+    expect(resolved).toBe(false); // gated on the queued rebuild, not resolved early
+
+    releaseRead();
+    await Promise.all([queued, empty]);
+    expect(resolved).toBe(true);
+    expect(repo.findMiniSearchRowsByIds).not.toHaveBeenCalled();
+  });
+
   it('on an empty id list for a never-indexed entity: rebuilds it in full and registers it', async () => {
     const { repo, live, findMiniSearchRows, findMiniSearchRowsByIds } = makeLiveRepo([
       makeMiniSearchRow('f0', 'e1', 'cherry'),

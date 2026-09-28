@@ -134,7 +134,8 @@ export class SearchService {
    * Serialized with sync() on the same chain and, like it, never rejects. An
    * entity that is stale or has never been indexed gets a full rebuild instead
    * — including on an empty `ids` list, which is a no-op only for an entity
-   * the index already tracks.
+   * the index already tracks, and even then one that waits for rebuilds
+   * already queued on the chain.
    */
   async syncEntries(entityId: string, ids: Iterable<string>): Promise<void> {
     const uniqueIds = [...new Set(ids)];
@@ -146,7 +147,12 @@ export class SearchService {
       !this.staleEntities.has(entityId) &&
       this.miniSearchEntryIdsByEntity.has(entityId)
     ) {
-      return;
+      // Nothing to do, but still wait for rebuilds already on the chain: the
+      // sync(entityId) this call replaced awaited its own chained turn, so a
+      // host that writes (and dedups down to nothing) while a forget() or
+      // global sync() is mid-rebuild must not read a pre-rebuild index on
+      // its next search.
+      return this.syncChain;
     }
 
     const work = this.syncChain.then(async () => {
