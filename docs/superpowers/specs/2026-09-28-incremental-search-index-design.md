@@ -1,7 +1,7 @@
 # Incremental Keyword Search Index: Design
 
 **Date:** 2026-09-28
-**Status:** Implemented — revision 5
+**Status:** Implemented — revision 6
 **Branch:** `fix/core-incremental-search-index-232`
 **Source baseline:** `854ac92` (core 7.7.5)
 **Issue:** #232
@@ -191,3 +191,4 @@ The issue's wall-clock benchmark (25/100/250/1000 fact chunks) is not a CI test.
   The rejections:
   - **Per-id `upsertGraph` invalidation** (to keep interleaved-upsertGraph hosts at O(touched)): unsafe under host rollback — §5's own argument. ids recorded from an uncommitted (or rolled-back) `upsertGraph` would be discarded from the index and read back absent, dropping live documents; the entity-coarse flag heals by re-reading committed truth. The interleaving cost is the pre-#232 status quo, not a regression.
   - **Bounding `staleEntities`:** an LRU or clearing flags on unrelated rebuilds silently drops needed rebuilds (rebuilding entity A says nothing about entity B's drift) — a correctness loss for one id string per `markStale`'d entity, which is dwarfed by `miniSearchEntryIdsByEntity` itself and shrinks only on that entity's rebuild or a global `sync()`, both already implemented.
+- **r6 (2026-09-28):** PR review remediation. A bot review flagged the fast path's post-read re-check as a race; that claim is false — §4.2 step 2's re-check (`tracked && !staleEntities.has(entityId)`) runs after the only `await`, and from there to `addAll` the turn is synchronous, so no `clearAll()`/`markStale()` can interleave, and both cases fall through to a full rebuild in the same call. Verifying it did surface a genuinely open window next door: `markStale()` runs inside the host's still-open transaction, so a call landing while a rebuild's read is in flight belongs to rows that read cannot have seen — yet the rebuild's completion unconditionally deleted the flag, losing the catch-up until some unrelated full rebuild. §5's flag clearing is now epoch-guarded: `markStale` bumps a per-entity counter, and a rebuild clears the entity's flag only when the counter it snapshotted before its read still holds afterwards (`sync()`'s global clear included). Residual, accepted: a `markStale` that lands *before* a concurrent turn's read with the transaction still uncommitted at the snapshot moment remains indistinguishable from a stale flag the read already covers — that is the host-owned-transaction gap §1/§5 already scope out.
