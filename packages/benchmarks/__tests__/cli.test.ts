@@ -15,12 +15,19 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import { mkdtempSync, readFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import {
   parseArgs,
   estimateIngestTokens,
+  resolveOutPath,
+  REPO_ROOT,
   runLongMemEvalCommand,
+  runSupersessionCommand,
 } from '../src/cli';
 import type { LmeQuestion, LmeQuestionType } from '../src/longmemeval/dataset';
+import type { Scenario } from '../src/supersession/run';
 import type { ChatEndpoint } from '../src/provider';
 
 function makeQ(type: LmeQuestionType, id: string, sessionChars: number): LmeQuestion {
@@ -183,6 +190,131 @@ describe('runLongMemEvalCommand (spend guard)', () => {
       }) as any,
     });
 
+    expect(r.exitCode).not.toBe(0);
+    expect(r.exitCode).not.toBe(1); // distinct from the "no --yes" guard
+  });
+});
+
+describe('resolveOutPath', () => {
+  it('passes absolute paths through unchanged', () => {
+    expect(resolveOutPath('/tmp/cm-smoke.json')).toBe('/tmp/cm-smoke.json');
+  });
+
+  it('resolves relative paths against the repo root, not process.cwd()', () => {
+    // `pnpm --filter <pkg> bench …` runs with cwd = the package directory;
+    // a relative `--out packages/benchmarks/results/x.json` must still land
+    // at `<repo>/packages/benchmarks/results/x.json`.
+    expect(resolveOutPath('packages/benchmarks/results/baseline-7.7.7.json')).toBe(
+      join(REPO_ROOT, 'packages', 'benchmarks', 'results', 'baseline-7.7.7.json'),
+    );
+  });
+});
+
+describe('runSupersessionCommand', () => {
+  // The command resolves its endpoint from env (as the live run does); the
+  // base URL is pointed at a distinctly non-production host so the URL
+  // assertion below fails if the runner ever stops routing through the
+  // resolved endpoint.
+  const ENV = {
+    ZAI_API_KEY: 'fake-key',
+    BENCH_BASE_URL: 'https://cli-supersession.test',
+    BENCH_MODEL: 'm',
+  };
+
+  const ANTHROPIC_OK = () =>
+    new Response(
+      JSON.stringify({
+        content: [{ type: 'text', text: '{}' }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    );
+
+  const smallScenario: Scenario = {
+    name: '__cli_scenario__',
+    existing: [{ id: 'a', title: 'User lives in Seattle', body: 'b', source_type: 'user_stated' }],
+    events: [{ summary: 'User moved to San Francisco' }],
+    extract: { facts: [], tasks: [] },
+    resolve: null,
+    expectCurrentTitles: ['San Francisco'],
+    expectSuperseded: ['a'],
+  };
+
+  it('returns exit code 0 with --dry-run before endpoint resolution (no env needed)', async () => {
+    const stdout = vi.fn();
+    const r = await runSupersessionCommand({
+      argv: ['supersession', '--strategy', 'legacy', '--dry-run'],
+      env: {}, // intentionally empty: dry-run must not resolve a key
+      scenarios: [smallScenario],
+      embed: async () => [0.1],
+      stdout,
+    });
+    expect(r.exitCode).toBe(0);
+    const combined = stdout.mock.calls.map((c) => String(c[0])).join('');
+    expect(combined).toMatch(/input tokens/i);
+  });
+
+  it('returns exit code 1 without --yes and never fetches', async () => {
+    const stdout = vi.fn();
+    const fetchImpl = vi.fn(async () => ANTHROPIC_OK());
+    const r = await runSupersessionCommand({
+      argv: ['supersession', '--strategy', 'legacy'],
+      env: { ...ENV },
+      scenarios: [smallScenario],
+      embed: async () => [0.1],
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      stdout,
+    });
+    expect(r.exitCode).toBe(1);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    const combined = stdout.mock.calls.map((c) => String(c[0])).join('');
+    expect(combined).toContain('Re-run with --yes to spend these tokens.');
+  });
+
+  it('runs the suite with --yes, routes every call through the injected endpoint, and writes the report', async () => {
+    const outDir = mkdtempSync(join(tmpdir(), 'bench-cli-supersession-'));
+    const outFile = join(outDir, 'report.json');
+    const stdout = vi.fn();
+    const urls: string[] = [];
+    const fetchImpl = vi.fn(async (input: string) => {
+      urls.push(input);
+      return ANTHROPIC_OK();
+    });
+
+    const skipScenario: Scenario = { ...smallScenario, name: '__cli_skipped__', liveSkip: true };
+    const r = await runSupersessionCommand({
+      argv: ['supersession', '--strategy', 'legacy', '--yes', '--out', outFile],
+      env: { ...ENV },
+      scenarios: [smallScenario, skipScenario],
+      embed: async () => [0.1],
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      stdout,
+    });
+
+    expect(r.exitCode).toBe(0);
+    expect(urls.length).toBeGreaterThan(0);
+    for (const u of urls) {
+      expect(u.startsWith('https://cli-supersession.test/')).toBe(true);
+    }
+
+    const report = JSON.parse(readFileSync(outFile, 'utf8'));
+    expect(report.kind).toBe('supersession');
+    expect(report.strategy).toBe('legacy');
+    expect(report.total).toBe(1); // the liveSkip scenario is excluded from results
+    expect(report.skipped).toBe(1);
+    expect(report.results).toHaveLength(1);
+    expect(report.results[0].name).toBe('__cli_scenario__');
+  });
+
+  it('fails fast with a missing API key when --yes is supplied', async () => {
+    const r = await runSupersessionCommand({
+      argv: ['supersession', '--yes'],
+      env: {}, // no key set
+      scenarios: [smallScenario],
+      embed: async () => [0.1],
+      stdout: () => {},
+      stderr: () => {},
+    });
     expect(r.exitCode).not.toBe(0);
     expect(r.exitCode).not.toBe(1); // distinct from the "no --yes" guard
   });

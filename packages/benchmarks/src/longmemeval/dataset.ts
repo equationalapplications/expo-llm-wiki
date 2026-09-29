@@ -9,6 +9,7 @@
 
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'fs';
 import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 
 export interface LmeTurn {
   role: 'user' | 'assistant';
@@ -36,7 +37,11 @@ export interface LmeQuestion {
 const DEFAULT_DATASET_URL =
   'https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json';
 
-const DEFAULT_CACHE_DIR = join(process.cwd(), 'packages', 'benchmarks', '.cache');
+// Derived from this module's own location (`<root>/packages/benchmarks/src/
+// longmemeval/dataset.ts`) so the cache is found regardless of the caller's
+// cwd — `pnpm --filter <pkg> bench …` runs scripts inside the package
+// directory, where a `process.cwd()`-based path would double the prefix.
+const DEFAULT_CACHE_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '.cache');
 
 export interface LoadDatasetOpts {
   url?: string;

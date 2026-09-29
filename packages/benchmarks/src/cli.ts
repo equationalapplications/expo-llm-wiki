@@ -18,9 +18,9 @@
  *       for answer+judge) and refuses to spend tokens unless `--yes` is set.
  *
  *   supersession [--strategy legacy|ops] [--yes] [--out <file>]
- *       Run the supersession scenarios (Task 8) under the same guard. Stub for
- *       PR-0 — Task 8 replaces the body; the flag parsing, cost-guard, and
- *       report-write plumbing is in this module.
+ *       Run the supersession scenarios (Task 8's live runner) under the same
+ *       guard: prints the scenario count and a flat per-scenario token
+ *       estimate, refuses to spend without `--yes`.
  *
  * `process.argv` is parsed by hand so the CLI has no dependency footprint.
  * The handler functions return `{ exitCode }` instead of calling `process.exit`
@@ -28,7 +28,7 @@
  */
 
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
-import { dirname, join } from 'path';
+import { dirname, isAbsolute, join } from 'path';
 import { fileURLToPath } from 'url';
 
 import { endpointFromEnv, ChatEndpoint } from './provider';
@@ -37,6 +37,30 @@ import { flagsKey, EngineFlags } from './longmemeval/ingest';
 import { sampleQuestionIds } from './longmemeval/sample';
 import { loadDataset, LmeQuestion } from './longmemeval/dataset';
 import { runLongMemEval } from './longmemeval/run';
+import { runSupersession, Scenario } from './supersession/run';
+
+// --------------------------------------------------------------------------
+// Repo-root-relative paths
+// --------------------------------------------------------------------------
+
+/**
+ * The worktree / repo root, derived from this module's own location
+ * (`<root>/packages/benchmarks/src/cli.ts`), so every default path below is
+ * correct regardless of the caller's cwd. `pnpm --filter <pkg> bench …`
+ * runs package scripts with cwd set to the *package* directory, so joining
+ * against `process.cwd()` would double the `packages/benchmarks` prefix and
+ * miss the fixtures.
+ */
+export const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+
+/**
+ * Resolve a `--out` path: absolute paths pass through; relative paths are
+ * resolved against {@link REPO_ROOT} so `--out packages/benchmarks/results/x.json`
+ * lands in the repo's results directory no matter where the CLI was invoked.
+ */
+export function resolveOutPath(p: string): string {
+  return isAbsolute(p) ? p : join(REPO_ROOT, p);
+}
 
 // --------------------------------------------------------------------------
 // Argument parsing
@@ -144,6 +168,12 @@ export interface LongMemEvalDeps {
   /** Injected to keep tests off the filesystem / network. */
   env?: Record<string, string | undefined>;
   sampleIds?: string[];
+  /**
+   * The seed the sample ids were drawn with (read from the committed
+   * fixture); recorded in the report's `sample.seed` field. Defaults to 0
+   * when the caller does not supply one.
+   */
+  sampleSeed?: number;
   dataset?: LmeQuestion[];
   cacheDir?: string;
   embed: (t: string) => Promise<number[]>;
@@ -169,7 +199,7 @@ function nowStamp(): string {
 }
 
 function defaultResultsDir(): string {
-  return join(process.cwd(), DEFAULT_RESULTS_DIR);
+  return join(REPO_ROOT, DEFAULT_RESULTS_DIR);
 }
 
 function ensureDir(file: string): void {
@@ -291,10 +321,11 @@ export async function runLongMemEvalCommand(deps: LongMemEvalDeps): Promise<Comm
     judgeEndpoint,
     concurrency: deps.concurrency,
     embed: deps.embed,
+    ...(deps.sampleSeed !== undefined ? { sampleSeed: deps.sampleSeed } : {}),
   });
 
   // Write the report. Default path: `results/raw/longmemeval-<version>-<flagsKey>-<timestamp>.json`.
-  const reportFile = outArg ?? join(defaultResultsDir(), `longmemeval-${engine.version}-${flagsKey(flags)}-${nowStamp()}.json`);
+  const reportFile = outArg ? resolveOutPath(outArg) : join(defaultResultsDir(), `longmemeval-${engine.version}-${flagsKey(flags)}-${nowStamp()}.json`);
   ensureDir(reportFile);
   writeFileSync(reportFile, JSON.stringify(report, null, 2));
   stdout(`\nWrote report to ${reportFile}\n\n`);
@@ -353,7 +384,7 @@ export async function runSampleCommand(deps: SampleDeps): Promise<CommandResult>
   const url = deps.url ?? process.env.BENCH_LONGMEMEVAL_URL ?? 'https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json';
   const payload = JSON.stringify({ seed, dataset: url, ids }, null, 2);
 
-  const outFile = deps.outFile ?? join(process.cwd(), DEFAULT_SAMPLE_FILE);
+  const outFile = deps.outFile ?? join(REPO_ROOT, DEFAULT_SAMPLE_FILE);
   ensureDir(outFile);
   writeFileSync(outFile, payload);
   stdout(`Wrote ${ids.length} ids to ${outFile}\n`);
@@ -361,20 +392,42 @@ export async function runSampleCommand(deps: SampleDeps): Promise<CommandResult>
 }
 
 // --------------------------------------------------------------------------
-// supersession subcommand (stub — Task 8 replaces the runner)
+// supersession subcommand
 // --------------------------------------------------------------------------
 
 export interface SupersessionDeps {
   argv: string[];
+  /** Injected to keep tests off the filesystem / network. */
+  env?: Record<string, string | undefined>;
+  /** The scenarios from `fixtures/supersession/scenarios.json`. */
+  scenarios?: Scenario[];
+  /** Injected embedder (fastembed singleton in live mode). */
+  embed?: (text: string) => Promise<number[]>;
+  /** Injected fetch so tests never touch the network. */
+  fetchImpl?: (input: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<Response>;
   stdout?: (line: string) => void;
   stderr?: (line: string) => void;
 }
 
 /**
- * Handle the `supersession` subcommand. The actual scenario runner lives in
- * Task 8 — this stub enforces the flag parsing + cost-guard shape so the
- * orchestrator (and humans) get the same dry-run / `--yes` behaviour as
- * the LongMemEval subcommand while PR-0 lands.
+ * Conservative flat per-scenario input-token estimate for the printed cost
+ * guard. A scenario is a handful of short events feeding the librarian (plus
+ * a heal pass for legacy), so a few calls at a few hundred tokens each —
+ * 6 000 is a deliberate overestimate so the printed number errs high.
+ */
+const SUPERSESSION_TOKENS_PER_SCENARIO = 6000;
+
+/**
+ * Handle the `supersession` subcommand (Task 8's live runner).
+ *
+ * Flow mirrors `longmemeval`:
+ *   1. parse argv (`--strategy`, `--dry-run`, `--yes`, `--out`)
+ *   2. `--dry-run` short-circuits before endpoint resolution
+ *   3. resolve the answer endpoint via `endpointFromEnv('BENCH')` (fails fast
+ *      on no key)
+ *   4. print the estimate (scenario count + flat per-scenario tokens)
+ *   5. without `--yes` → print warning, exit 1
+ *   6. run `runSupersession`, write the report, print the pass count
  */
 export async function runSupersessionCommand(deps: SupersessionDeps): Promise<CommandResult> {
   const stdout = deps.stdout ?? ((line: string) => process.stdout.write(line));
@@ -386,18 +439,65 @@ export async function runSupersessionCommand(deps: SupersessionDeps): Promise<Co
   }
   const dryRun = parsed.flags['dry-run'] === true;
   const yes = parsed.flags.yes === true;
+  const outArg = typeof parsed.flags.out === 'string' ? parsed.flags.out : undefined;
   const strategy = parsed.flags.strategy === 'ops' ? 'ops' : 'legacy';
 
+  if (!deps.scenarios || !deps.embed) {
+    stderr('Internal error: scenarios and embed must be provided by the caller\n');
+    return { exitCode: 2 };
+  }
+
+  const runnable = deps.scenarios.filter((s) => !s.liveSkip);
+  const skipped = deps.scenarios.length - runnable.length;
+  const tokenEstimate = runnable.length * SUPERSESSION_TOKENS_PER_SCENARIO;
+
+  const printEstimate = (answerModel: string): void => {
+    const lines = [
+      `flags: strategy=${strategy}`,
+      `model: ${answerModel}`,
+      `scenarios:  ${runnable.length} to run (${skipped} liveSkip skipped)`,
+      `input tokens (estimate): ${tokenEstimate.toLocaleString('en-US')}`,
+    ];
+    stdout(lines.join('\n') + '\n');
+  };
+
   if (dryRun) {
-    stdout(`supersession (dry-run) strategy=${strategy}\n`);
+    printEstimate('(dry-run: not resolved)');
     return { exitCode: 0 };
   }
+
+  // After this point any failure mode other than the cost guard is fatal.
+  let endpoint: ChatEndpoint;
+  try {
+    endpoint = endpointFromEnv('BENCH', deps.env);
+  } catch (e) {
+    stderr(`${(e as Error).message}\n`);
+    return { exitCode: 2 };
+  }
+
+  printEstimate(endpoint.model);
   if (!yes) {
     stdout('Re-run with --yes to spend these tokens.\n');
     return { exitCode: 1 };
   }
-  stderr('supersession runner not implemented in PR-0 (Task 8).\n');
-  return { exitCode: 2 };
+
+  // Spend-approved: run the live supersession suite.
+  const report = await runSupersession({
+    scenarios: deps.scenarios,
+    strategy,
+    endpoint,
+    embed: deps.embed,
+    ...(deps.fetchImpl !== undefined ? { fetchImpl: deps.fetchImpl } : {}),
+  });
+
+  // Default path: `results/raw/supersession-<version>-<strategy>-<timestamp>.json`.
+  const engine = await engineInfo();
+  const reportFile = outArg ? resolveOutPath(outArg) : join(defaultResultsDir(), `supersession-${engine.version}-${strategy}-${nowStamp()}.json`);
+  ensureDir(reportFile);
+  writeFileSync(reportFile, JSON.stringify(report, null, 2));
+  stdout(`\nWrote report to ${reportFile}\n\n`);
+  stdout(`Supersession (${strategy}): ${report.passed}/${report.total} passed (${report.skipped} liveSkip skipped)\n`);
+  return { exitCode: 0 };
 }
 
 // --------------------------------------------------------------------------
@@ -448,16 +548,17 @@ function renderSummaryTable(report: BenchReport): string {
 // CLI entry point
 // --------------------------------------------------------------------------
 
-function readCommittedSampleIds(fixturesDir: string): string[] {
+function readCommittedSample(fixturesDir: string): { seed: number; ids: string[] } {
   const file = join(fixturesDir, 'longmemeval-sample.json');
   if (!existsSync(file)) {
     throw new Error(`sample fixture not found at ${file}; run \`bench sample --seed <n>\` first`);
   }
-  const parsed = JSON.parse(readFileSync(file, 'utf8')) as { ids?: unknown };
+  const parsed = JSON.parse(readFileSync(file, 'utf8')) as { seed?: unknown; ids?: unknown };
   if (!Array.isArray(parsed.ids) || !parsed.ids.every((x) => typeof x === 'string')) {
     throw new Error(`sample fixture at ${file} is malformed`);
   }
-  return parsed.ids as string[];
+  const seed = typeof parsed.seed === 'number' ? parsed.seed : 0;
+  return { seed, ids: parsed.ids as string[] };
 }
 
 async function main(): Promise<void> {
@@ -473,17 +574,18 @@ async function main(): Promise<void> {
     process.exit(r.exitCode);
   }
   if (command === 'longmemeval') {
-    const fixturesDir = join(process.cwd(), 'packages', 'benchmarks', 'fixtures');
-    const sampleIds = readCommittedSampleIds(fixturesDir);
+    const fixturesDir = join(REPO_ROOT, 'packages', 'benchmarks', 'fixtures');
+    const { seed, ids: sampleIds } = readCommittedSample(fixturesDir);
     const { getEmbedder } = await import('./embed');
     const embed = await getEmbedder();
     const dataset = await loadDataset();
-    const cacheDir = join(process.cwd(), 'packages', 'benchmarks', '.cache');
+    const cacheDir = join(REPO_ROOT, 'packages', 'benchmarks', '.cache');
     const concurrencyRaw = process.env.BENCH_CONCURRENCY;
     const concurrency = concurrencyRaw ? Math.max(1, Math.floor(Number(concurrencyRaw))) : undefined;
     const r = await runLongMemEvalCommand({
       argv,
       sampleIds,
+      sampleSeed: seed,
       dataset,
       cacheDir,
       embed,
@@ -492,7 +594,11 @@ async function main(): Promise<void> {
     process.exit(r.exitCode);
   }
   if (command === 'supersession') {
-    const r = await runSupersessionCommand({ argv });
+    const scenariosFile = join(REPO_ROOT, 'packages', 'benchmarks', 'fixtures', 'supersession', 'scenarios.json');
+    const scenarios = JSON.parse(readFileSync(scenariosFile, 'utf8')) as Scenario[];
+    const { getEmbedder } = await import('./embed');
+    const embed = await getEmbedder();
+    const r = await runSupersessionCommand({ argv, scenarios, embed });
     process.exit(r.exitCode);
   }
   process.stderr.write(`Unknown command: ${command}\n${renderHelp()}`);
