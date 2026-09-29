@@ -22,6 +22,8 @@ import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
 import { runBatched } from './BoundedLlmCall';
 import type { BuiltPrompt } from './BoundedLlmCall';
+import { callLlm } from '../utils/llmCall';
+import type { UsageMeter } from '../utils/usage';
 import {
   HEAL_ANCHORS_PER_CANDIDATE,
   HEAL_MAX_ANCHORS,
@@ -811,6 +813,7 @@ export class MaintenanceService {
       batchSize?: number;
       bodyTruncationChars?: number;
       trigger?: WikiDiagnosticTrigger;
+      meter?: UsageMeter;
     },
   ): Promise<HealResult> {
     const promptOverride = options?.promptOverride;
@@ -951,7 +954,7 @@ export class MaintenanceService {
         if (groundingCorpus !== undefined) corpusByPrompt.set(prompts, groundingCorpus);
         return prompts;
       },
-      call: (prompts) => this.options.llmProvider.generateText(prompts),
+      call: (prompts) => callLlm(this.options, { operation: 'heal', entityId, trigger, meter: options?.meter }, prompts),
       parse: (responseText, batch, prompts) => {
         const result = parseJsonResponse<{ downgraded: string[], deleted: string[], newFacts: ExtractedFact[] }>(responseText);
         return {
@@ -1246,7 +1249,7 @@ export class MaintenanceService {
     const outcome = await runBatched<WikiFact, OntologyBackfillBatch>({
       items: candidates,
       buildPrompt,
-      call: (prompts) => this.options.llmProvider.generateText(prompts),
+      call: (prompts) => callLlm(this.options, { operation: 'ontologyBackfill', entityId, trigger: 'call' }, prompts),
       parse: (responseText, batch) => {
         const parsed = parseJsonResponse<{
           classifications?: Array<{ id?: unknown; okf_type?: unknown; edges?: unknown }>;
