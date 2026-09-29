@@ -1,0 +1,137 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`librarian legacy parity (snapshot, recorded before the verbatim move) > runLibrarian output is byte-stable across re-runs (snapshot recorded pre-move) 1`] = `
+{
+  "diagnostics": [
+    {
+      "code": "fact_rejected",
+      "detail": {
+        "itemIndex": 2,
+        "reason": "invalid_shape",
+      },
+      "entityId": "e1",
+      "message": "An extracted fact failed validation and was not written.",
+      "operation": "librarian",
+      "severity": "warn",
+      "trigger": "call",
+    },
+    {
+      "code": "task_rejected",
+      "detail": {
+        "itemIndex": 1,
+        "reason": "invalid_shape",
+      },
+      "entityId": "e1",
+      "message": "An extracted task failed validation and was not written.",
+      "operation": "librarian",
+      "severity": "warn",
+      "trigger": "call",
+    },
+    {
+      "code": "fact_deduplicated",
+      "detail": {
+        "itemIndex": 1,
+        "reason": "fuzzy_title",
+      },
+      "entityId": "e1",
+      "message": "An extracted fact duplicated an existing fact and was not written.",
+      "operation": "librarian",
+      "severity": "info",
+      "trigger": "call",
+    },
+  ],
+  "facts": [
+    {
+      "body": "First algorithm by Ada Lovelace",
+      "confidence": "certain",
+      "id": "fact_000000000000000000000002",
+      "lifecycle_status": "stable",
+      "okf_type": null,
+      "source_type": "librarian_inferred",
+      "tags": "["history"]",
+      "title": "Ada Lovelace wrote programs",
+    },
+    {
+      "body": "Old body",
+      "confidence": "certain",
+      "id": "fact_seed_1",
+      "lifecycle_status": "stable",
+      "okf_type": null,
+      "source_type": "librarian_inferred",
+      "tags": "["history"]",
+      "title": "Charles Babbage engines history",
+    },
+  ],
+  "prompts": [
+    {
+      "systemPrompt": "You are a knowledge extraction agent. Your job is to analyze recent episodic events and extract stable facts and actionable tasks about the user or entity.
+Return ONLY a valid JSON object matching this schema:
+{
+  "facts": [{ "title": "string (max 80 chars)", "body": "string (max 800 chars)", "tags": ["string"], "confidence": "certain|inferred|tentative" }],
+  "tasks": [{ "description": "string", "priority": "number (0-10)" }]
+}
+Keep facts concise. Do not return markdown, just raw JSON.",
+      "userPrompt": "Events:
+[
+  {
+    "id": "evt_seed_2",
+    "entity_id": "e1",
+    "event_type": "observation",
+    "summary": "Babbage designed the Analytical Engine",
+    "related_entry_id": null,
+    "created_at": 1700000000000
+  },
+  {
+    "id": "evt_000000000000000000000001",
+    "entity_id": "e1",
+    "event_type": "observation",
+    "summary": "User said hi",
+    "related_entry_id": null,
+    "created_at": 1700000000000
+  }
+]
+
+Current Facts:
+[
+  {
+    "id": "fact_seed_1",
+    "entity_id": "e1",
+    "title": "Charles Babbage engines history",
+    "body": "Old body",
+    "tags": [
+      "history"
+    ],
+    "confidence": "certain",
+    "source_type": "librarian_inferred",
+    "source_hash": null,
+    "source_ref": null,
+    "created_at": 1700000000000,
+    "updated_at": 1700000000000,
+    "last_accessed_at": null,
+    "deleted_at": null,
+    "access_count": 0,
+    "okf_type": null,
+    "lifecycle_status": "stable",
+    "stale_after": null,
+    "generated_by": null,
+    "okf_sources": [],
+    "okf_verified": [],
+    "okf_usage_window": null,
+    "last_verified_at": null,
+    "last_verified_by": null,
+    "isStale": false,
+    "trustTier": "unverified"
+  }
+]",
+    },
+  ],
+  "tasks": [
+    {
+      "description": "Verify the engine design",
+      "id": "task_000000000000000000000003",
+      "priority": 0,
+      "status": "pending",
+    },
+  ],
+}
+`;
