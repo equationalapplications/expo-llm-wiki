@@ -29,9 +29,17 @@ const ANTHROPIC_OK = (text: string, inputTokens = 0, outputTokens = 0) =>
     { status: 200, headers: { 'content-type': 'application/json' } },
   );
 
+// Deliberately distinct from any production URL (`https://api.z.ai/...` and
+// `https://x.test`). If the runner ever regresses and hard-codes its
+// endpoint, this assertion would silently keep passing — the regression
+// would only surface in production. Use a third URL here so the test
+// doubles as a guard: a future fix that re-introduces a hard-coded URL
+// would either hit the wrong server (caught by `createProvider` returning
+// the real `fetch` to a non-routable host) or break the test's baseUrl
+// equality assertion below.
 const FAKE_ENDPOINT: ChatEndpoint = {
   protocol: 'anthropic',
-  baseUrl: 'https://x.test',
+  baseUrl: 'https://test.local',
   apiKey: 'k',
   model: 'm',
 };
@@ -150,7 +158,96 @@ describe('runSupersession (legacy)', () => {
     });
 
     expect(report.total).toBe(1);
+    expect(report.skipped).toBe(1);
     expect(report.results).toHaveLength(1);
     expect(report.results[0].name).toBe('__should_run__');
+  });
+
+  it('runs a two-run scenario (secondRunFrom) and routes every LLM call through the injected endpoint', async () => {
+    // Pick the relocation-3 scenario — it has secondRunFrom=1, so the runner
+    // must write the first event, run the librarian (and heal), then write
+    // the second event and run them again.
+    const twoRun = scenarios.find((s) => s.name === 'relocation-3-moved-back-AB-A');
+    expect(twoRun).toBeDefined();
+    expect(twoRun?.secondRunFrom).toBe(1);
+
+    const seenUrls: string[] = [];
+    const fetchImpl = vi.fn(async (url: string) => {
+      seenUrls.push(url);
+      return ANTHROPIC_OK('{}', 0, 0);
+    });
+
+    const report = await runSupersession({
+      scenarios: [twoRun!],
+      strategy: 'legacy',
+      endpoint: FAKE_ENDPOINT,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      embed: async (_t: string) => [0.1, 0.2, 0.3],
+    });
+
+    expect(report.total).toBe(1);
+    expect(report.skipped).toBe(0);
+    expect(report.results).toHaveLength(1);
+    const row = report.results[0];
+    expect(row.name).toBe('relocation-3-moved-back-AB-A');
+    expect(row.pass).toBe(false);
+    expect(row.error).toBeUndefined();
+
+    // Every fetchImpl hit must target the injected endpoint's host. If the
+    // runner ever re-introduces a hard-coded base URL, `seenUrls` would
+    // contain `https://api.z.ai/...` (or `https://x.test/...`) instead of
+    // `https://test.local/...`. This is the regression guard for the
+    // Critical finding in the round-1 review.
+    expect(seenUrls.length).toBeGreaterThan(0);
+    for (const url of seenUrls) {
+      expect(url.startsWith('https://test.local/')).toBe(true);
+    }
+  });
+
+  it('records an error row when a scenario throws, without aborting the suite', async () => {
+    const good: Scenario = {
+      name: '__good__',
+      existing: [{ id: 'a', title: 'User lives in Seattle', body: 'b', source_type: 'user_stated' }],
+      events: [{ summary: 'moved to SF' }],
+      extract: { facts: [], tasks: [] },
+      resolve: null,
+      expectCurrentTitles: [],
+      expectSuperseded: [],
+    };
+    const bad: Scenario = {
+      name: '__bad__',
+      // `existing` contains a duplicate id (same id twice) — `runReembed`
+      // plus the raw-INSERT throws because the PRIMARY KEY collides.
+      existing: [
+        { id: 'dup', title: 'first', body: 'b', source_type: 'user_stated' },
+        { id: 'dup', title: 'second', body: 'b', source_type: 'user_stated' },
+      ],
+      events: [],
+      extract: { facts: [], tasks: [] },
+      resolve: null,
+      expectCurrentTitles: [],
+      expectSuperseded: [],
+    };
+
+    const fetchImpl = vi.fn(async () => ANTHROPIC_OK('{}', 0, 0));
+    const report = await runSupersession({
+      scenarios: [bad, good],
+      strategy: 'legacy',
+      endpoint: FAKE_ENDPOINT,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      embed: async (_t: string) => [0.1, 0.2, 0.3],
+    });
+
+    expect(report.total).toBe(2);
+    expect(report.results).toHaveLength(2);
+
+    const badRow = report.results.find((r) => r.name === '__bad__');
+    expect(badRow?.pass).toBe(false);
+    expect(typeof badRow?.error).toBe('string');
+    expect(badRow?.error && badRow.error.length).toBeGreaterThan(0);
+
+    // The good scenario must still run — a single bad row never aborts.
+    const goodRow = report.results.find((r) => r.name === '__good__');
+    expect(goodRow).toBeDefined();
   });
 });

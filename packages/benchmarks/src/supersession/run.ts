@@ -36,7 +36,6 @@ import type { SQLiteAdapter, LLMProvider } from '@equationalapplications/core-ll
 
 import { openDb, OpenDbResult } from '../db';
 import { ChatEndpoint, createProvider } from '../provider';
-import { UsageRecorder, instrument } from '../instrument';
 import { engineInfo } from '../report';
 
 type EmbedFn = (text: string) => Promise<number[]>;
@@ -86,6 +85,8 @@ export interface SupersessionResultRow {
   name: string;
   pass: boolean;
   currentTitles: string[];
+  /** Populated when the scenario threw during setup, replay, or evaluate. */
+  error?: string;
 }
 
 export interface SupersessionReport {
@@ -138,12 +139,15 @@ async function insertExistingFacts(adapter: SQLiteAdapter, facts: ScenarioExisti
  * surfaced here. The `occurred_at` field on the scenario is purely for the
  * PR-B replay path and is recorded here only via `created_at`.
  */
-async function writeScenarioEvents(adapter: SQLiteAdapter, events: ScenarioEvent[]): Promise<void> {
+async function writeScenarioEvents(adapter: SQLiteAdapter, events: ScenarioEvent[], idOffset = 0): Promise<void> {
   const now = Date.now();
   for (let i = 0; i < events.length; i++) {
     const ev = events[i];
-    const eventId = `evt_${i + 1}`;
-    const createdAt = ev.occurred_at ?? now + i;
+    // `idOffset` lets a two-run scenario pass `second.length` so the second
+    // half's event ids continue from where the first half stopped —
+    // otherwise `evt_1` collides between halves.
+    const eventId = `evt_${idOffset + i + 1}`;
+    const createdAt = ev.occurred_at ?? now + idOffset + i;
     await adapter.runAsync(
       `INSERT INTO llm_wiki_events (id, entity_id, event_type, summary, created_at)
        VALUES (?, ?, 'observation', ?, ?)`,
@@ -189,18 +193,18 @@ async function readCurrentFacts(wiki: WikiMemory): Promise<Array<{ id: string; t
 interface RunOneOpts {
   scenario: Scenario;
   flags: { strategy: 'legacy' | 'ops' };
+  endpoint: ChatEndpoint;
   fetchImpl: FetchLike;
   embed: EmbedFn;
 }
 
-async function runOneScenario({ scenario, flags, fetchImpl, embed }: RunOneOpts): Promise<SupersessionResultRow> {
-  const recorder = new UsageRecorder();
-  const providerInner = createProvider({ protocol: 'anthropic', baseUrl: 'https://x.test', apiKey: 'k', model: 'm' }, fetchImpl);
-  // We do not classify call sites here — the report only needs passed/total.
-  // The recorder is kept around so the runner could later surface per-scenario
-  // usage without changing the public surface.
-  void recorder;
-  const provider = instrument(providerInner, recorder, 'other');
+async function runOneScenario({ scenario, flags, endpoint, fetchImpl, embed }: RunOneOpts): Promise<SupersessionResultRow> {
+  // Build the LLM provider from the caller's `endpoint` (defaults to Z.AI's
+  // Anthropic-compatible endpoint). The live runner resolves this in `cli.ts`
+  // from `endpointFromEnv('BENCH')`; the test harness passes a fake
+  // `ChatEndpoint` whose baseUrl is something other than the production URL
+  // so a regression that hard-codes the URL would fail the test.
+  const provider = createProvider(endpoint, fetchImpl);
 
   const handle: OpenDbResult = openDb();
   try {
@@ -231,7 +235,7 @@ async function runOneScenario({ scenario, flags, fetchImpl, embed }: RunOneOpts)
     }
 
     if (second.length > 0) {
-      await writeScenarioEvents(adapter, second);
+      await writeScenarioEvents(adapter, second, first.length);
       await wiki.runLibrarian(ENTITY);
       if (flags.strategy === 'legacy') {
         await wiki.runHeal(ENTITY);
@@ -266,13 +270,27 @@ export async function runSupersession(opts: RunSupersessionOpts): Promise<Supers
       skipped += 1;
       continue;
     }
-    const row = await runOneScenario({
-      scenario,
-      flags,
-      fetchImpl,
-      embed: opts.embed,
-    });
-    rows.push(row);
+    // A single bad scenario must not abort the entire suite — every scenario
+    // costs at least one in-flight LLM call and a $5+ rerun would be the
+    // difference between "one row failed" and "no data at all". Catch the
+    // throw, mark the row as failed with the message, and continue.
+    try {
+      const row = await runOneScenario({
+        scenario,
+        flags,
+        endpoint: opts.endpoint,
+        fetchImpl,
+        embed: opts.embed,
+      });
+      rows.push(row);
+    } catch (e) {
+      rows.push({
+        name: scenario.name,
+        pass: false,
+        currentTitles: [],
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
   }
 
   const passed = rows.filter((r) => r.pass).length;
