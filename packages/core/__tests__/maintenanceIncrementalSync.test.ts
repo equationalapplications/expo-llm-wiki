@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { WikiMemory } from '../src/WikiMemory';
+import { WikiMemory, PrunePartialFailureError } from '../src/WikiMemory';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 import type { MemoryDump, SQLiteAdapter, WikiFact } from '../src/types';
 
@@ -146,6 +146,84 @@ describe('incremental keyword index for maintenance passes (#235)', () => {
     expect(search(wiki, 'yeoman')).toEqual([]);
   });
 
+  it('forget by clearAll indexes only the enumerated ids (no full rebuild)', async () => {
+    const facts = Array.from({ length: 300 }, (_, i) => makeFact(i));
+    const { wiki } = await freshWiki();
+    await wiki.importDump(dumpOf(facts), { merge: true });
+
+    const counts = countIndexReads(wiki);
+    const result = await wiki.forget(ENTITY, { clearAll: true });
+
+    expect(result.deleted.entries).toBe(300);
+    expect(result.metadataReset).toBe(true);
+    // Every live id is enumerated into the incremental sync; the entity stays
+    // tracked, so the index empties without a full rebuild.
+    expect(counts.fullReads).toBe(0);
+    expect(search(wiki, 'note')).toEqual([]);
+  });
+
+  it('prune partial failure still syncs the succeeded ids incrementally', async () => {
+    const facts = Array.from({ length: 300 }, (_, i) => makeFact(i));
+    facts[0] = { ...facts[0], body: 'xylophone marker zero' };
+    facts[1] = { ...facts[1], body: 'yeoman marker one' };
+    const { wiki, db } = await freshWiki();
+    await wiki.importDump(dumpOf(facts), { merge: true });
+    await wiki.forget(ENTITY, { entryId: 'fact_0000' });
+    await wiki.forget(ENTITY, { entryId: 'fact_0001' });
+
+    // Break the embedding cleanup hook on the SECOND pruned row: row 0's
+    // notify succeeds, row 1's throws -> failure path with succeeded=[row0].
+    const embedding = wiki.__testAccess.embeddingService;
+    let calls = 0;
+    vi.spyOn(embedding, 'notifyEmbeddingPersistedOrThrow').mockImplementation(async () => {
+      calls += 1;
+      if (calls === 2) throw new Error('ranker rejected');
+      return undefined as never;
+    });
+
+    const counts = countIndexReads(wiki);
+    await expect(
+      wiki.runPrune(ENTITY, { retainSoftDeletedFor: 0, retainEventsFor: 0 }),
+    ).rejects.toBeInstanceOf(PrunePartialFailureError);
+
+    // The succeeded row is hard-deleted and its index document is gone via the
+    // O(touched) sync (no full-entity read); the failed row is left
+    // soft-deleted — not hard-deleted — for the next prune pass.
+    expect(counts.fullReads).toBe(0);
+    expect(counts.rows).toBe(0);
+    expect(search(wiki, 'xylophone')).toEqual([]);
+    const remaining = await db.getAllAsync<{ id: string }>(
+      `SELECT id FROM ${PREFIX}entries WHERE id IN ('fact_0000', 'fact_0001')`,
+    );
+    expect(remaining.map((r) => r.id)).toEqual(['fact_0001']);
+    expect(search(wiki, 'note').length).toBe(298);
+  });
+
+  it('prune scrubs index documents a raw soft-delete left behind (drift repair)', async () => {
+    const facts = Array.from({ length: 300 }, (_, i) => makeFact(i));
+    facts[0] = { ...facts[0], body: 'xylophone marker zero' };
+    const { wiki, db } = await freshWiki();
+    await wiki.importDump(dumpOf(facts), { merge: true });
+    expect(search(wiki, 'xylophone')).toEqual(['fact_0000']);
+
+    // Simulate a pre-#233-style path: a row soft-deleted without passing ids
+    // to syncEntries — its document survives in the index as drift.
+    await db.runAsync(
+      `UPDATE ${PREFIX}entries SET deleted_at = ? WHERE id = 'fact_0000'`,
+      [Date.now()],
+    );
+    expect(search(wiki, 'xylophone')).toEqual(['fact_0000']);
+
+    // Prune's incremental sync discards each pruned id before re-reading it,
+    // so the stale document is scrubbed at O(touched) — the drift-repair duty
+    // the old full-entity sync() performed.
+    const counts = countIndexReads(wiki);
+    await wiki.runPrune(ENTITY, { retainSoftDeletedFor: 0, retainEventsFor: 0 });
+    expect(counts.fullReads).toBe(0);
+    expect(search(wiki, 'xylophone')).toEqual([]);
+    expect(search(wiki, 'note').length).toBe(299);
+  });
+
   it('heal early return syncs only the orphan/stale pass ids', async () => {
     const { wiki, db } = await freshWiki(
       async () => NOOP_HEAL,
@@ -165,7 +243,7 @@ describe('incremental keyword index for maintenance passes (#235)', () => {
     expect(result.scanned).toBe(0);
     expect(result.downgraded).toBe(2);
     // Exactly the 2 downgraded (still-live) rows are read back and reindexed;
-    // the 202 other live rows are not read.
+    // the 200 other live rows are not read.
     expect(counts.fullReads).toBe(0);
     expect(counts.rows).toBe(2);
     expect(search(wiki, 'xenialq')).toEqual(['f0']);
