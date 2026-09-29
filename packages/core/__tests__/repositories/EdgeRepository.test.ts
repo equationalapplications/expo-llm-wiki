@@ -178,6 +178,7 @@ describe('EdgeRepository.getNeighborhood()', () => {
     edgeTypes: undefined as string[] | undefined,
     minConfidence: 'tentative' as const,
     excludeSourceTypes: [] as string[],
+    live: { mode: 'current' as const, t: Date.now() },
     maxNodes: 20,
   };
 

@@ -265,6 +265,12 @@ export interface WikiConfig {
   maxFtsResults?: number;
   pruneEventsAfter?: number;
   pruneRetainSoftDeletedFor?: number;
+  /**
+   * Days after `valid_to` before `runPrune` soft-deletes an expired or
+   * superseded fact (the soft-delete retention then hard-deletes it).
+   * Default null = keep history forever.
+   */
+  pruneSupersededAfter?: number | null;
   autoLibrarianThreshold?: number;
   autoHealThreshold?: number;
   orphanAfterDays?: number | null;
@@ -376,6 +382,12 @@ export interface ReadOptions {
    * Resolves call → `WikiConfig.excludeDrafts` → false.
    */
   excludeDrafts?: boolean;
+  /**
+   * Valid-time snapshot (epoch ms): return facts live at this instant using
+   * current knowledge (spec §4.2). Omitted ⇒ current facts only.
+   * Throws `WikiInvalidReadOptions('asOf', …)` when not a finite number >= 0.
+   */
+  asOf?: number;
 }
 
 export interface WikiFact {
@@ -449,6 +461,15 @@ export interface WikiFact {
    * `mapRowToFact` / `mapRowToTask`.
    */
   trustTier?: 'unverified' | 'machine-confirmed' | 'human-reviewed';
+  // --- Temporal (spec 2026-09-29 §4). Present on mapped facts only when non-null. ---
+  /** Epoch ms the fact became true in the world. Absent ⇒ since `created_at`. */
+  valid_from?: number | null;
+  /** Epoch ms the fact stopped being true (exclusive). Absent ⇒ open-ended. */
+  valid_to?: number | null;
+  /** Id of the fact that replaced this one. Audit / `history()` only; reads never filter on it. */
+  superseded_by?: string | null;
+  /** Epoch ms the supersession was recorded (transaction time). Audit only. */
+  superseded_at?: number | null;
 }
 
 export interface WikiTask {
@@ -494,6 +515,8 @@ export interface WikiEvent {
   summary: string;
   related_entry_id?: string | null;
   created_at: number;
+  /** Real-world time of the event (epoch ms). `created_at` stays ingestion time and remains the ordering key. */
+  occurred_at?: number | null;
 }
 
 export interface WikiEdge {
@@ -528,6 +551,8 @@ export interface GraphTraversalOptions {
    * Resolves call → `WikiConfig.excludeDrafts` → false.
    */
   excludeDrafts?: boolean;
+  /** Valid-time snapshot for traversal (epoch ms); an edge is walkable only when both endpoints are live at this instant. Omitted ⇒ now. */
+  asOf?: number;
 }
 
 export interface GraphNeighborhood {
@@ -725,7 +750,7 @@ export type WikiDiagnosticCode =
 
 /** The service run that emitted the diagnostic. */
 export type WikiDiagnosticOperation =
-  | 'ingest' | 'upsertGraph' | 'librarian' | 'heal' | 'ontologyBackfill' | 'reembed' | 'importDump' | 'write';
+  | 'ingest' | 'upsertGraph' | 'librarian' | 'heal' | 'ontologyBackfill' | 'reembed' | 'importDump' | 'write' | 'supersede';
 
 /** `'auto'` when a write threshold started the run (auto-librarian / auto-heal); `'call'` when the host did. */
 export type WikiDiagnosticTrigger = 'call' | 'auto';
@@ -1225,6 +1250,33 @@ export class WikiDraftNotFound extends Error {
     Object.setPrototypeOf(this, WikiDraftNotFound.prototype);
   }
 }
+
+export type WikiSupersedeReason = 'not_found' | 'already_superseded' | 'immutable_target' | 'cycle' | 'cross_entity';
+
+/** Thrown by `supersede()` (spec §4.3). Contextless like {@link WikiDraftNotFound}. */
+export class WikiSupersedeError extends Error {
+  readonly code = 'WIKI_SUPERSEDE_REJECTED' as const;
+  readonly reason: WikiSupersedeReason;
+
+  constructor(reason: WikiSupersedeReason) {
+    super(`supersede() rejected: ${reason}`);
+    this.name = 'WikiSupersedeError';
+    this.reason = reason;
+    Object.setPrototypeOf(this, WikiSupersedeError.prototype);
+  }
+}
+
+/** A new fact to create as the replacement, or the id of an existing fact. */
+export type SupersedeReplacement =
+  | string
+  | {
+      title: string;
+      body: string;
+      tags?: string[];
+      confidence?: WikiFact['confidence'];
+      source_type?: 'user_stated' | 'user_confirmed' | 'librarian_inferred';
+      valid_from?: number;
+    };
 
 /** One page of `listDrafts`. `nextCursor` is opaque; pass it back unchanged. */
 export interface DraftPage {
