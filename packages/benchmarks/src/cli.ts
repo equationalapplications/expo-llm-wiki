@@ -1,0 +1,545 @@
+/**
+ * Benchmarks CLI.
+ *
+ *   `pnpm --filter @equationalapplications/benchmarks-llm-wiki bench <command>`
+ *
+ * Subcommands:
+ *
+ *   sample --seed <n>
+ *       Load the LongMemEval_S dataset (cached) and write the stratified
+ *       question-id list to `fixtures/longmemeval-sample.json`. The committed
+ *       fixture is the canonical sample for PR-0.
+ *
+ *   longmemeval [--strategy legacy|ops] [--maintenance auto|deferred]
+ *               [--read-budget <n>] [--max-questions <n>]
+ *               [--dry-run | --yes] [--out <file>]
+ *       Run the LongMemEval pipeline against the committed sample. Prints a
+ *       one-screen cost estimate (per-question ingest estimate + flat 2000
+ *       for answer+judge) and refuses to spend tokens unless `--yes` is set.
+ *
+ *   supersession [--strategy legacy|ops] [--yes] [--out <file>]
+ *       Run the supersession scenarios (Task 8) under the same guard. Stub for
+ *       PR-0 — Task 8 replaces the body; the flag parsing, cost-guard, and
+ *       report-write plumbing is in this module.
+ *
+ * `process.argv` is parsed by hand so the CLI has no dependency footprint.
+ * The handler functions return `{ exitCode }` instead of calling `process.exit`
+ * so they can be exercised under test without spawning a child process.
+ */
+
+import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
+
+import { endpointFromEnv, ChatEndpoint } from './provider';
+import { engineInfo, BenchReport } from './report';
+import { flagsKey, EngineFlags } from './longmemeval/ingest';
+import { sampleQuestionIds, STRATA } from './longmemeval/sample';
+import { loadDataset, LmeQuestion } from './longmemeval/dataset';
+import { runLongMemEval } from './longmemeval/run';
+
+// --------------------------------------------------------------------------
+// Argument parsing
+// --------------------------------------------------------------------------
+
+export interface ParsedArgs {
+  command: string;
+  flags: Record<string, string | boolean>;
+}
+
+const BOOLEAN_FLAGS = new Set(['dry-run', 'yes', 'help']);
+
+/**
+ * Hand-rolled `process.argv` parser. The first non-flag token is the
+ * command; remaining tokens are `--key value` or `--flag` pairs.
+ *
+ * Boolean flags (presence-only) are mapped to `true`. Value flags capture
+ * the immediately following token — a value is consumed only when it does
+ * not start with `--`, so `--strategy ops --dry-run` does not eat `--dry-run`
+ * as the strategy value.
+ */
+export function parseArgs(argv: string[]): ParsedArgs {
+  const out: ParsedArgs = { command: '', flags: {} };
+  let i = 0;
+  // Skip a leading process.argv[0]/[1] only if it looks like a node invocation
+  // (caller may pass either the full argv or just the slice after the binary).
+  if (argv.length > 0 && (argv[0].endsWith('node') || argv[0].endsWith('tsx') || argv[0].endsWith('cli.ts'))) {
+    i += 1;
+  }
+  for (; i < argv.length; i++) {
+    const tok = argv[i];
+    if (tok.startsWith('--')) {
+      const key = tok.slice(2);
+      const next = argv[i + 1];
+      if (BOOLEAN_FLAGS.has(key) || next === undefined || next.startsWith('--')) {
+        out.flags[key] = true;
+      } else {
+        out.flags[key] = next;
+        i += 1;
+      }
+    } else if (out.command === '') {
+      out.command = tok;
+    }
+    // Bare non-flag tokens after the command are ignored.
+  }
+  return out;
+}
+
+// --------------------------------------------------------------------------
+// Cost estimate
+// --------------------------------------------------------------------------
+
+/**
+ * Per-question ingest token estimate plus a flat 2 000 for answer+judge.
+ *
+ *   `Σ_questions( ceil(Σ_turns(content.length) / 4) + 2000 )`
+ *
+ * Ingestion is the dominant cost driver — the haystack sessions contribute
+ * most of the tokens. Answer + judge are short prompts capped at 2 000
+ * input tokens per question by the GLM 5.3 Flash defaults; the flat 2 000
+ * is a deliberate overestimate so the printed estimate is conservative.
+ */
+export function estimateIngestTokens(questions: LmeQuestion[]): number {
+  let total = 0;
+  for (const q of questions) {
+    let chars = 0;
+    for (const session of q.haystack_sessions) {
+      for (const turn of session) {
+        chars += turn.content.length;
+      }
+    }
+    total += Math.ceil(chars / 4) + 2000;
+  }
+  return total;
+}
+
+// --------------------------------------------------------------------------
+// Cached-question probe
+// --------------------------------------------------------------------------
+
+function cacheFileFor(cacheDir: string, engineVersion: string, flags: EngineFlags, questionId: string): string {
+  return join(cacheDir, 'ingest', engineVersion, flagsKey(flags), `${questionId}.sqlite`);
+}
+
+/**
+ * Count how many of the supplied `questionIds` already have a complete
+ * ingest cache file for the (engineVersion, flags) tuple.
+ */
+function countCachedQuestions(cacheDir: string, engineVersion: string, flags: EngineFlags, questionIds: string[]): number {
+  let n = 0;
+  for (const id of questionIds) {
+    if (existsSync(cacheFileFor(cacheDir, engineVersion, flags, id))) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
+// --------------------------------------------------------------------------
+// longmemeval subcommand
+// --------------------------------------------------------------------------
+
+export interface LongMemEvalDeps {
+  argv: string[];
+  /** Injected to keep tests off the filesystem / network. */
+  env?: Record<string, string | undefined>;
+  sampleIds?: string[];
+  dataset?: LmeQuestion[];
+  cacheDir?: string;
+  embed: (t: string) => Promise<number[]>;
+  concurrency?: number;
+  stdout?: (line: string) => void;
+  stderr?: (line: string) => void;
+  /**
+   * Injected runner override; defaults to `runLongMemEval`. Tests pass a
+   * `vi.fn` so a successful run can be exercised without spending tokens.
+   */
+  runImpl?: typeof runLongMemEval;
+}
+
+export interface CommandResult {
+  exitCode: number;
+}
+
+const DEFAULT_RESULTS_DIR = 'packages/benchmarks/results/raw';
+
+function nowStamp(): string {
+  // ISO 8601 → `YYYYMMDDTHHMMSS` so it's filesystem-safe.
+  return new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, '');
+}
+
+function defaultResultsDir(): string {
+  return join(process.cwd(), DEFAULT_RESULTS_DIR);
+}
+
+function ensureDir(file: string): void {
+  mkdirSync(dirname(file), { recursive: true });
+}
+
+/**
+ * Handle the `longmemeval` subcommand. Returns the exit code instead of
+ * calling `process.exit(...)` so tests can drive it without spawning a child.
+ *
+ * Flow:
+ *   1. parse argv
+ *   2. resolve flags (`--strategy`, `--maintenance`, `--read-budget`,
+ *      `--max-questions`, `--dry-run`, `--yes`, `--out`)
+ *   3. (after this point, optional `--dry-run` short-circuits before any
+ *      env resolution)
+ *   4. resolve endpoints via `endpointFromEnv` (fails fast on no key)
+ *   5. load dataset + sample ids; filter by sample ids; cap by `--max-questions`
+ *   6. print estimate (engine, flags, models, count, tokens, cached)
+ *   7. `--dry-run` → exit 0
+ *   8. without `--yes` → print warning, exit 1
+ *   9. run, write report, print summary table
+ */
+export async function runLongMemEvalCommand(deps: LongMemEvalDeps): Promise<CommandResult> {
+  const stdout = deps.stdout ?? ((line: string) => process.stdout.write(line));
+  const stderr = deps.stderr ?? ((line: string) => process.stderr.write(line));
+  const { argv } = deps;
+  const parsed = parseArgs(argv);
+  if (parsed.command !== 'longmemeval' && parsed.command !== '') {
+    stderr(`Unknown command: ${parsed.command}\n`);
+    return { exitCode: 2 };
+  }
+
+  const dryRun = parsed.flags['dry-run'] === true;
+  const yes = parsed.flags.yes === true;
+  const outArg = typeof parsed.flags.out === 'string' ? parsed.flags.out : undefined;
+  const maxQuestionsRaw = typeof parsed.flags['max-questions'] === 'string' ? parsed.flags['max-questions'] : undefined;
+  const maxQuestions = maxQuestionsRaw ? Math.max(0, Math.floor(Number(maxQuestionsRaw))) : undefined;
+  const strategy = parsed.flags.strategy === 'ops' ? 'ops' : 'legacy';
+  const maintenance = parsed.flags.maintenance === 'deferred' ? 'deferred' : 'auto';
+  const readBudgetRaw = typeof parsed.flags['read-budget'] === 'string' ? parsed.flags['read-budget'] : undefined;
+  const readTokenBudget = readBudgetRaw ? Math.max(0, Math.floor(Number(readBudgetRaw))) : undefined;
+
+  const flags: EngineFlags = {
+    strategy,
+    maintenance,
+    ...(readTokenBudget ? { readTokenBudget } : {}),
+  };
+
+  // `--dry-run` short-circuits before any endpoint / dataset / filesystem IO
+  // so a missing API key does not fail a dry run.
+  if (dryRun) {
+    const engine = await engineInfo();
+    const questionCount = deps.sampleIds?.length ?? 0;
+    const tokenEstimate = deps.dataset ? estimateIngestTokens(deps.dataset) : 0;
+    stdout(renderEstimate({
+      engine,
+      flags,
+      answerModel: '(dry-run: not resolved)',
+      judgeModel: '(dry-run: not resolved)',
+      questionCount,
+      cachedCount: 0,
+      tokenEstimate,
+    }));
+    return { exitCode: 0 };
+  }
+
+  // After this point any failure mode other than the cost guard is fatal.
+  let answerEndpoint: ChatEndpoint;
+  let judgeEndpoint: ChatEndpoint;
+  try {
+    answerEndpoint = endpointFromEnv('BENCH', deps.env);
+    judgeEndpoint = endpointFromEnv('BENCH_JUDGE', deps.env);
+  } catch (e) {
+    stderr(`${(e as Error).message}\n`);
+    return { exitCode: 2 };
+  }
+
+  if (!deps.dataset || !deps.sampleIds) {
+    stderr('Internal error: dataset and sampleIds must be provided by the caller\n');
+    return { exitCode: 2 };
+  }
+  const cacheDir = deps.cacheDir ?? join(process.cwd(), 'packages', 'benchmarks', '.cache');
+  const dataset = deps.dataset;
+  const sampleIds = deps.sampleIds;
+  const byId = new Map(dataset.map((q) => [q.question_id, q]));
+  const filtered = sampleIds
+    .map((id) => byId.get(id))
+    .filter((q): q is LmeQuestion => q !== undefined);
+  const questions = maxQuestions !== undefined ? filtered.slice(0, maxQuestions) : filtered;
+
+  const engine = await engineInfo();
+  const cachedCount = countCachedQuestions(cacheDir, engine.version, flags, questions.map((q) => q.question_id));
+  const tokenEstimate = estimateIngestTokens(questions);
+
+  stdout(renderEstimate({
+    engine,
+    flags,
+    answerModel: answerEndpoint.model,
+    judgeModel: judgeEndpoint.model,
+    questionCount: questions.length,
+    cachedCount,
+    tokenEstimate,
+  }));
+
+  if (!yes) {
+    stdout('Re-run with --yes to spend these tokens.\n');
+    return { exitCode: 1 };
+  }
+
+  // Spend-approved: run the pipeline.
+  const runner = deps.runImpl ?? runLongMemEval;
+  const report: BenchReport = await runner({
+    questions,
+    flags,
+    cacheDir,
+    engineVersion: engine.version,
+    answerEndpoint,
+    judgeEndpoint,
+    concurrency: deps.concurrency,
+    embed: deps.embed,
+  });
+
+  // Write the report. Default path: `results/raw/longmemeval-<version>-<flagsKey>-<timestamp>.json`.
+  const reportFile = outArg ?? join(defaultResultsDir(), `longmemeval-${engine.version}-${flagsKey(flags)}-${nowStamp()}.json`);
+  ensureDir(reportFile);
+  writeFileSync(reportFile, JSON.stringify(report, null, 2));
+  stdout(`\nWrote report to ${reportFile}\n\n`);
+  stdout(renderSummaryTable(report));
+  return { exitCode: 0 };
+}
+
+// --------------------------------------------------------------------------
+// sample subcommand
+// --------------------------------------------------------------------------
+
+export interface SampleDeps {
+  argv: string[];
+  /** Override the cache directory used by `loadDataset`. */
+  cacheDir?: string;
+  /** Override the dataset URL. */
+  url?: string;
+  /** Override the output file path. */
+  outFile?: string;
+  /** Override the fetch implementation. */
+  fetchImpl?: typeof fetch;
+  /** Override stdout. */
+  stdout?: (line: string) => void;
+  stderr?: (line: string) => void;
+}
+
+const DEFAULT_SAMPLE_FILE = 'packages/benchmarks/fixtures/longmemeval-sample.json';
+
+/**
+ * Handle the `sample` subcommand. Loads the dataset, runs the stratified
+ * sampler with the supplied seed, and writes
+ * `fixtures/longmemeval-sample.json` (or the override).
+ */
+export async function runSampleCommand(deps: SampleDeps): Promise<CommandResult> {
+  const stdout = deps.stdout ?? ((line: string) => process.stdout.write(line));
+  const stderr = deps.stderr ?? ((line: string) => process.stderr.write(line));
+  const parsed = parseArgs(deps.argv);
+  const seedRaw = typeof parsed.flags.seed === 'string' ? parsed.flags.seed : undefined;
+  if (seedRaw === undefined) {
+    stderr('sample: --seed <n> is required\n');
+    return { exitCode: 2 };
+  }
+  const seed = Math.floor(Number(seedRaw));
+  if (!Number.isFinite(seed)) {
+    stderr(`sample: --seed must be a finite integer (got ${seedRaw})\n`);
+    return { exitCode: 2 };
+  }
+
+  const dataset = await loadDataset({
+    ...(deps.cacheDir ? { cacheDir: deps.cacheDir } : {}),
+    ...(deps.url ? { url: deps.url } : {}),
+    ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
+  });
+
+  const ids = sampleQuestionIds(dataset, seed);
+  const url = deps.url ?? process.env.BENCH_LONGMEMEVAL_URL ?? 'https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json';
+  const payload = JSON.stringify({ seed, dataset: url, ids, strata: STRATA }, null, 2);
+
+  const outFile = deps.outFile ?? join(process.cwd(), DEFAULT_SAMPLE_FILE);
+  ensureDir(outFile);
+  writeFileSync(outFile, payload);
+  stdout(`Wrote ${ids.length} ids to ${outFile}\n`);
+  return { exitCode: 0 };
+}
+
+// --------------------------------------------------------------------------
+// supersession subcommand (stub — Task 8 replaces the runner)
+// --------------------------------------------------------------------------
+
+export interface SupersessionDeps {
+  argv: string[];
+  stdout?: (line: string) => void;
+  stderr?: (line: string) => void;
+}
+
+/**
+ * Handle the `supersession` subcommand. The actual scenario runner lives in
+ * Task 8 — this stub enforces the flag parsing + cost-guard shape so the
+ * orchestrator (and humans) get the same dry-run / `--yes` behaviour as
+ * the LongMemEval subcommand while PR-0 lands.
+ */
+export async function runSupersessionCommand(deps: SupersessionDeps): Promise<CommandResult> {
+  const stdout = deps.stdout ?? ((line: string) => process.stdout.write(line));
+  const stderr = deps.stderr ?? ((line: string) => process.stderr.write(line));
+  const parsed = parseArgs(deps.argv);
+  if (parsed.command !== 'supersession' && parsed.command !== '') {
+    stderr(`Unknown command: ${parsed.command}\n`);
+    return { exitCode: 2 };
+  }
+  const dryRun = parsed.flags['dry-run'] === true;
+  const yes = parsed.flags.yes === true;
+  const strategy = parsed.flags.strategy === 'ops' ? 'ops' : 'legacy';
+
+  if (dryRun) {
+    stdout(`supersession (dry-run) strategy=${strategy}\n`);
+    return { exitCode: 0 };
+  }
+  if (!yes) {
+    stdout('Re-run with --yes to spend these tokens.\n');
+    return { exitCode: 1 };
+  }
+  stderr('supersession runner not implemented in PR-0 (Task 8).\n');
+  return { exitCode: 2 };
+}
+
+// --------------------------------------------------------------------------
+// Helpers — printed estimate + summary table
+// --------------------------------------------------------------------------
+
+interface EstimateArgs {
+  engine: { version: string; gitSha: string };
+  flags: EngineFlags;
+  answerModel: string;
+  judgeModel: string;
+  questionCount: number;
+  cachedCount: number;
+  tokenEstimate: number;
+}
+
+function renderEstimate(args: EstimateArgs): string {
+  const lines = [
+    `engine: ${args.engine.version} (${args.engine.gitSha})`,
+    `flags: strategy=${args.flags.strategy} maintenance=${args.flags.maintenance}` +
+      (args.flags.readTokenBudget ? ` read-budget=${args.flags.readTokenBudget}` : ''),
+    `answer model: ${args.answerModel}`,
+    `judge model:  ${args.judgeModel}`,
+    `questions:    ${args.questionCount} (cached ingests: ${args.cachedCount})`,
+    `input tokens (estimate): ${args.tokenEstimate.toLocaleString('en-US')}`,
+  ];
+  return lines.join('\n') + '\n';
+}
+
+function renderSummaryTable(report: BenchReport): string {
+  const lines: string[] = [];
+  lines.push('Per-type accuracy:');
+  const types = Object.keys(report.accuracy.byType);
+  for (const t of types) {
+    const b = report.accuracy.byType[t];
+    lines.push(`  ${t.padEnd(28)} ${b.correct}/${b.total}  (${(b.rate * 100).toFixed(1)}%)`);
+  }
+  lines.push('');
+  lines.push(`Overall accuracy:           ${(report.accuracy.overall * 100).toFixed(1)}%`);
+  lines.push(`Cached ingests:             ${report.cachedIngests} / ${report.questions.length}`);
+  lines.push(`Answer calls / tokens:      ${report.tokens.answer.calls} / ${report.tokens.answer.inputTokens + report.tokens.answer.outputTokens}`);
+  lines.push(`Judge calls / tokens:       ${report.tokens.judge.calls} / ${report.tokens.judge.inputTokens + report.tokens.judge.outputTokens}`);
+  lines.push(`Latency (ms): ingest p50=${report.latencyMs.ingestP50} p95=${report.latencyMs.ingestP95}; answer p50=${report.latencyMs.answerP50} p95=${report.latencyMs.answerP95}`);
+  return lines.join('\n') + '\n';
+}
+
+// --------------------------------------------------------------------------
+// CLI entry point
+// --------------------------------------------------------------------------
+
+function readCommittedSampleIds(fixturesDir: string): string[] {
+  const file = join(fixturesDir, 'longmemeval-sample.json');
+  if (!existsSync(file)) {
+    throw new Error(`sample fixture not found at ${file}; run \`bench sample --seed <n>\` first`);
+  }
+  const parsed = JSON.parse(readFileSync(file, 'utf8')) as { ids?: unknown };
+  if (!Array.isArray(parsed.ids) || !parsed.ids.every((x) => typeof x === 'string')) {
+    throw new Error(`sample fixture at ${file} is malformed`);
+  }
+  return parsed.ids as string[];
+}
+
+async function main(): Promise<void> {
+  const argv = process.argv.slice(2);
+  const parsed = parseArgs(argv);
+  const command = parsed.command;
+  if (command === '' || parsed.flags.help === true) {
+    process.stdout.write(renderHelp());
+    return;
+  }
+  if (command === 'sample') {
+    const r = await runSampleCommand({ argv });
+    process.exit(r.exitCode);
+  }
+  if (command === 'longmemeval') {
+    const fixturesDir = join(process.cwd(), 'packages', 'benchmarks', 'fixtures');
+    const sampleIds = readCommittedSampleIds(fixturesDir);
+    const { getEmbedder } = await import('./embed');
+    const embed = await getEmbedder();
+    const dataset = await loadDataset();
+    const cacheDir = join(process.cwd(), 'packages', 'benchmarks', '.cache');
+    const concurrencyRaw = process.env.BENCH_CONCURRENCY;
+    const concurrency = concurrencyRaw ? Math.max(1, Math.floor(Number(concurrencyRaw))) : undefined;
+    const r = await runLongMemEvalCommand({
+      argv,
+      sampleIds,
+      dataset,
+      cacheDir,
+      embed,
+      ...(concurrency ? { concurrency } : {}),
+    });
+    process.exit(r.exitCode);
+  }
+  if (command === 'supersession') {
+    const r = await runSupersessionCommand({ argv });
+    process.exit(r.exitCode);
+  }
+  process.stderr.write(`Unknown command: ${command}\n${renderHelp()}`);
+  process.exit(2);
+}
+
+function renderHelp(): string {
+  return [
+    'Usage: bench <command> [flags]',
+    '',
+    'Commands:',
+    '  sample --seed <n>              Write fixtures/longmemeval-sample.json',
+    '  longmemeval [flags]            Run the LongMemEval pipeline',
+    '  supersession [flags]           Run the supersession suite (Task 8)',
+    '',
+    'Common flags:',
+    '  --strategy <legacy|ops>        Librarian strategy (default legacy)',
+    '  --maintenance <auto|deferred>  Maintenance mode (default auto)',
+    '  --read-budget <n>              Read-side token budget',
+    '  --max-questions <n>            Cap the question list',
+    '  --dry-run                      Print the estimate and exit 0',
+    '  --yes                          Confirm token spend',
+    '  --out <file>                   Report output path',
+    '',
+  ].join('\n');
+}
+
+// Run `main` only when this file is the entry point. The exported symbols
+// stay available for tests.
+const invokedDirectly = (() => {
+  try {
+    const here = fileURLToPath(import.meta.url);
+    const entry = process.argv[1] ? resolve(process.argv[1]) : '';
+    return here === entry;
+  } catch {
+    return false;
+  }
+})();
+
+if (invokedDirectly) {
+  void main();
+}
+
+// Helper for the entry-point detection above.
+function resolve(p: string): string {
+  // Resolve absolute paths; leave relative ones as-is. We avoid `path.resolve`
+  // here so this file's helpers stay minimal.
+  if (p.startsWith('/')) return p;
+  return join(process.cwd(), p);
+}
