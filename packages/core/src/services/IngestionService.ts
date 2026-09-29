@@ -20,6 +20,7 @@ import { PromptService } from './PromptService';
 import { DEFAULT_MAX_CHUNK_LENGTH, DEFAULT_CHUNK_OVERLAP } from '../utils/chunkingDefaults';
 import { resolveGrounding, buildGroundingCorpus, checkGrounding, groundingOutcome } from '../utils/grounding';
 import type { GroundingTrust, GroundingVerdict } from '../utils/grounding';
+import { callLlm } from '../utils/llmCall';
 
 type ChunkResult =
   | { status: 'ok'; facts: ExtractedFact[]; itemIndexes: number[]; rejected: Array<{ itemIndex: number; reason: ReturnType<typeof factRejectionReason> }>; verdicts: GroundingVerdict[]; ontology_updates?: OntologyUpdates }
@@ -194,7 +195,7 @@ export class IngestionService {
             ontologyContext,
           );
           try {
-            const responseText = await this.options.llmProvider.generateText({ systemPrompt, userPrompt });
+            const responseText = await callLlm(this.options, { operation: 'ingest', entityId, trigger: 'call' }, { systemPrompt, userPrompt });
             const result = parseJsonResponse<{ facts: ExtractedFact[]; ontology_updates?: OntologyUpdates }>(responseText);
             const rawFacts: unknown[] = Array.isArray(result.facts) ? result.facts : [];
             const facts: ExtractedFact[] = [];
