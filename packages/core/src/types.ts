@@ -225,6 +225,8 @@ export interface HealResult {
   remaining: number;
   /** Heal candidates inside the recheck cooldown. */
   deferred: number;
+  /** Present when a token budget stopped the pass early (spec §10.5). Unattempted candidates stay eligible. */
+  budgetStop?: { requiredEstimate: number };
 }
 
 /**

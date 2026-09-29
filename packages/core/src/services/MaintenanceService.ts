@@ -1099,9 +1099,13 @@ export class MaintenanceService {
       const callErrorIds = new Set(
         outcome.skipped.filter((s) => s.reason === 'call_error').map((s) => s.item.id),
       );
+      // Budget-stopped candidates must NOT receive the cooldown stamp: their
+      // fact was never sent to the model, so cooling them down would lock them
+      // out of the next pass for HEAL_RECHECK_MS for no reason.
+      const unattemptedIds = new Set(outcome.unattempted.map((f) => f.id));
       await this.entryRepo.markHealChecked(
         [
-          ...healCandidates.map((f) => f.id).filter((id) => !callErrorIds.has(id)),
+          ...healCandidates.map((f) => f.id).filter((id) => !callErrorIds.has(id) && !unattemptedIds.has(id)),
           ...insertedFacts.map((f) => f.id),
         ],
         entityId,
@@ -1185,6 +1189,7 @@ export class MaintenanceService {
       degraded: healedDegraded,
       remaining: counts.eligible,
       deferred: counts.deferred,
+      ...(outcome.budgetStop ? { budgetStop: outcome.budgetStop } : {}),
     };
   }
 
