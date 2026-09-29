@@ -17,7 +17,7 @@
 - `doRunLibrarian` (the sync after `diagBuffer.flush`)
 - `doRunHeal` (the empty-candidate early return and the main return)
 
-The other `sync()` caller, `WikiMemory.setup()`'s global `sync()` (a different method, not one of the six), stays unchanged: setup and recovery are exactly what full rebuild is for.
+The other `sync()` callers — `WikiMemory.setup()`'s global `sync()` and `importDump`'s `merge=false` branch (`ImportExportService` keeps a deliberate full `sync()` there: the import just hard-replaced the entity's rows, so the rebuild is O(entity) of new data either way and one full pass is cheaper) — stay unchanged: setup, recovery, and wholesale replacement are exactly what full rebuild is for.
 
 **Correction to the issue's analysis (verified against `61f7700`).** The issue frames librarian and heal as "the genuinely blocked" callers that need repository calls threaded to return touched ids first. That is wrong on both counts:
 
@@ -88,7 +88,7 @@ Residual accepted: a row whose *index document content* changed only because of 
 
 ### 2.5 Unchanged
 
-`WikiMemory.setup()`'s global `sync()`, `ImportExportService`/`IngestionService` (already on `syncEntries` since #233), `softDeleteBySource`, `clearVectorCache`, `markStale`, the epoch contract (#233 spec §5/r6). None of these paths run inside a host-owned transaction core cannot see, so the #233 epoch caveat does not apply.
+`WikiMemory.setup()`'s global `sync()`, `importDump`'s `merge=false` branch (deliberate full rebuild — see §1), the `merge=true` `importDump`/`ingestDocument` paths (already on `syncEntries` since #233), `softDeleteBySource`, `clearVectorCache`, `markStale`, the epoch contract (#233 spec §5/r6). None of these paths run inside a host-owned transaction core cannot see, so the #233 epoch caveat does not apply.
 
 ## 3. Behavioral parity
 
@@ -102,13 +102,14 @@ Two intentional differences, both already pinned by #233's `SearchService` tests
 ## 4. Tests [REQ-235-TEST — delivered in `packages/core/__tests__/maintenanceIncrementalSync.test.ts` (real SQLite, chunk-size-independent)]
 
 1. **forget by entryId**: O(deleted) reads, zero full-entity reads; the forgotten fact leaves the index, the rest of the entity stays searchable.
-2. **runPrune success**: O(touched) reads, zero full reads; both pruned documents leave the index.
-3. **runPrune partial failure**: `PrunePartialFailureError` still throws after `syncEntries` ran with the succeeded ids — the succeeded row is hard-deleted and unindexed at O(touched); the failed row stays soft-deleted for the next pass.
-4. **forget by clearAll**: every live id enumerated; entity stays tracked; index empties with no full rebuild.
-5. **librarian**: O(inserted) reads; inserted fact searchable, ballast untouched.
-6. **heal empty-candidate early return**: with only the stale pass mutating rows, `syncEntries` carries exactly those ids (the pre-existing early-return contract, now pinned).
-7. **heal full path**: O(touched) reads for deleted + downgraded + inserted; end-state search verifies each.
-8. **drift repair**: a row soft-deleted by raw SQL (a pre-#233-style path that skipped index updates) keeps a stale index document until `runPrune` hard-deletes it — the incremental sync scrubs it at O(touched), preserving prune's drift-repair duty.
+2. **forget by sourceRef**: O(deleted) reads; exactly the by-source ids are enumerated (the §1 claim that no repository change is needed, pinned).
+3. **runPrune success**: O(touched) reads, zero full reads; both pruned documents leave the index.
+4. **runPrune partial failure**: `PrunePartialFailureError` still throws after `syncEntries` ran with the succeeded ids — the succeeded row is hard-deleted and unindexed at O(touched); the failed row stays soft-deleted for the next pass.
+5. **forget by clearAll**: every live id enumerated; entity stays tracked; index empties with no full rebuild.
+6. **librarian**: O(inserted) reads; inserted fact searchable, ballast untouched.
+7. **heal empty-candidate early return**: with only the stale pass mutating rows, `syncEntries` carries exactly those ids (the pre-existing early-return contract, now pinned).
+8. **heal full path**: O(touched) reads for deleted + downgraded + inserted; end-state search verifies each.
+9. **drift repair**: a row soft-deleted by raw SQL (a pre-#233-style path that skipped index updates) keeps a stale index document until `runPrune` hard-deletes it — the incremental sync scrubs it at O(touched), preserving prune's drift-repair duty.
 
 `MaintenanceService.test.ts`/`healAnchorBounding.test.ts` mocks gain `syncEntries`; `importDump.test.ts`'s busy-key test stalls `syncEntries` (forget's index path). All #233 `SearchService` tests are untouched.
 
