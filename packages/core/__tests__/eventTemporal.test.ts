@@ -9,6 +9,13 @@ function makeWiki() {
   return { wiki, db };
 }
 
+async function wikiWith() {
+  const db = openTestDatabase();
+  const wiki = new WikiMemory(db, { llmProvider: { generateText: async () => '{}' } });
+  await wiki.setup();
+  return { db, eventRepo: (wiki as any).eventRepo, metadataRepo: (wiki as any).metadataRepo };
+}
+
 describe('write({ occurred_at })', () => {
   it('persists a positive occurred_at and round-trips it on read', async () => {
     const { wiki } = makeWiki();
@@ -60,6 +67,23 @@ describe('write({ occurred_at })', () => {
 });
 
 describe('librarian watermark storage', () => {
+  it('round-trips and getAfter/countAfter/sumSummaryCharsAfter honour (created_at, id) order', async () => {
+    const { db, eventRepo, metadataRepo } = await wikiWith();
+    for (const [id, at, s] of [['evt_a', 10, 'aa'], ['evt_b', 20, 'bbbb'], ['evt_c', 20, 'cccccc'], ['evt_d', 30, 'd']] as const) {
+      await db.runAsync(`INSERT INTO llm_wiki_events (id, entity_id, event_type, summary, created_at) VALUES (?, 'e1', 'observation', ?, ?)`, [id, s, at]);
+    }
+    expect(await metadataRepo.getLibrarianWatermark('e1')).toBeNull();
+    expect((await eventRepo.getAfter('e1', null, 10)).map((e: any) => e.id)).toEqual(['evt_a', 'evt_b', 'evt_c', 'evt_d']);
+
+    await metadataRepo.setLibrarianWatermark('e1', { at: 20, id: 'evt_b' }, db);
+    const wm = await metadataRepo.getLibrarianWatermark('e1');
+    expect(wm).toEqual({ at: 20, id: 'evt_b' });
+    expect((await eventRepo.getAfter('e1', wm, 10)).map((e: any) => e.id)).toEqual(['evt_c', 'evt_d']);
+    expect(await eventRepo.countAfter('e1', wm)).toBe(2);
+    expect(await eventRepo.sumSummaryCharsAfter('e1', wm)).toBe(7);
+    expect((await eventRepo.getAfter('e1', wm, 1)).map((e: any) => e.id)).toEqual(['evt_c']);
+  });
+
   it('returns null when no watermark has been set', async () => {
     const { wiki } = makeWiki();
     await wiki.setup();

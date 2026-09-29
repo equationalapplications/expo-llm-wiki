@@ -136,59 +136,51 @@ export class EventRepository extends BaseRepository {
   }
 
   /**
-   * Return events strictly after the watermark `(at, id)` in chronological
-   * (ASC) order. When `entityId` is provided, restrict to that entity.
+   * Return events for `entityId` strictly after the watermark `(at, id)` in
+   * chronological (ASC, id-ASC tie-break) order. Pass `wm = null` to read
+   * from the beginning of the entity's event log. `limit` caps the result.
    *
    * Used by the op-based librarian (PR-B) to enumerate its unprocessed tail.
    */
-  async getAfter(wm: LibrarianWatermark, entityId?: string): Promise<WikiEvent[]> {
-    const args = afterArgs(wm);
-    const rows = entityId
-      ? await this.db.getAllAsync<WikiEvent>(
-          `SELECT * FROM ${this.prefix}events WHERE entity_id = ? AND ${AFTER_SQL} ORDER BY created_at ASC, id ASC`,
-          [entityId, ...args],
-        )
-      : await this.db.getAllAsync<WikiEvent>(
-          `SELECT * FROM ${this.prefix}events WHERE ${AFTER_SQL} ORDER BY created_at ASC, id ASC`,
-          args,
-        );
+  async getAfter(
+    entityId: string,
+    wm: LibrarianWatermark | null,
+    limit?: number,
+  ): Promise<WikiEvent[]> {
+    const limitClause = limit != null ? ` LIMIT ?` : '';
+    const params: unknown[] = wm ? [entityId, wm.at, wm.at, wm.id] : [entityId];
+    const where = wm ? `entity_id = ? AND ${AFTER_SQL}` : `entity_id = ?`;
+    if (limit != null) params.push(limit);
+    const rows = await this.db.getAllAsync<WikiEvent>(
+      `SELECT * FROM ${this.prefix}events WHERE ${where} ORDER BY created_at ASC, id ASC${limitClause}`,
+      params,
+    );
     return rows.map(mapEvent);
   }
 
   /**
-   * Count of events strictly after the watermark. Used as the op-based
-   * librarian's bounded batch size.
+   * Count of events for `entityId` strictly after the watermark. Used as
+   * the op-based librarian's bounded batch size.
    */
-  async countAfter(wm: LibrarianWatermark, entityId?: string): Promise<number> {
-    const args = afterArgs(wm);
-    const row = entityId
-      ? await this.db.getFirstAsync<{ count: number }>(
-          `SELECT COUNT(*) as count FROM ${this.prefix}events WHERE entity_id = ? AND ${AFTER_SQL}`,
-          [entityId, ...args],
-        )
-      : await this.db.getFirstAsync<{ count: number }>(
-          `SELECT COUNT(*) as count FROM ${this.prefix}events WHERE ${AFTER_SQL}`,
-          args,
-        );
+  async countAfter(entityId: string, wm: LibrarianWatermark): Promise<number> {
+    const row = await this.db.getFirstAsync<{ count: number }>(
+      `SELECT COUNT(*) as count FROM ${this.prefix}events WHERE entity_id = ? AND ${AFTER_SQL}`,
+      [entityId, wm.at, wm.at, wm.id],
+    );
     return row?.count ?? 0;
   }
 
   /**
-   * Sum of `summary` lengths (in characters) for events strictly after the
-   * watermark. Used by the op-based librarian's token budget estimator
-   * (PR-B); CHAR_LENGTH keeps the count locale-independent on every SQLite.
+   * Sum of `summary` lengths (in characters) for events for `entityId`
+   * strictly after the watermark. Used by the op-based librarian's token
+   * budget estimator (PR-B); SQLite's `LENGTH` returns character count for
+   * UTF-8 text input.
    */
-  async sumSummaryCharsAfter(wm: LibrarianWatermark, entityId?: string): Promise<number> {
-    const args = afterArgs(wm);
-    const row = entityId
-      ? await this.db.getFirstAsync<{ total: number | null }>(
-          `SELECT SUM(CHAR_LENGTH(summary)) as total FROM ${this.prefix}events WHERE entity_id = ? AND ${AFTER_SQL}`,
-          [entityId, ...args],
-        )
-      : await this.db.getFirstAsync<{ total: number | null }>(
-          `SELECT SUM(CHAR_LENGTH(summary)) as total FROM ${this.prefix}events WHERE ${AFTER_SQL}`,
-          args,
-        );
+  async sumSummaryCharsAfter(entityId: string, wm: LibrarianWatermark): Promise<number> {
+    const row = await this.db.getFirstAsync<{ total: number | null }>(
+      `SELECT SUM(LENGTH(summary)) as total FROM ${this.prefix}events WHERE entity_id = ? AND ${AFTER_SQL}`,
+      [entityId, wm.at, wm.at, wm.id],
+    );
     return row?.total ?? 0;
   }
 }
