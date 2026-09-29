@@ -1,8 +1,20 @@
+import { mkdirSync } from 'fs';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
+
 import { EmbeddingModel, FlagEmbedding } from 'fastembed';
 
 type EmbedFn = (text: string) => Promise<number[]>;
 
 let cached: Promise<EmbedFn> | null = null;
+
+/**
+ * Absolute cache directory for the ONNX model. fastembed's default is a
+ * cwd-relative `local_cache/`, which litters the package directory when run
+ * through `pnpm --filter` (cwd = the package dir); keep the ~150 MB model
+ * under this package's gitignored `.cache/` instead.
+ */
+const MODEL_CACHE_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '.cache', 'fastembed');
 
 /**
  * Return a memoised `embed(text)` helper backed by fastembed's BGESmallENV15
@@ -14,7 +26,8 @@ let cached: Promise<EmbedFn> | null = null;
 export function getEmbedder(): Promise<EmbedFn> {
   if (!cached) {
     cached = (async () => {
-      const embedder = await FlagEmbedding.init({ model: EmbeddingModel.BGESmallENV15 });
+      mkdirSync(MODEL_CACHE_DIR, { recursive: true });
+      const embedder = await FlagEmbedding.init({ model: EmbeddingModel.BGESmallENV15, cacheDir: MODEL_CACHE_DIR });
       return async (text: string): Promise<number[]> => {
         for await (const batch of embedder.embed([text])) {
           return Array.from(batch[0]);

@@ -561,6 +561,14 @@ function readCommittedSample(fixturesDir: string): { seed: number; ids: string[]
   return { seed, ids: parsed.ids as string[] };
 }
 
+/**
+ * CLI entry point. The exit code is communicated via `process.exitCode`
+ * (not `process.exit`): the fastembed/onnxruntime session must be torn
+ * down by a natural event-loop drain — calling `process.exit` while the
+ * ORT session is alive aborts the process with
+ * `mutex lock failed: Invalid argument` *after* the work is done, which
+ * pnpm/CI would read as a failed run.
+ */
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const parsed = parseArgs(argv);
@@ -571,7 +579,8 @@ async function main(): Promise<void> {
   }
   if (command === 'sample') {
     const r = await runSampleCommand({ argv });
-    process.exit(r.exitCode);
+    process.exitCode = r.exitCode;
+    return;
   }
   if (command === 'longmemeval') {
     const fixturesDir = join(REPO_ROOT, 'packages', 'benchmarks', 'fixtures');
@@ -591,7 +600,8 @@ async function main(): Promise<void> {
       embed,
       ...(concurrency ? { concurrency } : {}),
     });
-    process.exit(r.exitCode);
+    process.exitCode = r.exitCode;
+    return;
   }
   if (command === 'supersession') {
     const scenariosFile = join(REPO_ROOT, 'packages', 'benchmarks', 'fixtures', 'supersession', 'scenarios.json');
@@ -599,10 +609,11 @@ async function main(): Promise<void> {
     const { getEmbedder } = await import('./embed');
     const embed = await getEmbedder();
     const r = await runSupersessionCommand({ argv, scenarios, embed });
-    process.exit(r.exitCode);
+    process.exitCode = r.exitCode;
+    return;
   }
   process.stderr.write(`Unknown command: ${command}\n${renderHelp()}`);
-  process.exit(2);
+  process.exitCode = 2;
 }
 
 function renderHelp(): string {
