@@ -1,3 +1,13 @@
+## [7.7.7](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.7.6...v7.7.7) (2026-09-29)
+
+### Bug Fixes
+
+* **deps:** bump fast-uri override floor to 3.1.7 (GHSA-qw65-cvwx-89v3, GHSA-58mr-gqgx-xq4g) ([4b61e03](https://github.com/equationalapplications/expo-llm-wiki/commit/4b61e03568f6040c49a866b71947e88f562145c8))
+
+### Performance Improvements
+
+* **core:** convert MaintenanceService syncs to incremental syncEntries ([#235](https://github.com/equationalapplications/expo-llm-wiki/issues/235)) ([16e0aa6](https://github.com/equationalapplications/expo-llm-wiki/commit/16e0aa66169c07a8879559ccf593e2170fff7019))
+
 ## [7.7.6](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.7.5...v7.7.6) (2026-09-28)
 
 ### Bug Fixes
