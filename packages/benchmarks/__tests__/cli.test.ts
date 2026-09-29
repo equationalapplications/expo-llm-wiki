@@ -174,6 +174,30 @@ describe('runLongMemEvalCommand (spend guard)', () => {
     expect(combined).toMatch(/input tokens/i);
   });
 
+  it('estimates only the sampled questions, not the whole dataset', async () => {
+    const stdout = vi.fn();
+    const small = makeQ('single-session-user', 'q1', 100); // ceil(200/4) + 2000 = 2,050
+    const huge = makeQ('multi-session', 'q2', 4_000_000); // 1,000,000 + 2000 = 1,002,000
+
+    const r = await runLongMemEvalCommand({
+      argv: ['longmemeval', '--dry-run'],
+      env: {},
+      sampleIds: [small.question_id],
+      dataset: [small, huge],
+      cacheDir: '/tmp/no-such-cache',
+      embed: async () => [0.1],
+      stdout,
+      runImpl: vi.fn(async () => {
+        throw new Error('runner should not be called when --dry-run is set');
+      }) as any,
+    });
+
+    expect(r.exitCode).toBe(0);
+    const combined = stdout.mock.calls.map((c) => String(c[0])).join('');
+    expect(combined).toContain('2,050');
+    expect(combined).not.toContain('1,002,000');
+  });
+
   it('fails fast with a missing API key when --yes is supplied', async () => {
     const q = makeQ('single-session-user', 'q1', 10);
     const r = await runLongMemEvalCommand({

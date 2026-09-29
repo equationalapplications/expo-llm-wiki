@@ -69,8 +69,18 @@ const ENTITY = 'lme-user';
 
 /** Poll cadence (ms) for {@link waitIdle}. */
 const IDLE_POLL_MS = 50;
-/** Hard ceiling (ms) for {@link waitIdle}. */
-const IDLE_TIMEOUT_MS = 10 * 60 * 1000;
+/**
+ * Hard ceiling (ms) for {@link waitIdle}.
+ *
+ * One full auto-heal pass legitimately takes longer than ten minutes against
+ * a flash-tier model: at the `autoHealThreshold` boundary (default 100) a
+ * pass offers up to `HEAL_BATCH_SIZE` (25) candidates and every candidate
+ * whose response fails to parse is retried as a singleton batch, each a
+ * full LLM call. Both smoke runs stalled at exactly event 100 — the heal
+ * boundary — with the ingest DB showing the librarian fully caught up, so
+ * the budget has to cover a complete heal pass, not just a librarian call.
+ */
+const IDLE_TIMEOUT_MS = 60 * 60 * 1000;
 /** Safety cap for the deferred-maintenance loop. */
 const DEFERRED_MAX_ITERATIONS = 200;
 

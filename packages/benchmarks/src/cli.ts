@@ -253,8 +253,15 @@ export async function runLongMemEvalCommand(deps: LongMemEvalDeps): Promise<Comm
   // so a missing API key does not fail a dry run.
   if (dryRun) {
     const engine = await engineInfo();
-    const questionCount = deps.sampleIds?.length ?? 0;
-    const tokenEstimate = deps.dataset ? estimateIngestTokens(deps.dataset) : 0;
+    // Estimate the same question set the live run would process — the sample
+    // ids ∩ dataset — not the whole dataset (≈500 questions; the estimate
+    // would over-state the spend by more than 6x).
+    const datasetById = new Map((deps.dataset ?? []).map((q) => [q.question_id, q]));
+    const dryRunQuestions = (deps.sampleIds ?? [])
+      .map((id) => datasetById.get(id))
+      .filter((q): q is LmeQuestion => q !== undefined);
+    const questionCount = dryRunQuestions.length;
+    const tokenEstimate = estimateIngestTokens(dryRunQuestions);
     stdout(renderEstimate({
       engine,
       flags,
