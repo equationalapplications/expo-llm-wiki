@@ -10,6 +10,8 @@ import {
   WikiIngestEmptyError,
   type ChunkFailure,
 } from '../src/index';
+import { WikiSupersedeError as PublicSupersedeError } from '../src/index';
+import { WikiMemory as PublicWikiMemory } from '../src/index';
 import { chunkText as chunkTextInternal, safeSlice as safeSliceInternal } from '../src/utils/pure';
 
 describe('public exports: chunking', () => {
@@ -103,5 +105,13 @@ describe('public exports: parse resilience error classes', () => {
     expect(e.parseFailures).toEqual([f]);
     expect(e.sourceRef).toBe('doc://x');
     expect(e.chunks).toBe(3);
+  });
+});
+
+describe('public exports: temporal facts', () => {
+  it('exports WikiSupersedeError and the supersede/history methods', () => {
+    expect(new PublicSupersedeError('not_found').reason).toBe('not_found');
+    expect(typeof PublicWikiMemory.prototype.supersede).toBe('function');
+    expect(typeof PublicWikiMemory.prototype.history).toBe('function');
   });
 });
