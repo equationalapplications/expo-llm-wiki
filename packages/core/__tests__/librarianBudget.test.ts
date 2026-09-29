@@ -12,9 +12,9 @@ import type { SQLiteAdapter } from '../src/types';
  * returns a `budgetStop` result WITHOUT calling the LLM provider. Mirrors
  * the parallel guarantee in `healBudget.test.ts` for the heal pass.
  *
- * The mirror test ("runs and reports processedThrough = newest event when it
- * fits") locks in the shape of the success result so future refactors cannot
- * silently change `processedThrough` semantics.
+ * The mirror test ("runs and reports an EventCursor for the newest event
+ * when it fits") locks in the shape of the success result so future refactors
+ * cannot silently change `processedThrough` semantics.
  */
 describe('librarian budget pre-flight (legacy strategy)', () => {
   it('declines without calling the LLM when the prompt does not fit, and reports the estimate', async () => {
@@ -38,7 +38,7 @@ describe('librarian budget pre-flight (legacy strategy)', () => {
     expect(result.budgetStop!.requiredEstimate).toBeGreaterThan(500);
   });
 
-  it('runs and reports processedThrough = newest event when it fits', async () => {
+  it('runs and reports an EventCursor for the newest event when it fits', async () => {
     const db: SQLiteAdapter = openTestDatabase();
     const generateText = vi.fn().mockResolvedValue(JSON.stringify({ facts: [], tasks: [] }));
     const wiki = new WikiMemory(db, { llmProvider: { generateText } });
@@ -63,6 +63,6 @@ describe('librarian budget pre-flight (legacy strategy)', () => {
     expect(generateText).toHaveBeenCalledTimes(1);
     expect(result.budgetStop).toBeUndefined();
     expect(result.factsWritten).toBe(0);
-    expect(result.processedThrough).toBe(newestEventId);
+    expect(result.processedThrough).toEqual({ at: events[0].created_at, id: newestEventId });
   });
 });

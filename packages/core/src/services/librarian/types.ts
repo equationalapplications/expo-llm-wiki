@@ -63,15 +63,24 @@ export interface LibrarianContext {
 }
 
 /**
+ * Position in the event log a pass read through: the event's `created_at`
+ * (epoch ms) and its id. Callers advance checkpoints / watermarks with it.
+ */
+export interface EventCursor {
+  at: number;
+  id: string;
+}
+
+/**
  * What the strategy did. The shape is intentionally narrow: callers (lock
  * wrapper, deferred scheduler) only need to know whether work happened and
  * whether a budget error truncated it. PR-B adds its own watermark
- * semantics; the legacy `processedThrough` is the id of the newest event
- * the pass read (or null when there were no events).
+ * semantics; the legacy `processedThrough` is an {@link EventCursor} for the
+ * newest event the pass read (or null when there were no events).
  */
 export interface LibrarianResult {
-  /** Newest event id the pass processed, or `null` if the event log was empty. */
-  processedThrough: string | null;
+  /** Newest event the pass processed (epoch ms + id), or `null` if the event log was empty. */
+  processedThrough: EventCursor | null;
   /** Number of facts actually written (excludes deduped, rejected, failed-validation). */
   factsWritten: number;
   /** Set only when `callLlm` raised `WikiBudgetExhausted`. */

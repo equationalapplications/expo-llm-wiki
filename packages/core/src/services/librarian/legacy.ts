@@ -26,7 +26,7 @@ import { generateId } from '../../utils/ids';
 import { callLlm } from '../../utils/llmCall';
 import { WikiBudgetExhausted } from '../../utils/usage';
 import { FUZZY_THRESHOLD, MIN_TOKENS_TO_QUALIFY } from './constants';
-import type { LibrarianStrategy, LibrarianResult, TitleIndexEntry } from './types';
+import type { LibrarianStrategy, LibrarianResult, EventCursor, TitleIndexEntry } from './types';
 import type { ExtractedFact, ExtractedFactWithOntology, ExtractedTask, WikiFact, WikiTask, OntologyUpdates } from '../../types';
 
 export const runLegacyLibrarianPass: LibrarianStrategy = async (deps, ctx) => {
@@ -214,8 +214,11 @@ export const runLegacyLibrarianPass: LibrarianStrategy = async (deps, ctx) => {
     deps.searchService.evictCache(entityId);
 
     // After `events.reverse()`, the array is oldest-first; the last element is
-    // the newest event the pass read. Empty event log → null.
-    const processedThrough = events.length > 0 ? events[events.length - 1].id : null;
+    // the newest event the pass read. Empty event log → null. Post-move
+    // refinement (sanctioned): the cursor carries the event's `created_at`
+    // alongside its id, so callers can advance checkpoints without re-querying.
+    const processedThrough: EventCursor | null =
+      events.length > 0 ? { at: events[events.length - 1].created_at, id: events[events.length - 1].id } : null;
     const out: LibrarianResult = { processedThrough, factsWritten: insertedFacts.length };
     return out;
   };
