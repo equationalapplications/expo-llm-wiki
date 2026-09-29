@@ -76,6 +76,12 @@ function mapRowToFact(row: any): WikiFact {
     // Spec §2.7 + §5.3: hydrate so read() consumers don't re-call the helpers.
     isStale: isStaleAfter(staleAfterRaw, now),
     trustTier: deriveTrustTier(okf_verified),
+    // Temporal (spec 2026-09-29 §4, §10.8): keys appear only when set so
+    // existing deep-equality assertions and host snapshots are unchanged.
+    ...(row.valid_from != null ? { valid_from: Number(row.valid_from) } : {}),
+    ...(row.valid_to != null ? { valid_to: Number(row.valid_to) } : {}),
+    ...(row.superseded_by != null ? { superseded_by: String(row.superseded_by) } : {}),
+    ...(row.superseded_at != null ? { superseded_at: Number(row.superseded_at) } : {}),
   };
 }
 
