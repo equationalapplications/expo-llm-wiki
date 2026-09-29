@@ -1,7 +1,7 @@
 # Competitive memory: temporal facts, op-based librarian, budgeted maintenance: Design
 
 **Date:** 2026-09-29
-**Status:** Draft (r1) — awaiting user review
+**Status:** Approved
 **Branch:** `dev/competitive-memory` (long-lived; cut from `main` at `0f39bf4`, release 7.7.7)
 **Package:** `@equationalapplications/core-llm-wiki` (plus a new private `packages/benchmarks`)
 **Downstream consumers:** Clanker (Expo), Curated Thoughts (Tauri), SynapseTree (SaaS, SQLite-per-tenant on S3)
@@ -264,3 +264,20 @@ SynapseTree/hosted code; transaction-time (`knownAt`) queries; a separate triple
 - **Two librarian code paths through 7.x.** Mitigated by the verbatim `legacy/` move and the parity test.
 - **Benchmark cost / judge bias.** Mitigated by ingest cache, manual-only runs, and naming the judge in every report.
 - **Dev branch drift from `main`.** Merge `main` into the dev branch (merge commit) after each 7.7.x release.
+
+## 10. Plan-time refinements
+
+Found while writing the implementation plans against the 7.7.7 source; these supersede the sections they name.
+
+1. **PR decomposition (supersedes §2 "one PR per phase").** Seven PRs in four waves. Wave 1 (parallel): **PR-0** benchmarks, **PR-A** temporal facts + watermark storage, **PR-S** librarian seam (verbatim legacy move, strategy dispatch, `callLlm` gateway, `UsageMeter`, `generateTextWithUsage`, `llm_usage`, budget-aware `runBatched`). Wave 2 (parallel, after A + S): **PR-B** ops librarian, **PR-D1** budgeted reads. Wave 3: **PR-C** deferred/budgeted maintenance (needs B's watermark advancement). Wave 4: **PR-D2** benchmark rerun, calibration, docs. PR-S exists so B and C share one tested seam instead of both editing `doRunLibrarian`.
+2. **NOOP writes nothing (supersedes §5.3 "touches `last_verified_at`").** `last_verified_at/_by` are derived mirrors of `okf_verified` (importDump recomputes them); touching them alone would break that invariant.
+3. **Watermark ownership.** PR-B makes *both* strategies advance `librarian_watermark_*` after a committed pass (legacy: newest event it read). On an existing DB with a NULL watermark, the ops strategy seeds it from the event at position `memory_checkpoint` so switching strategies never re-extracts the whole history.
+4. **Budget scope (supersedes §6.2 reembed budgeting).** `tokenBudget` meters `generateText` tokens only; `embed` calls are not metered. Reembed runs only while `deadlineMs` allows. `stoppedReason.job` is `'librarian' | 'heal'`.
+5. **Budget exhaustion inside `runBatched`.** A budget stop ends the run cleanly with partial results; unattempted items are neither `skipped` nor cooldown-stamped, so they stay eligible next run.
+6. **Prune event guard scope (refines §6.4).** Unprocessed-event retention applies only when `maintenance: 'deferred'` or `librarian.strategy: 'ops'`; legacy auto-mode pruning is unchanged.
+7. **Traversal from a non-live anchor** returns the anchor alone with no edges (same shape as `edgeTypes: []`).
+8. **`WikiFact` temporal keys** are present only when non-null, so existing deep-equality assertions and host snapshots are unchanged.
+9. **OKF:** temporal fields are flat frontmatter keys (`valid_from`, `valid_to`, `superseded_by`, `superseded_at`, epoch ms), matching how `created_at` / `deleted_at` are carried today.
+10. **`pruneSupersededAfter`** soft-deletes expired rows; the existing soft-delete retention then hard-deletes them through the embedding-hook path. No second deletion path.
+11. **Embedding reuse (§5.3):** `EmbeddingService.tryEmbedFact` is split into `embedTextForFact` (vector only) and `storeFactVector` (persist + hook) so the ops gate's vector is persisted without a second `embed` call.
+12. **`read({ tokenBudget })` packs facts only;** tasks and events in the bundle are unaffected.
