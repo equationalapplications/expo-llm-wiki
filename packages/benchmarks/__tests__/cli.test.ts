@@ -121,6 +121,10 @@ describe('runLongMemEvalCommand (spend guard)', () => {
 
     const r = await runLongMemEvalCommand({
       argv: ['longmemeval', '--strategy', 'legacy', '--maintenance', 'auto'],
+      // Inject a fake key so the test isolates the `--yes` guard from the
+      // no-key guard; CI environments without ZAI_API_KEY set would otherwise
+      // short-circuit out of endpointFromEnv before reaching the cost guard.
+      env: { ZAI_API_KEY: 'fake-key-for-spend-guard-test' },
       sampleIds: [q.question_id],
       dataset: [q],
       cacheDir: '/tmp/no-such-cache',

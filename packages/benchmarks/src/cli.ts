@@ -34,7 +34,7 @@ import { fileURLToPath } from 'url';
 import { endpointFromEnv, ChatEndpoint } from './provider';
 import { engineInfo, BenchReport } from './report';
 import { flagsKey, EngineFlags } from './longmemeval/ingest';
-import { sampleQuestionIds, STRATA } from './longmemeval/sample';
+import { sampleQuestionIds } from './longmemeval/sample';
 import { loadDataset, LmeQuestion } from './longmemeval/dataset';
 import { runLongMemEval } from './longmemeval/run';
 
@@ -351,7 +351,7 @@ export async function runSampleCommand(deps: SampleDeps): Promise<CommandResult>
 
   const ids = sampleQuestionIds(dataset, seed);
   const url = deps.url ?? process.env.BENCH_LONGMEMEVAL_URL ?? 'https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json';
-  const payload = JSON.stringify({ seed, dataset: url, ids, strata: STRATA }, null, 2);
+  const payload = JSON.stringify({ seed, dataset: url, ids }, null, 2);
 
   const outFile = deps.outFile ?? join(process.cwd(), DEFAULT_SAMPLE_FILE);
   ensureDir(outFile);
