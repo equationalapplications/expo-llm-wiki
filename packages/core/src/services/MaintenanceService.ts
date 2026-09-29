@@ -242,6 +242,8 @@ export class MaintenanceService {
 
       this._validatePruneDuration(retainSoftDeletedFor, 'retainSoftDeletedFor');
       this._validatePruneDuration(retainEventsFor, 'retainEventsFor');
+      const pruneSupersededAfter = this.options.config?.pruneSupersededAfter ?? null;
+      this._validatePruneDuration(pruneSupersededAfter, 'pruneSupersededAfter');
 
       const now = Date.now();
       // The full-entity rebuild is deferred until the touched-id set is known:
@@ -252,6 +254,20 @@ export class MaintenanceService {
       let deletedEntries = 0;
       let deletedTasks = 0;
       let deletedEvents = 0;
+
+      // Spec §4.4 / §10.10: expired and superseded history is soft-deleted
+      // here; the soft-delete retention below (on a later run) hard-deletes
+      // it through the embedding-hook path. Off by default.
+      if (pruneSupersededAfter !== null) {
+        const expiredCutoff = now - pruneSupersededAfter * 86400000;
+        const expiredIds = await this.entryRepo.findExpiredIds(entityId, expiredCutoff);
+        if (expiredIds.length > 0) {
+          await this.db.withTransactionAsync(async (tx) => {
+            await this.entryRepo.softDeleteByIds(expiredIds, entityId, tx);
+          });
+          syncedIds = [...expiredIds];
+        }
+      }
 
       if (retainSoftDeletedFor !== null) {
         const cutoff = now - retainSoftDeletedFor * 86400000;
@@ -277,7 +293,7 @@ export class MaintenanceService {
         // discards each id before re-reading it, so a stale document left
         // behind by a path that never passed ids to syncEntries is scrubbed
         // here (§2.2).
-        syncedIds = succeededIds;
+        syncedIds = [...syncedIds, ...succeededIds];
 
         await this.db.withTransactionAsync(async (tx) => {
           if (succeededIds.length > 0) {

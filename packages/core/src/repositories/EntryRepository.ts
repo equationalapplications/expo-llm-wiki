@@ -639,12 +639,14 @@ export class EntryRepository extends BaseRepository {
     tx?: SQLiteAdapter,
   ): Promise<WikiFact[]> {
     const executor = this.getExecutor(tx);
+    const now = Date.now();
     const rows = await executor.getAllAsync<any>(
       `SELECT * FROM ${this.prefix}entries
        WHERE entity_id = ? AND deleted_at IS NULL AND source_type != 'immutable_document'
+         AND ${liveAtSql('current')}
          AND (heal_checked_at IS NULL OR heal_checked_at <= ?)
        ORDER BY updated_at ASC LIMIT ?`,
-      [entityId, recheckCutoff, limit],
+      [entityId, now, now, recheckCutoff, limit],
     );
     return rows.map(mapRowToFact);
   }
@@ -669,6 +671,7 @@ export class EntryRepository extends BaseRepository {
     // Chunked like every other multi-id read here. The current caller stays well
     // under SQLITE_MAX_VARIABLE_NUMBER, but that is a property of the caller,
     // not of this method.
+    const now = Date.now();
     for (let i = 0; i < ids.length; i += this.chunkSize) {
       const chunk = ids.slice(i, i + this.chunkSize);
       const placeholders = chunk.map(() => '?').join(', ');
@@ -676,8 +679,9 @@ export class EntryRepository extends BaseRepository {
         `SELECT ${columns} FROM ${this.prefix}entries
          WHERE entity_id = ? AND deleted_at IS NULL
            AND source_type = 'immutable_document'
+           AND ${liveAtSql('current')}
            AND id IN (${placeholders})`,
-        [entityId, ...chunk],
+        [entityId, now, now, ...chunk],
       );
       rows.push(...chunkRows);
     }
@@ -703,15 +707,16 @@ export class EntryRepository extends BaseRepository {
     excludeSourceRef?: string,
   ): Promise<WikiFact[]> {
     const executor = this.getExecutor(tx);
+    const now = Date.now();
     // `IS NULL OR !=` keeps NULL-source_ref rows (e.g. librarian_inferred facts)
     // in the cross-sourceRef title index. The intent of `excludeSourceRef` is
     // "drop THIS sourceRef's rows"; NULL rows belong to neither the current
     // sourceRef nor the replacement set, and excluding them causes edges
     // targeting legacy/non-document facts to fail to resolve.
     const excludeClause = excludeSourceRef ? ` AND (source_ref IS NULL OR source_ref != ?)` : '';
-    const args: unknown[] = excludeSourceRef ? [entityId, excludeSourceRef, limit] : [entityId, limit];
+    const args: unknown[] = excludeSourceRef ? [entityId, now, now, excludeSourceRef, limit] : [entityId, now, now, limit];
     const rows = await executor.getAllAsync<any>(
-      `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL${excludeClause} ORDER BY updated_at DESC LIMIT ?`,
+      `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL AND ${liveAtSql('current')}${excludeClause} ORDER BY updated_at DESC LIMIT ?`,
       args,
     );
     return rows.map(mapRowToFact);
@@ -1715,13 +1720,15 @@ export class EntryRepository extends BaseRepository {
     tx?: SQLiteAdapter,
   ): Promise<{ eligible: number; deferred: number }> {
     const executor = this.getExecutor(tx);
+    const now = Date.now();
     const row = await executor.getFirstAsync<{ eligible: number | null; deferred: number | null }>(
       `SELECT
          SUM(CASE WHEN heal_checked_at IS NULL OR heal_checked_at <= ? THEN 1 ELSE 0 END) AS eligible,
          SUM(CASE WHEN heal_checked_at IS NOT NULL AND heal_checked_at > ? THEN 1 ELSE 0 END) AS deferred
        FROM ${this.prefix}entries
-       WHERE entity_id = ? AND deleted_at IS NULL AND source_type != 'immutable_document'`,
-      [recheckCutoff, recheckCutoff, entityId],
+       WHERE entity_id = ? AND deleted_at IS NULL AND source_type != 'immutable_document'
+         AND ${liveAtSql('current')}`,
+      [recheckCutoff, recheckCutoff, entityId, now, now],
     );
     return { eligible: Number(row?.eligible ?? 0), deferred: Number(row?.deferred ?? 0) };
   }
