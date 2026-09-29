@@ -55,8 +55,10 @@ export interface LibrarianContext {
   entityId: string;
   trigger: WikiDiagnosticTrigger;
   promptOverride?: string;
-  /** Optional meter (Phase C budgeted maintenance). Legacy ignores it but
-   * still records usage when present via `callLlm`. */
+  /** Optional meter (Phase C budgeted maintenance). Legacy honors it:
+   * `callLlm` pre-flights the prompt estimate against it, usage is recorded
+   * on every call, and the pass returns `budgetStop` when the budget is
+   * exhausted (see `librarianBudget.test.ts`). */
   meter?: UsageMeter;
 }
 

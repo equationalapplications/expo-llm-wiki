@@ -10,16 +10,18 @@
 import { runLegacyLibrarianPass } from './legacy';
 import type { LibrarianDeps, LibrarianContext, LibrarianResult, LibrarianStrategy } from './types';
 
-const STRATEGIES: Record<string, LibrarianStrategy> = {
-  legacy: runLegacyLibrarianPass,
-};
+// A Map (not a plain object literal) so inherited Object properties like
+// 'constructor' or 'toString' cannot masquerade as strategy names.
+const STRATEGIES = new Map<string, LibrarianStrategy>([
+  ['legacy', runLegacyLibrarianPass],
+]);
 
 export async function runLibrarianStrategy(
   deps: LibrarianDeps,
   ctx: LibrarianContext,
 ): Promise<LibrarianResult> {
   const strategy = deps.options.config?.librarian?.strategy ?? 'legacy';
-  const fn = STRATEGIES[strategy];
+  const fn = STRATEGIES.get(strategy);
   if (!fn) {
     throw new Error(`Unknown librarian strategy: ${strategy}`);
   }

@@ -48,7 +48,7 @@ export async function callLlm(
 
   const record: UsageRecord = reported
     ? { inputTokens: reported.inputTokens, outputTokens: reported.outputTokens, estimated: false }
-    : { inputTokens: promptEstimate, outputTokens: estimateTokens(typeof text === 'string' ? text : ''), estimated: true };
+    : { inputTokens: promptEstimate, outputTokens: estimateTokens(text), estimated: true };
   ctx.meter?.record(record);
 
   if (options.config?.reportLlmUsage === true) {
