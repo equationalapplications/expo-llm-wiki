@@ -14,18 +14,13 @@
  */
 
 import { readFileSync } from 'fs';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
 import type { UsageTotals } from './instrument';
 import type { EngineFlags } from './longmemeval/ingest';
-import type { LmeQuestionType } from './longmemeval/dataset';
-
-export interface EngineInfo {
-  version: string;
-  gitSha: string;
-}
+import type { CallSite } from './instrument';
 
 /**
  * The core package.json lives at `<repo>/packages/core/package.json`. The
@@ -35,86 +30,63 @@ export interface EngineInfo {
 const CORE_PACKAGE_JSON = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'core', 'package.json');
 
 /**
- * Read engine version (from core's package.json) and short git SHA (from
- * `git rev-parse --short HEAD`). Synchronous so it can be called before any
- * async work in the harness without changing the function signature.
+ * The single embedder this package ships with. The value surfaces in
+ * {@link BenchReport.models.embed} so a downstream consumer can tell which
+ * vector model produced the candidate scores in the report.
  */
-export function engineInfo(cwd: string = process.cwd()): EngineInfo {
+export const EMBED_MODEL = 'fastembed/BGESmallENV15';
+
+/**
+ * Read engine version (from core's package.json) and short git SHA (from
+ * `git rev-parse --short HEAD`). Async per the published contract even
+ * though the body is otherwise I/O-light — keeps the call site consistent
+ * with the rest of the pipeline.
+ */
+export async function engineInfo(cwd: string = process.cwd()): Promise<{ version: string; gitSha: string }> {
   const pkg = JSON.parse(readFileSync(CORE_PACKAGE_JSON, 'utf8')) as { version?: string };
   const version = typeof pkg.version === 'string' ? pkg.version : 'unknown';
   let gitSha: string;
   try {
-    gitSha = execSync('git rev-parse --short HEAD', { cwd, encoding: 'utf8' }).trim();
+    gitSha = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd, encoding: 'utf8' }).trim();
   } catch {
     gitSha = 'unknown';
   }
   return { version, gitSha };
 }
 
-export interface ModelInfo {
-  answer: string;
-  judge: string;
-}
-
-export interface SampleInfo {
-  seed: number;
-  questionIds: string[];
-}
-
+/**
+ * Per-type accuracy breakdown. `rate` is the fraction correct in `[0, 1]`
+ * (zero when `total === 0`); downstream UIs use it directly without
+ * recomputing the division.
+ */
 export interface AccuracyByType {
   correct: number;
   total: number;
-}
-
-export interface AccuracyReport {
-  overall: number;
-  byType: Record<LmeQuestionType, AccuracyByType>;
-}
-
-export interface RetrievalReport {
-  /** Mean retrieval-payload tokens across the run. */
-  avgContextTokens: number;
-  /** Max retrieval-payload tokens across the run. */
-  maxContextTokens: number;
-  /** Sum of retrieval-payload tokens across the run. */
-  totalContextTokens: number;
-}
-
-export interface LatencyReport {
-  p50: number;
-  p90: number;
-  p99: number;
-  /** Total wall-clock spent in the pipeline, in milliseconds. */
-  total: number;
-}
-
-export interface QuestionRecord {
-  questionId: string;
-  questionType: LmeQuestionType;
-  correct: boolean;
-  contextTokens: number;
-  latencyMs: number;
-  /** True when this question's ingest came from the cache rather than a fresh replay. */
-  cached: boolean;
-  judgeOutput: string;
-  answer: string;
+  rate: number;
 }
 
 /**
  * The full run report. This is the JSON the CLI writes under
  * `packages/benchmarks/results/<run-name>.json`.
+ *
+ * Shape is the contract from the brief verbatim; the field order matches
+ * the published spec for grep-friendly diffs.
  */
 export interface BenchReport {
-  engine: EngineInfo;
-  models: ModelInfo;
-  sample: SampleInfo;
-  flags: EngineFlags;
-  accuracy: AccuracyReport;
-  tokens: UsageTotals;
-  retrieval: RetrievalReport;
-  latencyMs: LatencyReport;
+  kind: 'longmemeval';
+  createdAt: string;
+  engine: { version: string; gitSha: string; flags: EngineFlags };
+  models: { answer: string; judge: string; embed: typeof EMBED_MODEL };
+  sample: { seed: number; count: number; dataset: string };
+  accuracy: {
+    overall: number;
+    byType: Record<string, AccuracyByType>;
+  };
+  tokens: Record<CallSite, { calls: number; inputTokens: number; outputTokens: number; estimatedCalls: number }>;
+  retrieval: { meanContextTokens: number; p50: number; p95: number };
+  latencyMs: { ingestP50: number; ingestP95: number; answerP50: number; answerP95: number };
   cachedIngests: number;
-  questions: QuestionRecord[];
+  questions: Array<{ id: string; type: string; correct: boolean; contextTokens: number }>;
 }
 
 export type { UsageTotals };

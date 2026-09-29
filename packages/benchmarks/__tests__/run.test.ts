@@ -97,25 +97,64 @@ describe('runLongMemEval', () => {
         embed: async (_t: string) => [0.1, 0.2, 0.3],
       });
 
-      // 1 of 2 verdicts was "yes" → accuracy 0.5.
-      expect(report.accuracy.overall).toBe(0.5);
-      // Per-type accuracy: each type has total 1; first question type is correct,
-      // second is not (the order matches the input questions array).
-      expect(report.accuracy.byType['single-session-user']).toEqual({ correct: 1, total: 1 });
-      expect(report.accuracy.byType['knowledge-update']).toEqual({ correct: 0, total: 1 });
-      // Two answer-model calls and two judge-model calls — one per question.
-      expect(report.tokens.answer.calls).toBe(2);
-      expect(report.tokens.judge.calls).toBe(2);
-      // Judge model id surfaces in the report exactly as configured.
-      expect(report.models.judge).toBe('judge-model');
+      // ---- top-level meta ----
+      expect(report.kind).toBe('longmemeval');
+      expect(typeof report.createdAt).toBe('string');
+      // ISO 8601 with a "T" separator and a trailing "Z".
+      expect(report.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+      expect(report.engine.flags).toEqual(flags);
+      expect(report.engine.version).toBe('7.7.7');
+      expect(report.engine.gitSha).toMatch(/^[0-9a-f]+$/);
       expect(report.models.answer).toBe('answer-model');
-      // The first question produced non-empty retrieval context.
-      expect(report.questions[0].contextTokens).toBeGreaterThan(0);
-      expect(report.questions[0].correct).toBe(true);
-      expect(report.questions[1].correct).toBe(false);
+      expect(report.models.judge).toBe('judge-model');
+      expect(report.models.embed).toBe('fastembed/BGESmallENV15');
+      expect(report.sample.count).toBe(2);
+      expect(report.sample.dataset).toBe('longmemeval');
       // Cached ingest counter is well-formed (zero or more).
       expect(typeof report.cachedIngests).toBe('number');
       expect(report.cachedIngests).toBeGreaterThanOrEqual(0);
+
+      // ---- accuracy ----
+      // 1 of 2 verdicts was "yes" → accuracy 0.5.
+      expect(report.accuracy.overall).toBe(0.5);
+      // Per-type accuracy: each type has total 1; first question type is
+      // correct, second is not (the order matches the input questions array).
+      expect(report.accuracy.byType['single-session-user']).toEqual({ correct: 1, total: 1, rate: 1 });
+      expect(report.accuracy.byType['knowledge-update']).toEqual({ correct: 0, total: 1, rate: 0 });
+
+      // ---- tokens ----
+      // Two answer-model calls and two judge-model calls — one per question.
+      expect(report.tokens.answer.calls).toBe(2);
+      expect(report.tokens.judge.calls).toBe(2);
+      // The brief's spec excludes `ms` from `tokens[*]`.
+      expect((report.tokens.answer as unknown as { ms?: number }).ms).toBeUndefined();
+
+      // ---- retrieval ----
+      expect(typeof report.retrieval.meanContextTokens).toBe('number');
+      expect(typeof report.retrieval.p50).toBe('number');
+      expect(typeof report.retrieval.p95).toBe('number');
+
+      // ---- latency (ingest vs answer split) ----
+      expect(typeof report.latencyMs.ingestP50).toBe('number');
+      expect(typeof report.latencyMs.ingestP95).toBe('number');
+      expect(typeof report.latencyMs.answerP50).toBe('number');
+      expect(typeof report.latencyMs.answerP95).toBe('number');
+
+      // ---- questions ----
+      expect(report.questions).toHaveLength(2);
+      expect(report.questions[0].id).toBe('sess-user-001');
+      expect(report.questions[0].type).toBe('single-session-user');
+      expect(report.questions[0].correct).toBe(true);
+      expect(report.questions[0].contextTokens).toBeGreaterThan(0);
+      expect(report.questions[1].id).toBe('know-update-001');
+      expect(report.questions[1].type).toBe('knowledge-update');
+      expect(report.questions[1].correct).toBe(false);
+      // The spec drops the extras (cached / judgeOutput / answer / latencyMs);
+      // confirm the field names are absent on the wire.
+      expect((report.questions[0] as unknown as { cached?: unknown }).cached).toBeUndefined();
+      expect((report.questions[0] as unknown as { judgeOutput?: unknown }).judgeOutput).toBeUndefined();
+      expect((report.questions[0] as unknown as { answer?: unknown }).answer).toBeUndefined();
+      expect((report.questions[0] as unknown as { latencyMs?: unknown }).latencyMs).toBeUndefined();
     } finally {
       rmSync(cacheDir, { recursive: true, force: true });
     }

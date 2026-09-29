@@ -19,22 +19,20 @@ import { WikiMemory, formatContext } from '@equationalapplications/core-llm-wiki
 
 import { openDb } from '../db';
 import { ChatEndpoint, createProvider } from '../provider';
-import { UsageRecorder, instrument } from '../instrument';
+import { UsageRecorder, instrument, CallSite } from '../instrument';
 import { ingestQuestion, EngineFlags } from './ingest';
 import { buildAnswerPrompt, buildJudgePrompt, parseVerdict } from './judge';
 import type { LmeQuestion } from './dataset';
-import type {
-  BenchReport,
-  QuestionRecord,
-  AccuracyReport,
-  RetrievalReport,
-  LatencyReport,
-} from '../report';
-import { engineInfo, ModelInfo, AccuracyByType } from '../report';
+import type { BenchReport, AccuracyByType } from '../report';
+import { engineInfo, EMBED_MODEL } from '../report';
 
 const ENTITY = 'lme-user';
 /** Default cap on the per-call retrieval candidate set, matching the brief. */
 const DEFAULT_MAX_RESULTS = 10;
+/** Dataset tag emitted in `sample.dataset`. */
+const DATASET_TAG = 'longmemeval';
+/** `kind` literal surfaced in the report. */
+const REPORT_KIND = 'longmemeval';
 
 type EmbedFn = (text: string) => Promise<number[]>;
 type FetchLike = (input: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<Response>;
@@ -92,11 +90,12 @@ async function pool<T, R>(tasks: T[], size: number, worker: (t: T, i: number) =>
 }
 
 interface QuestionRunResult {
-  questionId: string;
-  questionType: LmeQuestion['question_type'];
+  id: string;
+  type: LmeQuestion['question_type'];
   correct: boolean;
   contextTokens: number;
-  latencyMs: number;
+  ingestMs: number;
+  answerMs: number;
   cached: boolean;
   judgeOutput: string;
   answer: string;
@@ -110,6 +109,10 @@ interface QuestionRunResult {
  * `llmProvider` passed to `WikiMemory` is a no-op stub for `generateText` —
  * the harness never asks the engine to call out to an LLM during a read —
  * plus the supplied `embed` so semantic ranking is exercised when present.
+ *
+ * `ingestMs` wraps `ingestQuestion(...)` and `answerMs` wraps the combined
+ * answer + judge LLM calls; the report's `latencyMs.ingest*` and
+ * `latencyMs.answer*` percentiles are computed from these two arrays.
  */
 async function runOneQuestion(
   q: LmeQuestion,
@@ -123,7 +126,7 @@ async function runOneQuestion(
     ingestProvider: ReturnType<typeof instrument>;
   },
 ): Promise<QuestionRunResult> {
-  const started = Date.now();
+  const ingestStarted = Date.now();
   const ingestResult = await ingestQuestion(q, {
     flags: ctx.flags,
     provider: { generateText: (p) => ctx.ingestProvider.generateText(p) },
@@ -131,6 +134,7 @@ async function runOneQuestion(
     cacheDir: ctx.cacheDir,
     engineVersion: ctx.engineVersion,
   });
+  const ingestMs = Date.now() - ingestStarted;
 
   const handle = openDb(ingestResult.dbFile);
   try {
@@ -151,19 +155,22 @@ async function runOneQuestion(
     const context = formatContext(bundle, { maxEvents: 0, maxTasks: 0 });
     const contextTokens = Math.ceil(context.length / 4);
 
+    const answerStarted = Date.now();
     const answerPrompt = buildAnswerPrompt(q, context);
     const answerText = await ctx.answerProvider.generateText(answerPrompt);
 
     const judgePrompt = buildJudgePrompt(q, answerText);
     const judgeOutput = await ctx.judgeProvider.generateText(judgePrompt);
     const correct = parseVerdict(judgeOutput);
+    const answerMs = Date.now() - answerStarted;
 
     return {
-      questionId: q.question_id,
-      questionType: q.question_type,
+      id: q.question_id,
+      type: q.question_type,
       correct,
       contextTokens,
-      latencyMs: Date.now() - started,
+      ingestMs,
+      answerMs,
       cached: ingestResult.cached,
       judgeOutput,
       answer: answerText,
@@ -171,6 +178,25 @@ async function runOneQuestion(
   } finally {
     handle.close();
   }
+}
+
+/**
+ * Project the UsageRecorder's totals into the spec's per-site shape (the
+ * recorder also tracks `ms`, which the spec does not expose in
+ * `BenchReport.tokens`).
+ */
+function tokensWithoutMs(totals: { [k in CallSite]: { calls: number; inputTokens: number; outputTokens: number; estimatedCalls: number; ms: number } }): Record<CallSite, { calls: number; inputTokens: number; outputTokens: number; estimatedCalls: number }> {
+  const out = {} as Record<CallSite, { calls: number; inputTokens: number; outputTokens: number; estimatedCalls: number }>;
+  for (const site of Object.keys(totals) as CallSite[]) {
+    const r = totals[site];
+    out[site] = {
+      calls: r.calls,
+      inputTokens: r.inputTokens,
+      outputTokens: r.outputTokens,
+      estimatedCalls: r.estimatedCalls,
+    };
+  }
+  return out;
 }
 
 /**
@@ -206,79 +232,88 @@ export async function runLongMemEval(opts: RunLongMemEvalOpts): Promise<BenchRep
   };
 
   const records = await pool(opts.questions, concurrency, (q) => runOneQuestion(q, ctx));
+  const engine = await engineInfo();
 
   // ----- accuracy -----
-  const byType: Record<LmeQuestion['question_type'], AccuracyByType> = {
-    'single-session-user': { correct: 0, total: 0 },
-    'single-session-assistant': { correct: 0, total: 0 },
-    'single-session-preference': { correct: 0, total: 0 },
-    'multi-session': { correct: 0, total: 0 },
-    'temporal-reasoning': { correct: 0, total: 0 },
-    'knowledge-update': { correct: 0, total: 0 },
+  // Initialise every known LmeQuestionType so the report is dense even
+  // when a particular stratum is empty in the sample.
+  const byType: Record<string, AccuracyByType> = {
+    'single-session-user': { correct: 0, total: 0, rate: 0 },
+    'single-session-assistant': { correct: 0, total: 0, rate: 0 },
+    'single-session-preference': { correct: 0, total: 0, rate: 0 },
+    'multi-session': { correct: 0, total: 0, rate: 0 },
+    'temporal-reasoning': { correct: 0, total: 0, rate: 0 },
+    'knowledge-update': { correct: 0, total: 0, rate: 0 },
   };
   let totalCorrect = 0;
   for (const r of records) {
-    byType[r.questionType].total += 1;
+    const bucket = byType[r.type] ?? { correct: 0, total: 0, rate: 0 };
+    bucket.total += 1;
     if (r.correct) {
-      byType[r.questionType].correct += 1;
+      bucket.correct += 1;
       totalCorrect += 1;
     }
+    bucket.rate = bucket.total === 0 ? 0 : bucket.correct / bucket.total;
+    byType[r.type] = bucket;
   }
-  const accuracy: AccuracyReport = {
+  const accuracy = {
     overall: records.length === 0 ? 0 : totalCorrect / records.length,
     byType,
   };
 
   // ----- retrieval -----
   const contextTokens = records.map((r) => r.contextTokens);
+  const contextTokensAsc = contextTokens.slice().sort((a, b) => a - b);
   const totalContextTokens = contextTokens.reduce((a, b) => a + b, 0);
-  const retrieval: RetrievalReport = {
-    avgContextTokens: records.length === 0 ? 0 : totalContextTokens / records.length,
-    maxContextTokens: contextTokens.length === 0 ? 0 : Math.max(...contextTokens),
-    totalContextTokens,
+  const retrieval = {
+    meanContextTokens: records.length === 0 ? 0 : totalContextTokens / records.length,
+    p50: percentile(contextTokensAsc, 0.5),
+    p95: percentile(contextTokensAsc, 0.95),
   };
 
-  // ----- latency -----
-  const latenciesAsc = records.map((r) => r.latencyMs).slice().sort((a, b) => a - b);
-  const latency: LatencyReport = {
-    p50: percentile(latenciesAsc, 0.5),
-    p90: percentile(latenciesAsc, 0.9),
-    p99: percentile(latenciesAsc, 0.99),
-    total: latenciesAsc.reduce((a, b) => a + b, 0),
+  // ----- latency (ingest vs answer split) -----
+  const ingestAsc = records.map((r) => r.ingestMs).slice().sort((a, b) => a - b);
+  const answerAsc = records.map((r) => r.answerMs).slice().sort((a, b) => a - b);
+  const latencyMs = {
+    ingestP50: percentile(ingestAsc, 0.5),
+    ingestP95: percentile(ingestAsc, 0.95),
+    answerP50: percentile(answerAsc, 0.5),
+    answerP95: percentile(answerAsc, 0.95),
   };
 
-  // ----- sample + questions -----
-  const questionRecords: QuestionRecord[] = records.map((r) => ({
-    questionId: r.questionId,
-    questionType: r.questionType,
+  // ----- questions -----
+  const questions = records.map((r) => ({
+    id: r.id,
+    type: r.type,
     correct: r.correct,
     contextTokens: r.contextTokens,
-    latencyMs: r.latencyMs,
-    cached: r.cached,
-    judgeOutput: r.judgeOutput,
-    answer: r.answer,
   }));
-
-  const models: ModelInfo = {
-    answer: opts.answerEndpoint.model,
-    judge: opts.judgeEndpoint.model,
-  };
 
   const cachedIngests = records.reduce((n, r) => (r.cached ? n + 1 : n), 0);
 
   return {
-    engine: engineInfo(),
-    models,
+    kind: REPORT_KIND,
+    createdAt: new Date().toISOString(),
+    engine: {
+      version: engine.version,
+      gitSha: engine.gitSha,
+      flags: opts.flags,
+    },
+    models: {
+      answer: opts.answerEndpoint.model,
+      judge: opts.judgeEndpoint.model,
+      embed: EMBED_MODEL,
+    },
     sample: {
       seed: opts.sampleSeed ?? 0,
-      questionIds: records.map((r) => r.questionId),
+      count: opts.questions.length,
+      dataset: DATASET_TAG,
     },
-    flags: opts.flags,
     accuracy,
-    tokens: recorder.totals(),
+    tokens: tokensWithoutMs(recorder.totals()),
     retrieval,
-    latencyMs: latency,
+    latencyMs,
     cachedIngests,
-    questions: questionRecords,
+    questions,
   };
 }
