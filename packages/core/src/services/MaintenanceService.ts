@@ -30,9 +30,8 @@ import {
   HEAL_MAX_FACT_BODY_CHARS_L3,
   HEAL_MAX_TASKS,
 } from '../utils/healConstants';
-
-const FUZZY_THRESHOLD = 0.5;
-const MIN_TOKENS_TO_QUALIFY = 3;
+import { FUZZY_THRESHOLD, MIN_TOKENS_TO_QUALIFY } from './librarian/constants';
+import { runLibrarianStrategy, type LibrarianContext, type LibrarianResult } from './librarian';
 
 export const ONTOLOGY_BACKFILL_BATCH_SIZE = 25;
 export const ONTOLOGY_BACKFILL_MAX_PROMPT_CHARS = 40_000;
@@ -629,174 +628,32 @@ export class MaintenanceService {
 
   /** Core librarian pass (locks handled by {@link runLibrarian}). Package-internal orchestration hook. */
   async doRunLibrarian(entityId: string, promptOverride?: string, trigger: WikiDiagnosticTrigger = 'call'): Promise<void> {
-    const events = await this.eventRepo.getRecent(entityId, 50);
-    const currentFactsRows = await this.entryRepo.findRecentByEntityId(entityId, 100);
+    await this.runLibrarianPass({ entityId, trigger, ...(promptOverride !== undefined ? { promptOverride } : {}) });
+  }
 
-    const currentFacts = currentFactsRows.map(f => {
-      const { embedding: _embedding, embedding_blob: _blob, ...rest } = f as WikiFact & { embedding?: unknown; embedding_blob?: unknown };
-      return {
-        ...rest,
-        tags: typeof rest.tags === 'string' ? JSON.parse(rest.tags) : rest.tags,
-      };
-    });
-
-    const ontologyContext = await this.ontologyService?.buildPromptContext(entityId) ?? null;
-
-    const promptEvents = events.reverse();
-    const librarianGrounding = this.promptService.groundingFor('librarian');
-
-    // groundingCorpus (spec §6.3) is built with the prompt, from the event
-    // summaries that prompt actually shows.
-    const { systemPrompt, userPrompt, groundingCorpus: librarianCorpus = [] } = this.promptService.buildLibrarianPrompt(
-      promptEvents,
-      currentFacts,
-      promptOverride,
-      ontologyContext,
+  /**
+   * Seam between the lock wrapper and the strategy dispatcher (spec 2026-09-29
+   * §5.1). Builds the strategy deps from `this` and dispatches via
+   * `runLibrarianStrategy` so PR-B can plug in `ops/` without touching this
+   * class. Returns the strategy's `LibrarianResult` so deferred/budgeted
+   * schedulers (PR-C) can advance watermarks; the existing void-returning
+   * `doRunLibrarian` discards it.
+   */
+  async runLibrarianPass(ctx: LibrarianContext): Promise<LibrarianResult> {
+    return runLibrarianStrategy(
+      {
+        db: this.db,
+        options: this.options,
+        entryRepo: this.entryRepo,
+        taskRepo: this.taskRepo,
+        eventRepo: this.eventRepo,
+        searchService: this.searchService,
+        embeddingService: this.embeddingService,
+        promptService: this.promptService,
+        ontologyService: this.ontologyService,
+      },
+      ctx,
     );
-
-    const responseText = await this.options.llmProvider.generateText({ systemPrompt, userPrompt });
-
-    const result = parseJsonResponse<{
-      facts: ExtractedFact[];
-      tasks: ExtractedTask[];
-      ontology_updates?: OntologyUpdates;
-    }>(responseText);
-    const facts = Array.isArray(result.facts) ? result.facts : [];
-    const tasks = Array.isArray(result.tasks) ? result.tasks : [];
-    const ontologyUpdates = result.ontology_updates;
-
-    const diagBuffer = new DiagnosticBuffer();
-    const diagBase = { entityId, operation: 'librarian' as const, trigger };
-    const validFacts: ExtractedFact[] = [];
-    const validFactItemIndexes: number[] = [];
-    facts.forEach((raw, itemIndex) => {
-      const valid = validateFact(raw);
-      if (valid) {
-        validFacts.push(valid);
-        validFactItemIndexes.push(itemIndex);
-      } else {
-        diagBuffer.push({ ...diagBase, code: 'fact_rejected', detail: { itemIndex, reason: factRejectionReason(raw) } });
-      }
-    });
-    const validTasks: ExtractedTask[] = [];
-    tasks.forEach((raw, itemIndex) => {
-      const valid = validateTask(raw);
-      if (valid) validTasks.push(valid);
-      else diagBuffer.push({ ...diagBase, code: 'task_rejected', detail: { itemIndex, reason: taskRejectionReason(raw) } });
-    });
-
-    const now = Date.now();
-    const insertedFacts: Array<{ id: string; entity_id: string; title: string; body: string; tags: string }> = [];
-
-    await this.db.withTransactionAsync(async (tx) => {
-      let { mode, manifest } = await this.ontologyService?.getEffectiveState(entityId, tx)
-        ?? { mode: 'off' as const, manifest: { node_types: [], edge_types: [] } };
-
-      if (mode === 'emergent' && ontologyUpdates && this.ontologyService) {
-        manifest = await this.ontologyService.mergeEmergentUpdates(entityId, ontologyUpdates, tx);
-      }
-
-      const titleIndex = new Map<string, TitleIndexEntry>();
-      for (const existing of currentFactsRows) {
-        titleIndex.set(normalizeTitleKey(existing.title), {
-          id: existing.id,
-          okf_type: existing.okf_type ?? null,
-        });
-      }
-
-      const factsForDedupe = await this.entryRepo.findRecentByEntityId(entityId, 100, tx);
-
-      const pendingEdges: Array<{
-        sourceId: string;
-        sourceType: string | null;
-        edges: ExtractedFactWithOntology['edges'];
-      }> = [];
-
-      for (const [k, fact] of validFacts.entries()) {
-        const newTokens = titleTokens(fact.title);
-        let skip = false;
-
-        if (newTokens.size >= MIN_TOKENS_TO_QUALIFY) {
-          for (const existing of factsForDedupe) {
-            if (existing.source_type !== 'librarian_inferred') continue;
-            const existingTokens = titleTokens(existing.title);
-            if (existingTokens.size >= MIN_TOKENS_TO_QUALIFY) {
-              if (jaccardScore(newTokens, existingTokens) >= FUZZY_THRESHOLD) {
-                skip = true;
-                break;
-              }
-            }
-          }
-        }
-
-        if (skip) {
-          diagBuffer.push({ ...diagBase, code: 'fact_deduplicated', detail: { itemIndex: validFactItemIndexes[k], reason: 'fuzzy_title' } });
-          continue;
-        }
-
-        const ontologyFact = fact as ExtractedFactWithOntology;
-        const id = generateId('fact_');
-        const validationDrops: EdgeDrop[] = [];
-        const normalized = this.ontologyService?.validateAndNormalizeFact(ontologyFact, manifest, { strict: false, drops: validationDrops })
-          ?? { okf_type: null, edges: [] };
-        for (const drop of validationDrops) diagBuffer.push(edgeDropDiagnostic(drop, { ...diagBase, factId: id }));
-
-        const grounding = librarianGrounding
-          ? groundingOutcome(checkGrounding(fact.evidence, librarianCorpus, librarianGrounding), now)
-          : null;
-        if (grounding?.diagnostic) {
-          diagBuffer.push({ ...diagBase, code: grounding.diagnostic.code, detail: { factId: id, itemIndex: validFactItemIndexes[k], reason: grounding.diagnostic.reason } });
-        }
-
-        const factObj: WikiFact = {
-          id, entity_id: entityId, title: fact.title, body: fact.body, tags: fact.tags, confidence: fact.confidence,
-          source_type: 'librarian_inferred', source_hash: null, source_ref: null,
-          created_at: now, updated_at: now, last_accessed_at: null, access_count: 0, deleted_at: null,
-          okf_type: normalized.okf_type,
-          ...grounding?.trust,
-        };
-
-        await this.entryRepo.upsert(factObj, tx);
-        insertedFacts.push({ id, entity_id: entityId, title: fact.title, body: fact.body, tags: JSON.stringify(fact.tags) });
-        factsForDedupe.push(factObj);
-
-        titleIndex.set(normalizeTitleKey(fact.title), { id, okf_type: normalized.okf_type });
-
-        if (normalized.edges.length > 0) {
-          pendingEdges.push({ sourceId: id, sourceType: normalized.okf_type, edges: normalized.edges });
-        }
-      }
-
-      for (const item of pendingEdges) {
-        const resolveDrops: EdgeDrop[] = [];
-        await this.ontologyService?.resolveAndPersistEdges(
-          entityId, item.sourceId, item.sourceType, item.edges ?? [], manifest, titleIndex, tx, now, resolveDrops,
-        );
-        for (const drop of resolveDrops) diagBuffer.push(edgeDropDiagnostic(drop, diagBase));
-      }
-
-      for (const task of validTasks) {
-        const id = generateId('task_');
-        const taskObj: WikiTask = {
-          id, entity_id: entityId, description: task.description, status: 'pending', priority: task.priority,
-          created_at: now, updated_at: now, resolved_at: null, deleted_at: null
-        };
-        await this.taskRepo.upsert(taskObj, tx);
-      }
-    });
-
-    diagBuffer.flush(this.options);
-
-    // The transaction only inserts (fresh generateId('fact_') rows); tasks and
-    // edges are not indexed, so insertedFacts is the complete mutation set and
-    // the index update is O(inserted), not O(entity) (spec §2.3).
-    await this.searchService.syncEntries(entityId, insertedFacts.map((f) => f.id));
-
-    for (const fact of insertedFacts) {
-      await this.embeddingService.embedFact(fact, { operation: 'librarian', trigger });
-    }
-
-    this.searchService.evictCache(entityId);
   }
 
   /**

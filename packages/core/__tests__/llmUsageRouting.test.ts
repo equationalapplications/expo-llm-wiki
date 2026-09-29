@@ -11,7 +11,7 @@ describe('every LLM text call is metered through callLlm', () => {
     expect(ofCode(diagnostics, 'llm_usage').map((d) => d.operation)).toContain('ingest');
   });
 
-  it.todo('librarian and heal emit llm_usage when enabled (passes after Task 5 routes the librarian)', async () => {
+  it('librarian and heal emit llm_usage when enabled', async () => {
     const { wiki, diagnostics } = await makeDiagnosticWiki({
       generateText: async ({ systemPrompt }) => systemPrompt.includes('grooming')
         ? JSON.stringify({ downgraded: [], deleted: [], newFacts: [] })
