@@ -32,7 +32,11 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
       okf_usage_window TEXT,
       embedding_failed_at INTEGER,
       embedding_failure_kind TEXT,
-      embedding_attempts INTEGER NOT NULL DEFAULT 0
+      embedding_attempts INTEGER NOT NULL DEFAULT 0,
+      valid_from INTEGER,
+      valid_to INTEGER,
+      superseded_by TEXT,
+      superseded_at INTEGER
     );
 
     CREATE INDEX IF NOT EXISTS ${prefix}entries_entity_idx ON ${prefix}entries(entity_id);
@@ -99,7 +103,8 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
       event_type TEXT NOT NULL,
       summary TEXT NOT NULL,
       related_entry_id TEXT,
-      created_at INTEGER NOT NULL
+      created_at INTEGER NOT NULL,
+      occurred_at INTEGER
     );
 
     CREATE INDEX IF NOT EXISTS ${prefix}events_entity_idx ON ${prefix}events(entity_id, created_at DESC);
@@ -107,7 +112,9 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
     CREATE TABLE IF NOT EXISTS ${prefix}checkpoints (
       entity_id TEXT PRIMARY KEY,
       heal_checkpoint INTEGER NOT NULL DEFAULT 0,
-      memory_checkpoint INTEGER NOT NULL DEFAULT 0
+      memory_checkpoint INTEGER NOT NULL DEFAULT 0,
+      librarian_watermark_at INTEGER,
+      librarian_watermark_id TEXT
     );
 
     CREATE TABLE IF NOT EXISTS ${prefix}entity_manifests (
@@ -146,6 +153,7 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
   // The migration also creates these same indexes, so the IF NOT EXISTS guard
   // makes either path safe.
   await createOkfV02IndexesIfColumnsExist(db, prefix);
+  await createTemporalIndexesIfColumnsExist(db, prefix);
 }
 
 async function createOkfV02IndexesIfColumnsExist(db: SQLiteAdapter, prefix: string): Promise<void> {
@@ -163,5 +171,25 @@ async function createOkfV02IndexesIfColumnsExist(db: SQLiteAdapter, prefix: stri
     if (colNames.has('last_verified_at')) {
       await db.execAsync(`CREATE INDEX IF NOT EXISTS ${prefix}${table}_last_verified_at_idx ON ${prefix}${table}(last_verified_at);`);
     }
+  }
+}
+
+/**
+ * Temporal indexes (spec 2026-09-29 §4.1). Gated on column existence for the
+ * same reason as the OKF v0.2 indexes: on an upgrade from < v13 this runs
+ * before migration 13 has added the columns.
+ */
+export async function createTemporalIndexesIfColumnsExist(db: SQLiteAdapter, prefix: string): Promise<void> {
+  const cols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${prefix}entries)`);
+  const names = new Set(cols.map((c) => c.name));
+  if (names.has('superseded_by')) {
+    await db.execAsync(
+      `CREATE INDEX IF NOT EXISTS ${prefix}entries_superseded_idx ON ${prefix}entries(entity_id, superseded_by) WHERE superseded_by IS NOT NULL;`,
+    );
+  }
+  if (names.has('valid_from') && names.has('valid_to')) {
+    await db.execAsync(
+      `CREATE INDEX IF NOT EXISTS ${prefix}entries_temporal_idx ON ${prefix}entries(entity_id) WHERE valid_from IS NOT NULL OR valid_to IS NOT NULL;`,
+    );
   }
 }
