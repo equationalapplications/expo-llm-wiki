@@ -1570,15 +1570,17 @@ export class EntryRepository extends BaseRepository {
     entityIds: readonly string[],
     limit: number,
     tx?: SQLiteAdapter,
-    opts?: { excludeDrafts?: boolean },
+    opts?: { excludeDrafts?: boolean; live?: { mode: LiveMode; t: number } },
   ): Promise<WikiFact[]> {
     if (entityIds.length === 0) return [];
     const executor = this.getExecutor(tx);
     const placeholders = entityIds.map(() => '?').join(',');
     const draftClause = opts?.excludeDrafts === true ? ` AND lifecycle_status != 'draft'` : '';
+    const liveClause = opts?.live ? ` AND ${liveAtSql(opts.live.mode)}` : '';
+    const liveArgs = opts?.live ? [opts.live.t, opts.live.t] : [];
     const rows = await executor.getAllAsync<any>(
-      `SELECT * FROM ${this.prefix}entries WHERE entity_id IN (${placeholders}) AND deleted_at IS NULL${draftClause} ORDER BY updated_at DESC LIMIT ?`,
-      [...entityIds, limit],
+      `SELECT * FROM ${this.prefix}entries WHERE entity_id IN (${placeholders}) AND deleted_at IS NULL${draftClause}${liveClause} ORDER BY updated_at DESC LIMIT ?`,
+      [...entityIds, ...liveArgs, limit],
     );
     return rows.map(mapRowToFact);
   }

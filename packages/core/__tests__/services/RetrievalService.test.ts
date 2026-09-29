@@ -36,6 +36,8 @@ describe('RetrievalService', () => {
       findWithEmbeddingsByEntityIds: vi.fn().mockResolvedValue([]),
       findByIds: vi.fn().mockResolvedValue([]),
       trackAccess: vi.fn().mockResolvedValue(undefined),
+      findDraftIdsByEntityIds: vi.fn().mockResolvedValue(new Set<string>()),
+      findNonLiveIdsByEntityIds: vi.fn().mockResolvedValue(new Set<string>()),
     };
 
     mockTaskRepo = {
@@ -105,7 +107,7 @@ describe('RetrievalService', () => {
       const result = await retrievalService.read('user_1', '   ');
 
       expect(mockOptions.llmProvider.embed).not.toHaveBeenCalled();
-      expect(mockEntryRepo.findRecentByEntityIds).toHaveBeenCalledWith(['user_1'], 10);
+      expect(mockEntryRepo.findRecentByEntityIds).toHaveBeenCalledWith(['user_1'], 10, undefined, expect.objectContaining({ live: expect.objectContaining({ mode: 'current' }) }));
       expect(result.facts).toEqual(mockRecentFacts);
     });
 
