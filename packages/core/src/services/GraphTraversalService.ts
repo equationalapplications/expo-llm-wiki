@@ -1,6 +1,8 @@
 import type { EdgeRepository, NeighborhoodQueryOptions } from '../repositories/EdgeRepository';
 import type { EntryRepository } from '../repositories/EntryRepository';
 import type { GraphTraversalOptions, GraphNeighborhood, WikiConfig } from '../types';
+import { WikiInvalidReadOptions } from '../types';
+import { isLiveAt } from '../utils/temporal';
 
 /**
  * Pure orchestrator — no SQL. Merges WikiConfig defaults with per-call options,
@@ -24,6 +26,14 @@ export class GraphTraversalService {
     const maxNodes =
       Number.isFinite(rawMaxNodes) && rawMaxNodes >= 1 ? Math.floor(rawMaxNodes) : defaultMaxNodes;
 
+    const rawAsOf = options.asOf;
+    if (rawAsOf !== undefined && !(typeof rawAsOf === 'number' && Number.isFinite(rawAsOf) && rawAsOf >= 0)) {
+      throw new WikiInvalidReadOptions('asOf', 'must be a finite epoch-ms number >= 0');
+    }
+    const live = rawAsOf === undefined
+      ? { mode: 'current' as const, t: Date.now() }
+      : { mode: 'asOf' as const, t: Math.trunc(rawAsOf) };
+
     const opts: NeighborhoodQueryOptions = {
       maxDepth: Math.max(1, Math.min(options.maxDepth ?? 1, 3)),
       direction: options.direction ?? this.config.traversalDirection ?? 'both',
@@ -31,11 +41,17 @@ export class GraphTraversalService {
       minConfidence: options.minTraversalConfidence ?? this.config.minTraversalConfidence ?? 'tentative',
       excludeSourceTypes: options.excludeSourceTypes ?? this.config.excludeSourceTypes ?? [],
       excludeDrafts: options.excludeDrafts ?? this.config.excludeDrafts ?? false,
+      live,
       maxNodes,
     };
 
     const { nodeIds, edges } = await this.edgeRepo.getNeighborhood(entityId, options.sourceId, opts);
     if (nodeIds.length === 0) return { nodes: [], edges: [] };
+
+    // Spec §10.7: a non-live anchor returns alone — both endpoints of a
+    // walkable edge must be live at the query instant.
+    const [anchor] = await this.entryRepo.findByIds([options.sourceId], [entityId]);
+    if (anchor && !isLiveAt(anchor, live.mode, live.t)) return { nodes: [anchor], edges: [] };
 
     // findByIds() returns facts in input-ID order (Map-based lookup,
     // see packages/core/src/repositories/EntryRepository.ts:104-108) — no re-sort needed.
