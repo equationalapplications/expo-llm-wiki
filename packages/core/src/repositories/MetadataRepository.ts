@@ -7,6 +7,13 @@ export function entitySummaryMetaKey(entityId: string): string {
   return `entity_summary:${entityId}`;
 }
 
+/**
+ * The op-based librarian's high-water mark on the `events` table. Stored
+ * alongside `memory_checkpoint` / `heal_checkpoint` so an entity's
+ * maintenance state stays in one row. See spec 2026-09-29 §4.1.
+ */
+export type LibrarianWatermark = { at: number; id: string };
+
 export class MetadataRepository extends BaseRepository {
   // CHECKPOINTS TABLE METHODS
 
@@ -58,6 +65,42 @@ export class MetadataRepository extends BaseRepository {
     await executor.runAsync(
       `DELETE FROM ${this.prefix}checkpoints WHERE entity_id = ?`,
       [entityId],
+    );
+  }
+
+  /**
+   * Read the op-based librarian's high-water mark. Returns `null` when the
+   * entity has never had its watermark set.
+   */
+  async getLibrarianWatermark(entityId: string, tx: SQLiteAdapter): Promise<LibrarianWatermark | null> {
+    const executor = this.getExecutor(tx);
+    const row = await executor.getFirstAsync<{
+      librarian_watermark_at: number | null;
+      librarian_watermark_id: string | null;
+    }>(
+      `SELECT librarian_watermark_at, librarian_watermark_id FROM ${this.prefix}checkpoints WHERE entity_id = ?`,
+      [entityId],
+    );
+    if (!row || row.librarian_watermark_at == null || row.librarian_watermark_id == null) {
+      return null;
+    }
+    return { at: row.librarian_watermark_at, id: row.librarian_watermark_id };
+  }
+
+  /**
+   * Write the op-based librarian's high-water mark. Uses `ON CONFLICT`
+   * `DO UPDATE` so existing `memory_checkpoint` / `heal_checkpoint` rows
+   * are preserved verbatim.
+   */
+  async setLibrarianWatermark(entityId: string, wm: LibrarianWatermark, tx: SQLiteAdapter): Promise<void> {
+    const executor = this.getExecutor(tx);
+    await executor.runAsync(
+      `INSERT INTO ${this.prefix}checkpoints (entity_id, memory_checkpoint, heal_checkpoint, librarian_watermark_at, librarian_watermark_id)
+       VALUES (?, 0, 0, ?, ?)
+       ON CONFLICT(entity_id) DO UPDATE SET
+         librarian_watermark_at = excluded.librarian_watermark_at,
+         librarian_watermark_id = excluded.librarian_watermark_id`,
+      [entityId, wm.at, wm.id],
     );
   }
 
