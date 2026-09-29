@@ -32,6 +32,42 @@ describe('createProvider (anthropic, default)', () => {
     expect(String(err.message)).not.toContain('k"');
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
+
+  it('passes an abort signal on every request so a hung connection cannot stall forever', async () => {
+    const signals: unknown[] = [];
+    const fetchImpl = vi.fn(async (_url: string, init?: { signal?: AbortSignal }) => {
+      signals.push(init?.signal);
+      return json({ content: [{ type: 'text', text: 'ok' }] });
+    });
+    await createProvider(anth, fetchImpl as any).generateText({ systemPrompt: 's', userPrompt: 'u' });
+    expect(signals.length).toBe(1);
+    expect(signals[0]).toBeInstanceOf(AbortSignal);
+  });
+
+  it('retries a hung request (network error) then succeeds', async () => {
+    vi.useFakeTimers();
+    const fetchImpl = vi.fn()
+      .mockRejectedValueOnce(new Error('This operation was aborted'))
+      .mockResolvedValueOnce(json({ content: [{ type: 'text', text: 'ok' }] }));
+    const r = createProvider(anth, fetchImpl as any).generateText({ systemPrompt: 's', userPrompt: 'u' });
+    await vi.runAllTimersAsync();
+    expect(await r).toBe('ok');
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  });
+
+  it('throws a wrapped, key-free error when every attempt hangs', async () => {
+    vi.useFakeTimers();
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('This operation was aborted');
+    });
+    const r = createProvider(anth, fetchImpl as any).generateText({ systemPrompt: 's', userPrompt: 'u' });
+    const err = await vi.runAllTimersAsync().then(() => r.catch((e) => e));
+    expect(String(err.message)).toContain('request failed after 5 attempts');
+    expect(String(err.message)).not.toContain('k"');
+    expect(fetchImpl).toHaveBeenCalledTimes(5);
+    vi.useRealTimers();
+  });
 });
 
 describe('createProvider (openai)', () => {

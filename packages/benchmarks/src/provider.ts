@@ -6,7 +6,10 @@
  * - `openai`: POST /chat/completions.
  *
  * Retries 429 / 529 / 5xx responses up to 4 times with 1s/2s/4s/8s backoff.
- * All other failures (including non-retryable 4xx) throw immediately and never
+ * Every request carries an abort signal so a hung connection cannot stall a
+ * run forever: a network error or a timeout is retried with the same backoff
+ * as a 5xx and, once retries are exhausted, throws immediately. All other
+ * failures (including non-retryable 4xx) throw immediately and never
  * include the API key in the error message.
  */
 
@@ -32,11 +35,18 @@ export interface ChatProvider {
   generateTextWithUsage(p: TextParams): Promise<TextWithUsage>;
 }
 
-type FetchLike = (input: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<Response>;
+type FetchLike = (input: string, init?: { method?: string; headers?: Record<string, string>; body?: string; signal?: AbortSignal }) => Promise<Response>;
 
 const RETRY_STATUSES = new Set([429, 529, 500, 502, 503, 504]);
 const BACKOFFS_MS = [1000, 2000, 4000, 8000];
 const MAX_RETRIES = 4;
+
+/**
+ * Hard per-request timeout. A hung connection (observed live against the
+ * Z.AI endpoint: one request never returned and stalled the ingest for the
+ * full 10-minute idle budget) must surface as a retryable failure instead.
+ */
+const REQUEST_TIMEOUT_MS = 120_000;
 
 function stripTrailingSlash(url: string): string {
   return url.endsWith('/') ? url.slice(0, -1) : url;
@@ -53,7 +63,18 @@ async function sleep(ms: number): Promise<void> {
 async function sendWithRetry(url: string, init: { method: string; headers: Record<string, string>; body: string }, fetchImpl: FetchLike): Promise<Response> {
   let lastResponse: Response | null = null;
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    const response = await fetchImpl(url, init);
+    let response: Response;
+    try {
+      response = await fetchImpl(url, { ...init, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+    } catch (e) {
+      // Network error or timeout — retry with the same backoff as a 5xx;
+      // once retries are exhausted, surface the failure.
+      if (attempt < MAX_RETRIES) {
+        await sleep(BACKOFFS_MS[attempt]);
+        continue;
+      }
+      throw new Error(`request failed after ${MAX_RETRIES + 1} attempts: ${(e as Error).message}`);
+    }
     if (!isRetryable(response.status)) {
       return response;
     }
