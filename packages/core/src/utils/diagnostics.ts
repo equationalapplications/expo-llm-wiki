@@ -28,6 +28,7 @@ const SEVERITY: Record<WikiDiagnosticCode, WikiDiagnosticSeverity> = {
   grounding_failed: 'warn',
   classification_low_confidence: 'info',
   classification_invalid: 'warn',
+  llm_usage: 'info',
 };
 
 // Fixed templates (REQ-DIAG-03): never interpolate content into these.
@@ -45,6 +46,7 @@ const MESSAGE: Record<WikiDiagnosticCode, string> = {
   grounding_failed: 'A fact carried evidence not found in its source and was stored as a draft.',
   classification_low_confidence: 'A classifier answer was below the confidence threshold and was not applied.',
   classification_invalid: 'A classifier answer was invalid and was not applied.',
+  llm_usage: 'An LLM call completed; token usage attached.',
 };
 
 const warnedNonFunction = new WeakSet<object>();

@@ -245,6 +245,11 @@ export interface GroundingConfig {
   maxEvidenceChars?: number;
 }
 
+export interface LibrarianConfig {
+  /** `'legacy'` is the 7.x add-only librarian. PR-B adds `'ops'`. */
+  strategy?: 'legacy';
+}
+
 export interface WikiConfig {
   /**
    * Prefix applied to every SQL table/index/trigger name. Must match
@@ -318,6 +323,10 @@ export interface WikiConfig {
   excludeDrafts?: boolean;
   /** Evidence check for LLM-authored facts (spec §6). Default off. */
   grounding?: GroundingConfig;
+  /** Emit an `llm_usage` diagnostic after every LLM text call. Default false. */
+  reportLlmUsage?: boolean;
+  /** Librarian strategy selection (spec 2026-09-29 §5.1). Default `{ strategy: 'legacy' }`. */
+  librarian?: LibrarianConfig;
 }
 
 export interface ReadOptions {
@@ -560,6 +569,16 @@ export interface LLMProvider {
    */
   generateText: (params: { systemPrompt: string; userPrompt: string }) => Promise<string>;
   /**
+   * Optional. When present, core calls this instead of `generateText` and
+   * meters the reported usage (spec 2026-09-29 §6.3). Called with the provider
+   * as `this`. Omit `usage` (or return malformed numbers) to fall back to the
+   * chars/4 estimate.
+   */
+  generateTextWithUsage?: (params: { systemPrompt: string; userPrompt: string }) => Promise<{
+    text: string;
+    usage?: { inputTokens: number; outputTokens: number };
+  }>;
+  /**
    * Optional. When provided, enables semantic similarity search in `read()`.
    * Must return a stable-dimension float array for any input text.
    * Called once per fact on creation/update, and once per `read()` query.
@@ -699,7 +718,8 @@ export type WikiDiagnosticCode =
   | 'grounding_missing'
   | 'grounding_failed'
   | 'classification_low_confidence'
-  | 'classification_invalid';
+  | 'classification_invalid'
+  | 'llm_usage';
 
 /** The service run that emitted the diagnostic. */
 export type WikiDiagnosticOperation =
@@ -726,6 +746,12 @@ export interface WikiDiagnosticDetail {
   chunkIndexes?: number[];
   /** Aggregated emissions only. */
   count?: number;
+  /** `llm_usage` only. */
+  inputTokens?: number;
+  /** `llm_usage` only. */
+  outputTokens?: number;
+  /** `llm_usage` only: true when a figure is the chars/4 estimate. */
+  estimated?: boolean;
 }
 
 export interface WikiDiagnostic {
