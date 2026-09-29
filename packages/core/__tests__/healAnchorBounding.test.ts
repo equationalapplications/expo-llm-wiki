@@ -59,6 +59,7 @@ describe('doRunHeal — bounded anchors and batched candidates (#63)', () => {
     mockEventRepo = { getRecent: vi.fn().mockResolvedValue([]) };
     mockSearchService = {
       sync: vi.fn().mockResolvedValue(undefined),
+      syncEntries: vi.fn().mockResolvedValue(undefined),
       evictCache: vi.fn(),
       // Every anchor matches, plus a non-anchor the SQL filter must drop.
       searchKeyword: vi.fn(() => [...anchorIds, 'c0'].map(id => ({ id, score: 1 }))),

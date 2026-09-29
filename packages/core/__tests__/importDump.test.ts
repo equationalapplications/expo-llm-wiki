@@ -619,13 +619,15 @@ describe('importDump — busy-key protection', () => {
     const { wiki } = makeRealWiki();
     await wiki.setup();
 
-    // Patch forget to stall mid-execution so the import race is detectable
+    // Patch syncEntries to stall mid-execution so the import race is
+    // detectable (forget's index update path since #235).
     let resolveForget: () => void = () => {};
     const blocker = new Promise<void>((r) => { resolveForget = r; });
-    const originalSync = (wiki as any).searchService.sync.bind((wiki as any).searchService);
-    (wiki as any).searchService.sync = async (entityId: string) => {
+    const searchService = (wiki as any).searchService;
+    const originalSyncEntries = searchService.syncEntries.bind(searchService);
+    searchService.syncEntries = async (entityId: string, ids: Iterable<string>) => {
       await blocker;
-      return originalSync(entityId);
+      return originalSyncEntries(entityId, ids);
     };
 
     const forget = wiki.forget('user-1', { clearAll: true });
