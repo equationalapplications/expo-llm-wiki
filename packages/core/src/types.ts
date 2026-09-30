@@ -247,9 +247,17 @@ export interface GroundingConfig {
   maxEvidenceChars?: number;
 }
 
+export interface LibrarianGateConfig {
+  /** Neighbours fetched per candidate. Default 5. */
+  k?: number;
+  /** Cosine at or above which (with title Jaccard ≥ FUZZY_THRESHOLD) a candidate is a duplicate. Default 0.97. */
+  dupThreshold?: number;
+  /** Best-neighbour cosine below which a candidate is novel. Default 0.55. */
+  novelThreshold?: number;
+}
 export interface LibrarianConfig {
-  /** `'legacy'` is the 7.x add-only librarian. `'ops'` lands in PR-B (spec §5.1, §5.3). */
   strategy?: 'legacy' | 'ops';
+  gate?: LibrarianGateConfig;
 }
 
 export interface WikiConfig {
@@ -746,7 +754,11 @@ export type WikiDiagnosticCode =
   | 'grounding_failed'
   | 'classification_low_confidence'
   | 'classification_invalid'
-  | 'llm_usage';
+  | 'llm_usage'
+  | 'librarian_gate'
+  | 'librarian_op_rejected'
+  | 'contradicts_document'
+  | 'resolve_failed';
 
 /** The service run that emitted the diagnostic. */
 export type WikiDiagnosticOperation =
@@ -779,6 +791,12 @@ export interface WikiDiagnosticDetail {
   outputTokens?: number;
   /** `llm_usage` only: true when a figure is the chars/4 estimate. */
   estimated?: boolean;
+  /** librarian_gate only. */
+  gateNoop?: number;
+  /** librarian_gate only. */
+  gateAdd?: number;
+  /** librarian_gate only. */
+  gateAmbiguous?: number;
 }
 
 export interface WikiDiagnostic {
