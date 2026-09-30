@@ -81,6 +81,11 @@ function factFrontmatterV2(f: WikiFact): OkfFrontmatter {
     ...(f.okf_verified && f.okf_verified.length > 0 ? { verified: f.okf_verified } : {}),
     ...(f.okf_sources && f.okf_sources.length > 0 ? { sources: f.okf_sources } : {}),
     ...(f.okf_usage_window ? { usage_window: f.okf_usage_window } : {}),
+    // Temporal (spec 2026-09-29 §10.9): flat epoch-ms keys, like created_at.
+    ...(f.valid_from != null ? { valid_from: f.valid_from } : {}),
+    ...(f.valid_to != null ? { valid_to: f.valid_to } : {}),
+    ...(f.superseded_by != null ? { superseded_by: f.superseded_by } : {}),
+    ...(f.superseded_at != null ? { superseded_at: f.superseded_at } : {}),
   };
 }
 

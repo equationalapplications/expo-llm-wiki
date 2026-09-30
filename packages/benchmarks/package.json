@@ -1,0 +1,24 @@
+{
+  "name": "@equationalapplications/benchmarks-llm-wiki",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Benchmarks for core-llm-wiki (LongMemEval slice, supersession suite). Not published.",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "bench": "tsx src/cli.ts"
+  },
+  "dependencies": {
+    "@equationalapplications/core-llm-wiki": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "26.5.0",
+    "better-sqlite3": "13.0.3",
+    "fastembed": "2.1.0",
+    "tsx": "4.23.13",
+    "typescript": "5.9.3",
+    "vitest": "5.0.0"
+  }
+}

@@ -12,6 +12,7 @@ import {
   ReadOptions,
   WikiSourceRefHashCollision,
   WikiDraftNotFound,
+  WikiSupersedeError,
 } from './types';
 import type { DraftPage } from './types';
 import type { PendingSourceStatus, WikiLintReport, WikiInstructions } from './types';
@@ -38,9 +39,10 @@ import { GraphTraversalService } from './services/GraphTraversalService';
 import { LintRepository } from './repositories/LintRepository';
 import { LintService } from './services/LintService';
 import { OkfTrustWritesRepository } from './db/okf-trust-writes';
+import { TemporalService } from './services/TemporalService';
 import { validateManifest } from './utils/ontology';
 import { DiagnosticBuffer } from './utils/diagnostics';
-import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighborhood, OntologyBackfillResult, HealResult, IngestDocumentResult, ReembedResult } from './types';
+import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighborhood, OntologyBackfillResult, HealResult, IngestDocumentResult, ReembedResult, SupersedeReplacement, WikiFact } from './types';
 
 export { WikiBusyError, WikiTransactionError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER, WikiStrictOntologyViolation, WikiSourceRefHashCollision, WikiParseError, WikiIngestEmptyError, WikiGraphNodeOwnershipConflict } from './types';
 
@@ -57,6 +59,7 @@ export interface WikiMemoryTestAccess {
   writeService: WriteService;
   promptService: PromptService;
   graphTraversalService: GraphTraversalService;
+  temporalService: TemporalService;
   entryRepo: EntryRepository;
   sourceRefIndexRepo: SourceRefIndexRepository;
   metadataRepo: MetadataRepository;
@@ -101,6 +104,7 @@ export class WikiMemory {
   private graphTraversalService: GraphTraversalService;
   private lintRepo: LintRepository;
   private lintService: LintService;
+  private temporalService: TemporalService;
   private readonly okfTrustWrites: OkfTrustWritesRepository;
 
   constructor(db: SQLiteAdapter, options: WikiOptions) {
@@ -131,6 +135,7 @@ export class WikiMemory {
     this.lintService = new LintService(this.lintRepo, this.ontologyService);
     this.embeddingService = new EmbeddingService(this.db, this.options, this.entryRepo, this.metadataRepo);
     this.searchService = new SearchService(this.entryRepo);
+    this.temporalService = new TemporalService(this.db, this.options, this.entryRepo, this.searchService, this.embeddingService);
     this.jobManager = new JobManager(this.prefix);
     this.promptService = new PromptService(options.config?.prompts, resolveGrounding(options.config?.grounding));
     this.ingestionService = new IngestionService(
@@ -225,6 +230,7 @@ export class WikiMemory {
       writeService: this.writeService,
       promptService: this.promptService,
       graphTraversalService: this.graphTraversalService,
+      temporalService: this.temporalService,
       entryRepo: this.entryRepo,
       sourceRefIndexRepo: this.sourceRefIndexRepo,
       metadataRepo: this.metadataRepo,
@@ -622,6 +628,25 @@ export class WikiMemory {
     opts?: { dryRun?: boolean },
   ): Promise<{ deleted: { entries: number; tasks: number }; metadataReset?: boolean }> {
     return this.maintenanceService.forget(entityId, params, opts);
+  }
+
+  /**
+   * End `oldId`'s validity and link it to its replacement (spec §4.3). One
+   * transaction. Throws `WikiSupersedeError` for missing, foreign, already
+   * superseded, immutable-document, or cyclic targets.
+   */
+  async supersede(
+    entityId: string,
+    oldId: string,
+    replacement: SupersedeReplacement,
+    options?: { validFrom?: number },
+  ): Promise<{ newId: string }> {
+    return this.temporalService.supersede(entityId, oldId, replacement, options);
+  }
+
+  /** The supersession chain containing `factId`, oldest first. [] when unknown. */
+  async history(entityId: string, factId: string): Promise<WikiFact[]> {
+    return this.temporalService.history(entityId, factId);
   }
 
   /**
