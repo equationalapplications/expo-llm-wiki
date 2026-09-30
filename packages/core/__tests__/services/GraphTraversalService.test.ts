@@ -62,6 +62,7 @@ describe('GraphTraversalService', () => {
       minConfidence: 'tentative',
       excludeSourceTypes: [],
       excludeDrafts: false,
+      live: expect.objectContaining({ mode: 'current' }),
       maxNodes: 20,
     });
   });
@@ -87,6 +88,7 @@ describe('GraphTraversalService', () => {
       minConfidence: 'certain',
       excludeSourceTypes: ['immutable_document'],
       excludeDrafts: false,
+      live: expect.objectContaining({ mode: 'current' }),
       maxNodes: 5,
     });
   });
@@ -119,6 +121,7 @@ describe('GraphTraversalService', () => {
       minConfidence: 'tentative',
       excludeSourceTypes: ['user_stated'],
       excludeDrafts: false,
+      live: expect.objectContaining({ mode: 'current' }),
       maxNodes: 8,
     });
   });
