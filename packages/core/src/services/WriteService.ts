@@ -9,6 +9,7 @@ import type { MaintenanceService } from './MaintenanceService';
 import { generateId } from '../utils/ids';
 import { clip } from '../utils/pure';
 import { emitDiagnostic } from '../utils/diagnostics';
+import { assertEpochMs } from '../utils/temporal';
 
 export class WriteService {
   constructor(
@@ -52,6 +53,7 @@ export class WriteService {
 
     const id = generateId('evt_');
     const now = Date.now();
+    const occurredAt = event.occurred_at == null ? null : assertEpochMs('event.occurred_at', event.occurred_at);
 
     let eventType = event.event_type;
     if (!['observation', 'decision', 'action', 'outcome'].includes(eventType)) {
@@ -65,6 +67,7 @@ export class WriteService {
       summary,
       related_entry_id: relatedEntryId,
       created_at: now,
+      occurred_at: occurredAt,
     };
 
     let shouldRunLibrarian = false;

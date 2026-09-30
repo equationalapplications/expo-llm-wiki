@@ -319,6 +319,15 @@ export class ImportExportService {
 
         await this.entryRepo.upsertForImport(factObj, tx);
 
+        // Temporal columns (spec §4.4): import is replace semantics, so an
+        // absent key clears. Outbox off — upsertForImport already staged the row.
+        await this.entryRepo.setTemporal(fact.id, entityId, {
+          valid_from: fact.valid_from ?? null,
+          valid_to: fact.valid_to ?? null,
+          superseded_by: fact.superseded_by ?? null,
+          superseded_at: fact.superseded_at ?? null,
+        }, tx, { outbox: false });
+
         if (blobData != null) {
           factsWithPreservedBlob.set(fact.id, blobData);
           if (!fact.deleted_at) preservedBlobDims.add(blobData.byteLength / 4);
@@ -411,6 +420,7 @@ export class ImportExportService {
             summary: event.summary,
             related_entry_id: event.related_entry_id ?? null,
             created_at: event.created_at,
+            occurred_at: event.occurred_at ?? null,
           },
           tx,
         );

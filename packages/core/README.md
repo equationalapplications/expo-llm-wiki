@@ -67,6 +67,31 @@ For programmatic pipelines — importing pre-classified data, building a GraphRA
 
 This is the GraphRAG seed path: load a corpus, walk it.
 
+## Temporal facts
+
+Facts carry an optional validity window. Nothing changes until you use it: facts without validity data are always current.
+
+```typescript
+// The user tells you they moved; the move happened on March 1.
+await wiki.supersede('user-123', seattleFactId, { title: 'Lives in San Francisco', body: 'Moved in March.' }, {
+  validFrom: Date.parse('2026-03-01'),
+});
+
+await wiki.read('user-123', 'where do I live');                                  // current: San Francisco
+await wiki.read('user-123', 'where do I live', { asOf: Date.parse('2026-02-01') }); // then: Seattle
+await wiki.history('user-123', seattleFactId);                                    // [Seattle, San Francisco]
+
+// Record when an event really happened (defaults to ingestion time):
+await wiki.write('user-123', { event_type: 'observation', summary: 'Moved to SF', occurred_at: Date.parse('2026-03-01') });
+```
+
+- Validity is half-open: `[valid_from, valid_to)`. At the switch instant only the new fact matches.
+- `asOf` answers "what do we now know was true at T". Learning late about a past change still answers correctly for the past.
+- `supersede()` refuses `immutable_document` facts (re-ingest the document instead), cycles, facts owned by another entity, and facts already superseded. It throws `WikiSupersedeError` with a `reason`.
+- `traverseGraph({ asOf })` only walks edges whose two facts are both live at that instant.
+- History is kept. Set `config.pruneSupersededAfter` (days) to let `runPrune` retire expired facts.
+- `getMemoryBundle()` and `exportDump()` return every non-deleted fact, including history.
+
 ## Installation
 
 ```bash
@@ -123,6 +148,15 @@ const wikiMemory = new WikiMemory(db, {
 // read() returns MiniSearch results, onRetrievalFallback not called (embed absent is expected)
 // read() returns MiniSearch results, onRetrievalFallback called (embed threw)
 ```
+
+### Token budgets
+
+```typescript
+const bundle = await wiki.read('user-123', 'what should I cook?', { tokenBudget: 800 });
+const prompt = formatContext(bundle, { compact: true });
+```
+
+`tokenBudget` keeps the most relevant facts per token that fit within about 800 tokens. Tokens are estimated as characters ÷ 4. The top fact is always included, truncated if it alone is too big. Tasks and events are unaffected. `traverseGraph` accepts the same option and keeps nodes in breadth-first order. A `read_budget` diagnostic reports how many facts were packed.
 
 ## Configuration
 
