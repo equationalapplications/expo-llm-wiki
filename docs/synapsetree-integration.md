@@ -2,7 +2,7 @@
 
 This guide documents how **SynapseTree**, a SaaS tenant-aware knowledge store, runs `expo-llm-wiki` as its per-tenant memory backend. SynapseTree keeps one SQLite file per tenant in object storage (S3), pulls the file at the start of each request, runs the wiki engine in-process, and pushes the file back when the request ends. Every responsibility below maps to a piece of that lifecycle.
 
-The guide follows the [2026-09-29 competitive-memory design spec](../superpowers/specs/2026-09-29-competitive-memory-design.md) (target release **7.8.0**) and the spec's host-responsibility section (§6.5) — host-fulfilled contracts the engine does not implement.
+The guide follows the [2026-09-29 competitive-memory design spec](superpowers/specs/2026-09-29-competitive-memory-design.md) (target release **7.8.0**) and the spec's host-responsibility section (§6.5) — host-fulfilled contracts the engine does not implement.
 
 > **Audience:** SynapseTree backend and platform engineers integrating `expo-llm-wiki` as a tenant-aware knowledge store. Assumes familiarity with the wiki's core API at [`packages/core/README.md`](../../packages/core/README.md).
 
@@ -57,11 +57,11 @@ Before step 4 (or in a separate queue worker), inspect the backlog without calli
 
 ```typescript
 const pending = await wiki.getPendingMaintenance();
-// [{ entityId, pendingEvents, healPending?, unembedPending? }, ...]
+// [{ entityId, pendingEvents, pendingTokensEstimate, healDue, reembedPending }, ...]
 // sorted by pendingEvents desc, then entityId asc; entities with no work omitted
 ```
 
-`pendingEvents` is the librarian's pending batch; `healPending` is the heal backlog; `unembedPending` is unembedded facts waiting on `runReembed`. Use this in a per-tenant queue worker to decide whether to call `runPendingMaintenance` for that file at all — if the backlog is empty, skip the round trip to the model entirely.
+`pendingEvents` is the librarian's pending batch (events after the watermark); `pendingTokensEstimate` is `ceil(sum of pending event summary chars / 4)` and pairs with `config.maintenance: 'deferred'` for sizing the per-request budget; `healDue` is the same rule as auto-heal (events since the heal checkpoint `>=` `autoHealThreshold`); `reembedPending` is the live-facts-with-no-embedding flag (always `false` when `embed` is absent). Use this in a per-tenant queue worker to decide whether to call `runPendingMaintenance` for that file at all — if the backlog is empty, skip the round trip to the model entirely.
 
 ---
 
@@ -184,7 +184,7 @@ The `tokensUsed` field on `RunPendingMaintenanceResult` is your per-request main
 
 ## Cross-references
 
-- [2026-09-29 competitive-memory design spec](../superpowers/specs/2026-09-29-competitive-memory-design.md) — §6.5 host responsibilities, §7.3 docs, §7.4 open item
+- [2026-09-29 competitive-memory design spec](superpowers/specs/2026-09-29-competitive-memory-design.md) — §6.5 host responsibilities, §7.3 docs, §7.4 open item
 - [`docs/benchmarks.md`](./benchmarks.md) — 7.8.0 rerun results
 - [`packages/core/README.md`](../../packages/core/README.md#deferred-maintenance) — deferred maintenance API, `runPendingMaintenance`, `getPendingMaintenance`
 - [`packages/core/README.md`](../../packages/core/README.md#temporal-facts) — temporal API (`supersede`, `history`, `asOf`)
