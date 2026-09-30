@@ -1,9 +1,9 @@
 {
   "kind": "calibration",
-  "createdAt": "2026-09-30T05:58:32.695Z",
+  "createdAt": "2026-09-30T06:01:39.102Z",
   "engine": {
     "version": "7.7.7",
-    "gitSha": "a8abce9"
+    "gitSha": "8f9d982"
   },
   "scenarioCount": 30,
   "rowCount": 36,
