@@ -15,9 +15,9 @@ class MockSQLiteDatabase {
     async runAsync(sql: string, args: any[] = []): Promise<{ changes: number; lastInsertRowId: number }> {
       const normalized = sql.replace(/\s+/g, ' ').trim();
 
-      if (normalized.startsWith('INSERT INTO') && normalized.includes('events (id, entity_id, event_type, summary, related_entry_id, created_at)')) {
-        const [id, entity_id, event_type, summary, related_entry_id, created_at] = args;
-        this.events.push({ id, entity_id, event_type, summary, related_entry_id, created_at });
+      if (normalized.startsWith('INSERT INTO') && normalized.includes('events (id, entity_id, event_type, summary, related_entry_id, created_at')) {
+        const [id, entity_id, event_type, summary, related_entry_id, created_at, occurred_at] = args;
+        this.events.push({ id, entity_id, event_type, summary, related_entry_id, created_at, occurred_at });
         return { changes: 1, lastInsertRowId: 0 };
       }
 

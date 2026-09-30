@@ -45,7 +45,11 @@ overrides:
   'fast-uri@>=3.0.0 <3.1.7': 3.1.7
   '@babel/core@<=7.29.0': 7.29.6
   '@ungap/structured-clone': ^1.3.1
-  brace-expansion@>=5.0.0 <5.0.6: 5.0.6
+  # GHSA-qhr7-859c-m2p7 / GHSA-6j4f-fj2g-mc7p (HIGH): brace-expansion
+  # >=4.0.0 <5.0.11 (DoS via uncontrolled recursion). 5.0.11 published
+  # 2026-09-14, clears the 14-day age gate; supersedes the earlier
+  # >=5.0.0 <5.0.6 floor.
+  brace-expansion@>=5.0.0 <5.0.11: 5.0.11
   deepmerge-ts@<8.0.0: 8.0.0
   esbuild@>=0.27.3 <0.28.1: 0.28.1
   fast-uri@>=2.0.0 <3.0.0: 2.4.4
@@ -57,7 +61,15 @@ overrides:
   react-dom: 19.2.8
   shell-quote@<1.9.0: ^1.9.0
   tar@<7.5.21: ^7.5.21
-  undici@>=7.0.0 <7.29.0: 7.29.0
+  # Scoped exception to the tar pin above: fastembed 2.1.0 does
+  # `import tar from "tar"`, which is a hard SyntaxError under Node ESM
+  # against tar 7 (no default export) — every fastembed consumer fails at
+  # module load. fastembed only extracts its own model archive from
+  # Hugging Face, never attacker-controlled input, so the crafted-archive
+  # DoS advisory behind the broad pin does not apply here. Remove this
+  # line when fastembed ships a tar-7-compatible release.
+  'fastembed>tar': 6.2.1
+  undici@>=7.0.0 <7.29.1: 7.29.1
   uuid@<11.1.1: 11.1.1
   vite@>=8.0.0 <=8.0.15: 8.0.16
   ws@>=7.0.0 <7.5.11: 7.5.11

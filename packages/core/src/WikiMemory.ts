@@ -12,9 +12,10 @@ import {
   ReadOptions,
   WikiSourceRefHashCollision,
   WikiDraftNotFound,
+  WikiSupersedeError,
 } from './types';
 import type { DraftPage } from './types';
-import type { PendingSourceStatus, WikiLintReport, WikiInstructions } from './types';
+import type { PendingSourceStatus, WikiLintReport, WikiInstructions, PendingMaintenance, RunPendingMaintenanceOptions, RunPendingMaintenanceResult } from './types';
 import { EntryRepository } from './repositories/EntryRepository';
 import { OutboxRepository } from './repositories/OutboxRepository';
 import { SourceRefIndexRepository } from './repositories/SourceRefIndexRepository';
@@ -28,6 +29,7 @@ import { normalizeSourceRef, normalizeSourceHash, validateFact, validateTask, cl
 import { resolveGrounding } from './utils/grounding';
 import { IngestionService } from './services/IngestionService';
 import { MaintenanceService } from './services/MaintenanceService';
+import { MaintenanceScheduler } from './services/MaintenanceScheduler';
 import { ImportExportService } from './services/ImportExportService';
 import { EmbeddingService } from './services/EmbeddingService';
 import { RetrievalService } from './services/RetrievalService';
@@ -38,9 +40,10 @@ import { GraphTraversalService } from './services/GraphTraversalService';
 import { LintRepository } from './repositories/LintRepository';
 import { LintService } from './services/LintService';
 import { OkfTrustWritesRepository } from './db/okf-trust-writes';
+import { TemporalService } from './services/TemporalService';
 import { validateManifest } from './utils/ontology';
 import { DiagnosticBuffer } from './utils/diagnostics';
-import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighborhood, OntologyBackfillResult, HealResult, IngestDocumentResult, ReembedResult } from './types';
+import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighborhood, OntologyBackfillResult, HealResult, IngestDocumentResult, ReembedResult, SupersedeReplacement, WikiFact } from './types';
 
 export { WikiBusyError, WikiTransactionError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER, WikiStrictOntologyViolation, WikiSourceRefHashCollision, WikiParseError, WikiIngestEmptyError, WikiGraphNodeOwnershipConflict } from './types';
 
@@ -52,11 +55,13 @@ export interface WikiMemoryTestAccess {
   importExportService: ImportExportService;
   ingestionService: IngestionService;
   maintenanceService: MaintenanceService;
+  maintenanceScheduler: MaintenanceScheduler;
   retrievalService: RetrievalService;
   searchService: SearchService;
   writeService: WriteService;
   promptService: PromptService;
   graphTraversalService: GraphTraversalService;
+  temporalService: TemporalService;
   entryRepo: EntryRepository;
   sourceRefIndexRepo: SourceRefIndexRepository;
   metadataRepo: MetadataRepository;
@@ -93,6 +98,7 @@ export class WikiMemory {
   private jobManager: JobManager;
   private ingestionService: IngestionService;
   private maintenanceService: MaintenanceService;
+  private maintenanceScheduler: MaintenanceScheduler;
   private importExportService: ImportExportService;
   private retrievalService: RetrievalService;
   private writeService: WriteService;
@@ -101,6 +107,7 @@ export class WikiMemory {
   private graphTraversalService: GraphTraversalService;
   private lintRepo: LintRepository;
   private lintService: LintService;
+  private temporalService: TemporalService;
   private readonly okfTrustWrites: OkfTrustWritesRepository;
 
   constructor(db: SQLiteAdapter, options: WikiOptions) {
@@ -131,6 +138,7 @@ export class WikiMemory {
     this.lintService = new LintService(this.lintRepo, this.ontologyService);
     this.embeddingService = new EmbeddingService(this.db, this.options, this.entryRepo, this.metadataRepo);
     this.searchService = new SearchService(this.entryRepo);
+    this.temporalService = new TemporalService(this.db, this.options, this.entryRepo, this.searchService, this.embeddingService);
     this.jobManager = new JobManager(this.prefix);
     this.promptService = new PromptService(options.config?.prompts, resolveGrounding(options.config?.grounding));
     this.ingestionService = new IngestionService(
@@ -161,6 +169,15 @@ export class WikiMemory {
       this.embeddingService,
       this.promptService,
       this.ontologyService,
+    );
+    this.maintenanceScheduler = new MaintenanceScheduler(
+      this.db,
+      this.options,
+      this.maintenanceService,
+      this.metadataRepo,
+      this.eventRepo,
+      this.entryRepo,
+      this.jobManager,
     );
     this.importExportService = new ImportExportService(
       this.db,
@@ -220,11 +237,13 @@ export class WikiMemory {
       importExportService: this.importExportService,
       ingestionService: this.ingestionService,
       maintenanceService: this.maintenanceService,
+      maintenanceScheduler: this.maintenanceScheduler,
       retrievalService: this.retrievalService,
       searchService: this.searchService,
       writeService: this.writeService,
       promptService: this.promptService,
       graphTraversalService: this.graphTraversalService,
+      temporalService: this.temporalService,
       entryRepo: this.entryRepo,
       sourceRefIndexRepo: this.sourceRefIndexRepo,
       metadataRepo: this.metadataRepo,
@@ -524,6 +543,26 @@ export class WikiMemory {
     return this.writeService.write(entityId, event);
   }
 
+  /** Await auto-mode background librarian/heal jobs started by write(). No-op in 'deferred' mode. */
+  async drain(): Promise<void> {
+    return this.writeService.drain();
+  }
+
+  /**
+   * Report which entities have pending maintenance work (librarian events
+   * behind the watermark, heal backlog, unembedded facts) without running
+   * anything. Entities with no pending work are omitted; sorted by
+   * `pendingEvents` desc then `entityId` asc.
+   */
+  async getPendingMaintenance(entityIds?: string[]): Promise<PendingMaintenance[]> {
+    return this.maintenanceScheduler.getPending(entityIds);
+  }
+
+  /** Run pending librarian/heal/reembed work under an optional token budget and deadline (spec §6.2). Nothing runs after it resolves. */
+  async runPendingMaintenance(options?: RunPendingMaintenanceOptions): Promise<RunPendingMaintenanceResult> {
+    return this.maintenanceScheduler.run(options);
+  }
+
   /**
    * @param options.promptOverride - Applies only to this manual call. Does NOT affect
    * WriteService-triggered auto-runs. For persistent prompt customization across auto-runs,
@@ -622,6 +661,25 @@ export class WikiMemory {
     opts?: { dryRun?: boolean },
   ): Promise<{ deleted: { entries: number; tasks: number }; metadataReset?: boolean }> {
     return this.maintenanceService.forget(entityId, params, opts);
+  }
+
+  /**
+   * End `oldId`'s validity and link it to its replacement (spec §4.3). One
+   * transaction. Throws `WikiSupersedeError` for missing, foreign, already
+   * superseded, immutable-document, or cyclic targets.
+   */
+  async supersede(
+    entityId: string,
+    oldId: string,
+    replacement: SupersedeReplacement,
+    options?: { validFrom?: number },
+  ): Promise<{ newId: string }> {
+    return this.temporalService.supersede(entityId, oldId, replacement, options);
+  }
+
+  /** The supersession chain containing `factId`, oldest first. [] when unknown. */
+  async history(entityId: string, factId: string): Promise<WikiFact[]> {
+    return this.temporalService.history(entityId, factId);
   }
 
   /**

@@ -1,0 +1,707 @@
+[
+  {
+    "name": "relocation-1-seattle-to-sf",
+    "note": "Classic single-hop relocation. Seattle fact is superseded by the new SF fact.",
+    "existing": [
+      { "id": "seattle", "title": "User lives in Seattle", "body": "User moved to Seattle in 2018.", "source_type": "user_stated" }
+    ],
+    "events": [
+      { "summary": "user: I just moved to San Francisco.", "occurred_at": 1730000000000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "User lives in San Francisco", "body": "User moved to San Francisco in late 2024.", "tags": [], "confidence": "certain", "source_event": "e1", "valid_from": 1730000000000 }
+      ],
+      "tasks": []
+    },
+    "resolve": {
+      "ops": [
+        { "item": 0, "op": "SUPERSEDE", "target": "n1" }
+      ]
+    },
+    "expectCurrentTitles": ["San Francisco"],
+    "expectSuperseded": ["seattle"]
+  },
+  {
+    "name": "relocation-2-portland-to-seattle-with-valid_from",
+    "note": "Relocation where the extract response carries an explicit valid_from (the user said 'since last March').",
+    "existing": [
+      { "id": "portland", "title": "User lives in Portland", "body": "User moved to Portland in 2020.", "source_type": "user_stated" }
+    ],
+    "events": [
+      { "summary": "user: I have lived in Seattle since last March.", "occurred_at": 1735000000000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "User lives in Seattle since March 2024", "body": "User moved to Seattle in March 2024.", "tags": ["location"], "confidence": "certain", "source_event": "e1", "valid_from": 1709251200000 }
+      ],
+      "tasks": []
+    },
+    "resolve": {
+      "ops": [
+        { "item": 0, "op": "SUPERSEDE", "target": "n1" }
+      ]
+    },
+    "expectCurrentTitles": ["Seattle"],
+    "expectSuperseded": ["portland"],
+    "expectDiagnostics": []
+  },
+  {
+    "name": "relocation-3-moved-back-AB-A",
+    "note": "Two-run scenario. First run: Portland→Seattle. Second run: Seattle→Portland again. The user moved back.",
+    "existing": [
+      { "id": "portland_old", "title": "User lives in Portland", "body": "Original residence.", "source_type": "user_stated" }
+    ],
+    "events": [
+      { "summary": "user: I moved to Seattle last year.", "occurred_at": 1700000000000 },
+      { "summary": "user: Actually I moved back to Portland last month.", "occurred_at": 1730000000000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "User lives in Seattle", "body": "User moved to Seattle in 2023.", "tags": [], "confidence": "certain", "source_event": "e1" },
+        { "title": "User lives in Portland", "body": "User moved back to Portland in 2024.", "tags": [], "confidence": "certain", "source_event": "e2" }
+      ],
+      "tasks": []
+    },
+    "resolve": {
+      "ops": [
+        { "item": 0, "op": "SUPERSEDE", "target": "n1" },
+        { "item": 1, "op": "SUPERSEDE", "target": "n2" }
+      ]
+    },
+    "expectCurrentTitles": ["Portland"],
+    "expectSuperseded": ["portland_old"],
+    "secondRunFrom": 1
+  },
+  {
+    "name": "relocation-4-visiting-sf-add-not-supersede",
+    "note": "The user clarifies they are only visiting SF — the new candidate must ADD, not SUPERSEDE.",
+    "existing": [
+      { "id": "seattle", "title": "User lives in Seattle", "body": "Permanent residence.", "source_type": "user_stated" }
+    ],
+    "events": [
+      { "summary": "user: I am visiting San Francisco this week.", "occurred_at": 1730000000000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "User is visiting San Francisco this week", "body": "Short trip, not a move.", "tags": ["travel"], "confidence": "certain", "source_event": "e1" }
+      ],
+      "tasks": []
+    },
+    "resolve": {
+      "ops": [
+        { "item": 0, "op": "ADD" }
+      ]
+    },
+    "expectCurrentTitles": ["Seattle", "visiting San Francisco"],
+    "expectSuperseded": []
+  },
+  {
+    "name": "relocation-5-two-candidates-target-same-fact",
+    "note": "Two candidates both try to supersede the same neighbour. The first wins; the second falls back to ADD with librarian_op_rejected / already_superseded.",
+    "existing": [
+      { "id": "seattle", "title": "User lives in Seattle", "body": "Permanent residence.", "source_type": "user_stated" }
+    ],
+    "events": [
+      { "summary": "user: I moved to San Francisco.", "occurred_at": 1730000000000 },
+      { "summary": "user: I am now in San Francisco too.", "occurred_at": 1730000001000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "User lives in San Francisco", "body": "User moved to San Francisco.", "tags": [], "confidence": "certain", "source_event": "e1" },
+        { "title": "User resides in San Francisco", "body": "Same fact, paraphrased.", "tags": [], "confidence": "certain", "source_event": "e2" }
+      ],
+      "tasks": []
+    },
+    "resolve": {
+      "ops": [
+        { "item": 0, "op": "SUPERSEDE", "target": "n1" },
+        { "item": 1, "op": "SUPERSEDE", "target": "n1" }
+      ]
+    },
+    "expectCurrentTitles": ["San Francisco"],
+    "expectSuperseded": ["seattle"],
+    "expectDiagnostics": ["librarian_op_rejected"]
+  },
+  {
+    "name": "job-1-engineer-to-manager-same-company",
+    "note": "Promotion at the same company. Old 'engineer' role is superseded.",
+    "existing": [
+      { "id": "engineer_role", "title": "User is an engineer at Acme", "body": "Software engineer since 2020.", "source_type": "user_stated" }
+    ],
+    "events": [
+      { "summary": "user: I was promoted to engineering manager at Acme.", "occurred_at": 1730000000000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "User is an engineering manager at Acme", "body": "Promoted from engineer in 2024.", "tags": ["career"], "confidence": "certain", "source_event": "e1" }
+      ],
+      "tasks": []
+    },
+    "resolve": {
+      "ops": [
+        { "item": 0, "op": "SUPERSEDE", "target": "n1" }
+      ]
+    },
+    "expectCurrentTitles": ["engineering manager at Acme"],
+    "expectSuperseded": ["engineer_role"]
+  },
+  {
+    "name": "job-2-acme-to-globex",
+    "note": "Company change. Old Acme employer fact is superseded by the new Globex one.",
+    "existing": [
+      { "id": "acme_employer", "title": "User works at Acme", "body": "Employer since 2021.", "source_type": "user_stated" }
+    ],
+    "events": [
+      { "summary": "user: I started a new job at Globex this week.", "occurred_at": 1730000000000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "User works at Globex", "body": "New employer, started this week.", "tags": ["career"], "confidence": "certain", "source_event": "e1" }
+      ],
+      "tasks": []
+    },
+    "resolve": {
+      "ops": [
+        { "item": 0, "op": "SUPERSEDE", "target": "n1" }
+      ]
+    },
+    "expectCurrentTitles": ["Globex"],
+    "expectSuperseded": ["acme_employer"]
+  },
+  {
+    "name": "job-3-update-librarian_inferred",
+    "note": "Adding a detail ('payments team') to a librarian_inferred fact. UPDATE applies in place, same id.",
+    "existing": [
+      { "id": "engineer_inferred", "title": "User is an engineer at Acme", "body": "Inferred from earlier conversation.", "source_type": "librarian_inferred" }
+    ],
+    "events": [
+      { "summary": "user: I am on the payments team specifically.", "occurred_at": 1730000000000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "User is an engineer on the payments team at Acme", "body": "Refined detail.", "tags": ["career"], "confidence": "certain", "source_event": "e1" }
+      ],
+      "tasks": []
+    },
+    "resolve": {
+      "ops": [
+        { "item": 0, "op": "UPDATE", "target": "n1", "title": "User is an engineer on the payments team at Acme", "body": "Refined detail." }
+      ]
+    },
+    "expectCurrentTitles": ["payments team"],
+    "expectSuperseded": []
+  },
+  {
+    "name": "job-4-update-user_stated-becomes-supersede",
+    "note": "Adding a detail to a user_stated fact. UPDATE on user_stated is rejected and converted to SUPERSEDE.",
+    "existing": [
+      { "id": "engineer_stated", "title": "User is an engineer at Acme", "body": "Told us directly.", "source_type": "user_stated" }
+    ],
+    "events": [
+      { "summary": "user: I am on the payments team specifically.", "occurred_at": 1730000000000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "User is an engineer on the payments team at Acme", "body": "Refined detail.", "tags": ["career"], "confidence": "certain", "source_event": "e1" }
+      ],
+      "tasks": []
+    },
+    "resolve": {
+      "ops": [
+        { "item": 0, "op": "SUPERSEDE", "target": "n1" }
+      ]
+    },
+    "expectCurrentTitles": ["payments team"],
+    "expectSuperseded": ["engineer_stated"]
+  },
+  {
+    "name": "job-5-duplicate-restatement",
+    "note": "User restates their role verbatim. The gate dedupes to NOOP — exactly one LLM call (the extract).",
+    "existing": [
+      { "id": "engineer_dup", "title": "User is an engineer at Acme", "body": "Told us before.", "source_type": "user_stated" }
+    ],
+    "events": [
+      { "summary": "user: Just to confirm, I am an engineer at Acme.", "occurred_at": 1730000000000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "User is an engineer at Acme", "body": "Restatement.", "tags": [], "confidence": "certain", "source_event": "e1" }
+      ],
+      "tasks": []
+    },
+    "resolve": null,
+    "expectCurrentTitles": ["engineer at Acme"],
+    "expectSuperseded": []
+  },
+  {
+    "name": "diet-1-vegan-to-keto",
+    "note": "Diet change. Old vegan preference is superseded.",
+    "existing": [
+      { "id": "vegan_pref", "title": "User follows a vegan diet", "body": "Stated explicitly.", "source_type": "user_stated" }
+    ],
+    "events": [
+      { "summary": "user: I switched to a keto diet last month.", "occurred_at": 1730000000000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "User follows a keto diet", "body": "Switched last month.", "tags": ["diet"], "confidence": "certain", "source_event": "e1" }
+      ],
+      "tasks": []
+    },
+    "resolve": {
+      "ops": [
+        { "item": 0, "op": "SUPERSEDE", "target": "n1" }
+      ]
+    },
+    "expectCurrentTitles": ["keto"],
+    "expectSuperseded": ["vegan_pref"]
+  },
+  {
+    "name": "diet-2-tea-to-coffee",
+    "note": "Hot beverage preference flip. Old tea preference is superseded. Replay correction: the original extract title ('User prefers coffee over tea') is a pure word-order permutation of the stored title, so title Jaccard is 1.0 and the gate NOOPs before resolve can SUPERSEDE. Reworded so the candidate reaches resolve.",
+    "existing": [
+      { "id": "tea_pref", "title": "User prefers tea over coffee", "body": "Mentioned repeatedly.", "source_type": "user_stated" }
+    ],
+    "events": [
+      { "summary": "user: I have started drinking coffee every morning.", "occurred_at": 1730000000000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "User now drinks coffee every morning", "body": "New habit.", "tags": ["preference"], "confidence": "certain", "source_event": "e1" }
+      ],
+      "tasks": []
+    },
+    "resolve": {
+      "ops": [
+        { "item": 0, "op": "SUPERSEDE", "target": "n1" }
+      ]
+    },
+    "expectCurrentTitles": ["coffee"],
+    "expectSuperseded": ["tea_pref"]
+  },
+  {
+    "name": "diet-3-also-likes-coffee-add",
+    "note": "User says they ALSO like coffee (in addition to tea). ADD — both preferences remain current.",
+    "existing": [
+      { "id": "tea_pref", "title": "User prefers tea", "body": "Original preference.", "source_type": "user_stated" }
+    ],
+    "events": [
+      { "summary": "user: I also like coffee in the afternoon.", "occurred_at": 1730000000000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "User likes coffee in the afternoon", "body": "Additional preference.", "tags": ["preference"], "confidence": "certain", "source_event": "e1" }
+      ],
+      "tasks": []
+    },
+    "resolve": {
+      "ops": [
+        { "item": 0, "op": "ADD" }
+      ]
+    },
+    "expectCurrentTitles": ["tea", "coffee"],
+    "expectSuperseded": []
+  },
+  {
+    "name": "diet-4-exact-duplicate-different-punctuation",
+    "note": "User restates their diet verbatim, just different punctuation. Gate NOOP — exactly one LLM call.",
+    "existing": [
+      { "id": "vegan_pref", "title": "User follows a vegan diet.", "body": "Told us before.", "source_type": "user_stated" }
+    ],
+    "events": [
+      { "summary": "user: vegan diet!!!", "occurred_at": 1730000000000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "User follows a vegan diet", "body": "Restated with punctuation.", "tags": [], "confidence": "certain", "source_event": "e1" }
+      ],
+      "tasks": []
+    },
+    "resolve": null,
+    "expectCurrentTitles": ["vegan diet"],
+    "expectSuperseded": []
+  },
+  {
+    "name": "diet-5-preference-reversal-with-date",
+    "note": "User reverses a preference and explicitly anchors it with a date.",
+    "existing": [
+      { "id": "coffee_pref", "title": "User prefers coffee", "body": "Long-time preference.", "source_type": "user_stated" }
+    ],
+    "events": [
+      { "summary": "user: As of January 2025, I have switched back to tea.", "occurred_at": 1735000000000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "User prefers tea since January 2025", "body": "Reversal with date.", "tags": ["preference"], "confidence": "certain", "source_event": "e1", "valid_from": 1735689600000 }
+      ],
+      "tasks": []
+    },
+    "resolve": {
+      "ops": [
+        { "item": 0, "op": "SUPERSEDE", "target": "n1" }
+      ]
+    },
+    "expectCurrentTitles": ["tea since January 2025"],
+    "expectSuperseded": ["coffee_pref"]
+  },
+  {
+    "name": "relationship-1-single-to-married",
+    "note": "Relationship status change.",
+    "existing": [
+      { "id": "single_status", "title": "User is single", "body": "Stated earlier.", "source_type": "user_stated" }
+    ],
+    "events": [
+      { "summary": "user: I got married last weekend.", "occurred_at": 1730000000000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "User is married", "body": "Married last weekend.", "tags": ["relationship"], "confidence": "certain", "source_event": "e1" }
+      ],
+      "tasks": []
+    },
+    "resolve": {
+      "ops": [
+        { "item": 0, "op": "SUPERSEDE", "target": "n1" }
+      ]
+    },
+    "expectCurrentTitles": ["married"],
+    "expectSuperseded": ["single_status"]
+  },
+  {
+    "name": "relationship-2-project-renamed",
+    "note": "User renames a project. Old project name is superseded. Replay correction: the original extract title repeated nearly every token of the stored title (title Jaccard 0.8), so the gate NOOPs before resolve can SUPERSEDE. Reworded so the candidate reaches resolve.",
+    "existing": [
+      { "id": "old_project", "title": "User is working on Project Phoenix", "body": "Self-named project.", "source_type": "user_stated" }
+    ],
+    "events": [
+      { "summary": "user: I am renaming the project to Phoenix Pro.", "occurred_at": 1730000000000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "The project is now called Phoenix Pro", "body": "Renamed project.", "tags": ["project"], "confidence": "certain", "source_event": "e1" }
+      ],
+      "tasks": []
+    },
+    "resolve": {
+      "ops": [
+        { "item": 0, "op": "SUPERSEDE", "target": "n1" }
+      ]
+    },
+    "expectCurrentTitles": ["Phoenix Pro"],
+    "expectSuperseded": ["old_project"]
+  },
+  {
+    "name": "relationship-3-project-cancelled-supersede-with-reason",
+    "note": "User cancels a project. The SUPERSEDE op carries the cancellation reason in the new fact's body.",
+    "existing": [
+      { "id": "project_zeta", "title": "User is working on Project Zeta", "body": "Active project.", "source_type": "user_stated" }
+    ],
+    "events": [
+      { "summary": "user: I am cancelling Project Zeta because the client pulled out.", "occurred_at": 1730000000000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "Project Zeta was cancelled", "body": "Cancelled because the client pulled out.", "tags": ["project"], "confidence": "certain", "source_event": "e1" }
+      ],
+      "tasks": []
+    },
+    "resolve": {
+      "ops": [
+        { "item": 0, "op": "SUPERSEDE", "target": "n1" }
+      ]
+    },
+    "expectCurrentTitles": ["cancelled"],
+    "expectSuperseded": ["project_zeta"]
+  },
+  {
+    "name": "relationship-4-unrelated-new-project-add",
+    "note": "User starts a brand-new project that has no relation to the existing one. ADD.",
+    "existing": [
+      { "id": "project_alpha", "title": "User is working on Project Alpha", "body": "Active project.", "source_type": "user_stated" }
+    ],
+    "events": [
+      { "summary": "user: I am starting a brand new side project called Project Beta.", "occurred_at": 1730000000000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "User is starting Project Beta", "body": "Unrelated new project.", "tags": ["project"], "confidence": "certain", "source_event": "e1" }
+      ],
+      "tasks": []
+    },
+    "resolve": {
+      "ops": [
+        { "item": 0, "op": "ADD" }
+      ]
+    },
+    "expectCurrentTitles": ["Project Alpha", "Project Beta"],
+    "expectSuperseded": []
+  },
+  {
+    "name": "relationship-5-rename-of-immutable-document",
+    "note": "Trying to rename an immutable_document fact. The new candidate becomes a draft and emits contradicts_document. Replay correction: the original extract title repeated nearly every token of the stored title (title Jaccard 0.8), so the gate NOOPs before resolve can target the immutable document. Reworded so the candidate reaches resolve.",
+    "existing": [
+      { "id": "doc_v1", "title": "User is working on Project Atlas", "body": "From a contract document.", "source_type": "immutable_document" }
+    ],
+    "events": [
+      { "summary": "user: I renamed it to Project Atlas Pro.", "occurred_at": 1730000000000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "The project is now called Atlas Pro", "body": "User-claimed rename.", "tags": ["project"], "confidence": "certain", "source_event": "e1" }
+      ],
+      "tasks": []
+    },
+    "resolve": {
+      "ops": [
+        { "item": 0, "op": "SUPERSEDE", "target": "n1" }
+      ]
+    },
+    "expectCurrentTitles": ["Atlas"],
+    "expectSuperseded": [],
+    "expectDiagnostics": ["contradicts_document"]
+  },
+  {
+    "name": "misbehaviour-1-invented-target-n9",
+    "note": "Model tries to supersede neighbour n9 which does not exist. ADD + librarian_op_rejected.",
+    "liveSkip": true,
+    "existing": [
+      { "id": "seattle", "title": "User lives in Seattle", "body": "Permanent residence.", "source_type": "user_stated" }
+    ],
+    "events": [
+      { "summary": "user: I moved to San Francisco.", "occurred_at": 1730000000000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "User lives in San Francisco", "body": "New city.", "tags": [], "confidence": "certain", "source_event": "e1" }
+      ],
+      "tasks": []
+    },
+    "resolve": {
+      "ops": [
+        { "item": 0, "op": "SUPERSEDE", "target": "n9" }
+      ]
+    },
+    "expectCurrentTitles": ["San Francisco"],
+    "expectSuperseded": [],
+    "expectDiagnostics": ["librarian_op_rejected"]
+  },
+  {
+    "name": "misbehaviour-2-op-for-item-3-only-one-item",
+    "note": "Model returns an op for item 3 when there is only one candidate. ADD + librarian_op_rejected.",
+    "liveSkip": true,
+    "existing": [
+      { "id": "seattle", "title": "User lives in Seattle", "body": "Permanent residence.", "source_type": "user_stated" }
+    ],
+    "events": [
+      { "summary": "user: I moved to San Francisco.", "occurred_at": 1730000000000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "User lives in San Francisco", "body": "New city.", "tags": [], "confidence": "certain", "source_event": "e1" }
+      ],
+      "tasks": []
+    },
+    "resolve": {
+      "ops": [
+        { "item": 3, "op": "SUPERSEDE", "target": "n1" }
+      ]
+    },
+    "expectCurrentTitles": ["San Francisco"],
+    "expectSuperseded": [],
+    "expectDiagnostics": ["librarian_op_rejected"]
+  },
+  {
+    "name": "misbehaviour-3-missing-ops-key",
+    "note": "Model returns a response with no 'ops' key. Stored as a draft with resolve_failed. Replay correction: the original replay JSON had \"ops\": [], which parses as a valid (empty) op list and lands the candidate as ADD with librarian_op_rejected — never resolve_failed. The response is now truly missing the ops key, matching the scenario name.",
+    "liveSkip": true,
+    "existing": [
+      { "id": "seattle", "title": "User lives in Seattle", "body": "Permanent residence.", "source_type": "user_stated" }
+    ],
+    "events": [
+      { "summary": "user: I moved to San Francisco.", "occurred_at": 1730000000000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "User lives in San Francisco", "body": "New city.", "tags": [], "confidence": "certain", "source_event": "e1" }
+      ],
+      "tasks": []
+    },
+    "resolve": {},
+    "expectCurrentTitles": ["Seattle", "San Francisco"],
+    "expectSuperseded": [],
+    "expectDiagnostics": ["resolve_failed"]
+  },
+  {
+    "name": "misbehaviour-4-update-empty-title-and-body",
+    "note": "Model returns UPDATE with empty title and body. The candidate's own text is used (fallback).",
+    "liveSkip": true,
+    "existing": [
+      { "id": "engineer_inferred", "title": "User is an engineer at Acme", "body": "Inferred from earlier conversation.", "source_type": "librarian_inferred" }
+    ],
+    "events": [
+      { "summary": "user: I am on the payments team specifically.", "occurred_at": 1730000000000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "User is an engineer on the payments team at Acme", "body": "Refined detail.", "tags": ["career"], "confidence": "certain", "source_event": "e1" }
+      ],
+      "tasks": []
+    },
+    "resolve": {
+      "ops": [
+        { "item": 0, "op": "UPDATE", "target": "n1", "title": "", "body": "" }
+      ]
+    },
+    "expectCurrentTitles": ["payments team"],
+    "expectSuperseded": []
+  },
+  {
+    "name": "misbehaviour-5-unknown-op-delete",
+    "note": "Model returns an unknown op 'DELETE'. ADD + librarian_op_rejected.",
+    "liveSkip": true,
+    "existing": [
+      { "id": "seattle", "title": "User lives in Seattle", "body": "Permanent residence.", "source_type": "user_stated" }
+    ],
+    "events": [
+      { "summary": "user: I moved to San Francisco.", "occurred_at": 1730000000000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "User lives in San Francisco", "body": "New city.", "tags": [], "confidence": "certain", "source_event": "e1" }
+      ],
+      "tasks": []
+    },
+    "resolve": {
+      "ops": [
+        { "item": 0, "op": "DELETE", "target": "n1" }
+      ]
+    },
+    "expectCurrentTitles": ["San Francisco"],
+    "expectSuperseded": [],
+    "expectDiagnostics": ["librarian_op_rejected"]
+  },
+  {
+    "name": "mixed-1-three-candidates-noop-add-supersede",
+    "note": "Three candidates: two the gate should ADD (coffee, and the Acme restatement, which has no existing fact to NOOP against) and one resolve-SUPERSEDE. Exactly two LLM calls. Per-fact `gate` labels drive calibration because the candidates differ.",
+    "existing": [
+      { "id": "seattle", "title": "User lives in Seattle", "body": "Permanent residence.", "source_type": "user_stated" },
+      { "id": "tea_pref", "title": "User prefers tea", "body": "Long-time preference.", "source_type": "user_stated" }
+    ],
+    "events": [
+      { "summary": "user: I moved to San Francisco.", "occurred_at": 1730000000000 },
+      { "summary": "user: I also started drinking coffee.", "occurred_at": 1730000001000 },
+      { "summary": "user: I am still an engineer at Acme — just confirming.", "occurred_at": 1730000002000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "User lives in San Francisco", "body": "New city.", "tags": [], "confidence": "certain", "source_event": "e1", "gate": "ambiguous" },
+        { "title": "User also drinks coffee", "body": "Additional beverage preference.", "tags": ["preference"], "confidence": "certain", "source_event": "e2", "gate": "add" },
+        { "title": "User is an engineer at Acme", "body": "Restated.", "tags": [], "confidence": "certain", "source_event": "e3", "gate": "add" }
+      ],
+      "tasks": []
+    },
+    "resolve": {
+      "ops": [
+        { "item": 0, "op": "SUPERSEDE", "target": "n1" }
+      ]
+    },
+    "expectCurrentTitles": ["San Francisco", "coffee", "tea"],
+    "expectSuperseded": ["seattle"]
+  },
+  {
+    "name": "mixed-2-in-batch-duplicate-candidates",
+    "note": "Two candidates in the same extract are paraphrases of each other. The second is dropped with fact_deduplicated / in_batch. Replay correction: in-batch dedup keys on the normalized title+body, and the original candidates had different bodies ('First/Second restatement.'), so neither was a duplicate. Bodies are now identical so the second candidate collides.",
+    "existing": [
+      { "id": "engineer_role", "title": "User is an engineer at Acme", "body": "Told us earlier.", "source_type": "user_stated" }
+    ],
+    "events": [
+      { "summary": "user: I am an engineer at Acme.", "occurred_at": 1730000000000 },
+      { "summary": "user: Just confirming I am an engineer at Acme.", "occurred_at": 1730000001000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "User is an engineer at Acme", "body": "Restatement.", "tags": [], "confidence": "certain", "source_event": "e1" },
+        { "title": "User is an engineer at Acme", "body": "Restatement.", "tags": [], "confidence": "certain", "source_event": "e2" }
+      ],
+      "tasks": []
+    },
+    "resolve": null,
+    "expectCurrentTitles": ["engineer at Acme"],
+    "expectSuperseded": [],
+    "expectDiagnostics": ["fact_deduplicated"]
+  },
+  {
+    "name": "mixed-3-superseded-fact-never-offered-again",
+    "note": "Two-run scenario. After the first run supersedes seattle, the second run must never offer seattle as a neighbour to a new candidate.",
+    "existing": [
+      { "id": "seattle", "title": "User lives in Seattle", "body": "Original residence.", "source_type": "user_stated" }
+    ],
+    "events": [
+      { "summary": "user: I moved to San Francisco.", "occurred_at": 1700000000000 },
+      { "summary": "user: My new job is in Portland.", "occurred_at": 1730000000000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "User lives in San Francisco", "body": "First move.", "tags": [], "confidence": "certain", "source_event": "e1" },
+        { "title": "User lives in Portland", "body": "Second move.", "tags": [], "confidence": "certain", "source_event": "e2" }
+      ],
+      "tasks": []
+    },
+    "resolve": {
+      "ops": [
+        { "item": 0, "op": "SUPERSEDE", "target": "n1" },
+        { "item": 1, "op": "SUPERSEDE", "target": "n2" }
+      ]
+    },
+    "expectCurrentTitles": ["Portland"],
+    "expectSuperseded": ["seattle"],
+    "secondRunFrom": 1
+  },
+  {
+    "name": "mixed-4-event-occurred_at-drives-valid_from",
+    "note": "When the extract does NOT supply valid_from, the event's occurred_at drives the new fact's valid_from.",
+    "existing": [
+      { "id": "seattle", "title": "User lives in Seattle", "body": "Original residence.", "source_type": "user_stated" }
+    ],
+    "events": [
+      { "summary": "user: I moved to San Francisco last Tuesday.", "occurred_at": 1730000000000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "User lives in San Francisco", "body": "No explicit valid_from.", "tags": [], "confidence": "certain", "source_event": "e1" }
+      ],
+      "tasks": []
+    },
+    "resolve": {
+      "ops": [
+        { "item": 0, "op": "SUPERSEDE", "target": "n1" }
+      ]
+    },
+    "expectCurrentTitles": ["San Francisco"],
+    "expectSuperseded": ["seattle"]
+  },
+  {
+    "name": "mixed-5-extract-valid_from-overrides-occurred_at",
+    "note": "When the extract supplies a valid_from that is EARLIER than the event's occurred_at, the extract's value wins.",
+    "existing": [
+      { "id": "seattle", "title": "User lives in Seattle", "body": "Original residence.", "source_type": "user_stated" }
+    ],
+    "events": [
+      { "summary": "user: I moved to San Francisco last week.", "occurred_at": 1730000000000 }
+    ],
+    "extract": {
+      "facts": [
+        { "title": "User lives in San Francisco since 2020", "body": "Extract supplied an older valid_from.", "tags": [], "confidence": "certain", "source_event": "e1", "valid_from": 1577836800000 }
+      ],
+      "tasks": []
+    },
+    "resolve": {
+      "ops": [
+        { "item": 0, "op": "SUPERSEDE", "target": "n1" }
+      ]
+    },
+    "expectCurrentTitles": ["San Francisco since 2020"],
+    "expectSuperseded": ["seattle"]
+  }
+]

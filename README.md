@@ -1157,6 +1157,11 @@ flowchart TD
 2. **Read operations** auto-refetch when `entityId`, `query`, `wiki`, or `ReadOptions` values change; call `refetch()` to refresh manually
 3. **Write operations** (write, ingest, forget, maintenance) do not automatically re-trigger `useMemoryRead`; call `refetch()` after a write to refresh read results
 
+## Documentation
+
+- [SynapseTree integration guide](docs/synapsetree-integration.md) — recommended configuration, request lifecycle, where maintenance runs, single-writer requirement, `entity_id` scheme, MCP surface, and costs for tenant-aware hosts (e.g. SaaS with per-tenant SQLite files in object storage).
+- [Benchmarks](docs/benchmarks.md) — supersession results and run-level token totals for the 7.8.0 release versus the legacy baseline. LongMemEval accuracy, tokens per answer, and ingestion tokens are not measured yet (issue #247).
+
 ---
 
 Made with ❤️ by Equational Applications LLC. [https://equationalapplications.com/](https://equationalapplications.com/)

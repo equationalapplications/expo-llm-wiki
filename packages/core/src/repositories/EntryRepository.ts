@@ -3,7 +3,28 @@ import { WikiGraphNodeOwnershipConflict } from '../types';
 import { BaseRepository } from './BaseRepository';
 import { OutboxRepository } from './OutboxRepository';
 import { parseJsonArray, parseJsonObject } from './rowMappers';
+import { liveAtSql, type LiveMode } from '../utils/temporal';
 import { isStaleAfter, deriveTrustTier } from '@equationalapplications/core-okf';
+
+/** Subset of temporal columns that {@link EntryRepository.setTemporal} may write (spec 2026-09-29 §4.3). */
+export type TemporalFields = {
+  valid_from?: number | null;
+  valid_to?: number | null;
+  superseded_by?: string | null;
+  superseded_at?: number | null;
+};
+
+/** Lightweight projection used by TemporalService for supersession chain walks. */
+export type TemporalRow = {
+  id: string;
+  entity_id: string;
+  source_type: WikiFact['source_type'];
+  deleted_at: number | null;
+  created_at: number;
+  valid_from: number | null;
+  valid_to: number | null;
+  superseded_by: string | null;
+};
 
 export type EntryRowMetadata = {
   id: string;
@@ -76,6 +97,12 @@ function mapRowToFact(row: any): WikiFact {
     // Spec §2.7 + §5.3: hydrate so read() consumers don't re-call the helpers.
     isStale: isStaleAfter(staleAfterRaw, now),
     trustTier: deriveTrustTier(okf_verified),
+    // Temporal (spec 2026-09-29 §4, §10.8): keys appear only when set so
+    // existing deep-equality assertions and host snapshots are unchanged.
+    ...(row.valid_from != null ? { valid_from: Number(row.valid_from) } : {}),
+    ...(row.valid_to != null ? { valid_to: Number(row.valid_to) } : {}),
+    ...(row.superseded_by != null ? { superseded_by: String(row.superseded_by) } : {}),
+    ...(row.superseded_at != null ? { superseded_at: Number(row.superseded_at) } : {}),
   };
 }
 
@@ -612,12 +639,14 @@ export class EntryRepository extends BaseRepository {
     tx?: SQLiteAdapter,
   ): Promise<WikiFact[]> {
     const executor = this.getExecutor(tx);
+    const now = Date.now();
     const rows = await executor.getAllAsync<any>(
       `SELECT * FROM ${this.prefix}entries
        WHERE entity_id = ? AND deleted_at IS NULL AND source_type != 'immutable_document'
+         AND ${liveAtSql('current')}
          AND (heal_checked_at IS NULL OR heal_checked_at <= ?)
        ORDER BY updated_at ASC LIMIT ?`,
-      [entityId, recheckCutoff, limit],
+      [entityId, now, now, recheckCutoff, limit],
     );
     return rows.map(mapRowToFact);
   }
@@ -642,6 +671,7 @@ export class EntryRepository extends BaseRepository {
     // Chunked like every other multi-id read here. The current caller stays well
     // under SQLITE_MAX_VARIABLE_NUMBER, but that is a property of the caller,
     // not of this method.
+    const now = Date.now();
     for (let i = 0; i < ids.length; i += this.chunkSize) {
       const chunk = ids.slice(i, i + this.chunkSize);
       const placeholders = chunk.map(() => '?').join(', ');
@@ -649,8 +679,9 @@ export class EntryRepository extends BaseRepository {
         `SELECT ${columns} FROM ${this.prefix}entries
          WHERE entity_id = ? AND deleted_at IS NULL
            AND source_type = 'immutable_document'
+           AND ${liveAtSql('current')}
            AND id IN (${placeholders})`,
-        [entityId, ...chunk],
+        [entityId, now, now, ...chunk],
       );
       rows.push(...chunkRows);
     }
@@ -676,15 +707,16 @@ export class EntryRepository extends BaseRepository {
     excludeSourceRef?: string,
   ): Promise<WikiFact[]> {
     const executor = this.getExecutor(tx);
+    const now = Date.now();
     // `IS NULL OR !=` keeps NULL-source_ref rows (e.g. librarian_inferred facts)
     // in the cross-sourceRef title index. The intent of `excludeSourceRef` is
     // "drop THIS sourceRef's rows"; NULL rows belong to neither the current
     // sourceRef nor the replacement set, and excluding them causes edges
     // targeting legacy/non-document facts to fail to resolve.
     const excludeClause = excludeSourceRef ? ` AND (source_ref IS NULL OR source_ref != ?)` : '';
-    const args: unknown[] = excludeSourceRef ? [entityId, excludeSourceRef, limit] : [entityId, limit];
+    const args: unknown[] = excludeSourceRef ? [entityId, now, now, excludeSourceRef, limit] : [entityId, now, now, limit];
     const rows = await executor.getAllAsync<any>(
-      `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL${excludeClause} ORDER BY updated_at DESC LIMIT ?`,
+      `SELECT * FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL AND ${liveAtSql('current')}${excludeClause} ORDER BY updated_at DESC LIMIT ?`,
       args,
     );
     return rows.map(mapRowToFact);
@@ -928,6 +960,118 @@ export class EntryRepository extends BaseRepository {
         payload: { id, entity_id: entityId, deleted_at: now },
       }, tx);
     }
+  }
+
+  /** Spec §4: write any subset of the four temporal columns. Absent key = untouched; null = clear. */
+  async setTemporal(
+    id: string,
+    entityId: string,
+    fields: TemporalFields,
+    tx: SQLiteAdapter,
+    opts?: { outbox?: boolean },
+  ): Promise<number> {
+    const keys = (['valid_from', 'valid_to', 'superseded_by', 'superseded_at'] as const).filter((k) => k in fields);
+    if (keys.length === 0) return 0;
+    const executor = this.getExecutor(tx);
+    const result = await executor.runAsync(
+      `UPDATE ${this.prefix}entries SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ? AND entity_id = ?`,
+      [...keys.map((k) => fields[k] ?? null), id, entityId],
+    );
+    if (result.changes > 0 && opts?.outbox !== false) {
+      const payload: Record<string, unknown> = { id, entity_id: entityId };
+      for (const k of keys) payload[k] = fields[k] ?? null;
+      await this.outbox.push({ entityId, tableName: 'entries', recordId: id, operation: 'UPDATE', payload }, tx);
+    }
+    return result.changes;
+  }
+
+  async findTemporalRow(id: string, tx?: SQLiteAdapter): Promise<TemporalRow | null> {
+    const executor = this.getExecutor(tx);
+    const row = await executor.getFirstAsync<any>(
+      `SELECT id, entity_id, source_type, deleted_at, created_at, valid_from, valid_to, superseded_by
+       FROM ${this.prefix}entries WHERE id = ?`,
+      [id],
+    );
+    if (!row) return null;
+    return {
+      id: String(row.id),
+      entity_id: String(row.entity_id),
+      source_type: row.source_type,
+      deleted_at: row.deleted_at != null ? Number(row.deleted_at) : null,
+      created_at: Number(row.created_at),
+      valid_from: row.valid_from != null ? Number(row.valid_from) : null,
+      valid_to: row.valid_to != null ? Number(row.valid_to) : null,
+      superseded_by: row.superseded_by != null ? String(row.superseded_by) : null,
+    };
+  }
+
+  /**
+   * Ids of non-deleted facts NOT live at `t` (spec §4.2). In 'current' mode a
+   * row with both validity columns NULL is always live, so the query is
+   * restricted to rows that carry a validity column — served by the partial
+   * entries_temporal_idx.
+   */
+  async findNonLiveIdsByEntityIds(
+    entityIds: readonly string[],
+    mode: LiveMode,
+    t: number,
+    tx?: SQLiteAdapter,
+  ): Promise<Set<string>> {
+    if (entityIds.length === 0) return new Set();
+    const executor = this.getExecutor(tx);
+    const placeholders = entityIds.map(() => '?').join(',');
+    const temporalOnly = mode === 'current' ? ' AND (valid_from IS NOT NULL OR valid_to IS NOT NULL)' : '';
+    const rows = await executor.getAllAsync<{ id: string }>(
+      `SELECT id FROM ${this.prefix}entries
+       WHERE entity_id IN (${placeholders}) AND deleted_at IS NULL${temporalOnly}
+         AND NOT ${liveAtSql(mode)}`,
+      [...entityIds, t, t],
+    );
+    return new Set(rows.map((r) => r.id));
+  }
+
+  async findSupersessionChainIds(
+    entityId: string,
+    factId: string,
+    maxDepth: number,
+    tx?: SQLiteAdapter,
+  ): Promise<{ predecessors: string[]; successors: string[] }> {
+    const executor = this.getExecutor(tx);
+    const successors = await executor.getAllAsync<{ id: string }>(
+      `WITH RECURSIVE fwd(id, depth) AS (
+         SELECT superseded_by, 1 FROM ${this.prefix}entries WHERE id = ? AND entity_id = ? AND superseded_by IS NOT NULL
+         UNION
+         SELECT e.superseded_by, fwd.depth + 1 FROM fwd
+         JOIN ${this.prefix}entries e ON e.id = fwd.id AND e.entity_id = ?
+         WHERE e.superseded_by IS NOT NULL AND fwd.depth < ?
+       )
+       SELECT id FROM fwd ORDER BY depth ASC`,
+      [factId, entityId, entityId, maxDepth],
+    );
+    const predecessors = await executor.getAllAsync<{ id: string }>(
+      `WITH RECURSIVE bwd(id, depth) AS (
+         SELECT id, 1 FROM ${this.prefix}entries WHERE entity_id = ? AND superseded_by = ?
+         UNION
+         SELECT e.id, bwd.depth + 1 FROM bwd
+         JOIN ${this.prefix}entries e ON e.entity_id = ? AND e.superseded_by = bwd.id
+         WHERE bwd.depth < ?
+       )
+       SELECT id FROM bwd ORDER BY depth DESC`,
+      [entityId, factId, entityId, maxDepth],
+    );
+    const drop = (ids: Array<{ id: string }>) => ids.map((r) => r.id).filter((id) => id !== factId);
+    return { predecessors: drop(predecessors), successors: drop(successors) };
+  }
+
+  async findExpiredIds(entityId: string, cutoff: number, tx?: SQLiteAdapter): Promise<string[]> {
+    const executor = this.getExecutor(tx);
+    const rows = await executor.getAllAsync<{ id: string }>(
+      `SELECT id FROM ${this.prefix}entries
+       WHERE entity_id = ? AND deleted_at IS NULL AND valid_to IS NOT NULL AND valid_to <= ?
+       ORDER BY valid_to ASC`,
+      [entityId, cutoff],
+    );
+    return rows.map((r) => r.id);
   }
 
   /**
@@ -1431,15 +1575,17 @@ export class EntryRepository extends BaseRepository {
     entityIds: readonly string[],
     limit: number,
     tx?: SQLiteAdapter,
-    opts?: { excludeDrafts?: boolean },
+    opts?: { excludeDrafts?: boolean; live?: { mode: LiveMode; t: number } },
   ): Promise<WikiFact[]> {
     if (entityIds.length === 0) return [];
     const executor = this.getExecutor(tx);
     const placeholders = entityIds.map(() => '?').join(',');
     const draftClause = opts?.excludeDrafts === true ? ` AND lifecycle_status != 'draft'` : '';
+    const liveClause = opts?.live ? ` AND ${liveAtSql(opts.live.mode)}` : '';
+    const liveArgs = opts?.live ? [opts.live.t, opts.live.t] : [];
     const rows = await executor.getAllAsync<any>(
-      `SELECT * FROM ${this.prefix}entries WHERE entity_id IN (${placeholders}) AND deleted_at IS NULL${draftClause} ORDER BY updated_at DESC LIMIT ?`,
-      [...entityIds, limit],
+      `SELECT * FROM ${this.prefix}entries WHERE entity_id IN (${placeholders}) AND deleted_at IS NULL${draftClause}${liveClause} ORDER BY updated_at DESC LIMIT ?`,
+      [...entityIds, ...liveArgs, limit],
     );
     return rows.map(mapRowToFact);
   }
@@ -1574,13 +1720,15 @@ export class EntryRepository extends BaseRepository {
     tx?: SQLiteAdapter,
   ): Promise<{ eligible: number; deferred: number }> {
     const executor = this.getExecutor(tx);
+    const now = Date.now();
     const row = await executor.getFirstAsync<{ eligible: number | null; deferred: number | null }>(
       `SELECT
          SUM(CASE WHEN heal_checked_at IS NULL OR heal_checked_at <= ? THEN 1 ELSE 0 END) AS eligible,
          SUM(CASE WHEN heal_checked_at IS NOT NULL AND heal_checked_at > ? THEN 1 ELSE 0 END) AS deferred
        FROM ${this.prefix}entries
-       WHERE entity_id = ? AND deleted_at IS NULL AND source_type != 'immutable_document'`,
-      [recheckCutoff, recheckCutoff, entityId],
+       WHERE entity_id = ? AND deleted_at IS NULL AND source_type != 'immutable_document'
+         AND ${liveAtSql('current')}`,
+      [recheckCutoff, recheckCutoff, entityId, now, now],
     );
     return { eligible: Number(row?.eligible ?? 0), deferred: Number(row?.deferred ?? 0) };
   }
@@ -1627,5 +1775,21 @@ export class EntryRepository extends BaseRepository {
       [entityId],
     );
     return rows.map(r => ({ id: r.id, title: r.title }));
+  }
+
+  /**
+   * Count of live facts for `entityId` with no stored embedding that are still
+   * retryable (`embedding_attempts < maxAttempts`). Backs the deferred
+   * maintenance pending report's `reembedPending` flag and the reembed job's
+   * entity selection (PR-C 2026-09-29).
+   */
+  async countReembedPending(entityId: string, maxAttempts: number, tx?: SQLiteAdapter): Promise<number> {
+    const executor = this.getExecutor(tx);
+    const row = await executor.getFirstAsync<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM ${this.prefix}entries
+       WHERE entity_id = ? AND deleted_at IS NULL AND embedding_blob IS NULL AND embedding IS NULL AND embedding_attempts < ?`,
+      [entityId, maxAttempts],
+    );
+    return Number(row?.n ?? 0);
   }
 }

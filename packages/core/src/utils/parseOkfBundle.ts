@@ -265,7 +265,17 @@ function frontmatterToFact(
     okf_usage_window: usageWindow,
     last_verified_at: lastV?.at ?? null,
     last_verified_by: lastV?.by ?? null,
+    ...optionalEpoch('valid_from', (frontmatter as any).valid_from),
+    ...optionalEpoch('valid_to', (frontmatter as any).valid_to),
+    ...(typeof (frontmatter as any).superseded_by === 'string' ? { superseded_by: (frontmatter as any).superseded_by } : {}),
+    ...optionalEpoch('superseded_at', (frontmatter as any).superseded_at),
   };
+}
+
+/** Temporal epoch-ms frontmatter keys (spec 2026-09-29 §10.9): keep only finite,
+ * non-negative numbers; anything else means "absent" and the key stays off. */
+function optionalEpoch<K extends string>(key: K, v: unknown): Partial<Record<K, number>> {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? ({ [key]: Math.trunc(v) } as Record<K, number>) : {};
 }
 
 function frontmatterToTask(

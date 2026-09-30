@@ -1,4 +1,5 @@
 import type { SQLiteAdapter } from '../types';
+import { createTemporalIndexesIfColumnsExist } from './schema';
 
 export interface Migration {
   version: number;
@@ -306,6 +307,38 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX IF NOT EXISTS ${prefix}edges_entity_id_idx ON ${prefix}edges(entity_id, id);
         DROP INDEX IF EXISTS ${prefix}edges_entity_idx;
       `);
+    },
+  },
+  {
+    version: 13,
+    description: 'Temporal facts: valid_from/valid_to/superseded_by/superseded_at on entries, occurred_at on events, librarian watermark on checkpoints',
+    run: async (db, prefix) => {
+      // ALTER TABLE ADD COLUMN must run outside any explicit transaction —
+      // same constraint as v2/v3/v5/v7/v8/v10/v11. No backfill: NULL valid_from
+      // means "since created_at" and is read through COALESCE (spec §4.1).
+      const adds: Array<[string, string, string]> = [
+        ['entries', 'valid_from', 'INTEGER'],
+        ['entries', 'valid_to', 'INTEGER'],
+        ['entries', 'superseded_by', 'TEXT'],
+        ['entries', 'superseded_at', 'INTEGER'],
+        ['events', 'occurred_at', 'INTEGER'],
+        ['checkpoints', 'librarian_watermark_at', 'INTEGER'],
+        ['checkpoints', 'librarian_watermark_id', 'TEXT'],
+      ];
+      const existingByTable = new Map<string, Set<string>>();
+      for (const [table, column, type] of adds) {
+        let existing = existingByTable.get(table);
+        if (!existing) {
+          const cols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${prefix}${table})`);
+          existing = new Set(cols.map((c) => c.name));
+          existingByTable.set(table, existing);
+        }
+        if (!existing.has(column)) {
+          await db.execAsync(`ALTER TABLE ${prefix}${table} ADD COLUMN ${column} ${type}`);
+          existing.add(column);
+        }
+      }
+      await createTemporalIndexesIfColumnsExist(db, prefix);
     },
   },
 ];

@@ -225,6 +225,8 @@ export interface HealResult {
   remaining: number;
   /** Heal candidates inside the recheck cooldown. */
   deferred: number;
+  /** Present when a token budget stopped the pass early (spec §10.5). Unattempted candidates stay eligible. */
+  budgetStop?: { requiredEstimate: number };
 }
 
 /**
@@ -245,6 +247,20 @@ export interface GroundingConfig {
   maxEvidenceChars?: number;
 }
 
+export interface LibrarianGateConfig {
+  /** Neighbours fetched per candidate. Default 5. */
+  k?: number;
+  /** Cosine at or above which (with title Jaccard ≥ FUZZY_THRESHOLD) a candidate is a duplicate. Default 0.89 (calibrated against the 30 supersession scenarios). */
+  dupThreshold?: number;
+  /** Best-neighbour cosine below which a candidate is novel. Default 0.30 (calibrated against the 30 supersession scenarios). */
+  novelThreshold?: number;
+}
+/** `'legacy'` is the 7.x add-only librarian. `'ops'` is the spec §5.1 / §5.3 dispatcher. */
+export interface LibrarianConfig {
+  strategy?: 'legacy' | 'ops';
+  gate?: LibrarianGateConfig;
+}
+
 export interface WikiConfig {
   /**
    * Prefix applied to every SQL table/index/trigger name. Must match
@@ -258,6 +274,12 @@ export interface WikiConfig {
   maxFtsResults?: number;
   pruneEventsAfter?: number;
   pruneRetainSoftDeletedFor?: number;
+  /**
+   * Days after `valid_to` before `runPrune` soft-deletes an expired or
+   * superseded fact (the soft-delete retention then hard-deletes it).
+   * Default null = keep history forever.
+   */
+  pruneSupersededAfter?: number | null;
   autoLibrarianThreshold?: number;
   autoHealThreshold?: number;
   orphanAfterDays?: number | null;
@@ -318,6 +340,21 @@ export interface WikiConfig {
   excludeDrafts?: boolean;
   /** Evidence check for LLM-authored facts (spec §6). Default off. */
   grounding?: GroundingConfig;
+  /** Emit an `llm_usage` diagnostic after every LLM text call. Default false. */
+  reportLlmUsage?: boolean;
+  /** Librarian strategy selection (spec 2026-09-29 §5.1). Default `{ strategy: 'legacy' }`. */
+  librarian?: LibrarianConfig;
+  /**
+   * `'auto'` (default): write() starts librarian/heal in the background when
+   * thresholds are crossed. `'deferred'`: write() only records the event; the
+   * host runs `runPendingMaintenance()` (spec 2026-09-29 §6). Pair with
+   * `librarian: { strategy: 'ops' }`: the legacy strategy reads only the
+   * newest 50 events per pass and advances the watermark past them, so a
+   * deferred backlog larger than that is never extracted.
+   */
+  maintenance?: 'auto' | 'deferred';
+  /** `'auto'` mode only: also trigger the librarian when pending event text reaches ~this many tokens (chars/4). */
+  autoLibrarianTokenThreshold?: number;
 }
 
 export interface ReadOptions {
@@ -365,6 +402,18 @@ export interface ReadOptions {
    * Resolves call → `WikiConfig.excludeDrafts` → false.
    */
   excludeDrafts?: boolean;
+  /**
+   * Valid-time snapshot (epoch ms): return facts live at this instant using
+   * current knowledge (spec §4.2). Omitted ⇒ current facts only.
+   * Throws `WikiInvalidReadOptions('asOf', …)` when not a finite number >= 0.
+   */
+  asOf?: number;
+  /**
+   * Pack facts into roughly this many tokens (chars/4 estimate), most valuable
+   * per token first; the top fact is always kept (truncated if needed).
+   * Tasks and events are not affected. Spec 2026-09-29 §7.1.
+   */
+  tokenBudget?: number;
 }
 
 export interface WikiFact {
@@ -438,6 +487,15 @@ export interface WikiFact {
    * `mapRowToFact` / `mapRowToTask`.
    */
   trustTier?: 'unverified' | 'machine-confirmed' | 'human-reviewed';
+  // --- Temporal (spec 2026-09-29 §4). Present on mapped facts only when non-null. ---
+  /** Epoch ms the fact became true in the world. Absent ⇒ since `created_at`. */
+  valid_from?: number | null;
+  /** Epoch ms the fact stopped being true (exclusive). Absent ⇒ open-ended. */
+  valid_to?: number | null;
+  /** Id of the fact that replaced this one. Audit / `history()` only; reads never filter on it. */
+  superseded_by?: string | null;
+  /** Epoch ms the supersession was recorded (transaction time). Audit only. */
+  superseded_at?: number | null;
 }
 
 export interface WikiTask {
@@ -483,6 +541,8 @@ export interface WikiEvent {
   summary: string;
   related_entry_id?: string | null;
   created_at: number;
+  /** Real-world time of the event (epoch ms). `created_at` stays ingestion time and remains the ordering key. */
+  occurred_at?: number | null;
 }
 
 export interface WikiEdge {
@@ -517,6 +577,10 @@ export interface GraphTraversalOptions {
    * Resolves call → `WikiConfig.excludeDrafts` → false.
    */
   excludeDrafts?: boolean;
+  /** Valid-time snapshot for traversal (epoch ms); an edge is walkable only when both endpoints are live at this instant. Omitted ⇒ now. */
+  asOf?: number;
+  /** Pack nodes (anchor first, then BFS order) into roughly this many tokens; edges to dropped nodes are removed. */
+  tokenBudget?: number;
 }
 
 export interface GraphNeighborhood {
@@ -559,6 +623,16 @@ export interface LLMProvider {
    * SDK handles and config on the instance.
    */
   generateText: (params: { systemPrompt: string; userPrompt: string }) => Promise<string>;
+  /**
+   * Optional. When present, core calls this instead of `generateText` and
+   * meters the reported usage (spec 2026-09-29 §6.3). Called with the provider
+   * as `this`. Omit `usage` (or return malformed numbers) to fall back to the
+   * chars/4 estimate.
+   */
+  generateTextWithUsage?: (params: { systemPrompt: string; userPrompt: string }) => Promise<{
+    text: string;
+    usage?: { inputTokens: number; outputTokens: number };
+  }>;
   /**
    * Optional. When provided, enables semantic similarity search in `read()`.
    * Must return a stable-dimension float array for any input text.
@@ -699,11 +773,18 @@ export type WikiDiagnosticCode =
   | 'grounding_missing'
   | 'grounding_failed'
   | 'classification_low_confidence'
-  | 'classification_invalid';
+  | 'classification_invalid'
+  | 'llm_usage'
+  | 'librarian_gate'
+  | 'librarian_op_rejected'
+  | 'contradicts_document'
+  | 'resolve_failed'
+  | 'read_budget'
+  | 'event_retention_held';
 
 /** The service run that emitted the diagnostic. */
 export type WikiDiagnosticOperation =
-  | 'ingest' | 'upsertGraph' | 'librarian' | 'heal' | 'ontologyBackfill' | 'reembed' | 'importDump' | 'write';
+  | 'ingest' | 'upsertGraph' | 'librarian' | 'heal' | 'ontologyBackfill' | 'reembed' | 'importDump' | 'write' | 'supersede' | 'read' | 'prune';
 
 /** `'auto'` when a write threshold started the run (auto-librarian / auto-heal); `'call'` when the host did. */
 export type WikiDiagnosticTrigger = 'call' | 'auto';
@@ -726,6 +807,24 @@ export interface WikiDiagnosticDetail {
   chunkIndexes?: number[];
   /** Aggregated emissions only. */
   count?: number;
+  /** `llm_usage` only. */
+  inputTokens?: number;
+  /** `llm_usage` only. */
+  outputTokens?: number;
+  /** `llm_usage` only: true when a figure is the chars/4 estimate. */
+  estimated?: boolean;
+  /** librarian_gate only. */
+  gateNoop?: number;
+  /** librarian_gate only. */
+  gateAdd?: number;
+  /** librarian_gate only. */
+  gateAmbiguous?: number;
+  /** read_budget only. */
+  candidates?: number;
+  /** read_budget only. */
+  packed?: number;
+  /** read_budget only. */
+  tokensUsed?: number;
 }
 
 export interface WikiDiagnostic {
@@ -860,6 +959,8 @@ export interface FormatContextOptions {
   includeTags?: boolean;
   includeEntityIds?: boolean;
   includeFactScores?: boolean;
+  /** Title + body only; overrides every include* flag. Default false. */
+  compact?: boolean;
   factWeights?: {
     confidence?: number;
     accessCount?: number;
@@ -1198,6 +1299,33 @@ export class WikiDraftNotFound extends Error {
   }
 }
 
+export type WikiSupersedeReason = 'not_found' | 'already_superseded' | 'immutable_target' | 'cycle' | 'cross_entity';
+
+/** Thrown by `supersede()` (spec §4.3). Contextless like {@link WikiDraftNotFound}. */
+export class WikiSupersedeError extends Error {
+  readonly code = 'WIKI_SUPERSEDE_REJECTED' as const;
+  readonly reason: WikiSupersedeReason;
+
+  constructor(reason: WikiSupersedeReason) {
+    super(`supersede() rejected: ${reason}`);
+    this.name = 'WikiSupersedeError';
+    this.reason = reason;
+    Object.setPrototypeOf(this, WikiSupersedeError.prototype);
+  }
+}
+
+/** A new fact to create as the replacement, or the id of an existing fact. */
+export type SupersedeReplacement =
+  | string
+  | {
+      title: string;
+      body: string;
+      tags?: string[];
+      confidence?: WikiFact['confidence'];
+      source_type?: 'user_stated' | 'user_confirmed' | 'librarian_inferred';
+      valid_from?: number;
+    };
+
 /** One page of `listDrafts`. `nextCursor` is opaque; pass it back unchanged. */
 export interface DraftPage {
   facts: WikiFact[];
@@ -1239,5 +1367,60 @@ export interface WikiInstructions {
   librarian: string;
   heal: string;
   ontologyBackfill: string;
+}
+
+export type MaintenanceJob = 'librarian' | 'heal' | 'reembed';
+
+export interface PendingMaintenance {
+  entityId: string;
+  /** Events after the librarian watermark. */
+  pendingEvents: number;
+  /** ceil(sum of pending event summary chars / 4). */
+  pendingTokensEstimate: number;
+  /** Same rule as auto-heal: events since the heal checkpoint >= autoHealThreshold. */
+  healDue: boolean;
+  /**
+   * Non-deleted facts (superseded history rows included, matching what
+   * `runReembed` sweeps) with no stored embedding that are still retryable.
+   * Always false without `embed`.
+   */
+  reembedPending: boolean;
+}
+
+export interface RunPendingMaintenanceOptions {
+  /** Default: every entity with pending work. */
+  entityIds?: string[];
+  /** generateText tokens (provider-reported or chars/4). Omitted = unbounded. */
+  tokenBudget?: number;
+  /** Wall-clock milliseconds from the call. Checked between units; a unit in flight is never interrupted. */
+  deadlineMs?: number;
+  /** Default all three. */
+  jobs?: MaintenanceJob[];
+}
+
+export type MaintenanceStopReason =
+  | { reason: 'complete' }
+  | { reason: 'deadline' }
+  | { reason: 'budget_exhausted' }
+  | { reason: 'budget_too_small'; job: 'librarian' | 'heal'; entityId: string; requiredEstimate: number };
+
+export interface EntityMaintenanceReport {
+  entityId: string;
+  librarianPasses: number;
+  factsWritten: number;
+  healPasses: number;
+  reembedded: boolean;
+  /** Set when a lock was held elsewhere; nothing ran for that job. */
+  busy?: MaintenanceJob[];
+}
+
+export interface RunPendingMaintenanceResult {
+  perEntity: EntityMaintenanceReport[];
+  tokensUsed: number;
+  /** True when any usage figure was a chars/4 estimate. */
+  estimated: boolean;
+  /** null when no tokenBudget was given. */
+  remaining: number | null;
+  stoppedReason: MaintenanceStopReason;
 }
 

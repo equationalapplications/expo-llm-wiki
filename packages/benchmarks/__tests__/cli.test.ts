@@ -1,0 +1,449 @@
+/**
+ * CLI surface tests for `packages/benchmarks/src/cli.ts`.
+ *
+ * The CLI spawns nothing — these tests verify the pure pieces the handler
+ * relies on, plus the spend-guard exit codes:
+ *
+ *   - `parseArgs(argv)` is a pure parser; no I/O, no dependency.
+ *   - `estimateIngestTokens(questions)` is the per-run cost summary formula.
+ *   - `runLongMemEvalCommand({ ... })` returns `{ exitCode: 1 }` when
+ *     `--yes` is omitted, and `{ exitCode: 0 }` when `--dry-run` is
+ *     supplied (in either case, before any provider resolution).
+ *
+ * The dataset loader, sample ids, endpoints, embedder, and stdout are all
+ * injected so CI never touches a network or filesystem.
+ */
+
+import { describe, it, expect, vi } from 'vitest';
+import { mkdtempSync, readFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import {
+  parseArgs,
+  estimateIngestTokens,
+  resolveOutPath,
+  REPO_ROOT,
+  runLongMemEvalCommand,
+  runCompareCommand,
+  runSupersessionCommand,
+} from '../src/cli';
+import type { LmeQuestion, LmeQuestionType } from '../src/longmemeval/dataset';
+import type { Scenario } from '../src/supersession/run';
+import type { ChatEndpoint } from '../src/provider';
+
+function makeQ(type: LmeQuestionType, id: string, sessionChars: number): LmeQuestion {
+  // Build a session whose content is exactly `sessionChars` characters long.
+  // Each turn contributes its `content.length`; the total is the session length.
+  const content = 'a'.repeat(sessionChars);
+  return {
+    question_id: id,
+    question_type: type,
+    question: 'q',
+    answer: 'a',
+    question_date: '2023/05/20 (Sat) 02:21',
+    haystack_dates: ['2023/05/18 (Thu) 10:00'],
+    haystack_sessions: [[{ role: 'user', content }, { role: 'assistant', content }]],
+  };
+}
+
+describe('parseArgs', () => {
+  it('parses a verb with no flags', () => {
+    expect(parseArgs(['sample'])).toEqual({ command: 'sample', flags: {} });
+  });
+
+  it('parses `--key value` pairs into a flags record', () => {
+    const r = parseArgs([
+      'longmemeval',
+      '--strategy', 'legacy',
+      '--maintenance', 'auto',
+      '--read-budget', '800',
+      '--max-questions', '5',
+      '--out', '/tmp/report.json',
+    ]);
+    expect(r.command).toBe('longmemeval');
+    expect(r.flags.strategy).toBe('legacy');
+    expect(r.flags.maintenance).toBe('auto');
+    expect(r.flags['read-budget']).toBe('800');
+    expect(r.flags['max-questions']).toBe('5');
+    expect(r.flags.out).toBe('/tmp/report.json');
+  });
+
+  it('parses boolean flags (presence only)', () => {
+    const r = parseArgs(['longmemeval', '--dry-run', '--yes']);
+    expect(r.flags['dry-run']).toBe(true);
+    expect(r.flags.yes).toBe(true);
+    expect(r.command).toBe('longmemeval');
+  });
+
+  it('mixes value and boolean flags without consuming the next flag as a value', () => {
+    const r = parseArgs(['longmemeval', '--strategy', 'ops', '--dry-run', '--yes']);
+    expect(r.flags.strategy).toBe('ops');
+    expect(r.flags['dry-run']).toBe(true);
+    expect(r.flags.yes).toBe(true);
+  });
+
+  it('returns an empty command string when called with no arguments', () => {
+    expect(parseArgs([])).toEqual({ command: '', flags: {} });
+  });
+});
+
+describe('estimateIngestTokens', () => {
+  it('is the sum of ceil(turn chars / 4) plus 2000 per question (answer+judge)', () => {
+    const q = makeQ('single-session-user', 'q1', 100);
+    // session has 2 turns × 100 chars = 200 chars => ceil(200 / 4) = 50
+    // + 2000 flat
+    expect(estimateIngestTokens([q])).toBe(50 + 2000);
+  });
+
+  it('rounds up when the char count is not a multiple of 4', () => {
+    // 5 chars over 2 turns = 10 chars total => ceil(10/4) = 3
+    const q = makeQ('single-session-user', 'q1', 5);
+    expect(estimateIngestTokens([q])).toBe(3 + 2000);
+  });
+
+  it('scales linearly across multiple questions', () => {
+    const q = makeQ('knowledge-update', 'q', 16);
+    // 32 chars => 8 ingest tokens per question; 2000 per question.
+    expect(estimateIngestTokens([q, q, q])).toBe((8 + 2000) * 3);
+  });
+
+  it('returns 0 for an empty question list', () => {
+    expect(estimateIngestTokens([])).toBe(0);
+  });
+});
+
+describe('runLongMemEvalCommand (spend guard)', () => {
+  const endpoint: ChatEndpoint = {
+    protocol: 'anthropic',
+    baseUrl: 'https://x.test',
+    apiKey: 'k',
+    model: 'm',
+  };
+
+  it('returns exit code 1 without --yes (and never invokes the runner)', async () => {
+    const stdout = vi.fn();
+    const runImpl = vi.fn(async () => {
+      throw new Error('runner should not be called when --yes is missing');
+    });
+    const q = makeQ('single-session-user', 'q1', 10);
+
+    const r = await runLongMemEvalCommand({
+      argv: ['longmemeval', '--strategy', 'legacy', '--maintenance', 'auto'],
+      // Inject a fake key so the test isolates the `--yes` guard from the
+      // no-key guard; CI environments without ZAI_API_KEY set would otherwise
+      // short-circuit out of endpointFromEnv before reaching the cost guard.
+      env: { ZAI_API_KEY: 'fake-key-for-spend-guard-test' },
+      sampleIds: [q.question_id],
+      dataset: [q],
+      cacheDir: '/tmp/no-such-cache',
+      embed: async () => [0.1],
+      stdout,
+      runImpl: runImpl as any,
+    });
+
+    expect(r.exitCode).toBe(1);
+    expect(runImpl).not.toHaveBeenCalled();
+    // The standard warning line must be printed so the user knows how to retry.
+    const combined = stdout.mock.calls.map((c) => String(c[0])).join('');
+    expect(combined).toContain('Re-run with --yes to spend these tokens.');
+  });
+
+  it('returns exit code 0 with --dry-run (before any provider resolution)', async () => {
+    const stdout = vi.fn();
+    const runImpl = vi.fn(async () => {
+      throw new Error('runner should not be called when --dry-run is set');
+    });
+    const q = makeQ('single-session-user', 'q1', 100);
+
+    const r = await runLongMemEvalCommand({
+      // No env, no answerEndpoint — the --dry-run path must short-circuit
+      // before any provider resolution so an unset key is non-fatal here.
+      argv: ['longmemeval', '--dry-run'],
+      env: {}, // intentionally empty: must not throw on dry-run
+      sampleIds: [q.question_id],
+      dataset: [q],
+      cacheDir: '/tmp/no-such-cache',
+      embed: async () => [0.1],
+      stdout,
+      runImpl: runImpl as any,
+    });
+
+    expect(r.exitCode).toBe(0);
+    expect(runImpl).not.toHaveBeenCalled();
+    // The estimate line should be in the output so the operator can sanity-check.
+    const combined = stdout.mock.calls.map((c) => String(c[0])).join('');
+    expect(combined).toMatch(/input tokens/i);
+  });
+
+  it('estimates only the sampled questions, not the whole dataset', async () => {
+    const stdout = vi.fn();
+    const small = makeQ('single-session-user', 'q1', 100); // ceil(200/4) + 2000 = 2,050
+    const huge = makeQ('multi-session', 'q2', 4_000_000); // 1,000,000 + 2000 = 1,002,000
+
+    const r = await runLongMemEvalCommand({
+      argv: ['longmemeval', '--dry-run'],
+      env: {},
+      sampleIds: [small.question_id],
+      dataset: [small, huge],
+      cacheDir: '/tmp/no-such-cache',
+      embed: async () => [0.1],
+      stdout,
+      runImpl: vi.fn(async () => {
+        throw new Error('runner should not be called when --dry-run is set');
+      }) as any,
+    });
+
+    expect(r.exitCode).toBe(0);
+    const combined = stdout.mock.calls.map((c) => String(c[0])).join('');
+    expect(combined).toContain('2,050');
+    expect(combined).not.toContain('1,002,000');
+  });
+
+  it('fails fast with a missing API key when --yes is supplied', async () => {
+    const q = makeQ('single-session-user', 'q1', 10);
+    const r = await runLongMemEvalCommand({
+      argv: ['longmemeval', '--yes'],
+      env: {}, // no key set
+      sampleIds: [q.question_id],
+      dataset: [q],
+      cacheDir: '/tmp/no-such-cache',
+      embed: async () => [0.1],
+      stdout: () => {},
+      stderr: () => {}, // mute the "Set ZAI_API_KEY ..." warning
+      runImpl: vi.fn(async () => {
+        throw new Error('runner should not be called when env resolution fails');
+      }) as any,
+    });
+
+    expect(r.exitCode).not.toBe(0);
+    expect(r.exitCode).not.toBe(1); // distinct from the "no --yes" guard
+  });
+});
+
+describe('resolveOutPath', () => {
+  it('passes absolute paths through unchanged', () => {
+    expect(resolveOutPath('/tmp/cm-smoke.json')).toBe('/tmp/cm-smoke.json');
+  });
+
+  it('resolves relative paths against the repo root, not process.cwd()', () => {
+    // `pnpm --filter <pkg> bench …` runs with cwd = the package directory;
+    // a relative `--out packages/benchmarks/results/x.json` must still land
+    // at `<repo>/packages/benchmarks/results/x.json`.
+    expect(resolveOutPath('packages/benchmarks/results/baseline-7.7.7.json')).toBe(
+      join(REPO_ROOT, 'packages', 'benchmarks', 'results', 'baseline-7.7.7.json'),
+    );
+  });
+});
+
+describe('runSupersessionCommand', () => {
+  // The command resolves its endpoint from env (as the live run does); the
+  // base URL is pointed at a distinctly non-production host so the URL
+  // assertion below fails if the runner ever stops routing through the
+  // resolved endpoint.
+  const ENV = {
+    ZAI_API_KEY: 'fake-key',
+    BENCH_BASE_URL: 'https://cli-supersession.test',
+    BENCH_MODEL: 'm',
+  };
+
+  const ANTHROPIC_OK = () =>
+    new Response(
+      JSON.stringify({
+        content: [{ type: 'text', text: '{}' }],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    );
+
+  const smallScenario: Scenario = {
+    name: '__cli_scenario__',
+    existing: [{ id: 'a', title: 'User lives in Seattle', body: 'b', source_type: 'user_stated' }],
+    events: [{ summary: 'User moved to San Francisco' }],
+    extract: { facts: [], tasks: [] },
+    resolve: null,
+    expectCurrentTitles: ['San Francisco'],
+    expectSuperseded: ['a'],
+  };
+
+  it('returns exit code 0 with --dry-run before endpoint resolution (no env needed)', async () => {
+    const stdout = vi.fn();
+    const r = await runSupersessionCommand({
+      argv: ['supersession', '--strategy', 'legacy', '--dry-run'],
+      env: {}, // intentionally empty: dry-run must not resolve a key
+      scenarios: [smallScenario],
+      embed: async () => [0.1],
+      stdout,
+    });
+    expect(r.exitCode).toBe(0);
+    const combined = stdout.mock.calls.map((c) => String(c[0])).join('');
+    expect(combined).toMatch(/input tokens/i);
+  });
+
+  it('returns exit code 1 without --yes and never fetches', async () => {
+    const stdout = vi.fn();
+    const fetchImpl = vi.fn(async () => ANTHROPIC_OK());
+    const r = await runSupersessionCommand({
+      argv: ['supersession', '--strategy', 'legacy'],
+      env: { ...ENV },
+      scenarios: [smallScenario],
+      embed: async () => [0.1],
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      stdout,
+    });
+    expect(r.exitCode).toBe(1);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    const combined = stdout.mock.calls.map((c) => String(c[0])).join('');
+    expect(combined).toContain('Re-run with --yes to spend these tokens.');
+  });
+
+  it('runs the suite with --yes, routes every call through the injected endpoint, and writes the report', async () => {
+    const outDir = mkdtempSync(join(tmpdir(), 'bench-cli-supersession-'));
+    const outFile = join(outDir, 'report.json');
+    const stdout = vi.fn();
+    const urls: string[] = [];
+    const fetchImpl = vi.fn(async (input: string) => {
+      urls.push(input);
+      return ANTHROPIC_OK();
+    });
+
+    const skipScenario: Scenario = { ...smallScenario, name: '__cli_skipped__', liveSkip: true };
+    const r = await runSupersessionCommand({
+      argv: ['supersession', '--strategy', 'legacy', '--yes', '--out', outFile],
+      env: { ...ENV },
+      scenarios: [smallScenario, skipScenario],
+      embed: async () => [0.1],
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      stdout,
+    });
+
+    expect(r.exitCode).toBe(0);
+    expect(urls.length).toBeGreaterThan(0);
+    for (const u of urls) {
+      expect(u.startsWith('https://cli-supersession.test/')).toBe(true);
+    }
+
+    const report = JSON.parse(readFileSync(outFile, 'utf8'));
+    expect(report.kind).toBe('supersession');
+    expect(report.strategy).toBe('legacy');
+    expect(report.total).toBe(1); // the liveSkip scenario is excluded from results
+    expect(report.skipped).toBe(1);
+    expect(report.results).toHaveLength(1);
+    expect(report.results[0].name).toBe('__cli_scenario__');
+  });
+
+  it('fails fast with a missing API key when --yes is supplied', async () => {
+    const r = await runSupersessionCommand({
+      argv: ['supersession', '--yes'],
+      env: {}, // no key set
+      scenarios: [smallScenario],
+      embed: async () => [0.1],
+      stdout: () => {},
+      stderr: () => {},
+    });
+    expect(r.exitCode).not.toBe(0);
+    expect(r.exitCode).not.toBe(1); // distinct from the "no --yes" guard
+  });
+});
+
+describe('runCompareCommand', () => {
+  function smallReport(overrides: { judgeModel: string; overall: number }): any {
+    return {
+      kind: 'longmemeval',
+      createdAt: '2026-09-30T00:00:00.000Z',
+      engine: { version: '7.7.7', gitSha: 'abc1234', flags: { strategy: 'legacy', maintenance: 'auto' } },
+      models: {
+        answer: 'glm-4.6',
+        judge: overrides.judgeModel,
+        embed: 'fastembed/BGESmallENV15',
+      },
+      sample: { seed: 0, count: 4, dataset: 'longmemeval' },
+      accuracy: {
+        overall: overrides.overall,
+        byType: {
+          'single-session-user': { correct: 2, total: 4, rate: 0.5 },
+        },
+      },
+      tokens: {
+        answer: { calls: 4, inputTokens: 1000, outputTokens: 200, estimatedCalls: 0 },
+      },
+      retrieval: { meanContextTokens: 100, p50: 90, p95: 200 },
+      latencyMs: { ingestP50: 200, ingestP95: 400, answerP50: 800, answerP95: 1200 },
+      cachedIngests: 0,
+      questions: [],
+    };
+  }
+
+  it('prints Markdown comparison to stdout when no --out is supplied', async () => {
+    const beforeJson = JSON.stringify(smallReport({ judgeModel: 'glm-4.6', overall: 0.5 }));
+    const afterJson = JSON.stringify(smallReport({ judgeModel: 'glm-4.6-judge', overall: 0.75 }));
+    const store: Record<string, string> = { '/tmp/before.json': beforeJson, '/tmp/after.json': afterJson };
+    const readFile = (p: string) => {
+      if (!(p in store)) throw new Error(`unexpected read: ${p}`);
+      return store[p];
+    };
+    const stdout = vi.fn();
+    const stderr = vi.fn();
+    const r = await runCompareCommand({
+      argv: ['compare', '/tmp/before.json', '/tmp/after.json'],
+      readFile,
+      stdout,
+      stderr,
+    });
+    expect(r.exitCode).toBe(0);
+    expect(stderr).not.toHaveBeenCalled();
+    const combined = stdout.mock.calls.map((c) => String(c[0])).join('');
+    expect(combined).toMatch(/Bench report comparison/);
+    expect(combined).toMatch(/Accuracy/i);
+    // The judge models differ ⇒ the bold warning line must be present.
+    expect(combined).toMatch(/\*\*[^*]*\bjudge\b[^*]*\*\*/i);
+  });
+
+  it('returns exit code 2 when one of the positional paths is missing', async () => {
+    const stderr = vi.fn();
+    const r = await runCompareCommand({
+      argv: ['compare', '/tmp/before.json'],
+      readFile: () => '{}',
+      stdout: () => {},
+      stderr,
+    });
+    expect(r.exitCode).toBe(2);
+    expect(stderr).toHaveBeenCalled();
+  });
+
+  it('writes the comparison to the supplied --out path', async () => {
+    const outDir = mkdtempSync(join(tmpdir(), 'bench-cli-compare-'));
+    const outFile = join(outDir, 'cmp.md');
+    const beforeJson = JSON.stringify(smallReport({ judgeModel: 'glm-4.6', overall: 0.5 }));
+    const afterJson = JSON.stringify(smallReport({ judgeModel: 'glm-4.6', overall: 0.6 }));
+    const store: Record<string, string> = { '/tmp/before.json': beforeJson, '/tmp/after.json': afterJson };
+    const readFile = (p: string) => store[p] ?? (() => { throw new Error(`unexpected read: ${p}`); })();
+    const stdout = vi.fn();
+    const r = await runCompareCommand({
+      argv: ['compare', '/tmp/before.json', '/tmp/after.json', '--out', outFile],
+      readFile,
+      stdout,
+    });
+    expect(r.exitCode).toBe(0);
+    const written = readFileSync(outFile, 'utf8');
+    expect(written).toMatch(/Bench report comparison/);
+    // No warning line when judge model is the same in both.
+    expect(written).not.toMatch(/\*\*[^*]*\b(judge|answer)\s+model[^*]*\*\*/i);
+    const combined = stdout.mock.calls.map((c) => String(c[0])).join('');
+    expect(combined).toContain(outFile);
+  });
+
+  it('returns exit code 2 when reading or parsing a report fails', async () => {
+    const stderr = vi.fn();
+    const r = await runCompareCommand({
+      argv: ['compare', '/tmp/before.json', '/tmp/after.json'],
+      readFile: (p) => {
+        if (p === '/tmp/before.json') return 'not-json';
+        return '{}';
+      },
+      stdout: () => {},
+      stderr,
+    });
+    expect(r.exitCode).toBe(2);
+    expect(stderr).toHaveBeenCalled();
+  });
+});
