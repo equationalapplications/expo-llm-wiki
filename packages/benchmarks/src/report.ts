@@ -7,7 +7,7 @@
  * and the supersession suite (T7/T8) depend on.
  *
  * `engineInfo()` reads core's package.json to recover the engine version
- * (7.7.7 today) and shells out to `git rev-parse --short HEAD` for the
+ * and shells out to `git rev-parse --short HEAD` for the
  * commit the run was made from. The version is read at call time so the
  * reported value always matches the dependency the run was made against,
  * not the build's `engines` field.

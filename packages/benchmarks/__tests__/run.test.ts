@@ -1,10 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'fs';
+import { mkdtempSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { runLongMemEval } from '../src/longmemeval/run';
 import type { EngineFlags } from '../src/longmemeval/ingest';
 import type { LmeQuestion, LmeQuestionType } from '../src/longmemeval/dataset';
+
+// engineInfo() reads core's package.json at call time, so the expected
+// version tracks every release bump rather than a hardcoded literal.
+const CORE_VERSION = (JSON.parse(readFileSync(new URL('../../core/package.json', import.meta.url), 'utf8')) as { version: string }).version;
 
 function makeQuestion(type: LmeQuestionType, id: string, answer: string): LmeQuestion {
   return {
@@ -103,7 +107,7 @@ describe('runLongMemEval', () => {
       // ISO 8601 with a "T" separator and a trailing "Z".
       expect(report.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
       expect(report.engine.flags).toEqual(flags);
-      expect(report.engine.version).toBe('7.7.7');
+      expect(report.engine.version).toBe(CORE_VERSION);
       expect(report.engine.gitSha).toMatch(/^[0-9a-f]+$/);
       expect(report.models.answer).toBe('answer-model');
       expect(report.models.judge).toBe('judge-model');
