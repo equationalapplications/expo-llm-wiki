@@ -160,12 +160,16 @@ export class EventRepository extends BaseRepository {
 
   /**
    * Count of events for `entityId` strictly after the watermark. Used as
-   * the op-based librarian's bounded batch size.
+   * the op-based librarian's bounded batch size and by the deferred-maintenance
+   * pending report. Pass `wm = null` to count the entity's whole event log
+   * (no watermark yet) — mirrors `getAfter` / `sumSummaryCharsAfter`.
    */
-  async countAfter(entityId: string, wm: LibrarianWatermark): Promise<number> {
+  async countAfter(entityId: string, wm: LibrarianWatermark | null): Promise<number> {
+    const params: unknown[] = wm ? [entityId, wm.at, wm.at, wm.id] : [entityId];
+    const where = wm ? `entity_id = ? AND ${AFTER_SQL}` : `entity_id = ?`;
     const row = await this.db.getFirstAsync<{ count: number }>(
-      `SELECT COUNT(*) as count FROM ${this.prefix}events WHERE entity_id = ? AND ${AFTER_SQL}`,
-      [entityId, wm.at, wm.at, wm.id],
+      `SELECT COUNT(*) as count FROM ${this.prefix}events WHERE ${where}`,
+      params,
     );
     return row?.count ?? 0;
   }

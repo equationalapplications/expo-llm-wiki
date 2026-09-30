@@ -15,7 +15,7 @@ import {
   WikiSupersedeError,
 } from './types';
 import type { DraftPage } from './types';
-import type { PendingSourceStatus, WikiLintReport, WikiInstructions } from './types';
+import type { PendingSourceStatus, WikiLintReport, WikiInstructions, PendingMaintenance } from './types';
 import { EntryRepository } from './repositories/EntryRepository';
 import { OutboxRepository } from './repositories/OutboxRepository';
 import { SourceRefIndexRepository } from './repositories/SourceRefIndexRepository';
@@ -29,6 +29,7 @@ import { normalizeSourceRef, normalizeSourceHash, validateFact, validateTask, cl
 import { resolveGrounding } from './utils/grounding';
 import { IngestionService } from './services/IngestionService';
 import { MaintenanceService } from './services/MaintenanceService';
+import { MaintenanceScheduler } from './services/MaintenanceScheduler';
 import { ImportExportService } from './services/ImportExportService';
 import { EmbeddingService } from './services/EmbeddingService';
 import { RetrievalService } from './services/RetrievalService';
@@ -54,6 +55,7 @@ export interface WikiMemoryTestAccess {
   importExportService: ImportExportService;
   ingestionService: IngestionService;
   maintenanceService: MaintenanceService;
+  maintenanceScheduler: MaintenanceScheduler;
   retrievalService: RetrievalService;
   searchService: SearchService;
   writeService: WriteService;
@@ -96,6 +98,7 @@ export class WikiMemory {
   private jobManager: JobManager;
   private ingestionService: IngestionService;
   private maintenanceService: MaintenanceService;
+  private maintenanceScheduler: MaintenanceScheduler;
   private importExportService: ImportExportService;
   private retrievalService: RetrievalService;
   private writeService: WriteService;
@@ -167,6 +170,15 @@ export class WikiMemory {
       this.promptService,
       this.ontologyService,
     );
+    this.maintenanceScheduler = new MaintenanceScheduler(
+      this.db,
+      this.options,
+      this.maintenanceService,
+      this.metadataRepo,
+      this.eventRepo,
+      this.entryRepo,
+      this.jobManager,
+    );
     this.importExportService = new ImportExportService(
       this.db,
       this.entryRepo,
@@ -225,6 +237,7 @@ export class WikiMemory {
       importExportService: this.importExportService,
       ingestionService: this.ingestionService,
       maintenanceService: this.maintenanceService,
+      maintenanceScheduler: this.maintenanceScheduler,
       retrievalService: this.retrievalService,
       searchService: this.searchService,
       writeService: this.writeService,
@@ -533,6 +546,16 @@ export class WikiMemory {
   /** Await auto-mode background librarian/heal jobs started by write(). No-op in 'deferred' mode. */
   async drain(): Promise<void> {
     return this.writeService.drain();
+  }
+
+  /**
+   * Report which entities have pending maintenance work (librarian events
+   * behind the watermark, heal backlog, unembedded facts) without running
+   * anything. Entities with no pending work are omitted; sorted by
+   * `pendingEvents` desc then `entityId` asc.
+   */
+  async getPendingMaintenance(entityIds?: string[]): Promise<PendingMaintenance[]> {
+    return this.maintenanceScheduler.getPending(entityIds);
   }
 
   /**
