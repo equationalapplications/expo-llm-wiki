@@ -140,6 +140,8 @@ const report = await wiki.runPendingMaintenance({ tokenBudget: 20_000, deadlineM
 - Under `'deferred'` or the ops strategy, `runPrune` never deletes events the librarian has not processed.
 - `JobManager` locks only work within one process. Guarantee a single writer per database file across processes.
 
+See the [SynapseTree integration guide](../../docs/synapsetree-integration.md) for the end-to-end pattern on tenant-aware hosts (S3-backed SQLite, request lifecycle, `entity_id` scheme, MCP surface, costs). Benchmarks live at [docs/benchmarks.md](../../docs/benchmarks.md).
+
 ## Installation
 
 ```bash
