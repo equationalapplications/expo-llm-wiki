@@ -1,0 +1,17 @@
+{
+  "name": "ScopeLab",
+  "short_name": "ScopeLab",
+  "description": "Client-side LLM tool playground with memory.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "theme_color": "#0f172a",
+  "background_color": "#0f172a",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
