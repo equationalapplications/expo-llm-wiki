@@ -1,10 +1,21 @@
-# Benchmark results — 7.8.0 vs 7.7.7
+# Benchmark results — 7.8.0 release vs 7.7.7 baseline
 
 Run on **2026-09-30** to measure how the new ops strategy shipped in
-`7.8.0` changes end-to-end benchmark outcomes compared to the legacy
-librarian shipped in `7.7.7`. Results are committed at
-`f0abfde` (synapse-tree guide), `25e392c` (doc fix), and
-`5875b75` (result JSONs); this page summarises them.
+this PR (which will become `7.8.0` at release time) changes
+end-to-end benchmark outcomes compared to the legacy librarian
+shipped in `7.7.7`. Both reruns run against an engine whose
+`packages/core/package.json` is still `7.7.7` at the cited commits
+(`d380f0a` for the legacy baseline, `1f670db` for this worktree) —
+the `7.8.0` version bump is a release-process step and is not in git
+history yet (no `chore(release): 7.8.0` exists; the most recent release
+commit is `d2fc492 chore(release): 7.7.7`). The difference between
+the runs is the `--strategy` argument and the post-cut PR work
+(`PR-A`/`B`/`C`/`D1`/`0`/`S`), not the engine version. The
+`engine.version` field in both committed result JSONs reads `7.7.7`,
+matching `package.json`.
+
+Results are committed at `f0abfde` (synapse-tree guide), `25e392c`
+(doc fix), and `5875b75` (result JSONs); this page summarises them.
 
 ## What we measured
 
@@ -23,7 +34,7 @@ Both suites use the same model for **answer generation** and
 | Provider | z.ai Anthropic-compatible endpoint |
 | Base URL | `https://api.z.ai/api/anthropic` |
 | Model (answer) | `GLM-5.3-FLASH` |
-| Model (judge) | `GLM-5.3-FLASH` (same as answer — see §6 caveats) |
+| Model (judge) | `GLM-5.3-FLASH` (same model as the answer; see §6 caveats) |
 | Embedder | FastEmbed `BGESmallENV15` (`bge-small-en-v1.5`, 384 dim) — local, hardware-independent |
 | Seed | `20260929` |
 | Token accounting | provider-reported (`usage.input_tokens` / `usage.output_tokens`) when the response includes a `usage` block; otherwise `chars / 4` |
@@ -35,8 +46,9 @@ escape-hatch that lets this page ship with the supersession data only.
 ## Results
 
 Supersession pass counts, **legacy** (`--strategy legacy`, engine `7.7.7`,
-git SHA `d380f0a`) versus **ops** (`--strategy ops`, engine `7.8.0`,
-git SHA `1f670db`):
+git SHA `d380f0a`) versus **ops** (`--strategy ops`, engine `7.7.7`
+at this commit — the `7.8.0` version bump is the release step,
+not done here, git SHA `1f670db`):
 
 | Strategy | Passed | Failed | Total | Wall-clock |
 |---------|-------:|-------:|------:|-----------:|
@@ -92,8 +104,12 @@ output collapsed or omitted state that ops preserved:
 - **`mixed-1-three-candidates-noop-add-supersede`** — legacy returned
   three titles (`User started drinking coffee`, `User is an engineer at
   Acme`, `User now lives in San Francisco`) and dropped the tea
-  preference that the catalog requires. Ops returned the same three plus
-  `User prefers tea`, matching the catalog.
+  preference that the catalog requires. Ops returned four titles
+  (`User started drinking coffee`, `User works as an engineer at Acme`,
+  `User moved to San Francisco`, `User prefers tea`): the same three
+  facts with slight paraphrasing (e.g. "is an engineer" →
+  "works as an engineer", "now lives in" → "moved to"), plus the
+  missing tea preference.
 - **`relationship-4-unrelated-new-project-add`** — legacy returned a
   single new-project title and dropped the existing Project Alpha
   relationship that should have been kept alongside the new add. Ops
@@ -124,9 +140,14 @@ thresholds tolerate more additive facts in the result set.
   outcome.
 - **2 scenarios** that both strategies fail:
   - **`diet-5-preference-reversal-with-date`** — even with ops, the
-    result set misses a prior beverage period and over-collapses the
-    reversal. Likely requires a temporal-window extraction pass that
-    is not in scope for the ops strategy.
+    dated precision is wrong. Ops returns
+    `User drank tea in the past before a period of not drinking it`
+    and `User switched back to drinking tea as of January 2025`,
+    which captures the reversal but not the prior coffee period's
+    start/end dates the catalog expects. Legacy returns
+    `User switched back to tea as of January 2025` only, which is
+    worse. Both strategies need a temporal-window extraction pass
+    that is not in scope for ops.
   - **`mixed-5-extract-valid_from-overrides-occurred_at`** — ops
     returns just `User moved to San Francisco` and drops the
     `Former residence: Seattle (until October 2024)` trail that
@@ -191,7 +212,7 @@ pnpm --filter @equationalapplications/benchmarks-llm-wiki bench \
   supersession --strategy legacy --yes \
   --out packages/benchmarks/results/supersession-baseline-7.7.7.json
 
-# Ops final — run from this worktree (engine 7.8.0 / git SHA 1f670db)
+# Ops final — run from this worktree (engine 7.7.7 / git SHA 1f670db; the 7.8.0 release label is post-merge)
 pnpm --filter @equationalapplications/benchmarks-llm-wiki bench \
   supersession --strategy ops --yes \
   --out packages/benchmarks/results/supersession-7.8.0.json
@@ -205,12 +226,12 @@ pnpm --filter @equationalapplications/benchmarks-llm-wiki bench \
   longmemeval --strategy legacy --maintenance auto --yes \
   --out packages/benchmarks/results/baseline-7.7.7.json
 
-# Ops final on 7.8.0
+# Ops final — engine is 7.7.7 at this commit (the 7.8.0 release label is post-merge)
 pnpm --filter @equationalapplications/benchmarks-llm-wiki bench \
   longmemeval --strategy ops --maintenance deferred --read-budget 800 --yes \
   --out packages/benchmarks/results/report-7.8.0.json
 
-# Legacy final on 7.8.0 (engine comparison, not strategy comparison)
+# Legacy final (engine comparison, not strategy comparison)
 pnpm --filter @equationalapplications/benchmarks-llm-wiki bench \
   longmemeval --strategy legacy --maintenance auto --yes \
   --out packages/benchmarks/results/report-7.8.0-legacy.json
@@ -292,18 +313,38 @@ same signature:
 
 The trigger is HTTP 429 from z.ai's rate limiter
 (`Rate limit reached for requests`, request IDs
-`2026093016*`...) that the **legacy librarian** does not catch:
+`2026093016*`...) that the **legacy librarian** does not catch.
+Verified call chain (the throw propagates **up** from the provider,
+not down from the dispatcher):
 
-- `packages/benchmarks/src/provider.ts:40,129` retries 429/529/5xx
-  up to 4× with backoff at the provider layer.
-- `packages/core/src/services/MaintenanceService.ts:647`
-  (`MaintenanceService.doRunLibrarian`) calls
-  `WriteService.runLibrarianThenMaybeHeal` which calls
-  `runLegacyLibrarianPass` (`packages/core/src/services/librarian/legacy.ts:62`).
-  This path throws on a 429 that exceeds the retry budget — and the
-  retry budget is small enough that a sustained 429 storm
-  (longmemeval's per-question librarian calls run continuously for
-  hours) exhausts it.
+- Origin: `packages/benchmarks/src/provider.ts:129` — `throw new
+  Error(errMessage(response.status, text))` after the 4-retry budget
+  at `provider.ts:40` (1s/2s/4s/8s backoff for 429/529/5xx) is
+  exhausted. Longmemeval's per-question librarian calls run
+  continuously for hours, so a sustained 429 storm exhausts that
+  budget.
+- Propagates up through `callLlm`
+  (`packages/core/src/utils/llmCall.ts:24`, signature; the
+  `provider.generateText` call site is at `llmCall.ts:46`).
+- → `runLegacyLibrarianPass` signature at
+  `packages/core/src/services/librarian/legacy.ts:32`. (Line 62 is
+  inside the inner `try { callLlm(...) }` catch that converts
+  `WikiBudgetExhausted` into `LibrarianResult.budgetStop`; the throw
+  itself leaves the function uncaught because the call site only
+  catches `WikiBudgetExhausted`, not generic errors.)
+- → `MaintenanceService.runLibrarianPass` at
+  `packages/core/src/services/MaintenanceService.ts:674`, called by
+- → `MaintenanceService.doRunLibrarian` at
+  `packages/core/src/services/MaintenanceService.ts:658`, called by
+- → `WriteService.runLibrarianThenMaybeHeal` at
+  `packages/core/src/services/WriteService.ts:175`.
+
+When the throw exits the writer, the surrounding `Promise.catch` in
+`WriteService` (above `runLibrarianThenMaybeHeal` at line 138)
+swallows it for the write path — but the lock is then reacquired by
+the next write, and the underlying `std::system_error: mutex lock
+failed` surfaces once the underlying Node.js stdlib hits a corrupted
+mutex state, triggering the SIGABRT.
 - The **heal** path catches 429s cleanly and skips (`response could
   not be bounded: HTTP 429` → heal skipped, no throw), which is why
   the heal-side reruns survive and the librarian-side reruns do not.
