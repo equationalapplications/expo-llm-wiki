@@ -15,7 +15,7 @@ import {
   WikiSupersedeError,
 } from './types';
 import type { DraftPage } from './types';
-import type { PendingSourceStatus, WikiLintReport, WikiInstructions, PendingMaintenance } from './types';
+import type { PendingSourceStatus, WikiLintReport, WikiInstructions, PendingMaintenance, RunPendingMaintenanceOptions, RunPendingMaintenanceResult } from './types';
 import { EntryRepository } from './repositories/EntryRepository';
 import { OutboxRepository } from './repositories/OutboxRepository';
 import { SourceRefIndexRepository } from './repositories/SourceRefIndexRepository';
@@ -556,6 +556,11 @@ export class WikiMemory {
    */
   async getPendingMaintenance(entityIds?: string[]): Promise<PendingMaintenance[]> {
     return this.maintenanceScheduler.getPending(entityIds);
+  }
+
+  /** Run pending librarian/heal/reembed work under an optional token budget and deadline (spec §6.2). Nothing runs after it resolves. */
+  async runPendingMaintenance(options?: RunPendingMaintenanceOptions): Promise<RunPendingMaintenanceResult> {
+    return this.maintenanceScheduler.run(options);
   }
 
   /**
