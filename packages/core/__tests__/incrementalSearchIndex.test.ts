@@ -60,8 +60,8 @@ function countIndexReads(wiki: WikiMemory) {
   return counts;
 }
 
-const search = (wiki: WikiMemory, query: string) =>
-  wiki.__testAccess.searchService.searchKeyword(query, [ENTITY], 2000).map((r) => r.id).sort();
+const search = (wiki: WikiMemory, query: string, entityId = ENTITY) =>
+  wiki.__testAccess.searchService.searchKeyword(query, [entityId], 2000).map((r) => r.id).sort();
 
 describe('incremental keyword index (#232)', () => {
   it('reads each imported row back about once, whatever the chunk size', async () => {
@@ -135,5 +135,145 @@ describe('incremental keyword index (#232)', () => {
 
     await wiki.importDump(dumpOf([makeFact(1)]), { merge: true });
     expect(search(wiki, 'pelican')).toEqual(['node_1']);
+  });
+});
+
+describe('WikiMemory.syncSearchIndex (#246)', () => {
+  function upsertNode(
+    wiki: WikiMemory,
+    tx: Parameters<WikiMemory['upsertGraph']>[2],
+    entityId: string,
+    id: string,
+    title: string,
+    hashChar: string,
+  ) {
+    return wiki.upsertGraph(
+      entityId,
+      { sourceRef: `${id}.ts`, sourceHash: hashChar.repeat(64), nodes: [{ id, type: '', title }], edges: [] },
+      tx,
+    );
+  }
+
+  const quietPrune = { retainSoftDeletedFor: null, retainEventsFor: null } as const;
+
+  it('makes committed upsertGraph nodes keyword-searchable without another core write', async () => {
+    const { wiki, db } = await freshWiki();
+    await wiki.importDump(dumpOf([makeFact(0)]), { merge: true });
+    await db.withTransactionAsync((tx) => upsertNode(wiki, tx, ENTITY, 'node_1', 'pelican symbol', 'c'));
+    expect(search(wiki, 'pelican')).toEqual([]);
+
+    await wiki.syncSearchIndex(ENTITY);
+
+    expect(search(wiki, 'pelican')).toEqual(['node_1']);
+  });
+
+  it('surfaces the nodes through the public read() path', async () => {
+    const { wiki, db } = await freshWiki();
+    await wiki.importDump(dumpOf([makeFact(0)]), { merge: true });
+    await db.withTransactionAsync((tx) => upsertNode(wiki, tx, ENTITY, 'node_1', 'pelican symbol', 'c'));
+    expect((await wiki.read(ENTITY, 'pelican')).facts.map((f) => f.id)).not.toContain('node_1');
+
+    await wiki.syncSearchIndex(ENTITY);
+
+    expect((await wiki.read(ENTITY, 'pelican')).facts.map((f) => f.id)).toContain('node_1');
+  });
+
+  it('surfaces the nodes through hybrid read() when an embedder is configured', async () => {
+    const db = openTestDatabase();
+    const wiki = new WikiMemory(db, {
+      llmProvider: { generateText: async () => '{"facts":[]}', embed: async () => [0.1, 0.2, 0.3] },
+    });
+    await wiki.setup();
+    await wiki.importDump(dumpOf([makeFact(0)]), { merge: true });
+    await db.withTransactionAsync((tx) => upsertNode(wiki, tx, ENTITY, 'node_1', 'pelican symbol', 'c'));
+
+    await wiki.syncSearchIndex(ENTITY);
+
+    expect((await wiki.read(ENTITY, 'pelican')).facts.map((f) => f.id)).toContain('node_1');
+  });
+
+  it('is a no-op for an entity whose index is already current', async () => {
+    const { wiki } = await freshWiki();
+    await wiki.importDump(dumpOf([makeFact(0)]), { merge: true });
+    const counts = countIndexReads(wiki);
+
+    await wiki.syncSearchIndex(ENTITY);
+
+    expect(counts).toEqual({ rows: 0, fullReads: 0 });
+  });
+
+  it('with no argument, rebuilds every stale entity and leaves clean ones alone', async () => {
+    const { wiki, db } = await freshWiki();
+    await wiki.importDump(dumpOf([makeFact(0)]), { merge: true });
+    await wiki.importDump(
+      { generatedAt: 0, entities: { e3: { facts: [{ ...makeFact(2), id: 'fact_e3', entity_id: 'e3' }], tasks: [], events: [], edges: [] } } },
+      { merge: true },
+    );
+    await db.withTransactionAsync(async (tx) => {
+      await upsertNode(wiki, tx, ENTITY, 'node_1', 'pelican symbol', 'c');
+      await upsertNode(wiki, tx, 'e2', 'node_2', 'heron symbol', 'd');
+    });
+    const counts = countIndexReads(wiki);
+
+    await wiki.syncSearchIndex();
+
+    expect(search(wiki, 'pelican')).toEqual(['node_1']);
+    expect(search(wiki, 'heron', 'e2')).toEqual(['node_2']);
+    // One full read per stale entity (e1, e2); the clean e3 is never re-read.
+    expect(counts.fullReads).toBe(2);
+  });
+
+  it('never rejects when the rebuild fails, and the next call retries it', async () => {
+    const { wiki, db } = await freshWiki();
+    await wiki.importDump(dumpOf([makeFact(0)]), { merge: true });
+    await db.withTransactionAsync((tx) => upsertNode(wiki, tx, ENTITY, 'node_1', 'pelican symbol', 'c'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const repo = wiki.__testAccess.entryRepo;
+    const spy = vi.spyOn(repo, 'findMiniSearchRows').mockRejectedValueOnce(new Error('disk hiccup'));
+
+    await expect(wiki.syncSearchIndex(ENTITY)).resolves.toBeUndefined();
+    expect(search(wiki, 'pelican')).toEqual([]);
+
+    spy.mockRestore();
+    await wiki.syncSearchIndex(ENTITY);
+    expect(search(wiki, 'pelican')).toEqual(['node_1']);
+    warn.mockRestore();
+  });
+
+  it('keeps the entity stale when markStale lands during the rebuild read', async () => {
+    const { wiki, db } = await freshWiki();
+    await wiki.importDump(dumpOf([makeFact(0)]), { merge: true });
+    await db.withTransactionAsync((tx) => upsertNode(wiki, tx, ENTITY, 'node_1', 'pelican symbol', 'c'));
+    const { entryRepo: repo, searchService } = wiki.__testAccess;
+    const real = repo.findMiniSearchRows.bind(repo);
+    const spy = vi.spyOn(repo, 'findMiniSearchRows').mockImplementationOnce(async (...args) => {
+      searchService.markStale(ENTITY);
+      return real(...args);
+    });
+
+    await wiki.syncSearchIndex(ENTITY);
+    spy.mockRestore();
+
+    // Still stale, so the next call rebuilds again instead of no-oping.
+    const counts = countIndexReads(wiki);
+    await wiki.syncSearchIndex(ENTITY);
+    expect(counts.fullReads).toBe(1);
+  });
+
+  it('runs safely alongside a concurrent maintenance pass', async () => {
+    const { wiki, db } = await freshWiki();
+    await wiki.importDump(dumpOf([makeFact(0)]), { merge: true });
+    await db.withTransactionAsync((tx) => upsertNode(wiki, tx, ENTITY, 'node_1', 'pelican symbol', 'c'));
+
+    await Promise.all([wiki.runPrune(ENTITY, quietPrune), wiki.syncSearchIndex(ENTITY)]);
+
+    expect(search(wiki, 'pelican')).toEqual(['node_1']);
+  });
+
+  it('rejects an empty entityId', async () => {
+    const { wiki } = await freshWiki();
+    await expect(wiki.syncSearchIndex('')).rejects.toThrow(
+      new TypeError('Invalid entityId: must be a non-empty string.'),
+    );
   });
 });
