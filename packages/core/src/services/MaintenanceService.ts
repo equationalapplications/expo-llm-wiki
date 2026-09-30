@@ -326,8 +326,20 @@ export class MaintenanceService {
 
       if (retainEventsFor !== null) {
         const cutoff = now - retainEventsFor * 86400000;
-        const eventResult = await this.eventRepo.prune(entityId, cutoff);
-        deletedEvents = eventResult.changes;
+        const guarded = this.options.config?.maintenance === 'deferred' || this.options.config?.librarian?.strategy === 'ops';
+        if (guarded) {
+          // Spec §6: under deferred/ops the librarian re-reads the event log,
+          // so prune may only delete events the watermark has already passed.
+          const wm = await this.metadataRepo.getLibrarianWatermark(entityId, this.db);
+          deletedEvents = (await this.eventRepo.pruneThrough(entityId, cutoff, wm)).changes;
+          const held = await this.eventRepo.countHeldBack(entityId, cutoff, wm);
+          if (held > 0) {
+            emitDiagnostic(this.options, { code: 'event_retention_held', operation: 'prune', trigger: 'call', entityId, detail: { count: held } });
+          }
+        } else {
+          const eventResult = await this.eventRepo.prune(entityId, cutoff);
+          deletedEvents = eventResult.changes;
+        }
       }
 
       if (vacuum) {

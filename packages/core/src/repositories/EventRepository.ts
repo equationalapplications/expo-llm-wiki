@@ -104,6 +104,35 @@ export class EventRepository extends BaseRepository {
   }
 
   /**
+   * Watermark-guarded prune (spec 2026-09-29 competitive-memory §6): delete
+   * events at or before `cutoff` **and** at-or-before the librarian watermark.
+   * Events the librarian has not processed yet are retention-held, never
+   * deleted. `wm = null` (no watermark yet) deletes nothing.
+   * Used by runPrune under the deferred/ops strategies.
+   */
+  async pruneThrough(entityId: string, cutoff: number, wm: LibrarianWatermark | null): Promise<{ changes: number }> {
+    if (!wm) return { changes: 0 };
+    return this.db.runAsync(
+      `DELETE FROM ${this.prefix}events WHERE entity_id = ? AND created_at <= ? AND NOT ${AFTER_SQL}`,
+      [entityId, cutoff, ...afterArgs(wm)],
+    );
+  }
+
+  /**
+   * Count events at or before `cutoff` that are after the watermark — the
+   * retention-held tail `pruneThrough` left in place. `wm = null` counts all
+   * events at or before `cutoff` (every one of them is held back).
+   */
+  async countHeldBack(entityId: string, cutoff: number, wm: LibrarianWatermark | null): Promise<number> {
+    const where = wm ? ` AND ${AFTER_SQL}` : '';
+    const row = await this.db.getFirstAsync<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM ${this.prefix}events WHERE entity_id = ? AND created_at <= ?${where}`,
+      [entityId, cutoff, ...(wm ? afterArgs(wm) : [])],
+    );
+    return Number(row?.n ?? 0);
+  }
+
+  /**
    * Return the total number of events stored for an entity.
    * `tx` is optional — pass an active transaction handle for atomic reads.
    */
