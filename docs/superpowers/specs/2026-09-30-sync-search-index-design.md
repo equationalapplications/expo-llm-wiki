@@ -1,7 +1,7 @@
 # Public `WikiMemory.syncSearchIndex()`: Design
 
 **Date:** 2026-09-30
-**Status:** Draft — awaiting review → **Approved** 2026-09-30 in PR #251 review: §2.2 resolved to option 1 (sync stale entities only)
+**Status:** Draft — awaiting review → **Approved** 2026-09-30 in PR #251 review: §2.2 resolved to option 1 (sync stale entities only) → **Implemented** in `62d1fd3`
 **Branch:** `docs/core-sync-search-index-246`
 **Source baseline:** `18a34f8` (v7.8.0)
 **Issue:** #246
