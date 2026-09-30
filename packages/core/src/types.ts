@@ -928,6 +928,8 @@ export interface FormatContextOptions {
   includeTags?: boolean;
   includeEntityIds?: boolean;
   includeFactScores?: boolean;
+  /** Title + body only; overrides every include* flag. Default false. */
+  compact?: boolean;
   factWeights?: {
     confidence?: number;
     accessCount?: number;
