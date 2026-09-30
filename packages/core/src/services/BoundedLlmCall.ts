@@ -14,6 +14,8 @@
  * `call` with no LLM and no database.
  */
 
+import { WikiBudgetExhausted } from '../utils/usage';
+
 /**
  * Batch size when the provider declares no ceiling.
  *
@@ -149,6 +151,10 @@ export interface RunBatchedOutcome<TItem, TResult> {
   skipped: Array<{ item: TItem; reason: 'non_convergent' | 'call_error' }>;
   /** Number of `call` attempts made, including failed ones. */
   batches: number;
+  /** Items never sent because a budget stop ended the run. Not skipped: callers must not cooldown-stamp them. */
+  unattempted: TItem[];
+  /** Present when the run ended on WikiBudgetExhausted. */
+  budgetStop?: { requiredEstimate: number };
 }
 
 export function initialBatchSize(maxOutputTokens?: number): number {
@@ -174,6 +180,8 @@ export async function runBatched<TItem, TResult>(
   const results: TResult[] = [];
   const skipped: Array<{ item: TItem; reason: 'non_convergent' | 'call_error' }> = [];
   let batches = 0;
+  const settled = new Set<TItem>();
+  let budgetStop: { requiredEstimate: number } | undefined;
 
   /**
    * Sticky downward adaptation. Ratchets down on failure and never climbs back
@@ -262,6 +270,7 @@ export async function runBatched<TItem, TResult>(
         const reason: 'non_convergent' | 'call_error' =
           fromCall && !isTruncationError(err) && !isConfigError(err) ? 'call_error' : 'non_convergent';
         skipped.push({ item: batch[0], reason });
+        settled.add(batch[0]);
         onSkip?.(batch[0], err);
       }
       return;
@@ -286,7 +295,7 @@ export async function runBatched<TItem, TResult>(
     // can match anchors the parent did not. Without this, the input bound held
     // only on first attempts.
     let i = 0;
-    while (i < batch.length) {
+    while (i < batch.length && !budgetStop) {
       const size = Math.min(batchSize, batch.length - i);
       const trimmed = await trim(batch.slice(i, i + size));
       await attempt(trimmed.batch, trimmed.prompts);
@@ -300,6 +309,7 @@ export async function runBatched<TItem, TResult>(
     prebuilt?: BuiltPrompt,
     attemptLevel: 0 | 1 | 2 | 3 = 0,
   ): Promise<void> => {
+    if (budgetStop) return;
     if (batch.length === 0) return;
     // prebuilt is the L0 form from trim(); only valid at attemptLevel === 0.
     // The level-advance path in onFailure passes `undefined` to force a rebuild.
@@ -313,6 +323,14 @@ export async function runBatched<TItem, TResult>(
     try {
       responseText = await call(prompts);
     } catch (err) {
+      // Budget stop is a clean termination, not a failure: end the run, keep
+      // earlier results, surface the un-attempted items, do NOT skip them.
+      // Caught BEFORE onFailure so a budget error is never confused with a
+      // truncation-shaped or transient call_error.
+      if (err instanceof WikiBudgetExhausted) {
+        budgetStop = { requiredEstimate: err.requiredEstimate };
+        return;
+      }
       // Non-truncation call errors: hand to onFailure (skips at batch.length===1,
       // throws at batch.length>1). Truncation errors also go to onFailure for
       // potential ladder escalation.
@@ -333,14 +351,16 @@ export async function runBatched<TItem, TResult>(
     }
 
     results.push(result);
+    for (const item of batch) settled.add(item);
   };
 
   let index = 0;
-  while (index < items.length) {
+  while (index < items.length && !budgetStop) {
     const { batch, prompts } = await trim(items.slice(index, index + batchSize));
     index += batch.length;
     await attempt(batch, prompts, 0);
   }
 
-  return { results, skipped, batches };
+  const unattempted = budgetStop ? items.filter((item) => !settled.has(item)) : [];
+  return { results, skipped, batches, unattempted, ...(budgetStop ? { budgetStop } : {}) };
 }

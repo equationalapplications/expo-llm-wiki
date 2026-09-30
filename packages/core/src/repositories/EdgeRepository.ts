@@ -1,5 +1,6 @@
 import { BaseRepository } from './BaseRepository';
 import type { WikiEdge, SQLiteAdapter } from '../types';
+import { liveAtSql, type LiveMode } from '../utils/temporal';
 
 export interface NeighborhoodQueryOptions {
   maxDepth: number; // already clamped to [1,3] by the caller (GraphTraversalService)
@@ -16,6 +17,8 @@ export interface NeighborhoodQueryOptions {
    * intentionally start from a draft. Default false (drafts visible).
    */
   excludeDrafts?: boolean;
+  /** Liveness gate for discovered nodes: 'current' (live now) or 'asOf' (valid time T). Always supplied by GraphTraversalService. */
+  live: { mode: LiveMode; t: number };
 }
 
 const CONFIDENCE_RANK: Record<'tentative' | 'inferred' | 'certain', number> = {
@@ -180,6 +183,7 @@ export class EdgeRepository extends BaseRepository {
           ) >= ?
           AND n.source_type NOT IN (${excludeSourceTypesPlaceholders})
           AND (? = 0 OR n.lifecycle_status != 'draft')
+          AND ${liveAtSql(opts.live.mode, 'n.')}
         WHERE w.depth < ?
           AND instr(w.visited, ',' || (CASE WHEN e.source_id = w.node_id THEN e.target_id ELSE e.source_id END) || ',') = 0
       )
@@ -199,6 +203,7 @@ export class EdgeRepository extends BaseRepository {
       minConfidenceRank,
       ...opts.excludeSourceTypes,
       opts.excludeDrafts === true ? 1 : 0,
+      opts.live.t, opts.live.t,
       opts.maxDepth,
       opts.maxNodes,
     ];
