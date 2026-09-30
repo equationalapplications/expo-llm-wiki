@@ -22,6 +22,20 @@ export class WriteService {
     private maintenanceService: MaintenanceService,
   ) {}
 
+  private inflight = new Set<Promise<unknown>>();
+
+  private track(p: Promise<unknown>): void {
+    this.inflight.add(p);
+    p.finally(() => this.inflight.delete(p)).catch(() => {});
+  }
+
+  /** Await every background job this instance started (spec §6.2). Loops because a finishing job can start another. */
+  async drain(): Promise<void> {
+    while (this.inflight.size > 0) {
+      await Promise.allSettled([...this.inflight]);
+    }
+  }
+
   async write(entityId: string, event: Omit<WikiEvent, 'id' | 'entity_id' | 'created_at'>): Promise<void> {
     if (typeof entityId !== 'string' || entityId.length === 0 || entityId.length > 200 || entityId.includes('\0')) {
       throw new TypeError(
@@ -70,6 +84,12 @@ export class WriteService {
       occurred_at: occurredAt,
     };
 
+    const deferred = this.options.config?.maintenance === 'deferred';
+    if (deferred) {
+      await this.eventRepo.add(newEvent);
+      return;
+    }
+
     let shouldRunLibrarian = false;
     let librarianCount = 0;
     let prevMemoryCheckpoint = 0;
@@ -96,6 +116,18 @@ export class WriteService {
           prevMemoryCheckpoint = memoryCheckpoint;
           await this.metadataRepo.updateCheckpoint(entityId, { memory: count }, tx);
         }
+      } else {
+        const tokenThreshold = this.options.config?.autoLibrarianTokenThreshold;
+        if (typeof tokenThreshold === 'number' && tokenThreshold > 0 && !this.jobManager.isBlocked('librarian', entityId)) {
+          const wm = await this.metadataRepo.getLibrarianWatermark(entityId, tx);
+          const chars = await this.eventRepo.sumSummaryCharsAfter(entityId, wm, tx);
+          if (Math.ceil(chars / 4) >= tokenThreshold) {
+            shouldRunLibrarian = true;
+            librarianCount = count;
+            prevMemoryCheckpoint = memoryCheckpoint;
+            await this.metadataRepo.updateCheckpoint(entityId, { memory: count }, tx);
+          }
+        }
       }
     });
 
@@ -103,7 +135,7 @@ export class WriteService {
       try {
         this.jobManager.acquireLock('librarian', entityId);
         const stage: { job: 'librarian' | 'heal' } = { job: 'librarian' };
-        this.runLibrarianThenMaybeHeal(entityId, librarianCount, prevMemoryCheckpoint, stage)
+        const job = this.runLibrarianThenMaybeHeal(entityId, librarianCount, prevMemoryCheckpoint, stage)
           .catch((err: unknown) => {
             console.error(err);
             this.reportBackgroundFailure(entityId, stage.job);
@@ -111,6 +143,7 @@ export class WriteService {
           .finally(() => {
             this.jobManager.releaseLock('librarian', entityId);
           });
+        this.track(job);
       } catch (e) {
         if (!(e instanceof WikiBusyError)) throw e;
         await this.metadataRepo.updateCheckpoint(entityId, { memory: prevMemoryCheckpoint }, this.db);
@@ -131,10 +164,11 @@ export class WriteService {
       // heal's dedupe read being inside its transaction (#69).
       // tryAcquireAutoHealLock inside maybeRunHeal prevents a burst of writes
       // from stacking passes.
-      this.maybeRunHeal(entityId, eventCount).catch((err: unknown) => {
+      const healJob = this.maybeRunHeal(entityId, eventCount).catch((err: unknown) => {
         console.error(err);
         this.reportBackgroundFailure(entityId, 'heal');
       });
+      this.track(healJob);
     }
   }
 
