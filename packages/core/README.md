@@ -92,6 +92,54 @@ await wiki.write('user-123', { event_type: 'observation', summary: 'Moved to SF'
 - History is kept. Set `config.pruneSupersededAfter` (days) to let `runPrune` retire expired facts.
 - `getMemoryBundle()` and `exportDump()` return every non-deleted fact, including history.
 
+## Librarian strategies
+
+`config.librarian.strategy` selects how events become facts. The default, `'legacy'`, is unchanged from 7.x.
+
+```typescript
+new WikiMemory(db, {
+  llmProvider,
+  config: { librarian: { strategy: 'ops', gate: { k: 5, dupThreshold: 0.97, novelThreshold: 0.55 } } },
+});
+```
+
+`'ops'` works in three steps:
+
+1. **Extract.** Candidate facts come from the events since the last pass. Existing facts are not sent.
+2. **Gate, with no LLM call.** Each candidate is compared with its closest current facts. An identical fact is a no-op, and a candidate with no close match is added. Only candidates that are similar but different continue to step 3. Similar is not the same as identical: "lives in Seattle" and "moved to San Francisco" score as similar, so they go to the model.
+3. **Resolve, in one batched call.** The model returns `ADD`, `UPDATE`, `SUPERSEDE` or `NOOP` for each remaining candidate. `SUPERSEDE` uses `supersede()`, so history is kept and `read({ asOf })` still sees the old fact.
+
+- The thresholds depend on your embedding model. The defaults are provisional.
+- Without `embed`, the gate uses keyword search. Every keyword match then goes to the resolve step.
+- Under `'ops'`, `runLibrarian`'s `promptOverride` and `prompts.librarianSystemPrompt` are ignored: the ops prompts use a different schema.
+- A model answer that can't be used never loses a fact. It is added, or stored as a draft, and a diagnostic is emitted.
+
+## Deferred maintenance
+
+By default, `write()` starts the librarian and heal in the background when thresholds are crossed. On serverless or request-scoped hosts those background promises can be frozen or killed. Set `maintenance: 'deferred'` to decide when maintenance runs:
+
+```typescript
+const wiki = new WikiMemory(db, {
+  llmProvider,
+  config: { maintenance: 'deferred', librarian: { strategy: 'ops' } },
+});
+
+await wiki.write(entityId, { event_type: 'observation', summary, occurred_at });
+
+const report = await wiki.runPendingMaintenance({ tokenBudget: 20_000, deadlineMs: 8_000 });
+// report.stoppedReason: complete | deadline | budget_exhausted | budget_too_small
+// Nothing is still running here, so it is safe to persist the database.
+```
+
+- `getPendingMaintenance()` shows the backlog per entity without calling a model.
+- The budget covers text-generation tokens only; embedding calls are not counted. Figures are provider-reported when `generateTextWithUsage` exists, otherwise estimated at characters ÷ 4.
+- Entities share the budget fairly: each round runs one batch per entity.
+- `budget_too_small` names the job and entity whose smallest step needs more than the whole budget.
+- A crash mid-batch loses nothing. The librarian's progress marker only advances after a batch commits.
+- In `'auto'` mode, call `drain()` before the app is suspended or closed. `autoLibrarianTokenThreshold` also triggers the librarian on the size of the pending text.
+- Under `'deferred'` or the ops strategy, `runPrune` never deletes events the librarian has not processed.
+- `JobManager` locks only work within one process. Guarantee a single writer per database file across processes.
+
 ## Installation
 
 ```bash

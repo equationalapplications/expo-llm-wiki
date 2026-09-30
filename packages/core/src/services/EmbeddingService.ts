@@ -105,6 +105,32 @@ export class EmbeddingService {
     body: string;
     tags: string | string[];
   }, ctx?: EmbedDiagnosticContext): Promise<EmbedFactResult> {
+    const r = await this.embedTextForFact(fact, ctx);
+    return r.ok ? this.storeFactVector(fact, r.vector, ctx) : r;
+  }
+
+  /**
+   * Compute half: build the embed text, call embed(), validate the result,
+   * mark any embed-time failure, and return the validated Float32 vector.
+   *
+   * Failure kinds: `no_provider`, `invalid_vector`, `float32_overflow`,
+   * `provider_error`. All embed-time failures are marked via `markFailure`;
+   * `no_provider` deliberately does not mark (spec §2.4).
+   *
+   * Storage errors are NOT possible here — that is `storeFactVector`'s domain.
+   */
+  async embedTextForFact(
+    fact: {
+      id: string;
+      entity_id: string;
+      title: string;
+      body: string;
+      tags: string | string[];
+    },
+    ctx?: EmbedDiagnosticContext,
+    opts?: { markFailures?: boolean },
+  ): Promise<{ ok: true; vector: Float32Array } | { ok: false; kind: EmbedFailureKind }> {
+    const markFailures = opts?.markFailures !== false;
     // Callability, not truthiness: a truthy non-function would pass a `!embedFn`
     // guard, throw TypeError at the call, and be marked `provider_error` —
     // burning an attempt per sweep until a host config error permanently
@@ -131,8 +157,8 @@ export class EmbeddingService {
       const vector = await this.options.llmProvider.embed(text);
       if (vector.length === 0 || !vector.every(v => typeof v === 'number' && isFinite(v))) {
         console.warn(`[WikiMemory] embedFact: embed() returned an invalid vector for ${fact.id}; skipping.`);
-        this.reportEmbed(ctx, fact, 'embedding_failed', 'invalid_vector');
-        await this.markFailure(fact.id, 'invalid_vector');
+        if (markFailures) this.reportEmbed(ctx, fact, 'embedding_failed', 'invalid_vector');
+        if (markFailures) await this.markFailure(fact.id, 'invalid_vector');
         return { ok: false, kind: 'invalid_vector' };
       }
       float32Vector = new Float32Array(vector);
@@ -145,17 +171,28 @@ export class EmbeddingService {
       }
       if (hasNonFinite) {
         console.warn(`[WikiMemory] embedFact: embed() returned values that overflow float32 for ${fact.id}; skipping.`);
-        this.reportEmbed(ctx, fact, 'embedding_failed', 'float32_overflow');
-        await this.markFailure(fact.id, 'float32_overflow');
+        if (markFailures) this.reportEmbed(ctx, fact, 'embedding_failed', 'float32_overflow');
+        if (markFailures) await this.markFailure(fact.id, 'float32_overflow');
         return { ok: false, kind: 'float32_overflow' };
       }
     } catch (err) {
       console.warn(`[WikiMemory] embedFact failed for ${fact.id}:`, err);
-      this.reportEmbed(ctx, fact, 'embedding_failed', 'embed_threw');
-      await this.markFailure(fact.id, 'provider_error');
+      if (markFailures) this.reportEmbed(ctx, fact, 'embedding_failed', 'embed_threw');
+      if (markFailures) await this.markFailure(fact.id, 'provider_error');
       return { ok: false, kind: 'provider_error' };
     }
+    return { ok: true, vector: float32Vector };
+  }
 
+  /**
+   * Storage half: persist the computed vector to the entry row, then fire the
+   * `onEmbeddingPersisted` hook. Failure kinds: `storage_error` only — embed
+   * failures do not originate here, so they cannot be marked as such (spec §3.2, D3).
+   */
+  async storeFactVector(fact: {
+    id: string;
+    entity_id: string;
+  }, float32Vector: Float32Array, ctx?: EmbedDiagnosticContext): Promise<EmbedFactResult> {
     // Storage is a separate failure domain: a DB error here is NOT an
     // embedding failure and must not be marked as one (spec §3.2, D3).
     try {

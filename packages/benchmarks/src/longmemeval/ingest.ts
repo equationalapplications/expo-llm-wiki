@@ -16,10 +16,12 @@
  *   - `supportsOccurredAt`: `PRAGMA table_info(llm_wiki_events)` contains `occurred_at`
  *     (added by PR-A's migration 13; absent on 7.7.7 ⇒ events are replayed
  *     without `occurred_at`).
- *   - `runPendingMaintenance` / `getPendingMaintenance`: only present once PR-C
- *     lands. Calling `ingestQuestion` with `flags.maintenance === 'deferred'`
- *     on 7.7.7 throws; this is deliberate — deferred mode is opt-in and the
- *     baselines must be measured on the legacy-auto maintenance path.
+ *   - `runPendingMaintenance` / `getPendingMaintenance`: present in the linked
+ *     `WikiMemory` types (PR-C added them to core), but the engine the cache
+ *     file was built with may predate PR-C. Calling `ingestQuestion` with
+ *     `flags.maintenance === 'deferred'` against a 7.7.7 engine throws via a
+ *     runtime `typeof` probe; this is deliberate — deferred mode is opt-in
+ *     and the baselines must be measured on the legacy-auto maintenance path.
  */
 
 import { mkdirSync, rmSync, existsSync } from 'fs';
@@ -92,7 +94,7 @@ export function cacheFilePath(cacheDir: string, engineVersion: string, flags: En
   return join(cacheDir, 'ingest', engineVersion, flagsKey(flags), `${questionId}.sqlite`);
 }
 
-interface WikiMemoryWithDeferred extends WikiMemory {
+interface WikiMemoryWithDeferred {
   runPendingMaintenance?: () => Promise<unknown>;
   getPendingMaintenance?: () => Promise<unknown[]>;
 }
@@ -196,8 +198,11 @@ export async function ingestQuestion(q: LmeQuestion, opts: IngestOpts): Promise<
     if (opts.flags.maintenance === 'deferred') {
       // Deferred path is only valid when the engine ships the deferred
       // maintenance API (PR-C and later). 7.7.7 does not — fail loudly so a
-      // misconfigured baseline cannot silently fall back to legacy-auto.
-      const w = wiki as WikiMemoryWithDeferred;
+      // misconfigured baseline cannot silently fall back to legacy-auto. The
+      // runtime `typeof` probe still matters even though the linked WikiMemory
+      // type now declares both methods: the engine version this cache file
+      // was built against may predate PR-C.
+      const w = wiki as unknown as WikiMemoryWithDeferred;
       if (typeof w.runPendingMaintenance !== 'function' || typeof w.getPendingMaintenance !== 'function') {
         throw new Error('engine does not support deferred mode');
       }
@@ -214,8 +219,8 @@ export async function ingestQuestion(q: LmeQuestion, opts: IngestOpts): Promise<
         }
       }
       for (let i = 0; i < DEFERRED_MAX_ITERATIONS; i++) {
-        await w.runPendingMaintenance!();
-        const pending = await w.getPendingMaintenance!();
+        await w.runPendingMaintenance();
+        const pending = await w.getPendingMaintenance();
         if (!Array.isArray(pending) || pending.length === 0) break;
       }
     } else {

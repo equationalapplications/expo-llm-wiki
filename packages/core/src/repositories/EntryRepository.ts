@@ -1776,4 +1776,20 @@ export class EntryRepository extends BaseRepository {
     );
     return rows.map(r => ({ id: r.id, title: r.title }));
   }
+
+  /**
+   * Count of live facts for `entityId` with no stored embedding that are still
+   * retryable (`embedding_attempts < maxAttempts`). Backs the deferred
+   * maintenance pending report's `reembedPending` flag and the reembed job's
+   * entity selection (PR-C 2026-09-29).
+   */
+  async countReembedPending(entityId: string, maxAttempts: number, tx?: SQLiteAdapter): Promise<number> {
+    const executor = this.getExecutor(tx);
+    const row = await executor.getFirstAsync<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM ${this.prefix}entries
+       WHERE entity_id = ? AND deleted_at IS NULL AND embedding_blob IS NULL AND embedding IS NULL AND embedding_attempts < ?`,
+      [entityId, maxAttempts],
+    );
+    return Number(row?.n ?? 0);
+  }
 }

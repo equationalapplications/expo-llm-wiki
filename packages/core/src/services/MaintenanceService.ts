@@ -16,7 +16,7 @@ import type { EntryRepository } from '../repositories/EntryRepository';
 import type { SourceRefIndexRepository } from '../repositories/SourceRefIndexRepository';
 import type { TaskRepository } from '../repositories/TaskRepository';
 import type { EventRepository } from '../repositories/EventRepository';
-import { entitySummaryMetaKey, type MetadataRepository } from '../repositories/MetadataRepository';
+import { entitySummaryMetaKey, type LibrarianWatermark, type MetadataRepository } from '../repositories/MetadataRepository';
 import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
@@ -326,8 +326,20 @@ export class MaintenanceService {
 
       if (retainEventsFor !== null) {
         const cutoff = now - retainEventsFor * 86400000;
-        const eventResult = await this.eventRepo.prune(entityId, cutoff);
-        deletedEvents = eventResult.changes;
+        const guarded = this.options.config?.maintenance === 'deferred' || this.options.config?.librarian?.strategy === 'ops';
+        if (guarded) {
+          // Spec §6: under deferred/ops the librarian re-reads the event log,
+          // so prune may only delete events the watermark has already passed.
+          const wm = await this.metadataRepo.getLibrarianWatermark(entityId, this.db);
+          deletedEvents = (await this.eventRepo.pruneThrough(entityId, cutoff, wm)).changes;
+          const held = await this.eventRepo.countHeldBack(entityId, cutoff, wm);
+          if (held > 0) {
+            emitDiagnostic(this.options, { code: 'event_retention_held', operation: 'prune', trigger: 'call', entityId, detail: { count: held } });
+          }
+        } else {
+          const eventResult = await this.eventRepo.prune(entityId, cutoff);
+          deletedEvents = eventResult.changes;
+        }
       }
 
       if (vacuum) {
@@ -654,22 +666,66 @@ export class MaintenanceService {
    * class. Returns the strategy's `LibrarianResult` so deferred/budgeted
    * schedulers (PR-C) can advance watermarks; the existing void-returning
    * `doRunLibrarian` discards it.
+   *
+   * Spec §10.3: one place advances the watermark, for every strategy, only
+   * after the pass resolved (its transaction committed) and never backwards.
+   * A budget-stopped pass wrote nothing and must not move the watermark.
    */
   async runLibrarianPass(ctx: LibrarianContext): Promise<LibrarianResult> {
-    return runLibrarianStrategy(
-      {
-        db: this.db,
-        options: this.options,
-        entryRepo: this.entryRepo,
-        taskRepo: this.taskRepo,
-        eventRepo: this.eventRepo,
-        searchService: this.searchService,
-        embeddingService: this.embeddingService,
-        promptService: this.promptService,
-        ontologyService: this.ontologyService,
-      },
-      ctx,
-    );
+    const result = await runLibrarianStrategy(this.librarianDeps(), ctx);
+    if (result.processedThrough && !result.budgetStop) {
+      await this.advanceLibrarianWatermark(ctx.entityId, result.processedThrough);
+    }
+    return result;
+  }
+
+  /**
+   * Strategy deps shared between legacy and ops librarians (spec §5.1). The
+   * ops strategy (PR-B Task 8) reads/anchors the watermark through these two
+   * hooks so the dispatcher itself never reaches into the metadata table —
+   * the watermark invariant (one place advances, never backwards) lives here.
+   */
+  private librarianDeps() {
+    return {
+      db: this.db,
+      options: this.options,
+      entryRepo: this.entryRepo,
+      taskRepo: this.taskRepo,
+      eventRepo: this.eventRepo,
+      searchService: this.searchService,
+      embeddingService: this.embeddingService,
+      promptService: this.promptService,
+      ontologyService: this.ontologyService,
+      seedWatermark: (entityId: string) => this.seedLibrarianWatermark(entityId),
+      getWatermark: (entityId: string) => this.metadataRepo.getLibrarianWatermark(entityId, this.db),
+    };
+  }
+
+  /**
+   * Persist `next` as the entity's librarian watermark when it is strictly
+   * newer than the stored value, under the (created_at, id) ordering used by
+   * the op-based librarian (spec §10.3). Never moves backwards.
+   */
+  private async advanceLibrarianWatermark(entityId: string, next: LibrarianWatermark): Promise<void> {
+    const current = await this.metadataRepo.getLibrarianWatermark(entityId, this.db);
+    const newer = !current || next.at > current.at || (next.at === current.at && next.id > current.id);
+    if (newer) await this.metadataRepo.setLibrarianWatermark(entityId, next, this.db);
+  }
+
+  /**
+   * Spec §10.3: first ops pass on a legacy DB starts after what the count
+   * checkpoint already covered. No-op when a watermark already exists or the
+   * memory checkpoint is 0; otherwise anchor the watermark to the event at
+   * offset `min(memory_checkpoint, totalEvents) - 1`.
+   */
+  async seedLibrarianWatermark(entityId: string): Promise<void> {
+    if (await this.metadataRepo.getLibrarianWatermark(entityId, this.db)) return;
+    const cp = await this.metadataRepo.getCheckpoint(entityId, this.db);
+    const memory = cp.memory ?? 0;
+    if (memory <= 0) return;
+    const total = await this.eventRepo.count(entityId);
+    const ev = await this.eventRepo.getAtOffset(entityId, Math.min(memory, total) - 1);
+    if (ev) await this.metadataRepo.setLibrarianWatermark(entityId, { at: ev.created_at, id: ev.id }, this.db);
   }
 
   /**
