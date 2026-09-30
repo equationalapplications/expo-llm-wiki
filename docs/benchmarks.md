@@ -311,11 +311,12 @@ same signature:
 - PR-D2's `bench longmemeval --strategy legacy --maintenance auto`
   (PID `50622`, log `/tmp/cm-baseline-longmemeval.log`).
 
-The trigger is HTTP 429 from z.ai's rate limiter
+Both runs coincided with HTTP 429 from z.ai's rate limiter
 (`Rate limit reached for requests`, request IDs
-`2026093016*`...) that the **legacy librarian** does not catch.
-Verified call chain (the throw propagates **up** from the provider,
-not down from the dispatcher):
+`2026093016*`...) that the **legacy librarian** does not catch. The
+429 is confirmed; that it caused the SIGABRT is **not** (see below).
+Verified call chain for the 429 (the throw propagates **up** from the
+provider, not down from the dispatcher):
 
 - Origin: `packages/benchmarks/src/provider.ts:129` — `throw new
   Error(errMessage(response.status, text))` after the 4-retry budget
@@ -341,10 +342,17 @@ not down from the dispatcher):
 
 When the throw exits the writer, the surrounding `Promise.catch` in
 `WriteService` (chained to `runLibrarianThenMaybeHeal` at line 138)
-swallows it for the write path — but the lock is then reacquired by
-the next write, and the underlying `std::system_error: mutex lock
-failed` surfaces once the underlying Node.js stdlib hits a corrupted
-mutex state, triggering the SIGABRT.
+catches the background failure and releases the lock. That path does
+not by itself show native mutex corruption, so **the mutex cause is
+unconfirmed**. The one documented source of this exact abort is
+`packages/benchmarks/src/cli.ts`: ending the process while the
+FastEmbed/ONNX Runtime session is loaded fails with `mutex lock
+failed`. Until this release the CLI entrypoint ran `void main()`, so a
+rejection escaping `runLongMemEval` (for example, one question whose
+429 retries were exhausted) ended the process through the
+unhandled-rejection path with the session still live. That is a
+plausible mechanism, not a verified one. The entrypoint now catches
+the rejection and sets `process.exitCode`.
 - The **heal** path catches 429s cleanly and skips (`response could
   not be bounded: HTTP 429` → heal skipped, no throw), which is why
   the heal-side reruns survive and the librarian-side reruns do not.

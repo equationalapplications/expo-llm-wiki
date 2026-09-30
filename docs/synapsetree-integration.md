@@ -32,7 +32,7 @@ What each piece buys you:
 - **`config.reportLlmUsage: true`** — turns on the `llm_usage` diagnostic stream. The `UsageMeter` records usage regardless of this flag, but the diagnostic only emits when the flag is on. Set it `true` so `onDiagnostic` can route per-tenant usage to metering.
 - **`onDiagnostic: (d) => meter.record(tenantId, d)`** — every diagnostic is content-free (IDs, indexes, counts, reason slugs only) and typed, so a single switch on `d.code` covers `llm_usage`, `read_budget`, `event_retention_held`, `grounding_*`, `background_job_failed`, and the rest. Route the `llm_usage` ones to the metering pipeline and everything else to logs.
 
-The op thresholds under 'ops' (`dupThreshold=0.89`, `novelThreshold=0.30`) were calibrated against the Phase D rerun — pre-change defaults (0.97 / 0.55) misclassified 4/36 rows in commit `bee560f`; pass them through `config.librarian.gate` if your embedding model differs from the calibrated one, or accept the defaults and re-calibrate later. **They are calibrated for fastembed/BGESmallENV15; provisional for other embedders.**
+The op thresholds under 'ops' (`dupThreshold=0.89`, `novelThreshold=0.30`) were calibrated against the Phase D rerun — the calibration (`packages/benchmarks/results/calibration-7.7.7.json`, with per-candidate labels for `mixed-1`) misclassifies 2/36 rows at the new defaults versus 6/36 at the pre-change defaults (0.97 / 0.55); pass them through `config.librarian.gate` if your embedding model differs from the calibrated one, or accept the defaults and re-calibrate later. **They are calibrated for fastembed/BGESmallENV15; provisional for other embedders.**
 
 ---
 
@@ -175,10 +175,10 @@ For now, expose `wiki_traverse_graph` (and optionally `wiki_get_ontology` / `wik
 
 ## 7. Costs
 
-Token-cost data lives in [`docs/benchmarks.md`](./benchmarks.md). That doc measures the 7.8.0 release against the legacy baseline:
+Token-cost data lives in [`docs/benchmarks.md`](./benchmarks.md). For 7.8.0 it reports run-level token totals for the supersession suite only; the LongMemEval runs produced no report, so **per-answer and per-ingested-token measurements are not available yet** (issue #247).
 
-- **Tokens per answer** — packed reads under a `tokenBudget`. The packing is greedy (top fact always included, then by score ÷ estimated tokens) so most well-tuned queries stay under the budget with one fact truncation at most. See the `read_budget` diagnostic (`{ candidates, packed, tokensUsed }`) for per-call visibility.
-- **Tokens per ingested token** — measured under the ops librarian with `maintenance: 'deferred'`. The ops gate (`dupThreshold=0.89`, `novelThreshold=0.30`) drops no-op and novel candidates before the model sees them, so the per-event token cost is much smaller than the legacy path. Numbers in `docs/benchmarks.md` are published as measured, including any category where ops underperforms legacy.
+- **Tokens per answer** — not measured. Reads under a `tokenBudget` are packed greedily (top fact always included, then by score ÷ estimated tokens); the `read_budget` diagnostic (`{ candidates, packed, tokensUsed }`) gives per-call visibility in your own deployment.
+- **Tokens per ingested token** — not measured. The ops gate (`dupThreshold=0.89`, `novelThreshold=0.30`) settles clear duplicates and clearly novel candidates without a resolve call, which is expected to cost less than the legacy path, but no per-token figure is published.
 
 The `tokensUsed` field on `RunPendingMaintenanceResult` is your per-request maintenance spend. Multiply by your model's price per 1k tokens (input vs output split if `generateTextWithUsage` is implemented) for the per-tenant cost line. The `llm_usage` diagnostic stream from `onDiagnostic` gives per-call visibility into the same figure.
 

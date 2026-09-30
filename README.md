@@ -1160,7 +1160,7 @@ flowchart TD
 ## Documentation
 
 - [SynapseTree integration guide](docs/synapsetree-integration.md) — recommended configuration, request lifecycle, where maintenance runs, single-writer requirement, `entity_id` scheme, MCP surface, and costs for tenant-aware hosts (e.g. SaaS with per-tenant SQLite files in object storage).
-- [Benchmarks](docs/benchmarks.md) — per-category accuracy, ingestion tokens, tokens per answer, and latency for the 7.8.0 release versus the legacy baseline.
+- [Benchmarks](docs/benchmarks.md) — supersession results and run-level token totals for the 7.8.0 release versus the legacy baseline. LongMemEval accuracy, tokens per answer, and ingestion tokens are not measured yet (issue #247).
 
 ---
 
