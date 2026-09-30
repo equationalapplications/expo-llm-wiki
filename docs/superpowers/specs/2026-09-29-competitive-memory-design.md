@@ -154,10 +154,10 @@ services/librarian/
 
 - Embed each candidate once (vectors reused on insert — no double embed). Top-k **current** facts per candidate, k = 5: cosine when `embed` is available, MiniSearch otherwise.
 - Gate per candidate:
-  - **NOOP** — normalised title+body identical to a neighbour, **or** cosine ≥ `dupThreshold` (default 0.97) **and** title Jaccard ≥ the existing `FUZZY_THRESHOLD` (0.5, currently private in `MaintenanceService`; moved to a shared librarian module). Touches the neighbour's `last_verified_at`.
-  - **ADD** — no neighbour, or best cosine < `novelThreshold` (default 0.55); in keyword mode, zero MiniSearch hits.
+  - **NOOP** — normalised title+body identical to a neighbour, **or** cosine ≥ `dupThreshold` (default 0.89) **and** title Jaccard ≥ the existing `FUZZY_THRESHOLD` (0.5, currently private in `MaintenanceService`; moved to a shared librarian module). Touches the neighbour's `last_verified_at`.
+  - **ADD** — no neighbour, or best cosine < `novelThreshold` (default 0.30); in keyword mode, zero MiniSearch hits.
   - **Ambiguous** — everything else → step 4.
-- `config.librarian.gate: { dupThreshold?, novelThreshold?, k? }`. Defaults are provisional (embedding-model dependent) and are recalibrated from Phase 0 live-mode runs before 7.8.0.
+- `config.librarian.gate: { dupThreshold?, novelThreshold?, k? }`. Defaults were provisional (embedding-model dependent) until calibrated by the PR-D2 offline `bench calibrate` pass over the 30 supersession scenarios (commit `a8abce9`); the calibrated pair (0.89 / 0.30) misclassifies 0 of 36 rows in the calibration fixture, vs 4 of 36 for the previous (0.97 / 0.55) defaults. Numbers live in `packages/benchmarks/results/calibration-7.7.7.json`.
 - Diagnostic `librarian_gate` `{ noop, add, ambiguous }` per pass.
 
 ### 5.4 Step 4 — resolve (one batched LLM call)

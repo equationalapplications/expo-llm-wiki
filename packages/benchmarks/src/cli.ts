@@ -22,6 +22,19 @@
  *       guard: prints the scenario count and a flat per-scenario token
  *       estimate, refuses to spend without `--yes`.
  *
+ *   calibrate [--out <file>]
+ *       Offline gate-threshold calibration (Task 1 of PR-D2). Walks every
+ *       supersession scenario, embeds each candidate against every existing
+ *       fact (fastembed — no API cost), labels the candidate's expected class,
+ *       and picks the `(novelThreshold, dupThreshold)` pair with the fewest
+ *       misclassifications. Writes `results/calibration-<version>.json`.
+ *
+ *   compare <before.json> <after.json> [--out <file>]
+ *       Offline Markdown comparison between two BenchReport JSON files
+ *       (Task 2 of PR-D2). Prints the report to stdout (or `--out`) so a
+ *       reviewer can read engine / flag / model deltas end-to-end without
+ *       rerunning the pipeline.
+ *
  * `process.argv` is parsed by hand so the CLI has no dependency footprint.
  * The handler functions return `{ exitCode }` instead of calling `process.exit`
  * so they can be exercised under test without spawning a child process.
@@ -38,6 +51,9 @@ import { sampleQuestionIds } from './longmemeval/sample';
 import { loadDataset, LmeQuestion } from './longmemeval/dataset';
 import { runLongMemEval } from './longmemeval/run';
 import { runSupersession, Scenario } from './supersession/run';
+import { calibrationRows, recommendThresholds, CalibrationRow } from './calibrate';
+import { compareReports } from './compare';
+import { resolveGateConfig } from '../../core/src/services/librarian/ops/gate';
 
 // --------------------------------------------------------------------------
 // Repo-root-relative paths
@@ -508,6 +524,216 @@ export async function runSupersessionCommand(deps: SupersessionDeps): Promise<Co
 }
 
 // --------------------------------------------------------------------------
+// calibrate subcommand
+// --------------------------------------------------------------------------
+
+export interface CalibrateDeps {
+  argv: string[];
+  /** The scenarios from `fixtures/supersession/scenarios.json`. */
+  scenarios?: Scenario[];
+  /** Injected embedder (fastembed singleton in live mode). */
+  embed?: (text: string) => Promise<number[]>;
+  stdout?: (line: string) => void;
+  stderr?: (line: string) => void;
+}
+
+/**
+ * Shape of the JSON written to `results/calibration-<engineVersion>.json`.
+ * The CLI's job is to print a one-screen summary and persist this object so a
+ * later `fix(core): calibrate ops gate defaults (<numbers>)` commit (if the
+ * numbers warrant it) can quote the same source-of-truth numbers in its body.
+ */
+export interface CalibrationResult {
+  kind: 'calibration';
+  createdAt: string;
+  engine: { version: string; gitSha: string };
+  scenarioCount: number;
+  rowCount: number;
+  novelThreshold: number;
+  dupThreshold: number;
+  misclassifiedAtDefaults: number;
+  misclassifiedAtRecommended: number;
+  defaultsConfirmed: boolean;
+  rows: CalibrationRow[];
+}
+
+/**
+ * Format one calibration row for stdout.
+ */
+function renderCalibrationRow(r: CalibrationRow): string {
+  const cos = r.bestCosine === null ? '   null' : r.bestCosine.toFixed(2).padStart(5);
+  const jac = r.titleJaccard === null ? '   null' : r.titleJaccard.toFixed(2).padStart(5);
+  return `  ${r.scenario.padEnd(46)} ${r.candidate.padEnd(40)} ${cos} ${jac}  expected=${r.expected}`;
+}
+
+/**
+ * Handle the `calibrate` subcommand.
+ *
+ * Offline pass:
+ *   1. parse argv (`--out`)
+ *   2. resolve scenarios + embedder
+ *   3. walk every scenario and produce calibration rows (no API cost —
+ *      fastembed runs locally on ONNX)
+ *   4. call `recommendThresholds` to find the best pair
+ *   5. print the row table + recommendation + defaults-confirmed flag
+ *   6. write `results/calibration-<engineVersion>.json`
+ *
+ * The result is committed so a follow-up `fix(core)` commit can quote the
+ * numbers directly without re-running the embedder.
+ */
+export async function runCalibrateCommand(deps: CalibrateDeps): Promise<CommandResult> {
+  const stdout = deps.stdout ?? ((line: string) => process.stdout.write(line));
+  const stderr = deps.stderr ?? ((line: string) => process.stderr.write(line));
+  const parsed = parseArgs(deps.argv);
+  if (parsed.command !== 'calibrate' && parsed.command !== '') {
+    stderr(`Unknown command: ${parsed.command}\n`);
+    return { exitCode: 2 };
+  }
+  const outArg = typeof parsed.flags.out === 'string' ? parsed.flags.out : undefined;
+
+  if (!deps.scenarios || !deps.embed) {
+    stderr('Internal error: scenarios and embed must be provided by the caller\n');
+    return { exitCode: 2 };
+  }
+
+  const engine = await engineInfo();
+  stdout(`engine: ${engine.version} (${engine.gitSha})\n`);
+  stdout(`scenarios: ${deps.scenarios.length}\n\n`);
+
+  const rows = await calibrationRows(deps.scenarios, deps.embed);
+  const rec = recommendThresholds(rows);
+  const defaults = resolveGateConfig();
+  const defaultsConfirmed = rec.misclassifiedAtDefaults <= rec.misclassifiedAtRecommended;
+
+  stdout('Calibration rows (bestCosine, titleJaccard, expected):\n');
+  for (const r of rows) stdout(renderCalibrationRow(r) + '\n');
+  stdout('\n');
+  stdout(`defaults:      dupThreshold=${defaults.dupThreshold.toFixed(2)}  novelThreshold=${defaults.novelThreshold.toFixed(2)}   misclassified=${rec.misclassifiedAtDefaults}\n`);
+  stdout(`recommended:   dupThreshold=${rec.dupThreshold.toFixed(2)}  novelThreshold=${rec.novelThreshold.toFixed(2)}   misclassified=${rec.misclassifiedAtRecommended}\n`);
+  stdout(`defaults confirmed: ${defaultsConfirmed ? 'yes' : 'no — change defaults'}\n\n`);
+
+  const result: CalibrationResult = {
+    kind: 'calibration',
+    createdAt: new Date().toISOString(),
+    engine: { version: engine.version, gitSha: engine.gitSha },
+    scenarioCount: deps.scenarios.length,
+    rowCount: rows.length,
+    novelThreshold: rec.novelThreshold,
+    dupThreshold: rec.dupThreshold,
+    misclassifiedAtDefaults: rec.misclassifiedAtDefaults,
+    misclassifiedAtRecommended: rec.misclassifiedAtRecommended,
+    defaultsConfirmed,
+    rows,
+  };
+
+  // Default path: `results/calibration-<engineVersion>.json` (committed so a
+  // follow-up `fix(core)` commit can quote the same numbers).
+  const resultFile = outArg ? resolveOutPath(outArg) : join(REPO_ROOT, 'packages', 'benchmarks', 'results', `calibration-${engine.version}.json`);
+  ensureDir(resultFile);
+  writeFileSync(resultFile, JSON.stringify(result, null, 2));
+  stdout(`Wrote calibration result to ${resultFile}\n`);
+  return { exitCode: 0 };
+}
+
+// --------------------------------------------------------------------------
+// compare subcommand
+// --------------------------------------------------------------------------
+
+export interface CompareDeps {
+  argv: string[];
+  /** Override the filesystem read so tests can pass reports inline. */
+  readFile?: (path: string) => string;
+  stdout?: (line: string) => void;
+  stderr?: (line: string) => void;
+}
+
+/**
+ * Parse the two positional paths (`before`, `after`) plus `--out` out of an
+ * argv slice. The first token is the `compare` verb and is skipped. The
+ * remaining `--flag value` pairs populate `out`; the remaining bare tokens
+ * are the positional paths (first two).
+ */
+function parseCompareArgs(argv: string[]): { before: string; after: string; out?: string } {
+  const positional: string[] = [];
+  let out: string | undefined;
+  // Skip a leading node-style binary token, mirroring `parseArgs`.
+  const startIdx = argv.length > 0 && (argv[0].endsWith('node') || argv[0].endsWith('tsx') || argv[0].endsWith('cli.ts')) ? 1 : 0;
+  for (let i = startIdx; i < argv.length; i++) {
+    const tok = argv[i];
+    if (tok === 'compare') {
+      // skip the verb
+      continue;
+    }
+    if (tok.startsWith('--')) {
+      if (tok === '--out') {
+        const v = argv[i + 1];
+        if (v && !v.startsWith('--')) {
+          out = v;
+          i += 1;
+        }
+      }
+      // other flags are ignored
+    } else {
+      positional.push(tok);
+    }
+  }
+  const [before, after] = positional;
+  return { before, after, out };
+}
+
+/**
+ * Handle the `compare` subcommand (Task 2 of PR-D2). Reads two
+ * BenchReport JSON files from disk and prints a Markdown comparison.
+ *
+ * Flow:
+ *   1. parse argv (positional before/after, optional `--out`)
+ *   2. validate both paths were provided
+ *   3. read + JSON.parse both files
+ *   4. invoke `compareReports(...)`
+ *   5. print to stdout (or write to `--out`)
+ */
+export async function runCompareCommand(deps: CompareDeps): Promise<CommandResult> {
+  const stdout = deps.stdout ?? ((line: string) => process.stdout.write(line));
+  const stderr = deps.stderr ?? ((line: string) => process.stderr.write(line));
+  const readFile = deps.readFile ?? ((p: string) => readFileSync(p, 'utf8'));
+  const parsed = parseArgs(deps.argv);
+  if (parsed.command !== 'compare' && parsed.command !== '') {
+    stderr(`Unknown command: ${parsed.command}\n`);
+    return { exitCode: 2 };
+  }
+  // Re-parse the raw argv so positional args (after the `compare` verb)
+  // survive — `parseArgs` above only captured the verb + flags.
+  const positional = parseCompareArgs(deps.argv);
+  if (!positional.before || !positional.after) {
+    stderr('compare: <before.json> <after.json> required\n');
+    return { exitCode: 2 };
+  }
+  const outArg = positional.out;
+
+  let beforeReport: BenchReport;
+  let afterReport: BenchReport;
+  try {
+    beforeReport = JSON.parse(readFile(positional.before)) as BenchReport;
+    afterReport = JSON.parse(readFile(positional.after)) as BenchReport;
+  } catch (e) {
+    stderr(`compare: failed to read or parse reports — ${(e as Error).message}\n`);
+    return { exitCode: 2 };
+  }
+
+  const md = compareReports(beforeReport, afterReport);
+  if (outArg) {
+    const outFile = resolveOutPath(outArg);
+    ensureDir(outFile);
+    writeFileSync(outFile, md);
+    stdout(`Wrote comparison to ${outFile}\n`);
+  } else {
+    stdout(md);
+    if (!md.endsWith('\n')) stdout('\n');
+  }
+  return { exitCode: 0 };
+}
+
+// --------------------------------------------------------------------------
 // Helpers — printed estimate + summary table
 // --------------------------------------------------------------------------
 
@@ -619,6 +845,20 @@ async function main(): Promise<void> {
     process.exitCode = r.exitCode;
     return;
   }
+  if (command === 'calibrate') {
+    const scenariosFile = join(REPO_ROOT, 'packages', 'benchmarks', 'fixtures', 'supersession', 'scenarios.json');
+    const scenarios = JSON.parse(readFileSync(scenariosFile, 'utf8')) as Scenario[];
+    const { getEmbedder } = await import('./embed');
+    const embed = await getEmbedder();
+    const r = await runCalibrateCommand({ argv, scenarios, embed });
+    process.exitCode = r.exitCode;
+    return;
+  }
+  if (command === 'compare') {
+    const r = await runCompareCommand({ argv });
+    process.exitCode = r.exitCode;
+    return;
+  }
   process.stderr.write(`Unknown command: ${command}\n${renderHelp()}`);
   process.exitCode = 2;
 }
@@ -631,6 +871,9 @@ function renderHelp(): string {
     '  sample --seed <n>              Write fixtures/longmemeval-sample.json',
     '  longmemeval [flags]            Run the LongMemEval pipeline',
     '  supersession [flags]           Run the supersession suite (Task 8)',
+    '  calibrate [--out <file>]        Offline gate-threshold calibration (Task 1 of PR-D2)',
+    '  compare <before.json> <after.json> [--out <file>]',
+    '                                  Offline Markdown comparison (Task 2 of PR-D2)',
     '',
     'Common flags:',
     '  --strategy <legacy|ops>        Librarian strategy (default legacy)',

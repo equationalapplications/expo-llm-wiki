@@ -99,7 +99,7 @@ await wiki.write('user-123', { event_type: 'observation', summary: 'Moved to SF'
 ```typescript
 new WikiMemory(db, {
   llmProvider,
-  config: { librarian: { strategy: 'ops', gate: { k: 5, dupThreshold: 0.97, novelThreshold: 0.55 } } },
+  config: { librarian: { strategy: 'ops', gate: { k: 5, dupThreshold: 0.89, novelThreshold: 0.30 } } },
 });
 ```
 
@@ -139,6 +139,8 @@ const report = await wiki.runPendingMaintenance({ tokenBudget: 20_000, deadlineM
 - In `'auto'` mode, call `drain()` before the app is suspended or closed. `autoLibrarianTokenThreshold` also triggers the librarian on the size of the pending text.
 - Under `'deferred'` or the ops strategy, `runPrune` never deletes events the librarian has not processed.
 - `JobManager` locks only work within one process. Guarantee a single writer per database file across processes.
+
+See the [SynapseTree integration guide](../../docs/synapsetree-integration.md) for the end-to-end pattern on tenant-aware hosts (S3-backed SQLite, request lifecycle, `entity_id` scheme, MCP surface, costs). Benchmarks live at [docs/benchmarks.md](../../docs/benchmarks.md).
 
 ## Installation
 

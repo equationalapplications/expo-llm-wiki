@@ -250,9 +250,9 @@ export interface GroundingConfig {
 export interface LibrarianGateConfig {
   /** Neighbours fetched per candidate. Default 5. */
   k?: number;
-  /** Cosine at or above which (with title Jaccard ≥ FUZZY_THRESHOLD) a candidate is a duplicate. Default 0.97. */
+  /** Cosine at or above which (with title Jaccard ≥ FUZZY_THRESHOLD) a candidate is a duplicate. Default 0.89 (calibrated against the 30 supersession scenarios). */
   dupThreshold?: number;
-  /** Best-neighbour cosine below which a candidate is novel. Default 0.55. */
+  /** Best-neighbour cosine below which a candidate is novel. Default 0.30 (calibrated against the 30 supersession scenarios). */
   novelThreshold?: number;
 }
 /** `'legacy'` is the 7.x add-only librarian. `'ops'` is the spec §5.1 / §5.3 dispatcher. */
