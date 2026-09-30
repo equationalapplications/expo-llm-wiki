@@ -22,6 +22,10 @@ describe('WikiMemory.upsertGraph — public API surface', () => {
     expect(typeof wiki.upsertGraph).toBe('function');
   });
 
+  it('has a public post-commit syncSearchIndex companion (#246)', () => {
+    expect(typeof wiki.syncSearchIndex).toBe('function');
+  });
+
   it('accepts (entityId, params, adapter) and returns the documented shape', async () => {
     const result = await db.withTransactionAsync(async (tx) =>
       wiki.upsertGraph(

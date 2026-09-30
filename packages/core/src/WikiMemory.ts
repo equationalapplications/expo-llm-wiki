@@ -642,6 +642,32 @@ export class WikiMemory {
     this.searchService.evictCache();
   }
 
+  /**
+   * Brings the keyword search index up to date with SQLite after a host
+   * transaction that used `upsertGraph` has committed. Core never sees that
+   * commit, so without this the nodes stay out of keyword, hybrid and
+   * fallback retrieval until the entity's next core write.
+   *
+   * With `entityId`, rebuilds that entity if it is stale or has never been
+   * indexed; otherwise it is a no-op that still waits for rebuilds already
+   * queued. Without an argument, does the same for every entity currently
+   * marked stale.
+   *
+   * Call only after the host's transaction commits: called inside it, the
+   * rebuild may index rows that later roll back, or miss them and clear the
+   * stale flag anyway. Serialized with core's internal index syncs and takes
+   * no maintenance lock. Never rejects for a valid `entityId` — on failure the
+   * entity stays stale and the next call retries it. Does not compute
+   * embeddings; that remains the maintenance sweep's job.
+   *
+   * @throws {TypeError} when `entityId` is given but is not a non-empty string.
+   */
+  async syncSearchIndex(entityId?: string): Promise<void> {
+    if (entityId === undefined) return this.searchService.syncStale();
+    assertEntityId(entityId);
+    return this.searchService.syncEntries(entityId, []);
+  }
+
   async exportDump(entityIds?: string[]): Promise<MemoryDump> {
     return this.importExportService.exportDump(entityIds);
   }
@@ -716,9 +742,10 @@ export class WikiMemory {
    * MUST be called from inside an open `db.withTransactionAsync` callback —
    * the third argument is the caller's `tx`. The method does not open a
    * nested transaction, does not acquire any lock, and does not perform
-   * post-commit work (search sync, embedding, cache eviction). Hosts that
-   * want embeddings synced should drive the existing maintenance sweep
-   * (`runLibrarian` / `runHeal` / `runOntologyBackfill` / `runPrune`,
+   * post-commit work (search sync, embedding, cache eviction). After the
+   * transaction commits, call `syncSearchIndex(entityId)` to make the new
+   * nodes keyword-searchable. Embeddings still come from the maintenance
+   * sweep (`runLibrarian` / `runHeal` / `runOntologyBackfill` / `runPrune`,
    * scoped via `listEntityIds`).
    *
    * Contract (full pre-flight validation lives inside
@@ -792,8 +819,8 @@ export class WikiMemory {
       { diag: { buffer: diagBuffer, operation: 'upsertGraph' } },
     );
     // Core never sees this commit, so it can't index the nodes itself. Marking
-    // the entity stale makes its next import or ingest rebuild the entity's
-    // index in full, which is how these nodes reached search before #232.
+    // the entity stale makes the host's post-commit syncSearchIndex() (or,
+    // failing that, the entity's next core write) rebuild its index in full.
     this.searchService.markStale(entityId);
     diagBuffer.flush(this.options);
     return result;

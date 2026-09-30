@@ -247,6 +247,16 @@ export class SearchService {
   }
 
   /**
+   * Runs syncEntries(id, []) for each entity marked stale when this is called,
+   * so only those entities are rebuilt. Each rebuild still takes its own turn
+   * on the sync chain, and like syncEntries this never rejects.
+   */
+  async syncStale(): Promise<void> {
+    const ids = [...this.staleEntities];
+    await Promise.all(ids.map((id) => this.syncEntries(id, [])));
+  }
+
+  /**
    * Clears the parsed vector cache. Useful for mid-loop flush guarantees
    * or memory pressure evictions.
    */

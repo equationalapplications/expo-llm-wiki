@@ -627,6 +627,15 @@ const { nodesWritten, edgesWritten, superseded } = await wiki.upsertGraph('entit
 
 `upsertGraph` is "the tail of `ingestDocument` with the middle (LLM extraction) step removed" — it accepts caller-supplied nodes (`{ id, type, title, body? }`) and edges (`{ type, sourceId, targetId, id? }`) and writes them under the same `(sourceRef, sourceHash)` semantics. If a *different* live `sourceRef` already holds the same `sourceHash`, it throws `WikiSourceRefHashCollision`; re-writing the identical `(sourceRef, sourceHash)` is a no-op returning zero counts. The adapter parameter is required so writes participate in the caller's transaction.
 
+Core never sees your transaction commit, so it can't index the new nodes itself. Until you tell it, they won't show up in keyword or hybrid `read()` results on the same instance. Call `syncSearchIndex` **after** the commit, not inside the transaction:
+
+```typescript
+await db.withTransactionAsync((tx) => wiki.upsertGraph('entity-123', params, tx));
+await wiki.syncSearchIndex('entity-123'); // or syncSearchIndex() for every entity written
+```
+
+It is cheap on an entity that is already current, runs in order with core's own index syncs, and never rejects. It does not compute embeddings; those still come from the maintenance sweep.
+
 ### Background Maintenance
 
 ```typescript
