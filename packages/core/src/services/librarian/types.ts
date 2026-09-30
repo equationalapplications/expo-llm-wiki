@@ -63,6 +63,15 @@ export interface LibrarianContext {
 }
 
 /**
+ * Alias used by the ops librarian (PR-B). Mirrors {@link LibrarianContext}
+ * 1:1 — kept separate so spec language (`runLibrarianPass(ctx:
+ * LibrarianPassContext)`) reads without per-strategy boilerplate, and so a
+ * future divergence between the strategy contexts cannot silently break
+ * callers.
+ */
+export type LibrarianPassContext = LibrarianContext;
+
+/**
  * Position in the event log a pass read through: the event's `created_at`
  * (epoch ms) and its id. Callers advance checkpoints / watermarks with it.
  */
