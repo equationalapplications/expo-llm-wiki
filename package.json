@@ -37,16 +37,16 @@
     "@semantic-release/exec": "7.1.0",
     "@semantic-release/git": "11.0.1",
     "@types/better-sqlite3": "9.6.0",
-    "@types/node": "26.5.0",
-    "@types/react": "19.2.18",
-    "@vitest/coverage-v8": "5.0.0",
+    "@types/node": "26.6.1",
+    "@types/react": "19.3.0",
+    "@vitest/coverage-v8": "5.0.1",
     "better-sqlite3": "13.0.3",
     "conventional-changelog-conventionalcommits": "8.0.0",
-    "expo-sqlite": "57.0.2",
-    "react": "19.2.8",
+    "expo-sqlite": "57.0.3",
+    "react": "19.3.0",
     "semantic-release": "25.0.9",
     "tsup": "8.5.1",
     "typescript": "5.9.3",
-    "vitest": "5.0.0"
+    "vitest": "5.0.1"
   }
 }
