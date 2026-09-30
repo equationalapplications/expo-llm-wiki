@@ -105,6 +105,27 @@ export class EmbeddingService {
     body: string;
     tags: string | string[];
   }, ctx?: EmbedDiagnosticContext): Promise<EmbedFactResult> {
+    const r = await this.embedTextForFact(fact, ctx);
+    return r.ok ? this.storeFactVector(fact, r.vector, ctx) : r;
+  }
+
+  /**
+   * Compute half: build the embed text, call embed(), validate the result,
+   * mark any embed-time failure, and return the validated Float32 vector.
+   *
+   * Failure kinds: `no_provider`, `invalid_vector`, `float32_overflow`,
+   * `provider_error`. All embed-time failures are marked via `markFailure`;
+   * `no_provider` deliberately does not mark (spec §2.4).
+   *
+   * Storage errors are NOT possible here — that is `storeFactVector`'s domain.
+   */
+  async embedTextForFact(fact: {
+    id: string;
+    entity_id: string;
+    title: string;
+    body: string;
+    tags: string | string[];
+  }, ctx?: EmbedDiagnosticContext): Promise<{ ok: true; vector: Float32Array } | { ok: false; kind: EmbedFailureKind }> {
     // Callability, not truthiness: a truthy non-function would pass a `!embedFn`
     // guard, throw TypeError at the call, and be marked `provider_error` —
     // burning an attempt per sweep until a host config error permanently
@@ -155,7 +176,18 @@ export class EmbeddingService {
       await this.markFailure(fact.id, 'provider_error');
       return { ok: false, kind: 'provider_error' };
     }
+    return { ok: true, vector: float32Vector };
+  }
 
+  /**
+   * Storage half: persist the computed vector to the entry row, then fire the
+   * `onEmbeddingPersisted` hook. Failure kinds: `storage_error` only — embed
+   * failures do not originate here, so they cannot be marked as such (spec §3.2, D3).
+   */
+  async storeFactVector(fact: {
+    id: string;
+    entity_id: string;
+  }, float32Vector: Float32Array, ctx?: EmbedDiagnosticContext): Promise<EmbedFactResult> {
     // Storage is a separate failure domain: a DB error here is NOT an
     // embedding failure and must not be marked as one (spec §3.2, D3).
     try {
@@ -272,3 +304,4 @@ export class EmbeddingService {
     }
   }
 }
+
