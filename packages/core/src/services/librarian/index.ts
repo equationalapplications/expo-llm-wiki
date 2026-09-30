@@ -8,12 +8,14 @@
  */
 
 import { runLegacyLibrarianPass } from './legacy';
+import { runOpsLibrarianPass } from './ops';
 import type { LibrarianDeps, LibrarianContext, LibrarianResult, LibrarianStrategy } from './types';
 
 // A Map (not a plain object literal) so inherited Object properties like
 // 'constructor' or 'toString' cannot masquerade as strategy names.
 const STRATEGIES = new Map<string, LibrarianStrategy>([
   ['legacy', runLegacyLibrarianPass],
+  ['ops', runOpsLibrarianPass],
 ]);
 
 export async function runLibrarianStrategy(

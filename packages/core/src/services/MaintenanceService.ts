@@ -669,8 +669,9 @@ export class MaintenanceService {
 
   /**
    * Strategy deps shared between legacy and ops librarians (spec §5.1). The
-   * `ops/` strategy adds watermark hooks in Task 8; keeping them out for
-   * keeps this task a single, focused change.
+   * ops strategy (PR-B Task 8) reads/anchors the watermark through these two
+   * hooks so the dispatcher itself never reaches into the metadata table —
+   * the watermark invariant (one place advances, never backwards) lives here.
    */
   private librarianDeps() {
     return {
@@ -683,6 +684,8 @@ export class MaintenanceService {
       embeddingService: this.embeddingService,
       promptService: this.promptService,
       ontologyService: this.ontologyService,
+      seedWatermark: (entityId: string) => this.seedLibrarianWatermark(entityId),
+      getWatermark: (entityId: string) => this.metadataRepo.getLibrarianWatermark(entityId, this.db),
     };
   }
 
