@@ -24,6 +24,7 @@ import {
   resolveOutPath,
   REPO_ROOT,
   runLongMemEvalCommand,
+  runCompareCommand,
   runSupersessionCommand,
 } from '../src/cli';
 import type { LmeQuestion, LmeQuestionType } from '../src/longmemeval/dataset';
@@ -341,5 +342,108 @@ describe('runSupersessionCommand', () => {
     });
     expect(r.exitCode).not.toBe(0);
     expect(r.exitCode).not.toBe(1); // distinct from the "no --yes" guard
+  });
+});
+
+describe('runCompareCommand', () => {
+  function smallReport(overrides: { judgeModel: string; overall: number }): any {
+    return {
+      kind: 'longmemeval',
+      createdAt: '2026-09-30T00:00:00.000Z',
+      engine: { version: '7.7.7', gitSha: 'abc1234', flags: { strategy: 'legacy', maintenance: 'auto' } },
+      models: {
+        answer: 'glm-4.6',
+        judge: overrides.judgeModel,
+        embed: 'fastembed/BGESmallENV15',
+      },
+      sample: { seed: 0, count: 4, dataset: 'longmemeval' },
+      accuracy: {
+        overall: overrides.overall,
+        byType: {
+          'single-session-user': { correct: 2, total: 4, rate: 0.5 },
+        },
+      },
+      tokens: {
+        answer: { calls: 4, inputTokens: 1000, outputTokens: 200, estimatedCalls: 0 },
+      },
+      retrieval: { meanContextTokens: 100, p50: 90, p95: 200 },
+      latencyMs: { ingestP50: 200, ingestP95: 400, answerP50: 800, answerP95: 1200 },
+      cachedIngests: 0,
+      questions: [],
+    };
+  }
+
+  it('prints Markdown comparison to stdout when no --out is supplied', async () => {
+    const beforeJson = JSON.stringify(smallReport({ judgeModel: 'glm-4.6', overall: 0.5 }));
+    const afterJson = JSON.stringify(smallReport({ judgeModel: 'glm-4.6-judge', overall: 0.75 }));
+    const store: Record<string, string> = { '/tmp/before.json': beforeJson, '/tmp/after.json': afterJson };
+    const readFile = (p: string) => {
+      if (!(p in store)) throw new Error(`unexpected read: ${p}`);
+      return store[p];
+    };
+    const stdout = vi.fn();
+    const stderr = vi.fn();
+    const r = await runCompareCommand({
+      argv: ['compare', '/tmp/before.json', '/tmp/after.json'],
+      readFile,
+      stdout,
+      stderr,
+    });
+    expect(r.exitCode).toBe(0);
+    expect(stderr).not.toHaveBeenCalled();
+    const combined = stdout.mock.calls.map((c) => String(c[0])).join('');
+    expect(combined).toMatch(/Bench report comparison/);
+    expect(combined).toMatch(/Accuracy/i);
+    // The judge models differ ⇒ the bold warning line must be present.
+    expect(combined).toMatch(/\*\*[^*]*\bjudge\b[^*]*\*\*/i);
+  });
+
+  it('returns exit code 2 when one of the positional paths is missing', async () => {
+    const stderr = vi.fn();
+    const r = await runCompareCommand({
+      argv: ['compare', '/tmp/before.json'],
+      readFile: () => '{}',
+      stdout: () => {},
+      stderr,
+    });
+    expect(r.exitCode).toBe(2);
+    expect(stderr).toHaveBeenCalled();
+  });
+
+  it('writes the comparison to the supplied --out path', async () => {
+    const outDir = mkdtempSync(join(tmpdir(), 'bench-cli-compare-'));
+    const outFile = join(outDir, 'cmp.md');
+    const beforeJson = JSON.stringify(smallReport({ judgeModel: 'glm-4.6', overall: 0.5 }));
+    const afterJson = JSON.stringify(smallReport({ judgeModel: 'glm-4.6', overall: 0.6 }));
+    const store: Record<string, string> = { '/tmp/before.json': beforeJson, '/tmp/after.json': afterJson };
+    const readFile = (p: string) => store[p] ?? (() => { throw new Error(`unexpected read: ${p}`); })();
+    const stdout = vi.fn();
+    const r = await runCompareCommand({
+      argv: ['compare', '/tmp/before.json', '/tmp/after.json', '--out', outFile],
+      readFile,
+      stdout,
+    });
+    expect(r.exitCode).toBe(0);
+    const written = readFileSync(outFile, 'utf8');
+    expect(written).toMatch(/Bench report comparison/);
+    // No warning line when judge model is the same in both.
+    expect(written).not.toMatch(/\*\*[^*]*\b(judge|answer)\s+model[^*]*\*\*/i);
+    const combined = stdout.mock.calls.map((c) => String(c[0])).join('');
+    expect(combined).toContain(outFile);
+  });
+
+  it('returns exit code 2 when reading or parsing a report fails', async () => {
+    const stderr = vi.fn();
+    const r = await runCompareCommand({
+      argv: ['compare', '/tmp/before.json', '/tmp/after.json'],
+      readFile: (p) => {
+        if (p === '/tmp/before.json') return 'not-json';
+        return '{}';
+      },
+      stdout: () => {},
+      stderr,
+    });
+    expect(r.exitCode).toBe(2);
+    expect(stderr).toHaveBeenCalled();
   });
 });

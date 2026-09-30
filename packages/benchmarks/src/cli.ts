@@ -29,6 +29,12 @@
  *       and picks the `(novelThreshold, dupThreshold)` pair with the fewest
  *       misclassifications. Writes `results/calibration-<version>.json`.
  *
+ *   compare <before.json> <after.json> [--out <file>]
+ *       Offline Markdown comparison between two BenchReport JSON files
+ *       (Task 2 of PR-D2). Prints the report to stdout (or `--out`) so a
+ *       reviewer can read engine / flag / model deltas end-to-end without
+ *       rerunning the pipeline.
+ *
  * `process.argv` is parsed by hand so the CLI has no dependency footprint.
  * The handler functions return `{ exitCode }` instead of calling `process.exit`
  * so they can be exercised under test without spawning a child process.
@@ -46,6 +52,7 @@ import { loadDataset, LmeQuestion } from './longmemeval/dataset';
 import { runLongMemEval } from './longmemeval/run';
 import { runSupersession, Scenario } from './supersession/run';
 import { calibrationRows, recommendThresholds, CalibrationRow } from './calibrate';
+import { compareReports } from './compare';
 import { resolveGateConfig } from '../../core/src/services/librarian/ops/gate';
 
 // --------------------------------------------------------------------------
@@ -629,6 +636,104 @@ export async function runCalibrateCommand(deps: CalibrateDeps): Promise<CommandR
 }
 
 // --------------------------------------------------------------------------
+// compare subcommand
+// --------------------------------------------------------------------------
+
+export interface CompareDeps {
+  argv: string[];
+  /** Override the filesystem read so tests can pass reports inline. */
+  readFile?: (path: string) => string;
+  stdout?: (line: string) => void;
+  stderr?: (line: string) => void;
+}
+
+/**
+ * Parse the two positional paths (`before`, `after`) plus `--out` out of an
+ * argv slice. The first token is the `compare` verb and is skipped. The
+ * remaining `--flag value` pairs populate `out`; the remaining bare tokens
+ * are the positional paths (first two).
+ */
+function parseCompareArgs(argv: string[]): { before: string; after: string; out?: string } {
+  const positional: string[] = [];
+  let out: string | undefined;
+  // Skip a leading node-style binary token, mirroring `parseArgs`.
+  const startIdx = argv.length > 0 && (argv[0].endsWith('node') || argv[0].endsWith('tsx') || argv[0].endsWith('cli.ts')) ? 1 : 0;
+  for (let i = startIdx; i < argv.length; i++) {
+    const tok = argv[i];
+    if (tok === 'compare') {
+      // skip the verb
+      continue;
+    }
+    if (tok.startsWith('--')) {
+      if (tok === '--out') {
+        const v = argv[i + 1];
+        if (v && !v.startsWith('--')) {
+          out = v;
+          i += 1;
+        }
+      }
+      // other flags are ignored
+    } else {
+      positional.push(tok);
+    }
+  }
+  const [before, after] = positional;
+  return { before, after, out };
+}
+
+/**
+ * Handle the `compare` subcommand (Task 2 of PR-D2). Reads two
+ * BenchReport JSON files from disk and prints a Markdown comparison.
+ *
+ * Flow:
+ *   1. parse argv (positional before/after, optional `--out`)
+ *   2. validate both paths were provided
+ *   3. read + JSON.parse both files
+ *   4. invoke `compareReports(...)`
+ *   5. print to stdout (or write to `--out`)
+ */
+export async function runCompareCommand(deps: CompareDeps): Promise<CommandResult> {
+  const stdout = deps.stdout ?? ((line: string) => process.stdout.write(line));
+  const stderr = deps.stderr ?? ((line: string) => process.stderr.write(line));
+  const readFile = deps.readFile ?? ((p: string) => readFileSync(p, 'utf8'));
+  const parsed = parseArgs(deps.argv);
+  if (parsed.command !== 'compare' && parsed.command !== '') {
+    stderr(`Unknown command: ${parsed.command}\n`);
+    return { exitCode: 2 };
+  }
+  // Re-parse the raw argv so positional args (after the `compare` verb)
+  // survive — `parseArgs` above only captured the verb + flags.
+  const positional = parseCompareArgs(deps.argv);
+  if (!positional.before || !positional.after) {
+    stderr('compare: <before.json> <after.json> required\n');
+    return { exitCode: 2 };
+  }
+  const outArg = positional.out;
+
+  let beforeReport: BenchReport;
+  let afterReport: BenchReport;
+  try {
+    beforeReport = JSON.parse(readFile(positional.before)) as BenchReport;
+    afterReport = JSON.parse(readFile(positional.after)) as BenchReport;
+  } catch (e) {
+    stderr(`compare: failed to read or parse reports — ${(e as Error).message}\n`);
+    return { exitCode: 2 };
+  }
+
+  const md = compareReports(beforeReport, afterReport);
+  if (outArg) {
+    const outFile = resolveOutPath(outArg);
+    ensureDir(outFile);
+    writeFileSync(outFile, md);
+    stdout(`Wrote comparison to ${outFile}\n`);
+  } else {
+    stdout(md);
+    if (!md.endsWith('\n')) stdout('\n');
+  }
+  return { exitCode: 0 };
+}
+
+// --------------------------------------------------------------------------
 // Helpers — printed estimate + summary table
 // --------------------------------------------------------------------------
 
@@ -749,6 +854,11 @@ async function main(): Promise<void> {
     process.exitCode = r.exitCode;
     return;
   }
+  if (command === 'compare') {
+    const r = await runCompareCommand({ argv });
+    process.exitCode = r.exitCode;
+    return;
+  }
   process.stderr.write(`Unknown command: ${command}\n${renderHelp()}`);
   process.exitCode = 2;
 }
@@ -762,6 +872,8 @@ function renderHelp(): string {
     '  longmemeval [flags]            Run the LongMemEval pipeline',
     '  supersession [flags]           Run the supersession suite (Task 8)',
     '  calibrate [--out <file>]        Offline gate-threshold calibration (Task 1 of PR-D2)',
+    '  compare <before.json> <after.json> [--out <file>]',
+    '                                  Offline Markdown comparison (Task 2 of PR-D2)',
     '',
     'Common flags:',
     '  --strategy <legacy|ops>        Librarian strategy (default legacy)',
