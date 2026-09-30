@@ -255,6 +255,7 @@ export interface LibrarianGateConfig {
   /** Best-neighbour cosine below which a candidate is novel. Default 0.55. */
   novelThreshold?: number;
 }
+/** `'legacy'` is the 7.x add-only librarian. `'ops'` is the spec §5.1 / §5.3 dispatcher. */
 export interface LibrarianConfig {
   strategy?: 'legacy' | 'ops';
   gate?: LibrarianGateConfig;
