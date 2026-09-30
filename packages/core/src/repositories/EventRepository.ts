@@ -188,14 +188,18 @@ export class EventRepository extends BaseRepository {
 
   /**
    * Sum of `summary` lengths (in characters) for events for `entityId`
-   * strictly after the watermark. Used by the op-based librarian's token
-   * budget estimator (PR-B); SQLite's `LENGTH` returns character count for
-   * UTF-8 text input.
+   * strictly after the watermark. Pass `wm = null` to sum the entity's whole
+   * event log (no watermark yet). Used by the op-based librarian's token
+   * budget estimator (PR-B) and by the auto-trigger's pending-size check
+   * (PR-C). SQLite's `LENGTH` returns character count for UTF-8 text input.
    */
-  async sumSummaryCharsAfter(entityId: string, wm: LibrarianWatermark): Promise<number> {
-    const row = await this.db.getFirstAsync<{ total: number | null }>(
-      `SELECT SUM(LENGTH(summary)) as total FROM ${this.prefix}events WHERE entity_id = ? AND ${AFTER_SQL}`,
-      [entityId, wm.at, wm.at, wm.id],
+  async sumSummaryCharsAfter(entityId: string, wm: LibrarianWatermark | null, tx?: SQLiteAdapter): Promise<number> {
+    const executor = this.getExecutor(tx);
+    const params: unknown[] = wm ? [entityId, wm.at, wm.at, wm.id] : [entityId];
+    const where = wm ? `entity_id = ? AND ${AFTER_SQL}` : `entity_id = ?`;
+    const row = await executor.getFirstAsync<{ total: number | null }>(
+      `SELECT SUM(LENGTH(summary)) as total FROM ${this.prefix}events WHERE ${where}`,
+      params,
     );
     return row?.total ?? 0;
   }

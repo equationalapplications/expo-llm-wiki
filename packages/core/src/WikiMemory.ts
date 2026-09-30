@@ -530,6 +530,11 @@ export class WikiMemory {
     return this.writeService.write(entityId, event);
   }
 
+  /** Await auto-mode background librarian/heal jobs started by write(). No-op in 'deferred' mode. */
+  async drain(): Promise<void> {
+    return this.writeService.drain();
+  }
+
   /**
    * @param options.promptOverride - Applies only to this manual call. Does NOT affect
    * WriteService-triggered auto-runs. For persistent prompt customization across auto-runs,
