@@ -88,7 +88,7 @@ export function compareReports(before: BenchReport, after: BenchReport): string 
     if (answerDiffers) reasons.push(`answer model (${before.models.answer} → ${after.models.answer})`);
     if (judgeDiffers) reasons.push(`judge model (${before.models.judge} → ${after.models.judge})`);
     const verb = reasons.length === 1 ? 'differs' : 'differ';
-    lines.push(`**Warning:** ${reasons.join(' and ')} ${verb} between the two reports — accuracy deltas may be confounded.**`);
+    lines.push(`**Warning: ${reasons.join(' and ')} ${verb} between the two reports — accuracy deltas may be confounded.**`);
     lines.push('');
   }
 
