@@ -33,6 +33,7 @@ const SEVERITY: Record<WikiDiagnosticCode, WikiDiagnosticSeverity> = {
   librarian_op_rejected: 'warn',
   contradicts_document: 'warn',
   resolve_failed: 'warn',
+  read_budget: 'info',
 };
 
 // Fixed templates (REQ-DIAG-03): never interpolate content into these.
@@ -55,6 +56,7 @@ const MESSAGE: Record<WikiDiagnosticCode, string> = {
   librarian_op_rejected: 'A librarian reconciliation op was invalid and the candidate was added instead.',
   contradicts_document: 'A candidate contradicted a document fact and was stored as a draft.',
   resolve_failed: 'Reconciliation failed for a candidate; it was stored as a draft.',
+  read_budget: 'A read was packed to a token budget.',
 };
 
 const warnedNonFunction = new WeakSet<object>();

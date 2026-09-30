@@ -3,6 +3,7 @@ import type { EntryRepository } from '../repositories/EntryRepository';
 import type { GraphTraversalOptions, GraphNeighborhood, WikiConfig } from '../types';
 import { WikiInvalidReadOptions } from '../types';
 import { isLiveAt } from '../utils/temporal';
+import { packFactsByBudget, factTokenCost } from '../utils/budget';
 
 /**
  * Pure orchestrator — no SQL. Merges WikiConfig defaults with per-call options,
@@ -29,6 +30,10 @@ export class GraphTraversalService {
     const rawAsOf = options.asOf;
     if (rawAsOf !== undefined && !(typeof rawAsOf === 'number' && Number.isFinite(rawAsOf) && rawAsOf >= 0)) {
       throw new WikiInvalidReadOptions('asOf', 'must be a finite epoch-ms number >= 0');
+    }
+    const rawTokenBudget = options.tokenBudget;
+    if (rawTokenBudget !== undefined && !(typeof rawTokenBudget === 'number' && Number.isFinite(rawTokenBudget) && rawTokenBudget >= 0)) {
+      throw new WikiInvalidReadOptions('tokenBudget', 'must be a finite number >= 0');
     }
     const live = rawAsOf === undefined
       ? { mode: 'current' as const, t: Date.now() }
@@ -60,6 +65,16 @@ export class GraphTraversalService {
     const filteredEdges = edges.filter(
       (edge) => hydratedIds.has(edge.source_id) && hydratedIds.has(edge.target_id),
     );
-    return { nodes, edges: filteredEdges };
+    if (options.tokenBudget === undefined) return { nodes, edges: filteredEdges };
+    const budget = Math.trunc(options.tokenBudget);
+    const [anchorPacked] = packFactsByBudget([nodes[0]], budget).items;
+    const kept = [anchorPacked];
+    let used = factTokenCost(anchorPacked);
+    for (const node of nodes.slice(1)) {
+      const cost = factTokenCost(node);
+      if (used + cost <= budget) { kept.push(node); used += cost; }
+    }
+    const keptIds = new Set(kept.map((n) => n.id));
+    return { nodes: kept, edges: filteredEdges.filter((e) => keptIds.has(e.source_id) && keptIds.has(e.target_id)) };
   }
 }
