@@ -37,7 +37,12 @@ export class MaintenanceScheduler {
       const chars = pendingEvents > 0 ? await this.eventRepo.sumSummaryCharsAfter(entityId, wm) : 0;
       const eventCount = await this.eventRepo.count(entityId);
       const cp = await this.metadataRepo.getCheckpoint(entityId, this.db);
-      const healCheckpoint = Math.min(cp.heal ?? 0, eventCount);
+      // Same clamp as WriteService.maybeRunHeal: an out-of-range checkpoint
+      // (reachable after runPrune deletes events a heal pass already counted)
+      // resets to ZERO, not to the event count — both views must agree that
+      // the entity is fully unhealed.
+      let healCheckpoint = cp.heal ?? 0;
+      if (healCheckpoint > eventCount) healCheckpoint = 0;
       const healDue = eventCount - healCheckpoint >= autoHealThreshold;
       const reembedPending = canEmbed && (await this.entryRepo.countReembedPending(entityId, MAX_EMBED_ATTEMPTS)) > 0;
       if (pendingEvents > 0 || healDue || reembedPending) {
