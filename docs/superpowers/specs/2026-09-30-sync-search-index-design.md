@@ -1,7 +1,7 @@
 # Public `WikiMemory.syncSearchIndex()`: Design
 
 **Date:** 2026-09-30
-**Status:** Draft — awaiting review
+**Status:** Draft — awaiting review → **Approved** 2026-09-30 in PR #251 review: §2.2 resolved to option 1 (sync stale entities only)
 **Branch:** `docs/core-sync-search-index-246`
 **Source baseline:** `18a34f8` (v7.8.0)
 **Issue:** #246
@@ -75,7 +75,13 @@ It runs on the same `syncChain` as every internal sync (`importDump`, `ingestDoc
 
 `assertEntityId` is the existing module-level guard (`WikiMemory.ts`). It throws `TypeError('Invalid entityId: must be a non-empty string.')`, the same as `pendingSources`, `lint` and `getInstructions`. This is the method's only throw. It happens synchronously inside the async function, so it surfaces as a rejected promise. "Never rejects" therefore applies to valid input only, which the JSDoc must say.
 
-### 2.2 Without an argument — **review decision**
+### 2.2 Without an argument — **resolved in review: option 1, sync stale entities only**
+
+**Review outcome (2026-09-30).** Option 1 was chosen.
+- Delegating to `sync()` was rejected. A full rebuild on every call would give back the incremental-index gains of #232/#233; a global rebuild stays reserved for `setup()` and recovery.
+- Dropping the no-argument form was rejected. A host that batch-writes several tenants through `upsertGraph` gets a cheap way to make the index consistent everywhere before it proceeds.
+
+The original analysis follows unchanged.
 
 The issue is internally inconsistent here. Its JSDoc says "for every stale entity when omitted", but its implementation note says "delegate to `searchService.sync()`". Those differ: `sync()` with no argument rebuilds **every** entity's index, then vacuums and clears the whole vector cache. That is O(database), the same cost as `setup()`.
 
@@ -99,7 +105,7 @@ async syncStale(): Promise<void> {
 
 **Alternative: drop the no-argument form (YAGNI).** SynapseTree, the only known consumer, always knows the entity it wrote. The signature could require `entityId`, and a no-argument form could be added later without breaking anyone.
 
-This spec assumes the recommended option. §5 and §6 change accordingly if the review picks one of the others.
+This spec assumes the recommended option. §5 and §6 change accordingly if the review picks one of the others. *(Resolved: the recommended option was chosen, so §5 and §6 stand as written.)*
 
 ## 3. Contract details
 
