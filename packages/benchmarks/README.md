@@ -128,9 +128,9 @@ field when a scenario threw. A scenario **passes** when every expected
 current title is contained (case-insensitively) in some current fact's title
 **and** no `expectSuperseded` id is still current.
 
-To re-read the committed baselines without an API key:
+To re-read the committed baselines without an API key (the LongMemEval
+baseline is not committed yet; see issue #247):
 
 ```sh
-jq '.accuracy' packages/benchmarks/results/baseline-7.7.7.json
 jq '{passed, total, skipped}' packages/benchmarks/results/supersession-baseline-7.7.7.json
 ```

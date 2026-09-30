@@ -60,10 +60,10 @@ export function buildJudgePrompt(
   response: string,
 ): { systemPrompt: string; userPrompt: string } {
   const template = JUDGE_TEMPLATES[q.question_type];
-  const userPrompt = template
-    .replace('{question}', q.question)
-    .replace('{answer}', q.answer)
-    .replace('{response}', response);
+  // One pass with a function replacer: values are inserted literally (no `$&`
+  // / `$'` expansion) and never re-scanned for later placeholders.
+  const values: Record<string, string> = { question: q.question, answer: q.answer, response };
+  const userPrompt = template.replace(/\{(question|answer|response)\}/g, (_m, k: string) => values[k]);
   return { systemPrompt: JUDGE_SYSTEM_PROMPT, userPrompt };
 }
 

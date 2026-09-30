@@ -1,16 +1,16 @@
 {
   "kind": "calibration",
-  "createdAt": "2026-09-30T06:01:39.102Z",
+  "createdAt": "2026-09-30T13:33:44.808Z",
   "engine": {
     "version": "7.7.7",
-    "gitSha": "8f9d982"
+    "gitSha": "5056903"
   },
   "scenarioCount": 30,
   "rowCount": 36,
   "novelThreshold": 0.3,
   "dupThreshold": 0.89,
-  "misclassifiedAtDefaults": 0,
-  "misclassifiedAtRecommended": 0,
+  "misclassifiedAtDefaults": 2,
+  "misclassifiedAtRecommended": 2,
   "defaultsConfirmed": true,
   "rows": [
     {
@@ -214,14 +214,14 @@
       "candidate": "User also drinks coffee",
       "bestCosine": 0.77716168374868,
       "titleJaccard": 0.16666666666666666,
-      "expected": "ambiguous"
+      "expected": "add"
     },
     {
       "scenario": "mixed-1-three-candidates-noop-add-supersede",
       "candidate": "User is an engineer at Acme",
       "bestCosine": 0.6715212200229822,
       "titleJaccard": 0.2,
-      "expected": "ambiguous"
+      "expected": "add"
     },
     {
       "scenario": "mixed-2-in-batch-duplicate-candidates",

@@ -583,7 +583,7 @@
   },
   {
     "name": "mixed-1-three-candidates-noop-add-supersede",
-    "note": "Three candidates: one gate-NOOP, one gate-ADD, one resolve-SUPERSEDE. Exactly two LLM calls.",
+    "note": "Three candidates: two the gate should ADD (coffee, and the Acme restatement, which has no existing fact to NOOP against) and one resolve-SUPERSEDE. Exactly two LLM calls. Per-fact `gate` labels drive calibration because the candidates differ.",
     "existing": [
       { "id": "seattle", "title": "User lives in Seattle", "body": "Permanent residence.", "source_type": "user_stated" },
       { "id": "tea_pref", "title": "User prefers tea", "body": "Long-time preference.", "source_type": "user_stated" }
@@ -595,9 +595,9 @@
     ],
     "extract": {
       "facts": [
-        { "title": "User lives in San Francisco", "body": "New city.", "tags": [], "confidence": "certain", "source_event": "e1" },
-        { "title": "User also drinks coffee", "body": "Additional beverage preference.", "tags": ["preference"], "confidence": "certain", "source_event": "e2" },
-        { "title": "User is an engineer at Acme", "body": "Restated.", "tags": [], "confidence": "certain", "source_event": "e3" }
+        { "title": "User lives in San Francisco", "body": "New city.", "tags": [], "confidence": "certain", "source_event": "e1", "gate": "ambiguous" },
+        { "title": "User also drinks coffee", "body": "Additional beverage preference.", "tags": ["preference"], "confidence": "certain", "source_event": "e2", "gate": "add" },
+        { "title": "User is an engineer at Acme", "body": "Restated.", "tags": [], "confidence": "certain", "source_event": "e3", "gate": "add" }
       ],
       "tasks": []
     },

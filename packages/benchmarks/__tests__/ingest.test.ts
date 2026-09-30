@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, existsSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import Database from 'better-sqlite3';
-import { flagsKey, ingestQuestion } from '../src/longmemeval/ingest';
+import { flagsKey, cacheFilePath, ingestQuestion } from '../src/longmemeval/ingest';
 import type { LmeQuestion } from '../src/longmemeval/dataset';
 
 function makeSyntheticQuestion(): LmeQuestion {
@@ -94,6 +94,14 @@ describe('flagsKey', () => {
     expect(flagsKey({ strategy: 'ops', maintenance: 'deferred' })).toBe('ops-deferred');
     expect(flagsKey({ strategy: 'ops', maintenance: 'deferred', readTokenBudget: 800 })).toBe('ops-deferred-b800');
     expect(flagsKey({ strategy: 'legacy', maintenance: 'auto', readTokenBudget: 0 })).toBe('legacy-auto');
+  });
+});
+
+describe('cacheFilePath', () => {
+  it('leaves the read-only token budget out of the ingest cache key', () => {
+    const base = cacheFilePath('/c', '7.8.0', { strategy: 'ops', maintenance: 'deferred' }, 'q1');
+    expect(cacheFilePath('/c', '7.8.0', { strategy: 'ops', maintenance: 'deferred', readTokenBudget: 800 }, 'q1')).toBe(base);
+    expect(base).toBe(join('/c', 'ingest', '7.8.0', 'ops-deferred', 'q1.sqlite'));
   });
 });
 

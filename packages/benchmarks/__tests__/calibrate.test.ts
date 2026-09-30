@@ -128,6 +128,14 @@ describe('expectedClass (resolve null ⇒ gate decides alone)', () => {
     expect(expectedClass(s, 0)).toBe('ambiguous');
   });
 
+  it('prefers a per-fact gate label over the scenario-level rules', () => {
+    const s = scenario({ resolve: { ops: [{ item: 0, op: 'SUPERSEDE', target: 'n1' }] } });
+    s.extract.facts = [{ title: 'a', gate: 'ambiguous' }, { title: 'b', gate: 'add' }, { title: 'c' }];
+    expect(expectedClass(s, 0)).toBe('ambiguous');
+    expect(expectedClass(s, 1)).toBe('add');
+    expect(expectedClass(s, 2)).toBe('ambiguous');
+  });
+
   it('returns "noop" when the candidate is a restatement (existing preserved + no new title)', () => {
     // job-5 shape: candidate "User is an engineer at Acme" matches existing
     // "User is an engineer at Acme"; expectCurrentTitles "engineer at Acme"

@@ -46,7 +46,7 @@ import { fileURLToPath } from 'url';
 
 import { endpointFromEnv, ChatEndpoint } from './provider';
 import { engineInfo, BenchReport } from './report';
-import { flagsKey, EngineFlags } from './longmemeval/ingest';
+import { flagsKey, cacheFilePath, EngineFlags } from './longmemeval/ingest';
 import { sampleQuestionIds } from './longmemeval/sample';
 import { loadDataset, LmeQuestion } from './longmemeval/dataset';
 import { runLongMemEval } from './longmemeval/run';
@@ -158,7 +158,7 @@ export function estimateIngestTokens(questions: LmeQuestion[]): number {
 // --------------------------------------------------------------------------
 
 function cacheFileFor(cacheDir: string, engineVersion: string, flags: EngineFlags, questionId: string): string {
-  return join(cacheDir, 'ingest', engineVersion, flagsKey(flags), `${questionId}.sqlite`);
+  return cacheFilePath(cacheDir, engineVersion, flags, questionId);
 }
 
 /**
@@ -900,7 +900,13 @@ const invokedDirectly = (() => {
 })();
 
 if (invokedDirectly) {
-  void main();
+  // Set exitCode rather than letting the rejection go unhandled: an
+  // unhandled-rejection exit with the ONNX session live aborts natively
+  // (see the docblock on main()).
+  main().catch((e: unknown) => {
+    process.stderr.write(`bench: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}\n`);
+    process.exitCode = 1;
+  });
 }
 
 // Helper for the entry-point detection above.

@@ -135,12 +135,14 @@ async function insertExistingFacts(adapter: SQLiteAdapter, facts: ScenarioExisti
  *
  * 7.7.7's `llm_wiki_events` schema has no `occurred_at` column; events are
  * stored in chronological order by `created_at`. PR-A adds the column via
- * migration 13 — feature-detected in the ingest path (see T4) but not
- * surfaced here. The `occurred_at` field on the scenario is purely for the
- * PR-B replay path and is recorded here only via `created_at`.
+ * migration 13; when it exists (feature-detected, as in the ingest path) the
+ * scenario's `occurred_at` is written to it too, so temporal scenarios reach
+ * the librarian's `occurred_at` path rather than the `created_at` fallback.
  */
 async function writeScenarioEvents(adapter: SQLiteAdapter, events: ScenarioEvent[], idOffset = 0): Promise<void> {
   const now = Date.now();
+  const cols = await adapter.getAllAsync<{ name: string }>('PRAGMA table_info(llm_wiki_events)');
+  const supportsOccurredAt = cols.some((c) => c.name === 'occurred_at');
   for (let i = 0; i < events.length; i++) {
     const ev = events[i];
     // `idOffset` lets a two-run scenario pass `second.length` so the second
@@ -148,11 +150,19 @@ async function writeScenarioEvents(adapter: SQLiteAdapter, events: ScenarioEvent
     // otherwise `evt_1` collides between halves.
     const eventId = `evt_${idOffset + i + 1}`;
     const createdAt = ev.occurred_at ?? now + idOffset + i;
-    await adapter.runAsync(
-      `INSERT INTO llm_wiki_events (id, entity_id, event_type, summary, created_at)
-       VALUES (?, ?, 'observation', ?, ?)`,
-      [eventId, ENTITY, ev.summary, createdAt],
-    );
+    if (supportsOccurredAt) {
+      await adapter.runAsync(
+        `INSERT INTO llm_wiki_events (id, entity_id, event_type, summary, created_at, occurred_at)
+         VALUES (?, ?, 'observation', ?, ?, ?)`,
+        [eventId, ENTITY, ev.summary, createdAt, ev.occurred_at ?? null],
+      );
+    } else {
+      await adapter.runAsync(
+        `INSERT INTO llm_wiki_events (id, entity_id, event_type, summary, created_at)
+         VALUES (?, ?, 'observation', ?, ?)`,
+        [eventId, ENTITY, ev.summary, createdAt],
+      );
+    }
   }
 }
 

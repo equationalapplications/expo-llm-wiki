@@ -51,6 +51,14 @@ describe('buildAnswerPrompt', () => {
 });
 
 describe('buildJudgePrompt', () => {
+  it('inserts values literally, without $-pattern expansion or re-substitution', () => {
+    const q = { ...makeQuestion('single-session-user'), question: 'Q {answer} {response}', answer: "A $& $'" };
+    const { userPrompt } = buildJudgePrompt(q, "R $` $'");
+    expect(userPrompt).toContain('Q {answer} {response}');
+    expect(userPrompt).toContain("A $& $'");
+    expect(userPrompt).toContain("R $` $'");
+  });
+
   it('has a JUDGE_TEMPLATES entry for every LmeQuestionType', () => {
     for (const t of TYPES) {
       expect(JUDGE_TEMPLATES[t]).toBeTypeOf('string');

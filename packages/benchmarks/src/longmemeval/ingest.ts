@@ -87,11 +87,13 @@ const IDLE_TIMEOUT_MS = 60 * 60 * 1000;
 const DEFERRED_MAX_ITERATIONS = 200;
 
 /**
- * Resolve the per-question cache file path. Pure — exists only for tests
- * that need to assert the layout.
+ * Resolve the per-question cache file path. `readTokenBudget` is a
+ * read-side flag, so it is left out of the key: a budget sweep reuses one
+ * ingest instead of re-ingesting every question per budget value.
  */
 export function cacheFilePath(cacheDir: string, engineVersion: string, flags: EngineFlags, questionId: string): string {
-  return join(cacheDir, 'ingest', engineVersion, flagsKey(flags), `${questionId}.sqlite`);
+  const ingestKey = flagsKey({ strategy: flags.strategy, maintenance: flags.maintenance });
+  return join(cacheDir, 'ingest', engineVersion, ingestKey, `${questionId}.sqlite`);
 }
 
 interface WikiMemoryWithDeferred {
@@ -218,10 +220,19 @@ export async function ingestQuestion(q: LmeQuestion, opts: IngestOpts): Promise<
           } as any);
         }
       }
+      // Never write the completion sentinel over an unfinished memory state:
+      // the cache fast path would reuse it on every later run.
+      let quiesced = false;
       for (let i = 0; i < DEFERRED_MAX_ITERATIONS; i++) {
         await w.runPendingMaintenance();
         const pending = await w.getPendingMaintenance();
-        if (!Array.isArray(pending) || pending.length === 0) break;
+        if (!Array.isArray(pending) || pending.length === 0) {
+          quiesced = true;
+          break;
+        }
+      }
+      if (!quiesced) {
+        throw new Error(`deferred maintenance did not quiesce within ${DEFERRED_MAX_ITERATIONS} rounds for "${q.question_id}"`);
       }
     } else {
       // Legacy auto-mode — wait for quiescence after every write so a

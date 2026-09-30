@@ -54,8 +54,15 @@ export type ExpectedClass = 'noop' | 'add' | 'ambiguous';
  *     the resolved ops (SUPERSEDE / UPDATE / ADD / NOOP) belong to the
  *     model, not the gate. `expectedClass` returns `ambiguous` because
  *     that is the gate's only contribution in this branch.
+ *
+ * A per-fact `gate` label on `extract.facts[candidateIndex]` overrides both
+ * rules. Scenarios whose candidates the gate should treat differently (e.g.
+ * `mixed-1`: one resolve candidate beside two gate-ADDs) must carry one,
+ * since the scenario-level rules can only assign a single class.
  */
 export function expectedClass(s: Scenario, candidateIndex: number): ExpectedClass {
+  const label = s.extract.facts[candidateIndex]?.gate;
+  if (label === 'noop' || label === 'add' || label === 'ambiguous') return label;
   if (s.resolve !== null) return 'ambiguous';
   // resolve === null: gate decides alone
   const existingAllPreserved = s.expectSuperseded.length === 0;
