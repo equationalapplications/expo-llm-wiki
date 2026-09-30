@@ -73,6 +73,46 @@ describe('runPendingMaintenance', () => {
     expect(r.estimated).toBe(true);
   });
 
+  it('deadline outranks budget_exhausted when both apply mid-unit', async () => {
+    // The budget must exhaust INSIDE a unit that also crosses the deadline —
+    // the between-units deadline check cannot see it, only the break-site
+    // re-check can. Setup: one fact already stored for 'a'; the pending
+    // event extracts a similar-but-not-identical fact, so the gate is
+    // keyword-mode ambiguous over that neighbour and the pass makes a second
+    // (resolve) LLM call. Extract's awaited call sleeps past deadlineMs; the
+    // resolve pre-flight then exceeds what remains (budget = full-batch need
+    // + 10 leaves only scraps). Both reasons apply at the same break;
+    // precedence requires 'deadline' (caller retries as-is), not
+    // 'budget_exhausted' (which would advise raising the budget).
+    const factJson = (name: string) => JSON.stringify({
+      facts: [{ title: `Zeta pipeline ${name}`, body: 'z'.repeat(800), tags: [], confidence: 'certain' }],
+      tasks: [],
+    });
+    const fact1 = factJson('overview');
+    const fact2 = factJson('refresh');
+    const generateText = vi.fn(async ({ userPrompt }: { userPrompt: string }) => {
+      await new Promise((r) => setTimeout(r, 40));
+      return userPrompt.includes('WWW') ? fact1 : fact2;
+    });
+    const { wiki } = await mk({ generateText });
+    await wiki.write('a', { event_type: 'observation', summary: 'WWW ' + 'w'.repeat(996) });
+    await wiki.__testAccess.maintenanceService.runLibrarianPass({ entityId: 'a', trigger: 'call' });
+    await wiki.write('a', { event_type: 'observation', summary: 'QQQ ' + 'q'.repeat(996) });
+    // Measure the one-event extract estimate (same summary length ⇒ same
+    // estimate) with a probe pass on a clean entity; subtract the response
+    // estimate the mock's fixed fact2 JSON contributes.
+    await wiki.write('probe', { event_type: 'observation', summary: 'x'.repeat(1000) });
+    const probeMeter = new UsageMeter();
+    await wiki.__testAccess.maintenanceService.runLibrarianPass({ entityId: 'probe', trigger: 'call', meter: probeMeter });
+    const estOneUnit = probeMeter.used - estimateTokens(fact2);
+    expect(estOneUnit).toBeGreaterThan(0);
+
+    const r = await wiki.runPendingMaintenance({ tokenBudget: 2 * estOneUnit + 10, deadlineMs: 10 });
+    expect(r.stoppedReason).toEqual({ reason: 'deadline' });
+    expect(r.perEntity[0].librarianPasses).toBe(0);
+    expect(r.tokensUsed).toBeGreaterThan(0);
+  });
+
   it('deadline is checked between units', async () => {
     const generateText = vi.fn(async () => { await new Promise((r) => setTimeout(r, 30)); return noFacts; });
     const { wiki } = await mk({ generateText });

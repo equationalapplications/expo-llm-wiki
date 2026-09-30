@@ -110,6 +110,13 @@ export class MaintenanceScheduler {
       }
       return 'exhausted';
     };
+    // A unit that ends with the meter exhausted made real awaited LLM calls,
+    // so the deadline may have lapsed mid-unit too. Precedence is deadline
+    // first (spec §10): the caller must be told to retry as-is, not to raise
+    // the budget. Re-checked here because the between-units deadline check
+    // only runs before a unit starts, never after one ends.
+    const exhaustedStop = (): MaintenanceStopReason =>
+      Date.now() >= deadline ? { reason: 'deadline' } : { reason: 'budget_exhausted' };
     const markBusy = (st: State, job: MaintenanceJob) => { (st.report.busy ??= []).push(job); };
 
     rounds: for (;;) {
@@ -129,7 +136,7 @@ export class MaintenanceScheduler {
             this.jobManager.releaseLock('librarian', entityId);
           }
           if (r.budgetStop) {
-            if (classify('librarian', entityId, r.budgetStop.requiredEstimate) === 'exhausted') { stopped = { reason: 'budget_exhausted' }; break rounds; }
+            if (classify('librarian', entityId, r.budgetStop.requiredEstimate) === 'exhausted') { stopped = exhaustedStop(); break rounds; }
             st.librarian = false;
             continue;
           }
@@ -151,8 +158,12 @@ export class MaintenanceScheduler {
           } finally {
             this.jobManager.releaseLock('heal', entityId);
           }
+          // Defense against future doRunHeal changes: scanned === 0 means the
+          // pass bailed before any LLM call, so budgetStop cannot arise there
+          // today — but if it ever did, classify it instead of mislabeling a
+          // never-started job as exhausted.
           if (h.budgetStop && h.scanned === 0) {
-            if (classify('heal', entityId, h.budgetStop.requiredEstimate) === 'exhausted') { stopped = { reason: 'budget_exhausted' }; break rounds; }
+            if (classify('heal', entityId, h.budgetStop.requiredEstimate) === 'exhausted') { stopped = exhaustedStop(); break rounds; }
             st.heal = false;
             continue;
           }
@@ -162,7 +173,7 @@ export class MaintenanceScheduler {
             st.heal = false;
             await this.metadataRepo.updateCheckpoint(entityId, { heal: await this.eventRepo.count(entityId) }, this.db);
           }
-          if (h.budgetStop) { stopped = { reason: 'budget_exhausted' }; break rounds; }
+          if (h.budgetStop) { stopped = exhaustedStop(); break rounds; }
           continue;
         }
 
