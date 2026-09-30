@@ -23,7 +23,7 @@ The slice is a seeded, stratified sample of the LongMemEval_S dataset
 (`seed: 20260929`; the committed `fixtures/longmemeval-sample.json` holds the
 exact question ids):
 
-| Stratum | Count |
+| Stratum | Target |
 |---|---|
 | knowledge-update | 20 |
 | temporal-reasoning | 20 |
@@ -33,7 +33,11 @@ exact question ids):
 | single-session-preference | 8 |
 | **Total** | **80** |
 
-Abstention questions (`question_id` ending `_abs`) are excluded.
+The targets are fixed by `STRATA` in `src/longmemeval/sample.ts`; the seeded
+sampler fills as many of each as the dataset provides. Abstention questions
+(`question_id` ending `_abs`) are excluded entirely. The committed
+`fixtures/longmemeval-sample.json` carries the actual question ids picked at
+`seed = 20260929`.
 
 **Attribution.** The judge templates are adapted from the public LongMemEval
 repository's `evaluate_qa.py` (including the temporal off-by-one and
