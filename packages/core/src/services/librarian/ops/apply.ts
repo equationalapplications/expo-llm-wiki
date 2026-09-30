@@ -123,12 +123,17 @@ export async function applyOps(
       if (op.op === 'UPDATE' && target.source_type === 'librarian_inferred') {
         const [existing] = await deps.entryRepo.findByIds([op.targetId], [entityId], tx);
         if (existing) {
+          const newTitle = op.title ?? g.candidate.fact.title;
           await deps.entryRepo.upsert({
             ...existing,
-            title: op.title ?? g.candidate.fact.title,
+            title: newTitle,
             body: op.body ?? g.candidate.fact.body,
             updated_at: now,
           }, tx);
+          // Keep the pass-local index in step with the row (as insert() does),
+          // so later candidates' edges resolve the new title, not the old one.
+          titleIndex.delete(normalizeTitleKey(existing.title));
+          titleIndex.set(normalizeTitleKey(newTitle), { id: existing.id, okf_type: existing.okf_type ?? null });
           updatedIds.push(existing.id);
           continue;
         }
