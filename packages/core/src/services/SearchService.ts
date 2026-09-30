@@ -249,7 +249,8 @@ export class SearchService {
   /**
    * Runs syncEntries(id, []) for each entity marked stale when this is called,
    * so only those entities are rebuilt. Each rebuild still takes its own turn
-   * on the sync chain, and like syncEntries this never rejects.
+   * on the sync chain, and like syncEntries this never rejects. With nothing
+   * stale it resolves at once, without waiting on work already on the chain.
    */
   async syncStale(): Promise<void> {
     const ids = [...this.staleEntities];

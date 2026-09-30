@@ -743,8 +743,9 @@ export class WikiMemory {
    * the third argument is the caller's `tx`. The method does not open a
    * nested transaction, does not acquire any lock, and does not perform
    * post-commit work (search sync, embedding, cache eviction). After the
-   * transaction commits, call `syncSearchIndex(entityId)` to make the new
-   * nodes keyword-searchable. Embeddings still come from the maintenance
+   * transaction commits, call `syncSearchIndex(entityId)` — or
+   * `syncSearchIndex()` after writing several entities in one transaction —
+   * to make the new nodes keyword-searchable. Embeddings still come from the maintenance
    * sweep (`runLibrarian` / `runHeal` / `runOntologyBackfill` / `runPrune`,
    * scoped via `listEntityIds`).
    *
