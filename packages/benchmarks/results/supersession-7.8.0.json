@@ -1,0 +1,203 @@
+{
+  "kind": "supersession",
+  "createdAt": "2026-09-30T06:28:29.503Z",
+  "strategy": "ops",
+  "engine": {
+    "version": "7.7.7",
+    "gitSha": "1f670db",
+    "flags": {
+      "strategy": "ops"
+    }
+  },
+  "passed": 23,
+  "total": 25,
+  "skipped": 5,
+  "results": [
+    {
+      "name": "relocation-1-seattle-to-sf",
+      "pass": true,
+      "currentTitles": [
+        "User recently moved to San Francisco"
+      ]
+    },
+    {
+      "name": "relocation-2-portland-to-seattle-with-valid_from",
+      "pass": true,
+      "currentTitles": [
+        "User lives in Seattle since March 2024"
+      ]
+    },
+    {
+      "name": "relocation-3-moved-back-AB-A",
+      "pass": true,
+      "currentTitles": [
+        "User previously lived in Portland before moving away",
+        "User moved back to Portland in September 2024"
+      ]
+    },
+    {
+      "name": "relocation-4-visiting-sf-add-not-supersede",
+      "pass": true,
+      "currentTitles": [
+        "User is visiting San Francisco this week",
+        "User lives in Seattle"
+      ]
+    },
+    {
+      "name": "relocation-5-two-candidates-target-same-fact",
+      "pass": true,
+      "currentTitles": [
+        "Someone else known to the user is also in San Francisco",
+        "User moved to San Francisco"
+      ]
+    },
+    {
+      "name": "job-1-engineer-to-manager-same-company",
+      "pass": true,
+      "currentTitles": [
+        "User promoted to engineering manager at Acme"
+      ]
+    },
+    {
+      "name": "job-2-acme-to-globex",
+      "pass": true,
+      "currentTitles": [
+        "User started a new job at Globex"
+      ]
+    },
+    {
+      "name": "job-3-update-librarian_inferred",
+      "pass": true,
+      "currentTitles": [
+        "User is an engineer on the payments team at Acme"
+      ]
+    },
+    {
+      "name": "job-4-update-user_stated-becomes-supersede",
+      "pass": true,
+      "currentTitles": [
+        "User is an engineer on the payments team at Acme"
+      ]
+    },
+    {
+      "name": "job-5-duplicate-restatement",
+      "pass": true,
+      "currentTitles": [
+        "User is an engineer at Acme"
+      ]
+    },
+    {
+      "name": "diet-1-vegan-to-keto",
+      "pass": true,
+      "currentTitles": [
+        "User follows a keto diet (since ~September 2024)"
+      ]
+    },
+    {
+      "name": "diet-2-tea-to-coffee",
+      "pass": true,
+      "currentTitles": [
+        "Drinks coffee every morning"
+      ]
+    },
+    {
+      "name": "diet-3-also-likes-coffee-add",
+      "pass": true,
+      "currentTitles": [
+        "User likes coffee in the afternoon",
+        "User prefers tea"
+      ]
+    },
+    {
+      "name": "diet-4-exact-duplicate-different-punctuation",
+      "pass": true,
+      "currentTitles": [
+        "User follows a vegan diet"
+      ]
+    },
+    {
+      "name": "diet-5-preference-reversal-with-date",
+      "pass": false,
+      "currentTitles": [
+        "User drank tea in the past before a period of not drinking it",
+        "User switched back to drinking tea as of January 2025"
+      ]
+    },
+    {
+      "name": "relationship-1-single-to-married",
+      "pass": true,
+      "currentTitles": [
+        "User got married in October 2024"
+      ]
+    },
+    {
+      "name": "relationship-2-project-renamed",
+      "pass": true,
+      "currentTitles": [
+        "Project renamed to Phoenix Pro"
+      ]
+    },
+    {
+      "name": "relationship-3-project-cancelled-supersede-with-reason",
+      "pass": true,
+      "currentTitles": [
+        "Project Zeta cancelled due to client withdrawal"
+      ]
+    },
+    {
+      "name": "relationship-4-unrelated-new-project-add",
+      "pass": true,
+      "currentTitles": [
+        "User started a new side project called Project Beta",
+        "User is working on Project Alpha"
+      ]
+    },
+    {
+      "name": "relationship-5-rename-of-immutable-document",
+      "pass": true,
+      "currentTitles": [
+        "User is working on Project Atlas (renamed to 'Project Atlas Pro')",
+        "User is working on Project Atlas"
+      ]
+    },
+    {
+      "name": "mixed-1-three-candidates-noop-add-supersede",
+      "pass": true,
+      "currentTitles": [
+        "User started drinking coffee",
+        "User works as an engineer at Acme",
+        "User moved to San Francisco",
+        "User prefers tea"
+      ]
+    },
+    {
+      "name": "mixed-2-in-batch-duplicate-candidates",
+      "pass": true,
+      "currentTitles": [
+        "User is an engineer at Acme"
+      ]
+    },
+    {
+      "name": "mixed-3-superseded-fact-never-offered-again",
+      "pass": true,
+      "currentTitles": [
+        "User has a new job in Portland",
+        "User moved to San Francisco"
+      ]
+    },
+    {
+      "name": "mixed-4-event-occurred_at-drives-valid_from",
+      "pass": true,
+      "currentTitles": [
+        "User moved to San Francisco"
+      ]
+    },
+    {
+      "name": "mixed-5-extract-valid_from-overrides-occurred_at",
+      "pass": false,
+      "currentTitles": [
+        "User moved to San Francisco"
+      ]
+    }
+  ]
+}
