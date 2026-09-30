@@ -29,6 +29,11 @@ const SEVERITY: Record<WikiDiagnosticCode, WikiDiagnosticSeverity> = {
   classification_low_confidence: 'info',
   classification_invalid: 'warn',
   llm_usage: 'info',
+  librarian_gate: 'info',
+  librarian_op_rejected: 'warn',
+  contradicts_document: 'warn',
+  resolve_failed: 'warn',
+  read_budget: 'info',
 };
 
 // Fixed templates (REQ-DIAG-03): never interpolate content into these.
@@ -47,6 +52,11 @@ const MESSAGE: Record<WikiDiagnosticCode, string> = {
   classification_low_confidence: 'A classifier answer was below the confidence threshold and was not applied.',
   classification_invalid: 'A classifier answer was invalid and was not applied.',
   llm_usage: 'An LLM call completed; token usage attached.',
+  librarian_gate: 'Librarian gate outcome counts for one pass.',
+  librarian_op_rejected: 'A librarian reconciliation op was invalid and the candidate was added instead.',
+  contradicts_document: 'A candidate contradicted a document fact and was stored as a draft.',
+  resolve_failed: 'Reconciliation failed for a candidate; it was stored as a draft.',
+  read_budget: 'A read was packed to a token budget.',
 };
 
 const warnedNonFunction = new WeakSet<object>();

@@ -8,6 +8,8 @@ import type { MetadataRepository } from '../repositories/MetadataRepository';
 import type { SearchService } from './SearchService';
 import { applyTierWeight, normalizeEntityIds, sanitizeTierWeights, selectWithFloors, shouldExposeReadMetadata, validateTierFloors } from '../readOptions';
 import { sanitizeRankerError, safeErrorToString } from '../utils/pure';
+import { packFactsByBudget } from '../utils/budget';
+import { emitDiagnostic } from '../utils/diagnostics';
 import type { LiveMode } from '../utils/temporal';
 
 type ReadCandidateRowMetadata = EntryRowMetadata;
@@ -60,6 +62,20 @@ export class RetrievalService {
     if (rawAsOf !== undefined && !(typeof rawAsOf === 'number' && Number.isFinite(rawAsOf) && rawAsOf >= 0)) {
       throw new WikiInvalidReadOptions('asOf', 'must be a finite epoch-ms number >= 0');
     }
+    const tokenBudget = options?.tokenBudget;
+    if (tokenBudget !== undefined && !(typeof tokenBudget === 'number' && Number.isFinite(tokenBudget) && tokenBudget >= 0)) {
+      throw new WikiInvalidReadOptions('tokenBudget', 'must be a finite number >= 0');
+    }
+    const applyBudget = (input: WikiFact[]): WikiFact[] => {
+      if (tokenBudget === undefined) return input;
+      const packed = packFactsByBudget(input, Math.trunc(tokenBudget), scoreByFactId);
+      emitDiagnostic(this.options, {
+        code: 'read_budget', operation: 'read', trigger: 'call',
+        entityId: entityIds.length === 1 ? entityIds[0] : entityIds.join(','),
+        detail: { candidates: packed.candidates, packed: packed.packed, tokensUsed: packed.tokensUsed },
+      });
+      return packed.items;
+    };
     const liveMode: LiveMode = rawAsOf === undefined ? 'current' : 'asOf';
     const liveAt = rawAsOf === undefined ? Date.now() : Math.trunc(rawAsOf);
     const trimmedQuery = query.trim();
@@ -720,6 +736,8 @@ export class RetrievalService {
         }
       }
 
+      facts = applyBudget(facts);
+
       if (facts.length > 0) {
         const ids = facts.map(f => f.id);
         const now = Date.now();
@@ -733,6 +751,7 @@ export class RetrievalService {
         ...(excludeDrafts ? { excludeDrafts: true } : {}),
         live: { mode: liveMode, t: liveAt },
       });
+      facts = applyBudget(facts);
     }
 
     const eventsLimit = Math.min(10 * entityIds.length, 100);

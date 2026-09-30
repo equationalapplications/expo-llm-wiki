@@ -3,6 +3,8 @@ import {
   LIBRARIAN_SYSTEM_PROMPT,
   HEAL_SYSTEM_PROMPT,
   ONTOLOGY_BACKFILL_SYSTEM_PROMPT,
+  OPS_EXTRACT_SYSTEM_PROMPT,
+  OPS_RESOLVE_SYSTEM_PROMPT,
   groundingEvidenceBlock,
 } from '../prompts';
 import type { DegradedRecord, PromptOverrides, OntologyPromptContext, WikiInstructions } from '../types';
@@ -18,6 +20,7 @@ import {
   type GroundingWriter,
   type ResolvedGrounding,
 } from '../utils/grounding';
+import type { LabeledEvent } from './librarian/ops/text';
 
 export class PromptService {
   constructor(
@@ -251,6 +254,27 @@ export class PromptService {
       systemPrompt: this.appendOntology(template, ontologyContext),
       userPrompt: `Facts:\n${JSON.stringify(facts, null, 2)}`,
     };
+  }
+
+  /** Ops extract (spec §5.2): events only — no existing facts. */
+  buildOpsExtractPrompt(
+    events: LabeledEvent[],
+    ontologyContext?: OntologyPromptContext | null,
+  ): { systemPrompt: string; userPrompt: string; groundingCorpus?: string[] } {
+    const lines = events.map((l) => `${l.label} [${new Date(l.at).toISOString()}] (${l.event.event_type}) ${l.event.summary}`);
+    const grounding = this.groundingFor('librarian');
+    return {
+      systemPrompt: this.appendGrounding(this.appendOntology(OPS_EXTRACT_SYSTEM_PROMPT, ontologyContext), 'librarian'),
+      userPrompt: `Events:\n${lines.join('\n')}`,
+      ...(grounding ? { groundingCorpus: buildGroundingCorpus(events.map((l) => l.event.summary)) } : {}),
+    };
+  }
+
+  /** Ops resolve (spec §5.4): only each item's own neighbours. */
+  buildOpsResolvePrompt(
+    items: Array<{ item: number; candidate: { title: string; body: string }; existing: Array<{ ref: string; title: string; body: string }> }>,
+  ): { systemPrompt: string; userPrompt: string } {
+    return { systemPrompt: OPS_RESOLVE_SYSTEM_PROMPT, userPrompt: `Items:\n${JSON.stringify({ items })}` };
   }
 
   /**

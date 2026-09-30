@@ -92,6 +92,28 @@ await wiki.write('user-123', { event_type: 'observation', summary: 'Moved to SF'
 - History is kept. Set `config.pruneSupersededAfter` (days) to let `runPrune` retire expired facts.
 - `getMemoryBundle()` and `exportDump()` return every non-deleted fact, including history.
 
+## Librarian strategies
+
+`config.librarian.strategy` selects how events become facts. The default, `'legacy'`, is unchanged from 7.x.
+
+```typescript
+new WikiMemory(db, {
+  llmProvider,
+  config: { librarian: { strategy: 'ops', gate: { k: 5, dupThreshold: 0.97, novelThreshold: 0.55 } } },
+});
+```
+
+`'ops'` works in three steps:
+
+1. **Extract.** Candidate facts come from the events since the last pass. Existing facts are not sent.
+2. **Gate, with no LLM call.** Each candidate is compared with its closest current facts. An identical fact is a no-op, and a candidate with no close match is added. Only candidates that are similar but different continue to step 3. Similar is not the same as identical: "lives in Seattle" and "moved to San Francisco" score as similar, so they go to the model.
+3. **Resolve, in one batched call.** The model returns `ADD`, `UPDATE`, `SUPERSEDE` or `NOOP` for each remaining candidate. `SUPERSEDE` uses `supersede()`, so history is kept and `read({ asOf })` still sees the old fact.
+
+- The thresholds depend on your embedding model. The defaults are provisional.
+- Without `embed`, the gate uses keyword search. Every keyword match then goes to the resolve step.
+- Under `'ops'`, `runLibrarian`'s `promptOverride` and `prompts.librarianSystemPrompt` are ignored: the ops prompts use a different schema.
+- A model answer that can't be used never loses a fact. It is added, or stored as a draft, and a diagnostic is emitted.
+
 ## Installation
 
 ```bash
@@ -148,6 +170,15 @@ const wikiMemory = new WikiMemory(db, {
 // read() returns MiniSearch results, onRetrievalFallback not called (embed absent is expected)
 // read() returns MiniSearch results, onRetrievalFallback called (embed threw)
 ```
+
+### Token budgets
+
+```typescript
+const bundle = await wiki.read('user-123', 'what should I cook?', { tokenBudget: 800 });
+const prompt = formatContext(bundle, { compact: true });
+```
+
+`tokenBudget` keeps the most relevant facts per token that fit within about 800 tokens. Tokens are estimated as characters ÷ 4. The top fact is always included, truncated if it alone is too big. Tasks and events are unaffected. `traverseGraph` accepts the same option and keeps nodes in breadth-first order. A `read_budget` diagnostic reports how many facts were packed.
 
 ## Configuration
 
