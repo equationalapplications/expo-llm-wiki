@@ -388,6 +388,12 @@ export interface ReadOptions {
    * Throws `WikiInvalidReadOptions('asOf', …)` when not a finite number >= 0.
    */
   asOf?: number;
+  /**
+   * Pack facts into roughly this many tokens (chars/4 estimate), most valuable
+   * per token first; the top fact is always kept (truncated if needed).
+   * Tasks and events are not affected. Spec 2026-09-29 §7.1.
+   */
+  tokenBudget?: number;
 }
 
 export interface WikiFact {
@@ -553,6 +559,8 @@ export interface GraphTraversalOptions {
   excludeDrafts?: boolean;
   /** Valid-time snapshot for traversal (epoch ms); an edge is walkable only when both endpoints are live at this instant. Omitted ⇒ now. */
   asOf?: number;
+  /** Pack nodes (anchor first, then BFS order) into roughly this many tokens; edges to dropped nodes are removed. */
+  tokenBudget?: number;
 }
 
 export interface GraphNeighborhood {
@@ -746,11 +754,12 @@ export type WikiDiagnosticCode =
   | 'grounding_failed'
   | 'classification_low_confidence'
   | 'classification_invalid'
-  | 'llm_usage';
+  | 'llm_usage'
+  | 'read_budget';
 
 /** The service run that emitted the diagnostic. */
 export type WikiDiagnosticOperation =
-  | 'ingest' | 'upsertGraph' | 'librarian' | 'heal' | 'ontologyBackfill' | 'reembed' | 'importDump' | 'write' | 'supersede';
+  | 'ingest' | 'upsertGraph' | 'librarian' | 'heal' | 'ontologyBackfill' | 'reembed' | 'importDump' | 'write' | 'supersede' | 'read';
 
 /** `'auto'` when a write threshold started the run (auto-librarian / auto-heal); `'call'` when the host did. */
 export type WikiDiagnosticTrigger = 'call' | 'auto';
@@ -779,6 +788,12 @@ export interface WikiDiagnosticDetail {
   outputTokens?: number;
   /** `llm_usage` only: true when a figure is the chars/4 estimate. */
   estimated?: boolean;
+  /** read_budget only. */
+  candidates?: number;
+  /** read_budget only. */
+  packed?: number;
+  /** read_budget only. */
+  tokensUsed?: number;
 }
 
 export interface WikiDiagnostic {
@@ -913,6 +928,8 @@ export interface FormatContextOptions {
   includeTags?: boolean;
   includeEntityIds?: boolean;
   includeFactScores?: boolean;
+  /** Title + body only; overrides every include* flag. Default false. */
+  compact?: boolean;
   factWeights?: {
     confidence?: number;
     accessCount?: number;

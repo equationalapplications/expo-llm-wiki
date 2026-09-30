@@ -149,6 +149,15 @@ const wikiMemory = new WikiMemory(db, {
 // read() returns MiniSearch results, onRetrievalFallback called (embed threw)
 ```
 
+### Token budgets
+
+```typescript
+const bundle = await wiki.read('user-123', 'what should I cook?', { tokenBudget: 800 });
+const prompt = formatContext(bundle, { compact: true });
+```
+
+`tokenBudget` keeps the most relevant facts per token that fit within about 800 tokens. Tokens are estimated as characters ÷ 4. The top fact is always included, truncated if it alone is too big. Tasks and events are unaffected. `traverseGraph` accepts the same option and keeps nodes in breadth-first order. A `read_budget` diagnostic reports how many facts were packed.
+
 ## Configuration
 
 All `WikiConfig` fields are optional:
