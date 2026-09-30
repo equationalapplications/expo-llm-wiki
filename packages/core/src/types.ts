@@ -559,6 +559,8 @@ export interface GraphTraversalOptions {
   excludeDrafts?: boolean;
   /** Valid-time snapshot for traversal (epoch ms); an edge is walkable only when both endpoints are live at this instant. Omitted ⇒ now. */
   asOf?: number;
+  /** Pack nodes (anchor first, then BFS order) into roughly this many tokens; edges to dropped nodes are removed. */
+  tokenBudget?: number;
 }
 
 export interface GraphNeighborhood {
