@@ -344,6 +344,14 @@ export interface WikiConfig {
   reportLlmUsage?: boolean;
   /** Librarian strategy selection (spec 2026-09-29 §5.1). Default `{ strategy: 'legacy' }`. */
   librarian?: LibrarianConfig;
+  /**
+   * `'auto'` (default): write() starts librarian/heal in the background when
+   * thresholds are crossed. `'deferred'`: write() only records the event; the
+   * host runs `runPendingMaintenance()` (spec 2026-09-29 §6).
+   */
+  maintenance?: 'auto' | 'deferred';
+  /** `'auto'` mode only: also trigger the librarian when pending event text reaches ~this many tokens (chars/4). */
+  autoLibrarianTokenThreshold?: number;
 }
 
 export interface ReadOptions {
@@ -768,11 +776,12 @@ export type WikiDiagnosticCode =
   | 'librarian_op_rejected'
   | 'contradicts_document'
   | 'resolve_failed'
-  | 'read_budget';
+  | 'read_budget'
+  | 'event_retention_held';
 
 /** The service run that emitted the diagnostic. */
 export type WikiDiagnosticOperation =
-  | 'ingest' | 'upsertGraph' | 'librarian' | 'heal' | 'ontologyBackfill' | 'reembed' | 'importDump' | 'write' | 'supersede' | 'read';
+  | 'ingest' | 'upsertGraph' | 'librarian' | 'heal' | 'ontologyBackfill' | 'reembed' | 'importDump' | 'write' | 'supersede' | 'read' | 'prune';
 
 /** `'auto'` when a write threshold started the run (auto-librarian / auto-heal); `'call'` when the host did. */
 export type WikiDiagnosticTrigger = 'call' | 'auto';
@@ -1355,5 +1364,56 @@ export interface WikiInstructions {
   librarian: string;
   heal: string;
   ontologyBackfill: string;
+}
+
+export type MaintenanceJob = 'librarian' | 'heal' | 'reembed';
+
+export interface PendingMaintenance {
+  entityId: string;
+  /** Events after the librarian watermark. */
+  pendingEvents: number;
+  /** ceil(sum of pending event summary chars / 4). */
+  pendingTokensEstimate: number;
+  /** Same rule as auto-heal: events since the heal checkpoint >= autoHealThreshold. */
+  healDue: boolean;
+  /** Live facts with no stored embedding that are still retryable. Always false without `embed`. */
+  reembedPending: boolean;
+}
+
+export interface RunPendingMaintenanceOptions {
+  /** Default: every entity with pending work. */
+  entityIds?: string[];
+  /** generateText tokens (provider-reported or chars/4). Omitted = unbounded. */
+  tokenBudget?: number;
+  /** Wall-clock milliseconds from the call. Checked between units; a unit in flight is never interrupted. */
+  deadlineMs?: number;
+  /** Default all three. */
+  jobs?: MaintenanceJob[];
+}
+
+export type MaintenanceStopReason =
+  | { reason: 'complete' }
+  | { reason: 'deadline' }
+  | { reason: 'budget_exhausted' }
+  | { reason: 'budget_too_small'; job: 'librarian' | 'heal'; entityId: string; requiredEstimate: number };
+
+export interface EntityMaintenanceReport {
+  entityId: string;
+  librarianPasses: number;
+  factsWritten: number;
+  healPasses: number;
+  reembedded: boolean;
+  /** Set when a lock was held elsewhere; nothing ran for that job. */
+  busy?: MaintenanceJob[];
+}
+
+export interface RunPendingMaintenanceResult {
+  perEntity: EntityMaintenanceReport[];
+  tokensUsed: number;
+  /** True when any usage figure was a chars/4 estimate. */
+  estimated: boolean;
+  /** null when no tokenBudget was given. */
+  remaining: number | null;
+  stoppedReason: MaintenanceStopReason;
 }
 
