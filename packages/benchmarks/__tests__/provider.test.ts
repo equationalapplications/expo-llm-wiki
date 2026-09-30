@@ -61,8 +61,11 @@ describe('createProvider (anthropic, default)', () => {
     const fetchImpl = vi.fn(async () => {
       throw new Error('This operation was aborted');
     });
-    const r = createProvider(anth, fetchImpl as any).generateText({ systemPrompt: 's', userPrompt: 'u' });
-    const err = await vi.runAllTimersAsync().then(() => r.catch((e) => e));
+    // Pre-attach the rejection handler so the unhandled-rejection monitor
+    // never observes r settling before its handler is in place (vitest 5
+    // would otherwise fail the run with a PromiseRejectionHandledWarning).
+    const r = createProvider(anth, fetchImpl as any).generateText({ systemPrompt: 's', userPrompt: 'u' }).catch((e) => e);
+    const err = await vi.runAllTimersAsync().then(() => r);
     expect(String(err.message)).toContain('request failed after 5 attempts');
     expect(String(err.message)).not.toContain('k"');
     expect(fetchImpl).toHaveBeenCalledTimes(5);
