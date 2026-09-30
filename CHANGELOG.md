@@ -1,3 +1,9 @@
+## [7.9.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.8.0...v7.9.0) (2026-09-30)
+
+### Features
+
+* **core:** add WikiMemory.syncSearchIndex() for hosts that write through upsertGraph ([62d1fd3](https://github.com/equationalapplications/expo-llm-wiki/commit/62d1fd336c81a9dbd1d1985794ebb7f95002b7da)), closes [#246](https://github.com/equationalapplications/expo-llm-wiki/issues/246)
+
 ## [7.8.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.7.7...v7.8.0) (2026-09-30)
 
 ### Features
