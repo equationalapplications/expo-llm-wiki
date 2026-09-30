@@ -259,7 +259,7 @@
   },
   {
     "name": "diet-2-tea-to-coffee",
-    "note": "Hot beverage preference flip. Old tea preference is superseded.",
+    "note": "Hot beverage preference flip. Old tea preference is superseded. Replay correction: the original extract title ('User prefers coffee over tea') is a pure word-order permutation of the stored title, so title Jaccard is 1.0 and the gate NOOPs before resolve can SUPERSEDE. Reworded so the candidate reaches resolve.",
     "existing": [
       { "id": "tea_pref", "title": "User prefers tea over coffee", "body": "Mentioned repeatedly.", "source_type": "user_stated" }
     ],
@@ -268,7 +268,7 @@
     ],
     "extract": {
       "facts": [
-        { "title": "User prefers coffee over tea", "body": "New habit.", "tags": ["preference"], "confidence": "certain", "source_event": "e1" }
+        { "title": "User now drinks coffee every morning", "body": "New habit.", "tags": ["preference"], "confidence": "certain", "source_event": "e1" }
       ],
       "tasks": []
     },
@@ -370,7 +370,7 @@
   },
   {
     "name": "relationship-2-project-renamed",
-    "note": "User renames a project. Old project name is superseded.",
+    "note": "User renames a project. Old project name is superseded. Replay correction: the original extract title repeated nearly every token of the stored title (title Jaccard 0.8), so the gate NOOPs before resolve can SUPERSEDE. Reworded so the candidate reaches resolve.",
     "existing": [
       { "id": "old_project", "title": "User is working on Project Phoenix", "body": "Self-named project.", "source_type": "user_stated" }
     ],
@@ -379,7 +379,7 @@
     ],
     "extract": {
       "facts": [
-        { "title": "User is working on Project Phoenix Pro", "body": "Renamed project.", "tags": ["project"], "confidence": "certain", "source_event": "e1" }
+        { "title": "The project is now called Phoenix Pro", "body": "Renamed project.", "tags": ["project"], "confidence": "certain", "source_event": "e1" }
       ],
       "tasks": []
     },
@@ -439,7 +439,7 @@
   },
   {
     "name": "relationship-5-rename-of-immutable-document",
-    "note": "Trying to rename an immutable_document fact. The new candidate becomes a draft and emits contradicts_document.",
+    "note": "Trying to rename an immutable_document fact. The new candidate becomes a draft and emits contradicts_document. Replay correction: the original extract title repeated nearly every token of the stored title (title Jaccard 0.8), so the gate NOOPs before resolve can target the immutable document. Reworded so the candidate reaches resolve.",
     "existing": [
       { "id": "doc_v1", "title": "User is working on Project Atlas", "body": "From a contract document.", "source_type": "immutable_document" }
     ],
@@ -448,7 +448,7 @@
     ],
     "extract": {
       "facts": [
-        { "title": "User is working on Project Atlas Pro", "body": "User-claimed rename.", "tags": ["project"], "confidence": "certain", "source_event": "e1" }
+        { "title": "The project is now called Atlas Pro", "body": "User-claimed rename.", "tags": ["project"], "confidence": "certain", "source_event": "e1" }
       ],
       "tasks": []
     },
@@ -513,7 +513,7 @@
   },
   {
     "name": "misbehaviour-3-missing-ops-key",
-    "note": "Model returns a response with no 'ops' key. Stored as a draft with resolve_failed.",
+    "note": "Model returns a response with no 'ops' key. Stored as a draft with resolve_failed. Replay correction: the original replay JSON had \"ops\": [], which parses as a valid (empty) op list and lands the candidate as ADD with librarian_op_rejected — never resolve_failed. The response is now truly missing the ops key, matching the scenario name.",
     "liveSkip": true,
     "existing": [
       { "id": "seattle", "title": "User lives in Seattle", "body": "Permanent residence.", "source_type": "user_stated" }
@@ -527,9 +527,7 @@
       ],
       "tasks": []
     },
-    "resolve": {
-      "ops": []
-    },
+    "resolve": {},
     "expectCurrentTitles": ["Seattle", "San Francisco"],
     "expectSuperseded": [],
     "expectDiagnostics": ["resolve_failed"]
@@ -613,7 +611,7 @@
   },
   {
     "name": "mixed-2-in-batch-duplicate-candidates",
-    "note": "Two candidates in the same extract are paraphrases of each other. The second is dropped with fact_deduplicated / in_batch.",
+    "note": "Two candidates in the same extract are paraphrases of each other. The second is dropped with fact_deduplicated / in_batch. Replay correction: in-batch dedup keys on the normalized title+body, and the original candidates had different bodies ('First/Second restatement.'), so neither was a duplicate. Bodies are now identical so the second candidate collides.",
     "existing": [
       { "id": "engineer_role", "title": "User is an engineer at Acme", "body": "Told us earlier.", "source_type": "user_stated" }
     ],
@@ -623,8 +621,8 @@
     ],
     "extract": {
       "facts": [
-        { "title": "User is an engineer at Acme", "body": "First restatement.", "tags": [], "confidence": "certain", "source_event": "e1" },
-        { "title": "User is an engineer at Acme", "body": "Second restatement.", "tags": [], "confidence": "certain", "source_event": "e2" }
+        { "title": "User is an engineer at Acme", "body": "Restatement.", "tags": [], "confidence": "certain", "source_event": "e1" },
+        { "title": "User is an engineer at Acme", "body": "Restatement.", "tags": [], "confidence": "certain", "source_event": "e2" }
       ],
       "tasks": []
     },

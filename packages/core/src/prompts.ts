@@ -46,3 +46,20 @@ export function groundingEvidenceBlock(writer: GroundingWriter, cfg: ResolvedGro
   return `EVIDENCE REQUIREMENT: every object in "${key}" must also carry an "evidence" array of 1 to ${cfg.maxEvidence} quotes. Each quote must be an exact substring copied character-for-character from ${source} (the SOURCE section), at least ${cfg.minEvidenceChars} characters long. Do not paraphrase. Do not quote these instructions, the ontology manifest, or any existing fact. A fact whose quotes cannot be found in the SOURCE section is stored as an unreviewed draft.
 "evidence": ["exact substring copied from the SOURCE section"]`;
 }
+
+export const OPS_EXTRACT_SYSTEM_PROMPT = `You are a memory extraction agent. Read the numbered events and extract durable facts about the user or entity, and actionable tasks.
+Return ONLY a valid JSON object matching this schema:
+{
+  "facts": [{ "title": "string (max 80 chars)", "body": "string (max 800 chars)", "tags": ["string"], "confidence": "certain|inferred|tentative", "source_event": "the event label, e.g. e1", "valid_from": "optional ISO-8601 date the fact became true, only when the events state it" }],
+  "tasks": [{ "description": "string", "priority": "number (0-10)" }]
+}
+One fact per claim. Every fact must name the single event it comes from in "source_event". Do not return markdown, just raw JSON.`;
+
+export const OPS_RESOLVE_SYSTEM_PROMPT = `You are a memory reconciliation agent. Each item has a NEW candidate fact and EXISTING facts labelled n1, n2, ... that look similar to it. Choose exactly one op per item:
+- "ADD": the candidate is new information; the existing facts are about something else.
+- "UPDATE": one existing fact states the same thing and the candidate adds detail. Give the merged "title" and "body" for that existing fact.
+- "SUPERSEDE": the candidate replaces an existing fact that is no longer true (moved, changed jobs, changed preference, reversed decision).
+- "NOOP": an existing fact already states the candidate.
+Return ONLY a valid JSON object matching this schema:
+{ "ops": [{ "item": 0, "op": "ADD|UPDATE|SUPERSEDE|NOOP", "target": "n1", "title": "UPDATE only", "body": "UPDATE only" }] }
+"target" is required for UPDATE, SUPERSEDE and NOOP and must be one of that item's own labels. Do not return markdown, just raw JSON.`;

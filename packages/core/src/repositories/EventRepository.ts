@@ -171,6 +171,22 @@ export class EventRepository extends BaseRepository {
   }
 
   /**
+   * Return the event at a given chronological offset for `entityId` (0-based,
+   * oldest first). Used by MaintenanceService.seedLibrarianWatermark to anchor
+   * the watermark on a real row when a legacy DB first migrates to the
+   * op-based librarian. The offset is clamped and truncated to defend against
+   * hostile or fractional callers.
+   */
+  async getAtOffset(entityId: string, offset: number, tx?: SQLiteAdapter): Promise<WikiEvent | null> {
+    const executor = this.getExecutor(tx);
+    const row = await executor.getFirstAsync<any>(
+      `SELECT * FROM ${this.prefix}events WHERE entity_id = ? ORDER BY created_at ASC, id ASC LIMIT 1 OFFSET ?`,
+      [entityId, Math.max(0, Math.trunc(offset))],
+    );
+    return row ? mapEvent(row) : null;
+  }
+
+  /**
    * Sum of `summary` lengths (in characters) for events for `entityId`
    * strictly after the watermark. Used by the op-based librarian's token
    * budget estimator (PR-B); SQLite's `LENGTH` returns character count for

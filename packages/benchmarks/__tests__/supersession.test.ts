@@ -66,7 +66,9 @@ describe('supersession scenarios fixture', () => {
   it('every resolve.ops[].target matches /^n\\d+$/', () => {
     for (const s of scenarios) {
       if (!s.resolve) continue;
-      for (const op of s.resolve.ops) {
+      // resolve may legitimately omit the ops key (misbehaviour-3 replays a
+      // model response with no 'ops' field) — nothing to check then.
+      for (const op of s.resolve.ops ?? []) {
         const target = (op as { target?: unknown }).target;
         if (typeof target !== 'string') continue;
         expect(target, `scenario "${s.name}" has a non-/^n\\d+$/ target: ${JSON.stringify(op)}`).toMatch(/^n\d+$/);

@@ -33,10 +33,17 @@ import type { EmbeddingService } from '../EmbeddingService';
 import type { PromptService } from '../PromptService';
 import type { OntologyService, TitleIndexEntry } from '../OntologyService';
 import type { UsageMeter } from '../../utils/usage';
+import type { LibrarianWatermark } from '../../repositories/MetadataRepository';
 
 /**
  * Collaborators the legacy librarian pass needs. Exposed as a struct (not a
  * class) so PR-B can build the same deps without subclassing MaintenanceService.
+ *
+ * The two watermark hooks are the seam between the ops strategy and
+ * `MaintenanceService`: the strategy never reaches into the metadata table or
+ * the watermark seed directly — it asks the host to ensure a watermark exists
+ * and to read the current one. This keeps the dispatcher honest about the
+ * spec §10.3 invariant (one place advances, never rolls back).
  */
 export interface LibrarianDeps {
   db: SQLiteAdapter;
@@ -48,6 +55,10 @@ export interface LibrarianDeps {
   embeddingService: EmbeddingService;
   promptService: PromptService;
   ontologyService?: OntologyService;
+  /** Seed an entity's watermark from `memory_checkpoint` when missing (spec §10.3). No-op when one exists. */
+  seedWatermark: (entityId: string) => Promise<void>;
+  /** Read the entity's current watermark, or `null` if never seeded. */
+  getWatermark: (entityId: string) => Promise<LibrarianWatermark | null>;
 }
 
 /** Per-pass inputs the caller decides; the strategy cannot derive these. */
@@ -61,6 +72,15 @@ export interface LibrarianContext {
    * exhausted (see `librarianBudget.test.ts`). */
   meter?: UsageMeter;
 }
+
+/**
+ * Alias used by the ops librarian (PR-B). Mirrors {@link LibrarianContext}
+ * 1:1 — kept separate so spec language (`runLibrarianPass(ctx:
+ * LibrarianPassContext)`) reads without per-strategy boilerplate, and so a
+ * future divergence between the strategy contexts cannot silently break
+ * callers.
+ */
+export type LibrarianPassContext = LibrarianContext;
 
 /**
  * Position in the event log a pass read through: the event's `created_at`
