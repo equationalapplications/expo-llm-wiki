@@ -120,6 +120,13 @@ export async function runResolve(
       else out.rejected.push(g);
     });
   }
+  // A transient provider error (429, 5xx, reset) is not a resolve failure:
+  // storing it as a draft would advance the watermark past a candidate that
+  // never got an answer. Abort the pass so the watermark stays put, matching
+  // what runBatched already does for the same error on a multi-item batch.
+  if (outcome.skipped.some((s) => s.reason === 'call_error')) {
+    throw new Error('resolve: transient provider error; retry the pass');
+  }
   for (const s of outcome.skipped) out.failed.push(s.item);
   return out;
 }

@@ -95,7 +95,10 @@ export async function applyOps(
       await deps.entryRepo.setTemporal(id, entityId, { valid_from: validFrom }, tx);
       titleIndex.set(normalizeTitleKey(title), { id, okf_type: normalized.okf_type });
       if (normalized.edges.length > 0) pendingEdges.push({ sourceId: id, sourceType: normalized.okf_type, edges: normalized.edges });
-      written.push({ id, vector: g.vector, fact: { id, entity_id: entityId, title, body, tags: fact.tags } });
+      // The gate vector encodes the candidate's own text; when overrides
+      // changed what was stored, drop it so the fact is embedded afresh.
+      const textChanged = title !== fact.title || body !== fact.body;
+      written.push({ id, vector: textChanged ? null : g.vector, fact: { id, entity_id: entityId, title, body, tags: fact.tags } });
       return id;
     };
 

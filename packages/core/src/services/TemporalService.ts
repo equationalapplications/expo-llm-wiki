@@ -34,6 +34,9 @@ export class TemporalService {
     const repl = await this.entryRepo.findTemporalRow(newId, tx);
     if (!repl || repl.deleted_at != null) throw new WikiSupersedeError('not_found');
     if (repl.entity_id !== entityId) throw new WikiSupersedeError('cross_entity');
+    // A replacement that is itself superseded is not current, so linking to it
+    // would leave `oldId` with no current successor.
+    if (repl.superseded_by != null) throw new WikiSupersedeError('already_superseded');
     const { predecessors } = await this.entryRepo.findSupersessionChainIds(entityId, oldId, HISTORY_MAX_DEPTH, tx);
     if (predecessors.includes(newId)) throw new WikiSupersedeError('cycle');
 

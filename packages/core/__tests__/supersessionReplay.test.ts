@@ -170,8 +170,8 @@ describe('supersession replay against the ops librarian', () => {
         `SELECT superseded_by FROM llm_wiki_entries WHERE id = ?`,
         [id],
       );
-      expect(row, `[${sc.name}] existing fact "${id}" not found`).toBeDefined();
-      expect(row?.superseded_by).not.toBeNull();
+      expect(row, `[${sc.name}] existing fact "${id}" not found`).not.toBeNull();
+      expect(row!.superseded_by).toEqual(expect.any(String));
     }
 
     // Every expected diagnostic code must have been emitted.
@@ -187,10 +187,12 @@ describe('supersession replay against the ops librarian', () => {
         `SELECT superseded_by FROM llm_wiki_entries WHERE id = ?`,
         [sc.expectSuperseded[0]],
       );
+      expect(old?.superseded_by, `[${sc.name}] "${sc.expectSuperseded[0]}" not superseded`).toEqual(expect.any(String));
       const replacement = await db.getFirstAsync<{ valid_from: number | null }>(
         `SELECT valid_from FROM llm_wiki_entries WHERE id = ?`,
-        [old?.superseded_by ?? ''],
+        [old!.superseded_by],
       );
+      expect(replacement, `[${sc.name}] replacement fact not found`).not.toBeNull();
       const expectedValidFrom =
         sc.name === 'mixed-4-event-occurred_at-drives-valid_from' ? 1730000000000 : 1577836800000;
       expect(replacement?.valid_from).toBe(expectedValidFrom);

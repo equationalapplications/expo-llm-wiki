@@ -11,12 +11,13 @@ function mk(responses: Array<(p: { systemPrompt: string; userPrompt: string }) =
   const diagnostics: WikiDiagnostic[] = [];
   let i = 0;
   const generateText = vi.fn(async (p: { systemPrompt: string; userPrompt: string }) => JSON.stringify(responses[i++](p)));
+  const embedSpy = vi.fn(embed);
   const wiki = new WikiMemory(db, {
-    llmProvider: { generateText, embed },
+    llmProvider: { generateText, embed: embedSpy },
     config: { autoLibrarianThreshold: 1000, librarian: { strategy: 'ops' } },
     onDiagnostic: (d) => diagnostics.push(d),
   });
-  return { db, wiki, generateText, diagnostics };
+  return { db, wiki, generateText, diagnostics, embed: embedSpy };
 }
 
 describe('ops librarian end to end', () => {
@@ -68,6 +69,37 @@ describe('ops librarian end to end', () => {
     const draft = await db.getFirstAsync<any>(`SELECT lifecycle_status FROM llm_wiki_entries WHERE id != 'seattle'`);
     expect(draft.lifecycle_status).toBe('draft');
     expect(ofCode(diagnostics, 'resolve_failed')).toHaveLength(1);
+  });
+
+  it('a transient resolve provider error aborts the pass without drafting or advancing the watermark', async () => {
+    const { db, wiki } = mk([
+      () => ({ facts: [{ title: 'User lives in San Francisco now', body: 'b', tags: [], confidence: 'certain', source_event: 'e1' }], tasks: [] }),
+      () => { throw new Error('HTTP 429 Too Many Requests'); },
+    ]);
+    await wiki.setup();
+    await db.runAsync(`INSERT INTO llm_wiki_entries (id, entity_id, title, body, source_type, confidence, created_at, updated_at)
+      VALUES ('seattle','u','User lives in Seattle','b','user_stated','certain',1,1)`);
+    await wiki.runReembed();
+    await db.runAsync(`INSERT INTO llm_wiki_events (id, entity_id, event_type, summary, created_at) VALUES ('evt_1','u','observation','x',100)`);
+    await expect(wiki.runLibrarian('u')).rejects.toThrow();
+    expect(await db.getAllAsync(`SELECT id FROM llm_wiki_entries WHERE id != 'seattle'`)).toEqual([]);
+    expect(await (wiki.__testAccess as any).metadataRepo.getLibrarianWatermark('u')).toBeNull();
+  });
+
+  it('re-embeds a superseding fact whose text came from UPDATE overrides', async () => {
+    const { db, wiki, embed } = mk([
+      () => ({ facts: [{ title: 'User lives in San Francisco now', body: 'b', tags: [], confidence: 'certain', source_event: 'e1' }], tasks: [] }),
+      () => ({ ops: [{ item: 0, op: 'UPDATE', target: 'n1', title: 'User lives in San Francisco (merged)', body: 'merged body' }] }),
+    ]);
+    await wiki.setup();
+    await db.runAsync(`INSERT INTO llm_wiki_entries (id, entity_id, title, body, source_type, confidence, created_at, updated_at)
+      VALUES ('seattle','u','User lives in Seattle','b','user_stated','certain',1,1)`);
+    await wiki.runReembed();
+    await db.runAsync(`INSERT INTO llm_wiki_events (id, entity_id, event_type, summary, created_at) VALUES ('evt_1','u','observation','x',100)`);
+    await wiki.runLibrarian('u');
+    const old = await db.getFirstAsync<any>(`SELECT superseded_by FROM llm_wiki_entries WHERE id='seattle'`);
+    expect(old.superseded_by).toEqual(expect.any(String));
+    expect(embed.mock.calls.some(([t]) => t.includes('merged body'))).toBe(true);
   });
 
   it('an invented target falls back to ADD with librarian_op_rejected', async () => {

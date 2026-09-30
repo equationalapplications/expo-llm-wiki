@@ -69,6 +69,15 @@ describe('supersede()', () => {
     await expect(wiki.supersede('e1', 'v2', 'v1')).rejects.toBeInstanceOf(WikiSupersedeError);
   });
 
+  it('rejects a replacement that is itself superseded', async () => {
+    await insert('a');
+    await insert('b');
+    await insert('c');
+    await wiki.supersede('e1', 'b', 'c');
+    await expect(wiki.supersede('e1', 'a', 'b')).rejects.toMatchObject({ reason: 'already_superseded' });
+    expect((await temporal('a')).superseded_by).toBeNull();
+  });
+
   it('leaves no partial writes on rejection', async () => {
     await insert('doc', 'e1', 'immutable_document');
     const before = await db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM llm_wiki_entries`);
