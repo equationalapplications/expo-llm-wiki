@@ -1,17 +1,17 @@
 {
   "kind": "calibration",
-  "createdAt": "2026-09-30T05:54:38.579Z",
+  "createdAt": "2026-09-30T05:58:32.695Z",
   "engine": {
     "version": "7.7.7",
-    "gitSha": "92d22bf"
+    "gitSha": "a8abce9"
   },
   "scenarioCount": 30,
   "rowCount": 36,
   "novelThreshold": 0.3,
   "dupThreshold": 0.89,
-  "misclassifiedAtDefaults": 4,
+  "misclassifiedAtDefaults": 0,
   "misclassifiedAtRecommended": 0,
-  "defaultsConfirmed": false,
+  "defaultsConfirmed": true,
   "rows": [
     {
       "scenario": "relocation-1-seattle-to-sf",

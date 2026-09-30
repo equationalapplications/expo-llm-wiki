@@ -99,7 +99,7 @@ await wiki.write('user-123', { event_type: 'observation', summary: 'Moved to SF'
 ```typescript
 new WikiMemory(db, {
   llmProvider,
-  config: { librarian: { strategy: 'ops', gate: { k: 5, dupThreshold: 0.97, novelThreshold: 0.55 } } },
+  config: { librarian: { strategy: 'ops', gate: { k: 5, dupThreshold: 0.89, novelThreshold: 0.30 } } },
 });
 ```
 

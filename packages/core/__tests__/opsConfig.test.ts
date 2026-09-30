@@ -6,7 +6,11 @@ import type { WikiDiagnostic } from '../src/types';
 
 describe('resolveGateConfig', () => {
   it('applies spec defaults', () => {
-    expect(resolveGateConfig()).toEqual({ k: 5, dupThreshold: 0.97, novelThreshold: 0.55 });
+    // Calibrated defaults (see gate.ts for the calibration source). The
+    // spec's "provisional until calibrated" caveat was retired after the
+    // PR-D2 `feat(benchmarks): offline gate threshold calibration` pass
+    // over the 30 supersession scenarios.
+    expect(resolveGateConfig()).toEqual({ k: 5, dupThreshold: 0.89, novelThreshold: 0.30 });
   });
   it('clamps k and thresholds', () => {
     expect(resolveGateConfig({ k: 99, dupThreshold: 2, novelThreshold: -1 })).toEqual({ k: 20, dupThreshold: 1, novelThreshold: 0 });

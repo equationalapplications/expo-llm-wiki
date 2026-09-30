@@ -25,14 +25,19 @@ describe('classifyCandidate', () => {
       .toEqual({ kind: 'ambiguous' });
   });
   it('low cosine is ADD', () => {
-    expect(classifyCandidate({ title: 'User owns a cat', body: 'x' }, [n('f1', 'User lives in Seattle', 0.3)], cfg, 'vector')).toEqual({ kind: 'add' });
+    // Use a cosine strictly below the calibrated novelThreshold (0.30)
+    // so the rule "score < novelThreshold => add" holds under both the
+    // old (0.55) and new (0.30) defaults.
+    expect(classifyCandidate({ title: 'User owns a cat', body: 'x' }, [n('f1', 'User lives in Seattle', 0.2)], cfg, 'vector')).toEqual({ kind: 'add' });
   });
   it('middle band is AMBIGUOUS', () => {
-    expect(classifyCandidate({ title: 'User works at Acme', body: 'x' }, [n('f1', 'User works at Globex', 0.8)], cfg, 'vector')).toEqual({ kind: 'ambiguous' });
+    expect(classifyCandidate({ title: 'User works at Acme', body: 'x' }, [n('f1', 'User works at Globex', 0.5)], cfg, 'vector')).toEqual({ kind: 'ambiguous' });
   });
   it('boundaries: exactly novelThreshold is not ADD; exactly dupThreshold can be NOOP', () => {
-    expect(classifyCandidate({ title: 'a b c d', body: 'x' }, [n('f1', 'e f g h', 0.55)], cfg, 'vector')).toEqual({ kind: 'ambiguous' });
-    expect(classifyCandidate({ title: 'user drinks green tea', body: 'x' }, [n('f1', 'user drinks green tea daily', 0.97)], cfg, 'vector'))
+    // Calibrated defaults: dupThreshold=0.89, novelThreshold=0.30. Score=0.30
+    // is not ADD (>=), and 0.30 < 0.89 means not NOOP either ⇒ ambiguous.
+    expect(classifyCandidate({ title: 'a b c d', body: 'x' }, [n('f1', 'e f g h', 0.30)], cfg, 'vector')).toEqual({ kind: 'ambiguous' });
+    expect(classifyCandidate({ title: 'user drinks green tea', body: 'x' }, [n('f1', 'user drinks green tea daily', 0.89)], cfg, 'vector'))
       .toEqual({ kind: 'noop', target: 'f1' });
   });
   it('keyword mode with hits is AMBIGUOUS', () => {

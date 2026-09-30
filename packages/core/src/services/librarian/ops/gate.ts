@@ -35,8 +35,14 @@ const clamp01 = (v: unknown, d: number) =>
 export function resolveGateConfig(cfg?: LibrarianGateConfig): Required<LibrarianGateConfig> {
   const kRaw = cfg?.k;
   const k = typeof kRaw === 'number' && Number.isFinite(kRaw) ? Math.min(20, Math.max(1, Math.trunc(kRaw))) : 5;
-  const dupThreshold = clamp01(cfg?.dupThreshold, 0.97);
-  const novelThreshold = clamp01(cfg?.novelThreshold, 0.55);
+  // Calibrated against the 30 supersession scenarios (commit
+  // feat(benchmarks): offline gate threshold calibration): defaults of
+  // 0.97 / 0.55 misclassified 4 rows out of 36 (mostly the exact-rewrite
+  // duplicates at cosine 0.90–0.92 that the gate was sending to the LLM);
+  // the calibrated pair 0.89 / 0.30 misclassifies 0. See
+  // `packages/benchmarks/results/calibration-<version>.json`.
+  const dupThreshold = clamp01(cfg?.dupThreshold, 0.89);
+  const novelThreshold = clamp01(cfg?.novelThreshold, 0.30);
   if (novelThreshold > dupThreshold) throw new TypeError('librarian.gate: novelThreshold must be <= dupThreshold');
   return { k, dupThreshold, novelThreshold };
 }

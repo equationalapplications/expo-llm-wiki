@@ -46,6 +46,7 @@ import { loadDataset, LmeQuestion } from './longmemeval/dataset';
 import { runLongMemEval } from './longmemeval/run';
 import { runSupersession, Scenario } from './supersession/run';
 import { calibrationRows, recommendThresholds, CalibrationRow } from './calibrate';
+import { resolveGateConfig } from '../../core/src/services/librarian/ops/gate';
 
 // --------------------------------------------------------------------------
 // Repo-root-relative paths
@@ -594,12 +595,13 @@ export async function runCalibrateCommand(deps: CalibrateDeps): Promise<CommandR
 
   const rows = await calibrationRows(deps.scenarios, deps.embed);
   const rec = recommendThresholds(rows);
+  const defaults = resolveGateConfig();
   const defaultsConfirmed = rec.misclassifiedAtDefaults <= rec.misclassifiedAtRecommended;
 
   stdout('Calibration rows (bestCosine, titleJaccard, expected):\n');
   for (const r of rows) stdout(renderCalibrationRow(r) + '\n');
   stdout('\n');
-  stdout(`defaults:      dupThreshold=0.97  novelThreshold=0.55   misclassified=${rec.misclassifiedAtDefaults}\n`);
+  stdout(`defaults:      dupThreshold=${defaults.dupThreshold.toFixed(2)}  novelThreshold=${defaults.novelThreshold.toFixed(2)}   misclassified=${rec.misclassifiedAtDefaults}\n`);
   stdout(`recommended:   dupThreshold=${rec.dupThreshold.toFixed(2)}  novelThreshold=${rec.novelThreshold.toFixed(2)}   misclassified=${rec.misclassifiedAtRecommended}\n`);
   stdout(`defaults confirmed: ${defaultsConfirmed ? 'yes' : 'no — change defaults'}\n\n`);
 

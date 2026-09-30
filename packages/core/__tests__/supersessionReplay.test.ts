@@ -14,12 +14,13 @@ import type { WikiDiagnostic } from '../src/types';
  * Embedder: fixed 16-dim bag-of-keywords so every cosine is deterministic.
  * Gate config: `novelThreshold: 0` — with this embedder, a relocation pair
  * ("Seattle" vs "San Francisco") sits on disjoint keyword dims and would
- * cosine to 0, which the default threshold (0.55) reads as novel and gates
- * to ADD before the resolver ever sees it. Zeroing the floor means every
- * candidate with live neighbours that is not an outright duplicate is
- * resolved by the recorded ops — exactly what the fixture's `resolve` JSON
- * assumes. Duplicate detection (cos ≥ dupThreshold + title Jaccard) is
- * untouched, so gate-NOOP scenarios still bypass the resolver.
+ * cosine to 0, which the default threshold (0.30 after PR-D2 calibration)
+ * reads as novel and gates to ADD before the resolver ever sees it. Zeroing
+ * the floor means every candidate with live neighbours that is not an
+ * outright duplicate is resolved by the recorded ops — exactly what the
+ * fixture's `resolve` JSON assumes. Duplicate detection (cos ≥ dupThreshold
+ * + title Jaccard) is untouched, so gate-NOOP scenarios still bypass the
+ * resolver.
  *
  * Title assertions use PR-0's live-runner containment semantics (every
  * expected title appears as a substring of some current fact title,
