@@ -211,6 +211,10 @@ Line grammar: `- ({event_type}) {summary}` with two optional parts — the summa
 | `stale_after` | `YYYY-MM-DD` | OPTIONAL | Absolute cutoff; a fact is `isStale` when `today >= stale_after`. |
 | `sources` | `[{ id?, resource, title?, author?, usage_count?, last_modified?, usage_window? }]` | OPTIONAL | Provenance with per-source credibility signals. |
 | `usage_window` | `{ from: YYYY-MM-DD, to: YYYY-MM-DD }` | OPTIONAL | Sibling of `sources`. Per-entry `usage_window` overrides. |
+| `valid_from` | `number` | OPTIONAL | Optional; epoch ms; temporal validity, see core README → Temporal facts. |
+| `valid_to` | `number` | OPTIONAL | Optional; epoch ms; temporal validity, see core README → Temporal facts. |
+| `superseded_by` | `string` | OPTIONAL | Optional; id (of the superseding fact); temporal validity, see core README → Temporal facts. |
+| `superseded_at` | `number` | OPTIONAL | Optional; epoch ms; temporal validity, see core README → Temporal facts. |
 
 **`timestamp` still rides along.** `llm-wiki/2` export emits `timestamp` alongside `generated.at` on every concept, not only on the `llm-wiki/1` path — a deliberate, permanent back-compat choice so a naive v0.1-only reader stays fully functional against a v0.2 bundle without understanding flow-mapping syntax at all. `generated.at` is canonical; if a document somehow carries both with different values (a hand-edited or transitional bundle), `generated.at` wins on import.
 

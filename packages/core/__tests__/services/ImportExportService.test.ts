@@ -27,6 +27,7 @@ describe('ImportExportService', () => {
       bulkSoftDeleteByEntityId: vi.fn().mockResolvedValue(undefined),
       findExistingMetadataByIds: vi.fn().mockResolvedValue([]),
       upsertForImport: vi.fn().mockResolvedValue(undefined),
+      setTemporal: vi.fn().mockResolvedValue(1),
       hasLegacySourceTypes: vi.fn().mockResolvedValue(false),
       countLegacySourceTypes: vi.fn().mockResolvedValue(0),
     };
