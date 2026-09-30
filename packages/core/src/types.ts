@@ -248,8 +248,8 @@ export interface GroundingConfig {
 }
 
 export interface LibrarianConfig {
-  /** `'legacy'` is the 7.x add-only librarian. PR-B adds `'ops'`. */
-  strategy?: 'legacy';
+  /** `'legacy'` is the 7.x add-only librarian. `'ops'` lands in PR-B (spec §5.1, §5.3). */
+  strategy?: 'legacy' | 'ops';
 }
 
 export interface WikiConfig {
