@@ -650,8 +650,9 @@ export class WikiMemory {
    *
    * With `entityId`, rebuilds that entity if it is stale or has never been
    * indexed; otherwise it is a no-op that still waits for rebuilds already
-   * queued. Without an argument, does the same for every entity currently
-   * marked stale.
+   * queued. Without an argument, rebuilds every entity currently marked
+   * stale; when none is, it resolves immediately and does not wait for rebuilds
+   * already queued.
    *
    * Call only after the host's transaction commits: called inside it, the
    * rebuild may index rows that later roll back, or miss them and clear the

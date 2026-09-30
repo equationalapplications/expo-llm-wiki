@@ -1261,7 +1261,7 @@ await db.withTransactionAsync((tx) => wikiMemory.upsertGraph('entity-123', param
 await wikiMemory.syncSearchIndex('entity-123'); // or syncSearchIndex() for every entity written
 ```
 
-It is cheap on an entity that is already current, runs in order with core's own index syncs, and never rejects. It does not compute embeddings; those still come from the maintenance sweep.
+It is cheap on an entity that is already current, runs in order with core's own index syncs, and never rejects for a valid `entityId` (an empty or non-string id throws `TypeError`). It does not compute embeddings; those still come from the maintenance sweep.
 
 Entry IDs occupy one globally shared namespace within a database. An ID belongs
 to its existing entity while its row exists, including after soft deletion.

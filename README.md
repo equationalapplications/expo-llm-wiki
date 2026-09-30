@@ -634,7 +634,7 @@ await db.withTransactionAsync((tx) => wiki.upsertGraph('entity-123', params, tx)
 await wiki.syncSearchIndex('entity-123'); // or syncSearchIndex() for every entity written
 ```
 
-It is cheap on an entity that is already current, runs in order with core's own index syncs, and never rejects. It does not compute embeddings; those still come from the maintenance sweep.
+It is cheap on an entity that is already current, runs in order with core's own index syncs, and never rejects for a valid `entityId` (an empty or non-string id throws `TypeError`). It does not compute embeddings; those still come from the maintenance sweep.
 
 ### Background Maintenance
 

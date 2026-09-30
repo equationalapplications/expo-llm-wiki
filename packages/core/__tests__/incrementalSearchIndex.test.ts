@@ -60,8 +60,8 @@ function countIndexReads(wiki: WikiMemory) {
   return counts;
 }
 
-const search = (wiki: WikiMemory, query: string) =>
-  wiki.__testAccess.searchService.searchKeyword(query, [ENTITY], 2000).map((r) => r.id).sort();
+const search = (wiki: WikiMemory, query: string, entityId = ENTITY) =>
+  wiki.__testAccess.searchService.searchKeyword(query, [entityId], 2000).map((r) => r.id).sort();
 
 describe('incremental keyword index (#232)', () => {
   it('reads each imported row back about once, whatever the chunk size', async () => {
@@ -139,9 +139,6 @@ describe('incremental keyword index (#232)', () => {
 });
 
 describe('WikiMemory.syncSearchIndex (#246)', () => {
-  const searchIn = (wiki: WikiMemory, entityId: string, query: string) =>
-    wiki.__testAccess.searchService.searchKeyword(query, [entityId], 2000).map((r) => r.id).sort();
-
   function upsertNode(
     wiki: WikiMemory,
     tx: Parameters<WikiMemory['upsertGraph']>[2],
@@ -220,8 +217,8 @@ describe('WikiMemory.syncSearchIndex (#246)', () => {
 
     await wiki.syncSearchIndex();
 
-    expect(searchIn(wiki, ENTITY, 'pelican')).toEqual(['node_1']);
-    expect(searchIn(wiki, 'e2', 'heron')).toEqual(['node_2']);
+    expect(search(wiki, 'pelican')).toEqual(['node_1']);
+    expect(search(wiki, 'heron', 'e2')).toEqual(['node_2']);
     // One full read per stale entity (e1, e2); the clean e3 is never re-read.
     expect(counts.fullReads).toBe(2);
   });
