@@ -22,6 +22,13 @@
  *       guard: prints the scenario count and a flat per-scenario token
  *       estimate, refuses to spend without `--yes`.
  *
+ *   calibrate [--out <file>]
+ *       Offline gate-threshold calibration (Task 1 of PR-D2). Walks every
+ *       supersession scenario, embeds each candidate against every existing
+ *       fact (fastembed — no API cost), labels the candidate's expected class,
+ *       and picks the `(novelThreshold, dupThreshold)` pair with the fewest
+ *       misclassifications. Writes `results/calibration-<version>.json`.
+ *
  * `process.argv` is parsed by hand so the CLI has no dependency footprint.
  * The handler functions return `{ exitCode }` instead of calling `process.exit`
  * so they can be exercised under test without spawning a child process.
@@ -38,6 +45,7 @@ import { sampleQuestionIds } from './longmemeval/sample';
 import { loadDataset, LmeQuestion } from './longmemeval/dataset';
 import { runLongMemEval } from './longmemeval/run';
 import { runSupersession, Scenario } from './supersession/run';
+import { calibrationRows, recommendThresholds, CalibrationRow } from './calibrate';
 
 // --------------------------------------------------------------------------
 // Repo-root-relative paths
@@ -508,6 +516,117 @@ export async function runSupersessionCommand(deps: SupersessionDeps): Promise<Co
 }
 
 // --------------------------------------------------------------------------
+// calibrate subcommand
+// --------------------------------------------------------------------------
+
+export interface CalibrateDeps {
+  argv: string[];
+  /** The scenarios from `fixtures/supersession/scenarios.json`. */
+  scenarios?: Scenario[];
+  /** Injected embedder (fastembed singleton in live mode). */
+  embed?: (text: string) => Promise<number[]>;
+  stdout?: (line: string) => void;
+  stderr?: (line: string) => void;
+}
+
+/**
+ * Shape of the JSON written to `results/calibration-<engineVersion>.json`.
+ * The CLI's job is to print a one-screen summary and persist this object so a
+ * later `fix(core): calibrate ops gate defaults (<numbers>)` commit (if the
+ * numbers warrant it) can quote the same source-of-truth numbers in its body.
+ */
+export interface CalibrationResult {
+  kind: 'calibration';
+  createdAt: string;
+  engine: { version: string; gitSha: string };
+  scenarioCount: number;
+  rowCount: number;
+  novelThreshold: number;
+  dupThreshold: number;
+  misclassifiedAtDefaults: number;
+  misclassifiedAtRecommended: number;
+  defaultsConfirmed: boolean;
+  rows: CalibrationRow[];
+}
+
+/**
+ * Format one calibration row for stdout.
+ */
+function renderCalibrationRow(r: CalibrationRow): string {
+  const cos = r.bestCosine === null ? '   null' : r.bestCosine.toFixed(2).padStart(5);
+  const jac = r.titleJaccard === null ? '   null' : r.titleJaccard.toFixed(2).padStart(5);
+  return `  ${r.scenario.padEnd(46)} ${r.candidate.padEnd(40)} ${cos} ${jac}  expected=${r.expected}`;
+}
+
+/**
+ * Handle the `calibrate` subcommand.
+ *
+ * Offline pass:
+ *   1. parse argv (`--out`)
+ *   2. resolve scenarios + embedder
+ *   3. walk every scenario and produce calibration rows (no API cost —
+ *      fastembed runs locally on ONNX)
+ *   4. call `recommendThresholds` to find the best pair
+ *   5. print the row table + recommendation + defaults-confirmed flag
+ *   6. write `results/calibration-<engineVersion>.json`
+ *
+ * The result is committed so a follow-up `fix(core)` commit can quote the
+ * numbers directly without re-running the embedder.
+ */
+export async function runCalibrateCommand(deps: CalibrateDeps): Promise<CommandResult> {
+  const stdout = deps.stdout ?? ((line: string) => process.stdout.write(line));
+  const stderr = deps.stderr ?? ((line: string) => process.stderr.write(line));
+  const parsed = parseArgs(deps.argv);
+  if (parsed.command !== 'calibrate' && parsed.command !== '') {
+    stderr(`Unknown command: ${parsed.command}\n`);
+    return { exitCode: 2 };
+  }
+  const outArg = typeof parsed.flags.out === 'string' ? parsed.flags.out : undefined;
+
+  if (!deps.scenarios || !deps.embed) {
+    stderr('Internal error: scenarios and embed must be provided by the caller\n');
+    return { exitCode: 2 };
+  }
+
+  const engine = await engineInfo();
+  stdout(`engine: ${engine.version} (${engine.gitSha})\n`);
+  stdout(`scenarios: ${deps.scenarios.length}\n\n`);
+
+  const rows = await calibrationRows(deps.scenarios, deps.embed);
+  const rec = recommendThresholds(rows);
+  const defaultsConfirmed = rec.misclassifiedAtDefaults <= rec.misclassifiedAtRecommended;
+
+  stdout('Calibration rows (bestCosine, titleJaccard, expected):\n');
+  for (const r of rows) stdout(renderCalibrationRow(r) + '\n');
+  stdout('\n');
+  stdout(`defaults:      dupThreshold=0.97  novelThreshold=0.55   misclassified=${rec.misclassifiedAtDefaults}\n`);
+  stdout(`recommended:   dupThreshold=${rec.dupThreshold.toFixed(2)}  novelThreshold=${rec.novelThreshold.toFixed(2)}   misclassified=${rec.misclassifiedAtRecommended}\n`);
+  stdout(`defaults confirmed: ${defaultsConfirmed ? 'yes' : 'no — change defaults'}\n\n`);
+
+  const result: CalibrationResult = {
+    kind: 'calibration',
+    createdAt: new Date().toISOString(),
+    engine: { version: engine.version, gitSha: engine.gitSha },
+    scenarioCount: deps.scenarios.length,
+    rowCount: rows.length,
+    novelThreshold: rec.novelThreshold,
+    dupThreshold: rec.dupThreshold,
+    misclassifiedAtDefaults: rec.misclassifiedAtDefaults,
+    misclassifiedAtRecommended: rec.misclassifiedAtRecommended,
+    defaultsConfirmed,
+    rows,
+  };
+
+  // Default path: `results/calibration-<engineVersion>.json` (committed so a
+  // follow-up `fix(core)` commit can quote the same numbers).
+  const resultFile = outArg ? resolveOutPath(outArg) : join(REPO_ROOT, 'packages', 'benchmarks', 'results', `calibration-${engine.version}.json`);
+  ensureDir(resultFile);
+  writeFileSync(resultFile, JSON.stringify(result, null, 2));
+  stdout(`Wrote calibration result to ${resultFile}\n`);
+  return { exitCode: 0 };
+}
+
+// --------------------------------------------------------------------------
 // Helpers — printed estimate + summary table
 // --------------------------------------------------------------------------
 
@@ -619,6 +738,15 @@ async function main(): Promise<void> {
     process.exitCode = r.exitCode;
     return;
   }
+  if (command === 'calibrate') {
+    const scenariosFile = join(REPO_ROOT, 'packages', 'benchmarks', 'fixtures', 'supersession', 'scenarios.json');
+    const scenarios = JSON.parse(readFileSync(scenariosFile, 'utf8')) as Scenario[];
+    const { getEmbedder } = await import('./embed');
+    const embed = await getEmbedder();
+    const r = await runCalibrateCommand({ argv, scenarios, embed });
+    process.exitCode = r.exitCode;
+    return;
+  }
   process.stderr.write(`Unknown command: ${command}\n${renderHelp()}`);
   process.exitCode = 2;
 }
@@ -631,6 +759,7 @@ function renderHelp(): string {
     '  sample --seed <n>              Write fixtures/longmemeval-sample.json',
     '  longmemeval [flags]            Run the LongMemEval pipeline',
     '  supersession [flags]           Run the supersession suite (Task 8)',
+    '  calibrate [--out <file>]        Offline gate-threshold calibration (Task 1 of PR-D2)',
     '',
     'Common flags:',
     '  --strategy <legacy|ops>        Librarian strategy (default legacy)',

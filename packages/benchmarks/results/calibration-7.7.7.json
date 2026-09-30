@@ -1,0 +1,269 @@
+{
+  "kind": "calibration",
+  "createdAt": "2026-09-30T05:54:38.579Z",
+  "engine": {
+    "version": "7.7.7",
+    "gitSha": "92d22bf"
+  },
+  "scenarioCount": 30,
+  "rowCount": 36,
+  "novelThreshold": 0.3,
+  "dupThreshold": 0.89,
+  "misclassifiedAtDefaults": 4,
+  "misclassifiedAtRecommended": 0,
+  "defaultsConfirmed": false,
+  "rows": [
+    {
+      "scenario": "relocation-1-seattle-to-sf",
+      "candidate": "User lives in San Francisco",
+      "bestCosine": 0.8120963574458355,
+      "titleJaccard": 0.4,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "relocation-2-portland-to-seattle-with-valid_from",
+      "candidate": "User lives in Seattle since March 2024",
+      "bestCosine": 0.8396266358167122,
+      "titleJaccard": 0.2857142857142857,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "relocation-3-moved-back-AB-A",
+      "candidate": "User lives in Seattle",
+      "bestCosine": 0.7286066273168817,
+      "titleJaccard": 0.5,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "relocation-3-moved-back-AB-A",
+      "candidate": "User lives in Portland",
+      "bestCosine": 0.8490871035015137,
+      "titleJaccard": 1,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "relocation-4-visiting-sf-add-not-supersede",
+      "candidate": "User is visiting San Francisco this week",
+      "bestCosine": 0.6623754995328595,
+      "titleJaccard": 0.125,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "relocation-5-two-candidates-target-same-fact",
+      "candidate": "User lives in San Francisco",
+      "bestCosine": 0.7994513342779993,
+      "titleJaccard": 0.4,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "relocation-5-two-candidates-target-same-fact",
+      "candidate": "User resides in San Francisco",
+      "bestCosine": 0.7344279076615956,
+      "titleJaccard": 0.16666666666666666,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "job-1-engineer-to-manager-same-company",
+      "candidate": "User is an engineering manager at Acme",
+      "bestCosine": 0.8680855504405784,
+      "titleJaccard": 0.4,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "job-2-acme-to-globex",
+      "candidate": "User works at Globex",
+      "bestCosine": 0.7157649665720999,
+      "titleJaccard": 0.5,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "job-3-update-librarian_inferred",
+      "candidate": "User is an engineer on the payments team at Acme",
+      "bestCosine": 0.8095540461910362,
+      "titleJaccard": 0.5,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "job-4-update-user_stated-becomes-supersede",
+      "candidate": "User is an engineer on the payments team at Acme",
+      "bestCosine": 0.8084267998122091,
+      "titleJaccard": 0.5,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "job-5-duplicate-restatement",
+      "candidate": "User is an engineer at Acme",
+      "bestCosine": 0.9014466523608409,
+      "titleJaccard": 1,
+      "expected": "noop"
+    },
+    {
+      "scenario": "diet-1-vegan-to-keto",
+      "candidate": "User follows a keto diet",
+      "bestCosine": 0.8060676182486736,
+      "titleJaccard": 0.6,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "diet-2-tea-to-coffee",
+      "candidate": "User now drinks coffee every morning",
+      "bestCosine": 0.7682693292830457,
+      "titleJaccard": 0.2222222222222222,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "diet-3-also-likes-coffee-add",
+      "candidate": "User likes coffee in the afternoon",
+      "bestCosine": 0.7693335659855749,
+      "titleJaccard": 0.14285714285714285,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "diet-4-exact-duplicate-different-punctuation",
+      "candidate": "User follows a vegan diet",
+      "bestCosine": 0.9175455997171008,
+      "titleJaccard": 1,
+      "expected": "noop"
+    },
+    {
+      "scenario": "diet-5-preference-reversal-with-date",
+      "candidate": "User prefers tea since January 2025",
+      "bestCosine": 0.7212425944312253,
+      "titleJaccard": 0.2857142857142857,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "relationship-1-single-to-married",
+      "candidate": "User is married",
+      "bestCosine": 0.7421979428462715,
+      "titleJaccard": 0,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "relationship-2-project-renamed",
+      "candidate": "The project is now called Phoenix Pro",
+      "bestCosine": 0.7972879635120311,
+      "titleJaccard": 0.25,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "relationship-3-project-cancelled-supersede-with-reason",
+      "candidate": "Project Zeta was cancelled",
+      "bestCosine": 0.6741040088570163,
+      "titleJaccard": 0.3333333333333333,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "relationship-4-unrelated-new-project-add",
+      "candidate": "User is starting Project Beta",
+      "bestCosine": 0.8231388296597544,
+      "titleJaccard": 0.3333333333333333,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "relationship-5-rename-of-immutable-document",
+      "candidate": "The project is now called Atlas Pro",
+      "bestCosine": 0.7371516834158813,
+      "titleJaccard": 0.25,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "misbehaviour-1-invented-target-n9",
+      "candidate": "User lives in San Francisco",
+      "bestCosine": 0.8153367991135329,
+      "titleJaccard": 0.4,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "misbehaviour-2-op-for-item-3-only-one-item",
+      "candidate": "User lives in San Francisco",
+      "bestCosine": 0.8153367991135329,
+      "titleJaccard": 0.4,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "misbehaviour-3-missing-ops-key",
+      "candidate": "User lives in San Francisco",
+      "bestCosine": 0.8153367991135329,
+      "titleJaccard": 0.4,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "misbehaviour-4-update-empty-title-and-body",
+      "candidate": "User is an engineer on the payments team at Acme",
+      "bestCosine": 0.8095540461910362,
+      "titleJaccard": 0.5,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "misbehaviour-5-unknown-op-delete",
+      "candidate": "User lives in San Francisco",
+      "bestCosine": 0.8153367991135329,
+      "titleJaccard": 0.4,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "mixed-1-three-candidates-noop-add-supersede",
+      "candidate": "User lives in San Francisco",
+      "bestCosine": 0.8153367991135329,
+      "titleJaccard": 0.4,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "mixed-1-three-candidates-noop-add-supersede",
+      "candidate": "User also drinks coffee",
+      "bestCosine": 0.77716168374868,
+      "titleJaccard": 0.16666666666666666,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "mixed-1-three-candidates-noop-add-supersede",
+      "candidate": "User is an engineer at Acme",
+      "bestCosine": 0.6715212200229822,
+      "titleJaccard": 0.2,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "mixed-2-in-batch-duplicate-candidates",
+      "candidate": "User is an engineer at Acme",
+      "bestCosine": 0.8989709587834542,
+      "titleJaccard": 1,
+      "expected": "noop"
+    },
+    {
+      "scenario": "mixed-2-in-batch-duplicate-candidates",
+      "candidate": "User is an engineer at Acme",
+      "bestCosine": 0.8989709587834542,
+      "titleJaccard": 1,
+      "expected": "noop"
+    },
+    {
+      "scenario": "mixed-3-superseded-fact-never-offered-again",
+      "candidate": "User lives in San Francisco",
+      "bestCosine": 0.7631225075720512,
+      "titleJaccard": 0.4,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "mixed-3-superseded-fact-never-offered-again",
+      "candidate": "User lives in Portland",
+      "bestCosine": 0.775545719381131,
+      "titleJaccard": 0.5,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "mixed-4-event-occurred_at-drives-valid_from",
+      "candidate": "User lives in San Francisco",
+      "bestCosine": 0.6884360399975157,
+      "titleJaccard": 0.4,
+      "expected": "ambiguous"
+    },
+    {
+      "scenario": "mixed-5-extract-valid_from-overrides-occurred_at",
+      "candidate": "User lives in San Francisco since 2020",
+      "bestCosine": 0.6833157339852919,
+      "titleJaccard": 0.2857142857142857,
+      "expected": "ambiguous"
+    }
+  ]
+}
