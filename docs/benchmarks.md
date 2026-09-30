@@ -340,7 +340,7 @@ not down from the dispatcher):
   `packages/core/src/services/WriteService.ts:175`.
 
 When the throw exits the writer, the surrounding `Promise.catch` in
-`WriteService` (above `runLibrarianThenMaybeHeal` at line 138)
+`WriteService` (chained to `runLibrarianThenMaybeHeal` at line 138)
 swallows it for the write path — but the lock is then reacquired by
 the next write, and the underlying `std::system_error: mutex lock
 failed` surfaces once the underlying Node.js stdlib hits a corrupted

@@ -32,7 +32,7 @@ What each piece buys you:
 - **`config.reportLlmUsage: true`** — turns on the `llm_usage` diagnostic stream. The `UsageMeter` records usage regardless of this flag, but the diagnostic only emits when the flag is on. Set it `true` so `onDiagnostic` can route per-tenant usage to metering.
 - **`onDiagnostic: (d) => meter.record(tenantId, d)`** — every diagnostic is content-free (IDs, indexes, counts, reason slugs only) and typed, so a single switch on `d.code` covers `llm_usage`, `read_budget`, `event_retention_held`, `grounding_*`, `background_job_failed`, and the rest. Route the `llm_usage` ones to the metering pipeline and everything else to logs.
 
-The op thresholds under `'ops'` (`dupThreshold=0.89`, `novelThreshold=0.30`) were calibrated against the Phase D rerun — pass them through `config.librarian.gate` if your embedding model differs from the calibrated one, or accept the defaults and re-calibrate later. They are provisional.
+The op thresholds under 'ops' (`dupThreshold=0.89`, `novelThreshold=0.30`) were calibrated against the Phase D rerun — pre-change defaults (0.97 / 0.55) misclassified 4/36 rows in commit `bee560f`; pass them through `config.librarian.gate` if your embedding model differs from the calibrated one, or accept the defaults and re-calibrate later. **They are calibrated for fastembed/BGESmallENV15; provisional for other embedders.**
 
 ---
 
@@ -156,18 +156,20 @@ The wiki does not enforce any of these — it accepts any string. Whatever the c
 
 SynapseTree's MCP tool surface maps to core calls. The current `core-llm-tools` package exports Gemini tool schemas for a subset; for the rest, SynapseTree wraps its own MCP handlers until the schemas land.
 
-| Core call | Purpose | Tool name (planned/available) | `core-llm-tools` schema shipped? |
-|-----------|---------|--------------------------------|-----------------------------------|
-| `wiki.read(entityId, query, { tokenBudget })` | Retrieve facts/tasks/events for the answer | `wiki_read` | **Yes** |
-| `wiki.write(entityId, { event_type, summary, occurred_at })` | Log an episodic event | `wiki_write` | **Yes** |
-| `wiki.traverseGraph(entityId, { sourceId, maxDepth, direction, edgeTypes, asOf })` | Walk GraphRAG edges from an anchor fact | `wiki_traverse_graph` | **Yes** |
-| `wiki.supersede(entityId, factId, replacement, { validFrom })` | Replace a fact while keeping history | `wiki_supersede` | **Yes** |
-| `wiki.history(entityId, factId)` | Return the supersession chain for a fact | `wiki_history` | **No** (spec §7.4 open item) |
-| `wiki.read(entityId, query, { asOf })` | Temporal point-in-time read | folded into `wiki_read` opts | **No** (spec §7.4 open item) |
+| Core call | Tool name (real | planned) | `core-llm-tools` schema shipped? |
+|---|---|---|
+| `wiki.getOntology()` | `wiki_get_ontology` | Yes (`wikiGetOntologyManifest`) |
+| `wiki.traverseGraph(entityId, ...)` | `wiki_traverse_graph` | Yes (`wikiTraverseGraphManifest`) |
+| `wiki.getInstructions()` | `wiki_get_instructions` | Yes (`wikiGetInstructionsManifest`) |
+| `wiki.read(entityId, query, { tokenBudget })` | `wiki_read` | **No** — host-defined MCP wrapper |
+| `wiki.read(entityId, query, { asOf })` | folded into `wiki_read` | **No** — host-defined wrapper; spec §7.4 open item |
+| `wiki.write(entityId, ...)` | `wiki_write` | **No** — host-defined MCP wrapper |
+| `wiki.supersede(entityId, factId, ...)` | `wiki_supersede` | **No** — host-defined MCP wrapper |
+| `wiki.history(entityId, factId)` | `wiki_history` | **No** — host-defined wrapper; spec §7.4 open item |
 
-> **Open item (spec §7.4).** `core-llm-tools` schemas for `history` and `asOf` are **not shipped yet** — the schemas for `read`, `write`, `traverseGraph`, and `supersede` are exported, but the temporal surface lands in a follow-up. SynapseTree should wrap its own MCP handlers for `wiki_history` and the `asOf` form of `wiki_read` until the schema lands, then drop the wrapper.
+> `core-llm-tools` ships schemas only for `wiki_traverse_graph`, `wiki_get_ontology`, and `wiki_get_instructions`. All other wiki calls (`read`, `write`, `supersede`, `history`, the `asOf` form of `read`) require host-defined MCP wrappers with input validation that mirrors the core options — the JSON shapes are stable, only the tool schemas are missing. The `history`/`asOf` schemas are explicitly tracked as spec §7.4 open items.
 
-For now, expose `read`/`write`/`traverseGraph`/`supersede` via `core-llm-tools` schemas, and ship `history`/`asOf` as host-defined tools with input validation that mirrors the core options (the JSON shapes are stable; only the tool schema is missing).
+For now, expose `wiki_traverse_graph` (and optionally `wiki_get_ontology` / `wiki_get_instructions`) via `core-llm-tools` schemas; expose the rest as host-defined MCP wrappers.
 
 ---
 
