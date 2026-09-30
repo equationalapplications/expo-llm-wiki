@@ -134,9 +134,10 @@ const report = await wiki.runPendingMaintenance({ tokenBudget: 20_000, deadlineM
 - `getPendingMaintenance()` shows the backlog per entity without calling a model.
 - The budget covers text-generation tokens only; embedding calls are not counted. Figures are provider-reported when `generateTextWithUsage` exists, otherwise estimated at characters ÷ 4.
 - Entities share the budget fairly: each round runs one batch per entity.
-- `budget_too_small` names the job and entity whose smallest step needs more than the whole budget.
+- `budget_too_small` names the first job and entity whose smallest step needed more than the whole budget; other entities may have hit the same limit in that run.
 - A crash mid-batch loses nothing. The librarian's progress marker only advances after a batch commits.
 - In `'auto'` mode, call `drain()` before the app is suspended or closed. `autoLibrarianTokenThreshold` also triggers the librarian on the size of the pending text.
+- Use `'deferred'` with the ops strategy. The legacy strategy reads only the newest 50 events per pass and marks them processed, so a backlog larger than that is skipped.
 - Under `'deferred'` or the ops strategy, `runPrune` never deletes events the librarian has not processed.
 - `JobManager` locks only work within one process. Guarantee a single writer per database file across processes.
 

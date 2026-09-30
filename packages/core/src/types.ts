@@ -347,7 +347,10 @@ export interface WikiConfig {
   /**
    * `'auto'` (default): write() starts librarian/heal in the background when
    * thresholds are crossed. `'deferred'`: write() only records the event; the
-   * host runs `runPendingMaintenance()` (spec 2026-09-29 §6).
+   * host runs `runPendingMaintenance()` (spec 2026-09-29 §6). Pair with
+   * `librarian: { strategy: 'ops' }`: the legacy strategy reads only the
+   * newest 50 events per pass and advances the watermark past them, so a
+   * deferred backlog larger than that is never extracted.
    */
   maintenance?: 'auto' | 'deferred';
   /** `'auto'` mode only: also trigger the librarian when pending event text reaches ~this many tokens (chars/4). */
@@ -1376,7 +1379,11 @@ export interface PendingMaintenance {
   pendingTokensEstimate: number;
   /** Same rule as auto-heal: events since the heal checkpoint >= autoHealThreshold. */
   healDue: boolean;
-  /** Live facts with no stored embedding that are still retryable. Always false without `embed`. */
+  /**
+   * Non-deleted facts (superseded history rows included, matching what
+   * `runReembed` sweeps) with no stored embedding that are still retryable.
+   * Always false without `embed`.
+   */
   reembedPending: boolean;
 }
 

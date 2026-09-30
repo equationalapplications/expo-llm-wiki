@@ -61,7 +61,7 @@ const pending = await wiki.getPendingMaintenance();
 // sorted by pendingEvents desc, then entityId asc; entities with no work omitted
 ```
 
-`pendingEvents` is the librarian's pending batch (events after the watermark); `pendingTokensEstimate` is `ceil(sum of pending event summary chars / 4)` and pairs with `config.maintenance: 'deferred'` for sizing the per-request budget; `healDue` is the same rule as auto-heal (events since the heal checkpoint `>=` `autoHealThreshold`); `reembedPending` is the live-facts-with-no-embedding flag (always `false` when `embed` is absent). Use this in a per-tenant queue worker to decide whether to call `runPendingMaintenance` for that file at all — if the backlog is empty, skip the round trip to the model entirely.
+`pendingEvents` is the librarian's pending batch (events after the watermark); `pendingTokensEstimate` is `ceil(sum of pending event summary chars / 4)` and pairs with `config.maintenance: 'deferred'` for sizing the per-request budget; `healDue` is the same rule as auto-heal (events since the heal checkpoint `>=` `autoHealThreshold`); `reembedPending` is the facts-with-no-embedding flag (non-deleted facts, superseded history rows included, still under the retry limit) (always `false` when `embed` is absent). Use this in a per-tenant queue worker to decide whether to call `runPendingMaintenance` for that file at all — if the backlog is empty, skip the round trip to the model entirely.
 
 ---
 
