@@ -65,7 +65,7 @@ jobs:
       - name: pnpm audit (high+, allowlisted exceptions)
         env:
           # Allowlisted GHSA ids, comma-separated. Keep minimal + commented.
-          AUDIT_ALLOWLIST: "GHSA-5p2g-fcmc-qvqq,GHSA-w3rx-r6r6-pgpr" # image-size DoS (<=2.0.2), ICNS + JXL/HEIF parsers — no patched release yet as of 2026-08-24
+          AUDIT_ALLOWLIST: "GHSA-5p2g-fcmc-qvqq,GHSA-w3rx-r6r6-pgpr,GHSA-86w9-cpqp-85rv,GHSA-vfj7-8cjw-p6xm" # image-size DoS (<=2.0.2), ICNS + JXL/HEIF parsers; node-forge PKCS#1 v1.5 nested DigestAlgorithm (<=1.4.0); braces stack-exhaustion (<=3.0.3) — all three via expo-sqlite > expo > @expo/cli transitive; no upstream patch yet as of 2026-10-05
         run: |
           set -o pipefail
           pnpm audit --prod --audit-level=high --json > /tmp/audit.json || true
