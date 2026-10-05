@@ -277,9 +277,15 @@ export class SearchService {
     entityIds: string[],
     preFilterLimit?: number,
   ): Promise<Map<string, number>> {
+    // When `preFilterLimit` is undefined (full-scan hybrid path), match the
+    // pre-refactor behavior: do not impose a strategy-side cap. The original
+    // `getMiniSearchScores` returned every keyword hit so `rankSemantic`'s
+    // hybrid blend could weight every candidate; the PR-1 draft's
+    // `?? 100` default capped at 100 and silently zeroed out keyword weight
+    // for everything past rank 100 (CodeRabbit Minor #258).
     const opts: IndexSearchOptions = preFilterLimit !== undefined
       ? { entityIds, limit: preFilterLimit, preFilterLimit }
-      : { entityIds, limit: preFilterLimit ?? 100 };
+      : { entityIds, limit: Number.MAX_SAFE_INTEGER };
     const results = await this.indexStrategy.search(query, opts);
     return new Map(results.map((r) => [r.id, r.score]));
   }
