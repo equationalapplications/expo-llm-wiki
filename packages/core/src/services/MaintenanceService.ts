@@ -1539,12 +1539,12 @@ export class MaintenanceService {
 
     // Overfetch is sized off the cap we were given, not the global max —
     // a single-candidate query asks for fewer search hits.
-    const hits = this.searchService.searchKeyword(
+    const hits = await this.searchService.searchKeyword(
       query,
       [entityId],
       cap * HEAL_ANCHOR_SEARCH_OVERFETCH,
     );
-    const hitIds = hits.map(h => h.id as string);
+    const hitIds = hits.map(h => h.id);
 
     const anchors: HealAnchor[] = [];
     if (hitIds.length > 0) {

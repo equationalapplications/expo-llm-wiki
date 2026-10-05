@@ -97,6 +97,15 @@ export class MiniSearchIndexStrategy implements IndexStrategy {
     if (raw.length === 0) return [];
     const top = raw[0].score;
     if (top <= 0) return [];
+    // Tiebreak equal-score results by id before slicing: MiniSearch breaks
+    // ties by internal insertion order, which the strategy's own
+    // discard/add changes. Callers truncate to a `limit`, so the ids
+    // surviving a tie at the boundary must not depend on write history.
+    raw.sort((a, b) => {
+      const scoreDiff = b.score - a.score;
+      if (!Number.isNaN(scoreDiff) && scoreDiff !== 0) return scoreDiff;
+      return a.id.localeCompare(b.id);
+    });
     // `storeFields: ['entity_id']` puts entity_id on every result.
     return raw.slice(0, limit).map((r) => ({
       id: r.id,

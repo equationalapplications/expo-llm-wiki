@@ -72,6 +72,15 @@ export interface IndexStrategy {
    */
   vacuum?(): Promise<void>;
 
+  /**
+   * Returns the set of ids previously indexed under `entityId`, used by
+   * `SearchService.rebuildIndex` to know which docs to discard before
+   * adding fresh ones. Only MiniSearch implements this (it tracks per-entity
+   * id sets in-RAM); strategies whose discard is keyed by a SQL-side
+   * predicate (FTS5) do not need it and return `undefined`.
+   */
+  getEntryIdsByEntity?(entityId: string): ReadonlySet<string> | undefined;
+
   /** Release any resources. Called from `SearchService` teardown. */
   close?(): Promise<void>;
 }

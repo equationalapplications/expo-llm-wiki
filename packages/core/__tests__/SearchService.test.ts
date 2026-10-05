@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import MiniSearch from 'minisearch';
 import { SearchService } from '../src/services/SearchService';
+import { MiniSearchIndexStrategy } from '../src/services/search/MiniSearchIndexStrategy';
 import type { EntryRepository } from '../src/repositories/EntryRepository';
 import { cosineSimilarity } from '../src/utils/cosine';
 import { parseEmbedding } from '../src/utils/embedding';
@@ -16,6 +17,10 @@ function makeRepo(
   return {
     findMiniSearchRows: vi.fn().mockResolvedValue(rows),
   } as unknown as EntryRepository;
+}
+
+function makeService(repo = makeRepo()) {
+  return { service: new SearchService(repo, new MiniSearchIndexStrategy()), repo };
 }
 
 function makeVecRow(
@@ -52,7 +57,7 @@ function makeMiniSearchRow(
 describe('vector cache — FIFO eviction at entity cap (16)', () => {
   it('evicts entity-0 when 17th entity is cached; entity-16 remains cached', async () => {
     const repo = makeRepo();
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     const parseSpy = vi.spyOn(embeddingModule, 'parseEmbedding');
 
     const queryVec = new Float32Array([1, 0, 0]);
@@ -108,7 +113,7 @@ describe('vector cache — FIFO eviction at entity cap (16)', () => {
 describe('vector cache — per-entity fact cap (500)', () => {
   it('skips cache for entities with > 500 rows; parseEmbedding called on second read', async () => {
     const repo = makeRepo();
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     const parseSpy = vi.spyOn(embeddingModule, 'parseEmbedding');
 
     const queryVec = new Float32Array([1, 0, 0]);
@@ -151,7 +156,7 @@ describe('vector cache — per-entity fact cap (500)', () => {
 describe('vector cache — population', () => {
   it('first rankSemantic with populateCache=true populates; second call skips parseEmbedding', async () => {
     const repo = makeRepo();
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     const parseSpy = vi.spyOn(embeddingModule, 'parseEmbedding');
 
     const queryVec = new Float32Array([1, 0, 0]);
@@ -191,7 +196,7 @@ describe('vector cache — population', () => {
 
   it('populateCache=false does not cache; parseEmbedding called on each call', async () => {
     const repo = makeRepo();
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     const parseSpy = vi.spyOn(embeddingModule, 'parseEmbedding');
 
     const queryVec = new Float32Array([1, 0, 0]);
@@ -230,7 +235,7 @@ describe('vector cache — population', () => {
 describe('evictCache(entityId)', () => {
   it('clears specific entity cache only; other entities remain cached', async () => {
     const repo = makeRepo();
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     const parseSpy = vi.spyOn(embeddingModule, 'parseEmbedding');
     const queryVec = new Float32Array([1, 0, 0]);
 
@@ -287,7 +292,7 @@ describe('evictCache(entityId)', () => {
 describe('evictCache() without argument', () => {
   it('clears all entity caches', async () => {
     const repo = makeRepo();
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     const parseSpy = vi.spyOn(embeddingModule, 'parseEmbedding');
     const queryVec = new Float32Array([1, 0, 0]);
 
@@ -331,7 +336,7 @@ describe('clearAll()', () => {
   it('resets vectorCache, miniSearch, and miniSearchEntryIdsByEntity', async () => {
     const rows = [makeMiniSearchRow('f1', 'e1', 'apple', 'body', '[]')];
     const repo = makeRepo(rows);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     const parseSpy = vi.spyOn(embeddingModule, 'parseEmbedding');
     const queryVec = new Float32Array([1, 0, 0]);
 
@@ -347,10 +352,10 @@ describe('clearAll()', () => {
       limit: 10,
     });
 
-    service.clearAll();
+    await service.clearAll();
 
     // Keyword search should return empty after clearAll
-    const results = service.searchKeyword('apple', ['e1'], 10);
+    const results = await service.searchKeyword('apple', ['e1'], 10);
     expect(results).toHaveLength(0);
 
     // Cache should be cleared — parseEmbedding called on next rankSemantic
@@ -372,20 +377,20 @@ describe('clearAll()', () => {
   it('resets the minisearch dirt counter that removeAll() leaves behind', async () => {
     const rows = Array.from({ length: 5 }, (_, i) => makeMiniSearchRow(`f${i}`, 'e1', `word${i}`));
     const { repo } = makeLiveRepo(rows);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync('e1');
 
     // Accrue dirt with a raw discard: syncEntries vacuums its own discards
-    // away (see the syncEntries suite), so the private index is the honest
-    // way to leave dirtCount > 0 behind.
-    (service as any).miniSearch.discard('f3');
-    expect((service as any).miniSearch.dirtCount).toBe(1);
+    // away (see the syncEntries suite), so the strategy's private index is
+    // the honest way to leave dirtCount > 0 behind.
+    (service as any).indexStrategy.index.discard('f3');
+    expect((service as any).indexStrategy.index.dirtCount).toBe(1);
 
     // minisearch 7.2.0's removeAll() does not reset dirtCount (or its vacuum
     // bookkeeping); clearAll must swap in a fresh index so "fully resets"
     // holds.
-    service.clearAll();
-    expect((service as any).miniSearch.dirtCount).toBe(0);
+    await service.clearAll();
+    expect((service as any).indexStrategy.index.dirtCount).toBe(0);
   });
 });
 
@@ -397,7 +402,7 @@ describe('sync(entityId)', () => {
   it('rebuilds index for specific entity and evicts its cache', async () => {
     const initialRows = [makeMiniSearchRow('f1', 'e1', 'apple', 'body', '[]')];
     const repo = makeRepo(initialRows);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     const parseSpy = vi.spyOn(embeddingModule, 'parseEmbedding');
     const queryVec = new Float32Array([1, 0, 0]);
 
@@ -424,7 +429,7 @@ describe('sync(entityId)', () => {
     await service.sync('e1'); // should evict cache and rebuild index
 
     // searchKeyword should find newly added 'banana'
-    const results = service.searchKeyword('banana', ['e1'], 10);
+    const results = await service.searchKeyword('banana', ['e1'], 10);
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].id).toBe('f2');
 
@@ -456,7 +461,7 @@ describe('sync() without argument', () => {
       makeMiniSearchRow('f2', 'e2', 'car', 'body', '[]'),
     ];
     const repo = makeRepo(initialRows);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     const parseSpy = vi.spyOn(embeddingModule, 'parseEmbedding');
     const queryVec = new Float32Array([1, 0, 0]);
 
@@ -484,7 +489,7 @@ describe('sync() without argument', () => {
     await service.sync(); // global sync
 
     // New fact 'f3' should be found
-    const results = service.searchKeyword('new fact', ['e1'], 10);
+    const results = await service.searchKeyword('new fact', ['e1'], 10);
     expect(results.length).toBeGreaterThan(0);
 
     // All caches should be evicted
@@ -517,10 +522,10 @@ describe('searchKeyword', () => {
       makeMiniSearchRow('f2', 'e2', 'apple cider', 'body', '[]'),
     ];
     const repo = makeRepo(rows);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync();
 
-    const results = service.searchKeyword('apple', ['e1'], 10);
+    const results = await service.searchKeyword('apple', ['e1'], 10);
     expect(results.length).toBe(1);
     expect(results[0].id).toBe('f1');
   });
@@ -530,30 +535,30 @@ describe('searchKeyword', () => {
       makeMiniSearchRow(`f${i}`, 'e1', `apple item ${i}`, 'body', '[]'),
     );
     const repo = makeRepo(rows);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync();
 
-    const results = service.searchKeyword('apple', ['e1'], 2);
+    const results = await service.searchKeyword('apple', ['e1'], 2);
     expect(results.length).toBeLessThanOrEqual(2);
   });
 
   it('returns empty when entity not in entityIds', async () => {
     const rows = [makeMiniSearchRow('f1', 'e1', 'apple', 'body', '[]')];
     const repo = makeRepo(rows);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync();
 
-    const results = service.searchKeyword('apple', ['e-other'], 10);
+    const results = await service.searchKeyword('apple', ['e-other'], 10);
     expect(results).toHaveLength(0);
   });
 
   it('returns empty when no results match query', async () => {
     const rows = [makeMiniSearchRow('f1', 'e1', 'banana', 'body', '[]')];
     const repo = makeRepo(rows);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync();
 
-    const results = service.searchKeyword('xyzzy_no_match_abc', ['e1'], 10);
+    const results = await service.searchKeyword('xyzzy_no_match_abc', ['e1'], 10);
     expect(results).toHaveLength(0);
   });
 });
@@ -562,19 +567,19 @@ describe('searchKeyword', () => {
 // 10. getMiniSearchScores
 // ---------------------------------------------------------------------------
 
-describe('getMiniSearchScores', () => {
+describe('getKeywordScores', () => {
   it('returns normalized scores (all <= 1, all > 0)', async () => {
     const rows = [
       makeMiniSearchRow('f1', 'e1', 'apple fruit', 'body', '[]'),
       makeMiniSearchRow('f2', 'e1', 'apple', 'body', '[]'),
     ];
     const repo = makeRepo(rows);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync();
 
-    const scores = service.getMiniSearchScores('apple', ['e1']);
+    const scores = await service.getKeywordScores('apple', ['e1']);
     expect(scores.size).toBeGreaterThan(0);
-    // Scores are divided by max(1, topRawScore), so all are <= 1 and > 0
+    // Strategy normalizes top score to 1.0; remaining scores are in [0, 1].
     for (const score of scores.values()) {
       expect(score).toBeGreaterThan(0);
       expect(score).toBeLessThanOrEqual(1);
@@ -585,17 +590,17 @@ describe('getMiniSearchScores', () => {
     expect(scoreArr.every(([, s]) => s > 0)).toBe(true);
   });
 
-  it('top result is normalized to max(rawScore, 1) — value at most 1', async () => {
-    // When raw MiniSearch score >= 1, the top result gets score == 1.
-    // When raw score < 1, it's divided by 1, still <= 1.
+  it('top result is normalized to 1.0 — value at most 1', async () => {
+    // The strategy normalizes the top score to 1.0; every other result is
+    // scaled by the same factor, so the top is exactly 1.0.
     const rows = [
       makeMiniSearchRow('f1', 'e1', 'exact', 'body', '[]'),
     ];
     const repo = makeRepo(rows);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync();
 
-    const scores = service.getMiniSearchScores('exact', ['e1']);
+    const scores = await service.getKeywordScores('exact', ['e1']);
     expect(scores.size).toBe(1);
     const topScore = scores.get('f1')!;
     expect(topScore).toBeGreaterThan(0);
@@ -607,20 +612,20 @@ describe('getMiniSearchScores', () => {
       makeMiniSearchRow(`f${i}`, 'e1', `apple item ${i}`, 'body', '[]'),
     );
     const repo = makeRepo(rows);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync();
 
-    const scores = service.getMiniSearchScores('apple', ['e1'], 2);
+    const scores = await service.getKeywordScores('apple', ['e1'], 2);
     expect(scores.size).toBeLessThanOrEqual(2);
   });
 
   it('returns empty Map when no results', async () => {
     const rows = [makeMiniSearchRow('f1', 'e1', 'banana', 'body', '[]')];
     const repo = makeRepo(rows);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync();
 
-    const scores = service.getMiniSearchScores('xyzzy_no_match', ['e1']);
+    const scores = await service.getKeywordScores('xyzzy_no_match', ['e1']);
     expect(scores.size).toBe(0);
   });
 
@@ -630,10 +635,10 @@ describe('getMiniSearchScores', () => {
       makeMiniSearchRow('f2', 'e2', 'apple', 'body', '[]'),
     ];
     const repo = makeRepo(rows);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync();
 
-    const scores = service.getMiniSearchScores('apple', ['e1']);
+    const scores = await service.getKeywordScores('apple', ['e1']);
     expect(scores.has('f1')).toBe(true);
     expect(scores.has('f2')).toBe(false);
   });
@@ -646,7 +651,7 @@ describe('getMiniSearchScores', () => {
 describe('rankSemantic — cosine math', () => {
   it('produces scores identical to direct cosineSimilarity call', async () => {
     const repo = makeRepo();
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
 
     const queryVec = [0.6, 0.8, 0.0];
     const factVec = [1.0, 0.0, 0.0];
@@ -667,7 +672,7 @@ describe('rankSemantic — cosine math', () => {
 
   it('matches parseEmbedding then cosineSimilarity exactly', async () => {
     const repo = makeRepo();
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
 
     const queryVec = [0.3, 0.4, 0.866];
     const factVec = [0.5, 0.5, 0.707];
@@ -696,7 +701,7 @@ describe('rankSemantic — cosine math', () => {
 describe('rankSemantic — hybrid blend', () => {
   it('score = weight * cosine + (1-weight) * kwScore when weight provided', async () => {
     const repo = makeRepo();
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
 
     const queryVec = [1, 0, 0];
     const factVec = [1, 0, 0];
@@ -722,7 +727,7 @@ describe('rankSemantic — hybrid blend', () => {
 
   it('kwScore defaults to 0 when not in miniSearchScores map', async () => {
     const repo = makeRepo();
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
 
     const queryVec = [1, 0, 0];
     const factVec = [1, 0, 0];
@@ -745,7 +750,7 @@ describe('rankSemantic — hybrid blend', () => {
 
   it('clamps negative cosine to 0 in hybrid blend', async () => {
     const repo = makeRepo();
-    const svc = new SearchService(repo);
+    const svc = new SearchService(repo, new MiniSearchIndexStrategy());
     const queryVec = [1, 0, 0];
     const factVec = [-1, 0, 0]; // cosine = -1.0
     const weight = 0.7;
@@ -776,7 +781,7 @@ describe('rankSemantic — hybrid blend', () => {
 describe('rankSemantic — missing vector', () => {
   it('rows with null embedding get score=-2 when weight=undefined', async () => {
     const repo = makeRepo();
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
 
     const results = await service.rankSemantic({
       entityId: 'e1',
@@ -793,7 +798,7 @@ describe('rankSemantic — missing vector', () => {
 
   it('rows with null embedding get (1-weight)*kwScore when weight < 1', async () => {
     const repo = makeRepo();
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
 
     const weight = 0.4;
     const kwScore = 0.8;
@@ -814,7 +819,7 @@ describe('rankSemantic — missing vector', () => {
 
   it('rows with null embedding get score=-2 when weight=1', async () => {
     const repo = makeRepo();
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
 
     const results = await service.rankSemantic({
       entityId: 'e1',
@@ -837,7 +842,7 @@ describe('rankSemantic — missing vector', () => {
 describe('rankSemantic — skipSort', () => {
   it('results are not sorted when skipSort=true', async () => {
     const repo = makeRepo();
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
 
     // Row order: f-low (score ~0) then f-high (score ~1)
     // Without sort, original order is preserved.
@@ -865,7 +870,7 @@ describe('rankSemantic — skipSort', () => {
 
   it('results ARE sorted when skipSort=false (default)', async () => {
     const repo = makeRepo();
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
 
     const queryVec = [1, 0, 0];
     const rows = [
@@ -896,7 +901,7 @@ describe('rankSemantic — skipSort', () => {
 describe('rankSemantic — limit', () => {
   it('returns at most limit results', async () => {
     const repo = makeRepo();
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
 
     const queryVec = [1, 0, 0];
     const rows = Array.from({ length: 10 }, (_, i) =>
@@ -924,7 +929,7 @@ describe('rankSemantic — limit', () => {
 describe('tiebreak sort', () => {
   it('sorts by score desc, then access_count desc, then updated_at desc, then id asc', async () => {
     const repo = makeRepo();
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
 
     // All rows have the same cosine similarity (all same vector)
     const queryVec = [1, 0, 0];
@@ -957,7 +962,7 @@ describe('tiebreak sort', () => {
 
   it('higher score wins regardless of access_count', async () => {
     const repo = makeRepo();
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
 
     const queryVec = [1, 0, 0];
     const rows = [
@@ -987,24 +992,24 @@ describe('normalizeMiniSearchRow', () => {
   it('tags JSON array joined by space — all tags are searchable', async () => {
     const rows = [makeMiniSearchRow('f1', 'e1', 'doc', 'body', '["foo","bar","baz"]')];
     const repo = makeRepo(rows);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync();
 
     // Should find by any tag keyword
-    const r1 = service.searchKeyword('foo', ['e1'], 10);
+    const r1 = await service.searchKeyword('foo', ['e1'], 10);
     expect(r1.length).toBeGreaterThan(0);
-    const r2 = service.searchKeyword('bar', ['e1'], 10);
+    const r2 = await service.searchKeyword('bar', ['e1'], 10);
     expect(r2.length).toBeGreaterThan(0);
   });
 
   it('non-array JSON tags passed as-is to MiniSearch', async () => {
     const rows = [makeMiniSearchRow('f1', 'e1', 'doc', 'body', '"some-tag"')];
     const repo = makeRepo(rows);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync();
 
     // Non-array JSON string is left as-is — just shouldn't throw
-    const results = service.searchKeyword('some-tag', ['e1'], 10);
+    const results = await service.searchKeyword('some-tag', ['e1'], 10);
     // May or may not match depending on MiniSearch tokenization, just no crash
     expect(Array.isArray(results)).toBe(true);
   });
@@ -1012,7 +1017,7 @@ describe('normalizeMiniSearchRow', () => {
   it('malformed JSON tags left as-is — no crash', async () => {
     const rows = [makeMiniSearchRow('f1', 'e1', 'doc', 'body', 'not-valid-json')];
     const repo = makeRepo(rows);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
 
     // Should not throw
     await expect(service.sync()).resolves.not.toThrow();
@@ -1027,10 +1032,10 @@ describe('rebuildIndex via sync()', () => {
   it('after global sync, searchKeyword finds newly added documents', async () => {
     const initialRows = [makeMiniSearchRow('f1', 'e1', 'apple', 'body', '[]')];
     const repo = makeRepo(initialRows);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync();
 
-    let results = service.searchKeyword('banana', ['e1'], 10);
+    let results = await service.searchKeyword('banana', ['e1'], 10);
     expect(results).toHaveLength(0);
 
     const newRows = [
@@ -1040,7 +1045,7 @@ describe('rebuildIndex via sync()', () => {
     (repo.findMiniSearchRows as ReturnType<typeof vi.fn>).mockResolvedValue(newRows);
     await service.sync();
 
-    results = service.searchKeyword('banana', ['e1'], 10);
+    results = await service.searchKeyword('banana', ['e1'], 10);
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].id).toBe('f2');
   });
@@ -1048,31 +1053,31 @@ describe('rebuildIndex via sync()', () => {
   it('after entity sync, old docs removed and new ones indexed', async () => {
     const oldRows = [makeMiniSearchRow('f-old', 'e1', 'oldword', 'body', '[]')];
     const repo = makeRepo(oldRows);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync('e1');
 
-    expect(service.searchKeyword('oldword', ['e1'], 10).length).toBeGreaterThan(0);
+    expect((await service.searchKeyword('oldword', ['e1'], 10)).length).toBeGreaterThan(0);
 
     const newRows = [makeMiniSearchRow('f-new', 'e1', 'newword', 'body', '[]')];
     (repo.findMiniSearchRows as ReturnType<typeof vi.fn>).mockResolvedValue(newRows);
     await service.sync('e1');
 
     // Old doc should be gone
-    expect(service.searchKeyword('oldword', ['e1'], 10)).toHaveLength(0);
+    expect(await service.searchKeyword('oldword', ['e1'], 10)).toHaveLength(0);
     // New doc should be found
-    expect(service.searchKeyword('newword', ['e1'], 10).length).toBeGreaterThan(0);
+    expect((await service.searchKeyword('newword', ['e1'], 10)).length).toBeGreaterThan(0);
   });
 
   it('findMiniSearchRows is called with entityId when syncing specific entity', async () => {
     const repo = makeRepo([]);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync('e1');
     expect(repo.findMiniSearchRows).toHaveBeenCalledWith('e1');
   });
 
   it('findMiniSearchRows is called without args when syncing globally', async () => {
     const repo = makeRepo([]);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync();
     expect(repo.findMiniSearchRows).toHaveBeenCalledWith();
   });
@@ -1123,7 +1128,7 @@ describe('sync() concurrency', () => {
     // First sync reads slowly, second reads fast — without serialization the
     // first finishes last and discards f2.
     const { repo, firstRead } = makeScriptedRepo(dbRows, [40, 0]);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
 
     const first = service.sync('e1');
     // Only after the first (slow) read has snapshotted the old rows does f2
@@ -1134,14 +1139,14 @@ describe('sync() concurrency', () => {
     const second = service.sync('e1');
     await Promise.all([first, second]);
 
-    const ids = service.searchKeyword('alpha beta', ['e1'], 10).map((r) => r.id).sort();
+    const ids = (await service.searchKeyword('alpha beta', ['e1'], 10)).map((r) => r.id).sort();
     expect(ids).toEqual(['f1', 'f2']);
   });
 
   it('never runs two rebuilds at once', async () => {
     const dbRows = { current: [makeMiniSearchRow('f1', 'e1')] };
     const { repo, inFlight } = makeScriptedRepo(dbRows, [30, 20, 10, 0, 0]);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
 
     await Promise.all([
       service.sync('e1'),
@@ -1168,7 +1173,7 @@ describe('sync() concurrency', () => {
       }),
     } as unknown as EntryRepository;
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
 
     await expect(service.sync('e1')).resolves.toBeUndefined();
     expect(warn).toHaveBeenCalledWith(
@@ -1178,22 +1183,31 @@ describe('sync() concurrency', () => {
 
     // Chain is not poisoned: the next sync still runs and indexes.
     await service.sync('e1');
-    expect(service.searchKeyword('alpha', ['e1'], 10).map((r) => r.id)).toEqual(['f1']);
+    expect((await service.searchKeyword('alpha', ['e1'], 10)).map((r) => r.id)).toEqual(['f1']);
 
     warn.mockRestore();
   });
 
   it('vacuums explicitly and does not leave auto-vacuum armed', async () => {
+    // The strategy's vacuum() is conditional on dirtCount > 0: a clean
+    // rebuild (addAll only) leaves dirtCount at 0 and skips the explicit
+    // vacuum. To verify the explicit-vacuum path is wired, accrue dirt with
+    // a discard before sync.
     const vacuumSpy = vi.spyOn(MiniSearch.prototype, 'vacuum').mockResolvedValue(undefined as never);
     const repo = makeRepo([makeMiniSearchRow('f1', 'e1')]);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
+
+    await service.sync('e1');
+    // Accrue dirt with a raw discard on the strategy's private index.
+    (service as any).indexStrategy.index.discard('f1');
+    expect((service as any).indexStrategy.index.dirtCount).toBe(1);
 
     await service.sync('e1');
 
-    expect(vacuumSpy).toHaveBeenCalledTimes(1);
+    expect(vacuumSpy).toHaveBeenCalled();
     // Reading MiniSearch's internal options is deliberate: autoVacuum has no
     // public getter, and the whole point of B2 is that it is off.
-    expect((service as any).miniSearch._options.autoVacuum).toBe(false);
+    expect((service as any).indexStrategy.index._options.autoVacuum).toBe(false);
 
     vacuumSpy.mockRestore();
   });
@@ -1204,7 +1218,7 @@ describe('sync() concurrency', () => {
     // the previous one, every subsequent sync would reject forever — the same
     // unhandled rejection this method exists to prevent, just one step removed.
     const repo = makeRepo([makeMiniSearchRow('f1', 'e1', 'alpha')]);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const evict = vi.spyOn(service, 'evictCache').mockImplementationOnce(() => {
       throw new Error('cache eviction blew up');
@@ -1219,7 +1233,7 @@ describe('sync() concurrency', () => {
     // The chain still works, and the index from the failed turn is intact —
     // eviction runs after the rebuild, so the rebuild itself had committed.
     await expect(service.sync('e1')).resolves.toBeUndefined();
-    expect(service.searchKeyword('alpha', ['e1'], 10).map((r) => r.id)).toEqual(['f1']);
+    expect((await service.searchKeyword('alpha', ['e1'], 10)).map((r) => r.id)).toEqual(['f1']);
 
     evict.mockRestore();
     warn.mockRestore();
@@ -1243,13 +1257,13 @@ function makeLiveRepo(initial: MsRow[]) {
   return { repo, live, findMiniSearchRows, findMiniSearchRowsByIds };
 }
 
-const hits = (service: SearchService, query: string, entityIds = ['e1']) =>
-  service.searchKeyword(query, entityIds, 100).map((r) => r.id).sort();
+const hits = async (service: SearchService, query: string, entityIds = ['e1']) =>
+  (await service.searchKeyword(query, entityIds, 100)).map((r) => r.id).sort();
 
 describe('syncEntries', () => {
   it('indexes new ids by reading only those rows', async () => {
     const { repo, live, findMiniSearchRows, findMiniSearchRowsByIds } = makeLiveRepo([makeMiniSearchRow('f1', 'e1', 'apple')]);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync('e1');
     findMiniSearchRows.mockClear();
 
@@ -1258,31 +1272,31 @@ describe('syncEntries', () => {
 
     expect(findMiniSearchRowsByIds).toHaveBeenCalledWith('e1', ['f2']);
     expect(findMiniSearchRows).not.toHaveBeenCalled();
-    expect(hits(service, 'banana')).toEqual(['f2']);
-    expect(hits(service, 'apple')).toEqual(['f1']);
+    expect(await hits(service, 'banana')).toEqual(['f2']);
+    expect(await hits(service, 'apple')).toEqual(['f1']);
   });
 
   it('replaces an updated row', async () => {
     const { repo, live } = makeLiveRepo([makeMiniSearchRow('f1', 'e1', 'apple')]);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync('e1');
 
     live.rows[0] = makeMiniSearchRow('f1', 'e1', 'cherry');
     await service.syncEntries('e1', ['f1']);
 
-    expect(hits(service, 'apple')).toEqual([]);
-    expect(hits(service, 'cherry')).toEqual(['f1']);
+    expect(await hits(service, 'apple')).toEqual([]);
+    expect(await hits(service, 'cherry')).toEqual(['f1']);
   });
 
   it('removes a soft-deleted row', async () => {
     const { repo, live } = makeLiveRepo([makeMiniSearchRow('f1', 'e1', 'apple')]);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync('e1');
 
     live.rows = [];
     await service.syncEntries('e1', ['f1']);
 
-    expect(hits(service, 'apple')).toEqual([]);
+    expect(await hits(service, 'apple')).toEqual([]);
   });
 
   it('skips a tracked id the index no longer holds instead of throwing at it', async () => {
@@ -1291,46 +1305,46 @@ describe('syncEntries', () => {
     // throw in between leaves the set claiming ids the index has already
     // dropped. discard() on such an id throws ("it is not in the index").
     const { repo } = makeLiveRepo([makeMiniSearchRow('f1', 'e1', 'apple')]);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync('e1');
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    (service as any).miniSearch.discard('f1'); // index loses f1; tracked set still has it
+    (service as any).indexStrategy.index.discard('f1'); // index loses f1; tracked set still has it
 
     await expect(service.syncEntries('e1', ['f1'])).resolves.toBeUndefined();
     expect(warn).not.toHaveBeenCalled();
-    expect(hits(service, 'apple')).toEqual(['f1']); // re-added from the live row
+    expect(await hits(service, 'apple')).toEqual(['f1']); // re-added from the live row
 
     warn.mockRestore();
   });
 
   it('never touches an id indexed under another entity', async () => {
     const { repo } = makeLiveRepo([makeMiniSearchRow('f1', 'e1', 'apple'), makeMiniSearchRow('g1', 'e2', 'apple')]);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync();
 
     await service.syncEntries('e1', ['g1']);
 
-    expect(hits(service, 'apple', ['e2'])).toEqual(['g1']);
-    expect(hits(service, 'apple', ['e1'])).toEqual(['f1']);
+    expect(await hits(service, 'apple', ['e2'])).toEqual(['g1']);
+    expect(await hits(service, 'apple', ['e1'])).toEqual(['f1']);
   });
 
   it('ignores ids that are neither indexed nor live', async () => {
     const { repo } = makeLiveRepo([makeMiniSearchRow('f1', 'e1', 'apple')]);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync('e1');
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     await expect(service.syncEntries('e1', ['nope'])).resolves.toBeUndefined();
 
     expect(warn).not.toHaveBeenCalled();
-    expect(hits(service, 'apple')).toEqual(['f1']);
+    expect(await hits(service, 'apple')).toEqual(['f1']);
     warn.mockRestore();
   });
 
   it('makes no repository call for an empty id list on a tracked entity', async () => {
     const { repo, findMiniSearchRows, findMiniSearchRowsByIds } = makeLiveRepo([makeMiniSearchRow('f1', 'e1', 'apple')]);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync('e1');
     findMiniSearchRows.mockClear();
 
@@ -1359,7 +1373,7 @@ describe('syncEntries', () => {
       }),
       findMiniSearchRowsByIds: vi.fn(async () => []),
     } as unknown as EntryRepository;
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     let readCount = 0;
 
     await service.sync('e1'); // registers the entity
@@ -1384,14 +1398,14 @@ describe('syncEntries', () => {
       makeMiniSearchRow('f0', 'e1', 'cherry'),
       makeMiniSearchRow('f1', 'e1', 'apple'),
     ]);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
 
     await service.syncEntries('e1', []);
 
     expect(findMiniSearchRows).toHaveBeenCalledWith('e1');
     expect(findMiniSearchRowsByIds).not.toHaveBeenCalled();
-    expect(hits(service, 'apple')).toEqual(['f1']);
-    expect(hits(service, 'cherry')).toEqual(['f0']);
+    expect(await hits(service, 'apple')).toEqual(['f1']);
+    expect(await hits(service, 'cherry')).toEqual(['f0']);
 
     // The rebuild registered the entity, so the next sync stays incremental.
     findMiniSearchRows.mockClear();
@@ -1400,7 +1414,7 @@ describe('syncEntries', () => {
 
     expect(findMiniSearchRowsByIds).toHaveBeenCalledWith('e1', ['f2']);
     expect(findMiniSearchRows).not.toHaveBeenCalled();
-    expect(hits(service, 'banana')).toEqual(['f2']);
+    expect(await hits(service, 'banana')).toEqual(['f2']);
   });
 
   it('falls back to a full entity rebuild for an entity it has never indexed', async () => {
@@ -1408,19 +1422,19 @@ describe('syncEntries', () => {
       makeMiniSearchRow('f0', 'e1', 'cherry'),
       makeMiniSearchRow('f1', 'e1', 'apple'),
     ]);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
 
     await service.syncEntries('e1', ['f1']);
 
     expect(findMiniSearchRows).toHaveBeenCalledWith('e1');
     expect(findMiniSearchRowsByIds).not.toHaveBeenCalled();
-    expect(hits(service, 'apple')).toEqual(['f1']);
-    expect(hits(service, 'cherry')).toEqual(['f0']);
+    expect(await hits(service, 'apple')).toEqual(['f1']);
+    expect(await hits(service, 'cherry')).toEqual(['f0']);
   });
 
   it('on a failed read: warns, leaves the index unchanged, and rebuilds the entity next time', async () => {
     const { repo, live, findMiniSearchRows, findMiniSearchRowsByIds } = makeLiveRepo([makeMiniSearchRow('f1', 'e1', 'apple')]);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync('e1');
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     findMiniSearchRowsByIds.mockRejectedValueOnce(new Error('boom'));
@@ -1432,14 +1446,14 @@ describe('syncEntries', () => {
       expect.stringContaining('search index incremental sync failed for e1'),
       expect.any(Error),
     );
-    expect(hits(service, 'apple')).toEqual(['f1']);
-    expect(hits(service, 'banana')).toEqual([]);
+    expect(await hits(service, 'apple')).toEqual(['f1']);
+    expect(await hits(service, 'banana')).toEqual([]);
 
     // Stale → the next call rebuilds the entity in full, even with no ids.
     findMiniSearchRows.mockClear();
     await service.syncEntries('e1', []);
     expect(findMiniSearchRows).toHaveBeenCalledWith('e1');
-    expect(hits(service, 'banana')).toEqual(['f2']);
+    expect(await hits(service, 'banana')).toEqual(['f2']);
 
     // …and after that it is incremental again.
     findMiniSearchRows.mockClear();
@@ -1466,7 +1480,7 @@ describe('syncEntries', () => {
       }),
       findMiniSearchRowsByIds: vi.fn(async () => []),
     } as unknown as EntryRepository;
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
 
     const rebuilding = service.sync('e1');
     await firstRead; // the rebuild's read is in flight
@@ -1502,7 +1516,7 @@ describe('syncEntries', () => {
       }),
       findMiniSearchRowsByIds: vi.fn(async () => []),
     } as unknown as EntryRepository;
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
 
     // Never indexed, so syncEntries falls back to the full-rebuild path.
     const rebuilding = service.syncEntries('e1', ['f1']);
@@ -1524,7 +1538,7 @@ describe('syncEntries', () => {
 
   it('markStale forces one full rebuild; sync() clears the flag', async () => {
     const { repo, findMiniSearchRows, findMiniSearchRowsByIds } = makeLiveRepo([makeMiniSearchRow('f1', 'e1', 'apple')]);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync('e1');
 
     service.markStale('e1');
@@ -1547,17 +1561,17 @@ describe('syncEntries', () => {
 
   it('after clearAll(), takes the full-rebuild path instead of a duplicate-id addAll', async () => {
     const { repo, findMiniSearchRows } = makeLiveRepo([makeMiniSearchRow('f1', 'e1', 'apple')]);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync('e1');
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    service.clearAll();
+    await service.clearAll();
     findMiniSearchRows.mockClear();
     await service.syncEntries('e1', ['f1']);
 
     expect(findMiniSearchRows).toHaveBeenCalledWith('e1');
     expect(warn).not.toHaveBeenCalled();
-    expect(hits(service, 'apple')).toEqual(['f1']);
+    expect(await hits(service, 'apple')).toEqual(['f1']);
     warn.mockRestore();
   });
 
@@ -1576,7 +1590,7 @@ describe('syncEntries', () => {
       findMiniSearchRowsByIds: vi.fn((entityId: string, ids: readonly string[]) =>
         slow(rows.filter((r) => r.entity_id === entityId && ids.includes(r.id)), 5)),
     } as unknown as EntryRepository;
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync('e1');
 
     await Promise.all([
@@ -1587,7 +1601,7 @@ describe('syncEntries', () => {
     ]);
 
     expect(inFlight.max).toBe(1);
-    expect(hits(service, 'apple')).toEqual(['f1']);
+    expect(await hits(service, 'apple')).toEqual(['f1']);
   });
 
   it('equal-score results survive a limit identically before and after an incremental re-index', async () => {
@@ -1597,26 +1611,26 @@ describe('syncEntries', () => {
     // a limit, so the ids surviving the tie must not depend on write history.
     const rows = Array.from({ length: 10 }, (_, i) => makeMiniSearchRow(`f${i}`, 'e1', 'same', 'same', '[]'));
     const { repo } = makeLiveRepo(rows);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync('e1');
 
-    const before = service.searchKeyword('same', ['e1'], 5).map((r) => r.id);
+    const before = (await service.searchKeyword('same', ['e1'], 5)).map((r) => r.id);
     await service.syncEntries('e1', ['f3']);
-    const after = service.searchKeyword('same', ['e1'], 5).map((r) => r.id);
+    const after = (await service.searchKeyword('same', ['e1'], 5)).map((r) => r.id);
 
     expect(before).toEqual(['f0', 'f1', 'f2', 'f3', 'f4']);
     expect(after).toEqual(before);
   });
 
-  it('getMiniSearchScores truncates equal scores by id, not insertion order', async () => {
+  it('getKeywordScores truncates equal scores by id, not insertion order', async () => {
     const rows = Array.from({ length: 10 }, (_, i) => makeMiniSearchRow(`f${i}`, 'e1', 'same', 'same', '[]'));
     const { repo } = makeLiveRepo(rows);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync('e1');
 
-    const before = [...service.getMiniSearchScores('same', ['e1'], 5).keys()];
+    const before = [...(await service.getKeywordScores('same', ['e1'], 5)).keys()];
     await service.syncEntries('e1', ['f3']);
-    const after = [...service.getMiniSearchScores('same', ['e1'], 5).keys()];
+    const after = [...(await service.getKeywordScores('same', ['e1'], 5)).keys()];
 
     expect(before).toEqual(['f0', 'f1', 'f2', 'f3', 'f4']);
     expect(after).toEqual(before);
@@ -1625,7 +1639,7 @@ describe('syncEntries', () => {
   it('vacuums after a turn that discarded, never after an add-only turn', async () => {
     const rows = Array.from({ length: 30 }, (_, i) => makeMiniSearchRow(`f${i}`, 'e1', `word${i}`));
     const { repo, live } = makeLiveRepo(rows);
-    const service = new SearchService(repo);
+    const service = new SearchService(repo, new MiniSearchIndexStrategy());
     await service.sync('e1');
     const vacuumSpy = vi.spyOn(MiniSearch.prototype, 'vacuum'); // spy-through: the real vacuum must run
     vacuumSpy.mockClear(); // sync()'s own unconditional vacuum
@@ -1641,7 +1655,7 @@ describe('syncEntries', () => {
     live.rows[0] = makeMiniSearchRow('f0', 'e1', 'rewritten');
     await service.syncEntries('e1', ['f0']);
     expect(vacuumSpy).toHaveBeenCalledTimes(1);
-    expect((service as any).miniSearch.dirtCount).toBe(0);
+    expect((service as any).indexStrategy.index.dirtCount).toBe(0);
 
     vacuumSpy.mockRestore();
   });
