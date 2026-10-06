@@ -87,6 +87,35 @@ export class SearchService {
   }
 
   /**
+   * Install the strategy resolved by `WikiMemory.setup()`. Before setup, the
+   * service runs on an empty MiniSearch placeholder, as it always has.
+   */
+  setIndexStrategy(strategy: IndexStrategy): void {
+    this.indexStrategy = strategy;
+  }
+
+  /**
+   * One serialized drain turn for strategies with a durable ledger. Like
+   * sync(), it never rejects: the keyword index is rebuildable, and a failed
+   * drain leaves the ledger rows in place for the next turn.
+   */
+  private drainTurn(entityId?: string): Promise<void> {
+    const work = this.syncChain.then(async () => {
+      try {
+        try {
+          await this.indexStrategy.drain!();
+        } finally {
+          this.evictCache(entityId);
+        }
+      } catch (err) {
+        console.warn(`[WikiMemory] search index drain failed for ${entityId ?? '*'}:`, err);
+      }
+    });
+    this.syncChain = work;
+    return work;
+  }
+
+  /**
    * Rebuilds the search index and clears the vector cache for a given entity.
    * A direct replacement for manually syncing state after a DB transaction.
    *
@@ -95,6 +124,7 @@ export class SearchService {
    * correct failure mode and killing the host process is not.
    */
   async sync(entityId?: string): Promise<void> {
+    if (this.indexStrategy.drain) return this.drainTurn(entityId);
     const work = this.syncChain.then(async () => {
       try {
         // evictCache is inside the guard, not after it: a throw escaping here
@@ -144,6 +174,7 @@ export class SearchService {
    * already queued on the chain.
    */
   async syncEntries(entityId: string, ids: Iterable<string>): Promise<void> {
+    if (this.indexStrategy.drain) return this.drainTurn(entityId);
     const uniqueIds = [...new Set(ids)];
     // The fast path requires an indexed entity, matching needsRebuild() below:
     // otherwise an empty id set on a never-indexed entity would skip the
@@ -208,6 +239,8 @@ export class SearchService {
    * cannot index itself, such as upsertGraph inside a host transaction.
    */
   markStale(entityId: string): void {
+    // The ledger triggers already recorded these rows; there is nothing to mark.
+    if (this.indexStrategy.drain) return;
     this.staleEntities.add(entityId);
     this.staleEpochs.set(entityId, (this.staleEpochs.get(entityId) ?? 0) + 1);
   }
@@ -219,6 +252,7 @@ export class SearchService {
    * stale it resolves at once, without waiting on work already on the chain.
    */
   async syncStale(): Promise<void> {
+    if (this.indexStrategy.drain) return this.drainTurn();
     const ids = [...this.staleEntities];
     await Promise.all(ids.map((id) => this.syncEntries(id, [])));
   }
