@@ -3,6 +3,7 @@
 **Date:** 2026-10-05
 **Status:** Approved
 **Status revision (2026-10-05, PR #258 review):** Corrected the score contract — the pre-refactor `getMiniSearchScores` divided by `max(1, top)`, not by `top`, and `searchKeyword` returned raw scores. Strategies now return raw, non-negative, higher-is-better scores and `SearchService.getKeywordScores` keeps the `max(1, top)` scaling. Dropped `close?()` (no teardown path exists; PR-2 adds both if FTS5 needs them), documented `getEntryIdsByEntity?()`, and dropped the `getMiniSearchScores` alias (`SearchService` is not exported).
+**Status revision (2026-10-05, PR #258 review, round 2):** Replaced `add`/`discard`/`removeAll` with three single-step writes, `replace`, `replaceEntity` and `replaceAll`. Searches do not wait for `syncChain`, so splitting a write into awaited steps let a concurrent search see a half-applied index. The pre-refactor code avoided this by never awaiting between discard and `addAll`. Scores must be finite. Specified FTS5 per-entity replacement (`DELETE … WHERE entity_id = ?`) and upsert-by-delete, because FTS5's `id` column is not unique.
 
 ---
 
@@ -84,28 +85,34 @@ export interface IndexSearchResult {
   /**
    * Strategy-native relevance: non-negative, higher is better, comparable only
    * within one result set. Not normalized — `getKeywordScores` divides by
-   * `max(1, top)`; `searchKeyword` passes scores through unscaled.
+   * `max(1, top)`; `searchKeyword` passes scores through unscaled. Must be
+   * finite; SearchService drops results whose score is not.
    */
   score: number;
 }
 
 export interface IndexStrategy {
-  add(documents: readonly IndexDocument[]): Promise<void>;
-  discard(ids: readonly string[]): Promise<void>;
-  removeAll(): Promise<void>;
+  // Each write applies as one step: a concurrent search() sees the index
+  // wholly before or wholly after it.
+  /** Remove `ids`, then upsert `documents` by id. Incremental sync. */
+  replace(ids: readonly string[], documents: readonly IndexDocument[]): Promise<void>;
+  /** Remove every document under `entityId`, then add `documents`. Per-entity rebuild. */
+  replaceEntity(entityId: string, documents: readonly IndexDocument[]): Promise<void>;
+  /** Empty the index, then add `documents`. Global rebuild and clear. */
+  replaceAll(documents: readonly IndexDocument[]): Promise<void>;
   search(query: string, options: IndexSearchOptions): Promise<IndexSearchResult[]>;
   /** For MiniSearch only — FTS5 is a no-op. Called at the end of every discard-bearing turn. */
   vacuum?(): Promise<void>;
-  /** Ids indexed under `entityId`, for per-entity rebuilds. MiniSearch only; FTS5 omits it. */
+  /** Ids indexed under `entityId`, or undefined if never indexed. Drives syncEntries' incremental path. */
   getEntryIdsByEntity?(entityId: string): ReadonlySet<string> | undefined;
 }
 ```
 
-The interface is **deliberately narrow** — no `replace`, no `update`, no `commit`. Operations are append-only on `add` and removal on `discard`. This matches the existing SearchService usage (it always reads-then-writes a snapshot through `findMiniSearchRows[ByIds]`) and avoids the trigger-vs-explicit-indexing debate.
+The interface is **deliberately narrow**: three writes, each matching one existing SearchService path, and no `update` or `commit`. SearchService always reads a snapshot through `findMiniSearchRows[ByIds]` first and then writes it, which also avoids the trigger-vs-explicit-indexing debate. Each write is one step because searches are not serialized on `syncChain`. MiniSearch gets this by never awaiting inside a write; FTS5 by running each write in one transaction.
 
 ### MiniSearchIndexStrategy (new, `packages/core/src/services/search/MiniSearchIndexStrategy.ts`)
 
-Extracted **verbatim** from `SearchService`'s existing implementation: `createMiniSearch()`, `miniSearchEntryIdsByEntity` tracking, the `addAll`/`discard`/`has()` dance from `syncEntries`, the `removeAll` reset, the `dirtCount > 0 → vacuum` rule, and the `clearAll` swap. `search()` returns raw MiniSearch scores, as `searchKeyword` did; the `max(1, top)` scaling from `getMiniSearchScores` stays in `SearchService.getKeywordScores`.
+Extracted **verbatim** from `SearchService`'s existing implementation: `createMiniSearch()`, `miniSearchEntryIdsByEntity` tracking, the `addAll`/`discard`/`has()` dance from `syncEntries` (no await between discard and `addAll`), the empty-set registration from `rebuildIndex`, the fresh-instance reset, the `dirtCount > 0 → vacuum` rule, and the `clearAll` swap. `search()` returns raw MiniSearch scores, as `searchKeyword` did; the `max(1, top)` scaling from `getMiniSearchScores` stays in `SearchService.getKeywordScores`.
 
 `SearchService` retains ownership of `staleEntities`, `staleEpochs`, `syncChain`, and the orchestration logic (rebuild, markStale, syncStale, evictCache, rankSemantic). Only the **direct MiniSearch API calls** move out. This is the smallest refactor that introduces the seam.
 
@@ -128,12 +135,14 @@ Operations map as follows:
 
 | IndexStrategy method | FTS5 SQL |
 |---|---|
-| `add(docs)` | `INSERT INTO {prefix}entries_fts (id, entity_id, title, body, tags) VALUES (?,?,?,?,?)` per doc, chunked to `?`-limit × 5 columns. Inside an immediate transaction so a half-applied batch is impossible. |
-| `discard(ids)` | `DELETE FROM {prefix}entries_fts WHERE id IN (?,?,…)`. Same chunking. |
-| `removeAll()` | `DELETE FROM {prefix}entries_fts`. |
+| `replace(ids, docs)` | One immediate transaction: `DELETE FROM {prefix}entries_fts WHERE id IN (?,?,…)` over `ids` ∪ the docs' ids, then `INSERT INTO {prefix}entries_fts (id, entity_id, title, body, tags) VALUES (?,?,?,?,?)` per doc. Both are chunked to the `?` limit (× 5 columns for the insert). FTS5 virtual tables have no primary key or UNIQUE constraint, so `INSERT OR REPLACE` would not dedupe; deleting first is what makes this an upsert. |
+| `replaceEntity(entityId, docs)` | One immediate transaction: `DELETE FROM {prefix}entries_fts WHERE entity_id = ?`, then the same chunked inserts. Keyed by `entity_id` rather than a remembered id set, so rows for entries soft-deleted since the last sync are removed too: `findMiniSearchRows(entityId)` no longer returns them, so they are not re-inserted. |
+| `replaceAll(docs)` | One immediate transaction: `DELETE FROM {prefix}entries_fts`, then the same chunked inserts. |
 | `search(query, opts)` | `SELECT id, bm25({prefix}entries_fts) AS score FROM {prefix}entries_fts WHERE {prefix}entries_fts MATCH ? AND entity_id IN (?,?,…) ORDER BY score ASC LIMIT ?`. bm25 returns negative values; lower (more negative) is better, so we sort ASC and flip the sign for the IndexSearchResult contract. |
 
 **Explicit indexing, no triggers.** The existing `SearchService` control model (read-then-write through `entryRepo.findMiniSearchRows[ByIds]`, which already filters `deleted_at IS NULL`) applies cleanly. We do not add `entries_ai/ad/au` — soft-delete and `valid_from`/`valid_to` lifecycle (migration v13) make trigger-based sync incorrect: a soft-delete row must leave the index, and the existing `findMiniSearchRows` already excludes it. Triggers would also fire on every ALTER/UPDATE that has nothing to do with text, multiplying writes.
+
+**`getEntryIdsByEntity` for FTS5.** `SearchService.syncEntries` takes the incremental path only when this returns a set; with it absent, every `syncEntries` call falls back to `replaceEntity`. That is correct (the rebuild drops all of the entity's rows) but costs O(entity) per write and undoes #232. PR-2 must keep the incremental path open for FTS5. Either the strategy keeps a RAM set of indexed entities, populated by `replaceEntity`/`replaceAll`, and `syncEntries` changes from "ids tracked under this entity" to `replace` scoped by `entity_id = ?`. Or the strategy loads per-entity id sets from the table on first touch. The choice belongs to PR-2; the requirement is that FTS5 never falls back to a full rebuild on every write.
 
 **`search()` filters by `entity_id` via the `IN (?,?,…)` clause**, mirroring the current `filter: (r) => entityIdSet.has(r.entity_id)` predicate in MiniSearch. Multi-entity reads (the `string[]` overload of `WikiMemory.read`) work without per-entity partitioning.
 
