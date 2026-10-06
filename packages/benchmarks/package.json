@@ -7,7 +7,8 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "bench": "tsx src/cli.ts"
+    "bench": "tsx src/cli.ts",
+    "fixture:search-parity": "tsx src/searchParity/buildFixture.ts"
   },
   "dependencies": {
     "@equationalapplications/core-llm-wiki": "workspace:*"
