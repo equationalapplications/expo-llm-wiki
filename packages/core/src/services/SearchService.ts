@@ -107,10 +107,7 @@ export class SearchService {
           if (entityId === undefined) {
             // Global rebuild: read all live rows, replace the strategy's contents.
             const rows = await this.entryRepo.findMiniSearchRows();
-            await this.indexStrategy.removeAll();
-            if (rows.length > 0) {
-              await this.indexStrategy.add(rows.map(toIndexDoc));
-            }
+            await this.indexStrategy.replaceAll(rows.map(toIndexDoc));
             for (const id of [...this.staleEntities]) {
               if ((this.staleEpochs.get(id) ?? 0) === (epochsBefore.get(id) ?? 0)) {
                 this.staleEntities.delete(id);
@@ -180,14 +177,10 @@ export class SearchService {
             const trackedNow = this.indexStrategy.getEntryIdsByEntity?.(entityId);
             if (trackedNow && !this.staleEntities.has(entityId)) {
               // Only ids tracked under this entity are discarded, so other
-              // entities' documents are never touched (the strategy's discard
-              // is not entity-scoped).
+              // entities' documents are never touched (replace() is not
+              // entity-scoped).
               const idsToDiscard = uniqueIds.filter((id) => trackedNow.has(id));
-              await this.indexStrategy.discard(idsToDiscard);
-              const documents = rows.map(toIndexDoc);
-              if (documents.length > 0) {
-                await this.indexStrategy.add(documents);
-              }
+              await this.indexStrategy.replace(idsToDiscard, rows.map(toIndexDoc));
               await this.indexStrategy.vacuum?.();
               return;
             }
@@ -250,7 +243,7 @@ export class SearchService {
    */
   async clearAll(): Promise<void> {
     this.vectorCache.clear();
-    await this.indexStrategy.removeAll();
+    await this.indexStrategy.replaceAll([]);
     this.staleEntities.clear();
     this.staleEpochs.clear();
   }
@@ -263,7 +256,7 @@ export class SearchService {
     entityIds: string[],
     limit: number,
   ): Promise<IndexSearchResult[]> {
-    const results = await this.indexStrategy.search(query, { entityIds, limit });
+    const results = finiteResults(await this.indexStrategy.search(query, { entityIds, limit }));
     return results
       .sort((a, b) => this._compareSearchResults(a, b))
       .slice(0, limit);
@@ -286,7 +279,7 @@ export class SearchService {
     const opts: IndexSearchOptions = preFilterLimit !== undefined
       ? { entityIds, limit: preFilterLimit, preFilterLimit }
       : { entityIds, limit: Number.MAX_SAFE_INTEGER };
-    const results = await this.indexStrategy.search(query, opts);
+    const results = finiteResults(await this.indexStrategy.search(query, opts));
     if (results.length === 0) return new Map();
     // Pre-refactor scaling: a raw top score below 1 is left as-is rather
     // than inflated to 1, so a weak keyword match stays weak in the blend.
@@ -368,18 +361,7 @@ export class SearchService {
 
   private async rebuildIndex(entityId: string): Promise<void> {
     const rows = await this.entryRepo.findMiniSearchRows(entityId);
-
-    // Discard the entity's previously-indexed ids. The strategy's
-    // `getEntryIdsByEntity` returns undefined for untracked entities
-    // (matches the previous miniSearchEntryIdsByEntity.has(entityId) check).
-    const previousIds = this.indexStrategy.getEntryIdsByEntity?.(entityId);
-    if (previousIds) {
-      await this.indexStrategy.discard([...previousIds]);
-    }
-
-    if (rows.length > 0) {
-      await this.indexStrategy.add(rows.map(toIndexDoc));
-    }
+    await this.indexStrategy.replaceEntity(entityId, rows.map(toIndexDoc));
   }
 
   private _tieBreakSort(items: ScoredRow[]): void {
@@ -411,4 +393,15 @@ export class SearchService {
     if (!Number.isNaN(scoreDiff) && scoreDiff !== 0) return scoreDiff;
     return a.id.localeCompare(b.id);
   }
+}
+
+/**
+ * The strategy contract requires finite scores; drop any that are not, so a
+ * NaN or Infinity cannot become getKeywordScores' divisor or reach the
+ * hybrid blend in rankSemantic.
+ */
+function finiteResults(results: IndexSearchResult[]): IndexSearchResult[] {
+  return results.every((r) => Number.isFinite(r.score))
+    ? results
+    : results.filter((r) => Number.isFinite(r.score));
 }

@@ -1723,41 +1723,153 @@ describe('keyword score scale matches the pre-refactor MiniSearch path', () => {
 });
 
 // ---------------------------------------------------------------------------
-// MiniSearchIndexStrategy.discard — per-entity bookkeeping (#258 review)
+// MiniSearchIndexStrategy write bookkeeping (#258 review)
 // ---------------------------------------------------------------------------
 
-describe('MiniSearchIndexStrategy.discard bookkeeping', () => {
-  it('removes ids only from their owning entity set and forgets them', async () => {
+describe('MiniSearchIndexStrategy write bookkeeping', () => {
+  it('replace() removes ids only from their owning entity set', async () => {
     const strategy = new MiniSearchIndexStrategy();
-    await strategy.add([
+    await strategy.replaceAll([
       toIndexDoc(makeMiniSearchRow('a1', 'e1', 'alpha')),
       toIndexDoc(makeMiniSearchRow('a2', 'e1', 'alpha two')),
       toIndexDoc(makeMiniSearchRow('b1', 'e2', 'beta')),
     ]);
 
-    await strategy.discard(['a1', 'missing']);
+    await strategy.replace(['a1', 'missing'], []);
     expect([...strategy.getEntryIdsByEntity('e1')!]).toEqual(['a2']);
     expect([...strategy.getEntryIdsByEntity('e2')!]).toEqual(['b1']);
 
-    // A discarded id can be re-added under another entity.
-    await strategy.add([toIndexDoc(makeMiniSearchRow('a1', 'e2', 'alpha moved'))]);
-    await strategy.discard(['a1']);
+    // A discarded id can be re-added under another entity, and replace()
+    // upserts: re-adding an indexed id does not throw.
+    await strategy.replace([], [toIndexDoc(makeMiniSearchRow('a1', 'e2', 'alpha moved'))]);
+    await strategy.replace([], [toIndexDoc(makeMiniSearchRow('a1', 'e2', 'alpha again'))]);
+    expect([...strategy.getEntryIdsByEntity('e2')!].sort()).toEqual(['a1', 'b1']);
+    await strategy.replace(['a1'], []);
     expect([...strategy.getEntryIdsByEntity('e1')!]).toEqual(['a2']);
     expect([...strategy.getEntryIdsByEntity('e2')!]).toEqual(['b1']);
   });
 
-  it('does not scan unrelated entity sets', async () => {
+  it('replace() does not scan unrelated entity sets', async () => {
     const strategy = new MiniSearchIndexStrategy();
-    const docs = Array.from({ length: 50 }, (_, i) =>
-      toIndexDoc(makeMiniSearchRow(`d${i}`, `e${i}`, `doc ${i}`)),
+    await strategy.replaceAll(
+      Array.from({ length: 50 }, (_, i) => toIndexDoc(makeMiniSearchRow(`d${i}`, `e${i}`, `doc ${i}`))),
     );
-    await strategy.add(docs);
     const deleteSpy = vi.spyOn(Set.prototype, 'delete');
     try {
-      await strategy.discard(['d0']);
+      await strategy.replace(['d0'], []);
       expect(deleteSpy).toHaveBeenCalledTimes(1);
     } finally {
       deleteSpy.mockRestore();
     }
+  });
+
+  it('replaceEntity() tracks an entity with no documents', async () => {
+    // The pre-extraction rebuildIndex registered an empty set, so later
+    // syncEntries calls take the incremental path instead of rebuilding.
+    const strategy = new MiniSearchIndexStrategy();
+    await strategy.replaceEntity('e9', []);
+    expect(strategy.getEntryIdsByEntity('e9')).toEqual(new Set());
+  });
+
+  it('replaceEntity() drops only that entity\'s previous documents', async () => {
+    const strategy = new MiniSearchIndexStrategy();
+    await strategy.replaceAll([
+      toIndexDoc(makeMiniSearchRow('a1', 'e1', 'alpha')),
+      toIndexDoc(makeMiniSearchRow('b1', 'e2', 'alpha beta')),
+    ]);
+    await strategy.replaceEntity('e1', [toIndexDoc(makeMiniSearchRow('a2', 'e1', 'alpha two'))]);
+    const ids = (await strategy.search('alpha', { entityIds: ['e1', 'e2'], limit: 10 })).map((r) => r.id);
+    expect(ids.sort()).toEqual(['a2', 'b1']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Index writes are atomic with respect to concurrent searches (#258 review)
+// ---------------------------------------------------------------------------
+
+describe('searches never observe a half-applied index write', () => {
+  const rows = [
+    makeMiniSearchRow('f1', 'e1', 'apple one'),
+    makeMiniSearchRow('f2', 'e1', 'apple two'),
+  ];
+
+  function makeSyncRepo() {
+    return {
+      findMiniSearchRows: vi.fn().mockResolvedValue(rows),
+      findMiniSearchRowsByIds: vi.fn().mockImplementation(async (_e: string, ids: string[]) =>
+        rows.filter((r) => ids.includes(r.id)),
+      ),
+    } as unknown as EntryRepository;
+  }
+
+  // Polls searchKeyword on every turn of the microtask queue until `write`
+  // settles, recording how many of the two documents each search saw.
+  async function hitCountsDuring(service: SearchService, write: () => Promise<void>) {
+    const counts: number[] = [];
+    let done = false;
+    const writing = write().finally(() => { done = true; });
+    while (!done) {
+      counts.push((await service.searchKeyword('apple', ['e1'], 10)).length);
+    }
+    await writing;
+    return counts;
+  }
+
+  it('syncEntries (incremental)', async () => {
+    const service = new SearchService(makeSyncRepo(), new MiniSearchIndexStrategy());
+    await service.sync();
+    const counts = await hitCountsDuring(service, () => service.syncEntries('e1', ['f1']));
+    expect(counts.length).toBeGreaterThan(0);
+    expect(counts.every((n) => n === 2)).toBe(true);
+  });
+
+  it('sync(entityId) (per-entity rebuild)', async () => {
+    const service = new SearchService(makeSyncRepo(), new MiniSearchIndexStrategy());
+    await service.sync();
+    const counts = await hitCountsDuring(service, () => service.sync('e1'));
+    expect(counts.every((n) => n === 2)).toBe(true);
+  });
+
+  it('sync() (global rebuild)', async () => {
+    const service = new SearchService(makeSyncRepo(), new MiniSearchIndexStrategy());
+    await service.sync();
+    const counts = await hitCountsDuring(service, () => service.sync());
+    expect(counts.every((n) => n === 2)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Non-finite strategy scores (#258 review)
+// ---------------------------------------------------------------------------
+
+describe('non-finite strategy scores', () => {
+  function stubStrategy(results: Array<{ id: string; score: number }>) {
+    const strategy = new MiniSearchIndexStrategy();
+    vi.spyOn(strategy, 'search').mockResolvedValue(
+      results.map((r) => ({ ...r, entity_id: 'e1' })),
+    );
+    return strategy;
+  }
+
+  it('getKeywordScores drops non-finite scores instead of producing NaN', async () => {
+    const service = new SearchService(
+      makeRepo(),
+      stubStrategy([
+        { id: 'bad', score: NaN },
+        { id: 'inf', score: Infinity },
+        { id: 'f1', score: 4 },
+        { id: 'f2', score: 2 },
+      ]),
+    );
+    const scores = await service.getKeywordScores('q', ['e1']);
+    expect(scores).toEqual(new Map([['f1', 1], ['f2', 0.5]]));
+  });
+
+  it('searchKeyword drops non-finite scores', async () => {
+    const service = new SearchService(
+      makeRepo(),
+      stubStrategy([{ id: 'bad', score: NaN }, { id: 'f1', score: 3 }]),
+    );
+    expect((await service.searchKeyword('q', ['e1'], 10)).map((r) => r.id)).toEqual(['f1']);
   });
 });

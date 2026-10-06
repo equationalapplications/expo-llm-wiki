@@ -20,22 +20,25 @@ import type {
 export class MiniSearchIndexStrategy implements IndexStrategy {
   private index: MiniSearch<IndexDocument>;
   /**
-   * Per-entity id set, used by `SearchService.rebuildIndex` to know which
-   * docs to discard before adding fresh ones. The previous
-   * `miniSearchEntryIdsByEntity` lived on SearchService; ownership moves
-   * here because the strategy is the only thing that needs to discard from
-   * its own backing store on the rebuild path.
+   * Per-entity id set: replaceEntity() discards from it, and
+   * `SearchService.syncEntries` reads it (via getEntryIdsByEntity) to pick
+   * the incremental path. The previous `miniSearchEntryIdsByEntity` lived on
+   * SearchService.
    */
   private entryIdsByEntity = new Map<string, Set<string>>();
   /**
-   * Reverse of `entryIdsByEntity`, so discard() touches only the owning
+   * Reverse of `entryIdsByEntity`, so discardIds() touches only the owning
    * entity's set — the pre-extraction syncEntries deleted from that one set
    * rather than scanning every entity's.
    */
   private entityIdById = new Map<string, string>();
 
   constructor() {
-    this.index = new MiniSearch({
+    this.index = this.createIndex();
+  }
+
+  private createIndex(): MiniSearch<IndexDocument> {
+    return new MiniSearch({
       fields: ['title', 'body', 'tags'],
       storeFields: ['entity_id'],
       // Vacuuming is driven explicitly at the end of each serialized rebuild
@@ -52,49 +55,33 @@ export class MiniSearchIndexStrategy implements IndexStrategy {
     });
   }
 
-  async add(documents: readonly IndexDocument[]): Promise<void> {
-    if (documents.length === 0) return;
-    // MiniSearch mutates the document objects during addAll; pass a copy.
-    const docs: IndexDocument[] = documents.map((d) => ({ ...d }));
-    this.index.addAll(docs);
-    for (const doc of docs) {
-      const set = this.entryIdsByEntity.get(doc.entity_id) ?? new Set<string>();
-      set.add(doc.id);
-      this.entryIdsByEntity.set(doc.entity_id, set);
-      this.entityIdById.set(doc.id, doc.entity_id);
-    }
+  // Writes never await: MiniSearch is synchronous, so each one applies as a
+  // single step and a concurrent search sees the index before or after it,
+  // never half-updated — the guarantee the pre-extraction syncEntries kept
+  // with "no await from here to addAll".
+
+  async replace(ids: readonly string[], documents: readonly IndexDocument[]): Promise<void> {
+    // Upsert: addAll throws on an id already in the index.
+    this.discardIds([...ids, ...documents.map((d) => d.id)]);
+    this.addDocuments(documents);
   }
 
-  async discard(ids: readonly string[]): Promise<void> {
-    if (ids.length === 0) return;
-    for (const id of ids) {
-      // `has()` is the membership test of record: a rebuild that failed
-      // between its own discard pass and the set replacement can leave the
-      // tracking set claiming ids the index no longer holds — discard()
-      // throws on those, so guard with has().
-      if (this.index.has(id)) this.index.discard(id);
-    }
-    for (const id of ids) {
-      const entityId = this.entityIdById.get(id);
-      if (entityId === undefined) continue;
-      this.entryIdsByEntity.get(entityId)?.delete(id);
-      this.entityIdById.delete(id);
-    }
+  async replaceEntity(entityId: string, documents: readonly IndexDocument[]): Promise<void> {
+    const previous = this.entryIdsByEntity.get(entityId);
+    if (previous) this.discardIds([...previous]);
+    // Registered even when empty, so syncEntries treats the entity as tracked.
+    this.entryIdsByEntity.set(entityId, new Set());
+    this.addDocuments(documents);
   }
 
-  async removeAll(): Promise<void> {
-    // removeAll() (rather than the previous swap-in-createMiniSearch() dance)
-    // would leave dirtCount at its prior value, which trips syncEntries'
-    // conditional vacuum early after a clear. Mirror the previous behavior:
-    // swap in a fresh instance.
-    this.index = new MiniSearch({
-      fields: ['title', 'body', 'tags'],
-      storeFields: ['entity_id'],
-      autoVacuum: false,
-      searchOptions: { boost: { title: 2 }, fuzzy: 0.2, prefix: true },
-    });
+  async replaceAll(documents: readonly IndexDocument[]): Promise<void> {
+    // A fresh instance, not removeAll(): that empties the index but keeps
+    // dirtCount and vacuum bookkeeping (minisearch 7.2.0), which would trip
+    // syncEntries' conditional vacuum early after a clear.
+    this.index = this.createIndex();
     this.entryIdsByEntity.clear();
     this.entityIdById.clear();
+    this.addDocuments(documents);
   }
 
   async search(query: string, options: IndexSearchOptions): Promise<IndexSearchResult[]> {
@@ -139,5 +126,32 @@ export class MiniSearchIndexStrategy implements IndexStrategy {
    *  docs to discard on a per-entity rebuild. */
   getEntryIdsByEntity(entityId: string): ReadonlySet<string> | undefined {
     return this.entryIdsByEntity.get(entityId);
+  }
+
+  private addDocuments(documents: readonly IndexDocument[]): void {
+    if (documents.length === 0) return;
+    // MiniSearch mutates the document objects during addAll; pass a copy.
+    const docs: IndexDocument[] = documents.map((d) => ({ ...d }));
+    this.index.addAll(docs);
+    for (const doc of docs) {
+      const set = this.entryIdsByEntity.get(doc.entity_id) ?? new Set<string>();
+      set.add(doc.id);
+      this.entryIdsByEntity.set(doc.entity_id, set);
+      this.entityIdById.set(doc.id, doc.entity_id);
+    }
+  }
+
+  private discardIds(ids: readonly string[]): void {
+    for (const id of ids) {
+      // `has()` is the membership test of record: a rebuild that failed
+      // between its own discard pass and the set replacement can leave the
+      // tracking set claiming ids the index no longer holds — discard()
+      // throws on those, so guard with has().
+      if (this.index.has(id)) this.index.discard(id);
+      const entityId = this.entityIdById.get(id);
+      if (entityId === undefined) continue;
+      this.entryIdsByEntity.get(entityId)?.delete(id);
+      this.entityIdById.delete(id);
+    }
   }
 }
