@@ -41,7 +41,9 @@ export interface IndexSearchResult {
 /**
  * Keyword-index abstraction. The strategy owns its own backing store
  * (in-RAM MiniSearch vs on-disk FTS5) and is responsible for keeping it
- * consistent with the rows it has been told to add/discard.
+ * consistent with the rows it has been told to write. The strategy also owns
+ * the per-entity id bookkeeping — `SearchService` never sees the ids, only
+ * an indexed-or-not probe.
  *
  * Concurrency: writes are called from serialized turns on
  * `SearchService.syncChain`, but searches are not, so each write method MUST
@@ -52,25 +54,42 @@ export interface IndexSearchResult {
  */
 export interface IndexStrategy {
   /**
-   * Remove `ids` (missing ones are ignored), then upsert `documents` by id.
-   * Touches no other id. Used for incremental sync.
+   * Replace documents under `entityId`: remove the given `ids` only if they
+   * are currently tracked under `entityId` (ids under other entities and ids
+   * the strategy never indexed are silently ignored), then upsert
+   * `documents` by id. The strategy owns its id-tracking structure; callers
+   * do not see it. Used for incremental sync.
+   *
+   * Argument order is `(entityId, ids, documents)` so the FTS5 SQL
+   * `DELETE … WHERE entity_id = ? AND id IN (…)` matches the call shape.
    */
-  replace(ids: readonly string[], documents: readonly IndexDocument[]): Promise<void>;
+  replace(
+    entityId: string,
+    ids: readonly string[],
+    documents: readonly IndexDocument[],
+  ): Promise<void>;
 
   /**
-   * Remove every document indexed under `entityId`, then add `documents`
-   * (all of which belong to `entityId`). Used for per-entity rebuilds.
+   * Drop every document currently tracked under `entityId`, then add
+   * `documents` (all of which belong to `entityId`). The entity stays
+   * registered as indexed, even when `documents` is empty — `hasIndexedEntity`
+   * continues to return `true` so the next incremental sync can take the
+   * fast path. Used for per-entity rebuilds.
    */
   replaceEntity(entityId: string, documents: readonly IndexDocument[]): Promise<void>;
 
-  /** Empty the index, then add `documents`. Used for global rebuilds and clears. */
+  /**
+   * Empty the entire index, then add `documents`. After this call, no entity
+   * is registered as indexed (`hasIndexedEntity` returns `false` for every
+   * entity). Used for global rebuilds and clears.
+   */
   replaceAll(documents: readonly IndexDocument[]): Promise<void>;
 
   /**
-   * Search the index, best match first. If
-   * `preFilterLimit` is set, the strategy MAY return up to `preFilterLimit`
-   * candidates before the `limit` cap is applied (hybrid retrieval uses this
-   * to over-fetch candidates for downstream vector blending).
+   * Search the index, best match first. If `preFilterLimit` is set, the
+   * strategy MAY return up to `preFilterLimit` candidates before the `limit`
+   * cap is applied (hybrid retrieval uses this to over-fetch candidates for
+   * downstream vector blending). Score semantics are in `IndexSearchResult`.
    */
   search(query: string, options: IndexSearchOptions): Promise<IndexSearchResult[]>;
 
@@ -82,10 +101,13 @@ export interface IndexStrategy {
   vacuum?(): Promise<void>;
 
   /**
-   * Returns the set of ids indexed under `entityId`, or `undefined` if the
-   * entity has never been indexed. `SearchService.syncEntries` uses it to
-   * decide between the incremental path and a full `replaceEntity` rebuild,
-   * and to discard only ids that belong to the entity.
+   * `true` when `entityId` has been indexed at least once under the current
+   * strategy state; `false` otherwise. `SearchService.syncEntries` uses this
+   * to choose between the empty-ids no-op fast path and the full-rebuild
+   * fallback. Implementations MUST return `false` after `replaceAll([])` and
+   * MUST return `true` after a `replace`/`replaceEntity` that wrote at least
+   * one document (including `replace(entityId, [], [])` for tracking alone).
+   * Returning `undefined` means "unknown — take the rebuild path".
    */
-  getEntryIdsByEntity?(entityId: string): ReadonlySet<string> | undefined;
+  hasIndexedEntity?(entityId: string): boolean | undefined;
 }

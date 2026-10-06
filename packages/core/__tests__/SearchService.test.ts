@@ -1727,7 +1727,7 @@ describe('keyword score scale matches the pre-refactor MiniSearch path', () => {
 // ---------------------------------------------------------------------------
 
 describe('MiniSearchIndexStrategy write bookkeeping', () => {
-  it('replace() removes ids only from their owning entity set', async () => {
+  it('replace(entityId, ids, docs) only touches the owning entity', async () => {
     const strategy = new MiniSearchIndexStrategy();
     await strategy.replaceAll([
       toIndexDoc(makeMiniSearchRow('a1', 'e1', 'alpha')),
@@ -1735,32 +1735,68 @@ describe('MiniSearchIndexStrategy write bookkeeping', () => {
       toIndexDoc(makeMiniSearchRow('b1', 'e2', 'beta')),
     ]);
 
-    await strategy.replace(['a1', 'missing'], []);
-    expect([...strategy.getEntryIdsByEntity('e1')!]).toEqual(['a2']);
-    expect([...strategy.getEntryIdsByEntity('e2')!]).toEqual(['b1']);
+    // a1 is owned by e1; 'missing' was never indexed. Both must be silently
+    // ignored for e2 — e2 keeps b1.
+    await strategy.replace('e1', ['a1', 'missing'], []);
+    expect(strategy.hasIndexedEntity('e1')).toBe(true);
+    expect((await strategy.search('alpha', { entityIds: ['e1'], limit: 10 })).map((r) => r.id)).toEqual(['a2']);
+    expect((await strategy.search('beta', { entityIds: ['e2'], limit: 10 })).map((r) => r.id)).toEqual(['b1']);
 
-    // A discarded id can be re-added under another entity, and replace()
-    // upserts: re-adding an indexed id does not throw.
-    await strategy.replace([], [toIndexDoc(makeMiniSearchRow('a1', 'e2', 'alpha moved'))]);
-    await strategy.replace([], [toIndexDoc(makeMiniSearchRow('a1', 'e2', 'alpha again'))]);
-    expect([...strategy.getEntryIdsByEntity('e2')!].sort()).toEqual(['a1', 'b1']);
-    await strategy.replace(['a1'], []);
-    expect([...strategy.getEntryIdsByEntity('e1')!]).toEqual(['a2']);
-    expect([...strategy.getEntryIdsByEntity('e2')!]).toEqual(['b1']);
+    // An id moved between entities: re-add under e2, then ask e2 to drop it.
+    // replace(e2, [], [a1@e2]) is the upsert path; replace(e2, ['a1'], [])
+    // drops only the e2-owned copy.
+    await strategy.replace('e2', [], [toIndexDoc(makeMiniSearchRow('a1', 'e2', 'alpha moved'))]);
+    expect((await strategy.search('alpha', { entityIds: ['e2'], limit: 10 })).map((r) => r.id)).toEqual(['a1']);
+    await strategy.replace('e2', ['a1'], []);
+    expect((await strategy.search('alpha', { entityIds: ['e1', 'e2'], limit: 10 })).map((r) => r.id)).toEqual(['a2']);
   });
 
-  it('replace() does not scan unrelated entity sets', async () => {
+  it('replace(entityId, ids, docs) does not scan unrelated entity sets', async () => {
     const strategy = new MiniSearchIndexStrategy();
     await strategy.replaceAll(
       Array.from({ length: 50 }, (_, i) => toIndexDoc(makeMiniSearchRow(`d${i}`, `e${i}`, `doc ${i}`))),
     );
     const deleteSpy = vi.spyOn(Set.prototype, 'delete');
     try {
-      await strategy.replace(['d0'], []);
+      await strategy.replace('e0', ['d0'], []);
       expect(deleteSpy).toHaveBeenCalledTimes(1);
     } finally {
       deleteSpy.mockRestore();
     }
+  });
+
+  it('replace(entityId, [], docs) registers the entity as indexed', async () => {
+    // Covers the create-once-per-entity path: a write that only adds (no
+    // removes) still has to register the entity so the next syncEntries call
+    // can take the empty-ids fast path.
+    const strategy = new MiniSearchIndexStrategy();
+    expect(strategy.hasIndexedEntity('fresh')).toBe(false);
+    await strategy.replace('fresh', [], [toIndexDoc(makeMiniSearchRow('f1', 'fresh', 'fresh'))]);
+    expect(strategy.hasIndexedEntity('fresh')).toBe(true);
+  });
+
+  it('replace(entityId, ids, docs) silently ignores ids the strategy never tracked', async () => {
+    const strategy = new MiniSearchIndexStrategy();
+    await strategy.replaceAll([
+      toIndexDoc(makeMiniSearchRow('a1', 'e1', 'alpha')),
+      toIndexDoc(makeMiniSearchRow('b1', 'e2', 'alpha beta')),
+    ]);
+    // 'stale-not-tracked' was never indexed; 'b1' belongs to e2. Neither
+    // should throw or affect e2. 'a1' is owned by e1 and should be removed.
+    await expect(
+      strategy.replace('e1', ['stale-not-tracked', 'a1'], []),
+    ).resolves.toBeUndefined();
+    expect((await strategy.search('alpha', { entityIds: ['e1'], limit: 10 })).map((r) => r.id)).toEqual([]);
+    expect((await strategy.search('alpha', { entityIds: ['e2'], limit: 10 })).map((r) => r.id)).toEqual(['b1']);
+  });
+
+  it('hasIndexedEntity transitions: false → true (replace) → false (replaceAll([]))', async () => {
+    const strategy = new MiniSearchIndexStrategy();
+    expect(strategy.hasIndexedEntity('e1')).toBe(false);
+    await strategy.replace('e1', [], [toIndexDoc(makeMiniSearchRow('a1', 'e1', 'alpha'))]);
+    expect(strategy.hasIndexedEntity('e1')).toBe(true);
+    await strategy.replaceAll([]);
+    expect(strategy.hasIndexedEntity('e1')).toBe(false);
   });
 
   it('replaceEntity() tracks an entity with no documents', async () => {
@@ -1768,7 +1804,7 @@ describe('MiniSearchIndexStrategy write bookkeeping', () => {
     // syncEntries calls take the incremental path instead of rebuilding.
     const strategy = new MiniSearchIndexStrategy();
     await strategy.replaceEntity('e9', []);
-    expect(strategy.getEntryIdsByEntity('e9')).toEqual(new Set());
+    expect(strategy.hasIndexedEntity('e9')).toBe(true);
   });
 
   it('replaceEntity() drops only that entity\'s previous documents', async () => {

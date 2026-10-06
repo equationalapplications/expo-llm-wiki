@@ -145,14 +145,14 @@ export class SearchService {
    */
   async syncEntries(entityId: string, ids: Iterable<string>): Promise<void> {
     const uniqueIds = [...new Set(ids)];
-    // The fast path requires a tracked entity, matching needsRebuild() below:
+    // The fast path requires an indexed entity, matching needsRebuild() below:
     // otherwise an empty id set on a never-indexed entity would skip the
     // full rebuild that registers it (#232 review finding).
-    const tracked = this.indexStrategy.getEntryIdsByEntity?.(entityId);
+    const indexed = this.indexStrategy.hasIndexedEntity?.(entityId);
     if (
       uniqueIds.length === 0 &&
       !this.staleEntities.has(entityId) &&
-      tracked !== undefined
+      indexed === true
     ) {
       // Nothing to do, but still wait for rebuilds already on the chain: the
       // sync(entityId) this call replaced awaited its own chained turn, so a
@@ -168,19 +168,16 @@ export class SearchService {
           const epochsBefore = new Map(this.staleEpochs);
           const needsRebuild = () =>
             this.staleEntities.has(entityId) ||
-            this.indexStrategy.getEntryIdsByEntity?.(entityId) === undefined;
+            this.indexStrategy.hasIndexedEntity?.(entityId) !== true;
 
           if (!needsRebuild()) {
             // Read before mutating, so a failed read leaves the index as it was.
             const rows = await this.entryRepo.findMiniSearchRowsByIds(entityId, uniqueIds);
             // Re-check: clearAll() or markStale() may have run during the read.
-            const trackedNow = this.indexStrategy.getEntryIdsByEntity?.(entityId);
-            if (trackedNow && !this.staleEntities.has(entityId)) {
-              // Only ids tracked under this entity are discarded, so other
-              // entities' documents are never touched (replace() is not
-              // entity-scoped).
-              const idsToDiscard = uniqueIds.filter((id) => trackedNow.has(id));
-              await this.indexStrategy.replace(idsToDiscard, rows.map(toIndexDoc));
+            if (!this.staleEntities.has(entityId)) {
+              // The strategy scopes the discard by entityId, so we hand it
+              // every id we touched; ids it never tracked are silently ignored.
+              await this.indexStrategy.replace(entityId, uniqueIds, rows.map(toIndexDoc));
               await this.indexStrategy.vacuum?.();
               return;
             }
@@ -359,6 +356,13 @@ export class SearchService {
 
   // --- Internal Index Management ---
 
+  /**
+   * Rebuild a single entity's index from scratch. Reads every row for
+   * `entityId` from the repository (already filtered by `deleted_at IS NULL`)
+   * and hands the lot to `indexStrategy.replaceEntity`, which owns the
+   * drop-then-add bookkeeping so callers don't need to know the strategy's
+   * id-tracking shape.
+   */
   private async rebuildIndex(entityId: string): Promise<void> {
     const rows = await this.entryRepo.findMiniSearchRows(entityId);
     await this.indexStrategy.replaceEntity(entityId, rows.map(toIndexDoc));
