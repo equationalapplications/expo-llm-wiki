@@ -8,6 +8,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "bench": "tsx src/cli.ts",
+    "bench:fts5-memory": "tsx src/fts5Memory.ts",
     "fixture:search-parity": "tsx src/searchParity/buildFixture.ts"
   },
   "dependencies": {
