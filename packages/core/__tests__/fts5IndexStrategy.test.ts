@@ -124,3 +124,84 @@ describe('Fts5IndexStrategy.drain', () => {
     expect(rows.find((r) => r.id === 'f11')!.title).toBe('t11');
   });
 });
+
+import type { IndexDocument } from '../src/services/search/IndexStrategy';
+
+const doc = (id: string, entity_id: string, title: string, body = '', tags = ''): IndexDocument =>
+  ({ id, entity_id, title, body, tags });
+
+describe('Fts5IndexStrategy.search', () => {
+  it('ranks title matches above body matches, filters by entity, scores finite and non-negative', async () => {
+    await put('t', 'e1', 'cedar grove', 'nothing');
+    await put('b', 'e1', 'nothing', 'cedar grove');
+    await put('o', 'e2', 'cedar grove', 'other entity');
+    for (let i = 0; i < 20; i++) await put(`n${i}`, 'e1', 'filler', 'unrelated words'); // keep IDF > floor
+    const s = new Fts5IndexStrategy(db, P, meta);
+    await s.init();
+    const r = await s.search('cedar', { entityIds: ['e1'], limit: 10 });
+    expect(r.map((x) => x.id)).toEqual(['t', 'b']);
+    for (const x of r) { expect(Number.isFinite(x.score)).toBe(true); expect(x.score).toBeGreaterThanOrEqual(0); expect(x.entity_id).toBe('e1'); }
+    expect(r[0].score).toBeGreaterThan(r[1].score);
+  });
+
+  it('honors limit, preFilterLimit and MAX_SAFE_INTEGER', async () => {
+    for (let i = 0; i < 30; i++) await put(`f${i}`, 'e1', `cedar ${i}`, 'b');
+    for (let i = 0; i < 30; i++) await put(`g${i}`, 'e1', 'filler', 'b');
+    const s = new Fts5IndexStrategy(db, P, meta);
+    await s.init();
+    expect((await s.search('cedar', { entityIds: ['e1'], limit: 5 })).length).toBe(5);
+    expect((await s.search('cedar', { entityIds: ['e1'], limit: 12, preFilterLimit: 12 })).length).toBe(12);
+    expect((await s.search('cedar', { entityIds: ['e1'], limit: Number.MAX_SAFE_INTEGER })).length).toBe(30);
+  });
+
+  it('returns [] for empty entityIds or a token-less query, and never throws on hostile input', async () => {
+    await put('a', 'e1', 'alpha', 'one');
+    const s = new Fts5IndexStrategy(db, P, meta);
+    await s.init();
+    expect(await s.search('alpha', { entityIds: [], limit: 10 })).toEqual([]);
+    expect(await s.search('"-:()', { entityIds: ['e1'], limit: 10 })).toEqual([]);
+    await expect(s.search('alpha NEAR( "x', { entityIds: ['e1'], limit: 10 })).resolves.toBeDefined();
+  });
+});
+
+describe('Fts5IndexStrategy writes', () => {
+  it('replace removes only ids tracked under the entity, then upserts', async () => {
+    const s = new Fts5IndexStrategy(db, P, meta);
+    await s.init();
+    await s.replaceAll([doc('a', 'e1', 'alpha'), doc('b', 'e1', 'beta'), doc('x', 'e2', 'xray')]);
+    await s.replace('e1', ['a', 'x', 'nope'], [doc('c', 'e1', 'gamma'), doc('b', 'e1', 'beta2')]);
+    expect(await ftsRows()).toEqual([
+      { id: 'b', entity_id: 'e1', title: 'beta2' },
+      { id: 'c', entity_id: 'e1', title: 'gamma' },
+      { id: 'x', entity_id: 'e2', title: 'xray' },
+    ]);
+  });
+
+  it('replace and replaceEntity reject a cross-entity document before any discard', async () => {
+    const s = new Fts5IndexStrategy(db, P, meta);
+    await s.init();
+    await s.replaceAll([doc('a', 'e1', 'alpha')]);
+    await expect(s.replace('e1', ['a'], [doc('z', 'e2', 'zed')])).rejects.toThrow(/entity/);
+    await expect(s.replaceEntity('e1', [doc('z', 'e2', 'zed')])).rejects.toThrow(/entity/);
+    expect((await ftsRows()).map((r) => r.id)).toEqual(['a']);
+  });
+
+  it('replaceEntity drops everything under the entity only', async () => {
+    const s = new Fts5IndexStrategy(db, P, meta);
+    await s.init();
+    await s.replaceAll([doc('a', 'e1', 'alpha'), doc('b', 'e1', 'beta'), doc('x', 'e2', 'xray')]);
+    await s.replaceEntity('e1', [doc('c', 'e1', 'gamma')]);
+    expect((await ftsRows()).map((r) => r.id)).toEqual(['c', 'x']);
+  });
+
+  it('replaceAll([]) empties index, map and ledger', async () => {
+    await put('a', 'e1', 'alpha', 'one');
+    const s = new Fts5IndexStrategy(db, P, meta);
+    await s.init();
+    await put('b', 'e1', 'beta', 'two');
+    await s.replaceAll([]);
+    expect(await ftsRows()).toEqual([]);
+    expect(await pending()).toBe(0);
+    expect((await db.getFirstAsync<{ n: number }>(`SELECT count(*) AS n FROM ${P}fts_map`))!.n).toBe(0);
+  });
+});
