@@ -185,8 +185,8 @@ export class RetrievalService {
 
           if (effectivePreFilterLimit !== undefined) {
             populateCache = false; // partial scan — do not populate cache
-            const preResults = this.searchService
-              .searchKeyword(trimmedQuery, scoredEntityIds, Number.MAX_SAFE_INTEGER)
+            const preResults = (await this.searchService
+              .searchKeyword(trimmedQuery, scoredEntityIds, Number.MAX_SAFE_INTEGER))
               .filter((r) => !excludedIds.has(r.id));
             if (preResults.length === 0) {
               candidateRows = null; // empty pre-filter
@@ -220,7 +220,7 @@ export class RetrievalService {
             }
             // Collect MiniSearch scores for hybrid blend if weight is set and <1
             if (weight !== undefined && weight < 1) {
-              miniSearchScores = this.searchService.getMiniSearchScores(trimmedQuery, scoredEntityIds);
+              miniSearchScores = await this.searchService.getKeywordScores(trimmedQuery, scoredEntityIds);
             }
           }
 
@@ -547,7 +547,7 @@ export class RetrievalService {
                   const preFilteredIds = effectivePreFilterLimit !== undefined
                     ? new Set((candidateRows as ReadCandidateRowMetadata[]).map(r => r.id))
                     : undefined;
-                  const keywordResults = this.searchService.searchKeyword(trimmedQuery, scoredEntityIds, keywordOversampledLimit);
+                  const keywordResults = await this.searchService.searchKeyword(trimmedQuery, scoredEntityIds, keywordOversampledLimit);
                   const topResults = preFilteredIds === undefined
                     ? keywordResults
                     : keywordResults.filter(r => preFilteredIds.has(r.id));
@@ -715,13 +715,13 @@ export class RetrievalService {
         const fallbackOversampledLimit = hasActiveFloors
           ? Number.MAX_SAFE_INTEGER
           : padLimit(Math.max(maxResults * 2, maxResults + 50));
-        const results = this.searchService
-          .searchKeyword(trimmedQuery, scoredEntityIds, fallbackOversampledLimit)
-          .filter((r) => !excludedIds.has(r.id as string));
+        const results = (await this.searchService
+          .searchKeyword(trimmedQuery, scoredEntityIds, fallbackOversampledLimit))
+          .filter((r) => !excludedIds.has(r.id));
         const candidates = results.map(r => ({
-          id: r.id as string,
-          entity_id: (r as unknown as { entity_id: string }).entity_id,
-          score: applyTierWeight(r.score ?? 0, (r as unknown as { entity_id: string }).entity_id, sanitizedTierWeights),
+          id: r.id,
+          entity_id: r.entity_id,
+          score: applyTierWeight(r.score ?? 0, r.entity_id, sanitizedTierWeights),
           updated_at: null as number | null,
           access_count: null as number | null,
         }));

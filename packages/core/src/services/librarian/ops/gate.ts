@@ -139,11 +139,11 @@ export async function gateCandidates(
       }
     }
     if (!ranked) {
-      ranked = deps.searchService
-        .searchKeyword(`${c.fact.title} ${c.fact.body}`, [entityId], cfg.k + nonLive.size)
-        .filter((h) => !nonLive.has(h.id as string))
+      ranked = (await deps.searchService
+        .searchKeyword(`${c.fact.title} ${c.fact.body}`, [entityId], cfg.k + nonLive.size))
+        .filter((h) => !nonLive.has(h.id))
         .slice(0, cfg.k)
-        .map((h) => ({ id: h.id as string, score: null }));
+        .map((h) => ({ id: h.id, score: null }));
     }
 
     // 5. Hydrate neighbours preserving rank order; assign refs n1..nk.

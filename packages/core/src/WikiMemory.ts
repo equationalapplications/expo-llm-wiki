@@ -24,6 +24,7 @@ import { EventRepository } from './repositories/EventRepository';
 import { EdgeRepository } from './repositories/EdgeRepository';
 import { MetadataRepository, entitySummaryMetaKey } from './repositories/MetadataRepository';
 import { SearchService } from './services/SearchService';
+import { MiniSearchIndexStrategy } from './services/search/MiniSearchIndexStrategy';
 import { JobManager } from './services/JobManager';
 import { normalizeSourceRef, normalizeSourceHash, validateFact, validateTask, clip, chunkText } from './utils/pure';
 import { resolveGrounding } from './utils/grounding';
@@ -137,7 +138,10 @@ export class WikiMemory {
     );
     this.lintService = new LintService(this.lintRepo, this.ontologyService);
     this.embeddingService = new EmbeddingService(this.db, this.options, this.entryRepo, this.metadataRepo);
-    this.searchService = new SearchService(this.entryRepo);
+    this.searchService = new SearchService(
+      this.entryRepo,
+      new MiniSearchIndexStrategy(),
+    );
     this.temporalService = new TemporalService(this.db, this.options, this.entryRepo, this.searchService, this.embeddingService);
     this.jobManager = new JobManager(this.prefix);
     this.promptService = new PromptService(options.config?.prompts, resolveGrounding(options.config?.grounding));

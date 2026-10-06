@@ -1,7 +1,12 @@
-import MiniSearch, { SearchResult } from 'minisearch';
 import { EntryRepository } from '../repositories/EntryRepository';
 import { cosineSimilarity } from '../utils/cosine';
 import { parseEmbedding } from '../utils/embedding';
+import { toIndexDoc } from '../utils/indexDoc';
+import type {
+  IndexSearchOptions,
+  IndexSearchResult,
+  IndexStrategy,
+} from './search/IndexStrategy';
 
 export interface ScoredRow {
   id: string;
@@ -44,8 +49,7 @@ export class SearchService {
    */
   private static readonly MAX_VECTOR_CACHE_FACTS_PER_ENTITY = 500;
 
-  private miniSearch: MiniSearch<{ id: string; entity_id: string; title: string; body: string; tags: string }>;
-  private miniSearchEntryIdsByEntity = new Map<string, Set<string>>();
+  private indexStrategy: IndexStrategy;
   private vectorCache: Map<string, Map<string, Float32Array>> = new Map();
 
   /**
@@ -75,38 +79,18 @@ export class SearchService {
    */
   private staleEpochs = new Map<string, number>();
 
-  constructor(private entryRepo: EntryRepository) {
-    this.miniSearch = this.createMiniSearch();
-  }
-
-  /**
-   * A fresh index with the production options. clearAll() swaps one in because
-   * MiniSearch.removeAll() empties the index but leaves dirtCount (and its
-   * vacuum bookkeeping) at its old value, which would trip syncEntries'
-   * conditional vacuum early after a clear.
-   */
-  private createMiniSearch() {
-    return new MiniSearch({
-      fields: ['title', 'body', 'tags'],
-      storeFields: ['entity_id'],
-      // Vacuuming is driven explicitly at the end of each serialized rebuild
-      // (see sync). Auto-vacuum fires on its own schedule, asynchronously with
-      // respect to the caller, and traversing the tree mid-rebuild is what
-      // threw the uncaught TypeError in MiniSearch.performVacuuming (#64).
-      autoVacuum: false,
-      searchOptions: {
-        boost: { title: 2 },
-        fuzzy: 0.2,
-        prefix: true,
-      },
-    });
+  constructor(
+    private entryRepo: EntryRepository,
+    indexStrategy: IndexStrategy,
+  ) {
+    this.indexStrategy = indexStrategy;
   }
 
   /**
    * Rebuilds the search index and clears the vector cache for a given entity.
    * A direct replacement for manually syncing state after a DB transaction.
    *
-   * Rebuilds are serialized per instance and never reject: the MiniSearch index
+   * Rebuilds are serialized per instance and never reject: the keyword index
    * is a rebuildable cache over SQLite, so degraded keyword search is the
    * correct failure mode and killing the host process is not.
    */
@@ -120,20 +104,22 @@ export class SearchService {
         // inner finally keeps eviction unconditional, as it was before.
         try {
           const epochsBefore = new Map(this.staleEpochs);
-          await this.rebuildIndex(entityId);
-          // Clear only flags whose epoch survived the read (see staleEpochs).
-          if (entityId) {
-            if ((this.staleEpochs.get(entityId) ?? 0) === (epochsBefore.get(entityId) ?? 0)) {
-              this.staleEntities.delete(entityId);
-            }
-          } else {
+          if (entityId === undefined) {
+            // Global rebuild: read all live rows, replace the strategy's contents.
+            const rows = await this.entryRepo.findMiniSearchRows();
+            await this.indexStrategy.replaceAll(rows.map(toIndexDoc));
             for (const id of [...this.staleEntities]) {
               if ((this.staleEpochs.get(id) ?? 0) === (epochsBefore.get(id) ?? 0)) {
                 this.staleEntities.delete(id);
               }
             }
+          } else {
+            await this.rebuildIndex(entityId);
+            if ((this.staleEpochs.get(entityId) ?? 0) === (epochsBefore.get(entityId) ?? 0)) {
+              this.staleEntities.delete(entityId);
+            }
           }
-          await this.miniSearch.vacuum();
+          await this.indexStrategy.vacuum?.();
         } finally {
           this.evictCache(entityId);
         }
@@ -159,13 +145,14 @@ export class SearchService {
    */
   async syncEntries(entityId: string, ids: Iterable<string>): Promise<void> {
     const uniqueIds = [...new Set(ids)];
-    // The fast path requires a tracked entity, matching needsRebuild() below:
+    // The fast path requires an indexed entity, matching needsRebuild() below:
     // otherwise an empty id set on a never-indexed entity would skip the
     // full rebuild that registers it (#232 review finding).
+    const indexed = this.indexStrategy.hasIndexedEntity?.(entityId);
     if (
       uniqueIds.length === 0 &&
       !this.staleEntities.has(entityId) &&
-      this.miniSearchEntryIdsByEntity.has(entityId)
+      indexed === true
     ) {
       // Nothing to do, but still wait for rebuilds already on the chain: the
       // sync(entityId) this call replaced awaited its own chained turn, so a
@@ -180,39 +167,18 @@ export class SearchService {
         try {
           const epochsBefore = new Map(this.staleEpochs);
           const needsRebuild = () =>
-            this.staleEntities.has(entityId) || !this.miniSearchEntryIdsByEntity.has(entityId);
+            this.staleEntities.has(entityId) ||
+            this.indexStrategy.hasIndexedEntity?.(entityId) !== true;
 
           if (!needsRebuild()) {
             // Read before mutating, so a failed read leaves the index as it was.
             const rows = await this.entryRepo.findMiniSearchRowsByIds(entityId, uniqueIds);
             // Re-check: clearAll() or markStale() may have run during the read.
-            const tracked = this.miniSearchEntryIdsByEntity.get(entityId);
-            if (tracked && !this.staleEntities.has(entityId)) {
-              // No await from here to addAll: the index never shows a half-applied
-              // update. Only ids tracked under this entity are discarded, so other
-              // entities' documents are never touched. The tracked set normally
-              // matches the index exactly, but a rebuild that failed between its
-              // own discard pass and set replacement can leave it claiming ids
-              // the index no longer holds — and discard() throws on those — so
-              // miniSearch.has() is the membership test of record.
-              for (const id of uniqueIds) {
-                if (tracked.delete(id) && this.miniSearch.has(id)) this.miniSearch.discard(id);
-              }
-              const documents = rows.map((row) => this.normalizeMiniSearchRow(row));
-              if (documents.length > 0) this.miniSearch.addAll(documents);
-              for (const document of documents) tracked.add(document.id);
-
-              // A turn that discarded must vacuum before returning: in
-              // minisearch 7.2.0, a single un-vacuumed discard inverts the
-              // relative scores of term-sharing documents — ids indexed before
-              // the discarded one drop below ids indexed after, at any index
-              // size — silently reordering truncated search results. The
-              // vacuum is O(index), but only discard-bearing turns pay it:
-              // add-only turns (chunked merge imports) accrue no dirt and
-              // never vacuum, which is where #232's win lives.
-              if (this.miniSearch.dirtCount > 0) {
-                await this.miniSearch.vacuum();
-              }
+            if (!this.staleEntities.has(entityId)) {
+              // The strategy scopes the discard by entityId, so we hand it
+              // every id we touched; ids it never tracked are silently ignored.
+              await this.indexStrategy.replace(entityId, uniqueIds, rows.map(toIndexDoc));
+              await this.indexStrategy.vacuum?.();
               return;
             }
           }
@@ -224,7 +190,7 @@ export class SearchService {
           if ((this.staleEpochs.get(entityId) ?? 0) === (epochsBefore.get(entityId) ?? 0)) {
             this.staleEntities.delete(entityId);
           }
-          await this.miniSearch.vacuum();
+          await this.indexStrategy.vacuum?.();
         } finally {
           this.evictCache(entityId);
         }
@@ -272,46 +238,50 @@ export class SearchService {
   /**
    * Fully resets the search service.
    */
-  clearAll(): void {
+  async clearAll(): Promise<void> {
     this.vectorCache.clear();
-    // A fresh instance, not removeAll(): that empties the index but keeps
-    // dirtCount and vacuum bookkeeping (minisearch 7.2.0).
-    this.miniSearch = this.createMiniSearch();
-    this.miniSearchEntryIdsByEntity.clear();
+    await this.indexStrategy.replaceAll([]);
     this.staleEntities.clear();
     this.staleEpochs.clear();
   }
 
   /**
-   * Executes a keyword search against the active MiniSearch index.
+   * Executes a keyword search against the active index strategy.
    */
-  searchKeyword(query: string, entityIds: string[], limit: number): SearchResult[] {
-    const entityIdSet = new Set(entityIds);
-    const results = this.miniSearch.search(query, {
-      filter: (r) => entityIdSet.has(r.entity_id as string),
-      combineWith: 'OR',
-    });
-    return results.sort((a, b) => this._compareSearchResults(a, b)).slice(0, limit);
+  async searchKeyword(
+    query: string,
+    entityIds: string[],
+    limit: number,
+  ): Promise<IndexSearchResult[]> {
+    const results = finiteResults(await this.indexStrategy.search(query, { entityIds, limit }));
+    return results
+      .sort((a, b) => this._compareSearchResults(a, b))
+      .slice(0, limit);
   }
 
   /**
-   * Pre-fetches MiniSearch scores for candidate hydration, used during hybrid weighting.
+   * Pre-fetches keyword scores for candidate hydration, used during hybrid weighting.
    */
-  getMiniSearchScores(query: string, entityIds: string[], preFilterLimit?: number): Map<string, number> {
-    const entityIdSet = new Set(entityIds);
-    let results = this.miniSearch.search(query, {
-      filter: (r) => entityIdSet.has(r.entity_id as string),
-      combineWith: 'OR',
-    }).sort((a, b) => this._compareSearchResults(a, b));
-
-    if (preFilterLimit !== undefined) {
-      results = results.slice(0, preFilterLimit);
-    }
-
+  async getKeywordScores(
+    query: string,
+    entityIds: string[],
+    preFilterLimit?: number,
+  ): Promise<Map<string, number>> {
+    // When `preFilterLimit` is undefined (full-scan hybrid path), match the
+    // pre-refactor behavior: do not impose a strategy-side cap. The original
+    // `getMiniSearchScores` returned every keyword hit so `rankSemantic`'s
+    // hybrid blend could weight every candidate; the PR-1 draft's
+    // `?? 100` default capped at 100 and silently zeroed out keyword weight
+    // for everything past rank 100 (CodeRabbit Minor #258).
+    const opts: IndexSearchOptions = preFilterLimit !== undefined
+      ? { entityIds, limit: preFilterLimit, preFilterLimit }
+      : { entityIds, limit: Number.MAX_SAFE_INTEGER };
+    const results = finiteResults(await this.indexStrategy.search(query, opts));
     if (results.length === 0) return new Map();
-
-    const maxMsScore = Math.max(1, results[0]?.score ?? 1);
-    return new Map(results.map((r) => [r.id, r.score / maxMsScore]));
+    // Pre-refactor scaling: a raw top score below 1 is left as-is rather
+    // than inflated to 1, so a weak keyword match stays weak in the blend.
+    const maxScore = Math.max(1, results[0]?.score ?? 1);
+    return new Map(results.map((r) => [r.id, r.score / maxScore]));
   }
 
   /**
@@ -386,66 +356,16 @@ export class SearchService {
 
   // --- Internal Index Management ---
 
-  private async rebuildIndex(entityId?: string): Promise<void> {
-    if (entityId) {
-      const rows = await this.entryRepo.findMiniSearchRows(entityId);
-      const previousIds = this.miniSearchEntryIdsByEntity.get(entityId);
-
-      if (previousIds) {
-        for (const id of previousIds) {
-          this.miniSearch.discard(id);
-        }
-      }
-
-      const documents = rows.map((row) => this.normalizeMiniSearchRow(row));
-      if (documents.length > 0) {
-        this.miniSearch.addAll(documents);
-      }
-
-      this.miniSearchEntryIdsByEntity.set(
-        entityId,
-        new Set(documents.map((document) => document.id))
-      );
-      return;
-    }
-
-    const rows = await this.entryRepo.findMiniSearchRows();
-    this.miniSearch.removeAll();
-    this.miniSearchEntryIdsByEntity.clear();
-
-    const documents = rows.map((row) => this.normalizeMiniSearchRow(row));
-    if (documents.length > 0) {
-      this.miniSearch.addAll(documents);
-    }
-
-    for (const document of documents) {
-      const ids = this.miniSearchEntryIdsByEntity.get(document.entity_id) ?? new Set<string>();
-      ids.add(document.id);
-      this.miniSearchEntryIdsByEntity.set(document.entity_id, ids);
-    }
-  }
-
-  private normalizeMiniSearchRow(row: {
-    id: string;
-    entity_id: string;
-    title: string;
-    body: string;
-    tags: string;
-  }): { id: string; entity_id: string; title: string; body: string; tags: string } {
-    return {
-      id: row.id,
-      entity_id: row.entity_id,
-      title: row.title,
-      body: row.body,
-      tags: (() => {
-        try {
-          const parsed = JSON.parse(row.tags);
-          return Array.isArray(parsed) ? parsed.join(' ') : row.tags;
-        } catch {
-          return row.tags;
-        }
-      })(),
-    };
+  /**
+   * Rebuild a single entity's index from scratch. Reads every row for
+   * `entityId` from the repository (already filtered by `deleted_at IS NULL`)
+   * and hands the lot to `indexStrategy.replaceEntity`, which owns the
+   * drop-then-add bookkeeping so callers don't need to know the strategy's
+   * id-tracking shape.
+   */
+  private async rebuildIndex(entityId: string): Promise<void> {
+    const rows = await this.entryRepo.findMiniSearchRows(entityId);
+    await this.indexStrategy.replaceEntity(entityId, rows.map(toIndexDoc));
   }
 
   private _tieBreakSort(items: ScoredRow[]): void {
@@ -466,15 +386,26 @@ export class SearchService {
   }
 
   /**
-   * MiniSearch breaks equal-score ties by internal insertion order, which
-   * syncEntries changes: a discarded-and-re-added id moves to the end. Every
-   * caller truncates these results to a limit, so which ids survive a tie at
-   * the boundary must not depend on write history. Re-sort exact score ties
-   * by id — the same final tie-break _compareScoredRows applies.
+   * The keyword index breaks equal-score ties by internal insertion order,
+   * which syncEntries changes: a discarded-and-re-added id moves to the end.
+   * Every caller truncates these results to a limit, so which ids survive a
+   * tie at the boundary must not depend on write history. Re-sort exact
+   * score ties by id — the same final tie-break _compareScoredRows applies.
    */
-  private _compareSearchResults(a: SearchResult, b: SearchResult): number {
+  private _compareSearchResults(a: IndexSearchResult, b: IndexSearchResult): number {
     const scoreDiff = b.score - a.score;
     if (!Number.isNaN(scoreDiff) && scoreDiff !== 0) return scoreDiff;
     return a.id.localeCompare(b.id);
   }
+}
+
+/**
+ * The strategy contract requires finite scores; drop any that are not, so a
+ * NaN or Infinity cannot become getKeywordScores' divisor or reach the
+ * hybrid blend in rankSemantic.
+ */
+function finiteResults(results: IndexSearchResult[]): IndexSearchResult[] {
+  return results.every((r) => Number.isFinite(r.score))
+    ? results
+    : results.filter((r) => Number.isFinite(r.score));
 }

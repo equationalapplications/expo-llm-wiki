@@ -63,7 +63,7 @@ describe('MaintenanceService — PromptService injection', () => {
       sync: vi.fn().mockResolvedValue(undefined),
       syncEntries: vi.fn().mockResolvedValue(undefined),
       evictCache: vi.fn(),
-      searchKeyword: vi.fn().mockReturnValue([]),
+      searchKeyword: vi.fn().mockResolvedValue([]),
     };
     mockJobManager = {
       acquireLock: vi.fn(),

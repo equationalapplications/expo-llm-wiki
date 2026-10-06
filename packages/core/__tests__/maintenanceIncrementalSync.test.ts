@@ -84,8 +84,8 @@ function countIndexReads(wiki: WikiMemory) {
   return counts;
 }
 
-const search = (wiki: WikiMemory, query: string) =>
-  wiki.__testAccess.searchService.searchKeyword(query, [ENTITY], 2000).map((r) => r.id).sort();
+const search = async (wiki: WikiMemory, query: string) =>
+  (await wiki.__testAccess.searchService.searchKeyword(query, [ENTITY], 2000)).map((r) => r.id).sort();
 
 describe('incremental keyword index for maintenance passes (#235)', () => {
   it('forget by entryId reads only the forgotten rows, not the entity', async () => {
@@ -103,8 +103,8 @@ describe('incremental keyword index for maintenance passes (#235)', () => {
     expect(counts.rows).toBe(0);
     // 'xylophone' is a token unique to the forgotten fact — the index's fuzzy
     // and prefix matching (0.2 / true) has no neighbor for it.
-    expect(search(wiki, 'xylophone')).toEqual([]);
-    expect(search(wiki, 'note').length).toBe(599);
+    expect(await search(wiki, 'xylophone')).toEqual([]);
+    expect((await search(wiki, 'note')).length).toBe(599);
   });
 
   it('forget by sourceRef indexes only the matched ids', async () => {
@@ -121,7 +121,7 @@ describe('incremental keyword index for maintenance passes (#235)', () => {
     expect(result.deleted.entries).toBe(300);
     expect(counts.fullReads).toBe(0);
     expect(counts.rows).toBe(0);
-    expect(search(wiki, 'note').length).toBe(300);
+    expect((await search(wiki, 'note')).length).toBe(300);
   });
 
   it('prune reads only the pruned rows, not the entity', async () => {
@@ -141,9 +141,9 @@ describe('incremental keyword index for maintenance passes (#235)', () => {
     // survivors are untouched in the index.
     expect(counts.fullReads).toBe(0);
     expect(counts.rows).toBe(0);
-    expect(search(wiki, 'note').length).toBe(598);
-    expect(search(wiki, 'xylophone')).toEqual([]);
-    expect(search(wiki, 'yeoman')).toEqual([]);
+    expect((await search(wiki, 'note')).length).toBe(598);
+    expect(await search(wiki, 'xylophone')).toEqual([]);
+    expect(await search(wiki, 'yeoman')).toEqual([]);
   });
 
   it('forget by clearAll indexes only the enumerated ids (no full rebuild)', async () => {
@@ -159,7 +159,7 @@ describe('incremental keyword index for maintenance passes (#235)', () => {
     // Every live id is enumerated into the incremental sync; the entity stays
     // tracked, so the index empties without a full rebuild.
     expect(counts.fullReads).toBe(0);
-    expect(search(wiki, 'note')).toEqual([]);
+    expect(await search(wiki, 'note')).toEqual([]);
   });
 
   it('prune partial failure still syncs the succeeded ids incrementally', async () => {
@@ -191,12 +191,12 @@ describe('incremental keyword index for maintenance passes (#235)', () => {
     // soft-deleted — not hard-deleted — for the next prune pass.
     expect(counts.fullReads).toBe(0);
     expect(counts.rows).toBe(0);
-    expect(search(wiki, 'xylophone')).toEqual([]);
+    expect(await search(wiki, 'xylophone')).toEqual([]);
     const remaining = await db.getAllAsync<{ id: string }>(
       `SELECT id FROM ${PREFIX}entries WHERE id IN ('fact_0000', 'fact_0001')`,
     );
     expect(remaining.map((r) => r.id)).toEqual(['fact_0001']);
-    expect(search(wiki, 'note').length).toBe(298);
+    expect((await search(wiki, 'note')).length).toBe(298);
   });
 
   it('prune scrubs index documents a raw soft-delete left behind (drift repair)', async () => {
@@ -204,7 +204,7 @@ describe('incremental keyword index for maintenance passes (#235)', () => {
     facts[0] = { ...facts[0], body: 'xylophone marker zero' };
     const { wiki, db } = await freshWiki();
     await wiki.importDump(dumpOf(facts), { merge: true });
-    expect(search(wiki, 'xylophone')).toEqual(['fact_0000']);
+    expect(await search(wiki, 'xylophone')).toEqual(['fact_0000']);
 
     // Simulate a pre-#233-style path: a row soft-deleted without passing ids
     // to syncEntries — its document survives in the index as drift.
@@ -212,7 +212,7 @@ describe('incremental keyword index for maintenance passes (#235)', () => {
       `UPDATE ${PREFIX}entries SET deleted_at = ? WHERE id = 'fact_0000'`,
       [Date.now()],
     );
-    expect(search(wiki, 'xylophone')).toEqual(['fact_0000']);
+    expect(await search(wiki, 'xylophone')).toEqual(['fact_0000']);
 
     // Prune's incremental sync discards each pruned id before re-reading it,
     // so the stale document is scrubbed at O(touched) — the drift-repair duty
@@ -220,8 +220,8 @@ describe('incremental keyword index for maintenance passes (#235)', () => {
     const counts = countIndexReads(wiki);
     await wiki.runPrune(ENTITY, { retainSoftDeletedFor: 0, retainEventsFor: 0 });
     expect(counts.fullReads).toBe(0);
-    expect(search(wiki, 'xylophone')).toEqual([]);
-    expect(search(wiki, 'note').length).toBe(299);
+    expect(await search(wiki, 'xylophone')).toEqual([]);
+    expect((await search(wiki, 'note')).length).toBe(299);
   });
 
   it('heal early return syncs only the orphan/stale pass ids', async () => {
@@ -246,8 +246,8 @@ describe('incremental keyword index for maintenance passes (#235)', () => {
     // the 200 other live rows are not read.
     expect(counts.fullReads).toBe(0);
     expect(counts.rows).toBe(2);
-    expect(search(wiki, 'xenialq')).toEqual(['f0']);
-    expect(search(wiki, 'amber').length).toBeGreaterThan(0);
+    expect(await search(wiki, 'xenialq')).toEqual(['f0']);
+    expect((await search(wiki, 'amber')).length).toBeGreaterThan(0);
   });
 
   it('a full heal pass reads only the ids its passes touched', async () => {
@@ -276,10 +276,10 @@ describe('incremental keyword index for maintenance passes (#235)', () => {
     // inserted fact are re-read. None of the 403 other rows are touched.
     expect(counts.fullReads).toBe(0);
     expect(counts.rows).toBe(2);
-    expect(search(wiki, 'zeroid')).toEqual([]);
-    expect(search(wiki, 'zoroone')).toEqual(['f1']);
-    expect(search(wiki, 'quokka')).toHaveLength(1);
-    expect(search(wiki, 'amber').length).toBeGreaterThan(0);
+    expect(await search(wiki, 'zeroid')).toEqual([]);
+    expect(await search(wiki, 'zoroone')).toEqual(['f1']);
+    expect(await search(wiki, 'quokka')).toHaveLength(1);
+    expect((await search(wiki, 'amber')).length).toBeGreaterThan(0);
   });
 
   it('a librarian pass reads only the rows it inserted', async () => {
@@ -295,7 +295,7 @@ describe('incremental keyword index for maintenance passes (#235)', () => {
 
     expect(counts.fullReads).toBe(0);
     expect(counts.rows).toBe(1);
-    expect(search(wiki, 'ibex')).toHaveLength(1);
-    expect(search(wiki, 'amber').length).toBeGreaterThan(0);
+    expect(await search(wiki, 'ibex')).toHaveLength(1);
+    expect((await search(wiki, 'amber')).length).toBeGreaterThan(0);
   });
 });

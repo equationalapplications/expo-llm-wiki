@@ -130,10 +130,10 @@ describe('hybridWeight scoring', () => {
     await wiki.setup(); // rebuild MiniSearch
 
     const kwSpy = vi.spyOn((wiki as any).searchService, 'searchKeyword');
-    const scoreSpy = vi.spyOn((wiki as any).searchService, 'getMiniSearchScores');
+    const scoreSpy = vi.spyOn((wiki as any).searchService, 'getKeywordScores');
     await wiki.read('user-1', 'apple');
 
-    // One searchKeyword call serves preFilter; scores come from those results (no getMiniSearchScores call)
+    // One searchKeyword call serves preFilter; scores come from those results (no getKeywordScores call)
     expect(kwSpy.mock.calls.length).toBe(1);
     expect(scoreSpy.mock.calls.length).toBe(0);
     kwSpy.mockRestore();

@@ -54,9 +54,9 @@ describe('RetrievalService', () => {
     };
 
     mockSearchService = {
-      searchKeyword: vi.fn().mockReturnValue([]),
+      searchKeyword: vi.fn().mockResolvedValue([]),
       rankSemantic: vi.fn().mockResolvedValue([]),
-      getMiniSearchScores: vi.fn().mockReturnValue(new Map()),
+      getKeywordScores: vi.fn().mockResolvedValue(new Map()),
     };
 
     mockOptions = {
@@ -125,7 +125,7 @@ describe('RetrievalService', () => {
     it('falls back to keyword search if embed() throws an error', async () => {
       mockOptions.llmProvider.embed = vi.fn().mockRejectedValue(new Error('API Rate Limit'));
 
-      mockSearchService.searchKeyword.mockReturnValue([
+      mockSearchService.searchKeyword.mockResolvedValue([
         { id: 'fact_fallback', score: 0.9, entity_id: 'user_1' },
       ]);
       mockEntryRepo.findByIds.mockResolvedValue([

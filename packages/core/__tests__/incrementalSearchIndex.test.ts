@@ -60,8 +60,8 @@ function countIndexReads(wiki: WikiMemory) {
   return counts;
 }
 
-const search = (wiki: WikiMemory, query: string, entityId = ENTITY) =>
-  wiki.__testAccess.searchService.searchKeyword(query, [entityId], 2000).map((r) => r.id).sort();
+const search = async (wiki: WikiMemory, query: string, entityId = ENTITY) =>
+  (await wiki.__testAccess.searchService.searchKeyword(query, [entityId], 2000)).map((r) => r.id).sort();
 
 describe('incremental keyword index (#232)', () => {
   it('reads each imported row back about once, whatever the chunk size', async () => {
@@ -82,9 +82,9 @@ describe('incremental keyword index (#232)', () => {
     expect(counts.fullReads).toBe(1);
 
     for (const query of ['amber', 'juniper', 'topic42', 'note cedar']) {
-      const expected = search(oneShot, query);
+      const expected = await search(oneShot, query);
       expect(expected.length).toBeGreaterThan(0);
-      expect(search(chunked, query)).toEqual(expected);
+      expect(await search(chunked, query)).toEqual(expected);
     }
   });
 
@@ -95,8 +95,8 @@ describe('incremental keyword index (#232)', () => {
     const replacement: WikiFact = { ...makeFact(2), title: 'replacement quokka', body: 'quokka' };
     await wiki.importDump(dumpOf([replacement]), { merge: false });
 
-    expect(search(wiki, 'quokka')).toEqual(['fact_0002']);
-    expect(search(wiki, 'note')).toEqual([]);
+    expect(await search(wiki, 'quokka')).toEqual(['fact_0002']);
+    expect(await search(wiki, 'note')).toEqual([]);
   });
 
   it('ingestDocument on a 1000-fact entity reads back only the rows it touched', async () => {
@@ -104,7 +104,7 @@ describe('incremental keyword index (#232)', () => {
     const { wiki } = await freshWiki(async () => reply);
     await wiki.importDump(dumpOf(Array.from({ length: 1000 }, (_, i) => makeFact(i))), { merge: true });
     await wiki.ingestDocument(ENTITY, { sourceRef: 'journal-1', sourceHash: 'a'.repeat(64), documentChunk: 'Walrus notes.' });
-    expect(search(wiki, 'walrus')).toHaveLength(1);
+    expect(await search(wiki, 'walrus')).toHaveLength(1);
 
     reply = JSON.stringify({ facts: [{ title: 'Narwhal sighting', body: 'narwhal tusk spotted', tags: [], confidence: 'certain' }] });
     const counts = countIndexReads(wiki);
@@ -114,9 +114,9 @@ describe('incremental keyword index (#232)', () => {
     // absent) and inserts one narwhal fact. None of the 1000 rows are read.
     expect(counts.fullReads).toBe(0);
     expect(counts.rows).toBe(1);
-    expect(search(wiki, 'narwhal')).toHaveLength(1);
-    expect(search(wiki, 'walrus')).toEqual([]);
-    expect(search(wiki, 'amber').length).toBeGreaterThan(0);
+    expect(await search(wiki, 'narwhal')).toHaveLength(1);
+    expect(await search(wiki, 'walrus')).toEqual([]);
+    expect((await search(wiki, 'amber')).length).toBeGreaterThan(0);
   });
 
   it("upsertGraph nodes become keyword-searchable on the entity's next core write", async () => {
@@ -131,10 +131,10 @@ describe('incremental keyword index (#232)', () => {
       ),
     );
     // Core never sees the host's commit, so the node isn't indexed yet.
-    expect(search(wiki, 'pelican')).toEqual([]);
+    expect(await search(wiki, 'pelican')).toEqual([]);
 
     await wiki.importDump(dumpOf([makeFact(1)]), { merge: true });
-    expect(search(wiki, 'pelican')).toEqual(['node_1']);
+    expect(await search(wiki, 'pelican')).toEqual(['node_1']);
   });
 });
 
@@ -160,11 +160,11 @@ describe('WikiMemory.syncSearchIndex (#246)', () => {
     const { wiki, db } = await freshWiki();
     await wiki.importDump(dumpOf([makeFact(0)]), { merge: true });
     await db.withTransactionAsync((tx) => upsertNode(wiki, tx, ENTITY, 'node_1', 'pelican symbol', 'c'));
-    expect(search(wiki, 'pelican')).toEqual([]);
+    expect(await search(wiki, 'pelican')).toEqual([]);
 
     await wiki.syncSearchIndex(ENTITY);
 
-    expect(search(wiki, 'pelican')).toEqual(['node_1']);
+    expect(await search(wiki, 'pelican')).toEqual(['node_1']);
   });
 
   it('surfaces the nodes through the public read() path', async () => {
@@ -217,8 +217,8 @@ describe('WikiMemory.syncSearchIndex (#246)', () => {
 
     await wiki.syncSearchIndex();
 
-    expect(search(wiki, 'pelican')).toEqual(['node_1']);
-    expect(search(wiki, 'heron', 'e2')).toEqual(['node_2']);
+    expect(await search(wiki, 'pelican')).toEqual(['node_1']);
+    expect(await search(wiki, 'heron', 'e2')).toEqual(['node_2']);
     // One full read per stale entity (e1, e2); the clean e3 is never re-read.
     expect(counts.fullReads).toBe(2);
   });
@@ -232,11 +232,11 @@ describe('WikiMemory.syncSearchIndex (#246)', () => {
     const spy = vi.spyOn(repo, 'findMiniSearchRows').mockRejectedValueOnce(new Error('disk hiccup'));
 
     await expect(wiki.syncSearchIndex(ENTITY)).resolves.toBeUndefined();
-    expect(search(wiki, 'pelican')).toEqual([]);
+    expect(await search(wiki, 'pelican')).toEqual([]);
 
     spy.mockRestore();
     await wiki.syncSearchIndex(ENTITY);
-    expect(search(wiki, 'pelican')).toEqual(['node_1']);
+    expect(await search(wiki, 'pelican')).toEqual(['node_1']);
     warn.mockRestore();
   });
 
@@ -267,7 +267,7 @@ describe('WikiMemory.syncSearchIndex (#246)', () => {
 
     await Promise.all([wiki.runPrune(ENTITY, quietPrune), wiki.syncSearchIndex(ENTITY)]);
 
-    expect(search(wiki, 'pelican')).toEqual(['node_1']);
+    expect(await search(wiki, 'pelican')).toEqual(['node_1']);
   });
 
   it('rejects an empty entityId', async () => {
