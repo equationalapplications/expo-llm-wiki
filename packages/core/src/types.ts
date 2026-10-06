@@ -327,6 +327,19 @@ export interface WikiConfig {
   ontology?: OntologyConfig;
   /** Default node cap for traverseGraph(), unless overridden per-call. Default 20. */
   maxTraversalNodes?: number;
+  /**
+   * Keyword-index backend (#257).
+   * - `'fts5'`: always use SQLite FTS5; `setup()` throws if the adapter's SQLite lacks FTS5 or json1.
+   * - `'minisearch'`: always use the in-RAM MiniSearch index. Memory grows with stored text.
+   * - `'auto'`: probe at `setup()`; use FTS5 when present, else MiniSearch.
+   *
+   * FTS5 keeps its index inside the database file, fed by triggers on the
+   * entries table, so memory stays flat at any size. The first `setup()` that
+   * attaches FTS5 to an existing database rebuilds the index in one
+   * transaction, holding the write lock for its whole duration.
+   * @default 'minisearch'
+   */
+  indexStrategy?: 'fts5' | 'minisearch' | 'auto';
   /** Default minimum confidence tier for discovered traversal nodes. Default 'tentative'. */
   minTraversalConfidence?: 'certain' | 'inferred' | 'tentative';
   /** Default traversal direction. Default 'both'. */

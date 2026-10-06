@@ -231,6 +231,13 @@ const wikiMemory = new WikiMemory(db, {
     staleInferredAfterDays: 60,        // default: 60 (days before runHeal downgrades inferred facts; null to disable)
     preFilterLimit: 50,                // default: undefined — MiniSearch pre-filter before cosine scan; recommended for >500 facts
     hybridWeight: 0.7,                 // default: undefined — blend semantic (1.0) ↔ keyword (0.0); pure semantic when unset
+    // Keyword-index backend (#257): 'fts5' stores the index inside the database file, fed by triggers on the
+    // entries table, so memory stays flat at any size; setup() throws if the adapter's SQLite lacks FTS5 or json1.
+    // 'minisearch' (default) keeps the in-RAM MiniSearch index; 'auto' probes at setup() and uses FTS5 when present,
+    // else MiniSearch. The first setup() that attaches FTS5 to an existing database rebuilds the index in one
+    // transaction, holding the write lock for its whole duration. Server deployments with large databases should
+    // set 'fts5' (or 'auto'); MiniSearch memory grows with total stored text.
+    indexStrategy: 'minisearch',       // default: 'minisearch' — 'fts5' | 'minisearch' | 'auto'
     enableOutbox: false,               // default: false — when true, entry/task mutations write to an internal SQLite outbox table for external sync (e.g. via @equationalapplications/prisma-outbox)
     excludeDrafts: false,              // default: false — engine default for read()/traverseGraph() excludeDrafts; see Draft Review
     grounding: { mode: 'off' },        // default: off — 'draft' checks evidence quotes; see Grounding
