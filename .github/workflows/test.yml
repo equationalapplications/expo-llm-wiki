@@ -65,7 +65,11 @@ jobs:
       - name: pnpm audit (high+, allowlisted exceptions)
         env:
           # Allowlisted GHSA ids, comma-separated. Keep minimal + commented.
-          AUDIT_ALLOWLIST: "GHSA-5p2g-fcmc-qvqq,GHSA-w3rx-r6r6-pgpr,GHSA-86w9-cpqp-85rv,GHSA-vfj7-8cjw-p6xm" # image-size DoS (<=2.0.2), ICNS + JXL/HEIF parsers; node-forge PKCS#1 v1.5 nested DigestAlgorithm (<=1.4.0); braces stack-exhaustion (<=3.0.3) — all three via expo-sqlite > expo > @expo/cli transitive; no upstream patch yet as of 2026-10-05
+          # GHSA-68fv-2mgg-jv7q: source-map-js <1.2.2 event-loop DoS via indexed
+          # source-map offsets (expo-sqlite > expo > @expo/metro-config > postcss).
+          # 1.2.2 was published 2026-09-30 and clears the 14-day minimumReleaseAge
+          # gate on 2026-10-14; replace this entry with an override then.
+          AUDIT_ALLOWLIST: "GHSA-5p2g-fcmc-qvqq,GHSA-w3rx-r6r6-pgpr,GHSA-86w9-cpqp-85rv,GHSA-vfj7-8cjw-p6xm,GHSA-68fv-2mgg-jv7q" # image-size DoS (<=2.0.2), ICNS + JXL/HEIF parsers; node-forge PKCS#1 v1.5 nested DigestAlgorithm (<=1.4.0); braces stack-exhaustion (<=3.0.3) — all three via expo-sqlite > expo > @expo/cli transitive; no upstream patch yet as of 2026-10-05
         run: |
           set -o pipefail
           pnpm audit --prod --audit-level=high --json > /tmp/audit.json || true
@@ -134,7 +138,9 @@ jobs:
           # advisories (crafted-archive DoS); fastembed only extracts its own
           # model archive from Hugging Face, never attacker-controlled input.
           # Remove when fastembed ships a tar-7-compatible release.
-          AUDIT_ALLOWLIST: "GHSA-34x7-hfp2-rc4v,GHSA-8qq5-rm4j-mr97,GHSA-83g3-92jg-28cx,GHSA-qffp-2rhf-9h96,GHSA-9ppj-qmqm-q256,GHSA-r6q2-hw4h-h46w,GHSA-23hp-3jrh-7fpw,GHSA-8x88-c5mf-7j5w,GHSA-r292-9mhp-454m" # fastembed's transitive tar 6.2.1 — scoped exception `'fastembed>tar': 6.2.1` in pnpm-workspace.yaml
+          # GHSA-68fv-2mgg-jv7q (source-map-js, via postcss): patched 1.2.2 is
+          # still inside the age gate until 2026-10-14 — see the step above.
+          AUDIT_ALLOWLIST: "GHSA-34x7-hfp2-rc4v,GHSA-8qq5-rm4j-mr97,GHSA-83g3-92jg-28cx,GHSA-qffp-2rhf-9h96,GHSA-9ppj-qmqm-q256,GHSA-r6q2-hw4h-h46w,GHSA-23hp-3jrh-7fpw,GHSA-8x88-c5mf-7j5w,GHSA-r292-9mhp-454m,GHSA-68fv-2mgg-jv7q" # fastembed's transitive tar 6.2.1 — scoped exception `'fastembed>tar': 6.2.1` in pnpm-workspace.yaml
         shell: bash
         run: |
           set -e
