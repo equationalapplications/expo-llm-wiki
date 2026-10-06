@@ -110,4 +110,23 @@ export interface IndexStrategy {
    * Returning `undefined` means "unknown — take the rebuild path".
    */
   hasIndexedEntity?(entityId: string): boolean | undefined;
+
+  /**
+   * Create or verify the strategy's backing schema and run state changes.
+   * Called once by `createIndexStrategy`, before the strategy is installed.
+   */
+  init?(): Promise<void>;
+
+  /**
+   * Apply every change recorded in the strategy's durable ledger, in bounded
+   * chunks. A strategy that implements this keeps itself consistent with
+   * SQLite on its own: `SearchService` routes every sync to `drain()` and
+   * never feeds it rows (spec 2026-10-05 §PR-2 revision). MUST NOT be
+   * called from inside a `withTransactionAsync` callback; it opens its own
+   * transactions.
+   */
+  drain?(): Promise<void>;
+
+  /** Rebuild entirely in SQL from the source tables; no rows pass through JS. */
+  rebuildFromSource?(): Promise<void>;
 }
