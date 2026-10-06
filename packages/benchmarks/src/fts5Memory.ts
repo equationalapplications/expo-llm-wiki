@@ -1,5 +1,5 @@
 // packages/benchmarks/src/fts5Memory.ts
-import { mkdtempSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { WikiMemory } from '@equationalapplications/core-llm-wiki';
@@ -21,6 +21,11 @@ let peak = 0;
 const sample = () => { peak = Math.max(peak, process.memoryUsage().rss); };
 const timer = setInterval(sample, 100);
 const mib = (b: number) => Math.round(b / 1048576);
+// WAL mode keeps recent writes in the -wal sidecar until checkpoint, so the main file alone under-reports size.
+const dbBytes = (f: string) => statSync(f).size + (existsSync(`${f}-wal`) ? statSync(`${f}-wal`).size : 0);
+
+// searchKeyword is reached through __testAccess, which warns outside NODE_ENV=test.
+process.env.NODE_ENV ??= 'test';
 
 let seed = 257;
 const rand = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
@@ -35,7 +40,7 @@ async function main() {
 
   const drainMs: number[] = [];
   let batch = 0;
-  while (statSync(file).size / 1048576 < targetMiB) {
+  while (dbBytes(file) / 1048576 < targetMiB) {
     const nodes = Array.from({ length: NODES }, (_, i) => ({ id: `n${batch}_${i}`, type: '', title: text(6), body: text(BODY_WORDS) }));
     await adapter.withTransactionAsync((tx) => wiki.upsertGraph('e1', { sourceRef: `s${batch}.ts`, sourceHash: hashFor(batch), nodes, edges: [] }, tx));
     const t0 = performance.now();
@@ -43,7 +48,7 @@ async function main() {
     drainMs.push(performance.now() - t0);
     batch++;
     sample();
-    if (batch % 50 === 0) console.error(`batch ${batch} db=${mib(statSync(file).size)}MiB rss=${mib(process.memoryUsage().rss)}MiB`);
+    if (batch % 50 === 0) console.error(`batch ${batch} db=${mib(dbBytes(file))}MiB rss=${mib(process.memoryUsage().rss)}MiB`);
   }
   const buildPeak = peak;
   close();
@@ -71,7 +76,7 @@ async function main() {
   const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
   const first = mean(drainMs.slice(0, decile)), last = mean(drainMs.slice(-decile));
   const result = {
-    strategy, targetMiB, dbMiB: mib(statSync(file).size), batches: batch,
+    strategy, targetMiB, dbMiB: mib(dbBytes(file)), batches: batch,
     buildPeakRssMiB: mib(buildPeak), reopenPeakRssMiB: mib(reopenPeak), queryPeakRssMiB: mib(queryPeak),
     drainMsFirstDecile: Math.round(first), drainMsLastDecile: Math.round(last),
     pass: Math.max(buildPeak, reopenPeak, queryPeak) < 512 * 1048576 && last <= 2 * first,

@@ -94,13 +94,16 @@ export class Fts5IndexStrategy implements IndexStrategy {
     const cap = options.preFilterLimit ?? options.limit;
     const limit = cap >= Number.MAX_SAFE_INTEGER ? -1 : cap;
     const t = `${this.prefix}entries_fts`;
-    const bm25 = `bm25(${t}, 0.0, 0.0, 2.0, 1.0, 1.0)`;
+    // bm25 is evaluated once per matching row in the inner query; the outer
+    // SELECT only clamps and negates it.
     return this.db.getAllAsync<IndexSearchResult>(
-      `SELECT id, entity_id, max(0.0, -${bm25}) AS score
-         FROM ${t}
-        WHERE ${t} MATCH ? AND entity_id IN (SELECT value FROM json_each(?))
-        ORDER BY ${bm25}, id
-        LIMIT ?`,
+      `SELECT id, entity_id, max(0.0, -raw) AS score FROM (
+         SELECT id, entity_id, bm25(${t}, 0.0, 0.0, 2.0, 1.0, 1.0) AS raw
+           FROM ${t}
+          WHERE ${t} MATCH ? AND entity_id IN (SELECT value FROM json_each(?))
+          ORDER BY raw, id
+          LIMIT ?)
+        ORDER BY raw, id`,
       [match, JSON.stringify(options.entityIds), limit],
     );
   }
