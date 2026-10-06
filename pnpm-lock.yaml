@@ -229,9 +229,15 @@ importers:
       '@types/better-sqlite3':
         specifier: 9.6.0
         version: 9.6.0
+      '@types/sql.js':
+        specifier: 1.4.11
+        version: 1.4.11
       better-sqlite3:
         specifier: 13.0.3
         version: 13.0.3
+      sql.js:
+        specifier: 1.14.2
+        version: 1.14.2
       tsup:
         specifier: 8.5.1
         version: 8.5.1(jiti@2.7.0)(postcss@8.5.28)(tsx@4.23.13)(typescript@5.9.3)(yaml@2.9.1)
