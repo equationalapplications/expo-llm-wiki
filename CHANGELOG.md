@@ -1,3 +1,9 @@
+## [7.9.2](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.9.1...v7.9.2) (2026-10-06)
+
+### Bug Fixes
+
+* **ci:** register all 12 tar alerts as deferred, not fixed-awaiting-scan ([25d3861](https://github.com/equationalapplications/expo-llm-wiki/commit/25d38618338afaaf34e1707b420931c526e1af51))
+
 ## [7.9.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.9.0...v7.9.1) (2026-10-06)
 
 ### Bug Fixes
