@@ -1775,6 +1775,39 @@ describe('MiniSearchIndexStrategy write bookkeeping', () => {
     expect(strategy.hasIndexedEntity('fresh')).toBe(true);
   });
 
+  it('replace(entityId, [], []) registers the entity as indexed (tracking-only call)', async () => {
+    const strategy = new MiniSearchIndexStrategy();
+    await strategy.replace('fresh', [], []);
+    expect(strategy.hasIndexedEntity('fresh')).toBe(true);
+  });
+
+  it('replace(entityId, ids, docs) rejects documents under another entity without mutating', async () => {
+    const strategy = new MiniSearchIndexStrategy();
+    await strategy.replaceAll([toIndexDoc(makeMiniSearchRow('a1', 'e1', 'alpha'))]);
+    await expect(
+      strategy.replace('e1', ['a1'], [toIndexDoc(makeMiniSearchRow('b1', 'e2', 'beta'))]),
+    ).rejects.toThrow(/e2/);
+    // The precondition check runs before the discard, so a1 survives and b1
+    // never lands under either entity.
+    expect((await strategy.search('alpha', { entityIds: ['e1'], limit: 10 })).map((r) => r.id)).toEqual(['a1']);
+    expect(await strategy.search('beta', { entityIds: ['e1', 'e2'], limit: 10 })).toEqual([]);
+    expect(strategy.hasIndexedEntity('e2')).toBe(false);
+  });
+
+  it('a write that throws part-way still tracks the documents it added', async () => {
+    // MiniSearch.addAll adds one document at a time and throws on a duplicate
+    // id; the documents before it are already in the index. They must be
+    // tracked, or the next rebuild cannot discard them and re-adding them
+    // throws "duplicate ID" on every later turn.
+    const strategy = new MiniSearchIndexStrategy();
+    const d1 = toIndexDoc(makeMiniSearchRow('d1', 'e1', 'alpha one'));
+    const d2 = toIndexDoc(makeMiniSearchRow('d2', 'e1', 'alpha two'));
+    await expect(strategy.replaceEntity('e1', [d1, d2, d1])).rejects.toThrow();
+    await expect(strategy.replaceEntity('e1', [d1, d2])).resolves.toBeUndefined();
+    const ids = (await strategy.search('alpha', { entityIds: ['e1'], limit: 10 })).map((r) => r.id);
+    expect(ids.sort()).toEqual(['d1', 'd2']);
+  });
+
   it('replace(entityId, ids, docs) silently ignores ids the strategy never tracked', async () => {
     const strategy = new MiniSearchIndexStrategy();
     await strategy.replaceAll([

@@ -69,9 +69,13 @@ export class MiniSearchIndexStrategy implements IndexStrategy {
   /**
    * Incremental sync. Removes only ids currently tracked under `entityId`
    * (other entities' docs are untouched), then upserts `documents` by id.
-   * `addAll` throws on a duplicate id, so the same id appearing in both
-   * `ids` and `documents` is discarded first — the upsert is a no-op when
-   * the new doc has the same content.
+   * The same id appearing in both `ids` and `documents` is discarded first
+   * so the upsert does not throw on a duplicate id.
+   *
+   * Every document must carry `entityId` as its `entity_id`; a mismatch is
+   * rejected before the write mutates anything. A tracking-only call
+   * (`replace(entityId, [], [])`) registers the entity as indexed, matching
+   * the interface contract.
    *
    * Atomicity: never awaits between the discard pass and `addDocuments`, so
    * a concurrent `search()` sees the index wholly before or wholly after,
@@ -83,7 +87,9 @@ export class MiniSearchIndexStrategy implements IndexStrategy {
     ids: readonly string[],
     documents: readonly IndexDocument[],
   ): Promise<void> {
+    assertOwnedBy(entityId, documents);
     this.discardIds(ids, entityId);
+    if (!this.entryIdsByEntity.has(entityId)) this.entryIdsByEntity.set(entityId, new Set());
     this.addDocuments(documents);
   }
 
@@ -92,9 +98,10 @@ export class MiniSearchIndexStrategy implements IndexStrategy {
    * `index.has(id)` guard so a stale tracking set cannot make `discard()`
    * throw), then writes `documents`. The entity stays registered as
    * indexed — even when `documents` is empty — so the next `syncEntries`
-   * call can take the fast path.
+   * call can take the fast path. Every document must belong to `entityId`.
    */
   async replaceEntity(entityId: string, documents: readonly IndexDocument[]): Promise<void> {
+    assertOwnedBy(entityId, documents);
     const previous = this.entryIdsByEntity.get(entityId);
     if (previous) this.discardIds([...previous]);
     // Registered even when empty, so hasIndexedEntity(entityId) === true.
@@ -126,7 +133,7 @@ export class MiniSearchIndexStrategy implements IndexStrategy {
     const entityIdSet = new Set(options.entityIds);
     const limit = options.preFilterLimit ?? options.limit;
     const raw = this.index.search(query, {
-      filter: (r) => entityIdSet.has((r as unknown as IndexDocument).entity_id),
+      filter: (r) => entityIdSet.has(r.entity_id as string),
       combineWith: 'OR',
     });
     // Tiebreak equal-score results by id before slicing: MiniSearch breaks
@@ -141,7 +148,7 @@ export class MiniSearchIndexStrategy implements IndexStrategy {
     // `storeFields: ['entity_id']` puts entity_id on every result.
     return raw.slice(0, limit).map((r) => ({
       id: r.id,
-      entity_id: (r as unknown as IndexDocument).entity_id,
+      entity_id: r.entity_id as string,
       score: r.score,
     }));
   }
@@ -168,17 +175,21 @@ export class MiniSearchIndexStrategy implements IndexStrategy {
   }
 
   /**
-   * Upsert `documents` into the MiniSearch instance and register them in
+   * Add `documents` to the MiniSearch instance and register them in
    * `entryIdsByEntity` and `entityIdById`. MiniSearch mutates documents
-   * during `addAll`, so we pass copies. Idempotent: re-adding an already
-   * indexed id is a no-op when the document is identical, otherwise
-   * MiniSearch's `addAll` throws — `replace` discards first for that reason.
+   * during `add`, so each doc is copied first. `add` throws on an id the
+   * index already holds — `replace` and `replaceEntity` discard first for
+   * that reason.
+   *
+   * Adds and registers one document at a time: if a duplicate id throws
+   * part-way through, every document already in the index is tracked, so
+   * the next rebuild can discard it instead of failing on it again. This is
+   * the precondition the per-turn recovery path relies on (#258 review).
    */
   private addDocuments(documents: readonly IndexDocument[]): void {
-    if (documents.length === 0) return;
-    const docs: IndexDocument[] = documents.map((d) => ({ ...d }));
-    this.index.addAll(docs);
-    for (const doc of docs) {
+    for (const d of documents) {
+      const doc: IndexDocument = { ...d };
+      this.index.add(doc);
       const set = this.entryIdsByEntity.get(doc.entity_id) ?? new Set<string>();
       set.add(doc.id);
       this.entryIdsByEntity.set(doc.entity_id, set);
@@ -209,6 +220,21 @@ export class MiniSearchIndexStrategy implements IndexStrategy {
       if (this.index.has(id)) this.index.discard(id);
       this.entryIdsByEntity.get(owning)?.delete(id);
       this.entityIdById.delete(id);
+    }
+  }
+}
+
+/**
+ * `replace` and `replaceEntity` write under one entity. A document carrying a
+ * different `entity_id` would land in another entity's tracking set (and
+ * have no safe discard path), so the write rejects before mutating anything.
+ */
+function assertOwnedBy(entityId: string, documents: readonly IndexDocument[]): void {
+  for (const doc of documents) {
+    if (doc.entity_id !== entityId) {
+      throw new Error(
+        `IndexStrategy write for entity ${entityId} got document ${doc.id} under entity ${doc.entity_id}`,
+      );
     }
   }
 }
