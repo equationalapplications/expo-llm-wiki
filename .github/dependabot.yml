@@ -60,7 +60,18 @@ updates:
 # would break the build, add an `ignore` above AND cite the register key.
 # Re-opening of a registered alert = register review trigger, not noise.
 # Entries:
-# - tar|75: fixed-awaiting-scan — pnpm-lock.yaml already resolves tar@7.5.22
-#   (override floor 'tar@<7.5.21: ^7.5.21' in pnpm-workspace.yaml; patched is
-#   7.5.19). Alert persisted as of 2026-10-02; if still open on the next
-#   weekly rescan, flag to the maintenance pass instead of re-fixing.
+# - tar|48, tar|72, tar|73, tar|74, tar|75, tar|78, tar|133, tar|134, tar|135,
+#   tar|136, tar|137, tar|138: deferred — the alerts are real. Every tar 7
+#   consumer resolves tar@7.5.22 via the 'tar@<7.5.21' floor, but the scoped
+#   'fastembed>tar: 6.2.1' override in pnpm-workspace.yaml keeps tar@6.2.1 in
+#   pnpm-lock.yaml (fastembed 2.1.0 default-imports tar, which tar 7 lacks),
+#   and 6.2.1 is inside every one of these ranges. Reach is limited to the
+#   private packages/benchmarks + packages/integration, where fastembed only
+#   extracts its own Hugging Face model archive. Parent fix: fastembed 3.0.0
+#   drops tar (issue #254, clears the age gate 2026-10-08). On that bump,
+#   remove the override and these entries.
+#   GHSAs (alert numbers can be reassigned; these are the stable handles):
+#   48 vmf3-w455-68vh, 72 8x88-c5mf-7j5w, 73 w8wr-v893-vjvp, 74 gvwx-54wh-qm9j,
+#   75 23hp-3jrh-7fpw, 78 r292-9mhp-454m, 133 8qq5-rm4j-mr97,
+#   134 r6q2-hw4h-h46w, 135 34x7-hfp2-rc4v, 136 83g3-92jg-28cx,
+#   137 qffp-2rhf-9h96, 138 9ppj-qmqm-q256 (each prefixed GHSA-).
