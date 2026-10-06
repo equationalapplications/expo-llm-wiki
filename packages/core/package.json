@@ -65,9 +65,11 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "9.6.0",
+    "@types/sql.js": "1.4.11",
     "better-sqlite3": "13.0.3",
     "tsup": "8.5.1",
     "typescript": "5.9.3",
+    "sql.js": "1.14.2",
     "vitest": "5.0.1"
   }
 }

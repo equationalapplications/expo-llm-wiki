@@ -25,6 +25,7 @@ import { EdgeRepository } from './repositories/EdgeRepository';
 import { MetadataRepository, entitySummaryMetaKey } from './repositories/MetadataRepository';
 import { SearchService } from './services/SearchService';
 import { MiniSearchIndexStrategy } from './services/search/MiniSearchIndexStrategy';
+import { createIndexStrategy } from './services/search/createIndexStrategy';
 import { JobManager } from './services/JobManager';
 import { normalizeSourceRef, normalizeSourceHash, validateFact, validateTask, clip, chunkText } from './utils/pure';
 import { resolveGrounding } from './utils/grounding';
@@ -307,6 +308,15 @@ export class WikiMemory {
       }
     });
 
+    this.searchService.setIndexStrategy(
+      await createIndexStrategy(
+        this.db,
+        this.prefix,
+        this.metadataRepo,
+        this.options.config?.indexStrategy ?? 'minisearch',
+      ),
+    );
+    // FTS5: drains the ledger (no global read). MiniSearch: full rebuild, as before.
     await this.searchService.sync();
   }
 
@@ -664,6 +674,11 @@ export class WikiMemory {
    * no maintenance lock. Never rejects for a valid `entityId` — on failure the
    * entity stays stale and the next call retries it. Does not compute
    * embeddings; that remains the maintenance sweep's job.
+   *
+   * With the FTS5 index strategy this drains the index ledger in its own
+   * transactions, so it MUST be called after the host transaction commits,
+   * never from inside a `withTransactionAsync` callback. Calling it inside
+   * one waits on the transaction mutex that the callback holds.
    *
    * @throws {TypeError} when `entityId` is given but is not a non-empty string.
    */

@@ -1,0 +1,12 @@
+{
+  "strategy": "fts5",
+  "targetMiB": 500,
+  "dbMiB": 501,
+  "batches": 243,
+  "buildPeakRssMiB": 1835,
+  "reopenPeakRssMiB": 1466,
+  "queryPeakRssMiB": 1468,
+  "drainMsFirstDecile": 30,
+  "drainMsLastDecile": 38,
+  "pass": false
+}
