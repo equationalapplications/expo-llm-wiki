@@ -27,6 +27,12 @@ export class MiniSearchIndexStrategy implements IndexStrategy {
    * its own backing store on the rebuild path.
    */
   private entryIdsByEntity = new Map<string, Set<string>>();
+  /**
+   * Reverse of `entryIdsByEntity`, so discard() touches only the owning
+   * entity's set — the pre-extraction syncEntries deleted from that one set
+   * rather than scanning every entity's.
+   */
+  private entityIdById = new Map<string, string>();
 
   constructor() {
     this.index = new MiniSearch({
@@ -55,6 +61,7 @@ export class MiniSearchIndexStrategy implements IndexStrategy {
       const set = this.entryIdsByEntity.get(doc.entity_id) ?? new Set<string>();
       set.add(doc.id);
       this.entryIdsByEntity.set(doc.entity_id, set);
+      this.entityIdById.set(doc.id, doc.entity_id);
     }
   }
 
@@ -67,8 +74,11 @@ export class MiniSearchIndexStrategy implements IndexStrategy {
       // throws on those, so guard with has().
       if (this.index.has(id)) this.index.discard(id);
     }
-    for (const set of this.entryIdsByEntity.values()) {
-      for (const id of ids) set.delete(id);
+    for (const id of ids) {
+      const entityId = this.entityIdById.get(id);
+      if (entityId === undefined) continue;
+      this.entryIdsByEntity.get(entityId)?.delete(id);
+      this.entityIdById.delete(id);
     }
   }
 
@@ -84,6 +94,7 @@ export class MiniSearchIndexStrategy implements IndexStrategy {
       searchOptions: { boost: { title: 2 }, fuzzy: 0.2, prefix: true },
     });
     this.entryIdsByEntity.clear();
+    this.entityIdById.clear();
   }
 
   async search(query: string, options: IndexSearchOptions): Promise<IndexSearchResult[]> {
@@ -94,9 +105,6 @@ export class MiniSearchIndexStrategy implements IndexStrategy {
       filter: (r) => entityIdSet.has((r as unknown as IndexDocument).entity_id),
       combineWith: 'OR',
     });
-    if (raw.length === 0) return [];
-    const top = raw[0].score;
-    if (top <= 0) return [];
     // Tiebreak equal-score results by id before slicing: MiniSearch breaks
     // ties by internal insertion order, which the strategy's own
     // discard/add changes. Callers truncate to a `limit`, so the ids
@@ -106,11 +114,14 @@ export class MiniSearchIndexStrategy implements IndexStrategy {
       if (!Number.isNaN(scoreDiff) && scoreDiff !== 0) return scoreDiff;
       return a.id.localeCompare(b.id);
     });
+    // Raw MiniSearch scores, unscaled: searchKeyword callers and the
+    // exposed factScores saw these before the extraction, and
+    // getKeywordScores applies its own max(1, top) scaling.
     // `storeFields: ['entity_id']` puts entity_id on every result.
     return raw.slice(0, limit).map((r) => ({
       id: r.id,
       entity_id: (r as unknown as IndexDocument).entity_id,
-      score: r.score / top,
+      score: r.score,
     }));
   }
 

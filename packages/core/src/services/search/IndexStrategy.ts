@@ -24,9 +24,11 @@ export interface IndexSearchOptions {
 export interface IndexSearchResult {
   id: string;
   /**
-   * Score in `[0, 1]`. The top result is normalized to `1.0`; subsequent
-   * results are scaled by the same factor. Strategies MAY emit `NaN` for
-   * tie-handling; `SearchService._compareSearchResults` already tolerates this.
+   * Strategy-native relevance: non-negative, higher is better, comparable
+   * only within one result set. Not normalized — `SearchService.getKeywordScores`
+   * divides by `max(1, top)` for the hybrid blend, and `searchKeyword` passes
+   * scores through unscaled. Strategies MAY emit `NaN` for tie-handling;
+   * `SearchService._compareSearchResults` already tolerates this.
    */
   score: number;
   /**
@@ -58,7 +60,7 @@ export interface IndexStrategy {
   removeAll(): Promise<void>;
 
   /**
-   * Search the index. The top result's score is normalized to `1.0`. If
+   * Search the index, best match first. If
    * `preFilterLimit` is set, the strategy MAY return up to `preFilterLimit`
    * candidates before the `limit` cap is applied (hybrid retrieval uses this
    * to over-fetch candidates for downstream vector blending).
@@ -80,7 +82,4 @@ export interface IndexStrategy {
    * predicate (FTS5) do not need it and return `undefined`.
    */
   getEntryIdsByEntity?(entityId: string): ReadonlySet<string> | undefined;
-
-  /** Release any resources. Called from `SearchService` teardown. */
-  close?(): Promise<void>;
 }

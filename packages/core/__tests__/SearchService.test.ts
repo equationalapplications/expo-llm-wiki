@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import MiniSearch from 'minisearch';
 import { SearchService } from '../src/services/SearchService';
 import { MiniSearchIndexStrategy } from '../src/services/search/MiniSearchIndexStrategy';
+import { toIndexDoc } from '../src/utils/indexDoc';
 import type { EntryRepository } from '../src/repositories/EntryRepository';
 import { cosineSimilarity } from '../src/utils/cosine';
 import { parseEmbedding } from '../src/utils/embedding';
@@ -564,7 +565,7 @@ describe('searchKeyword', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 10. getMiniSearchScores
+// 10. getKeywordScores
 // ---------------------------------------------------------------------------
 
 describe('getKeywordScores', () => {
@@ -579,7 +580,7 @@ describe('getKeywordScores', () => {
 
     const scores = await service.getKeywordScores('apple', ['e1']);
     expect(scores.size).toBeGreaterThan(0);
-    // Strategy normalizes top score to 1.0; remaining scores are in [0, 1].
+    // getKeywordScores divides by max(1, top), so every score is in (0, 1].
     for (const score of scores.values()) {
       expect(score).toBeGreaterThan(0);
       expect(score).toBeLessThanOrEqual(1);
@@ -590,9 +591,9 @@ describe('getKeywordScores', () => {
     expect(scoreArr.every(([, s]) => s > 0)).toBe(true);
   });
 
-  it('top result is normalized to 1.0 — value at most 1', async () => {
-    // The strategy normalizes the top score to 1.0; every other result is
-    // scaled by the same factor, so the top is exactly 1.0.
+  it('top result is scaled to at most 1', async () => {
+    // getKeywordScores divides by max(1, top): a raw top score of 1 or more
+    // scales to exactly 1.0; a weaker one is left as-is.
     const rows = [
       makeMiniSearchRow('f1', 'e1', 'exact', 'body', '[]'),
     ];
@@ -1658,5 +1659,105 @@ describe('syncEntries', () => {
     expect((service as any).indexStrategy.index.dirtCount).toBe(0);
 
     vacuumSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Keyword score scale — pre-refactor parity (#258 review)
+// ---------------------------------------------------------------------------
+
+describe('keyword score scale matches the pre-refactor MiniSearch path', () => {
+  // Mirrors the MiniSearch config SearchService used before the IndexStrategy
+  // extraction, so expected scores come from MiniSearch itself.
+  function referenceScores(
+    rows: ReturnType<typeof makeMiniSearchRow>[],
+    query: string,
+    entityIds: string[],
+  ) {
+    const ref = new MiniSearch<ReturnType<typeof toIndexDoc>>({
+      fields: ['title', 'body', 'tags'],
+      storeFields: ['entity_id'],
+      autoVacuum: false,
+      searchOptions: { boost: { title: 2 }, fuzzy: 0.2, prefix: true },
+    });
+    ref.addAll(rows.map(toIndexDoc));
+    const ids = new Set(entityIds);
+    return ref.search(query, {
+      filter: (r) => ids.has(r.entity_id as string),
+      combineWith: 'OR',
+    });
+  }
+
+  const rows = [
+    makeMiniSearchRow('f1', 'e1', 'apple orchard', 'apple apple', '["fruit"]'),
+    makeMiniSearchRow('f2', 'e1', 'pear', 'an apple a day', '[]'),
+    makeMiniSearchRow('f3', 'e2', 'banana', 'appl', '[]'),
+  ];
+
+  it('searchKeyword returns raw MiniSearch scores', async () => {
+    const service = new SearchService(makeRepo(rows), new MiniSearchIndexStrategy());
+    await service.sync();
+
+    const expected = referenceScores(rows, 'apple', ['e1', 'e2']);
+    expect(expected[0].score).not.toBe(1);
+    const results = await service.searchKeyword('apple', ['e1', 'e2'], 10);
+    expect(new Map(results.map((r) => [r.id, r.score]))).toEqual(
+      new Map(expected.map((r) => [r.id, r.score])),
+    );
+  });
+
+  it('getKeywordScores divides by max(1, top) — scores below 1 are not inflated', async () => {
+    const service = new SearchService(makeRepo(rows), new MiniSearchIndexStrategy());
+    await service.sync();
+
+    // 'frut' is a fuzzy-only match whose raw top score stays below 1; the
+    // pre-refactor getMiniSearchScores left it unscaled.
+    for (const query of ['apple', 'frut']) {
+      const expected = referenceScores(rows, query, ['e1', 'e2']);
+      if (query === 'frut') expect(expected[0].score).toBeLessThan(1);
+      const divisor = Math.max(1, expected[0]?.score ?? 1);
+      const scores = await service.getKeywordScores(query, ['e1', 'e2']);
+      expect(scores).toEqual(new Map(expected.map((r) => [r.id, r.score / divisor])));
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MiniSearchIndexStrategy.discard — per-entity bookkeeping (#258 review)
+// ---------------------------------------------------------------------------
+
+describe('MiniSearchIndexStrategy.discard bookkeeping', () => {
+  it('removes ids only from their owning entity set and forgets them', async () => {
+    const strategy = new MiniSearchIndexStrategy();
+    await strategy.add([
+      toIndexDoc(makeMiniSearchRow('a1', 'e1', 'alpha')),
+      toIndexDoc(makeMiniSearchRow('a2', 'e1', 'alpha two')),
+      toIndexDoc(makeMiniSearchRow('b1', 'e2', 'beta')),
+    ]);
+
+    await strategy.discard(['a1', 'missing']);
+    expect([...strategy.getEntryIdsByEntity('e1')!]).toEqual(['a2']);
+    expect([...strategy.getEntryIdsByEntity('e2')!]).toEqual(['b1']);
+
+    // A discarded id can be re-added under another entity.
+    await strategy.add([toIndexDoc(makeMiniSearchRow('a1', 'e2', 'alpha moved'))]);
+    await strategy.discard(['a1']);
+    expect([...strategy.getEntryIdsByEntity('e1')!]).toEqual(['a2']);
+    expect([...strategy.getEntryIdsByEntity('e2')!]).toEqual(['b1']);
+  });
+
+  it('does not scan unrelated entity sets', async () => {
+    const strategy = new MiniSearchIndexStrategy();
+    const docs = Array.from({ length: 50 }, (_, i) =>
+      toIndexDoc(makeMiniSearchRow(`d${i}`, `e${i}`, `doc ${i}`)),
+    );
+    await strategy.add(docs);
+    const deleteSpy = vi.spyOn(Set.prototype, 'delete');
+    try {
+      await strategy.discard(['d0']);
+      expect(deleteSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      deleteSpy.mockRestore();
+    }
   });
 });

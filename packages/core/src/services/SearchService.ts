@@ -287,7 +287,11 @@ export class SearchService {
       ? { entityIds, limit: preFilterLimit, preFilterLimit }
       : { entityIds, limit: Number.MAX_SAFE_INTEGER };
     const results = await this.indexStrategy.search(query, opts);
-    return new Map(results.map((r) => [r.id, r.score]));
+    if (results.length === 0) return new Map();
+    // Pre-refactor scaling: a raw top score below 1 is left as-is rather
+    // than inflated to 1, so a weak keyword match stays weak in the blend.
+    const maxScore = Math.max(1, results[0]?.score ?? 1);
+    return new Map(results.map((r) => [r.id, r.score / maxScore]));
   }
 
   /**
