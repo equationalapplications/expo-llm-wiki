@@ -5,6 +5,7 @@
 **Status revision (2026-10-05, PR #258 review):** Corrected the score contract — the pre-refactor `getMiniSearchScores` divided by `max(1, top)`, not by `top`, and `searchKeyword` returned raw scores. Strategies now return raw, non-negative, higher-is-better scores and `SearchService.getKeywordScores` keeps the `max(1, top)` scaling. Dropped `close?()` (no teardown path exists; PR-2 adds both if FTS5 needs them), documented `getEntryIdsByEntity?()`, and dropped the `getMiniSearchScores` alias (`SearchService` is not exported).
 **Status revision (2026-10-05, PR #258 review, round 2):** Replaced `add`/`discard`/`removeAll` with three single-step writes, `replace`, `replaceEntity` and `replaceAll`. Searches do not wait for `syncChain`, so splitting a write into awaited steps let a concurrent search see a half-applied index. The pre-refactor code avoided this by never awaiting between discard and `addAll`. Scores must be finite. Specified FTS5 per-entity replacement (`DELETE … WHERE entity_id = ?`) and upsert-by-delete, because FTS5's `id` column is not unique.
 **Status revision (2026-10-06, PR #258 widening):** Reshaped `IndexStrategy` so the entity-scoping invariant is typecheck-enforced and the strategy owns its id-tracking structure. `replace(entityId, ids, documents)`; `getEntryIdsByEntity` is gone, replaced by `hasIndexedEntity?(entityId): boolean | undefined`. `SearchService.syncEntries` no longer filters ids to drop against a returned id set — the strategy ignores ids it does not track under the named entity. The MiniSearch impl adds an `entityIdById` reverse map. The "PR-2 must keep the incremental path open for FTS5" caveat is gone; the FTS5 `replace` SQL is `DELETE … WHERE entity_id = ? AND id IN (?,?,…)`, scoped in one statement.
+**Status revision (2026-10-06, PR #258 review round 4):** Made `replace(entityId, [], [])` register the entity as indexed (was already a contract requirement; MiniSearchIndexStrategy now sets the empty set on every `replace`, not only on `replaceEntity`). Closed a cross-entity write hole: a document whose `entity_id` does not match the call's `entityId` is rejected by both `replace` and `replaceEntity` before any discard, so the strategy cannot accidentally land a doc in another entity's tracking set. MiniSearchIndexStrategy's `addDocuments` switched from `addAll` to a per-document `add` so a duplicate-id throw part-way leaves the strategy with the index and the tracking maps in the same shape (every doc already added is tracked); the next rebuild can then discard those ids instead of failing on the same duplicate forever. FTS5 must apply the same atomic-add property per row (one `INSERT` per doc inside the transaction, not a single multi-row statement that may partially apply).
 
 ---
 
@@ -103,7 +104,10 @@ export interface IndexStrategy {
    * Other entities' documents are NEVER touched. Argument order is
    * `(entityId, ids, documents)` so the FTS5 SQL
    * `DELETE … WHERE entity_id = ? AND id IN (…)` matches the call shape.
-   * Incremental sync.
+   * A tracking-only call (`replace(entityId, [], [])`) registers the
+   * entity as indexed, so the next syncEntries can take the incremental
+   * fast path. Every document MUST carry `entityId` as its `entity_id`;
+   * a mismatch is rejected before any discard. Incremental sync.
    */
   replace(
     entityId: string,
@@ -113,7 +117,9 @@ export interface IndexStrategy {
   /**
    * Drop every document currently under `entityId`, then add `documents`.
    * The entity stays registered as indexed, even when `documents` is empty,
-   * so `hasIndexedEntity` continues to return `true` for it. Per-entity rebuild.
+   * so `hasIndexedEntity` continues to return `true` for it. Every
+   * document MUST carry `entityId` as its `entity_id`; a mismatch is
+   * rejected before any discard. Per-entity rebuild.
    */
   replaceEntity(entityId: string, documents: readonly IndexDocument[]): Promise<void>;
   /**
@@ -143,6 +149,8 @@ The interface is **deliberately narrow**: three writes, each matching one existi
 Extracted **verbatim** from `SearchService`'s existing implementation: `createMiniSearch()`, `miniSearchEntryIdsByEntity` tracking, the `addAll`/`discard`/`has()` dance from `syncEntries` (no await between discard and `addAll`), the empty-set registration from `rebuildIndex`, the fresh-instance reset, the `dirtCount > 0 → vacuum` rule, and the `clearAll` swap. `search()` returns raw MiniSearch scores, as `searchKeyword` did; the `max(1, top)` scaling from `getMiniSearchScores` stays in `SearchService.getKeywordScores`.
 
 The new shape adds a private `entityIdById: Map<id, entityId>` reverse map. `replace(entityId, ids, docs)` filters `ids` against `entityIdById.get(id) === entityId` and silently ignores the rest, so ids belonging to other entities are not touched. `hasIndexedEntity(entityId)` returns `entryIdsByEntity.has(entityId)`.
+
+Write atomicity, per document: `replace` and `replaceEntity` check every input against `entityId` before mutating, and `addDocuments` is a per-document loop (`add` plus map writes) rather than `addAll`. A throw on document *n* leaves the index and the tracking maps with documents 1..n-1 committed and *n* onward untouched, so the next rebuild can discard exactly that prefix. `addAll` would have left docs 1..n-1 in the index but the tracking map empty, so a subsequent rebuild would re-add them and throw on the same duplicate forever.
 
 `SearchService` retains ownership of `staleEntities`, `staleEpochs`, `syncChain`, and the orchestration logic (rebuild, markStale, syncStale, evictCache, rankSemantic). Only the **direct MiniSearch API calls** move out. This is the smallest refactor that introduces the seam.
 
