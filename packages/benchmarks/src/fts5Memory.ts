@@ -51,6 +51,10 @@ async function main() {
     if (batch % 50 === 0) console.error(`batch ${batch} db=${mib(dbBytes(file))}MiB rss=${mib(process.memoryUsage().rss)}MiB`);
   }
   const buildPeak = peak;
+  // Capture WAL-inclusive size before close: SQLite checkpoints and removes
+  // the -wal sidecar when the last connection closes, so a later statSync
+  // would under-report the size the build loop counted toward the target.
+  const dbMiB = mib(dbBytes(file));
   close();
 
   peak = 0;
@@ -76,7 +80,7 @@ async function main() {
   const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
   const first = mean(drainMs.slice(0, decile)), last = mean(drainMs.slice(-decile));
   const result = {
-    strategy, targetMiB, dbMiB: mib(dbBytes(file)), batches: batch,
+    strategy, targetMiB, dbMiB, batches: batch,
     buildPeakRssMiB: mib(buildPeak), reopenPeakRssMiB: mib(reopenPeak), queryPeakRssMiB: mib(queryPeak),
     drainMsFirstDecile: Math.round(first), drainMsLastDecile: Math.round(last),
     pass: Math.max(buildPeak, reopenPeak, queryPeak) < 512 * 1048576 && last <= 2 * first,
