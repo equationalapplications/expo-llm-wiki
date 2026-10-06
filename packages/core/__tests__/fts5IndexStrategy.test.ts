@@ -177,6 +177,16 @@ describe('Fts5IndexStrategy writes', () => {
     ]);
   });
 
+  it('replace reassigns an id that lives under another entity to the caller entity', async () => {
+    const s = new Fts5IndexStrategy(db, P, meta);
+    await s.init();
+    await s.replaceAll([doc('x', 'e2', 'xray')]);
+    await s.replace('e1', [], [doc('x', 'e1', 'xrayMoved')]);
+    expect(await ftsRows()).toEqual([
+      { id: 'x', entity_id: 'e1', title: 'xrayMoved' },
+    ]);
+  });
+
   it('replace and replaceEntity reject a cross-entity document before any discard', async () => {
     const s = new Fts5IndexStrategy(db, P, meta);
     await s.init();

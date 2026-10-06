@@ -52,6 +52,16 @@ describe('createIndexStrategy', () => {
     await expect(createIndexStrategy(db, P, meta, 'fts5')).rejects.toThrow(/indexStrategy 'fts5'/);
   });
 
+  it("'auto' falls back to MiniSearch when FTS5 init throws; 'fts5' re-throws", async () => {
+    const db = openTestDatabase(); const meta = await fresh(db);
+    const spy = vi.spyOn(Fts5IndexStrategy.prototype, 'init').mockRejectedValue(new Error('rebuild tx lock'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(await createIndexStrategy(db, P, meta, 'auto')).toBeInstanceOf(MiniSearchIndexStrategy);
+    expect(warn).toHaveBeenCalled();
+    await expect(createIndexStrategy(db, P, meta, 'fts5')).rejects.toThrow(/rebuild tx lock/);
+    spy.mockRestore(); warn.mockRestore();
+  });
+
   it("pinned 'minisearch' detaches a live database", async () => {
     const db = openTestDatabase(); const meta = await fresh(db);
     await createIndexStrategy(db, P, meta, 'fts5');

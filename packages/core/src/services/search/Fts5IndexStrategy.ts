@@ -57,9 +57,13 @@ export class Fts5IndexStrategy implements IndexStrategy {
 
   async replace(entityId: string, ids: readonly string[], documents: readonly IndexDocument[]): Promise<void> {
     assertEntity(entityId, documents);
-    const drop = [...new Set([...ids, ...documents.map((d) => d.id)])];
+    const docIds = documents.map((d) => d.id);
     await this.db.withTransactionAsync(async (tx) => {
-      await this.deleteByIds(tx, entityId, drop);
+      // Caller-supplied ids are scoped to the entity; incoming document ids are
+      // un-scoped so a doc that previously lived under another entity gets
+      // detached (otherwise the fts_map UNIQUE(id) insert would throw).
+      await this.deleteByIds(tx, entityId, ids);
+      await this.deleteByIds(tx, null, docIds);
       await this.insertDocs(tx, documents);
     });
   }
@@ -101,16 +105,20 @@ export class Fts5IndexStrategy implements IndexStrategy {
     );
   }
 
-  private async deleteByIds(tx: SQLiteAdapter, entityId: string, ids: readonly string[]): Promise<void> {
+  private async deleteByIds(tx: SQLiteAdapter, entityId: string | null, ids: readonly string[]): Promise<void> {
     if (ids.length === 0) return;
     const p = this.prefix;
     const json = JSON.stringify(ids);
+    const whereEntity = entityId === null ? '' : ' AND entity_id = ?';
+    // `json_each(?)` is the first placeholder; the optional `entity_id = ?` follows it.
+    const args: unknown[] = [json];
+    if (entityId !== null) args.push(entityId);
     await tx.runAsync(
       `DELETE FROM ${p}entries_fts WHERE rowid IN (
-         SELECT fts_rowid FROM ${p}fts_map WHERE entity_id = ? AND id IN (SELECT value FROM json_each(?)))`,
-      [entityId, json]);
+         SELECT fts_rowid FROM ${p}fts_map WHERE id IN (SELECT value FROM json_each(?))${whereEntity})`,
+      args);
     await tx.runAsync(
-      `DELETE FROM ${p}fts_map WHERE entity_id = ? AND id IN (SELECT value FROM json_each(?))`, [entityId, json]);
+      `DELETE FROM ${p}fts_map WHERE id IN (SELECT value FROM json_each(?))${whereEntity}`, args);
   }
 
   /** One INSERT pair per document: a throw part-way rolls back the whole transaction. */

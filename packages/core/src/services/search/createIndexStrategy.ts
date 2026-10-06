@@ -54,10 +54,18 @@ export async function createIndexStrategy(
   if (preferred !== 'minisearch') {
     if (await probeFts5(db, prefix)) {
       const strategy = new Fts5IndexStrategy(db, prefix, metadataRepo);
-      await strategy.init();
-      return strategy;
-    }
-    if (preferred === 'fts5') {
+      try {
+        await strategy.init();
+        return strategy;
+      } catch (err) {
+        // The probe only checks that FTS5/json1 are present; init can still
+        // fail (rebuild tx lock, DDL permission, etc.). The 'auto' contract is
+        // "FTS5 when usable, else MiniSearch" — log and fall through. Pinned
+        // 'fts5' must surface the failure to the caller.
+        if (preferred === 'fts5') throw err;
+        console.warn('[WikiMemory] FTS5 init failed; falling back to MiniSearch:', err);
+      }
+    } else if (preferred === 'fts5') {
       throw new Error(`indexStrategy 'fts5' was requested, but this SQLite build lacks FTS5 or json1.`);
     }
   }
