@@ -52,10 +52,17 @@ async function main() {
   ({ adapter, close } = openDb(file));
   wiki = new WikiMemory(adapter, { ...llm, config: { indexStrategy: strategy } });
   await wiki.setup();
+  // Microtask-only adapters never yield a macrotask turn during setup, so the
+  // 100 ms setInterval can miss the reopen phase. Sample explicitly.
+  sample();
   const reopenPeak = peak;
 
   peak = 0;
-  for (let i = 0; i < 1000; i++) await wiki.__testAccess.searchService.searchKeyword(text(2), ['e1'], 10);
+  for (let i = 0; i < 1000; i++) {
+    await wiki.__testAccess.searchService.searchKeyword(text(2), ['e1'], 10);
+    if (i % 20 === 0) sample();
+  }
+  sample();
   const queryPeak = peak;
   close();
   clearInterval(timer);

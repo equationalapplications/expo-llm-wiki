@@ -4,9 +4,9 @@
   "dbMiB": 501,
   "batches": 243,
   "buildPeakRssMiB": 1835,
-  "reopenPeakRssMiB": 0,
-  "queryPeakRssMiB": 0,
-  "drainMsFirstDecile": 31,
-  "drainMsLastDecile": 39,
+  "reopenPeakRssMiB": 1466,
+  "queryPeakRssMiB": 1468,
+  "drainMsFirstDecile": 30,
+  "drainMsLastDecile": 38,
   "pass": false
 }
