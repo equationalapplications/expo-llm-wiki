@@ -2,6 +2,7 @@
 
 **Date:** 2026-10-05
 **Status:** Approved
+**Status revision (2026-10-05, PR #258 review):** Corrected the score contract — the pre-refactor `getMiniSearchScores` divided by `max(1, top)`, not by `top`, and `searchKeyword` returned raw scores. Strategies now return raw, non-negative, higher-is-better scores and `SearchService.getKeywordScores` keeps the `max(1, top)` scaling. Dropped `close?()` (no teardown path exists; PR-2 adds both if FTS5 needs them), documented `getEntryIdsByEntity?()`, and dropped the `getMiniSearchScores` alias (`SearchService` is not exported).
 
 ---
 
@@ -52,7 +53,7 @@ Both go away when the index lives in SQLite itself.
 
 ## Non-goals
 
-- Changing the semantic (vector) ranking pipeline. `VectorRanker` and the `embedding_blob` path stay as-is. `rankSemantic`'s hybrid blend with `miniSearchScores` keeps its name and contract; this spec renames the *input* keyword-scores helper to `getKeywordScores` while preserving `getMiniSearchScores` as a deprecated alias.
+- Changing the semantic (vector) ranking pipeline. `VectorRanker` and the `embedding_blob` path stay as-is. `rankSemantic`'s hybrid blend with `miniSearchScores` keeps its name and contract; this spec renames the *input* keyword-scores helper to `getKeywordScores`. No alias is kept: `SearchService` is internal (not exported from the package entry point).
 - Vectors in SQLite (`sqlite-vec`). Out of scope; tracked separately.
 - Per-entity FTS5 partitioning. One `{prefix}entries_fts` table for the whole DB, filtered by `entity_id` in the query. Multi-tenant isolation already uses the `entity_id` column on `entries`; FTS5 inherits it via the JOIN in the search query.
 - Replacing MiniSearch for hosts whose adapter has FTS5. Hosts that explicitly pin `'minisearch'` (e.g., for behavioral stability) keep getting MiniSearch.
@@ -80,7 +81,11 @@ export interface IndexSearchResult {
   id: string;
   /** Entity the result is from; populated from `IndexDocument.entity_id`. */
   entity_id: string;
-  /** Score in [0, 1]. Max result's score is normalized to 1.0. */
+  /**
+   * Strategy-native relevance: non-negative, higher is better, comparable only
+   * within one result set. Not normalized — `getKeywordScores` divides by
+   * `max(1, top)`; `searchKeyword` passes scores through unscaled.
+   */
   score: number;
 }
 
@@ -91,8 +96,8 @@ export interface IndexStrategy {
   search(query: string, options: IndexSearchOptions): Promise<IndexSearchResult[]>;
   /** For MiniSearch only — FTS5 is a no-op. Called at the end of every discard-bearing turn. */
   vacuum?(): Promise<void>;
-  /** Tear down resources; called from `SearchService` when it is no longer needed. */
-  close?(): Promise<void>;
+  /** Ids indexed under `entityId`, for per-entity rebuilds. MiniSearch only; FTS5 omits it. */
+  getEntryIdsByEntity?(entityId: string): ReadonlySet<string> | undefined;
 }
 ```
 
@@ -100,7 +105,7 @@ The interface is **deliberately narrow** — no `replace`, no `update`, no `comm
 
 ### MiniSearchIndexStrategy (new, `packages/core/src/services/search/MiniSearchIndexStrategy.ts`)
 
-Extracted **verbatim** from `SearchService`'s existing implementation: `createMiniSearch()`, `miniSearchEntryIdsByEntity` tracking, the `addAll`/`discard`/`has()` dance from `syncEntries`, the `removeAll` reset, the `dirtCount > 0 → vacuum` rule, and the `clearAll` swap. The shape of `IndexSearchResult` (normalized to [0,1] by dividing by the top result) matches the existing `getMiniSearchScores` post-processing.
+Extracted **verbatim** from `SearchService`'s existing implementation: `createMiniSearch()`, `miniSearchEntryIdsByEntity` tracking, the `addAll`/`discard`/`has()` dance from `syncEntries`, the `removeAll` reset, the `dirtCount > 0 → vacuum` rule, and the `clearAll` swap. `search()` returns raw MiniSearch scores, as `searchKeyword` did; the `max(1, top)` scaling from `getMiniSearchScores` stays in `SearchService.getKeywordScores`.
 
 `SearchService` retains ownership of `staleEntities`, `staleEpochs`, `syncChain`, and the orchestration logic (rebuild, markStale, syncStale, evictCache, rankSemantic). Only the **direct MiniSearch API calls** move out. This is the smallest refactor that introduces the seam.
 
@@ -132,7 +137,7 @@ Operations map as follows:
 
 **`search()` filters by `entity_id` via the `IN (?,?,…)` clause**, mirroring the current `filter: (r) => entityIdSet.has(r.entity_id)` predicate in MiniSearch. Multi-entity reads (the `string[]` overload of `WikiMemory.read`) work without per-entity partitioning.
 
-**Score normalization** — `bm25()` returns negative numbers; we negate them, divide by the maximum result's magnitude, and emit `[0, 1]` to match `MiniSearchIndexStrategy`'s contract. This is what makes `getKeywordScores` produce comparable inputs to `weight * Math.max(0, cosSim) + (1 - weight) * kwScore` in `rankSemantic`.
+**Score sign** — `bm25()` returns negative numbers; we negate them so the result is non-negative and higher-is-better, per the `IndexSearchResult` contract. `getKeywordScores` then applies the same `max(1, top)` scaling it applies to MiniSearch scores before the `weight * Math.max(0, cosSim) + (1 - weight) * kwScore` blend in `rankSemantic`. Negated FTS5 `bm25()` and MiniSearch BM25+ are on similar but not identical scales, so PR-2 must check that the hybrid blend and the keyword-fallback `factScores` stay comparable across strategies.
 
 ### Capability detection (`packages/core/src/services/search/createIndexStrategy.ts`)
 
