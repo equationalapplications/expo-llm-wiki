@@ -1,3 +1,12 @@
+## [7.9.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.9.0...v7.9.1) (2026-10-06)
+
+### Bug Fixes
+
+* **core:** drop implicit 100-result cap in getKeywordScores ([2ca2152](https://github.com/equationalapplications/expo-llm-wiki/commit/2ca21523e75be0255dd74cf0f7501833ae58eae7))
+* **core:** make keyword-index writes atomic and drop non-finite scores ([410eb51](https://github.com/equationalapplications/expo-llm-wiki/commit/410eb514242622a5b629760e94c01c78a087abf8))
+* **core:** make MiniSearchIndexStrategy register tracking and reject cross-entity writes ([c459fde](https://github.com/equationalapplications/expo-llm-wiki/commit/c459fde356b94d51a24f6cda8a7bf03048e8dea2)), closes [#258](https://github.com/equationalapplications/expo-llm-wiki/issues/258)
+* **core:** restore raw keyword scores and entity-scoped discard ([6d1f9f2](https://github.com/equationalapplications/expo-llm-wiki/commit/6d1f9f25a8c613425eb7c3176417906b144772bd))
+
 ## [7.9.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.8.0...v7.9.0) (2026-09-30)
 
 ### Features
