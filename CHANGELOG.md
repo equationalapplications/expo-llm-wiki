@@ -1,3 +1,20 @@
+## [7.10.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.9.2...v7.10.0) (2026-10-06)
+
+### Features
+
+* **core:** add FTS5 ledger, drain and rebuild SQL ([#257](https://github.com/equationalapplications/expo-llm-wiki/issues/257)) ([7a78c73](https://github.com/equationalapplications/expo-llm-wiki/commit/7a78c7384e75d60ea3d79d7709d9d8666311d602))
+* **core:** add FTS5 MATCH query builder ([#257](https://github.com/equationalapplications/expo-llm-wiki/issues/257)) ([b1fab9b](https://github.com/equationalapplications/expo-llm-wiki/commit/b1fab9bba71e6609b7a499b8b923f71f9090f3f0))
+* **core:** add Fts5IndexStrategy init, rebuild and ledger drain ([#257](https://github.com/equationalapplications/expo-llm-wiki/issues/257)) ([d550f54](https://github.com/equationalapplications/expo-llm-wiki/commit/d550f54ae76b796f55414095caf41f89ccb9e702))
+* **core:** add Fts5IndexStrategy search and entity-scoped writes ([#257](https://github.com/equationalapplications/expo-llm-wiki/issues/257)) ([41fb278](https://github.com/equationalapplications/expo-llm-wiki/commit/41fb278d04cf247fccd16d8c453c84762782293d))
+* **core:** add indexStrategy config and resolve it in setup ([#257](https://github.com/equationalapplications/expo-llm-wiki/issues/257)) ([42a8ea4](https://github.com/equationalapplications/expo-llm-wiki/commit/42a8ea47780c380565bbb31a9393b783eed0889b))
+* **core:** resolve keyword-index strategy with FTS5 probe and detach ([#257](https://github.com/equationalapplications/expo-llm-wiki/issues/257)) ([c0c37bf](https://github.com/equationalapplications/expo-llm-wiki/commit/c0c37bf24e5a9db39bc195c20b9ae6f178e03963))
+* **core:** route search sync to the strategy ledger drain ([#257](https://github.com/equationalapplications/expo-llm-wiki/issues/257)) ([e5fbdb3](https://github.com/equationalapplications/expo-llm-wiki/commit/e5fbdb3a97053854abd51d1cf1e60d25e235396b))
+
+### Bug Fixes
+
+* **benchmarks:** capture reopen/query RSS peaks; regenerate fts5-memory result ([#265](https://github.com/equationalapplications/expo-llm-wiki/issues/265)) ([e7ce001](https://github.com/equationalapplications/expo-llm-wiki/commit/e7ce001cd258128ff931b60d864a8cc96e2320e4))
+* **core:** handle FTS5 cross-entity doc and auto init fallback ([#265](https://github.com/equationalapplications/expo-llm-wiki/issues/265)) ([cd05393](https://github.com/equationalapplications/expo-llm-wiki/commit/cd05393db5af99efc354eba3a20875d644d72e91))
+
 ## [7.9.2](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.9.1...v7.9.2) (2026-10-06)
 
 ### Bug Fixes
