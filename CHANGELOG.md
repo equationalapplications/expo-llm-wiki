@@ -1,3 +1,14 @@
+## [7.11.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.10.1...v7.11.0) (2026-10-07)
+
+### Features
+
+* **core:** default keyword index to FTS5 when available ([#257](https://github.com/equationalapplications/expo-llm-wiki/issues/257)) ([a1fd152](https://github.com/equationalapplications/expo-llm-wiki/commit/a1fd1526687ef2483919c21e26af7e9d358ce453))
+
+### Bug Fixes
+
+* **benchmarks:** cache prepared statements in the bench adapter ([#257](https://github.com/equationalapplications/expo-llm-wiki/issues/257)) ([eed12c6](https://github.com/equationalapplications/expo-llm-wiki/commit/eed12c68f085af71940508a43aa1c551f783dbe3))
+* **benchmarks:** evict one LRU statement instead of clearing the cache ([#257](https://github.com/equationalapplications/expo-llm-wiki/issues/257)) ([e2cef7d](https://github.com/equationalapplications/expo-llm-wiki/commit/e2cef7d13440d7e4299fc4fe70025a3016a5ef5d))
+
 ## [7.10.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.10.0...v7.10.1) (2026-10-07)
 
 ### Bug Fixes
