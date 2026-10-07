@@ -1,5 +1,5 @@
 // packages/benchmarks/src/fts5Memory.ts
-import { existsSync, mkdtempSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { WikiMemory } from '@equationalapplications/core-llm-wiki';
@@ -22,10 +22,12 @@ const sample = () => { peak = Math.max(peak, process.memoryUsage().rss); };
 const timer = setInterval(sample, 100);
 const mib = (b: number) => Math.round(b / 1048576);
 // WAL mode keeps recent writes in the -wal sidecar until checkpoint, so the main file alone under-reports size.
-const dbBytes = (f: string) => statSync(f).size + (existsSync(`${f}-wal`) ? statSync(`${f}-wal`).size : 0);
+// A single non-throwing stat: a checkpoint can remove the sidecar at any moment.
+const dbBytes = (f: string) => statSync(f).size + (statSync(`${f}-wal`, { throwIfNoEntry: false })?.size ?? 0);
 
 // searchKeyword is reached through __testAccess, which warns outside NODE_ENV=test.
-process.env.NODE_ENV ??= 'test';
+// Forced (not defaulted): this standalone script has no other NODE_ENV reader.
+process.env.NODE_ENV = 'test';
 
 let seed = 257;
 const rand = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
