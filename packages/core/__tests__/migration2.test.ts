@@ -6,6 +6,9 @@ import type { WikiOptions } from '../src/types';
 
 const stubOptions: WikiOptions = {
   llmProvider: { generateText: async () => '{}' },
+  // These tests assert the migration-owned schema; pin MiniSearch so the
+  // default 'auto' strategy does not add FTS5 objects or probe SQL.
+  config: { indexStrategy: 'minisearch' },
 };
 
 async function makeV1Db() {
