@@ -313,7 +313,7 @@ export class WikiMemory {
         this.db,
         this.prefix,
         this.metadataRepo,
-        this.options.config?.indexStrategy ?? 'minisearch',
+        this.options.config?.indexStrategy ?? 'auto',
       ),
     );
     // FTS5: drains the ledger (no global read). MiniSearch: full rebuild, as before.

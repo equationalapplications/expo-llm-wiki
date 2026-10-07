@@ -15,7 +15,7 @@ Platform-agnostic TypeScript engine for hybrid LLM memory. Features episodic fac
 
 - **Platform-agnostic** — Zero runtime dependencies; works with any SQLite driver via the `SQLiteAdapter` interface
 - **Semantic search** — Vector embeddings via your LLM's `embed` function, ranked by cosine similarity
-- **Keyword fallback** — [MiniSearch](https://github.com/lucaong/minisearch) in-memory index for offline/degraded scenarios when embeddings unavailable
+- **Keyword fallback** — SQLite FTS5 index stored in the database file, or an in-memory [MiniSearch](https://github.com/lucaong/minisearch) index where FTS5 is unavailable (see `indexStrategy`), for offline/degraded scenarios when embeddings unavailable
 - **Retrieval tuning** — Per-call overrides for `maxResults`, `preFilterLimit`, `hybridWeight`, `tierWeights`, `tierFloors`, and `includeZeroWeightEntities`
 - **Multi-entity reads** — Search across multiple `entity_id` namespaces in one pass with per-entity score multipliers (`tierWeights`); `tierFloors` reserves each namespace's top-N matching results; optional `factScores` and `metadata` for explainability
 - **Immutable vs mutable facts** — Use `WikiFact.source_type` to distinguish document-sourced facts (`immutable_document`) from derived or user-provided facts (`librarian_inferred`, `user_stated`, `user_confirmed`). Immutable document facts are not rewritten by `runLibrarian()` or `runHeal()` and can only be removed by `forget()` or re-ingesting.
@@ -35,7 +35,7 @@ Platform-agnostic TypeScript engine for hybrid LLM memory. Features episodic fac
 | Mode | API | Best for |
 |---|---|---|
 | **Semantic** (vector cosine) | `wiki.read(entityId, query)` with `embed` configured | Open-ended natural-language questions; "what do I know about X" |
-| **Keyword** (MiniSearch) | `wiki.read(entityId, query)` with `embed` absent or offline | Exact terms, identifiers, names; offline fallback |
+| **Keyword** (FTS5 or MiniSearch) | `wiki.read(entityId, query)` with `embed` absent or offline | Exact terms, identifiers, names; offline fallback |
 | **GraphRAG** (recursive CTE) | `wiki.traverseGraph(entityId, options)` + `formatGraphContext(result)` | Structural questions; "what connects to X", "everything two hops from this fact", "summarise the people, places, and projects linked to Alice" |
 
 The GraphRAG path is structurally distinct: it doesn't rank by relevance to a query string, it walks `llm_wiki_edges` from a known anchor fact. The result is dense and connected — subgraphs, not loose top-K hits.
@@ -183,7 +183,7 @@ const memory = await wikiMemory.read('user-123', 'What should I do this weekend?
 // E.g., fact "Saturday hiking trip" ranks high even though no lexical overlap
 ```
 
-When `embed` is unavailable, `read()` silently falls back to MiniSearch keyword search. If an embedding attempt throws, `read()` falls back and calls `onRetrievalFallback` if provided:
+When `embed` is unavailable, `read()` silently falls back to keyword search. If an embedding attempt throws, `read()` falls back and calls `onRetrievalFallback` if provided:
 
 ```typescript
 const wikiMemory = new WikiMemory(db, {
@@ -196,8 +196,8 @@ const wikiMemory = new WikiMemory(db, {
   },
 });
 
-// read() returns MiniSearch results, onRetrievalFallback not called (embed absent is expected)
-// read() returns MiniSearch results, onRetrievalFallback called (embed threw)
+// read() returns keyword results, onRetrievalFallback not called (embed absent is expected)
+// read() returns keyword results, onRetrievalFallback called (embed threw)
 ```
 
 ### Token budgets
@@ -229,15 +229,16 @@ const wikiMemory = new WikiMemory(db, {
     pruneEventsAfter: 30,              // default: 30 (days before hard-deleting old events)
     orphanAfterDays: 30,               // default: 30 (days before runHeal flags sourceless facts; null to disable)
     staleInferredAfterDays: 60,        // default: 60 (days before runHeal downgrades inferred facts; null to disable)
-    preFilterLimit: 50,                // default: undefined — MiniSearch pre-filter before cosine scan; recommended for >500 facts
+    preFilterLimit: 50,                // default: undefined — keyword pre-filter before cosine scan; recommended for >500 facts
     hybridWeight: 0.7,                 // default: undefined — blend semantic (1.0) ↔ keyword (0.0); pure semantic when unset
     // Keyword-index backend (#257): 'fts5' stores the index inside the database file, fed by triggers on the
     // entries table, so memory stays flat at any size; setup() throws if the adapter's SQLite lacks FTS5 or json1.
-    // 'minisearch' (default) keeps the in-RAM MiniSearch index; 'auto' probes at setup() and uses FTS5 when present,
-    // else MiniSearch. The first setup() that attaches FTS5 to an existing database rebuilds the index in one
-    // transaction, holding the write lock for its whole duration. Server deployments with large databases should
-    // set 'fts5' (or 'auto'); MiniSearch memory grows with total stored text.
-    indexStrategy: 'minisearch',       // default: 'minisearch' — 'fts5' | 'minisearch' | 'auto'
+    // 'minisearch' keeps the in-RAM MiniSearch index, whose memory grows with total stored text; 'auto' (default)
+    // probes at setup() and uses FTS5 when present, else MiniSearch (e.g. sql.js, which ships without FTS5).
+    // The first setup() that attaches FTS5 to an existing database rebuilds the index in one transaction, holding
+    // the write lock for its whole duration. Keyword rankings differ between the two backends; set 'minisearch'
+    // to keep the pre-7.11 behavior.
+    indexStrategy: 'auto',             // default: 'auto' — 'fts5' | 'minisearch' | 'auto'
     enableOutbox: false,               // default: false — when true, entry/task mutations write to an internal SQLite outbox table for external sync (e.g. via @equationalapplications/prisma-outbox)
     excludeDrafts: false,              // default: false — engine default for read()/traverseGraph() excludeDrafts; see Draft Review
     grounding: { mode: 'off' },        // default: off — 'draft' checks evidence quotes; see Grounding
@@ -400,7 +401,7 @@ True cosine-range pure semantic ranking (including negative cosine values) is us
 - Tasks are capped at `min(20 × entityCount, 200)`; events at `min(10 × entityCount, 100)` for multi-entity reads.
 
 **Pre-filtering optimization:**
-When `preFilterLimit: 50` is set with 1000 facts, cosine similarity is computed only for the top 50 MiniSearch keyword matches, reducing O(N) scoring to O(50).
+When `preFilterLimit: 50` is set with 1000 facts, cosine similarity is computed only for the top 50 keyword matches, reducing O(N) scoring to O(50).
 
 ## Draft Review
 

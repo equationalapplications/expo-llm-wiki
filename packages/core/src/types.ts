@@ -337,7 +337,7 @@ export interface WikiConfig {
    * entries table, so memory stays flat at any size. The first `setup()` that
    * attaches FTS5 to an existing database rebuilds the index in one
    * transaction, holding the write lock for its whole duration.
-   * @default 'minisearch'
+   * @default 'auto'
    */
   indexStrategy?: 'fts5' | 'minisearch' | 'auto';
   /** Default minimum confidence tier for discovered traversal nodes. Default 'tentative'. */

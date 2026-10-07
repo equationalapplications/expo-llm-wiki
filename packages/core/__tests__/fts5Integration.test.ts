@@ -90,3 +90,17 @@ describe('FTS5 end to end', () => {
     expect(JSON.stringify(bundle)).toContain('cedar node 0 0');
   });
 });
+
+describe('default strategy', () => {
+  it('is auto: FTS5 on better-sqlite3 with no config', async () => {
+    const db = openTestDatabase();
+    const wiki = new WikiMemory(db, llm);
+    await wiki.setup();
+    const { Fts5IndexStrategy } = await import('../src/services/search/Fts5IndexStrategy');
+    expect((wiki.__testAccess.searchService as any).indexStrategy).toBeInstanceOf(Fts5IndexStrategy);
+    // Smoke: the default-wired index is actually fed and queryable.
+    await upsert(wiki, db, 'e1', 0, 3);
+    await wiki.syncSearchIndex('e1');
+    expect(await hits(wiki, 'cedar')).toEqual(['n0_0', 'n0_1', 'n0_2']);
+  });
+});

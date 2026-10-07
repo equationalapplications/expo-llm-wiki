@@ -143,6 +143,11 @@ describe('VectorRanker integration', () => {
           embed: async (t) => keywordEmbed(t),
         },
         vectorRanker: mockRanker,
+        // Pinned: in a 2-fact corpus FTS5's bm25 IDF for a term in 1 of 2
+        // docs is ln(1.5/1.5) = 0, which SQLite clamps to ~1e-6, so the
+        // max(1, top) scaling leaves almost no keyword weight to blend. The
+        // blend math is what is under test, so use MiniSearch's BM25+ scores.
+        config: { indexStrategy: 'minisearch' },
       });
       await wiki.setup();
       await wiki.importDump(makeDump([
@@ -498,8 +503,9 @@ describe('VectorRanker integration', () => {
         vectorRankerFallback: 'keyword',
       });
       await wiki.setup();
-      // Three apple facts: MiniSearch ranks them so fact-a wins the top-1.
-      // Without the fix the fallback would search all three and return >1.
+      // Three apple facts tie on the term; which one wins the top-1 is up to
+      // the keyword backend. Without the fix the fallback would search all
+      // three and return >1.
       await wiki.importDump(makeDump([
         { id: 'fact-a', title: 'apple fruit', body: 'red and green' },
         { id: 'fact-b', title: 'apple orchard', body: 'trees and bees' },
@@ -507,7 +513,7 @@ describe('VectorRanker integration', () => {
       ]));
 
       const result = await wiki.read('user-1', 'apple', { maxResults: 5 });
-      expect(result.facts.map(f => f.id)).toEqual(['fact-a']);
+      expect(result.facts).toHaveLength(1);
     });
 
     it('keyword fallback honors a tier floor beyond the oversampling window when ranker fails', async () => {

@@ -3,10 +3,10 @@
   "targetMiB": 500,
   "dbMiB": 501,
   "batches": 240,
-  "buildPeakRssMiB": 1837,
-  "reopenPeakRssMiB": 1564,
-  "queryPeakRssMiB": 1566,
-  "drainMsFirstDecile": 29,
-  "drainMsLastDecile": 35,
-  "pass": false
+  "buildPeakRssMiB": 159,
+  "reopenPeakRssMiB": 161,
+  "queryPeakRssMiB": 163,
+  "drainMsFirstDecile": 30,
+  "drainMsLastDecile": 34,
+  "pass": true
 }

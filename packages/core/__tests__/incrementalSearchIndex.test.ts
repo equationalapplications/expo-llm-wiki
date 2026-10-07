@@ -35,7 +35,9 @@ function dumpOf(facts: WikiFact[]): MemoryDump {
 
 async function freshWiki(generateText: () => Promise<string> = async () => '{"facts":[]}') {
   const db = openTestDatabase();
-  const wiki = new WikiMemory(db, { llmProvider: { generateText } });
+  // Pinned: these tests count MiniSearch's per-entity read-backs. FTS5 reads
+  // nothing back (the trigger ledger drains in SQL; see fts5Integration).
+  const wiki = new WikiMemory(db, { llmProvider: { generateText }, config: { indexStrategy: 'minisearch' } });
   await wiki.setup();
   return { wiki, db };
 }
