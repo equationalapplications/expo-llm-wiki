@@ -1,3 +1,11 @@
+## [7.10.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.10.0...v7.10.1) (2026-10-07)
+
+### Bug Fixes
+
+* **benchmarks:** capture fts5-memory dbMiB before close ([2a5c817](https://github.com/equationalapplications/expo-llm-wiki/commit/2a5c81708efc3849b42a92d3a80fde500d5e6b88))
+* **benchmarks:** race-free WAL stat and forced NODE_ENV in fts5-memory ([#265](https://github.com/equationalapplications/expo-llm-wiki/issues/265)) ([aac366e](https://github.com/equationalapplications/expo-llm-wiki/commit/aac366eb0381884fba57a7afedb3989dda658bb5))
+* **core:** compute bm25 once per row; count WAL in fts5-memory benchmark ([#265](https://github.com/equationalapplications/expo-llm-wiki/issues/265)) ([d22a887](https://github.com/equationalapplications/expo-llm-wiki/commit/d22a88755bb45f99972d6c32bcf1798105772cc2))
+
 ## [7.10.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.9.2...v7.10.0) (2026-10-06)
 
 ### Features
