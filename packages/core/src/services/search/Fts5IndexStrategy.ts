@@ -95,7 +95,9 @@ export class Fts5IndexStrategy implements IndexStrategy {
     const limit = cap >= Number.MAX_SAFE_INTEGER ? -1 : cap;
     const t = `${this.prefix}entries_fts`;
     // bm25 is evaluated once per matching row in the inner query; the outer
-    // SELECT only clamps and negates it.
+    // SELECT only clamps and negates it. The outer ORDER BY is kept because SQL
+    // does not guarantee a subquery's order survives into the outer query; it
+    // sorts at most `limit` rows.
     return this.db.getAllAsync<IndexSearchResult>(
       `SELECT id, entity_id, max(0.0, -raw) AS score FROM (
          SELECT id, entity_id, bm25(${t}, 0.0, 0.0, 2.0, 1.0, 1.0) AS raw

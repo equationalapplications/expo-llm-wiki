@@ -22,7 +22,9 @@ const sample = () => { peak = Math.max(peak, process.memoryUsage().rss); };
 const timer = setInterval(sample, 100);
 const mib = (b: number) => Math.round(b / 1048576);
 // WAL mode keeps recent writes in the -wal sidecar until checkpoint, so the main file alone under-reports size.
-// A single non-throwing stat: a checkpoint can remove the sidecar at any moment.
+// The sidecar persists until the last connection closes (checkpoints rewind it, not remove it), so the two
+// stats can only over-count by at most one WAL's worth, bounded by auto-checkpoint. The WAL stat is
+// non-throwing because the sidecar does not exist before the first write.
 const dbBytes = (f: string) => statSync(f).size + (statSync(`${f}-wal`, { throwIfNoEntry: false })?.size ?? 0);
 
 // searchKeyword is reached through __testAccess, which warns outside NODE_ENV=test.
