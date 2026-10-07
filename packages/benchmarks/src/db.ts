@@ -11,10 +11,12 @@ export interface OpenDbResult {
  * - No argument (or undefined): in-memory database.
  * - With a file path: file-backed database with WAL journal mode.
  *
- * Body copied verbatim from `packages/integration/helpers/db.ts` so the
- * benchmarks share the integration package's adapter shape; only file-mode
- * adds `journal_mode = WAL` for better concurrent-read performance during
- * LongMemEval runs.
+ * Same adapter shape as `packages/integration/helpers/db.ts`, with two
+ * additions: file-mode sets `journal_mode = WAL` for better concurrent-read
+ * performance during LongMemEval runs, and prepared statements are cached by
+ * SQL text. Preparing per call leaves native statement memory that V8's GC
+ * does not see, so RSS grew ~3.5x the database size in fts5-memory runs
+ * (#257) and the benchmark measured the adapter instead of the engine.
  */
 export function openDb(file?: string): OpenDbResult {
   const db = new Database(file ?? ':memory:');
@@ -22,21 +24,33 @@ export function openDb(file?: string): OpenDbResult {
     db.pragma('journal_mode = WAL');
   }
 
+  // Bounded: IN (?,?,…) lists make the SQL text vary with list length.
+  const stmts = new Map<string, Database.Statement>();
+  const prepare = (sql: string): Database.Statement => {
+    let stmt = stmts.get(sql);
+    if (!stmt) {
+      if (stmts.size >= 512) stmts.clear();
+      stmt = db.prepare(sql);
+      stmts.set(sql, stmt);
+    }
+    return stmt;
+  };
+
   const adapter: SQLiteAdapter = {
     async execAsync(sql: string): Promise<void> {
       db.exec(sql);
     },
     async runAsync(sql: string, args: unknown[] = []): Promise<{ changes: number; lastInsertRowId: number }> {
-      const stmt = db.prepare(sql);
+      const stmt = prepare(sql);
       const info = stmt.run(...(args as any[]));
       return { changes: info.changes, lastInsertRowId: Number(info.lastInsertRowid) };
     },
     async getAllAsync<T>(sql: string, args: unknown[] = []): Promise<T[]> {
-      const stmt = db.prepare(sql);
+      const stmt = prepare(sql);
       return stmt.all(...(args as any[])) as T[];
     },
     async getFirstAsync<T>(sql: string, args: unknown[] = []): Promise<T | null> {
-      const stmt = db.prepare(sql);
+      const stmt = prepare(sql);
       const row = stmt.get(...(args as any[]));
       return (row ?? null) as T | null;
     },
