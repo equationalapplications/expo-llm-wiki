@@ -6,17 +6,40 @@ export interface OpenDbResult {
   close(): void;
 }
 
+// IN (?,?,…) lists make the SQL text vary with list length, so the cache is
+// bounded; the cap leaves room for many list lengths before eviction starts.
+const STATEMENT_CACHE_SIZE = 512;
+
+/** LRU cache of prepared statements keyed by SQL text. */
+function statementCache(db: Database.Database): (sql: string) => Database.Statement {
+  // Map iterates in insertion order: re-inserting on a hit keeps the
+  // least-recently-used key first, so eviction drops one cold entry rather
+  // than the whole hot set.
+  const stmts = new Map<string, Database.Statement>();
+  return (sql) => {
+    let stmt = stmts.get(sql);
+    if (stmt) {
+      stmts.delete(sql);
+    } else {
+      if (stmts.size >= STATEMENT_CACHE_SIZE) stmts.delete(stmts.keys().next().value!);
+      stmt = db.prepare(sql);
+    }
+    stmts.set(sql, stmt);
+    return stmt;
+  };
+}
+
 /**
  * Open a SQLite database for benchmarks.
  * - No argument (or undefined): in-memory database.
  * - With a file path: file-backed database with WAL journal mode.
  *
- * Same adapter shape as `packages/integration/helpers/db.ts`, with two
- * additions: file-mode sets `journal_mode = WAL` for better concurrent-read
- * performance during LongMemEval runs, and prepared statements are cached by
- * SQL text. Preparing per call leaves native statement memory that V8's GC
- * does not see, so RSS grew ~3.5x the database size in fts5-memory runs
- * (#257) and the benchmark measured the adapter instead of the engine.
+ * Same adapter shape as `packages/integration/helpers/db.ts`, plus file-mode
+ * sets `journal_mode = WAL` for better concurrent-read performance during
+ * LongMemEval runs. Both cache prepared statements by SQL text: preparing per
+ * call leaves native statement memory that V8's GC does not see, so RSS grew
+ * ~3.5x the database size in fts5-memory runs (#257) and the benchmark
+ * measured the adapter instead of the engine.
  */
 export function openDb(file?: string): OpenDbResult {
   const db = new Database(file ?? ':memory:');
@@ -24,17 +47,7 @@ export function openDb(file?: string): OpenDbResult {
     db.pragma('journal_mode = WAL');
   }
 
-  // Bounded: IN (?,?,…) lists make the SQL text vary with list length.
-  const stmts = new Map<string, Database.Statement>();
-  const prepare = (sql: string): Database.Statement => {
-    let stmt = stmts.get(sql);
-    if (!stmt) {
-      if (stmts.size >= 512) stmts.clear();
-      stmt = db.prepare(sql);
-      stmts.set(sql, stmt);
-    }
-    return stmt;
-  };
+  const prepare = statementCache(db);
 
   const adapter: SQLiteAdapter = {
     async execAsync(sql: string): Promise<void> {
