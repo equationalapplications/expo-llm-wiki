@@ -61,15 +61,10 @@ updates:
 # Re-opening of a registered alert = register review trigger, not noise.
 # Entries:
 # - tar|48, tar|72, tar|73, tar|74, tar|75, tar|78, tar|133, tar|134, tar|135,
-#   tar|136, tar|137, tar|138: deferred — the alerts are real. Every tar 7
-#   consumer resolves tar@7.5.22 via the 'tar@<7.5.21' floor, but the scoped
-#   'fastembed>tar: 6.2.1' override in pnpm-workspace.yaml keeps tar@6.2.1 in
-#   pnpm-lock.yaml (fastembed 2.1.0 default-imports tar, which tar 7 lacks),
-#   and 6.2.1 is inside every one of these ranges. Reach is limited to the
-#   private packages/benchmarks + packages/integration, where fastembed only
-#   extracts its own Hugging Face model archive. Parent fix: fastembed 3.0.0
-#   drops tar (issue #254, clears the age gate 2026-10-08). On that bump,
-#   remove the override and these entries.
+#   tar|136, tar|137, tar|138: fixed-awaiting-scan — fastembed 3.0.0 (#254)
+#   dropped its tar dependency, so the 'fastembed>tar: 6.2.1' override and
+#   tar@6.2.1 are gone from pnpm-lock.yaml. Remove this entry once Dependabot
+#   closes the alerts on main.
 #   GHSAs (alert numbers can be reassigned; these are the stable handles):
 #   48 vmf3-w455-68vh, 72 8x88-c5mf-7j5w, 73 w8wr-v893-vjvp, 74 gvwx-54wh-qm9j,
 #   75 23hp-3jrh-7fpw, 78 r292-9mhp-454m, 133 8qq5-rm4j-mr97,

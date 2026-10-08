@@ -68,7 +68,8 @@ jobs:
           # GHSA-68fv-2mgg-jv7q: source-map-js <1.2.2 event-loop DoS via indexed
           # source-map offsets (expo-sqlite > expo > @expo/metro-config > postcss).
           # 1.2.2 was published 2026-09-30 and clears the 14-day minimumReleaseAge
-          # gate on 2026-10-14; replace this entry with an override then.
+          # gate at 14:08 UTC 2026-10-14, so its expiry is 2026-10-15 (expiry
+          # is a whole UTC day); replace this entry with an override then.
           # GHSA-pqg4-j6r4-53mv: shell-quote <1.11.0 `quote()` command injection
           # via a line terminator in a token after a `{ comment }` token. Reach:
           # expo-sqlite > react-native > react-devtools-core > shell-quote.
@@ -82,7 +83,7 @@ jobs:
           # override is added to pnpm-workspace.yaml or the lockfile is
           # refreshed past the patched version. Add an entry here for
           # every date-bounded GHSA in AUDIT_ALLOWLIST above.
-          AUDIT_ALLOWLIST_EXPIRY: '{"GHSA-68fv-2mgg-jv7q": "2026-10-14", "GHSA-pqg4-j6r4-53mv": "2026-10-20"}'
+          AUDIT_ALLOWLIST_EXPIRY: '{"GHSA-68fv-2mgg-jv7q": "2026-10-15", "GHSA-pqg4-j6r4-53mv": "2026-10-20"}'
         run: |
           set -o pipefail
           pnpm audit --prod --audit-level=high --json > /tmp/audit.json || true
@@ -154,21 +155,23 @@ jobs:
       - name: Audit (fail only on advisories with an upstream patch)
         env:
           # Allowlisted GHSA ids, comma-separated. Keep minimal + commented.
-          # The fastembed-pinned tar 6.2.1 chain has known-but-not-applicable
-          # advisories (crafted-archive DoS); fastembed only extracts its own
-          # model archive from Hugging Face, never attacker-controlled input.
-          # Remove when fastembed ships a tar-7-compatible release.
           # GHSA-68fv-2mgg-jv7q (source-map-js, via postcss): patched 1.2.2 is
-          # still inside the age gate until 2026-10-14 — see the step above.
+          # still inside the age gate until 14:08 UTC 2026-10-14 — see the step above.
           # GHSA-pqg4-j6r4-53mv (shell-quote, via react-devtools-core): patched
           # 1.11.0 is still inside the age gate until 2026-10-20 — see the step above.
-          AUDIT_ALLOWLIST: "GHSA-34x7-hfp2-rc4v,GHSA-8qq5-rm4j-mr97,GHSA-83g3-92jg-28cx,GHSA-qffp-2rhf-9h96,GHSA-9ppj-qmqm-q256,GHSA-r6q2-hw4h-h46w,GHSA-23hp-3jrh-7fpw,GHSA-8x88-c5mf-7j5w,GHSA-r292-9mhp-454m,GHSA-68fv-2mgg-jv7q,GHSA-pqg4-j6r4-53mv" # fastembed's transitive tar 6.2.1 — scoped exception `'fastembed>tar': 6.2.1` in pnpm-workspace.yaml
+          # GHSA-8r5x-fm3f-whwj / GHSA-p8wg-vrv2-v86f (handlebars, JS injection
+          # via compile): patched 4.7.10 published 2026-10-05, clears the age
+          # gate 22:37 UTC 2026-10-19, so expiry is 2026-10-20 (expiry is a whole
+          # UTC day) — replace these entries with an override then.
+          # Reach is dev-only: semantic-release > conventional-changelog-writer,
+          # which compiles trusted repo templates.
+          AUDIT_ALLOWLIST: "GHSA-68fv-2mgg-jv7q,GHSA-pqg4-j6r4-53mv,GHSA-8r5x-fm3f-whwj,GHSA-p8wg-vrv2-v86f" # all still inside the minimumReleaseAge gate; replace with overrides on their dates
           # Mirrors the expiry map in the earlier audit step. An entry
           # past its expiry date is removed from the allowlist before
           # the fixable/unfixable split below; if any expired entry
           # remains, this step exits 1 to force the lockfile refresh or
           # override addition.
-          AUDIT_ALLOWLIST_EXPIRY: '{"GHSA-68fv-2mgg-jv7q": "2026-10-14", "GHSA-pqg4-j6r4-53mv": "2026-10-20"}'
+          AUDIT_ALLOWLIST_EXPIRY: '{"GHSA-68fv-2mgg-jv7q": "2026-10-15", "GHSA-pqg4-j6r4-53mv": "2026-10-20", "GHSA-8r5x-fm3f-whwj": "2026-10-20", "GHSA-p8wg-vrv2-v86f": "2026-10-20"}'
         shell: bash
         run: |
           set -e
