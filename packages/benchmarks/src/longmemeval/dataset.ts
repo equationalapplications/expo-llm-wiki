@@ -7,7 +7,7 @@
  * cache when present and falls back to a single `fetch` otherwise.
  */
 
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'fs';
+import { assertHttps, readCached, writeFileAtomic } from '../fsSafe';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -51,6 +51,60 @@ export interface LoadDatasetOpts {
 
 type FetchLike = (input: string, init?: { method?: string }) => Promise<Response>;
 
+const QUESTION_TYPES: ReadonlySet<string> = new Set<LmeQuestionType>([
+  'single-session-user',
+  'single-session-assistant',
+  'single-session-preference',
+  'multi-session',
+  'temporal-reasoning',
+  'knowledge-update',
+]);
+
+const isString = (v: unknown): v is string => typeof v === 'string';
+
+function toTurn(v: unknown): LmeTurn | null {
+  if (typeof v !== 'object' || v === null) return null;
+  const { role, content } = v as Record<string, unknown>;
+  if ((role !== 'user' && role !== 'assistant') || !isString(content)) return null;
+  return { role, content };
+}
+
+/**
+ * Validates the parsed dataset and rebuilds each row from known fields only, so
+ * network data is never written to the cache verbatim (CodeQL js/http-to-file-access).
+ * Some upstream answers are numbers; they are normalised to strings.
+ */
+export function validateDataset(raw: unknown): LmeQuestion[] {
+  if (!Array.isArray(raw)) throw new Error('LongMemEval dataset is not an array');
+  return raw.map((v, i) => {
+    const fail = (field: string): never => {
+      throw new Error(`LongMemEval row ${i}: ${field}`);
+    };
+    if (typeof v !== 'object' || v === null) fail('not an object');
+    const r = v as Record<string, unknown>;
+    if (!isString(r.question_id)) fail('question_id');
+    if (!isString(r.question_type) || !QUESTION_TYPES.has(r.question_type)) fail('question_type');
+    if (!isString(r.question)) fail('question');
+    if (!isString(r.answer) && !(typeof r.answer === 'number' && Number.isFinite(r.answer))) fail('answer');
+    if (!isString(r.question_date)) fail('question_date');
+    if (!Array.isArray(r.haystack_dates) || !r.haystack_dates.every(isString)) fail('haystack_dates');
+    if (!Array.isArray(r.haystack_sessions)) fail('haystack_sessions');
+    const sessions = (r.haystack_sessions as unknown[]).map((s) => {
+      if (!Array.isArray(s)) return fail('haystack_sessions');
+      return s.map((t) => toTurn(t) ?? fail('haystack_sessions'));
+    });
+    return {
+      question_id: r.question_id as string,
+      question_type: r.question_type as LmeQuestionType,
+      question: r.question as string,
+      answer: String(r.answer),
+      question_date: r.question_date as string,
+      haystack_dates: [...(r.haystack_dates as string[])],
+      haystack_sessions: sessions,
+    };
+  });
+}
+
 /**
  * Load the LongMemEval_S dataset. Reuses `${cacheDir}/longmemeval_s.json`
  * when present; otherwise fetches once and writes the file to the cache.
@@ -63,25 +117,24 @@ export async function loadDataset(opts: LoadDatasetOpts = {}): Promise<LmeQuesti
   const fetchImpl = (opts.fetchImpl ?? fetch) as FetchLike;
   const cacheFile = join(cacheDir, 'longmemeval_s.json');
 
-  if (existsSync(cacheFile)) {
-    return JSON.parse(readFileSync(cacheFile, 'utf8')) as LmeQuestion[];
-  }
+  const cached = readCached(cacheFile);
+  if (cached !== null) return validateDataset(JSON.parse(cached));
 
+  assertHttps(url);
   const response = await fetchImpl(url);
   if (!response.ok) {
     throw new Error(`LongMemEval fetch failed: HTTP ${response.status}`);
   }
-  const text = await response.text();
-  let parsed: LmeQuestion[];
+  let parsed: unknown;
   try {
-    parsed = JSON.parse(text) as LmeQuestion[];
+    parsed = JSON.parse(await response.text());
   } catch (e) {
     throw new Error(`LongMemEval response was not valid JSON: ${(e as Error).message}`);
   }
 
-  mkdirSync(dirname(cacheFile), { recursive: true });
-  writeFileSync(cacheFile, text);
-  return parsed;
+  const questions = validateDataset(parsed);
+  writeFileAtomic(cacheFile, JSON.stringify(questions));
+  return questions;
 }
 
 /**
