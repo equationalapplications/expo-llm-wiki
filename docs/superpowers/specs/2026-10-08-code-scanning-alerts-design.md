@@ -1,7 +1,9 @@
 # Spec: Close the Open CodeQL Code-Scanning Alerts
 
 **Date:** 2026-10-08
-**Status:** Draft
+**Status:** Implemented
+
+**Status revision (2026-10-08, branch fix/code-scanning-alerts):** Shipped by code change. Alerts #1-#17 addressed (ReDoS linear rewrites #1-#10, placeholder strip #11, atomic/validated writes #12-#17); CodeQL closure for all 22 alerts to be confirmed by the PR scan, with #18-#22 eligible for §E dismissal if any survive. Commits 5bb406e..2d95075.
 
 ---
 
