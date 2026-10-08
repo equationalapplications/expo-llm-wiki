@@ -1,3 +1,10 @@
+## [7.11.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.11.0...v7.11.1) (2026-10-08)
+
+### Bug Fixes
+
+* **deps:** bump fastembed to 3.0.0 and serialize-javascript to 7.1.2 ([#254](https://github.com/equationalapplications/expo-llm-wiki/issues/254)) ([a06ad2f](https://github.com/equationalapplications/expo-llm-wiki/commit/a06ad2f154a2e355509c4a0e11cb905d460e3d06)), closes [#141](https://github.com/equationalapplications/expo-llm-wiki/issues/141) [#258](https://github.com/equationalapplications/expo-llm-wiki/issues/258)
+* **deps:** finish fastembed 3 cleanup and fix allowlist expiry days ([#254](https://github.com/equationalapplications/expo-llm-wiki/issues/254)) ([d7b2c57](https://github.com/equationalapplications/expo-llm-wiki/commit/d7b2c579195cb2a8bdbe8099dd17f90a7672c615))
+
 ## [7.11.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.10.1...v7.11.0) (2026-10-07)
 
 ### Features
