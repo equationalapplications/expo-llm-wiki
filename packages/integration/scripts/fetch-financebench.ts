@@ -1,28 +1,15 @@
 // packages/integration/scripts/fetch-financebench.ts
-import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { fileURLToPath } from 'url';
+import { assertHttps, readCached, writeFileAtomic } from './fsSafe';
+import { toFinanceBenchRow } from './datasetGuards';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const FIXTURES = path.join(__dirname, '..', 'fixtures');
 const API = 'https://datasets-server.huggingface.co/rows';
 const DATASET = 'PatronusAI/financebench';
 const SPLIT = 'train';
-
-interface EvidenceItem {
-  evidence_text: string;
-  page_number: number;
-  evidence_file_name: string;
-}
-
-interface FinanceBenchRow {
-  financebench_id: string;
-  question: string;
-  doc_name: string;
-  evidence: EvidenceItem[];
-  answer: string;
-}
 
 interface PageResponse<T> {
   rows: { row: T }[];
@@ -39,8 +26,8 @@ function stableId(docName: string, evidenceText: string): string {
     .slice(0, 16);
 }
 
-async function fetchAllRows(): Promise<FinanceBenchRow[]> {
-  const results: FinanceBenchRow[] = [];
+async function fetchAllRows(): Promise<ReturnType<typeof toFinanceBenchRow>[]> {
+  const results: ReturnType<typeof toFinanceBenchRow>[] = [];
   let offset = 0;
   const length = 100;
   let total = Infinity;
@@ -49,6 +36,7 @@ async function fetchAllRows(): Promise<FinanceBenchRow[]> {
     const url =
       `${API}?dataset=${encodeURIComponent(DATASET)}&config=default` +
       `&split=${SPLIT}&offset=${offset}&length=${length}`;
+    assertHttps(url);
 
     let res: Response | undefined;
     for (let attempt = 0; attempt < 10; attempt++) {
@@ -64,10 +52,10 @@ async function fetchAllRows(): Promise<FinanceBenchRow[]> {
     }
     if (!res || !res.ok) throw new Error(`Failed after retries: ${url}`);
 
-    const data = (await res.json()) as PageResponse<FinanceBenchRow>;
+    const data = (await res.json()) as PageResponse<unknown>;
     total = data.num_rows_total;
     if (data.rows.length === 0) throw new Error(`API returned 0 rows at offset ${offset} of ${total}`);
-    for (const r of data.rows) results.push(r.row);
+    for (const r of data.rows) results.push(toFinanceBenchRow(r.row));
     offset += data.rows.length;
     process.stdout.write(`\r  ${offset}/${total}  `);
     await sleep(800);
@@ -77,13 +65,11 @@ async function fetchAllRows(): Promise<FinanceBenchRow[]> {
 }
 
 async function main() {
-  fs.mkdirSync(FIXTURES, { recursive: true });
-
   const corpusPath = path.join(FIXTURES, 'financebench-corpus.jsonl');
   const queriesPath = path.join(FIXTURES, 'financebench-queries.json');
   const qrelsPath = path.join(FIXTURES, 'financebench-qrels.json');
 
-  if (fs.existsSync(corpusPath) && fs.existsSync(queriesPath) && fs.existsSync(qrelsPath)) {
+  if ([corpusPath, queriesPath, qrelsPath].every((p) => readCached(p) !== null)) {
     console.log('Fixtures already present — delete them to re-fetch.');
     return;
   }
@@ -111,15 +97,14 @@ async function main() {
     qrels[row.financebench_id] = [...new Set(relevantIds)];
   }
 
-  fs.writeFileSync(
+  writeFileAtomic(
     corpusPath,
-    [...corpusMap.values()].map((d) => JSON.stringify(d)).join('\n') + '\n',
-    'utf8'
+    [...corpusMap.values()].map((d) => JSON.stringify(d)).join('\n') + '\n'
   );
   console.log(`  corpus: ${corpusMap.size} unique evidence texts`);
 
-  fs.writeFileSync(queriesPath, JSON.stringify(queries, null, 2), 'utf8');
-  fs.writeFileSync(qrelsPath, JSON.stringify(qrels, null, 2), 'utf8');
+  writeFileAtomic(queriesPath, JSON.stringify(queries, null, 2));
+  writeFileAtomic(qrelsPath, JSON.stringify(qrels, null, 2));
   console.log(`  queries: ${Object.keys(queries).length}`);
   console.log('\nDone. Run embed-financebench.ts next.');
 }
