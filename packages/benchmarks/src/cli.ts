@@ -40,7 +40,7 @@
  * so they can be exercised under test without spawning a child process.
  */
 
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { dirname, isAbsolute, join } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -53,6 +53,7 @@ import { runLongMemEval } from './longmemeval/run';
 import { runSupersession, Scenario } from './supersession/run';
 import { calibrationRows, recommendThresholds, CalibrationRow } from './calibrate';
 import { compareReports } from './compare';
+import { writeFileAtomic } from './fsSafe';
 import { resolveGateConfig } from '../../core/src/services/librarian/ops/gate';
 
 // --------------------------------------------------------------------------
@@ -218,10 +219,6 @@ function defaultResultsDir(): string {
   return join(REPO_ROOT, DEFAULT_RESULTS_DIR);
 }
 
-function ensureDir(file: string): void {
-  mkdirSync(dirname(file), { recursive: true });
-}
-
 /**
  * Handle the `longmemeval` subcommand. Returns the exit code instead of
  * calling `process.exit(...)` so tests can drive it without spawning a child.
@@ -349,8 +346,7 @@ export async function runLongMemEvalCommand(deps: LongMemEvalDeps): Promise<Comm
 
   // Write the report. Default path: `results/raw/longmemeval-<version>-<flagsKey>-<timestamp>.json`.
   const reportFile = outArg ? resolveOutPath(outArg) : join(defaultResultsDir(), `longmemeval-${engine.version}-${flagsKey(flags)}-${nowStamp()}.json`);
-  ensureDir(reportFile);
-  writeFileSync(reportFile, JSON.stringify(report, null, 2));
+  writeFileAtomic(reportFile, JSON.stringify(report, null, 2));
   stdout(`\nWrote report to ${reportFile}\n\n`);
   stdout(renderSummaryTable(report));
   return { exitCode: 0 };
@@ -408,8 +404,7 @@ export async function runSampleCommand(deps: SampleDeps): Promise<CommandResult>
   const payload = JSON.stringify({ seed, dataset: url, ids }, null, 2);
 
   const outFile = deps.outFile ?? join(REPO_ROOT, DEFAULT_SAMPLE_FILE);
-  ensureDir(outFile);
-  writeFileSync(outFile, payload);
+  writeFileAtomic(outFile, payload);
   stdout(`Wrote ${ids.length} ids to ${outFile}\n`);
   return { exitCode: 0 };
 }
@@ -516,8 +511,7 @@ export async function runSupersessionCommand(deps: SupersessionDeps): Promise<Co
   // Default path: `results/raw/supersession-<version>-<strategy>-<timestamp>.json`.
   const engine = await engineInfo();
   const reportFile = outArg ? resolveOutPath(outArg) : join(defaultResultsDir(), `supersession-${engine.version}-${strategy}-${nowStamp()}.json`);
-  ensureDir(reportFile);
-  writeFileSync(reportFile, JSON.stringify(report, null, 2));
+  writeFileAtomic(reportFile, JSON.stringify(report, null, 2));
   stdout(`\nWrote report to ${reportFile}\n\n`);
   stdout(`Supersession (${strategy}): ${report.passed}/${report.total} passed (${report.skipped} liveSkip skipped)\n`);
   return { exitCode: 0 };
@@ -629,8 +623,7 @@ export async function runCalibrateCommand(deps: CalibrateDeps): Promise<CommandR
   // Default path: `results/calibration-<engineVersion>.json` (committed so a
   // follow-up `fix(core)` commit can quote the same numbers).
   const resultFile = outArg ? resolveOutPath(outArg) : join(REPO_ROOT, 'packages', 'benchmarks', 'results', `calibration-${engine.version}.json`);
-  ensureDir(resultFile);
-  writeFileSync(resultFile, JSON.stringify(result, null, 2));
+  writeFileAtomic(resultFile, JSON.stringify(result, null, 2));
   stdout(`Wrote calibration result to ${resultFile}\n`);
   return { exitCode: 0 };
 }
@@ -723,8 +716,7 @@ export async function runCompareCommand(deps: CompareDeps): Promise<CommandResul
   const md = compareReports(beforeReport, afterReport);
   if (outArg) {
     const outFile = resolveOutPath(outArg);
-    ensureDir(outFile);
-    writeFileSync(outFile, md);
+    writeFileAtomic(outFile, md);
     stdout(`Wrote comparison to ${outFile}\n`);
   } else {
     stdout(md);
