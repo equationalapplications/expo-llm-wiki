@@ -535,3 +535,34 @@ describe('parseOkfBundle — log and round-trip', () => {
     }
   });
 });
+
+describe('parseOkfBundle — linear-time log lines (CodeQL #1 #8)', () => {
+  const logFiles = (logMd: string): OkfFile[] => [
+    conceptFile('entities/alice/facts/fact_aaa.md', { type: 'fact', title: 'A', id: 'fact_aaa' }),
+    { path: 'entities/alice/log.md', content: logMd },
+  ];
+
+  it('round-trips an escaped linked summary', () => {
+    const events = parseOkfBundle(
+      'alice',
+      logFiles(buildLogMd([{ date: '2023-11-14', text: '(observation) [a\\\\b \\[x\\]](./facts/fact_aaa.md)' }])),
+    ).entities.alice.events;
+    expect(events[0].summary).toBe('a\\b [x]');
+    expect(events[0].related_entry_id).toBe('fact_aaa');
+  });
+
+  it('escaped-summary attack completes in bounded time (#8)', () => {
+    const t0 = performance.now();
+    parseOkfBundle('alice', logFiles('## 2023-11-14\n\n- (()[' + '\\\\'.repeat(50_000) + '\n'));
+    expect(performance.now() - t0).toBeLessThan(500);
+  });
+
+  it('tightening: an unescaped "[" in a linked summary falls back to a plain summary', () => {
+    const events = parseOkfBundle(
+      'alice',
+      logFiles(buildLogMd([{ date: '2023-11-14', text: '(observation) [a[b](./facts/fact_aaa.md)' }])),
+    ).entities.alice.events;
+    expect(events[0].summary).toBe('[a[b](./facts/fact_aaa.md)');
+    expect(events[0].related_entry_id).toBeNull();
+  });
+});

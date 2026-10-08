@@ -164,7 +164,8 @@ function unescapeLogSummary(summary: string): string {
   return summary.replace(/\\\]/g, ']').replace(/\\\[/g, '[').replace(/\\\\/g, '\\');
 }
 
-const LOG_LINE_PATTERN = /^\(([^)]+)\)\s*(?:\[((?:\\.|[^\]])*)\]\(([^)]+)\)|(.+))$/;
+// linear: label group cannot start a plain char on `\` or `[` (closes CodeQL #8); plain branch starts on \S (closes CodeQL #1)
+const LOG_LINE_PATTERN = /^\(([^)]+)\)\s*(?:\[((?:\\.|[^\[\]\\])*)\]\(([^)]+)\)|(\S.*))$/;
 
 function parseLogEntryText(text: string): {
   event_type: WikiEvent['event_type'];
