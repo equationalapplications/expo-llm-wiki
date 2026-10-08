@@ -41,3 +41,52 @@ describe('entity index md', () => {
     expect(parseEntityIndexMd(content).summary).toBe('Summary line.');
   });
 });
+
+describe('parseEntityIndexMd — linear-time parsing (CodeQL #2 #3 #4 #9)', () => {
+  const within = (fn: () => void, ms = 500) => {
+    const t0 = performance.now();
+    fn();
+    expect(performance.now() - t0).toBeLessThan(ms);
+  };
+
+  it('round-trips titles and descriptions containing \\, [ and ]', () => {
+    const sections = [
+      {
+        heading: 'Facts',
+        entries: [
+          { title: 'a\\b [x] \\', path: 'facts/a.md', description: 'd [y] \\' },
+          { title: '] [', path: 'facts/b.md' },
+        ],
+      },
+    ];
+    const parsed = parseEntityIndexMd(buildEntityIndexMd({ summary: 'S', sections }));
+    expect(parsed.summary).toBe('S');
+    expect(parsed.sections).toEqual(sections);
+  });
+
+  it('escaped-label attack completes in bounded time (#9)', () => {
+    within(() => parseEntityIndexMd('## Facts\n* [' + '\\\\'.repeat(50_000)));
+  });
+
+  it('section-heading attack completes in bounded time (#2 #3)', () => {
+    within(() => parseEntityIndexMd('## a' + ' '.repeat(100_000) + '\rb'));
+  });
+
+  it('description-tail input completes in bounded time (#4, regression guard)', () => {
+    within(() => parseEntityIndexMd('## Facts\n* [a](p.md) - ' + ' '.repeat(100_000) + '\rb'));
+  });
+
+  it('keeps the old description behaviour for a dash with only whitespace after it', () => {
+    const parsed = parseEntityIndexMd('## Facts\n* [a](p.md) -   \n');
+    expect(parsed.sections[0].entries).toEqual([{ title: 'a', path: 'p.md', description: undefined }]);
+  });
+
+  it('tightening: a whitespace-only "##" line is not a section heading', () => {
+    expect(parseEntityIndexMd('##   \n* [a](p.md)\n').sections).toEqual([]);
+  });
+
+  it('tightening: a label with an unescaped "[" is skipped', () => {
+    const parsed = parseEntityIndexMd('## Facts\n* [a[b](p.md)\n* [ok](q.md)\n');
+    expect(parsed.sections[0].entries.map((e) => e.title)).toEqual(['ok']);
+  });
+});
