@@ -51,24 +51,37 @@ export class PromptService {
     return /\{\{\s*ontology(?:Manifest|ModeInstructions)\s*\}\}/.test(template);
   }
 
+  /** Removes ontology placeholders until none remain, so a nested form cannot reassemble one (closes CodeQL #11). */
+  private stripOntologyPlaceholders(template: string): string {
+    let out = template;
+    let prev: string;
+    do {
+      prev = out;
+      out = out.replace(/\{\{\s*ontology(?:Manifest|ModeInstructions)\s*\}\}/g, '');
+    } while (out !== prev);
+    return out;
+  }
+
   private buildSystemPrompt(
     template: string,
     variables: Record<string, unknown>,
     ontologyContext: OntologyPromptContext | null | undefined,
   ): string {
-    const shouldHydrate = Object.keys(variables).some((key) =>
-      new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`).test(template),
-    ) || (ontologyContext != null && this.hasOntologyPlaceholders(template));
-
-    const hydrated = shouldHydrate
-      ? this.hydrate(template, { ...variables, ...(ontologyContext ?? {}) })
+    const hasOntologyPlaceholders = this.hasOntologyPlaceholders(template);
+    // Strip before hydration so variable values (document text) are never edited.
+    const effective = hasOntologyPlaceholders && ontologyContext == null
+      ? this.stripOntologyPlaceholders(template)
       : template;
 
-    return this.hasOntologyPlaceholders(template)
-      ? (ontologyContext != null
-          ? hydrated
-          : hydrated.replace(/\{\{\s*ontology(?:Manifest|ModeInstructions)\s*\}\}/g, ''))
-      : this.appendOntology(hydrated, ontologyContext);
+    const shouldHydrate = Object.keys(variables).some((key) =>
+      new RegExp(`\\{\\{\\s*${key}\\s*\\}\\}`).test(effective),
+    ) || (ontologyContext != null && hasOntologyPlaceholders);
+
+    const hydrated = shouldHydrate
+      ? this.hydrate(effective, { ...variables, ...(ontologyContext ?? {}) })
+      : effective;
+
+    return hasOntologyPlaceholders ? hydrated : this.appendOntology(hydrated, ontologyContext);
   }
 
   private appendOntology(systemPrompt: string, ctx: OntologyPromptContext | null | undefined): string {

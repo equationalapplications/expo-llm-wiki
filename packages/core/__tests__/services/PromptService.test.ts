@@ -80,6 +80,20 @@ describe('PromptService', () => {
       expect(systemPrompt).toBe('Custom:  ');
       expect(systemPrompt).not.toMatch(/\{\{/);
     });
+
+    it('strips nested ontology placeholders completely when context is absent', () => {
+      const svc = new PromptService();
+      const template = '{{{{ontologyManifest}}ontologyManifest}}';
+      const { systemPrompt } = svc.buildIngestPrompt('chunk', template, null);
+      expect(systemPrompt).toBe('');
+    });
+
+    it('never strips placeholder-like text from hydrated variable values', () => {
+      const svc = new PromptService();
+      const template = 'Doc: {{documentChunk}} {{ontologyModeInstructions}}';
+      const { systemPrompt } = svc.buildIngestPrompt('quote {{ontologyManifest}} here', template, null);
+      expect(systemPrompt).toBe('Doc: quote {{ontologyManifest}} here ');
+    });
   });
 
   describe('buildLibrarianPrompt', () => {
