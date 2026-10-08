@@ -1,3 +1,19 @@
+## [7.11.2](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.11.1...v7.11.2) (2026-10-08)
+
+### Bug Fixes
+
+* **benchmarks:** atomic private writes for CLI outputs ([35a6cd9](https://github.com/equationalapplications/expo-llm-wiki/commit/35a6cd9edcad4171dba28aa248f7bb17587ab4e9)), closes [#12](https://github.com/equationalapplications/expo-llm-wiki/issues/12)
+* **benchmarks:** reject dataset-fetch redirects, clean temp on failed rename ([09974bb](https://github.com/equationalapplications/expo-llm-wiki/commit/09974bbbd51a36aa54a440de8891fa8dfa32e932))
+* **benchmarks:** validate and atomically cache the LongMemEval dataset ([bc9ae69](https://github.com/equationalapplications/expo-llm-wiki/commit/bc9ae69b8063e2de7e67cd40dd0202cbefec2614)), closes [#13](https://github.com/equationalapplications/expo-llm-wiki/issues/13)
+* **core:** linear-time OKF log-line parsing ([30c0b72](https://github.com/equationalapplications/expo-llm-wiki/commit/30c0b7289892560134cb72df83ee3852d72a5b19)), closes [#1](https://github.com/equationalapplications/expo-llm-wiki/issues/1)
+* **core:** strip ontology placeholders before hydration ([91722a9](https://github.com/equationalapplications/expo-llm-wiki/commit/91722a995c59bfda8ac4e7266d9f1308db0d3934))
+* **integration:** reject fetch-script redirects, clean temp on failed rename ([5b02bcf](https://github.com/equationalapplications/expo-llm-wiki/commit/5b02bcf92a3caac043e96d8a7a66955528a140ea))
+* **integration:** validated, atomic fixture fetch writes ([2d95075](https://github.com/equationalapplications/expo-llm-wiki/commit/2d9507528c3adcd95d61051781d79be8c3e91a5c)), closes [14-#17](https://github.com/equationalapplications/14-/issues/17)
+* **okf:** linear-time entity index parsing ([5bb406e](https://github.com/equationalapplications/expo-llm-wiki/commit/5bb406eb3db5c6fe60328c7045f82a2f17fb0655)), closes [#2](https://github.com/equationalapplications/expo-llm-wiki/issues/2) [#3](https://github.com/equationalapplications/expo-llm-wiki/issues/3) [#4](https://github.com/equationalapplications/expo-llm-wiki/issues/4)
+* **okf:** linear-time log.md bullet and event-id parsing ([8260fd0](https://github.com/equationalapplications/expo-llm-wiki/commit/8260fd0142820dea68d81ec9eb22bcbc9a3eee3f)), closes [#5](https://github.com/equationalapplications/expo-llm-wiki/issues/5)
+* **okf:** linear-time related-section link parsing ([e266bb3](https://github.com/equationalapplications/expo-llm-wiki/commit/e266bb340b34c15115f41654742a38fc3381a6ae))
+* **okf:** unambiguous frontmatter number pattern ([1973430](https://github.com/equationalapplications/expo-llm-wiki/commit/1973430eb3e7cc89d61e8ef800200dd88c42a90a))
+
 ## [7.11.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.11.0...v7.11.1) (2026-10-08)
 
 ### Bug Fixes
