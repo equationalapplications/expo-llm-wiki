@@ -2,9 +2,12 @@ import type { OkfIndexSection } from './types';
 import { buildIndexMd } from './index-md';
 
 const EVENT_LOG_LINK = /^\[Event log\]\(\.\/log\.md\)\s*$/;
-const TOP_LEVEL_H1 = /^#\s+.+\s*$/;
-const SECTION_HEADING = /^##\s+(.+)\s*$/;
-const INDEX_ENTRY = /^\*\s+\[((?:\\.|[^\]])*)\]\(([^)]+)\)(?:\s+-\s+(.*))?$/;
+// Only ever tested against trimmed lines; `\S` replaces `.+\s*$`.
+const TOP_LEVEL_H1 = /^#\s+\S/;
+// linear: capture starts on \S so it cannot trade characters with \s+ (closes CodeQL #2, #3)
+const SECTION_HEADING = /^##\s+(\S.*)$/;
+// linear: `\` and `[` cannot start a plain label char (closes CodeQL #9); disjoint tail (closes CodeQL #4)
+const INDEX_ENTRY = /^\*\s+\[((?:\\.|[^\[\]\\])*)\]\(([^)]+)\)(?:\s+-(\s.*)?)?$/;
 
 function unescapeIndexTitle(title: string): string {
   return title.replace(/\\\]/g, ']').replace(/\\\[/g, '[').replace(/\\\\/g, '\\');
@@ -73,10 +76,11 @@ export function parseEntityIndexMd(content: string): {
     const entryMatch = INDEX_ENTRY.exec(line);
     if (!entryMatch) continue;
 
+    const description = entryMatch[3]?.trimStart();
     current.entries.push({
       title: unescapeIndexTitle(entryMatch[1]),
       path: entryMatch[2],
-      description: entryMatch[3] ? unescapeIndexTitle(entryMatch[3]) : undefined,
+      description: description ? unescapeIndexTitle(description) : undefined,
     });
   }
   return { summary, sections };

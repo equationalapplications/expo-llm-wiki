@@ -34,3 +34,36 @@ describe('related section', () => {
     expect(splitRelatedSection(raw).relatedLinks).toEqual([]);
   });
 });
+
+describe('splitRelatedSection — linear-time parsing (CodeQL #10)', () => {
+  const within = (fn: () => void, ms = 500) => {
+    const t0 = performance.now();
+    fn();
+    expect(performance.now() - t0).toBeLessThan(ms);
+  };
+
+  it('round-trips edge types containing \\, [ and ]', () => {
+    const links = [
+      { edge_type: 'a\\b [x] \\', path: 'x.md' },
+      { edge_type: ']', path: 'y.md' },
+    ];
+    const { relatedLinks } = splitRelatedSection(appendRelatedSection('Body\n', links));
+    expect(relatedLinks).toEqual([
+      { text: 'a\\b [x] \\', path: 'x.md' },
+      { text: ']', path: 'y.md' },
+    ]);
+  });
+
+  it('escaped-label attack completes in bounded time', () => {
+    within(() => splitRelatedSection('Body\n\n## Related\n\n- [' + '\\\\'.repeat(50_000) + '\n'));
+  });
+
+  it('run of "[" completes in bounded time', () => {
+    within(() => splitRelatedSection('Body\n\n## Related\n\n- ' + '['.repeat(100_000) + '\n'));
+  });
+
+  it('tightening: an unescaped "[" splits the label at the inner bracket', () => {
+    const { relatedLinks } = splitRelatedSection('Body\n\n## Related\n\n- [a[b](x.md)\n');
+    expect(relatedLinks).toEqual([{ text: 'b', path: 'x.md' }]);
+  });
+});

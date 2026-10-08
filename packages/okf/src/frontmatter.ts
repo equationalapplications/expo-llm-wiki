@@ -233,7 +233,8 @@ function parseScalarValue(raw: string): OkfFrontmatterScalar {
   if (trimmed === 'null') return null;
   if (trimmed === 'true') return true;
   if (trimmed === 'false') return false;
-  if (/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(trimmed)) return Number(trimmed);
+  // linear: `\d+(?:\.\d*)?` accepts the same language as `\d+\.?\d*` with one parse per digit run (closes CodeQL #7)
+  if (/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(trimmed)) return Number(trimmed);
   return trimmed;
 }
 

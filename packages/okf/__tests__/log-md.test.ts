@@ -93,3 +93,54 @@ describe('event id comments', () => {
     expect(parsed[0].text).toBe(text);
   });
 });
+
+describe('log-md — linear-time parsing (CodeQL #5 #6)', () => {
+  const within = (fn: () => void, ms = 500) => {
+    const t0 = performance.now();
+    fn();
+    expect(performance.now() - t0).toBeLessThan(ms);
+  };
+
+  it('round-trips entries with id comments and bracket characters', () => {
+    const entries = [
+      { date: '2026-01-02', text: '(observation) [a \\[x\\]](./facts/f.md) <!-- id: evt_1 -->' },
+      { date: '2026-01-02', text: 'plain  spaced   text' },
+    ];
+    expect(parseLogMd(buildLogMd(entries))).toEqual(entries);
+  });
+
+  it('takes the last comment when two are present', () => {
+    expect(parseEventIdComment('x <!-- id: a <!-- id: b -->')).toEqual({
+      text: 'x <!-- id: a',
+      eventId: 'b',
+    });
+  });
+
+  it('accepts a comment with no inner spacing', () => {
+    expect(parseEventIdComment('x <!--id:abc-->')).toEqual({ text: 'x', eventId: 'abc' });
+  });
+
+  it('strips but drops an id with illegal characters', () => {
+    expect(parseEventIdComment('x <!-- id: a/b -->')).toEqual({ text: 'x' });
+  });
+
+  it('returns the original text when the id is empty', () => {
+    expect(parseEventIdComment('x <!-- id: -->')).toEqual({ text: 'x <!-- id: -->' });
+  });
+
+  it('repeated comment-opener attack completes in bounded time (#5)', () => {
+    within(() => parseEventIdComment('<!--id:'.repeat(20_000)));
+  });
+
+  it('whitespace attack completes in bounded time (#5)', () => {
+    within(() => parseEventIdComment(' '.repeat(100_000) + 'x'));
+  });
+
+  it('bullet input completes in bounded time (#6, regression guard)', () => {
+    within(() => parseLogMd('## 2026-01-01\n\n- ' + '  '.repeat(50_000) + '\rb\n'));
+  });
+
+  it('keeps a whitespace-only bullet as an empty entry', () => {
+    expect(parseLogMd('## 2026-01-01\n\n-   \n')).toEqual([{ date: '2026-01-01', text: '' }]);
+  });
+});

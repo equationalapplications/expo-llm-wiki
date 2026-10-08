@@ -46,12 +46,13 @@ export function splitRelatedSection(body: string): { body: string; relatedLinks:
   const relatedBlock = lines.slice(relatedStart, end).join('\n');
   const relatedLinks: OkfMarkdownLink[] = [];
   for (const line of relatedBlock.split(/\r?\n/)) {
-    const bullet = /^-\s+(.*)$/.exec(line);
+    const bullet = /^-\s+(\S.*)?$/.exec(line);
     if (!bullet) continue;
 
-    const linkPattern = /\[((?:\\.|[^\]])*)\]\(([^)\s]+)\)/g;
+    // linear: `\` and `[` cannot start a plain label char, so each attempt stops at the next `[` (closes CodeQL #10)
+    const linkPattern = /\[((?:\\.|[^\[\]\\])*)\]\(([^)\s]+)\)/g;
     let match: RegExpExecArray | null;
-    while ((match = linkPattern.exec(bullet[1])) !== null) {
+    while ((match = linkPattern.exec(bullet[1] ?? '')) !== null) {
       const linkPath = match[2];
       if (/^(https?:|mailto:)/i.test(linkPath)) continue;
       relatedLinks.push({

@@ -24,24 +24,30 @@ export function buildLogMd(entries: OkfLogEntry[]): string {
   return lines.join('\n').trimEnd() + '\n';
 }
 
-const EVENT_ID_COMMENT = /\s*<!--\s*id:\s*(\S+)\s*-->\s*$/;
-
 export function appendEventIdComment(text: string, eventId: string): string {
   if (!/^[A-Za-z0-9._-]+$/.test(eventId)) return text;
   return `${text} <!-- id: ${eventId} -->`;
 }
 
+// Hand-rolled instead of an unanchored regex (closes CodeQL #5). `lastIndexOf` matches the
+// old leftmost-regex result: `\S+` could never span the whitespace before a later `<!--`.
 export function parseEventIdComment(text: string): { text: string; eventId?: string } {
-  const match = EVENT_ID_COMMENT.exec(text);
-  if (!match) return { text };
-  const eventId = match[1];
-  const stripped = text.slice(0, match.index).trimEnd();
+  const trimmed = text.trimEnd();
+  if (!trimmed.endsWith('-->')) return { text };
+  const open = trimmed.lastIndexOf('<!--');
+  if (open === -1) return { text };
+  const inner = trimmed.slice(open + 4, -3).trim();
+  if (!inner.startsWith('id:')) return { text };
+  const eventId = inner.slice(3).trim();
+  if (eventId === '' || /\s/.test(eventId)) return { text };
+  const stripped = trimmed.slice(0, open).trimEnd();
   if (!/^[A-Za-z0-9._-]+$/.test(eventId)) return { text: stripped };
   return { text: stripped, eventId };
 }
 
 const DATE_HEADING = /^##\s+(\d{4}-\d{2}-\d{2})\s*$/;
-const BULLET = /^-\s+(.*)$/;
+// linear: capture starts on \S so it cannot trade characters with \s+ (closes CodeQL #6)
+const BULLET = /^-\s+(\S.*)?$/;
 
 /**
  * Reverse of {@link buildLogMd}. Best-effort: lines that don't match the exact
@@ -61,7 +67,7 @@ export function parseLogMd(content: string): OkfLogEntry[] {
     }
     const bulletMatch = BULLET.exec(line);
     if (bulletMatch && currentDate) {
-      entries.push({ date: currentDate, text: bulletMatch[1] });
+      entries.push({ date: currentDate, text: bulletMatch[1] ?? '' });
     }
   }
 

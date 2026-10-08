@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { mkdtempSync, rmSync, existsSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { loadDataset, parseLmeDate } from '../src/longmemeval/dataset';
+import { loadDataset, parseLmeDate, validateDataset } from '../src/longmemeval/dataset';
 import { sampleQuestionIds, STRATA } from '../src/longmemeval/sample';
 import type { LmeQuestion } from '../src/longmemeval/dataset';
 
@@ -173,5 +173,48 @@ describe('loadDataset', () => {
     } finally {
       rmSync(cacheDir, { recursive: true, force: true });
     }
+  });
+
+  it('rejects a non-https dataset URL before fetching', async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), 'lme-'));
+    try {
+      const fetchImpl = vi.fn();
+      await expect(
+        loadDataset({ url: 'http://example.test/x.json', cacheDir, fetchImpl: fetchImpl as unknown as typeof fetch }),
+      ).rejects.toThrow('Refusing non-HTTPS URL');
+      expect(fetchImpl).not.toHaveBeenCalled();
+    } finally {
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  it('writes only validated fields to the cache', async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), 'lme-cache-'));
+    try {
+      const rows = makeSynthetic().map((q) => ({ ...q, injected: '<script>' }));
+      const fetchImpl = vi.fn(async () => new Response(JSON.stringify(rows), { status: 200 }));
+      await loadDataset({ url: 'https://example.test/x.json', cacheDir, fetchImpl: fetchImpl as unknown as typeof fetch });
+      const cached = readFileSync(join(cacheDir, 'longmemeval_s.json'), 'utf8');
+      expect(cached).not.toContain('injected');
+      expect(JSON.parse(cached)).toEqual(makeSynthetic());
+    } finally {
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('validateDataset', () => {
+  it('accepts well-formed rows and normalises a numeric answer to a string', () => {
+    const [q] = makeSynthetic();
+    expect(validateDataset([{ ...q, answer: 3 }])[0].answer).toBe('3');
+  });
+
+  it('rejects a non-array, an unknown question_type and a malformed turn', () => {
+    const [q] = makeSynthetic();
+    expect(() => validateDataset({})).toThrow('LongMemEval dataset is not an array');
+    expect(() => validateDataset([{ ...q, question_type: 'bogus' }])).toThrow('LongMemEval row 0: question_type');
+    expect(() => validateDataset([{ ...q, haystack_sessions: [[{ role: 'system', content: 'x' }]] }])).toThrow(
+      'LongMemEval row 0: haystack_sessions',
+    );
   });
 });
