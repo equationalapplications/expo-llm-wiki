@@ -49,7 +49,7 @@ export interface LoadDatasetOpts {
   fetchImpl?: typeof fetch;
 }
 
-type FetchLike = (input: string, init?: { method?: string }) => Promise<Response>;
+type FetchLike = (input: string, init?: { method?: string; redirect?: 'error' }) => Promise<Response>;
 
 const QUESTION_TYPES: ReadonlySet<string> = new Set<LmeQuestionType>([
   'single-session-user',
@@ -121,7 +121,8 @@ export async function loadDataset(opts: LoadDatasetOpts = {}): Promise<LmeQuesti
   if (cached !== null) return validateDataset(JSON.parse(cached));
 
   assertHttps(url);
-  const response = await fetchImpl(url);
+  // redirect: 'error' — a redirect to http:// would bypass the assertHttps check above.
+  const response = await fetchImpl(url, { redirect: 'error' });
   if (!response.ok) {
     throw new Error(`LongMemEval fetch failed: HTTP ${response.status}`);
   }

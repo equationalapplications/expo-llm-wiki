@@ -12,12 +12,14 @@ import { dirname } from 'path';
 export function writeFileAtomic(path: string, data: string): void {
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  let tempWritten = false;
   try {
     writeFileSync(tmp, data, { flag: 'wx', mode: 0o600 });
+    tempWritten = true;
     renameSync(tmp, path);
   } catch (e) {
-    // Only remove what this call created; an EEXIST tmp belongs to someone else.
-    if ((e as NodeJS.ErrnoException).code !== 'EEXIST') rmSync(tmp, { force: true });
+    // Remove the temp only if this call created it; an EEXIST from the 'wx' open is someone else's file.
+    if (tempWritten) rmSync(tmp, { force: true });
     throw e;
   }
 }
