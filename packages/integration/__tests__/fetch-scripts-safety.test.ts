@@ -18,7 +18,8 @@ describe('fixture fsSafe', () => {
     expect(readCached(file)).toBeNull();
     writeFileAtomic(file, 'x');
     expect(readCached(file)).toBe('x');
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    // Windows does not implement POSIX permission bits; check the exact mode only elsewhere.
+    if (process.platform !== 'win32') expect(statSync(file).mode & 0o777).toBe(0o600);
     expect(readdirSync(dir)).toEqual(['out.json']);
     expect(() => assertHttps('http://datasets-server.huggingface.co/rows')).toThrow(/Refusing non-HTTPS URL/);
   });

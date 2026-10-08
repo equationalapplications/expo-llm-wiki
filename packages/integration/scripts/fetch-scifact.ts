@@ -27,7 +27,8 @@ async function fetchAllRows(
     assertHttps(url);
     let res: Response | undefined;
     for (let attempt = 0; attempt < 10; attempt++) {
-      res = await fetch(url);
+      // redirect: 'error' — a redirect to http:// would bypass the assertHttps check.
+      res = await fetch(url, { redirect: 'error' });
       if (res.status === 429) {
         const wait = Math.min(5000 * Math.pow(2, attempt), 120000);
         process.stdout.write(`\r  rate-limited, waiting ${(wait/1000).toFixed(0)}s…   `);
