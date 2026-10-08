@@ -208,3 +208,26 @@ describe('parseFrontmatter', () => {
     expect(frontmatter.title).toBe('T');
   });
 });
+
+describe('parseFrontmatter — numeric scalars (CodeQL #7)', () => {
+  it('parses every accepted number form and leaves near-misses as strings', () => {
+    const { frontmatter } = parseFrontmatter(
+      '---\na: 1\nb: -1.\nc: .5\nd: +2e10\ne: 00.10E-3\nf: 1.2.3\ng: e5\nh: 9x\n---\n',
+    );
+    expect(frontmatter).toMatchObject({
+      a: 1, b: -1, c: 0.5, d: 2e10, e: 0.0001, f: '1.2.3', g: 'e5', h: '9x',
+    });
+  });
+
+  it('round-trips numbers through serializeFrontmatter', () => {
+    const fm = { a: 1, b: -1.5, c: 0.5, d: 2e10 };
+    expect(parseFrontmatter(serializeFrontmatter(fm) + '\n').frontmatter).toMatchObject(fm);
+  });
+
+  it('long digit run with a trailing letter completes in bounded time', () => {
+    const t0 = performance.now();
+    const { frontmatter } = parseFrontmatter('---\nn: ' + '9'.repeat(100_000) + 'x\n---\n');
+    expect(performance.now() - t0).toBeLessThan(500);
+    expect(typeof frontmatter.n).toBe('string');
+  });
+});
