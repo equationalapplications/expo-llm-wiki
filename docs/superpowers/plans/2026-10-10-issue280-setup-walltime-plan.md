@@ -6,12 +6,12 @@
 
 **Architecture:**
 - **Survival scans (RC-2/RC-7):** `WikiMemory.setup()` replaces its two every-open scans with: (a) a fail-closed legacy `source_type` probe served by a new partial covering index, (b) a `source_ref` normalize that runs only when the `source_ref_normalize_stamp` meta key is missing/mismatched, in budgeted rowid-watermarked chunks, stamping on completion inside the final chunk's tx.
-- **FTS state machine (RC-1/RC-3/RC-4/RC-5):** `fts5_index_state` gains a load-bearing `rebuilding` value. `Fts5IndexStrategy.init()` never rebuilds in one tx: it either fast-paths (`live` + triggers present), or enters `rebuilding` (marker-loss/trigger-loss: one unchunkable DROP+CREATE DDL tx — accepted 22.3 s @1M floor; resumption: none needed), and `drain()` becomes the shared budgeted quantum: ledger drain first, then rebuild chunks (rowid windows of ≤500, watermark advancing inside each chunk tx) until `setupBudgetMs` (default 1500) is exhausted. Completion condition: watermark ≥ max(entries.rowid) AND ledger empty → flip to `live` in the final chunk's tx.
-- **RC-6 guard:** `createIndexStrategy` reorders `init()` failures into read-only-probes-first, one 250 ms retry, and NEVER calls `detachFts5` on the `auto` failure path — it returns an `UnavailableFts5IndexStrategy` whose `search()` throws `WikiSearchUnavailableError` (new exported error class). MiniSearch instantiation by `auto` happens only on the module-absent path (`probeFts5` false). Pinned `'minisearch'` keeps today's detach behavior; `'auto'` re-attaches detached stores (enters `rebuilding`).
+- **FTS state machine (RC-1/RC-3/RC-4/RC-5, spec rev 5):** `fts5_index_state` gains a load-bearing `rebuilding` value. `Fts5IndexStrategy.init()` never rebuilds in one tx: it either fast-paths (`live` + triggers present), or enters `rebuilding` — the transition tx **re-creates all three triggers** (`fts5TriggersDdl`) so writes during rebuild keep feeding the ledger, **keeps the existing `entries_fts` table** (stale, not corrupt — the rebuild delete-then-inserts each rowid window into it; **no DROP+CREATE, no 22.3 s DDL floor** — that is reserved for tokenizer/DDL mismatch, detected by comparing stored DDL), clears `fts_map`/`fts_pending`, watermark=0. The `rebuilding` resume path **verifies `triggersPresent()`** — missing trigger ⇒ restart (writes may have been missed). `drain(deadline)` is the shared quantum: ledger drain first, then rebuild chunks (rowid windows of ≤500, conflict-free inserts — see Task 3) until the deadline. **Write-triggered turns (`syncEntries`, per-entity `sync(id)`) are LEDGER DRAIN ONLY** — they never run rebuild chunks and serve the triggering write's own ledger ids first (read-your-writes). Full quanta run only in `setup()` and no-arg `syncSearchIndex()`. Completion: watermark ≥ max(entries.rowid) AND ledger empty, both re-checked inside the flipping tx. The v14 normalize runs **to completion** in the migration open (chunked txs, one shared open deadline — NOT budget-deferred: mixed normalized/raw refs break `hasChanged`/`forget`).
+- **RC-6 guard:** `createIndexStrategy` reorders `init()` failures into read-only-probes-first, one 250 ms retry, and NEVER calls `detachFts5` on the `auto` failure path — it returns an `UnavailableIndexStrategy` whose `search()` throws `WikiSearchUnavailableError` (new exported error class; `drain()` is a no-op that leaves the ledger intact; the maintenance heal path treats the throw as "no anchors", the retrieval keyword fallback propagates it; no-arg `syncSearchIndex()` retries `init()`). MiniSearch instantiation by `auto` happens only on the module-absent path (`probeFts5` false). Pinned `'minisearch'` keeps today's detach behavior; `'auto'` re-attaches detached stores (enters `rebuilding`).
 
 **Tech Stack:** TypeScript 5.9 (strict), vitest, pnpm workspace, better-sqlite3 13.0.3 (SQLite FTS5), Node ≥24.
 
-**Spec:** `docs/superpowers/specs/2026-10-10-issue280-setup-walltime-design.md` (rev 4, **Approved** by GLM 5.3 r4). Investigation: `docs/superpowers/investigations/2026-10-10-issue280-setup-walltime-investigation.md`. If plan and spec disagree, the spec wins: stop and report.
+**Spec:** `docs/superpowers/specs/2026-10-10-issue280-setup-walltime-design.md` (**rev 5** — GLM r4 Approved, then Tier-3 Opus adjudicated; the spec is authoritative). Investigation: `docs/superpowers/investigations/2026-10-10-issue280-setup-walltime-investigation.md`. If plan and spec disagree, the spec wins: stop and report.
 
 ## Global Constraints
 
@@ -87,12 +87,15 @@ Add `export { WikiSearchUnavailableError } from './errors/WikiSearchUnavailableE
 
 **Files:**
 - Modify: `packages/core/src/services/search/createIndexStrategy.ts:47-74` (the `createIndexStrategy` function)
-- Create: `packages/core/src/services/search/UnavailableFts5IndexStrategy.ts`
-- Test: `packages/core/__tests__/createIndexStrategy.test.ts`
+- Create: `packages/core/src/services/search/UnavailableIndexStrategy.ts`
+- Modify: `packages/core/src/services/MaintenanceService.ts` (:1542 area — heal catches `WikiSearchUnavailableError` → "no heal anchors")
+- Modify: `packages/core/src/services/RetrievalService.ts` (:550 area — keyword fallback propagates the error, decided)
+- Modify: `packages/core/src/services/SearchService.ts` (no-arg `syncSearchIndex()` path retries `init()` when the installed strategy is unavailable)
+- Test: `packages/core/__tests__/createIndexStrategy.test.ts`, extend `packages/core/__tests__/searchParity.test.ts` (heal/retrieval propagation)
 
 **Design (fix these semantics now, they ripple):**
-- `UnavailableFts5IndexStrategy implements IndexStrategy`: `search()` throws `WikiSearchUnavailableError` (cause = the last init error); `replace`/`replaceEntity`/`replaceAll` are **no-ops** (entries remain the source of truth; the index converges on recovery); `drain` is a no-op resolving normally (keeps `SearchService.drainTurn` healthy).
-- Retry = one re-call of the same init after `setTimeout` 250 ms. If the retry succeeds, return the real strategy. If it fails again, return `new UnavailableFts5IndexStrategy(lastError)` — **`detachFts5` is not called anywhere on this path.**
+- `UnavailableIndexStrategy implements IndexStrategy`: `search()` throws `WikiSearchUnavailableError` (cause = the last init error); `replace`/`replaceEntity`/`replaceAll` are **no-ops** (entries remain the source of truth; the index converges on recovery); `drain(deadline?)` is a **no-op that leaves the ledger intact**, resolving normally (write paths keep working and converging later — and no console.warn spam per write, which `drainTurn`'s catch would emit if it threw).
+- Retry = one re-call of the same init after `setTimeout` 250 ms. If the retry succeeds, return the real strategy. If it fails again, return `new UnavailableIndexStrategy(lastError)` — **`detachFts5` is not called anywhere on this path.** Internal callers (decided, spec rev 5 / Opus M-7): `MaintenanceService` heal (`:1542`) catches the error → "no heal anchors available"; `RetrievalService` keyword fallback (`:550`) propagates it; no-arg `syncSearchIndex()` retries `init()` (a long-lived host recovers without re-opening). Both caller behaviors get pinned tests.
 - The existing `probeFts5`-false fallback (module genuinely absent → `detachFts5` + MiniSearch) is UNCHANGED — but only reachable when the probe fails, never from the init-catch path.
 - Pinned `'fts5'` failure still throws the raw error (`:65`), unchanged.
 
@@ -106,17 +109,16 @@ Add `export { WikiSearchUnavailableError } from './errors/WikiSearchUnavailableE
 - [ ] **Step 4: Run to verify pass** + `createIndexStrategy.test.ts` (its module-absent fallback cases are the actual regression guard here — `miniSearchFallback.test.ts` is the read-path fallback, not strategy selection), `miniSearchFallback.test.ts` still green. **Add test 5: reopen-recovers** — after a double-failure open, a second `new WikiMemory(...)` open on the same store succeeds with a working strategy and keyword search returns results (pins spec 7(e)'s "next open recovers").
 - [ ] **Step 5: Commit** — `fix(core): auto init failure retries and never demotes the FTS index (#280 RC-6)`
 
-### Task 2b: `importDump` belt — dump-header stamp + conditional normalize
+### Task 2b (folded into Task 5): `importDump` belt — already satisfied by existing code
 
-**Objective:** Spec write-path audit belt (b): a dump from a store whose stamp is missing/older gets its refs re-normalized on import.
-
-**Files:**
-- Modify: `packages/core/src/services/ImportExportService.ts` (`MemoryDump` (:30-58) gains an optional header field `sourceRefNormalizeStamp?: { schema_version: number; normalize_alg: number }`; `exportDump` writes the store's stamp; `importDump` compares it to the current `SOURCE_REF_NORMALIZE_ALG` and, on missing/older, runs the same budgeted chunked normalize used by `setup()` — extract that loop from Task 5 into a shared private helper so both call sites are one function)
-- Test: `packages/core/__tests__/importDumpNormalizeBelt.test.ts`
-
-- [ ] **Step 1: Failing tests:** (1) dump from stamped store imports with zero normalize passes; (2) dump with `sourceRefNormalizeStamp: undefined` (legacy dump) + planted violating ref → import normalizes it and the store ends stamped; (3) dump stamped at `normalize_alg: 0` → re-normalized on import.
-- [ ] **Step 2: Verify failure. Step 3: Implement. Step 4: Verify pass** + `importDump.test.ts` green (dump JSON stays backward-compatible: new field optional on read).
-- [ ] **Step 5: Commit** — `feat(core): importDump re-normalizes dumps with missing or older normalize stamps (#280)`
+Opus M3 (converging with spec MIN-7): `ImportExportService.ts:273-282` **already
+normalizes every imported `source_ref`** (throwing on normalize-to-null), so an
+imported dump can never violate the stamp invariant — spec rev 5 records belt
+(b) as met by existing code. **No dump-header machinery. Task 5 instead adds
+one regression test** pinning that normalization: plant a violating ref in a
+dump JSON, import, assert the stored ref is normalized. (The earlier Task 2b
+was redundant, based on the wrong signal — the dump's stamp describes its
+SOURCE store, not the destination — and its red phase could not fail.)
 
 ---
 
@@ -125,24 +127,36 @@ Add `export { WikiSearchUnavailableError } from './errors/WikiSearchUnavailableE
 **Objective:** Marker-loss/trigger-loss no longer rebuilds in one tx; a resumable chunked rebuild exists.
 
 **Files:**
-- Modify: `packages/core/src/services/search/Fts5IndexStrategy.ts` (init + new private rebuild machinery)
-- Modify: `packages/core/src/services/search/fts5Sql.ts` (new SQL constants: `REBUILD_WATERMARK_KEY = 'fts5_rebuild_watermark'`, windowed rebuild SQL)
+- Modify: `packages/core/src/services/search/Fts5IndexStrategy.ts` (init + new private rebuild machinery; **delete `rebuildFromSource()`** — :40-42, no callers, and it contradicts "never rebuilds in one tx" — Opus m8; **remove `fts5_state`-blind fast-path**: `drain()` reads the state and runs rebuild chunks ONLY when `fts5_index_state === 'rebuilding'` — a `live` store drains its ledger and returns, never touching the watermark)
+- Modify: `packages/core/src/services/search/fts5Sql.ts` (new SQL constants: `REBUILD_WATERMARK_KEY = 'fts5_rebuild_watermark'`, windowed conflict-free rebuild SQL)
+- Modify: `packages/core/src/services/search/IndexStrategy.ts` (:120-128 — rewrite the `drain` doc for the deadline signature; both other strategies accept the new optional arg)
 - Test: `packages/core/__tests__/fts5Rebuild.test.ts`
 
-**Design:**
+**Design (spec rev 5 is authoritative):**
 - `init()` reads state (read-only) + `triggersPresent()` (read-only) BEFORE any mutation. Cases:
   - `live` + all triggers → `fts5TablesDdl` no-op guard, return (fast path, unchanged).
-  - `rebuilding` → return (resume; `drain()` continues the rebuild).
-  - marker lost OR any trigger missing → ONE transition tx: `DROP TABLE IF EXISTS entries_fts;` + `fts5TablesDdl` + clear `fts_map`/`fts_pending` + watermark = 0 + state = `rebuilding`. (Unchunkable DDL floor, accepted.)
-  - state `detached` → same transition tx as marker-loss (auto re-attach; the caller in `createIndexStrategy` only routes here for `fts5`/`auto` — Task 2 guarantees `auto` never reaches `detachFts5` on failure).
-- New `advanceRebuildQuantum(budgetMs): Promise<boolean>` — returns `true` when rebuild is complete. Loop: check elapsed; read watermark; `maxRowid = SELECT max(rowid) FROM entries`; if watermark ≥ maxRowid AND `fts_pending` empty → flip `live` in the same tx that drains the last ledger chunk; else next window tx: `BEGIN` → `INSERT INTO fts_map (id, entity_id) SELECT id, entity_id FROM entries WHERE deleted_at IS NULL AND rowid > ? AND rowid <= ?` (window = watermark+1 .. watermark+500 …but windows advance by rowid bounds, not row counts: use `SELECT max(rowid) FROM (SELECT rowid FROM entries WHERE rowid > ? ORDER BY rowid LIMIT 500)` to get the window's hi) → `INSERT INTO entries_fts ... FROM fts_map m JOIN entries e ... WHERE e.rowid > ? AND e.rowid <= ?` (the exact join shape of `rebuildSql`, windowed) → watermark = hi → `COMMIT`. Ledger drain still runs FIRST inside `drain()` (Task 4).
-- `drain()` becomes the shared quantum (Task 4 wires the budget): drain ledger chunks until empty or budget out; then `advanceRebuildQuantum` with the remaining budget.
+  - `rebuilding` → **verify `triggersPresent()`**; any missing ⇒ restart (re-arm tx, watermark=0); else return (resume; `drain()` continues the rebuild).
+  - marker lost OR any trigger missing → ONE re-arm tx: **run `fts5TriggersDdl`** (writes during rebuild MUST feed the ledger — Opus B-1), **keep the existing `entries_fts`** (stale, not corrupt — no DROP+CREATE, no 22.3 s DDL floor), clear `fts_map`/`fts_pending` **contents** (delete-then-insert per window), watermark = 0, state = `rebuilding`. DROP+CREATE is reserved for tokenizer/DDL mismatch vs `fts5TablesDdl` (compare stored DDL; that path keeps the 22.3 s @1M floor).
+  - state `detached` → same re-arm tx, plus re-create the ledger tables (`fts5LedgerDropSql` dropped them).
+- `drain(deadline: number): Promise<void>` — deadline = absolute ms timestamp (decided: deadline, not `budgetMs` — m7). Sequence: (1) ledger drain: chunk txs from `drainChunkSql` until ledger empty or deadline; (2) rebuild chunks ONLY when state is `rebuilding`, with **at least one chunk per quantum** (forward progress under sustained ledger load — m10): loop while `Date.now() < deadline`: read watermark (meta; missing ⇒ 0); `maxRowid = SELECT max(rowid) FROM entries` (**NULL on empty table ⇒ complete** — m5); if watermark ≥ maxRowid: re-check `fts_pending` empty **inside the flip tx** and set state `live` there; else next window tx — hi = `SELECT max(rowid) FROM (SELECT rowid FROM entries WHERE rowid > ? ORDER BY rowid LIMIT 500)` — then:
+  - `DELETE FROM fts_map WHERE id IN (SELECT id FROM entries WHERE deleted_at IS NOT NULL AND rowid > ? AND rowid <= ?)` (rows deleted since the last pass),
+  - `DELETE FROM entries_fts WHERE rowid IN (SELECT m.fts_rowid FROM fts_map m WHERE m.id IN (SELECT id FROM entries WHERE rowid > ? AND rowid <= ?))` (drop this window's previous contents — the table is kept, so old rows must go),
+  - `INSERT INTO fts_map (fts_rowid...)`: use `INSERT OR IGNORE INTO fts_map (id, entity_id) SELECT id, entity_id FROM entries WHERE deleted_at IS NULL AND rowid > ? AND rowid <= ?` (**conflict-free — Opus B-1**: a mid-rebuild write drained before its window is already mapped; `UNIQUE(id)` rejects, never skips),
+  - `INSERT INTO entries_fts (rowid, id, ...) SELECT m.fts_rowid, e.id, ... FROM fts_map m JOIN entries e ON e.id = m.id WHERE e.rowid > ? AND e.rowid <= ?` (rows keyed above the `max(fts_rowid)` recorded before the map insert — m1: state the mechanism ONCE, here),
+  - watermark = hi — all in ONE tx, committed atomically. Re-doing a window after crash is a no-op.
+- **Write path split (Opus M-1):** `SearchService.drainTurn` gains a `mode` (or the call sites pass the deadline only for full quanta): `syncEntries`/per-entity `sync(id)` → **ledger-drain-only** — bounded, and **the triggering write's own ids drain first** (newest seq window, then remainder if budget remains — read-your-writes, Opus M-4). Full quanta (rebuild chunks allowed) only from `setup()` and no-arg `syncSearchIndex()`.
+- VACUUM guard (Opus M-4): `MetadataRepository`'s VACUUM path (:160-163) records in meta (`fts_rebuild_post_vacuum = 1`) when run while state is `rebuilding` or the normalize watermark exists; the next `init()`/migration-open sees it, resets both watermarks to 0, clears the flag (windows are idempotent), and the rebuild restarts. (Renumbered rowids would otherwise silently skip ranges.)
 
 - [ ] **Step 1: Write failing tests** (real better-sqlite3 adapter, small stores ≤2k rows — reuse the fixture pattern from `.sandbox/leg-smoke-fixture.ts` if helpful):
-  1. marker-loss store → init leaves state `rebuilding`, watermark 0, fts tables empty; search returns partial (possibly empty) results without throwing.
-  2. `drain(budget)` advances the watermark; repeated drains complete the rebuild; final state `live`; exactly-once (map count = live entries; no dup ids).
-  3. resume: set up a `rebuilding` store with watermark=K (simulate crash by constructing state directly) → init does NOT reset the watermark; drain resumes from K; exactly-once.
-  4. completion requires drained ledger: with pending ledger rows above the watermark, state stays `rebuilding` until they're drained.
+  1. marker-loss store → init leaves state `rebuilding`, **all three triggers present** (Opus B-1), watermark 0, map/ledger cleared; `entries_fts` still holds the old (stale) contents — search returns stale-but-nonempty results; search does not throw.
+  2. `drain(deadline)` advances the watermark; repeated drains complete the rebuild; final state `live`; exactly-once (map count = live entries; no dup ids); **old stale rows are gone** (a deleted-since row is not searchable).
+  3. resume: `rebuilding` store with watermark=K (constructed directly) → init does NOT reset the watermark; drain resumes from K; exactly-once. **Resume with a dropped trigger ⇒ restart from 0** (Opus B-1).
+  4. completion requires drained ledger: pending ledger rows keep state `rebuilding` until drained; **completion re-checks both conditions inside the flip tx** (m5).
+  5. **conflict-free:** update a row ABOVE the watermark, drain (its id reaches the map via the ledger), then let its window run → no UNIQUE throw, no duplicate (the drain-before-window case, spec 7(a)).
+  6. tokenizer-mismatch store (corrupt stored DDL) → init takes the DROP+CREATE floor path; marker-loss does NOT.
+  7. **write during `rebuilding` returns quickly** (wall < 300 ms for a write against a 2k rebuilding store) and drains drain-only (Opus M-1).
+  8. `drain()` on a `live` store: ledger drains, watermark never consulted (m5/state-gate).
+  9. VACUUM guard: set `fts_rebuild_post_vacuum`, reopen → watermark reset, rebuild restarts (Opus M-4).
 - [ ] **Step 2: Run to verify failure.**
 - [ ] **Step 3: Implement** per Design. **Two decisions the review pinned:**
   - **State gate:** rebuild chunks run ONLY when `fts5_index_state === 'rebuilding'`. `drain()` on a `live` store drains the ledger and returns — it never reads the watermark (absent on legacy-live stores; stale as live stores grow). No NaN path, no accidental re-entrancy.
@@ -180,21 +194,26 @@ Add `export { WikiSearchUnavailableError } from './errors/WikiSearchUnavailableE
 - Modify: `packages/core/src/db/migrations.ts` (append v14 entry; `CURRENT_SCHEMA_VERSION` auto-derives. v14 also defines/creates the partial legacy index — **Task 5 owns creating the shared DDL constant in `schema.ts`; Task 6 consumes it**)
 - Modify: `packages/core/src/repositories/EntryRepository.ts` (add `findSourceRefViolationWindow(lo: number, hi: number)`: the `findRowsForSourceRefMigration` predicate (:1242-1255) plus `AND rowid > ? AND rowid <= ?`; delete the old method — it has no other callers after this task)
 - Modify: `packages/core/src/WikiMemory.ts:301-309` (replace ONLY the normalize block; **keep :297-299 — the `assertNoLegacySourceTypes()` fail-closed check stays in `setup()` unchanged**, per spec Change 2)
-- Test: `packages/core/__tests__/migration14.test.ts`, extend `packages/core/__tests__/wikiMemory*.test.ts` (whatever file covers setup() — locate via `search_files` for `assertNoLegacySourceTypes` in `__tests__`)
+- Test: `packages/core/__tests__/migration14.test.ts`, `packages/core/__tests__/migration13.test.ts` (**existing file asserts current version = 13 at :39-40,:63 — update to 14**, Opus m4), extend `packages/core/__tests__/wikiMemory*.test.ts` (whatever file covers setup() — locate via `search_files` for `assertNoLegacySourceTypes` in `__tests__`)
 
 **Design:**
 - Stamp meta key: `source_ref_normalize_stamp`, JSON `{ schema_version: 14, normalize_alg: 1 }` (`normalize_alg` = id of the current `normalizeSourceRef` semantics; bump on any future change). Constant `SOURCE_REF_NORMALIZE_ALG = 1` exported from `migrations.ts`.
 - v14 `run()`: `CREATE INDEX IF NOT EXISTS` partial legacy index (Task 6's DDL — define it once in `schema.ts` as an exported constant and reuse) + init normalize watermark meta (`source_ref_normalize_watermark` = 0). NO normalize loop inside `run()` (a migration must not be an unbounded tx).
-- `setup()` (after migrations, replacing :297-309): read stamp. If present AND `normalize_alg` matches current → skip entirely. Else loop quanta (same `setupBudgetMs` budget, drain arbitration does not apply here): window tx = read violation rows in the next rowid window (via the watermark, `LIMIT 500` window like Task 3) → normalize each (`normalizeSourceRef`, skip null returns) → `updateSourceRefByRowid` → advance watermark. When a window finds no more rows → write the stamp INSIDE that final chunk tx. Skip condition keys ONLY on stamp state, never on `schema_version < 14` (self-heals `version=14, stamp missing`).
+- **Completion + watermark lifecycle (Opus M2, spec rev 5):** "done" = **watermark ≥ `SELECT max(rowid)`**, checked inside the final chunk's tx; that tx writes the stamp **AND deletes `source_ref_normalize_watermark`** — one invariant, never a stale residue (a stale final watermark + later alg bump would "resume" past everything and stamp without scanning). Missing watermark ⇒ 0.
+- **Runs to completion, not budget-deferred (Opus M7, spec rev 5):** the normalize loop executes all windows in the migration open — chunked txs, but NOT bounded by `setupBudgetMs` (a mixed normalized/raw window breaks `hasChanged` (false "changed") and `forget({sourceRef})`, and can trip `source_ref_index`'s unique constraint). One-time cost, accepted in Acceptance 6 (≤240 s shape). It **shares one deadline bookkeeping with the post-migration `sync()`** only in the sense that both run in the same open (Opus m2); the budget governs the sync's quantum after normalize completes.
+- Rows whose ref normalizes to NULL are **written NULL** (today's `updateSourceRefByRowid` behavior — keep it; Opus m3).
+- **Empty-table guard:** `max(rowid)` NULL (empty entries) ⇒ complete immediately, stamp, delete watermark (Opus m5).
+- `setup()` (after migrations, replacing :301-309): read stamp. If present AND `normalize_alg` matches current → skip entirely. Else run the completion loop above. Skip condition keys ONLY on stamp state, never on `schema_version < 14` (self-heals `version=14, stamp missing`).
 - Fresh-store fast path (`WikiMemory.ts:266-268`): after setting `schema_version = CURRENT`, also write the stamp + rely on `setupDatabase`'s `IF NOT EXISTS` for the index (Task 6).
 
 - [ ] **Step 1: Failing tests:**
   1. v14 migration on a v13 store: runs, creates the partial index, watermark initialized, `CURRENT_SCHEMA_VERSION === 14`.
   2. Store with 10 violating refs → first setup normalizes ALL of them, writes the stamp; second setup performs ZERO violation scans (assert via sqlite trace or by counting `updateSourceRefByRowid` calls with a spy).
-  3. Stamp present but `normalize_alg: 0` → one rescan (finds nothing, re-stamps).
-  4. Stamp deleted, version=14 → self-heals: rescans, re-stamps.
-  5. >500 violating rows → multiple quanta; a setup() with `setupBudgetMs: 1` resumes across calls; exactly-once final state (all refs normalized).
-- [ ] **Step 2: Verify failure. Step 3: Implement. Step 4: Verify pass** + `migrations.test.ts` green (it asserts ascending order + CURRENT — v14 must extend, not break, those).
+  3. Stamp present but `normalize_alg: 0` → one full rescan to completion (finds nothing, re-stamps, **watermark deleted**).
+  4. Stamp deleted, version=14 → self-heals: rescans, re-stamps, watermark deleted.
+  5. >500 violating rows → multiple chunk txs, **all within one open regardless of `setupBudgetMs`** (Opus M7 — completion test: `setupBudgetMs: 1`, all refs still normalized); exactly-once final state (all refs normalized); watermark key **absent** after stamping (Opus M2).
+  6. Empty entries table → completes immediately, stamped, no error (NULL rowid guard, m5).
+- [ ] **Step 2: Verify failure. Step 3: Implement. Step 4: Verify pass** + `migrations.test.ts` + `migration13.test.ts` green (both assert ascending order + CURRENT — v14 must extend, not break, those).
 - [ ] **Step 5: Commit** — `feat(core): v14 stamped source_ref normalize migration (#280 RC-2/RC-7)`
 
 ---
@@ -218,7 +237,7 @@ Add `export { WikiSearchUnavailableError } from './errors/WikiSearchUnavailableE
 
 **Objective:** A fresh store never enters any migration or normalize.
 
-- [ ] **Step 1: Failing test:** brand-new store → first setup() → stamp present with current alg, partial index exists, normalize watermark key absent-or-final, state `live`, schema_version = CURRENT. (If Task 5's implementation already covers this, this test pins it.)
+- [ ] **Step 1: Failing test:** brand-new store → first setup() → stamp present with current alg, partial index exists, **normalize watermark key absent** (not "absent-or-final" — M2's invariant), state `live`, schema_version = CURRENT. (If Task 5's implementation already covers this, this test pins it.)
 - [ ] **Step 2–4:** red → fix (likely a two-line addition at `WikiMemory.ts:266-268`) → green.
 - [ ] **Step 5: Commit** — `fix(core): fresh-store fast path writes the normalize stamp (#280)`
 
@@ -228,7 +247,7 @@ Add `export { WikiSearchUnavailableError } from './errors/WikiSearchUnavailableE
 
 **Objective:** Pin both detached behaviors end-to-end.
 
-- [ ] **Step 1: Failing tests:** (a) store detached + open with `indexStrategy: 'minisearch'` → stays detached, MiniSearch active. (b) store detached + open with `'auto'` → `rebuilding` after init, converges to `live` across drains, MiniSearch never constructed (**spy on the `MiniSearchIndexStrategy` constructor** — it has no `init` method; `vi.spyOn(..., 'init')` throws on the undefined property). (c) detached + pinned `'fts5'` → re-attach.
+- [ ] **Step 1: Failing tests:** (a) store detached + open with `indexStrategy: 'minisearch'` → stays detached, MiniSearch active. (b) store detached + open with `'auto'` → `rebuilding` after init, converges to `live` across drains, **assert the installed strategy is an `Fts5IndexStrategy` instance** (via `__testAccess.searchService`; do NOT spy on the MiniSearch constructor — `WikiMemory.ts:144` always constructs the placeholder before setup(), so a construction-spy fails even on correct code — Opus M6). (c) detached + pinned `'fts5'` → re-attach.
 - [ ] **Step 2–4:** red → (expected: mostly already satisfied by Tasks 2–3; fix whatever leaks) → green.
 - [ ] **Step 5: Commit** — `test(core): pin detached-state semantics per preference (#280)`
 
@@ -244,20 +263,20 @@ Add `export { WikiSearchUnavailableError } from './errors/WikiSearchUnavailableE
 
 ---
 
-### Task 10: Marker-loss DDL-floor test (7g) + resume integration (7j)
+### Task 10: Marker-loss re-arm test (7g) + resume integration (7j)
 
-**Objective:** The corruption path is defined and converges; the leg harness's claim is pinned as a deterministic test.
+**Objective:** The corruption path is defined and converges (no DDL floor on the common path — spec rev 5); the leg harness's claim is pinned as a deterministic test.
 
-- [ ] **Step 1: Tests:** (a) delete the `fts5_index_state` row + drop one trigger on a built store → next setup enters `rebuilding` (DDL floor executes), quanta converge, final exactly-once. (b) constructed mid-rebuild state (watermark=K) + forced "crash" (new adapter, same file) → resumes from K, exactly-once (the deterministic version of `.sandbox/leg-fb-crash-resume.ts`; the SIGKILL harness stays in `.sandbox`, not CI).
-- [ ] **Step 2–4:** red → green. **Step 5: Commit** — `test(core): marker-loss DDL floor + crash-resume integration (#280)`
+- [ ] **Step 1: Tests:** (a) delete the `fts5_index_state` row + drop one trigger on a built store → next setup enters `rebuilding` via the re-arm tx (**no DROP+CREATE** — old contents stay searchable until their windows re-run; **triggers verified present after the transition and after mid-rebuild resume**, spec 7(g)), quanta converge, final exactly-once. (b) constructed mid-rebuild state (watermark=K) + forced "crash" (new adapter, same file) → resumes from K, exactly-once (the deterministic version of `.sandbox/leg-fb-crash-resume.ts`; the SIGKILL harness stays in `.sandbox`, not CI). (c) tokenizer-mismatch store → the DROP+CREATE floor path runs (the only DDL-floor case).
+- [ ] **Step 2–4:** red → green. **Step 5: Commit** — `test(core): marker-loss re-arm + crash-resume integration (#280)`
 
 ---
 
-### Task 11: Downgrade/backup-restore (7c) + full-suite gate
+### Task 11: Downgrade/backup-restore (7c) + VACUUM guard (7k) + full-suite gate
 
-**Objective:** Stamp invalidation semantics pinned; suite green; types + build clean.
+**Objective:** Stamp invalidation + VACUUM watermark invalidation pinned; suite green; types + build clean.
 
-- [ ] **Step 1: Test:** store stamped at alg 1 → simulate downgrade by rewriting stamp `{schema_version: 14, normalize_alg: 0}` + corrupting one ref → next setup rescan normalizes it, re-stamps alg 1. 
+- [ ] **Step 1: Tests:** (a) store stamped at alg 1 → simulate downgrade by rewriting stamp `{schema_version: 14, normalize_alg: 0}` + corrupting one ref → next setup rescan normalizes it, re-stamps alg 1. (b) **VACUUM guard (Opus M-6):** enter `rebuilding` (watermark > 0) → run the maintenance VACUUM path (`MetadataRepository.ts:160-163`) → reopen → watermark reset to 0, rebuild restarts from scratch, completes exactly-once (windows idempotent). Same for the normalize watermark mid-migration.
 - [ ] **Step 2–4:** red → green.
 - [ ] **Step 5:** Run FULL suite: record baseline first (`git stash`-free: run on the pre-task commit if not yet recorded), gate = no assertion failures + counts ≥ baseline + new tests. `pnpm --filter @equationalapplications/core-llm-wiki typecheck` + `pnpm -r build` clean.
 - [ ] **Step 6: Commit** — `test(core): normalize_alg bump forces exactly one rescan (#280)`
