@@ -115,9 +115,10 @@ Five changes, each mapped to a root cause:
   chunk tx commits **its chunk's inserts and the watermark advance atomically**
   (watermark lives in the same meta table, written inside the chunk tx). Crash
   ⇒ resume from watermark; verified exactly-once by
-  `.sandbox/leg-fb-crash-resume.ts` (no dup, no skip; PASS at smoke scale
-  2k entries with SIGKILL mid-rebuild; 1M run in flight — result lands in the
-  investigation review log).
+  `.sandbox/leg-fb-crash-resume.ts` at 1M entries: SIGKILL at 40% drained,
+  resume from the watermark completed the remaining 600k rows in 78.9 s
+  (7.6k rows/s, max chunk 1010 ms) with 1,000,000 fts_map rows, 0 duplicates,
+  no skipped range.
 - **Open path while `rebuilding`:** setup() performs a **bounded quantum**
   (time-boxed, target ≤ ~1–2 s of chunk work per open; config knob) and
   returns. Search during `rebuilding`: FTS results may be partial (recall
@@ -179,7 +180,10 @@ Five changes, each mapped to a root cause:
    converges in background chunks (measured full convergence 8.1k rows/s ⇒
    ~2 min @1M spread across opens/ticks, never blocking the fence).
 3. Crash-backlog path: 1M undrained ledger rows no longer add ~85 s to
-   setup(); drain is budgeted and converges across opens.
+   setup(); drain is budgeted and converges across opens. (Directly
+   measured shape: the resume leg's post-crash drain of 600k rows ran at
+   7.6k rows/s in ≤1.01 s chunks — budgeting keeps each open inside the
+   fence while the backlog converges.)
 4. RC-6: forced init failure on a healthy 1M store does NOT drop the ledger
    and does NOT trigger a MiniSearch full sync; retry succeeds on second open.
 5. **Gate-scale re-measure (required):** the ~4.7 GB NVMe store re-measured
