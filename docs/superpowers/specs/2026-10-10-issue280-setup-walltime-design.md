@@ -1,7 +1,7 @@
 # Spec: `wiki.setup()` wall time — minimal viable open, converging index
 
 **Date:** 2026-10-10
-**Status:** Draft (rev 2 — GLM 5.3 r1 triage applied; review: `.sandbox/glm-spec-review-r1.md`)
+**Status:** Draft (rev 3 — GLM r2 triage applied; reviews: `.sandbox/glm-spec-review-r{1,2}.md`)
 **Branch:** `spec/issue280-setup-walltime` · **PR:** [#281](https://github.com/equationalapplications/expo-llm-wiki/pull/281) (DRAFT until implemented)
 **Priority:** High — blocks the SynapseTree ARM64 gate (15 s writer-lease fence vs 693 s measured setup)
 
@@ -18,8 +18,8 @@ repeats work that is only needed once per data-changing event:
 |---|---|---|
 | 50 MB | 5.1 s | reported in #280 (issue number only; not reproduced by our legs — smallest leg was 55.7 MB) |
 | 4.7 GB | **693 s** | SynapseTree ARM64 gate: the writer-lease fence is 15 s, so setup holds/blocks the fence ~46× over |
-| 1M entries, first open | 108.3–117.6 s (V1 rebuild) | investigation §2.2 (NVMe legs) |
-| 1M entries, marker-lost | 165.4–209.4 s (V3) | investigation §2.2 |
+| 1M entries, first open | 108.3–117.6 s (V1 rebuild) | investigation §2.1 (NVMe legs) |
+| 1M entries, marker-lost | 165.4–209.4 s (V3) | investigation §2.1 |
 | 1M entries, warm | 1.74 s (of which survival scans 1.73 s) | investigation §2.2/§2.3 |
 
 Root causes use the **investigation §3 canonical numbering**:
@@ -31,7 +31,7 @@ Root causes use the **investigation §3 canonical numbering**:
 - **RC-2 — every-open survival scans.** The legacy `source_type` check
   (`assertNoLegacySourceTypes` — an unindexed `IN` scan, `EntryRepository.ts:1215-1219`)
   and the `source_ref` normalization scan (`findRowsForSourceRefMigration` — GLOB,
-  `EntryRepository.ts:1250`) run on **every** open: 0.60 s + 1.13 s @1M rows,
+  `EntryRepository.ts:1252`) run on **every** open: 0.60 s + 1.13 s @1M rows,
   exponent ≈1.3 on warm open; interpolating the measured 1M/2M points gives
   **16–30 s at 4.2M** (the spread reflects the 2M point sitting below the pure
   1.3 curve). Fence-critical either way.
@@ -40,7 +40,9 @@ Root causes use the **investigation §3 canonical numbering**:
   demotes a healthy multi-GB index to a full RC-1 rebuild on the next open.
 - **RC-4 — crash backlog drains inside the next open.** After a crash, the
   `fts_pending` ledger survives WAL replay and the next `setup()` drains it in
-  one go: ~85 s per 1M undrained rows, inside the open. (Pure WAL replay is
+  one go: ≈123 s per 1M undrained rows [C — derived from the measured 8.1k
+  rows/s drain throughput; the direct WAL-leg backlog measurement was lost to
+  harness errors]. (Pure WAL replay is
   exonerated — measured at noise level.)
 - **RC-5 — drain throughput/convergence.** Any budgeted-drain fix must actually
   converge: measured chunk throughput 7.6–8.1k rows/s, max chunk 733–1010 ms @1M.
@@ -137,10 +139,17 @@ separate fifth change.)
 **State set** (meta key `fts5_index_state`): `live`, `rebuilding`, `detached`.
 `detached` remains a real state — reachable via pinned
 `indexStrategy: 'minisearch'` (`createIndexStrategy.ts:72`) and present in
-existing stores in the wild. A v14 open on a `detached` store stays detached
-(the operator or a prior fallback chose it); switching back is an explicit
-operator action (re-open with `indexStrategy: 'fts5'`, which re-runs init and
-enters `rebuilding`). No automatic un-detach.
+existing stores in the wild. **`detached`-under-preference semantics (NEW-1, decided):** pinned
+`indexStrategy: 'minisearch'` holds a store detached — explicit operator
+choice. **`auto` re-attaches**: an `auto` open on a `detached` store enters
+`rebuilding` via the full rebuild path (table row below). Rationale: detached
+stores in the wild are overwhelmingly artifacts of the RC-6 fallback bug this
+spec fixes, and keeping them on MiniSearch under `auto` is the measured
+deterministic OOM path (Change 4's stakes). While `detached` under `auto` —
+before the rebuild's first quantum completes — keyword search is unavailable
+(`WikiSearchUnavailableError` per query); MiniSearch is **never** instantiated
+by `auto`. Switching back from a pinned-detached store is the operator
+re-opening with `'fts5'` or `'auto'`.
 
 **Transition table** (all transitions execute in ONE transaction — decide +
 mutate + watermark + state together; the `fb-crash-resume` leg's discipline):
@@ -154,7 +163,7 @@ mutate + watermark + state together; the `fb-crash-resume` leg's discipline):
 | `rebuilding` | open/setup quantum | `rebuilding` | advance watermark by ≤N chunk txs (below) |
 | `rebuilding` | watermark ≥ max(entries.rowid) **and** `fts_pending` empty | `live` | flip state in the final chunk's tx |
 | `live`/`rebuilding` | explicit `indexStrategy: 'minisearch'` | `detached` | `detachFts5` (unchanged behavior, operator-chosen) |
-| `detached` | open with FTS chosen | `rebuilding` | full rebuild path |
+| `detached` | open with `indexStrategy: 'fts5'` **or `'auto'`** | `rebuilding` | full rebuild path — `auto` never instantiates MiniSearch (NEW-1) |
 
 ¹ The DROP+CREATE of the virtual table is **single-statement DDL and
 unchunkable**: measured 22.3 s @1M (investigation §2.2, V3 bucket). This is the
@@ -196,10 +205,14 @@ Acceptance 6.
 **Convergence vehicle — open-driven only.** There is no background-tick
 mechanism in the engine today (drains run inside `sync()`,
 `SearchService.ts:96-116`), and this spec does not add one. Convergence
-therefore happens on open and on `sync()` calls. **Host contract:** a
-long-lived process that never re-opens and never calls `syncSearchIndex()`
-holds a partially-recalled index indefinitely — SynapseTree must re-open or
-call `syncSearchIndex()` on a schedule it owns (sign-off to be recorded in the
+therefore happens through two budgeted entry points that share one quantum
+executor: `setup()` on every open, **and `syncSearchIndex()` / the internal
+`sync()`** — both run the same quantum (ledger drain first, then rebuild
+chunks while watermark < max(rowid)) under a `setupBudgetMs`-sized budget, so
+a long-lived host converges the index without re-opening. **Host contract:** a
+long-lived process that neither re-opens nor calls `syncSearchIndex()` holds a
+partially-recalled index indefinitely — SynapseTree must call
+`syncSearchIndex()` on a schedule it owns (sign-off to be recorded in the
 review log at implementation). Recall during `rebuilding` is **partial, by
 design, and the only mode** — there is no strict-recall alternative (the
 previously drafted `searchConsistency: 'strict'` LIKE-fallback is cut: no SQL
@@ -255,7 +268,13 @@ That is sound only if every write surface normalizes. Audited surfaces
 - `setupBudgetMs?: number` (default **1500**): max wall time setup() spends on
   rebuild/drain/migration chunk work per open, checked between chunk txs.
 - `indexStrategy` keeps its existing shape; `'auto'` semantics change per
-  Change 4 (never silently demotes). No `searchConsistency` option ships.
+  Change 4 (never silently demotes) and per Change 3 (`auto` re-attaches
+  `detached` stores). No `searchConsistency` option ships.
+- `WikiSearchUnavailableError` (new public contract): exported from
+  `packages/core/src/index.ts`, stable name, `cause` chains the underlying
+  init failure, thrown per search query while keyword search is unavailable.
+  The pinned `'fts5'` failure path keeps today's behavior (the underlying
+  error propagates, `createIndexStrategy.ts:65`) — unchanged contract.
 
 ## Acceptance
 
@@ -277,13 +296,16 @@ investigation measured a 2.8× warm/cold swing, §2.3).
    excluded from this claim and bounded by 3 and 6 respectively.
 5. **Crash backlog @1M:** 1M undrained ledger rows add at most
    budget + max chunk to any single open (measured shape: 7.6k rows/s in
-   ≤1.01 s chunks), converging across opens instead of the current ~85 s.
+   ≤1.01 s chunks), converging across opens instead of the current
+   single-open drain (≈123 s per 1M undrained rows, [C] derived).
 6. **Gate-scale re-measure (required):** the ~4.7 GB NVMe store re-measured
    before/after on this machine (`profile-setup.ts`; legs ~30–45 min each).
-   Includes the foreign-store first-open shape (migration DDL ladder + normalize
-   + index build; 16.5 s @1M for the ladder component) — target: total
-   first-open ≤ 120 s @4.7 GB with per-tx windows fence-tolerable; steady-state
-   per 4.
+   Includes the foreign-store first-open shape (migration DDL ladder incl.
+   index builds + normalize + first quantum). Derived target [C]: ladder
+   ≈ 69 s (16.5 s @1M × 4.2, linear DDL) + first quantum ≤ 2.6 s ⇒ **≤ 120 s**
+   for a store with normalized refs; a store carrying a full un-normalized
+   backlog adds the ≈123 s normalize term ⇒ **≤ 240 s**. Per-tx windows stay
+   fence-tolerable throughout; steady-state per 4.
 7. **New tests:** (a) concurrent-writer rebuild exactly-once (GAP-2: triggers
    appending while the watermark advances, completion condition per Change 3);
    (b) fresh-store fast path writes v14 stamp + partial index (GAP-3);
@@ -332,3 +354,17 @@ investigation measured a 2.8× warm/cold swing, §2.3).
   acknowledged, 16–30 s extrapolation range, :72 citation). Full review:
   `.sandbox/glm-spec-review-r1.md`. All Critical/Important/Minor findings
   addressed in this revision; acceptance gaps GAP-1..5 folded into criterion 7.
+- **Tier-2 spec review r2** (2026-10-10, GLM 5.3 non-flash, session
+  20261010_073802_081b1f, full text `.sandbox/glm-spec-review-r2.md`): verdict
+  **Changes requested** ("close to approvable") — all 26 r1 findings verified
+  genuinely addressed with exact line-citation re-verification; number audit
+  clean except NEW-3: the "~85 s per 1M backlog" RC-4 figure was never directly
+  measured (the WAL-leg logs died in harness errors) — corrected to the derived
+  ≈123 s in both documents this revision. New findings, 0 Critical: 2 Important
+  (NEW-1 `detached`-under-`auto` self-contradiction — one reading
+  deterministically re-instantiates the MiniSearch OOM path; NEW-2 the
+  `sync()`-convergence claim had no mechanism behind it) + 6 Minor
+  (`WikiSearchUnavailableError` API shape, Acceptance-6 target derivation,
+  OQ-2 bookkeeping, historical RC-2 slip, two citation nano-drifts). All
+  addressed in spec rev 3; `auto` now re-attaches detached stores, and
+  `syncSearchIndex()` runs the shared budgeted quantum.
