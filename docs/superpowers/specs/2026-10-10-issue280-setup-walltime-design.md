@@ -1,7 +1,7 @@
 # Spec: `wiki.setup()` wall time — minimal viable open, converging index
 
 **Date:** 2026-10-10
-**Status:** Draft (rev 5 — Tier-3 Opus pass adjudicated; reviews: GLM `.sandbox/glm-spec-review-r{1..4}.md`, Opus `~/.hermes/cache/scratch/issue280/opus-spec-review.log`)
+**Status:** Draft (rev 6 — Opus delta adjudicated incl. issue-271 takeaways; reviews: GLM r1-r4, Opus full ×2, Opus delta ×2; logs under `~/.hermes/cache/scratch/issue280/`)
 **Branch:** `spec/issue280-setup-walltime` · **PR:** [#281](https://github.com/equationalapplications/expo-llm-wiki/pull/281) (DRAFT until implemented)
 **Priority:** High — blocks the SynapseTree ARM64 gate (15 s writer-lease fence vs 693 s measured setup)
 
@@ -127,7 +127,12 @@ separate fifth change.)
   job).
 - **Downgrade/backup-restore:** an older engine ignores the stamp (it does not
   know the key); a newer engine re-validates via the algorithm id — a bump of
-  `normalize_alg` forces exactly one re-scan.
+  `normalize_alg` forces exactly one re-scan. (Opus delta m2, noted: an OLDER
+  engine opening a `rebuilding` store takes today's single-tx rebuild path —
+  the 693 s shape; acceptable, documented.) The violation predicate is also
+  narrowed to match the stamp's claim exactly: `OR length(source_ref) > 255`
+  is added (refs longer than 255 are truncated by `normalizeSourceRef` — the
+  old predicate missed them; Opus delta m3).
 - The every-open unbounded normalize tx at `WikiMemory.ts:302-309` is deleted
   by the stamp skip; the migration path replaces it (RC-7).
 
@@ -175,39 +180,45 @@ mutate + watermark + state together; the `fb-crash-resume` leg's discipline):
 | From | Event | To | Actions in the transition tx |
 |---|---|---|---|
 | (absent) | fresh store, FTS chosen | `live` | create tables + triggers, stamp `live` |
-| `live` | triggers all present | `live` | no-op fast path |
-| `live` | **any trigger missing** (RC-3) | `rebuilding` | **re-create all triggers**, clear `fts_map`/`fts_pending` + `entries_fts` contents², watermark=0 — **the existing virtual table is kept** (see DDL note) |
+| `live` | **any trigger missing** (RC-3) | `rebuilding` | **re-create all triggers** (`fts5TriggersDdl`), clear **`fts_pending` only** — `fts_map` and `entries_fts` kept intact — watermark=0 |
 | marker row **lost** (RC-3) | any | `rebuilding` | same as above |
+| (absent) | **`entries` table absent** (truly fresh) | `live` | create tables + triggers, stamp `live` |
+| (absent) | **`entries` exists** (pre-FTS store) | `rebuilding` | full re-arm + rebuild (the Acceptance-6 foreign-store shape) |
+| `live`/`rebuilding` | triggers all present | (unchanged) | no-op fast path |
 | `rebuilding` | resume open | `rebuilding` | **verify `triggersPresent()`** — if any trigger was lost mid-rebuild, writes may have been missed ⇒ restart (watermark=0, same re-arm tx) |
 | `rebuilding` | setup() quantum **or** no-arg `syncSearchIndex()` | `rebuilding` | advance watermark by ≤N chunk txs (below) |
 | `rebuilding` | watermark ≥ max(entries.rowid) **and** `fts_pending` empty (both re-checked inside the final tx) | `live` | flip state in the final chunk's tx |
 | `live`/`rebuilding` | explicit `indexStrategy: 'minisearch'` | `detached` | `detachFts5` (unchanged behavior, operator-chosen) |
 | `detached` | open with `indexStrategy: 'fts5'` **or `'auto'`** | `rebuilding` | full rebuild path (incl. ledger-table re-creation — `fts5LedgerDropSql` removed them) — `auto`'s failure path never instantiates MiniSearch (NEW-1/R3-4) |
 
-**DDL note (supersedes the earlier "DROP+CREATE floor"):** on marker-loss or
-trigger-loss the existing `entries_fts` is **stale, not corrupt** — the rebuild
-delete-then-inserts each rowid window **into the existing table** (the drain's
-own shape), so there is **no DROP+CREATE and no 22.3 s @1M DDL floor** on this
-path. Side benefit: old rows stay searchable while their windows have not yet
-been re-done (recall shrinks instead of emptying). The DROP+CREATE is reserved
-for the case where the table is actually wrong: tokenizer/DDL mismatch vs
-`fts5TablesDdl` (detected by comparing the stored DDL). That case inherits the
-old floor (22.3 s @1M, ~94 s linear at 4.2M — bounded in Acceptance 3/6).
+**DDL note (rev 6, settled per Opus delta B-1):** marker-loss and trigger-loss
+**keep both `fts_map` AND `entries_fts` intact** — only `fts_pending` is
+cleared, and only the triggers are re-created. The rebuild window is then
+**`drainChunkSql` with `chunkIds = SELECT id FROM entries WHERE rowid > ? AND
+rowid <= ?`**: delete FTS rows via the map, delete the map rows for those ids,
+insert map rows for live ids, insert the FTS rows — conflict-free by
+construction (an id drained ahead of its window has no ledger row, and its map
+row is deleted+re-inserted by its window anyway). **No DROP+CREATE and no
+22.3 s floor** on this path; recall stays "previous index, minus rows whose
+windows haven't re-run yet". The DROP+CREATE is reserved for (a)
+tokenizer/DDL mismatch vs the stored DDL (detected by regexing the `tokenize=`
+clause, as `WikiMemory.ts:277` does — raw comparison always mismatches because
+`sqlite_master` drops `IF NOT EXISTS`), and (b) the detached re-attach path
+where `detachFts5`'s best-effort `entries_fts` drop may have failed (map
+untrustworthy ⇒ DROP+CREATE or assert-empty). The old rowid-collision chain
+(spec rev 5's "keep map but clear map" contradiction) is closed: with
+`fts_map` kept, window re-dos are genuinely idempotent, and
+`fts_rowid` (INTEGER PRIMARY KEY, no AUTOINCREMENT) never re-collides with
+surviving `entries_fts` rows.
 
-**Rebuild-mechanics note (Opus B-1):** window inserts are **conflict-free by
-construction**: the map insert is `INSERT INTO fts_map ... SELECT ... WHERE
-rowid > ? AND rowid <= ? AND id NOT IN (SELECT id FROM fts_map)` (equivalently
-`INSERT OR IGNORE`), and the `entries_fts` insert covers only the rows this
-window actually mapped (keyed above `max(fts_rowid)` recorded before the map
-insert). Re-doing a window after a crash is a no-op, not an error. Draining an
-id ABOVE the watermark is allowed and normal (that id's later window skips it
-via the NOT EXISTS guard). The `UNIQUE(id)` constraint rejects rather than
-skips — no plain `INSERT ... SELECT` may target `fts_map` anywhere on the
-rebuild path.
-
-**Old-content window note:** windows not yet re-done still hold pre-rebuild
-rows for ids that have since been deleted or updated; the ledger drain of those
-ids (delete-then-insert per `drainChunkSql`) already corrects them.
+**Orphan sweep (rev 6, required before the `live` flip):** windows walk
+`entries.rowid`, so index rows whose entry no longer exists (hard-deleted by
+`runPrune`, or id-changed while triggers were down) are never visited. The
+final rebuild quantum runs a chunked orphan sweep first: walk `fts_map` by
+`fts_rowid`, delete rows whose `id` has no live `entries` row (plus their FTS
+rows). The completion condition gains a third clause: **watermark ≥
+max(rowid) AND ledger empty AND orphan sweep complete**, all re-checked inside
+the flipping tx.
 
 ² The one remaining DROP+CREATE case (tokenizer/DDL mismatch) is single-statement
 DDL and unchunkable: measured 22.3 s @1M (investigation §2.2, V3 bucket) —
@@ -237,49 +248,69 @@ both re-checked inside the flipping transaction**, with the ledger drained
 drain-before-window case:** update a row ABOVE the watermark, drain, then let
 that row's window run — no duplicate, no stall.
 
-**Budget semantics (Opus M-1/M-3/M-4 — write path split):** the quantum is
-bounded by `setupBudgetMs` (default **1500**), checked **between** chunk
-transactions, worst-case wall = budget + max chunk. **One deadline per open**:
-the migration normalize (when it runs) and the post-migration `sync()` share
-a single deadline measured from open start (no 2× stacking). **Which entry
-point does what:**
-- `setup()` — full quantum: normalize (migration open), ledger drain, rebuild
-  chunks. This is the convergence workhorse.
-- no-arg `syncSearchIndex()` (→ `sync()` → `drainTurn`) — full quantum.
-- **write-triggered turns (`syncEntries` after ingest/forget/supersede/import,
-  and per-entity `sync(id)`) — LEDGER DRAIN ONLY**, bounded: they never run
-  rebuild chunks (a write during `rebuilding` must not pay ~2.5 s) and they
-  **drain to completion of their own ids first** — the drain ordering within a
-  write-triggered turn is the caller's own ids (newest seq window), then the
-  remainder if budget allows, so read-your-writes holds for the write that
-  triggered the turn (Opus M-4: the ledger drains oldest-first; a fresh write
-  behind a 1M backlog must not wait ~80 quanta).
-- Arbitration within a rebuild quantum: ledger drain first, then rebuild
-  chunks with the remainder — with the drain-before-window case above
-  constructively harmless.
-- At least one rebuild chunk per rebuild-quantum (forward progress under
-  sustained ledger load; starvation risk noted and accepted — the ledger also
-  converges, so the rebuild never starves permanently).
-- The migration's *unchunkable* pieces (CREATE INDEX build) remain declared
-  one-time costs in Acceptance 6. Note (Opus MIN-5): at 4.2M, FTS5 automatic
-  segment merges can stretch a single chunk commit; Acceptance 6 records the
-  observed max chunk time at gate scale.
+**Budget semantics (rev 6: interface contract per Opus delta M2/M3):** the
+quantum is bounded by `setupBudgetMs` (default **1500**), checked **between**
+chunk transactions, worst-case wall = budget + max chunk. **The drain interface
+is specified**: `drain(opts?: { deadline?: number; mode?: 'ledger' | 'full';
+ids?: readonly string[] })` — `mode: 'ledger'` never runs rebuild chunks;
+`ids` are the caller's own ledger rows, drained FIRST via an id-targeted chunk
+(`SELECT id FROM fts_pending WHERE id IN (SELECT value FROM json_each(?))`),
+so read-your-writes survives backlogs regardless of the 500-row seq window
+(the "newest seq window" phrasing is retired — it can miss the caller's rows
+under >500 concurrent writes). `syncEntries`/`sync(id)` thread their ids
+through `drainTurn`. **One deadline per open**: `setup()` captures
+`openDeadline = start + budget` and passes it through the migration and the
+post-migration `sync({ deadline })` — no per-turn re-budgeting (M-3 holds).
+**Which entry point does what** (corrected paths per Opus delta m1):
+- `setup()` — full quantum (`sync()` → `drainTurn`): normalize (migration
+  open), ledger drain, rebuild chunks. The convergence workhorse.
+- **no-arg `syncSearchIndex()` → `syncStale()` → `drainTurn`** — full quantum
+  (and the init-retry point; `WikiMemory.syncSearchIndex()` owns the retry,
+  not `SearchService`, which has no db/prefix/metadataRepo).
+- **`syncEntries`/`sync(id)` (write-triggered) — LEDGER DRAIN ONLY** with the
+  caller's `ids` first, remainder budget zero-to-small (a write must not pay
+  ~2.5 s).
+- Arbitration within a full quantum: ledger drain first, then rebuild chunks
+  with the remainder; **at least one rebuild chunk per full quantum unless the
+  drain overran the deadline** (bounds worst-case wall at budget + 2 × max
+  chunk ≈ 3.5 s, per Opus delta m1 — Acceptance 2/5 updated accordingly).
+- The migration normalize runs to completion (Change 1), sharing the
+  openDeadline only in that both finish within the open; the CREATE INDEX
+  build remains a declared one-time cost (Acceptance 6 records observed max
+  chunk at gate scale — FTS5 auto-merges can stretch it).
 
 **Convergence vehicle — open-driven, with a safe write path.** There is no
 background-tick mechanism in the engine today (`drains run inside sync()`,
 `SearchService.ts:96-116`), and this spec does not add one. Convergence
-happens in `setup()` and in no-arg `syncSearchIndex()`; writes converge only
-their own ids and stay fast. **Host contract:** a long-lived process that
-neither re-opens nor calls no-arg `syncSearchIndex()` holds a
-partially-recalled index indefinitely — SynapseTree must call
+happens in `setup()` and in no-arg `syncSearchIndex()` (→ `syncStale()`);
+writes converge only their own ids and stay fast. **Host contract:** a
+long-lived process that neither re-opens nor calls no-arg `syncSearchIndex()`
+holds a partially-recalled index indefinitely — SynapseTree must call
 `syncSearchIndex()` on a schedule it owns (sign-off recorded in the review log
 at implementation). Recall during `rebuilding` is **partial, by design, and
 the only mode** — there is no strict-recall alternative (the previously
 drafted `searchConsistency: 'strict'` LIKE-fallback is cut: no SQL LIKE path
 exists in the engine, and a `%q%` body scan would relocate the fence problem
 into every query). Mid-drain recall verified (`profile-fb-prototype.ts`);
-with the DDL-note change, recall during marker-loss rebuild starts at
-"previous index, possibly stale" instead of empty.
+with the rev-6 re-arm, recall during marker-loss rebuild stays at
+"previous index, minus re-run windows" instead of emptying.
+
+**`WikiSearchUnavailableError` — complete call-site map (rev 6, per the
+issue-271 takeaways §3 rule: grep ALL callers, pin each):** the error can
+surface from 5 sites, each pinned:
+- `RetrievalService.ts:189` (prefilter) and `:223` (hybrid keyword boost via
+  `getKeywordScores`): **caught → treated as empty keyword scores** — the
+  vector path proceeds; a keyword outage must not take down semantic reads
+  (weight < 1) (Opus delta M1/M2).
+- `RetrievalService.ts:719` (keyword-only fallback): **propagates** to the
+  caller (explicit degraded signal; keyword-only reads genuinely have nothing
+  to fall back to).
+- `RetrievalService.ts:550`: **propagates** (unchanged rev-5 decision).
+- `MaintenanceService.ts:1542` (heal anchors): **caught → "no heal anchors
+  available", and the degrade path must NOT stamp `heal_checked_at`** for
+  unchecked facts (Opus delta m7).
+- `syncEntries`/`drainTurn` paths: unavailable strategy's `drain` is a no-op
+  (ledger intact; no per-write warning spam).
 
 ### Change 4 — RC-6 guard: failure-ordered init, retry, never demote
 
@@ -357,33 +388,38 @@ investigation measured a 2.8× warm/cold swing, §2.3).
 1. **Warm open @1M:** setup() ≤ 1 s warm / ≤ 3 s cold (today: 1.74 s warm, of
    which 1.73 s is RC-2 scans; post-fix predicted ~0.01 s for the scan pair).
 2. **Converged rebuild open @1M** (`rebuilding`, watermark advanced by prior
-   opens): setup() returns within budget + max chunk (≤ 2.6 s @1M defaults).
+   opens): setup() returns within budget + 2 × max chunk (≤ 3.5 s @1M defaults
+   — the forced-final-chunk rule allows one extra chunk, Opus delta m1).
 3. **Marker-loss path @1M:** first open completes the re-arm tx + ≥1 quantum
-   and returns; the common marker-loss path has **no DDL floor** (existing
-   table kept — see the DDL note). The tokenizer-mismatch case keeps the
-   measured 22.3 s @1M floor as its accepted bound (explicitly outside the
-   steady-state fence claim — see 4). Convergence thereafter per 2. Tests:
-   delete the meta row + one trigger on a built store (common path); corrupt
-   the stored tokenizer DDL (floor path).
+   and returns; the common marker-loss path has **no DDL floor** (map + table
+   kept — see the DDL note). The tokenizer-mismatch and detached-re-attach
+   cases keep the measured 22.3 s @1M floor as their accepted bound
+   (explicitly outside the steady-state fence claim — see 4). Convergence
+   thereafter per 2. Tests: delete the meta row + one trigger on a built
+   store, **plus the rev-6 orphan case**: with triggers missing, hard-delete
+   one row (runPrune) and rename another, converge, assert neither is
+   searchable (orphan sweep works, 7(g′)).
 4. **Steady-state fence (the gate claim):** every open of a `live` store —
    warm, cold, and post-crash-resume — completes inside 15 s at 4.7 GB NVMe
    (measured re-run, criterion 6). Marker-loss/first-migration opens are
    excluded from this claim and bounded by 3 and 6 respectively.
 5. **Crash backlog @1M:** 1M undrained ledger rows add at most
-   budget + max chunk to any single open (measured shape: 7.6k rows/s in
+   budget + 2 × max chunk to any single open (measured shape: 7.6k rows/s in
    ≤1.01 s chunks), converging across opens instead of the current
    single-open drain (≈123 s per 1M undrained rows, [C] derived).
 6. **Gate-scale re-measure (required):** the ~4.7 GB NVMe store re-measured
    before/after on this machine (`profile-setup.ts`; legs ~30–45 min each).
    Includes the foreign-store first-open shape (`setupDatabase` DDL incl.
-   repeated CREATE INDEX + normalize + first quantum). Derived target [C]:
-   `setupDatabase` component ≈ 69 s (16.5 s @1M × 4.2, linear) + first
-   quantum ≤ 2.6 s ⇒ **≤ 120 s** for a store with normalized refs; a store
-   carrying a full un-normalized backlog adds the ≈123 s normalize term
-   (chunked, single deadline shared with the post-migration sync) ⇒
-   **≤ 240 s**. Per-tx windows stay fence-tolerable throughout; the largest
-   observed chunk commit time at gate scale is recorded here (FTS5 automatic
-   segment merges can stretch it — Opus MIN-5); steady-state per 4.
+   repeated CREATE INDEX + normalize + first quantum). Targets are **derived
+   from a required @1M normalize measurement** (the ≈123 s figure is the
+   *drain* rate; the normalize rate is unmeasured — Opus delta M3): measure
+   chunked normalize @1M, scale ×4.2, add the `setupDatabase` component
+   (≈ 69 s) + first quantum, and record the result here — with the explicit
+   statement that **a first migration open on a foreign store exceeds the
+   15 s fence by design** (one-time, chunked, crash-resumable). Per-tx windows
+   stay fence-tolerable throughout; the largest observed chunk commit time at
+   gate scale is recorded here (FTS5 auto-merges can stretch it); steady-state
+   per 4.
 7. **New tests:** (a) concurrent-writer rebuild exactly-once — triggers
    appending while the watermark advances, completion condition per Change 3,
    **including the drain-before-window case** (update a row above the
@@ -400,7 +436,9 @@ investigation measured a 2.8× warm/cold swing, §2.3).
    enters `rebuilding` and converges (per Change 3's transition table);
    (g) marker-loss transition produces the defined re-arm + rebuild sequence,
    **triggers verified present after the transition and after mid-rebuild
-   resume** (GAP-5/CRIT-1/Opus B-2); (h) `EXPLAIN QUERY PLAN` asserts the
+   resume** (GAP-5/CRIT-1/Opus B-2) **+ the rev-6 orphan case: triggers
+   missing, hard-delete one row (runPrune) + rename another, converge, neither
+   searchable** (Opus delta B1 7g′); (h) `EXPLAIN QUERY PLAN` asserts the
    partial index serves the legacy probe; (i) budget arbitration order (drain
    before rebuild within a quantum) **+ write-triggered turns stay
    drain-only** (a write during `rebuilding` never runs rebuild chunks);
@@ -409,7 +447,14 @@ investigation measured a 2.8× warm/cold swing, §2.3).
    invalid rebuild watermark and restarts the rebuild (Opus M-6); (l) migration
    normalize **runs to completion regardless of the time budget** (small
    budget, all refs still normalized; budget affects only the post-migration
-   sync).
+   sync); (m) **read-your-writes under backlog:** 5k-row ledger backlog + one
+   write → the written fact is searchable immediately after `syncEntries`
+   returns (ids-first drain, Opus delta M3); (n) **hybrid reads survive a
+   keyword outage:** `weight < 1` read with unavailable keyword scores still
+   returns vector-ranked results (RetrievalService :189/:223 sites, Opus
+   delta M1); (o) **heal degrade does not stamp:** `heal_checked_at` is not
+   written for facts never checked (Opus delta m7); (p) **VACUUM guard
+   extended to the normalize watermark** (Opus delta M4).
 8. Existing test suite green.
 
 ## Out of scope
@@ -500,3 +545,32 @@ investigation measured a 2.8× warm/cold swing, §2.3).
  watermark cleanup, chunk-boundary edge, doc-comment updates, test-suite
  bookkeeping (`migration13.test.ts` hardcode), empty-table rowid guard,
  `rebuildFromSource()` dead code removal. **Spec rev 5 = this revision.**
+- **Tier-3 Opus delta passes w/ issue-271 takeaways attached** (2026-10-10,
+ spec $1.29/26 turns + plan $1.74/37 turns, logs `opus-{spec,plan}-delta.log`;
+ Kurt directed the takeaways report be presented to the dual cycle):
+ verdicts **REQUEST CHANGES** on both — and the two passes CONVERGED on a
+ real self-contradiction in rev 5's marker-loss re-arm (table row said
+ "clear entries_fts contents", DDL note said "keep the table") whose
+ keep-map-but-clear-map reading hits an `fts_rowid` collision chain that
+ wedges the rebuild permanently (plan delta B1 worked the full failure
+ chain). **Rev 6 settles it per the reviewers' fix: keep `fts_map` AND
+ `entries_fts`, clear only `fts_pending`, windows become drain-shaped
+ delete-then-insert per id, orphan sweep before the flip (hard-deletes while
+ triggers were down — new test 7(g′)), detached re-attach keeps DROP+CREATE
+ (map untrustworthy).** Also applied from the deltas: drain interface
+ contract `drain({deadline, mode, ids})` with ids-first read-your-writes
+ (the takeaways §3 lesson, which had manifested AGAIN — 5 typed-error call
+ sites, 2 were pinned; all 5 now mapped: prefilter/blend degrade to empty,
+ keyword-only fallbacks propagate, heal degrades WITHOUT stamping
+ heal_checked_at); one-deadline-per-open restored (plan had per-turn
+ re-budgeting); forced-chunk bound fixed to budget + 2× max chunk (m1);
+ Acceptance-6 240 s figure corrected — the ≈123 s was the DRAIN rate, the
+ normalize rate is unmeasured and a required @1M normalize measurement now
+ precedes any gate-scale bound (M3); VACUUM guard extended to the normalize
+ watermark + mechanism specified (M4); fresh-store transition keyed on
+ entries-did-not-exist so pre-FTS stores rebuild (M5); downgrade-of-
+ rebuilding note (m2); 255-char predicate gap closed (m3); watermark keys
+ named + flip-tx deletion stated (m5). Takeaways §1/§2/§5/§8/§9 verified
+ pre-satisfied by design; §4 (orphan sweep incl. tests) and §6 (VACUUM
+ guard) incorporated as above; §7 telemetry deferred (no telemetry surface
+ in this delivery). **Spec rev 6 = this revision.**
