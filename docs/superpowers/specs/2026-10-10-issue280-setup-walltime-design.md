@@ -1,7 +1,7 @@
 # Spec: `wiki.setup()` wall time — minimal viable open, converging index
 
 **Date:** 2026-10-10
-**Status:** Draft (rev 3 — GLM r2 triage applied; reviews: `.sandbox/glm-spec-review-r{1,2}.md`)
+**Status:** Draft (rev 4 — GLM r3 triage applied; reviews: `.sandbox/glm-spec-review-r{1,2,3}.md`)
 **Branch:** `spec/issue280-setup-walltime` · **PR:** [#281](https://github.com/equationalapplications/expo-llm-wiki/pull/281) (DRAFT until implemented)
 **Priority:** High — blocks the SynapseTree ARM64 gate (15 s writer-lease fence vs 693 s measured setup)
 
@@ -147,9 +147,11 @@ stores in the wild are overwhelmingly artifacts of the RC-6 fallback bug this
 spec fixes, and keeping them on MiniSearch under `auto` is the measured
 deterministic OOM path (Change 4's stakes). While `detached` under `auto` —
 before the rebuild's first quantum completes — keyword search is unavailable
-(`WikiSearchUnavailableError` per query); MiniSearch is **never** instantiated
-by `auto`. Switching back from a pinned-detached store is the operator
-re-opening with `'fts5'` or `'auto'`.
+(`WikiSearchUnavailableError` per query); on the **failure** path — the one
+Change 4 governs — MiniSearch is **never** instantiated by `auto`. (The
+unrelated module-absent path — `probeFts5` false — still falls back to
+MiniSearch by design; see Change 4.) Switching back from a pinned-detached
+store is the operator re-opening with `'fts5'` or `'auto'`.
 
 **Transition table** (all transitions execute in ONE transaction — decide +
 mutate + watermark + state together; the `fb-crash-resume` leg's discipline):
@@ -160,10 +162,10 @@ mutate + watermark + state together; the `fb-crash-resume` leg's discipline):
 | `live` | triggers all present | `live` | no-op fast path |
 | `live` | **any trigger missing** (RC-3) | `rebuilding` | DROP+CREATE `entries_fts`¹, clear `fts_map`/`fts_pending`, watermark=0 |
 | marker row **lost** (RC-3) | any | `rebuilding` | same as above |
-| `rebuilding` | open/setup quantum | `rebuilding` | advance watermark by ≤N chunk txs (below) |
+| `rebuilding` | open/setup quantum **or** `sync()` quantum | `rebuilding` | advance watermark by ≤N chunk txs (below) |
 | `rebuilding` | watermark ≥ max(entries.rowid) **and** `fts_pending` empty | `live` | flip state in the final chunk's tx |
 | `live`/`rebuilding` | explicit `indexStrategy: 'minisearch'` | `detached` | `detachFts5` (unchanged behavior, operator-chosen) |
-| `detached` | open with `indexStrategy: 'fts5'` **or `'auto'`** | `rebuilding` | full rebuild path — `auto` never instantiates MiniSearch (NEW-1) |
+| `detached` | open with `indexStrategy: 'fts5'` **or `'auto'`** | `rebuilding` | full rebuild path — `auto`'s failure path never instantiates MiniSearch (NEW-1/R3-4) |
 
 ¹ The DROP+CREATE of the virtual table is **single-statement DDL and
 unchunkable**: measured 22.3 s @1M (investigation §2.2, V3 bucket). This is the
@@ -265,8 +267,9 @@ That is sound only if every write surface normalizes. Audited surfaces
 
 ## Config surface
 
-- `setupBudgetMs?: number` (default **1500**): max wall time setup() spends on
-  rebuild/drain/migration chunk work per open, checked between chunk txs.
+- `setupBudgetMs?: number` (default **1500**): max wall time each quantum
+  spends on rebuild/drain/migration chunk work — per open, and per
+  `syncSearchIndex()`/`sync()` call — checked between chunk txs.
 - `indexStrategy` keeps its existing shape; `'auto'` semantics change per
   Change 4 (never silently demotes) and per Change 3 (`auto` re-attaches
   `detached` stores). No `searchConsistency` option ships.
@@ -313,7 +316,9 @@ investigation measured a 2.8× warm/cold swing, §2.3).
    (GAP-3); (d) stamp-missing self-heal (Change 1); (e) RC-6: forced init
    failure ×2 on a healthy 1M store — no `detachFts5` call (spy), state not
    `detached`, `WikiSearchUnavailableError` thrown per query, next open
-   recovers; (f) `detached` store under v14 open stays detached (GAP-5);
+   recovers; (f) `detached` store semantics: under pinned `indexStrategy: 'minisearch'`
+   the store stays detached; under `'auto'` (the default) it re-attaches —
+   enters `rebuilding` and converges (per Change 3's transition table);
    (g) marker-loss transition produces the defined DDL + rebuild sequence
    (GAP-5/CRIT-1); (h) `EXPLAIN QUERY PLAN` asserts the partial index serves
    the legacy probe; (i) budget arbitration order (drain before rebuild within
@@ -368,3 +373,17 @@ investigation measured a 2.8× warm/cold swing, §2.3).
   OQ-2 bookkeeping, historical RC-2 slip, two citation nano-drifts). All
   addressed in spec rev 3; `auto` now re-attaches detached stores, and
   `syncSearchIndex()` runs the shared budgeted quantum.
+- **Tier-2 spec review r3** (2026-10-10, GLM 5.3 non-flash, session
+  20261010_080437_41a693, full text `.sandbox/glm-spec-review-r3.md`): verdict
+  **Changes requested** — "the design itself holds; no design work requested;
+  all four findings are localized text edits." All 8 r2 findings verified
+  resolved at their sites, with the reviewer independently confirming NEW-3's
+  premise (read the WAL-leg logs: ENOENT + TransformError) and re-deriving
+  122.7–123.5 s, plus a clean number audit (16.5 × 4.2 = 69.3; 71.6 ≤ 120;
+  194.6 ≤ 240). Findings, all applied in rev 4: R3-1 (Important) Acceptance
+  7(f) still mandated the old detached-stays-detached behavior, contradicting
+  auto re-attach — test rewritten to cover both preference semantics; R3-2
+  (Minor) "~85 s" remnant in investigation §6 review-log summary; R3-3 (Minor)
+  Config surface + transition table said "per open" only — now name the shared
+  sync quantum; R3-4 (Minor) the bare "never instantiated by auto" over-claimed
+  against Change 4's module-absent path — scoped to the failure path.
