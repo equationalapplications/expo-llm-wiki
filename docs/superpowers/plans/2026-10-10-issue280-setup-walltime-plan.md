@@ -40,6 +40,7 @@
 - Modify: `packages/core/src/index.ts` (add export)
 - Test: `packages/core/__tests__/wikiSearchUnavailableError.test.ts`
 
+- [ ] **Step 0 (before Task 1's first run): record the full-suite baseline** on the pre-task commit — files completed, tests completed, fork-error count — into this file (append under Global Constraints). The Task 11 gate compares against this number.
 - [ ] **Step 1: Write failing test**
 
 ```typescript
@@ -102,8 +103,20 @@ Add `export { WikiSearchUnavailableError } from './errors/WikiSearchUnavailableE
   4. `preferred: 'fts5'` + failing init → raw throw propagates.
 - [ ] **Step 2: Run to verify failure** — `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/createIndexStrategy.test.ts` → FAIL (today's code detaches + returns MiniSearch).
 - [ ] **Step 3: Implement** the reordered `createIndexStrategy` per Design above.
-- [ ] **Step 4: Run to verify pass** + existing `miniSearchFallback.test.ts` still green (its module-absent cases must pass unchanged — if one asserts the old init-catch demotion, update THAT test to the new contract and note it in the commit body).
+- [ ] **Step 4: Run to verify pass** + `createIndexStrategy.test.ts` (its module-absent fallback cases are the actual regression guard here — `miniSearchFallback.test.ts` is the read-path fallback, not strategy selection), `miniSearchFallback.test.ts` still green. **Add test 5: reopen-recovers** — after a double-failure open, a second `new WikiMemory(...)` open on the same store succeeds with a working strategy and keyword search returns results (pins spec 7(e)'s "next open recovers").
 - [ ] **Step 5: Commit** — `fix(core): auto init failure retries and never demotes the FTS index (#280 RC-6)`
+
+### Task 2b: `importDump` belt — dump-header stamp + conditional normalize
+
+**Objective:** Spec write-path audit belt (b): a dump from a store whose stamp is missing/older gets its refs re-normalized on import.
+
+**Files:**
+- Modify: `packages/core/src/services/ImportExportService.ts` (`MemoryDump` (:30-58) gains an optional header field `sourceRefNormalizeStamp?: { schema_version: number; normalize_alg: number }`; `exportDump` writes the store's stamp; `importDump` compares it to the current `SOURCE_REF_NORMALIZE_ALG` and, on missing/older, runs the same budgeted chunked normalize used by `setup()` — extract that loop from Task 5 into a shared private helper so both call sites are one function)
+- Test: `packages/core/__tests__/importDumpNormalizeBelt.test.ts`
+
+- [ ] **Step 1: Failing tests:** (1) dump from stamped store imports with zero normalize passes; (2) dump with `sourceRefNormalizeStamp: undefined` (legacy dump) + planted violating ref → import normalizes it and the store ends stamped; (3) dump stamped at `normalize_alg: 0` → re-normalized on import.
+- [ ] **Step 2: Verify failure. Step 3: Implement. Step 4: Verify pass** + `importDump.test.ts` green (dump JSON stays backward-compatible: new field optional on read).
+- [ ] **Step 5: Commit** — `feat(core): importDump re-normalizes dumps with missing or older normalize stamps (#280)`
 
 ---
 
@@ -131,8 +144,11 @@ Add `export { WikiSearchUnavailableError } from './errors/WikiSearchUnavailableE
   3. resume: set up a `rebuilding` store with watermark=K (simulate crash by constructing state directly) → init does NOT reset the watermark; drain resumes from K; exactly-once.
   4. completion requires drained ledger: with pending ledger rows above the watermark, state stays `rebuilding` until they're drained.
 - [ ] **Step 2: Run to verify failure.**
-- [ ] **Step 3: Implement** per Design.
-- [ ] **Step 4: Run to verify pass** + `fts5IndexStrategy.test.ts`, `fts5Integration.test.ts`, `fts5Sql.test.ts`, `SearchService.test.ts` all green (update any test asserting the old single-tx rebuild — note it in the commit body).
+- [ ] **Step 3: Implement** per Design. **Two decisions the review pinned:**
+  - **State gate:** rebuild chunks run ONLY when `fts5_index_state === 'rebuilding'`. `drain()` on a `live` store drains the ledger and returns — it never reads the watermark (absent on legacy-live stores; stale as live stores grow). No NaN path, no accidental re-entrancy.
+  - **Conflict-free window inserts (drain-first makes collisions normal, not exceptional):** a row written mid-rebuild is ledger-drained (→ already in `fts_map`) before its rebuild window arrives. Window SQL must be idempotent: `INSERT INTO fts_map (fts_rowid, id, entity_id) SELECT ... WHERE rowid > ? AND rowid <= ? AND id NOT IN (SELECT id FROM fts_map WHERE ...)` — or `INSERT OR IGNORE` on the map — and the `entries_fts` insert only for rows this window actually mapped (join through the just-inserted map rows; re-inserting a mapped id hits FTS5 rowid uniqueness). Re-doing a window after crash is a no-op, not an error.
+  - **Interim drain budget:** until Task 4 wires config, `drain()` uses the default 1500 ms constant (exported `DEFAULT_SETUP_BUDGET_MS`) — this is what keeps the broad suites green at this task's Step 4.
+- [ ] **Step 4: Run to verify pass** + `fts5IndexStrategy.test.ts`, `fts5Integration.test.ts`, `fts5Sql.test.ts`, `SearchService.test.ts` green, **plus the setup()-then-search suites: `WikiMemory.test.ts`, `searchParity.test.ts`, `incrementalSearchIndex.test.ts`, `importDump.test.ts`** (fresh stores must still yield a complete index on first open), then the full core suite with the baseline gate (Global Constraints). Update any test asserting the old single-tx rebuild — note it in the commit body.
 - [ ] **Step 5: Commit** — `feat(core): resumable watermark chunked FTS rebuild in rebuilding state (#280 RC-1/RC-3)`
 
 ---
@@ -143,7 +159,8 @@ Add `export { WikiSearchUnavailableError } from './errors/WikiSearchUnavailableE
 
 **Files:**
 - Modify: `packages/core/src/types.ts:342` area (add `setupBudgetMs?: number` to the config type with `@default 1500`)
-- Modify: `packages/core/src/WikiMemory.ts:311-320` (pass the budget into the strategy: `setIndexStrategy` gains a budget param or the strategy reads it from a setter — choose the smallest diff that keeps `SearchService` constructor-shape stable)
+- Modify: `packages/core/src/services/SearchService.ts` (`setIndexStrategy(strategy, opts?: { budgetMs?: number })` — the service stores `drainBudgetMs`; `drainTurn` computes a fresh deadline per turn (`Date.now() + budgetMs` at turn start) and passes it to `drain(deadline)` — this is the decided plumbing: per-call budget semantics per spec Config surface, not a strategy-held clock)
+- Modify: `packages/core/src/WikiMemory.ts:311-320` (pass `config.setupBudgetMs ?? DEFAULT_SETUP_BUDGET_MS` through `setIndexStrategy`)
 - Test: `packages/core/__tests__/rebuildBudget.test.ts`
 
 - [ ] **Step 1: Failing tests:**
@@ -160,9 +177,9 @@ Add `export { WikiSearchUnavailableError } from './errors/WikiSearchUnavailableE
 **Objective:** The every-open GLOB scan + unbounded normalize tx become a one-time, budgeted, resumable migration with a version-qualified stamp.
 
 **Files:**
-- Modify: `packages/core/src/db/migrations.ts` (append v14 entry; `CURRENT_SCHEMA_VERSION` auto-derives)
-- Modify: `packages/core/src/repositories/EntryRepository.ts` (add `findSourceRefViolationWindow(lo: number, hi: number)`: the `findRowsForSourceRefMigration` predicate (:1242-1255) plus `AND rowid > ? AND rowid <= ?`; keep the old method for one revision as deprecated or delete it — deleting is fine, it has no other callers)
-- Modify: `packages/core/src/WikiMemory.ts:297-309` (replace the scan+unbounded-tx block)
+- Modify: `packages/core/src/db/migrations.ts` (append v14 entry; `CURRENT_SCHEMA_VERSION` auto-derives. v14 also defines/creates the partial legacy index — **Task 5 owns creating the shared DDL constant in `schema.ts`; Task 6 consumes it**)
+- Modify: `packages/core/src/repositories/EntryRepository.ts` (add `findSourceRefViolationWindow(lo: number, hi: number)`: the `findRowsForSourceRefMigration` predicate (:1242-1255) plus `AND rowid > ? AND rowid <= ?`; delete the old method — it has no other callers after this task)
+- Modify: `packages/core/src/WikiMemory.ts:301-309` (replace ONLY the normalize block; **keep :297-299 — the `assertNoLegacySourceTypes()` fail-closed check stays in `setup()` unchanged**, per spec Change 2)
 - Test: `packages/core/__tests__/migration14.test.ts`, extend `packages/core/__tests__/wikiMemory*.test.ts` (whatever file covers setup() — locate via `search_files` for `assertNoLegacySourceTypes` in `__tests__`)
 
 **Design:**
@@ -211,7 +228,7 @@ Add `export { WikiSearchUnavailableError } from './errors/WikiSearchUnavailableE
 
 **Objective:** Pin both detached behaviors end-to-end.
 
-- [ ] **Step 1: Failing tests:** (a) store detached + open with `indexStrategy: 'minisearch'` → stays detached, MiniSearch active. (b) store detached + open with `'auto'` → `rebuilding` after init, converges to `live` across drains, MiniSearch never constructed (spy on `MiniSearchIndexStrategy.prototype.init`). (c) detached + pinned `'fts5'` → re-attach.
+- [ ] **Step 1: Failing tests:** (a) store detached + open with `indexStrategy: 'minisearch'` → stays detached, MiniSearch active. (b) store detached + open with `'auto'` → `rebuilding` after init, converges to `live` across drains, MiniSearch never constructed (**spy on the `MiniSearchIndexStrategy` constructor** — it has no `init` method; `vi.spyOn(..., 'init')` throws on the undefined property). (c) detached + pinned `'fts5'` → re-attach.
 - [ ] **Step 2–4:** red → (expected: mostly already satisfied by Tasks 2–3; fix whatever leaks) → green.
 - [ ] **Step 5: Commit** — `test(core): pin detached-state semantics per preference (#280)`
 
@@ -252,6 +269,8 @@ Add `export { WikiSearchUnavailableError } from './errors/WikiSearchUnavailableE
 **Objective:** Spec §Acceptance 1/2/5 numbers re-measured on this machine; Acceptance 6's 4.7 GB legs scheduled.
 
 - [ ] Re-run `.sandbox/profile-setup.ts` @1M: V1/V2/V3 + crash-backlog shapes on the new engine; fold the before/after table into spec **rev 5** (append-only).
+- [ ] Record the **host-contract sign-off** in the spec review log: SynapseTree calls `syncSearchIndex()` on a schedule it owns (spec Change 3 convergence contract — required at implementation).
+- [ ] Update the `indexStrategy` doc comment (`types.ts:330-342`) + option docs: MiniSearch paths (module-absent fallback, pinned `'minisearch'`) carry the measured 1M-entry OOM ceiling — operators of pro-scale stores need raised `--max-old-space-size`.
 - [ ] Schedule the ~4.7 GB NVMe legs (~30–45 min each, background, `ISSUE280_STORE_DIR=$HOME/issue280-stores`) — steady-state fence (≤15 s) and foreign-store first-open (≤120 s / ≤240 s) are the gate criteria.
 - [ ] Post leg summaries to PR #281 as comments (evidence trail, same as the Step-0 legs).
 
