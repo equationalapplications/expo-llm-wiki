@@ -1,7 +1,7 @@
 # Spec: `wiki.setup()` wall time — minimal viable open, converging index
 
 **Date:** 2026-10-10
-**Status:** Draft (rev 8 — Opus delta cycle #3 adjudicated: spec 7 MAJOR/7 minor + plan 0 BLOCKER/7 MAJOR/10 minor, all verified against source and applied; reviews: GLM r1-r4, Opus full ×2, Opus delta ×2 cycles; logs under `~/.hermes/cache/scratch/issue280/`)
+**Status:** Draft (rev 9 — Opus delta cycle #4 adjudicated: spec 0 BLOCKER/5 MAJOR/9 minor + plan 0 BLOCKER/5 MAJOR/10 minor, all verified against source and applied; reviews: GLM r1-r4, Opus full ×2, Opus delta ×3 cycles; logs under `~/.hermes/cache/scratch/issue280/`)
 **Branch:** `spec/issue280-setup-walltime` · **PR:** [#281](https://github.com/equationalapplications/expo-llm-wiki/pull/281) (DRAFT until implemented)
 **Priority:** High — blocks the SynapseTree ARM64 gate (15 s writer-lease fence vs 693 s measured setup)
 
@@ -102,13 +102,17 @@ separate fifth change.)
   wrongly (Opus M-5). Resumes from its watermark after a crash mid-migration.
 - Mechanics: the violation query is the existing GLOB predicate
   (`findRowsForSourceRefMigration`, `EntryRepository.ts:1242-1255`) plus
-  `rowid > ? AND rowid <= ?` windows — chunkable, tracked in meta key
-  `source_ref_normalize_watermark`. Rows whose ref normalizes to NULL are
+  `rowid > ? AND rowid <= ?` windows — chunkable, tracked in meta keys
+  `normalize_v14_entries_wm` / `normalize_v14_sri_wm` (rev 9 M2: one per
+  pass — see the two-table bullet below). Rows whose ref normalizes to NULL are
   written NULL (today's `updateSourceRefByRowid` behavior, kept deliberately).
-- **Stamp lifecycle (atomic):** when a window scan finds watermark ≥
-  max(rowid) (checked inside the final chunk's tx), that tx writes the stamp
-  AND deletes the normalize watermark — one invariant, never a stale residue.
-  Missing watermark ⇒ treated as 0. Stamp meta key:
+- **Stamp lifecycle (atomic):** when a pass's window scan finds that pass's
+  watermark ≥ its table's max(rowid) (checked inside the final chunk's tx),
+  that tx deletes that pass's watermark; the stamp is written — inside the
+  final chunk's tx of the SECOND (`source_ref_index`) pass, together with
+  that pass's watermark deletion — ONLY after BOTH passes complete (rev 9
+  M2): one invariant, never a stale residue. A missing watermark ⇒ treated
+  as 0 (resume = redo whichever pass lacks its own watermark). Stamp meta key:
   `(source_ref_normalize_stamp = {schema_version: 14, normalize_alg: N})`.
 - **Skip condition is defined purely on stamp state**, never on
   `schema_version < 14`: if the stamp is present and matches the current
@@ -121,7 +125,8 @@ separate fifth change.)
   (`WikiMemory.ts:263-267`); that path MUST also write the v14 stamp and create
   the Change-2 partial index, so a fresh store never enters the migration.
 - **Atomicity:** the stamp is written inside the final chunk's transaction
-  (with the watermark deletion — see lifecycle above). A partially-applied
+  of the second (`source_ref_index`) pass (with that pass's watermark
+  deletion — see lifecycle above). A partially-applied
   migration (some rows normalized, no stamp) is harmless to an older engine:
   the old every-open scan still runs and simply finds nothing (or finishes the
   job).
@@ -140,7 +145,9 @@ separate fifth change.)
   per-row check would flag values the write path legitimately stored, breaking
   the stamp invariant the moment it is written and misdirecting
   `forget({sourceRef})` after any re-normalize. `normalizeSourceRef` becomes
-  `.trim().slice(0, 255).trimEnd()` — a true fixed point, pinned by the
+  `value.replace(/[^A-Za-z0-9._\- ]/g, '').trim().slice(0, 255).trimEnd()`
+  (rev 9: the shorthand names the full pipeline incl. the existing
+  character-strip step at `pure.ts:909`) — a true fixed point, pinned by the
   property test `n(n(x)) === n(x)` (7(q)) — and `SOURCE_REF_NORMALIZE_ALG = 1`
   denotes the idempotent semantics. (The old every-open `TRIM(source_ref) !=
   source_ref` scan has this same bug today; the root cause is the
@@ -149,6 +156,22 @@ separate fifth change.)
   TypeScript per row; with an idempotent algorithm, "violating" simply means
   "differs under the current algorithm", and the check is a fixed-point test
   by construction.**
+- **Two tables, two passes (rev 9, Opus delta-4 M2):** `source_ref_index.source_ref`
+  is a SECOND stored copy of the ref (`schema.ts:53`,
+  `SourceRefIndexRepository.ts:40,60,80`), so the v14 normalize must rewrite
+  it too: `updateSourceRefByRowid` touches only `entries`
+  (`EntryRepository.ts:1257-1262`), `upsertGraph` compares
+  `canonical === sourceRef` (`WikiMemory.ts:816-827`), and
+  `softDeleteByEntityAndSourceRef` matches on the exact `source_ref` — a ref
+  whose 255-char cut ends in a space would leave `entries` normalized while
+  `source_ref_index` kept the stale form, and re-ingesting the same document
+  would then fail with `WikiSourceRefHashCollision` or, via the missed
+  soft-delete, a partial-UNIQUE `(entity_id, source_hash)` collision. The
+  migration therefore runs a SECOND watermarked rowid pass over
+  `source_ref_index` — same normalize algorithm, own rowid space, run AFTER
+  the entries pass — with the two watermarks named above; the
+  `SOURCE_REF_NORMALIZE_ALG` stamp lands only after BOTH passes complete.
+  Pinned by 7(s).
 - The every-open unbounded normalize tx at `WikiMemory.ts:302-309` is deleted
   by the stamp skip; the migration path replaces it (RC-7).
 
@@ -200,8 +223,8 @@ mutate + watermark + state together; the `fb-crash-resume` leg's discipline):
 |---|---|---|---|
 | (absent) | fresh store (`entriesExistedBeforeSetup === false`, passed DOWN into `init()` — rev 8 plumbs it through `createIndexStrategy` into `init()`; today `WikiMemory.ts:260-261` computes it but does NOT pass it down — that plumbing is part of this change; Opus plan M4), FTS chosen | `live` | create tables + triggers, stamp `live` |
 | `live` | **any trigger missing** (RC-3) | `rebuilding` | **re-create all triggers** (`fts5TriggersDdl`), clear **`fts_pending` only** — `fts_map` and `entries_fts` kept intact (subject to the re-arm consistency check, DDL note) — watermark=0, orphan-sweep cursor reset |
-| marker row **lost** OR `fts_map`/`entries_fts` missing while the other has rows (Opus plan M4b — same "state absent, entries pre-existed" shape) OR **both missing/empty while live entries exist** (rev 8, Opus delta-3 m3: the rev-7 fast path recreated empty tables and keyword search stayed empty forever — non-empty live entries with an empty `fts_map` means rebuild) | any | `rebuilding` | same re-arm (keep-map only when BOTH `fts_map` AND `entries_fts` exist AND pass the consistency check; else DROP+CREATE per the DDL note) |
-| `live`/`rebuilding` | triggers all present | (unchanged) | no-op fast path — **except `live` with non-empty entries but empty/missing `fts_map` ⇒ DROP+CREATE re-arm (rev 8, Opus delta-3 m3)** |
+| marker row **lost** OR `fts_map`/`entries_fts` missing while the other has rows (Opus plan M4b — same "state absent, entries pre-existed" shape) OR **both missing/empty while a live row exists AND `fts_pending` is empty** (rev 8, Opus delta-3 m3: the rev-7 fast path recreated empty tables and keyword search stayed empty forever — a live row (`deleted_at IS NULL LIMIT 1`, probed only after `fts_map` is found empty) with an empty `fts_map` means rebuild; rev 9 m4 appends the ledger clause — a fresh store that bulk-writes and crashes before its first drain has live rows, an empty `fts_map`, and a FULL ledger, which its first drain populates: no rebuild) | any | `rebuilding` | same re-arm (keep-map only when BOTH `fts_map` AND `entries_fts` exist AND pass the consistency check; else DROP+CREATE per the DDL note) |
+| `live`/`rebuilding` | triggers all present | (unchanged) | no-op fast path — **except `live` with a live row (`deleted_at IS NULL LIMIT 1`) but empty/missing `fts_map` AND an empty `fts_pending` ⇒ DROP+CREATE re-arm (rev 8, Opus delta-3 m3; rev 9 m4 adds the live-row probe + the `fts_pending`-empty clause)** |
 | `rebuilding` | resume open | `rebuilding` | **verify `triggersPresent()`** — if any trigger was lost mid-rebuild, writes may have been missed ⇒ restart (watermark=0, same re-arm tx) |
 | `rebuilding` | setup() quantum **or** no-arg `syncSearchIndex()` | `rebuilding` | advance watermark by ≤N chunk txs (below) |
 | `rebuilding` | **completion: watermark ≥ max(entries.rowid) AS SNAPSHOTTED AT RE-ARM (rev 8, Opus delta-3 plan minor 2 — not the live max: an insert landing between the last window and the flip must not starve it; rows inserted after the re-arm are already ledgered by the triggers and drain normally once `live`) AND orphan-sweep cursor ≥ sweep snapshot AND the residual `fts_pending` fits in ONE final chunk, drained INSIDE the flipping tx (rev 8, Opus delta-3 m2: the rev-7 "`fts_pending` empty" clause is dropped — a `live` store drains its ledger normally, and draining an unbounded backlog inside the flip tx was the RC-1 shape again; the residual is capped at one chunk)** | `live` | flip state in the final chunk's tx |
@@ -237,7 +260,12 @@ coalesce(max(fts_map.fts_rowid),
 — the re-arm takes the DROP+CREATE path. The max comparison alone cannot see
 a ghost FTS row sitting in a GAP of the map's rowid space (its map row
 deleted); rev 8 therefore adds plan delta-3 minor 1's **`count(*)` equality
-check on both tables** (cheap next to a 22 s DROP+CREATE): the invariant
+check**, spelled out (rev 9 m1) as `COUNT(*)` on `entries_fts_docsize` — an
+ordinary rowid table (one row per document, so `OP_Count` applies), NOT a
+count on the FTS5 table whose scan plan steps through the multi-GB
+`%_content` table — compared against the `fts_map` count, and run as a
+**READ-ONLY probe BEFORE the re-arm transaction opens** (Change 4's
+read-only-probes-first ordering; cheap next to a 22 s DROP+CREATE): the invariant
 implies equal counts, so any mismatch ⇒ DROP+CREATE (and the orphan sweep,
 walking `fts_map` by `fts_rowid`, covers below-max ghosts that still HAVE a
 map row). **No DROP+CREATE and no 22.3 s floor**
@@ -265,9 +293,12 @@ max(fts_map.fts_rowid) at init` once reached) advances during full quanta;
 each sweep tx deletes orphans in a bounded `fts_rowid` window and advances the
 cursor atomically. **The sweep walks `fts_map` by `fts_rowid`, NOT
 `entries_fts` (rev 8, Opus delta-3 m4):** on a 1M-row FTS5 table,
-`SELECT rowid FROM entries_fts WHERE rowid > ? LIMIT n` cannot seek — it
-concatenates and scans segments to the offset, making one sweep tx O(remaining
-rows) (the starvations previously cited for `runPrune`'s `DELETE WHERE NOT
+a rowid-offset window over `entries_fts` has the wrong cost shape — NOT
+because FTS5 cannot use rowid bounds (rev 9 m2: FTS5 full scans DO honour
+rowid bounds via `FTS5_STMT_SCAN_ASC`; the earlier "cannot seek" rationale
+was wrong), but because each such window still makes FTS5's scan walk from
+its lower bound to the offset, so cost grows with the remaining rows instead
+of seeking (the starvations previously cited for `runPrune`'s `DELETE WHERE NOT
 EXISTS` and the plan's NOT IN form are the same segment-scan cost at different
 multipliers). Walking `fts_map` (a normal b-tree table) with the exact-index
 anti-join `... FROM fts_map WHERE fts_rowid > ? AND fts_rowid <= ? AND NOT
@@ -295,9 +326,11 @@ corruption/manual deletion reaches marker-loss paths, which no longer pay the
 DDL floor).
 
 **Chunked rebuild mechanics:** rowid **windows** of ≤500 entries-rows per
-transaction (`SELECT ... WHERE rowid > ? AND rowid <= ?` — rowid windows may
-contain fewer rows when deletes left gaps; throughput legs measured row-dense
-stores). Each chunk tx commits its inserts + the watermark advance atomically.
+transaction, bounded the `drainHiSql` way (rev 9, Opus delta-4 M5;
+`fts5Sql.ts:64-66` pattern): each window's `hi` = `max(rowid)` over the next
+≤500 EXISTING rows — never a fixed-width `rowid > ? AND rowid <= ?` span —
+so a window bound always lands on a real row even when deletes left gaps
+(throughput legs measured row-dense stores). Each chunk tx commits its inserts + the watermark advance atomically.
 Exactly-once under resume verified at 1M (`fb-crash-resume` leg: SIGKILL at
 400k/1M mid-rebuild, resume completed 600k in 78.9 s, 1,000,000 map rows,
 0 duplicates) — single-writer case; the concurrent-writer shape is covered by
@@ -334,12 +367,25 @@ after commit, which becomes `syncEntries(entityId, [])` — with an empty id
 list there is nothing to drain first and `markStale` does nothing once a
 strategy has a `drain` (`SearchService.ts:243`), so under a backlog the
 documented call leaves the new nodes unsearchable. `drain({ids: []})` with an
-entity target therefore drains `fts_pending WHERE entity_id = ?` (bounded by
-the same chunk/deadline machinery). Because the ids-first chunk
+entity target therefore drains `fts_pending WHERE entity_id = ?` — **ORDER BY
+seq, ≤500 rows per tx (rev 9 plan m5), the same cap as the ids-first path.**
+**ids threading (rev 9, Opus delta-4 M3):** `WikiMemory.upsertGraph` already
+holds `params.nodes[].id` in process — it STASHES them per entity (in place
+of today's `markStale` call, `WikiMemory.ts:765-768`/`:816-827` contract) and
+threads them as `ids` on the next `syncSearchIndex(entityId)`, so the
+ids-first ≤500-id chunk covers the new nodes even when a 1M-row crash
+backlog all belongs to that single entity (oldest-first seq order alone
+would never reach the highest-seq new nodes within the write-turn budget).
+Because the ids-first chunk
 (`WHERE id IN json_each`) would full-scan the ledger on every write —
 `fts_pending` has NO indexes today (`fts5Sql.ts:40-44`) — this change adds
 `fts_pending(entity_id)` and `fts_pending(id)` indexes (trigger overhead
-accepted; the ids-first step runs on the write path). The `upsertGraph` and
+accepted; the ids-first step runs on the write path). **These two CREATE
+INDEX statements are declared and BUDGETED (rev 9 m5)** alongside the
+Change-2 partial index: they are unchunkable DDL built on the first
+new-engine open, so a store with a large crash backlog pays their build
+there — counted in the chunked-open budget and in Acceptances 4 and 6, not
+per-open. The `upsertGraph` and
 `syncSearchIndex` doc comments state the bounded-sync contract, and
 acceptance 7(r) pins upsertGraph-then-search under a backlog. **One deadline per open**: `setup()` captures
 `openDeadline = setup start + budget` (rev 8, plan delta-3 minor 4 — one
@@ -359,16 +405,20 @@ an options parameter — `sync(entityId?: string, opts?: { deadline?: number })`
   (and the init-retry point; `WikiMemory.syncSearchIndex()` owns the retry,
   not `SearchService`, which has no db/prefix/metadataRepo).
 - **`syncEntries`/`sync(id)` (write-triggered) — LEDGER DRAIN ONLY** with the
-  caller's `ids` first, remainder budget zero-to-small (a write must not pay
-  ~2.5 s).
+  caller's `ids` first. **Concrete write-turn budget (rev 9, Opus delta-4
+  M3):** a write-triggered turn drains **own ids + at most ONE ledger chunk**
+  (≤500 rows, `ORDER BY seq` — rev 9 plan m5); any remainder is left to
+  background/stale drain (setup() quanta and no-arg `syncSearchIndex()`). A
+  write must not pay ~2.5 s.
 - Arbitration within a full quantum: ledger drain first, then rebuild chunks
   with the remainder; **at least one rebuild chunk per full quantum unless the
   drain overran the deadline** (bounds worst-case wall at budget + 2 × max
   chunk ≈ 3.5 s, per Opus delta m1 — Acceptance 2/5 updated accordingly).
   **Degraded-write ordering audit (rev 8, Opus delta-3 m7):** every degrade in
   the call-site map below was audited for ordering — each degrades recall or
-  spend (prefilter fall-through, ambiguous gate classification, pass-level
-  heal skip, no-op drain); none leaves a half-applied write (the only
+  spend (prefilter outage propagates with the fallback event fired,
+  pass-level gate abort, pass-level heal skip, no-op drain); none leaves a
+  half-applied write (the only
   partially-applied surface, `syncEntries`'s per-id loop, already applies
   whole ids or throws). The takeaways §4 partial-visibility concern
   (normal parts searchable, failed parts findable as text) is met by
@@ -396,16 +446,37 @@ with the rev-6 re-arm, recall during marker-loss rebuild stays at
 "previous index, **including rows whose windows haven't re-run (STALE, not
 missing)**" instead of emptying (rev 8 m5: aligned with the rev-7 m9 wording;
 the "minus re-run windows" phrasing here contradicted it).
+**ACCEPTED RISK, stated explicitly (rev 9 m6):** during `rebuilding` —
+especially the common detached→`auto` re-attach — partial recall feeds
+INTERNAL consumers: heal stamps `heal_checked_at` against an incomplete
+anchor set, and the gate may classify `add` for duplicates not yet
+re-indexed (missed duplicates). Mitigations: the pass-level availability
+aborts (heal, gate) cover true outages, and the rebuild-completion flip
+bounds the window — an incomplete anchor set / missing duplicate exists only
+until the rebuild converges, not permanently.
 
 **Watermark validity under VACUUM (rev 8, Opus delta-3 M7 — mechanism, not
 just guard):** `entries` is `id TEXT PRIMARY KEY` (`schema.ts:6`), so its
 rowids are implicit and VACUUM may renumber them — a resumed rebuild windowing
 from a stale watermark would skip renumbered rows and flip to `live` with
 permanently unindexed ranges. Two mechanisms, both required: (1) the rebuild
-watermark is stored WITH a **fingerprint — the `id` at the watermark rowid** —
+watermark is stored WITH a **fingerprint — the `id` at the watermark row** —
 and every quantum (and the flip check) first verifies the fingerprint id still
-sits at that rowid; VACUUM preserves rowid order, so the fingerprint check is
-sufficient, and a missing fingerprint row means restart. (2) The normalize
+sits at that rowid. **Window bounds and fingerprint placement (rev 9, Opus
+delta-4 M5 — replaces the rev-8 fixed-span + restart-on-missing shape):**
+each window's `hi` is `max(rowid)` over the next ≤500 EXISTING rows (the
+`drainHiSql` pattern, `fts5Sql.ts:64-66`), and the fingerprint is taken at
+THAT row — so the upper bound never lands in a rowid gap (a fixed-width
+span's `hi` often lands in a gap, restarting every quantum — a livelock on
+any store that has run `runPrune`, whose hard-deletes at
+`MaintenanceService.ts:301` can remove the fingerprint row). **On a missing
+fingerprint row the engine RE-LOCATES — recomputing the watermark from the
+surviving predecessor (rows ≤ wm are exactly the rows before it) — rather
+than restarting.** SQLite's docs say only that rowids MAY change on VACUUM —
+rev 8's "VACUUM preserves rowid order" reliance is withdrawn; the design
+NEVER assumes rowid order: the engine's own vacuum path resets both
+watermarks AND the fingerprint (mechanism below), and re-location is the
+recovery for any OTHER reorder. (2) The normalize
 watermark gets the same fingerprint treatment (7(p), per delta M4), and —
 because `runPrune({vacuum: true})` runs VACUUM **in-process**
 (`MaintenanceService.ts:345-346`, not only before the "next open") — the
@@ -420,22 +491,24 @@ the issue-271 takeaways §3 rule: grep ALL callers, pin each — the rev-6 map
 said "5 sites" and missed one; found by grepping, not trusting the prior map,
 Opus plan M2):** the error can surface from 6 sites, each pinned:
 - `RetrievalService.ts:189` (prefilter) and `:223` (hybrid keyword boost via
-  `getKeywordScores`): at `:189` — **rev 8 (Opus delta-3 M1) corrects the
-  degrade:** in
-  the prefilter branch the keyword results ARE the candidate set — an empty
-  result under rev 7's wording meant `candidateRows = null` ⇒ `facts = []`
-  (`RetrievalService.ts:186-229`), i.e. zero facts with NO vector path
-  (there is none after the prefilter) and no `onRetrievalFallback`. The
-  pinned behavior: on error the prefilter branch **falls through to the
-  full-scan branch** (`RetrievalService.ts:212-225` —
-  `effectivePreFilterLimit` treated as undefined, `miniSearchScores`
-  undefined) so semantic reads proceed vector-ranked over the full candidate
-  scan, AND `onRetrievalFallback` fires. At `:223` the catch → empty keyword
-  scores is correct as-is (the hybrid blend has a real vector path; delta-3
-  M1 keep). A
-  keyword outage must not silently empty reads on a `preFilterLimit` host —
-  the takeaways §1 "goes dark" pattern. Pinned by 7(n) (prefilter-limit
-  host, non-empty vector results) and 7(n′) (weight < 1 blend).
+  `getKeywordScores`): at `:189` — **rev 9 (Opus delta-4 M1) REVERSES rev 8's
+  fall-through: the pinned behavior is PROPAGATE.** A full-scan fall-through
+  is not a degrade, it is the unbounded read path itself: at
+  `preFilterLimit` scale the full-scan branch
+  (`RetrievalService.ts:212-225`) re-opens the OOM this spec exists to
+  prevent — `findWithEmbeddingsByEntityIds` (`EntryRepository.ts:1524-1532`)
+  has NO LIMIT and loads `embedding_blob` plus the JSON `embedding` for
+  every live row of the scored entities (the 1.83 GB heap class at 1M), and
+  a host that sets `preFilterLimit` cannot afford that full scan. Failing
+  loudly IS the correct degrade: the error propagates via today's two-hop
+  path — caught at `:668`, `onRetrievalFallback` fires, the `:719` site
+  throws — with NO silent empty read and NO OOM. At `:223` the pinned
+  behavior (rev 9 m9 wording) is to **ADD a local catch → empty keyword
+  scores map** (no local catch exists today; today the error escapes to
+  :668) — the hybrid blend has a real vector path, so an empty keyword
+  scores map degrades recall, not the read. Pinned by 7(n) (prefilter-limit
+  host, outage ⇒ two-hop propagate + fallback event; NO full-scan leg) and
+  7(n′) (weight < 1 blend).
 - `RetrievalService.ts:719` (keyword-only fallback): **propagates** to the
   caller (explicit degraded signal; keyword-only reads genuinely have nothing
   to fall back to). **Rev 8 (Opus delta-3 m6) mechanism note:** the `:550`
@@ -459,19 +532,18 @@ Opus plan M2):** the error can surface from 6 sites, each pinned:
   as unattempted (the `unattemptedIds` handling at :1034).** This follows
   takeaways §5 (check the precondition before spending).
 - **`services/librarian/ops/gate.ts:143` (librarian gate keyword fallback —
-  NEW in rev 7, Opus plan M2; REV 8 CORRECTED per Opus delta-3 M2):** the
-  keyword branch at :141-147 runs only when `!ranked` — no embedding and no
-  stored vectors — so there is NO vector context to fall back to, and
-  `classifyCandidate` (`gate.ts:76`) returns `{kind: 'add'}` whenever
-  `neighbours.length === 0`: rev 7's "neighbours: []" wording made every
-  librarian candidate during an outage an unconditional ADD, including exact
-  restatements of existing facts — permanent duplication under a permanent
-  outage. **Pinned behavior: on error the candidate classifies as
-  `{kind: 'ambiguous'}`** (what keyword mode already returns when unsure,
-  :77); **better, when a bounded SQL exact-text lookup on the normalized
-  fact text is available it runs first so an exact duplicate still classifies
-  `noop`** — pinned by 7(e): "no new rows for an exact duplicate during an
-  outage". (Re-verified by grep: `gate.ts` is the sixth and last
+  NEW in rev 7, Opus plan M2; REV 9 (Opus delta-4 plan M1) replaces rev 8's
+  per-candidate degrade with a PASS-LEVEL ABORT:** before gating, if keyword
+  search is unavailable, abort the librarian pass without advancing the
+  watermark — the same pattern as `resolve.ts:123-129` — zero LLM calls,
+  zero new rows (rev 8's per-candidate
+  `ambiguous`+exact-text shape still duplicates via runResolve's
+  draft-insert: an `ambiguous` candidate enters the resolution draft and its
+  ADD lands on commit). The bounded SQL exact-text `noop` lookup is kept as
+  DEFENSE IN DEPTH INSIDE the pass — an exact duplicate still classifies
+  `noop` if the pass runs — but it is not the primary fix. Pinned by 7(e):
+  an outage yields zero LLM calls, zero new rows, and an unchanged
+  watermark. (Re-verified by grep: `gate.ts` is the sixth and last
   `searchKeyword` caller outside SearchService itself.)
 - `syncEntries`/`drainTurn` paths: unavailable strategy's `drain` is a no-op
   (ledger intact; no per-write warning spam).
@@ -503,13 +575,21 @@ dropped) then OOM-kills at ~202 s / 1.83 GB on the 1M store. The guard:
   ledger-safe path). Write paths keep working and
   converging later; no warning spam per write. `replace`/`replaceAll` remain
   no-ops; `hasIndexedEntity()` returns false. **Internal-caller behavior
-  (Opus M-7), decided:** the maintenance heal path
-  (`MaintenanceService.ts:1542`) catches `WikiSearchUnavailableError` and
-  treats it as "no heal anchors available" (degrade, don't abort); the
+  (Opus M-7), decided; REV 9 (Opus delta-4 M4) — this paragraph and
+  Acceptance 7(e) are REWRITTEN to match the Change-3 call-site map exactly,
+  which is the single source of truth for these behaviors; the rev-7
+  degrade wording here was stale:** the maintenance heal path
+  (`MaintenanceService.ts:1542`) performs the pass-level availability check
+  at the START of `doRunHeal` — on unavailability the whole pass is skipped
+  with one diagnostic (no LLM spend, no mutation, no stamps; candidates
+  unattempted), NOT a rev-7-style "no heal anchors available" degrade; the
   retrieval keyword fallback (`RetrievalService.ts:550`) propagates the error
-  to the caller (explicit degraded signal, not silent empty results); the
-  librarian gate (`gate.ts:143`) degrades to vector-only context (map above);
-  all pinned by tests. Additionally, **no-arg `syncSearchIndex()` retries
+  via the two-hop path (caught at :668, `onRetrievalFallback` fires, :719
+  throws — explicit degraded signal, not silent empty results); the
+  librarian gate (`gate.ts:143`) takes the pass-level availability ABORT per
+  the map below (zero LLM calls, zero new rows, watermark untouched), with
+  the bounded SQL exact-text `noop` lookup kept as defense in depth INSIDE
+  the pass; all pinned by tests. Additionally, **no-arg `syncSearchIndex()` retries
   `init()`** — a long-lived host that never re-opens still recovers.
   **Persistent-failure repair path (rev 8, Opus delta-3 M6):** if init fails
   on EVERY attempt (e.g. `SQLITE_CORRUPT_VTAB` from a damaged `entries_fts`
@@ -517,9 +597,15 @@ dropped) then OOM-kills at ~202 s / 1.83 GB on the 1M store. The guard:
   retry alone means a permanent keyword outage — takeaways §2's strict
   precondition without a repair path, and M1–M3's degrades then persist
   indefinitely. Init therefore **classifies the error**: a corruption-class
-  error (SQLite corruption codes, FTS5 vtab corruption) triggers the **safe
-  DROP+CREATE re-arm** into `rebuilding` — safe because `entries` is never
-  touched — and the next open converges via the chunked windows. Other
+  error — scoped (rev 9 m3) to `SQLITE_CORRUPT_VTAB` and to errors from
+  statements touching ONLY FTS tables (`entries_fts` + its shadow tables) —
+  triggers the **safe DROP+CREATE re-arm** into `rebuilding` — safe because
+  `entries` is never touched — and the next open converges via the chunked
+  windows. A generic `SQLITE_CORRUPT` raised from `entries` pages (e.g. by
+  the "live entries exist" probe) must NOT trigger DROP+CREATE: dropping a
+  good multi-GB index cannot fix corrupt entries pages and would still fail
+  every window — those errors keep the never-demote
+  `UnavailableIndexStrategy` path. Other
   persistent errors keep the never-demote `UnavailableIndexStrategy` path with
   the no-arg `syncSearchIndex()` retry. Test 7(e) gains a corrupt-FTS leg.
 - Detach + MiniSearch fallback remains available **only** via explicit
@@ -533,8 +619,11 @@ dropped) then OOM-kills at ~202 s / 1.83 GB on the 1M store. The guard:
 
 ## Write-path invariant audit (precondition for the Change-1 stamp)
 
-The stamp asserts "all stored source_refs are normalized as of algorithm N".
-That is sound only if every write surface normalizes. Audited surfaces
+The stamp asserts "all stored source_refs are normalized as of algorithm N" —
+in BOTH tables that store a copy, `entries.source_ref` AND
+`source_ref_index.source_ref` (rev 9, Opus delta-4 M2; the migration's second
+watermarked pass covers the second copy). That is sound only if every write
+surface normalizes. Audited surfaces
 (closing investigation open question 2):
 
 - `WikiMemory.hasChanged` single + batched paths (`normalizeSourceRef` at
@@ -569,8 +658,9 @@ Cache state is stated per criterion (warm = page cache retained; the
 investigation measured a 2.8× warm/cold swing, §2.3).
 
 1. **Warm open @1M:** setup() ≤ 1 s warm / ≤ 3 s cold (today: 1.74 s warm on
-   the profile-setup harness / 4.82 s in the investigation's in-process
-   measurement (delta-3 m7: both figures named — the criterion uses the
+   the profile-setup harness / 4.82 s COLD in the investigation's in-process
+   measurement — rev 9 m7 labels it cold; it pairs with the ≤3 s cold target
+   of this criterion — delta-3 m7: both figures named — the criterion uses the
    profile-setup harness; either baseline is exceeded by orders of magnitude
    post-fix), of
    which 1.73 s is RC-2 scans; post-fix predicted ~0.01 s for the scan pair).
@@ -591,7 +681,9 @@ investigation measured a 2.8× warm/cold swing, §2.3).
    searchable (orphan sweep works, 7(g′)).
 4. **Steady-state fence (the gate claim):** every open of a `live` store —
    warm, cold, and post-crash-resume — completes inside 15 s at 4.7 GB NVMe
-   (measured re-run, criterion 6). Marker-loss/first-migration opens are
+   (measured re-run, criterion 6; the unchunkable CREATE INDEX builds —
+   partial index + the two `fts_pending` indexes — are budgeted on the
+   first new-engine open, criterion 6, not here). Marker-loss/first-migration opens are
    excluded from this claim and bounded by 3 and 6 respectively.
 5. **Crash backlog @1M:** 1M undrained ledger rows add at most
    budget + 2 × max chunk to any single open (measured shape: 7.6k rows/s in
@@ -600,7 +692,9 @@ investigation measured a 2.8× warm/cold swing, §2.3).
 6. **Gate-scale re-measure (required):** the ~4.7 GB NVMe store re-measured
    before/after on this machine (`profile-setup.ts`; legs ~30–45 min each).
    Includes the foreign-store first-open shape (`setupDatabase` DDL incl.
-   repeated CREATE INDEX + normalize + first quantum). Targets are **derived
+   repeated CREATE INDEX + normalize + first quantum; rev 9 m5: the two
+   unchunkable `fts_pending(entity_id)`/`fts_pending(id)` CREATE INDEX
+   builds are budgeted here alongside the partial index). Targets are **derived
    from a required @1M normalize measurement** (the ≈123 s figure is the
    *drain* rate; the normalize rate is unmeasured — Opus delta M3): measure
    chunked normalize @1M, scale ×4.2, add the `setupDatabase` component
@@ -619,11 +713,18 @@ investigation measured a 2.8× warm/cold swing, §2.3).
    (GAP-3); (d) stamp-missing self-heal (Change 1); (e) RC-6: forced init
    failure ×2 on a healthy 1M store — no `detachFts5` call (spy), state not
    `detached`, `WikiSearchUnavailableError` thrown per query, next open
-   recovers; **heal degrades, retrieval keyword fallback propagates, the
-   librarian gate degrades to vector-only context (`gate.ts:143`); write
-   during unavailability succeeds, its ledger rows survive, and NO
-   full-table read fires while unavailable (`findMiniSearchRows` never
-   called — pins the B1 no-op-`drain` fix)** (Opus M-7 + rev 7 plan B1/M2);
+   recovers; **the Change-3 call-site map is the single source of truth for
+   the outage behaviors and 7(e) pins it as rewritten in rev 9 (delta-4 M4):
+   heal pass-level skip (one diagnostic, zero LLM calls, no mutation, no
+   stamps), retrieval keyword fallback propagates via the two-hop path, the
+   librarian gate takes the PASS-LEVEL availability abort (zero LLM calls,
+   zero new rows, watermark untouched) with the bounded SQL exact-text
+   `noop` lookup kept as defense in depth INSIDE the pass — NOT a
+   per-candidate ambiguous+exact-text degrade and NOT "vector-only
+   context"; write during unavailability succeeds, its ledger rows survive,
+   and NO full-table read fires while unavailable (`findMiniSearchRows`
+   never called — pins the B1 no-op-`drain` fix)** (Opus M-7 + rev 7 plan
+   B1/M2 + rev 9 delta-4 plan M1);
    (f) `detached` store semantics: under pinned `indexStrategy: 'minisearch'`
    the store stays detached; under `'auto'` (the default) it re-attaches —
    enters `rebuilding` and converges via CHUNKED WINDOWS (no `rebuildSql`
@@ -648,12 +749,13 @@ investigation measured a 2.8× warm/cold swing, §2.3).
    budget, all refs still normalized; budget affects only the post-migration
    sync); (m) **read-your-writes under backlog:** 5k-row ledger backlog + one
    write → the written fact is searchable immediately after `syncEntries`
-   returns (ids-first drain, Opus delta M3); (n) **prefilter host survives a
-   keyword outage:** a `preFilterLimit` read with unavailable keyword scores
-   returns **non-empty vector-ranked results** (falls through to the
-   full-scan branch, `RetrievalService.ts:212-225`) and fires
-   `onRetrievalFallback` (rev 8, delta-3 M1 — supersedes the rev-7 (n)
-   "empty-keyword-scores" wording, which pinned the degenerate behavior);
+   returns (ids-first drain, Opus delta M3); (n) **prefilter host outage (rev 9, delta-4 M1 — REVERSES rev 8's
+   fall-through):** a `preFilterLimit` read with unavailable keyword scores
+   PROPAGATES via the two-hop path (caught at :668, `onRetrievalFallback`
+   fires, `:719` throws) — the test pins the two-hop path + the fallback
+   event and has NO full-scan leg (the rev-8 full-scan fall-through re-opened
+   the unbounded-embedding OOM); memory assertion: no full-candidate
+   embedding load occurs;
    (n′) **hybrid blend survives a keyword outage:** `weight < 1` read with
    unavailable keyword scores still returns vector-ranked results
    (`:223` site, delta-3 M1 keep); (o) **heal pass skipped on unavailability:**
@@ -664,8 +766,19 @@ investigation measured a 2.8× warm/cold swing, §2.3).
    **`normalizeSourceRef` idempotency property test:** `n(n(x)) === n(x)` for
    arbitrary strings (rev 8, delta-3 M5); (r) **`upsertGraph`-then-search
    under backlog:** after `upsertGraph` + `syncSearchIndex(entityId)` with a
-   5k-row ledger backlog, the new nodes are searchable (rev 8, delta-3 M4).
-8. Existing test suite green.
+   5k-row ledger backlog, the new nodes are searchable (rev 8, delta-3 M4;
+   rev 9 M3: via the upsertGraph id stash threaded as `ids` into the
+   ids-first ≤500-id chunk, plus at most one ledger chunk per write turn);
+   (s) **v14 second-pass `source_ref_index` migration (rev 9, delta-4 M2):**
+   a 254-char ref + space + tail is ingested BEFORE the migration, then the
+   SAME document is re-ingested AFTER it — the old `source_ref_index` row is
+   soft-deleted (exact-ref match now hits the normalized form), with NO
+   `WikiSourceRefHashCollision` and NO partial-UNIQUE `(entity_id,
+   source_hash)` collision.
+8. Existing test suite green. **Note (rev 9 m8):** `createIndexStrategy.test.ts:69,89`
+   (which assert `'detached'` after an `auto` fallback) are REWRITTEN by this
+   change — the auto fallback no longer detaches — they are not merely kept
+   green.
 
 ## Out of scope
 
@@ -864,3 +977,48 @@ alignment. **Spec rev 8 = this revision.**
  pre-satisfied by design; §4 (orphan sweep incl. tests) and §6 (VACUUM
  guard) incorporated as above; §7 telemetry deferred (no telemetry surface
  in this delivery). **Spec rev 6 = this revision.**
+- **Tier-3 Opus delta cycle #4 (2026-10-10, spec 0 BLOCKER/5 MAJOR/9 minor
+  + plan 0 BLOCKER/5 MAJOR/10 minor; logs `opus-{spec,plan}-delta4.log`,
+  $1.6426 + $2.2189; both reviews REQUEST CHANGES; all key source claims
+  independently verified against the worktree before adoption). Spec
+  findings applied in this rev 9:** **M1** rev 8's prefilter fall-through
+  (`RetrievalService.ts:189`) swapped "empty results" for the unbounded
+  full-scan embedding load (`findWithEmbeddingsByEntityIds` has no LIMIT,
+  `EntryRepository.ts:1524-1532` — the read-path OOM class) ⇒ REVERSED to
+  propagate (today's two-hop path: caught at :668, `onRetrievalFallback`
+  fires, :719 throws); 7(n) rewritten (two-hop + fallback event, NO
+  full-scan leg); **M2** the v14 normalize left `source_ref_index.source_ref`
+  (the second stored copy) un-normalized — re-ingest then breaks C2/ingest
+  via `WikiSourceRefHashCollision` or a partial-UNIQUE collision ⇒ SECOND
+  watermarked rowid pass over `source_ref_index` (two watermarks
+  `normalize_v14_entries_wm`/`normalize_v14_sri_wm`, one stamp written only
+  after both passes), write-path audit names both tables, new test 7(s);
+  **M3** the entity-targeted drain contract could not satisfy 7(r) under a
+  1M single-entity backlog ⇒ `upsertGraph` stashes `params.nodes[].id` and
+  threads them as `ids` into the next `syncSearchIndex(entityId)`, and the
+  write-turn budget is concrete: own ids + at most ONE ledger chunk (≤500
+  rows); **M4** Change 4 + 7(e) still carried rev-7 degrade wording that
+  rev 8 overturned ⇒ rewritten to match the call-site map exactly (heal =
+  pass-level skip; gate = pass-level abort + exact-text `noop` defense in
+  depth); the map is declared the single source of truth; **M5** the
+  watermark fingerprint was undefined for gap-bounded windows and
+  prune-deleted fingerprint rows (restart = livelock) ⇒ `drainHiSql`-style
+  `hi` = max(rowid) over the next ≤500 existing rows, fingerprint at that
+  row, RE-LOCATE (not restart) on a missing fingerprint; the
+  "VACUUM preserves rowid order" claim withdrawn (SQLite docs: rowids MAY
+  change — the design never assumes order). Minors applied: m1 the
+  consistency count compares `entries_fts_docsize` vs the `fts_map` count
+  as a READ-ONLY probe BEFORE the re-arm tx; m2 the "rowid > ? LIMIT n
+  cannot seek" rationale corrected (FTS5 full scans honour rowid bounds,
+  `FTS5_STMT_SCAN_ASC`) — the `fts_map` walk kept; m3 the corruption
+  classifier scoped to `SQLITE_CORRUPT_VTAB` / FTS-table-only statements
+  (generic `SQLITE_CORRUPT` from `entries` pages must not DROP+CREATE); m4
+  "live + entries non-empty + empty `fts_map` ⇒ DROP+CREATE" now requires
+  `fts_pending` empty too (fresh bulk-write crash must not rebuild); m5 the
+  two `fts_pending` CREATE INDEX statements declared and budgeted alongside
+  the partial index; m6 partial recall during `rebuilding` feeding internal
+  consumers stated as an ACCEPTED risk (bounded by the completion flip); m7
+  the 4.82 s baseline labeled COLD; m8 `createIndexStrategy.test.ts:69,89`
+  declared REWRITTEN; m9 :223 wording = "add a local catch → empty keyword
+  scores map" (no local catch exists today). **Spec rev 9 = this
+  revision.**
