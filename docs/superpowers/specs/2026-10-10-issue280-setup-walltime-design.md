@@ -36,13 +36,17 @@ Investigation doc: `docs/superpowers/investigations/2026-10-10-issue280-setup-wa
   the `fts_pending` ledger survives WAL replay and the next `setup()` drains it
   in one go: ~85 s per 1M undrained rows, inside the open. (WAL replay itself is
   exonerated — pure replay overhead measured at noise level.)
-- **RC-6 — FTS init failure silently demotes the store.** In
+- **RC-6 — FTS init failure silently demotes the store (measured: data-destroying crash path).** In
   `createIndexStrategy` (`packages/core/src/services/search/createIndexStrategy.ts:60-67`),
   an `init()` throw on `indexStrategy: 'auto'` logs a warning, **drops the
-  ledger and FTS artifacts** (`detachFts5`), and falls back to MiniSearch —
-  whose full sync is a wall/memory breaker at pro scale (full text of every
-  entry enters JS). A transient failure (tx lock, DDL permission) destroys
-  incremental-index state permanently.
+  ledger and FTS artifacts** (`detachFts5`), and falls back to MiniSearch.
+  Measured (`.sandbox/leg-minisearch-fallback-cost.log`, healthy 2.6 GB / 1M
+  store, forced transient failure): `detachFts5` commits the demotion
+  (`state='detached'`, ledger/map/FTS table/triggers all dropped) and the
+  MiniSearch full sync then **OOM-kills the process at ~202 s, 1.83 GB heap,
+  exit 134** on a default Node heap. A transient failure (tx lock, DDL
+  permission) permanently destroys the incremental index — recovery is
+  RC-2's 108–209 s single-tx rebuild — and kills the host process at pro scale.
 - **RC-7 — the normalize loop is itself an unbounded tx.**
   `WikiMemory.ts:302-309` normalizes every row in ONE transaction — same
   fence-critical shape as RC-2 even after RC-1's scans are made skippable.
@@ -111,7 +115,9 @@ Five changes, each mapped to a root cause:
   chunk tx commits **its chunk's inserts and the watermark advance atomically**
   (watermark lives in the same meta table, written inside the chunk tx). Crash
   ⇒ resume from watermark; verified exactly-once by
-  `.sandbox/leg-fb-crash-resume.ts` (no dup, no skip; PASS at 1M).
+  `.sandbox/leg-fb-crash-resume.ts` (no dup, no skip; PASS at smoke scale
+  2k entries with SIGKILL mid-rebuild; 1M run in flight — result lands in the
+  investigation review log).
 - **Open path while `rebuilding`:** setup() performs a **bounded quantum**
   (time-boxed, target ≤ ~1–2 s of chunk work per open; config knob) and
   returns. Search during `rebuilding`: FTS results may be partial (recall
@@ -129,11 +135,17 @@ Five changes, each mapped to a root cause:
 
 ### Change 4 — RC-6 guard: never demote on transient failure
 
+- Measured stakes (`minisearch-fallback-cost` leg): today's fallback path
+  commits `detachFts5` (index artifacts permanently dropped) and then
+  OOM-kills at ~202 s / 1.83 GB on the 1M store. The guard below is
+  mandatory, not defensive.
 - In `createIndexStrategy`, on `init()` failure with `auto`: **retry the init
   once after a short backoff** (transient tx-lock case). If it still fails,
-  **do NOT detach/drop the ledger**; keep `fts5_index_state` untouched and
-  surface a typed `WikiSearchUnavailableError` (search returns empty /
-  host-visible degraded state) instead of MiniSearch full-sync.
+  **do NOT call `detachFts5`** — keep `fts5_index_state` untouched (no
+  artifacts dropped, no demotion committed) and surface a typed
+  `WikiSearchUnavailableError` (search returns empty / host-visible degraded
+  state) instead of MiniSearch full-sync. Keyword search degrades for one
+  open; the index and its ledger survive for the next open's retry.
 - Detach + MiniSearch fallback remains available **only** via explicit
   `indexStrategy: 'minisearch'` (operator's deliberate choice) — the
   measured fallback cost on the 1M store (`.sandbox/leg-minisearch-fallback-cost.log`)
