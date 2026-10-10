@@ -1,7 +1,7 @@
 # Spec: `wiki.setup()` wall time — minimal viable open, converging index
 
 **Date:** 2026-10-10
-**Status:** Draft (rev 9 — Opus delta cycle #4 adjudicated: spec 0 BLOCKER/5 MAJOR/9 minor + plan 0 BLOCKER/5 MAJOR/10 minor, all verified against source and applied; reviews: GLM r1-r4, Opus full ×2, Opus delta ×3 cycles; logs under `~/.hermes/cache/scratch/issue280/`)
+**Status:** Draft (rev 10 — Opus delta cycle #5 adjudicated: spec 0 BLOCKER/5 MAJOR/10 minor + plan 1 BLOCKER/5 MAJOR/5 minor, all verified against source and applied; reviews: GLM r1-r4, Opus full ×2, Opus delta ×5 cycles; logs under `~/.hermes/cache/scratch/issue280/`)
 **Branch:** `spec/issue280-setup-walltime` · **PR:** [#281](https://github.com/equationalapplications/expo-llm-wiki/pull/281) (DRAFT until implemented)
 **Priority:** High — blocks the SynapseTree ARM64 gate (15 s writer-lease fence vs 693 s measured setup)
 
@@ -100,12 +100,18 @@ separate fifth change.)
   but **not deferred by the time budget** — a store serving `hasChanged` /
   `forget({sourceRef})` with partially normalized refs would answer lookups
   wrongly (Opus M-5). Resumes from its watermark after a crash mid-migration.
-- Mechanics: the violation query is the existing GLOB predicate
-  (`findRowsForSourceRefMigration`, `EntryRepository.ts:1242-1255`) plus
-  `rowid > ? AND rowid <= ?` windows — chunkable, tracked in meta keys
-  `normalize_v14_entries_wm` / `normalize_v14_sri_wm` (rev 9 M2: one per
-  pass — see the two-table bullet below). Rows whose ref normalizes to NULL are
-  written NULL (today's `updateSourceRefByRowid` behavior, kept deliberately).
+- Mechanics (rev 10, delta-5 m1/M1 — the stale GLOB-predicate prose is
+  replaced): the window query fetches `(rowid, source_ref)` for non-NULL refs
+  and the violation test is the TypeScript fixed-point check
+  `normalizeSourceRef(v) !== v` (rev 7 replaced the SQL GLOB predicate of
+  `findRowsForSourceRefMigration`) over `rowid > ? AND rowid <= ?` windows —
+  chunkable, tracked in meta keys
+  `normalize_v14_entries_wm` / `normalize_v14_sri_wm` (one per
+  pass — see the two-table bullet below). In the `entries` pass, rows whose
+  ref normalizes to NULL are written NULL (today's `updateSourceRefByRowid`
+  behavior, kept deliberately — `entries.source_ref` is nullable). In the
+  `source_ref_index` pass a NULL-normalizing ref is NEVER written: the row is
+  SOFT-DELETED (delta-5 M1 — see the two-table bullet).
 - **Stamp lifecycle (atomic):** when a pass's window scan finds that pass's
   watermark ≥ its table's max(rowid) (checked inside the final chunk's tx),
   that tx deletes that pass's watermark; the stamp is written — inside the
@@ -120,6 +126,15 @@ separate fifth change.)
   chunked re-normalize (to completion), then stamp. This makes
   `version=14, stamp missing` (crash between completion and stamp, or a
   fresh-store path bug) self-healing rather than a permanent rescan.
+- **Placement (rev 10, delta-5 m2):** the v14 normalize lives OUTSIDE the
+  `MIGRATIONS` loop as a stamp-checked step with metadata + watermark
+  access — `MIGRATIONS` entries are `run(db, prefix)` with `schema_version`
+  set right after each one (`WikiMemory.ts:282-288`), so a normalize inside
+  the loop could not touch the watermarks and could be re-run under the
+  wrong version gate. `MIGRATIONS[14].run` itself ONLY creates the partial
+  index (`CREATE INDEX IF NOT EXISTS`); it never runs the normalize, and the
+  "never on `schema_version < 14`" property holds because the normalize is
+  reached only through the stamp-checked step.
 - **Fresh stores** (no `entries` table at first open) take the existing
   fast path that sets `schema_version = CURRENT` directly
   (`WikiMemory.ts:263-267`); that path MUST also write the v14 stamp and create
@@ -132,7 +147,12 @@ separate fifth change.)
   job).
 - **Downgrade/backup-restore:** an older engine ignores the stamp (it does not
   know the key); a newer engine re-validates via the algorithm id — a bump of
-  `normalize_alg` forces exactly one re-scan. (Opus delta m2, noted: an OLDER
+  `normalize_alg` forces exactly one re-scan. **Accepted residue (rev 10, delta-5 m9): a
+  downgrade-then-upgrade across the 255 boundary — an OLDER engine writing
+  255-boundary refs with the old non-idempotent algorithm AFTER the stamp
+  exists — leaves residue on re-upgrade (`normalize_alg` is unchanged, so
+  no forced rescan fires); narrow, documented, ACCEPTED.** (Opus delta
+  m2, noted: an OLDER
   engine opening a `rebuilding` store takes today's single-tx rebuild path —
   the 693 s shape; acceptable, documented.) The violation predicate is also
   narrowed to match the stamp's claim exactly: `OR length(source_ref) > 255`
@@ -171,7 +191,25 @@ separate fifth change.)
   `source_ref_index` — same normalize algorithm, own rowid space, run AFTER
   the entries pass — with the two watermarks named above; the
   `SOURCE_REF_NORMALIZE_ALG` stamp lands only after BOTH passes complete.
-  Pinned by 7(s).
+  Pinned by 7(s). **Pass-2 NULL rule (rev 10, Opus delta-5 M1 — the ladder's
+  first BLOCKER since cycle #2): `source_ref_index.source_ref` is
+  `TEXT NOT NULL` (`schema.ts:57`), so a row whose ref normalizes to NULL is
+  SOFT-DELETED (`deleted_at = now`) — never written NULL.** Rev 9's "written
+  NULL" wording would fail the chunk tx on a NOT NULL violation, and because
+  the normalize runs to completion regardless of budget, `setup()` would
+  throw on every later open — the store could never open again (takeaways
+  §2: a strict precondition with no repair path). **The motivation is wider
+  than the 255-char edge (delta-5 M1): the v9 backfill
+  (`migrations.ts:211-227`) copied raw `entries.source_ref` into
+  `source_ref_index` INSIDE the migrations loop, BEFORE the every-open
+  normalize (`WikiMemory.ts:301-309`, which never touches
+  `source_ref_index`) — so any store that crossed v9 with un-normalized refs
+  is out of sync TODAY: raw refs containing `/`, `\\`, NUL or other
+  stripped characters drift, not just the 255-char edge, and a raw ref like
+  `'///'` normalizes to NULL.** The unique index is NOT a hazard here: it is
+  on `(entity_id, source_hash)` (`schema.ts:61-63`), NOT on `source_ref`, so
+  soft-deleting or rewriting rows by rowid cannot collide; NULL-as-distinct
+  is never claimed for `source_ref`.
 - The every-open unbounded normalize tx at `WikiMemory.ts:302-309` is deleted
   by the stamp skip; the migration path replaces it (RC-7).
 
@@ -355,9 +393,12 @@ drain-overrun case; Acceptance 2/5's "budget + 2 × max chunk" is the
 authoritative bound, per Opus delta m1). **The drain interface
 is specified**: `drain(opts?: { deadline?: number; mode?: 'ledger' | 'full';
 ids?: readonly string[] })` — `mode: 'ledger'` never runs rebuild chunks;
-`ids` are the caller's own ledger rows, drained FIRST via an id-targeted chunk
-(`SELECT id FROM fts_pending WHERE id IN (SELECT value FROM json_each(?))`),
-so read-your-writes survives backlogs regardless of the 500-row seq window
+`ids` are the caller's own ledger rows, drained FIRST via id-targeted chunks
+(`SELECT id FROM fts_pending WHERE id IN (SELECT value FROM json_each(?))`,
+≤500 ids per tx) repeated until the caller's own ids are EXHAUSTED (rev 10,
+delta-5 M2: own ids drain TO COMPLETION — the cost is proportional to a
+write the caller already paid for; the ONE-chunk cap applies ONLY to the
+foreign backlog), so read-your-writes survives backlogs regardless of the 500-row seq window
 (the "newest seq window" phrasing is retired — it can miss the caller's rows
 under >500 concurrent writes). `syncEntries`/`sync(id)` thread their ids
 through `drainTurn`. **Empty-`ids` + `entityId` sync targets the ledger by
@@ -368,14 +409,24 @@ list there is nothing to drain first and `markStale` does nothing once a
 strategy has a `drain` (`SearchService.ts:243`), so under a backlog the
 documented call leaves the new nodes unsearchable. `drain({ids: []})` with an
 entity target therefore drains `fts_pending WHERE entity_id = ?` — **ORDER BY
-seq, ≤500 rows per tx (rev 9 plan m5), the same cap as the ids-first path.**
-**ids threading (rev 9, Opus delta-4 M3):** `WikiMemory.upsertGraph` already
+seq, ≤500 rows per tx (rev 9 plan m5); under the rev-10 write-turn budget
+this entity-targeted backlog counts as FOREIGN — the one-chunk cap applies
+to it, unlike the caller's own ids (delta-5 M2).**
+**ids threading (rev 9, Opus delta-4 M3; rev 10 delta-5 M3 extends it to
+the no-arg form):** `WikiMemory.upsertGraph` already
 holds `params.nodes[].id` in process — it STASHES them per entity (in place
-of today's `markStale` call, `WikiMemory.ts:765-768`/`:816-827` contract) and
-threads them as `ids` on the next `syncSearchIndex(entityId)`, so the
-ids-first ≤500-id chunk covers the new nodes even when a 1M-row crash
-backlog all belongs to that single entity (oldest-first seq order alone
-would never reach the highest-seq new nodes within the write-turn budget).
+of today's `markStale` call, `WikiMemory.ts:845` — delta-5 m5 citation fix)
+and threads them as `ids` on the next `syncSearchIndex(entityId)`, so the
+ids-first ≤500-id chunks (to completion) cover the new nodes even when a
+1M-row crash backlog all belongs to that single entity (oldest-first seq
+order alone would never reach the highest-seq new nodes within the
+write-turn budget). **No-arg consumption (delta-5 M3):** the no-arg
+`syncSearchIndex()` form — the one the `WikiMemory.ts:766-767` doc comment
+tells multi-entity writers to call — FIRST drains ALL stashed ids, across
+entities, in ≤500-id chunks, THEN runs the quantum; drained stash entries
+are CLEARED, and the stash is CAPPED (overflow falls back to the
+entity-targeted drain) so a host that only ever calls the no-arg form
+cannot grow it without bound.
 Because the ids-first chunk
 (`WHERE id IN json_each`) would full-scan the ledger on every write —
 `fts_pending` has NO indexes today (`fts5Sql.ts:40-44`) — this change adds
@@ -386,8 +437,10 @@ Change-2 partial index: they are unchunkable DDL built on the first
 new-engine open, so a store with a large crash backlog pays their build
 there — counted in the chunked-open budget and in Acceptances 4 and 6, not
 per-open. The `upsertGraph` and
-`syncSearchIndex` doc comments state the bounded-sync contract, and
-acceptance 7(r) pins upsertGraph-then-search under a backlog. **One deadline per open**: `setup()` captures
+`syncSearchIndex` doc comments state the bounded-sync contract for BOTH
+forms (entity-arg and no-arg — delta-5 M3), and
+acceptance 7(r) pins upsertGraph-then-search under a backlog via each
+form. **One deadline per open**: `setup()` captures
 `openDeadline = setup start + budget` (rev 8, plan delta-3 minor 4 — one
 capture point, named) and passes it through the migration and the
 post-migration `sync({ deadline })` — no per-turn re-budgeting (M-3 holds).
@@ -401,15 +454,26 @@ an options parameter — `sync(entityId?: string, opts?: { deadline?: number })`
 **Which entry point does what** (corrected paths per Opus delta m1):
 - `setup()` — full quantum (`sync()` → `drainTurn`): normalize (migration
   open), ledger drain, rebuild chunks. The convergence workhorse.
-- **no-arg `syncSearchIndex()` → `syncStale()` → `drainTurn`** — full quantum
+- **no-arg `syncSearchIndex()` → `syncStale()` → `drainTurn`** — full
+  quantum, but FIRST drains ALL stashed `upsertGraph` ids across entities in
+  ≤500-id chunks (rev 10 delta-5 M3 — stash cleared as drained, capped with
+  entity-targeted fallback; see the ids-threading bullet)
   (and the init-retry point; `WikiMemory.syncSearchIndex()` owns the retry,
   not `SearchService`, which has no db/prefix/metadataRepo).
 - **`syncEntries`/`sync(id)` (write-triggered) — LEDGER DRAIN ONLY** with the
-  caller's `ids` first. **Concrete write-turn budget (rev 9, Opus delta-4
-  M3):** a write-triggered turn drains **own ids + at most ONE ledger chunk**
-  (≤500 rows, `ORDER BY seq` — rev 9 plan m5); any remainder is left to
-  background/stale drain (setup() quanta and no-arg `syncSearchIndex()`). A
-  write must not pay ~2.5 s.
+  caller's `ids` first. **Concrete write-turn budget (rev 10, Opus delta-5
+  M2 — supersedes rev 9's one-chunk-everything cap):** a write-triggered
+  turn drains the caller's **own ids TO COMPLETION**, in ≤500-id chunk txs
+  (proportional to a write the caller already paid for); the **ONE ledger
+  chunk** cap (≤500 rows, `ORDER BY seq`) applies ONLY to the **foreign**
+  backlog drained after them; any foreign remainder is left to
+  background/stale drain (setup() quanta and no-arg `syncSearchIndex()`).
+  `importDump(merge=false)` PASSES ITS TOUCHED IDS (upserted + soft-deleted)
+  into the sync call (`ImportExportService.ts:452`, mirroring merge mode at
+  :450) — under the rev-9 cap a 10k-fact replace-mode import resolved with
+  ~9.5k imported facts unsearchable. A write still must not pay an
+  unbounded drain — the foreign one-chunk cap bounds it; own-id work is
+  proportional to the write itself.
 - Arbitration within a full quantum: ledger drain first, then rebuild chunks
   with the remainder; **at least one rebuild chunk per full quantum unless the
   drain overran the deadline** (bounds worst-case wall at budget + 2 × max
@@ -420,10 +484,11 @@ an options parameter — `sync(entityId?: string, opts?: { deadline?: number })`
   pass-level gate abort, pass-level heal skip, no-op drain); none leaves a
   half-applied write (the only
   partially-applied surface, `syncEntries`'s per-id loop, already applies
-  whole ids or throws). The takeaways §4 partial-visibility concern
+  whole ids or throws). The partial-visibility concern
   (normal parts searchable, failed parts findable as text) is met by
   gate.ts's exact-text `noop` lookup, not by writing unsafely during an
-  outage.
+  outage. (Delta-5 m5: the takeaways §4 reference here was citation drift —
+  §4 is about deleting dead mechanisms, not partial visibility.)
 - The migration normalize runs to completion (Change 1), sharing the
   openDeadline only in that both finish within the open; the CREATE INDEX
   build remains a declared one-time cost (Acceptance 6 records observed max
@@ -470,13 +535,22 @@ THAT row — so the upper bound never lands in a rowid gap (a fixed-width
 span's `hi` often lands in a gap, restarting every quantum — a livelock on
 any store that has run `runPrune`, whose hard-deletes at
 `MaintenanceService.ts:301` can remove the fingerprint row). **On a missing
-fingerprint row the engine RE-LOCATES — recomputing the watermark from the
-surviving predecessor (rows ≤ wm are exactly the rows before it) — rather
-than restarting.** SQLite's docs say only that rowids MAY change on VACUUM —
-rev 8's "VACUUM preserves rowid order" reliance is withdrawn; the design
-NEVER assumes rowid order: the engine's own vacuum path resets both
-watermarks AND the fingerprint (mechanism below), and re-location is the
-recovery for any OTHER reorder. (2) The normalize
+fingerprint row at check time the rebuild RESTARTS (rev 10, delta-5 m3 —
+SUPERSEDES rev 9's re-locate wording): the engine's hard-delete paths
+(`bulkDeletePruned`, `MaintenanceService.ts:301`, and any other
+fingerprint-row-deleting surface) RE-ANCHOR the fingerprint in the same
+transaction as the delete, so within the engine a fingerprint row can
+never vanish; absence at check time therefore means EXTERNAL change
+(manual SQL, VACUUM compaction, an older engine's writes) — exactly the
+condition where "rows ≤ wm are exactly the rows before it" no longer
+holds and re-locating would keep a stale watermark and flip to `live`
+with unindexed ranges and no signal. Restart is the safe exit; the
+rev-9 re-locate policy contradicted the design's "NEVER assumes rowid
+order" invariant.** SQLite's docs say only that rowids MAY change on
+VACUUM — rev 8's "VACUUM preserves rowid order" reliance is withdrawn;
+the design NEVER assumes rowid order: the engine's own vacuum path resets
+both watermarks AND the fingerprint (mechanism below), and the in-tx
+re-anchor keeps the fingerprint valid across every engine-issued delete. (2) The normalize
 watermark gets the same fingerprint treatment (7(p), per delta M4), and —
 because `runPrune({vacuum: true})` runs VACUUM **in-process**
 (`MaintenanceService.ts:345-346`, not only before the "next open") — the
@@ -498,8 +572,14 @@ Opus plan M2):** the error can surface from 6 sites, each pinned:
   (`RetrievalService.ts:212-225`) re-opens the OOM this spec exists to
   prevent — `findWithEmbeddingsByEntityIds` (`EntryRepository.ts:1524-1532`)
   has NO LIMIT and loads `embedding_blob` plus the JSON `embedding` for
-  every live row of the scored entities (the 1.83 GB heap class at 1M), and
-  a host that sets `preFilterLimit` cannot afford that full scan. Failing
+  every live row of the scored entities. The full-scan branch is in fact
+  the DEFAULT read path for every host WITHOUT `preFilterLimit`
+  (`RetrievalService.ts:99-101`), and `gate.ts:110` runs the same unlimited
+  read every librarian pass — the precise justification for propagating
+  here (rev 10, delta-5 m6): a `preFilterLimit` host OPTED OUT of the full
+  scan, so failing loudly beats silently granting it. (The 1.83 GB figure
+  was the MiniSearch sync, not an embedding load — the earlier implication
+  is dropped.) Failing
   loudly IS the correct degrade: the error propagates via today's two-hop
   path — caught at `:668`, `onRetrievalFallback` fires, the `:719` site
   throws — with NO silent empty read and NO OOM. At `:223` the pinned
@@ -532,18 +612,31 @@ Opus plan M2):** the error can surface from 6 sites, each pinned:
   as unattempted (the `unattemptedIds` handling at :1034).** This follows
   takeaways §5 (check the precondition before spending).
 - **`services/librarian/ops/gate.ts:143` (librarian gate keyword fallback —
-  NEW in rev 7, Opus plan M2; REV 9 (Opus delta-4 plan M1) replaces rev 8's
-  per-candidate degrade with a PASS-LEVEL ABORT:** before gating, if keyword
-  search is unavailable, abort the librarian pass without advancing the
-  watermark — the same pattern as `resolve.ts:123-129` — zero LLM calls,
-  zero new rows (rev 8's per-candidate
+  NEW in rev 7, Opus plan M2; REV 10 (Opus delta-5 M4) replaces rev 9's
+  "before gating … zero LLM calls" placement, which was unsatisfiable:
+  `runExtract` (an LLM call) runs at `librarian/ops/index.ts:38`, BEFORE
+  `gateCandidates` at :49, so an abort placed "before gating" has already
+  paid for extraction):** a named predicate —
+  **`SearchService.isKeywordAvailable(): boolean`** — is checked AFTER
+  `selectBatch` and BEFORE `runExtract`; the pass ABORTS (resolve-style,
+  per `resolve.ts:123-129`, watermark kept) ONLY when the pass could need
+  keyword mode: no embed provider, the embed failed, or the entity has no
+  stored vectors (the `gate.ts:124-147` conditions that route into
+  `searchKeyword`). Otherwise the pass RUNS — extraction spend on a pass
+  that never touches keyword mode is not blocked by an outage — and a rare
+  mid-pass fall-through to keyword mode during an outage throws the same
+  resolve-style abort (watermark kept; that extraction spend is accepted).
+  **Watermark-holdback rationale (delta-5 M4):** an UNCONDITIONAL abort
+  would halt librarian indefinitely under `deferred`/`ops` scheduling and
+  grow the event log without bound — `runPrune` holds every event back
+  behind the unadvanced watermark (`MaintenanceService.ts:329-338`) — a
+  stuck state with no exit (takeaways §2/§3). Rev 8's per-candidate
   `ambiguous`+exact-text shape still duplicates via runResolve's
-  draft-insert: an `ambiguous` candidate enters the resolution draft and its
-  ADD lands on commit). The bounded SQL exact-text `noop` lookup is kept as
-  DEFENSE IN DEPTH INSIDE the pass — an exact duplicate still classifies
-  `noop` if the pass runs — but it is not the primary fix. Pinned by 7(e):
-  an outage yields zero LLM calls, zero new rows, and an unchanged
-  watermark. (Re-verified by grep: `gate.ts` is the sixth and last
+  draft-insert: an `ambiguous` candidate enters the resolution draft and
+  its ADD lands on commit. The bounded SQL exact-text `noop` lookup is kept
+  as DEFENSE IN DEPTH INSIDE the pass — an exact duplicate still classifies
+  `noop` if the pass runs — but it is not the primary fix. Pinned by 7(e)
+  (both legs). (Re-verified by grep: `gate.ts` is the sixth and last
   `searchKeyword` caller outside SearchService itself.)
 - `syncEntries`/`drainTurn` paths: unavailable strategy's `drain` is a no-op
   (ledger intact; no per-write warning spam).
@@ -580,7 +673,12 @@ dropped) then OOM-kills at ~202 s / 1.83 GB on the 1M store. The guard:
   which is the single source of truth for these behaviors; the rev-7
   degrade wording here was stale:** the maintenance heal path
   (`MaintenanceService.ts:1542`) performs the pass-level availability check
-  at the START of `doRunHeal` — on unavailability the whole pass is skipped
+  AFTER the orphan/stale SQL passes and the empty-candidate return —
+  immediately before `runBatched` (`MaintenanceService.ts:818`; rev 10,
+  delta-5 m8: a check at the START of `doRunHeal` also gated the
+  orphan/stale-inferred passes at :780-789 and the empty-candidate return
+  at :800-818, none of which use keyword search — the check now guards
+  ONLY the LLM path) — on unavailability the remaining pass is skipped
   with one diagnostic (no LLM spend, no mutation, no stamps; candidates
   unattempted), NOT a rev-7-style "no heal anchors available" degrade; the
   retrieval keyword fallback (`RetrievalService.ts:550`) propagates the error
@@ -613,9 +711,20 @@ dropped) then OOM-kills at ~202 s / 1.83 GB on the 1M store. The guard:
   carries the measured memory ceiling: the MiniSearch full sync OOM-killed a
   default Node heap at **1M entries** — operators of pro-scale stores need a
   raised `--max-old-space-size`, documented next to the option.
-- `probeFts5` failure (module genuinely absent) still falls back to MiniSearch:
-  that case is permanent, not transient. Its memory ceiling is the same
-  documented one.
+- **`probeFts5` failure is CLASSIFIED (rev 10, delta-5 M5 — closes a gap in
+  "no demotion is committed in any failure path": today `probeFts5` swallows
+  every error and returns false, `createIndexStrategy.ts:23-24`, and under
+  `auto` that falls through to `detachFts5` at :72 and the MiniSearch
+  `replaceAll` path):** ONLY `no such module: fts5` / `no such function:
+  json_valid` mean the module is genuinely absent — that case is permanent
+  and the MiniSearch fallback (with its documented memory ceiling) is
+  valid. ANY OTHER probe error — `SQLITE_NOMEM`, `SQLITE_IOERR`,
+  `SQLITE_INTERRUPT`, anything else — goes down the `init()` failure path
+  (retry once, then the never-demote `UnavailableIndexStrategy`) and NEVER
+  detaches. Stakes: a transient `SQLITE_IOERR` on a healthy 1M store must
+  not commit `state='detached'`, drop the ledger and map, and reach the
+  measured 202 s / 1.83 GB MiniSearch `replaceAll` OOM — RC-6 reached
+  through the probe instead of `init()`.
 
 ## Write-path invariant audit (precondition for the Change-1 stamp)
 
@@ -629,9 +738,9 @@ surface normalizes. Audited surfaces
 - `WikiMemory.hasChanged` single + batched paths (`normalizeSourceRef` at
   :349/:371/:433/:810), `IngestionService` (:121), `MaintenanceService`
   (:540/:640), `ImportExportService` (:275).
-- **Belts:** (a) the violation predicate is cheaply re-checked whenever the
-  stamp's `normalize_alg` id bumps (one rescan — already the stamp-mismatch
-  behavior); (b) **already satisfied by existing code (Opus MIN-7):**
+- **Belts:** (a) the fixed-point scan is cheaply re-run whenever the
+  stamp's `normalize_alg` id bumps (one rescan — already the
+  stamp-mismatch behavior); (b) **already satisfied by existing code (Opus MIN-7):**
   `importDump` normalizes every imported `source_ref` at
   `ImportExportService.ts:273-282` (throwing if it normalizes to null), so an
   imported dump can never violate the stamp invariant — no dump-header
@@ -666,7 +775,11 @@ investigation measured a 2.8× warm/cold swing, §2.3).
    which 1.73 s is RC-2 scans; post-fix predicted ~0.01 s for the scan pair).
 2. **Converged rebuild open @1M** (`rebuilding`, watermark advanced by prior
    opens): setup() returns within budget + 2 × max chunk (≤ 3.5 s @1M defaults
-   — the forced-final-chunk rule allows one extra chunk, Opus delta m1).
+   — the forced-final-chunk rule allows one extra chunk, Opus delta m1;
+   **rev 10 delta-5 m7: this figure is EXTRAPOLATED — a REQUIRED keep-map
+   window measurement at 1M records the actual rate, because keep-map
+   windows delete and reinsert every row in a populated FTS5 index and FTS5
+   deletes read `%_content` — before the ≤3.5 s claim is relied upon**).
    **Pinned `'fts5'` retry behavior (delta-3 m7):** a pinned `'fts5'` init
    failure does NOT retry or demote — the underlying error propagates
    immediately (`createIndexStrategy.ts:65`, unchanged contract).
@@ -714,17 +827,28 @@ investigation measured a 2.8× warm/cold swing, §2.3).
    failure ×2 on a healthy 1M store — no `detachFts5` call (spy), state not
    `detached`, `WikiSearchUnavailableError` thrown per query, next open
    recovers; **the Change-3 call-site map is the single source of truth for
-   the outage behaviors and 7(e) pins it as rewritten in rev 9 (delta-4 M4):
-   heal pass-level skip (one diagnostic, zero LLM calls, no mutation, no
-   stamps), retrieval keyword fallback propagates via the two-hop path, the
-   librarian gate takes the PASS-LEVEL availability abort (zero LLM calls,
-   zero new rows, watermark untouched) with the bounded SQL exact-text
-   `noop` lookup kept as defense in depth INSIDE the pass — NOT a
-   per-candidate ambiguous+exact-text degrade and NOT "vector-only
-   context"; write during unavailability succeeds, its ledger rows survive,
-   and NO full-table read fires while unavailable (`findMiniSearchRows`
-   never called — pins the B1 no-op-`drain` fix)** (Opus M-7 + rev 7 plan
-   B1/M2 + rev 9 delta-4 plan M1);
+   the outage behaviors and 7(e) pins it as rewritten in rev 10 (delta-5 M4):
+   heal pass-level skip — the availability check sits immediately before
+   `runBatched` (delta-5 m8) — (one diagnostic, zero LLM calls, no
+   mutation, no stamps), retrieval keyword fallback propagates via the
+   two-hop path; the librarian gate pins BOTH legs of the
+   `isKeywordAvailable` design: (i) a pass that cannot need keyword mode
+   RUNS to completion during an outage (embed available, vectors stored —
+   extraction happens, no abort), and (ii) a pass that could need keyword
+   mode aborts resolve-style (watermark kept) after `selectBatch` and
+   before `runExtract`; a mid-pass fall-through to keyword mode during an
+   outage also aborts resolve-style with watermark kept; with the bounded
+   SQL exact-text `noop` lookup kept as defense in depth INSIDE the
+   pass — NOT a per-candidate ambiguous+exact-text degrade and NOT
+   "vector-only context"; write during unavailability succeeds, its ledger
+   rows survive, and NO full-table read fires while unavailable
+   (`findMiniSearchRows` never called — pins the B1 no-op-`drain` fix)**;
+   **probe leg (rev 10, delta-5 M5): `probeFts5` throws `SQLITE_IOERR` →
+   state is NOT `detached`, no `detachFts5` call (retry then
+   `UnavailableIndexStrategy`); only `no such module: fts5` /
+   `no such function: json_valid` take the MiniSearch fallback**
+   (Opus M-7 + rev 7 plan B1/M2 + rev 9 delta-4 plan M1 + rev 10 delta-5
+   M4/M5);
    (f) `detached` store semantics: under pinned `indexStrategy: 'minisearch'`
    the store stays detached; under `'auto'` (the default) it re-attaches —
    enters `rebuilding` and converges via CHUNKED WINDOWS (no `rebuildSql`
@@ -749,7 +873,13 @@ investigation measured a 2.8× warm/cold swing, §2.3).
    budget, all refs still normalized; budget affects only the post-migration
    sync); (m) **read-your-writes under backlog:** 5k-row ledger backlog + one
    write → the written fact is searchable immediately after `syncEntries`
-   returns (ids-first drain, Opus delta M3); (n) **prefilter host outage (rev 9, delta-4 M1 — REVERSES rev 8's
+   returns (ids-first drain, Opus delta M3; rev 10 delta-5 M2: own ids
+   drain TO COMPLETION in ≤500-id chunks — the one-chunk cap is
+   foreign-only); **(m′) bulk-import read-your-writes (rev 10, delta-5
+   M2): `importDump(merge=false)` of 2k facts under a 5k foreign-ledger
+   backlog → EVERY fact is searchable when the call returns (touched ids
+   passed into the sync call and drained to completion)**;
+   (n) **prefilter host outage (rev 9, delta-4 M1 — REVERSES rev 8's
    fall-through):** a `preFilterLimit` read with unavailable keyword scores
    PROPAGATES via the two-hop path (caught at :668, `onRetrievalFallback`
    fires, `:719` throws) — the test pins the two-hop path + the fallback
@@ -774,7 +904,15 @@ investigation measured a 2.8× warm/cold swing, §2.3).
    SAME document is re-ingested AFTER it — the old `source_ref_index` row is
    soft-deleted (exact-ref match now hits the normalized form), with NO
    `WikiSourceRefHashCollision` and NO partial-UNIQUE `(entity_id,
-   source_hash)` collision.
+   source_hash)` collision; **rev 10 (delta-5 M1) adds two legs: (i) a
+   pre-v9 `'a/b'` raw `source_ref_index` row (v9-backfill drift) → the
+   migration COMPLETES and the row is soft-deleted; (ii) a `'///'` row
+   (normalizes to NULL) → the migration COMPLETES (no NOT NULL violation),
+   the row is soft-deleted, the stamp is written, and re-ingesting `'a/b'`
+   soft-deletes the old index row** — no NULL is ever written to
+   `source_ref_index.source_ref` (`TEXT NOT NULL`), and the unique index on
+   `(entity_id, source_hash)` is not a hazard (it does not involve
+   `source_ref`).
 8. Existing test suite green. **Note (rev 9 m8):** `createIndexStrategy.test.ts:69,89`
    (which assert `'detached'` after an `auto` fallback) are REWRITTEN by this
    change — the auto fallback no longer detaches — they are not merely kept
@@ -974,8 +1112,11 @@ alignment. **Spec rev 8 = this revision.**
  entries-did-not-exist so pre-FTS stores rebuild (M5); downgrade-of-
  rebuilding note (m2); 255-char predicate gap closed (m3); watermark keys
  named + flip-tx deletion stated (m5). Takeaways §1/§2/§5/§8/§9 verified
- pre-satisfied by design; §4 (orphan sweep incl. tests) and §6 (VACUUM
- guard) incorporated as above; §7 telemetry deferred (no telemetry surface
+ pre-satisfied by design; §4 (delete dead mechanisms everywhere — incl.
+ the orphan-sweep dead code) and §6 (one-shot backfills, concurrent-migration
+ guards, empty-set edges — the VACUUM-guard mapping here was imprecise; the
+ concurrent-open guard is out of scope per the Out-of-scope section)
+ incorporated as applicable; §7 telemetry deferred (no telemetry surface
  in this delivery). **Spec rev 6 = this revision.**
 - **Tier-3 Opus delta cycle #4 (2026-10-10, spec 0 BLOCKER/5 MAJOR/9 minor
   + plan 0 BLOCKER/5 MAJOR/10 minor; logs `opus-{spec,plan}-delta4.log`,
@@ -1022,3 +1163,60 @@ alignment. **Spec rev 8 = this revision.**
   declared REWRITTEN; m9 :223 wording = "add a local catch → empty keyword
   scores map" (no local catch exists today). **Spec rev 9 = this
   revision.**
+- **Tier-3 Opus delta cycle #5 (2026-10-10, spec REQUEST CHANGES 0
+  BLOCKER/5 MAJOR/10 minor, $2.7388 + plan REQUEST CHANGES 1 BLOCKER/5
+  MAJOR/5 minor, $1.9190; logs `opus-{spec,plan}-delta5.log`; all key
+  source claims verified against worktree source before adoption). Spec
+  findings applied in this rev 10:** **M1** the v14 `source_ref_index`
+  pass-2 rule "rows that normalize to NULL are written NULL" bricks
+  affected stores — `source_ref_index.source_ref` is `TEXT NOT NULL`
+  (`schema.ts:57`), the tx would roll back and the to-completion normalize
+  would throw on every open — ⇒ pass 2 SOFT-DELETES NULL-normalizing rows
+  (`deleted_at = now`), the motivation extended to the v9-backfill drift
+  (raw refs with `/`, backslash, NUL or stripped chars are out of sync
+  today, not just the 255 edge), 7(s) gains the pre-v9 `'a/b'` and `'///'`
+  legs, and the plan's NULL-as-distinct premise is corrected (the unique
+  index is on `(entity_id, source_hash)`) — the ladder's first BLOCKER
+  since cycle #2; **M2** the one-chunk write-turn cap broke read-your-writes
+  for bulk writers (a 10k-fact `merge=false` import resolved ~9.5k facts
+  unsearchable; `ImportExportService.ts:452` passes no ids) ⇒ own ids drain
+  TO COMPLETION in ≤500-id chunks, the one-chunk cap is foreign-only, and
+  `importDump(merge=false)` passes its touched ids; 7(m′) added; **M3** the
+  `upsertGraph` id stash was consumed only by `syncSearchIndex(entityId)`
+  while the documented no-arg form (`WikiMemory.ts:766-767`) never touched
+  it — under a 1M backlog the quantum drains oldest-seq-first and never
+  reaches the new nodes ⇒ the no-arg form first drains ALL stashed ids
+  across entities in ≤500-id chunks (stash cleared once drained, capped
+  with entity-targeted fallback); 7(r) no-arg leg + doc-contract wording
+  for both forms; **M4** the gate's "before gating … zero LLM calls" abort
+  was unsatisfiable (`runExtract` runs at `librarian/ops/index.ts:38`,
+  before `gateCandidates` at :49) and an unconditional abort would halt
+  librarian under `deferred`/`ops` and grow the event log unboundedly via
+  the held-back watermark (`MaintenanceService.ts:329-338`) ⇒ named
+  `SearchService.isKeywordAvailable()`, checked after `selectBatch` and
+  BEFORE `runExtract`, aborting resolve-style (watermark kept) ONLY when
+  the pass could need keyword mode, with mid-pass fall-through aborting
+  the same way (extraction spend accepted); both 7(e) legs pinned; **M5**
+  `probeFts5` swallowed every error and returned false
+  (`createIndexStrategy.ts:23-24`), so a transient `SQLITE_IOERR` on a
+  healthy 1M store committed `detached` and reached the 202 s / 1.83 GB
+  MiniSearch `replaceAll` OOM — RC-6 via the probe ⇒ ONLY "no such module:
+  fts5" / "no such function: json_valid" mean module-absent; any other
+  error takes the init-failure path (retry, then
+  `UnavailableIndexStrategy`) and NEVER detaches; 7(e) probe leg added.
+  Minors applied: m1 stale GLOB-predicate prose rewritten (Mechanics +
+  belt (:632)); m2 v14 normalize placement stated (outside the MIGRATIONS
+  loop, stamp-checked, with `MIGRATIONS[14].run` only creating the partial
+  index); m3 the fingerprint RE-LOCATE policy REPLACED by in-tx RE-ANCHOR +
+  restart (resolves the rowid-stability contradiction); m4 sqlite code 267
+  added to the map with statement-scope fallback, classifier applies under
+  pinned `'fts5'`; m5 citation drift fixed (`markStale` is
+  `WikiMemory.ts:845`; takeaways §4 is delete-dead-mechanisms; the
+  review-log §6 mapping — concurrent-open guard out of scope); m6 full-scan
+  rationale corrected (default path; prefilter hosts opted out; 1.83 GB was
+  the MiniSearch sync); m7 required keep-map window measurement at 1M
+  (FTS5 deletes read `%_content`); m8 heal keyword check moved to
+  immediately before `runBatched` (~:818); m9 downgrade-then-upgrade
+  255-boundary residue documented as accepted; m10 dead-code sweep covers
+  `rebuildSql` export + tests AND the `rebuildFromSource` interface member
+  + its tests. **Spec rev 10 = this revision.**
