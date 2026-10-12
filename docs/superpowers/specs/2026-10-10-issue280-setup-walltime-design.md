@@ -1,11 +1,136 @@
 # Spec: `wiki.setup()` wall time — minimal viable open, converging index
 
 **Date:** 2026-10-10
-**Status:** Draft (rev 10 — Opus delta cycle #5 adjudicated: spec 0 BLOCKER/5 MAJOR/10 minor + plan 1 BLOCKER/5 MAJOR/5 minor, all verified against source and applied; reviews: GLM r1-r4, Opus full ×2, Opus delta ×5 cycles; logs under `~/.hermes/cache/scratch/issue280/`)
+**Status:** Draft (rev 11 — normative summary prepended, delivery split into PR-A / PR-B, migration gate for the upgrade open, rename-retire for the DDL floor, 7(s)(i) corrected; rev 10 — Opus delta cycle #5 adjudicated: spec 0 BLOCKER/5 MAJOR/10 minor + plan 1 BLOCKER/5 MAJOR/5 minor, all verified against source and applied; reviews: GLM r1-r4, Opus full ×2, Opus delta ×5 cycles; logs under `~/.hermes/cache/scratch/issue280/`)
 **Branch:** `spec/issue280-setup-walltime` · **PR:** [#281](https://github.com/equationalapplications/expo-llm-wiki/pull/281) (DRAFT until implemented)
 **Priority:** High — blocks the SynapseTree ARM64 gate (15 s writer-lease fence vs 693 s measured setup)
 
-Fixes #280.
+Fixes #280 (via PR-B; PR-A references it — see Delivery split).
+
+---
+
+## Normative summary (rev 11 — the current contract)
+
+This section states the contract as of the latest revision, so an implementer
+does not have to fold ten revisions of history. The sections below are the
+full record and carry the detail and rationale. **If this summary and a
+section below disagree, that is a spec bug: stop and report** — do not pick
+one.
+
+### Delivery split
+
+| PR | Branch | Scope | Issue link | Acceptance owned |
+|---|---|---|---|---|
+| **PR-A** — warm open + stability | `spec/issue280-setup-walltime` (#281) | Change 1, Change 2, migration gate (Change 1), Change 4 **except** the corruption-class DROP+CREATE repair | `Refs #280` | 1, 7(b)(c)(d)(e — all legs except corrupt-FTS)(h)(l)(n)(n′)(o)(p — normalize side)(q)(s)(t), 8; the @1M normalize-rate measurement |
+| **PR-B** — FTS state machine | new branch off `main` after PR-A merges | Change 3 in full, Change 4's corruption-class repair, rename-retire, `fts_pending` indexes (schema v15) | `Fixes #280` | 2, 3, 4, 5, 6, 7(a)(e — corrupt-FTS leg)(f)(g)(i)(j)(k)(m)(m′)(p — rebuild side)(r)(u) |
+
+PR-A alone does **not** close #280: the 693 s gate leg most likely ran the
+rebuild path (RC-1/RC-3), which only PR-B fixes. PR-A ships the
+fence-critical warm-open fix (RC-2/RC-7) and removes the data-destroying
+RC-6 crash path. **Between PR-A and PR-B, `Fts5IndexStrategy.init()` keeps
+today's single-transaction rebuild** for non-`live` states. An init failure
+on that rebuild now yields `UnavailableIndexStrategy` instead of detaching.
+
+### Every-open path (both PRs)
+
+`setup()` on an up-to-date `live` store does only O(1)/index-probe work:
+
+1. Migration gate (read-only): `schema_version`, normalize stamp, retired-table
+   list. Pending work + `migrations: 'refuse'` ⇒ throw
+   `WikiMigrationRequiredError` with zero mutation.
+2. `setupDatabase` `IF NOT EXISTS` DDL (no-ops).
+3. Legacy `source_type` probe through the partial index (fail-closed throw kept).
+4. Stamp matches `{schema_version: 14, normalize_alg: SOURCE_REF_NORMALIZE_ALG}`
+   ⇒ the normalize is skipped.
+5. `createIndexStrategy` → `init()` fast path → one budgeted full quantum
+   (PR-B) / ledger drain (PR-A, unchanged).
+
+### PR-A contract
+
+- **`normalizeSourceRef`** = `value.replace(/[^A-Za-z0-9._\- ]/g, '').trim().slice(0, 255).trimEnd()`,
+  NULL when empty. A true fixed point (`n(n(x)) === n(x)`); `SOURCE_REF_NORMALIZE_ALG = 1`.
+- **v14:** `MIGRATIONS[14].run` ONLY creates the partial legacy index. The
+  normalize is a separate stamp-checked step after the migrations loop, with
+  two rowid-watermarked passes of ≤500 rows per tx, run to completion
+  regardless of `setupBudgetMs`:
+  - pass 1 `entries` (`normalize_v14_entries_wm`): rewrite differing refs;
+    NULL-normalizing refs are written NULL;
+  - pass 2 `source_ref_index` (`normalize_v14_sri_wm`): rewrite differing refs;
+    NULL-normalizing refs ⇒ row SOFT-DELETED (`source_ref` is `TEXT NOT NULL`).
+  The violation test is the TS check `normalizeSourceRef(v) !== v`. Each
+  pass deletes its own watermark in its final chunk tx. The stamp is written
+  in pass 2's final chunk tx. A missing watermark means 0. The skip keys only
+  on the stamp, never on `schema_version`. Watermarks carry the fingerprint
+  rule (Change 3 VACUUM section), and the engine's VACUUM path resets them.
+- **Fresh stores** write `schema_version = CURRENT`, the stamp, and the partial index directly.
+- **Migration gate:** see Change 1 "Upgrade open vs the fence". Default
+  `migrations: 'run'` (today's behavior). SynapseTree opens inside the lease
+  with `'refuse'` and runs plain `setup()` out of lease on
+  `WikiMigrationRequiredError`.
+- **Change 4:** `probeFts5` classifies errors. Only `no such module: fts5` /
+  `no such function: json_valid` ⇒ module-absent ⇒ MiniSearch. Every other
+  probe or init error ⇒ one 250 ms retry ⇒ `UnavailableIndexStrategy`
+  (`search()` throws `WikiSearchUnavailableError`, `drain` is a PRESENT no-op,
+  `replace*` no-ops, `hasIndexedEntity()` false). `detachFts5` is never called
+  on a failure path. No-arg `syncSearchIndex()` retries init. Pinned `'fts5'`
+  init failure propagates raw. Pinned `'minisearch'` detaches (operator
+  choice).
+- **Call-site map (6 sites):**
+  - `RetrievalService.ts:189` prefilter ⇒ PROPAGATE (two-hop: `:668` catch,
+    `onRetrievalFallback`, `:719` throws);
+  - `:223` hybrid blend ⇒ local catch, empty keyword-scores map;
+  - `:550` and `:719` ⇒ propagate;
+  - `MaintenanceService` heal ⇒ `isKeywordAvailable()` checked immediately
+    before `runBatched` (~:818); unavailable ⇒ skip the LLM pass, one
+    diagnostic, no stamps;
+  - `gate.ts:143` ⇒ `isKeywordAvailable()` checked after `selectBatch`, before
+    `runExtract`; abort resolve-style (watermark kept) only when the pass could
+    need keyword mode; a mid-pass fall-through aborts the same way; the exact-text
+    `noop` lookup stays as defense in depth.
+
+### PR-B contract
+
+- **States** `live` / `rebuilding` / `detached`. Every transition happens in
+  one tx. Read-only probes come first: state, `triggersPresent()`, the
+  `entries_fts_docsize` vs `fts_map` count, and the max-rowid consistency check.
+- **Re-arm (marker/trigger loss, intact tables passing both checks):** re-create
+  triggers, clear `fts_pending` only, keep `fts_map` + `entries_fts`, reset the
+  watermark + fingerprint + sweep cursor, snapshot `max(entries.rowid)` and
+  `max(fts_map.fts_rowid)`, set state `rebuilding`. No DDL floor.
+- **Reset path** (tokenizer mismatch, failed consistency check, detached
+  re-attach, corruption-class `SQLITE_CORRUPT_VTAB` from FTS-only statements):
+  **rename-retire** the old `entries_fts` (see the DDL note, rev 11), CREATE an
+  empty one, clear `fts_map` + `fts_pending`, then the same re-arm.
+  `rebuildSql`, `rebuildFromSource` and the single-tx rebuild are deleted.
+- **Windows:** `windowChunkSql` (4 statements, never touches the ledger),
+  `hi` = max rowid over the next ≤500 existing rows, fingerprint at `hi`,
+  watermark advanced in the same tx. Engine hard-deletes
+  (`EntryRepository.ts:816`, via `runPrune`) re-anchor the fingerprint
+  in-tx. A missing fingerprint at check time ⇒ restart.
+- **Orphan sweep:** cursor over `fts_map.fts_rowid` with a `NOT EXISTS`
+  anti-join, ≤ one bounded tx per full quantum.
+- **Completion (re-checked inside the flip tx):** watermark ≥ the re-arm
+  snapshot, AND sweep cursor ≥ its snapshot, AND the residual `fts_pending`
+  fits one chunk, drained inside the flip tx.
+- **`drain({ deadline?, mode?: 'ledger'|'full', ids? })`:**
+  - caller ids first, to completion, ≤500 per tx via `json_each`;
+  - an entity target with empty ids ⇒ `fts_pending WHERE entity_id = ?`
+    (counts as foreign);
+  - write turns (`syncEntries`, `sync(id)`) = `'ledger'`, own ids plus at
+    most ONE foreign chunk;
+  - full quanta (`setup()`, no-arg `syncSearchIndex()`) = ledger, then ≥1
+    rebuild chunk unless the deadline was overrun, then the sweep tx, then
+    rename-retire reclamation;
+  - one `openDeadline` per `setup()`; worst case = budget + 2 × max chunk.
+- **Id threading:** `upsertGraph` stashes node ids (capped). Both
+  `syncSearchIndex(entityId)` and no-arg `syncSearchIndex()` drain the stash
+  first. `importDump(merge=false)` passes its touched ids.
+- **Schema v15:** `fts_pending(id)` + `fts_pending(entity_id)` indexes, covered by the migration gate.
+- **VACUUM** (engine path, in-process) resets both rebuild-side watermarks,
+  the fingerprint and the sweep cursor.
+- **Host contract:** convergence is open-driven. The host calls no-arg
+  `syncSearchIndex()` on its own schedule. Partial recall during
+  `rebuilding` is accepted.
 
 ---
 
@@ -212,6 +337,49 @@ separate fifth change.)
   is never claimed for `source_ref`.
 - The every-open unbounded normalize tx at `WikiMemory.ts:302-309` is deleted
   by the stamp skip; the migration path replaces it (RC-7).
+- **Upgrade open vs the fence — migration gate (rev 11, NEW; PR-A).** The
+  first new-engine open of every EXISTING store runs the v14 work to
+  completion. That is two full scans that bring each ref into JS, plus the
+  unchunkable partial-index build, plus v15's `fts_pending` indexes in PR-B.
+  The old GLOB scan alone projected to 16–30 s at 4.2M rows, and the
+  JS-side scan rate is unmeasured. So the upgrade itself would self-fence
+  every SynapseTree pro tenant once, because the host opens tenants inside
+  the writer lease (#280 "Why the caller can't work around it").
+  Acceptance 6's "exceeds the fence by design" is honest, but the issue asks
+  for "inside the fence or explicitly resumable-in-background", so the host
+  needs a way to route that open out of the lease:
+  - `setup(opts?: { migrations?: 'run' | 'refuse' })`, default `'run'`
+    (today's behavior, no host change required).
+  - Under `'refuse'`, `setup()` FIRST runs read-only probes:
+    `entries`-table existence, `schema_version` (or the derived version when
+    the row is absent), the normalize stamp, and the retired-table list
+    (PR-B). If any work is pending (a migration with `version > current`, a
+    stamp missing or mismatched, or a retired table not yet reclaimed when
+    reclamation has been handed off — DDL note, rev 11), it throws
+    **`WikiMigrationRequiredError`** before ANY mutation. The error is
+    exported, with `name` stable and fields
+    `{ fromVersion, toVersion, normalizeRequired: boolean, retiredTables: number }`.
+    **The gate runs BEFORE `setupDatabase`**: on an existing store,
+    `setupDatabase`'s `CREATE INDEX IF NOT EXISTS` statements are exactly
+    the unchunkable builds the gate exists to defer. The new indexes (the
+    partial index; v15's `fts_pending` indexes) are therefore created ONLY
+    by their migrations and by the fresh-store path, never by
+    `setupDatabase`'s every-open DDL. (This supersedes Change 2's "`CREATE
+    INDEX IF NOT EXISTS` on every open" line for existing stores. The
+    fresh-store path still creates the partial index directly.)
+  - Fresh stores (no `entries` table) never trip the gate: there is nothing
+    to migrate.
+  - **Host procedure (SynapseTree):** open inside the lease with
+    `migrations: 'refuse'`. On `WikiMigrationRequiredError`, release the
+    lease and run plain `setup()` out of lease (a maintenance worker, or a
+    pre-rollout sweep across tenants). The next in-lease open passes the
+    gate. Crash mid-migration ⇒ the watermarks resume it.
+  - **Why not a separate `wiki.migrate()`:** a second entry point would
+    duplicate `setup()`'s ordering and drift from it. With the gate, the
+    offline runner executes exactly the code an in-lease open would.
+  - The gate does NOT cover bounded work (rebuild quanta, ledger drain). The
+    steady-state claim (Acceptance 4) applies to opens that pass the gate.
+    Pinned by 7(t).
 
 ### Change 2 — partial covering index for the legacy check
 
@@ -230,7 +398,10 @@ separate fifth change.)
   predicate result) is budgeted as part of the v14 migration's declared cost
   in Acceptance 6, not per-open.
 - `CREATE INDEX IF NOT EXISTS` on every open is the no-op guard (and covers
-  the fresh-store fast path per Change 1).
+  the fresh-store fast path per Change 1). **Rev 11: superseded for existing
+  stores.** The index is created only by `MIGRATIONS[14].run` and the
+  fresh-store path, never by `setupDatabase`'s every-open DDL, so the
+  migration gate (Change 1) can defer its build out of the lease.
 
 ### Change 3 — FTS state machine: watermark rebuild, budgeted drain, marker-loss semantics
 
@@ -363,6 +534,40 @@ open never loses the marker (crash ⇒ `rebuilding` resumes; only external
 corruption/manual deletion reaches marker-loss paths, which no longer pay the
 DDL floor).
 
+**Rename-retire replaces the in-open DROP (rev 11, PR-B).** On every reset
+path (tokenizer mismatch, failed consistency check, detached re-attach with a
+surviving `entries_fts`, corruption-class repair), the re-arm tx runs
+`ALTER TABLE ${p}entries_fts RENAME TO ${p}entries_fts_retired_<n>` instead of
+`DROP TABLE`. FTS5's `xRename` renames the shadow tables, which is cheap
+metadata work. The tx then CREATEs an empty `entries_fts`, clears `fts_map`
+and `fts_pending`, and records `<n>` in the meta list
+`fts5_retired_tables` (JSON array; `<n>` is a monotonically increasing
+counter in meta, so names never collide). If the RENAME itself throws (e.g.
+the shadow tables are too damaged to rename), the re-arm falls back to
+today's `DROP TABLE` and keeps the measured 22.3 s @1M floor as the accepted
+bound for that case only. **The deferred DROP is NOT automatically cheap.**
+`DROP TABLE` costs O(pages), and FTS5 row deletes ADD delete-marker
+segments rather than freeing index pages. Reclamation therefore runs as
+bounded steps in full quanta, after the orphan sweep, each in its own tx:
+- (1) chunked `DELETE FROM <retired> WHERE rowid IN (SELECT rowid FROM <retired> ORDER BY rowid LIMIT 500)`
+  until empty;
+- (2) repeated bounded `INSERT INTO <retired>(<retired>, rank) VALUES('merge', N)`
+  until a merge does no work (FTS5 docs: compare `total_changes()` before
+  and after);
+- (3) `DROP TABLE <retired>`, then remove it from the meta list.
+
+Reclamation never blocks the `live` flip. The retired table is invisible to
+search. **Required measurement before relying on it (PR-B, alongside
+Acceptance 2's keep-map leg):** at 1M, measure the rename cost, the per-step
+delete/merge tx times, and the final DROP time after reclamation. If step 3
+is not bounded (remains of the order of the original 22.3 s), reclamation is
+handed off instead: the retired table counts as pending out-of-lease work in
+the Change-1 migration gate (`retiredTables > 0` ⇒
+`WikiMigrationRequiredError` under `'refuse'`), and the out-of-lease
+`setup()` drops it. Either way the lease-holding open never pays the floor.
+An older engine ignores `entries_fts_retired_*` tables (harmless residue).
+Pinned by 7(u). **Reading rule: every "DROP+CREATE" in revisions before rev 11 (transition table, DDL note, Change 4 corruption repair, acceptance text) now means rename-retire + CREATE, with DROP only as the RENAME-failure fallback.**
+
 **Chunked rebuild mechanics:** rowid **windows** of ≤500 entries-rows per
 transaction, bounded the `drainHiSql` way (rev 9, Opus delta-4 M5;
 `fts5Sql.ts:64-66` pattern): each window's `hi` = `max(rowid)` over the next
@@ -436,7 +641,9 @@ INDEX statements are declared and BUDGETED (rev 9 m5)** alongside the
 Change-2 partial index: they are unchunkable DDL built on the first
 new-engine open, so a store with a large crash backlog pays their build
 there — counted in the chunked-open budget and in Acceptances 4 and 6, not
-per-open. The `upsertGraph` and
+per-open. **Rev 11: they ship as schema v15 (`MIGRATIONS[15].run`, PR-B)**,
+not in `setupDatabase`'s every-open DDL, so the Change-1 migration gate
+covers their build. The `upsertGraph` and
 `syncSearchIndex` doc comments state the bounded-sync contract for BOTH
 forms (entity-arg and no-arg — delta-5 M3), and
 acceptance 7(r) pins upsertGraph-then-search under a backlog via each
@@ -760,6 +967,12 @@ surface normalizes. Audited surfaces
   init failure, thrown per search query while keyword search is unavailable.
   The pinned `'fts5'` failure path keeps today's behavior (the underlying
   error propagates, `createIndexStrategy.ts:65`) — unchanged contract.
+- **Rev 11:** `setup(opts?: { migrations?: 'run' | 'refuse' })` (default
+  `'run'`) and **`WikiMigrationRequiredError`** (new public contract,
+  exported from `packages/core/src/index.ts`, stable `name`, fields
+  `{ fromVersion, toVersion, normalizeRequired, retiredTables }`). Thrown
+  only under `'refuse'`, before any mutation (Change 1 migration gate).
+  Additive and non-breaking.
 
 ## Acceptance
 
@@ -816,7 +1029,11 @@ investigation measured a 2.8× warm/cold swing, §2.3).
    15 s fence by design** (one-time, chunked, crash-resumable). Per-tx windows
    stay fence-tolerable throughout; the largest observed chunk commit time at
    gate scale is recorded here (FTS5 auto-merges can stretch it); steady-state
-   per 4.
+   per 4. **Rev 11:** with the migration gate, a host using
+   `migrations: 'refuse'` never runs this first-migration open inside the
+   lease. The figure bounds the out-of-lease `setup()` run, and the
+   in-lease open that trips the gate is measured as well (read-only probes
+   only; expected ≪ 1 s).
 7. **New tests:** (a) concurrent-writer rebuild exactly-once — triggers
    appending while the watermark advances, completion condition per Change 3,
    **including the drain-before-window case** (update a row above the
@@ -906,13 +1123,39 @@ investigation measured a 2.8× warm/cold swing, §2.3).
    `WikiSourceRefHashCollision` and NO partial-UNIQUE `(entity_id,
    source_hash)` collision; **rev 10 (delta-5 M1) adds two legs: (i) a
    pre-v9 `'a/b'` raw `source_ref_index` row (v9-backfill drift) → the
-   migration COMPLETES and the row is soft-deleted; (ii) a `'///'` row
+   migration COMPLETES and the row is ~~soft-deleted~~ **REWRITTEN to `'ab'`
+   (rev 11 correction: `'a/b'` normalizes to the non-NULL `'ab'`, so the
+   pass-2 rule rewrites it; only NULL-normalizing refs such as `'///'` or
+   `'日本語'` are soft-deleted), and re-ingesting `'a/b'` finds the
+   normalized row (no `WikiSourceRefHashCollision`)**; (ii) a `'///'` row
    (normalizes to NULL) → the migration COMPLETES (no NOT NULL violation),
    the row is soft-deleted, the stamp is written, and re-ingesting `'a/b'`
    soft-deletes the old index row** — no NULL is ever written to
    `source_ref_index.source_ref` (`TEXT NOT NULL`), and the unique index on
    `(entity_id, source_hash)` is not a hazard (it does not involve
-   `source_ref`).
+   `source_ref`);
+   (t) **migration gate (rev 11, PR-A):**
+   - (i) a v13 store opened with `migrations: 'refuse'` throws
+     `WikiMigrationRequiredError` (`fromVersion: 13`, `toVersion: CURRENT`,
+     `normalizeRequired: true`) with ZERO mutation: `schema_version`
+     unchanged, no partial index, no stamp, no watermark keys (assert via
+     `sqlite_master` + meta);
+   - (ii) plain `setup()` then completes the migration, and a following
+     `'refuse'` open passes;
+   - (iii) a stamp-mismatched (`normalize_alg: 0`) v14 store trips the gate;
+   - (iv) a fresh store under `'refuse'` opens normally;
+   - (v) a crash mid-normalize (watermark present), then a `'refuse'` open,
+     throws; plain `setup()` resumes from the watermark;
+   - (vi) default options keep today's run-migrations behavior;
+   (u) **rename-retire (rev 11, PR-B):**
+   - (i) a tokenizer-mismatch store's re-arm runs RENAME, not DROP:
+     `entries_fts_retired_1` exists in `sqlite_master`, the new
+     `entries_fts` is empty, and the store converges to `live`;
+   - (ii) full quanta reclaim the retired table in bounded steps and finally
+     drop it; the meta list is empty;
+   - (iii) a forced RENAME failure falls back to DROP;
+   - (iv) if reclamation is handed off per the measurement rule,
+     `'refuse'` reports `retiredTables > 0` and plain `setup()` drops it.
 8. Existing test suite green. **Note (rev 9 m8):** `createIndexStrategy.test.ts:69,89`
    (which assert `'detached'` after an `auto` fallback) are REWRITTEN by this
    change — the auto fallback no longer detaches — they are not merely kept
@@ -1219,4 +1462,31 @@ alignment. **Spec rev 8 = this revision.**
   immediately before `runBatched` (~:818); m9 downgrade-then-upgrade
   255-boundary residue documented as accepted; m10 dead-code sweep covers
   `rebuildSql` export + tests AND the `rebuildFromSource` interface member
-  + its tests. **Spec rev 10 = this revision.**
+  + its tests. **Spec rev 10 = this revision.**- **Rev 11 (2026-10-12, Claude Opus 5.5 review of spec rev 10 + plan rev 5,
+  findings checked against worktree source; a Gemini summary review was set
+  aside as having no actionable findings, and it had restated the reversed
+  rev-8 prefilter fall-through and a ~1.5 s quantum).** Findings applied:
+  **(1) MAJOR — the upgrade open self-fences every existing tenant once.**
+  The v14 to-completion normalize, the partial-index build and the v15
+  `fts_pending` indexes run on the first in-lease open. ⇒ migration gate:
+  `setup({ migrations: 'refuse' })` + `WikiMigrationRequiredError`,
+  read-only probes before `setupDatabase`, new indexes created only by
+  migrations and the fresh path. Chosen over a separate `wiki.migrate()`
+  (no second code path to drift). 7(t).
+  **(2) minor — 7(s)(i) contradicted the pass-2 rule** (`'a/b'` → `'ab'` is
+  rewritten, not soft-deleted). Corrected inline.
+  **(3) minor — reset paths paid the DROP floor inside the lease** ⇒
+  rename-retire with bounded reclamation (chunked delete + bounded FTS5
+  `'merge'` + final DROP). Required 1M measurement, with a gate hand-off
+  fallback if the final DROP is not bounded; the RENAME-failure fallback is
+  DROP. 7(u).
+  **(4) process — five delta cycles each still found ~5 MAJORs** ⇒ delivery
+  split into PR-A (Changes 1, 2, 4 + gate; `Refs #280`) and PR-B
+  (Change 3 + corruption repair + rename-retire + v15; `Fixes #280`);
+  ownership of each acceptance item is in the normative summary.
+  **(5) readability** ⇒ normative summary prepended (the history below is
+  unchanged).
+  **Plan:** rev 5 mirrored spec rev 7 (the "plan rev pointer" commits for
+  revs 8–10 never touched the plan file). It is RETIRED and regenerated
+  against rev 11 as separate PR-A and PR-B task tracks. **Spec rev 11 =
+  this revision.**
