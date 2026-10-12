@@ -1,5 +1,5 @@
 import type { SQLiteAdapter } from '../types';
-import { createTemporalIndexesIfColumnsExist } from './schema';
+import { createTemporalIndexesIfColumnsExist, partialLegacyIndexDdl } from './schema';
 
 export interface Migration {
   version: number;
@@ -341,6 +341,13 @@ export const MIGRATIONS: Migration[] = [
       await createTemporalIndexesIfColumnsExist(db, prefix);
     },
   },
+  {
+    version: 14,
+    description: 'Partial covering index to avoid full-table scans on all queries before the full v14 migration runs (#280)',
+    run: async (db, prefix) => {
+      await db.execAsync(partialLegacyIndexDdl(prefix));
+    },
+},
 ];
 
 // Verify MIGRATIONS are in strictly ascending version order at module load time.

@@ -193,3 +193,11 @@ export async function createTemporalIndexesIfColumnsExist(db: SQLiteAdapter, pre
     );
   }
 }
+
+/**
+ * Partial covering index to avoid full-table scans on all queries before the full v14 migration runs.
+ * This index provides coverage for common query patterns on entries with entity_id, deleted_at, title, source_ref, and created_at.
+ */
+export function partialLegacyIndexDdl(prefix: string): string {
+  return `CREATE INDEX ${prefix}entries_partial_covering_idx ON ${prefix}entries (entity_id, deleted_at, title, source_ref, created_at);`;
+}

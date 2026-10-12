@@ -75,7 +75,7 @@ describe('createIndexStrategy', () => {
     const raw = new Database(':memory:');
     const b: SQLiteAdapter = {
       async execAsync(s) { raw.exec(s); },
-      async runAsync(s, a = []) { const i = raw.prepare(s).run(...(a as any[])); return { changes: i.changes, lastInsertRowId: Number(i.lastInsertRowid) }; },
+      async runAsync(s, a = []) { const i = raw.prepare(s).run(...(a as any[])); return { changes: i.changes, lastInsertRowId: Number(i.lastInsertrowid) }; },
       async getAllAsync(s, a = []) { return raw.prepare(s).all(...(a as any[])) as any; },
       async getFirstAsync(s, a = []) { return (raw.prepare(s).get(...(a as any[])) ?? null) as any; },
       async withTransactionAsync(fn) { raw.exec('BEGIN'); try { const r = await fn(b); raw.exec('COMMIT'); return r; } catch (e) { raw.exec('ROLLBACK'); throw e; } },
@@ -93,5 +93,44 @@ describe('createIndexStrategy', () => {
     expect(left).not.toContain(`${P}fts_map`);
     await s.runAsync(`INSERT INTO ${P}entries (id, entity_id, title, body, created_at, updated_at) VALUES ('a','e','t','b',1,1)`);
     await s.execAsync('VACUUM'); // verified 2026-10-06: works with a module-less fts5 table present
+  });
+
+  it("'auto' init failure ×2 → UnavailableIndexStrategy, never detaches; 'fts5' re-throws raw", async () => {
+    const db = openTestDatabase(); const meta = await fresh(db);
+    await createIndexStrategy(db, P, meta, 'fts5');
+    const spy = vi.spyOn(Fts5IndexStrategy.prototype, 'init').mockRejectedValue(new Error('rebuild tx lock'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const s = await createIndexStrategy(db, P, meta, 'auto');
+    expect(s).toBeInstanceOf(UnavailableIndexStrategy);
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(await meta.getMeta(FTS5_STATE_KEY)).toBe('live');
+    expect((await objects(db)).map((r) => r.name)).toEqual(expect.arrayContaining([`${P}fts_map`, `${P}fts_pending`]));
+    await expect(s.search('x', { entityIds: ['e'], limit: 5 })).rejects.toMatchObject({ name: 'WikiSearchUnavailableError', cause: expect.objectContaining({ message: 'rebuild tx lock' }) });
+    await expect(createIndexStrategy(db, P, meta, 'fts5')).rejects.toThrow(/rebuild tx lock/);
+    spy.mockRestore(); warn.mockRestore();
+  });
+
+  it("'auto' init fails once then succeeds → real strategy", async () => {
+    const db = openTestDatabase(); const meta = await fresh(db);
+    const real = Fts5IndexStrategy.prototype.init;
+    const spy = vi.spyOn(Fts5IndexStrategy.prototype, 'init')
+      .mockRejectedValueOnce(new Error('busy'))
+      .mockImplementation(function (this: Fts5IndexStrategy) { return real.call(this); });
+    expect(await createIndexStrategy(db, P, meta, 'auto')).toBeInstanceOf(Fts5IndexStrategy);
+    spy.mockRestore();
+  });
+
+  it("probe error other than module-absent (SQLITE_IOERR) never detaches (7(e) probe leg)", async () => {
+    const db = openTestDatabase(); const meta = await fresh(db);
+    await createIndexStrategy(db, P, meta, 'fts5');
+    const orig = db.getFirstAsync.bind(db);
+    vi.spyOn(db, 'getFirstAsync').mockImplementation(async (sql: string, p?: unknown[]) => {
+      if (sql.includes('json_valid')) throw Object.assign(new Error('disk I/O error'), { code: 'SQLITE_IOERR' });
+      return orig(sql, p);
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(await createIndexStrategy(db, P, meta, 'auto')).toBeInstanceOf(UnavailableIndexStrategy);
+    expect(await meta.getMeta(FTS5_STATE_KEY)).toBe('live');
+    warn.mockRestore();
   });
 });

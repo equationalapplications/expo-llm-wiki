@@ -1,6 +1,6 @@
 import type { SQLiteAdapter } from './types';
 import type { WikiOutboxEvent } from './outbox/types';
-import { setupDatabase } from './db/schema';
+import { setupDatabase, partialLegacyIndexDdl } from './db/schema';
 import { withSerializedTransactions } from './db/serializedAdapter';
 import { MIGRATIONS, CURRENT_SCHEMA_VERSION } from './db/migrations';
 import {
@@ -264,6 +264,8 @@ export class WikiMemory {
     let currentVersion: number;
 
     if (!entriesExistedBeforeSetup) {
+      // Create the partial covering index for fresh databases only
+      await this.db.execAsync(partialLegacyIndexDdl(this.prefix));
       await this.metadataRepo.setMeta('schema_version', String(CURRENT_SCHEMA_VERSION), this.db);
       currentVersion = CURRENT_SCHEMA_VERSION;
     } else {

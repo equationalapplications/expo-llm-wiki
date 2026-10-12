@@ -1437,3 +1437,21 @@ export interface RunPendingMaintenanceResult {
   stoppedReason: MaintenanceStopReason;
 }
 
+/**
+ * Thrown per keyword-search query while the keyword index is unavailable
+ * (FTS5 init failed after its retry; spec #280 Change 4). Writes keep working
+ * and the index converges once a later open or no-arg syncSearchIndex()
+ * re-inits successfully. `cause` is the underlying init error.
+ */
+export class WikiSearchUnavailableError extends Error {
+  constructor(message = 'Keyword search is temporarily unavailable', cause?: unknown) {
+    super(message, cause !== undefined ? { cause } : undefined);
+    this.name = 'WikiSearchUnavailableError';
+  }
+}
+
+/** Proxy-safe `instanceof WikiSearchUnavailableError` (issue #96: a hostile getPrototypeOf trap must not throw out of a catch). */
+export function isWikiSearchUnavailableError(err: unknown): boolean {
+  try { return err instanceof WikiSearchUnavailableError; } catch { return false; }
+}
+

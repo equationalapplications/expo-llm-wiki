@@ -906,7 +906,9 @@ export function taskRejectionReason(raw: unknown): 'invalid_shape' | 'missing_de
 
 export function normalizeSourceRef(value: string): string | null {
   if (typeof value !== 'string') return null;
-  const cleaned = value.replace(/[^A-Za-z0-9._\- ]/g, '').trim().slice(0, 255);
+  // trimEnd after the cut: a 255-char slice can end in a space, and without
+  // it the function is not a fixed point (spec #280 rev 8 M5, 7(q)).
+  const cleaned = value.replace(/[^A-Za-z0-9._\- ]/g, '').trim().slice(0, 255).trimEnd();
   return cleaned.length > 0 ? cleaned : null;
 }
 
