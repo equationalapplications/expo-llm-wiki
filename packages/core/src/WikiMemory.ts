@@ -1,6 +1,6 @@
 import type { SQLiteAdapter } from './types';
 import type { WikiOutboxEvent } from './outbox/types';
-import { setupDatabase } from './db/schema';
+import { setupDatabaseWithGate } from './db/migrationGate';
 import { withSerializedTransactions } from './db/serializedAdapter';
 import { MIGRATIONS, CURRENT_SCHEMA_VERSION } from './db/migrations';
 import {
@@ -13,6 +13,7 @@ import {
   WikiSourceRefHashCollision,
   WikiDraftNotFound,
   WikiSupersedeError,
+  WikiMigrationRequiredError,
 } from './types';
 import type { DraftPage } from './types';
 import type { PendingSourceStatus, WikiLintReport, WikiInstructions, PendingMaintenance, RunPendingMaintenanceOptions, RunPendingMaintenanceResult } from './types';

@@ -1437,3 +1437,22 @@ export interface RunPendingMaintenanceResult {
   stoppedReason: MaintenanceStopReason;
 }
 
+export interface PendingMigrationWork {
+  type: 'source_ref_normalize' | 'full_v14';
+  watermark?: number;
+}
+
+export class WikiMigrationRequiredError extends Error {
+  public readonly code = 'WIKI_MIGRATION_REQUIRED';
+  public readonly pendingWork: PendingMigrationWork;
+
+  constructor(message: string, pendingWork: PendingMigrationWork) {
+    super(message);
+    this.name = 'WikiMigrationRequiredError';
+    this.pendingWork = pendingWork;
+    if (typeof Error.captureStackTrace === 'function') {
+      Error.captureStackTrace(this, WikiMigrationRequiredError);
+    }
+  }
+}
+
