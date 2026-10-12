@@ -372,4 +372,97 @@ describe('WikiMemory outbox API', () => {
     );
     expect(outboxCall).toBeDefined();
   });
+
+  describe('Migration Gate', () => {
+    beforeEach(() => {
+      vi.doUnmock('../src/db/schema');
+      vi.doUnmock('../src/db/migrationGate');
+    });
+
+    it('uses allow policy by default', async () => {
+      const wiki = makeWiki();
+      const moduleSpy = vi.spyOn(await import('../src/db/schema'), 'setupDatabase');
+
+      await wiki.setup();
+
+      expect(moduleSpy).toHaveBeenCalled();
+    });
+
+    it('runs migration gate when refuse policy is set', async () => {
+      const wiki = makeWiki();
+      const moduleSpy = vi.spyOn(await import('../src/db/migrationGate'), 'setupDatabaseWithGate');
+
+      wiki['options'].config = { migrations: 'refuse', tablePrefix: 'test_' };
+
+      await expect(wiki.setup()).rejects.toThrow('Migration refused: source_ref_normalize');
+
+      expect(moduleSpy).toHaveBeenCalledWith(
+        expect.any(Object),
+        'test_',
+        wiki['metadataRepo'],
+        'refuse'
+      );
+    });
+
+    it('runs migration gate when auto policy is set', async () => {
+      const wiki = makeWiki();
+      const moduleSpy = vi.spyOn(await import('../src/db/migrationGate'), 'setupDatabaseWithGate');
+
+      // Mock probePendingWork to return no pending work for this test
+      vi.spyOn(await import('../src/db/sourceRefNormalize'), 'probePendingWork').mockResolvedValue(null);
+
+      wiki['options'].config = { migrations: 'auto', tablePrefix: 'test_' };
+
+      await wiki.setup();
+
+      expect(moduleSpy).toHaveBeenCalledWith(
+        expect.any(Object),
+        'test_',
+        wiki['metadataRepo'],
+        'auto'
+      );
+    });
+
+    it('throws WikiMigrationRequiredError when migrations are refused and pending work exists', async () => {
+      const wiki = makeWiki();
+      const WikiMigrationRequiredError = (await import('../src/types')).WikiMigrationRequiredError;
+      const mockMigrationRequiredError = new WikiMigrationRequiredError('Migration required', { type: 'source_ref_normalize' });
+
+      vi.spyOn(await import('../src/db/migrationGate'), 'setupDatabaseWithGate').mockRejectedValue(mockMigrationRequiredError);
+
+      wiki['options'].config = { migrations: 'refuse', tablePrefix: 'test_' };
+
+      await expect(wiki.setup()).rejects.toThrow(WikiMigrationRequiredError);
+    });
+
+    it('continues with auto policy when source_ref_normalize migration completes', async () => {
+      const wiki = makeWiki();
+      const WikiMigrationRequiredError = (await import('../src/types')).WikiMigrationRequiredError;
+      const mockMigrationRequiredError = new WikiMigrationRequiredError('source_ref_normalize migration', {
+        type: 'source_ref_normalize'
+      });
+
+      vi.spyOn(await import('../src/db/migrationGate'), 'setupDatabaseWithGate')
+        .mockRejectedValueOnce(mockMigrationRequiredError)
+        .mockImplementation(async () => {});
+
+      wiki['options'].config = { migrations: 'auto', tablePrefix: 'test_' };
+
+      // Mock the tableExists to return true (existing database)
+      wiki['metadataRepo'].tableExists = vi.fn().mockResolvedValue(true);
+
+      await expect(wiki.setup()).resolves.toBeUndefined();
+    });
+
+    it('does not run migration gate with allow policy', async () => {
+      const wiki = makeWiki();
+      const withGateSpy = vi.spyOn(await import('../src/db/migrationGate'), 'setupDatabaseWithGate');
+      const schemaSpy = vi.spyOn(await import('../src/db/schema'), 'setupDatabase').mockImplementation(async () => {});
+
+      await wiki.setup();
+
+      expect(withGateSpy).not.toHaveBeenCalled();
+      expect(schemaSpy).toHaveBeenCalled();
+    });
+  });
 });
