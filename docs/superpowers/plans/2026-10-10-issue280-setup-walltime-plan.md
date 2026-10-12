@@ -24,6 +24,12 @@
   - Typecheck: `pnpm --filter @equationalapplications/core-llm-wiki typecheck`
   - Workspace build: `pnpm -r build`
 - **Known local test-runner issue (from the 2026-09-22 plan, still assumed):** the full core suite on this ThinkPad can report vitest `Worker exited unexpectedly` fork-pool errors with zero assertion failures. Record the local baseline before Task 1; judge the full-suite gate as "no assertion failures, completed counts ≥ baseline plus new tests". **CI is the authoritative gate.** Single-file runs are reliable; for a red phase with many failures at once, re-run that file with `--pool=threads`.
+
+**Baseline results (Task A0, commit cfb56fe):**
+- Files tested: 173
+- Tests completed: 1848
+- Fork errors: 0
+- Assertion failures: 0
 - **Commit types:** `feat(core): …` (new capability), `fix(core): …` (behavior fix), `perf(core): …` (scan skip), `test(core): …`, `docs(spec): …`. **Never start a commit body line with `BREAKING CHANGE`** (semantic-release parses it as a footer and cuts a major). None of these changes are breaking: `setupBudgetMs` and the error class are additive; `'auto'` behavior changes are fixes to a measured crash path (documented in the spec, not a semver major).
 - **Spec edits are appended as revisions** (rev 6, 7, …); existing revision entries are never rewritten. The Step-8 `**Status:**` flip to Implemented is its own commit ON this branch, only after every task below is done.
 - **This plan file is gitignored** (`docs/superpowers/plans/`): commit with `git add -f`.
