@@ -2,353 +2,1464 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** rev 5 — mirrors spec **rev 7** (delta Opus cycle #2 adjudicated: spec 0B/4M/9m + plan 1B/6M/7m, all verified against source and applied — `drain`-no-op B1 correction, sixth call site `gate.ts:143`, re-arm consistency check, entries-flag plumbing, cursor-based orphan sweep, no-`rebuildSql` re-attach, TS-side normalize predicate). Supersedes rev 4 (which mirrored spec rev 6).
+**Status:** rev 6 — written fresh against **spec rev 11** (`cfb56fe`). Rev 5 mirrored spec rev 7 and is RETIRED in full; nothing below inherits from it. Two tracks: **PR-A** (fully expanded, execute now) and **PR-B** (task-level, re-expanded as plan rev 7 in Task B0 against post-PR-A `main`, because PR-A moves the code PR-B edits).
 
-**Goal:** Make every `wiki.setup()` open O(state-change) instead of O(database): skip the every-open survival scans (v14 stamp + partial index), replace the single-tx FTS rebuild with a watermark-chunked, budget-bounded converging rebuild, and make FTS init failures recoverable instead of index-destroying.
+**Goal:** Make every `wiki.setup()` open of an up-to-date store O(state-change) instead of O(database), give hosts a lever to keep one-time migration work out of the writer lease, and make FTS init failures recoverable instead of index-destroying.
 
 **Architecture:**
-- **Survival scans (RC-2/RC-7):** `WikiMemory.setup()` replaces its two every-open scans with: (a) a fail-closed legacy `source_type` probe served by a new partial covering index, (b) a `source_ref` normalize that runs only when the `source_ref_normalize_stamp` meta key is missing/mismatched, in rowid-watermarked chunks **run to completion** in the migration open (NOT budget-deferred), stamping inside the final chunk's tx (stamp write + watermark deletion in one tx).
-- **FTS state machine (RC-1/RC-3/RC-4/RC-5, spec rev 7):** `fts5_index_state` gains a load-bearing `rebuilding` value. `Fts5IndexStrategy.init()` never rebuilds in one tx. **Marker-loss/trigger-loss re-arm keeps BOTH `fts_map` AND `entries_fts` intact** (stale ≠ corrupt; guarded by the rev-7 consistency check) — only `fts_pending` is cleared and the three triggers are re-created (`fts5TriggersDdl`) in the transition tx; watermark=0, state=`rebuilding`. Rebuild windows are **drain-shaped** (the `drainChunkSql` statement shape, keyed by rowid-window ids): delete FTS rows via the map → delete the map rows → insert map rows for live ids → insert FTS rows; no DROP+CREATE, no 22.3 s DDL floor on the intact path (reserved for tokenizer mismatch, failed consistency check, detached re-attach). **Orphan sweep** is cursor-based and must complete BEFORE the `live` flip. Completion: **watermark ≥ max(entries.rowid) AND `fts_pending` empty AND orphan sweep complete**, all re-checked inside the flipping tx. The resume path **verifies `triggersPresent()`** — missing trigger ⇒ restart (writes may have been missed). **`drain(opts?: { deadline?, mode?: 'ledger'|'full', ids? })` is the specified interface**: full quanta (rebuild chunks allowed) run only in `setup()` and no-arg `syncSearchIndex()` → `syncStale()` → `drainTurn`; write-triggered turns (`syncEntries`, per-entity `sync(id)`) are **LEDGER DRAIN ONLY** with the caller's own `ids` drained FIRST (id-targeted chunk via `json_each` — read-your-writes under backlog). **One deadline per open**: `setup()` captures `openDeadline = start + budget` and threads it through the migration and the post-migration `sync({ deadline })` — no per-turn re-budgeting. Worst-case full-quantum wall = budget + 2 × max chunk (forced-final-chunk rule: at least one rebuild chunk per full quantum unless the drain overran the deadline).
-- **RC-6 guard:** `createIndexStrategy` reorders `init()` failures into read-only-probes-first, one 250 ms retry, and NEVER calls `detachFts5` on the `auto` failure path — it returns an `UnavailableIndexStrategy` whose `search()` throws `WikiSearchUnavailableError` (new exported error class; `drain()` is a PRESENT NO-OP — see Task 2 for why an ABSENT `drain` re-opens the OOM path). **All SIX `WikiSearchUnavailableError` call sites pinned** (rev 7 — the rev-6 map said five; grep found `gate.ts`: Opus plan M2): `RetrievalService.ts:189` (prefilter) and `:223` (hybrid keyword boost) **caught → treated as empty keyword scores** (the vector path proceeds); `RetrievalService.ts:719` and `:550` **propagate**; `MaintenanceService.ts:1542` (heal anchors) **caught → "no heal anchors available" WITHOUT stamping `heal_checked_at`** (the degrade must return before `markHealChecked` at :1035 runs, or stamping gated on anchors-found > 0 — rev 7 m3); **`services/librarian/ops/gate.ts:143` (librarian gate) caught → candidate gates with `neighbours: []`, decision from vector-only context, ingest proceeds** (rev 7, Opus plan M2). MiniSearch instantiation by `auto` happens only on the module-absent path (`probeFts5` false). Pinned `'minisearch'` keeps today's detach behavior; `'auto'` re-attaches detached stores (enters `rebuilding`).
+- PR-A replaces the two every-open survival scans:
+  - a partial covering index serves the legacy `source_type` probe;
+  - a stamp-checked, two-pass, rowid-watermarked `source_ref` normalize runs once, outside the migrations loop.
+- PR-A adds a read-only migration gate (`setup({ migrations: 'refuse' })` → `WikiMigrationRequiredError`). It runs before any DDL.
+- PR-A's RC-6 guard: `probeFts5` classifies its errors, `init()` gets one 250 ms retry, and failures install `UnavailableIndexStrategy`, never `detachFts5`. Each of the six keyword-search call sites is pinned to its spec behavior.
+- PR-B replaces the single-transaction FTS rebuild with the `rebuilding` state machine: windowed chunks, fingerprints, orphan sweep, rename-retire, and budgeted drains.
 
-**Tech Stack:** TypeScript 5.9 (strict), vitest, pnpm workspace, better-sqlite3 13.0.3 (SQLite FTS5), Node ≥24.
+**Tech Stack:** TypeScript 5.9 strict (`target` ES2020, `lib` includes `ES2022.Error`), vitest, pnpm workspace, better-sqlite3 13.0.3 (FTS5 + json1), sql.js 1.14.2 (no FTS5 — the module-absent fixture), Node ≥ 24.
 
-**Spec:** `docs/superpowers/specs/2026-10-10-issue280-setup-walltime-design.md` (**rev 6** — GLM r4 Approved, Opus full REQUEST-CHANGES adjudicated, Opus delta ×2 adjudicated incl. issue-271 takeaways; the spec is authoritative). Investigation: `docs/superpowers/investigations/2026-10-10-issue280-setup-walltime-investigation.md`. If plan and spec disagree, the spec wins: stop and report.
+**Spec:** `docs/superpowers/specs/2026-10-10-issue280-setup-walltime-design.md` (rev 11). Read its **Normative summary** first; the per-Change sections carry rationale. Investigation: `docs/superpowers/investigations/2026-10-10-issue280-setup-walltime-investigation.md`. **If this plan and the spec disagree, the spec wins: stop and report.**
 
 ## Global Constraints
 
-- **Branch/PR:** everything lands on `spec/issue280-setup-walltime` (PR #281, DRAFT until implementation completes). No new branches, no worktrees.
-- **Commands** (from repo root):
-  - One core test file: `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/<file>.test.ts`
-  - Full core suite: `pnpm --filter @equationalapplications/core-llm-wiki test`
-  - Typecheck: `pnpm --filter @equationalapplications/core-llm-wiki typecheck`
-  - Workspace build: `pnpm -r build`
-- **Known local test-runner issue (from the 2026-09-22 plan, still assumed):** the full core suite on this ThinkPad can report vitest `Worker exited unexpectedly` fork-pool errors with zero assertion failures. Record the local baseline before Task 1; judge the full-suite gate as "no assertion failures, completed counts ≥ baseline plus new tests". **CI is the authoritative gate.** Single-file runs are reliable; for a red phase with many failures at once, re-run that file with `--pool=threads`.
-- **Commit types:** `feat(core): …` (new capability), `fix(core): …` (behavior fix), `perf(core): …` (scan skip), `test(core): …`, `docs(spec): …`. **Never start a commit body line with `BREAKING CHANGE`** (semantic-release parses it as a footer and cuts a major). None of these changes are breaking: `setupBudgetMs` and the error class are additive; `'auto'` behavior changes are fixes to a measured crash path (documented in the spec, not a semver major).
-- **Spec edits are appended as revisions** (rev 6, 7, …); existing revision entries are never rewritten. The Step-8 `**Status:**` flip to Implemented is its own commit ON this branch, only after every task below is done.
-- **This plan file is gitignored** (`docs/superpowers/plans/`): commit with `git add -f`.
-- **Merge is Kurt's call** (SOP gate); merge commits only, never squash.
-- **Fence arithmetic to respect in every design decision:** per-open quantum wall = `setupBudgetMs` + max chunk tx (~1.01 s @1M measured); full quanta worst case = budget + 2 × max chunk ≈ 3.5 s @1M defaults (forced-final-chunk rule). Never introduce an unbounded loop, a full-table scan, or a non-`IF NOT EXISTS` DDL on the every-open path.
-- **Measured constants you may rely on** (investigation §2): partial-index probe 0.4 ms; glob scan 1.13 s @1M; legacy scan 0.60 s @1M; rebuild chunk throughput 7.6–8.1k rows/s; max chunk 733–1010 ms @1M; DDL floor (DROP+CREATE virtual table @1M) 22.3 s; V1 ladder component 16.5 s @1M; crash-backlog drain ≈123 s per 1M undrained rows [C — derived]. **The normalize rate is UNMEASURED** — the @1M normalize measurement (Task 12) is a PREREQUISITE for any 4.7 GB first-migration bound (Opus delta M3).
-- **MiniSearch must NOT implement `drain`** — `SearchService.syncStale()`/`drainTurn` guard on `if (this.indexStrategy.drain)`, so a drain-less MiniSearch makes full-quantum calls no-ops by construction. No task adds `drain` to `MiniSearchIndexStrategy`; Task 2 pins this with an assertion.
+- **Branches:**
+  - PR-A lands on `spec/issue280-setup-walltime` (PR #281, draft until Task A8).
+  - PR-B goes on a NEW branch `feat/issue280-fts-state-machine`, cut from `main` after PR-A merges.
+  - No worktrees.
+- **Issue linkage:** PR-A body says `Refs #280` (never `Fixes`/`Closes` — that would auto-close the issue on PR-A's merge). PR-B body says `Fixes #280`.
+- **Commands** (repo root):
+  - one file: `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/<file>.test.ts`
+  - suite: `pnpm --filter @equationalapplications/core-llm-wiki test`
+  - types: `pnpm --filter @equationalapplications/core-llm-wiki typecheck`
+  - build: `pnpm -r build`
+- **Local suite caveat:** the full core suite on this machine can report vitest `Worker exited unexpectedly` with zero assertion failures. The gate is "no assertion failures; completed counts ≥ baseline + new tests" (baseline recorded in Task A0). **CI is authoritative.** For a red phase with many failures, re-run that file with `--pool=threads`.
+- **Commit types:** `feat(core)`, `fix(core)`, `perf(core)`, `test(core)`, `docs(spec)`, `docs(plan)`. **Never start a commit-body line with `BREAKING CHANGE`** (semantic-release parses it as a footer and cuts a major). Nothing here is breaking: `setup(opts)`, both error classes and `setupBudgetMs` are additive. The `'auto'` changes fix a measured crash path.
+- **Proxy-safe error checks:** never call `err instanceof X` or `err.message` bare inside a catch. A hostile Proxy's `getPrototypeOf`/`get` trap can throw (issue #96 audit). Use the `try { … } catch { return false; }` helpers this plan defines.
+- **Spec edits** are appended as revisions; existing revision text is never rewritten. **This plan file is gitignored:** commit it with `git add -f`.
+- **Merging is the maintainer's call;** merge commits only, never squash.
+- **Every-open path rule:**
+  - Never add a full-table scan, an unbounded loop, or a non-`IF NOT EXISTS` DDL to the every-open path.
+  - New indexes are created ONLY by migrations and the fresh-store path, never by `setupDatabase`.
+- **Measured constants you may rely on** (investigation §2):
+  - partial-index probe 0.4 ms;
+  - glob scan 1.13 s and legacy scan 0.60 s @1M;
+  - rebuild/drain chunk throughput 7.6–8.1k rows/s, max chunk 733–1010 ms @1M;
+  - DROP+CREATE @1M 22.3 s.
+  - **The normalize rate is UNMEASURED** — Task A8 measures it.
 
 ---
 
-### Task 1: `WikiSearchUnavailableError` — the typed degraded-search signal
+# Track PR-A — warm open, migration gate, RC-6 guard (`Refs #280`)
 
-**Objective:** Hosts can catch a stable error class when keyword search is unavailable. **Acceptance harnesses route reads through `wiki.search()` / `getKeywordScores` — never direct DB/index access (Opus spec-cycle-2 M2).**
+## PR-A file map
+
+| File | Responsibility | Tasks |
+|---|---|---|
+| `packages/core/src/utils/pure.ts` | `normalizeSourceRef` becomes idempotent | A1 |
+| `packages/core/src/db/schema.ts` | export `legacySourceTypeIndexDdl(prefix)` (NOT added to `setupDatabase`) | A2 |
+| `packages/core/src/db/migrations.ts` | append v14 (creates the partial index only) | A2 |
+| `packages/core/src/db/sourceRefNormalize.ts` (new) | stamp/watermark keys, `stampMatches`, `writeNormalizeStamp`, `runSourceRefNormalize` (two passes) | A3 |
+| `packages/core/src/db/migrationGate.ts` (new) | `readSchemaVersion`, `probePendingWork` | A4 |
+| `packages/core/src/types.ts` | `WikiSetupOptions`, `WikiMigrationRequiredError`, `WikiSearchUnavailableError`, `isWikiSearchUnavailableError`, doc comments | A4, A5, A8 |
+| `packages/core/src/WikiMemory.ts` | `setup(opts)` ordering; fresh path; normalize call; `syncSearchIndex()` init retry | A2–A5 |
+| `packages/core/src/repositories/EntryRepository.ts` | delete `findRowsForSourceRefMigration`; add `hasStoredEmbedding` | A3, A6 |
+| `packages/core/src/repositories/MetadataRepository.ts` | `vacuum()` resets normalize watermarks | A3 |
+| `packages/core/src/services/search/createIndexStrategy.ts` | probe classification, retry, never-demote | A5 |
+| `packages/core/src/services/search/UnavailableIndexStrategy.ts` (new) | degraded strategy | A5 |
+| `packages/core/src/services/SearchService.ts` | `isKeywordAvailable()` | A5 |
+| `packages/core/src/services/RetrievalService.ts` | `:223` local catch | A6 |
+| `packages/core/src/services/MaintenanceService.ts` | heal pre-check before `runBatched` | A6 |
+| `packages/core/src/services/librarian/ops/gate.ts`, `ops/index.ts` | `gateNeedsKeyword` + pre-extract abort | A6 |
+
+---
+
+### Task A0 (controller): baseline
+
+- [ ] **Step 1:** on `cfb56fe`, run the full core suite. Append under Global Constraints: `Baseline (cfb56fe): <files> files, <tests> tests completed, <n> fork errors, 0 assertion failures`.
+- [ ] **Step 2:** `git add -f docs/superpowers/plans/2026-10-10-issue280-setup-walltime-plan.md && git commit -m "docs(plan): record issue280 PR-A suite baseline"`
+
+---
+
+### Task A1: idempotent `normalizeSourceRef` (spec 7(q))
 
 **Files:**
-- Create: `packages/core/src/errors/WikiSearchUnavailableError.ts`
-- Modify: `packages/core/src/index.ts` (add export)
-- Test: `packages/core/__tests__/wikiSearchUnavailableError.test.ts`
+- Modify: `packages/core/src/utils/pure.ts:907-911`
+- Test: `packages/core/__tests__/normalizeSourceRef.test.ts` (new)
 
-- [ ] **Step 0 (before Task 1's first run): record the full-suite baseline** on the pre-task commit — files completed, tests completed, fork-error count — into this file (append under Global Constraints). The Task 11 gate compares against this number.
-- [ ] **Step 1: Write failing test**
+**Interfaces:**
+- Produces: `normalizeSourceRef(value: string): string | null`, unchanged signature, now a fixed point (`n(n(x)) === n(x)`). Tasks A3 and A4 rely on the fixed point: "violating" ⇔ `normalizeSourceRef(v) !== v`.
+
+- [ ] **Step 1: Write the failing test**
 
 ```typescript
-import { WikiSearchUnavailableError } from '../src/errors/WikiSearchUnavailableError';
-import * as pkg from '../src/index';
+// packages/core/__tests__/normalizeSourceRef.test.ts
+import { describe, it, expect } from 'vitest';
+import { normalizeSourceRef } from '../src/utils/pure';
 
-describe('WikiSearchUnavailableError', () => {
-  it('is an Error with a stable name and cause chain', () => {
-    const cause = new Error('lock timeout');
-    const err = new WikiSearchUnavailableError('keyword search unavailable', cause);
-    expect(err).toBeInstanceOf(Error);
-    expect(err.name).toBe('WikiSearchUnavailableError');
-    expect(err.cause).toBe(cause);
+const ALPHABET = 'ab Z09._-/\\\u0000日 \t';
+function lcg(seed: number) { let s = seed >>> 0; return () => (s = (s * 1664525 + 1013904223) >>> 0) / 2 ** 32; }
+
+describe('normalizeSourceRef', () => {
+  it('trims a trailing space exposed by the 255-char cut (was non-idempotent)', () => {
+    const raw = 'a'.repeat(254) + ' ' + 'tail';
+    const once = normalizeSourceRef(raw);
+    expect(once).toBe('a'.repeat(254));
+    expect(normalizeSourceRef(once!)).toBe(once);
   });
-  it('is exported from the package root', () => {
-    expect(pkg.WikiSearchUnavailableError).toBe(WikiSearchUnavailableError);
+
+  it('is a fixed point: n(n(x)) === n(x) for 5000 generated strings', () => {
+    const rnd = lcg(280);
+    for (let i = 0; i < 5000; i++) {
+      const len = Math.floor(rnd() * 600);
+      let s = '';
+      for (let j = 0; j < len; j++) s += ALPHABET[Math.floor(rnd() * ALPHABET.length)];
+      const n = normalizeSourceRef(s);
+      if (n !== null) expect(normalizeSourceRef(n)).toBe(n);
+    }
+  });
+
+  it('keeps existing behavior for ordinary refs', () => {
+    expect(normalizeSourceRef('  docs/a b.md ')).toBe('docsa b.md');
+    expect(normalizeSourceRef('///')).toBeNull();
+    expect(normalizeSourceRef('日本語')).toBeNull();
+    expect(normalizeSourceRef('a/b')).toBe('ab');
   });
 });
 ```
 
-- [ ] **Step 2: Run to verify failure** — `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/wikiSearchUnavailableError.test.ts` → FAIL (module not found).
+- [ ] **Step 2: Run to verify failure** — `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/normalizeSourceRef.test.ts`. Expected: FAIL on the first case (`received` ends with a space).
+- [ ] **Step 3: Implement** — in `pure.ts` replace the `cleaned` line:
+
+```typescript
+export function normalizeSourceRef(value: string): string | null {
+  if (typeof value !== 'string') return null;
+  // trimEnd after the cut: a 255-char slice can end in a space, and without
+  // it the function is not a fixed point (spec #280 rev 8 M5, 7(q)).
+  const cleaned = value.replace(/[^A-Za-z0-9._\- ]/g, '').trim().slice(0, 255).trimEnd();
+  return cleaned.length > 0 ? cleaned : null;
+}
+```
+
+- [ ] **Step 4: Run to verify pass** (same command). Then run `hasChanged.test.ts`, `hasChangedBatched.test.ts`, `ingest.test.ts`, `importDump.test.ts` — all PASS.
+- [ ] **Step 5: Commit** — `git add packages/core/src/utils/pure.ts packages/core/__tests__/normalizeSourceRef.test.ts && git commit -m "fix(core): make normalizeSourceRef idempotent at the 255-char cut (#280)"`
+
+---
+
+### Task A2: partial legacy index — v14 migration + fresh path (spec Change 2, 7(h), part of 7(b))
+
+**Files:**
+- Modify: `packages/core/src/db/schema.ts` (new export below `setupDatabase`)
+- Modify: `packages/core/src/db/migrations.ts` (append the v14 entry after v13, before `CURRENT_SCHEMA_VERSION` at :358)
+- Modify: `packages/core/src/WikiMemory.ts:266-268` (fresh branch of `setup()`)
+- Modify: `packages/core/__tests__/migration13.test.ts:39-40,63` (v13 is no longer last)
+- Test: `packages/core/__tests__/legacyProbeIndex.test.ts` (new)
+
+**Interfaces:**
+- Produces: `legacySourceTypeIndexDdl(prefix: string): string` (exported from `db/schema.ts`), plus `MIGRATIONS` entry `{ version: 14 }`. `CURRENT_SCHEMA_VERSION` becomes 14 automatically.
+
+- [ ] **Step 1: Write the failing test**
+
+```typescript
+// packages/core/__tests__/legacyProbeIndex.test.ts
+import { describe, it, expect } from 'vitest';
+import { WikiMemory } from '../src/WikiMemory';
+import { CURRENT_SCHEMA_VERSION, MIGRATIONS } from '../src/db/migrations';
+import { openTestDatabase } from './helpers/sqliteAdapter';
+
+const P = 'llm_wiki_';
+const stub = { llmProvider: { generateText: async () => '{}' } } as const;
+const PROBE = `SELECT 1 AS one FROM ${P}entries WHERE source_type IN ('user_document', 'agent_inferred') LIMIT 1`;
+
+async function indexExists(db: ReturnType<typeof openTestDatabase>) {
+  return (await db.getFirstAsync(`SELECT 1 FROM sqlite_master WHERE type='index' AND name='${P}entries_legacy_source_type_idx'`)) != null;
+}
+
+describe('legacy source_type partial index', () => {
+  it('v14 is the last migration', () => {
+    expect(CURRENT_SCHEMA_VERSION).toBe(14);
+    expect(MIGRATIONS[MIGRATIONS.length - 1].version).toBe(14);
+  });
+
+  it('fresh store gets the index; the probe uses it', async () => {
+    const db = openTestDatabase();
+    await new WikiMemory(db, stub).setup();
+    expect(await indexExists(db)).toBe(true);
+    for (let i = 0; i < 1000; i++) {
+      await db.runAsync(`INSERT INTO ${P}entries (id, entity_id, title, body, created_at, updated_at) VALUES (?, 'e', 't', 'b', 1, 1)`, [`f${i}`]);
+    }
+    const plan = await db.getAllAsync<{ detail: string }>(`EXPLAIN QUERY PLAN ${PROBE}`);
+    expect(plan.map((r) => r.detail).join(' ')).toContain('entries_legacy_source_type_idx');
+  });
+
+  it('v13 store gains the index through v14, not through setupDatabase', async () => {
+    const db = openTestDatabase();
+    await new WikiMemory(db, stub).setup();
+    await db.execAsync(`DROP INDEX ${P}entries_legacy_source_type_idx`);
+    await db.runAsync(`UPDATE ${P}meta SET value = '13' WHERE key = 'schema_version'`);
+    await new WikiMemory(db, stub).setup();
+    expect(await indexExists(db)).toBe(true);
+    const v = await db.getFirstAsync<{ value: string }>(`SELECT value FROM ${P}meta WHERE key='schema_version'`);
+    expect(v?.value).toBe('14');
+  });
+
+  it('a current-version store missing the index is NOT repaired by every-open DDL', async () => {
+    // Pins "new indexes only via migrations/fresh path": setupDatabase must not build it.
+    const db = openTestDatabase();
+    await new WikiMemory(db, stub).setup();
+    await db.execAsync(`DROP INDEX ${P}entries_legacy_source_type_idx`);
+    await new WikiMemory(db, stub).setup();
+    expect(await indexExists(db)).toBe(false);
+  });
+
+  it('probe still fails closed when a legacy row exists', async () => {
+    const db = openTestDatabase();
+    await new WikiMemory(db, stub).setup();
+    await db.runAsync(`INSERT INTO ${P}entries (id, entity_id, title, body, source_type, created_at, updated_at) VALUES ('x','e','t','b','user_document',1,1)`);
+    await expect(new WikiMemory(db, stub).setup()).rejects.toThrow(/legacy source_type/);
+  });
+});
+```
+
+- [ ] **Step 2: Run to verify failure** — expected FAIL: `CURRENT_SCHEMA_VERSION` is 13; the index doesn't exist.
+- [ ] **Step 3: Implement**
+
+In `schema.ts`, after `setupDatabase`:
+
+```typescript
+/**
+ * Partial covering index for the every-open legacy source_type probe
+ * (`EntryRepository.hasLegacySourceTypes` — its WHERE must stay textually
+ * identical to this index's WHERE so the planner uses it). Created only by
+ * migration v14 and the fresh-store path, never by setupDatabase: on an
+ * existing store this build is unchunkable work the migration gate defers
+ * out of the writer lease (spec #280 rev 11, Change 1/2).
+ */
+export function legacySourceTypeIndexDdl(prefix: string): string {
+  return `CREATE INDEX IF NOT EXISTS ${prefix}entries_legacy_source_type_idx
+    ON ${prefix}entries(source_type) WHERE source_type IN ('user_document', 'agent_inferred');`;
+}
+```
+
+In `migrations.ts`, change the import to `import { createTemporalIndexesIfColumnsExist, legacySourceTypeIndexDdl } from './schema';` and append after the v13 entry:
+
+```typescript
+  {
+    version: 14,
+    description: 'Partial covering index for the legacy source_type probe (#280). The source_ref normalize is a stamp-checked step after the migrations loop, not part of this migration',
+    run: async (db, prefix) => {
+      await db.execAsync(legacySourceTypeIndexDdl(prefix));
+    },
+  },
+```
+
+In `WikiMemory.ts` add `legacySourceTypeIndexDdl` to the `./db/schema` import. In the fresh branch (`if (!entriesExistedBeforeSetup)`), make the index the first statement:
+
+```typescript
+    if (!entriesExistedBeforeSetup) {
+      await this.db.execAsync(legacySourceTypeIndexDdl(this.prefix));
+      await this.metadataRepo.setMeta('schema_version', String(CURRENT_SCHEMA_VERSION), this.db);
+      currentVersion = CURRENT_SCHEMA_VERSION;
+    } else {
+```
+
+In `migration13.test.ts`:
+- replace the "is the last migration" body with `expect(MIGRATIONS.some((m) => m.version === 13)).toBe(true);`;
+- at :63 change `toBe('13')` to `toBe(String(CURRENT_SCHEMA_VERSION))`.
+
+- [ ] **Step 4: Run to verify pass** — run `legacyProbeIndex.test.ts`, `migration13.test.ts`, `migrations.test.ts`, then `grep -rn "toBe('13')\|toBe(13)" packages/core/__tests__` → no remaining hits. Then typecheck.
+- [ ] **Step 5: Commit** — `perf(core): partial covering index for the legacy source_type probe via v14 (#280 RC-2)`
+
+---
+
+### Task A3: two-pass stamped `source_ref` normalize (spec Change 1; 7(c)(d)(l)(p normalize side)(s))
+
+**Files:**
+- Create: `packages/core/src/db/sourceRefNormalize.ts`
+- Modify: `packages/core/src/WikiMemory.ts:301-309` (replace the normalize block) and the fresh branch (write the stamp)
+- Modify: `packages/core/src/repositories/EntryRepository.ts:1242-1255` (delete `findRowsForSourceRefMigration`; keep `updateSourceRefByRowid`)
+- Modify: `packages/core/src/repositories/MetadataRepository.ts:160-163` (`vacuum()` resets the normalize watermarks)
+- Test: `packages/core/__tests__/sourceRefNormalize.test.ts` (new)
+
+**Interfaces:**
+- Consumes: `normalizeSourceRef` (A1); `MIGRATIONS[14]` (A2).
+- Produces (all exported from `db/sourceRefNormalize.ts`):
+  - `SOURCE_REF_NORMALIZE_ALG = 1`
+  - `NORMALIZE_STAMP_KEY = 'source_ref_normalize_stamp'`
+  - `ENTRIES_WM_KEY = 'normalize_v14_entries_wm'`
+  - `SRI_WM_KEY = 'normalize_v14_sri_wm'`
+  - `stampMatches(raw: string | null): boolean`
+  - `writeNormalizeStamp(meta: MetadataRepository, tx: SQLiteAdapter): Promise<void>`
+  - `runSourceRefNormalize(db: SQLiteAdapter, prefix: string, meta: MetadataRepository): Promise<void>`
+  - Task A4 consumes `stampMatches` + `NORMALIZE_STAMP_KEY`.
+
+- [ ] **Step 1: Write the failing test**
+
+```typescript
+// packages/core/__tests__/sourceRefNormalize.test.ts
+import { describe, it, expect, vi } from 'vitest';
+import { WikiMemory } from '../src/WikiMemory';
+import { openTestDatabase } from './helpers/sqliteAdapter';
+import {
+  ENTRIES_WM_KEY, NORMALIZE_STAMP_KEY, SOURCE_REF_NORMALIZE_ALG, SRI_WM_KEY,
+} from '../src/db/sourceRefNormalize';
+
+const P = 'llm_wiki_';
+const stub = { llmProvider: { generateText: async () => '{}' } } as const;
+type Db = ReturnType<typeof openTestDatabase>;
+
+const meta = async (db: Db, k: string) =>
+  (await db.getFirstAsync<{ value: string }>(`SELECT value FROM ${P}meta WHERE key = ?`, [k]))?.value ?? null;
+const ref = async (db: Db, id: string) =>
+  (await db.getFirstAsync<{ source_ref: string | null }>(`SELECT source_ref FROM ${P}entries WHERE id = ?`, [id]))!.source_ref;
+async function fact(db: Db, id: string, sourceRef: string | null) {
+  await db.runAsync(`INSERT INTO ${P}entries (id, entity_id, title, body, source_ref, created_at, updated_at) VALUES (?, 'e', 't', 'b', ?, 1, 1)`, [id, sourceRef]);
+}
+async function sri(db: Db, id: string, sourceRef: string, hash: string) {
+  await db.runAsync(`INSERT INTO ${P}source_ref_index (id, entity_id, source_hash, source_ref, created_at) VALUES (?, 'e', ?, ?, 1)`, [id, hash, sourceRef]);
+}
+/** A built store with the stamp removed — the shape of an upgraded v13 store. */
+async function unstamped(): Promise<Db> {
+  const db = openTestDatabase();
+  await new WikiMemory(db, stub).setup();
+  await db.runAsync(`DELETE FROM ${P}meta WHERE key = ?`, [NORMALIZE_STAMP_KEY]);
+  return db;
+}
+
+describe('v14 source_ref normalize', () => {
+  it('fresh store is stamped and has no watermark keys (7(b))', async () => {
+    const db = openTestDatabase();
+    await new WikiMemory(db, stub).setup();
+    expect(JSON.parse((await meta(db, NORMALIZE_STAMP_KEY))!)).toEqual({ schema_version: 14, normalize_alg: SOURCE_REF_NORMALIZE_ALG });
+    expect(await meta(db, ENTRIES_WM_KEY)).toBeNull();
+    expect(await meta(db, SRI_WM_KEY)).toBeNull();
+  });
+
+  it('normalizes entries incl. >255 and trim-before-truncate cases, then stamps', async () => {
+    const db = await unstamped();
+    await fact(db, 'slash', 'docs/a.md');
+    await fact(db, 'long', 'x'.repeat(300));
+    await fact(db, 'edge', 'a'.repeat(254) + ' tail');
+    await fact(db, 'null', '///');
+    await new WikiMemory(db, stub).setup();
+    expect(await ref(db, 'slash')).toBe('docsa.md');
+    expect(await ref(db, 'long')).toBe('x'.repeat(255));
+    expect(await ref(db, 'edge')).toBe('a'.repeat(254));
+    expect(await ref(db, 'null')).toBeNull();
+    expect(await meta(db, NORMALIZE_STAMP_KEY)).not.toBeNull();
+    expect(await meta(db, ENTRIES_WM_KEY)).toBeNull();
+    expect(await meta(db, SRI_WM_KEY)).toBeNull();
+  });
+
+  it('pass 2: rewrites drifted source_ref_index refs, soft-deletes NULL-normalizing ones (7(s))', async () => {
+    const db = await unstamped();
+    await sri(db, 'sri:e:h1', 'a/b', 'h1');
+    await sri(db, 'sri:e:h2', '///', 'h2');
+    await sri(db, 'sri:e:h3', '日本語', 'h3');
+    await new WikiMemory(db, stub).setup();
+    const rows = await db.getAllAsync<{ id: string; source_ref: string; deleted_at: number | null }>(
+      `SELECT id, source_ref, deleted_at FROM ${P}source_ref_index ORDER BY id`);
+    expect(rows.find((r) => r.id === 'sri:e:h1')).toMatchObject({ source_ref: 'ab', deleted_at: null });
+    expect(rows.find((r) => r.id === 'sri:e:h2')!.deleted_at).not.toBeNull();
+    expect(rows.find((r) => r.id === 'sri:e:h3')!.deleted_at).not.toBeNull();
+    expect(rows.every((r) => r.source_ref !== null)).toBe(true);
+    expect(await meta(db, NORMALIZE_STAMP_KEY)).not.toBeNull();
+  });
+
+  it('a stamped store performs zero normalize reads on the next open', async () => {
+    const db = openTestDatabase();
+    await new WikiMemory(db, stub).setup();
+    const spy = vi.spyOn(db, 'getAllAsync');
+    await new WikiMemory(db, stub).setup();
+    const scans = spy.mock.calls.filter(([sql]) => /SELECT rowid, id, source_ref FROM/.test(String(sql)));
+    expect(scans).toEqual([]);
+  });
+
+  it('runs to completion across many chunks in one open (>500 rows) (7(l))', async () => {
+    const db = await unstamped();
+    for (let i = 0; i < 1200; i++) await fact(db, `f${i}`, `dir/f${i}`);
+    await new WikiMemory(db, stub).setup();
+    const bad = await db.getFirstAsync<{ n: number }>(`SELECT count(*) AS n FROM ${P}entries WHERE source_ref LIKE '%/%'`);
+    expect(bad!.n).toBe(0);
+    expect(await meta(db, ENTRIES_WM_KEY)).toBeNull();
+  });
+
+  it('alg mismatch forces exactly one rescan; version=14 + missing stamp self-heals (7(c)(d))', async () => {
+    const db = openTestDatabase();
+    await new WikiMemory(db, stub).setup();
+    await fact(db, 'late', 'p/q');
+    await db.runAsync(`UPDATE ${P}meta SET value = ? WHERE key = ?`, [JSON.stringify({ schema_version: 14, normalize_alg: 0 }), NORMALIZE_STAMP_KEY]);
+    await new WikiMemory(db, stub).setup();
+    expect(await ref(db, 'late')).toBe('pq');
+    expect(JSON.parse((await meta(db, NORMALIZE_STAMP_KEY))!).normalize_alg).toBe(SOURCE_REF_NORMALIZE_ALG);
+  });
+
+  it('resumes from a valid watermark; restarts when its fingerprint row moved (7(p))', async () => {
+    const db = await unstamped();
+    for (let i = 0; i < 10; i++) await fact(db, `f${i}`, `d/f${i}`);
+    const at5 = await db.getFirstAsync<{ rowid: number; id: string }>(`SELECT rowid, id FROM ${P}entries WHERE id = 'f5'`);
+    await db.runAsync(`INSERT INTO ${P}meta (key, value) VALUES (?, ?)`, [ENTRIES_WM_KEY, JSON.stringify(at5)]);
+    await new WikiMemory(db, stub).setup();
+    expect(await ref(db, 'f9')).toBe('df9');    // after the watermark: normalized
+    expect(await ref(db, 'f2')).toBe('d/f2');   // before it: proves resume, not restart
+
+    const db2 = await unstamped();
+    for (let i = 0; i < 10; i++) await fact(db2, `f${i}`, `d/f${i}`);
+    const r5 = await db2.getFirstAsync<{ rowid: number }>(`SELECT rowid FROM ${P}entries WHERE id = 'f5'`);
+    await db2.runAsync(`INSERT INTO ${P}meta (key, value) VALUES (?, ?)`, [ENTRIES_WM_KEY, JSON.stringify({ rowid: r5!.rowid, id: 'not-f5' })]);
+    await new WikiMemory(db2, stub).setup();
+    expect(await ref(db2, 'f2')).toBe('df2');   // fingerprint mismatch ⇒ pass restarted from 0
+  });
+
+  it('engine VACUUM clears normalize watermarks (7(p))', async () => {
+    const db = openTestDatabase();
+    const wiki = new WikiMemory(db, stub);
+    await wiki.setup();
+    await db.runAsync(`INSERT INTO ${P}meta (key, value) VALUES (?, '{"rowid":1,"id":"x"}'), (?, '{"rowid":1,"id":"y"}')`, [ENTRIES_WM_KEY, SRI_WM_KEY]);
+    await (wiki.__testAccess as any).metadataRepo.vacuum();
+    expect(await meta(db, ENTRIES_WM_KEY)).toBeNull();
+    expect(await meta(db, SRI_WM_KEY)).toBeNull();
+  });
+
+  it('empty tables complete immediately and stamp', async () => {
+    const db = await unstamped();
+    await new WikiMemory(db, stub).setup();
+    expect(await meta(db, NORMALIZE_STAMP_KEY)).not.toBeNull();
+  });
+});
+```
+
+- [ ] **Step 2: Run to verify failure** — expected FAIL: the module doesn't exist.
 - [ ] **Step 3: Implement**
 
 ```typescript
-// packages/core/src/errors/WikiSearchUnavailableError.ts
-export class WikiSearchUnavailableError extends Error {
-  constructor(message = 'Keyword search is temporarily unavailable', cause?: unknown) {
-    super(message);
-    this.name = 'WikiSearchUnavailableError';
-    if (cause !== undefined) (this as { cause?: unknown }).cause = cause;
+// packages/core/src/db/sourceRefNormalize.ts
+import type { SQLiteAdapter } from '../types';
+import type { MetadataRepository } from '../repositories/MetadataRepository';
+import { normalizeSourceRef } from '../utils/pure';
+
+/** Id of the current normalizeSourceRef semantics. Bump on any change to it (forces one rescan). */
+export const SOURCE_REF_NORMALIZE_ALG = 1;
+export const NORMALIZE_STAMP_KEY = 'source_ref_normalize_stamp';
+export const ENTRIES_WM_KEY = 'normalize_v14_entries_wm';
+export const SRI_WM_KEY = 'normalize_v14_sri_wm';
+const CHUNK = 500;
+
+interface Watermark { rowid: number; id: string }
+
+export function stampMatches(raw: string | null): boolean {
+  if (!raw) return false;
+  try {
+    const s = JSON.parse(raw) as { normalize_alg?: unknown };
+    return s?.normalize_alg === SOURCE_REF_NORMALIZE_ALG;
+  } catch {
+    return false;
+  }
+}
+
+export async function writeNormalizeStamp(meta: MetadataRepository, tx: SQLiteAdapter): Promise<void> {
+  await meta.setMeta(NORMALIZE_STAMP_KEY, JSON.stringify({ schema_version: 14, normalize_alg: SOURCE_REF_NORMALIZE_ALG }), tx);
+}
+
+/**
+ * Resume point for one pass: the stored rowid only when its fingerprint id
+ * still sits at that rowid. Otherwise (external VACUUM renumbering, manual
+ * SQL) restart from 0 — a restart is idempotent, a stale resume skips rows.
+ */
+async function resumeRowid(db: SQLiteAdapter, prefix: string, meta: MetadataRepository, table: string, key: string): Promise<number> {
+  const raw = await meta.getMeta(key);
+  if (!raw) return 0;
+  let wm: Partial<Watermark>;
+  try { wm = JSON.parse(raw) as Partial<Watermark>; } catch { return 0; }
+  if (typeof wm.rowid !== 'number' || typeof wm.id !== 'string') return 0;
+  const row = await db.getFirstAsync<{ id: string }>(`SELECT id FROM ${prefix}${table} WHERE rowid = ?`, [wm.rowid]);
+  return row?.id === wm.id ? wm.rowid : 0;
+}
+
+async function runPass(
+  db: SQLiteAdapter, prefix: string, meta: MetadataRepository,
+  table: 'entries' | 'source_ref_index', key: string, stampOnCompletion: boolean,
+): Promise<void> {
+  let cursor = await resumeRowid(db, prefix, meta, table, key);
+  for (;;) {
+    const done = await db.withTransactionAsync(async (tx) => {
+      const rows = await tx.getAllAsync<{ rowid: number; id: string; source_ref: string | null }>(
+        `SELECT rowid, id, source_ref FROM ${prefix}${table} WHERE rowid > ? ORDER BY rowid LIMIT ${CHUNK}`, [cursor]);
+      for (const r of rows) {
+        if (r.source_ref == null) continue;
+        const n = normalizeSourceRef(r.source_ref);
+        if (n === r.source_ref) continue;
+        if (table === 'entries') {
+          await tx.runAsync(`UPDATE ${prefix}entries SET source_ref = ? WHERE rowid = ?`, [n, r.rowid]);
+        } else if (n === null) {
+          // source_ref_index.source_ref is TEXT NOT NULL: soft-delete, never write NULL (spec rev 10 M1).
+          await tx.runAsync(`UPDATE ${prefix}source_ref_index SET deleted_at = COALESCE(deleted_at, ?) WHERE rowid = ?`, [Date.now(), r.rowid]);
+        } else {
+          await tx.runAsync(`UPDATE ${prefix}source_ref_index SET source_ref = ? WHERE rowid = ?`, [n, r.rowid]);
+        }
+      }
+      if (rows.length < CHUNK) {
+        await meta.deleteMeta(key, tx);
+        if (stampOnCompletion) await writeNormalizeStamp(meta, tx);
+        return true;
+      }
+      const last = rows[rows.length - 1];
+      await meta.setMeta(key, JSON.stringify({ rowid: last.rowid, id: last.id }), tx);
+      cursor = last.rowid;
+      return false;
+    });
+    if (done) return;
+  }
+}
+
+/**
+ * Spec #280 Change 1: one-time, to-completion normalize of both stored copies
+ * of source_ref, in ≤500-row transactions, NOT bounded by setupBudgetMs (a
+ * half-normalized store answers hasChanged/forget wrongly). Skipped entirely
+ * when the stamp matches. The stamp lands in pass 2's final transaction, so
+ * "stamped" always means both passes completed.
+ */
+export async function runSourceRefNormalize(db: SQLiteAdapter, prefix: string, meta: MetadataRepository): Promise<void> {
+  if (stampMatches(await meta.getMeta(NORMALIZE_STAMP_KEY))) return;
+  await runPass(db, prefix, meta, 'entries', ENTRIES_WM_KEY, false);
+  await runPass(db, prefix, meta, 'source_ref_index', SRI_WM_KEY, true);
+}
+```
+
+In `WikiMemory.ts`:
+- add `import { runSourceRefNormalize, writeNormalizeStamp } from './db/sourceRefNormalize';`;
+- in the fresh branch, after the `schema_version` setMeta, add `await writeNormalizeStamp(this.metadataRepo, this.db);`;
+- replace the block at :297-309 (legacy assert + `findRowsForSourceRefMigration` + its transaction) with:
+
+```typescript
+    if (entriesExistedBeforeSetup) {
+      await this.importExportService.assertNoLegacySourceTypes();
+      await runSourceRefNormalize(this.db, this.prefix, this.metadataRepo);
+    }
+```
+
+- remove the now-unused `normalizeSourceRef` import from `WikiMemory.ts` only if nothing else there uses it — it IS used at :349/:371/:433/:810, so keep it.
+
+In `EntryRepository.ts`, delete `findRowsForSourceRefMigration` (verify first: `grep -rn findRowsForSourceRefMigration packages/` → only the deleted definition).
+
+In `MetadataRepository.ts`:
+
+```typescript
+  async vacuum(): Promise<void> {
+    // VACUUM may renumber implicit rowids; resume watermarks keyed on rowid
+    // become meaningless (spec #280 Change 3 VACUUM section, 7(p)).
+    await this.deleteMeta(ENTRIES_WM_KEY);
+    await this.deleteMeta(SRI_WM_KEY);
+    await this.db.execAsync(`PRAGMA wal_checkpoint(TRUNCATE)`);
+    await this.db.execAsync(`VACUUM`);
+  }
+```
+
+with `import { ENTRIES_WM_KEY, SRI_WM_KEY } from '../db/sourceRefNormalize';`. If that import cycles (`sourceRefNormalize` imports the `MetadataRepository` *type* only, so it should not), move the two key constants to a `db/normalizeKeys.ts` leaf file and import them from both places.
+
+- [ ] **Step 4: Run to verify pass** — run `sourceRefNormalize.test.ts`, `legacyProbeIndex.test.ts`, `hasChanged*.test.ts`, `forgetDryRun.test.ts`, `ingestDuplicateHash.test.ts`, `findSourceRefsByHash.test.ts`, `importDump.test.ts`, `migration9.test.ts` — all PASS. Then typecheck.
+- [ ] **Step 5: Commit** — `feat(core): stamped two-pass source_ref normalize replaces the every-open scan (#280 RC-2/RC-7)`
+
+---
+
+### Task A4: migration gate — `setup({ migrations: 'refuse' })` (spec Change 1 gate, 7(t))
+
+**Files:**
+- Create: `packages/core/src/db/migrationGate.ts`
+- Modify: `packages/core/src/types.ts` (add `WikiSetupOptions` + `WikiMigrationRequiredError` near the other error classes, ~:1012)
+- Modify: `packages/core/src/WikiMemory.ts` (`setup()` signature + gate before `setupDatabase`; version derivation → `readSchemaVersion`)
+- Test: `packages/core/__tests__/migrationGate.test.ts` (new)
+
+**Interfaces:**
+- Consumes: `stampMatches`, `NORMALIZE_STAMP_KEY`, `ENTRIES_WM_KEY` (A3); `CURRENT_SCHEMA_VERSION`.
+- Produces:
+  - `interface WikiSetupOptions { migrations?: 'run' | 'refuse' }` (types.ts, exported via `export * from './types'`);
+  - `class WikiMigrationRequiredError extends Error { fromVersion: number; toVersion: number; normalizeRequired: boolean; retiredTables: number }`;
+  - `readSchemaVersion(meta: MetadataRepository, prefix: string): Promise<number>`;
+  - `interface PendingMigrationWork { fromVersion: number; toVersion: number; normalizeRequired: boolean; retiredTables: number }`;
+  - `probePendingWork(meta: MetadataRepository, prefix: string): Promise<PendingMigrationWork | null>`;
+  - `WikiMemory.setup(opts?: WikiSetupOptions): Promise<void>`.
+  - PR-B Task B4 extends `probePendingWork`'s `retiredTables`.
+
+- [ ] **Step 1: Write the failing test**
+
+```typescript
+// packages/core/__tests__/migrationGate.test.ts
+import { describe, it, expect } from 'vitest';
+import { WikiMemory } from '../src/WikiMemory';
+import { WikiMigrationRequiredError } from '../src/index';
+import { CURRENT_SCHEMA_VERSION } from '../src/db/migrations';
+import { ENTRIES_WM_KEY, NORMALIZE_STAMP_KEY } from '../src/db/sourceRefNormalize';
+import { openTestDatabase } from './helpers/sqliteAdapter';
+
+const P = 'llm_wiki_';
+const stub = { llmProvider: { generateText: async () => '{}' } } as const;
+type Db = ReturnType<typeof openTestDatabase>;
+const snapshot = async (db: Db) => ({
+  master: await db.getAllAsync(`SELECT type, name, sql FROM sqlite_master ORDER BY type, name`),
+  meta: await db.getAllAsync(`SELECT key, value FROM ${P}meta ORDER BY key`),
+});
+/** v13-shaped store: version 13, no partial index, no stamp. */
+async function v13(): Promise<Db> {
+  const db = openTestDatabase();
+  await new WikiMemory(db, stub).setup();
+  await db.execAsync(`DROP INDEX ${P}entries_legacy_source_type_idx`);
+  await db.runAsync(`DELETE FROM ${P}meta WHERE key = ?`, [NORMALIZE_STAMP_KEY]);
+  await db.runAsync(`UPDATE ${P}meta SET value = '13' WHERE key = 'schema_version'`);
+  return db;
+}
+
+describe("setup({ migrations: 'refuse' })", () => {
+  it('(i) v13 store throws before ANY mutation', async () => {
+    const db = await v13();
+    const before = await snapshot(db);
+    const err = await new WikiMemory(db, stub).setup({ migrations: 'refuse' }).catch((e) => e);
+    expect(err).toBeInstanceOf(WikiMigrationRequiredError);
+    expect(err).toMatchObject({ name: 'WikiMigrationRequiredError', fromVersion: 13, toVersion: CURRENT_SCHEMA_VERSION, normalizeRequired: true, retiredTables: 0 });
+    expect(await snapshot(db)).toEqual(before);
+  });
+
+  it('(ii) plain setup() migrates; the next refuse open passes', async () => {
+    const db = await v13();
+    await new WikiMemory(db, stub).setup();
+    await expect(new WikiMemory(db, stub).setup({ migrations: 'refuse' })).resolves.toBeUndefined();
+  });
+
+  it('(iii) stamp mismatch at version 14 trips the gate', async () => {
+    const db = openTestDatabase();
+    await new WikiMemory(db, stub).setup();
+    await db.runAsync(`UPDATE ${P}meta SET value = '{"schema_version":14,"normalize_alg":0}' WHERE key = ?`, [NORMALIZE_STAMP_KEY]);
+    await expect(new WikiMemory(db, stub).setup({ migrations: 'refuse' })).rejects.toMatchObject({ fromVersion: 14, normalizeRequired: true });
+  });
+
+  it('(iv) fresh store opens normally under refuse', async () => {
+    await expect(new WikiMemory(openTestDatabase(), stub).setup({ migrations: 'refuse' })).resolves.toBeUndefined();
+  });
+
+  it('(v) mid-normalize crash shape: refuse throws, plain setup resumes and stamps', async () => {
+    const db = openTestDatabase();
+    await new WikiMemory(db, stub).setup();
+    await db.runAsync(`DELETE FROM ${P}meta WHERE key = ?`, [NORMALIZE_STAMP_KEY]);
+    await db.runAsync(`INSERT INTO ${P}meta (key, value) VALUES (?, '{"rowid":0,"id":""}')`, [ENTRIES_WM_KEY]);
+    await expect(new WikiMemory(db, stub).setup({ migrations: 'refuse' })).rejects.toBeInstanceOf(WikiMigrationRequiredError);
+    await new WikiMemory(db, stub).setup();
+    expect(await db.getFirstAsync(`SELECT 1 FROM ${P}meta WHERE key = ?`, [NORMALIZE_STAMP_KEY])).not.toBeNull();
+  });
+
+  it('(vi) default options keep run-migrations behavior; bad values are rejected', async () => {
+    const db = await v13();
+    await expect(new WikiMemory(db, stub).setup()).resolves.toBeUndefined();
+    await expect(new WikiMemory(db, stub).setup({ migrations: 'later' as never })).rejects.toThrow(TypeError);
+  });
+
+  it('a store with no meta table counts as pending', async () => {
+    const db = openTestDatabase();
+    await db.execAsync(`CREATE TABLE ${P}entries (id TEXT PRIMARY KEY, entity_id TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL)`);
+    await expect(new WikiMemory(db, stub).setup({ migrations: 'refuse' })).rejects.toMatchObject({ fromVersion: 0, normalizeRequired: true });
+  });
+});
+```
+
+- [ ] **Step 2: Run to verify failure** — expected FAIL: the `WikiMigrationRequiredError` export doesn't exist.
+- [ ] **Step 3: Implement**
+
+In `types.ts` (next to `WikiBusyError`):
+
+```typescript
+/** Options for {@link WikiMemory.setup}. */
+export interface WikiSetupOptions {
+  /**
+   * `'run'` (default): perform pending one-time migration work inside this
+   * call, as setup() always has. `'refuse'`: if any one-time work is pending
+   * (schema migration, source_ref normalize, retired FTS table reclamation),
+   * throw {@link WikiMigrationRequiredError} BEFORE mutating anything. Hosts
+   * that open inside a writer lease use `'refuse'` and run a plain `setup()`
+   * outside the lease when it throws (spec #280 rev 11).
+   * @default 'run'
+   */
+  migrations?: 'run' | 'refuse';
+}
+
+/**
+ * Thrown by `setup({ migrations: 'refuse' })` when one-time work is pending.
+ * Nothing was mutated. Run `setup()` (default options) outside the writer
+ * lease to perform it; the work is chunked and crash-resumable.
+ */
+export class WikiMigrationRequiredError extends Error {
+  readonly fromVersion: number;
+  readonly toVersion: number;
+  readonly normalizeRequired: boolean;
+  readonly retiredTables: number;
+
+  constructor(params: { fromVersion: number; toVersion: number; normalizeRequired: boolean; retiredTables: number }) {
+    const parts = [`schema ${params.fromVersion} → ${params.toVersion}`];
+    if (params.normalizeRequired) parts.push('source_ref normalize');
+    if (params.retiredTables > 0) parts.push(`${params.retiredTables} retired FTS table(s)`);
+    super(`Database has pending one-time work (${parts.join(', ')}); run setup() without migrations: 'refuse' outside the writer lease`);
+    this.name = 'WikiMigrationRequiredError';
+    this.fromVersion = params.fromVersion;
+    this.toVersion = params.toVersion;
+    this.normalizeRequired = params.normalizeRequired;
+    this.retiredTables = params.retiredTables;
   }
 }
 ```
 
-Add `export { WikiSearchUnavailableError } from './errors/WikiSearchUnavailableError';` to `packages/core/src/index.ts` (match the file's existing export style).
-- [ ] **Step 4: Run to verify pass** (same command) → PASS. Then `pnpm --filter @equationalapplications/core-llm-wiki typecheck` → clean.
-- [ ] **Step 5: Commit** — `feat(core): add WikiSearchUnavailableError for degraded keyword search`
+```typescript
+// packages/core/src/db/migrationGate.ts
+import type { MetadataRepository } from '../repositories/MetadataRepository';
+import { CURRENT_SCHEMA_VERSION } from './migrations';
+import { NORMALIZE_STAMP_KEY, stampMatches } from './sourceRefNormalize';
+
+/** Stored schema_version, or the legacy derivation when the row is absent (moved verbatim from WikiMemory.setup). */
+export async function readSchemaVersion(meta: MetadataRepository, prefix: string): Promise<number> {
+  const raw = await meta.getMeta('schema_version');
+  if (raw) {
+    const v = parseInt(raw, 10);
+    return Number.isFinite(v) ? v : 0;
+  }
+  const ftsDdl = await meta.getTableDdl(`${prefix}entries_fts`);
+  return /tokenize\s*=\s*['"]porter\s+unicode61['"]/i.test(ftsDdl ?? '') ? 1 : 0;
+}
+
+export interface PendingMigrationWork {
+  fromVersion: number;
+  toVersion: number;
+  normalizeRequired: boolean;
+  retiredTables: number;
+}
+
+/**
+ * Read-only probe for one-time work on an EXISTING store (caller checks the
+ * entries table exists). Must run before setupDatabase: no DDL, no writes.
+ */
+export async function probePendingWork(meta: MetadataRepository, prefix: string): Promise<PendingMigrationWork | null> {
+  const hasMeta = await meta.tableExists(`${prefix}meta`);
+  const fromVersion = hasMeta ? await readSchemaVersion(meta, prefix) : 0;
+  const normalizeRequired = !hasMeta || !stampMatches(await meta.getMeta(NORMALIZE_STAMP_KEY));
+  const retiredTables = 0; // PR-B (Task B4) counts fts5_retired_tables here.
+  if (fromVersion >= CURRENT_SCHEMA_VERSION && !normalizeRequired && retiredTables === 0) return null;
+  return { fromVersion, toVersion: CURRENT_SCHEMA_VERSION, normalizeRequired, retiredTables };
+}
+```
+
+In `WikiMemory.ts`:
+- import `probePendingWork, readSchemaVersion` from `./db/migrationGate`;
+- import `WikiMigrationRequiredError, type WikiSetupOptions` from `./types`;
+- replace the head of `setup()` through the version derivation:
+
+```typescript
+  async setup(opts?: WikiSetupOptions) {
+    const migrations = opts?.migrations ?? 'run';
+    if (migrations !== 'run' && migrations !== 'refuse') {
+      throw new TypeError(`setup: migrations must be 'run' or 'refuse', got ${String(migrations)}`);
+    }
+    const entriesExistedBeforeSetup = await this.metadataRepo.tableExists(`${this.prefix}entries`);
+
+    // Migration gate (spec #280 rev 11): read-only, and BEFORE setupDatabase,
+    // whose IF NOT EXISTS DDL would otherwise build missing tables/indexes.
+    if (migrations === 'refuse' && entriesExistedBeforeSetup) {
+      const pending = await probePendingWork(this.metadataRepo, this.prefix);
+      if (pending) throw new WikiMigrationRequiredError(pending);
+    }
+
+    await setupDatabase(this.db, this.prefix);
+
+    let currentVersion: number;
+
+    if (!entriesExistedBeforeSetup) {
+      await this.db.execAsync(legacySourceTypeIndexDdl(this.prefix));
+      await this.metadataRepo.setMeta('schema_version', String(CURRENT_SCHEMA_VERSION), this.db);
+      await writeNormalizeStamp(this.metadataRepo, this.db);
+      currentVersion = CURRENT_SCHEMA_VERSION;
+    } else {
+      currentVersion = await readSchemaVersion(this.metadataRepo, this.prefix);
+    }
+```
+
+(The rest of `setup()` stays as Task A3 left it.)
+
+- [ ] **Step 4: Run to verify pass** — run `migrationGate.test.ts`, `sourceRefNormalize.test.ts`, `legacyProbeIndex.test.ts`, `migrations.test.ts`, `migration*.test.ts` — all PASS. Then typecheck.
+- [ ] **Step 5: Commit** — `feat(core): setup({ migrations: 'refuse' }) gate with WikiMigrationRequiredError (#280)`
 
 ---
 
-### Task 2: Failure-ordered init + retry + never-demote + the five call sites
-
-**Objective:** On `auto`, an `init()` failure retries once and never calls `detachFts5`; the caller gets an unavailable strategy whose search throws the typed error; **all five error call sites behave per the rev-6 map**.
+### Task A5: RC-6 guard — probe classification, retry, `UnavailableIndexStrategy` (spec Change 4; 7(e) core + probe leg)
 
 **Files:**
-- Modify: `packages/core/src/services/search/createIndexStrategy.ts:47-74` (the `createIndexStrategy` function)
+- Modify: `packages/core/src/types.ts` (add `WikiSearchUnavailableError` + `isWikiSearchUnavailableError`)
 - Create: `packages/core/src/services/search/UnavailableIndexStrategy.ts`
-- Modify: `packages/core/src/services/RetrievalService.ts` (:189 prefilter + :223 `getKeywordScores` — **catch → empty keyword scores, vector path proceeds**; :550 and :719 — **propagate**, no change beyond pinned tests)
-- Modify: `packages/core/src/services/MaintenanceService.ts` (:1542 area — heal catches `WikiSearchUnavailableError` → "no heal anchors available", and the degrade path must **NOT stamp `heal_checked_at`** for unchecked facts)
-- Modify: `packages/core/src/WikiMemory.ts:685` (`syncSearchIndex()` — the **no-arg path retries `init()`** when the installed strategy is unavailable; the retry lives HERE, not in `SearchService`, which has no db/prefix/metadataRepo)
-- Test: `packages/core/__tests__/createIndexStrategy.test.ts`, extend `packages/core/__tests__/searchParity.test.ts` (call-site behaviors)
+- Modify: `packages/core/src/services/search/createIndexStrategy.ts:17-74`
+- Modify: `packages/core/src/services/SearchService.ts` (add `isKeywordAvailable()` after `setIndexStrategy`)
+- Modify: `packages/core/src/WikiMemory.ts:685-689` (`syncSearchIndex` retry)
+- Modify (REWRITE per spec 8): `packages/core/__tests__/createIndexStrategy.test.ts:53-63` ("'auto' falls back to MiniSearch when FTS5 init throws")
+- Test: `packages/core/__tests__/searchUnavailable.test.ts` (new)
 
-**Design (fix these semantics now, they ripple):**
-- `UnavailableIndexStrategy implements IndexStrategy`: `search()` throws `WikiSearchUnavailableError` (cause = the last init error); `replace`/`replaceEntity`/`replaceAll` are **no-ops** (entries remain the source of truth; the index converges on recovery); `hasIndexedEntity()` returns false; **`drain` is a PRESENT NO-OP (returns immediately) — NOT an absent property** (**rev 5/B1, Opus plan B1 — CORRECTS rev 4**: `SearchService`'s drain-less fallback paths (`SearchService.ts:127/:177/:255` — `sync`, `syncEntries`, `syncStale`) guard on `if (this.indexStrategy.drain)` and their else-branch calls `findMiniSearchRows()` + `replaceAll` — a full-table read + in-memory index build, i.e. the measured 1M-entry OOM (RC-6's crash path) re-entered through the back door. With `drain` present-but-no-op, EVERY entry point routes to `drainTurn` → the no-op → ledger intact, writes keep working, zero full reads.) Naming: the class is `UnavailableIndexStrategy` (strategy-level, not FTS-specific).
-- Retry = one re-call of the same init after `setTimeout` 250 ms. If the retry succeeds, return the real strategy. If it fails again, return `new UnavailableIndexStrategy(lastError)` — **`detachFts5` is not called anywhere on this path.** If state was already mutated to `rebuilding`, it stays `rebuilding` (recoverable, converging — the next open resumes from the watermark).
-- **Call-site map (spec rev 7 — pin ALL SIX with tests; rev 5 added `gate.ts` after grep — Opus plan M2):**
-  1. `RetrievalService.ts:189` (prefilter `searchKeyword`): catch `WikiSearchUnavailableError` → **empty prefilter results** (`candidateRows = null` path) — semantic reads proceed vector-only.
-  2. `RetrievalService.ts:223` (`getKeywordScores` hybrid blend): catch → **empty/absent keyword scores**; vector ranking proceeds (weight < 1 must not take down semantic reads — Opus delta M1).
-  3. `RetrievalService.ts:719` (keyword-only fallback): **propagates** (keyword-only reads genuinely have nothing to fall back to).
-  4. `RetrievalService.ts:550` (embed-absent keyword fallback): **propagates** (unchanged rev-5 decision).
-  5. `MaintenanceService.ts:1542` (heal anchors): catch → **"no heal anchors available"**, and `heal_checked_at` is **NOT written** for facts never checked (Opus delta m7; rev 7 m3: the degrade must return BEFORE `markHealChecked` at `MaintenanceService.ts:1035` runs, or stamping must be gated on anchors-found > 0 — the current code stamps regardless of anchor count).
-  6. **`services/librarian/ops/gate.ts:143` (librarian gate keyword fallback — NEW rev 5/Opus plan M2): catch → candidate gates with `neighbours: []`, decision from vector-only context; ingest proceeds.** A keyword outage must not abort ingest (acceptance 7(e) implicitly requires it).
-- The no-arg `WikiMemory.syncSearchIndex()` retry: when the installed strategy is an `UnavailableIndexStrategy`, re-run `createIndexStrategy` (or `init()` on a fresh strategy instance); a long-lived host recovers without re-opening.
-- The existing `probeFts5`-false fallback (module genuinely absent → `detachFts5` + MiniSearch) is UNCHANGED — but only reachable when the probe fails, never from the init-catch path.
-- Pinned `'fts5'` failure still throws the raw error (`:65`), unchanged.
+**Interfaces:**
+- Produces:
+  - `class WikiSearchUnavailableError extends Error` (`name` = `'WikiSearchUnavailableError'`, `cause` = the init error);
+  - `isWikiSearchUnavailableError(err: unknown): boolean` (Proxy-safe);
+  - `class UnavailableIndexStrategy implements IndexStrategy` (constructor `(cause: unknown)`; `drain()` is a PRESENT no-op);
+  - `SearchService.isKeywordAvailable(): boolean`;
+  - `FTS5_INIT_RETRY_MS = 250` (exported from `createIndexStrategy.ts`);
+  - `probeFts5` now THROWS on non-absence errors (still returns `false` only for module-absent).
+  - Task A6 consumes `isKeywordAvailable` and `isWikiSearchUnavailableError`.
 
-- [ ] **Step 1: Write failing tests** (**real better-sqlite3 adapter** — same fixture pattern as `fts5IndexStrategy.test.ts`; force `Fts5IndexStrategy.prototype.init` to throw via `vi.spyOn`):
-  1. init throws twice → returned strategy is `UnavailableIndexStrategy`; store state (`fts5_index_state`) is untouched; `fts_map`/`fts_pending` still exist.
-  2. `search()` on it throws `WikiSearchUnavailableError` with the init error as `cause`.
-  3. init throws once then succeeds → real strategy returned.
-  4. `preferred: 'fts5'` + failing init → raw throw propagates.
-  5. **Hybrid outage (7n):** `weight < 1` read with a failing keyword strategy still returns vector-ranked results (pins :189/:223 degrade-to-empty).
-  6. **Heal degrade does not stamp (7o):** heal with unavailable keyword search → returns no anchors AND `heal_checked_at` absent for unchecked facts.
-  7. Keyword-only fallback (:719) propagates the error to the caller.
-  8. **MiniSearch has no `drain`:** `expect((new MiniSearchIndexStrategy() as unknown as { drain?: unknown }).drain).toBeUndefined()` — pins the Global Constraint. **`UnavailableIndexStrategy` HAS `drain` (a no-op):** `expect(typeof (strategy as { drain?: unknown }).drain).toBe('function')` and a write (`syncEntries`) during unavailability does NOT call `findMiniSearchRows` (spy) — pins the rev-5/B1 fix that every entry point stays on the ledger-safe path.
-  9. No-arg `syncSearchIndex()` on an unavailable strategy retries init and recovers.
-- [ ] **Step 2: Run to verify failure** — `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/createIndexStrategy.test.ts` → FAIL (today's code detaches + returns MiniSearch).
-- [ ] **Step 3: Implement** the reordered `createIndexStrategy` per Design above.
-- [ ] **Step 4: Run to verify pass** + `createIndexStrategy.test.ts` (its module-absent fallback cases are the actual regression guard here — `miniSearchFallback.test.ts` is the read-path fallback, not strategy selection), `miniSearchFallback.test.ts` still green. **Add test 10: reopen-recovers** — after a double-failure open, a second `new WikiMemory(...)` open on the same store succeeds with a working strategy and keyword search returns results (pins spec 7(e)'s "next open recovers").
-- [ ] **Step 5: Commit** — `fix(core): auto init failure retries, never demotes, pins all six search-unavailable call sites (#280 RC-6)`
+- [ ] **Step 1: Write the failing tests**
 
-### Task 2b (folded into Task 5): `importDump` belt — already satisfied by existing code
+Replace the `"'auto' falls back to MiniSearch when FTS5 init throws; 'fts5' re-throws"` case in `createIndexStrategy.test.ts` with:
 
-Opus M3 (converging with spec MIN-7): `ImportExportService.ts:273-282` **already
-normalizes every imported `source_ref`** (throwing on normalize-to-null), so an
-imported dump can never violate the stamp invariant — spec rev 5 records belt
-(b) as met by existing code. **No dump-header machinery. Task 5 instead adds
-one regression test** pinning that normalization: plant a violating ref in a
-dump JSON, import, assert the stored ref is normalized. (The earlier Task 2b
-was redundant, based on the wrong signal — the dump's stamp describes its
-SOURCE store, not the destination — and its red phase could not fail.)
+```typescript
+  it("'auto' init failure ×2 → UnavailableIndexStrategy, never detaches; 'fts5' re-throws raw", async () => {
+    const db = openTestDatabase(); const meta = await fresh(db);
+    await createIndexStrategy(db, P, meta, 'fts5'); // live, ledger present
+    const spy = vi.spyOn(Fts5IndexStrategy.prototype, 'init').mockRejectedValue(new Error('rebuild tx lock'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const s = await createIndexStrategy(db, P, meta, 'auto');
+    expect(s).toBeInstanceOf(UnavailableIndexStrategy);
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(await meta.getMeta(FTS5_STATE_KEY)).toBe('live');
+    expect((await objects(db)).map((r) => r.name)).toEqual(expect.arrayContaining([`${P}fts_map`, `${P}fts_pending`]));
+    await expect(s.search('x', { entityIds: ['e'], limit: 5 })).rejects.toMatchObject({ name: 'WikiSearchUnavailableError', cause: expect.objectContaining({ message: 'rebuild tx lock' }) });
+    await expect(createIndexStrategy(db, P, meta, 'fts5')).rejects.toThrow(/rebuild tx lock/);
+    spy.mockRestore(); warn.mockRestore();
+  });
+
+  it("'auto' init fails once then succeeds → real strategy", async () => {
+    const db = openTestDatabase(); const meta = await fresh(db);
+    const real = Fts5IndexStrategy.prototype.init;
+    const spy = vi.spyOn(Fts5IndexStrategy.prototype, 'init')
+      .mockRejectedValueOnce(new Error('busy'))
+      .mockImplementation(function (this: Fts5IndexStrategy) { return real.call(this); });
+    expect(await createIndexStrategy(db, P, meta, 'auto')).toBeInstanceOf(Fts5IndexStrategy);
+    spy.mockRestore();
+  });
+
+  it("probe error other than module-absent (SQLITE_IOERR) never detaches (7(e) probe leg)", async () => {
+    const db = openTestDatabase(); const meta = await fresh(db);
+    await createIndexStrategy(db, P, meta, 'fts5');
+    const orig = db.getFirstAsync.bind(db);
+    vi.spyOn(db, 'getFirstAsync').mockImplementation(async (sql: string, p?: unknown[]) => {
+      if (sql.includes('json_valid')) throw Object.assign(new Error('disk I/O error'), { code: 'SQLITE_IOERR' });
+      return orig(sql, p);
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(await createIndexStrategy(db, P, meta, 'auto')).toBeInstanceOf(UnavailableIndexStrategy);
+    expect(await meta.getMeta(FTS5_STATE_KEY)).toBe('live');
+    warn.mockRestore();
+  });
+```
+
+Add the imports `import { UnavailableIndexStrategy } from '../src/services/search/UnavailableIndexStrategy';`. Keep the two existing module-absent cases (sql.js → MiniSearch; `json_valid` missing → `false`) unchanged: they pin that module-absent still falls back.
+
+```typescript
+// packages/core/__tests__/searchUnavailable.test.ts
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { WikiMemory } from '../src/WikiMemory';
+import { WikiSearchUnavailableError, isWikiSearchUnavailableError } from '../src/index';
+import { Fts5IndexStrategy } from '../src/services/search/Fts5IndexStrategy';
+import { MiniSearchIndexStrategy } from '../src/services/search/MiniSearchIndexStrategy';
+import { UnavailableIndexStrategy } from '../src/services/search/UnavailableIndexStrategy';
+import { EntryRepository } from '../src/repositories/EntryRepository';
+import { openTestDatabase } from './helpers/sqliteAdapter';
+
+const stub = { llmProvider: { generateText: async () => '{}' } } as const;
+afterEach(() => vi.restoreAllMocks());
+
+async function unavailableWiki() {
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const init = vi.spyOn(Fts5IndexStrategy.prototype, 'init').mockRejectedValue(new Error('locked'));
+  const db = openTestDatabase();
+  const wiki = new WikiMemory(db, stub);
+  await wiki.setup();
+  return { db, wiki, init, svc: (wiki.__testAccess as any).searchService };
+}
+
+describe('WikiSearchUnavailableError', () => {
+  it('stable name, cause chain, package export, Proxy-safe guard', () => {
+    const cause = new Error('x');
+    const e = new WikiSearchUnavailableError(undefined, cause);
+    expect(e.name).toBe('WikiSearchUnavailableError');
+    expect(e.cause).toBe(cause);
+    expect(isWikiSearchUnavailableError(e)).toBe(true);
+    const hostile = new Proxy({}, { getPrototypeOf() { throw new Error('trap'); } });
+    expect(isWikiSearchUnavailableError(hostile)).toBe(false);
+  });
+});
+
+describe('unavailable keyword search inside WikiMemory', () => {
+  it('setup and every sync entry point stay off the full-read path while unavailable (B1 no-op drain)', async () => {
+    const fullRead = vi.spyOn(EntryRepository.prototype, 'findMiniSearchRows');
+    const { db, wiki, svc } = await unavailableWiki();
+    expect(svc.isKeywordAvailable()).toBe(false);
+    await db.runAsync(`INSERT INTO llm_wiki_entries (id, entity_id, title, body, created_at, updated_at) VALUES ('f1','e','apple','b',1,1)`);
+    await wiki.syncSearchIndex('e');            // syncEntries path
+    await svc.sync();                           // sync path
+    expect(fullRead).not.toHaveBeenCalled();
+    const pending = await db.getFirstAsync<{ n: number }>(`SELECT count(*) AS n FROM llm_wiki_fts_pending`);
+    expect(pending!.n).toBeGreaterThan(0);      // ledger rows survive for later convergence
+  });
+
+  it('UnavailableIndexStrategy has a present no-op drain; MiniSearch has none', () => {
+    expect(typeof new UnavailableIndexStrategy(new Error('x')).drain).toBe('function');
+    expect((new MiniSearchIndexStrategy() as unknown as { drain?: unknown }).drain).toBeUndefined();
+  });
+
+  it('no-arg syncSearchIndex() retries init and recovers', async () => {
+    const { wiki, init, svc } = await unavailableWiki();
+    init.mockRestore();
+    await wiki.syncSearchIndex();
+    expect(svc.isKeywordAvailable()).toBe(true);
+  });
+
+  it('a fresh WikiMemory on the same store recovers (next open recovers)', async () => {
+    const { db, init } = await unavailableWiki();
+    init.mockRestore();
+    const again = new WikiMemory(db, stub);
+    await again.setup();
+    expect((again.__testAccess as any).searchService.isKeywordAvailable()).toBe(true);
+  });
+});
+```
+
+(`findMiniSearchRows` lives on `EntryRepository` — `EntryRepository.ts:1107`; `wiki.write()` writes events, not entries, which is why the test inserts the entries row directly and drives the sync entry points.)
+
+- [ ] **Step 2: Run to verify failure** — run both files. Expected FAIL: `UnavailableIndexStrategy` module missing; the old code detaches.
+- [ ] **Step 3: Implement**
+
+In `types.ts`:
+
+```typescript
+/**
+ * Thrown per keyword-search query while the keyword index is unavailable
+ * (FTS5 init failed after its retry; spec #280 Change 4). Writes keep working
+ * and the index converges once a later open or no-arg syncSearchIndex()
+ * re-inits successfully. `cause` is the underlying init error.
+ */
+export class WikiSearchUnavailableError extends Error {
+  constructor(message = 'Keyword search is temporarily unavailable', cause?: unknown) {
+    super(message, cause !== undefined ? { cause } : undefined);
+    this.name = 'WikiSearchUnavailableError';
+  }
+}
+
+/** Proxy-safe `instanceof WikiSearchUnavailableError` (issue #96: a hostile getPrototypeOf trap must not throw out of a catch). */
+export function isWikiSearchUnavailableError(err: unknown): boolean {
+  try { return err instanceof WikiSearchUnavailableError; } catch { return false; }
+}
+```
+
+```typescript
+// packages/core/src/services/search/UnavailableIndexStrategy.ts
+import { WikiSearchUnavailableError } from '../../types';
+import type { IndexDocument, IndexSearchOptions, IndexSearchResult, IndexStrategy } from './IndexStrategy';
+
+/**
+ * Installed when FTS5 init fails after its retry under 'auto' (spec #280
+ * Change 4). The ledger and FTS tables are left untouched; entries stay the
+ * source of truth and the index converges on the next successful init.
+ *
+ * `drain` MUST be present: SearchService's drain-less branches
+ * (sync/syncEntries/syncStale) fall back to findMiniSearchRows + replaceAll —
+ * a full-table read, the measured 1M-entry OOM. A no-op drain keeps every
+ * entry point on the ledger path.
+ */
+export class UnavailableIndexStrategy implements IndexStrategy {
+  constructor(private readonly cause: unknown) {}
+
+  async search(_query: string, _options: IndexSearchOptions): Promise<IndexSearchResult[]> {
+    throw new WikiSearchUnavailableError(undefined, this.cause);
+  }
+  async replace(_entityId: string, _ids: readonly string[], _documents: readonly IndexDocument[]): Promise<void> {}
+  async replaceEntity(_entityId: string, _documents: readonly IndexDocument[]): Promise<void> {}
+  async replaceAll(_documents: readonly IndexDocument[]): Promise<void> {}
+  hasIndexedEntity(_entityId: string): boolean { return false; }
+  async drain(): Promise<void> {}
+}
+```
+
+In `createIndexStrategy.ts`:
+
+```typescript
+export const FTS5_INIT_RETRY_MS = 250;
+
+/** True only for the errors that mean the module is genuinely absent (permanent). Proxy-safe. */
+function isModuleAbsentError(err: unknown): boolean {
+  let msg = '';
+  try { msg = String((err as { message?: unknown } | null)?.message ?? err); } catch { return false; }
+  return /no such module: fts5/i.test(msg) || /no such function: json_valid/i.test(msg);
+}
+
+/**
+ * Whether this SQLite build has FTS5 and json1. Returns false ONLY when the
+ * module is genuinely absent; any other error (SQLITE_IOERR, NOMEM,
+ * INTERRUPT, …) is rethrown so the caller treats it as a transient init
+ * failure instead of detaching a healthy store (spec #280 rev 10 M5).
+ */
+export async function probeFts5(db: SQLiteAdapter, prefix: string): Promise<boolean> {
+  const name = `temp.${prefix}fts5_probe`;
+  try {
+    await db.execAsync(`CREATE VIRTUAL TABLE IF NOT EXISTS ${name} USING fts5(x)`);
+    const row = await db.getFirstAsync<{ ok: number }>(`SELECT json_valid('[]') AS ok`);
+    return row?.ok === 1;
+  } catch (err) {
+    if (isModuleAbsentError(err)) return false;
+    throw err;
+  } finally {
+    try { await db.execAsync(`DROP TABLE IF EXISTS ${name}`); } catch { /* module absent */ }
+  }
+}
+```
+
+and replace `createIndexStrategy`:
+
+```typescript
+/** Resolve the keyword-index strategy for this database. Spec 2026-10-05 §PR-2; failure ordering per spec #280 Change 4. */
+export async function createIndexStrategy(
+  db: SQLiteAdapter,
+  prefix: string,
+  metadataRepo: MetadataRepository,
+  preferred: IndexStrategyPreference,
+): Promise<IndexStrategy> {
+  if (preferred === 'minisearch') {
+    await detachFts5(db, prefix, metadataRepo); // operator's explicit choice
+    return new MiniSearchIndexStrategy();
+  }
+  const attempt = async (): Promise<IndexStrategy | 'absent'> => {
+    if (!(await probeFts5(db, prefix))) return 'absent';
+    const strategy = new Fts5IndexStrategy(db, prefix, metadataRepo);
+    await strategy.init();
+    return strategy;
+  };
+  const absent = async (): Promise<IndexStrategy> => {
+    if (preferred === 'fts5') {
+      throw new Error(`indexStrategy 'fts5' was requested, but this SQLite build lacks FTS5 or json1.`);
+    }
+    await detachFts5(db, prefix, metadataRepo); // module genuinely absent: permanent, MiniSearch is valid
+    return new MiniSearchIndexStrategy();
+  };
+
+  try {
+    const s = await attempt();
+    return s === 'absent' ? absent() : s;
+  } catch (err) {
+    if (preferred === 'fts5') throw err; // pinned: surface the raw failure, unchanged contract
+  }
+  await new Promise((resolve) => setTimeout(resolve, FTS5_INIT_RETRY_MS));
+  try {
+    const s = await attempt();
+    return s === 'absent' ? absent() : s;
+  } catch (err) {
+    // Never detachFts5 here: a transient failure must not drop the ledger and
+    // route a pro-scale store into MiniSearch's full sync (measured OOM).
+    console.warn('[WikiMemory] FTS5 init failed after retry; keyword search unavailable until a later open or syncSearchIndex():', err);
+    return new UnavailableIndexStrategy(err);
+  }
+}
+```
+
+(import `UnavailableIndexStrategy`).
+
+In `SearchService.ts`, after `setIndexStrategy`:
+
+```typescript
+  /** False while the installed strategy is the degraded UnavailableIndexStrategy (spec #280 Change 4). */
+  isKeywordAvailable(): boolean {
+    return !(this.indexStrategy instanceof UnavailableIndexStrategy);
+  }
+```
+
+(import `UnavailableIndexStrategy` from `./search/UnavailableIndexStrategy`).
+
+In `WikiMemory.ts`, replace `syncSearchIndex`:
+
+```typescript
+  async syncSearchIndex(entityId?: string): Promise<void> {
+    if (entityId === undefined) {
+      // A long-lived host that never re-opens still recovers from a failed init (spec #280 Change 4).
+      if (!this.searchService.isKeywordAvailable()) {
+        this.searchService.setIndexStrategy(await createIndexStrategy(
+          this.db, this.prefix, this.metadataRepo, this.options.config?.indexStrategy ?? 'auto'));
+      }
+      return this.searchService.syncStale();
+    }
+    assertEntityId(entityId);
+    return this.searchService.syncEntries(entityId, []);
+  }
+```
+
+- [ ] **Step 4: Run to verify pass** — run `createIndexStrategy.test.ts`, `searchUnavailable.test.ts`, `miniSearchFallback.test.ts`, `fts5IndexStrategy.test.ts`, `fts5Integration.test.ts`, `SearchService.test.ts` (if present), `incrementalSearchIndex.test.ts` — all PASS. Then typecheck.
+- [ ] **Step 5: Commit** — `fix(core): auto FTS init failures retry and degrade to UnavailableIndexStrategy, never detach (#280 RC-6)`
 
 ---
 
-### Task 3: `rebuilding` state + drain-shaped chunked rebuild + orphan sweep in `Fts5IndexStrategy`
-
-**Objective:** Marker-loss/trigger-loss no longer rebuilds in one tx and pays **no DDL floor**; a resumable, conflict-free, drain-shaped chunked rebuild exists with an orphan sweep before the flip; the `drain({deadline, mode, ids})` contract is live.
+### Task A6: the six call sites (spec Change 3 call-site map; 7(e) heal/gate legs, 7(n), 7(n′), 7(o))
 
 **Files:**
-- Modify: `packages/core/src/services/search/Fts5IndexStrategy.ts` (init state machine + rebuild/drain machinery; **delete `rebuildFromSource()`** — :40-42, no callers, and it contradicts "never rebuilds in one tx" — Opus m8)
-- Modify: `packages/core/src/services/search/fts5Sql.ts` (new constants: `REBUILD_WATERMARK_KEY = 'fts5_rebuild_watermark'`, `ORPHAN_SWEEP_CURSOR_KEY = 'fts5_orphan_sweep_cursor'`, `rebuildWindowSql(p)` — the drain-shaped window statements below — and the orphan-sweep SQL; `drainChunkSql` gains the id-targeted `json_each` variant)
-- Modify: `packages/core/src/services/search/IndexStrategy.ts` (:120-128 — rewrite the `drain` doc for `drain(opts?: { deadline?, mode?, ids? })`; both other strategies stay drain-less)
-- Modify: `packages/core/src/services/search/createIndexStrategy.ts` + `WikiMemory.ts:260-261` (**rev 5, Opus plan M4: plumb `entriesExistedBeforeSetup` down** — `WikiMemory.setup()` computes it before `setupDatabase`; pass it through `createIndexStrategy` into `Fts5IndexStrategy.init(opts?: { entriesExisted?: boolean })`; the state-absent + no-entries-table case stamps `live` ONLY when the flag says the store is truly fresh, else enters `rebuilding`)
-- Modify: `packages/core/src/services/search/fts5Sql.ts` / `detachFts5` callers (**rev 5, Opus plan M5: guard the deferred-detach cleanup** — a pending/detached cleanup must no-op when state is `rebuilding`, or re-run the marker checks first, so a slow cleanup pass cannot clobber a store that just entered `rebuilding`)
-- Test: `packages/core/__tests__/fts5Rebuild.test.ts`
+- Modify: `packages/core/src/services/RetrievalService.ts:221-224` (local catch at the `:223` `getKeywordScores` call)
+- Modify: `packages/core/src/services/MaintenanceService.ts` (pre-check right after the `healCandidates.length === 0` early return, ~:818, before `findAllPending`)
+- Modify: `packages/core/src/repositories/EntryRepository.ts` (add `hasStoredEmbedding`)
+- Modify: `packages/core/src/services/librarian/ops/gate.ts` (export `gateNeedsKeyword`)
+- Modify: `packages/core/src/services/librarian/ops/index.ts:30-37` (abort between `selectBatch` and `runExtract`)
+- Test: `packages/core/__tests__/searchUnavailableCallSites.test.ts` (new)
 
-**Design (spec rev 7 is authoritative):**
-- `init(opts?: { entriesExisted?: boolean })` reads state (read-only) + `triggersPresent()` (read-only) + entries-table existence BEFORE any mutation. Cases:
-  - `live` + all triggers → `fts5TablesDdl` no-op guard, return (fast path, unchanged).
-  - `rebuilding` → **verify `triggersPresent()`**; any missing ⇒ restart (re-arm tx, watermark=0); else return (resume; `drain()` continues the rebuild).
-  - marker lost OR any trigger missing (from `live`) → ONE re-arm tx: **run `fts5TriggersDdl`** (writes during rebuild MUST feed the ledger — Opus B-2), **KEEP `fts_map` AND `entries_fts` contents** (stale, not corrupt), **clear ONLY `fts_pending`** (`DELETE FROM fts_pending`), watermark = 0, **orphan-sweep cursor = 0**, state = `rebuilding` — **subject to the re-arm consistency check (rev 5, Opus spec M3): keep-map only if BOTH tables exist AND `max(entries_fts.rowid) <= coalesce(max(fts_map.fts_rowid), 0)`** (the invariant "every surviving entries_fts rowid has a map row" — guarding also the plan-M3 wedge: map lost + FTS alive + naive keep-map ⇒ DELETE misses everything, INSERT hits UNIQUE rowid collisions, rebuild wedges forever). If the check fails, either table is missing, or the tokenizer regex mismatches → DROP+CREATE path (below). **No DROP+CREATE, no 22.3 s DDL floor on the intact marker-loss path.**
-  - state `detached` → re-create ledger tables (`fts5LedgerDropSql` dropped `fts_map`/`fts_pending`) AND **`DROP TABLE IF EXISTS entries_fts` + CREATE**, triggers, watermark=0, cursor=0, state=`rebuilding` — **content arrives via the chunked windows, NOT `rebuildSql`** (**rev 5, Opus plan M6: `rebuildSql` over 1M rows is a ~125 s single tx reintroducing RC-1; `rebuildSql` is deleted from init entirely**, alongside `rebuildFromSource`).
-  - state absent AND `entriesExisted` is false (truly fresh store — flag plumbed from `WikiMemory.setup()`, rev 5/M4) → create + stamp `live`; state absent AND `entriesExisted` true (pre-FTS store, the Acceptance-6 foreign-store shape) → full re-arm + enter `rebuilding`.
-  - **tokenizer/DDL mismatch** (detect by regexing the `tokenize=` clause of the stored `sqlite_master` DDL vs current `fts5TablesDdl` — raw comparison ALWAYS mismatches because `sqlite_master` drops `IF NOT EXISTS`, mirroring `WikiMemory.ts:277`): `DROP TABLE IF EXISTS entries_fts` + CREATE, clear `fts_map`/`fts_pending`, watermark=0, cursor=0, `rebuilding` (the only DROP+CREATE cases: this, failed consistency check, detached re-attach — each keeps the 22.3 s @1M floor as its accepted bound).
-- **`drain(opts?: { deadline?: number; mode?: 'ledger' | 'full'; ids?: readonly string[] }): Promise<void>`** — deadline = absolute ms timestamp. Sequence:
-  1. **ids-first (read-your-writes, Opus delta M3):** if `ids` non-empty, one id-targeted chunk tx — `chunkIds = SELECT id FROM fts_pending WHERE id IN (SELECT value FROM json_each(?))` — running the same drainChunkSql statement shape bound to those ids. (The "newest seq window" phrasing is RETIRED — it can miss the caller's rows under >500 concurrent writes.)
-  2. **Ledger drain:** chunk txs from `drainChunkSql` until ledger empty or deadline.
-  3. **Rebuild chunks ONLY when `mode: 'full'` AND `fts5_index_state === 'rebuilding'`** (state gate: a `live` store never reads the watermark; `mode: 'ledger'` never runs rebuild chunks). Arbitration: ledger first, then rebuild chunks with the remainder; **at least one rebuild chunk per full quantum unless the drain overran the deadline** (bounds worst case at budget + 2 × max chunk — Opus delta m1).
-- **Rebuild window = drain-shaped, per rowid window** (new `rebuildWindowSql(p)`; every statement binds lo/hi; run in ONE tx with the watermark advance):
-  - `chunkIds = SELECT id FROM entries WHERE rowid > ? AND rowid <= ?`
-  - `DELETE FROM entries_fts WHERE rowid IN (SELECT m.fts_rowid FROM fts_map m WHERE m.id IN (chunkIds))`
-  - `DELETE FROM fts_map WHERE id IN (chunkIds)`
-  - `INSERT INTO fts_map (id, entity_id) SELECT e.id, e.entity_id FROM entries e WHERE e.id IN (chunkIds) AND e.deleted_at IS NULL`
-  - `INSERT INTO entries_fts (rowid, id, entity_id, title, body, tags) SELECT m.fts_rowid, e.id, … FROM fts_map m JOIN entries e ON e.id = m.id WHERE e.id IN (chunkIds)`
-  - watermark = hi.
-  **Conflict-free GIVEN the map invariant (rev 5/Opus spec M3):** a row ledger-drained ahead of its window has no ledger row at window time, and its map/FTS rows are deleted+re-inserted by its window anyway; `fts_rowid` (INTEGER PRIMARY KEY, no AUTOINCREMENT) never collides with surviving rows because each window deletes its own ids' FTS rows before inserting. The invariant ("every surviving entries_fts rowid has a map row") is GUARDED at re-arm by the consistency check (init Design above) rather than assumed. No `INSERT OR IGNORE`, no `max(fts_rowid)` bookkeeping (the rev-3 approach is superseded). Re-doing a window after crash is a no-op.
-- **Window bounds:** hi = `SELECT max(rowid) FROM (SELECT rowid FROM entries WHERE rowid > ? ORDER BY rowid LIMIT 500)`; **empty-table guard:** `max(rowid)` NULL ⇒ complete (m5).
-- **Orphan sweep (rev 5 = spec rev 7, cursor-based — REQUIRED before the `live` flip):** windows walk `entries.rowid`, so rows whose entry was hard-deleted (`runPrune`) or id-changed while triggers were down are never visited. The sweep is **cursor-based** (Opus spec-cycle-2 M4, replacing the rev-4 "final quantum runs the whole sweep first" shape, which added an unbounded tail to one quantum): meta key `fts5_orphan_sweep_cursor`, initialized to 0 at every transition INTO `rebuilding`, snapshot = `max(fts_map.fts_rowid)` taken once at init; each full quantum, after rebuild chunks, one bounded sweep tx runs `DELETE FROM entries_fts WHERE rowid IN (SELECT fts_rowid FROM fts_map WHERE fts_rowid > ? AND fts_rowid <= ? AND id NOT IN (SELECT id FROM entries))` + the matching map-row delete, advancing the cursor atomically in the same tx. Sweep completes when cursor ≥ snapshot. **Completion condition (three clauses, all re-checked inside the flipping tx): watermark ≥ max(entries.rowid) AND orphan-sweep cursor ≥ snapshot AND `fts_pending` empty — the flipping tx first drains any residual ledger rows INSIDE the tx (rev 7 m2: a steady trickle of writes cannot starve the flip indefinitely).** New map rows added during the rebuild cannot be orphans (their windows insert from live entries), so the init-time snapshot is sound.
-- **Entry-point plumbing (corrected paths, Opus delta m1):** `setup()` → full quantum (normalize in the migration open, then ledger drain + rebuild chunks); **no-arg `syncSearchIndex()` → `syncStale()` → `drainTurn`** → full quantum; `syncEntries`/per-entity `sync(id)` (write-triggered) → **`mode: 'ledger'`** with the write's own `ids` first (a write must not pay ~2.5 s, and never runs rebuild chunks — Opus M-1). (`SearchService.drainTurn` currently calls `this.indexStrategy.drain!()` at :105/:127/:177/:255 — rethread to pass `{ deadline, mode, ids }`.)
-- **Interim budget:** until Task 4 wires config, full quanta use the default 1500 ms constant (exported `DEFAULT_SETUP_BUDGET_MS`) — this keeps the broad suites green at this task's Step 4.
-- **VACUUM guard (Opus M-6, extended per delta M4):** `MetadataRepository.vacuum()` (:160-162) records `fts_rebuild_post_vacuum = 1` in meta when run while state is `rebuilding` OR the `source_ref_normalize_watermark` key exists; the next `init()`/migration-open sees the flag, resets BOTH watermarks to 0, clears the flag (windows are idempotent), and the rebuild/migration restarts. (Renumbered rowids would otherwise silently skip ranges.)
+**Interfaces:**
+- Consumes: `SearchService.isKeywordAvailable()`, `WikiSearchUnavailableError`, `isWikiSearchUnavailableError` (A5).
+- Produces:
+  - `EntryRepository.hasStoredEmbedding(entityId: string): Promise<boolean>`;
+  - `gateNeedsKeyword(deps, entityId: string): Promise<boolean>` (exported from `gate.ts`; `deps` typed exactly like `gateCandidates`' first parameter).
 
-- [ ] **Step 1: Write failing tests** (real better-sqlite3 adapter, small stores ≤2k rows — reuse the fixture pattern from `.sandbox/leg-smoke-fixture.ts` if helpful):
-  1. marker-loss store → init leaves state `rebuilding`, **all three triggers present** (Opus B-2), watermark 0, **`fts_pending` empty; `fts_map` AND `entries_fts` contents INTACT** — search returns stale-but-nonempty results; search does not throw; **no DROP+CREATE occurred** (assert `sqlite_master` DDL/sql rows unchanged).
-  2. `drain({ mode: 'full' })` advances the watermark; repeated drains complete the rebuild; final state `live`; exactly-once (map count = live entries; no dup ids); stale rows for soft-deleted entries are gone from their windows.
-  3. resume: `rebuilding` store with watermark=K (constructed directly) → init does NOT reset the watermark; drain resumes from K; exactly-once. **Resume with a dropped trigger ⇒ restart from 0** (Opus B-2).
-  4. completion requires drained ledger AND completed orphan-sweep cursor: pending ledger rows keep state `rebuilding` until drained; **a cursor below its snapshot keeps it `rebuilding` even with an empty ledger and a complete watermark**; **the flip tx drains residual ledger rows inside the tx — with a steady per-quantum trickle of writes, the flip still happens (no starvation, rev 7 m2)**; **all three clauses re-checked inside the flip tx**.
-  5. **conflict-free / drain-before-window (7a):** update a row ABOVE the watermark, drain (its id reaches the map via the ledger), then let its window run → no UNIQUE throw, no duplicate.
-  6. **read-your-writes under backlog (7m):** 5k-row ledger backlog + one write → `syncEntries` returns → the written fact is searchable immediately (ids-first `json_each` chunk).
-  7. tokenizer-mismatch store (corrupt stored DDL `tokenize=` clause) → init takes the DROP+CREATE floor path; marker-loss does NOT.
-  7b. **consistency-check case (rev 5/Opus spec M3 + plan M3):** externally corrupted store — `entries_fts` holds a rowid > `max(fts_map.fts_rowid)` → re-arm takes the DROP+CREATE path, not keep-map; also `fts_map` missing while `entries_fts` has rows → DROP+CREATE (no wedge).
-  8. detached re-attach (`auto`) → ledger tables re-created + `entries_fts` DROP+CREATE + triggers + **content via chunked windows (NO `rebuildSql` single tx — assert via long-tx spy or by chunked watermark advancement, rev 5/plan M6)**; converges to `live`.
-  9. pre-FTS store (state absent, `entriesExisted: true`) → enters `rebuilding` with full re-arm; truly fresh (`entriesExisted: false`) → `live` directly (**flag plumbed from setup(), rev 5/plan M4**).
-  9b. **deferred-detach guard (rev 5/plan M5):** a pending detach/cleanup running against a store that meanwhile entered `rebuilding` no-ops (state `rebuilding` survives; watermark intact).
-  10. **orphan sweep (7g′ unit half):** with triggers down, hard-delete one entry (`runPrune`) and rename another's id-shape; re-arm + converge → the deleted row is NOT searchable, the renamed row IS (under its new id), `fts_map` has no orphan rows.
-  11. **write during `rebuilding` returns quickly** (wall < 300 ms for a write against a 2k rebuilding store) and runs `mode: 'ledger'` only — **rebuild chunks never run in a write-triggered turn** (7i half).
-  12. `drain({ mode: 'full' })` on a `live` store: ledger drains, watermark never consulted (state gate).
-  13. VACUUM guard: set `fts_rebuild_post_vacuum`, reopen → watermark reset, rebuild restarts (Opus M-6).
-  14. **interim map truncation documented (Opus spec-cycle-2 M1):** with weight < 1 during a mid-rebuild state, `getKeywordScores` returns scores over the TRUNCATED map (assert behavior + assert the window is bounded: weight<1 reads during rebuild complete; document in Task 3's commit body — accepted tradeoff vs the 693 s baseline).
-- [ ] **Step 2: Run to verify failure.**
-- [ ] **Step 3: Implement** per Design. **Decisions the reviews pinned:** state gate (`rebuilding` only); drain-shaped windows (no OR IGNORE/max-fts_rowid); orphan sweep before the flip; ids-first via `json_each`; `DEFAULT_SETUP_BUDGET_MS` interim constant.
-- [ ] **Step 4: Run to verify pass** + `fts5IndexStrategy.test.ts`, `fts5Integration.test.ts`, `fts5Sql.test.ts`, `SearchService.test.ts` green, **plus the setup()-then-search suites: `WikiMemory.test.ts`, `searchParity.test.ts`, `incrementalSearchIndex.test.ts`, `importDump.test.ts`** (fresh stores must still yield a complete index on first open), then the full core suite with the baseline gate (Global Constraints). Update any test asserting the old single-tx rebuild — note it in the commit body.
-- [ ] **Step 5: Commit** — `feat(core): resumable drain-shaped FTS rebuild with cursor-based orphan sweep in rebuilding state (#280 RC-1/RC-3)`
+Sites `:189` (prefilter), `:550` and `:719` need NO code change: they already propagate through the `:668` catch → `onRetrievalFallback` → `:719` throw. They are pinned by tests only. `gate.ts:143` mid-pass needs no change either (the throw already aborts the pass with the watermark kept); it is pinned by a test.
+
+- [ ] **Step 1: Write the failing tests**
+
+```typescript
+// packages/core/__tests__/searchUnavailableCallSites.test.ts
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { WikiMemory } from '../src/WikiMemory';
+import { Fts5IndexStrategy } from '../src/services/search/Fts5IndexStrategy';
+import { openTestDatabase } from './helpers/sqliteAdapter';
+import type { WikiDiagnostic, WikiOptions } from '../src/types';
+
+afterEach(() => vi.restoreAllMocks());
+const P = 'llm_wiki_';
+const vec = async (t: string) => (/apple/i.test(t) ? [1, 0, 0] : [0, 0, 1]);
+
+async function wikiWith(options: Partial<WikiOptions>) {
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  vi.spyOn(Fts5IndexStrategy.prototype, 'init').mockRejectedValue(new Error('locked'));
+  const db = openTestDatabase();
+  const diagnostics: WikiDiagnostic[] = [];
+  const generateText = vi.fn(async () => '{"facts":[],"tasks":[]}');
+  const wiki = new WikiMemory(db, {
+    llmProvider: { generateText, ...(options.llmProvider ?? {}) },
+    config: options.config,
+    onDiagnostic: (d) => diagnostics.push(d),
+    onRetrievalFallback: options.onRetrievalFallback,
+  } as WikiOptions);
+  await wiki.setup();
+  await db.runAsync(`INSERT OR REPLACE INTO ${P}meta (key, value) VALUES ('embedding_dimension', '3')`);
+  return { db, wiki, diagnostics, generateText };
+}
+async function factWithVec(db: ReturnType<typeof openTestDatabase>, id: string, title: string, v: number[], sourceType = 'user_stated') {
+  await db.runAsync(
+    `INSERT INTO ${P}entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at, embedding_blob)
+     VALUES (?, 'u', ?, 'b', '[]', 'inferred', ?, 1, 1, ?)`,
+    [id, title, sourceType, new Uint8Array(new Float32Array(v).buffer)]);
+}
+
+describe('keyword outage call-site map', () => {
+  it('(n′) hybrid blend (:223) degrades to vector-only results', async () => {
+    const { db, wiki } = await wikiWith({ llmProvider: { embed: vec } as any });
+    await factWithVec(db, 'f-apple', 'apple fruit', [1, 0, 0]);
+    const r = await wiki.read('u', 'apple', { hybridWeight: 0.5 });
+    expect(r.facts[0]?.id).toBe('f-apple');
+  });
+
+  it('(n) prefilter host (:189) propagates via the two-hop path and fires onRetrievalFallback', async () => {
+    const onRetrievalFallback = vi.fn();
+    const { db, wiki } = await wikiWith({ llmProvider: { embed: vec } as any, config: { preFilterLimit: 10 } as any, onRetrievalFallback });
+    await factWithVec(db, 'f-apple', 'apple fruit', [1, 0, 0]);
+    const embeddingLoad = vi.spyOn((wiki.__testAccess as any).entryRepo, 'findWithEmbeddingsByEntityIds');
+    await expect(wiki.read('u', 'apple')).rejects.toMatchObject({ name: 'WikiSearchUnavailableError' });
+    expect(onRetrievalFallback).toHaveBeenCalled();
+    expect(embeddingLoad).not.toHaveBeenCalled(); // no full-candidate embedding load
+  });
+
+  it('keyword-only read (no embed provider) propagates (:550/:719)', async () => {
+    const { wiki } = await wikiWith({});
+    await expect(wiki.read('u', 'apple')).rejects.toMatchObject({ name: 'WikiSearchUnavailableError' });
+  });
+
+  it('(o) heal skips the LLM pass: one diagnostic, no generateText, no heal_checked_at stamps', async () => {
+    const { db, wiki, diagnostics, generateText } = await wikiWith({});
+    await factWithVec(db, 'c1', 'inferred thing', [0, 0, 1], 'librarian_inferred');
+    await wiki.runHeal('u');
+    expect(generateText).not.toHaveBeenCalled();
+    expect(diagnostics.filter((d) => d.code === 'heal_skipped' && d.detail?.reason === 'keyword_search_unavailable')).toHaveLength(1);
+    const row = await db.getFirstAsync<{ heal_checked_at: number | null }>(`SELECT heal_checked_at FROM ${P}entries WHERE id = 'c1'`);
+    expect(row!.heal_checked_at).toBeNull();
+  });
+
+  it('(e-gate i) a pass that cannot need keyword mode RUNS during an outage', async () => {
+    const { db, wiki, generateText } = await wikiWith({ llmProvider: { embed: vec } as any, config: { autoLibrarianThreshold: 1000, librarian: { strategy: 'ops' } } as any });
+    await factWithVec(db, 'f-apple', 'apple fruit', [1, 0, 0]);
+    await db.runAsync(`INSERT INTO ${P}events (id, entity_id, event_type, summary, created_at) VALUES ('evt_1','u','observation','apple',100)`);
+    await wiki.runLibrarian('u').catch(() => {});
+    expect(generateText).toHaveBeenCalled(); // extraction happened
+  });
+
+  it('(e-gate ii) a pass that could need keyword mode aborts before runExtract, watermark kept', async () => {
+    const { db, wiki, generateText } = await wikiWith({ config: { autoLibrarianThreshold: 1000, librarian: { strategy: 'ops' } } as any }); // no embed provider
+    await db.runAsync(`INSERT INTO ${P}events (id, entity_id, event_type, summary, created_at) VALUES ('evt_1','u','observation','apple',100)`);
+    await wiki.runLibrarian('u').catch(() => {});
+    expect(generateText).not.toHaveBeenCalled();
+    expect(await (wiki.__testAccess as any).metadataRepo.getLibrarianWatermark('u')).toBeNull();
+  });
+
+  it('(e-gate mid-pass) an embed failure routes a candidate into keyword mode at :143 → abort, watermark kept', async () => {
+    // Embed provider present + stored vectors ⇒ the pre-check lets the pass run;
+    // the candidate's embed then fails, gate.ts falls through to searchKeyword,
+    // which throws WikiSearchUnavailableError and aborts the pass.
+    const failingEmbed = async () => { throw new Error('embed down'); };
+    const { db, wiki, generateText } = await wikiWith({ llmProvider: { embed: failingEmbed } as any, config: { autoLibrarianThreshold: 1000, librarian: { strategy: 'ops' } } as any });
+    await factWithVec(db, 'f-apple', 'apple fruit', [1, 0, 0]);
+    await db.runAsync(`INSERT INTO ${P}events (id, entity_id, event_type, summary, created_at) VALUES ('evt_1','u','observation','apple',100)`);
+    generateText.mockResolvedValueOnce(JSON.stringify({ facts: [{ title: 'apple pie', body: 'b', tags: [], confidence: 'certain', source_event: 'e1' }], tasks: [] }));
+    await wiki.runLibrarian('u').catch(() => {});
+    expect(generateText).toHaveBeenCalledTimes(1); // extraction only; no resolve call
+    expect(await (wiki.__testAccess as any).metadataRepo.getLibrarianWatermark('u')).toBeNull();
+    expect((await db.getAllAsync(`SELECT 1 FROM ${P}entries`)).length).toBe(1); // no new rows
+  });
+});
+```
+
+Fixture facts (verified 2026-10-12):
+- `onRetrievalFallback?: (error: Error) => void` is a top-level `WikiOptions` field (`types.ts:872`).
+- Heal candidates are live, non-`immutable_document` rows with `heal_checked_at IS NULL OR ≤ cutoff` (`EntryRepository.ts:635-647`), so the `librarian_inferred` fixture row qualifies.
+- If the ops pass needs `embedding_dimension` to match the stored vector length, the `wikiWith` helper already sets it to 3.
+
+- [ ] **Step 2: Run to verify failure** — expected FAIL on (n′), (o) and (e-gate ii). The other cases may already pass; they pin existing propagation and must stay green.
+- [ ] **Step 3: Implement**
+
+`RetrievalService.ts` (the full-scan `else` branch):
+
+```typescript
+            if (weight !== undefined && weight < 1) {
+              try {
+                miniSearchScores = await this.searchService.getKeywordScores(trimmedQuery, scoredEntityIds);
+              } catch (err) {
+                // Keyword outage degrades the blend, not the read (spec #280 call-site map, :223).
+                if (!isWikiSearchUnavailableError(err)) throw err;
+                miniSearchScores = new Map();
+              }
+            }
+```
+
+(import `isWikiSearchUnavailableError` from `../types`).
+
+`EntryRepository.ts`:
+
+```typescript
+  /** Whether the entity has at least one live row with a stored vector (librarian gate pre-check, spec #280). */
+  async hasStoredEmbedding(entityId: string, tx?: SQLiteAdapter): Promise<boolean> {
+    const executor = this.getExecutor(tx);
+    const row = await executor.getFirstAsync<{ one: number }>(
+      `SELECT 1 AS one FROM ${this.prefix}entries
+       WHERE entity_id = ? AND deleted_at IS NULL AND (embedding_blob IS NOT NULL OR embedding IS NOT NULL) LIMIT 1`,
+      [entityId],
+    );
+    return row != null;
+  }
+```
+
+`gate.ts` (exported next to `gateCandidates`; give `deps` the same type annotation `gateCandidates` uses):
+
+```typescript
+/**
+ * Whether a gate pass for this entity could route a candidate into keyword
+ * mode (gate.ts step 4): no embed provider, or no stored vectors to rank
+ * against. An embed failure mid-pass is the remaining route; it surfaces as a
+ * WikiSearchUnavailableError from searchKeyword and aborts the pass the same
+ * way (spec #280 rev 10 M4).
+ */
+export async function gateNeedsKeyword(deps: Parameters<typeof gateCandidates>[0], entityId: string): Promise<boolean> {
+  if (typeof deps.options.llmProvider.embed !== 'function') return true;
+  return !(await deps.entryRepo.hasStoredEmbedding(entityId));
+}
+```
+
+`ops/index.ts`, between the `sel.batch.length === 0` return and `let ex;`:
+
+```typescript
+  // Keyword outage: abort BEFORE paying for extraction, but only when this
+  // pass could need keyword mode — an unconditional abort would stall the
+  // librarian and hold back event pruning indefinitely (spec #280 rev 10 M4).
+  // Throwing keeps the watermark, like resolve's transient-error abort.
+  if (!deps.searchService.isKeywordAvailable() && (await gateNeedsKeyword(deps, entityId))) {
+    throw new WikiSearchUnavailableError('librarian: keyword search unavailable and this pass may need it; retry the pass');
+  }
+```
+
+(import `gateNeedsKeyword` from `./gate` and `WikiSearchUnavailableError` from `../../../types`. If `deps` lacks `searchService` at this point, check `gate.ts:142` — it uses `deps.searchService`, so the field exists on the same deps object.)
+
+`MaintenanceService.ts`, immediately after the `if (healCandidates.length === 0) { … }` block:
+
+```typescript
+    // Keyword outage: heal anchors need keyword search (:1542), so skip the
+    // LLM pass entirely — no spend, no mutation, no heal_checked_at stamps;
+    // candidates stay unattempted (spec #280 call-site map). The orphan/stale
+    // SQL passes above did run; sync their ids as the empty-candidate path does.
+    if (!this.searchService.isKeywordAvailable()) {
+      await this.searchService.syncEntries(entityId, Array.from(new Set([...orphanedIds, ...staleDowngradedIds])));
+      this.searchService.evictCache(entityId);
+      emitDiagnostic(this.options, { ...diagBase, code: 'heal_skipped', detail: { reason: 'keyword_search_unavailable', count: healCandidates.length } });
+      const counts = await this.entryRepo.countHealCandidatesByEntityId(entityId, recheckCutoff);
+      return {
+        scanned: 0,
+        downgraded: staleDowngradedIds.length,
+        deleted: orphanedIds.length,
+        newFactsCreated: 0,
+        skipped: [], degraded: [], remaining: counts.eligible, deferred: counts.deferred,
+      };
+    }
+```
+
+Update the `heal_skipped` description in `utils/diagnostics.ts:50` to `'Heal skipped a candidate fact, or the whole LLM pass when keyword search is unavailable.'`.
+
+- [ ] **Step 4: Run to verify pass** — run `searchUnavailableCallSites.test.ts`, `hybridScoring.test.ts`, `opsLibrarian.test.ts`, `healAnchorBounding.test.ts`, `healBounding.test.ts`, `diagnosticsMaintenance.test.ts`, `embeddingRetrieval.test.ts` — all PASS. Then typecheck.
+- [ ] **Step 5: Commit** — `fix(core): pin keyword-outage behavior at all six search call sites (#280 RC-6)`
 
 ---
 
-### Task 4: `setupBudgetMs` config + one-deadline-per-open + arbitration
-
-**Objective:** The quantum is time-boxed; the deadline is captured ONCE per open and threaded through; write turns stay drain-only.
+### Task A7: docs + full-suite gate
 
 **Files:**
-- Modify: `packages/core/src/types.ts:342` area (add `setupBudgetMs?: number` to the config type with `@default 1500`)
-- Modify: `packages/core/src/services/SearchService.ts` (`setIndexStrategy(strategy, opts?: { budgetMs?: number })` stores `drainBudgetMs`; `sync/drainTurn/syncStale` accept `opts?: { deadline?: number; ids?: readonly string[] }` and forward `{ deadline, mode, ids }` to `drain` — a call WITHOUT an explicit deadline computes `Date.now() + drainBudgetMs` at turn start; per-turn re-budgeting of an open-supplied deadline is forbidden, M-3 holds)
-- Modify: `packages/core/src/WikiMemory.ts` (setup(): capture `openDeadline = Date.now() + (config.setupBudgetMs ?? DEFAULT_SETUP_BUDGET_MS)` ONCE after migrations start; pass it to the migration runner and to the post-migration `sync({ deadline: openDeadline })` at :311-320)
-- Test: `packages/core/__tests__/rebuildBudget.test.ts`
+- Modify: `packages/core/src/types.ts:330-342` (`indexStrategy` doc)
+- Modify: `packages/core/src/WikiMemory.ts` (JSDoc on `setup`)
+- Modify: `packages/core/README.md` (or the package's existing configuration doc — find it with `grep -rln "indexStrategy" packages/core/*.md docs/ 2>/dev/null`)
 
-- [ ] **Step 1: Failing tests:**
-  1. `setupBudgetMs: 1` on a 2k-row rebuilding store → a full-quantum `drain()` returns after ~1 ms of chunk work with watermark advanced but < max; repeated calls converge.
-  2. Arbitration (7i): on a store with BOTH pending ledger rows and rebuild windows remaining, one quantum drains the ledger first (assert ledger empty before any rebuild-window insert when both fit; when only the ledger fits, ledger drained and watermark untouched); **at least one rebuild chunk still runs when the drain did not overrun the deadline** (forced-final-chunk rule).
-  3. Default: config absent → budget 1500 (assert via exported default constant or behavior proxy).
-  4. One-deadline-per-open: setup() with a tiny budget on a store with normalize work → the post-migration sync honors the SAME deadline captured at open start (no fresh per-turn budget) — observable via total open wall ≤ normalize + one budget + 2 × max chunk, not normalize + 2 × budget per turn. **Clock note (rev 5 plan-minor): the absolute timestamp uses `Date.now()`; wall-clock steps could shorten a quantum — acceptable (fail-safe direction: less work per turn, convergence via next open; never extends the fence).**
-- [ ] **Step 2: Verify failure. Step 3: Implement. Step 4: Verify pass** + full search-suite files green.
-- [ ] **Step 5: Commit** — `feat(core): setupBudgetMs quantum with one-deadline-per-open and drain-first arbitration (#280 RC-5)`
+- [ ] **Step 1:** Replace the last paragraph of the `indexStrategy` doc:
 
----
+```typescript
+   * FTS5 keeps its index inside the database file, fed by triggers on the
+   * entries table, so memory stays flat at any size. If FTS5 init fails
+   * transiently under 'auto', setup() retries once and then completes with
+   * keyword search unavailable (queries throw WikiSearchUnavailableError);
+   * it never demotes to MiniSearch. MiniSearch is used only when pinned or
+   * when the SQLite build lacks FTS5/json1 — and it holds all entry text in
+   * the JS heap: the measured ceiling is ~1M entries on a default Node heap
+   * (raise --max-old-space-size for larger stores).
+```
 
-### Task 5: v14 migration + stamped source_ref normalize (RC-2 source_ref half, RC-7)
+- [ ] **Step 2:** Add JSDoc above `setup(opts?)`:
 
-**Objective:** The every-open GLOB scan + unbounded normalize tx become a one-time, resumable, run-to-completion migration with a version-qualified stamp.
+```typescript
+  /**
+   * Opens the store: schema migrations, one-time source_ref normalize, and
+   * the keyword index. On an up-to-date store this does only index probes.
+   * Pass `{ migrations: 'refuse' }` from inside a writer lease: pending
+   * one-time work then throws WikiMigrationRequiredError before any mutation,
+   * and the host runs a plain `setup()` outside the lease.
+   */
+```
 
-**Files:**
-- Modify: `packages/core/src/db/migrations.ts` (append v14 entry; `CURRENT_SCHEMA_VERSION` auto-derives. v14 also defines/creates the partial legacy index — **Task 5 owns creating the shared DDL constant in `schema.ts`; Task 6 consumes it**)
-- Modify: `packages/core/src/repositories/EntryRepository.ts` (**rev 5/Opus spec m7: the window query selects `(rowid, source_ref)` and the violating predicate is applied in TypeScript — `normalizeSourceRef(v) !== v` — replacing `findRowsForSourceRefMigration` and any SQL GLOB predicate**: `normalizeSourceRef` trims BEFORE truncating (`pure.ts:909`), so a value with a space at position 255 passes any GLOB test while normalizing differently; predicate-vs-algorithm drift is the bug class, and comparing against the actual algorithm in JS eliminates it. The old method is deleted — no other callers after this task. Rows whose ref normalizes to NULL are **written NULL** (kept deliberately; note `source_ref_index` treats NULL as distinct — no unique-constraint hazard, rev 5 plan-m4 note))
-- Modify: `packages/core/src/WikiMemory.ts:301-309` (replace ONLY the normalize block; **keep :297-299 — the `assertNoLegacySourceTypes()` fail-closed check stays in `setup()` unchanged**, per spec Change 2)
-- Test: `packages/core/__tests__/migration14.test.ts`, `packages/core/__tests__/migration13.test.ts` (**existing file asserts current version = 13 at :39-40,:63 — update to 14**, Opus m4), extend `packages/core/__tests__/wikiMemory*.test.ts` (whatever file covers setup() — locate via `search_files` for `assertNoLegacySourceTypes` in `__tests__`)
-
-**Design:**
-- Stamp meta key: `source_ref_normalize_stamp`, JSON `{ schema_version: 14, normalize_alg: 1 }` (`normalize_alg` = id of the current `normalizeSourceRef` semantics; bump on any future change). Constant `SOURCE_REF_NORMALIZE_ALG = 1` exported from `migrations.ts`. Watermark meta key: `source_ref_normalize_watermark` (named per rev 6 m5).
-- v14 `run()`: `CREATE INDEX IF NOT EXISTS` partial legacy index (Task 6's DDL — define it once in `schema.ts` as an exported constant and reuse) + init normalize watermark meta (`source_ref_normalize_watermark` = 0). NO normalize loop inside `run()` (a migration must not be an unbounded tx).
-- **Completion + watermark lifecycle (Opus M2, spec rev 6 m5):** "done" = **watermark ≥ `SELECT max(rowid)`**, checked inside the final chunk's tx; that tx writes the stamp **AND deletes `source_ref_normalize_watermark`** — one invariant, never a stale residue (a stale final watermark + later alg bump would "resume" past everything and stamp without scanning; the flip-tx deletion is stated here ONCE). Missing watermark ⇒ 0.
-- **Runs to completion, not budget-deferred (Opus M7 / delta M3, spec rev 6):** the normalize loop executes all windows in the migration open — chunked txs, but NOT bounded by `setupBudgetMs` (a mixed normalized/raw window breaks `hasChanged` (false "changed") and `forget({sourceRef})`, and can trip `source_ref_index`'s unique constraint). It shares the openDeadline only in the bookkeeping sense that both finish within the same open (Task 4); the budget governs the post-migration sync quantum after normalize completes.
-- Rows whose ref normalizes to NULL are **written NULL** (today's `updateSourceRefByRowid` behavior — keep it; Opus m3).
-- **Empty-table guard:** `max(rowid)` NULL (empty entries) ⇒ complete immediately, stamp, delete watermark (Opus m5).
-- **VACUUM guard covers the normalize watermark (7p, Opus delta M4):** the Task 3 flag mechanism applies mid-migration too — a post-VACUUM migration open resets the normalize watermark and restarts the scan.
-- `setup()` (after migrations, replacing :301-309): read stamp. If present AND `normalize_alg` matches current → skip entirely. Else run the completion loop above. Skip condition keys ONLY on stamp state, never on `schema_version < 14` (self-heals `version=14, stamp missing`).
-- Fresh-store fast path (`WikiMemory.ts:266-268`): after setting `schema_version = CURRENT`, also write the stamp + rely on `setupDatabase`'s `IF NOT EXISTS` for the index (Task 6).
-
-- [ ] **Step 1: Failing tests:**
-  1. v14 migration on a v13 store: runs, creates the partial index, watermark initialized, `CURRENT_SCHEMA_VERSION === 14`.
-  2. Store with 10 violating refs → first setup normalizes ALL of them, writes the stamp; second setup performs ZERO violation scans (assert via sqlite trace or by counting `updateSourceRefByRowid` calls with a spy).
-  3. **255-char predicate gap closed:** a row with `length(source_ref) > 255` is found and normalized by the window scan (the old GLOB predicate missed it).
-  4. Stamp present but `normalize_alg: 0` → one full rescan to completion (finds nothing, re-stamps, **watermark deleted**).
-  4b. **trim-before-truncate case (rev 5/Opus spec m7):** a row whose ref has a space at position 255 (passes any GLOB predicate unchanged, normalizes differently) IS found by the TS-side scan and rewritten.
-  4c. **harness rule (Opus spec-cycle-2 M2):** every acceptance/migration test asserts via the public surface (`wiki.setup()` result state, `forget({sourceRef})`, `hasChanged`) — no direct DB/index manipulation.
-  5. Stamp deleted, version=14 → self-heals: rescans, re-stamps, watermark deleted.
-  6. >500 violating rows → multiple chunk txs, **all within one open regardless of `setupBudgetMs`** (completion test: `setupBudgetMs: 1`, all refs still normalized); exactly-once final state; watermark key **absent** after stamping (Opus M2).
-  7. Empty entries table → completes immediately, stamped, no error (NULL rowid guard, m5).
-  8. `importDump` regression (Task 2b): dump JSON with a violating ref → imported store's ref is normalized.
-- [ ] **Step 2: Verify failure. Step 3: Implement. Step 4: Verify pass** + `migrations.test.ts` + `migration13.test.ts` green (both assert ascending order + CURRENT — v14 must extend, not break, those).
-- [ ] **Step 5: Commit** — `feat(core): v14 stamped source_ref normalize migration with TS-side violating-row scan (#280 RC-2/RC-7)`
+- [ ] **Step 3:** Add a "Opening inside a writer lease" subsection to the package doc with the host procedure from spec Change 1 (open with `'refuse'` → on `WikiMigrationRequiredError` release the lease → run `setup()` out of lease → re-open).
+- [ ] **Step 4:** Run the full core suite (gate per Global Constraints vs the Task A0 baseline), typecheck, then `pnpm -r build`. All clean.
+- [ ] **Step 5: Commit** — `docs(core): document the migration gate and the MiniSearch memory ceiling (#280)`
 
 ---
 
-### Task 6: Partial covering index for the legacy probe (RC-2 source_type half)
+### Task A8 (controller): measurements, spec record, PR-A ready
 
-**Objective:** The legacy `source_type` check hits a near-free partial index; fail-closed throw unchanged.
-
-**Files:**
-- Modify: `packages/core/src/db/schema.ts` (add to `setupDatabase` DDL: `CREATE INDEX IF NOT EXISTS ${prefix}entries_legacy_source_type_idx ON ${prefix}entries(source_type) WHERE source_type IN ('user_document', 'agent_inferred');`)
-- Modify: `packages/core/src/repositories/EntryRepository.ts:1211-1218` — no query change needed (verify the planner uses the index; the predicate matches the index's WHERE)
-- Test: `packages/core/__tests__/legacyProbeIndex.test.ts`
-
-- [ ] **Step 1: Failing test:** build a store ≥1k rows with none legacy → `EXPLAIN QUERY PLAN` for the `hasLegacySourceTypes` query mentions `entries_legacy_source_type_idx`; `hasLegacySourceTypes()` returns false in O(index) (assert plan, not timing). Insert one `'user_document'` row → returns true (probe correctness).
-- [ ] **Step 2: Verify failure** (plan shows full scan). **Step 3: Implement** (schema DDL + confirm v14/task-5 reuse the same DDL constant). **Step 4: Verify pass.**
-- [ ] **Step 5: Commit** — `perf(core): partial covering index for the legacy source_type probe (#280 RC-2)`
+- [ ] **Step 1: @1M normalize measurement** (`ISSUE280_STORE_DIR=$HOME/issue280-stores`, never `/tmp`). On the 1M NVMe store: remove the stamp, run `setup()` (default), record total normalize wall, rows/s, and the max chunk-tx commit time. Then run `setup({ migrations: 'refuse' })` on an unstamped copy and record the gate-trip wall (expected ≪ 1 s).
+- [ ] **Step 2: Acceptance 1:** warm open @1M, warm and cold page cache, using `.sandbox/profile-setup.ts`. Targets: ≤ 1 s warm, ≤ 3 s cold.
+- [ ] **Step 3:** Append spec **rev 12** (review log + Acceptance 6 derivation input: normalize@1M × 4.2, gate-trip wall, Acceptance 1 numbers). Commit: `docs(spec): issue280 rev 12 - PR-A measurements`.
+- [ ] **Step 4:** Update PR #281: title `perf(core): warm-open survival scans, migration gate, RC-6 guard (#280 PR-A)`. The body must contain `Refs #280` and no `Fixes`/`Closes`. Check with `gh pr view 281 --json body -q .body | grep -Ei "fixes|closes"` → no output.
+- [ ] **Step 5:** `gh pr checks 281` green (never claim green without checking) → `gh pr ready 281`. Merge is the maintainer's call (merge commit).
 
 ---
 
-### Task 7: Fresh-store fast path completeness (stamp + index)
+# Track PR-B — FTS state machine (`Fixes #280`)
 
-**Objective:** A fresh store never enters any migration or normalize.
+**Why this track is task-level only:** PR-A rewrites `setup()`, `createIndexStrategy`, `SearchService` and `syncSearchIndex`, so PR-B line numbers and some signatures are only knowable on post-merge `main`. Task B0 re-expands B1–B8 into full TDD steps as **plan rev 7** before any PR-B code is written. Everything below is binding scope; the step-level code comes in rev 7.
 
-- [ ] **Step 1: Failing test:** brand-new store → first setup() → stamp present with current alg, partial index exists, **normalize watermark key absent** (not "absent-or-final" — M2's invariant), state `live`, schema_version = CURRENT. (If Task 5's implementation already covers this, this test pins it.)
-- [ ] **Step 2–4:** red → fix (likely a two-line addition at `WikiMemory.ts:266-268`) → green.
-- [ ] **Step 5: Commit** — `fix(core): fresh-store fast path writes the normalize stamp (#280)`
+### Task B0 (controller): branch + plan rev 7
 
----
+- [ ] After PR-A merges: `git switch main && git pull && git switch -c feat/issue280-fts-state-machine`.
+- [ ] Re-read the spec's Normative summary "PR-B contract" + Change 3 + DDL note (rev 11 rename-retire). Expand B1–B8 below into full steps (failing test code, implementation code, commands) against current source. Commit as plan rev 7: `docs(plan): issue280 rev 7 - expand PR-B track`.
 
-### Task 8: Detached-semantics tests (7f) + auto re-attach
+### Task B1: `drain` interface, budget, write-turn caps, schema v15
 
-**Objective:** Pin both detached behaviors end-to-end.
+- **Scope:** add `setupBudgetMs?: number` (default 1500, exported `DEFAULT_SETUP_BUDGET_MS`) and the drain interface.
+  - **`Fts5IndexStrategy.drain(opts?: { deadline?: number; mode?: 'ledger' | 'full'; ids?: readonly string[]; entityId?: string })`.**
+  - **Ids first, to completion:** `SELECT id FROM fts_pending WHERE id IN (SELECT value FROM json_each(?))`, ≤500 ids per tx.
+  - **Entity target with empty ids:** `fts_pending WHERE entity_id = ? ORDER BY seq`, ≤500 per tx; counts as foreign.
+  - **Write turns** (`syncEntries`, `sync(id)`) use `mode: 'ledger'`: own ids plus at most ONE foreign chunk.
+  - **Full quanta** (`setup()`, no-arg `syncSearchIndex()`) drain the ledger until the deadline.
+  - **Deadline:** one `openDeadline` captured at `setup()` start and threaded into `sync({ deadline })`; never re-budget per turn.
+  - **Schema v15:** `MIGRATIONS[15].run` creates `fts_pending(id)` and `fts_pending(entity_id)` indexes. Not in `setupDatabase`.
+  - `SearchService.sync(entityId?, opts?: { deadline?: number })` keeps the `ImportExportService.ts:452` call compiling.
+- **Tests:** 7(i) arbitration order; 7(m) read-your-writes under a 5k backlog; a write turn under a 5k backlog drains ≤ own ids + 500; `setupBudgetMs: 1` converges across calls; v15 is covered by the migration gate (`'refuse'` on a v14 store throws).
 
-- [ ] **Step 1: Failing tests:** (a) store detached + open with `indexStrategy: 'minisearch'` → stays detached, MiniSearch active. (b) store detached + open with `'auto'` → `rebuilding` after init, converges to `live` across drains, **assert the installed strategy is an `Fts5IndexStrategy` instance** (via `__testAccess.searchService`; do NOT spy on the MiniSearch constructor — `WikiMemory.ts:144` always constructs the placeholder before setup(), so a construction-spy fails even on correct code — Opus M6); **assert the re-attach took the DROP+CREATE path** (ledger tables re-created — `fts5LedgerDropSql` had dropped them). (c) detached + pinned `'fts5'` → re-attach.
-- [ ] **Step 2–4:** red → (expected: mostly already satisfied by Tasks 2–3; fix whatever leaks) → green.
-- [ ] **Step 5: Commit** — `test(core): pin detached-state semantics per preference (#280)`
+### Task B2: `init()` state machine (no rebuild)
 
----
+- **Scope:**
+  - **Read-only probes first:** state, `triggersPresent()`, the `entries_fts_docsize` vs `fts_map` count, and the max-rowid check (`SELECT rowid FROM entries_fts ORDER BY rowid DESC LIMIT 1` ≤ `coalesce(max(fts_map.fts_rowid), 0)`).
+  - **Keep-map re-arm tx:** create triggers, `DELETE FROM fts_pending`, keep `fts_map` + `entries_fts`, reset the watermark + fingerprint + sweep cursor, snapshot `max(entries.rowid)` + `max(fts_map.fts_rowid)`, set state `rebuilding`.
+  - **Transition table:** implement every row exactly (incl. the live-row + empty-map + empty-ledger case).
+  - **Fresh-store flag:** plumb `entriesExisted` from `setup()` → `createIndexStrategy` → `init(opts?: { entriesExisted?: boolean })`.
+  - **Resume:** on resume, re-verify triggers; missing ⇒ restart.
+  - **Detach guard:** the deferred-detach cleanup no-ops on `rebuilding`.
+  - **Delete dead code:** `rebuildSql` (export + tests), `rebuildInTx`, `rebuildFromSource` (method, interface member, tests).
+- **Tests:** 7(g) marker loss + trigger loss → `rebuilding` with triggers present and no DDL change; the consistency-check cases (ghost rowid beyond the map; count mismatch; map missing while FTS has rows) take the reset path; 7(f) detached under `'minisearch'` stays detached, under `'auto'`/`'fts5'` re-attaches; fresh vs pre-FTS store.
 
-### Task 9: Concurrent-writer rebuild exactly-once (7a)
+### Task B3: windows, fingerprint, completion, orphan sweep
 
-**Objective:** The completion condition holds with writers active mid-rebuild.
+- **Scope:**
+  - **`windowChunkSql(p)`:** 4 statements bound to `chunkIds = SELECT id FROM entries WHERE rowid > ? AND rowid <= ?`:
+    1. delete FTS rows via the map;
+    2. delete map rows;
+    3. insert map rows for live ids;
+    4. insert FTS rows.
+    It never touches `fts_pending`.
+  - **Window bound:** `hi` = max rowid over the next ≤500 existing rows; fingerprint = id at `hi`; the watermark and fingerprint advance in the same tx.
+  - **Re-anchor:** `EntryRepository.ts:816`'s hard delete re-anchors the fingerprint in the same tx when it deletes the fingerprint row. A missing fingerprint at check time ⇒ restart.
+  - **Orphan sweep:** one bounded tx per full quantum, `DELETE … WHERE fts_rowid > ? AND fts_rowid <= ? AND NOT EXISTS (SELECT 1 FROM entries WHERE entries.id = fts_map.id)` (+ the matching `entries_fts` rows), cursor advanced in the same tx.
+  - **Flip tx:** checks watermark ≥ snapshot AND cursor ≥ sweep snapshot AND residual ledger ≤ 1 chunk, drains that residual, then sets `live`.
+  - **Full-quantum order:** ledger → ≥1 window (unless the deadline was overrun) → sweep tx.
+- **Tests:** 7(a) concurrent writer exactly-once incl. drain-before-window; 7(j) resume from watermark K exactly-once; prune deletes the fingerprint row → re-anchored, no restart; manual rowid change → restart; 7(g′) orphan case; flip under a steady trickle of writes still happens; state gate (a `live` store never reads the watermark).
 
-- [ ] **Step 1: Failing test:** 2k-row store enters `rebuilding`; a second connection inserts 200 rows while quanta run (interleave: insert after each quantum). After completion: state `live`; every original + inserted live row present exactly once in `fts_map`/`entries_fts`; search finds an inserted-mid-rebuild row. **Include the drain-before-window case explicitly:** update a row above the watermark, drain, then let its window run — no duplicate, no stall.
-- [ ] **Step 2–4:** red (if the completion condition races, this catches it) → fix → green.
-- [ ] **Step 5: Commit** — `test(core): concurrent-writer rebuild exactly-once via drained-ledger completion (#280)`
+### Task B4: rename-retire + corruption repair + gate `retiredTables`
 
----
+- **Scope:**
+  - **Reset path:** `ALTER TABLE ${p}entries_fts RENAME TO ${p}entries_fts_retired_<n>` (`<n>` from a meta counter; names appended to the meta JSON list `fts5_retired_tables`), then CREATE empty, clear `fts_map` + `fts_pending`, then the re-arm. RENAME failure ⇒ DROP fallback.
+  - **Reclamation in full quanta, after the sweep:**
+    - (1) chunked `DELETE … WHERE rowid IN (SELECT rowid FROM <retired> ORDER BY rowid LIMIT 500)`;
+    - (2) bounded `INSERT INTO <retired>(<retired>, rank) VALUES('merge', N)` until `total_changes()` is unchanged;
+    - (3) `DROP TABLE`, then remove it from the list.
+  - **Corruption-class init error:** `SQLITE_CORRUPT_VTAB` / code 267, or an error from FTS-only statements, ⇒ reset path. Generic `SQLITE_CORRUPT` from `entries` ⇒ `UnavailableIndexStrategy`. This applies under pinned `'fts5'` too.
+  - **`probePendingWork`:** counts `fts5_retired_tables` entries only when reclamation is handed off (decided by the B8 measurement; until then `retiredTables` stays 0).
+- **Tests:** 7(u)(i)–(iv); 7(e) corrupt-FTS leg; tokenizer mismatch takes the reset path; marker loss does not.
 
-### Task 10: Marker-loss re-arm test (7g) + orphan sweep integration (7g′) + resume integration (7j)
+### Task B5: id threading
 
-**Objective:** The corruption path is defined and converges with **no DDL floor** (spec rev 6); orphans converge away; the leg harness's claim is pinned as a deterministic test.
+- **Scope:**
+  - `upsertGraph` stashes `params.nodes[].id` per entity (capped; overflow ⇒ entity-targeted drain), in place of the `markStale` call at `WikiMemory.ts:845`.
+  - `syncSearchIndex(entityId)` drains that entity's stash first.
+  - No-arg `syncSearchIndex()` drains ALL stashed ids first, then runs the quantum, and clears what it drained.
+  - `importDump(merge=false)` passes upserted + soft-deleted ids into the sync call (`ImportExportService.ts:452`), and the comment at :444-448 is updated.
+  - Update the `upsertGraph` and `syncSearchIndex` docs to state the bounded-sync contract for both forms.
+- **Tests:** 7(r) via both forms under a 5k backlog; 7(m′) `merge=false` import of 2k facts under a 5k foreign backlog → all searchable on return.
 
-- [ ] **Step 1: Tests:** (a) delete the `fts5_index_state` row + drop one trigger on a built store → next setup enters `rebuilding` via the re-arm tx (**no DROP+CREATE** — old contents stay searchable until their windows re-run; **triggers verified present after the transition and after mid-rebuild resume**, spec 7(g)), quanta converge, final exactly-once. (b) **orphan case (7g′):** with triggers missing, hard-delete one row (`runPrune`) and rename another → converge → **neither is searchable under its stale identity** (the deleted row absent; the renamed row found only under its new id) — the integration half of Task 3 test 10. (c) constructed mid-rebuild state (watermark=K) + forced "crash" (new adapter, same file) → resumes from K, exactly-once (the deterministic version of `.sandbox/leg-fb-crash-resume.ts`; the SIGKILL harness stays in `.sandbox`, not CI). (d) tokenizer-mismatch store → the DROP+CREATE floor path runs (with detached re-attach, the only DDL-floor cases).
-- [ ] **Step 2–4:** red → green. **Step 5: Commit** — `test(core): marker-loss re-arm, orphan sweep, crash-resume integration (#280)`
+### Task B6: VACUUM reset (rebuild side)
 
----
+- **Scope:** `MetadataRepository.vacuum()` (already clearing the normalize watermarks since A3) also resets the rebuild watermark, fingerprint and sweep cursor when state is `rebuilding` (restart from 0).
+- **Tests:** 7(k) including in-process `runPrune({ vacuum: true })` followed by `syncSearchIndex()` in the same process → completes exactly-once.
 
-### Task 11: Downgrade/backup-restore (7c) + VACUUM guards (7k/7p) + full-suite gate
+### Task B7: integration acceptance + full-suite gate
 
-**Objective:** Stamp invalidation + both VACUUM watermark invalidations pinned; suite green; types + build clean.
+- Promote the leg harness to integration tests: 7(j), 7(g), 7(a) on a ≥2k-row store; rewrite `createIndexStrategy.test.ts`'s remaining old-rebuild assertions; full suite, typecheck, build. Commit body lists every rewritten test.
 
-- [ ] **Step 1: Tests:** (a) store stamped at alg 1 → simulate downgrade by rewriting stamp `{schema_version: 14, normalize_alg: 0}` + corrupting one ref → next setup rescan normalizes it, re-stamps alg 1. (b) **VACUUM guard rebuild side (7k, Opus M-6):** enter `rebuilding` (watermark > 0) → run the maintenance VACUUM path (`MetadataRepository.ts:160-162`) → reopen → watermark reset to 0, rebuild restarts from scratch, completes exactly-once (windows idempotent). (c) **VACUUM guard normalize side (7p, delta M4):** normalize watermark present mid-migration + VACUUM → next open resets the normalize watermark and rescans. (d) **detached re-attach under 'auto' converges via chunked windows (rev 5/plan M6):** detached store + auto open → `rebuilding`, watermark advances in chunks, NO `rebuildSql`-sized single tx, completes exactly-once.
-- [ ] **Step 2–4:** red → green.
-- [ ] **Step 5:** Run FULL suite: record baseline first (Task 1 Step 0), gate = no assertion failures + counts ≥ baseline + new tests. `pnpm --filter @equationalapplications/core-llm-wiki typecheck` + `pnpm -r build` clean.
-- [ ] **Step 6: Commit** — `test(core): normalize_alg bump forces exactly one rescan; VACUUM guards both watermarks; chunked re-attach (#280)`
+### Task B8 (controller): measurements, sign-off, PR-B
 
----
-
-### Task 12 (controller, not subagent): Acceptance re-measures
-
-**Objective:** Spec §Acceptance 1/2/5 numbers re-measured on this machine; the Acceptance-6 target **derived from a required @1M normalize measurement BEFORE any 4.7 GB bound** (Opus delta M3: ≈123 s was the DRAIN rate; normalize is unmeasured).
-
-- [ ] **Measure chunked normalize @1M FIRST** (`ISSUE280_STORE_DIR=$HOME/issue280-stores` — never `/tmp`, 3.6 GB tmpfs): rows/s and max chunk commit time for the v14 window scan+normalize. **Derive the Acceptance-6 target**: normalize@1M × 4.2 + `setupDatabase` component (≈ 69 s) + first quantum; record it in spec **rev 7** with the explicit statement that a first migration open on a foreign store exceeds the 15 s fence by design (one-time, chunked, crash-resumable).
-- [ ] Re-run `.sandbox/profile-setup.ts` @1M: V1/V2/V3 + crash-backlog shapes on the new engine; fold the before/after table into the same spec revision (append-only).
-- [ ] Record the **host-contract sign-off** in the spec review log: SynapseTree calls `syncSearchIndex()` on a schedule it owns (spec Change 3 convergence contract — required at implementation).
-- [ ] Update the `indexStrategy` doc comment (`types.ts:330-342`) + option docs: MiniSearch paths (module-absent fallback, pinned `'minisearch'`) carry the measured 1M-entry OOM ceiling — operators of pro-scale stores need raised `--max-old-space-size`.
-- [ ] Schedule the ~4.7 GB NVMe legs (~30–45 min each, background, `ISSUE280_STORE_DIR=$HOME/issue280-stores`) — steady-state fence (every `live` open ≤ 15 s incl. post-crash-resume) is the gate criterion; record the largest observed chunk commit time at gate scale (FTS5 auto-merges can stretch it).
-- [ ] Post leg summaries to PR #281 as comments (evidence trail, same as the Step-0 legs).
-
-### Task 13 (controller): Step 8 status flip → ready
-
-- [ ] All tasks 1–12 done + CI green (`gh pr checks 281` — never claim green without checking).
-- [ ] Commit: `docs(spec): mark issue280 setup wall-time spec Implemented` (flip `**Status:**` to Implemented, rev 7 note).
-- [ ] `gh pr ready 281`. Merge = Kurt's call.
+- @1M: keep-map window rate (the spec's ≤3.5 s claim is extrapolated until this is measured) and the rename-retire reclamation profile (rename, per-step delete/merge, final DROP). Apply the reclamation rule: bounded ⇒ in-quantum; not bounded ⇒ hand-off via `retiredTables` (finish Task B4's last bullet).
+- ~4.7 GB NVMe legs (background, ~30–45 min each): steady-state fence (Acceptance 4), crash backlog (5), first-migration open (6), and the largest observed chunk commit time.
+- Record the SynapseTree host-contract sign-off (scheduled no-arg `syncSearchIndex()` + `migrations: 'refuse'` procedure) in the spec review log; spec rev 13 with all numbers.
+- Open PR-B with `Fixes #280`; CI green; ready; merge is the maintainer's call.
 
 ---
 
 ## Interfaces (cross-task contracts)
 
-- `WikiSearchUnavailableError` (Task 1) — consumed by Task 2's strategy and all six pinned call sites (incl. `librarian/ops/gate.ts:143`); exported at package root.
-- `UnavailableIndexStrategy` (Task 2) — `search()` throws; **`drain` is a PRESENT no-op** (the `drainTurn` guard then routes every entry point to the ledger-safe path — an absent `drain` re-opens the 1M OOM via `findMiniSearchRows`, rev 5/B1); MiniSearch must never grow a `drain` (its drain-less path is only reachable via pinned `'minisearch'` or module-absent, where `findMiniSearchRows` is the intended MiniSearch behavior on a strategy that owns its contents).
-- `Fts5IndexStrategy.drain(opts?: { deadline?: number; mode?: 'ledger' | 'full'; ids?: readonly string[] })` (Tasks 3–4) — the ONLY quantum executor; `SearchService.sync/drainTurn/syncStale` forward `{ deadline, mode, ids }`; `setup()` supplies the open-captured deadline; write turns supply `mode: 'ledger'` + their ids; full quanta only from `setup()` and no-arg `syncSearchIndex()`.
-- `rebuildWindowSql(p)` + `REBUILD_WATERMARK_KEY` + `ORPHAN_SWEEP_CURSOR_KEY` (Task 3) — drain-shaped window statements keyed by `SELECT id FROM entries WHERE rowid > ? AND rowid <= ?`; the id-targeted `json_each` drain-chunk variant shares `drainChunkSql`'s statement shape; `entriesExisted` flag plumbed from `WikiMemory.setup()` through `createIndexStrategy` into `init()`.
-- Orphan sweep (Task 3) — cursor-based walk of `fts_map` by `fts_rowid` (`fts5_orphan_sweep_cursor`, snapshot at init); third completion clause alongside watermark ≥ max(rowid) and ledger empty; flip tx drains residual ledger rows inside the tx.
-- Re-arm consistency check (Task 3, rev 5) — keep-map only if `max(entries_fts.rowid) <= coalesce(max(fts_map.fts_rowid), 0)` and both tables exist; else DROP+CREATE.
-- `SOURCE_REF_NORMALIZE_ALG` + stamp JSON shape (Task 5) — consumed by Task 7 (fresh path) and Task 11 (downgrade test); watermark key `source_ref_normalize_watermark` deleted inside the stamping tx.
-- Partial-index DDL string (Tasks 5/6) — single exported constant in `schema.ts`, referenced by v14.
-- Watermark meta keys: `fts5_rebuild_watermark` (Task 3), `source_ref_normalize_watermark` (Task 5) — both advanced only inside the chunk tx that did the work; both reset by the `fts_rebuild_post_vacuum` flag.
+| Name | Defined in | Consumed by |
+|---|---|---|
+| `normalizeSourceRef` (fixed point) | A1 `utils/pure.ts` | A3 |
+| `legacySourceTypeIndexDdl(prefix)` | A2 `db/schema.ts` | A2 (v14, fresh path) |
+| `SOURCE_REF_NORMALIZE_ALG`, `NORMALIZE_STAMP_KEY`, `ENTRIES_WM_KEY`, `SRI_WM_KEY`, `stampMatches`, `writeNormalizeStamp`, `runSourceRefNormalize` | A3 `db/sourceRefNormalize.ts` | A3, A4, `MetadataRepository.vacuum` |
+| `readSchemaVersion`, `probePendingWork`, `PendingMigrationWork` | A4 `db/migrationGate.ts` | A4, B4 |
+| `WikiSetupOptions`, `WikiMigrationRequiredError` | A4 `types.ts` | A4, hosts |
+| `WikiSearchUnavailableError`, `isWikiSearchUnavailableError` | A5 `types.ts` | A5, A6 |
+| `UnavailableIndexStrategy` | A5 | A5, `SearchService.isKeywordAvailable` |
+| `SearchService.isKeywordAvailable()` | A5 | A5 (`syncSearchIndex`), A6 (heal, ops pass) |
+| `FTS5_INIT_RETRY_MS` | A5 `createIndexStrategy.ts` | tests |
+| `EntryRepository.hasStoredEmbedding` | A6 | A6 `gateNeedsKeyword` |
+| `gateNeedsKeyword` | A6 `librarian/ops/gate.ts` | A6 `ops/index.ts` |
+| `drain({ deadline, mode, ids, entityId })`, `DEFAULT_SETUP_BUDGET_MS`, `windowChunkSql`, retired-table meta keys | B1–B4 (rev 7) | B-track |
