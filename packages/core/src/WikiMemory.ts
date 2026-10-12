@@ -1,6 +1,7 @@
 import type { SQLiteAdapter } from './types';
 import type { WikiOutboxEvent } from './outbox/types';
 import { setupDatabaseWithGate } from './db/migrationGate';
+import { setupDatabase } from './db/schema';
 import { withSerializedTransactions } from './db/serializedAdapter';
 import { MIGRATIONS, CURRENT_SCHEMA_VERSION } from './db/migrations';
 import {
@@ -260,6 +261,7 @@ export class WikiMemory {
   async setup() {
     const entriesExistedBeforeSetup = await this.metadataRepo.tableExists(`${this.prefix}entries`);
 
+    // Create tables first
     await setupDatabase(this.db, this.prefix);
 
     let currentVersion: number;
@@ -280,11 +282,38 @@ export class WikiMemory {
       }
     }
 
-    for (const migration of MIGRATIONS) {
-      if (migration.version > currentVersion) {
-        await migration.run(this.db, this.prefix);
-        await this.metadataRepo.setMeta('schema_version', String(migration.version), this.db);
-        currentVersion = migration.version;
+    // Run migration gate if configured with refuse or auto policy
+    const migrationPolicy = this.options.config?.migrations ?? 'allow';
+    if (migrationPolicy !== 'allow') {
+      try {
+        await setupDatabaseWithGate(
+          this.db,
+          this.prefix,
+          this.metadataRepo,
+          migrationPolicy
+        );
+      } catch (err) {
+        if (err instanceof WikiMigrationRequiredError) {
+          // For auto policy, we want to continue after handling the migration
+          if (migrationPolicy === 'auto' && err.pendingWork.type === 'source_ref_normalize') {
+            // Continue with normal flow - source ref normalization will be done below
+          } else {
+            throw err;
+          }
+        } else {
+          throw err;
+        }
+      }
+    }
+
+    // Run schema migrations for versions behind current (only for allow policy or auto after source ref normalize)
+    if (migrationPolicy === 'allow' || (migrationPolicy === 'auto' && entriesExistedBeforeSetup)) {
+      for (const migration of MIGRATIONS) {
+        if (migration.version > currentVersion) {
+          await migration.run(this.db, this.prefix);
+          await this.metadataRepo.setMeta('schema_version', String(migration.version), this.db);
+          currentVersion = migration.version;
+        }
       }
     }
 
@@ -299,15 +328,18 @@ export class WikiMemory {
       await this.importExportService.assertNoLegacySourceTypes();
     }
 
+    // Do source ref normalization if needed
     const rows = await this.entryRepo.findRowsForSourceRefMigration();
-    await this.db.withTransactionAsync(async (tx) => {
-      for (const row of rows) {
-        const normalized = normalizeSourceRef(row.source_ref);
-        if (normalized !== row.source_ref) {
-          await this.entryRepo.updateSourceRefByRowid(row.rowid, normalized, tx);
+    if (rows.length > 0) {
+      await this.db.withTransactionAsync(async (tx) => {
+        for (const row of rows) {
+          const normalized = normalizeSourceRef(row.source_ref);
+          if (normalized !== row.source_ref) {
+            await this.entryRepo.updateSourceRefByRowid(row.rowid, normalized, tx);
+          }
         }
-      }
-    });
+      });
+    }
 
     this.searchService.setIndexStrategy(
       await createIndexStrategy(

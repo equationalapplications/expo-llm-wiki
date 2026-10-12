@@ -368,6 +368,14 @@ export interface WikiConfig {
   maintenance?: 'auto' | 'deferred';
   /** `'auto'` mode only: also trigger the librarian when pending event text reaches ~this many tokens (chars/4). */
   autoLibrarianTokenThreshold?: number;
+  /**
+   * Migration policy for setup().
+   * - `'allow'`: Run all migrations (default, preserves existing behavior)
+   * - `'refuse'`: Throw WikiMigrationRequiredError before any mutations
+   * - `'auto'`: Auto-run specific pending migrations (currently only source_ref_normalize)
+   * @default 'allow'
+   */
+  migrations?: 'allow' | 'refuse' | 'auto';
 }
 
 export interface ReadOptions {
