@@ -165,6 +165,19 @@ export class Fts5IndexStrategy implements IndexStrategy {
   }
 
   async drain(opts: DrainOptions = {}): Promise<void> {
+    try {
+      await this.drainOnce(opts);
+    } catch (err) {
+      // SQLITE_CORRUPT_VTAB names the FTS5 table itself, so the reset init() applies is safe here too:
+      // without it every drain fails until the next open (#284 review). The reset clears the ledger, so
+      // the caller's ids converge through the rebuild windows instead. Other corruption may be in
+      // entries, which this cannot repair: it propagates as before.
+      if (ftsCorruptionClass(err) !== 'vtab') throw err;
+      await this.resetAndRearm();
+    }
+  }
+
+  private async drainOnce(opts: DrainOptions): Promise<void> {
     const ids = opts.ids ?? [];
     // The caller's own ids are not deadline-bound (DrainOptions.ids): they drain to completion, and the caller drops them from its stash only once this succeeds.
     if (ids.length > 0) await this.drainIds(ids);

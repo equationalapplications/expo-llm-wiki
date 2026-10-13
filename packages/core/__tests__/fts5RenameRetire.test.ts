@@ -144,6 +144,37 @@ describe('corruption repair (#280 B4, 7(e) corrupt-FTS leg)', () => {
     expect((await s.search('cedar', { entityIds: ['e1'], limit: 50 })).length).toBe(10);
   });
 
+  it('SQLITE_CORRUPT_VTAB during a drain resets in-session instead of failing every drain (#284 review)', async () => {
+    const s = await liveStore(10);
+    await db.runAsync(`INSERT INTO ${P}entries (id, entity_id, title, body, tags, created_at, updated_at) VALUES ('r10', 'e1', 'cedar 10', 'b', '[]', 1, 1)`);
+    const orig = db.runAsync.bind(db);
+    let thrown = false;
+    vi.spyOn(db, 'runAsync').mockImplementation((async (sql: string, args?: unknown[]) => {
+      if (!thrown && String(sql).startsWith(`DELETE FROM ${P}entries_fts WHERE rowid IN`)) { thrown = true; throw corruptVtab(); }
+      return orig(sql, args as never);
+    }) as never);
+    await expect(s.drain({ mode: 'ledger', ids: ['r10'] })).resolves.toBeUndefined();
+    expect(thrown).toBe(true);
+    expect(await state()).toBe('rebuilding');
+    expect(await retired()).toEqual([`${P}entries_fts_retired_1`]);
+    await s.drain();
+    expect(await state()).toBe('live');
+    expect((await s.search('cedar', { entityIds: ['e1'], limit: 50 })).length).toBe(11);
+  });
+
+  it('a generic SQLITE_CORRUPT during a drain still propagates and does not reset', async () => {
+    const s = await liveStore(10);
+    await db.runAsync(`INSERT INTO ${P}entries (id, entity_id, title, body, tags, created_at, updated_at) VALUES ('r10', 'e1', 'cedar 10', 'b', '[]', 1, 1)`);
+    const orig = db.runAsync.bind(db);
+    vi.spyOn(db, 'runAsync').mockImplementation((async (sql: string, args?: unknown[]) => {
+      if (String(sql).startsWith(`DELETE FROM ${P}entries_fts WHERE rowid IN`)) throw Object.assign(new Error('malformed'), { code: 'SQLITE_CORRUPT' });
+      return orig(sql, args as never);
+    }) as never);
+    await expect(s.drain({ mode: 'ledger', ids: ['r10'] })).rejects.toMatchObject({ code: 'SQLITE_CORRUPT' });
+    expect(await state()).toBe('live');
+    expect(await retired()).toEqual([]);
+  });
+
   it("a generic SQLITE_CORRUPT from entries does NOT reset: 'auto' -> UnavailableIndexStrategy, no retired table", async () => {
     await liveStore(10);
     await db.runAsync(`DELETE FROM ${P}meta WHERE key = ?`, [FTS5_STATE_KEY]);
