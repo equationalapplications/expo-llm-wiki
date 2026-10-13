@@ -736,7 +736,8 @@ export class MaintenanceService {
    *
    * Bounded: at most `batchSize` candidates per pass (#67). Loop on
    * `result.remaining > 0` for convergence — see {@link HealResult.remaining}
-   * for what convergence means here.
+   * for what convergence means here, and for the no-progress flags
+   * (`searchUnavailable`, `budgetStop`) a loop must also stop on.
    */
   async doRunHeal(
     entityId: string,
@@ -823,6 +824,9 @@ export class MaintenanceService {
         deleted: orphanedIds.length,
         newFactsCreated: 0,
         skipped: [], degraded: [], remaining: counts.eligible, deferred: counts.deferred,
+        // remaining stays > 0 so maybeRunHeal holds the checkpoint back and
+        // retries after the outage; the flag lets a host loop stop instead.
+        ...(keywordUnavailable ? { searchUnavailable: true as const } : {}),
       };
     }
     // Cap applied once at fetch time. The bound is the one remaining

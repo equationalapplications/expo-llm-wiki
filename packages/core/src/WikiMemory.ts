@@ -51,6 +51,8 @@ import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighb
 export { WikiBusyError, WikiTransactionError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER, WikiStrictOntologyViolation, WikiSourceRefHashCollision, WikiParseError, WikiIngestEmptyError, WikiGraphNodeOwnershipConflict } from './types';
 
 const TABLE_PREFIX_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,30}_$/;
+/** Minimum gap between failed no-arg syncSearchIndex() re-init attempts (spec #280 Change 4). */
+const SEARCH_REINIT_COOLDOWN_MS = 5_000;
 
 /** Typed escape hatch for tests — not part of the supported consumer API. */
 export interface WikiMemoryTestAccess {
@@ -258,6 +260,8 @@ export class WikiMemory {
   }
 
   private reinitSearch: Promise<void> | null = null;
+  /** When the last no-arg syncSearchIndex() re-init left keyword search unavailable (0 = never). */
+  private reinitFailedAt = 0;
 
   /**
    * Opens the store: migration gate, DDL, schema migrations, then the stamped
@@ -670,7 +674,8 @@ export class WikiMemory {
    * indexed; otherwise it is a no-op that still waits for rebuilds already
    * queued. Without an argument, rebuilds every entity currently marked
    * stale; when none is, it resolves immediately and does not wait for rebuilds
-   * already queued.
+   * already queued. While keyword search is unavailable it first retries the
+   * index init, at most once per 5 s after a failed attempt.
    *
    * Call only after the host's transaction commits: called inside it, the
    * rebuild may index rows that later roll back, or miss them and clear the
@@ -689,7 +694,10 @@ export class WikiMemory {
   async syncSearchIndex(entityId?: string): Promise<void> {
     if (entityId === undefined) {
       // A long-lived host that never re-opens still recovers from a failed init (spec #280 Change 4).
-      if (!this.searchService.isKeywordAvailable()) {
+      // After a failed re-init, wait SEARCH_REINIT_COOLDOWN_MS before the next:
+      // each attempt costs the 250 ms retry backoff plus up to two rebuild
+      // transactions under the write lock, and hosts call this after every write.
+      if (!this.searchService.isKeywordAvailable() && Date.now() - this.reinitFailedAt >= SEARCH_REINIT_COOLDOWN_MS) {
         // One re-init at a time; concurrent callers share it. On success, run the
         // same full sync setup() does (a new MiniSearch index starts empty).
         this.reinitSearch ??= (async () => {
@@ -699,6 +707,7 @@ export class WikiMemory {
             this.searchService.setIndexStrategy(strategy);
             if (this.searchService.isKeywordAvailable()) await this.searchService.sync();
           } finally {
+            this.reinitFailedAt = this.searchService.isKeywordAvailable() ? 0 : Date.now();
             this.reinitSearch = null;
           }
         })();

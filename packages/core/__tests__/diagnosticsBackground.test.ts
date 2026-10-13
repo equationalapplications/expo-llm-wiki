@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { makeDiagnosticWiki, ofCode } from './helpers/diagnosticsHarness';
+import { WikiSearchUnavailableError } from '../src/types';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -19,6 +20,20 @@ describe('background job diagnostics', () => {
     });
     expect(error).toHaveBeenCalledWith(failure);
     expect(JSON.stringify(diagnostics)).not.toContain('llm offline');
+  });
+
+  it('auto-librarian keyword outage → background_job_failed reason keyword_search_unavailable, no console.error', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { wiki, diagnostics } = await makeDiagnosticWiki({
+      config: { autoLibrarianThreshold: 1 },
+      generateText: async () => { throw new WikiSearchUnavailableError(); },
+    });
+    await wiki.write('e1', { event_type: 'observation', summary: 'one' });
+    await vi.waitFor(() => expect(ofCode(diagnostics, 'background_job_failed')).toHaveLength(1));
+    expect(ofCode(diagnostics, 'background_job_failed')[0]).toMatchObject({
+      operation: 'librarian', trigger: 'auto', detail: { reason: 'keyword_search_unavailable' },
+    });
+    expect(error).not.toHaveBeenCalled();
   });
 
   it('auto-librarian run tags its own diagnostics with trigger auto', async () => {

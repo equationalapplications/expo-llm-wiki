@@ -239,7 +239,9 @@ const wikiMemory = new WikiMemory(db, {
     // the write lock for its whole duration. Keyword rankings differ between the two backends; set 'minisearch'
     // to keep the pre-7.11 behavior.
     // Under 'auto', a failed FTS5 init is retried once, then setup() completes with keyword search unavailable
-    // (queries throw WikiSearchUnavailableError); it never silently demotes to MiniSearch. MiniSearch holds all
+    // (queries throw WikiSearchUnavailableError); it never silently demotes to MiniSearch. While unavailable,
+    // runHeal returns searchUnavailable: true, runPendingMaintenance lists skipped jobs in perEntity[].searchUnavailable,
+    // and a no-arg syncSearchIndex() retries the init (at most once per 5 s after a failure). MiniSearch holds all
     // entry text in the JS heap — the measured ceiling is ~1M entries on a default Node heap (--max-old-space-size).
     indexStrategy: 'auto',             // default: 'auto' — 'fts5' | 'minisearch' | 'auto'
     enableOutbox: false,               // default: false — when true, entry/task mutations write to an internal SQLite outbox table for external sync (e.g. via @equationalapplications/prisma-outbox)

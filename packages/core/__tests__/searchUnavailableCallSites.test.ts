@@ -83,6 +83,27 @@ describe('keyword outage call-site map', () => {
     expect(await (wiki.__testAccess as any).metadataRepo.getLibrarianWatermark('u', db)).toBeNull();
   });
 
+  it('(e-gate iv) only non-live rows carry vectors: the pre-check matches the route and aborts before runExtract', async () => {
+    const { db, wiki, generateText } = await wikiWith({ llmProvider: { embed: vec } as any, config: { autoLibrarianThreshold: 1000, librarian: { strategy: 'ops' } } as any });
+    await factWithVec(db, 'f-old', 'apple fruit', [1, 0, 0]);
+    await db.runAsync(`UPDATE ${P}entries SET valid_to = 2 WHERE id = 'f-old'`); // expired: excluded from vector ranking
+    await db.runAsync(`INSERT INTO ${P}entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at)
+      VALUES ('f-new', 'u', 'pear', 'b', '[]', 'inferred', 'user_stated', 1, 1)`); // live, no vector
+    await db.runAsync(`INSERT INTO ${P}events (id, entity_id, event_type, summary, created_at) VALUES ('evt_1','u','observation','apple',100)`);
+    await wiki.runLibrarian('u').catch(() => {});
+    expect(generateText).not.toHaveBeenCalled();
+    expect(await (wiki.__testAccess as any).metadataRepo.getLibrarianWatermark('u', db)).toBeNull();
+  });
+
+  it('(e-gate v) mixed stored dimensions route to keyword mode, so the pass aborts before runExtract', async () => {
+    const { db, wiki, generateText } = await wikiWith({ llmProvider: { embed: vec } as any, config: { autoLibrarianThreshold: 1000, librarian: { strategy: 'ops' } } as any });
+    await factWithVec(db, 'f-a', 'apple fruit', [1, 0, 0]);
+    await factWithVec(db, 'f-b', 'pear', [0, 1]);
+    await db.runAsync(`INSERT INTO ${P}events (id, entity_id, event_type, summary, created_at) VALUES ('evt_1','u','observation','apple',100)`);
+    await wiki.runLibrarian('u').catch(() => {});
+    expect(generateText).not.toHaveBeenCalled();
+  });
+
   it('(e-gate iii) an entity with no facts yet RUNS during an outage: nothing to rank against', async () => {
     const { db, wiki, generateText } = await wikiWith({ config: { autoLibrarianThreshold: 1000, librarian: { strategy: 'ops' } } as any }); // no embed provider
     await db.runAsync(`INSERT INTO ${P}events (id, entity_id, event_type, summary, created_at) VALUES ('evt_1','u','observation','apple',100)`);
@@ -108,6 +129,23 @@ describe('keyword outage call-site map', () => {
     expect(generateText).not.toHaveBeenCalled();
   });
 
+  it('heal outage result flags searchUnavailable and keeps remaining > 0 (checkpoint held back)', async () => {
+    const { db, wiki } = await wikiWith({ config: { orphanAfterDays: null, staleInferredAfterDays: null } as any });
+    await factWithVec(db, 'c1', 'inferred thing', [0, 0, 1], 'librarian_inferred');
+    const r = await wiki.runHeal('u');
+    expect(r.searchUnavailable).toBe(true);
+    expect(r.scanned).toBe(0);
+    expect(r.remaining).toBeGreaterThan(0);
+  });
+
+  it('runPendingMaintenance reports outage-skipped jobs per entity', async () => {
+    const { db, wiki } = await wikiWith({ config: { orphanAfterDays: null, staleInferredAfterDays: null, autoHealThreshold: 1, autoLibrarianThreshold: 1000, librarian: { strategy: 'ops' } } as any }); // no embed provider
+    await factWithVec(db, 'c1', 'inferred thing', [0, 0, 1], 'librarian_inferred');
+    await db.runAsync(`INSERT INTO ${P}events (id, entity_id, event_type, summary, created_at) VALUES ('evt_1','u','observation','x',100)`);
+    const r = await wiki.runPendingMaintenance({ entityIds: ['u'], jobs: ['librarian', 'heal'] });
+    expect(r.perEntity[0].searchUnavailable).toEqual(['librarian', 'heal']);
+  });
+
   it("one entity's librarian abort does not fail runPendingMaintenance for the others", async () => {
     const { db, wiki } = await wikiWith({ config: { autoLibrarianThreshold: 1000, librarian: { strategy: 'ops' } } as any }); // no embed provider
     await factWithVec(db, 'f-pear', 'pear', [0, 0, 1]);
@@ -122,6 +160,15 @@ describe('keyword outage call-site map', () => {
     init.mockClear();
     await Promise.all([wiki.syncSearchIndex(), wiki.syncSearchIndex()]);
     expect(init).toHaveBeenCalledTimes(2); // one attempt + its one retry, not two of each
+  });
+
+  it('a failed no-arg re-init is not retried inside the cooldown', async () => {
+    const { wiki } = await wikiWith({});
+    const init = vi.mocked(Fts5IndexStrategy.prototype.init);
+    await wiki.syncSearchIndex(); // fails: arms the cooldown
+    init.mockClear();
+    await wiki.syncSearchIndex();
+    expect(init).not.toHaveBeenCalled();
   });
 
   it('(e-gate mid-pass) an embed failure routes a candidate into keyword mode at :143 → abort, watermark kept', async () => {

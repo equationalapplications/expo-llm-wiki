@@ -118,6 +118,7 @@ export class MaintenanceScheduler {
     const exhaustedStop = (): MaintenanceStopReason =>
       Date.now() >= deadline ? { reason: 'deadline' } : { reason: 'budget_exhausted' };
     const markBusy = (st: State, job: MaintenanceJob) => { (st.report.busy ??= []).push(job); };
+    const markSearchUnavailable = (st: State, job: MaintenanceJob) => { (st.report.searchUnavailable ??= []).push(job); };
 
     rounds: for (;;) {
       let progressed = false;
@@ -127,7 +128,10 @@ export class MaintenanceScheduler {
         const entityId = st.p.entityId;
 
         if (st.librarian) {
-          if (this.jobManager.isBlocked('librarian', entityId)) { st.librarian = false; markBusy(st, 'librarian'); continue; }
+          // A skipped librarian (busy, outage) sets progressed so the round
+          // re-runs: otherwise a lone entity would end the loop here and never
+          // reach its heal/reembed. Terminates: st.librarian is now false.
+          if (this.jobManager.isBlocked('librarian', entityId)) { st.librarian = false; markBusy(st, 'librarian'); progressed = true; continue; }
           this.jobManager.acquireLock('librarian', entityId);
           let r: LibrarianResult;
           try {
@@ -137,6 +141,8 @@ export class MaintenanceScheduler {
             // Skip it for this run rather than failing every other entity's work.
             if (!isWikiSearchUnavailableError(err)) throw err;
             st.librarian = false;
+            markSearchUnavailable(st, 'librarian');
+            progressed = true;
             continue;
           } finally {
             this.jobManager.releaseLock('librarian', entityId);
@@ -176,7 +182,11 @@ export class MaintenanceScheduler {
           // Nothing scanned yet candidates remain (e.g. a keyword outage skipped
           // the LLM pass): another round cannot progress, so stop healing this
           // entity for this run instead of looping forever.
-          if (h.scanned === 0 && h.remaining > 0) { st.heal = false; continue; }
+          if (h.scanned === 0 && h.remaining > 0) {
+            st.heal = false;
+            if (h.searchUnavailable) markSearchUnavailable(st, 'heal');
+            continue;
+          }
           st.report.healPasses++;
           progressed = true;
           if (h.remaining === 0) {

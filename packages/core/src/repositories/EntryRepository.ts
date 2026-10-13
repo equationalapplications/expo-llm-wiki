@@ -148,17 +148,6 @@ export class EntryRepository extends BaseRepository {
     super(db, prefix);
   }
 
-  /** Whether the entity has at least one live row with a stored vector (librarian gate pre-check, spec #280). */
-  async hasStoredEmbedding(entityId: string, tx?: SQLiteAdapter): Promise<boolean> {
-    const executor = this.getExecutor(tx);
-    const row = await executor.getFirstAsync<{ one: number }>(
-      `SELECT 1 AS one FROM ${this.prefix}entries
-       WHERE entity_id = ? AND deleted_at IS NULL AND (embedding_blob IS NOT NULL OR embedding IS NOT NULL) LIMIT 1`,
-      [entityId],
-    );
-    return row != null;
-  }
-
   /** Whether the entity has any non-deleted row (librarian gate: keyword ranking over zero facts is trivially empty). */
   async hasLiveEntry(entityId: string, tx?: SQLiteAdapter): Promise<boolean> {
     const executor = this.getExecutor(tx);

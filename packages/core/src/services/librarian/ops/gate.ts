@@ -83,17 +83,39 @@ export function classifyCandidate(
 }
 
 /**
+ * Live, parseable stored vectors for an entity - the vector-mode ranking set.
+ * Shared by gateCandidates and gateNeedsKeyword so the pre-check can never
+ * disagree with the route the pass actually takes.
+ */
+async function loadStoredVectors(
+  deps: LibrarianDeps,
+  entityId: string,
+  nonLive: Set<string>,
+): Promise<Array<{ id: string; vec: Float32Array }>> {
+  const stored: Array<{ id: string; vec: Float32Array }> = [];
+  for (const row of await deps.entryRepo.findWithEmbeddingsByEntityIds([entityId])) {
+    if (nonLive.has(row.id)) continue;
+    const vec = parseEmbedding(row.embedding_blob, row.embedding);
+    if (vec) stored.push({ id: row.id, vec });
+  }
+  return stored;
+}
+
+/**
  * Whether a gate pass for this entity could route a candidate into keyword
- * mode (step 4): no embed provider, or no stored vectors to rank against. An
- * embed failure mid-pass is the remaining route; it surfaces as a
- * WikiSearchUnavailableError from searchKeyword and aborts the pass the same
- * way (spec #280 rev 10 M4).
+ * mode (step 4): no embed provider, or no usable stored vectors to rank
+ * against (none live and parseable, or mixed dimensions). The remaining
+ * routes - an embed failure mid-pass, or a candidate vector whose dimension
+ * differs from a uniform stored set - surface as a WikiSearchUnavailableError
+ * from searchKeyword and abort the pass the same way (spec #280 rev 10 M4).
  */
 export async function gateNeedsKeyword(deps: LibrarianDeps, entityId: string): Promise<boolean> {
   // No facts yet: keyword ranking is trivially empty, so gateCandidates skips it.
   if (!(await deps.entryRepo.hasLiveEntry(entityId))) return false;
   if (typeof deps.options.llmProvider.embed !== 'function') return true;
-  return !(await deps.entryRepo.hasStoredEmbedding(entityId));
+  const nonLive = await deps.entryRepo.findNonLiveIdsByEntityIds([entityId], 'current', Date.now());
+  const stored = await loadStoredVectors(deps, entityId, nonLive);
+  return stored.length === 0 || stored.some((s) => s.vec.length !== stored[0].vec.length);
 }
 
 export async function gateCandidates(
@@ -119,14 +141,7 @@ export async function gateCandidates(
 
   // 3. Pre-load stored vectors when an embed provider is available.
   const canEmbed = typeof deps.options.llmProvider.embed === 'function';
-  const stored: Array<{ id: string; vec: Float32Array }> = [];
-  if (canEmbed && unique.length > 0) {
-    for (const row of await deps.entryRepo.findWithEmbeddingsByEntityIds([entityId])) {
-      if (nonLive.has(row.id)) continue;
-      const vec = parseEmbedding(row.embedding_blob, row.embedding);
-      if (vec) stored.push({ id: row.id, vec });
-    }
-  }
+  const stored = canEmbed && unique.length > 0 ? await loadStoredVectors(deps, entityId, nonLive) : [];
 
   // An entity with no facts has nothing to rank against; skip keyword search,
   // which would otherwise throw during an outage and stall its first pass.

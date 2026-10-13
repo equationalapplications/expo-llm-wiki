@@ -221,12 +221,22 @@ export interface HealResult {
    * cooldown", not "there is no more work" — it climbs back as the cooldown lapses
    * and as new facts are written. A host loop terminates, but it converges to
    * "corpus swept once this cooldown window", not to a drained queue.
+   *
+   * A pass that could not make progress (`searchUnavailable` or `budgetStop`
+   * set) leaves `remaining > 0`, so a convergence loop must also stop on those:
+   * `while (r.remaining > 0 && !r.searchUnavailable && !r.budgetStop)`.
    */
   remaining: number;
   /** Heal candidates inside the recheck cooldown. */
   deferred: number;
   /** Present when a token budget stopped the pass early (spec §10.5). Unattempted candidates stay eligible. */
   budgetStop?: { requiredEstimate: number };
+  /**
+   * True when the LLM pass was skipped because keyword search is unavailable
+   * (heal anchors need it; spec #280). Candidates stay eligible and unattempted;
+   * retry after `syncSearchIndex()` restores keyword search.
+   */
+  searchUnavailable?: true;
 }
 
 /**
@@ -1439,6 +1449,12 @@ export interface EntityMaintenanceReport {
   reembedded: boolean;
   /** Set when a lock was held elsewhere; nothing ran for that job. */
   busy?: MaintenanceJob[];
+  /**
+   * Set when keyword search is unavailable and the job could not run for this
+   * entity (spec #280). Its watermark/checkpoint is kept; retry after
+   * `syncSearchIndex()` restores keyword search.
+   */
+  searchUnavailable?: MaintenanceJob[];
 }
 
 export interface RunPendingMaintenanceResult {
