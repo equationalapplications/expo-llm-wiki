@@ -1,7 +1,7 @@
 # Spec: `wiki.setup()` wall time — minimal viable open, converging index
 
 **Date:** 2026-10-10
-**Status:** Implemented (rev 11 — migration gate for the upgrade implemented and tested, PR-A scope complete; rev 10 — Opus delta cycle #5 adjudicated: spec 0 BLOCKER/5 MAJOR/10 minor + plan 1 BLOCKER/5 MAJOR/5 minor, all verified against source and applied; reviews: GLM r1-r4, Opus full ×2, Opus delta ×5 cycles; logs under `~/.hermes/cache/scratch/issue280/`)
+**Status:** In progress (rev 11 status correction, 2026-10-13: PR-A's Change 1 (stamped normalize), Change 2 (v14 partial index) and the migration gate are implemented and tested, with the gate API shipped as `'allow' | 'refuse' | 'auto'` and `PendingMigrationWork` as `schema_migration`/`source_ref_normalize`. PR-A's Change 4 (probeFts5 classification, `UnavailableIndexStrategy`, call-site map) is NOT yet implemented. The earlier "PR-A scope complete" claim below is superseded; rev 11 — migration gate for the upgrade implemented and tested; rev 10 — Opus delta cycle #5 adjudicated: spec 0 BLOCKER/5 MAJOR/10 minor + plan 1 BLOCKER/5 MAJOR/5 minor, all verified against source and applied; reviews: GLM r1-r4, Opus full ×2, Opus delta ×5 cycles; logs under `~/.hermes/cache/scratch/issue280/`)
 **Branch:** `spec/issue280-setup-walltime` · **PR:** [#281](https://github.com/equationalapplications/expo-llm-wiki/pull/281) (DRAFT until implemented)
 **Priority:** High — blocks the SynapseTree ARM64 gate (15 s writer-lease fence vs 693 s measured setup)
 
