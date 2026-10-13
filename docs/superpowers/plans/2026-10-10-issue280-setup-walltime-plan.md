@@ -47,12 +47,12 @@
 
 ---
 
-## Resume here (rev 8, 2026-10-13) — start at Task B6 (B5 done, commit 57ed7bc)
+## Resume here (rev 8, 2026-10-13) — start at Task B7 (B6 done, commit c53237d)
 
 - **PR-A is merged:** PR #281 → `main` as merge commit `459b84e`. Issue #280 is open again (a stray closing keyword in commit `cfb56fe` had auto-closed it). Only PR-B's PR body may say `Fixes #280`. No commit message may contain a closing keyword followed by an issue number.
 - **Branch:** `feat/issue280-fts-state-machine`, cut from `main` @ `459b84e`. It is not pushed and has no PR yet. Its only commit so far is this plan (rev 8).
 - **Baseline (B0, on `459b84e`):** core suite **176 files / 1904 tests, 0 failures**; `typecheck` exit 0.
-- **Next:** Task B6 (B1-B5 done). B8 needs F8.
+- **Next:** Task B7 (B1-B6 done). B8 needs F8.
 - **Ignore** `.superpowers/sdd/2026-10-10-issue280-setup-walltime-plan/NEXT_SESSION_HANDOFF.md`: it is stale (it says A2–A7 failed; all of them shipped).
 - Task A8 (measurements) is still deferred. B8 needs its harness (F10).
 - The rev 7 block below is historical.
@@ -3461,7 +3461,7 @@ git commit -m "feat(core): thread upsertGraph and import ids into the FTS drain 
 - Produces: `restartRebuildAfterVacuum(db, prefix, meta)` in `fts5Progress.ts`.
 - Consumes: B2's `writeRebuildStart`; B3's fingerprint check.
 
-- [ ] **Step 1: Write the failing tests** — create `packages/core/__tests__/fts5Vacuum.test.ts`:
+- [x] **Step 1: Write the failing tests** — create `packages/core/__tests__/fts5Vacuum.test.ts`:
 
 ```typescript
 // packages/core/__tests__/fts5Vacuum.test.ts
@@ -3530,9 +3530,9 @@ describe('7(k) VACUUM guard (#280 B6)', () => {
 });
 ```
 
-- [ ] **Step 2: Run it — expect FAIL** on the first test (the watermark survives the VACUUM). `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/fts5Vacuum.test.ts`
+- [x] **Step 2: Run it — expect FAIL** on the first test (the watermark survives the VACUUM). `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/fts5Vacuum.test.ts`
 
-- [ ] **Step 3: Implement.** Append to `fts5Progress.ts`:
+- [x] **Step 3: Implement.** Append to `fts5Progress.ts`:
 
 ```typescript
 /**
