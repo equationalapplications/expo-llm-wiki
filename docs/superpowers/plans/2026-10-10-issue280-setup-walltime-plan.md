@@ -47,12 +47,12 @@
 
 ---
 
-## Resume here (rev 8, 2026-10-13) — start at Task B2 (B1 done, commit 17bc7ab)
+## Resume here (rev 8, 2026-10-13) — start at Task B3 (B2 done, commit 92cefd8)
 
 - **PR-A is merged:** PR #281 → `main` as merge commit `459b84e`. Issue #280 is open again (a stray closing keyword in commit `cfb56fe` had auto-closed it). Only PR-B's PR body may say `Fixes #280`. No commit message may contain a closing keyword followed by an issue number.
 - **Branch:** `feat/issue280-fts-state-machine`, cut from `main` @ `459b84e`. It is not pushed and has no PR yet. Its only commit so far is this plan (rev 8).
 - **Baseline (B0, on `459b84e`):** core suite **176 files / 1904 tests, 0 failures**; `typecheck` exit 0.
-- **Next:** Task B2 (B1 done). B2 needs F3 and F12 (approved 2026-10-13), B4 needs F1 and F7, B5 needs F5 and F6, B8 needs F8.
+- **Next:** Task B3 (B1, B2 done). B3 restores the deferred convergence assertions. B2 needs F3 and F12 (approved 2026-10-13), B4 needs F1 and F7, B5 needs F5 and F6, B8 needs F8.
 - **Ignore** `.superpowers/sdd/2026-10-10-issue280-setup-walltime-plan/NEXT_SESSION_HANDOFF.md`: it is stale (it says A2–A7 failed; all of them shipped).
 - Task A8 (measurements) is still deferred. B8 needs its harness (F10).
 - The rev 7 block below is historical.
@@ -2028,7 +2028,7 @@ git commit -m "feat(core): budgeted FTS drain modes, setupBudgetMs and schema v1
 - Produces: `IndexStrategy.init?(opts?: { entriesExisted?: boolean })`; `createIndexStrategy(..., opts?: { setupBudgetMs?: number; entriesExisted?: boolean })`; meta keys in `fts5Sql.ts`: `FTS5_REBUILD_WM_KEY = 'fts5_rebuild_wm'` (JSON `{ rowid: number; id: string | null }`), `FTS5_REBUILD_SNAPSHOT_KEY = 'fts5_rebuild_snapshot'` (JSON `{ entries: number; map: number }`), `FTS5_SWEEP_CURSOR_KEY = 'fts5_orphan_sweep_cursor'` (decimal integer); `fts5Progress.ts`: `writeRebuildStart(tx, prefix, meta)`, `readRebuildProgress(meta, tx?) → RebuildProgress | null`, types `RebuildWatermark`, `RebuildProgress`. `Fts5IndexStrategy` private: `rearmInTx(tx)`, `resetAndRearm()`, `retireFtsTable(tx)`, `keepMapConsistent()`.
 - Consumes: B1's `fts5PendingIndexesDdl`.
 
-- [ ] **Step 1: Write the failing transition tests** — create `packages/core/__tests__/fts5StateMachine.test.ts`:
+- [x] **Step 1: Write the failing transition tests** — create `packages/core/__tests__/fts5StateMachine.test.ts`:
 
 ```typescript
 // packages/core/__tests__/fts5StateMachine.test.ts
@@ -2229,9 +2229,9 @@ describe('init transitions (#280 B2)', () => {
 });
 ```
 
-- [ ] **Step 2: Run it — expect FAIL.** `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/fts5StateMachine.test.ts` → FAIL: the new keys are not exported and `init` takes no options (it rebuilds to `live`).
+- [x] **Step 2: Run it — expect FAIL.** `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/fts5StateMachine.test.ts` → FAIL: the new keys are not exported and `init` takes no options (it rebuilds to `live`).
 
-- [ ] **Step 3: Keys + progress helpers.** In `fts5Sql.ts`, after `FTS5_DRAIN_CHUNK`, add:
+- [x] **Step 3: Keys + progress helpers.** In `fts5Sql.ts`, after `FTS5_DRAIN_CHUNK`, add:
 
 ```typescript
 /** Rebuild watermark: JSON `{ rowid, id }`; `id` is the fingerprint (the entries id at `rowid`), null at 0 and once windows complete. */
@@ -2282,7 +2282,7 @@ export async function readRebuildProgress(meta: MetadataRepository, tx?: SQLiteA
 }
 ```
 
-- [ ] **Step 4: `init()` state machine.** In `Fts5IndexStrategy.ts`, remove `rebuildFromSource` (`:40-42`), `rebuildInTx` (`:141-145`) and the `rebuildSql` import; import the new keys, `fts5PendingIndexesDdl`, `writeRebuildStart`. Replace `init()` with:
+- [x] **Step 4: `init()` state machine.** In `Fts5IndexStrategy.ts`, remove `rebuildFromSource` (`:40-42`), `rebuildInTx` (`:141-145`) and the `rebuildSql` import; import the new keys, `fts5PendingIndexesDdl`, `writeRebuildStart`. Replace `init()` with:
 
 ```typescript
   /**
@@ -2373,11 +2373,11 @@ export async function readRebuildProgress(meta: MetadataRepository, tx?: SQLiteA
 
 `triggersPresent()` stays as is. In `IndexStrategy.ts` change `init?(): Promise<void>;` to `init?(opts?: { entriesExisted?: boolean }): Promise<void>;` (doc: "`entriesExisted: false` marks a store `setup()` just created: FTS starts `live` with nothing to index.") and delete `rebuildFromSource?` (`:130-131`).
 
-- [ ] **Step 5: Plumb `entriesExisted`.** `createIndexStrategy`'s opts become `{ setupBudgetMs?: number; entriesExisted?: boolean }`, and `attempt()` calls `await strategy.init({ entriesExisted: opts.entriesExisted });`. In `WikiMemory.setup()` pass `{ setupBudgetMs, entriesExisted: entriesExistedBeforeSetup }`. `syncSearchIndex`'s re-init passes only `{ setupBudgetMs }` (the store exists by then).
+- [x] **Step 5: Plumb `entriesExisted`.** `createIndexStrategy`'s opts become `{ setupBudgetMs?: number; entriesExisted?: boolean }`, and `attempt()` calls `await strategy.init({ entriesExisted: opts.entriesExisted });`. In `WikiMemory.setup()` pass `{ setupBudgetMs, entriesExisted: entriesExistedBeforeSetup }`. `syncSearchIndex`'s re-init passes only `{ setupBudgetMs }` (the store exists by then).
 
-- [ ] **Step 6: Run Step 1's file — expect PASS.**
+- [x] **Step 6: Run Step 1's file — expect PASS.**
 
-- [ ] **Step 7: Rewrite the fixtures that relied on init's single-tx rebuild (F3).** Run `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/fts5IndexStrategy.test.ts __tests__/fts5Sql.test.ts __tests__/createIndexStrategy.test.ts __tests__/fts5Drain.test.ts __tests__/fts5Integration.test.ts` and fix exactly these:
+- [x] **Step 7: Rewrite the fixtures that relied on init's single-tx rebuild (F3).** Run `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/fts5IndexStrategy.test.ts __tests__/fts5Sql.test.ts __tests__/createIndexStrategy.test.ts __tests__/fts5Drain.test.ts __tests__/fts5Integration.test.ts` and fix exactly these:
   - `fts5Sql.test.ts:3,45-52`: drop `rebuildSql` from the import and the `for (const s of rebuildSql…)` line; rename the test to `'drain chunk SQL prepares against the schema'`.
   - `fts5IndexStrategy.test.ts` `describe('Fts5IndexStrategy.init')` (`:33-71`) → replace the four tests with: (1) `'fresh init installs triggers and marks live'` — `init({ entriesExisted: false })`, assert `live`, triggers, `pending() === 0`; (2) `'second init on a live database does not rebuild'` — unchanged except the first init passes `{ entriesExisted: false }` and `put('a')` moves after it with an explicit `drain()` before the second `put`; (3) `'live with a missing trigger re-arms into rebuilding'` — assert state `rebuilding` and all three triggers present; (4) `'detached state re-arms into rebuilding'`. Convergence of these to indexed rows is asserted in B3.
   - Every other test in `fts5IndexStrategy.test.ts` that calls `put(...)` before `s.init()`: change `s.init()` to `s.init({ entriesExisted: false })` and move the pre-init `put` calls after it, then `await s.drain()` before the assertions. Expectations stay byte-identical. (In `'survives VACUUM'` (`:112`) the 20 puts move after init and a `drain()` follows them.)
@@ -2386,9 +2386,9 @@ export async function readRebuildProgress(meta: MetadataRepository, tx?: SQLiteA
   - `fts5Integration.test.ts:71-82` (`'state changes'`): the store re-attached by `open(db, 'auto')` is now `rebuilding` and cannot converge until B3. Replace the final `expect` with `expect(await c.__testAccess.metadataRepo.getMeta('fts5_index_state')).toBe('rebuilding'); // B3 Step 9 restores the 20-hit assertion`.
   Expected after the edits: those files PASS.
 
-- [ ] **Step 8: Gate.** Full suite + typecheck. Any further failure must be a test that indexes rows written before a non-fresh init and then searches. Fix it the same way (init first, or `{ entriesExisted: false }`), and list every such file in the commit body. Any other failure is a real bug: stop and debug (superpowers:systematic-debugging).
+- [x] **Step 8: Gate.** Full suite + typecheck. Any further failure must be a test that indexes rows written before a non-fresh init and then searches. Fix it the same way (init first, or `{ entriesExisted: false }`), and list every such file in the commit body. Any other failure is a real bug: stop and debug (superpowers:systematic-debugging).
 
-- [ ] **Step 9: Commit.**
+- [x] **Step 9: Commit.**
 
 ```bash
 git add packages/core/src/services/search packages/core/src/services/search/fts5Progress.ts packages/core/src/WikiMemory.ts \
