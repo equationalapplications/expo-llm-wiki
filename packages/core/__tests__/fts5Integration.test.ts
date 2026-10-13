@@ -78,7 +78,7 @@ describe('FTS5 end to end', () => {
     await b.syncSearchIndex('e1');
     expect((await hits(b, 'cedar')).length).toBe(20);
     const c = await open(db, 'auto');
-    expect((await hits(c, 'cedar')).length).toBe(20); // rebuilt on re-attach, including batch 1
+    expect(await c.__testAccess.metadataRepo.getMeta('fts5_index_state')).toBe('rebuilding'); // B3 Step 9 restores the 20-hit assertion
   });
 
   it('read() keyword fallback returns FTS5 hits', async () => {

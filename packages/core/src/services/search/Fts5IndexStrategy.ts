@@ -4,8 +4,9 @@ import type { MetadataRepository } from '../../repositories/MetadataRepository';
 import type { DrainOptions, IndexDocument, IndexSearchOptions, IndexSearchResult, IndexStrategy } from './IndexStrategy';
 import {
   FTS5_DRAIN_CHUNK, FTS5_STATE_KEY, drainChunkSql, drainHiSql, entityDrainChunkSql, entityDrainHiSql, fts5PendingIndexesDdl,
-  fts5TablesDdl, fts5TriggerNames, fts5TriggersDdl, idDrainChunkSql, rebuildSql,
+  fts5TablesDdl, fts5TriggerNames, fts5TriggersDdl, idDrainChunkSql,
 } from './fts5Sql';
+import { writeRebuildStart } from './fts5Progress';
 import { monotonicNow } from '../../utils/monotonicNow';
 import { DEFAULT_SETUP_BUDGET_MS } from '../../utils/setupDefaults';
 import { buildFtsMatchQuery } from './ftsQuery';
@@ -24,26 +25,89 @@ export class Fts5IndexStrategy implements IndexStrategy {
     private readonly budgetMs: number = DEFAULT_SETUP_BUDGET_MS,
   ) {}
 
-  async init(): Promise<void> {
+  /**
+   * Resolves the index state (spec #280 Change 3 transition table). Every
+   * read-only probe runs before the one transition transaction, so a probe
+   * failure leaves zero mutation (Change 4 ordering).
+   */
+  async init(opts: { entriesExisted?: boolean } = {}): Promise<void> {
+    const p = this.prefix;
     const state = await this.metadataRepo.getMeta(FTS5_STATE_KEY);
-    if (state === 'live' && (await this.triggersPresent())) {
-      await this.db.execAsync(fts5TablesDdl(this.prefix));
+    const ftsExists = await this.metadataRepo.tableExists(`${p}entries_fts`);
+    const mapExists = await this.metadataRepo.tableExists(`${p}fts_map`);
+    const pendingExists = await this.metadataRepo.tableExists(`${p}fts_pending`);
+    const trig = await this.triggersPresent();
+
+    if (state === null && opts.entriesExisted === false) {
+      // Fresh store: nothing to index yet.
+      await this.db.withTransactionAsync(async (tx) => {
+        await tx.execAsync(fts5TablesDdl(p) + fts5PendingIndexesDdl(p) + fts5TriggersDdl(p));
+        await this.metadataRepo.setMeta(FTS5_STATE_KEY, 'live', tx);
+      });
       return;
     }
-    // detached, missing, or live with a trigger gone: one transaction rebuilds
-    // and re-arms, so no write can slip between the rebuild and the triggers.
+    if (state === 'detached') return this.resetAndRearm(); // re-attach: the map is untrustworthy
+
+    const intact = trig && ftsExists && mapExists && pendingExists;
+    if (intact && state === 'rebuilding') return; // resume; each quantum re-verifies the fingerprint
+    if (intact && state === 'live') {
+      if (await this.liveRowsButNothingIndexed()) return this.resetAndRearm();
+      return; // fast path
+    }
+    // Marker lost, a trigger lost, or a table missing.
+    if (ftsExists && mapExists && (await this.keepMapConsistent())) {
+      await this.db.withTransactionAsync((tx) => this.rearmInTx(tx));
+      return;
+    }
+    return this.resetAndRearm();
+  }
+
+  /** live, a live entry, an empty fts_map and an empty ledger: the index was lost (rev 8 m3 / rev 9 m4). */
+  private async liveRowsButNothingIndexed(): Promise<boolean> {
+    const p = this.prefix;
+    if (await this.db.getFirstAsync(`SELECT 1 AS x FROM ${p}fts_map LIMIT 1`)) return false;
+    if (!(await this.db.getFirstAsync(`SELECT 1 AS x FROM ${p}entries WHERE deleted_at IS NULL LIMIT 1`))) return false;
+    return (await this.db.getFirstAsync(`SELECT 1 AS x FROM ${p}fts_pending LIMIT 1`)) === null;
+  }
+
+  /**
+   * Read-only keep-map check (spec DDL note): every surviving entries_fts
+   * rowid must have a map row. Max-rowid seek, then docsize vs map counts.
+   */
+  private async keepMapConsistent(): Promise<boolean> {
+    const p = this.prefix;
+    const fts = await this.db.getFirstAsync<{ rowid: number }>(`SELECT rowid FROM ${p}entries_fts ORDER BY rowid DESC LIMIT 1`);
+    const map = await this.db.getFirstAsync<{ hi: number; n: number }>(
+      `SELECT coalesce(max(fts_rowid), 0) AS hi, count(*) AS n FROM ${p}fts_map`);
+    if ((fts?.rowid ?? 0) > (map?.hi ?? 0)) return false;
+    const doc = await this.db.getFirstAsync<{ n: number }>(`SELECT count(*) AS n FROM ${p}entries_fts_docsize`);
+    return (doc?.n ?? 0) === (map?.n ?? 0);
+  }
+
+  /** Keep-map re-arm: triggers, empty ledger, rebuild from 0, state rebuilding. One transaction. */
+  private async rearmInTx(tx: SQLiteAdapter): Promise<void> {
+    const p = this.prefix;
+    await tx.execAsync(fts5TablesDdl(p));
+    await tx.execAsync(`DELETE FROM ${p}fts_pending;`);
+    await tx.execAsync(fts5PendingIndexesDdl(p) + fts5TriggersDdl(p));
+    await writeRebuildStart(tx, p, this.metadataRepo);
+    await this.metadataRepo.setMeta(FTS5_STATE_KEY, 'rebuilding', tx);
+  }
+
+  /** Reset path: retire entries_fts, recreate it empty, clear map + ledger, then the re-arm. One transaction. */
+  private async resetAndRearm(): Promise<void> {
+    const p = this.prefix;
     await this.db.withTransactionAsync(async (tx) => {
-      await tx.execAsync(`DROP TABLE IF EXISTS ${this.prefix}entries_fts;`);
-      await tx.execAsync(fts5TablesDdl(this.prefix));
-      await tx.execAsync(fts5PendingIndexesDdl(this.prefix));
-      await this.rebuildInTx(tx);
-      await tx.execAsync(fts5TriggersDdl(this.prefix));
-      await this.metadataRepo.setMeta(FTS5_STATE_KEY, 'live', tx);
+      await this.retireFtsTable(tx);
+      await tx.execAsync(fts5TablesDdl(p));
+      await tx.execAsync(`DELETE FROM ${p}fts_map; DELETE FROM ${p}fts_pending;`);
+      await this.rearmInTx(tx);
     });
   }
 
-  async rebuildFromSource(): Promise<void> {
-    await this.db.withTransactionAsync((tx) => this.rebuildInTx(tx));
+  /** B2: drop. B4 replaces this with rename-retire (DROP only as the RENAME-failure fallback). */
+  private async retireFtsTable(tx: SQLiteAdapter): Promise<void> {
+    await tx.execAsync(`DROP TABLE IF EXISTS ${this.prefix}entries_fts;`);
   }
 
   async drain(opts: DrainOptions = {}): Promise<void> {
@@ -192,12 +256,6 @@ export class Fts5IndexStrategy implements IndexStrategy {
         `INSERT INTO ${p}entries_fts (rowid, id, entity_id, title, body, tags) VALUES (?, ?, ?, ?, ?, ?)`,
         [lastInsertRowId, d.id, d.entity_id, d.title, d.body, d.tags]);
     }
-  }
-
-  private async rebuildInTx(tx: SQLiteAdapter): Promise<void> {
-    const p = this.prefix;
-    await tx.execAsync(`DELETE FROM ${p}entries_fts; DELETE FROM ${p}fts_map; DELETE FROM ${p}fts_pending;`);
-    for (const sql of rebuildSql(p)) await tx.runAsync(sql);
   }
 
   private async triggersPresent(): Promise<boolean> {

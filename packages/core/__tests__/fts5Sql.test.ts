@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import Database from 'better-sqlite3';
-import { tagsExpr, fts5TablesDdl, fts5TriggersDdl, fts5TriggerNames, drainChunkSql, rebuildSql } from '../src/services/search/fts5Sql';
+import { tagsExpr, fts5TablesDdl, fts5TriggersDdl, fts5TriggerNames, drainChunkSql } from '../src/services/search/fts5Sql';
 import { toIndexDoc } from '../src/utils/indexDoc';
 
 const tokens = (s: string | null) => (s ?? '').toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
@@ -42,12 +42,11 @@ describe('DDL', () => {
     expect((db.prepare(`SELECT count(*) AS n FROM p_fts_pending`).get() as any).n).toBe(2);
   });
 
-  it('drain chunk and rebuild SQL prepare against the schema', () => {
+  it('drain chunk SQL prepares against the schema', () => {
     const db = new Database(':memory:');
     db.exec(`CREATE TABLE p_entries (id TEXT PRIMARY KEY, entity_id TEXT NOT NULL, title TEXT NOT NULL,
       body TEXT NOT NULL, tags TEXT NOT NULL DEFAULT '[]', deleted_at INTEGER)`);
     db.exec(fts5TablesDdl('p_'));
     for (const s of drainChunkSql('p_')) expect(() => db.prepare(s)).not.toThrow();
-    for (const s of rebuildSql('p_')) expect(() => db.prepare(s)).not.toThrow();
   });
 });

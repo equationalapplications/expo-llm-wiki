@@ -343,7 +343,7 @@ export class WikiMemory {
         this.prefix,
         this.metadataRepo,
         this.options.config?.indexStrategy ?? 'auto',
-        { setupBudgetMs },
+        { setupBudgetMs, entriesExisted: entriesExistedBeforeSetup },
       ),
     );
     // FTS5: one budgeted quantum (no global read). MiniSearch: full rebuild, as before.

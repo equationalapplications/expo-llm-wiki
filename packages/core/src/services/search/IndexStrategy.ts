@@ -130,8 +130,9 @@ export interface IndexStrategy {
   /**
    * Create or verify the strategy's backing schema and run state changes.
    * Called once by `createIndexStrategy`, before the strategy is installed.
+   * `entriesExisted: false` marks a store `setup()` just created: FTS starts `live` with nothing to index.
    */
-  init?(): Promise<void>;
+  init?(opts?: { entriesExisted?: boolean }): Promise<void>;
 
   /**
    * Apply every change recorded in the strategy's durable ledger, in bounded
@@ -143,6 +144,4 @@ export interface IndexStrategy {
    */
   drain?(opts?: DrainOptions): Promise<void>;
 
-  /** Rebuild entirely in SQL from the source tables; no rows pass through JS. */
-  rebuildFromSource?(): Promise<void>;
 }

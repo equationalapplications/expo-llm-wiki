@@ -4,6 +4,12 @@
 
 export const FTS5_STATE_KEY = 'fts5_index_state';
 export const FTS5_DRAIN_CHUNK = 500;
+/** Rebuild watermark: JSON `{ rowid, id }`; `id` is the fingerprint (the entries id at `rowid`), null at 0 and once windows complete. */
+export const FTS5_REBUILD_WM_KEY = 'fts5_rebuild_wm';
+/** Re-arm snapshot: JSON `{ entries: max(entries.rowid), map: max(fts_map.fts_rowid) }`. */
+export const FTS5_REBUILD_SNAPSHOT_KEY = 'fts5_rebuild_snapshot';
+/** Orphan-sweep cursor over fts_map.fts_rowid (decimal integer). Spec #280 Change 3. */
+export const FTS5_SWEEP_CURSOR_KEY = 'fts5_orphan_sweep_cursor';
 
 export function fts5TriggerNames(prefix: string): readonly [string, string, string] {
   return [`${prefix}entries_fts_ai`, `${prefix}entries_fts_au`, `${prefix}entries_fts_ad`];
@@ -131,16 +137,6 @@ export function entityDrainChunkSql(p: string): readonly string[] {
        FROM ${p}fts_map m JOIN ${p}entries e ON e.id = m.id
        WHERE m.id IN (${chunkIds})`,
     `DELETE FROM ${p}fts_pending WHERE entity_id = ? AND seq <= ?`,
-  ];
-}
-
-/** Full rebuild from live entries. Caller empties the three tables first, in the same transaction. */
-export function rebuildSql(p: string): readonly string[] {
-  return [
-    `INSERT INTO ${p}fts_map (id, entity_id) SELECT id, entity_id FROM ${p}entries WHERE deleted_at IS NULL`,
-    `INSERT INTO ${p}entries_fts (rowid, id, entity_id, title, body, tags)
-       SELECT m.fts_rowid, e.id, e.entity_id, e.title, e.body, ${tagsExpr('e.tags')}
-       FROM ${p}fts_map m JOIN ${p}entries e ON e.id = m.id`,
   ];
 }
 

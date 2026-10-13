@@ -35,7 +35,7 @@ const indexed = async (id: string) => (await db.getFirstAsync(`SELECT 1 AS x FRO
 /** A live, empty FTS5 store (B2 makes this `init({ entriesExisted: false })`). */
 async function liveStrategy(budgetMs?: number): Promise<Fts5IndexStrategy> {
   const s = new Fts5IndexStrategy(db, P, meta, budgetMs);
-  await s.init();
+  await s.init({ entriesExisted: false });
   return s;
 }
 
