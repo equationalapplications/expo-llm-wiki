@@ -67,7 +67,7 @@
   2. A4's `readSchemaVersion` lives as `detectSchemaVersion` in `src/db/sourceRefNormalize.ts`; `probePendingWork(db, meta, prefix)` takes `db` first.
   3. The VACUUM watermark reset is in `MaintenanceService.runPrune` (via `resetNormalizeWatermarks`), not in `MetadataRepository.vacuum()` (that would be an import cycle).
   4. Plan test fixes: A5's "every sync entry point stays off the full-read path" test warms the store first (`warm` helper option); A6's (o) heal test sets `orphanAfterDays: null` / `staleInferredAfterDays: null`; `getLibrarianWatermark` takes a tx argument.
-- **Remaining for PR-A:** Task A8 only (below). The ARM64 leg (A8 Step 4) needs the maintainer.
+- **Remaining for PR-A (rev 7a, maintainer decision 2026-10-13):** measurements are NOT a merge gate. The changes are required for structural reasons; tuning and metrics come later. The merge gate is correctness only: a review of the full PR diff against the spec's PR-A contract, fixes for any real bugs, CI green, then `gh pr ready 281` and merge (merge commit). Task A8 below is DEFERRED to a follow-up (it can run on `main` after PR-A merges); do not run it as part of PR-A.
 - **Not in scope:** anything under Track PR-B.
 
 ---
@@ -1376,7 +1376,7 @@ Update the `heal_skipped` description in `utils/diagnostics.ts:50` to `'Heal ski
 
 ---
 
-### Task A8 (controller): measurements, spec record, PR-A ready
+### Task A8 (DEFERRED, rev 7a — not a PR-A merge gate): measurements, spec record
 
 **Rev 7 rewrite.** The original A8 assumed a sandbox (`.sandbox/profile-setup.ts`, a 1M store under `$HOME/issue280-stores`) that only existed on the investigation machine and was never committed. The maintainer authorized proceeding without it (2026-10-13). This task builds a committed replacement, then measures on whatever machine runs it, and records the machine honestly. Numbers from this machine are NOT comparable to the investigation's NVMe ThinkPad rows; never present them as such.
 
