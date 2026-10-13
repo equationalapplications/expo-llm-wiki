@@ -146,6 +146,20 @@ describe('keyword outage call-site map', () => {
     expect(r.perEntity[0].searchUnavailable).toEqual(['librarian', 'heal']);
   });
 
+  it('runPendingMaintenance still reembeds when the outage skips heal', async () => {
+    const { db, wiki } = await wikiWith({ llmProvider: { embed: vec } as any, config: { orphanAfterDays: null, staleInferredAfterDays: null, autoHealThreshold: 1 } as any });
+    await factWithVec(db, 'c1', 'inferred thing', [0, 0, 1], 'librarian_inferred');
+    await db.runAsync(`INSERT INTO ${P}entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at)
+      VALUES ('f-new', 'u', 'pear', 'b', '[]', 'inferred', 'user_stated', 1, 1)`); // no vector: reembed pending
+    await db.runAsync(`INSERT INTO ${P}events (id, entity_id, event_type, summary, created_at) VALUES ('evt_1','u','observation','x',100)`); // makes heal due
+    const runReembed = vi.spyOn((wiki.__testAccess as any).maintenanceService, 'runReembed').mockResolvedValue(undefined);
+    const r = await wiki.runPendingMaintenance({ entityIds: ['u'], jobs: ['heal', 'reembed'] });
+    expect(r.perEntity[0].searchUnavailable).toEqual(['heal']);
+    expect(runReembed).toHaveBeenCalledTimes(1);
+    expect(r.perEntity[0].reembedded).toBe(true);
+    expect(r.stoppedReason).toEqual({ reason: 'complete' });
+  });
+
   it("one entity's librarian abort does not fail runPendingMaintenance for the others", async () => {
     const { db, wiki } = await wikiWith({ config: { autoLibrarianThreshold: 1000, librarian: { strategy: 'ops' } } as any }); // no embed provider
     await factWithVec(db, 'f-pear', 'pear', [0, 0, 1]);
@@ -169,6 +183,25 @@ describe('keyword outage call-site map', () => {
     init.mockClear();
     await wiki.syncSearchIndex();
     expect(init).not.toHaveBeenCalled();
+  });
+
+  it('the re-init cooldown doubles per consecutive failure on the monotonic clock', async () => {
+    const { wiki } = await wikiWith({});
+    const init = vi.mocked(Fts5IndexStrategy.prototype.init);
+    let now = 1_000_000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    vi.spyOn(Date, 'now').mockReturnValue(0); // a wall-clock step must not matter
+    const attempted = async (advanceMs: number) => {
+      now += advanceMs;
+      init.mockClear();
+      await wiki.syncSearchIndex();
+      return init.mock.calls.length > 0;
+    };
+    expect(await attempted(0)).toBe(true); // failure 1 → 5 s cooldown
+    expect(await attempted(4_999)).toBe(false);
+    expect(await attempted(1)).toBe(true); // failure 2 → 10 s cooldown
+    expect(await attempted(5_000)).toBe(false);
+    expect(await attempted(5_000)).toBe(true);
   });
 
   it('(e-gate mid-pass) an embed failure routes a candidate into keyword mode at :143 → abort, watermark kept', async () => {

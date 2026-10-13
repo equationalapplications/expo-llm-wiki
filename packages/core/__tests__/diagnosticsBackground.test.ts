@@ -22,8 +22,9 @@ describe('background job diagnostics', () => {
     expect(JSON.stringify(diagnostics)).not.toContain('llm offline');
   });
 
-  it('auto-librarian keyword outage → background_job_failed reason keyword_search_unavailable, no console.error', async () => {
+  it('auto-librarian keyword outage → background_job_failed reason keyword_search_unavailable, no console.error, one console.warn', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { wiki, diagnostics } = await makeDiagnosticWiki({
       config: { autoLibrarianThreshold: 1 },
       generateText: async () => { throw new WikiSearchUnavailableError(); },
@@ -33,7 +34,11 @@ describe('background job diagnostics', () => {
     expect(ofCode(diagnostics, 'background_job_failed')[0]).toMatchObject({
       operation: 'librarian', trigger: 'auto', detail: { reason: 'keyword_search_unavailable' },
     });
+    await wiki.write('e1', { event_type: 'observation', summary: 'two' });
+    await vi.waitFor(() => expect(ofCode(diagnostics, 'background_job_failed')).toHaveLength(2));
     expect(error).not.toHaveBeenCalled();
+    // Visible without an onDiagnostic hook, but once per instance, not per write.
+    expect(warn.mock.calls.filter(([m]) => String(m).includes('keyword search is unavailable'))).toHaveLength(1);
   });
 
   it('auto-librarian run tags its own diagnostics with trigger auto', async () => {

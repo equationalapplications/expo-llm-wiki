@@ -14,7 +14,9 @@ import type { IndexDocument, IndexSearchOptions, IndexSearchResult, IndexStrateg
 export class UnavailableIndexStrategy implements IndexStrategy {
   constructor(private readonly cause: unknown) {}
 
-  async search(_query: string, _options: IndexSearchOptions): Promise<IndexSearchResult[]> {
+  async search(_query: string, options: IndexSearchOptions): Promise<IndexSearchResult[]> {
+    // IndexStrategy contract: an empty entityIds list matches nothing, outage or not.
+    if (options.entityIds.length === 0) return [];
     throw new WikiSearchUnavailableError(undefined, this.cause);
   }
   async replace(_entityId: string, _ids: readonly string[], _documents: readonly IndexDocument[]): Promise<void> {}

@@ -120,18 +120,22 @@ export class MaintenanceScheduler {
     const markBusy = (st: State, job: MaintenanceJob) => { (st.report.busy ??= []).push(job); };
     const markSearchUnavailable = (st: State, job: MaintenanceJob) => { (st.report.searchUnavailable ??= []).push(job); };
 
+    // Open job flags across all entities. Flags only ever clear, so a round
+    // that clears one (a skip: busy, outage, too small, nothing processed)
+    // counts as progress — it must re-run so the entity reaches its later
+    // jobs — and the loop still terminates.
+    const openJobs = () => states.reduce((n, s) => n + +s.librarian + +s.heal + +s.reembed, 0);
+
     rounds: for (;;) {
       let progressed = false;
+      const openAtStart = openJobs();
       for (const st of states) {
         if (!st.librarian && !st.heal && !st.reembed) continue;
         if (Date.now() >= deadline) { stopped = { reason: 'deadline' }; break rounds; }
         const entityId = st.p.entityId;
 
         if (st.librarian) {
-          // A skipped librarian (busy, outage) sets progressed so the round
-          // re-runs: otherwise a lone entity would end the loop here and never
-          // reach its heal/reembed. Terminates: st.librarian is now false.
-          if (this.jobManager.isBlocked('librarian', entityId)) { st.librarian = false; markBusy(st, 'librarian'); progressed = true; continue; }
+          if (this.jobManager.isBlocked('librarian', entityId)) { st.librarian = false; markBusy(st, 'librarian'); continue; }
           this.jobManager.acquireLock('librarian', entityId);
           let r: LibrarianResult;
           try {
@@ -142,7 +146,6 @@ export class MaintenanceScheduler {
             if (!isWikiSearchUnavailableError(err)) throw err;
             st.librarian = false;
             markSearchUnavailable(st, 'librarian');
-            progressed = true;
             continue;
           } finally {
             this.jobManager.releaseLock('librarian', entityId);
@@ -209,7 +212,7 @@ export class MaintenanceScheduler {
           }
         }
       }
-      if (!progressed) break;
+      if (!progressed && openJobs() === openAtStart) break;
     }
 
     if (stopped.reason === 'complete' && tooSmall) stopped = tooSmall;

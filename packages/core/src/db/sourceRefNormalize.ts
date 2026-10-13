@@ -63,12 +63,17 @@ async function runPass(
   db: SQLiteAdapter, prefix: string, meta: MetadataRepository,
   table: 'entries' | 'source_ref_index', key: string, stampOnCompletion: boolean,
 ): Promise<void> {
-  let cursor = await resumeRowid(db, prefix, meta, table, key);
-  let done = false;
-  while (!done) {
+  let cursor: number | null = await resumeRowid(db, prefix, meta, table, key);
+  while (cursor !== null) {
+    // The callback records the next cursor (null = done) in a local that is
+    // applied only after the tx resolves, so in-memory progress never moves
+    // past a chunk that rolled back. Not the callback's return value: host
+    // adapters (e.g. expo-sqlite) may resolve withTransactionAsync to void.
+    const from: number = cursor;
+    let next: number | null = from;
     await db.withTransactionAsync(async (tx) => {
       const rows = await tx.getAllAsync<{ rowid: number; id: string; source_ref: string | null }>(
-        `SELECT rowid, id, source_ref FROM ${prefix}${table} WHERE rowid > ? ORDER BY rowid LIMIT ${CHUNK}`, [cursor]);
+        `SELECT rowid, id, source_ref FROM ${prefix}${table} WHERE rowid > ? ORDER BY rowid LIMIT ${CHUNK}`, [from]);
       for (const r of rows) {
         if (r.source_ref == null) continue;
         const n = normalizeSourceRef(r.source_ref);
@@ -84,13 +89,14 @@ async function runPass(
       if (rows.length < CHUNK) {
         await meta.deleteMeta(key, tx);
         if (stampOnCompletion) await writeNormalizeStamp(meta, tx);
-        done = true;
+        next = null;
         return;
       }
       const last = rows[rows.length - 1];
       await meta.setMeta(key, JSON.stringify({ rowid: last.rowid, id: last.id }), tx);
-      cursor = last.rowid;
+      next = last.rowid;
     });
+    cursor = next;
   }
 }
 

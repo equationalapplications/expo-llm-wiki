@@ -51,6 +51,12 @@ describe('unavailable keyword search inside WikiMemory', () => {
     expect((new MiniSearchIndexStrategy() as unknown as { drain?: unknown }).drain).toBeUndefined();
   });
 
+  it('UnavailableIndexStrategy.search honors the empty-entityIds contract, throws otherwise', async () => {
+    const s = new UnavailableIndexStrategy(new Error('x'));
+    await expect(s.search('q', { entityIds: [], limit: 5 })).resolves.toEqual([]);
+    await expect(s.search('q', { entityIds: ['u'], limit: 5 })).rejects.toMatchObject({ name: 'WikiSearchUnavailableError' });
+  });
+
   it('no-arg syncSearchIndex() retries init and recovers', async () => {
     const { wiki, init, svc } = await unavailableWiki();
     init.mockRestore();

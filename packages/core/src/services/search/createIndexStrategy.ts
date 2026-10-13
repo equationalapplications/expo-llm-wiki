@@ -88,20 +88,19 @@ export async function createIndexStrategy(
     return new MiniSearchIndexStrategy();
   };
 
-  try {
-    const s = await attempt();
-    return s === 'absent' ? await absent() : s;
-  } catch (err) {
-    if (preferred === 'fts5') throw err; // pinned: surface the raw failure
-  }
-  await new Promise((resolve) => setTimeout(resolve, FTS5_INIT_RETRY_MS));
-  try {
-    const s = await attempt();
-    return s === 'absent' ? await absent() : s;
-  } catch (err) {
-    // Never detachFts5 here: a transient failure must not drop the ledger and
-    // route a large store into MiniSearch's full sync (measured OOM).
-    console.warn('[WikiMemory] FTS5 init failed after retry; keyword search unavailable until a later open or syncSearchIndex():', err);
-    return new UnavailableIndexStrategy(err);
+  for (let tries = 1; ; tries++) {
+    try {
+      const s = await attempt();
+      return s === 'absent' ? await absent() : s;
+    } catch (err) {
+      if (preferred === 'fts5') throw err; // pinned: surface the raw failure
+      if (tries === 2) {
+        // Never detachFts5 here: a transient failure must not drop the ledger and
+        // route a large store into MiniSearch's full sync (measured OOM).
+        console.warn('[WikiMemory] FTS5 init failed after retry; keyword search unavailable until a later open or syncSearchIndex():', err);
+        return new UnavailableIndexStrategy(err);
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, FTS5_INIT_RETRY_MS));
   }
 }

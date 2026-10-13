@@ -51,8 +51,19 @@ import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighb
 export { WikiBusyError, WikiTransactionError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER, WikiStrictOntologyViolation, WikiSourceRefHashCollision, WikiParseError, WikiIngestEmptyError, WikiGraphNodeOwnershipConflict } from './types';
 
 const TABLE_PREFIX_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,30}_$/;
-/** Minimum gap between failed no-arg syncSearchIndex() re-init attempts (spec #280 Change 4). */
+/**
+ * Backoff between failed no-arg syncSearchIndex() re-init attempts (spec #280
+ * Change 4): doubles per consecutive failure from the base up to the cap, and
+ * is never shorter than SEARCH_REINIT_COST_FACTOR × the failed attempt's own
+ * duration, so a slow attempt (backoff + rebuild under the write lock) can
+ * take at most ~1/(factor+1) of wall time.
+ */
 const SEARCH_REINIT_COOLDOWN_MS = 5_000;
+const SEARCH_REINIT_COOLDOWN_MAX_MS = 5 * 60_000;
+const SEARCH_REINIT_COST_FACTOR = 10;
+/** Monotonic clock: a wall-clock step must not stretch or skip the cooldown. */
+const monotonicNow = (): number =>
+  typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now();
 
 /** Typed escape hatch for tests — not part of the supported consumer API. */
 export interface WikiMemoryTestAccess {
@@ -260,8 +271,10 @@ export class WikiMemory {
   }
 
   private reinitSearch: Promise<void> | null = null;
-  /** When the last no-arg syncSearchIndex() re-init left keyword search unavailable (0 = never). */
-  private reinitFailedAt = 0;
+  /** Monotonic time before which a no-arg syncSearchIndex() skips the re-init (0 = no cooldown). */
+  private reinitRetryAt = 0;
+  /** Consecutive failed re-inits; drives the exponential backoff. */
+  private reinitFailures = 0;
 
   /**
    * Opens the store: migration gate, DDL, schema migrations, then the stamped
@@ -675,7 +688,9 @@ export class WikiMemory {
    * queued. Without an argument, rebuilds every entity currently marked
    * stale; when none is, it resolves immediately and does not wait for rebuilds
    * already queued. While keyword search is unavailable it first retries the
-   * index init, at most once per 5 s after a failed attempt.
+   * index init; after a failed attempt it waits at least 5 s, doubling per
+   * consecutive failure up to 5 min (longer when an attempt is itself slow),
+   * before retrying again.
    *
    * Call only after the host's transaction commits: called inside it, the
    * rebuild may index rows that later roll back, or miss them and clear the
@@ -694,20 +709,29 @@ export class WikiMemory {
   async syncSearchIndex(entityId?: string): Promise<void> {
     if (entityId === undefined) {
       // A long-lived host that never re-opens still recovers from a failed init (spec #280 Change 4).
-      // After a failed re-init, wait SEARCH_REINIT_COOLDOWN_MS before the next:
-      // each attempt costs the 250 ms retry backoff plus up to two rebuild
-      // transactions under the write lock, and hosts call this after every write.
-      if (!this.searchService.isKeywordAvailable() && Date.now() - this.reinitFailedAt >= SEARCH_REINIT_COOLDOWN_MS) {
+      // After a failed re-init, back off before the next: each attempt costs
+      // the 250 ms retry backoff plus up to two rebuild transactions under the
+      // write lock, and hosts call this after every write.
+      if (!this.searchService.isKeywordAvailable() && monotonicNow() >= this.reinitRetryAt) {
         // One re-init at a time; concurrent callers share it. On success, run the
         // same full sync setup() does (a new MiniSearch index starts empty).
         this.reinitSearch ??= (async () => {
+          const started = monotonicNow();
           try {
             const strategy = await createIndexStrategy(
               this.db, this.prefix, this.metadataRepo, this.options.config?.indexStrategy ?? 'auto');
             this.searchService.setIndexStrategy(strategy);
             if (this.searchService.isKeywordAvailable()) await this.searchService.sync();
           } finally {
-            this.reinitFailedAt = this.searchService.isKeywordAvailable() ? 0 : Date.now();
+            if (this.searchService.isKeywordAvailable()) {
+              this.reinitFailures = 0;
+              this.reinitRetryAt = 0;
+            } else {
+              const now = monotonicNow();
+              const backoff = Math.min(SEARCH_REINIT_COOLDOWN_MS * 2 ** this.reinitFailures, SEARCH_REINIT_COOLDOWN_MAX_MS);
+              this.reinitFailures++;
+              this.reinitRetryAt = now + Math.max(backoff, SEARCH_REINIT_COST_FACTOR * (now - started));
+            }
             this.reinitSearch = null;
           }
         })();
