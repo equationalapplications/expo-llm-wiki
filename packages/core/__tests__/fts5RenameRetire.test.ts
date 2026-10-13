@@ -150,6 +150,47 @@ describe('corruption repair (#280 B4, 7(e) corrupt-FTS leg)', () => {
     expect(await state()).toBeNull(); // the re-arm tx rolled back
   });
 
+  it("SQLITE_CORRUPT (generic) from the FTS-only fast-path seek resets", async () => {
+    await liveStore(10);
+    const orig = db.getFirstAsync.bind(db);
+    let thrown = false;
+    vi.spyOn(db, 'getFirstAsync').mockImplementation((async (sql: string, args?: unknown[]) => {
+      if (!thrown && sql.includes(`FROM ${P}entries_fts ORDER BY rowid DESC`)) { thrown = true; throw Object.assign(new Error('malformed'), { code: 'SQLITE_CORRUPT' }); }
+      return orig(sql, args as never);
+    }) as never);
+    await new Fts5IndexStrategy(db, P, meta).init();
+    expect(await retired()).toEqual([`${P}entries_fts_retired_1`]);
+    expect(await state()).toBe('rebuilding');
+  });
+
+  it('SQLITE_CORRUPT from the entries_fts_docsize count on the marker-loss path resets', async () => {
+    await liveStore(10);
+    await db.runAsync(`DELETE FROM ${P}meta WHERE key = ?`, [FTS5_STATE_KEY]);
+    const orig = db.getFirstAsync.bind(db);
+    let thrown = false;
+    vi.spyOn(db, 'getFirstAsync').mockImplementation((async (sql: string, args?: unknown[]) => {
+      if (!thrown && sql.includes(`${P}entries_fts_docsize`)) { thrown = true; throw Object.assign(new Error('malformed'), { code: 'SQLITE_CORRUPT' }); }
+      return orig(sql, args as never);
+    }) as never);
+    await new Fts5IndexStrategy(db, P, meta).init();
+    expect(await retired()).toEqual([`${P}entries_fts_retired_1`]);
+    expect(await state()).toBe('rebuilding');
+  });
+
+  it('a failing reclamation DELETE never fails drain() or the flip; the table stays listed', async () => {
+    const s = await liveStore(1200);
+    await swapTokenizer();
+    await new Fts5IndexStrategy(db, P, meta).init();
+    const orig = db.runAsync.bind(db);
+    vi.spyOn(db, 'runAsync').mockImplementation((async (sql: string, args?: unknown[]) => {
+      if (String(sql).startsWith(`DELETE FROM ${P}entries_fts_retired_1`)) throw new Error('locked');
+      return orig(sql, args as never);
+    }) as never);
+    await expect(s.drain()).resolves.toBeUndefined();
+    expect(await state()).toBe('live');
+    expect(await retired()).toEqual([`${P}entries_fts_retired_1`]);
+  });
+
   it('a transient SQLITE_BUSY from an FTS-only statement does NOT reset (F7)', async () => {
     await liveStore(10);
     const orig = db.getFirstAsync.bind(db);

@@ -188,7 +188,11 @@ export class Fts5IndexStrategy implements IndexStrategy {
       }
       await this.tryFlip();
     }
-    await this.reclaimRetired(deadline); // never blocks the flip
+    try {
+      await this.reclaimRetired(deadline);
+    } catch {
+      // Best-effort: a corrupt or locked retired table stays listed and is retried next quantum; it never fails drain() or the flip.
+    }
   }
 
   /** Bounded reclamation steps, each its own tx, until the deadline or nothing is retired. */
