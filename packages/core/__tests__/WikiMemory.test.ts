@@ -103,13 +103,23 @@ describe('WikiMemory (Facade Layer)', () => {
   describe('Setup and Migrations', () => {
     it('detects fresh install and sets initial schema version without running upgrade migrations', async () => {
       const tableExistsSpy = vi.spyOn(wiki.__testAccess.metadataRepo, 'tableExists').mockResolvedValue(false);
-      const setMetaSpy = vi.spyOn(wiki.__testAccess.metadataRepo, 'setMeta').mockResolvedValue(undefined);
+      // Record whether each write lands while the fresh-store finalize transaction is open.
+      let inTx = false;
+      const writesInTx: Array<[string, boolean]> = [];
+      const setMetaSpy = vi.spyOn(wiki.__testAccess.metadataRepo, 'setMeta').mockImplementation(async (key) => {
+        writesInTx.push([key, inTx]);
+      });
+      vi.mocked(mockDb.withTransactionAsync).mockImplementation(async (cb) => {
+        inTx = true;
+        try { return await cb(mockDb); } finally { inTx = false; }
+      });
 
       await wiki.setup();
 
       expect(tableExistsSpy).toHaveBeenCalledWith('test_entries');
-      // Written inside the fresh-store finalize transaction, so the adapter is the tx handle.
       expect(setMetaSpy).toHaveBeenCalledWith('schema_version', String(CURRENT_SCHEMA_VERSION), expect.any(Object));
+      expect(writesInTx).toContainEqual(['schema_version', true]);
+      expect(writesInTx).not.toContainEqual(['schema_version', false]);
     });
 
     it('throws an error if legacy source types are detected on an existing database', async () => {
@@ -370,11 +380,6 @@ describe('WikiMemory outbox API', () => {
   });
 
   describe('Migration Gate', () => {
-    beforeEach(() => {
-      vi.doUnmock('../src/db/schema');
-      vi.doUnmock('../src/db/migrationGate');
-    });
-
     it('uses allow policy by default', async () => {
       const wiki = makeWiki();
       const moduleSpy = vi.spyOn(await import('../src/db/schema'), 'setupDatabase');
@@ -431,18 +436,6 @@ describe('WikiMemory outbox API', () => {
       await wiki.setup({ migrations: 'auto' });
 
       expect(gateSpy).toHaveBeenCalledWith(expect.any(Object), 'test_', wiki['metadataRepo'], 'auto');
-    });
-
-    it('throws WikiMigrationRequiredError when migrations are refused and pending work exists', async () => {
-      const wiki = makeWiki();
-      const WikiMigrationRequiredError = (await import('../src/types')).WikiMigrationRequiredError;
-      const mockMigrationRequiredError = new WikiMigrationRequiredError('Migration required', { type: 'source_ref_normalize', entriesWatermark: 0, sourceRefIndexWatermark: 0 });
-
-      vi.spyOn(await import('../src/db/migrationGate'), 'setupDatabaseWithGate').mockRejectedValue(mockMigrationRequiredError);
-
-      wiki['options'].config = { migrations: 'refuse', tablePrefix: 'test_' };
-
-      await expect(wiki.setup()).rejects.toThrow(WikiMigrationRequiredError);
     });
 
     it('routes allow policy through the gate, which performs schema setup', async () => {

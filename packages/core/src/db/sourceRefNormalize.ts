@@ -1,5 +1,6 @@
 import type { PendingMigrationWork, SQLiteAdapter } from '../types';
 import { MetadataRepository } from '../repositories/MetadataRepository';
+import { parseJsonObject } from '../repositories/rowMappers';
 import { normalizeSourceRef } from '../utils/pure';
 import { CURRENT_SCHEMA_VERSION } from './migrations';
 
@@ -14,36 +15,48 @@ const CHUNK = 500;
 interface Watermark { rowid: number; id: string }
 
 export function stampMatches(raw: string | null): boolean {
-  if (!raw) return false;
-  try {
-    const s = JSON.parse(raw) as { normalize_alg?: unknown };
-    return s?.normalize_alg === SOURCE_REF_NORMALIZE_ALG;
-  } catch {
-    return false;
-  }
+  return parseJsonObject<{ normalize_alg?: unknown }>(raw)?.normalize_alg === SOURCE_REF_NORMALIZE_ALG;
 }
 
 export async function writeNormalizeStamp(meta: MetadataRepository, tx: SQLiteAdapter): Promise<void> {
   await meta.setMeta(NORMALIZE_STAMP_KEY, JSON.stringify({ schema_version: NORMALIZE_STAMP_SCHEMA_VERSION, normalize_alg: SOURCE_REF_NORMALIZE_ALG }), tx);
 }
 
-/** Shared by the runner and the gate probe so both agree on what a valid watermark is. */
-async function readWatermark(meta: MetadataRepository, key: string): Promise<Watermark | null> {
-  const raw = await meta.getMeta(key);
-  if (!raw) return null;
-  try {
-    const wm = JSON.parse(raw) as Partial<Watermark>;
-    return typeof wm.rowid === 'number' && typeof wm.id === 'string' ? { rowid: wm.rowid, id: wm.id } : null;
-  } catch {
-    return null;
-  }
-}
-
+/**
+ * Resume rowid for a pass: the stored watermark when it parses AND its fingerprint
+ * (the id at that rowid) still matches, else 0. Shared by the runner and the gate
+ * probe so a refusal never reports progress the runner would discard.
+ */
 async function resumeRowid(db: SQLiteAdapter, prefix: string, meta: MetadataRepository, table: string, key: string): Promise<number> {
-  const wm = await readWatermark(meta, key);
-  if (!wm) return 0;
+  const wm = parseJsonObject<Partial<Watermark>>(await meta.getMeta(key));
+  if (typeof wm?.rowid !== 'number' || typeof wm.id !== 'string') return 0;
   const row = await db.getFirstAsync<{ id: string }>(`SELECT id FROM ${prefix}${table} WHERE rowid = ?`, [wm.rowid]);
   return row?.id === wm.id ? wm.rowid : 0;
+}
+
+/**
+ * Drops both pass watermarks. Called before an in-process VACUUM, which may
+ * renumber rowids: an interrupted normalize then restarts from 0 instead of
+ * trusting a rowid that could now point at a different row.
+ */
+export async function resetNormalizeWatermarks(meta: MetadataRepository): Promise<void> {
+  await meta.deleteMeta(ENTRIES_WM_KEY);
+  await meta.deleteMeta(SRI_WM_KEY);
+}
+
+/**
+ * The store's schema version. A missing row means a pre-versioned store: v1 if
+ * its FTS table already uses the porter tokenizer, else v0. Shared by setup()
+ * and the gate probe so both report the same version.
+ */
+export async function detectSchemaVersion(meta: MetadataRepository, prefix: string): Promise<number> {
+  const stored = await meta.getMeta('schema_version');
+  if (stored) {
+    const v = parseInt(stored, 10);
+    return Number.isFinite(v) ? v : 0;
+  }
+  const ftsDdl = await meta.getTableDdl(`${prefix}entries_fts`);
+  return /tokenize\s*=\s*['"]porter\s+unicode61['"]/i.test(ftsDdl ?? '') ? 1 : 0;
 }
 
 async function runPass(
@@ -81,12 +94,8 @@ async function runPass(
   }
 }
 
-async function watermarkRowid(meta: MetadataRepository, key: string): Promise<number> {
-  return (await readWatermark(meta, key))?.rowid ?? 0;
-}
-
 /** Read-only probe for the migration gate. Never mutates. */
-export async function probePendingWork(meta: MetadataRepository, prefix: string): Promise<PendingMigrationWork | null> {
+export async function probePendingWork(db: SQLiteAdapter, meta: MetadataRepository, prefix: string): Promise<PendingMigrationWork | null> {
   // Fresh store (nothing created yet): there is no pending work to probe.
   if (!(await meta.tableExists(`${prefix}entries`))) return null;
   // Entries without meta: an unversioned store. setupDatabase would create meta, so this is pending work.
@@ -95,9 +104,7 @@ export async function probePendingWork(meta: MetadataRepository, prefix: string)
   }
 
   // Schema migrations come first: normalization only runs against a current-version schema.
-  // A missing/non-numeric schema_version on an existing store means a pre-versioned (legacy) store.
-  const parsedVersion = parseInt((await meta.getMeta('schema_version')) ?? '', 10);
-  const version = Number.isFinite(parsedVersion) ? parsedVersion : 0;
+  const version = await detectSchemaVersion(meta, prefix);
   if (version < CURRENT_SCHEMA_VERSION) {
     return { type: 'schema_migration', fromVersion: version, toVersion: CURRENT_SCHEMA_VERSION };
   }
@@ -105,8 +112,8 @@ export async function probePendingWork(meta: MetadataRepository, prefix: string)
   if (!stampMatches(await meta.getMeta(NORMALIZE_STAMP_KEY))) {
     return {
       type: 'source_ref_normalize',
-      entriesWatermark: await watermarkRowid(meta, ENTRIES_WM_KEY),
-      sourceRefIndexWatermark: await watermarkRowid(meta, SRI_WM_KEY),
+      entriesWatermark: await resumeRowid(db, prefix, meta, 'entries', ENTRIES_WM_KEY),
+      sourceRefIndexWatermark: await resumeRowid(db, prefix, meta, 'source_ref_index', SRI_WM_KEY),
     };
   }
 

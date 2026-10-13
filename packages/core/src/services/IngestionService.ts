@@ -578,6 +578,12 @@ export class IngestionService {
       nodeTrust?: ReadonlyMap<string, GroundingTrust>;
     },
   ): Promise<{ nodesWritten: number; edgesWritten: number; superseded: number }> {
+    // The v14 normalize stamp asserts every stored ref is normalized, so this
+    // write surface normalizes itself rather than trusting callers (idempotent).
+    const sourceRef = normalizeSourceRef(params.sourceRef);
+    if (!sourceRef) throw new Error('Invalid sourceRef');
+    params = { ...params, sourceRef };
+
     // Node-ownership pre-flight FIRST — before ontology resolution and every
     // persistent mutation, so a rejected write leaves no seeded manifest
     // behind. Shared with ingestDocument's full path via runFullUpsertGraph;

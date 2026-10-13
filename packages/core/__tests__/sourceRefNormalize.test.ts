@@ -4,6 +4,7 @@ import { CURRENT_SCHEMA_VERSION, MIGRATIONS } from '../src/db/migrations';
 import { MetadataRepository } from '../src/repositories/MetadataRepository';
 import {
   ENTRIES_WM_KEY,
+  detectSchemaVersion,
   NORMALIZE_STAMP_KEY,
   SRI_WM_KEY,
   probePendingWork,
@@ -40,6 +41,23 @@ async function insertSri(db: SQLiteAdapter, id: string, hash: string, sourceRef:
     `INSERT INTO ${P}source_ref_index (id, entity_id, source_hash, source_ref, created_at) VALUES (?, 'e1', ?, ?, 1)`,
     [id, hash, sourceRef],
   );
+}
+async function insertDirtyEntries(db: SQLiteAdapter, n: number): Promise<void> {
+  await db.withTransactionAsync(async (tx) => {
+    for (let i = 0; i < n; i++) {
+      await tx.runAsync(
+        `INSERT INTO ${P}entries (id, entity_id, title, body, source_ref, created_at, updated_at) VALUES (?, 'e1', 't', 'b', ?, 1, 1)`,
+        [`f${i}`, `dir/${i}`]);
+    }
+  });
+}
+async function dirtyCount(db: SQLiteAdapter): Promise<number> {
+  return (await db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}entries WHERE source_ref LIKE 'dir/%'`))!.n;
+}
+/** Fails the Nth withTransactionAsync call, simulating a crash mid-normalize. */
+function failNthTransaction(db: SQLiteAdapter, n: number): SQLiteAdapter {
+  let calls = 0;
+  return { ...db, withTransactionAsync: (fn) => (++calls === n ? Promise.reject(new Error('simulated crash')) : db.withTransactionAsync(fn)) };
 }
 async function indexNames(db: SQLiteAdapter): Promise<string[]> {
   return (await db.getAllAsync<{ name: string }>(`PRAGMA index_list(${P}entries)`)).map((i) => i.name);
@@ -145,16 +163,9 @@ describe('runSourceRefNormalize', () => {
   it('chunks past 500 rows and clears watermarks on completion', async () => {
     const db = await freshDb();
     await clearStamp(db);
-    await db.withTransactionAsync(async (tx) => {
-      for (let i = 0; i < 1201; i++) {
-        await tx.runAsync(
-          `INSERT INTO ${P}entries (id, entity_id, title, body, source_ref, created_at, updated_at) VALUES (?, 'e1', 't', 'b', ?, 1, 1)`,
-          [`f${i}`, `dir/${i}`]);
-      }
-    });
+    await insertDirtyEntries(db, 1201);
     await runSourceRefNormalize(db, P, new MetadataRepository(db, P));
-    const bad = await db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM ${P}entries WHERE source_ref LIKE 'dir/%'`);
-    expect(bad?.n).toBe(0);
+    expect(await dirtyCount(db)).toBe(0);
     expect(await meta(db, ENTRIES_WM_KEY)).toBeNull();
   });
 
@@ -179,6 +190,34 @@ describe('runSourceRefNormalize', () => {
     expect((await db.getFirstAsync<{ source_ref: string }>(`SELECT source_ref FROM ${P}entries WHERE id = 'f1'`))?.source_ref).toBe('a1');
   });
 
+  it('rescans when the stamp carries a different normalize_alg', async () => {
+    const db = await freshDb();
+    await insertEntry(db, 'f1', 'a/b');
+    await db.runAsync(`UPDATE ${P}meta SET value = ? WHERE key = ?`, [JSON.stringify({ schema_version: 14, normalize_alg: 0 }), NORMALIZE_STAMP_KEY]);
+    await expect(new WikiMemory(db, stubOptions).setup({ migrations: 'refuse' })).rejects.toThrow(/normalize stamp missing or outdated/);
+    await runSourceRefNormalize(db, P, new MetadataRepository(db, P));
+    expect((await db.getFirstAsync<{ source_ref: string }>(`SELECT source_ref FROM ${P}entries WHERE id = 'f1'`))?.source_ref).toBe('ab');
+    expect(JSON.parse((await meta(db, NORMALIZE_STAMP_KEY))!).normalize_alg).toBe(1);
+  });
+
+  it('a VACUUM through runPrune resets both watermarks so the normalize restarts from 0', async () => {
+    const db = await freshDb();
+    await clearStamp(db);
+    await insertDirtyEntries(db, 1201);
+    const m = new MetadataRepository(db, P);
+    // Crash on the second chunk: the first chunk committed with a watermark.
+    await expect(runSourceRefNormalize(failNthTransaction(db, 2), P, m)).rejects.toThrow('simulated crash');
+    expect(await meta(db, ENTRIES_WM_KEY)).not.toBeNull();
+    await m.setMeta(SRI_WM_KEY, JSON.stringify({ rowid: 1, id: 'x' }), db);
+
+    await new WikiMemory(db, stubOptions).runPrune('e1', { vacuum: true });
+
+    expect(await meta(db, ENTRIES_WM_KEY)).toBeNull();
+    expect(await meta(db, SRI_WM_KEY)).toBeNull();
+    await new WikiMemory(db, stubOptions).setup();
+    expect(await dirtyCount(db)).toBe(0);
+  });
+
   it('is skipped when the stamp matches', async () => {
     const db = await freshDb();
     await insertEntry(db, 'f1', 'a/b');
@@ -190,15 +229,15 @@ describe('runSourceRefNormalize', () => {
 describe('probePendingWork + migration gate', () => {
   it('reports nothing on a fresh or up-to-date store', async () => {
     const empty = openTestDatabase();
-    expect(await probePendingWork(new MetadataRepository(empty, P), P)).toBeNull();
+    expect(await probePendingWork(empty, new MetadataRepository(empty, P), P)).toBeNull();
     const db = await freshDb();
-    expect(await probePendingWork(new MetadataRepository(db, P), P)).toBeNull();
+    expect(await probePendingWork(db, new MetadataRepository(db, P), P)).toBeNull();
   });
 
   it("treats entries without a meta table as a v0 schema migration, and 'refuse' does not create meta", async () => {
     const db = openTestDatabase();
     await db.execAsync(`CREATE TABLE ${P}entries (id TEXT PRIMARY KEY)`);
-    expect(await probePendingWork(new MetadataRepository(db, P), P))
+    expect(await probePendingWork(db, new MetadataRepository(db, P), P))
       .toEqual({ type: 'schema_migration', fromVersion: 0, toVersion: CURRENT_SCHEMA_VERSION });
     await expect(new WikiMemory(db, stubOptions).setup({ migrations: 'refuse' })).rejects.toBeInstanceOf(WikiMigrationRequiredError);
     expect(await new MetadataRepository(db, P).tableExists(`${P}meta`)).toBe(false);
@@ -207,9 +246,11 @@ describe('probePendingWork + migration gate', () => {
   it('reports both pass watermarks', async () => {
     const db = await freshDb();
     await clearStamp(db);
+    await insertSri(db, 's1', 'h1', 'x');
+    const s1 = await db.getFirstAsync<{ rowid: number }>(`SELECT rowid FROM ${P}source_ref_index WHERE id = 's1'`);
     const m = new MetadataRepository(db, P);
-    await m.setMeta(SRI_WM_KEY, JSON.stringify({ rowid: 7, id: 'x' }), db);
-    expect(await probePendingWork(m, P)).toEqual({ type: 'source_ref_normalize', entriesWatermark: 0, sourceRefIndexWatermark: 7 });
+    await m.setMeta(SRI_WM_KEY, JSON.stringify({ rowid: s1!.rowid, id: 's1' }), db);
+    expect(await probePendingWork(db, m, P)).toEqual({ type: 'source_ref_normalize', entriesWatermark: 0, sourceRefIndexWatermark: s1!.rowid });
   });
 
   it("'refuse' throws on a pending schema migration without mutating, naming real versions", async () => {
@@ -233,6 +274,63 @@ describe('probePendingWork + migration gate', () => {
 
     await db.runAsync(`UPDATE ${P}meta SET value = '13' WHERE key = 'schema_version'`);
     await expect(new WikiMemory(db, stubOptions).setup({ migrations: 'auto' })).rejects.toBeInstanceOf(WikiMigrationRequiredError);
+  });
+
+  it('reports watermark 0 when the stored fingerprint no longer matches', async () => {
+    const db = await freshDb();
+    await clearStamp(db);
+    await insertEntry(db, 'f1', 'a/1');
+    const f1 = await db.getFirstAsync<{ rowid: number }>(`SELECT rowid FROM ${P}entries WHERE id = 'f1'`);
+    const m = new MetadataRepository(db, P);
+    await m.setMeta(ENTRIES_WM_KEY, JSON.stringify({ rowid: f1!.rowid, id: 'f1' }), db);
+    expect(await probePendingWork(db, m, P)).toMatchObject({ entriesWatermark: f1!.rowid });
+    await m.setMeta(ENTRIES_WM_KEY, JSON.stringify({ rowid: f1!.rowid, id: 'renumbered' }), db);
+    expect(await probePendingWork(db, m, P)).toMatchObject({ entriesWatermark: 0 });
+  });
+
+  it('agrees with setup() on a pre-versioned store with porter FTS (v1, not v0)', async () => {
+    const db = openTestDatabase();
+    await db.execAsync(`CREATE TABLE ${P}entries (id TEXT PRIMARY KEY)`);
+    await db.execAsync(`CREATE TABLE ${P}meta (key TEXT PRIMARY KEY, value TEXT)`);
+    await db.execAsync(`CREATE VIRTUAL TABLE ${P}entries_fts USING fts5(body, tokenize='porter unicode61')`);
+    const m = new MetadataRepository(db, P);
+    expect(await detectSchemaVersion(m, P)).toBe(1);
+    expect(await probePendingWork(db, m, P)).toEqual({ type: 'schema_migration', fromVersion: 1, toVersion: CURRENT_SCHEMA_VERSION });
+  });
+
+  it('rejects an unrecognized policy with a TypeError before touching the store', async () => {
+    const db = await freshDb();
+    await clearStamp(db);
+    await insertEntry(db, 'f1', 'a/b');
+    for (const bad of ['Refuse', 'refuse ', '']) {
+      await expect(new WikiMemory(db, stubOptions).setup({ migrations: bad as 'refuse' })).rejects.toBeInstanceOf(TypeError);
+    }
+    expect((await db.getFirstAsync<{ source_ref: string }>(`SELECT source_ref FROM ${P}entries WHERE id = 'f1'`))?.source_ref).toBe('a/b');
+  });
+
+  it('crash mid-normalize, then refuse reports the watermark, then a plain setup() resumes and completes', async () => {
+    const db = await freshDb();
+    await clearStamp(db);
+    await insertDirtyEntries(db, 1201);
+    await expect(runSourceRefNormalize(failNthTransaction(db, 2), P, new MetadataRepository(db, P))).rejects.toThrow('simulated crash');
+    expect(await dirtyCount(db)).toBe(701);
+
+    const err = await new WikiMemory(db, stubOptions).setup({ migrations: 'refuse' }).catch((e) => e);
+    expect(err).toBeInstanceOf(WikiMigrationRequiredError);
+    expect(err.pendingWork.entriesWatermark).toBeGreaterThan(0);
+    expect(err.message).toContain('will resume from its watermark');
+    expect(await dirtyCount(db)).toBe(701);
+
+    await new WikiMemory(db, stubOptions).setup();
+    expect(await dirtyCount(db)).toBe(0);
+    await expect(new WikiMemory(db, stubOptions).setup({ migrations: 'refuse' })).resolves.toBeUndefined();
+  });
+
+  it('the legacy source_type probe uses the partial index', async () => {
+    const db = await freshDb();
+    const plan = await db.getAllAsync<{ detail: string }>(
+      `EXPLAIN QUERY PLAN SELECT 1 AS one FROM ${P}entries WHERE source_type IN ('user_document', 'agent_inferred') LIMIT 1`);
+    expect(plan.map((r) => r.detail).join('\n')).toContain(LEGACY_IDX);
   });
 
   it("'refuse' passes once a plain setup() has stamped the store", async () => {

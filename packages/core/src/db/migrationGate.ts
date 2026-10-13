@@ -4,6 +4,8 @@ import { probePendingWork } from './sourceRefNormalize';
 import { setupDatabase } from './schema';
 import { WikiMigrationRequiredError } from '../types';
 
+const MIGRATION_POLICIES: readonly MigrationPolicy[] = ['allow', 'refuse', 'auto'];
+
 /**
  * Runs the read-only migration gate, then setupDatabase's every-open DDL.
  * - 'allow': no gate.
@@ -17,8 +19,13 @@ export async function setupDatabaseWithGate(
   meta: MetadataRepository,
   migrations: MigrationPolicy = 'allow',
 ): Promise<void> {
+  // Fail closed: an unrecognized value (e.g. 'Refuse' from env/JSON config) must not
+  // silently skip the refusal and run a migration inside a time-critical open.
+  if (!MIGRATION_POLICIES.includes(migrations)) {
+    throw new TypeError(`Invalid migrations policy ${JSON.stringify(migrations)}; expected 'allow', 'refuse' or 'auto'.`);
+  }
   if (migrations !== 'allow') {
-    const pending = await probePendingWork(meta, prefix);
+    const pending = await probePendingWork(db, meta, prefix);
     if (pending && (migrations === 'refuse' || pending.type === 'schema_migration')) {
       throw new WikiMigrationRequiredError(describePending(pending, migrations), pending);
     }

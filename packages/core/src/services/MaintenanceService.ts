@@ -21,6 +21,7 @@ import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
 import { runBatched } from './BoundedLlmCall';
+import { resetNormalizeWatermarks } from '../db/sourceRefNormalize';
 import type { BuiltPrompt } from './BoundedLlmCall';
 import { callLlm } from '../utils/llmCall';
 import type { UsageMeter } from '../utils/usage';
@@ -343,6 +344,8 @@ export class MaintenanceService {
       }
 
       if (vacuum) {
+        // VACUUM may renumber rowids; a watermark must never survive it.
+        await resetNormalizeWatermarks(this.metadataRepo);
         await this.metadataRepo.vacuum();
       }
 

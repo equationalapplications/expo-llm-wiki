@@ -1,7 +1,7 @@
 import type { SQLiteAdapter } from './types';
 import type { WikiOutboxEvent } from './outbox/types';
 import { setupDatabaseWithGate } from './db/migrationGate';
-import { runSourceRefNormalize, writeNormalizeStamp } from './db/sourceRefNormalize';
+import { detectSchemaVersion, runSourceRefNormalize, writeNormalizeStamp } from './db/sourceRefNormalize';
 import { withSerializedTransactions } from './db/serializedAdapter';
 import { MIGRATIONS, CURRENT_SCHEMA_VERSION, createLegacySourceTypeIndex } from './db/migrations';
 import {
@@ -257,6 +257,13 @@ export class WikiMemory {
     };
   }
 
+  /**
+   * Opens the store: migration gate, DDL, schema migrations, then the stamped
+   * source_ref normalize. Await it before any other call on this instance — the
+   * normalize commits in chunks, so a sourceRef-keyed call (forget, upsertGraph,
+   * hasChanged, ingest) issued before setup() resolves can see partially
+   * normalized refs.
+   */
   async setup(opts?: { migrations?: MigrationPolicy }) {
     const entriesExistedBeforeSetup = await this.metadataRepo.tableExists(`${this.prefix}entries`);
 
@@ -277,16 +284,7 @@ export class WikiMemory {
       });
       currentVersion = CURRENT_SCHEMA_VERSION;
     } else {
-      const schemaVersionValue = await this.metadataRepo.getMeta('schema_version');
-
-      if (schemaVersionValue) {
-        currentVersion = parseInt(schemaVersionValue, 10);
-        if (!Number.isFinite(currentVersion)) currentVersion = 0;
-      } else {
-        const ftsDdl = await this.metadataRepo.getTableDdl(`${this.prefix}entries_fts`);
-        const hasPorter = /tokenize\s*=\s*['"]porter\s+unicode61['"]/i.test(ftsDdl ?? '');
-        currentVersion = hasPorter ? 1 : 0;
-      }
+      currentVersion = await detectSchemaVersion(this.metadataRepo, this.prefix);
     }
 
     // Schema migrations. Under 'refuse'/'auto' the gate has already thrown if any are pending.
