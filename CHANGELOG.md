@@ -1,3 +1,23 @@
+## [7.12.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.11.2...v7.12.0) (2026-10-13)
+
+### Features
+
+* **core:** accept per-call setup({ migrations }); align plan with allow/refuse/auto API ([830e39e](https://github.com/equationalapplications/expo-llm-wiki/commit/830e39ec1077249b68375d9da70ebc30fee07fba))
+* **core:** auto FTS init failures retry and degrade to UnavailableIndexStrategy, never detach ([#280](https://github.com/equationalapplications/expo-llm-wiki/issues/280) RC-6) ([ddff88e](https://github.com/equationalapplications/expo-llm-wiki/commit/ddff88efb846e850cec353fdb56a5b3c7f80aba6))
+* **core:** pin keyword-outage behavior at all six search call sites ([#280](https://github.com/equationalapplications/expo-llm-wiki/issues/280) RC-6) ([8b9d081](https://github.com/equationalapplications/expo-llm-wiki/commit/8b9d081bc23a96a1f9b0740222593d171939a3f0))
+
+### Bug Fixes
+
+* **core:** add v14 legacy index, make normalizeSourceRef idempotent, tighten migration gate ([fcbf8ca](https://github.com/equationalapplications/expo-llm-wiki/commit/fcbf8caddc657f293f6b3dbd9e3c13a1478dd9ca)), closes [#281](https://github.com/equationalapplications/expo-llm-wiki/issues/281) [#280](https://github.com/equationalapplications/expo-llm-wiki/issues/280)
+* **core:** address PR [#281](https://github.com/equationalapplications/expo-llm-wiki/issues/281) review — fail-closed policy, VACUUM watermark reset ([33c9cf7](https://github.com/equationalapplications/expo-llm-wiki/commit/33c9cf77cb18a5884a74aeb807dc3f3214f8bd91))
+* **core:** keyword-outage maintenance fixes from PR [#281](https://github.com/equationalapplications/expo-llm-wiki/issues/281) review ([3083d24](https://github.com/equationalapplications/expo-llm-wiki/commit/3083d24b92d39382b216b4aca0b015ee1001fd83))
+* **core:** keyword-outage review fixes for PR [#281](https://github.com/equationalapplications/expo-llm-wiki/issues/281) ([a2b4fa3](https://github.com/equationalapplications/expo-llm-wiki/commit/a2b4fa3028261793f401ff32e19377422858dfcd))
+* **core:** make fresh-store finalize atomic and gate entries-without-meta stores ([d761d9d](https://github.com/equationalapplications/expo-llm-wiki/commit/d761d9da5b7d61d521c481764afab80e835e5137)), closes [#280](https://github.com/equationalapplications/expo-llm-wiki/issues/280)
+* **core:** run migration gate before mutations, reuse stamped normalization, address PR [#281](https://github.com/equationalapplications/expo-llm-wiki/issues/281) review ([920f71d](https://github.com/equationalapplications/expo-llm-wiki/commit/920f71dc8c1b86cfa4921c5385e4a7d39c962e8d))
+* **core:** third-pass PR [#281](https://github.com/equationalapplications/expo-llm-wiki/issues/281) review fixes for keyword-outage paths ([3d55b46](https://github.com/equationalapplications/expo-llm-wiki/commit/3d55b46798a7e823a689480c19d0a9a64c02d2f0))
+* implement migration gate for issue [#280](https://github.com/equationalapplications/expo-llm-wiki/issues/280) ([d3d7430](https://github.com/equationalapplications/expo-llm-wiki/commit/d3d743013308815efe4604e3c2883020a3cbeb0a))
+* implement migration gate tests and fix failing checks ([d001a1e](https://github.com/equationalapplications/expo-llm-wiki/commit/d001a1e58b2c3e6d87a6f79a4b4f3a50b2d9aede))
+
 ## [7.11.2](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.11.1...v7.11.2) (2026-10-08)
 
 ### Bug Fixes
