@@ -3,6 +3,8 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { WikiMemory } from '../src/WikiMemory';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 import type { SQLiteAdapter } from '../src/types';
+import { Fts5IndexStrategy } from '../src/services/search/Fts5IndexStrategy';
+import { UnavailableIndexStrategy } from '../src/services/search/UnavailableIndexStrategy';
 
 const P = 'llm_wiki_';
 const HASH = (b: number) => 'a'.repeat(56) + b.toString(16).padStart(8, '0');
@@ -122,12 +124,71 @@ describe('stash generations (#284 review)', () => {
       strategy.drain = drain;
     }
     const internals = wiki as unknown as { upsertIdStash: Map<string, Map<string, number>>; upsertIdStashSize: number };
-    expect([...(internals.upsertIdStash.get('e1')?.keys() ?? [])]).toEqual(['e1_node_0']);
-    expect(internals.upsertIdStashSize).toBe(1);
+    // The re-upsert stashed its node and the two facts it superseded, all after the peek.
+    expect([...(internals.upsertIdStash.get('e1')?.keys() ?? [])].sort()).toEqual(['e1_node_0', 'e1_node_1', 'e1_node_2']);
+    expect(internals.upsertIdStashSize).toBe(3);
 
     await wiki.syncSearchIndex('e1');
     expect(await hits(wiki, 'e1', 'cedar')).toEqual(['e1_node_0']);
+    expect(await hits(wiki, 'e1', 'juniper')).toEqual([]);
     expect(internals.upsertIdStashSize).toBe(0);
+  });
+});
+
+describe('upsertGraph review fixes (#284)', () => {
+  it.each([['e1'], [undefined]])('facts superseded by upsertGraph leave the index under a foreign backlog (syncSearchIndex(%s))', async (target) => {
+    const db = openTestDatabase();
+    const wiki = await open(db, 1);
+    const old = await upsert(wiki, db, 'e1', 20);
+    await wiki.syncSearchIndex('e1');
+    expect((await hits(wiki, 'e1', 'juniper')).sort()).toEqual([...old].sort());
+    await rawBacklog(db, 'e2', 5000);
+    // Same sourceRef, new hash: supersedes every juniper node.
+    await db.withTransactionAsync((tx) => wiki.upsertGraph('e1', {
+      sourceRef: 'g.ts', sourceHash: HASH(2), nodes: [{ id: 'e1_cedar', type: '', title: 'cedar', body: 'x' }], edges: [],
+    }, tx));
+    await wiki.syncSearchIndex(target);
+    expect(await hits(wiki, 'e1', 'juniper')).toEqual([]);
+    expect(await hits(wiki, 'e1', 'cedar')).toEqual(['e1_cedar']);
+  });
+
+  it('upsertGraph keeps its public return shape', async () => {
+    const db = openTestDatabase();
+    const wiki = await open(db);
+    await upsert(wiki, db, 'e1', 2);
+    const result = await db.withTransactionAsync((tx) => wiki.upsertGraph('e1', {
+      sourceRef: 'g.ts', sourceHash: HASH(2), nodes: [{ id: 'e1_cedar', type: '', title: 'cedar', body: 'x' }], edges: [],
+    }, tx));
+    expect(Object.keys(result).sort()).toEqual(['edgesWritten', 'nodesWritten', 'superseded']);
+  });
+
+  it('while keyword search is unavailable the stash is kept, and drains after the re-init', async () => {
+    const db = openTestDatabase();
+    const wiki = await open(db);
+    const service = wiki.__testAccess.searchService as unknown as { indexStrategy: unknown; setIndexStrategy: (s: unknown) => void };
+    service.setIndexStrategy(new UnavailableIndexStrategy(new Error('outage')));
+    const ids = await upsert(wiki, db, 'e1', 20);
+    await wiki.syncSearchIndex('e1');
+    const internals = wiki as unknown as { upsertIdStashSize: number };
+    expect(internals.upsertIdStashSize).toBe(20);
+
+    await wiki.syncSearchIndex(); // re-init succeeds, then the stash drains
+    expect(service.indexStrategy).toBeInstanceOf(Fts5IndexStrategy);
+    expect((await hits(wiki, 'e1', 'juniper')).sort()).toEqual([...ids].sort());
+    expect(internals.upsertIdStashSize).toBe(0);
+  });
+
+  it('a successful re-init runs one budgeted quantum, not two', async () => {
+    const db = openTestDatabase();
+    const wiki = await open(db);
+    const service = wiki.__testAccess.searchService;
+    service.setIndexStrategy(new UnavailableIndexStrategy(new Error('outage')));
+    const sync = vi.spyOn(service, 'sync');
+    const syncStale = vi.spyOn(service, 'syncStale');
+    await wiki.syncSearchIndex();
+    expect(service.isKeywordAvailable()).toBe(true);
+    expect(sync).not.toHaveBeenCalled();
+    expect(syncStale).toHaveBeenCalledTimes(1);
   });
 });
 

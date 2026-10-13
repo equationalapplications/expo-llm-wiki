@@ -550,7 +550,8 @@ export class IngestionService {
    *
    * @returns Counts: nodesWritten (validated nodes persisted), edgesWritten
    *   (manifest-valid edges persisted), superseded (prior facts soft-deleted
-   *   plus prior source-ref edges hard-deleted).
+   *   plus prior source-ref edges hard-deleted), and supersededFactIds (the
+   *   ids of those soft-deleted facts, for the caller's post-commit index sync).
    *
    * Node-ownership pre-flight (spec §3, REQ-GRAPH-01): the first statement
    * is `assertGraphNodeOwnership(entityId, params.nodes, tx)`, which runs
@@ -577,7 +578,7 @@ export class IngestionService {
       /** Insert-time trust by node id. Ingest-only (spec §6.5); the public upsertGraph never passes it, so host nodes are never grounded. */
       nodeTrust?: ReadonlyMap<string, GroundingTrust>;
     },
-  ): Promise<{ nodesWritten: number; edgesWritten: number; superseded: number }> {
+  ): Promise<{ nodesWritten: number; edgesWritten: number; superseded: number; supersededFactIds: string[] }> {
     // The v14 normalize stamp asserts every stored ref is normalized, so this
     // write surface normalizes itself rather than trusting callers (idempotent).
     const sourceRef = normalizeSourceRef(params.sourceRef);
@@ -752,6 +753,7 @@ export class IngestionService {
       nodesWritten: wikiFacts.length,
       edgesWritten: edgesInsertedCount,
       superseded: deletedFactIds.length + deletedEdgeCount,
+      supersededFactIds: deletedFactIds,
     };
   }
 

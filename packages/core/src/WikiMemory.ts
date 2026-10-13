@@ -272,7 +272,7 @@ export class WikiMemory {
   /** Max upsertGraph node ids held for their post-commit sync (spec #280 id threading). */
   static readonly UPSERT_ID_STASH_CAP = 10_000;
   /**
-   * upsertGraph node ids per entity, awaiting syncSearchIndex(), each with the
+   * upsertGraph node and superseded-fact ids per entity, awaiting syncSearchIndex(), each with the
    * generation of its latest stash. Ids leave the stash only once a drain
    * succeeded, so a failed drain retries them next call.
    */
@@ -348,7 +348,9 @@ export class WikiMemory {
    * host runs a plain `setup()` outside the lease.
    *
    * Keyword-index catch-up work is bounded by `config.setupBudgetMs`; anything
-   * left converges on later opens and no-arg `syncSearchIndex()` calls.
+   * left converges on later opens and no-arg `syncSearchIndex()` calls. Not
+   * bounded: an index reset (tokenizer change, re-attach after detach, a lost
+   * or inconsistent index), which runs as one unchunked transaction.
    */
   async setup(opts?: { migrations?: MigrationPolicy }) {
     const setupBudgetMs = this.setupBudgetMs();
@@ -750,9 +752,10 @@ export class WikiMemory {
    * commit, so without this the nodes stay out of keyword, hybrid and
    * fallback retrieval until the entity's next core write.
    *
-   * With `entityId`: drains that entity's pending `upsertGraph` node ids first,
-   * to completion, then at most one more ledger chunk — so its new nodes are
-   * searchable when the call resolves, under any backlog. Without an
+   * With `entityId`: drains that entity's pending `upsertGraph` ids (its new
+   * nodes and the facts they superseded) first, to completion, then at most
+   * one more ledger chunk — so its new nodes are searchable, and the
+   * superseded facts gone, when the call resolves, under any backlog. Without an
    * argument: drains every stashed `upsertGraph` id across entities first,
    * then runs one keyword-index quantum bounded by `config.setupBudgetMs`
    * (backlog drain, then rebuild work while the index is rebuilding). Hosts
@@ -783,8 +786,7 @@ export class WikiMemory {
       // the 250 ms retry backoff plus up to two rebuild transactions under the
       // write lock, and hosts call this after every write.
       if (!this.searchService.isKeywordAvailable() && monotonicNow() >= this.reinitRetryAt) {
-        // One re-init at a time; concurrent callers share it. On success, run the
-        // same full sync setup() does (a new MiniSearch index starts empty).
+        // One re-init at a time; concurrent callers share it.
         this.reinitSearch ??= (async () => {
           const started = monotonicNow();
           try {
@@ -792,7 +794,9 @@ export class WikiMemory {
               this.db, this.prefix, this.metadataRepo, this.options.config?.indexStrategy ?? 'auto',
               { setupBudgetMs: this.setupBudgetMs() });
             this.searchService.setIndexStrategy(strategy);
-            if (this.searchService.isKeywordAvailable()) await this.searchService.sync();
+            // A new MiniSearch index starts empty and needs the full sync. A ledger
+            // strategy gets its one quantum from the syncStale() below (#284 review).
+            if (this.searchService.isKeywordAvailable() && !this.searchService.hasLedger()) await this.searchService.sync();
           } finally {
             if (this.searchService.isKeywordAvailable()) {
               this.reinitFailures = 0;
@@ -810,12 +814,23 @@ export class WikiMemory {
       }
       const stashed = this.peekStashedIds();
       const ids = [...stashed.values()].flatMap((m) => [...m.keys()]);
-      if (await this.searchService.syncStale({ ids })) this.dropStashedIds(stashed);
+      if (await this.syncDrained(this.searchService.syncStale({ ids }))) this.dropStashedIds(stashed);
       return;
     }
     assertEntityId(entityId);
     const stashed = this.peekStashedIds(entityId);
-    if (await this.searchService.syncEntries(entityId, stashed.get(entityId)?.keys() ?? [])) this.dropStashedIds(stashed);
+    if (await this.syncDrained(this.searchService.syncEntries(entityId, stashed.get(entityId)?.keys() ?? []))) {
+      this.dropStashedIds(stashed);
+    }
+  }
+
+  /**
+   * True when a sync applied the stashed ids. While keyword search is
+   * unavailable the stand-in strategy's drain is a no-op that reports success,
+   * so the ids stay stashed for the first sync after a re-init (#284 review).
+   */
+  private async syncDrained(sync: Promise<boolean>): Promise<boolean> {
+    return (await sync) && this.searchService.isKeywordAvailable();
   }
 
   async exportDump(entityIds?: string[]): Promise<MemoryDump> {
@@ -966,17 +981,18 @@ export class WikiMemory {
     // diagnostics are delivered when upsertGraph resolves (spec §4.2.4).
     // Hosts that roll back should disregard them.
     const diagBuffer = new DiagnosticBuffer();
-    const result = await this.ingestionService.upsertGraphCore(
+    const { supersededFactIds, ...result } = await this.ingestionService.upsertGraphCore(
       entityId,
       { sourceRef, sourceHash, nodes: params.nodes, edges: params.edges },
       adapter,
       { diag: { buffer: diagBuffer, operation: 'upsertGraph' } },
     );
     // Core never sees this commit. Under a ledger strategy the triggers already
-    // recorded the rows: stash the node ids so the host's post-commit
+    // recorded the rows: stash the node ids, and the facts this call
+    // superseded (as ingestDocument threads them), so the host's post-commit
     // syncSearchIndex() drains them first, to completion, under any backlog.
     // MiniSearch has no ledger: markStale makes that sync rebuild the entity.
-    this.stashUpsertIds(entityId, params.nodes.map((n) => n.id));
+    this.stashUpsertIds(entityId, [...supersededFactIds, ...params.nodes.map((n) => n.id)]);
     this.searchService.markStale(entityId);
     diagBuffer.flush(this.options);
     return result;

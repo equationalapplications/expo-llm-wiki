@@ -48,7 +48,11 @@ export interface DrainOptions {
    * ledger until the deadline, then rebuild work. Default `'full'`.
    */
   mode?: 'ledger' | 'full';
-  /** The caller's own ledger ids: drained first, to completion, ≤500 per transaction. */
+  /**
+   * The caller's own ledger ids: drained first, to completion, ≤500 per
+   * transaction. Not deadline-bound: the cost is proportional to a write the
+   * caller already made.
+   */
   ids?: readonly string[];
   /** With empty `ids` in ledger mode, the one foreign chunk is `fts_pending WHERE entity_id = ?`. */
   entityId?: string;
