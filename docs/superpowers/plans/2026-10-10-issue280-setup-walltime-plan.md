@@ -47,12 +47,12 @@
 
 ---
 
-## Resume here (rev 8, 2026-10-13) — start at Task B3 (B2 done, commit 92cefd8)
+## Resume here (rev 8, 2026-10-13) — start at Task B4 (B3 done, commit 9074cb5)
 
 - **PR-A is merged:** PR #281 → `main` as merge commit `459b84e`. Issue #280 is open again (a stray closing keyword in commit `cfb56fe` had auto-closed it). Only PR-B's PR body may say `Fixes #280`. No commit message may contain a closing keyword followed by an issue number.
 - **Branch:** `feat/issue280-fts-state-machine`, cut from `main` @ `459b84e`. It is not pushed and has no PR yet. Its only commit so far is this plan (rev 8).
 - **Baseline (B0, on `459b84e`):** core suite **176 files / 1904 tests, 0 failures**; `typecheck` exit 0.
-- **Next:** Task B3 (B1, B2 done). B3 restores the deferred convergence assertions. B2 needs F3 and F12 (approved 2026-10-13), B4 needs F1 and F7, B5 needs F5 and F6, B8 needs F8.
+- **Next:** Task B4 (B1-B3 done). B2 needs F3 and F12 (approved 2026-10-13), B4 needs F1 and F7, B5 needs F5 and F6, B8 needs F8.
 - **Ignore** `.superpowers/sdd/2026-10-10-issue280-setup-walltime-plan/NEXT_SESSION_HANDOFF.md`: it is stale (it says A2–A7 failed; all of them shipped).
 - Task A8 (measurements) is still deferred. B8 needs its harness (F10).
 - The rev 7 block below is historical.
@@ -2425,7 +2425,7 @@ Body: list the rewritten fixtures from Step 7/8 and state that convergence of `r
 - Produces: `windowHiSql(p)` (binds `[lo, cap]`), `windowChunkSql(p)` (each statement binds `[lo, hi]`), `sweepHiSql(p)` (binds `[lo, cap]`), `sweepChunkSql(p)` (each binds `[lo, hi]`), `FTS5_SWEEP_CHUNK = 500`; `reanchorRebuildFingerprint(tx, prefix, deletedIds)` in `fts5Progress.ts`.
 - Consumes: B2's keys, `RebuildProgress`, `readRebuildProgress`, `rearmInTx`.
 
-- [ ] **Step 1: Write the failing convergence tests** — create `packages/core/__tests__/fts5Rebuild.test.ts`:
+- [x] **Step 1: Write the failing convergence tests** — create `packages/core/__tests__/fts5Rebuild.test.ts`:
 
 ```typescript
 // packages/core/__tests__/fts5Rebuild.test.ts
@@ -2620,9 +2620,9 @@ describe('rebuild windows (#280 B3)', () => {
 });
 ```
 
-- [ ] **Step 2: Run it — expect FAIL.** `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/fts5Rebuild.test.ts` → FAIL: `reanchorRebuildFingerprint` is not exported and no store leaves `rebuilding`.
+- [x] **Step 2: Run it — expect FAIL.** `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/fts5Rebuild.test.ts` → FAIL: `reanchorRebuildFingerprint` is not exported and no store leaves `rebuilding`.
 
-- [ ] **Step 3: Window + sweep SQL.** In `fts5Sql.ts`, add `export const FTS5_SWEEP_CHUNK = 500;` next to `FTS5_DRAIN_CHUNK`, then:
+- [x] **Step 3: Window + sweep SQL.** In `fts5Sql.ts`, add `export const FTS5_SWEEP_CHUNK = 500;` next to `FTS5_DRAIN_CHUNK`, then:
 
 ```typescript
 /** hi of the next rebuild window: max rowid over the next ≤500 EXISTING entries rows in (lo, cap]. Binds [lo, cap]. */
@@ -2667,7 +2667,7 @@ export function sweepChunkSql(p: string): readonly string[] {
 
 Add to `fts5Sql.test.ts`'s `'drain chunk SQL prepares…'` test: `for (const s of [...windowChunkSql('p_'), ...sweepChunkSql('p_'), windowHiSql('p_'), sweepHiSql('p_')]) expect(() => db.prepare(s)).not.toThrow();` (import them).
 
-- [ ] **Step 4: Re-anchor helper.** Append to `fts5Progress.ts` (add `FTS5_STATE_KEY` to the import):
+- [x] **Step 4: Re-anchor helper.** Append to `fts5Progress.ts` (add `FTS5_STATE_KEY` to the import):
 
 ```typescript
 /**
@@ -2702,7 +2702,7 @@ In `EntryRepository.bulkDeletePruned`, after the chunk loop and before `return t
 
 with `import { reanchorRebuildFingerprint } from '../services/search/fts5Progress';`.
 
-- [ ] **Step 5: Full quantum.** In `Fts5IndexStrategy.ts`, import the B3 SQL, `readRebuildProgress`, `RebuildProgress`, `RebuildWatermark`, and replace B1's `fullQuantum` with:
+- [x] **Step 5: Full quantum.** In `Fts5IndexStrategy.ts`, import the B3 SQL, `readRebuildProgress`, `RebuildProgress`, `RebuildWatermark`, and replace B1's `fullQuantum` with:
 
 ```typescript
   /**
@@ -2796,11 +2796,11 @@ with `import { reanchorRebuildFingerprint } from '../services/search/fts5Progres
 
 TypeScript narrows `next` inside the callback; if it complains that `next` is `never` after the tx, declare it as `let next = pr.wm as RebuildWatermark;` (same idiom as `sourceRefNormalize.ts:72-73`).
 
-- [ ] **Step 6: Run Step 1's file — expect PASS.**
+- [x] **Step 6: Run Step 1's file — expect PASS.**
 
-- [ ] **Step 7: Restore B2's deferred convergence assertions.** In `fts5IndexStrategy.test.ts`'s rewritten `init` block, extend the `rebuilding` tests to `await s.drain()` and assert rows indexed and state `live`. In `fts5Integration.test.ts:81`, restore `expect((await hits(c, 'cedar')).length).toBe(20); // rebuilt on re-attach, including batch 1`. Run both files → PASS.
+- [x] **Step 7: Restore B2's deferred convergence assertions.** In `fts5IndexStrategy.test.ts`'s rewritten `init` block, extend the `rebuilding` tests to `await s.drain()` and assert rows indexed and state `live`. In `fts5Integration.test.ts:81`, restore `expect((await hits(c, 'cedar')).length).toBe(20); // rebuilt on re-attach, including batch 1`. Run both files → PASS.
 
-- [ ] **Step 8: Prune re-anchor at the engine level.** Append to `fts5Rebuild.test.ts`:
+- [x] **Step 8: Prune re-anchor at the engine level.** Append to `fts5Rebuild.test.ts`:
 
 ```typescript
 import { WikiMemory } from '../src/WikiMemory';
@@ -2834,9 +2834,9 @@ describe('runPrune re-anchors the fingerprint (#280 B3)', () => {
 
 Run the file → PASS (Step 4 already wired `bulkDeletePruned`).
 
-- [ ] **Step 9: Gate.** Full suite + typecheck.
+- [x] **Step 9: Gate.** Full suite + typecheck.
 
-- [ ] **Step 10: Commit.**
+- [x] **Step 10: Commit.**
 
 ```bash
 git add packages/core/src/services/search packages/core/src/repositories/EntryRepository.ts \
