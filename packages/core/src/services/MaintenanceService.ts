@@ -819,6 +819,23 @@ export class MaintenanceService {
         skipped: [], degraded: [], remaining: counts.eligible, deferred: counts.deferred,
       };
     }
+    // Keyword outage: heal anchors need keyword search, so skip the LLM pass
+    // entirely - no spend, no mutation, no heal_checked_at stamps; candidates
+    // stay unattempted (spec #280 call-site map). The orphan/stale SQL passes
+    // above did run; sync their ids as the empty-candidate path does.
+    if (!this.searchService.isKeywordAvailable()) {
+      await this.searchService.syncEntries(entityId, Array.from(new Set([...orphanedIds, ...staleDowngradedIds])));
+      this.searchService.evictCache(entityId);
+      emitDiagnostic(this.options, { ...diagBase, code: 'heal_skipped', detail: { reason: 'keyword_search_unavailable', count: healCandidates.length } });
+      const counts = await this.entryRepo.countHealCandidatesByEntityId(entityId, recheckCutoff);
+      return {
+        scanned: 0,
+        downgraded: staleDowngradedIds.length,
+        deleted: orphanedIds.length,
+        newFactsCreated: 0,
+        skipped: [], degraded: [], remaining: counts.eligible, deferred: counts.deferred,
+      };
+    }
     // Cap applied once at fetch time. The bound is the one remaining
     // unbounded input to the heal prompt (#101's L0 fix). AllTasks is
     // entity-global; we don't re-fetch per level. L1+ levels omit the

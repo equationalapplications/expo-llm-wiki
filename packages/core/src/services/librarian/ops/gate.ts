@@ -82,6 +82,18 @@ export function classifyCandidate(
   return { kind: 'ambiguous' };
 }
 
+/**
+ * Whether a gate pass for this entity could route a candidate into keyword
+ * mode (step 4): no embed provider, or no stored vectors to rank against. An
+ * embed failure mid-pass is the remaining route; it surfaces as a
+ * WikiSearchUnavailableError from searchKeyword and aborts the pass the same
+ * way (spec #280 rev 10 M4).
+ */
+export async function gateNeedsKeyword(deps: LibrarianDeps, entityId: string): Promise<boolean> {
+  if (typeof deps.options.llmProvider.embed !== 'function') return true;
+  return !(await deps.entryRepo.hasStoredEmbedding(entityId));
+}
+
 export async function gateCandidates(
   deps: LibrarianDeps,
   ctx: LibrarianPassContext,

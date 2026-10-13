@@ -2,7 +2,8 @@ import { DiagnosticBuffer } from '../../../utils/diagnostics';
 import { WikiBudgetExhausted } from '../../../utils/usage';
 import type { LibrarianStrategy } from '../types';
 import { runExtract, selectBatch } from './extract';
-import { gateCandidates, resolveGateConfig } from './gate';
+import { gateCandidates, gateNeedsKeyword, resolveGateConfig } from './gate';
+import { WikiSearchUnavailableError } from '../../../types';
 import { runResolve } from './resolve';
 import { applyOps } from './apply';
 
@@ -32,6 +33,14 @@ export const runOpsLibrarianPass: LibrarianStrategy = async (deps, ctx) => {
   const sel = await selectBatch(deps, entityId, wm, ctx.meter);
   if ('budgetStop' in sel) return { processedThrough: null, factsWritten: 0, budgetStop: sel.budgetStop };
   if (sel.batch.length === 0) return { processedThrough: null, factsWritten: 0 };
+
+  // Keyword outage: abort BEFORE paying for extraction, but only when this
+  // pass could need keyword mode - an unconditional abort would stall the
+  // librarian and hold back event pruning (spec #280 rev 10 M4). Throwing
+  // keeps the watermark, like resolve's transient-error abort.
+  if (!deps.searchService.isKeywordAvailable() && (await gateNeedsKeyword(deps, entityId))) {
+    throw new WikiSearchUnavailableError('librarian: keyword search unavailable and this pass may need it; retry the pass');
+  }
 
   let ex;
   try {
