@@ -238,6 +238,9 @@ const wikiMemory = new WikiMemory(db, {
     // The first setup() that attaches FTS5 to an existing database rebuilds the index in one transaction, holding
     // the write lock for its whole duration. Keyword rankings differ between the two backends; set 'minisearch'
     // to keep the pre-7.11 behavior.
+    // Under 'auto', a failed FTS5 init is retried once, then setup() completes with keyword search unavailable
+    // (queries throw WikiSearchUnavailableError); it never silently demotes to MiniSearch. MiniSearch holds all
+    // entry text in the JS heap — the measured ceiling is ~1M entries on a default Node heap (--max-old-space-size).
     indexStrategy: 'auto',             // default: 'auto' — 'fts5' | 'minisearch' | 'auto'
     enableOutbox: false,               // default: false — when true, entry/task mutations write to an internal SQLite outbox table for external sync (e.g. via @equationalapplications/prisma-outbox)
     excludeDrafts: false,              // default: false — engine default for read()/traverseGraph() excludeDrafts; see Draft Review
@@ -262,6 +265,23 @@ const wikiMemory = new WikiMemory(db, {
   // onDiagnostic: (d) => { ... }, // see Diagnostics
 });
 ```
+
+### Opening inside a writer lease
+
+One-time upgrade work (schema migrations, the `source_ref` normalize) can take minutes on a large store. If you open the store inside a time-limited writer lease, refuse that work instead of running it:
+
+```typescript
+try {
+  await wiki.setup({ migrations: 'refuse' });   // also settable as config.migrations
+} catch (err) {
+  if (!(err instanceof WikiMigrationRequiredError)) throw err;
+  // err.pendingWork says what is pending. Release the lease, then:
+  await wiki.setup();                           // runs the work out of lease (resumable if interrupted)
+  // ...re-acquire the lease and open again with 'refuse'.
+}
+```
+
+`'allow'` (default) runs everything; `'auto'` throws on a pending schema migration but runs a pending normalize. Await `setup()` before any other call on the instance.
 
 ## Prompt Management & Overrides
 

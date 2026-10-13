@@ -337,6 +337,12 @@ export interface WikiConfig {
    * entries table, so memory stays flat at any size. The first `setup()` that
    * attaches FTS5 to an existing database rebuilds the index in one
    * transaction, holding the write lock for its whole duration.
+   * If FTS5 init fails under `'auto'`, `setup()` retries once after 250 ms and
+   * then completes with keyword search unavailable (queries throw
+   * `WikiSearchUnavailableError`); it never demotes to MiniSearch. MiniSearch
+   * is used only when pinned or when the SQLite build lacks FTS5/json1, and it
+   * holds all entry text in the JS heap: the measured ceiling is ~1M entries
+   * on a default Node heap (raise `--max-old-space-size` for larger stores).
    * @default 'auto'
    */
   indexStrategy?: 'fts5' | 'minisearch' | 'auto';

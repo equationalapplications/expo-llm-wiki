@@ -263,6 +263,10 @@ export class WikiMemory {
    * normalize commits in chunks, so a sourceRef-keyed call (forget, upsertGraph,
    * hasChanged, ingest) issued before setup() resolves can see partially
    * normalized refs.
+   *
+   * Pass `{ migrations: 'refuse' }` from inside a writer lease: pending one-time
+   * work then throws WikiMigrationRequiredError before any mutation, and the
+   * host runs a plain `setup()` outside the lease.
    */
   async setup(opts?: { migrations?: MigrationPolicy }) {
     const entriesExistedBeforeSetup = await this.metadataRepo.tableExists(`${this.prefix}entries`);
