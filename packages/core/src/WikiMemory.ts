@@ -681,7 +681,14 @@ export class WikiMemory {
    * @throws {TypeError} when `entityId` is given but is not a non-empty string.
    */
   async syncSearchIndex(entityId?: string): Promise<void> {
-    if (entityId === undefined) return this.searchService.syncStale();
+    if (entityId === undefined) {
+      // A long-lived host that never re-opens still recovers from a failed init (spec #280 Change 4).
+      if (!this.searchService.isKeywordAvailable()) {
+        this.searchService.setIndexStrategy(await createIndexStrategy(
+          this.db, this.prefix, this.metadataRepo, this.options.config?.indexStrategy ?? 'auto'));
+      }
+      return this.searchService.syncStale();
+    }
     assertEntityId(entityId);
     return this.searchService.syncEntries(entityId, []);
   }

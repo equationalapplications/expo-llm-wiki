@@ -4,15 +4,27 @@ import type { MetadataRepository } from '../../repositories/MetadataRepository';
 import type { IndexStrategy } from './IndexStrategy';
 import { Fts5IndexStrategy } from './Fts5IndexStrategy';
 import { MiniSearchIndexStrategy } from './MiniSearchIndexStrategy';
+import { UnavailableIndexStrategy } from './UnavailableIndexStrategy';
 import { FTS5_STATE_KEY, fts5LedgerDropSql } from './fts5Sql';
 
 export type IndexStrategyPreference = 'fts5' | 'minisearch' | 'auto';
 
+export const FTS5_INIT_RETRY_MS = 250;
+
+/** True only for errors meaning the module is genuinely absent (permanent). Proxy-safe. */
+function isModuleAbsentError(err: unknown): boolean {
+  let msg = '';
+  try { msg = String((err as { message?: unknown } | null)?.message ?? err); } catch { return false; }
+  return /no such module: fts5/i.test(msg) || /no such function: json_valid/i.test(msg);
+}
+
 /**
- * True when this SQLite build has FTS5 and json1 (the drain needs both). The
+ * Whether this SQLite build has FTS5 and json1 (the drain needs both). The
  * probe table lives in `temp`, so the database file is never touched.
- * `sqlite_compileoption_used` is not consulted: FTS5 can be loaded as an
- * extension or built into a custom WASM without the flag.
+ * Returns false ONLY when the module is genuinely absent; any other error
+ * (SQLITE_IOERR, NOMEM, INTERRUPT, ...) is rethrown so the caller treats it
+ * as a transient init failure instead of detaching a healthy store
+ * (spec #280 Change 4).
  */
 export async function probeFts5(db: SQLiteAdapter, prefix: string): Promise<boolean> {
   const name = `temp.${prefix}fts5_probe`;
@@ -20,8 +32,9 @@ export async function probeFts5(db: SQLiteAdapter, prefix: string): Promise<bool
     await db.execAsync(`CREATE VIRTUAL TABLE IF NOT EXISTS ${name} USING fts5(x)`);
     const row = await db.getFirstAsync<{ ok: number }>(`SELECT json_valid('[]') AS ok`);
     return row?.ok === 1;
-  } catch {
-    return false;
+  } catch (err) {
+    if (isModuleAbsentError(err)) return false;
+    throw err;
   } finally {
     try { await db.execAsync(`DROP TABLE IF EXISTS ${name}`); } catch { /* module absent */ }
   }
@@ -44,31 +57,45 @@ export async function detachFts5(db: SQLiteAdapter, prefix: string, metadataRepo
   try { await db.execAsync(`DROP TABLE IF EXISTS ${prefix}entries_fts`); } catch { /* no fts5 module */ }
 }
 
-/** Resolve the keyword-index strategy for this database. Spec 2026-10-05 §PR-2 revision. */
+/** Resolve the keyword-index strategy for this database. Failure ordering per spec #280 Change 4. */
 export async function createIndexStrategy(
   db: SQLiteAdapter,
   prefix: string,
   metadataRepo: MetadataRepository,
   preferred: IndexStrategyPreference,
 ): Promise<IndexStrategy> {
-  if (preferred !== 'minisearch') {
-    if (await probeFts5(db, prefix)) {
-      const strategy = new Fts5IndexStrategy(db, prefix, metadataRepo);
-      try {
-        await strategy.init();
-        return strategy;
-      } catch (err) {
-        // The probe only checks that FTS5/json1 are present; init can still
-        // fail (rebuild tx lock, DDL permission, etc.). The 'auto' contract is
-        // "FTS5 when usable, else MiniSearch" — log and fall through. Pinned
-        // 'fts5' must surface the failure to the caller.
-        if (preferred === 'fts5') throw err;
-        console.warn('[WikiMemory] FTS5 init failed; falling back to MiniSearch:', err);
-      }
-    } else if (preferred === 'fts5') {
+  if (preferred === 'minisearch') {
+    await detachFts5(db, prefix, metadataRepo); // operator's explicit choice
+    return new MiniSearchIndexStrategy();
+  }
+  const attempt = async (): Promise<IndexStrategy | 'absent'> => {
+    if (!(await probeFts5(db, prefix))) return 'absent';
+    const strategy = new Fts5IndexStrategy(db, prefix, metadataRepo);
+    await strategy.init();
+    return strategy;
+  };
+  const absent = async (): Promise<IndexStrategy> => {
+    if (preferred === 'fts5') {
       throw new Error(`indexStrategy 'fts5' was requested, but this SQLite build lacks FTS5 or json1.`);
     }
+    await detachFts5(db, prefix, metadataRepo); // module genuinely absent: permanent
+    return new MiniSearchIndexStrategy();
+  };
+
+  try {
+    const s = await attempt();
+    return s === 'absent' ? await absent() : s;
+  } catch (err) {
+    if (preferred === 'fts5') throw err; // pinned: surface the raw failure
   }
-  await detachFts5(db, prefix, metadataRepo);
-  return new MiniSearchIndexStrategy();
+  await new Promise((resolve) => setTimeout(resolve, FTS5_INIT_RETRY_MS));
+  try {
+    const s = await attempt();
+    return s === 'absent' ? await absent() : s;
+  } catch (err) {
+    // Never detachFts5 here: a transient failure must not drop the ledger and
+    // route a large store into MiniSearch's full sync (measured OOM).
+    console.warn('[WikiMemory] FTS5 init failed after retry; keyword search unavailable until a later open or syncSearchIndex():', err);
+    return new UnavailableIndexStrategy(err);
+  }
 }
