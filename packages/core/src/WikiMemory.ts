@@ -257,12 +257,12 @@ export class WikiMemory {
     };
   }
 
-  async setup() {
+  async setup(opts?: { migrations?: 'allow' | 'refuse' | 'auto' }) {
     const entriesExistedBeforeSetup = await this.metadataRepo.tableExists(`${this.prefix}entries`);
 
     // The gate runs before any mutation: 'refuse' throws before tables are touched,
     // 'auto' runs only the stamped source_ref normalization, 'allow' just sets up.
-    const migrationPolicy = this.options.config?.migrations ?? 'allow';
+    const migrationPolicy = opts?.migrations ?? this.options.config?.migrations ?? 'allow';
     await setupDatabaseWithGate(this.db, this.prefix, this.metadataRepo, migrationPolicy);
 
     let currentVersion: number;

@@ -573,7 +573,7 @@ with `import { ENTRIES_WM_KEY, SRI_WM_KEY } from '../db/sourceRefNormalize';`. I
 **Interfaces:**
 - Consumes: `stampMatches`, `NORMALIZE_STAMP_KEY`, `ENTRIES_WM_KEY` (A3); `CURRENT_SCHEMA_VERSION`.
 - Produces:
-  - `interface WikiSetupOptions { migrations?: 'run' | 'refuse' }` (types.ts, exported via `export * from './types'`);
+  - `interface WikiSetupOptions { migrations?: 'allow' | 'refuse' | 'auto' }` (types.ts, exported via `export * from './types'`);
   - `class WikiMigrationRequiredError extends Error { fromVersion: number; toVersion: number; normalizeRequired: boolean; retiredTables: number }`;
   - `readSchemaVersion(meta: MetadataRepository, prefix: string): Promise<number>`;
   - `interface PendingMigrationWork { fromVersion: number; toVersion: number; normalizeRequired: boolean; retiredTables: number }`;
@@ -646,7 +646,7 @@ describe("setup({ migrations: 'refuse' })", () => {
     expect(await db.getFirstAsync(`SELECT 1 FROM ${P}meta WHERE key = ?`, [NORMALIZE_STAMP_KEY])).not.toBeNull();
   });
 
-  it('(vi) default options keep run-migrations behavior; bad values are rejected', async () => {
+  it('(vi) default options ('allow') keep run-migrations behavior; bad values are rejected', async () => {
     const db = await v13();
     await expect(new WikiMemory(db, stub).setup()).resolves.toBeUndefined();
     await expect(new WikiMemory(db, stub).setup({ migrations: 'later' as never })).rejects.toThrow(TypeError);
@@ -669,15 +669,16 @@ In `types.ts` (next to `WikiBusyError`):
 /** Options for {@link WikiMemory.setup}. */
 export interface WikiSetupOptions {
   /**
-   * `'run'` (default): perform pending one-time migration work inside this
+   * `'allow'` (default): perform pending one-time migration work inside this
    * call, as setup() always has. `'refuse'`: if any one-time work is pending
    * (schema migration, source_ref normalize, retired FTS table reclamation),
    * throw {@link WikiMigrationRequiredError} BEFORE mutating anything. Hosts
    * that open inside a writer lease use `'refuse'` and run a plain `setup()`
-   * outside the lease when it throws (spec #280 rev 11).
-   * @default 'run'
+   * outside the lease when it throws (spec #280 rev 11). `'auto'`: auto-run
+   * only the stamped source_ref normalize; any other pending work throws.
+   * @default 'allow'
    */
-  migrations?: 'run' | 'refuse';
+  migrations?: 'allow' | 'refuse' | 'auto';
 }
 
 /**
@@ -750,9 +751,9 @@ In `WikiMemory.ts`:
 
 ```typescript
   async setup(opts?: WikiSetupOptions) {
-    const migrations = opts?.migrations ?? 'run';
-    if (migrations !== 'run' && migrations !== 'refuse') {
-      throw new TypeError(`setup: migrations must be 'run' or 'refuse', got ${String(migrations)}`);
+    const migrations = opts?.migrations ?? 'allow';
+    if (migrations !== 'allow' && migrations !== 'refuse' && migrations !== 'auto') {
+      throw new TypeError(`setup: migrations must be 'allow', 'refuse' or 'auto', got ${String(migrations)}`);
     }
     const entriesExistedBeforeSetup = await this.metadataRepo.tableExists(`${this.prefix}entries`);
 

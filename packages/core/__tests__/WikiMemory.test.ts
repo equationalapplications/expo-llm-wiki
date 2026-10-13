@@ -427,6 +427,16 @@ describe('WikiMemory outbox API', () => {
       );
     });
 
+    it('per-call setup({ migrations }) overrides config policy', async () => {
+      const wiki = makeWiki();
+      const gateSpy = vi.spyOn(await import('../src/db/migrationGate'), 'setupDatabaseWithGate');
+      wiki['options'].config = { migrations: 'allow', tablePrefix: 'test_' };
+
+      await wiki.setup({ migrations: 'auto' });
+
+      expect(gateSpy).toHaveBeenCalledWith(expect.any(Object), 'test_', wiki['metadataRepo'], 'auto');
+    });
+
     it('throws WikiMigrationRequiredError when migrations are refused and pending work exists', async () => {
       const wiki = makeWiki();
       const WikiMigrationRequiredError = (await import('../src/types')).WikiMigrationRequiredError;
