@@ -49,7 +49,7 @@ describe('7(r) upsertGraph then search under a 5k backlog (#280 B5)', () => {
     await wiki.syncSearchIndex();
     expect((await hits(wiki, 'e1', 'juniper')).sort()).toEqual([...a].sort());
     expect((await hits(wiki, 'e2', 'juniper')).sort()).toEqual([...b].sort());
-    expect((wiki as unknown as { upsertIdStash: Map<string, Set<string>> }).upsertIdStash.size).toBe(0);
+    expect((wiki as unknown as { upsertIdStash: Map<string, Map<string, number>> }).upsertIdStash.size).toBe(0);
   });
 
   it('the stash is capped: overflow falls back to the entity-targeted drain and does not grow', async () => {
@@ -57,7 +57,7 @@ describe('7(r) upsertGraph then search under a 5k backlog (#280 B5)', () => {
     const db = openTestDatabase();
     const wiki = await open(db);
     await upsert(wiki, db, 'e1', 20);
-    const stash = (wiki as unknown as { upsertIdStash: Map<string, Set<string>> }).upsertIdStash;
+    const stash = (wiki as unknown as { upsertIdStash: Map<string, Map<string, number>> }).upsertIdStash;
     expect([...stash.values()].reduce((n, s) => n + s.size, 0)).toBeLessThanOrEqual(5);
     await wiki.syncSearchIndex('e1');
     expect((await hits(wiki, 'e1', 'juniper')).length).toBe(20); // 5 own ids + one ≤500-row foreign chunk; no other backlog
@@ -70,14 +70,14 @@ describe('7(r) upsertGraph then search under a 5k backlog (#280 B5)', () => {
     const ids = await upsert(wiki, db, 'e1', 3);
     await wiki.syncSearchIndex('e1');
     expect((await hits(wiki, 'e1', 'juniper')).sort()).toEqual([...ids].sort());
-    expect((wiki as unknown as { upsertIdStash: Map<string, Set<string>> }).upsertIdStash.size).toBe(0);
+    expect((wiki as unknown as { upsertIdStash: Map<string, Map<string, number>> }).upsertIdStash.size).toBe(0);
   });
 
   it.each([['e1'], [undefined]])('a failed drain keeps the stashed ids for the next syncSearchIndex(%s)', async (target) => {
     const db = openTestDatabase();
     const wiki = await open(db);
     const ids = await upsert(wiki, db, 'e1', 20);
-    const internals = wiki as unknown as { upsertIdStash: Map<string, Set<string>>; upsertIdStashSize: number };
+    const internals = wiki as unknown as { upsertIdStash: Map<string, Map<string, number>>; upsertIdStashSize: number };
     const strategy = (wiki.__testAccess.searchService as unknown as { indexStrategy: { drain: () => Promise<void> } }).indexStrategy;
     const drain = strategy.drain;
     strategy.drain = async () => { throw Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' }); };
@@ -94,6 +94,39 @@ describe('7(r) upsertGraph then search under a 5k backlog (#280 B5)', () => {
     await wiki.syncSearchIndex(target);
     expect((await hits(wiki, 'e1', 'juniper')).sort()).toEqual([...ids].sort());
     expect(internals.upsertIdStash.size).toBe(0);
+    expect(internals.upsertIdStashSize).toBe(0);
+  });
+});
+
+describe('stash generations (#284 review)', () => {
+  it('an id re-stashed while its drain is in flight survives that drain and is indexed next call', async () => {
+    const db = openTestDatabase();
+    const wiki = await open(db);
+    await upsert(wiki, db, 'e1', 3);
+    await rawBacklog(db, 'e2', 5000); // a foreign backlog the follow-up chunk cannot clear
+    const strategy = (wiki.__testAccess.searchService as unknown as { indexStrategy: { drain: (o?: unknown) => Promise<void> } }).indexStrategy;
+    const drain = strategy.drain.bind(strategy);
+    let reupserted = false;
+    strategy.drain = async (o) => {
+      await drain(o);
+      if (reupserted) return;
+      reupserted = true;
+      // The update commits after the drain ran but before syncSearchIndex drops its snapshot.
+      await db.withTransactionAsync((tx) => wiki.upsertGraph('e1', {
+        sourceRef: 'g.ts', sourceHash: HASH(2), nodes: [{ id: 'e1_node_0', type: '', title: 'cedar', body: 'x' }], edges: [],
+      }, tx));
+    };
+    try {
+      await wiki.syncSearchIndex('e1');
+    } finally {
+      strategy.drain = drain;
+    }
+    const internals = wiki as unknown as { upsertIdStash: Map<string, Map<string, number>>; upsertIdStashSize: number };
+    expect([...(internals.upsertIdStash.get('e1')?.keys() ?? [])]).toEqual(['e1_node_0']);
+    expect(internals.upsertIdStashSize).toBe(1);
+
+    await wiki.syncSearchIndex('e1');
+    expect(await hits(wiki, 'e1', 'cedar')).toEqual(['e1_node_0']);
     expect(internals.upsertIdStashSize).toBe(0);
   });
 });

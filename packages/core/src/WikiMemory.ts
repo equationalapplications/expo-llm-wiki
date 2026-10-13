@@ -272,45 +272,52 @@ export class WikiMemory {
   /** Max upsertGraph node ids held for their post-commit sync (spec #280 id threading). */
   static readonly UPSERT_ID_STASH_CAP = 10_000;
   /**
-   * upsertGraph node ids per entity, awaiting syncSearchIndex(). Ids leave the
-   * stash only once a drain succeeded, so a failed drain retries them next call.
+   * upsertGraph node ids per entity, awaiting syncSearchIndex(), each with the
+   * generation of its latest stash. Ids leave the stash only once a drain
+   * succeeded, so a failed drain retries them next call.
    */
-  private upsertIdStash = new Map<string, Set<string>>();
+  private upsertIdStash = new Map<string, Map<string, number>>();
   /** Total ids across upsertIdStash, kept in step so the cap check is O(1). */
   private upsertIdStashSize = 0;
+  /** Bumped per stashed id; a re-stash during an in-flight drain outlives that drain's drop. */
+  private upsertIdStashGen = 0;
 
   private stashUpsertIds(entityId: string, ids: readonly string[]): void {
     // Only a ledger strategy drains by id; MiniSearch rebuilds the stale entity instead.
     if (!this.searchService.hasLedger()) return;
     const cap = (this.constructor as typeof WikiMemory).UPSERT_ID_STASH_CAP;
-    const set = this.upsertIdStash.get(entityId) ?? new Set<string>();
+    const stash = this.upsertIdStash.get(entityId) ?? new Map<string, number>();
     for (const id of ids) {
-      if (set.has(id)) continue;
-      if (this.upsertIdStashSize >= cap) break; // overflow: the entity-targeted / full-quantum drain covers the rest
-      set.add(id);
-      this.upsertIdStashSize++;
+      if (!stash.has(id)) {
+        if (this.upsertIdStashSize >= cap) continue; // overflow: the entity-targeted / full-quantum drain covers the rest
+        this.upsertIdStashSize++;
+      }
+      stash.set(id, ++this.upsertIdStashGen);
     }
-    if (set.size > 0) this.upsertIdStash.set(entityId, set);
+    if (stash.size > 0) this.upsertIdStash.set(entityId, stash);
   }
 
-  /** Snapshot of the stash (one entity, or all) without removing anything. */
-  private peekStashedIds(entityId?: string): Map<string, string[]> {
-    const snapshot = new Map<string, string[]>();
-    for (const [id, set] of this.upsertIdStash) {
-      if (entityId === undefined || id === entityId) snapshot.set(id, [...set]);
+  /** Snapshot of the stash (one entity, or all) with generations, without removing anything. */
+  private peekStashedIds(entityId?: string): Map<string, Map<string, number>> {
+    const snapshot = new Map<string, Map<string, number>>();
+    for (const [id, stash] of this.upsertIdStash) {
+      if (entityId === undefined || id === entityId) snapshot.set(id, new Map(stash));
     }
     return snapshot;
   }
 
-  /** Removes a drained snapshot; ids stashed since the peek stay for the next call. */
-  private dropStashedIds(snapshot: Map<string, string[]>): void {
-    for (const [entityId, ids] of snapshot) {
-      const set = this.upsertIdStash.get(entityId);
-      if (!set) continue;
-      for (const id of ids) {
-        if (set.delete(id)) this.upsertIdStashSize--;
+  /**
+   * Removes a drained snapshot. An id re-stashed after the peek has a newer
+   * generation and stays: the drain may have run before that write committed.
+   */
+  private dropStashedIds(snapshot: Map<string, Map<string, number>>): void {
+    for (const [entityId, drained] of snapshot) {
+      const stash = this.upsertIdStash.get(entityId);
+      if (!stash) continue;
+      for (const [id, gen] of drained) {
+        if (stash.get(id) === gen && stash.delete(id)) this.upsertIdStashSize--;
       }
-      if (set.size === 0) this.upsertIdStash.delete(entityId);
+      if (stash.size === 0) this.upsertIdStash.delete(entityId);
     }
   }
 
@@ -802,12 +809,13 @@ export class WikiMemory {
         await this.reinitSearch;
       }
       const stashed = this.peekStashedIds();
-      if (await this.searchService.syncStale({ ids: [...stashed.values()].flat() })) this.dropStashedIds(stashed);
+      const ids = [...stashed.values()].flatMap((m) => [...m.keys()]);
+      if (await this.searchService.syncStale({ ids })) this.dropStashedIds(stashed);
       return;
     }
     assertEntityId(entityId);
     const stashed = this.peekStashedIds(entityId);
-    if (await this.searchService.syncEntries(entityId, stashed.get(entityId) ?? [])) this.dropStashedIds(stashed);
+    if (await this.searchService.syncEntries(entityId, stashed.get(entityId)?.keys() ?? [])) this.dropStashedIds(stashed);
   }
 
   async exportDump(entityIds?: string[]): Promise<MemoryDump> {
