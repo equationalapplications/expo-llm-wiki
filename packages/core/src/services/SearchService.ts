@@ -132,13 +132,16 @@ export class SearchService {
    *
    * With a ledger strategy, `sync()` runs one full quantum bounded by
    * `opts.deadline`; `sync(entityId)` is a write turn (ledger only).
+   * `opts.ids` are the caller's touched ids: a ledger strategy drains them
+   * first, to completion; MiniSearch ignores them and rebuilds the entity in
+   * one scan.
    */
-  async sync(entityId?: string, opts?: { deadline?: number }): Promise<void> {
+  async sync(entityId?: string, opts?: { deadline?: number; ids?: readonly string[] }): Promise<void> {
     if (this.indexStrategy.drain) {
       // No entity: a full quantum (setup(), re-init). An entity: a write turn, ledger-only.
       return this.drainTurn(entityId, entityId === undefined
         ? { mode: 'full', deadline: opts?.deadline }
-        : { mode: 'ledger', entityId });
+        : { mode: 'ledger', entityId, ids: opts?.ids });
     }
     const work = this.syncChain.then(async () => {
       try {
@@ -266,8 +269,8 @@ export class SearchService {
    * on the sync chain, and like syncEntries this never rejects. With nothing
    * stale it resolves at once, without waiting on work already on the chain.
    */
-  async syncStale(): Promise<void> {
-    if (this.indexStrategy.drain) return this.drainTurn(undefined, { mode: 'full' });
+  async syncStale(opts?: { ids?: readonly string[] }): Promise<void> {
+    if (this.indexStrategy.drain) return this.drainTurn(undefined, { mode: 'full', ids: opts?.ids });
     const ids = [...this.staleEntities];
     await Promise.all(ids.map((id) => this.syncEntries(id, [])));
   }

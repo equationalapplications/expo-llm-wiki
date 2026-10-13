@@ -269,6 +269,36 @@ export class WikiMemory {
     };
   }
 
+  /** Max upsertGraph node ids held for their post-commit sync (spec #280 id threading). */
+  static readonly UPSERT_ID_STASH_CAP = 10_000;
+  /** upsertGraph node ids per entity, awaiting syncSearchIndex(); drained ids are removed. */
+  private upsertIdStash = new Map<string, Set<string>>();
+
+  private stashUpsertIds(entityId: string, ids: readonly string[]): void {
+    let size = 0;
+    for (const s of this.upsertIdStash.values()) size += s.size;
+    const cap = (this.constructor as typeof WikiMemory).UPSERT_ID_STASH_CAP;
+    const set = this.upsertIdStash.get(entityId) ?? new Set<string>();
+    for (const id of ids) {
+      if (set.has(id)) continue;
+      if (size >= cap) break; // overflow: the entity-targeted / full-quantum drain covers the rest
+      set.add(id);
+      size++;
+    }
+    if (set.size > 0) this.upsertIdStash.set(entityId, set);
+  }
+
+  private takeStashedIds(entityId?: string): string[] {
+    if (entityId !== undefined) {
+      const ids = [...(this.upsertIdStash.get(entityId) ?? [])];
+      this.upsertIdStash.delete(entityId);
+      return ids;
+    }
+    const all = [...this.upsertIdStash.values()].flatMap((s) => [...s]);
+    this.upsertIdStash.clear();
+    return all;
+  }
+
   private reinitSearch: Promise<void> | null = null;
   /** Monotonic time before which a no-arg syncSearchIndex() skips the re-init (0 = no cooldown). */
   private reinitRetryAt = 0;
@@ -692,14 +722,17 @@ export class WikiMemory {
    * commit, so without this the nodes stay out of keyword, hybrid and
    * fallback retrieval until the entity's next core write.
    *
-   * With `entityId`, rebuilds that entity if it is stale or has never been
-   * indexed; otherwise it is a no-op that still waits for rebuilds already
-   * queued. Without an argument, rebuilds every entity currently marked
-   * stale; when none is, it resolves immediately and does not wait for rebuilds
-   * already queued. While keyword search is unavailable it first retries the
-   * index init; after a failed attempt it waits at least 5 s, doubling per
-   * consecutive failure up to 5 min (longer when an attempt is itself slow),
-   * before retrying again.
+   * With `entityId`: drains that entity's pending `upsertGraph` node ids first,
+   * to completion, then at most one more ledger chunk — so its new nodes are
+   * searchable when the call resolves, under any backlog. Without an
+   * argument: drains every stashed `upsertGraph` id across entities first,
+   * then runs one keyword-index quantum bounded by `config.setupBudgetMs`
+   * (backlog drain, then rebuild work while the index is rebuilding). Hosts
+   * with a long-lived process should call the no-arg form on their own
+   * schedule: that is what converges a rebuilding index. While keyword search
+   * is unavailable it first retries the index init; after a failed attempt it
+   * waits at least 5 s, doubling per consecutive failure up to 5 min (longer
+   * when an attempt is itself slow), before retrying again.
    *
    * Call only after the host's transaction commits: called inside it, the
    * rebuild may index rows that later roll back, or miss them and clear the
@@ -747,10 +780,10 @@ export class WikiMemory {
         })();
         await this.reinitSearch;
       }
-      return this.searchService.syncStale();
+      return this.searchService.syncStale({ ids: this.takeStashedIds() });
     }
     assertEntityId(entityId);
-    return this.searchService.syncEntries(entityId, []);
+    return this.searchService.syncEntries(entityId, this.takeStashedIds(entityId));
   }
 
   async exportDump(entityIds?: string[]): Promise<MemoryDump> {
@@ -830,7 +863,10 @@ export class WikiMemory {
    * post-commit work (search sync, embedding, cache eviction). After the
    * transaction commits, call `syncSearchIndex(entityId)` — or
    * `syncSearchIndex()` after writing several entities in one transaction —
-   * to make the new nodes keyword-searchable. Embeddings still come from the maintenance
+   * to make the new nodes keyword-searchable: both forms drain this call's node ids
+   * first, to completion, so the nodes are searchable under any backlog (up to
+   * `WikiMemory.UPSERT_ID_STASH_CAP` pending ids; beyond that they converge with
+   * the backlog). Embeddings still come from the maintenance
    * sweep (`runLibrarian` / `runHeal` / `runOntologyBackfill` / `runPrune`,
    * scoped via `listEntityIds`).
    *
@@ -904,9 +940,11 @@ export class WikiMemory {
       adapter,
       { diag: { buffer: diagBuffer, operation: 'upsertGraph' } },
     );
-    // Core never sees this commit, so it can't index the nodes itself. Marking
-    // the entity stale makes the host's post-commit syncSearchIndex() (or,
-    // failing that, the entity's next core write) rebuild its index in full.
+    // Core never sees this commit. Under a ledger strategy the triggers already
+    // recorded the rows: stash the node ids so the host's post-commit
+    // syncSearchIndex() drains them first, to completion, under any backlog.
+    // MiniSearch has no ledger: markStale makes that sync rebuild the entity.
+    this.stashUpsertIds(entityId, params.nodes.map((n) => n.id));
     this.searchService.markStale(entityId);
     diagBuffer.flush(this.options);
     return result;

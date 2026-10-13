@@ -442,14 +442,15 @@ export class ImportExportService {
     });
 
     // Index only what this call wrote (#232): a whole-entity rebuild here made
-    // chunked imports quadratic. merge=false replaces the entity, so its
-    // touched set is every previously live fact plus the bundle — O(entity)
-    // either way — and sync()'s single entity scan beats feeding those same
-    // ids back through chunked id-parameterized reads.
+    // chunked imports quadratic. merge=false replaces the entity, so it passes
+    // every touched id (upserted + soft-deleted): a ledger strategy drains them
+    // to completion under any foreign backlog (spec #280 7(m′)), while MiniSearch
+    // ignores the ids and rebuilds the entity in one scan, which beats feeding
+    // those same ids back through chunked id-parameterized reads.
     if (merge) {
       await this.searchService.syncEntries(entityId, [...upsertedFactIds]);
     } else {
-      await this.searchService.sync(entityId);
+      await this.searchService.sync(entityId, { ids: [...upsertedFactIds, ...softDeletedFactIds] });
     }
 
     for (const fact of bundle.facts) {
