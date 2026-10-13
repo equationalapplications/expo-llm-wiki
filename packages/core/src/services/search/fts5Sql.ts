@@ -86,9 +86,13 @@ export function drainHiSql(p: string): string {
   return `SELECT max(seq) AS hi FROM (SELECT seq FROM ${p}fts_pending ORDER BY seq LIMIT ${FTS5_DRAIN_CHUNK})`;
 }
 
-/** One drain chunk. Every statement binds `?` = hi. Run in one transaction, in order. */
-export function drainChunkSql(p: string): readonly string[] {
-  const chunkIds = `SELECT id FROM ${p}fts_pending WHERE seq <= ?`;
+/**
+ * One ledger-driven chunk: re-index the ids `chunkIds` selects, then delete
+ * the ledger rows `ledgerWhere` matches. Every statement binds the same
+ * arguments, so `chunkIds` and `ledgerWhere` must take identical placeholders.
+ * Run in one transaction, in order.
+ */
+function ledgerChunkSql(p: string, chunkIds: string, ledgerWhere: string): readonly string[] {
   return [
     `DELETE FROM ${p}entries_fts WHERE rowid IN (SELECT m.fts_rowid FROM ${p}fts_map m WHERE m.id IN (${chunkIds}))`,
     `DELETE FROM ${p}fts_map WHERE id IN (${chunkIds})`,
@@ -98,8 +102,13 @@ export function drainChunkSql(p: string): readonly string[] {
        SELECT m.fts_rowid, e.id, e.entity_id, e.title, e.body, ${tagsExpr('e.tags')}
        FROM ${p}fts_map m JOIN ${p}entries e ON e.id = m.id
        WHERE m.id IN (${chunkIds})`,
-    `DELETE FROM ${p}fts_pending WHERE seq <= ?`,
+    `DELETE FROM ${p}fts_pending WHERE ${ledgerWhere}`,
   ];
+}
+
+/** One drain chunk. Every statement binds `?` = hi. */
+export function drainChunkSql(p: string): readonly string[] {
+  return ledgerChunkSql(p, `SELECT id FROM ${p}fts_pending WHERE seq <= ?`, 'seq <= ?');
 }
 
 /**
@@ -120,18 +129,9 @@ CREATE INDEX IF NOT EXISTS ${p}fts_pending_entity ON ${p}fts_pending(entity_id);
  * skipped: chunkIds is filtered through fts_pending.
  */
 export function idDrainChunkSql(p: string): readonly string[] {
-  const chunkIds = `SELECT id FROM ${p}fts_pending WHERE id IN (SELECT value FROM json_each(?))`;
-  return [
-    `DELETE FROM ${p}entries_fts WHERE rowid IN (SELECT m.fts_rowid FROM ${p}fts_map m WHERE m.id IN (${chunkIds}))`,
-    `DELETE FROM ${p}fts_map WHERE id IN (${chunkIds})`,
-    `INSERT INTO ${p}fts_map (id, entity_id)
-       SELECT e.id, e.entity_id FROM ${p}entries e WHERE e.id IN (${chunkIds}) AND e.deleted_at IS NULL`,
-    `INSERT INTO ${p}entries_fts (rowid, id, entity_id, title, body, tags)
-       SELECT m.fts_rowid, e.id, e.entity_id, e.title, e.body, ${tagsExpr('e.tags')}
-       FROM ${p}fts_map m JOIN ${p}entries e ON e.id = m.id
-       WHERE m.id IN (${chunkIds})`,
-    `DELETE FROM ${p}fts_pending WHERE id IN (SELECT value FROM json_each(?))`,
-  ];
+  return ledgerChunkSql(p,
+    `SELECT id FROM ${p}fts_pending WHERE id IN (SELECT value FROM json_each(?))`,
+    'id IN (SELECT value FROM json_each(?))');
 }
 
 /** hi for an entity-targeted chunk. Binds `?` = entity_id. */
@@ -141,18 +141,7 @@ export function entityDrainHiSql(p: string): string {
 
 /** One entity-targeted drain chunk. Every statement binds [entity_id, hi]. */
 export function entityDrainChunkSql(p: string): readonly string[] {
-  const chunkIds = `SELECT id FROM ${p}fts_pending WHERE entity_id = ? AND seq <= ?`;
-  return [
-    `DELETE FROM ${p}entries_fts WHERE rowid IN (SELECT m.fts_rowid FROM ${p}fts_map m WHERE m.id IN (${chunkIds}))`,
-    `DELETE FROM ${p}fts_map WHERE id IN (${chunkIds})`,
-    `INSERT INTO ${p}fts_map (id, entity_id)
-       SELECT e.id, e.entity_id FROM ${p}entries e WHERE e.id IN (${chunkIds}) AND e.deleted_at IS NULL`,
-    `INSERT INTO ${p}entries_fts (rowid, id, entity_id, title, body, tags)
-       SELECT m.fts_rowid, e.id, e.entity_id, e.title, e.body, ${tagsExpr('e.tags')}
-       FROM ${p}fts_map m JOIN ${p}entries e ON e.id = m.id
-       WHERE m.id IN (${chunkIds})`,
-    `DELETE FROM ${p}fts_pending WHERE entity_id = ? AND seq <= ?`,
-  ];
+  return ledgerChunkSql(p, `SELECT id FROM ${p}fts_pending WHERE entity_id = ? AND seq <= ?`, 'entity_id = ? AND seq <= ?');
 }
 
 /** Remove triggers and ordinary ledger tables. Never touches entries_fts (needs the fts5 module). */
