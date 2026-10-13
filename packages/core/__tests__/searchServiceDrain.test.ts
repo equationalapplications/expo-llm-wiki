@@ -53,4 +53,18 @@ describe('SearchService in drain mode', () => {
     await svc.syncEntries('e1', ['a']);
     expect(evict).toHaveBeenCalledWith('e1');
   });
+
+  it('passes mode/ids/deadline per entry point (#280 B1): write turns are ledger-only', async () => {
+    const { svc, strategy } = setup();
+    await svc.sync(undefined, { deadline: 42 });
+    await svc.sync('e1');
+    await svc.syncEntries('e1', ['a', 'a', 'b']);
+    await svc.syncStale();
+    expect((strategy.drain as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0])).toEqual([
+      { mode: 'full', deadline: 42 },
+      { mode: 'ledger', entityId: 'e1' },
+      { mode: 'ledger', entityId: 'e1', ids: ['a', 'b'] },
+      { mode: 'full' },
+    ]);
+  });
 });

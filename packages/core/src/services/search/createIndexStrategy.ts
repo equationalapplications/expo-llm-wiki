@@ -69,6 +69,7 @@ export async function createIndexStrategy(
   prefix: string,
   metadataRepo: MetadataRepository,
   preferred: IndexStrategyPreference,
+  opts: { setupBudgetMs?: number } = {},
 ): Promise<IndexStrategy> {
   if (preferred === 'minisearch') {
     await detachFts5(db, prefix, metadataRepo); // operator's explicit choice
@@ -76,7 +77,7 @@ export async function createIndexStrategy(
   }
   const attempt = async (): Promise<IndexStrategy | 'absent'> => {
     if (!(await probeFts5(db, prefix))) return 'absent';
-    const strategy = new Fts5IndexStrategy(db, prefix, metadataRepo);
+    const strategy = new Fts5IndexStrategy(db, prefix, metadataRepo, opts.setupBudgetMs);
     await strategy.init();
     return strategy;
   };

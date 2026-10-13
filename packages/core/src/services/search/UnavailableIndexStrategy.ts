@@ -1,5 +1,5 @@
 import { WikiSearchUnavailableError } from '../../types';
-import type { IndexDocument, IndexSearchOptions, IndexSearchResult, IndexStrategy } from './IndexStrategy';
+import type { DrainOptions, IndexDocument, IndexSearchOptions, IndexSearchResult, IndexStrategy } from './IndexStrategy';
 
 /**
  * Installed when FTS5 init fails after its retry under 'auto' (spec #280
@@ -23,5 +23,5 @@ export class UnavailableIndexStrategy implements IndexStrategy {
   async replaceEntity(_entityId: string, _documents: readonly IndexDocument[]): Promise<void> {}
   async replaceAll(_documents: readonly IndexDocument[]): Promise<void> {}
   hasIndexedEntity(_entityId: string): boolean { return false; }
-  async drain(): Promise<void> {}
+  async drain(_opts?: DrainOptions): Promise<void> {}
 }

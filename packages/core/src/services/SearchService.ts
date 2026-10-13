@@ -3,6 +3,7 @@ import { cosineSimilarity } from '../utils/cosine';
 import { parseEmbedding } from '../utils/embedding';
 import { toIndexDoc } from '../utils/indexDoc';
 import type {
+  DrainOptions,
   IndexSearchOptions,
   IndexSearchResult,
   IndexStrategy,
@@ -105,11 +106,11 @@ export class SearchService {
    * sync(), it never rejects: the keyword index is rebuildable, and a failed
    * drain leaves the ledger rows in place for the next turn.
    */
-  private drainTurn(entityId?: string): Promise<void> {
+  private drainTurn(entityId: string | undefined, opts: DrainOptions): Promise<void> {
     const work = this.syncChain.then(async () => {
       try {
         try {
-          await this.indexStrategy.drain!();
+          await this.indexStrategy.drain!(opts);
         } finally {
           this.evictCache(entityId);
         }
@@ -128,9 +129,17 @@ export class SearchService {
    * Rebuilds are serialized per instance and never reject: the keyword index
    * is a rebuildable cache over SQLite, so degraded keyword search is the
    * correct failure mode and killing the host process is not.
+   *
+   * With a ledger strategy, `sync()` runs one full quantum bounded by
+   * `opts.deadline`; `sync(entityId)` is a write turn (ledger only).
    */
-  async sync(entityId?: string): Promise<void> {
-    if (this.indexStrategy.drain) return this.drainTurn(entityId);
+  async sync(entityId?: string, opts?: { deadline?: number }): Promise<void> {
+    if (this.indexStrategy.drain) {
+      // No entity: a full quantum (setup(), re-init). An entity: a write turn, ledger-only.
+      return this.drainTurn(entityId, entityId === undefined
+        ? { mode: 'full', deadline: opts?.deadline }
+        : { mode: 'ledger', entityId });
+    }
     const work = this.syncChain.then(async () => {
       try {
         // evictCache is inside the guard, not after it: a throw escaping here
@@ -180,7 +189,7 @@ export class SearchService {
    * already queued on the chain.
    */
   async syncEntries(entityId: string, ids: Iterable<string>): Promise<void> {
-    if (this.indexStrategy.drain) return this.drainTurn(entityId);
+    if (this.indexStrategy.drain) return this.drainTurn(entityId, { mode: 'ledger', entityId, ids: [...new Set(ids)] });
     const uniqueIds = [...new Set(ids)];
     // The fast path requires an indexed entity, matching needsRebuild() below:
     // otherwise an empty id set on a never-indexed entity would skip the
@@ -258,7 +267,7 @@ export class SearchService {
    * stale it resolves at once, without waiting on work already on the chain.
    */
   async syncStale(): Promise<void> {
-    if (this.indexStrategy.drain) return this.drainTurn();
+    if (this.indexStrategy.drain) return this.drainTurn(undefined, { mode: 'full' });
     const ids = [...this.staleEntities];
     await Promise.all(ids.map((id) => this.syncEntries(id, [])));
   }

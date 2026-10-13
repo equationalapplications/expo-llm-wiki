@@ -16,6 +16,7 @@ export { configureRandomSource } from './utils/ids';
 export { chunkText, safeSlice } from './utils/pure';
 export { DEFAULT_MAX_CHUNK_LENGTH, DEFAULT_CHUNK_OVERLAP } from './utils/chunkingDefaults';
 export { DEFAULT_MAX_EMBED_CHARS, EMBED_CHARS_CEILING } from './utils/embedDefaults';
+export { DEFAULT_SETUP_BUDGET_MS } from './utils/setupDefaults';
 export * from './librarianPrompt';
 export { PromptService } from './services/PromptService';
 export type { EmbedFactResult, EmbedFailureKind } from './services/EmbeddingService';

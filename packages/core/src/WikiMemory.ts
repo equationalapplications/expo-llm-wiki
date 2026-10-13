@@ -27,6 +27,8 @@ import { MetadataRepository, entitySummaryMetaKey } from './repositories/Metadat
 import { SearchService } from './services/SearchService';
 import { MiniSearchIndexStrategy } from './services/search/MiniSearchIndexStrategy';
 import { createIndexStrategy } from './services/search/createIndexStrategy';
+import { monotonicNow } from './utils/monotonicNow';
+import { DEFAULT_SETUP_BUDGET_MS } from './utils/setupDefaults';
 import { JobManager } from './services/JobManager';
 import { normalizeSourceRef, normalizeSourceHash, validateFact, validateTask, clip, chunkText } from './utils/pure';
 import { resolveGrounding } from './utils/grounding';
@@ -61,9 +63,6 @@ const TABLE_PREFIX_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,30}_$/;
 const SEARCH_REINIT_COOLDOWN_MS = 5_000;
 const SEARCH_REINIT_COOLDOWN_MAX_MS = 5 * 60_000;
 const SEARCH_REINIT_COST_FACTOR = 10;
-/** Monotonic clock: a wall-clock step must not stretch or skip the cooldown. */
-const monotonicNow = (): number =>
-  typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now();
 
 /** Typed escape hatch for tests — not part of the supported consumer API. */
 export interface WikiMemoryTestAccess {
@@ -286,8 +285,17 @@ export class WikiMemory {
    * Pass `{ migrations: 'refuse' }` from inside a writer lease: pending one-time
    * work then throws WikiMigrationRequiredError before any mutation, and the
    * host runs a plain `setup()` outside the lease.
+   *
+   * Keyword-index catch-up work is bounded by `config.setupBudgetMs`; anything
+   * left converges on later opens and no-arg `syncSearchIndex()` calls.
    */
   async setup(opts?: { migrations?: MigrationPolicy }) {
+    const setupBudgetMs = this.options.config?.setupBudgetMs ?? DEFAULT_SETUP_BUDGET_MS;
+    if (typeof setupBudgetMs !== 'number' || !Number.isFinite(setupBudgetMs) || setupBudgetMs <= 0) {
+      throw new TypeError(`setupBudgetMs must be a positive finite number; got ${String(setupBudgetMs)}`);
+    }
+    // One deadline per open (spec #280 Change 3): captured here, never re-budgeted per turn.
+    const openDeadline = monotonicNow() + setupBudgetMs;
     const entriesExistedBeforeSetup = await this.metadataRepo.tableExists(`${this.prefix}entries`);
 
     // The gate runs before any mutation: 'refuse' throws before tables are touched,
@@ -335,10 +343,11 @@ export class WikiMemory {
         this.prefix,
         this.metadataRepo,
         this.options.config?.indexStrategy ?? 'auto',
+        { setupBudgetMs },
       ),
     );
-    // FTS5: drains the ledger (no global read). MiniSearch: full rebuild, as before.
-    await this.searchService.sync();
+    // FTS5: one budgeted quantum (no global read). MiniSearch: full rebuild, as before.
+    await this.searchService.sync(undefined, { deadline: openDeadline });
   }
 
   async hasChanged(
@@ -719,7 +728,8 @@ export class WikiMemory {
           const started = monotonicNow();
           try {
             const strategy = await createIndexStrategy(
-              this.db, this.prefix, this.metadataRepo, this.options.config?.indexStrategy ?? 'auto');
+              this.db, this.prefix, this.metadataRepo, this.options.config?.indexStrategy ?? 'auto',
+              { setupBudgetMs: this.options.config?.setupBudgetMs ?? DEFAULT_SETUP_BUDGET_MS });
             this.searchService.setIndexStrategy(strategy);
             if (this.searchService.isKeywordAvailable()) await this.searchService.sync();
           } finally {

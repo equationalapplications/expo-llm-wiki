@@ -1,10 +1,13 @@
 // packages/core/src/services/search/Fts5IndexStrategy.ts
 import type { SQLiteAdapter } from '../../types';
 import type { MetadataRepository } from '../../repositories/MetadataRepository';
-import type { IndexDocument, IndexSearchOptions, IndexSearchResult, IndexStrategy } from './IndexStrategy';
+import type { DrainOptions, IndexDocument, IndexSearchOptions, IndexSearchResult, IndexStrategy } from './IndexStrategy';
 import {
-  FTS5_STATE_KEY, drainChunkSql, drainHiSql, fts5TablesDdl, fts5TriggerNames, fts5TriggersDdl, rebuildSql,
+  FTS5_DRAIN_CHUNK, FTS5_STATE_KEY, drainChunkSql, drainHiSql, entityDrainChunkSql, entityDrainHiSql, fts5PendingIndexesDdl,
+  fts5TablesDdl, fts5TriggerNames, fts5TriggersDdl, idDrainChunkSql, rebuildSql,
 } from './fts5Sql';
+import { monotonicNow } from '../../utils/monotonicNow';
+import { DEFAULT_SETUP_BUDGET_MS } from '../../utils/setupDefaults';
 import { buildFtsMatchQuery } from './ftsQuery';
 
 /**
@@ -18,6 +21,7 @@ export class Fts5IndexStrategy implements IndexStrategy {
     private readonly db: SQLiteAdapter,
     private readonly prefix: string,
     private readonly metadataRepo: MetadataRepository,
+    private readonly budgetMs: number = DEFAULT_SETUP_BUDGET_MS,
   ) {}
 
   async init(): Promise<void> {
@@ -31,6 +35,7 @@ export class Fts5IndexStrategy implements IndexStrategy {
     await this.db.withTransactionAsync(async (tx) => {
       await tx.execAsync(`DROP TABLE IF EXISTS ${this.prefix}entries_fts;`);
       await tx.execAsync(fts5TablesDdl(this.prefix));
+      await tx.execAsync(fts5PendingIndexesDdl(this.prefix));
       await this.rebuildInTx(tx);
       await tx.execAsync(fts5TriggersDdl(this.prefix));
       await this.metadataRepo.setMeta(FTS5_STATE_KEY, 'live', tx);
@@ -41,18 +46,69 @@ export class Fts5IndexStrategy implements IndexStrategy {
     await this.db.withTransactionAsync((tx) => this.rebuildInTx(tx));
   }
 
-  async drain(): Promise<void> {
+  async drain(opts: DrainOptions = {}): Promise<void> {
+    const ids = opts.ids ?? [];
+    if (ids.length > 0) await this.drainIds(ids);
+    if (opts.mode === 'ledger') {
+      // Write turn: at most ONE foreign chunk after the caller's own ids.
+      if (ids.length === 0 && opts.entityId !== undefined) await this.drainEntityChunk(opts.entityId);
+      else await this.drainLedgerChunk();
+      return;
+    }
+    await this.fullQuantum(opts.deadline ?? monotonicNow() + this.budgetMs);
+  }
+
+  /** Full quantum. B3 extends it with rebuild windows, the sweep and the flip. */
+  private async fullQuantum(deadline: number): Promise<void> {
+    await this.drainLedgerUntil(deadline);
+  }
+
+  /** Seq-ordered ledger chunks until empty or the deadline. True when a chunk ran and the deadline was then reached. */
+  private async drainLedgerUntil(deadline: number): Promise<boolean> {
+    let ran = false;
+    while (await this.drainLedgerChunk()) {
+      ran = true;
+      if (monotonicNow() >= deadline) return true;
+    }
+    return ran && monotonicNow() >= deadline;
+  }
+
+  /** The caller's own ids, to completion, ≤ FTS5_DRAIN_CHUNK per transaction. */
+  private async drainIds(ids: readonly string[]): Promise<void> {
+    const unique = [...new Set(ids)];
+    const chunk = idDrainChunkSql(this.prefix);
+    for (let i = 0; i < unique.length; i += FTS5_DRAIN_CHUNK) {
+      const json = JSON.stringify(unique.slice(i, i + FTS5_DRAIN_CHUNK));
+      await this.db.withTransactionAsync(async (tx) => {
+        for (const sql of chunk) await tx.runAsync(sql, [json]);
+      });
+    }
+  }
+
+  /** One seq-ordered chunk. False when the ledger was empty. */
+  private async drainLedgerChunk(): Promise<boolean> {
     const hiSql = drainHiSql(this.prefix);
     const chunk = drainChunkSql(this.prefix);
-    for (;;) {
-      const done = await this.db.withTransactionAsync(async (tx) => {
-        const row = await tx.getFirstAsync<{ hi: number | null }>(hiSql);
-        if (row?.hi == null) return true;
-        for (const sql of chunk) await tx.runAsync(sql, [row.hi]);
-        return false;
-      });
-      if (done) return;
-    }
+    // A local, not the callback's return value: host adapters may resolve withTransactionAsync to void.
+    let ran = false;
+    await this.db.withTransactionAsync(async (tx) => {
+      const row = await tx.getFirstAsync<{ hi: number | null }>(hiSql);
+      if (row?.hi == null) return;
+      for (const sql of chunk) await tx.runAsync(sql, [row.hi]);
+      ran = true;
+    });
+    return ran;
+  }
+
+  /** One entity-targeted chunk (ORDER BY seq, ≤ FTS5_DRAIN_CHUNK). */
+  private async drainEntityChunk(entityId: string): Promise<void> {
+    const hiSql = entityDrainHiSql(this.prefix);
+    const chunk = entityDrainChunkSql(this.prefix);
+    await this.db.withTransactionAsync(async (tx) => {
+      const row = await tx.getFirstAsync<{ hi: number | null }>(hiSql, [entityId]);
+      if (row?.hi == null) return;
+      for (const sql of chunk) await tx.runAsync(sql, [entityId, row.hi]);
+    });
   }
 
   async replace(entityId: string, ids: readonly string[], documents: readonly IndexDocument[]): Promise<void> {
