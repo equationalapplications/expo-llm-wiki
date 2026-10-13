@@ -87,6 +87,24 @@ describe('migration v14: legacy source_type partial index', () => {
     expect((await db.getFirstAsync<{ source_ref: string }>(`SELECT source_ref FROM ${P}entries WHERE id = 'f1'`))?.source_ref).toBe('maila.md');
   });
 
+  it('fresh-store finalize is atomic: a failed index build leaves no schema_version to strand it', async () => {
+    const db = openTestDatabase();
+    const realExec = db.execAsync.bind(db);
+    let failIndex = true;
+    db.execAsync = async (sql: string) => {
+      if (failIndex && sql.includes('entries_legacy_source_type_idx')) throw new Error('simulated crash');
+      return realExec(sql);
+    };
+    await expect(new WikiMemory(db, stubOptions).setup()).rejects.toThrow('simulated crash');
+    expect(await meta(db, 'schema_version')).toBeNull();
+    expect(await meta(db, NORMALIZE_STAMP_KEY)).toBeNull();
+
+    failIndex = false;
+    await new WikiMemory(db, stubOptions).setup();
+    expect(await indexNames(db)).toContain(LEGACY_IDX);
+    expect(await meta(db, 'schema_version')).toBe('14');
+  });
+
   it('setupDatabase does not create the index on an existing store', async () => {
     const db = await freshDb();
     await db.execAsync(`DROP INDEX ${LEGACY_IDX}`);
@@ -175,6 +193,15 @@ describe('probePendingWork + migration gate', () => {
     expect(await probePendingWork(new MetadataRepository(empty, P), P)).toBeNull();
     const db = await freshDb();
     expect(await probePendingWork(new MetadataRepository(db, P), P)).toBeNull();
+  });
+
+  it("treats entries without a meta table as a v0 schema migration, and 'refuse' does not create meta", async () => {
+    const db = openTestDatabase();
+    await db.execAsync(`CREATE TABLE ${P}entries (id TEXT PRIMARY KEY)`);
+    expect(await probePendingWork(new MetadataRepository(db, P), P))
+      .toEqual({ type: 'schema_migration', fromVersion: 0, toVersion: CURRENT_SCHEMA_VERSION });
+    await expect(new WikiMemory(db, stubOptions).setup({ migrations: 'refuse' })).rejects.toBeInstanceOf(WikiMigrationRequiredError);
+    expect(await new MetadataRepository(db, P).tableExists(`${P}meta`)).toBe(false);
   });
 
   it('reports both pass watermarks', async () => {

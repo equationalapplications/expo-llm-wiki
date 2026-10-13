@@ -268,9 +268,13 @@ export class WikiMemory {
     let currentVersion: number;
 
     if (!entriesExistedBeforeSetup) {
-      await this.metadataRepo.setMeta('schema_version', String(CURRENT_SCHEMA_VERSION), this.db);
-      await writeNormalizeStamp(this.metadataRepo, this.db);
-      await createLegacySourceTypeIndex(this.db, this.prefix);
+      // One transaction: a crash must never leave schema_version=14 without the index,
+      // since no migration would rebuild it on the next open.
+      await this.db.withTransactionAsync(async (tx) => {
+        await createLegacySourceTypeIndex(tx, this.prefix);
+        await writeNormalizeStamp(this.metadataRepo, tx);
+        await this.metadataRepo.setMeta('schema_version', String(CURRENT_SCHEMA_VERSION), tx);
+      });
       currentVersion = CURRENT_SCHEMA_VERSION;
     } else {
       const schemaVersionValue = await this.metadataRepo.getMeta('schema_version');

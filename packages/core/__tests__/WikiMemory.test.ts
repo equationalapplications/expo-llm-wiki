@@ -108,12 +108,8 @@ describe('WikiMemory (Facade Layer)', () => {
       await wiki.setup();
 
       expect(tableExistsSpy).toHaveBeenCalledWith('test_entries');
-      // this.db is the serialized wrapper (Object.create(mockDb)), not raw mockDb.
-      expect(setMetaSpy).toHaveBeenCalledWith(
-        'schema_version',
-        String(CURRENT_SCHEMA_VERSION),
-        (wiki as unknown as { db: SQLiteAdapter }).db,
-      );
+      // Written inside the fresh-store finalize transaction, so the adapter is the tx handle.
+      expect(setMetaSpy).toHaveBeenCalledWith('schema_version', String(CURRENT_SCHEMA_VERSION), expect.any(Object));
     });
 
     it('throws an error if legacy source types are detected on an existing database', async () => {

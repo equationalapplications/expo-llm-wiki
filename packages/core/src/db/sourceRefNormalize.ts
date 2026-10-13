@@ -27,12 +27,21 @@ export async function writeNormalizeStamp(meta: MetadataRepository, tx: SQLiteAd
   await meta.setMeta(NORMALIZE_STAMP_KEY, JSON.stringify({ schema_version: NORMALIZE_STAMP_SCHEMA_VERSION, normalize_alg: SOURCE_REF_NORMALIZE_ALG }), tx);
 }
 
-async function resumeRowid(db: SQLiteAdapter, prefix: string, meta: MetadataRepository, table: string, key: string): Promise<number> {
+/** Shared by the runner and the gate probe so both agree on what a valid watermark is. */
+async function readWatermark(meta: MetadataRepository, key: string): Promise<Watermark | null> {
   const raw = await meta.getMeta(key);
-  if (!raw) return 0;
-  let wm: Partial<Watermark>;
-  try { wm = JSON.parse(raw) as Partial<Watermark>; } catch { return 0; }
-  if (typeof wm.rowid !== 'number' || typeof wm.id !== 'string') return 0;
+  if (!raw) return null;
+  try {
+    const wm = JSON.parse(raw) as Partial<Watermark>;
+    return typeof wm.rowid === 'number' && typeof wm.id === 'string' ? { rowid: wm.rowid, id: wm.id } : null;
+  } catch {
+    return null;
+  }
+}
+
+async function resumeRowid(db: SQLiteAdapter, prefix: string, meta: MetadataRepository, table: string, key: string): Promise<number> {
+  const wm = await readWatermark(meta, key);
+  if (!wm) return 0;
   const row = await db.getFirstAsync<{ id: string }>(`SELECT id FROM ${prefix}${table} WHERE rowid = ?`, [wm.rowid]);
   return row?.id === wm.id ? wm.rowid : 0;
 }
@@ -73,21 +82,16 @@ async function runPass(
 }
 
 async function watermarkRowid(meta: MetadataRepository, key: string): Promise<number> {
-  const raw = await meta.getMeta(key);
-  if (!raw) return 0;
-  try {
-    const wm = JSON.parse(raw) as Partial<Watermark>;
-    return typeof wm.rowid === 'number' ? wm.rowid : 0;
-  } catch {
-    return 0;
-  }
+  return (await readWatermark(meta, key))?.rowid ?? 0;
 }
 
 /** Read-only probe for the migration gate. Never mutates. */
 export async function probePendingWork(meta: MetadataRepository, prefix: string): Promise<PendingMigrationWork | null> {
   // Fresh store (nothing created yet): there is no pending work to probe.
-  if (!(await meta.tableExists(`${prefix}entries`)) || !(await meta.tableExists(`${prefix}meta`))) {
-    return null;
+  if (!(await meta.tableExists(`${prefix}entries`))) return null;
+  // Entries without meta: an unversioned store. setupDatabase would create meta, so this is pending work.
+  if (!(await meta.tableExists(`${prefix}meta`))) {
+    return { type: 'schema_migration', fromVersion: 0, toVersion: CURRENT_SCHEMA_VERSION };
   }
 
   // Schema migrations come first: normalization only runs against a current-version schema.
