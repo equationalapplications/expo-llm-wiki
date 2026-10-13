@@ -47,12 +47,12 @@
 
 ---
 
-## Resume here (rev 8, 2026-10-13) — start at Task B4 (B3 done, commit 9074cb5)
+## Resume here (rev 8, 2026-10-13) — start at Task B5 (B4 done, commit 6e6abd4)
 
 - **PR-A is merged:** PR #281 → `main` as merge commit `459b84e`. Issue #280 is open again (a stray closing keyword in commit `cfb56fe` had auto-closed it). Only PR-B's PR body may say `Fixes #280`. No commit message may contain a closing keyword followed by an issue number.
 - **Branch:** `feat/issue280-fts-state-machine`, cut from `main` @ `459b84e`. It is not pushed and has no PR yet. Its only commit so far is this plan (rev 8).
 - **Baseline (B0, on `459b84e`):** core suite **176 files / 1904 tests, 0 failures**; `typecheck` exit 0.
-- **Next:** Task B4 (B1-B3 done). B2 needs F3 and F12 (approved 2026-10-13), B4 needs F1 and F7, B5 needs F5 and F6, B8 needs F8.
+- **Next:** Task B5 (B1-B4 done). B5 needs F5 and F6, B8 needs F8.
 - **Ignore** `.superpowers/sdd/2026-10-10-issue280-setup-walltime-plan/NEXT_SESSION_HANDOFF.md`: it is stale (it says A2–A7 failed; all of them shipped).
 - Task A8 (measurements) is still deferred. B8 needs its harness (F10).
 - The rev 7 block below is historical.
@@ -2867,7 +2867,7 @@ git commit -m "feat(core): chunked FTS rebuild windows, fingerprint, orphan swee
 - Produces: `FTS5_RETIRED_TABLES_KEY = 'fts5_retired_tables'` (JSON string array), `FTS5_RETIRED_COUNTER_KEY = 'fts5_retired_counter'`, `FTS5_RECLAIM_MERGE_PAGES = 500`, `retiredTableName(p, n)`, `isRetiredTableName(p, name)` (in `fts5Sql.ts`); `ftsCorruptionClass(err): 'vtab' | 'corrupt' | null` (Proxy-safe, exported from `Fts5IndexStrategy.ts` for tests).
 - Consumes: B2's `resetAndRearm`/`retireFtsTable`, B3's `fullQuantum`.
 
-- [ ] **Step 1: Write the failing tests** — create `packages/core/__tests__/fts5RenameRetire.test.ts`:
+- [x] **Step 1: Write the failing tests** — create `packages/core/__tests__/fts5RenameRetire.test.ts`:
 
 ```typescript
 // packages/core/__tests__/fts5RenameRetire.test.ts
@@ -3027,9 +3027,9 @@ describe('corruption repair (#280 B4, 7(e) corrupt-FTS leg)', () => {
 });
 ```
 
-- [ ] **Step 2: Run it — expect FAIL.** `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/fts5RenameRetire.test.ts` → FAIL (`ftsCorruptionClass` and `FTS5_RETIRED_TABLES_KEY` are not exported; no rename).
+- [x] **Step 2: Run it — expect FAIL.** `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/fts5RenameRetire.test.ts` → FAIL (`ftsCorruptionClass` and `FTS5_RETIRED_TABLES_KEY` are not exported; no rename).
 
-- [ ] **Step 3: Keys + names.** In `fts5Sql.ts` add:
+- [x] **Step 3: Keys + names.** In `fts5Sql.ts` add:
 
 ```typescript
 /** Retired entries_fts tables awaiting reclamation: JSON array of table names (spec #280 rev 11 rename-retire). */
@@ -3048,7 +3048,7 @@ export function isRetiredTableName(p: string, name: unknown): name is string {
 }
 ```
 
-- [ ] **Step 4: Rename-retire.** Replace B2's `retireFtsTable` with:
+- [x] **Step 4: Rename-retire.** Replace B2's `retireFtsTable` with:
 
 ```typescript
   /** Rename-retire entries_fts (spec #280 rev 11); DROP only when the RENAME throws. */
@@ -3076,7 +3076,7 @@ export function isRetiredTableName(p: string, name: unknown): name is string {
 
 (Import `parseJsonArray` from `../../repositories/rowMappers`; its signature is `parseJsonArray<T>(s: unknown, fallback: T[]): T[]`, `rowMappers.ts:11`.)
 
-- [ ] **Step 5: Tokenizer check + fast-path seek + corruption classification.** In `init()`'s probes add, after `trig`:
+- [x] **Step 5: Tokenizer check + fast-path seek + corruption classification.** In `init()`'s probes add, after `trig`:
 
 ```typescript
     const ftsDdl = ftsExists ? await this.metadataRepo.getTableDdl(`${p}entries_fts`) : null;
@@ -3151,7 +3151,7 @@ export function ftsCorruptionClass(err: unknown): 'vtab' | 'corrupt' | null {
 
 If the reset itself throws (RENAME and DROP both fail), that error propagates to `createIndexStrategy`'s retry → `UnavailableIndexStrategy` (or raw under pinned `'fts5'`).
 
-- [ ] **Step 6: Reclamation.** Append to `fullQuantum` (after `await this.tryFlip();`, and also reached by a `live` store: move the `live` early-return so it skips only the rebuild block):
+- [x] **Step 6: Reclamation.** Append to `fullQuantum` (after `await this.tryFlip();`, and also reached by a `live` store: move the `live` early-return so it skips only the rebuild block):
 
 ```typescript
   private async fullQuantum(deadline: number): Promise<void> {
@@ -3209,9 +3209,9 @@ If the reset itself throws (RENAME and DROP both fail), that error propagates to
 
 Note on Step 1's `(ii)` count: the three `DELETE FROM …retired_1` calls go through `runAsync`; the merge is an `INSERT`, so it is not counted.
 
-- [ ] **Step 7: Run Step 1's file — expect PASS.** Then re-run `__tests__/fts5StateMachine.test.ts __tests__/fts5Rebuild.test.ts` — PASS (the B2 reset-path tests now see a retired table instead of a drop; their assertions only check the live `entries_fts`/`fts_map` counts, which are unchanged).
+- [x] **Step 7: Run Step 1's file — expect PASS.** Then re-run `__tests__/fts5StateMachine.test.ts __tests__/fts5Rebuild.test.ts` — PASS (the B2 reset-path tests now see a retired table instead of a drop; their assertions only check the live `entries_fts`/`fts_map` counts, which are unchanged).
 
-- [ ] **Step 8: Gate `retiredTables` (F1).** No gate change in B4: `probePendingWork` keeps returning `null` for retired tables until B8 decides hand-off. Add one test to `fts5RenameRetire.test.ts` pinning that:
+- [x] **Step 8: Gate `retiredTables` (F1).** No gate change in B4: `probePendingWork` keeps returning `null` for retired tables until B8 decides hand-off. Add one test to `fts5RenameRetire.test.ts` pinning that:
 
 ```typescript
 import { probePendingWork } from '../src/db/sourceRefNormalize';
@@ -3225,9 +3225,9 @@ it('until B8 decides hand-off, retired tables are not pending migration work', a
 });
 ```
 
-- [ ] **Step 9: Gate.** Full suite + typecheck.
+- [x] **Step 9: Gate.** Full suite + typecheck.
 
-- [ ] **Step 10: Commit.**
+- [x] **Step 10: Commit.**
 
 ```bash
 git add packages/core/src/services/search packages/core/__tests__/fts5RenameRetire.test.ts
