@@ -221,12 +221,22 @@ export interface HealResult {
    * cooldown", not "there is no more work" — it climbs back as the cooldown lapses
    * and as new facts are written. A host loop terminates, but it converges to
    * "corpus swept once this cooldown window", not to a drained queue.
+   *
+   * A pass that could not make progress (`searchUnavailable` or `budgetStop`
+   * set) leaves `remaining > 0`, so a convergence loop must also stop on those:
+   * `while (r.remaining > 0 && !r.searchUnavailable && !r.budgetStop)`.
    */
   remaining: number;
   /** Heal candidates inside the recheck cooldown. */
   deferred: number;
   /** Present when a token budget stopped the pass early (spec §10.5). Unattempted candidates stay eligible. */
   budgetStop?: { requiredEstimate: number };
+  /**
+   * True when the LLM pass was skipped because keyword search is unavailable
+   * (heal anchors need it; spec #280). Candidates stay eligible and unattempted;
+   * retry after `syncSearchIndex()` restores keyword search.
+   */
+  searchUnavailable?: true;
 }
 
 /**
@@ -337,6 +347,12 @@ export interface WikiConfig {
    * entries table, so memory stays flat at any size. The first `setup()` that
    * attaches FTS5 to an existing database rebuilds the index in one
    * transaction, holding the write lock for its whole duration.
+   * If FTS5 init fails under `'auto'`, `setup()` retries once after 250 ms and
+   * then completes with keyword search unavailable (queries throw
+   * `WikiSearchUnavailableError`); it never demotes to MiniSearch. MiniSearch
+   * is used only when pinned or when the SQLite build lacks FTS5/json1, and it
+   * holds all entry text in the JS heap: the measured ceiling is ~1M entries
+   * on a default Node heap (raise `--max-old-space-size` for larger stores).
    * @default 'auto'
    */
   indexStrategy?: 'fts5' | 'minisearch' | 'auto';
@@ -368,6 +384,14 @@ export interface WikiConfig {
   maintenance?: 'auto' | 'deferred';
   /** `'auto'` mode only: also trigger the librarian when pending event text reaches ~this many tokens (chars/4). */
   autoLibrarianTokenThreshold?: number;
+  /**
+   * Migration policy for setup().
+   * - `'allow'`: Run all migrations (default, preserves existing behavior)
+   * - `'refuse'`: Throw WikiMigrationRequiredError before any mutations
+   * - `'auto'`: Run the source_ref normalize if pending; throw if a schema migration is pending
+   * @default 'allow'
+   */
+  migrations?: MigrationPolicy;
 }
 
 export interface ReadOptions {
@@ -1425,6 +1449,12 @@ export interface EntityMaintenanceReport {
   reembedded: boolean;
   /** Set when a lock was held elsewhere; nothing ran for that job. */
   busy?: MaintenanceJob[];
+  /**
+   * Set when keyword search is unavailable and the job could not run for this
+   * entity (spec #280). Its watermark/checkpoint is kept; retry after
+   * `syncSearchIndex()` restores keyword search.
+   */
+  searchUnavailable?: MaintenanceJob[];
 }
 
 export interface RunPendingMaintenanceResult {
@@ -1437,3 +1467,42 @@ export interface RunPendingMaintenanceResult {
   stoppedReason: MaintenanceStopReason;
 }
 
+export type MigrationPolicy = 'allow' | 'refuse' | 'auto';
+
+/** Work the migration gate found pending on an existing store. Watermarks are resume rowids (0 = not started). */
+export type PendingMigrationWork =
+  | { type: 'schema_migration'; fromVersion: number; toVersion: number }
+  | { type: 'source_ref_normalize'; entriesWatermark: number; sourceRefIndexWatermark: number };
+
+export class WikiMigrationRequiredError extends Error {
+  public readonly code = 'WIKI_MIGRATION_REQUIRED';
+  public readonly pendingWork: PendingMigrationWork;
+
+  constructor(message: string, pendingWork: PendingMigrationWork) {
+    super(message);
+    this.name = 'WikiMigrationRequiredError';
+    this.pendingWork = pendingWork;
+    if (typeof Error.captureStackTrace === 'function') {
+      Error.captureStackTrace(this, WikiMigrationRequiredError);
+    }
+  }
+}
+
+
+/**
+ * Thrown per keyword-search query while the keyword index is unavailable
+ * (FTS5 init failed after its retry; spec #280 Change 4). Writes keep working
+ * and the index converges once a later open or no-arg syncSearchIndex()
+ * re-inits successfully. `cause` is the underlying init error.
+ */
+export class WikiSearchUnavailableError extends Error {
+  constructor(message = 'Keyword search is temporarily unavailable', cause?: unknown) {
+    super(message, cause !== undefined ? { cause } : undefined);
+    this.name = 'WikiSearchUnavailableError';
+  }
+}
+
+/** Proxy-safe `instanceof WikiSearchUnavailableError` (issue #96). */
+export function isWikiSearchUnavailableError(err: unknown): boolean {
+  try { return err instanceof WikiSearchUnavailableError; } catch { return false; }
+}

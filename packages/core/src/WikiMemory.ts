@@ -1,8 +1,9 @@
 import type { SQLiteAdapter } from './types';
 import type { WikiOutboxEvent } from './outbox/types';
-import { setupDatabase } from './db/schema';
+import { setupDatabaseWithGate } from './db/migrationGate';
+import { detectSchemaVersion, runSourceRefNormalize, writeNormalizeStamp } from './db/sourceRefNormalize';
 import { withSerializedTransactions } from './db/serializedAdapter';
-import { MIGRATIONS, CURRENT_SCHEMA_VERSION } from './db/migrations';
+import { MIGRATIONS, CURRENT_SCHEMA_VERSION, createLegacySourceTypeIndex } from './db/migrations';
 import {
   WikiOptions,
   MemoryBundle,
@@ -14,7 +15,7 @@ import {
   WikiDraftNotFound,
   WikiSupersedeError,
 } from './types';
-import type { DraftPage } from './types';
+import type { DraftPage, MigrationPolicy } from './types';
 import type { PendingSourceStatus, WikiLintReport, WikiInstructions, PendingMaintenance, RunPendingMaintenanceOptions, RunPendingMaintenanceResult } from './types';
 import { EntryRepository } from './repositories/EntryRepository';
 import { OutboxRepository } from './repositories/OutboxRepository';
@@ -50,6 +51,19 @@ import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighb
 export { WikiBusyError, WikiTransactionError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER, WikiStrictOntologyViolation, WikiSourceRefHashCollision, WikiParseError, WikiIngestEmptyError, WikiGraphNodeOwnershipConflict } from './types';
 
 const TABLE_PREFIX_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,30}_$/;
+/**
+ * Backoff between failed no-arg syncSearchIndex() re-init attempts (spec #280
+ * Change 4): doubles per consecutive failure from the base up to the cap, and
+ * is never shorter than SEARCH_REINIT_COST_FACTOR × the failed attempt's own
+ * duration, so a slow attempt (backoff + rebuild under the write lock) can
+ * take at most ~1/(factor+1) of wall time.
+ */
+const SEARCH_REINIT_COOLDOWN_MS = 5_000;
+const SEARCH_REINIT_COOLDOWN_MAX_MS = 5 * 60_000;
+const SEARCH_REINIT_COST_FACTOR = 10;
+/** Monotonic clock: a wall-clock step must not stretch or skip the cooldown. */
+const monotonicNow = (): number =>
+  typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now();
 
 /** Typed escape hatch for tests — not part of the supported consumer API. */
 export interface WikiMemoryTestAccess {
@@ -256,29 +270,47 @@ export class WikiMemory {
     };
   }
 
-  async setup() {
+  private reinitSearch: Promise<void> | null = null;
+  /** Monotonic time before which a no-arg syncSearchIndex() skips the re-init (0 = no cooldown). */
+  private reinitRetryAt = 0;
+  /** Consecutive failed re-inits; drives the exponential backoff. */
+  private reinitFailures = 0;
+
+  /**
+   * Opens the store: migration gate, DDL, schema migrations, then the stamped
+   * source_ref normalize. Await it before any other call on this instance — the
+   * normalize commits in chunks, so a sourceRef-keyed call (forget, upsertGraph,
+   * hasChanged, ingest) issued before setup() resolves can see partially
+   * normalized refs.
+   *
+   * Pass `{ migrations: 'refuse' }` from inside a writer lease: pending one-time
+   * work then throws WikiMigrationRequiredError before any mutation, and the
+   * host runs a plain `setup()` outside the lease.
+   */
+  async setup(opts?: { migrations?: MigrationPolicy }) {
     const entriesExistedBeforeSetup = await this.metadataRepo.tableExists(`${this.prefix}entries`);
 
-    await setupDatabase(this.db, this.prefix);
+    // The gate runs before any mutation: 'refuse' throws before tables are touched,
+    // 'auto' lets only a pending source_ref normalize through (run below), 'allow' just sets up.
+    const migrationPolicy = opts?.migrations ?? this.options.config?.migrations ?? 'allow';
+    await setupDatabaseWithGate(this.db, this.prefix, this.metadataRepo, migrationPolicy);
 
     let currentVersion: number;
 
     if (!entriesExistedBeforeSetup) {
-      await this.metadataRepo.setMeta('schema_version', String(CURRENT_SCHEMA_VERSION), this.db);
+      // One transaction: a crash must never leave schema_version=14 without the index,
+      // since no migration would rebuild it on the next open.
+      await this.db.withTransactionAsync(async (tx) => {
+        await createLegacySourceTypeIndex(tx, this.prefix);
+        await writeNormalizeStamp(this.metadataRepo, tx);
+        await this.metadataRepo.setMeta('schema_version', String(CURRENT_SCHEMA_VERSION), tx);
+      });
       currentVersion = CURRENT_SCHEMA_VERSION;
     } else {
-      const schemaVersionValue = await this.metadataRepo.getMeta('schema_version');
-
-      if (schemaVersionValue) {
-        currentVersion = parseInt(schemaVersionValue, 10);
-        if (!Number.isFinite(currentVersion)) currentVersion = 0;
-      } else {
-        const ftsDdl = await this.metadataRepo.getTableDdl(`${this.prefix}entries_fts`);
-        const hasPorter = /tokenize\s*=\s*['"]porter\s+unicode61['"]/i.test(ftsDdl ?? '');
-        currentVersion = hasPorter ? 1 : 0;
-      }
+      currentVersion = await detectSchemaVersion(this.metadataRepo, this.prefix);
     }
 
+    // Schema migrations. Under 'refuse'/'auto' the gate has already thrown if any are pending.
     for (const migration of MIGRATIONS) {
       if (migration.version > currentVersion) {
         await migration.run(this.db, this.prefix);
@@ -292,21 +324,10 @@ export class WikiMemory {
       if (!schemaVersionCheck) {
         await this.metadataRepo.setMeta('schema_version', String(currentVersion), this.db);
       }
-    }
-
-    if (entriesExistedBeforeSetup) {
       await this.importExportService.assertNoLegacySourceTypes();
+      // Stamped, watermark-resumable normalization; no-op once the stamp matches.
+      await runSourceRefNormalize(this.db, this.prefix, this.metadataRepo);
     }
-
-    const rows = await this.entryRepo.findRowsForSourceRefMigration();
-    await this.db.withTransactionAsync(async (tx) => {
-      for (const row of rows) {
-        const normalized = normalizeSourceRef(row.source_ref);
-        if (normalized !== row.source_ref) {
-          await this.entryRepo.updateSourceRefByRowid(row.rowid, normalized, tx);
-        }
-      }
-    });
 
     this.searchService.setIndexStrategy(
       await createIndexStrategy(
@@ -666,7 +687,10 @@ export class WikiMemory {
    * indexed; otherwise it is a no-op that still waits for rebuilds already
    * queued. Without an argument, rebuilds every entity currently marked
    * stale; when none is, it resolves immediately and does not wait for rebuilds
-   * already queued.
+   * already queued. While keyword search is unavailable it first retries the
+   * index init; after a failed attempt it waits at least 5 s, doubling per
+   * consecutive failure up to 5 min (longer when an attempt is itself slow),
+   * before retrying again.
    *
    * Call only after the host's transaction commits: called inside it, the
    * rebuild may index rows that later roll back, or miss them and clear the
@@ -683,7 +707,38 @@ export class WikiMemory {
    * @throws {TypeError} when `entityId` is given but is not a non-empty string.
    */
   async syncSearchIndex(entityId?: string): Promise<void> {
-    if (entityId === undefined) return this.searchService.syncStale();
+    if (entityId === undefined) {
+      // A long-lived host that never re-opens still recovers from a failed init (spec #280 Change 4).
+      // After a failed re-init, back off before the next: each attempt costs
+      // the 250 ms retry backoff plus up to two rebuild transactions under the
+      // write lock, and hosts call this after every write.
+      if (!this.searchService.isKeywordAvailable() && monotonicNow() >= this.reinitRetryAt) {
+        // One re-init at a time; concurrent callers share it. On success, run the
+        // same full sync setup() does (a new MiniSearch index starts empty).
+        this.reinitSearch ??= (async () => {
+          const started = monotonicNow();
+          try {
+            const strategy = await createIndexStrategy(
+              this.db, this.prefix, this.metadataRepo, this.options.config?.indexStrategy ?? 'auto');
+            this.searchService.setIndexStrategy(strategy);
+            if (this.searchService.isKeywordAvailable()) await this.searchService.sync();
+          } finally {
+            if (this.searchService.isKeywordAvailable()) {
+              this.reinitFailures = 0;
+              this.reinitRetryAt = 0;
+            } else {
+              const now = monotonicNow();
+              const backoff = Math.min(SEARCH_REINIT_COOLDOWN_MS * 2 ** this.reinitFailures, SEARCH_REINIT_COOLDOWN_MAX_MS);
+              this.reinitFailures++;
+              this.reinitRetryAt = now + Math.max(backoff, SEARCH_REINIT_COST_FACTOR * (now - started));
+            }
+            this.reinitSearch = null;
+          }
+        })();
+        await this.reinitSearch;
+      }
+      return this.searchService.syncStale();
+    }
     assertEntityId(entityId);
     return this.searchService.syncEntries(entityId, []);
   }

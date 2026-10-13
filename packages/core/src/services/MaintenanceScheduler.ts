@@ -9,7 +9,7 @@ import type {
   RunPendingMaintenanceResult,
   HealResult,
 } from '../types';
-import { WikiBusyError } from '../types';
+import { WikiBusyError, isWikiSearchUnavailableError } from '../types';
 import { MaintenanceService, MAX_EMBED_ATTEMPTS } from './MaintenanceService';
 import type { LibrarianResult } from './librarian';
 import { UsageMeter } from '../utils/usage';
@@ -118,9 +118,17 @@ export class MaintenanceScheduler {
     const exhaustedStop = (): MaintenanceStopReason =>
       Date.now() >= deadline ? { reason: 'deadline' } : { reason: 'budget_exhausted' };
     const markBusy = (st: State, job: MaintenanceJob) => { (st.report.busy ??= []).push(job); };
+    const markSearchUnavailable = (st: State, job: MaintenanceJob) => { (st.report.searchUnavailable ??= []).push(job); };
+
+    // Open job flags across all entities. Flags only ever clear, so a round
+    // that clears one (a skip: busy, outage, too small, nothing processed)
+    // counts as progress — it must re-run so the entity reaches its later
+    // jobs — and the loop still terminates.
+    const openJobs = () => states.reduce((n, s) => n + +s.librarian + +s.heal + +s.reembed, 0);
 
     rounds: for (;;) {
       let progressed = false;
+      const openAtStart = openJobs();
       for (const st of states) {
         if (!st.librarian && !st.heal && !st.reembed) continue;
         if (Date.now() >= deadline) { stopped = { reason: 'deadline' }; break rounds; }
@@ -132,6 +140,13 @@ export class MaintenanceScheduler {
           let r: LibrarianResult;
           try {
             r = await this.maintenanceService.runLibrarianPass({ entityId, trigger: 'call', meter });
+          } catch (err) {
+            // Keyword outage: this entity's pass aborted with its watermark kept.
+            // Skip it for this run rather than failing every other entity's work.
+            if (!isWikiSearchUnavailableError(err)) throw err;
+            st.librarian = false;
+            markSearchUnavailable(st, 'librarian');
+            continue;
           } finally {
             this.jobManager.releaseLock('librarian', entityId);
           }
@@ -167,6 +182,14 @@ export class MaintenanceScheduler {
             st.heal = false;
             continue;
           }
+          // Nothing scanned yet candidates remain (e.g. a keyword outage skipped
+          // the LLM pass): another round cannot progress, so stop healing this
+          // entity for this run instead of looping forever.
+          if (h.scanned === 0 && h.remaining > 0) {
+            st.heal = false;
+            if (h.searchUnavailable) markSearchUnavailable(st, 'heal');
+            continue;
+          }
           st.report.healPasses++;
           progressed = true;
           if (h.remaining === 0) {
@@ -189,7 +212,7 @@ export class MaintenanceScheduler {
           }
         }
       }
-      if (!progressed) break;
+      if (!progressed && openJobs() === openAtStart) break;
     }
 
     if (stopped.reason === 'complete' && tooSmall) stopped = tooSmall;

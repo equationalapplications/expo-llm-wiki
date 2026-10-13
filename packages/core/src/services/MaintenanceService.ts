@@ -21,6 +21,7 @@ import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
 import { runBatched } from './BoundedLlmCall';
+import { resetNormalizeWatermarks } from '../db/sourceRefNormalize';
 import type { BuiltPrompt } from './BoundedLlmCall';
 import { callLlm } from '../utils/llmCall';
 import type { UsageMeter } from '../utils/usage';
@@ -343,6 +344,8 @@ export class MaintenanceService {
       }
 
       if (vacuum) {
+        // VACUUM may renumber rowids; a watermark must never survive it.
+        await resetNormalizeWatermarks(this.metadataRepo);
         await this.metadataRepo.vacuum();
       }
 
@@ -733,7 +736,8 @@ export class MaintenanceService {
    *
    * Bounded: at most `batchSize` candidates per pass (#67). Loop on
    * `result.remaining > 0` for convergence — see {@link HealResult.remaining}
-   * for what convergence means here.
+   * for what convergence means here, and for the no-progress flags
+   * (`searchUnavailable`, `budgetStop`) a loop must also stop on.
    */
   async doRunHeal(
     entityId: string,
@@ -798,10 +802,16 @@ export class MaintenanceService {
     }
 
     const healCandidates = await this.entryRepo.findHealCandidatesByEntityId(entityId, batchSize, recheckCutoff);
-    if (healCandidates.length === 0) {
+    // Keyword outage: heal anchors need keyword search, so skip the LLM pass
+    // entirely - no spend, no mutation, no heal_checked_at stamps; candidates
+    // stay unattempted (spec #280 call-site map).
+    const keywordUnavailable = healCandidates.length > 0 && !this.searchService.isKeywordAvailable();
+    if (healCandidates.length === 0 || keywordUnavailable) {
+      if (keywordUnavailable) {
+        emitDiagnostic(this.options, { ...diagBase, code: 'heal_skipped', detail: { reason: 'keyword_search_unavailable', count: healCandidates.length } });
+      }
       // The orphan/stale SQL passes above may still have mutated rows, so the
-      // search index sync must happen before returning — it did today, after
-      // runBatched no-oped on an empty candidate list. Both passes return the
+      // search index sync must happen before returning. Both passes return the
       // ids they touched (markOrphaned via RETURNING id, downgradeStaleInferred
       // via select-then-update with the same predicate), so the sync stays
       // O(touched) on the early-return path too (spec §2.4).
@@ -814,6 +824,9 @@ export class MaintenanceService {
         deleted: orphanedIds.length,
         newFactsCreated: 0,
         skipped: [], degraded: [], remaining: counts.eligible, deferred: counts.deferred,
+        // remaining stays > 0 so maybeRunHeal holds the checkpoint back and
+        // retries after the outage; the flag lets a host loop stop instead.
+        ...(keywordUnavailable ? { searchUnavailable: true as const } : {}),
       };
     }
     // Cap applied once at fetch time. The bound is the one remaining

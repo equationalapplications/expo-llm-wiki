@@ -47,7 +47,7 @@ const MESSAGE: Record<WikiDiagnosticCode, string> = {
   embedding_failed: 'A fact could not be embedded.',
   hook_failed: 'A host hook threw or rejected.',
   background_job_failed: 'A background maintenance job failed.',
-  heal_skipped: 'Heal skipped a candidate fact.',
+  heal_skipped: 'Heal skipped a candidate fact, or the whole LLM pass when keyword search is unavailable.',
   grounding_missing: 'A fact carried no qualifying evidence and was stored as a draft.',
   grounding_failed: 'A fact carried evidence not found in its source and was stored as a draft.',
   classification_low_confidence: 'A classifier answer was below the confidence threshold and was not applied.',

@@ -1,6 +1,6 @@
 import type { SQLiteAdapter } from '../types';
 import type { WikiOptions, MemoryBundle, WikiFact, ReadOptions } from '../types';
-import { WikiInvalidReadOptions } from '../types';
+import { WikiInvalidReadOptions, isWikiSearchUnavailableError } from '../types';
 import { EntryRepository, EntryRowMetadata, EntryRowWithEmbeddings } from '../repositories/EntryRepository';
 import type { TaskRepository } from '../repositories/TaskRepository';
 import type { EventRepository } from '../repositories/EventRepository';
@@ -220,7 +220,13 @@ export class RetrievalService {
             }
             // Collect MiniSearch scores for hybrid blend if weight is set and <1
             if (weight !== undefined && weight < 1) {
-              miniSearchScores = await this.searchService.getKeywordScores(trimmedQuery, scoredEntityIds);
+              try {
+                miniSearchScores = await this.searchService.getKeywordScores(trimmedQuery, scoredEntityIds);
+              } catch (err) {
+                // Keyword outage degrades the blend, not the read (spec #280 call-site map).
+                if (!isWikiSearchUnavailableError(err)) throw err;
+                miniSearchScores = new Map();
+              }
             }
           }
 

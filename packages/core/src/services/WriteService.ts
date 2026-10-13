@@ -1,6 +1,6 @@
 import type { SQLiteAdapter } from '../types';
 import type { WikiOptions, WikiEvent } from '../types';
-import { WikiBusyError } from '../types';
+import { WikiBusyError, isWikiSearchUnavailableError } from '../types';
 import type { EntryRepository } from '../repositories/EntryRepository';
 import type { EventRepository } from '../repositories/EventRepository';
 import type { MetadataRepository } from '../repositories/MetadataRepository';
@@ -137,8 +137,7 @@ export class WriteService {
         const stage: { job: 'librarian' | 'heal' } = { job: 'librarian' };
         const job = this.runLibrarianThenMaybeHeal(entityId, librarianCount, prevMemoryCheckpoint, stage)
           .catch((err: unknown) => {
-            console.error(err);
-            this.reportBackgroundFailure(entityId, stage.job);
+            this.reportBackgroundFailure(entityId, stage.job, err);
           })
           .finally(() => {
             this.jobManager.releaseLock('librarian', entityId);
@@ -165,8 +164,7 @@ export class WriteService {
       // tryAcquireAutoHealLock inside maybeRunHeal prevents a burst of writes
       // from stacking passes.
       const healJob = this.maybeRunHeal(entityId, eventCount).catch((err: unknown) => {
-        console.error(err);
-        this.reportBackgroundFailure(entityId, 'heal');
+        this.reportBackgroundFailure(entityId, 'heal', err);
       });
       this.track(healJob);
     }
@@ -222,10 +220,23 @@ export class WriteService {
     }
   }
 
-  private reportBackgroundFailure(entityId: string, job: 'librarian' | 'heal'): void {
+  private warnedSearchUnavailable = false;
+
+  private reportBackgroundFailure(entityId: string, job: 'librarian' | 'heal', err: unknown): void {
+    // A keyword outage is an expected, retryable state (the pass kept its
+    // watermark/checkpoint), not a crash: report it by reason, without the
+    // stack trace, so it matches how runPendingMaintenance reports it.
+    // Warn once per instance so a host without an onDiagnostic hook still sees
+    // that auto passes are held, without a log line on every later write.
+    const searchUnavailable = isWikiSearchUnavailableError(err);
+    if (!searchUnavailable) console.error(err);
+    else if (!this.warnedSearchUnavailable) {
+      this.warnedSearchUnavailable = true;
+      console.warn('[WikiMemory] Auto librarian/heal pass skipped: keyword search is unavailable. Work is held, not lost, until it recovers (a no-arg syncSearchIndex() retries the init); later skips report only via onDiagnostic.');
+    }
     emitDiagnostic(this.options, {
       code: 'background_job_failed', operation: job, trigger: 'auto', entityId,
-      detail: { reason: 'unhandled_rejection' },
+      detail: { reason: searchUnavailable ? 'keyword_search_unavailable' : 'unhandled_rejection' },
     });
   }
 }

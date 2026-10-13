@@ -103,17 +103,23 @@ describe('WikiMemory (Facade Layer)', () => {
   describe('Setup and Migrations', () => {
     it('detects fresh install and sets initial schema version without running upgrade migrations', async () => {
       const tableExistsSpy = vi.spyOn(wiki.__testAccess.metadataRepo, 'tableExists').mockResolvedValue(false);
-      const setMetaSpy = vi.spyOn(wiki.__testAccess.metadataRepo, 'setMeta').mockResolvedValue(undefined);
+      // Record whether each write lands while the fresh-store finalize transaction is open.
+      let inTx = false;
+      const writesInTx: Array<[string, boolean]> = [];
+      const setMetaSpy = vi.spyOn(wiki.__testAccess.metadataRepo, 'setMeta').mockImplementation(async (key) => {
+        writesInTx.push([key, inTx]);
+      });
+      vi.mocked(mockDb.withTransactionAsync).mockImplementation(async (cb) => {
+        inTx = true;
+        try { return await cb(mockDb); } finally { inTx = false; }
+      });
 
       await wiki.setup();
 
       expect(tableExistsSpy).toHaveBeenCalledWith('test_entries');
-      // this.db is the serialized wrapper (Object.create(mockDb)), not raw mockDb.
-      expect(setMetaSpy).toHaveBeenCalledWith(
-        'schema_version',
-        String(CURRENT_SCHEMA_VERSION),
-        (wiki as unknown as { db: SQLiteAdapter }).db,
-      );
+      expect(setMetaSpy).toHaveBeenCalledWith('schema_version', String(CURRENT_SCHEMA_VERSION), expect.any(Object));
+      expect(writesInTx).toContainEqual(['schema_version', true]);
+      expect(writesInTx).not.toContainEqual(['schema_version', false]);
     });
 
     it('throws an error if legacy source types are detected on an existing database', async () => {
@@ -371,5 +377,74 @@ describe('WikiMemory outbox API', () => {
       (c: unknown[]) => String(c[0]).includes('outbox'),
     );
     expect(outboxCall).toBeDefined();
+  });
+
+  describe('Migration Gate', () => {
+    it('uses allow policy by default', async () => {
+      const wiki = makeWiki();
+      const moduleSpy = vi.spyOn(await import('../src/db/schema'), 'setupDatabase');
+
+      await wiki.setup();
+
+      expect(moduleSpy).toHaveBeenCalled();
+    });
+
+    it('runs migration gate when refuse policy is set', async () => {
+      const wiki = makeWiki();
+      const moduleSpy = vi.spyOn(await import('../src/db/migrationGate'), 'setupDatabaseWithGate');
+
+      wiki['options'].config = { migrations: 'refuse', tablePrefix: 'test_' };
+      // Existing store at the current schema version, but never stamped
+      wiki['metadataRepo'].tableExists = vi.fn().mockResolvedValue(true);
+      vi.spyOn(wiki['metadataRepo'], 'getMeta').mockImplementation(async (key: string) =>
+        key === 'schema_version' ? String((await import('../src/db/migrations')).CURRENT_SCHEMA_VERSION) : null);
+
+      await expect(wiki.setup()).rejects.toThrow(/Migration refused \(migrations: 'refuse'\): source_ref normalize/);
+
+      expect(moduleSpy).toHaveBeenCalledWith(
+        expect.any(Object),
+        'test_',
+        wiki['metadataRepo'],
+        'refuse'
+      );
+    });
+
+    it('runs migration gate when auto policy is set', async () => {
+      const wiki = makeWiki();
+      const moduleSpy = vi.spyOn(await import('../src/db/migrationGate'), 'setupDatabaseWithGate');
+
+      // Mock probePendingWork to return no pending work for this test
+      vi.spyOn(await import('../src/db/sourceRefNormalize'), 'probePendingWork').mockResolvedValue(null);
+
+      wiki['options'].config = { migrations: 'auto', tablePrefix: 'test_' };
+
+      await wiki.setup();
+
+      expect(moduleSpy).toHaveBeenCalledWith(
+        expect.any(Object),
+        'test_',
+        wiki['metadataRepo'],
+        'auto'
+      );
+    });
+
+    it('per-call setup({ migrations }) overrides config policy', async () => {
+      const wiki = makeWiki();
+      const gateSpy = vi.spyOn(await import('../src/db/migrationGate'), 'setupDatabaseWithGate');
+      wiki['options'].config = { migrations: 'allow', tablePrefix: 'test_' };
+
+      await wiki.setup({ migrations: 'auto' });
+
+      expect(gateSpy).toHaveBeenCalledWith(expect.any(Object), 'test_', wiki['metadataRepo'], 'auto');
+    });
+
+    it('routes allow policy through the gate, which performs schema setup', async () => {
+      const wiki = makeWiki();
+      const withGateSpy = vi.spyOn(await import('../src/db/migrationGate'), 'setupDatabaseWithGate');
+
+      await wiki.setup();
+
+      expect(withGateSpy).toHaveBeenCalledWith(expect.any(Object), expect.any(String), wiki['metadataRepo'], 'allow');
+    });
   });
 });

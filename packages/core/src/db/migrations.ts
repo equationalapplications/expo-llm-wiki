@@ -341,7 +341,28 @@ export const MIGRATIONS: Migration[] = [
       await createTemporalIndexesIfColumnsExist(db, prefix);
     },
   },
+  {
+    version: 14,
+    description: 'Partial index for the every-open legacy source_type probe',
+    run: async (db, prefix) => {
+      // ONLY the index. The source_ref normalize is a separate stamp-checked,
+      // watermark-resumable step after the migrations loop (sourceRefNormalize.ts).
+      await createLegacySourceTypeIndex(db, prefix);
+    },
+  },
 ];
+
+/**
+ * Partial index covering the legacy source_type probe. Created only by v14 and
+ * the fresh-store path — never by setupDatabase's every-open DDL, so the
+ * migration gate can defer its (unchunkable) build out of a caller's lease.
+ */
+export async function createLegacySourceTypeIndex(db: SQLiteAdapter, prefix: string): Promise<void> {
+  await db.execAsync(
+    `CREATE INDEX IF NOT EXISTS ${prefix}entries_legacy_source_type_idx ON ${prefix}entries(source_type) ` +
+      `WHERE source_type IN ('user_document', 'agent_inferred')`,
+  );
+}
 
 // Verify MIGRATIONS are in strictly ascending version order at module load time.
 // This prevents skipped or repeated migrations caused by out-of-order entries.

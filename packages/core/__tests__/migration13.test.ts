@@ -35,9 +35,9 @@ async function downgradeToV12(db: SQLiteAdapter): Promise<void> {
 }
 
 describe('migration v13: temporal columns + librarian watermark', () => {
-  it('is the last migration', () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(13);
-    expect(MIGRATIONS[MIGRATIONS.length - 1].version).toBe(13);
+  it('is registered below the current schema version', () => {
+    expect(MIGRATIONS.some((m) => m.version === 13)).toBe(true);
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThan(13);
   });
 
   it('fresh install has every new column and both indexes', async () => {
@@ -60,7 +60,7 @@ describe('migration v13: temporal columns + librarian watermark', () => {
     const row = await db.getFirstAsync<Record<string, unknown>>(`SELECT * FROM ${P}entries WHERE id = 'fact_1'`);
     expect(row).toMatchObject({ valid_from: null, valid_to: null, superseded_by: null, superseded_at: null });
     const v = await db.getFirstAsync<{ value: string }>(`SELECT value FROM ${P}meta WHERE key = 'schema_version'`);
-    expect(v?.value).toBe('13');
+    expect(v?.value).toBe(String(CURRENT_SCHEMA_VERSION));
   });
 
   it('v13 is idempotent when columns already exist', async () => {

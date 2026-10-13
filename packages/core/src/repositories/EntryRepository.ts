@@ -148,6 +148,16 @@ export class EntryRepository extends BaseRepository {
     super(db, prefix);
   }
 
+  /** Whether the entity has any non-deleted row (librarian gate: keyword ranking over zero facts is trivially empty). */
+  async hasLiveEntry(entityId: string, tx?: SQLiteAdapter): Promise<boolean> {
+    const executor = this.getExecutor(tx);
+    const row = await executor.getFirstAsync<{ one: number }>(
+      `SELECT 1 AS one FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL LIMIT 1`,
+      [entityId],
+    );
+    return row != null;
+  }
+
   /**
    * Fetch facts by IDs, optionally scoped to entity IDs.
    * Returns facts in the order of the input IDs (first match wins).
@@ -1236,29 +1246,6 @@ export class EntryRepository extends BaseRepository {
     }
     return executor.getAllAsync(
       `SELECT * FROM ${this.prefix}entries WHERE deleted_at IS NULL`,
-    );
-  }
-
-  async findRowsForSourceRefMigration(tx?: SQLiteAdapter): Promise<Array<{ rowid: number; source_ref: string }>> {
-    const executor = this.getExecutor(tx);
-    return executor.getAllAsync(
-      `SELECT rowid, source_ref FROM ${this.prefix}entries
-       WHERE source_ref IS NOT NULL
-         AND (
-           TRIM(source_ref) != source_ref
-           OR INSTR(source_ref, '/') > 0
-           OR INSTR(source_ref, '\\') > 0
-           OR INSTR(source_ref, CHAR(0)) > 0
-           OR source_ref GLOB '*[^-A-Za-z0-9._ ]*'
-         )`,
-    );
-  }
-
-  async updateSourceRefByRowid(rowid: number, sourceRef: string | null, tx: SQLiteAdapter): Promise<void> {
-    const executor = this.getExecutor(tx);
-    await executor.runAsync(
-      `UPDATE ${this.prefix}entries SET source_ref = ? WHERE rowid = ?`,
-      [sourceRef, rowid],
     );
   }
 

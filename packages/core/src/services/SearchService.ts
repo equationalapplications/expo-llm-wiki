@@ -7,6 +7,7 @@ import type {
   IndexSearchResult,
   IndexStrategy,
 } from './search/IndexStrategy';
+import { UnavailableIndexStrategy } from './search/UnavailableIndexStrategy';
 
 export interface ScoredRow {
   id: string;
@@ -92,6 +93,11 @@ export class SearchService {
    */
   setIndexStrategy(strategy: IndexStrategy): void {
     this.indexStrategy = strategy;
+  }
+
+  /** False while the installed strategy is the degraded UnavailableIndexStrategy (spec #280 Change 4). */
+  isKeywordAvailable(): boolean {
+    return !(this.indexStrategy instanceof UnavailableIndexStrategy);
   }
 
   /**
