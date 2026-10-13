@@ -12,6 +12,7 @@ import { parseJsonArray } from '../../repositories/rowMappers';
 import { monotonicNow } from '../../utils/monotonicNow';
 import { DEFAULT_SETUP_BUDGET_MS } from '../../utils/setupDefaults';
 import { buildFtsMatchQuery } from './ftsQuery';
+import { extractSqliteCode } from '../../db/sqliteCodes';
 
 /**
  * Keyword index stored in SQLite FTS5, kept consistent with `entries` by a
@@ -496,35 +497,29 @@ function unwrapFtsOnly(err: unknown): { cause: unknown; ftsOnly: boolean } {
   return { cause: err, ftsOnly: false };
 }
 
+/** Proxy-safe extractSqliteCode (issue #96): any trap => undefined. */
+function safeSqliteCode(err: unknown): string | undefined {
+  try {
+    return extractSqliteCode(err);
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * 'vtab' for SQLITE_CORRUPT_VTAB (extended code 267, any statement), 'corrupt'
  * for another SQLITE_CORRUPT* code, else null. Proxy-safe: any trap => null.
  */
 export function ftsCorruptionClass(err: unknown): 'vtab' | 'corrupt' | null {
-  let code: unknown;
-  let message: unknown;
-  try {
-    code = (err as { code?: unknown }).code;
-    message = (err as { message?: unknown }).message;
-  } catch {
-    return null;
-  }
-  if (code === 'SQLITE_CORRUPT_VTAB' || (typeof message === 'string' && /^Error code 267:/.test(message))) return 'vtab';
-  if ((typeof code === 'string' && code.startsWith('SQLITE_CORRUPT')) || (typeof message === 'string' && /^Error code 11:/.test(message))) return 'corrupt';
+  const code = safeSqliteCode(err);
+  if (code === 'SQLITE_CORRUPT_VTAB') return 'vtab';
+  if (code?.startsWith('SQLITE_CORRUPT')) return 'corrupt';
   return null;
 }
 
 /** A SQLite error (better-sqlite3 / expo-sqlite shapes): `code` 'SQLITE_*' or an 'Error code N:' message. Proxy-safe: any trap => false. */
 export function isSqliteError(err: unknown): boolean {
-  let code: unknown;
-  let message: unknown;
-  try {
-    code = (err as { code?: unknown }).code;
-    message = (err as { message?: unknown }).message;
-  } catch {
-    return false;
-  }
-  return (typeof code === 'string' && code.startsWith('SQLITE_')) || (typeof message === 'string' && /^Error code \d+:/.test(message));
+  return safeSqliteCode(err) !== undefined;
 }
 
 function assertEntity(entityId: string, documents: readonly IndexDocument[]): void {

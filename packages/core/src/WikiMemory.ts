@@ -271,32 +271,56 @@ export class WikiMemory {
 
   /** Max upsertGraph node ids held for their post-commit sync (spec #280 id threading). */
   static readonly UPSERT_ID_STASH_CAP = 10_000;
-  /** upsertGraph node ids per entity, awaiting syncSearchIndex(); drained ids are removed. */
+  /**
+   * upsertGraph node ids per entity, awaiting syncSearchIndex(). Ids leave the
+   * stash only once a drain succeeded, so a failed drain retries them next call.
+   */
   private upsertIdStash = new Map<string, Set<string>>();
+  /** Total ids across upsertIdStash, kept in step so the cap check is O(1). */
+  private upsertIdStashSize = 0;
 
   private stashUpsertIds(entityId: string, ids: readonly string[]): void {
-    let size = 0;
-    for (const s of this.upsertIdStash.values()) size += s.size;
+    // Only a ledger strategy drains by id; MiniSearch rebuilds the stale entity instead.
+    if (!this.searchService.hasLedger()) return;
     const cap = (this.constructor as typeof WikiMemory).UPSERT_ID_STASH_CAP;
     const set = this.upsertIdStash.get(entityId) ?? new Set<string>();
     for (const id of ids) {
       if (set.has(id)) continue;
-      if (size >= cap) break; // overflow: the entity-targeted / full-quantum drain covers the rest
+      if (this.upsertIdStashSize >= cap) break; // overflow: the entity-targeted / full-quantum drain covers the rest
       set.add(id);
-      size++;
+      this.upsertIdStashSize++;
     }
     if (set.size > 0) this.upsertIdStash.set(entityId, set);
   }
 
-  private takeStashedIds(entityId?: string): string[] {
-    if (entityId !== undefined) {
-      const ids = [...(this.upsertIdStash.get(entityId) ?? [])];
-      this.upsertIdStash.delete(entityId);
-      return ids;
+  /** Snapshot of the stash (one entity, or all) without removing anything. */
+  private peekStashedIds(entityId?: string): Map<string, string[]> {
+    const snapshot = new Map<string, string[]>();
+    for (const [id, set] of this.upsertIdStash) {
+      if (entityId === undefined || id === entityId) snapshot.set(id, [...set]);
     }
-    const all = [...this.upsertIdStash.values()].flatMap((s) => [...s]);
-    this.upsertIdStash.clear();
-    return all;
+    return snapshot;
+  }
+
+  /** Removes a drained snapshot; ids stashed since the peek stay for the next call. */
+  private dropStashedIds(snapshot: Map<string, string[]>): void {
+    for (const [entityId, ids] of snapshot) {
+      const set = this.upsertIdStash.get(entityId);
+      if (!set) continue;
+      for (const id of ids) {
+        if (set.delete(id)) this.upsertIdStashSize--;
+      }
+      if (set.size === 0) this.upsertIdStash.delete(entityId);
+    }
+  }
+
+  /** `config.setupBudgetMs` or the default, validated: a positive finite number. */
+  private setupBudgetMs(): number {
+    const budget = this.options.config?.setupBudgetMs ?? DEFAULT_SETUP_BUDGET_MS;
+    if (typeof budget !== 'number' || !Number.isFinite(budget) || budget <= 0) {
+      throw new TypeError(`setupBudgetMs must be a positive finite number; got ${String(budget)}`);
+    }
+    return budget;
   }
 
   private reinitSearch: Promise<void> | null = null;
@@ -320,10 +344,7 @@ export class WikiMemory {
    * left converges on later opens and no-arg `syncSearchIndex()` calls.
    */
   async setup(opts?: { migrations?: MigrationPolicy }) {
-    const setupBudgetMs = this.options.config?.setupBudgetMs ?? DEFAULT_SETUP_BUDGET_MS;
-    if (typeof setupBudgetMs !== 'number' || !Number.isFinite(setupBudgetMs) || setupBudgetMs <= 0) {
-      throw new TypeError(`setupBudgetMs must be a positive finite number; got ${String(setupBudgetMs)}`);
-    }
+    const setupBudgetMs = this.setupBudgetMs();
     // One deadline per open (spec #280 Change 3): captured here, never re-budgeted per turn.
     const openDeadline = monotonicNow() + setupBudgetMs;
     const entriesExistedBeforeSetup = await this.metadataRepo.tableExists(`${this.prefix}entries`);
@@ -762,7 +783,7 @@ export class WikiMemory {
           try {
             const strategy = await createIndexStrategy(
               this.db, this.prefix, this.metadataRepo, this.options.config?.indexStrategy ?? 'auto',
-              { setupBudgetMs: this.options.config?.setupBudgetMs ?? DEFAULT_SETUP_BUDGET_MS });
+              { setupBudgetMs: this.setupBudgetMs() });
             this.searchService.setIndexStrategy(strategy);
             if (this.searchService.isKeywordAvailable()) await this.searchService.sync();
           } finally {
@@ -780,10 +801,13 @@ export class WikiMemory {
         })();
         await this.reinitSearch;
       }
-      return this.searchService.syncStale({ ids: this.takeStashedIds() });
+      const stashed = this.peekStashedIds();
+      if (await this.searchService.syncStale({ ids: [...stashed.values()].flat() })) this.dropStashedIds(stashed);
+      return;
     }
     assertEntityId(entityId);
-    return this.searchService.syncEntries(entityId, this.takeStashedIds(entityId));
+    const stashed = this.peekStashedIds(entityId);
+    if (await this.searchService.syncEntries(entityId, stashed.get(entityId) ?? [])) this.dropStashedIds(stashed);
   }
 
   async exportDump(entityIds?: string[]): Promise<MemoryDump> {

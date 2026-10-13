@@ -1,5 +1,5 @@
 // packages/core/__tests__/idThreading.test.ts
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { WikiMemory } from '../src/WikiMemory';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 import type { SQLiteAdapter } from '../src/types';
@@ -70,6 +70,31 @@ describe('7(r) upsertGraph then search under a 5k backlog (#280 B5)', () => {
     const ids = await upsert(wiki, db, 'e1', 3);
     await wiki.syncSearchIndex('e1');
     expect((await hits(wiki, 'e1', 'juniper')).sort()).toEqual([...ids].sort());
+    expect((wiki as unknown as { upsertIdStash: Map<string, Set<string>> }).upsertIdStash.size).toBe(0);
+  });
+
+  it.each([['e1'], [undefined]])('a failed drain keeps the stashed ids for the next syncSearchIndex(%s)', async (target) => {
+    const db = openTestDatabase();
+    const wiki = await open(db);
+    const ids = await upsert(wiki, db, 'e1', 20);
+    const internals = wiki as unknown as { upsertIdStash: Map<string, Set<string>>; upsertIdStashSize: number };
+    const strategy = (wiki.__testAccess.searchService as unknown as { indexStrategy: { drain: () => Promise<void> } }).indexStrategy;
+    const drain = strategy.drain;
+    strategy.drain = async () => { throw Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' }); };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await wiki.syncSearchIndex(target);
+    } finally {
+      strategy.drain = drain;
+      warn.mockRestore();
+    }
+    expect(internals.upsertIdStash.get('e1')?.size).toBe(20);
+    expect(internals.upsertIdStashSize).toBe(20);
+
+    await wiki.syncSearchIndex(target);
+    expect((await hits(wiki, 'e1', 'juniper')).sort()).toEqual([...ids].sort());
+    expect(internals.upsertIdStash.size).toBe(0);
+    expect(internals.upsertIdStashSize).toBe(0);
   });
 });
 
