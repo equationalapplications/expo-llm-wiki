@@ -62,14 +62,20 @@ describe('Fts5IndexStrategy.init', () => {
     expect(await meta.getMeta(FTS5_STATE_KEY)).toBe('rebuilding');
     const trig = await db.getAllAsync<{ name: string }>(`SELECT name FROM sqlite_master WHERE type='trigger'`);
     expect(trig.map((t) => t.name)).toEqual(expect.arrayContaining([...fts5TriggerNames(P)]));
-    // Convergence to indexed rows is asserted in B3.
+    await s.drain();
+    expect(await meta.getMeta(FTS5_STATE_KEY)).toBe('live');
+    expect((await ftsRows()).map((r) => r.id).sort()).toEqual(['a', 'b']);
   });
 
   it('detached state re-arms into rebuilding', async () => {
     await put('a', 'e1', 'alpha', 'one');
     await meta.setMeta(FTS5_STATE_KEY, 'detached', db);
-    await new Fts5IndexStrategy(db, P, meta).init();
+    const r = new Fts5IndexStrategy(db, P, meta);
+    await r.init();
     expect(await meta.getMeta(FTS5_STATE_KEY)).toBe('rebuilding');
+    await r.drain();
+    expect(await meta.getMeta(FTS5_STATE_KEY)).toBe('live');
+    expect((await ftsRows()).map((r) => r.id)).toEqual(['a']);
   });
 });
 

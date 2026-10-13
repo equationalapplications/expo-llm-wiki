@@ -3,10 +3,11 @@ import type { SQLiteAdapter } from '../../types';
 import type { MetadataRepository } from '../../repositories/MetadataRepository';
 import type { DrainOptions, IndexDocument, IndexSearchOptions, IndexSearchResult, IndexStrategy } from './IndexStrategy';
 import {
-  FTS5_DRAIN_CHUNK, FTS5_STATE_KEY, drainChunkSql, drainHiSql, entityDrainChunkSql, entityDrainHiSql, fts5PendingIndexesDdl,
+  FTS5_DRAIN_CHUNK, FTS5_REBUILD_SNAPSHOT_KEY, FTS5_REBUILD_WM_KEY, FTS5_STATE_KEY, FTS5_SWEEP_CURSOR_KEY,
+  sweepChunkSql, sweepHiSql, windowChunkSql, windowHiSql, drainChunkSql, drainHiSql, entityDrainChunkSql, entityDrainHiSql, fts5PendingIndexesDdl,
   fts5TablesDdl, fts5TriggerNames, fts5TriggersDdl, idDrainChunkSql,
 } from './fts5Sql';
-import { writeRebuildStart } from './fts5Progress';
+import { readRebuildProgress, writeRebuildStart, type RebuildProgress, type RebuildWatermark } from './fts5Progress';
 import { monotonicNow } from '../../utils/monotonicNow';
 import { DEFAULT_SETUP_BUDGET_MS } from '../../utils/setupDefaults';
 import { buildFtsMatchQuery } from './ftsQuery';
@@ -122,9 +123,92 @@ export class Fts5IndexStrategy implements IndexStrategy {
     await this.fullQuantum(opts.deadline ?? monotonicNow() + this.budgetMs);
   }
 
-  /** Full quantum. B3 extends it with rebuild windows, the sweep and the flip. */
+  /**
+   * One full quantum (spec #280 Change 3): ledger first; then, while
+   * `rebuilding`, ≥1 window unless the ledger drain overran the deadline,
+   * one sweep tx, and the flip check. A `live` store reads only the state.
+   */
   private async fullQuantum(deadline: number): Promise<void> {
-    await this.drainLedgerUntil(deadline);
+    const ledgerOverran = await this.drainLedgerUntil(deadline);
+    if ((await this.metadataRepo.getMeta(FTS5_STATE_KEY)) !== 'rebuilding') return;
+    const progress = await readRebuildProgress(this.metadataRepo);
+    if (!progress || !(await this.fingerprintValid(progress.wm))) return this.restartRebuild();
+    if (!ledgerOverran) {
+      do {
+        if (!(await this.runWindow(progress))) break;
+      } while (monotonicNow() < deadline);
+      await this.runSweepTx(progress);
+    }
+    await this.tryFlip();
+  }
+
+  /** The id at the watermark's rowid still matches. A null id (start, or windows complete) has nothing to check. */
+  private async fingerprintValid(wm: RebuildWatermark, tx: SQLiteAdapter = this.db): Promise<boolean> {
+    if (wm.id === null) return true;
+    const row = await tx.getFirstAsync<{ id: string }>(`SELECT id FROM ${this.prefix}entries WHERE rowid = ?`, [wm.rowid]);
+    return row?.id === wm.id;
+  }
+
+  /** External change under the watermark: start over (same re-arm transaction as a trigger-loss restart). */
+  private async restartRebuild(): Promise<void> {
+    await this.db.withTransactionAsync((tx) => this.rearmInTx(tx));
+  }
+
+  /** One window tx. False once no rows remain in (wm, snapshot]; the watermark is then pinned at the snapshot (F9). */
+  private async runWindow(pr: RebuildProgress): Promise<boolean> {
+    if (pr.wm.rowid >= pr.snapshot.entries) return false;
+    const p = this.prefix;
+    let next: RebuildWatermark = pr.wm;
+    let more = false;
+    await this.db.withTransactionAsync(async (tx) => {
+      const row = await tx.getFirstAsync<{ hi: number | null }>(windowHiSql(p), [pr.wm.rowid, pr.snapshot.entries]);
+      if (row?.hi == null) {
+        next = { rowid: pr.snapshot.entries, id: null };
+      } else {
+        for (const sql of windowChunkSql(p)) await tx.runAsync(sql, [pr.wm.rowid, row.hi]);
+        const fp = await tx.getFirstAsync<{ id: string }>(`SELECT id FROM ${p}entries WHERE rowid = ?`, [row.hi]);
+        next = { rowid: row.hi, id: fp!.id };
+        more = true;
+      }
+      await this.metadataRepo.setMeta(FTS5_REBUILD_WM_KEY, JSON.stringify(next), tx);
+    });
+    pr.wm = next; // only after the tx resolved
+    return more;
+  }
+
+  /** At most one bounded sweep tx; the cursor advances in the same tx. */
+  private async runSweepTx(pr: RebuildProgress): Promise<void> {
+    if (pr.cursor >= pr.snapshot.map) return;
+    const p = this.prefix;
+    let next = pr.cursor;
+    await this.db.withTransactionAsync(async (tx) => {
+      const row = await tx.getFirstAsync<{ hi: number | null }>(sweepHiSql(p), [pr.cursor, pr.snapshot.map]);
+      const hi = row?.hi ?? pr.snapshot.map;
+      for (const sql of sweepChunkSql(p)) await tx.runAsync(sql, [pr.cursor, hi]);
+      await this.metadataRepo.setMeta(FTS5_SWEEP_CURSOR_KEY, String(hi), tx);
+      next = hi;
+    });
+    pr.cursor = next;
+  }
+
+  /** Completion, re-checked inside the flipping tx; the residual ledger (≤ one chunk) drains in it. */
+  private async tryFlip(): Promise<void> {
+    const p = this.prefix;
+    await this.db.withTransactionAsync(async (tx) => {
+      if ((await this.metadataRepo.getMeta(FTS5_STATE_KEY, tx)) !== 'rebuilding') return;
+      const pr = await readRebuildProgress(this.metadataRepo, tx);
+      if (!pr || pr.wm.rowid < pr.snapshot.entries || pr.cursor < pr.snapshot.map) return;
+      if (!(await this.fingerprintValid(pr.wm, tx))) return;
+      const residual = await tx.getFirstAsync<{ n: number }>(
+        `SELECT count(*) AS n FROM (SELECT 1 FROM ${p}fts_pending LIMIT ${FTS5_DRAIN_CHUNK + 1})`);
+      if ((residual?.n ?? 0) > FTS5_DRAIN_CHUNK) return;
+      const hi = await tx.getFirstAsync<{ hi: number | null }>(drainHiSql(p));
+      if (hi?.hi != null) for (const sql of drainChunkSql(p)) await tx.runAsync(sql, [hi.hi]);
+      await this.metadataRepo.deleteMeta(FTS5_REBUILD_WM_KEY, tx);
+      await this.metadataRepo.deleteMeta(FTS5_REBUILD_SNAPSHOT_KEY, tx);
+      await this.metadataRepo.deleteMeta(FTS5_SWEEP_CURSOR_KEY, tx);
+      await this.metadataRepo.setMeta(FTS5_STATE_KEY, 'live', tx);
+    });
   }
 
   /** Seq-ordered ledger chunks until empty or the deadline. True when a chunk ran and the deadline was then reached. */

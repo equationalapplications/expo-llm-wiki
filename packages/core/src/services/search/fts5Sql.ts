@@ -4,6 +4,7 @@
 
 export const FTS5_STATE_KEY = 'fts5_index_state';
 export const FTS5_DRAIN_CHUNK = 500;
+export const FTS5_SWEEP_CHUNK = 500;
 /** Rebuild watermark: JSON `{ rowid, id }`; `id` is the fingerprint (the entries id at `rowid`), null at 0 and once windows complete. */
 export const FTS5_REBUILD_WM_KEY = 'fts5_rebuild_wm';
 /** Re-arm snapshot: JSON `{ entries: max(entries.rowid), map: max(fts_map.fts_rowid) }`. */
@@ -147,4 +148,43 @@ export function fts5LedgerDropSql(p: string): string {
     `DROP TABLE IF EXISTS ${p}fts_pending;`,
     `DROP TABLE IF EXISTS ${p}fts_map;`,
   ].join('\n');
+}
+
+/** hi of the next rebuild window: max rowid over the next ≤500 EXISTING entries rows in (lo, cap]. Binds [lo, cap]. */
+export function windowHiSql(p: string): string {
+  return `SELECT max(rowid) AS hi FROM (SELECT rowid FROM ${p}entries WHERE rowid > ? AND rowid <= ? ORDER BY rowid LIMIT ${FTS5_DRAIN_CHUNK})`;
+}
+
+/**
+ * One rebuild window (spec #280 DDL note). Every statement binds [lo, hi].
+ * Never touches fts_pending: an id drained ahead of its window is simply
+ * re-done here, and fts_rowid never re-collides because the map is kept.
+ */
+export function windowChunkSql(p: string): readonly string[] {
+  const chunkIds = `SELECT id FROM ${p}entries WHERE rowid > ? AND rowid <= ?`;
+  return [
+    `DELETE FROM ${p}entries_fts WHERE rowid IN (SELECT m.fts_rowid FROM ${p}fts_map m WHERE m.id IN (${chunkIds}))`,
+    `DELETE FROM ${p}fts_map WHERE id IN (${chunkIds})`,
+    `INSERT INTO ${p}fts_map (id, entity_id)
+       SELECT e.id, e.entity_id FROM ${p}entries e WHERE e.rowid > ? AND e.rowid <= ? AND e.deleted_at IS NULL`,
+    `INSERT INTO ${p}entries_fts (rowid, id, entity_id, title, body, tags)
+       SELECT m.fts_rowid, e.id, e.entity_id, e.title, e.body, ${tagsExpr('e.tags')}
+       FROM ${p}entries e JOIN ${p}fts_map m ON m.id = e.id
+       WHERE e.rowid > ? AND e.rowid <= ?`,
+  ];
+}
+
+/** hi of the next sweep window over fts_map.fts_rowid in (lo, cap]. Binds [lo, cap]. */
+export function sweepHiSql(p: string): string {
+  return `SELECT max(fts_rowid) AS hi FROM (SELECT fts_rowid FROM ${p}fts_map WHERE fts_rowid > ? AND fts_rowid <= ? ORDER BY fts_rowid LIMIT ${FTS5_SWEEP_CHUNK})`;
+}
+
+/** Orphan sweep (spec #280 Change 3): map rows whose entry no longer exists. Both bind [lo, hi]; FTS rows first. */
+export function sweepChunkSql(p: string): readonly string[] {
+  const orphans = `SELECT m.fts_rowid FROM ${p}fts_map m
+     WHERE m.fts_rowid > ? AND m.fts_rowid <= ? AND NOT EXISTS (SELECT 1 FROM ${p}entries e WHERE e.id = m.id)`;
+  return [
+    `DELETE FROM ${p}entries_fts WHERE rowid IN (${orphans})`,
+    `DELETE FROM ${p}fts_map WHERE fts_rowid IN (${orphans})`,
+  ];
 }

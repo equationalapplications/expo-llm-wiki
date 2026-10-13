@@ -5,7 +5,7 @@
 import type { SQLiteAdapter } from '../../types';
 import type { MetadataRepository } from '../../repositories/MetadataRepository';
 import { parseJsonObject } from '../../repositories/rowMappers';
-import { FTS5_REBUILD_SNAPSHOT_KEY, FTS5_REBUILD_WM_KEY, FTS5_SWEEP_CURSOR_KEY } from './fts5Sql';
+import { FTS5_REBUILD_SNAPSHOT_KEY, FTS5_REBUILD_WM_KEY, FTS5_STATE_KEY, FTS5_SWEEP_CURSOR_KEY } from './fts5Sql';
 
 export interface RebuildWatermark { rowid: number; id: string | null }
 export interface RebuildProgress {
@@ -32,4 +32,26 @@ export async function readRebuildProgress(meta: MetadataRepository, tx?: SQLiteA
   if (typeof wm?.rowid !== 'number' || !(typeof wm.id === 'string' || wm.id === null)) return null;
   if (typeof snap?.entries !== 'number' || typeof snap.map !== 'number' || !Number.isFinite(cursor)) return null;
   return { wm: { rowid: wm.rowid, id: wm.id }, snapshot: { entries: snap.entries, map: snap.map }, cursor };
+}
+
+/**
+ * Keeps the rebuild fingerprint valid across an engine hard-delete (spec #280
+ * Change 3): call in the deleting transaction, after the DELETE. Only when
+ * the fingerprint id is among `deletedIds` does the watermark move to the
+ * greatest surviving rowid below it (or 0), so a missing fingerprint at
+ * check time always means an external change, which restarts the rebuild.
+ * Raw meta SQL: repositories must not depend on MetadataRepository here.
+ */
+export async function reanchorRebuildFingerprint(tx: SQLiteAdapter, prefix: string, deletedIds: readonly string[]): Promise<void> {
+  if (deletedIds.length === 0) return;
+  const metaValue = async (key: string) =>
+    (await tx.getFirstAsync<{ value: string }>(`SELECT value FROM ${prefix}meta WHERE key = ?`, [key]))?.value ?? null;
+  if ((await metaValue(FTS5_STATE_KEY)) !== 'rebuilding') return;
+  const wm = parseJsonObject<{ rowid?: unknown; id?: unknown }>(await metaValue(FTS5_REBUILD_WM_KEY));
+  if (typeof wm?.rowid !== 'number' || typeof wm.id !== 'string' || !deletedIds.includes(wm.id)) return;
+  if ((await tx.getFirstAsync<{ id: string }>(`SELECT id FROM ${prefix}entries WHERE rowid = ?`, [wm.rowid]))?.id === wm.id) return;
+  const below = await tx.getFirstAsync<{ rowid: number; id: string }>(
+    `SELECT rowid, id FROM ${prefix}entries WHERE rowid < ? ORDER BY rowid DESC LIMIT 1`, [wm.rowid]);
+  const next: RebuildWatermark = below ? { rowid: below.rowid, id: below.id } : { rowid: 0, id: null };
+  await tx.runAsync(`UPDATE ${prefix}meta SET value = ? WHERE key = ?`, [JSON.stringify(next), FTS5_REBUILD_WM_KEY]);
 }

@@ -3,6 +3,7 @@ import { WikiGraphNodeOwnershipConflict } from '../types';
 import { BaseRepository } from './BaseRepository';
 import { OutboxRepository } from './OutboxRepository';
 import { parseJsonArray, parseJsonObject } from './rowMappers';
+import { reanchorRebuildFingerprint } from '../services/search/fts5Progress';
 import { liveAtSql, type LiveMode } from '../utils/temporal';
 import { isStaleAfter, deriveTrustTier } from '@equationalapplications/core-okf';
 
@@ -840,6 +841,8 @@ export class EntryRepository extends BaseRepository {
         }
       }
     }
+    // Spec #280 Change 3: an engine hard-delete never strands the FTS rebuild fingerprint.
+    if (totalChanges > 0) await reanchorRebuildFingerprint(executor, this.prefix, ids);
     return totalChanges;
   }
 
