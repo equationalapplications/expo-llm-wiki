@@ -47,12 +47,12 @@
 
 ---
 
-## Resume here (rev 8, 2026-10-13) — start at Task B5 (B4 done, commit 6e6abd4)
+## Resume here (rev 8, 2026-10-13) — start at Task B6 (B5 done, commit 57ed7bc)
 
 - **PR-A is merged:** PR #281 → `main` as merge commit `459b84e`. Issue #280 is open again (a stray closing keyword in commit `cfb56fe` had auto-closed it). Only PR-B's PR body may say `Fixes #280`. No commit message may contain a closing keyword followed by an issue number.
 - **Branch:** `feat/issue280-fts-state-machine`, cut from `main` @ `459b84e`. It is not pushed and has no PR yet. Its only commit so far is this plan (rev 8).
 - **Baseline (B0, on `459b84e`):** core suite **176 files / 1904 tests, 0 failures**; `typecheck` exit 0.
-- **Next:** Task B5 (B1-B4 done). B5 needs F5 and F6, B8 needs F8.
+- **Next:** Task B6 (B1-B5 done). B8 needs F8.
 - **Ignore** `.superpowers/sdd/2026-10-10-issue280-setup-walltime-plan/NEXT_SESSION_HANDOFF.md`: it is stale (it says A2–A7 failed; all of them shipped).
 - Task A8 (measurements) is still deferred. B8 needs its harness (F10).
 - The rev 7 block below is historical.
@@ -3254,7 +3254,7 @@ git commit -m "feat(core): rename-retire FTS resets, bounded reclamation, corrup
 - Produces: `SearchService.sync(entityId?, opts?: { deadline?: number; ids?: readonly string[] })`; `SearchService.syncStale(opts?: { ids?: readonly string[] })`; `WikiMemory` private `upsertIdStash: Map<string, Set<string>>`, `static readonly UPSERT_ID_STASH_CAP = 10_000`.
 - Consumes: B1's `DrainOptions` (`mode: 'full'` + `ids` = ids first, then the quantum).
 
-- [ ] **Step 1: Write the failing tests** — create `packages/core/__tests__/idThreading.test.ts`:
+- [x] **Step 1: Write the failing tests** — create `packages/core/__tests__/idThreading.test.ts`:
 
 ```typescript
 // packages/core/__tests__/idThreading.test.ts
@@ -3351,11 +3351,11 @@ describe("7(m') importDump(merge=false) under a 5k foreign backlog (#280 B5)", (
 });
 ```
 
-- [ ] **Step 2: Run it — expect FAIL.** `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/idThreading.test.ts` → FAIL (`UPSERT_ID_STASH_CAP` undefined; 7(r) same-entity leg drains only the 500 oldest e1 rows; 7(m′) drains one entity chunk). If `exportDump`/`importDump` rejects the raw-inserted source rows (a missing NOT NULL column, or an import validation such as a null `source_ref`), set that column to a valid value on the source rows: read the field named in the error in `ImportExportService.ts` and `PRAGMA table_info(llm_wiki_entries)`. Never weaken the 2000-hit assertion.
+- [x] **Step 2: Run it — expect FAIL.** `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/idThreading.test.ts` → FAIL (`UPSERT_ID_STASH_CAP` undefined; 7(r) same-entity leg drains only the 500 oldest e1 rows; 7(m′) drains one entity chunk). If `exportDump`/`importDump` rejects the raw-inserted source rows (a missing NOT NULL column, or an import validation such as a null `source_ref`), set that column to a valid value on the source rows: read the field named in the error in `ImportExportService.ts` and `PRAGMA table_info(llm_wiki_entries)`. Never weaken the 2000-hit assertion.
 
-- [ ] **Step 3: SearchService.** Change `sync`'s signature to `sync(entityId?: string, opts?: { deadline?: number; ids?: readonly string[] })`; in its drain branch use `{ mode: 'ledger', entityId, ids: opts?.ids }` for the entity form. Doc: "`opts.ids` are the caller's touched ids: a ledger strategy drains them first, to completion; MiniSearch ignores them and rebuilds the entity in one scan." Change `syncStale` to `async syncStale(opts?: { ids?: readonly string[] }): Promise<void>` with `if (this.indexStrategy.drain) return this.drainTurn(undefined, { mode: 'full', ids: opts?.ids });`. Update Step-8-of-B1's routing test's expected second call to `{ mode: 'ledger', entityId: 'e1', ids: undefined }` (it still matches by `toEqual`) — no edit needed; re-run it.
+- [x] **Step 3: SearchService.** Change `sync`'s signature to `sync(entityId?: string, opts?: { deadline?: number; ids?: readonly string[] })`; in its drain branch use `{ mode: 'ledger', entityId, ids: opts?.ids }` for the entity form. Doc: "`opts.ids` are the caller's touched ids: a ledger strategy drains them first, to completion; MiniSearch ignores them and rebuilds the entity in one scan." Change `syncStale` to `async syncStale(opts?: { ids?: readonly string[] }): Promise<void>` with `if (this.indexStrategy.drain) return this.drainTurn(undefined, { mode: 'full', ids: opts?.ids });`. Update Step-8-of-B1's routing test's expected second call to `{ mode: 'ledger', entityId: 'e1', ids: undefined }` (it still matches by `toEqual`) — no edit needed; re-run it.
 
-- [ ] **Step 4: WikiMemory stash.** Add next to the re-init fields (`:273-277`):
+- [x] **Step 4: WikiMemory stash.** Add next to the re-init fields (`:273-277`):
 
 ```typescript
   /** Max upsertGraph node ids held for their post-commit sync (spec #280 id threading). */
@@ -3402,7 +3402,7 @@ In `upsertGraph`, replace the comment + call at `:897-900` with:
 
 In `syncSearchIndex`, change `:740` to `return this.searchService.syncStale({ ids: this.takeStashedIds() });` and `:743` to `return this.searchService.syncEntries(entityId, this.takeStashedIds(entityId));`.
 
-- [ ] **Step 5: Import.** Replace `ImportExportService.ts:444-453` with:
+- [x] **Step 5: Import.** Replace `ImportExportService.ts:444-453` with:
 
 ```typescript
     // Index only what this call wrote (#232): a whole-entity rebuild here made
@@ -3418,7 +3418,7 @@ In `syncSearchIndex`, change `:740` to `return this.searchService.syncStale({ id
     }
 ```
 
-- [ ] **Step 6: Docs.** Replace the `syncSearchIndex` JSDoc's second paragraph (`:686-693`) with:
+- [x] **Step 6: Docs.** Replace the `syncSearchIndex` JSDoc's second paragraph (`:686-693`) with:
 
 ```typescript
    * With `entityId`: drains that entity's pending `upsertGraph` node ids first,
@@ -3436,11 +3436,11 @@ In `syncSearchIndex`, change `:740` to `return this.searchService.syncStale({ id
 
 and in the `upsertGraph` JSDoc replace "to make the new nodes keyword-searchable." (`:823`) with "to make the new nodes keyword-searchable: both forms drain this call's node ids first, to completion, so the nodes are searchable under any backlog (up to `WikiMemory.UPSERT_ID_STASH_CAP` pending ids; beyond that they converge with the backlog).".
 
-- [ ] **Step 7: Run Step 1's file — expect PASS.** Re-run `__tests__/fts5Integration.test.ts __tests__/upsertGraphContract.test.ts __tests__/incrementalSearchIndex.test.ts __tests__/searchServiceDrain.test.ts` — PASS.
+- [x] **Step 7: Run Step 1's file — expect PASS.** Re-run `__tests__/fts5Integration.test.ts __tests__/upsertGraphContract.test.ts __tests__/incrementalSearchIndex.test.ts __tests__/searchServiceDrain.test.ts` — PASS.
 
-- [ ] **Step 8: Gate.** Full suite + typecheck.
+- [x] **Step 8: Gate.** Full suite + typecheck.
 
-- [ ] **Step 9: Commit.**
+- [x] **Step 9: Commit.**
 
 ```bash
 git add packages/core/src/WikiMemory.ts packages/core/src/services/SearchService.ts packages/core/src/services/ImportExportService.ts \
