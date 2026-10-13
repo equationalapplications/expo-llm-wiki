@@ -140,7 +140,7 @@ export class SearchService {
     if (this.indexStrategy.drain) {
       // No entity: a full quantum (setup(), re-init). An entity: a write turn, ledger-only.
       return this.drainTurn(entityId, entityId === undefined
-        ? { mode: 'full', deadline: opts?.deadline }
+        ? { mode: 'full', deadline: opts?.deadline, ids: opts?.ids }
         : { mode: 'ledger', entityId, ids: opts?.ids });
     }
     const work = this.syncChain.then(async () => {

@@ -93,6 +93,16 @@ describe('Fts5IndexStrategy.drain modes (#280 B1)', () => {
     expect(await pending()).toBe(0);
   });
 
+  it('full mode drains the caller ids to completion even past the deadline; only the backlog is bounded', async () => {
+    const s = await liveStrategy();
+    await bulk('e2', 2000);
+    await bulk('e1', 1200, 'mine');
+    const mine = Array.from({ length: 1200 }, (_, i) => `mine_${i}`);
+    await s.drain({ mode: 'full', deadline: 0, ids: mine });
+    for (const id of ['mine_0', 'mine_599', 'mine_1199']) expect(await indexed(id)).toBe(true);
+    expect(await pending()).toBe(1500); // own 1200 to completion + ONE overrun foreign chunk of 500
+  });
+
   it('ids with no ledger row (already drained, or never written) are a no-op', async () => {
     const s = await liveStrategy();
     await bulk('e1', 3);

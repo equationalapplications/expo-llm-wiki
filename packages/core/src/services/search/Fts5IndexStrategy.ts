@@ -164,16 +164,16 @@ export class Fts5IndexStrategy implements IndexStrategy {
   }
 
   async drain(opts: DrainOptions = {}): Promise<void> {
-    const deadline = opts.deadline ?? monotonicNow() + this.budgetMs;
     const ids = opts.ids ?? [];
-    if (ids.length > 0) await this.drainIdsWithDeadline(ids, deadline);
+    // The caller's own ids are not deadline-bound (DrainOptions.ids): the stash is already cleared, so a skipped id stays unsearchable.
+    if (ids.length > 0) await this.drainIds(ids);
     if (opts.mode === 'ledger') {
       // Write turn: at most ONE foreign chunk after the caller's own ids.
       if (ids.length === 0 && opts.entityId !== undefined) await this.drainEntityChunk(opts.entityId);
       else await this.drainLedgerChunk();
       return;
     }
-    await this.fullQuantum(deadline);
+    await this.fullQuantum(opts.deadline ?? monotonicNow() + this.budgetMs);
   }
 
   /**
@@ -209,9 +209,7 @@ export class Fts5IndexStrategy implements IndexStrategy {
   private async reclaimRetired(deadline: number): Promise<void> {
     while (monotonicNow() < deadline) {
       const [name] = await this.retiredList();
-      if (name === undefined) {
-        return;
-      }
+      if (name === undefined) return;
       try {
         await this.reclaimStep(name);
       } catch (err) {
@@ -353,15 +351,9 @@ export class Fts5IndexStrategy implements IndexStrategy {
 
   /** The caller's own ids, to completion, ≤ FTS5_DRAIN_CHUNK per transaction. */
   private async drainIds(ids: readonly string[]): Promise<void> {
-    await this.drainIdsWithDeadline(ids, monotonicNow() + this.budgetMs);
-  }
-
-  /** The caller's own ids, bounded by deadline, ≤ FTS5_DRAIN_CHUNK per transaction. */
-  private async drainIdsWithDeadline(ids: readonly string[], deadline: number): Promise<void> {
     const unique = [...new Set(ids)];
     const chunk = idDrainChunkSql(this.prefix);
     for (let i = 0; i < unique.length; i += FTS5_DRAIN_CHUNK) {
-      if (monotonicNow() >= deadline) break;
       const json = JSON.stringify(unique.slice(i, i + FTS5_DRAIN_CHUNK));
       await this.db.withTransactionAsync(async (tx) => {
         for (const sql of chunk) await tx.runAsync(sql, [json]);
@@ -377,9 +369,7 @@ export class Fts5IndexStrategy implements IndexStrategy {
     let ran = false;
     await this.db.withTransactionAsync(async (tx) => {
       const row = await tx.getFirstAsync<{ hi: number | null }>(hiSql);
-      if (row?.hi == null) {
-        return;
-      }
+      if (row?.hi == null) return;
       for (const sql of chunk) await tx.runAsync(sql, [row.hi]);
       ran = true;
     });
