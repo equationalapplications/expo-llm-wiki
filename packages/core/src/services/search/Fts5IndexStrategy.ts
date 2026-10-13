@@ -166,7 +166,7 @@ export class Fts5IndexStrategy implements IndexStrategy {
 
   async drain(opts: DrainOptions = {}): Promise<void> {
     const ids = opts.ids ?? [];
-    // The caller's own ids are not deadline-bound (DrainOptions.ids): the stash is already cleared, so a skipped id stays unsearchable.
+    // The caller's own ids are not deadline-bound (DrainOptions.ids): they drain to completion, and the caller drops them from its stash only once this succeeds.
     if (ids.length > 0) await this.drainIds(ids);
     if (opts.mode === 'ledger') {
       // Write turn: at most ONE foreign chunk after the caller's own ids.
