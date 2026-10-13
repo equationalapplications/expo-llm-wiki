@@ -55,3 +55,15 @@ export async function reanchorRebuildFingerprint(tx: SQLiteAdapter, prefix: stri
   const next: RebuildWatermark = below ? { rowid: below.rowid, id: below.id } : { rowid: 0, id: null };
   await tx.runAsync(`UPDATE ${prefix}meta SET value = ? WHERE key = ?`, [JSON.stringify(next), FTS5_REBUILD_WM_KEY]);
 }
+
+/**
+ * After an in-process VACUUM (which may renumber entries rowids): a
+ * `rebuilding` index restarts its windows and sweep from 0 against fresh
+ * snapshots. A `live` index has nothing to reset.
+ */
+export async function restartRebuildAfterVacuum(db: SQLiteAdapter, prefix: string, meta: MetadataRepository): Promise<void> {
+  await db.withTransactionAsync(async (tx) => {
+    if ((await meta.getMeta(FTS5_STATE_KEY, tx)) !== 'rebuilding') return;
+    await writeRebuildStart(tx, prefix, meta);
+  });
+}
