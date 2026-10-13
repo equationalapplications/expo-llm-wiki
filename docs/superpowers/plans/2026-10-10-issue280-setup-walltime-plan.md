@@ -3562,9 +3562,9 @@ In `MaintenanceService.runPrune`'s vacuum branch (`:346-350`):
 
 with `import { restartRebuildAfterVacuum } from './search/fts5Progress';`.
 
-- [ ] **Step 4: Run Step 1's file — expect PASS.**
-- [ ] **Step 5: Gate.** Full suite + typecheck.
-- [ ] **Step 6: Commit.**
+- [x] **Step 4: Run Step 1's file — expect PASS.**
+- [x] **Step 5: Gate.** Full suite + typecheck.
+- [x] **Step 6: Commit.**
 
 ```bash
 git add packages/core/src/services/search/fts5Progress.ts packages/core/src/services/MaintenanceService.ts packages/core/__tests__/fts5Vacuum.test.ts
