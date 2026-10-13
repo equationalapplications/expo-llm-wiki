@@ -1,7 +1,7 @@
 import type { SQLiteAdapter } from './types';
 import type { WikiOutboxEvent } from './outbox/types';
 import { setupDatabaseWithGate } from './db/migrationGate';
-import { setupDatabase } from './db/schema';
+import { runSourceRefNormalize, writeNormalizeStamp } from './db/sourceRefNormalize';
 import { withSerializedTransactions } from './db/serializedAdapter';
 import { MIGRATIONS, CURRENT_SCHEMA_VERSION } from './db/migrations';
 import {
@@ -14,7 +14,6 @@ import {
   WikiSourceRefHashCollision,
   WikiDraftNotFound,
   WikiSupersedeError,
-  WikiMigrationRequiredError,
 } from './types';
 import type { DraftPage } from './types';
 import type { PendingSourceStatus, WikiLintReport, WikiInstructions, PendingMaintenance, RunPendingMaintenanceOptions, RunPendingMaintenanceResult } from './types';
@@ -261,13 +260,16 @@ export class WikiMemory {
   async setup() {
     const entriesExistedBeforeSetup = await this.metadataRepo.tableExists(`${this.prefix}entries`);
 
-    // Create tables first
-    await setupDatabase(this.db, this.prefix);
+    // The gate runs before any mutation: 'refuse' throws before tables are touched,
+    // 'auto' runs only the stamped source_ref normalization, 'allow' just sets up.
+    const migrationPolicy = this.options.config?.migrations ?? 'allow';
+    await setupDatabaseWithGate(this.db, this.prefix, this.metadataRepo, migrationPolicy);
 
     let currentVersion: number;
 
     if (!entriesExistedBeforeSetup) {
       await this.metadataRepo.setMeta('schema_version', String(CURRENT_SCHEMA_VERSION), this.db);
+      await writeNormalizeStamp(this.metadataRepo, this.db);
       currentVersion = CURRENT_SCHEMA_VERSION;
     } else {
       const schemaVersionValue = await this.metadataRepo.getMeta('schema_version');
@@ -282,38 +284,12 @@ export class WikiMemory {
       }
     }
 
-    // Run migration gate if configured with refuse or auto policy
-    const migrationPolicy = this.options.config?.migrations ?? 'allow';
-    if (migrationPolicy !== 'allow') {
-      try {
-        await setupDatabaseWithGate(
-          this.db,
-          this.prefix,
-          this.metadataRepo,
-          migrationPolicy
-        );
-      } catch (err) {
-        if (err instanceof WikiMigrationRequiredError) {
-          // For auto policy, we want to continue after handling the migration
-          if (migrationPolicy === 'auto' && err.pendingWork.type === 'source_ref_normalize') {
-            // Continue with normal flow - source ref normalization will be done below
-          } else {
-            throw err;
-          }
-        } else {
-          throw err;
-        }
-      }
-    }
-
-    // Run schema migrations for versions behind current (only for allow policy or auto after source ref normalize)
-    if (migrationPolicy === 'allow' || (migrationPolicy === 'auto' && entriesExistedBeforeSetup)) {
-      for (const migration of MIGRATIONS) {
-        if (migration.version > currentVersion) {
-          await migration.run(this.db, this.prefix);
-          await this.metadataRepo.setMeta('schema_version', String(migration.version), this.db);
-          currentVersion = migration.version;
-        }
+    // Schema migrations. Under 'refuse'/'auto' the gate has already thrown if any are pending.
+    for (const migration of MIGRATIONS) {
+      if (migration.version > currentVersion) {
+        await migration.run(this.db, this.prefix);
+        await this.metadataRepo.setMeta('schema_version', String(migration.version), this.db);
+        currentVersion = migration.version;
       }
     }
 
@@ -322,23 +298,10 @@ export class WikiMemory {
       if (!schemaVersionCheck) {
         await this.metadataRepo.setMeta('schema_version', String(currentVersion), this.db);
       }
-    }
-
-    if (entriesExistedBeforeSetup) {
       await this.importExportService.assertNoLegacySourceTypes();
-    }
-
-    // Do source ref normalization if needed
-    const rows = await this.entryRepo.findRowsForSourceRefMigration();
-    if (rows.length > 0) {
-      await this.db.withTransactionAsync(async (tx) => {
-        for (const row of rows) {
-          const normalized = normalizeSourceRef(row.source_ref);
-          if (normalized !== row.source_ref) {
-            await this.entryRepo.updateSourceRefByRowid(row.rowid, normalized, tx);
-          }
-        }
-      });
+      // Stamped, watermark-resumable normalization; no-op once the stamp matches
+      // (already done by the gate under 'auto').
+      await runSourceRefNormalize(this.db, this.prefix, this.metadataRepo);
     }
 
     this.searchService.setIndexStrategy(

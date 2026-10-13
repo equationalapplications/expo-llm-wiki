@@ -44,14 +44,14 @@
 
 † tmpfs rows underestimate real-disk cost: at 1M, tmpfs V1 = 47.2 s vs NVMe 108.3 s (2.3×). Capacity planning uses NVMe rows only.
 
-**NVMe warm-open (V2) fits exponent ≈1.3 on entries** (0.09 → 0.51 → 1.98 → ~3 s warm-cache series). The gate's pro store holds ~4.2M entries ⇒ naive extrapolation **~30 s warm-cache, ~50 s+ cold — several times the 15 s fence**, consistent with the per-phase finding that warm open is 100% sequential scans (linear I/O + per-row JS with a growing constant). V1/V3 grow at least as fast (V3: 4.67 → 12.22 → 97.65 → 165 s).
+**NVMe warm-open (V2) fits exponent ≈1.3 on entries** (0.09 → 0.51 → 1.98 → ~3 s warm-cache series). The gate's pro store holds ~4.2M entries ⇒ scaling the 1.74 s warm point by 4.2^1.3 (≈6.5×) gives **~11 s warm**, the ~3 s series endpoint gives **~20 s warm**, and scaling the 4.82 s cold point gives **~31 s cold** — the cold and upper-warm estimates exceed the 15 s fence, consistent with the per-phase finding that warm open is 100% sequential scans (linear I/O + per-row JS with a growing constant). V1/V3 grow at least as fast (V3: 4.67 → 12.22 → 97.65 → 165 s).
 
-V3 marker-lost @1.1 GB local = 165–209 s; ×~3.8 architecture/storage penalty ≈ **the gate's 693 s @4.7 GB**. Strong hint the gate's pro leg was a rebuild/marker-lost path, not a warm open. [C — gate store state not retrievable]
+V3 marker-lost @1.1 GB local = 165–209 s; linear size scaling to 4.7 GB (×4.27) gives **≈705–893 s**, bracketing the gate's 693 s @4.7 GB. No separate architecture/storage penalty is needed to explain it — strong hint the gate's pro leg was a rebuild/marker-lost path, not a warm open. [C — gate store state not retrievable]
 
 ### 2.2 Phase attribution @1M NVMe (per-SQL buckets) — [V]
 
 - **V2 warm (1.74 s): glob_scan 1.13 s (65%) + legacy_types_scan 0.60 s (35%) = 99.8%.** Everything else ≤1.4 ms.
-- V1 first-open (117.6 s): FTS rebuild INSERT 52.6 s (44.8%), migration DDL 16.5 s (14%), tx_overhead 98.4 s (83.7% — rebuild runs in one transaction, commit/fsync included).
+- V1 first-open (117.6 s): FTS rebuild INSERT 52.6 s (44.8%), migration DDL 16.5 s (14%), tx_overhead 98.4 s (83.7% — the wall time of the enclosing single transaction, commit/fsync included). **The buckets overlap and are not additive:** tx_overhead contains the INSERT and DDL time, so the percentages sum to >100%.
 - V3 marker-lost (209.4 s): rebuild INSERT 114.7 s + DROP/CREATE virtual table 22.3 s; 99.2% inside one transaction.
 
 ### 2.3 Cold-cache caveat [V]
@@ -60,8 +60,8 @@ First 1M V2 measured 4.82 s vs 1.74 s on the same store — cold page cache ≈ 
 
 ### 2.4 Extrapolation to the gate's pro leg [C]
 
-- Warm open: 1.74 s warm-cache / ~4.8 s cold @1.1 GB ⇒ naive-linear to 4.7 GB: ~7.5 s / ~21 s — **cold warm-open already breaches a 15 s fence before any ARM64 penalty**; scans are pure sequential-read + per-row JS, so a 2–3× architecture penalty is plausible ⇒ 15–60 s.
-- Rebuild path: 165–209 s @1.1 GB ⇒ ~3 min @4.7 GB local; ×3.8 ≈ 693 s. Matches the gate if the pro store was marker-lost or foreign.
+- Warm open: 1.74 s warm-cache / ~4.8 s cold @1.1 GB ⇒ naive-linear to 4.7 GB (×4.27): ~7.4 s / ~21 s; with the fitted ^1.3 exponent on 4.2M entries: ~11–20 s warm / ~31 s cold — **cold warm-open breaches a 15 s fence under either model**; scans are pure sequential-read + per-row JS, so a 2–3× architecture penalty is plausible ⇒ up to ~60 s.
+- Rebuild path: 165–209 s @1.1 GB ⇒ ≈705–893 s @4.7 GB by linear scaling (×4.27). Matches the gate's 693 s if the pro store was marker-lost or foreign.
 
 ## 3. Root causes (revised)
 
@@ -69,8 +69,8 @@ First 1M V2 measured 4.82 s vs 1.74 s on the same store — cold page cache ≈ 
 `Fts5IndexStrategy.init()` (Fts5IndexStrategy.ts:31-37) rebuilds the whole index in one `withTransactionAsync` when state ≠ live-with-triggers. @1M: 114 s INSERT + up to 22 s DDL in one tx (rollback window = whole rebuild). No resume, no progress, no partial availability.
 
 **RC-2 [V — ELEVATED to fence-critical per GLM r1] — the two survival scans run on every open, forever.**
-`findRowsForSourceRefMigration` (GLOB, unindexable) + `assertNoLegacySourceTypes` (unindexed `IN` scan) = 100% of warm-open cost; linear in entries; ×cold-cache and ×architecture penalties. At pro scale this alone plausibly breaches the 15 s fence. Both are pre-version survival checks — on a `schema_version=13` store the writer already guarantees the invariants, so per-open re-verification is redundant work.
-**Partial-index discriminator [V — Opus-requested leg, `.sandbox/profile-partial-index.ts`]:** the planner DOES use covering partial indexes for both scans (glob 1181 ms → 11.3 ms, legacy → 0.4 ms @1M), **but** the source_ref violation-predicate index costs 13× on writes (10k inserts: 457 → 6099 ms — TRIM/INSTR/GLOB re-evaluated per insert). Verdict: partial index **disqualified for source_ref** (write-heavy engine), **viable for source_type** (plain string equality, near-free per insert, preserves the fail-closed throw). F-A design settles: legacy check = partial index (detection kept, cost ~0); source_ref normalize = v14 one-shot migration + version-qualified stamp/skip.
+`findRowsForSourceRefMigration` (GLOB, unindexable) + `assertNoLegacySourceTypes` (unindexed `IN` scan) = 100% of warm-open cost; linear in entries; ×cold-cache and ×architecture penalties. At pro scale this alone plausibly breaches the 15 s fence. Both are survival checks. **`schema_version=13` does not by itself guarantee the invariants:** migrations through v13 leave legacy `source_type` values intact, so the check must not be skipped on version alone — only a migration or an explicit stamp that establishes the invariant may justify skipping it. Detection stays fail-closed; cost is reduced via the partial index below.
+**Partial-index discriminator [V — Opus-requested leg, `.sandbox/profile-partial-index.ts`]:** the planner DOES use covering partial indexes for both scans (glob 1181 ms → 11.3 ms, legacy → 0.4 ms @1M), **but** the source_ref violation-predicate index costs 13× on writes (10k inserts: 457 → 6099 ms — TRIM/INSTR/GLOB re-evaluated per insert). Verdict: partial index **disqualified for source_ref** (write-heavy engine), **viable for source_type** (plain string equality, near-free per insert, preserves the fail-closed throw). F-A design settles: legacy check = partial index (fail-closed detection kept, cost ~0; never skipped on version alone); source_ref normalize = v14 one-shot migration + version-qualified stamp/skip.
 
 **RC-3 [V] — marker semantics are binary and brittle.**
 `fts5_index_state ∈ {live, detached}`; any trigger loss or lost meta row demotes a healthy multi-GB index to RC-1's full rebuild. No `rebuilding`/resumable state exists.

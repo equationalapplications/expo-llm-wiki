@@ -1,6 +1,7 @@
 import type { SQLiteAdapter } from '../types';
 import type { MetadataRepository } from '../repositories/MetadataRepository';
-import { probePendingWork } from './sourceRefNormalize';
+import { probePendingWork, runSourceRefNormalize } from './sourceRefNormalize';
+import { setupDatabase } from './schema';
 import { WikiMigrationRequiredError } from '../types';
 
 export interface MigrationGateOptions {
@@ -13,11 +14,10 @@ export async function setupDatabaseWithGate(
   db: SQLiteAdapter,
   prefix: string,
   meta: MetadataRepository,
-  migrations: 'allow' | 'refuse' | 'auto' = 'auto'
+  migrations: 'allow' | 'refuse' | 'auto' = 'allow'
 ): Promise<void> {
   if (migrations === 'allow') {
     // Allow all migrations - proceed normally
-    const { setupDatabase } = await import('./schema');
     return setupDatabase(db, prefix);
   }
 
@@ -28,7 +28,6 @@ export async function setupDatabaseWithGate(
     if (migrations === 'auto') {
       // Auto-run the specific pending work
       if (pending.type === 'source_ref_normalize') {
-        const { runSourceRefNormalize } = await import('./sourceRefNormalize');
         await runSourceRefNormalize(db, prefix, meta);
       } else {
         throw new WikiMigrationRequiredError(
@@ -46,6 +45,5 @@ export async function setupDatabaseWithGate(
   }
 
   // No pending work, proceed normally
-  const { setupDatabase } = await import('./schema');
   return setupDatabase(db, prefix);
 }

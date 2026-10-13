@@ -393,6 +393,10 @@ describe('WikiMemory outbox API', () => {
       const moduleSpy = vi.spyOn(await import('../src/db/migrationGate'), 'setupDatabaseWithGate');
 
       wiki['options'].config = { migrations: 'refuse', tablePrefix: 'test_' };
+      // Existing store at the current schema version, but never stamped
+      wiki['metadataRepo'].tableExists = vi.fn().mockResolvedValue(true);
+      vi.spyOn(wiki['metadataRepo'], 'getMeta').mockImplementation(async (key: string) =>
+        key === 'schema_version' ? String((await import('../src/db/migrations')).CURRENT_SCHEMA_VERSION) : null);
 
       await expect(wiki.setup()).rejects.toThrow('Migration refused: source_ref_normalize');
 
@@ -435,34 +439,13 @@ describe('WikiMemory outbox API', () => {
       await expect(wiki.setup()).rejects.toThrow(WikiMigrationRequiredError);
     });
 
-    it('continues with auto policy when source_ref_normalize migration completes', async () => {
-      const wiki = makeWiki();
-      const WikiMigrationRequiredError = (await import('../src/types')).WikiMigrationRequiredError;
-      const mockMigrationRequiredError = new WikiMigrationRequiredError('source_ref_normalize migration', {
-        type: 'source_ref_normalize'
-      });
-
-      vi.spyOn(await import('../src/db/migrationGate'), 'setupDatabaseWithGate')
-        .mockRejectedValueOnce(mockMigrationRequiredError)
-        .mockImplementation(async () => {});
-
-      wiki['options'].config = { migrations: 'auto', tablePrefix: 'test_' };
-
-      // Mock the tableExists to return true (existing database)
-      wiki['metadataRepo'].tableExists = vi.fn().mockResolvedValue(true);
-
-      await expect(wiki.setup()).resolves.toBeUndefined();
-    });
-
-    it('does not run migration gate with allow policy', async () => {
+    it('routes allow policy through the gate, which performs schema setup', async () => {
       const wiki = makeWiki();
       const withGateSpy = vi.spyOn(await import('../src/db/migrationGate'), 'setupDatabaseWithGate');
-      const schemaSpy = vi.spyOn(await import('../src/db/schema'), 'setupDatabase').mockImplementation(async () => {});
 
       await wiki.setup();
 
-      expect(withGateSpy).not.toHaveBeenCalled();
-      expect(schemaSpy).toHaveBeenCalled();
+      expect(withGateSpy).toHaveBeenCalledWith(expect.any(Object), expect.any(String), wiki['metadataRepo'], 'allow');
     });
   });
 });

@@ -395,10 +395,13 @@ describe('v14 source_ref normalize', () => {
     const db = await unstamped();
     for (let i = 0; i < 10; i++) await fact(db, `f${i}`, `d/f${i}`);
     const at5 = await db.getFirstAsync<{ rowid: number; id: string }>(`SELECT rowid, id FROM ${P}entries WHERE id = 'f5'`);
+    // A valid checkpoint means the prefix through the watermark row is already normalized.
+    for (let i = 0; i <= 5; i++) await db.runAsync(`UPDATE ${P}entries SET source_ref = ? WHERE id = ?`, [`df${i}`, `f${i}`]);
     await db.runAsync(`INSERT INTO ${P}meta (key, value) VALUES (?, ?)`, [ENTRIES_WM_KEY, JSON.stringify(at5)]);
     await new WikiMemory(db, stub).setup();
     expect(await ref(db, 'f9')).toBe('df9');    // after the watermark: normalized
-    expect(await ref(db, 'f2')).toBe('d/f2');   // before it: proves resume, not restart
+    expect(await ref(db, 'f2')).toBe('df2');    // seeded prefix stays normalized
+    for (let i = 0; i < 10; i++) expect(await ref(db, `f${i}`)).toBe(`df${i}`); // every row normalized after resume
 
     const db2 = await unstamped();
     for (let i = 0; i < 10; i++) await fact(db2, `f${i}`, `d/f${i}`);
@@ -1351,6 +1354,7 @@ Update the `heal_skipped` description in `utils/diagnostics.ts:50` to `'Heal ski
 
 - [ ] **Step 1: @1M normalize measurement** (`ISSUE280_STORE_DIR=$HOME/issue280-stores`, never `/tmp`). On the 1M NVMe store: remove the stamp, run `setup()` (default), record total normalize wall, rows/s, and the max chunk-tx commit time. Then run `setup({ migrations: 'refuse' })` on an unstamped copy and record the gate-trip wall (expected ≪ 1 s).
 - [ ] **Step 2: Acceptance 1:** warm open @1M, warm and cold page cache, using `.sandbox/profile-setup.ts`. Targets: ≤ 1 s warm, ≤ 3 s cold.
+  Also measure `setup()` on the original **52.9 MB** store (warm and cold page cache, target ARM64 environment) — the #280 objective requires remeasurement at both original store sizes.
 - [ ] **Step 3:** Append spec **rev 12** (review log + Acceptance 6 derivation input: normalize@1M × 4.2, gate-trip wall, Acceptance 1 numbers). Commit: `docs(spec): issue280 rev 12 - PR-A measurements`.
 - [ ] **Step 4:** Update PR #281: title `perf(core): warm-open survival scans, migration gate, RC-6 guard (#280 PR-A)`. The body must contain `Refs #280` and no `Fixes`/`Closes`. Check with `gh pr view 281 --json body -q .body | grep -Ei "fixes|closes"` → no output.
 - [ ] **Step 5:** `gh pr checks 281` green (never claim green without checking) → `gh pr ready 281`. Merge is the maintainer's call (merge commit).

@@ -1,6 +1,7 @@
 import type { SQLiteAdapter } from '../types';
 import { MetadataRepository } from '../repositories/MetadataRepository';
 import { normalizeSourceRef } from '../utils/pure';
+import { CURRENT_SCHEMA_VERSION } from './migrations';
 
 export const SOURCE_REF_NORMALIZE_ALG = 1;
 export const NORMALIZE_STAMP_KEY = 'source_ref_normalize_stamp';
@@ -39,8 +40,9 @@ async function runPass(
   table: 'entries' | 'source_ref_index', key: string, stampOnCompletion: boolean,
 ): Promise<void> {
   let cursor = await resumeRowid(db, prefix, meta, table, key);
-  for (;;) {
-    const done = await db.withTransactionAsync(async (tx) => {
+  let done = false;
+  while (!done) {
+    await db.withTransactionAsync(async (tx) => {
       const rows = await tx.getAllAsync<{ rowid: number; id: string; source_ref: string | null }>(
         `SELECT rowid, id, source_ref FROM ${prefix}${table} WHERE rowid > ? ORDER BY rowid LIMIT ${CHUNK}`, [cursor]);
       for (const r of rows) {
@@ -58,21 +60,32 @@ async function runPass(
       if (rows.length < CHUNK) {
         await meta.deleteMeta(key, tx);
         if (stampOnCompletion) await writeNormalizeStamp(meta, tx);
-        return true;
+        done = true;
+        return;
       }
       const last = rows[rows.length - 1];
       await meta.setMeta(key, JSON.stringify({ rowid: last.rowid, id: last.id }), tx);
       cursor = last.rowid;
-      return false;
     });
-    if (done) return;
   }
 }
 
 export async function probePendingWork(meta: MetadataRepository, prefix: string): Promise<{ type: 'source_ref_normalize'; watermark?: number } | { type: 'full_v14' } | null> {
-  // Check if source_ref normalization is needed
+  // Fresh store (nothing created yet): there is no pending work to probe.
+  if (!(await meta.tableExists(`${prefix}entries`)) || !(await meta.tableExists(`${prefix}meta`))) {
+    return null;
+  }
+
+  // Schema migrations come first: normalization only runs against a current-version schema.
+  // A missing/non-numeric schema_version on an existing store means a pre-versioned (legacy) store.
+  const schemaVersionValue = await meta.getMeta('schema_version');
+  const parsedVersion = schemaVersionValue ? parseInt(schemaVersionValue, 10) : 0;
+  const version = Number.isFinite(parsedVersion) ? parsedVersion : 0;
+  if (version < CURRENT_SCHEMA_VERSION) {
+    return { type: 'full_v14' };
+  }
+
   if (!stampMatches(await meta.getMeta(NORMALIZE_STAMP_KEY))) {
-    // Check for watermarks to determine if work is in progress
     const entriesWm = await meta.getMeta(ENTRIES_WM_KEY);
     if (entriesWm) {
       try {
@@ -80,19 +93,9 @@ export async function probePendingWork(meta: MetadataRepository, prefix: string)
         return { type: 'source_ref_normalize', watermark: parsed.rowid };
       } catch {
         // Invalid JSON, resume from beginning
-        return { type: 'source_ref_normalize', watermark: 0 };
       }
     }
     return { type: 'source_ref_normalize', watermark: 0 };
-  }
-
-  // Check for v14 migration if stamp is present but schema is not at v14
-  const { CURRENT_SCHEMA_VERSION } = await import('./migrations');
-  const schemaVersionValue = await meta.getMeta('schema_version');
-  const version = schemaVersionValue ? parseInt(schemaVersionValue, 10) : 0;
-
-  if (version < CURRENT_SCHEMA_VERSION) {
-    return { type: 'full_v14' };
   }
 
   return null;
