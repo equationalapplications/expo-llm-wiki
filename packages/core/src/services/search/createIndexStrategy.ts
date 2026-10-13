@@ -13,9 +13,15 @@ export const FTS5_INIT_RETRY_MS = 250;
 
 /** True only for errors meaning the module is genuinely absent (permanent). Proxy-safe. */
 function isModuleAbsentError(err: unknown): boolean {
-  let msg = '';
-  try { msg = String((err as { message?: unknown } | null)?.message ?? err); } catch { return false; }
-  return /no such module: fts5/i.test(msg) || /no such function: json_valid/i.test(msg);
+  // Walk a short cause chain: some adapters wrap the SQLite message.
+  let cur: unknown = err;
+  for (let depth = 0; depth < 3 && cur != null; depth++) {
+    let msg = '';
+    try { msg = String((cur as { message?: unknown }).message ?? cur); } catch { return false; }
+    if (/no such module: fts5/i.test(msg) || /no such function: json_valid/i.test(msg)) return true;
+    try { cur = (cur as { cause?: unknown }).cause; } catch { return false; }
+  }
+  return false;
 }
 
 /**

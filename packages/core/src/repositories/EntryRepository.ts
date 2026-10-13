@@ -148,10 +148,6 @@ export class EntryRepository extends BaseRepository {
     super(db, prefix);
   }
 
-  /**
-   * Fetch facts by IDs, optionally scoped to entity IDs.
-   * Returns facts in the order of the input IDs (first match wins).
-   */
   /** Whether the entity has at least one live row with a stored vector (librarian gate pre-check, spec #280). */
   async hasStoredEmbedding(entityId: string, tx?: SQLiteAdapter): Promise<boolean> {
     const executor = this.getExecutor(tx);
@@ -163,6 +159,20 @@ export class EntryRepository extends BaseRepository {
     return row != null;
   }
 
+  /** Whether the entity has any non-deleted row (librarian gate: keyword ranking over zero facts is trivially empty). */
+  async hasLiveEntry(entityId: string, tx?: SQLiteAdapter): Promise<boolean> {
+    const executor = this.getExecutor(tx);
+    const row = await executor.getFirstAsync<{ one: number }>(
+      `SELECT 1 AS one FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NULL LIMIT 1`,
+      [entityId],
+    );
+    return row != null;
+  }
+
+  /**
+   * Fetch facts by IDs, optionally scoped to entity IDs.
+   * Returns facts in the order of the input IDs (first match wins).
+   */
   async findByIds(
     ids: readonly string[],
     scopedEntityIds?: readonly string[],

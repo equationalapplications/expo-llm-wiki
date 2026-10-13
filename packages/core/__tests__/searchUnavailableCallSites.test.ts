@@ -76,10 +76,52 @@ describe('keyword outage call-site map', () => {
 
   it('(e-gate ii) a pass that could need keyword mode aborts before runExtract, watermark kept', async () => {
     const { db, wiki, generateText } = await wikiWith({ config: { autoLibrarianThreshold: 1000, librarian: { strategy: 'ops' } } as any }); // no embed provider
+    await factWithVec(db, 'f-pear', 'pear', [0, 0, 1]); // existing facts: ranking would need keyword mode
     await db.runAsync(`INSERT INTO ${P}events (id, entity_id, event_type, summary, created_at) VALUES ('evt_1','u','observation','apple',100)`);
     await wiki.runLibrarian('u').catch(() => {});
     expect(generateText).not.toHaveBeenCalled();
     expect(await (wiki.__testAccess as any).metadataRepo.getLibrarianWatermark('u', db)).toBeNull();
+  });
+
+  it('(e-gate iii) an entity with no facts yet RUNS during an outage: nothing to rank against', async () => {
+    const { db, wiki, generateText } = await wikiWith({ config: { autoLibrarianThreshold: 1000, librarian: { strategy: 'ops' } } as any }); // no embed provider
+    await db.runAsync(`INSERT INTO ${P}events (id, entity_id, event_type, summary, created_at) VALUES ('evt_1','u','observation','apple',100)`);
+    generateText.mockResolvedValueOnce(JSON.stringify({ facts: [{ title: 'apple pie', body: 'b', tags: [], confidence: 'certain', source_event: 'e1' }], tasks: [] }));
+    await wiki.runLibrarian('u');
+    expect(generateText).toHaveBeenCalled();
+    expect(await (wiki.__testAccess as any).metadataRepo.getLibrarianWatermark('u', db)).not.toBeNull();
+  });
+
+  it('runPendingMaintenance terminates when heal is skipped by the outage', async () => {
+    const { db, wiki, generateText } = await wikiWith({ config: { orphanAfterDays: null, staleInferredAfterDays: null, autoHealThreshold: 1 } as any });
+    await factWithVec(db, 'c1', 'inferred thing', [0, 0, 1], 'librarian_inferred');
+    await db.runAsync(`INSERT INTO ${P}events (id, entity_id, event_type, summary, created_at) VALUES ('evt_1','u','observation','x',100)`); // makes heal due
+    // The loop never yields to timers, so cap it by call count instead of a timeout.
+    const maint = (wiki.__testAccess as any).maintenanceService;
+    const real = maint.doRunHeal.bind(maint);
+    const doRunHeal = vi.spyOn(maint, 'doRunHeal').mockImplementation(async (...args: unknown[]) => {
+      if (doRunHeal.mock.calls.length > 3) throw new Error('runPendingMaintenance did not terminate');
+      return real(...args);
+    });
+    await expect(wiki.runPendingMaintenance({ entityIds: ['u'], jobs: ['heal'] })).resolves.toBeDefined();
+    expect(doRunHeal).toHaveBeenCalledTimes(1);
+    expect(generateText).not.toHaveBeenCalled();
+  });
+
+  it("one entity's librarian abort does not fail runPendingMaintenance for the others", async () => {
+    const { db, wiki } = await wikiWith({ config: { autoLibrarianThreshold: 1000, librarian: { strategy: 'ops' } } as any }); // no embed provider
+    await factWithVec(db, 'f-pear', 'pear', [0, 0, 1]);
+    await db.runAsync(`INSERT INTO ${P}events (id, entity_id, event_type, summary, created_at) VALUES ('evt_1','u','observation','apple',100)`);
+    await expect(wiki.runPendingMaintenance({ entityIds: ['u'], jobs: ['librarian'] })).resolves.toBeDefined();
+    expect(await (wiki.__testAccess as any).metadataRepo.getLibrarianWatermark('u', db)).toBeNull();
+  });
+
+  it('concurrent no-arg syncSearchIndex() calls share one re-init', async () => {
+    const { wiki } = await wikiWith({});
+    const init = vi.mocked(Fts5IndexStrategy.prototype.init);
+    init.mockClear();
+    await Promise.all([wiki.syncSearchIndex(), wiki.syncSearchIndex()]);
+    expect(init).toHaveBeenCalledTimes(2); // one attempt + its one retry, not two of each
   });
 
   it('(e-gate mid-pass) an embed failure routes a candidate into keyword mode at :143 → abort, watermark kept', async () => {

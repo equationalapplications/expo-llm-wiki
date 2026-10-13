@@ -90,6 +90,8 @@ export function classifyCandidate(
  * way (spec #280 rev 10 M4).
  */
 export async function gateNeedsKeyword(deps: LibrarianDeps, entityId: string): Promise<boolean> {
+  // No facts yet: keyword ranking is trivially empty, so gateCandidates skips it.
+  if (!(await deps.entryRepo.hasLiveEntry(entityId))) return false;
   if (typeof deps.options.llmProvider.embed !== 'function') return true;
   return !(await deps.entryRepo.hasStoredEmbedding(entityId));
 }
@@ -126,6 +128,10 @@ export async function gateCandidates(
     }
   }
 
+  // An entity with no facts has nothing to rank against; skip keyword search,
+  // which would otherwise throw during an outage and stall its first pass.
+  const hasFacts = unique.length > 0 && (await deps.entryRepo.hasLiveEntry(entityId));
+
   // 4. For each unique candidate, decide vector or keyword mode and rank.
   const gated: GatedCandidate[] = [];
   for (const c of unique) {
@@ -150,6 +156,7 @@ export async function gateCandidates(
         }
       }
     }
+    if (!ranked && !hasFacts) ranked = [];
     if (!ranked) {
       ranked = (await deps.searchService
         .searchKeyword(`${c.fact.title} ${c.fact.body}`, [entityId], cfg.k + nonLive.size))

@@ -257,6 +257,8 @@ export class WikiMemory {
     };
   }
 
+  private reinitSearch: Promise<void> | null = null;
+
   /**
    * Opens the store: migration gate, DDL, schema migrations, then the stamped
    * source_ref normalize. Await it before any other call on this instance — the
@@ -688,8 +690,19 @@ export class WikiMemory {
     if (entityId === undefined) {
       // A long-lived host that never re-opens still recovers from a failed init (spec #280 Change 4).
       if (!this.searchService.isKeywordAvailable()) {
-        this.searchService.setIndexStrategy(await createIndexStrategy(
-          this.db, this.prefix, this.metadataRepo, this.options.config?.indexStrategy ?? 'auto'));
+        // One re-init at a time; concurrent callers share it. On success, run the
+        // same full sync setup() does (a new MiniSearch index starts empty).
+        this.reinitSearch ??= (async () => {
+          try {
+            const strategy = await createIndexStrategy(
+              this.db, this.prefix, this.metadataRepo, this.options.config?.indexStrategy ?? 'auto');
+            this.searchService.setIndexStrategy(strategy);
+            if (this.searchService.isKeywordAvailable()) await this.searchService.sync();
+          } finally {
+            this.reinitSearch = null;
+          }
+        })();
+        await this.reinitSearch;
       }
       return this.searchService.syncStale();
     }

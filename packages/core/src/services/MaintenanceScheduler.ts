@@ -9,7 +9,7 @@ import type {
   RunPendingMaintenanceResult,
   HealResult,
 } from '../types';
-import { WikiBusyError } from '../types';
+import { WikiBusyError, isWikiSearchUnavailableError } from '../types';
 import { MaintenanceService, MAX_EMBED_ATTEMPTS } from './MaintenanceService';
 import type { LibrarianResult } from './librarian';
 import { UsageMeter } from '../utils/usage';
@@ -132,6 +132,12 @@ export class MaintenanceScheduler {
           let r: LibrarianResult;
           try {
             r = await this.maintenanceService.runLibrarianPass({ entityId, trigger: 'call', meter });
+          } catch (err) {
+            // Keyword outage: this entity's pass aborted with its watermark kept.
+            // Skip it for this run rather than failing every other entity's work.
+            if (!isWikiSearchUnavailableError(err)) throw err;
+            st.librarian = false;
+            continue;
           } finally {
             this.jobManager.releaseLock('librarian', entityId);
           }
@@ -167,6 +173,10 @@ export class MaintenanceScheduler {
             st.heal = false;
             continue;
           }
+          // Nothing scanned yet candidates remain (e.g. a keyword outage skipped
+          // the LLM pass): another round cannot progress, so stop healing this
+          // entity for this run instead of looping forever.
+          if (h.scanned === 0 && h.remaining > 0) { st.heal = false; continue; }
           st.report.healPasses++;
           progressed = true;
           if (h.remaining === 0) {

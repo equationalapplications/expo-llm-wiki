@@ -801,32 +801,21 @@ export class MaintenanceService {
     }
 
     const healCandidates = await this.entryRepo.findHealCandidatesByEntityId(entityId, batchSize, recheckCutoff);
-    if (healCandidates.length === 0) {
+    // Keyword outage: heal anchors need keyword search, so skip the LLM pass
+    // entirely - no spend, no mutation, no heal_checked_at stamps; candidates
+    // stay unattempted (spec #280 call-site map).
+    const keywordUnavailable = healCandidates.length > 0 && !this.searchService.isKeywordAvailable();
+    if (healCandidates.length === 0 || keywordUnavailable) {
+      if (keywordUnavailable) {
+        emitDiagnostic(this.options, { ...diagBase, code: 'heal_skipped', detail: { reason: 'keyword_search_unavailable', count: healCandidates.length } });
+      }
       // The orphan/stale SQL passes above may still have mutated rows, so the
-      // search index sync must happen before returning — it did today, after
-      // runBatched no-oped on an empty candidate list. Both passes return the
+      // search index sync must happen before returning. Both passes return the
       // ids they touched (markOrphaned via RETURNING id, downgradeStaleInferred
       // via select-then-update with the same predicate), so the sync stays
       // O(touched) on the early-return path too (spec §2.4).
       await this.searchService.syncEntries(entityId, Array.from(new Set([...orphanedIds, ...staleDowngradedIds])));
       this.searchService.evictCache(entityId);
-      const counts = await this.entryRepo.countHealCandidatesByEntityId(entityId, recheckCutoff);
-      return {
-        scanned: 0,
-        downgraded: staleDowngradedIds.length,
-        deleted: orphanedIds.length,
-        newFactsCreated: 0,
-        skipped: [], degraded: [], remaining: counts.eligible, deferred: counts.deferred,
-      };
-    }
-    // Keyword outage: heal anchors need keyword search, so skip the LLM pass
-    // entirely - no spend, no mutation, no heal_checked_at stamps; candidates
-    // stay unattempted (spec #280 call-site map). The orphan/stale SQL passes
-    // above did run; sync their ids as the empty-candidate path does.
-    if (!this.searchService.isKeywordAvailable()) {
-      await this.searchService.syncEntries(entityId, Array.from(new Set([...orphanedIds, ...staleDowngradedIds])));
-      this.searchService.evictCache(entityId);
-      emitDiagnostic(this.options, { ...diagBase, code: 'heal_skipped', detail: { reason: 'keyword_search_unavailable', count: healCandidates.length } });
       const counts = await this.entryRepo.countHealCandidatesByEntityId(entityId, recheckCutoff);
       return {
         scanned: 0,
