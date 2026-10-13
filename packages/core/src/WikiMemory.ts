@@ -3,7 +3,7 @@ import type { WikiOutboxEvent } from './outbox/types';
 import { setupDatabaseWithGate } from './db/migrationGate';
 import { runSourceRefNormalize, writeNormalizeStamp } from './db/sourceRefNormalize';
 import { withSerializedTransactions } from './db/serializedAdapter';
-import { MIGRATIONS, CURRENT_SCHEMA_VERSION } from './db/migrations';
+import { MIGRATIONS, CURRENT_SCHEMA_VERSION, createLegacySourceTypeIndex } from './db/migrations';
 import {
   WikiOptions,
   MemoryBundle,
@@ -15,7 +15,7 @@ import {
   WikiDraftNotFound,
   WikiSupersedeError,
 } from './types';
-import type { DraftPage } from './types';
+import type { DraftPage, MigrationPolicy } from './types';
 import type { PendingSourceStatus, WikiLintReport, WikiInstructions, PendingMaintenance, RunPendingMaintenanceOptions, RunPendingMaintenanceResult } from './types';
 import { EntryRepository } from './repositories/EntryRepository';
 import { OutboxRepository } from './repositories/OutboxRepository';
@@ -257,11 +257,11 @@ export class WikiMemory {
     };
   }
 
-  async setup(opts?: { migrations?: 'allow' | 'refuse' | 'auto' }) {
+  async setup(opts?: { migrations?: MigrationPolicy }) {
     const entriesExistedBeforeSetup = await this.metadataRepo.tableExists(`${this.prefix}entries`);
 
     // The gate runs before any mutation: 'refuse' throws before tables are touched,
-    // 'auto' runs only the stamped source_ref normalization, 'allow' just sets up.
+    // 'auto' lets only a pending source_ref normalize through (run below), 'allow' just sets up.
     const migrationPolicy = opts?.migrations ?? this.options.config?.migrations ?? 'allow';
     await setupDatabaseWithGate(this.db, this.prefix, this.metadataRepo, migrationPolicy);
 
@@ -270,6 +270,7 @@ export class WikiMemory {
     if (!entriesExistedBeforeSetup) {
       await this.metadataRepo.setMeta('schema_version', String(CURRENT_SCHEMA_VERSION), this.db);
       await writeNormalizeStamp(this.metadataRepo, this.db);
+      await createLegacySourceTypeIndex(this.db, this.prefix);
       currentVersion = CURRENT_SCHEMA_VERSION;
     } else {
       const schemaVersionValue = await this.metadataRepo.getMeta('schema_version');
@@ -299,8 +300,7 @@ export class WikiMemory {
         await this.metadataRepo.setMeta('schema_version', String(currentVersion), this.db);
       }
       await this.importExportService.assertNoLegacySourceTypes();
-      // Stamped, watermark-resumable normalization; no-op once the stamp matches
-      // (already done by the gate under 'auto').
+      // Stamped, watermark-resumable normalization; no-op once the stamp matches.
       await runSourceRefNormalize(this.db, this.prefix, this.metadataRepo);
     }
 

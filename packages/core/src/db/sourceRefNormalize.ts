@@ -1,9 +1,11 @@
-import type { SQLiteAdapter } from '../types';
+import type { PendingMigrationWork, SQLiteAdapter } from '../types';
 import { MetadataRepository } from '../repositories/MetadataRepository';
 import { normalizeSourceRef } from '../utils/pure';
 import { CURRENT_SCHEMA_VERSION } from './migrations';
 
 export const SOURCE_REF_NORMALIZE_ALG = 1;
+/** Schema version that introduced the stamped normalize; recorded in the stamp, not compared. */
+const NORMALIZE_STAMP_SCHEMA_VERSION = 14;
 export const NORMALIZE_STAMP_KEY = 'source_ref_normalize_stamp';
 export const ENTRIES_WM_KEY = 'normalize_v14_entries_wm';
 export const SRI_WM_KEY = 'normalize_v14_sri_wm';
@@ -22,7 +24,7 @@ export function stampMatches(raw: string | null): boolean {
 }
 
 export async function writeNormalizeStamp(meta: MetadataRepository, tx: SQLiteAdapter): Promise<void> {
-  await meta.setMeta(NORMALIZE_STAMP_KEY, JSON.stringify({ schema_version: 14, normalize_alg: SOURCE_REF_NORMALIZE_ALG }), tx);
+  await meta.setMeta(NORMALIZE_STAMP_KEY, JSON.stringify({ schema_version: NORMALIZE_STAMP_SCHEMA_VERSION, normalize_alg: SOURCE_REF_NORMALIZE_ALG }), tx);
 }
 
 async function resumeRowid(db: SQLiteAdapter, prefix: string, meta: MetadataRepository, table: string, key: string): Promise<number> {
@@ -70,7 +72,19 @@ async function runPass(
   }
 }
 
-export async function probePendingWork(meta: MetadataRepository, prefix: string): Promise<{ type: 'source_ref_normalize'; watermark?: number } | { type: 'full_v14' } | null> {
+async function watermarkRowid(meta: MetadataRepository, key: string): Promise<number> {
+  const raw = await meta.getMeta(key);
+  if (!raw) return 0;
+  try {
+    const wm = JSON.parse(raw) as Partial<Watermark>;
+    return typeof wm.rowid === 'number' ? wm.rowid : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Read-only probe for the migration gate. Never mutates. */
+export async function probePendingWork(meta: MetadataRepository, prefix: string): Promise<PendingMigrationWork | null> {
   // Fresh store (nothing created yet): there is no pending work to probe.
   if (!(await meta.tableExists(`${prefix}entries`)) || !(await meta.tableExists(`${prefix}meta`))) {
     return null;
@@ -78,59 +92,21 @@ export async function probePendingWork(meta: MetadataRepository, prefix: string)
 
   // Schema migrations come first: normalization only runs against a current-version schema.
   // A missing/non-numeric schema_version on an existing store means a pre-versioned (legacy) store.
-  const schemaVersionValue = await meta.getMeta('schema_version');
-  const parsedVersion = schemaVersionValue ? parseInt(schemaVersionValue, 10) : 0;
+  const parsedVersion = parseInt((await meta.getMeta('schema_version')) ?? '', 10);
   const version = Number.isFinite(parsedVersion) ? parsedVersion : 0;
   if (version < CURRENT_SCHEMA_VERSION) {
-    return { type: 'full_v14' };
+    return { type: 'schema_migration', fromVersion: version, toVersion: CURRENT_SCHEMA_VERSION };
   }
 
   if (!stampMatches(await meta.getMeta(NORMALIZE_STAMP_KEY))) {
-    const entriesWm = await meta.getMeta(ENTRIES_WM_KEY);
-    if (entriesWm) {
-      try {
-        const parsed = JSON.parse(entriesWm) as { rowid: number };
-        return { type: 'source_ref_normalize', watermark: parsed.rowid };
-      } catch {
-        // Invalid JSON, resume from beginning
-      }
-    }
-    return { type: 'source_ref_normalize', watermark: 0 };
+    return {
+      type: 'source_ref_normalize',
+      entriesWatermark: await watermarkRowid(meta, ENTRIES_WM_KEY),
+      sourceRefIndexWatermark: await watermarkRowid(meta, SRI_WM_KEY),
+    };
   }
 
   return null;
-}
-
-export async function runNormalizedBatchWrite(db: SQLiteAdapter, opts: {
-  prefix: string
-  batchSize: number
-  watermark?: number
-}): Promise<{ written: number; watermark: number }> {
-  const meta = new MetadataRepository(db, opts.prefix);
-  let written = 0;
-  let cursor = opts.watermark || 0;
-
-  for (;;) {
-    const rows = await db.getAllAsync<{ rowid: number; id: string; source_ref: string | null }>(
-      `SELECT rowid, id, source_ref FROM ${opts.prefix}entries WHERE rowid > ? ORDER BY rowid LIMIT ${opts.batchSize}`, [cursor]);
-
-    if (rows.length === 0) break;
-
-    for (const r of rows) {
-      if (r.source_ref == null) continue;
-      const n = normalizeSourceRef(r.source_ref);
-      if (n === r.source_ref) continue;
-      await db.runAsync(`UPDATE ${opts.prefix}entries SET source_ref = ? WHERE rowid = ?`, [n, r.rowid]);
-      written++;
-    }
-
-    const last = rows[rows.length - 1];
-    cursor = last.rowid;
-
-    if (rows.length < opts.batchSize) break;
-  }
-
-  return { written, watermark: cursor };
 }
 
 export async function runSourceRefNormalize(db: SQLiteAdapter, prefix: string, meta: MetadataRepository): Promise<void> {

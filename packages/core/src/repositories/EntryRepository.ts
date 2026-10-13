@@ -1239,29 +1239,6 @@ export class EntryRepository extends BaseRepository {
     );
   }
 
-  async findRowsForSourceRefMigration(tx?: SQLiteAdapter): Promise<Array<{ rowid: number; source_ref: string }>> {
-    const executor = this.getExecutor(tx);
-    return executor.getAllAsync(
-      `SELECT rowid, source_ref FROM ${this.prefix}entries
-       WHERE source_ref IS NOT NULL
-         AND (
-           TRIM(source_ref) != source_ref
-           OR INSTR(source_ref, '/') > 0
-           OR INSTR(source_ref, '\\') > 0
-           OR INSTR(source_ref, CHAR(0)) > 0
-           OR source_ref GLOB '*[^-A-Za-z0-9._ ]*'
-         )`,
-    );
-  }
-
-  async updateSourceRefByRowid(rowid: number, sourceRef: string | null, tx: SQLiteAdapter): Promise<void> {
-    const executor = this.getExecutor(tx);
-    await executor.runAsync(
-      `UPDATE ${this.prefix}entries SET source_ref = ? WHERE rowid = ?`,
-      [sourceRef, rowid],
-    );
-  }
-
   async findLatestSourceHash(entityId: string, sourceRef: string, tx?: SQLiteAdapter): Promise<string | null> {
     const executor = this.getExecutor(tx);
     const row = await executor.getFirstAsync<{ source_hash: string | null }>(

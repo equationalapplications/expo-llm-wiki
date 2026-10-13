@@ -372,10 +372,10 @@ export interface WikiConfig {
    * Migration policy for setup().
    * - `'allow'`: Run all migrations (default, preserves existing behavior)
    * - `'refuse'`: Throw WikiMigrationRequiredError before any mutations
-   * - `'auto'`: Auto-run specific pending migrations (currently only source_ref_normalize)
+   * - `'auto'`: Run the source_ref normalize if pending; throw if a schema migration is pending
    * @default 'allow'
    */
-  migrations?: 'allow' | 'refuse' | 'auto';
+  migrations?: MigrationPolicy;
 }
 
 export interface ReadOptions {
@@ -1445,10 +1445,12 @@ export interface RunPendingMaintenanceResult {
   stoppedReason: MaintenanceStopReason;
 }
 
-export interface PendingMigrationWork {
-  type: 'source_ref_normalize' | 'full_v14';
-  watermark?: number;
-}
+export type MigrationPolicy = 'allow' | 'refuse' | 'auto';
+
+/** Work the migration gate found pending on an existing store. Watermarks are resume rowids (0 = not started). */
+export type PendingMigrationWork =
+  | { type: 'schema_migration'; fromVersion: number; toVersion: number }
+  | { type: 'source_ref_normalize'; entriesWatermark: number; sourceRefIndexWatermark: number };
 
 export class WikiMigrationRequiredError extends Error {
   public readonly code = 'WIKI_MIGRATION_REQUIRED';

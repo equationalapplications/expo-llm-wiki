@@ -398,7 +398,7 @@ describe('WikiMemory outbox API', () => {
       vi.spyOn(wiki['metadataRepo'], 'getMeta').mockImplementation(async (key: string) =>
         key === 'schema_version' ? String((await import('../src/db/migrations')).CURRENT_SCHEMA_VERSION) : null);
 
-      await expect(wiki.setup()).rejects.toThrow('Migration refused: source_ref_normalize');
+      await expect(wiki.setup()).rejects.toThrow(/Migration refused \(migrations: 'refuse'\): source_ref normalize/);
 
       expect(moduleSpy).toHaveBeenCalledWith(
         expect.any(Object),
@@ -440,7 +440,7 @@ describe('WikiMemory outbox API', () => {
     it('throws WikiMigrationRequiredError when migrations are refused and pending work exists', async () => {
       const wiki = makeWiki();
       const WikiMigrationRequiredError = (await import('../src/types')).WikiMigrationRequiredError;
-      const mockMigrationRequiredError = new WikiMigrationRequiredError('Migration required', { type: 'source_ref_normalize' });
+      const mockMigrationRequiredError = new WikiMigrationRequiredError('Migration required', { type: 'source_ref_normalize', entriesWatermark: 0, sourceRefIndexWatermark: 0 });
 
       vi.spyOn(await import('../src/db/migrationGate'), 'setupDatabaseWithGate').mockRejectedValue(mockMigrationRequiredError);
 

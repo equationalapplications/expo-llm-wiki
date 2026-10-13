@@ -1,49 +1,37 @@
-import type { SQLiteAdapter } from '../types';
+import type { SQLiteAdapter, MigrationPolicy, PendingMigrationWork } from '../types';
 import type { MetadataRepository } from '../repositories/MetadataRepository';
-import { probePendingWork, runSourceRefNormalize } from './sourceRefNormalize';
+import { probePendingWork } from './sourceRefNormalize';
 import { setupDatabase } from './schema';
 import { WikiMigrationRequiredError } from '../types';
 
-export interface MigrationGateOptions {
-  prefix: string;
-  meta: MetadataRepository;
-  migrations: 'allow' | 'refuse' | 'auto';
-}
-
+/**
+ * Runs the read-only migration gate, then setupDatabase's every-open DDL.
+ * - 'allow': no gate.
+ * - 'refuse': any pending work throws before any mutation.
+ * - 'auto': a pending schema migration throws; a pending source_ref normalize
+ *   is let through and run by setup() after the DDL and migrations loop.
+ */
 export async function setupDatabaseWithGate(
   db: SQLiteAdapter,
   prefix: string,
   meta: MetadataRepository,
-  migrations: 'allow' | 'refuse' | 'auto' = 'allow'
+  migrations: MigrationPolicy = 'allow',
 ): Promise<void> {
-  if (migrations === 'allow') {
-    // Allow all migrations - proceed normally
-    return setupDatabase(db, prefix);
-  }
-
-  // Check for pending work
-  const pending = await probePendingWork(meta, prefix);
-
-  if (pending) {
-    if (migrations === 'auto') {
-      // Auto-run the specific pending work
-      if (pending.type === 'source_ref_normalize') {
-        await runSourceRefNormalize(db, prefix, meta);
-      } else {
-        throw new WikiMigrationRequiredError(
-          `Full migration required: ${pending.type}`,
-          pending
-        );
-      }
-    } else {
-      // Refuse migration and throw error
-      throw new WikiMigrationRequiredError(
-        `Migration refused: ${pending.type}`,
-        pending
-      );
+  if (migrations !== 'allow') {
+    const pending = await probePendingWork(meta, prefix);
+    if (pending && (migrations === 'refuse' || pending.type === 'schema_migration')) {
+      throw new WikiMigrationRequiredError(describePending(pending, migrations), pending);
     }
   }
-
-  // No pending work, proceed normally
   return setupDatabase(db, prefix);
+}
+
+function describePending(pending: PendingMigrationWork, policy: MigrationPolicy): string {
+  const what = pending.type === 'schema_migration'
+    ? `schema migration v${pending.fromVersion} -> v${pending.toVersion} is pending`
+    : pending.entriesWatermark === 0 && pending.sourceRefIndexWatermark === 0
+      ? 'source_ref normalize has not run on this store (normalize stamp missing or outdated; may complete with zero rewrites)'
+      : 'source_ref normalize was interrupted and will resume from its watermark';
+  return `Migration refused (migrations: '${policy}'): ${what}. ` +
+    `Open once with setup({ migrations: 'allow' }) outside any time-critical path to complete it.`;
 }

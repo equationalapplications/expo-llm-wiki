@@ -906,7 +906,7 @@ export function taskRejectionReason(raw: unknown): 'invalid_shape' | 'missing_de
 
 export function normalizeSourceRef(value: string): string | null {
   if (typeof value !== 'string') return null;
-  const cleaned = value.replace(/[^A-Za-z0-9._\- ]/g, '').trim().slice(0, 255);
+  const cleaned = value.replace(/[^A-Za-z0-9._\- ]/g, '').trim().slice(0, 255).trimEnd();
   return cleaned.length > 0 ? cleaned : null;
 }
 
