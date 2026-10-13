@@ -3,11 +3,12 @@ import type { SQLiteAdapter } from '../../types';
 import type { MetadataRepository } from '../../repositories/MetadataRepository';
 import type { DrainOptions, IndexDocument, IndexSearchOptions, IndexSearchResult, IndexStrategy } from './IndexStrategy';
 import {
-  FTS5_DRAIN_CHUNK, FTS5_REBUILD_SNAPSHOT_KEY, FTS5_REBUILD_WM_KEY, FTS5_STATE_KEY, FTS5_SWEEP_CURSOR_KEY,
+  FTS5_DRAIN_CHUNK, FTS5_RECLAIM_MERGE_PAGES, FTS5_RETIRED_COUNTER_KEY, FTS5_RETIRED_TABLES_KEY, isRetiredTableName, retiredTableName, FTS5_REBUILD_SNAPSHOT_KEY, FTS5_REBUILD_WM_KEY, FTS5_STATE_KEY, FTS5_SWEEP_CURSOR_KEY,
   sweepChunkSql, sweepHiSql, windowChunkSql, windowHiSql, drainChunkSql, drainHiSql, entityDrainChunkSql, entityDrainHiSql, fts5PendingIndexesDdl,
   fts5TablesDdl, fts5TriggerNames, fts5TriggersDdl, idDrainChunkSql,
 } from './fts5Sql';
 import { readRebuildProgress, writeRebuildStart, type RebuildProgress, type RebuildWatermark } from './fts5Progress';
+import { parseJsonArray } from '../../repositories/rowMappers';
 import { monotonicNow } from '../../utils/monotonicNow';
 import { DEFAULT_SETUP_BUDGET_MS } from '../../utils/setupDefaults';
 import { buildFtsMatchQuery } from './ftsQuery';
@@ -32,12 +33,38 @@ export class Fts5IndexStrategy implements IndexStrategy {
    * failure leaves zero mutation (Change 4 ordering).
    */
   async init(opts: { entriesExisted?: boolean } = {}): Promise<void> {
+    try {
+      await this.initOnce(opts);
+    } catch (err) {
+      const wrapped = unwrapFtsOnly(err);
+      const cls = ftsCorruptionClass(wrapped.cause);
+      // Corruption confined to FTS tables: entries is untouched, so a reset re-arm is safe (spec #280 Change 4).
+      if (cls === 'vtab' || (cls === 'corrupt' && wrapped.ftsOnly)) {
+        await this.resetAndRearm();
+        return;
+      }
+      throw wrapped.cause; // generic errors keep the retry -> UnavailableIndexStrategy path; pinned 'fts5' sees them raw
+    }
+  }
+
+  /** Marks errors from statements that touch only FTS tables (entries_fts + shadows). */
+  private async ftsOnly<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (err) {
+      throw new FtsOnlyStatementError(err);
+    }
+  }
+
+  private async initOnce(opts: { entriesExisted?: boolean }): Promise<void> {
     const p = this.prefix;
     const state = await this.metadataRepo.getMeta(FTS5_STATE_KEY);
     const ftsExists = await this.metadataRepo.tableExists(`${p}entries_fts`);
     const mapExists = await this.metadataRepo.tableExists(`${p}fts_map`);
     const pendingExists = await this.metadataRepo.tableExists(`${p}fts_pending`);
     const trig = await this.triggersPresent();
+    const ftsDdl = ftsExists ? await this.metadataRepo.getTableDdl(`${p}entries_fts`) : null;
+    const tokenizerOk = ftsDdl === null || /tokenize\s*=\s*['"]porter\s+unicode61['"]/i.test(ftsDdl);
 
     if (state === null && opts.entriesExisted === false) {
       // Fresh store: nothing to index yet.
@@ -49,9 +76,12 @@ export class Fts5IndexStrategy implements IndexStrategy {
     }
     if (state === 'detached') return this.resetAndRearm(); // re-attach: the map is untrustworthy
 
+    if (!tokenizerOk) return this.resetAndRearm();
+
     const intact = trig && ftsExists && mapExists && pendingExists;
     if (intact && state === 'rebuilding') return; // resume; each quantum re-verifies the fingerprint
     if (intact && state === 'live') {
+      await this.ftsOnly(() => this.db.getFirstAsync(`SELECT rowid FROM ${p}entries_fts ORDER BY rowid DESC LIMIT 1`));
       if (await this.liveRowsButNothingIndexed()) return this.resetAndRearm();
       return; // fast path
     }
@@ -77,11 +107,11 @@ export class Fts5IndexStrategy implements IndexStrategy {
    */
   private async keepMapConsistent(): Promise<boolean> {
     const p = this.prefix;
-    const fts = await this.db.getFirstAsync<{ rowid: number }>(`SELECT rowid FROM ${p}entries_fts ORDER BY rowid DESC LIMIT 1`);
+    const fts = await this.ftsOnly(() => this.db.getFirstAsync<{ rowid: number }>(`SELECT rowid FROM ${p}entries_fts ORDER BY rowid DESC LIMIT 1`));
     const map = await this.db.getFirstAsync<{ hi: number; n: number }>(
       `SELECT coalesce(max(fts_rowid), 0) AS hi, count(*) AS n FROM ${p}fts_map`);
     if ((fts?.rowid ?? 0) > (map?.hi ?? 0)) return false;
-    const doc = await this.db.getFirstAsync<{ n: number }>(`SELECT count(*) AS n FROM ${p}entries_fts_docsize`);
+    const doc = await this.ftsOnly(() => this.db.getFirstAsync<{ n: number }>(`SELECT count(*) AS n FROM ${p}entries_fts_docsize`));
     return (doc?.n ?? 0) === (map?.n ?? 0);
   }
 
@@ -106,9 +136,26 @@ export class Fts5IndexStrategy implements IndexStrategy {
     });
   }
 
-  /** B2: drop. B4 replaces this with rename-retire (DROP only as the RENAME-failure fallback). */
+  /** Rename-retire entries_fts (spec #280 rev 11); DROP only when the RENAME throws. */
   private async retireFtsTable(tx: SQLiteAdapter): Promise<void> {
-    await tx.execAsync(`DROP TABLE IF EXISTS ${this.prefix}entries_fts;`);
+    const p = this.prefix;
+    if (!(await this.metadataRepo.tableExists(`${p}entries_fts`, tx))) return;
+    const n = Number((await this.metadataRepo.getMeta(FTS5_RETIRED_COUNTER_KEY, tx)) ?? '0') + 1;
+    const name = retiredTableName(p, n);
+    try {
+      await tx.execAsync(`ALTER TABLE ${p}entries_fts RENAME TO ${name}`);
+    } catch {
+      // Shadow tables too damaged to rename: today's DROP, with its measured floor, for this case only.
+      await tx.execAsync(`DROP TABLE ${p}entries_fts`);
+      return;
+    }
+    await this.metadataRepo.setMeta(FTS5_RETIRED_TABLES_KEY, JSON.stringify([...(await this.retiredList(tx)), name]), tx);
+    await this.metadataRepo.setMeta(FTS5_RETIRED_COUNTER_KEY, String(n), tx);
+  }
+
+  private async retiredList(tx: SQLiteAdapter = this.db): Promise<string[]> {
+    const raw = parseJsonArray<unknown>(await this.metadataRepo.getMeta(FTS5_RETIRED_TABLES_KEY, tx), []);
+    return raw.filter((n): n is string => isRetiredTableName(this.prefix, n));
   }
 
   async drain(opts: DrainOptions = {}): Promise<void> {
@@ -130,16 +177,54 @@ export class Fts5IndexStrategy implements IndexStrategy {
    */
   private async fullQuantum(deadline: number): Promise<void> {
     const ledgerOverran = await this.drainLedgerUntil(deadline);
-    if ((await this.metadataRepo.getMeta(FTS5_STATE_KEY)) !== 'rebuilding') return;
-    const progress = await readRebuildProgress(this.metadataRepo);
-    if (!progress || !(await this.fingerprintValid(progress.wm))) return this.restartRebuild();
-    if (!ledgerOverran) {
-      do {
-        if (!(await this.runWindow(progress))) break;
-      } while (monotonicNow() < deadline);
-      await this.runSweepTx(progress);
+    if ((await this.metadataRepo.getMeta(FTS5_STATE_KEY)) === 'rebuilding') {
+      const progress = await readRebuildProgress(this.metadataRepo);
+      if (!progress || !(await this.fingerprintValid(progress.wm))) return this.restartRebuild();
+      if (!ledgerOverran) {
+        do {
+          if (!(await this.runWindow(progress))) break;
+        } while (monotonicNow() < deadline);
+        await this.runSweepTx(progress);
+      }
+      await this.tryFlip();
     }
-    await this.tryFlip();
+    await this.reclaimRetired(deadline); // never blocks the flip
+  }
+
+  /** Bounded reclamation steps, each its own tx, until the deadline or nothing is retired. */
+  private async reclaimRetired(deadline: number): Promise<void> {
+    while (monotonicNow() < deadline) {
+      const [name] = await this.retiredList();
+      if (name === undefined) return;
+      await this.reclaimStep(name);
+    }
+  }
+
+  /** (1) delete <=500 rows, else (2) one bounded merge, else (3) DROP + delist. */
+  private async reclaimStep(name: string): Promise<void> {
+    if (!(await this.metadataRepo.tableExists(name))) return this.delistRetired(name, false);
+    if (await this.db.getFirstAsync(`SELECT rowid FROM ${name} LIMIT 1`)) {
+      await this.db.withTransactionAsync(async (tx) => {
+        await tx.runAsync(`DELETE FROM ${name} WHERE rowid IN (SELECT rowid FROM ${name} ORDER BY rowid LIMIT ${FTS5_DRAIN_CHUNK})`);
+      });
+      return;
+    }
+    let merged = false;
+    await this.db.withTransactionAsync(async (tx) => {
+      const before = await tx.getFirstAsync<{ n: number }>(`SELECT total_changes() AS n`);
+      await tx.runAsync(`INSERT INTO ${name}(${name}, rank) VALUES('merge', ${FTS5_RECLAIM_MERGE_PAGES})`);
+      const after = await tx.getFirstAsync<{ n: number }>(`SELECT total_changes() AS n`);
+      merged = (after?.n ?? 0) - (before?.n ?? 0) >= 2; // FTS5 docs: < 2 means the merge did no work
+    });
+    if (!merged) await this.delistRetired(name, true);
+  }
+
+  private async delistRetired(name: string, drop: boolean): Promise<void> {
+    await this.db.withTransactionAsync(async (tx) => {
+      if (drop) await tx.execAsync(`DROP TABLE IF EXISTS ${name}`);
+      const rest = (await this.retiredList(tx)).filter((n) => n !== name);
+      await this.metadataRepo.setMeta(FTS5_RETIRED_TABLES_KEY, JSON.stringify(rest), tx);
+    });
   }
 
   /** The id at the watermark's rowid still matches. A null id (start, or windows complete) has nothing to check. */
@@ -348,6 +433,40 @@ export class Fts5IndexStrategy implements IndexStrategy {
       `SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN (?, ?, ?)`, [...names]);
     return rows.length === names.length;
   }
+}
+
+class FtsOnlyStatementError extends Error {
+  readonly ftsOnlyCause: unknown;
+  constructor(cause: unknown) {
+    super('FTS-only statement failed');
+    this.ftsOnlyCause = cause;
+  }
+}
+
+/** Proxy-safe unwrap (issue #96): never `instanceof` a caught value bare. */
+function unwrapFtsOnly(err: unknown): { cause: unknown; ftsOnly: boolean } {
+  try {
+    if (err instanceof FtsOnlyStatementError) return { cause: err.ftsOnlyCause, ftsOnly: true };
+  } catch { /* hostile Proxy */ }
+  return { cause: err, ftsOnly: false };
+}
+
+/**
+ * 'vtab' for SQLITE_CORRUPT_VTAB (extended code 267, any statement), 'corrupt'
+ * for another SQLITE_CORRUPT* code, else null. Proxy-safe: any trap => null.
+ */
+export function ftsCorruptionClass(err: unknown): 'vtab' | 'corrupt' | null {
+  let code: unknown;
+  let message: unknown;
+  try {
+    code = (err as { code?: unknown }).code;
+    message = (err as { message?: unknown }).message;
+  } catch {
+    return null;
+  }
+  if (code === 'SQLITE_CORRUPT_VTAB' || (typeof message === 'string' && /^Error code 267:/.test(message))) return 'vtab';
+  if ((typeof code === 'string' && code.startsWith('SQLITE_CORRUPT')) || (typeof message === 'string' && /^Error code 11:/.test(message))) return 'corrupt';
+  return null;
 }
 
 function assertEntity(entityId: string, documents: readonly IndexDocument[]): void {

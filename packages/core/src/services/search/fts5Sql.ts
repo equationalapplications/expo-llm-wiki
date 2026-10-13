@@ -5,6 +5,20 @@
 export const FTS5_STATE_KEY = 'fts5_index_state';
 export const FTS5_DRAIN_CHUNK = 500;
 export const FTS5_SWEEP_CHUNK = 500;
+/** Retired entries_fts tables awaiting reclamation: JSON array of table names (spec #280 rev 11 rename-retire). */
+export const FTS5_RETIRED_TABLES_KEY = 'fts5_retired_tables';
+/** Monotonic counter for retired-table names, so names never collide. */
+export const FTS5_RETIRED_COUNTER_KEY = 'fts5_retired_counter';
+/** Pages per reclamation 'merge' step (tuned by the B8 measurement). */
+export const FTS5_RECLAIM_MERGE_PAGES = 500;
+
+export function retiredTableName(p: string, n: number): string {
+  return `${p}entries_fts_retired_${n}`;
+}
+/** Only engine-shaped names are ever interpolated into reclamation SQL. */
+export function isRetiredTableName(p: string, name: unknown): name is string {
+  return typeof name === 'string' && name.startsWith(`${p}entries_fts_retired_`) && /^\d+$/.test(name.slice(`${p}entries_fts_retired_`.length));
+}
 /** Rebuild watermark: JSON `{ rowid, id }`; `id` is the fingerprint (the entries id at `rowid`), null at 0 and once windows complete. */
 export const FTS5_REBUILD_WM_KEY = 'fts5_rebuild_wm';
 /** Re-arm snapshot: JSON `{ entries: max(entries.rowid), map: max(fts_map.fts_rowid) }`. */
