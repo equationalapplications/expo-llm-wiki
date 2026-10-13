@@ -47,12 +47,12 @@
 
 ---
 
-## Resume here (rev 8, 2026-10-13) — start at Task B7 (B6 done, commit c53237d)
+## Resume here (rev 8, 2026-10-13) — start at Task B8 (B7 done, commit cc549a0)
 
 - **PR-A is merged:** PR #281 → `main` as merge commit `459b84e`. Issue #280 is open again (a stray closing keyword in commit `cfb56fe` had auto-closed it). Only PR-B's PR body may say `Fixes #280`. No commit message may contain a closing keyword followed by an issue number.
 - **Branch:** `feat/issue280-fts-state-machine`, cut from `main` @ `459b84e`. It is not pushed and has no PR yet. Its only commit so far is this plan (rev 8).
 - **Baseline (B0, on `459b84e`):** core suite **176 files / 1904 tests, 0 failures**; `typecheck` exit 0.
-- **Next:** Task B7 (B1-B6 done). B8 needs F8.
+- **Next:** Task B8 (B1-B7 done; controller work). B8 needs F8.
 - **Ignore** `.superpowers/sdd/2026-10-10-issue280-setup-walltime-plan/NEXT_SESSION_HANDOFF.md`: it is stale (it says A2–A7 failed; all of them shipped).
 - Task A8 (measurements) is still deferred. B8 needs its harness (F10).
 - The rev 7 block below is historical.
@@ -3668,10 +3668,10 @@ describe('FTS state machine, integration (#280 B7, ≥2k rows)', () => {
 });
 ```
 
-- [ ] **Step 2: Run it.** `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/fts5StateMachineIntegration.test.ts` → PASS (B1–B6 implement it; a failure here is a real bug: debug it, do not loosen the test).
-- [ ] **Step 3: Leftover sweep.** `grep -rn "rebuildSql\|rebuildFromSource\|rebuildInTx\|toBe('live')" packages/core/__tests__/createIndexStrategy.test.ts packages/core/__tests__/fts5*.test.ts`. Every remaining `toBe('live')` must follow either `{ entriesExisted: false }` or a converging drain; rewrite any that doesn't, and note it for the commit body. `rebuild*` must have zero hits.
-- [ ] **Step 4: Gate.** Full suite (no assertion failures; completed ≥ 1904 + every B-task test), typecheck, then `pnpm -r build` — all clean.
-- [ ] **Step 5: Commit.** `git add packages/core/__tests__ && git commit -m "test(core): FTS state machine integration acceptance on a 2.4k-row store (#280 B7)"`. The body lists every test file rewritten across B2–B7 and why (B2 fixture moves; the B3 convergence restorations; Step 3 leftovers).
+- [x] **Step 2: Run it.** `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/fts5StateMachineIntegration.test.ts` → PASS (B1–B6 implement it; a failure here is a real bug: debug it, do not loosen the test).
+- [x] **Step 3: Leftover sweep.** `grep -rn "rebuildSql\|rebuildFromSource\|rebuildInTx\|toBe('live')" packages/core/__tests__/createIndexStrategy.test.ts packages/core/__tests__/fts5*.test.ts`. Every remaining `toBe('live')` must follow either `{ entriesExisted: false }` or a converging drain; rewrite any that doesn't, and note it for the commit body. `rebuild*` must have zero hits.
+- [x] **Step 4: Gate.** Full suite (no assertion failures; completed ≥ 1904 + every B-task test), typecheck, then `pnpm -r build` — all clean.
+- [x] **Step 5: Commit.** `git add packages/core/__tests__ && git commit -m "test(core): FTS state machine integration acceptance on a 2.4k-row store (#280 B7)"`. The body lists every test file rewritten across B2–B7 and why (B2 fixture moves; the B3 convergence restorations; Step 3 leftovers).
 
 ---
 
