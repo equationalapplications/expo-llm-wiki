@@ -450,7 +450,7 @@ export class ImportExportService {
     if (merge) {
       await this.searchService.syncEntries(entityId, [...upsertedFactIds]);
     } else {
-      await this.searchService.sync(entityId, { ids: [...upsertedFactIds, ...softDeletedFactIds] });
+      await this.searchService.sync(entityId, { ids: [...new Set([...upsertedFactIds, ...softDeletedFactIds])] });
     }
 
     for (const fact of bundle.facts) {

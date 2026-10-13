@@ -1,9 +1,15 @@
 // packages/core/__tests__/fts5Vacuum.test.ts
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { WikiMemory } from '../src/WikiMemory';
 import { MetadataRepository } from '../src/repositories/MetadataRepository';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 import type { SQLiteAdapter } from '../src/types';
+import { Fts5IndexStrategy } from '../src/services/search/Fts5IndexStrategy';
+import { restartRebuildAfterVacuum } from '../src/services/search/fts5Progress';
+import { fts5TriggerNames } from '../src/services/search/fts5Sql';
+import { setupDatabase } from '../src/db/schema';
+
+afterEach(() => vi.restoreAllMocks());
 
 const P = 'llm_wiki_';
 const stub = { llmProvider: { generateText: async () => '{}' } };
@@ -43,11 +49,58 @@ describe('7(k) VACUUM guard (#280 B6)', () => {
 
   it('a post-VACUUM open (rowids renumbered outside the engine) detects the stale fingerprint and restarts', async () => {
     const { db, meta } = await rebuildingStore();
+    const stale = await wm(meta);
+    expect(stale.rowid).toBeGreaterThan(0);
+    expect(stale.rowid).toBeLessThan(100000);
     await db.runAsync(`UPDATE ${P}entries SET rowid = rowid + 100000`); // what an external VACUUM may do
+    await db.runAsync(`DELETE FROM ${P}fts_pending`); // a real VACUUM fires no triggers
     await new WikiMemory(db, cfg(1)).setup();
-    const after = await wm(meta);
-    expect(after.rowid === 0 || after.rowid > 100000).toBe(true); // restarted, then possibly one window
+    // The stale fingerprint restarts the rebuild from 0 against a fresh (renumbered) snapshot; that quantum ends at the restart.
+    expect(await wm(meta)).toEqual({ rowid: 0, id: null });
+    expect(JSON.parse((await meta.getMeta('fts5_rebuild_snapshot'))!).entries).toBe(101500);
+    expect(await meta.getMeta('fts5_orphan_sweep_cursor')).toBe('0');
     for (let i = 0; i < 50 && (await meta.getMeta('fts5_index_state')) !== 'live'; i++) await new WikiMemory(db, cfg(1)).setup();
+    expect(await meta.getMeta('fts5_index_state')).toBe('live');
+    await expectExactlyOnce(db);
+  });
+
+  it('a VACUUM restart between two window transactions of one quantum is not overwritten (final review I1)', async () => {
+    const db = openTestDatabase();
+    const meta = new MetadataRepository(db, P);
+    await setupDatabase(db, P);
+    const s = new Fts5IndexStrategy(db, P, meta);
+    await s.init({ entriesExisted: false });
+    // Rows reach the index only through windows: triggers off while inserting at high rowids.
+    for (const t of fts5TriggerNames(P)) await db.execAsync(`DROP TRIGGER ${t}`);
+    await db.withTransactionAsync(async (tx) => {
+      for (let i = 0; i < 1500; i++) {
+        await tx.runAsync(`INSERT INTO ${P}entries (rowid, id, entity_id, title, body, tags, created_at, updated_at) VALUES (?, ?, 'e1', ?, 'b', '[]', 1, 1)`, [100001 + i, `r${i}`, `cedar ${i}`]);
+      }
+    });
+    await db.runAsync(`DELETE FROM ${P}meta WHERE key = 'fts5_index_state'`);
+    await new Fts5IndexStrategy(db, P, meta).init(); // trigger loss: keep-map re-arm, empty index, rebuilding
+    expect(await meta.getMeta('fts5_index_state')).toBe('rebuilding');
+
+    const orig = db.withTransactionAsync.bind(db);
+    let wmWrites = 0;
+    let injected = false;
+    const origSet = meta.setMeta.bind(meta);
+    vi.spyOn(meta, 'setMeta').mockImplementation((async (k: string, v: string, tx?: SQLiteAdapter) => {
+      if (k === 'fts5_rebuild_wm') wmWrites++;
+      return origSet(k, v, tx);
+    }) as never);
+    vi.spyOn(db, 'withTransactionAsync').mockImplementation((async (fn: (tx: SQLiteAdapter) => Promise<unknown>) => {
+      if (wmWrites === 1 && !injected) {
+        injected = true; // between window tx 1 and 2: an in-process VACUUM compacts rowids, then the B6 restart
+        await orig(async (tx) => { await tx.runAsync(`UPDATE ${P}entries SET rowid = rowid - 100000`); });
+        await restartRebuildAfterVacuum(db, P, meta);
+      }
+      return orig(fn as never);
+    }) as never);
+    await s.drain({ mode: 'full', deadline: Number.POSITIVE_INFINITY });
+    expect(injected).toBe(true);
+    vi.restoreAllMocks();
+    for (let i = 0; i < 50 && (await meta.getMeta('fts5_index_state')) !== 'live'; i++) await s.drain();
     expect(await meta.getMeta('fts5_index_state')).toBe('live');
     await expectExactlyOnce(db);
   });

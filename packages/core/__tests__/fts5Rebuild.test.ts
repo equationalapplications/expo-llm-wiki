@@ -190,7 +190,6 @@ describe('rebuild windows (#280 B3)', () => {
   });
 });
 
-
 describe('runPrune re-anchors the fingerprint (#280 B3)', () => {
   it('prune hard-deletes the fingerprint row: re-anchored, no restart, converges exactly once', async () => {
     const wdb = openTestDatabase();

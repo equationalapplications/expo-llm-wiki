@@ -55,6 +55,28 @@ describe('FTS state machine, integration (#280 B7, ≥2k rows)', () => {
     expect((await w.__testAccess.searchService.searchKeyword('cedar', ['e1'], 10_000)).length).toBe(N);
   });
 
+  it('content that only windows can deliver: rows written with all triggers off, incl. a soft-delete and a hard-delete orphan (final review I3)', async () => {
+    const db = await builtStore();
+    for (const t of fts5TriggerNames(P)) await db.execAsync(`DROP TRIGGER ${t}`);
+    await db.withTransactionAsync(async (tx) => {
+      for (let i = 0; i < 600; i++) {
+        await tx.runAsync(`INSERT INTO ${P}entries (id, entity_id, title, body, tags, created_at, updated_at) VALUES (?, 'e1', ?, 'b', '[]', 1, 1)`, [`w${i}`, `walnut ${i}`]);
+      }
+      await tx.runAsync(`INSERT INTO ${P}entries (id, entity_id, title, body, tags, created_at, updated_at, deleted_at) VALUES ('wdel', 'e1', 'walnut gone', 'b', '[]', 1, 1, 1)`);
+      await tx.runAsync(`UPDATE ${P}entries SET title = 'walnut changed' WHERE id = 'r10'`);
+      await tx.runAsync(`UPDATE ${P}entries SET deleted_at = 1 WHERE id = 'r5'`); // indexed, now soft-deleted
+      await tx.runAsync(`DELETE FROM ${P}entries WHERE id = 'r20'`); // indexed, now an orphan map row
+    });
+    expect(await db.getFirstAsync(`SELECT 1 FROM ${P}fts_pending LIMIT 1`)).toBeNull(); // no ledger: only windows/sweep can converge
+    await db.runAsync(`DELETE FROM ${P}meta WHERE key = 'fts5_index_state'`);
+    const w = await convergeByOpens(db);
+    await expectExactlyOnce(db);
+    expect(await db.getFirstAsync(`SELECT 1 FROM ${P}fts_map WHERE id IN ('r5', 'r20', 'wdel')`)).toBeNull();
+    const hits = await w.__testAccess.searchService.searchKeyword('walnut', ['e1'], 10_000);
+    expect(hits.length).toBe(601); // w0..w599 + r10; never wdel
+    expect((await w.__testAccess.searchService.searchKeyword('cedar', ['e1'], 10_000)).length).toBe(N - 3);
+  });
+
   it('7(j) resume across opens from watermark K is exactly-once', async () => {
     const db = await builtStore();
     await db.runAsync(`DELETE FROM ${P}meta WHERE key = 'fts5_index_state'`);

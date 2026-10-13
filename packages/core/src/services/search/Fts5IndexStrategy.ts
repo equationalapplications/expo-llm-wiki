@@ -93,11 +93,16 @@ export class Fts5IndexStrategy implements IndexStrategy {
     return this.resetAndRearm();
   }
 
-  /** live, a live entry, an empty fts_map and an empty ledger: the index was lost (rev 8 m3 / rev 9 m4). */
+  /**
+   * live, a live entry, an empty fts_map and an empty ledger: the index was lost (rev 8 m3 / rev 9 m4).
+   * Every-open path: the live-row probe reads at most FTS5_DRAIN_CHUNK of the newest rows (final review M1),
+   * so an all-soft-deleted store is never fully scanned; a lost index whose newest rows are all deleted goes undetected.
+   */
   private async liveRowsButNothingIndexed(): Promise<boolean> {
     const p = this.prefix;
     if (await this.db.getFirstAsync(`SELECT 1 AS x FROM ${p}fts_map LIMIT 1`)) return false;
-    if (!(await this.db.getFirstAsync(`SELECT 1 AS x FROM ${p}entries WHERE deleted_at IS NULL LIMIT 1`))) return false;
+    if (!(await this.db.getFirstAsync(
+      `SELECT 1 AS x FROM (SELECT deleted_at FROM ${p}entries ORDER BY rowid DESC LIMIT ${FTS5_DRAIN_CHUNK}) WHERE deleted_at IS NULL LIMIT 1`))) return false;
     return (await this.db.getFirstAsync(`SELECT 1 AS x FROM ${p}fts_pending LIMIT 1`)) === null;
   }
 
@@ -181,17 +186,21 @@ export class Fts5IndexStrategy implements IndexStrategy {
       const progress = await readRebuildProgress(this.metadataRepo);
       if (!progress || !(await this.fingerprintValid(progress.wm))) return this.restartRebuild();
       if (!ledgerOverran) {
+        let step: WindowStep;
         do {
-          if (!(await this.runWindow(progress))) break;
-        } while (monotonicNow() < deadline);
-        await this.runSweepTx(progress);
+          step = await this.runWindow(progress);
+        } while (step === 'more' && monotonicNow() < deadline);
+        // 'stale': progress moved under this quantum (a VACUUM restart, a re-anchor, a flip); the next quantum re-reads it.
+        if (step !== 'stale') await this.runSweepTx(progress);
       }
       await this.tryFlip();
     }
     try {
       await this.reclaimRetired(deadline);
-    } catch {
-      // Best-effort: a corrupt or locked retired table stays listed and is retried next quantum; it never fails drain() or the flip.
+    } catch (err) {
+      // Best-effort for database errors only: a locked retired table stays listed and is retried next quantum,
+      // never failing drain() or the flip. A non-SQLite error is a bug and propagates (final review I2).
+      if (!isSqliteError(err)) throw err;
     }
   }
 
@@ -200,7 +209,19 @@ export class Fts5IndexStrategy implements IndexStrategy {
     while (monotonicNow() < deadline) {
       const [name] = await this.retiredList();
       if (name === undefined) return;
-      await this.reclaimStep(name);
+      try {
+        await this.reclaimStep(name);
+      } catch (err) {
+        if (ftsCorruptionClass(err) === null) throw err;
+        // Persistently corrupt (the corruption reset is what retired it): DROP once and delist; if even
+        // the DROP fails, delist anyway so no quantum re-reads its corrupt pages (final review I2).
+        try {
+          await this.delistRetired(name, true);
+        } catch (dropErr) {
+          if (!isSqliteError(dropErr)) throw dropErr;
+          await this.delistRetired(name, false);
+        }
+      }
     }
   }
 
@@ -243,13 +264,28 @@ export class Fts5IndexStrategy implements IndexStrategy {
     await this.db.withTransactionAsync((tx) => this.rearmInTx(tx));
   }
 
-  /** One window tx. False once no rows remain in (wm, snapshot]; the watermark is then pinned at the snapshot (F9). */
-  private async runWindow(pr: RebuildProgress): Promise<boolean> {
-    if (pr.wm.rowid >= pr.snapshot.entries) return false;
+  /**
+   * Progress as stored, re-read inside a window/sweep tx: false when it no
+   * longer matches what this quantum assumed (final review I1). Writing a
+   * watermark or cursor computed from a stale `pr` would overwrite a
+   * concurrent restart (runPrune VACUUM is not on the sync chain).
+   */
+  private async progressUnchanged(pr: RebuildProgress, tx: SQLiteAdapter): Promise<boolean> {
+    if ((await this.metadataRepo.getMeta(FTS5_STATE_KEY, tx)) !== 'rebuilding') return false;
+    const cur = await readRebuildProgress(this.metadataRepo, tx);
+    return cur !== null && cur.wm.rowid === pr.wm.rowid && cur.wm.id === pr.wm.id && cur.cursor === pr.cursor
+      && cur.snapshot.entries === pr.snapshot.entries && cur.snapshot.map === pr.snapshot.map;
+  }
+
+  /** One window tx. 'done' once no rows remain in (wm, snapshot] (the watermark is then pinned at the snapshot, F9); 'stale' when progress moved under the quantum. */
+  private async runWindow(pr: RebuildProgress): Promise<WindowStep> {
+    if (pr.wm.rowid >= pr.snapshot.entries) return 'done';
     const p = this.prefix;
     let next: RebuildWatermark = pr.wm;
     let more = false;
+    let stale = false;
     await this.db.withTransactionAsync(async (tx) => {
+      if (!(await this.progressUnchanged(pr, tx))) { stale = true; return; }
       const row = await tx.getFirstAsync<{ hi: number | null }>(windowHiSql(p), [pr.wm.rowid, pr.snapshot.entries]);
       if (row?.hi == null) {
         next = { rowid: pr.snapshot.entries, id: null };
@@ -261,8 +297,9 @@ export class Fts5IndexStrategy implements IndexStrategy {
       }
       await this.metadataRepo.setMeta(FTS5_REBUILD_WM_KEY, JSON.stringify(next), tx);
     });
+    if (stale) return 'stale';
     pr.wm = next; // only after the tx resolved
-    return more;
+    return more ? 'more' : 'done';
   }
 
   /** At most one bounded sweep tx; the cursor advances in the same tx. */
@@ -271,6 +308,7 @@ export class Fts5IndexStrategy implements IndexStrategy {
     const p = this.prefix;
     let next = pr.cursor;
     await this.db.withTransactionAsync(async (tx) => {
+      if (!(await this.progressUnchanged(pr, tx))) return; // keep pr.cursor; the next quantum re-reads
       const row = await tx.getFirstAsync<{ hi: number | null }>(sweepHiSql(p), [pr.cursor, pr.snapshot.map]);
       const hi = row?.hi ?? pr.snapshot.map;
       for (const sql of sweepChunkSql(p)) await tx.runAsync(sql, [pr.cursor, hi]);
@@ -439,6 +477,8 @@ export class Fts5IndexStrategy implements IndexStrategy {
   }
 }
 
+type WindowStep = 'more' | 'done' | 'stale';
+
 class FtsOnlyStatementError extends Error {
   readonly ftsOnlyCause: unknown;
   constructor(cause: unknown) {
@@ -471,6 +511,19 @@ export function ftsCorruptionClass(err: unknown): 'vtab' | 'corrupt' | null {
   if (code === 'SQLITE_CORRUPT_VTAB' || (typeof message === 'string' && /^Error code 267:/.test(message))) return 'vtab';
   if ((typeof code === 'string' && code.startsWith('SQLITE_CORRUPT')) || (typeof message === 'string' && /^Error code 11:/.test(message))) return 'corrupt';
   return null;
+}
+
+/** A SQLite error (better-sqlite3 / expo-sqlite shapes): `code` 'SQLITE_*' or an 'Error code N:' message. Proxy-safe: any trap => false. */
+export function isSqliteError(err: unknown): boolean {
+  let code: unknown;
+  let message: unknown;
+  try {
+    code = (err as { code?: unknown }).code;
+    message = (err as { message?: unknown }).message;
+  } catch {
+    return false;
+  }
+  return (typeof code === 'string' && code.startsWith('SQLITE_')) || (typeof message === 'string' && /^Error code \d+:/.test(message));
 }
 
 function assertEntity(entityId: string, documents: readonly IndexDocument[]): void {

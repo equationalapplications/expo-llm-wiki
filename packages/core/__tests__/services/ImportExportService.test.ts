@@ -188,6 +188,9 @@ describe('ImportExportService', () => {
       // merge=false passes every touched id (upserted + soft-deleted) so a
       // ledger strategy drains them to completion (#280 B5).
       expect(mockSearchService.sync).toHaveBeenCalledWith('user_1', { ids: expect.arrayContaining(['fact_1']) });
+      const ids = (mockSearchService.sync.mock.calls[0][1] as { ids: string[] }).ids;
+      expect([...ids].sort()).toEqual(['fact_1', 'old_1']);
+      expect(ids).toHaveLength(2);
       expect(mockSearchService.syncEntries).not.toHaveBeenCalled();
     });
 

@@ -48,5 +48,6 @@ describe('DDL', () => {
       body TEXT NOT NULL, tags TEXT NOT NULL DEFAULT '[]', deleted_at INTEGER)`);
     db.exec(fts5TablesDdl('p_'));
     for (const s of drainChunkSql('p_')) expect(() => db.prepare(s)).not.toThrow();
-    for (const s of [...windowChunkSql('p_'), ...sweepChunkSql('p_'), windowHiSql('p_'), sweepHiSql('p_')]) expect(() => db.prepare(s)).not.toThrow();  });
+    for (const s of [...windowChunkSql('p_'), ...sweepChunkSql('p_'), windowHiSql('p_'), sweepHiSql('p_')]) expect(() => db.prepare(s)).not.toThrow();
+  });
 });

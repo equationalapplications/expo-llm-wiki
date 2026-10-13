@@ -7,7 +7,7 @@ import { Fts5IndexStrategy } from '../src/services/search/Fts5IndexStrategy';
 import { createIndexStrategy } from '../src/services/search/createIndexStrategy';
 import { MiniSearchIndexStrategy } from '../src/services/search/MiniSearchIndexStrategy';
 import {
-  FTS5_STATE_KEY, FTS5_REBUILD_WM_KEY, FTS5_REBUILD_SNAPSHOT_KEY, FTS5_SWEEP_CURSOR_KEY, fts5TriggerNames,
+  FTS5_DRAIN_CHUNK, FTS5_STATE_KEY, FTS5_REBUILD_WM_KEY, FTS5_REBUILD_SNAPSHOT_KEY, FTS5_SWEEP_CURSOR_KEY, fts5TriggerNames,
 } from '../src/services/search/fts5Sql';
 import type { SQLiteAdapter } from '../src/types';
 
@@ -44,6 +44,33 @@ async function liveStore(n: number): Promise<Fts5IndexStrategy> {
   expect(await state()).toBe('live');
   return s;
 }
+
+describe('live-row probe is bounded on every open (final review M1)', () => {
+  it('an all-soft-deleted store with an empty fts_map reads at most FTS5_DRAIN_CHUNK entries rows, and stays live', async () => {
+    await liveStore(0);
+    await bulk(1200);
+    await db.runAsync(`UPDATE ${P}entries SET deleted_at = 1`);
+    await new Fts5IndexStrategy(db, P, meta).drain();
+    expect(await count('fts_map')).toBe(0);
+    const get = vi.spyOn(db, 'getFirstAsync');
+    await new Fts5IndexStrategy(db, P, meta).init();
+    const probes = get.mock.calls.map((c) => String(c[0])).filter((q) => q.includes(`FROM ${P}entries`) && q.includes('deleted_at IS NULL'));
+    expect(probes).toHaveLength(1);
+    expect(probes[0]).toMatch(new RegExp(`\\(SELECT deleted_at FROM ${P}entries ORDER BY rowid DESC LIMIT ${FTS5_DRAIN_CHUNK}\\)`));
+    expect(await state()).toBe('live');
+    get.mockRestore();
+  });
+
+  it('a lost index with a live row among the newest rows is still detected (rebuild)', async () => {
+    await liveStore(0);
+    await bulk(1200);
+    await db.runAsync(`UPDATE ${P}entries SET deleted_at = 1 WHERE id != 'e1_1199'`);
+    await new Fts5IndexStrategy(db, P, meta).drain();
+    await db.execAsync(`DELETE FROM ${P}fts_map; DELETE FROM ${P}entries_fts; DELETE FROM ${P}fts_pending;`);
+    await new Fts5IndexStrategy(db, P, meta).init();
+    expect(await state()).toBe('rebuilding');
+  });
+});
 
 describe('init transitions (#280 B2)', () => {
   it('fresh store (entriesExisted: false) goes straight to live with the pending indexes', async () => {

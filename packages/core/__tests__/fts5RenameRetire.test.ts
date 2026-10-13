@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 import { setupDatabase } from '../src/db/schema';
 import { MetadataRepository } from '../src/repositories/MetadataRepository';
-import { Fts5IndexStrategy, ftsCorruptionClass } from '../src/services/search/Fts5IndexStrategy';
+import { Fts5IndexStrategy, ftsCorruptionClass, isSqliteError } from '../src/services/search/Fts5IndexStrategy';
 import { createIndexStrategy } from '../src/services/search/createIndexStrategy';
 import { UnavailableIndexStrategy } from '../src/services/search/UnavailableIndexStrategy';
 import { FTS5_STATE_KEY, FTS5_RETIRED_TABLES_KEY } from '../src/services/search/fts5Sql';
@@ -118,6 +118,14 @@ describe('corruption repair (#280 B4, 7(e) corrupt-FTS leg)', () => {
     expect(ftsCorruptionClass(null)).toBeNull();
   });
 
+  it('isSqliteError is Proxy-safe and recognises both adapter shapes', () => {
+    expect(isSqliteError(Object.assign(new Error('x'), { code: 'SQLITE_LOCKED' }))).toBe(true);
+    expect(isSqliteError(new Error('Error code 5: database is locked'))).toBe(true);
+    expect(isSqliteError(new TypeError('x'))).toBe(false);
+    expect(isSqliteError(new Proxy({}, { get() { throw new Error('trap'); } }))).toBe(false);
+    expect(isSqliteError(null)).toBe(false);
+  });
+
   it.each(['auto', 'fts5'] as const)("SQLITE_CORRUPT_VTAB from the FTS-only fast-path probe repairs under '%s'", async (pref) => {
     await liveStore(10);
     const orig = db.getFirstAsync.bind(db);
@@ -183,12 +191,61 @@ describe('corruption repair (#280 B4, 7(e) corrupt-FTS leg)', () => {
     await new Fts5IndexStrategy(db, P, meta).init();
     const orig = db.runAsync.bind(db);
     vi.spyOn(db, 'runAsync').mockImplementation((async (sql: string, args?: unknown[]) => {
-      if (String(sql).startsWith(`DELETE FROM ${P}entries_fts_retired_1`)) throw new Error('locked');
+      if (String(sql).startsWith(`DELETE FROM ${P}entries_fts_retired_1`)) throw Object.assign(new Error('database table is locked'), { code: 'SQLITE_LOCKED' });
       return orig(sql, args as never);
     }) as never);
     await expect(s.drain()).resolves.toBeUndefined();
     expect(await state()).toBe('live');
     expect(await retired()).toEqual([`${P}entries_fts_retired_1`]);
+  });
+
+  it('a corrupt retired table is dropped and delisted, not retried forever (final review I2)', async () => {
+    const s = await liveStore(1200);
+    await swapTokenizer();
+    await new Fts5IndexStrategy(db, P, meta).init();
+    const orig = db.getFirstAsync.bind(db);
+    vi.spyOn(db, 'getFirstAsync').mockImplementation((async (sql: string, args?: unknown[]) => {
+      if (String(sql).startsWith(`SELECT rowid FROM ${P}entries_fts_retired_1`)) throw Object.assign(new Error('database disk image is malformed'), { code: 'SQLITE_CORRUPT_VTAB' });
+      return orig(sql, args as never);
+    }) as never);
+    await expect(s.drain()).resolves.toBeUndefined();
+    expect(await state()).toBe('live');
+    expect(await retired()).toEqual([]);
+    expect(await tables()).toEqual([`${P}entries_fts`]);
+  });
+
+  it('a corrupt retired table whose DROP also fails is still delisted (final review I2)', async () => {
+    const s = await liveStore(1200);
+    await swapTokenizer();
+    await new Fts5IndexStrategy(db, P, meta).init();
+    const origGet = db.getFirstAsync.bind(db);
+    vi.spyOn(db, 'getFirstAsync').mockImplementation((async (sql: string, args?: unknown[]) => {
+      if (String(sql).startsWith(`SELECT rowid FROM ${P}entries_fts_retired_1`)) throw Object.assign(new Error('malformed'), { code: 'SQLITE_CORRUPT' });
+      return origGet(sql, args as never);
+    }) as never);
+    const origExec = db.execAsync.bind(db);
+    vi.spyOn(db, 'execAsync').mockImplementation((async (sql: string) => {
+      if (String(sql).startsWith(`DROP TABLE IF EXISTS ${P}entries_fts_retired_1`)) throw Object.assign(new Error('malformed'), { code: 'SQLITE_CORRUPT' });
+      return origExec(sql);
+    }) as never);
+    await expect(s.drain()).resolves.toBeUndefined();
+    expect(await retired()).toEqual([]);
+    const reads = vi.mocked(db.getFirstAsync).mock.calls.filter((c) => String(c[0]).includes('entries_fts_retired_1')).length;
+    await s.drain();
+    expect(vi.mocked(db.getFirstAsync).mock.calls.filter((c) => String(c[0]).includes('entries_fts_retired_1')).length).toBe(reads); // no retry
+  });
+
+  it('a non-SQLite error from reclamation propagates instead of being swallowed (final review I2)', async () => {
+    const s = await liveStore(1200);
+    await swapTokenizer();
+    await new Fts5IndexStrategy(db, P, meta).init();
+    const orig = db.runAsync.bind(db);
+    vi.spyOn(db, 'runAsync').mockImplementation((async (sql: string, args?: unknown[]) => {
+      if (String(sql).startsWith(`DELETE FROM ${P}entries_fts_retired_1`)) throw new TypeError('programming error');
+      return orig(sql, args as never);
+    }) as never);
+    await expect(s.drain()).rejects.toThrow(TypeError);
+    expect(await state()).toBe('live'); // the flip committed before reclamation
   });
 
   it('a transient SQLITE_BUSY from an FTS-only statement does NOT reset (F7)', async () => {

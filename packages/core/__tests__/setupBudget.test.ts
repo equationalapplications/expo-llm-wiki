@@ -1,10 +1,17 @@
 // packages/core/__tests__/setupBudget.test.ts
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { WikiMemory } from '../src/WikiMemory';
 import { DEFAULT_SETUP_BUDGET_MS } from '../src/index';
 import { CURRENT_SCHEMA_VERSION } from '../src/db/migrations';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 import type { SQLiteAdapter } from '../src/types';
+import { monotonicNow } from '../src/utils/monotonicNow';
+
+// A controllable clock: the budget test below steps it past any deadline on every read.
+vi.mock('../src/utils/monotonicNow', async (importOriginal) => {
+  const m = await importOriginal<typeof import('../src/utils/monotonicNow')>();
+  return { ...m, monotonicNow: vi.fn(m.monotonicNow) };
+});
 
 const P = 'llm_wiki_';
 const stub = { llmProvider: { generateText: async () => '{}' } } as const;
@@ -38,10 +45,20 @@ describe('setupBudgetMs (#280 B1)', () => {
     const db = openTestDatabase();
     await open(db).setup();
     await backlog(db, 3000);
-    await open(db, { setupBudgetMs: 1 }).setup();
-    expect(await pending(db)).toBeGreaterThan(0);
-    for (let i = 0; i < 20 && (await pending(db)) > 0; i++) await open(db, { setupBudgetMs: 1 }).setup();
-    expect(await pending(db)).toBe(0);
+    // Deterministic: every clock read is 1s later than the last, so each open's deadline has passed after its first unit of work.
+    const real = vi.mocked(monotonicNow).getMockImplementation()!;
+    let t = 0;
+    vi.mocked(monotonicNow).mockImplementation(() => (t += 1000));
+    try {
+      await open(db, { setupBudgetMs: 1 }).setup();
+      const left = await pending(db);
+      expect(left).toBeGreaterThan(0);
+      expect(left).toBeLessThan(3000); // at least one unit of progress
+      for (let i = 0; i < 20 && (await pending(db)) > 0; i++) await open(db, { setupBudgetMs: 1 }).setup();
+      expect(await pending(db)).toBe(0);
+    } finally {
+      vi.mocked(monotonicNow).mockImplementation(real);
+    }
   });
 });
 
