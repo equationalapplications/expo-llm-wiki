@@ -1,7 +1,7 @@
 # Spec: `wiki.setup()` wall time — minimal viable open, converging index
 
 **Date:** 2026-10-10
-**Status:** In progress (rev 11 status correction, 2026-10-13: PR-A's Change 1 (stamped normalize), Change 2 (v14 partial index) and the migration gate are implemented and tested, with the gate API shipped as `'allow' | 'refuse' | 'auto'` and `PendingMigrationWork` as `schema_migration`/`source_ref_normalize`. PR-A's Change 4 (probeFts5 classification, `UnavailableIndexStrategy`, call-site map) is NOT yet implemented. The earlier "PR-A scope complete" claim below is superseded; rev 11 — migration gate for the upgrade implemented and tested; rev 10 — Opus delta cycle #5 adjudicated: spec 0 BLOCKER/5 MAJOR/10 minor + plan 1 BLOCKER/5 MAJOR/5 minor, all verified against source and applied; reviews: GLM r1-r4, Opus full ×2, Opus delta ×5 cycles; logs under `~/.hermes/cache/scratch/issue280/`)
+**Status:** In progress (rev 11a, 2026-10-13: normative gate contract aligned with the shipped API — see "Shipped gate contract" below; PR-A row marks Change 4 as still outstanding. rev 11 status correction, 2026-10-13: PR-A's Change 1 (stamped normalize), Change 2 (v14 partial index) and the migration gate are implemented and tested, with the gate API shipped as `'allow' | 'refuse' | 'auto'` and `PendingMigrationWork` as `schema_migration`/`source_ref_normalize`. PR-A's Change 4 (probeFts5 classification, `UnavailableIndexStrategy`, call-site map) is NOT yet implemented. The earlier "PR-A scope complete" claim below is superseded; rev 11 — migration gate for the upgrade implemented and tested; rev 10 — Opus delta cycle #5 adjudicated: spec 0 BLOCKER/5 MAJOR/10 minor + plan 1 BLOCKER/5 MAJOR/5 minor, all verified against source and applied; reviews: GLM r1-r4, Opus full ×2, Opus delta ×5 cycles; logs under `~/.hermes/cache/scratch/issue280/`)
 **Branch:** `spec/issue280-setup-walltime` · **PR:** [#281](https://github.com/equationalapplications/expo-llm-wiki/pull/281) (DRAFT until implemented)
 **Priority:** High — blocks the SynapseTree ARM64 gate (15 s writer-lease fence vs 693 s measured setup)
 
@@ -21,7 +21,7 @@ one.
 
 | PR | Branch | Scope | Issue link | Acceptance owned |
 |---|---|---|---|---|
-| **PR-A** — warm open + stability | `spec/issue280-setup-walltime` (#281) | Change 1, Change 2, migration gate (Change 1), Change 4 **except** the corruption-class DROP+CREATE repair | `Refs #280` | 1, 7(b)(c)(d)(e — all legs except corrupt-FTS)(h)(l)(n)(n′)(o)(p — normalize side)(q)(s)(t), 8; the @1M normalize-rate measurement |
+| **PR-A** — warm open + stability | `spec/issue280-setup-walltime` (#281) | Change 1, Change 2, migration gate (Change 1), Change 4 **except** the corruption-class DROP+CREATE repair | `Refs #280` — **not mergeable until Change 4 lands** (rev 11a: Change 1, Change 2 and the gate are implemented; Change 4 is outstanding) | 1, 7(b)(c)(d)(e — all legs except corrupt-FTS)(h)(l)(n)(n′)(o)(p — normalize side)(q)(s)(t), 8; the @1M normalize-rate measurement |
 | **PR-B** — FTS state machine | new branch off `main` after PR-A merges | Change 3 in full, Change 4's corruption-class repair, rename-retire, `fts_pending` indexes (schema v15) | `Fixes #280` | 2, 3, 4, 5, 6, 7(a)(e — corrupt-FTS leg)(f)(g)(i)(j)(k)(m)(m′)(p — rebuild side)(r)(u) |
 
 PR-A alone does **not** close #280: the 693 s gate leg most likely ran the
@@ -62,11 +62,28 @@ on that rebuild now yields `UnavailableIndexStrategy` instead of detaching.
   in pass 2's final chunk tx. A missing watermark means 0. The skip keys only
   on the stamp, never on `schema_version`. Watermarks carry the fingerprint
   rule (Change 3 VACUUM section), and the engine's VACUUM path resets them.
-- **Fresh stores** write `schema_version = CURRENT`, the stamp, and the partial index directly.
+- **Fresh stores** write the partial index, the stamp, and `schema_version = CURRENT` directly, in one transaction (rev 11a), so a crash cannot leave a v14 store without the index.
 - **Migration gate:** see Change 1 "Upgrade open vs the fence". Default
-  `migrations: 'run'` (today's behavior). SynapseTree opens inside the lease
+  `migrations: 'allow'` (today's behavior). SynapseTree opens inside the lease
   with `'refuse'` and runs plain `setup()` out of lease on
   `WikiMigrationRequiredError`.
+- **Shipped gate contract (rev 11a — supersedes the rev-11 shape in Change 1,
+  the API-changes list and acceptance 7(t)/(u)):**
+  `setup(opts?: { migrations?: 'allow' | 'refuse' | 'auto' })`, also settable
+  as `config.migrations`; the per-call option wins; default `'allow'`.
+  `'refuse'` throws on any pending work; `'auto'` throws on a pending schema
+  migration but runs a pending source_ref normalize. `WikiMigrationRequiredError`
+  has `name: 'WikiMigrationRequiredError'`, `code: 'WIKI_MIGRATION_REQUIRED'`
+  and `pendingWork: PendingMigrationWork`, where `PendingMigrationWork` is
+  `{ type: 'schema_migration'; fromVersion; toVersion }` or
+  `{ type: 'source_ref_normalize'; entriesWatermark; sourceRefIndexWatermark }`
+  (watermarks are resume rowids, 0 = not started). An existing `entries` table
+  without a `meta` table reports `schema_migration` from v0. Schema migrations
+  are reported first; the normalize is only reported on a current-version
+  store. PR-B adds a third variant for unreclaimed retired tables instead of a
+  `retiredTables` count. Read `fromVersion: 13 … normalizeRequired: true` in
+  7(t)(i) as `pendingWork: { type: 'schema_migration', fromVersion: 13,
+  toVersion: CURRENT }`, and `'run'` anywhere below as `'allow'`.
 - **Change 4:** `probeFts5` classifies errors. Only `no such module: fts5` /
   `no such function: json_valid` ⇒ module-absent ⇒ MiniSearch. Every other
   probe or init error ⇒ one 250 ms retry ⇒ `UnavailableIndexStrategy`
