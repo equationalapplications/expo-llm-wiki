@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** rev 6 — written fresh against **spec rev 11** (`cfb56fe`). Rev 5 mirrored spec rev 7 and is RETIRED in full; nothing below inherits from it. Two tracks: **PR-A** (fully expanded, execute now) and **PR-B** (task-level, re-expanded as plan rev 7 in Task B0 against post-PR-A `main`, because PR-A moves the code PR-B edits).
+**Status:** rev 7 (2026-10-13) — PR-A tasks A0–A7 DONE and ticked; Task A8 rewritten so it can run without the original sandbox machine (see "Resume here" and Task A8). rev 6 — written fresh against **spec rev 11** (`cfb56fe`). Rev 5 mirrored spec rev 7 and is RETIRED in full; nothing below inherits from it. Two tracks: **PR-A** (fully expanded, execute now) and **PR-B** (task-level, re-expanded as plan rev 7 in Task B0 against post-PR-A `main`, because PR-A moves the code PR-B edits).
 
 **Goal:** Make every `wiki.setup()` open of an up-to-date store O(state-change) instead of O(database), give hosts a lever to keep one-time migration work out of the writer lease, and make FTS init failures recoverable instead of index-destroying.
 
@@ -47,6 +47,31 @@
 
 ---
 
+## Resume here (rev 7 handoff, 2026-10-13)
+
+**Read this block first. Everything you need to continue PR-A is here; do not re-run A0–A7.**
+
+- **Branch:** `spec/issue280-setup-walltime`, head `584ba94` (pushed). **PR #281** is a DRAFT, body says `Refs #280` (no `Fixes`), CI green at `584ba94`.
+- **Baseline now:** core suite 176 files / **1891 tests**, 0 failures; `pnpm typecheck` exit 0; `pnpm -r build` clean. This supersedes the A0 baseline line.
+- **Done (A0–A7)** — where each landed:
+  | Task | Commits |
+  |---|---|
+  | A1 idempotent `normalizeSourceRef`, A2 v14 partial index | `fcbf8ca`, `d761d9d` (fresh-store finalize atomic) |
+  | A3 stamped normalize, A4 gate (`'allow' \| 'refuse' \| 'auto'`) | `0f00747`…`920f71d`, `830e39e`, `fcbf8ca` |
+  | Review fixes (policy `TypeError`, VACUUM resets normalize watermarks in `MaintenanceService.runPrune`, shared `detectSchemaVersion`, fingerprinted probe watermarks, `upsertGraphCore` normalizes) | `33c9cf7` (spec rev 11b `4a6688b`) |
+  | A5 RC-6 guard | `ddff88e` |
+  | A6 six call sites | `8b9d081` |
+  | A7 docs | `69d2a00` (spec rev 11c `584ba94`) |
+- **Deviations already applied — do NOT "fix" them back to the plan text:**
+  1. The gate API shipped as `migrations: 'allow' | 'refuse' | 'auto'` and `PendingMigrationWork` = `schema_migration` / `source_ref_normalize` (spec rev 11a "Shipped gate contract"). Plan code in A4 that says `'run'`, `normalizeRequired` or `retiredTables` is historical.
+  2. A4's `readSchemaVersion` lives as `detectSchemaVersion` in `src/db/sourceRefNormalize.ts`; `probePendingWork(db, meta, prefix)` takes `db` first.
+  3. The VACUUM watermark reset is in `MaintenanceService.runPrune` (via `resetNormalizeWatermarks`), not in `MetadataRepository.vacuum()` (that would be an import cycle).
+  4. Plan test fixes: A5's "every sync entry point stays off the full-read path" test warms the store first (`warm` helper option); A6's (o) heal test sets `orphanAfterDays: null` / `staleInferredAfterDays: null`; `getLibrarianWatermark` takes a tx argument.
+- **Remaining for PR-A:** Task A8 only (below). The ARM64 leg (A8 Step 4) needs the maintainer.
+- **Not in scope:** anything under Track PR-B.
+
+---
+
 # Track PR-A — warm open, migration gate, RC-6 guard (`Refs #280`)
 
 ## PR-A file map
@@ -73,8 +98,8 @@
 
 ### Task A0 (controller): baseline
 
-- [ ] **Step 1:** on `cfb56fe`, run the full core suite. Append under Global Constraints: `Baseline (cfb56fe): <files> files, <tests> tests completed, <n> fork errors, 0 assertion failures`.
-- [ ] **Step 2:** `git add -f docs/superpowers/plans/2026-10-10-issue280-setup-walltime-plan.md && git commit -m "docs(plan): record issue280 PR-A suite baseline"`
+- [x] **Step 1:** on `cfb56fe`, run the full core suite. Append under Global Constraints: `Baseline (cfb56fe): <files> files, <tests> tests completed, <n> fork errors, 0 assertion failures`.
+- [x] **Step 2:** `git add -f docs/superpowers/plans/2026-10-10-issue280-setup-walltime-plan.md && git commit -m "docs(plan): record issue280 PR-A suite baseline"`
 
 ---
 
@@ -87,7 +112,7 @@
 **Interfaces:**
 - Produces: `normalizeSourceRef(value: string): string | null`, unchanged signature, now a fixed point (`n(n(x)) === n(x)`). Tasks A3 and A4 rely on the fixed point: "violating" ⇔ `normalizeSourceRef(v) !== v`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 // packages/core/__tests__/normalizeSourceRef.test.ts
@@ -125,8 +150,8 @@ describe('normalizeSourceRef', () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify failure** — `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/normalizeSourceRef.test.ts`. Expected: FAIL on the first case (`received` ends with a space).
-- [ ] **Step 3: Implement** — in `pure.ts` replace the `cleaned` line:
+- [x] **Step 2: Run to verify failure** — `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/normalizeSourceRef.test.ts`. Expected: FAIL on the first case (`received` ends with a space).
+- [x] **Step 3: Implement** — in `pure.ts` replace the `cleaned` line:
 
 ```typescript
 export function normalizeSourceRef(value: string): string | null {
@@ -138,8 +163,8 @@ export function normalizeSourceRef(value: string): string | null {
 }
 ```
 
-- [ ] **Step 4: Run to verify pass** (same command). Then run `hasChanged.test.ts`, `hasChangedBatched.test.ts`, `ingest.test.ts`, `importDump.test.ts` — all PASS.
-- [ ] **Step 5: Commit** — `git add packages/core/src/utils/pure.ts packages/core/__tests__/normalizeSourceRef.test.ts && git commit -m "fix(core): make normalizeSourceRef idempotent at the 255-char cut (#280)"`
+- [x] **Step 4: Run to verify pass** (same command). Then run `hasChanged.test.ts`, `hasChangedBatched.test.ts`, `ingest.test.ts`, `importDump.test.ts` — all PASS.
+- [x] **Step 5: Commit** — `git add packages/core/src/utils/pure.ts packages/core/__tests__/normalizeSourceRef.test.ts && git commit -m "fix(core): make normalizeSourceRef idempotent at the 255-char cut (#280)"`
 
 ---
 
@@ -155,7 +180,7 @@ export function normalizeSourceRef(value: string): string | null {
 **Interfaces:**
 - Produces: `legacySourceTypeIndexDdl(prefix: string): string` (exported from `db/schema.ts`), plus `MIGRATIONS` entry `{ version: 14 }`. `CURRENT_SCHEMA_VERSION` becomes 14 automatically.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 // packages/core/__tests__/legacyProbeIndex.test.ts
@@ -218,8 +243,8 @@ describe('legacy source_type partial index', () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify failure** — expected FAIL: `CURRENT_SCHEMA_VERSION` is 13; the index doesn't exist.
-- [ ] **Step 3: Implement**
+- [x] **Step 2: Run to verify failure** — expected FAIL: `CURRENT_SCHEMA_VERSION` is 13; the index doesn't exist.
+- [x] **Step 3: Implement**
 
 In `schema.ts`, after `setupDatabase`:
 
@@ -264,8 +289,8 @@ In `migration13.test.ts`:
 - replace the "is the last migration" body with `expect(MIGRATIONS.some((m) => m.version === 13)).toBe(true);`;
 - at :63 change `toBe('13')` to `toBe(String(CURRENT_SCHEMA_VERSION))`.
 
-- [ ] **Step 4: Run to verify pass** — run `legacyProbeIndex.test.ts`, `migration13.test.ts`, `migrations.test.ts`, then `grep -rn "toBe('13')\|toBe(13)" packages/core/__tests__` → no remaining hits. Then typecheck.
-- [ ] **Step 5: Commit** — `perf(core): partial covering index for the legacy source_type probe via v14 (#280 RC-2)`
+- [x] **Step 4: Run to verify pass** — run `legacyProbeIndex.test.ts`, `migration13.test.ts`, `migrations.test.ts`, then `grep -rn "toBe('13')\|toBe(13)" packages/core/__tests__` → no remaining hits. Then typecheck.
+- [x] **Step 5: Commit** — `perf(core): partial covering index for the legacy source_type probe via v14 (#280 RC-2)`
 
 ---
 
@@ -290,7 +315,7 @@ In `migration13.test.ts`:
   - `runSourceRefNormalize(db: SQLiteAdapter, prefix: string, meta: MetadataRepository): Promise<void>`
   - Task A4 consumes `stampMatches` + `NORMALIZE_STAMP_KEY`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 // packages/core/__tests__/sourceRefNormalize.test.ts
@@ -429,8 +454,8 @@ describe('v14 source_ref normalize', () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify failure** — expected FAIL: the module doesn't exist.
-- [ ] **Step 3: Implement**
+- [x] **Step 2: Run to verify failure** — expected FAIL: the module doesn't exist.
+- [x] **Step 3: Implement**
 
 ```typescript
 // packages/core/src/db/sourceRefNormalize.ts
@@ -557,8 +582,8 @@ In `MetadataRepository.ts`:
 
 with `import { ENTRIES_WM_KEY, SRI_WM_KEY } from '../db/sourceRefNormalize';`. If that import cycles (`sourceRefNormalize` imports the `MetadataRepository` *type* only, so it should not), move the two key constants to a `db/normalizeKeys.ts` leaf file and import them from both places.
 
-- [ ] **Step 4: Run to verify pass** — run `sourceRefNormalize.test.ts`, `legacyProbeIndex.test.ts`, `hasChanged*.test.ts`, `forgetDryRun.test.ts`, `ingestDuplicateHash.test.ts`, `findSourceRefsByHash.test.ts`, `importDump.test.ts`, `migration9.test.ts` — all PASS. Then typecheck.
-- [ ] **Step 5: Commit** — `feat(core): stamped two-pass source_ref normalize replaces the every-open scan (#280 RC-2/RC-7)`
+- [x] **Step 4: Run to verify pass** — run `sourceRefNormalize.test.ts`, `legacyProbeIndex.test.ts`, `hasChanged*.test.ts`, `forgetDryRun.test.ts`, `ingestDuplicateHash.test.ts`, `findSourceRefsByHash.test.ts`, `importDump.test.ts`, `migration9.test.ts` — all PASS. Then typecheck.
+- [x] **Step 5: Commit** — `feat(core): stamped two-pass source_ref normalize replaces the every-open scan (#280 RC-2/RC-7)`
 
 ---
 
@@ -581,7 +606,7 @@ with `import { ENTRIES_WM_KEY, SRI_WM_KEY } from '../db/sourceRefNormalize';`. I
   - `WikiMemory.setup(opts?: WikiSetupOptions): Promise<void>`.
   - PR-B Task B4 extends `probePendingWork`'s `retiredTables`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 // packages/core/__tests__/migrationGate.test.ts
@@ -660,8 +685,8 @@ describe("setup({ migrations: 'refuse' })", () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify failure** — expected FAIL: the `WikiMigrationRequiredError` export doesn't exist.
-- [ ] **Step 3: Implement**
+- [x] **Step 2: Run to verify failure** — expected FAIL: the `WikiMigrationRequiredError` export doesn't exist.
+- [x] **Step 3: Implement**
 
 In `types.ts` (next to `WikiBusyError`):
 
@@ -780,8 +805,8 @@ In `WikiMemory.ts`:
 
 (The rest of `setup()` stays as Task A3 left it.)
 
-- [ ] **Step 4: Run to verify pass** — run `migrationGate.test.ts`, `sourceRefNormalize.test.ts`, `legacyProbeIndex.test.ts`, `migrations.test.ts`, `migration*.test.ts` — all PASS. Then typecheck.
-- [ ] **Step 5: Commit** — `feat(core): setup({ migrations: 'refuse' }) gate with WikiMigrationRequiredError (#280)`
+- [x] **Step 4: Run to verify pass** — run `migrationGate.test.ts`, `sourceRefNormalize.test.ts`, `legacyProbeIndex.test.ts`, `migrations.test.ts`, `migration*.test.ts` — all PASS. Then typecheck.
+- [x] **Step 5: Commit** — `feat(core): setup({ migrations: 'refuse' }) gate with WikiMigrationRequiredError (#280)`
 
 ---
 
@@ -806,7 +831,7 @@ In `WikiMemory.ts`:
   - `probeFts5` now THROWS on non-absence errors (still returns `false` only for module-absent).
   - Task A6 consumes `isKeywordAvailable` and `isWikiSearchUnavailableError`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Replace the `"'auto' falls back to MiniSearch when FTS5 init throws; 'fts5' re-throws"` case in `createIndexStrategy.test.ts` with:
 
@@ -925,8 +950,8 @@ describe('unavailable keyword search inside WikiMemory', () => {
 
 (`findMiniSearchRows` lives on `EntryRepository` — `EntryRepository.ts:1107`; `wiki.write()` writes events, not entries, which is why the test inserts the entries row directly and drives the sync entry points.)
 
-- [ ] **Step 2: Run to verify failure** — run both files. Expected FAIL: `UnavailableIndexStrategy` module missing; the old code detaches.
-- [ ] **Step 3: Implement**
+- [x] **Step 2: Run to verify failure** — run both files. Expected FAIL: `UnavailableIndexStrategy` module missing; the old code detaches.
+- [x] **Step 3: Implement**
 
 In `types.ts`:
 
@@ -1089,8 +1114,8 @@ In `WikiMemory.ts`, replace `syncSearchIndex`:
   }
 ```
 
-- [ ] **Step 4: Run to verify pass** — run `createIndexStrategy.test.ts`, `searchUnavailable.test.ts`, `miniSearchFallback.test.ts`, `fts5IndexStrategy.test.ts`, `fts5Integration.test.ts`, `SearchService.test.ts` (if present), `incrementalSearchIndex.test.ts` — all PASS. Then typecheck.
-- [ ] **Step 5: Commit** — `fix(core): auto FTS init failures retry and degrade to UnavailableIndexStrategy, never detach (#280 RC-6)`
+- [x] **Step 4: Run to verify pass** — run `createIndexStrategy.test.ts`, `searchUnavailable.test.ts`, `miniSearchFallback.test.ts`, `fts5IndexStrategy.test.ts`, `fts5Integration.test.ts`, `SearchService.test.ts` (if present), `incrementalSearchIndex.test.ts` — all PASS. Then typecheck.
+- [x] **Step 5: Commit** — `fix(core): auto FTS init failures retry and degrade to UnavailableIndexStrategy, never detach (#280 RC-6)`
 
 ---
 
@@ -1112,7 +1137,7 @@ In `WikiMemory.ts`, replace `syncSearchIndex`:
 
 Sites `:189` (prefilter), `:550` and `:719` need NO code change: they already propagate through the `:668` catch → `onRetrievalFallback` → `:719` throw. They are pinned by tests only. `gate.ts:143` mid-pass needs no change either (the throw already aborts the pass with the watermark kept); it is pinned by a test.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```typescript
 // packages/core/__tests__/searchUnavailableCallSites.test.ts
@@ -1220,8 +1245,8 @@ Fixture facts (verified 2026-10-12):
 - Heal candidates are live, non-`immutable_document` rows with `heal_checked_at IS NULL OR ≤ cutoff` (`EntryRepository.ts:635-647`), so the `librarian_inferred` fixture row qualifies.
 - If the ops pass needs `embedding_dimension` to match the stored vector length, the `wikiWith` helper already sets it to 3.
 
-- [ ] **Step 2: Run to verify failure** — expected FAIL on (n′), (o) and (e-gate ii). The other cases may already pass; they pin existing propagation and must stay green.
-- [ ] **Step 3: Implement**
+- [x] **Step 2: Run to verify failure** — expected FAIL on (n′), (o) and (e-gate ii). The other cases may already pass; they pin existing propagation and must stay green.
+- [x] **Step 3: Implement**
 
 `RetrievalService.ts` (the full-scan `else` branch):
 
@@ -1308,8 +1333,8 @@ export async function gateNeedsKeyword(deps: Parameters<typeof gateCandidates>[0
 
 Update the `heal_skipped` description in `utils/diagnostics.ts:50` to `'Heal skipped a candidate fact, or the whole LLM pass when keyword search is unavailable.'`.
 
-- [ ] **Step 4: Run to verify pass** — run `searchUnavailableCallSites.test.ts`, `hybridScoring.test.ts`, `opsLibrarian.test.ts`, `healAnchorBounding.test.ts`, `healBounding.test.ts`, `diagnosticsMaintenance.test.ts`, `embeddingRetrieval.test.ts` — all PASS. Then typecheck.
-- [ ] **Step 5: Commit** — `fix(core): pin keyword-outage behavior at all six search call sites (#280 RC-6)`
+- [x] **Step 4: Run to verify pass** — run `searchUnavailableCallSites.test.ts`, `hybridScoring.test.ts`, `opsLibrarian.test.ts`, `healAnchorBounding.test.ts`, `healBounding.test.ts`, `diagnosticsMaintenance.test.ts`, `embeddingRetrieval.test.ts` — all PASS. Then typecheck.
+- [x] **Step 5: Commit** — `fix(core): pin keyword-outage behavior at all six search call sites (#280 RC-6)`
 
 ---
 
@@ -1320,7 +1345,7 @@ Update the `heal_skipped` description in `utils/diagnostics.ts:50` to `'Heal ski
 - Modify: `packages/core/src/WikiMemory.ts` (JSDoc on `setup`)
 - Modify: `packages/core/README.md` (or the package's existing configuration doc — find it with `grep -rln "indexStrategy" packages/core/*.md docs/ 2>/dev/null`)
 
-- [ ] **Step 1:** Replace the last paragraph of the `indexStrategy` doc:
+- [x] **Step 1:** Replace the last paragraph of the `indexStrategy` doc:
 
 ```typescript
    * FTS5 keeps its index inside the database file, fed by triggers on the
@@ -1333,7 +1358,7 @@ Update the `heal_skipped` description in `utils/diagnostics.ts:50` to `'Heal ski
    * (raise --max-old-space-size for larger stores).
 ```
 
-- [ ] **Step 2:** Add JSDoc above `setup(opts?)`:
+- [x] **Step 2:** Add JSDoc above `setup(opts?)`:
 
 ```typescript
   /**
@@ -1345,20 +1370,45 @@ Update the `heal_skipped` description in `utils/diagnostics.ts:50` to `'Heal ski
    */
 ```
 
-- [ ] **Step 3:** Add a "Opening inside a writer lease" subsection to the package doc with the host procedure from spec Change 1 (open with `'refuse'` → on `WikiMigrationRequiredError` release the lease → run `setup()` out of lease → re-open).
-- [ ] **Step 4:** Run the full core suite (gate per Global Constraints vs the Task A0 baseline), typecheck, then `pnpm -r build`. All clean.
-- [ ] **Step 5: Commit** — `docs(core): document the migration gate and the MiniSearch memory ceiling (#280)`
+- [x] **Step 3:** Add a "Opening inside a writer lease" subsection to the package doc with the host procedure from spec Change 1 (open with `'refuse'` → on `WikiMigrationRequiredError` release the lease → run `setup()` out of lease → re-open).
+- [x] **Step 4:** Run the full core suite (gate per Global Constraints vs the Task A0 baseline), typecheck, then `pnpm -r build`. All clean.
+- [x] **Step 5: Commit** — `docs(core): document the migration gate and the MiniSearch memory ceiling (#280)`
 
 ---
 
 ### Task A8 (controller): measurements, spec record, PR-A ready
 
-- [ ] **Step 1: @1M normalize measurement** (`ISSUE280_STORE_DIR=$HOME/issue280-stores`, never `/tmp`). On the 1M NVMe store: remove the stamp, run `setup()` (default), record total normalize wall, rows/s, and the max chunk-tx commit time. Then run `setup({ migrations: 'refuse' })` on an unstamped copy and record the gate-trip wall (expected ≪ 1 s).
-- [ ] **Step 2: Acceptance 1:** warm open @1M, warm and cold page cache, using `.sandbox/profile-setup.ts`. Targets: ≤ 1 s warm, ≤ 3 s cold.
-  Also measure `setup()` on the original **52.9 MB** store (warm and cold page cache, target ARM64 environment) — the #280 objective requires remeasurement at both original store sizes.
-- [ ] **Step 3:** Append spec **rev 12** (review log + Acceptance 6 derivation input: normalize@1M × 4.2, gate-trip wall, Acceptance 1 numbers). Commit: `docs(spec): issue280 rev 12 - PR-A measurements`.
-- [ ] **Step 4:** Update PR #281: title `perf(core): warm-open survival scans, migration gate, RC-6 guard (#280 PR-A)`. The body must contain `Refs #280` and no `Fixes`/`Closes`. Check with `gh pr view 281 --json body -q .body | grep -Ei "fixes|closes"` → no output.
-- [ ] **Step 5:** `gh pr checks 281` green (never claim green without checking) → `gh pr ready 281`. Merge is the maintainer's call (merge commit).
+**Rev 7 rewrite.** The original A8 assumed a sandbox (`.sandbox/profile-setup.ts`, a 1M store under `$HOME/issue280-stores`) that only existed on the investigation machine and was never committed. The maintainer authorized proceeding without it (2026-10-13). This task builds a committed replacement, then measures on whatever machine runs it, and records the machine honestly. Numbers from this machine are NOT comparable to the investigation's NVMe ThinkPad rows; never present them as such.
+
+**Files:**
+- Create: `bench/issue280/makeStore.ts` — builds a synthetic store.
+- Create: `bench/issue280/profileSetup.ts` — times `setup()` legs.
+- Create: `bench/issue280/README.md` — how to run, and the measured-machine table.
+- Modify: the spec (rev 12 append only), PR #281 title.
+
+**Global rules for A8:**
+- Stores go under `ISSUE280_STORE_DIR` (default `$HOME/issue280-stores`). Never `/tmp` (tmpfs undercounts disk cost 2–3×, investigation §2.1). Never commit a `.db` file.
+- Run with `node --experimental-strip-types` or `pnpm dlx tsx` against the BUILT core (`pnpm -r build` first; import from `packages/core/dist`), with `better-sqlite3` from the workspace. Use `openTestDatabase`'s adapter shape from `packages/core/__tests__/helpers/sqliteAdapter.ts` but on a FILE path, not `:memory:` (copy the adapter into `bench/issue280/adapter.ts`; do not import from `__tests__`).
+- Record for every run: CPU model, OS, disk type (NVMe/SATA/APFS SSD), Node version, `better-sqlite3` version, entry count, `.db` file size.
+- If any number misses its target, DO NOT tune code to hit it. Record it and stop; report to the maintainer.
+
+- [ ] **Step 1: `makeStore.ts`.** Args: `--entries N` (default 1,000,000), `--out <path>`. Steps:
+  1. Open the file DB, `PRAGMA journal_mode=WAL`, construct `WikiMemory` with `indexStrategy: 'fts5'` and a stub `llmProvider` (`generateText: async () => '{}'`), `await setup()` (fresh store: stamp + v14 index written).
+  2. Insert N rows directly into `llm_wiki_entries` in transactions of 10,000, ~1.1 KB per row to match the investigation's 1.12 GB @1M: `id` = `f<i>`, `entity_id` = `e<i % 100>`, `title` = 40 chars, `body` = ~1,000 chars of word-like text (seeded PRNG, fixed seed `280`), `source_ref` = **`dir/<i>.md`** for 50% of rows (violating — contains `/`) and `<i>.md` for the rest, `created_at`/`updated_at` = `Date.now()`. Look up the exact required columns with `PRAGMA table_info(llm_wiki_entries)` and fill every NOT NULL column.
+  3. Also insert N/10 `llm_wiki_source_ref_index` rows, 50% with a `/` in `source_ref`.
+  4. Run one plain `setup()` so FTS is `live` and the store is stamped, then `PRAGMA wal_checkpoint(TRUNCATE)`. Print entry count and file size.
+  Verify: `--entries 10000` finishes in seconds and a second `setup()` on it returns without error.
+- [ ] **Step 2: `profileSetup.ts`.** Args: `--store <path>`, `--leg <warm|normalize|gate>`. Each leg works on a COPY of the store (`fs.copyFileSync` of `.db`, after checkpoint) so legs don't contaminate each other. Use `performance.now()`.
+  - `warm`: open + `setup()` on the stamped store, 5 runs, report each and the median. Cold-cache variant: on Linux `sync; echo 3 | sudo tee /proc/sys/vm/drop_caches` before each run; on macOS `sudo purge`. If sudo is unavailable, report "cold: not measured" — never fake it.
+  - `normalize`: `DELETE FROM llm_wiki_meta WHERE key='source_ref_normalize_stamp'`, then time `setup()`. Also report rows/s (entries + source_ref_index rows ÷ normalize wall) and max chunk-tx commit time: wrap the adapter's `withTransactionAsync` to time each call and report the max.
+  - `gate`: delete the stamp on a fresh copy, time `setup({ migrations: 'refuse' })` until it throws `WikiMigrationRequiredError`; assert the stamp is still absent afterwards.
+  Verify on a 10k store first: all three legs run and print numbers.
+- [ ] **Step 3: Run @1M.** `makeStore --entries 1000000`, then each leg. Targets (spec Acceptance 1): warm ≤ 1 s, cold ≤ 3 s; gate-trip ≪ 1 s. Normalize has no target — it is the measurement Acceptance 6 needs. Put all results and the machine description in `bench/issue280/README.md`.
+- [ ] **Step 4 (MAINTAINER — do not attempt): ARM64 + 52.9 MB leg.** The #280 objective also requires `setup()` remeasured on the original 52.9 MB store on the ARM64 target. Write the exact commands into the README for the maintainer and mark this leg "pending maintainer" in the spec record. Do not substitute a local run for it.
+- [ ] **Step 5: Commit** — `git add bench/issue280 && git commit -m "test(core): committed issue280 setup() benchmark harness (#280 A8)"` (no `.db` files: check `git status` first).
+- [ ] **Step 6: Spec rev 12.** Append (never rewrite earlier text) a rev 12 entry to the spec Status line and a "PR-A measurements" subsection: the machine table; warm/cold medians @1M vs targets; normalize wall, rows/s, max chunk-tx ms; gate-trip wall; Acceptance 6 derivation input = normalize@1M × 4.2 (state it is extrapolated); ARM64 leg = pending maintainer. Commit `docs(spec): issue280 rev 12 - PR-A measurements`.
+- [ ] **Step 7: PR #281.** `gh pr edit 281 --title "perf(core): warm-open survival scans, migration gate, RC-6 guard (#280 PR-A)"`. Check `gh pr view 281 --json body -q .body | grep -Ei "fixes|closes"` prints nothing. Push, then `gh pr checks 281` — all green (never claim green without checking).
+- [ ] **Step 8: STOP.** Do NOT run `gh pr ready 281` and do not merge. Report the numbers and whether Acceptance 1 targets were met; readiness is the maintainer's call (pending the ARM64 leg). Merge commits only, never squash.
 
 ---
 
