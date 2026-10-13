@@ -47,12 +47,12 @@
 
 ---
 
-## Resume here (rev 8, 2026-10-13) — start at Task B1
+## Resume here (rev 8, 2026-10-13) — start at Task B2 (B1 done, commit 17bc7ab)
 
 - **PR-A is merged:** PR #281 → `main` as merge commit `459b84e`. Issue #280 is open again (a stray closing keyword in commit `cfb56fe` had auto-closed it). Only PR-B's PR body may say `Fixes #280`. No commit message may contain a closing keyword followed by an issue number.
 - **Branch:** `feat/issue280-fts-state-machine`, cut from `main` @ `459b84e`. It is not pushed and has no PR yet. Its only commit so far is this plan (rev 8).
 - **Baseline (B0, on `459b84e`):** core suite **176 files / 1904 tests, 0 failures**; `typecheck` exit 0.
-- **Next:** Task B1. Before B1 starts, get the maintainer's decisions on the B0 findings marked "decision". B1 depends on none of them; B2 needs F3 and F12, B4 needs F1 and F7, B5 needs F5 and F6, and B8 needs F8.
+- **Next:** Task B2 (B1 done). B2 needs F3 and F12 (approved 2026-10-13), B4 needs F1 and F7, B5 needs F5 and F6, B8 needs F8.
 - **Ignore** `.superpowers/sdd/2026-10-10-issue280-setup-walltime-plan/NEXT_SESSION_HANDOFF.md`: it is stale (it says A2–A7 failed; all of them shipped).
 - Task A8 (measurements) is still deferred. B8 needs its harness (F10).
 - The rev 7 block below is historical.
@@ -1511,7 +1511,7 @@ Update the `heal_skipped` description in `utils/diagnostics.ts:50` to `'Heal ski
 - Produces: `DrainOptions { deadline?: number; mode?: 'ledger' | 'full'; ids?: readonly string[]; entityId?: string }` (`IndexStrategy.ts`); `IndexStrategy.drain?(opts?: DrainOptions)`; `Fts5IndexStrategy` constructor `(db, prefix, metadataRepo, budgetMs = DEFAULT_SETUP_BUDGET_MS)`; `createIndexStrategy(db, prefix, metadataRepo, preferred, opts?: { setupBudgetMs?: number })`; `SearchService.sync(entityId?: string, opts?: { deadline?: number })`; `fts5PendingIndexesDdl(p)`, `idDrainChunkSql(p)`, `entityDrainHiSql(p)`, `entityDrainChunkSql(p)`; `monotonicNow()`; `DEFAULT_SETUP_BUDGET_MS`. Deadlines are `monotonicNow()` timestamps.
 - Consumes: nothing new.
 
-- [ ] **Step 1: Write the failing strategy tests** — create `packages/core/__tests__/fts5Drain.test.ts`:
+- [x] **Step 1: Write the failing strategy tests** — create `packages/core/__tests__/fts5Drain.test.ts`:
 
 ```typescript
 // packages/core/__tests__/fts5Drain.test.ts
@@ -1619,9 +1619,9 @@ describe('Fts5IndexStrategy.drain modes (#280 B1)', () => {
 });
 ```
 
-- [ ] **Step 2: Run it — expect FAIL.** `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/fts5Drain.test.ts` → FAIL: `fts5PendingIndexesDdl`/`idDrainChunkSql` are not exported, and the 7(m) assertion fails (`pending` is 0 because today's drain empties the ledger).
+- [x] **Step 2: Run it — expect FAIL.** `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/fts5Drain.test.ts` → FAIL: `fts5PendingIndexesDdl`/`idDrainChunkSql` are not exported, and the 7(m) assertion fails (`pending` is 0 because today's drain empties the ledger).
 
-- [ ] **Step 3: Shared clock + budget default.** Create `packages/core/src/utils/monotonicNow.ts`:
+- [x] **Step 3: Shared clock + budget default.** Create `packages/core/src/utils/monotonicNow.ts`:
 
 ```typescript
 /** Monotonic clock (ms): a wall-clock step must not stretch or skip a deadline or a cooldown. */
@@ -1642,7 +1642,7 @@ export const DEFAULT_SETUP_BUDGET_MS = 1500;
 
 In `packages/core/src/WikiMemory.ts`, delete the local `monotonicNow` (`:64-66`, keep the comment's meaning in the new file) and add `import { monotonicNow } from './utils/monotonicNow';` and `import { DEFAULT_SETUP_BUDGET_MS } from './utils/setupDefaults';`. In `packages/core/src/index.ts`, after the `DEFAULT_MAX_EMBED_CHARS` export line (`:18`), add `export { DEFAULT_SETUP_BUDGET_MS } from './utils/setupDefaults';`.
 
-- [ ] **Step 4: SQL.** In `packages/core/src/services/search/fts5Sql.ts`, after `drainChunkSql` add:
+- [x] **Step 4: SQL.** In `packages/core/src/services/search/fts5Sql.ts`, after `drainChunkSql` add:
 
 ```typescript
 /**
@@ -1701,7 +1701,7 @@ export function entityDrainChunkSql(p: string): readonly string[] {
 
 `idDrainChunkSql`'s first four statements each bind ONE `?` and the fifth binds one; call each with `[json]`. `entityDrainChunkSql`'s statements each bind two; call each with `[entityId, hi]`.
 
-- [ ] **Step 5: Interface.** In `packages/core/src/services/search/IndexStrategy.ts`, above `export interface IndexStrategy`, add:
+- [x] **Step 5: Interface.** In `packages/core/src/services/search/IndexStrategy.ts`, above `export interface IndexStrategy`, add:
 
 ```typescript
 /** One drain turn's shape (spec #280 Change 3 "drain interface"). */
@@ -1723,7 +1723,7 @@ export interface DrainOptions {
 
 and replace the `drain?(): Promise<void>;` member (`:128`) with `drain?(opts?: DrainOptions): Promise<void>;` (keep its doc comment, adding: "Bounded by `opts` — see DrainOptions."). In `UnavailableIndexStrategy.ts:26` change to `async drain(_opts?: DrainOptions): Promise<void> {}` and import `DrainOptions`.
 
-- [ ] **Step 6: Strategy drain.** In `Fts5IndexStrategy.ts`: import `DrainOptions`, `FTS5_DRAIN_CHUNK`, `fts5PendingIndexesDdl`, `idDrainChunkSql`, `entityDrainHiSql`, `entityDrainChunkSql`, `monotonicNow`, `DEFAULT_SETUP_BUDGET_MS`. Constructor gains `private readonly budgetMs: number = DEFAULT_SETUP_BUDGET_MS`. In `init()`'s rebuild transaction (`:31-37`), after `tx.execAsync(fts5TablesDdl(this.prefix));` add `await tx.execAsync(fts5PendingIndexesDdl(this.prefix));` (B2 rewrites init; this keeps fresh stores indexed meanwhile). Replace `drain()` (`:44-56`) with:
+- [x] **Step 6: Strategy drain.** In `Fts5IndexStrategy.ts`: import `DrainOptions`, `FTS5_DRAIN_CHUNK`, `fts5PendingIndexesDdl`, `idDrainChunkSql`, `entityDrainHiSql`, `entityDrainChunkSql`, `monotonicNow`, `DEFAULT_SETUP_BUDGET_MS`. Constructor gains `private readonly budgetMs: number = DEFAULT_SETUP_BUDGET_MS`. In `init()`'s rebuild transaction (`:31-37`), after `tx.execAsync(fts5TablesDdl(this.prefix));` add `await tx.execAsync(fts5PendingIndexesDdl(this.prefix));` (B2 rewrites init; this keeps fresh stores indexed meanwhile). Replace `drain()` (`:44-56`) with:
 
 ```typescript
   async drain(opts: DrainOptions = {}): Promise<void> {
@@ -1792,9 +1792,9 @@ and replace the `drain?(): Promise<void>;` member (`:128`) with `drain?(opts?: D
   }
 ```
 
-- [ ] **Step 7: Run Step 1's file — expect PASS** (same command as Step 2).
+- [x] **Step 7: Run Step 1's file — expect PASS** (same command as Step 2).
 
-- [ ] **Step 8: Write the failing SearchService routing test** — append to `packages/core/__tests__/searchServiceDrain.test.ts`, inside the existing `describe('SearchService in drain mode', ...)`:
+- [x] **Step 8: Write the failing SearchService routing test** — append to `packages/core/__tests__/searchServiceDrain.test.ts`, inside the existing `describe('SearchService in drain mode', ...)`:
 
 ```typescript
   it('passes mode/ids/deadline per entry point (#280 B1): write turns are ledger-only', async () => {
@@ -1814,7 +1814,7 @@ and replace the `drain?(): Promise<void>;` member (`:128`) with `drain?(opts?: D
 
 Run `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/searchServiceDrain.test.ts` → FAIL (`drain` is called with `undefined`).
 
-- [ ] **Step 9: SearchService.** In `packages/core/src/services/SearchService.ts` import `DrainOptions` and change:
+- [x] **Step 9: SearchService.** In `packages/core/src/services/SearchService.ts` import `DrainOptions` and change:
 
 ```typescript
   private drainTurn(entityId: string | undefined, opts: DrainOptions): Promise<void> {
@@ -1853,9 +1853,9 @@ and add to its doc comment: "With a ledger strategy, `sync()` runs one full quan
 
 In `syncStale` replace `:261` with `if (this.indexStrategy.drain) return this.drainTurn(undefined, { mode: 'full' });`. (vitest's `toEqual` ignores `undefined`-valued keys, so a call made as `{ mode: 'full', deadline: undefined }` matches `{ mode: 'full' }`.)
 
-- [ ] **Step 10: Run Step 8's file — expect PASS.**
+- [x] **Step 10: Run Step 8's file — expect PASS.**
 
-- [ ] **Step 11: Write the failing budget + v15 tests** — create `packages/core/__tests__/setupBudget.test.ts`:
+- [x] **Step 11: Write the failing budget + v15 tests** — create `packages/core/__tests__/setupBudget.test.ts`:
 
 ```typescript
 // packages/core/__tests__/setupBudget.test.ts
@@ -1944,7 +1944,7 @@ describe('schema v15 (#280 B1)', () => {
 
 Run `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/setupBudget.test.ts` → FAIL (`DEFAULT_SETUP_BUDGET_MS` undefined until Step 3 is exported; v15 missing; budget not validated or honoured).
 
-- [ ] **Step 12: v15.** In `packages/core/src/db/migrations.ts` add `import { fts5PendingIndexesDdl } from '../services/search/fts5Sql';` and append after the v14 entry:
+- [x] **Step 12: v15.** In `packages/core/src/db/migrations.ts` add `import { fts5PendingIndexesDdl } from '../services/search/fts5Sql';` and append after the v14 entry:
 
 ```typescript
   {
@@ -1962,7 +1962,7 @@ Run `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests
 
 (`fts5Sql.ts` imports nothing, so there is no cycle.)
 
-- [ ] **Step 13: Config + setup plumbing.** In `types.ts`, after `migrations?: MigrationPolicy;` (`:394`) add:
+- [x] **Step 13: Config + setup plumbing.** In `types.ts`, after `migrations?: MigrationPolicy;` (`:394`) add:
 
 ```typescript
   /**
@@ -1990,11 +1990,11 @@ In `createIndexStrategy.ts`, change the signature to `createIndexStrategy(db, pr
 
 pass `{ setupBudgetMs }` as `createIndexStrategy`'s fifth argument at `:333-338` and in `syncSearchIndex`'s re-init (`:721-722`, using `this.options.config?.setupBudgetMs ?? DEFAULT_SETUP_BUDGET_MS`), and change `:341` to `await this.searchService.sync(undefined, { deadline: openDeadline });`. Extend `setup()`'s JSDoc with: "Keyword-index catch-up work is bounded by `config.setupBudgetMs`; anything left converges on later opens and no-arg `syncSearchIndex()` calls."
 
-- [ ] **Step 14: Run Step 11's file — expect PASS.** Then run the touched neighbours: `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/fts5IndexStrategy.test.ts __tests__/fts5Integration.test.ts __tests__/createIndexStrategy.test.ts __tests__/searchUnavailable.test.ts __tests__/migrations.test.ts` → PASS.
+- [x] **Step 14: Run Step 11's file — expect PASS.** Then run the touched neighbours: `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/fts5IndexStrategy.test.ts __tests__/fts5Integration.test.ts __tests__/createIndexStrategy.test.ts __tests__/searchUnavailable.test.ts __tests__/migrations.test.ts` → PASS.
 
-- [ ] **Step 15: Gate.** Full suite (gate per Global Constraints vs the rev-8 baseline 1904/176 + the new tests) and `pnpm --filter @equationalapplications/core-llm-wiki typecheck` → exit 0.
+- [x] **Step 15: Gate.** Full suite (gate per Global Constraints vs the rev-8 baseline 1904/176 + the new tests) and `pnpm --filter @equationalapplications/core-llm-wiki typecheck` → exit 0.
 
-- [ ] **Step 16: Commit.**
+- [x] **Step 16: Commit.**
 
 ```bash
 git add packages/core/src/utils/monotonicNow.ts packages/core/src/utils/setupDefaults.ts packages/core/src/index.ts \
