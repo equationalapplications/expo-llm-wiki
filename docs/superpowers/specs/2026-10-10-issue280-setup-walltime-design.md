@@ -1,7 +1,7 @@
 # Spec: `wiki.setup()` wall time — minimal viable open, converging index
 
 **Date:** 2026-10-10
-**Status:** In progress (rev 11a, 2026-10-13: normative gate contract aligned with the shipped API — see "Shipped gate contract" below; PR-A row marks Change 4 as still outstanding. rev 11 status correction, 2026-10-13: PR-A's Change 1 (stamped normalize), Change 2 (v14 partial index) and the migration gate are implemented and tested, with the gate API shipped as `'allow' | 'refuse' | 'auto'` and `PendingMigrationWork` as `schema_migration`/`source_ref_normalize`. PR-A's Change 4 (probeFts5 classification, `UnavailableIndexStrategy`, call-site map) is NOT yet implemented. The earlier "PR-A scope complete" claim below is superseded; rev 11 — migration gate for the upgrade implemented and tested; rev 10 — Opus delta cycle #5 adjudicated: spec 0 BLOCKER/5 MAJOR/10 minor + plan 1 BLOCKER/5 MAJOR/5 minor, all verified against source and applied; reviews: GLM r1-r4, Opus full ×2, Opus delta ×5 cycles; logs under `~/.hermes/cache/scratch/issue280/`)
+**Status:** In progress (rev 11b, 2026-10-13: PR #281 `/code-review max` findings adjudicated — gate rejects unrecognized policies with `TypeError`; in-process VACUUM resets both normalize watermarks; probe and runner share one fingerprint-validated watermark read and one schema-version detector; `upsertGraphCore` normalizes its own `sourceRef`; the chunked normalize's concurrency contract is stated under "PR-A contract" below. Change 4 is still outstanding. rev 11a, 2026-10-13: normative gate contract aligned with the shipped API — see "Shipped gate contract" below; PR-A row marks Change 4 as still outstanding. rev 11 status correction, 2026-10-13: PR-A's Change 1 (stamped normalize), Change 2 (v14 partial index) and the migration gate are implemented and tested, with the gate API shipped as `'allow' | 'refuse' | 'auto'` and `PendingMigrationWork` as `schema_migration`/`source_ref_normalize`. PR-A's Change 4 (probeFts5 classification, `UnavailableIndexStrategy`, call-site map) is NOT yet implemented. The earlier "PR-A scope complete" claim below is superseded; rev 11 — migration gate for the upgrade implemented and tested; rev 10 — Opus delta cycle #5 adjudicated: spec 0 BLOCKER/5 MAJOR/10 minor + plan 1 BLOCKER/5 MAJOR/5 minor, all verified against source and applied; reviews: GLM r1-r4, Opus full ×2, Opus delta ×5 cycles; logs under `~/.hermes/cache/scratch/issue280/`)
 **Branch:** `spec/issue280-setup-walltime` · **PR:** [#281](https://github.com/equationalapplications/expo-llm-wiki/pull/281) (DRAFT until implemented)
 **Priority:** High — blocks the SynapseTree ARM64 gate (15 s writer-lease fence vs 693 s measured setup)
 
@@ -63,6 +63,21 @@ on that rebuild now yields `UnavailableIndexStrategy` instead of detaching.
   on the stamp, never on `schema_version`. Watermarks carry the fingerprint
   rule (Change 3 VACUUM section), and the engine's VACUUM path resets them.
 - **Fresh stores** write the partial index, the stamp, and `schema_version = CURRENT` directly, in one transaction (rev 11a), so a crash cannot leave a v14 store without the index.
+- **Concurrency during the chunked normalize (rev 11b).** Each chunk commits,
+  so between chunks the store holds a mix of raw and normalized refs. That is
+  safe because no correct caller can write in that window: the engine only
+  ever deletes the stamp by a `normalize_alg` bump, so any process that has
+  completed `setup()` saw (or wrote) a matching stamp, and a peer that is
+  itself mid-`setup()` resumes from the committed watermark and converges.
+  The one unsafe shape is calling a sourceRef-keyed method (`forget`,
+  `upsertGraph`, `hasChanged`, ingest) on an instance whose `setup()` has not
+  resolved; `setup()`'s JSDoc states that it must be awaited first. The
+  pre-PR single transaction blocked such calls only incidentally. A
+  mixed-version deployment across a `normalize_alg` bump is the accepted
+  residue already listed under Downgrade/backup-restore.
+- **Policy validation (rev 11b):** any `migrations` value other than
+  `'allow' | 'refuse' | 'auto'` throws `TypeError` before the probe, so a
+  mistyped `'Refuse'` fails closed instead of running the normalize.
 - **Migration gate:** see Change 1 "Upgrade open vs the fence". Default
   `migrations: 'allow'` (today's behavior). SynapseTree opens inside the lease
   with `'refuse'` and runs plain `setup()` out of lease on
@@ -961,7 +976,10 @@ surface normalizes. Audited surfaces
 
 - `WikiMemory.hasChanged` single + batched paths (`normalizeSourceRef` at
   :349/:371/:433/:810), `IngestionService` (:121), `MaintenanceService`
-  (:540/:640), `ImportExportService` (:275).
+  (:540/:640), `ImportExportService` (:275). **rev 11b:**
+  `IngestionService.upsertGraphCore` (shared by `upsertGraph` and
+  `ingestDocument`'s full path) now normalizes its own `sourceRef` at entry
+  instead of trusting both callers.
 - **Belts:** (a) the fixed-point scan is cheaply re-run whenever the
   stamp's `normalize_alg` id bumps (one rescan — already the
   stamp-mismatch behavior); (b) **already satisfied by existing code (Opus MIN-7):**
