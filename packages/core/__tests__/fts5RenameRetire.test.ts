@@ -8,7 +8,8 @@ import { createIndexStrategy } from '../src/services/search/createIndexStrategy'
 import { UnavailableIndexStrategy } from '../src/services/search/UnavailableIndexStrategy';
 import { FTS5_STATE_KEY, FTS5_RETIRED_TABLES_KEY } from '../src/services/search/fts5Sql';
 import { probePendingWork } from '../src/db/sourceRefNormalize';
-import type { SQLiteAdapter } from '../src/types';
+import { withSerializedTransactions } from '../src/db/serializedAdapter';
+import { WikiTransactionError, type SQLiteAdapter } from '../src/types';
 
 const P = 'llm_wiki_';
 let db: SQLiteAdapter;
@@ -79,6 +80,35 @@ describe('rename-retire (#280 B4, 7(u))', () => {
     expect(await state()).toBe('rebuilding');
   });
 
+  it.each([
+    ['SQLITE_IOERR_WRITE', () => Object.assign(new Error('disk I/O error'), { code: 'SQLITE_IOERR_WRITE' })],
+    ['SQLITE_FULL', () => Object.assign(new Error('database or disk is full'), { code: 'SQLITE_FULL' })],
+    ['expo-sqlite SQLITE_BUSY', () => new Error('Error code 5: database is locked')],
+  ])('(iv) RENAME failing with %s fails the reset whole: no DROP, nothing committed (#284 review)', async (_label, error) => {
+    await liveStore(10);
+    await swapTokenizer();
+    const orig = db.execAsync.bind(db);
+    const exec = vi.spyOn(db, 'execAsync').mockImplementation(async (sql: string) => {
+      if (/ALTER TABLE .*entries_fts RENAME TO/.test(sql)) throw error();
+      return orig(sql);
+    });
+    await expect(new Fts5IndexStrategy(db, P, meta).init()).rejects.toThrow();
+    expect(exec.mock.calls.some((c) => String(c[0]).startsWith(`DROP TABLE ${P}entries_fts`))).toBe(false);
+    expect(await meta.getTableDdl(`${P}entries_fts`)).not.toMatch(/porter/); // the old table survives
+    expect(await state()).toBe('live');
+    expect(await retired()).toEqual([]);
+  });
+
+  it('reclamation checks each retired table once per quantum, not per step (#284 review)', async () => {
+    const s = await liveStore(1200);
+    await swapTokenizer();
+    await new Fts5IndexStrategy(db, P, meta).init();
+    const exists = vi.spyOn(meta, 'tableExists');
+    await s.drain(); // converge + reclaim: 3 deletes, a merge, the drop
+    expect(await retired()).toEqual([]);
+    expect(exists.mock.calls.filter((c) => c[0] === `${P}entries_fts_retired_1`)).toHaveLength(1);
+  });
+
   it('marker loss does NOT take the reset path (no retired table)', async () => {
     await liveStore(10);
     await db.runAsync(`DELETE FROM ${P}meta WHERE key = ?`, [FTS5_STATE_KEY]);
@@ -116,6 +146,48 @@ describe('corruption repair (#280 B4, 7(e) corrupt-FTS leg)', () => {
     expect(ftsCorruptionClass(Object.assign(new Error('x'), { code: 'SQLITE_BUSY' }))).toBeNull();
     expect(ftsCorruptionClass(new Proxy({}, { get() { throw new Error('trap'); } }))).toBeNull();
     expect(ftsCorruptionClass(null)).toBeNull();
+  });
+
+  it('classifies a WikiTransactionError by its lifted driver code (#284 review)', () => {
+    expect(ftsCorruptionClass(new WikiTransactionError('Transaction failed', { cause: corruptVtab() }))).toBe('vtab');
+    expect(ftsCorruptionClass(new WikiTransactionError('Transaction failed', { cause: new Error('Error code 11: malformed') }))).toBe('corrupt');
+    expect(isSqliteError(new WikiTransactionError('Transaction failed', { cause: Object.assign(new Error('x'), { code: 'SQLITE_LOCKED' }) }))).toBe(true);
+    expect(isSqliteError(Object.assign(new Error('x'), { sqliteErrorCode: 42 }))).toBe(false);
+  });
+
+  it('through the serialized adapter (WikiMemory wiring), SQLITE_CORRUPT_VTAB during a drain still resets (#284 review)', async () => {
+    await liveStore(10);
+    await db.runAsync(`INSERT INTO ${P}entries (id, entity_id, title, body, tags, created_at, updated_at) VALUES ('r10', 'e1', 'cedar 10', 'b', '[]', 1, 1)`);
+    const sdb = withSerializedTransactions(db);
+    const s = new Fts5IndexStrategy(sdb, P, new MetadataRepository(sdb, P));
+    const orig = db.runAsync.bind(db);
+    let thrown = false;
+    vi.spyOn(db, 'runAsync').mockImplementation((async (sql: string, args?: unknown[]) => {
+      if (!thrown && String(sql).startsWith(`DELETE FROM ${P}entries_fts WHERE rowid IN`)) { thrown = true; throw corruptVtab(); }
+      return orig(sql, args as never);
+    }) as never);
+    await expect(s.drain({ mode: 'ledger', ids: ['r10'] })).resolves.toBeUndefined();
+    expect(thrown).toBe(true);
+    expect(await state()).toBe('rebuilding');
+    await s.drain();
+    expect(await state()).toBe('live');
+    expect((await s.search('cedar', { entityIds: ['e1'], limit: 50 })).length).toBe(11);
+  });
+
+  it('through the serialized adapter, a locked retired-table DELETE is still swallowed (#284 review)', async () => {
+    await liveStore(1200);
+    await swapTokenizer();
+    await new Fts5IndexStrategy(db, P, meta).init();
+    const sdb = withSerializedTransactions(db);
+    const s = new Fts5IndexStrategy(sdb, P, new MetadataRepository(sdb, P));
+    const orig = db.runAsync.bind(db);
+    vi.spyOn(db, 'runAsync').mockImplementation((async (sql: string, args?: unknown[]) => {
+      if (String(sql).startsWith(`DELETE FROM ${P}entries_fts_retired_1`)) throw Object.assign(new Error('database table is locked'), { code: 'SQLITE_LOCKED' });
+      return orig(sql, args as never);
+    }) as never);
+    await expect(s.drain()).resolves.toBeUndefined();
+    expect(await state()).toBe('live');
+    expect(await retired()).toEqual([`${P}entries_fts_retired_1`]);
   });
 
   it('isSqliteError is Proxy-safe and recognises both adapter shapes', () => {

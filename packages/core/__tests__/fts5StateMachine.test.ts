@@ -56,7 +56,9 @@ describe('live-row probe is bounded on every open (final review M1)', () => {
     await new Fts5IndexStrategy(db, P, meta).init();
     const probes = get.mock.calls.map((c) => String(c[0])).filter((q) => q.includes(`FROM ${P}entries`) && q.includes('deleted_at IS NULL'));
     expect(probes).toHaveLength(1);
-    expect(probes[0]).toMatch(new RegExp(`\\(SELECT deleted_at FROM ${P}entries ORDER BY rowid DESC LIMIT ${FTS5_DRAIN_CHUNK}\\)`));
+    for (const dir of ['ASC', 'DESC']) {
+      expect(probes[0]).toMatch(new RegExp(`\\(SELECT id, deleted_at FROM ${P}entries ORDER BY rowid ${dir} LIMIT ${FTS5_DRAIN_CHUNK}\\)`));
+    }
     expect(await state()).toBe('live');
     get.mockRestore();
   });
@@ -69,6 +71,25 @@ describe('live-row probe is bounded on every open (final review M1)', () => {
     await db.execAsync(`DELETE FROM ${P}fts_map; DELETE FROM ${P}entries_fts; DELETE FROM ${P}fts_pending;`);
     await new Fts5IndexStrategy(db, P, meta).init();
     expect(await state()).toBe('rebuilding');
+  });
+
+  it('a lost index stays detected after post-loss writes were drained into the map (#284 review)', async () => {
+    const s = await liveStore(30);
+    await db.execAsync(`DELETE FROM ${P}fts_map; DELETE FROM ${P}entries_fts;`);
+    await db.runAsync(`INSERT INTO ${P}entries (id, entity_id, title, body, tags, created_at, updated_at) VALUES ('late', 'e1', 'cedar late', 'b', '[]', 1, 1)`);
+    await s.drain({ mode: 'ledger' }); // the post-loss write repopulates the map: the old probe never fired again
+    expect(await count('fts_map')).toBe(1);
+    await new Fts5IndexStrategy(db, P, meta).init();
+    expect(await state()).toBe('rebuilding');
+  });
+
+  it('a healthy live store with an undrained ledger stays live', async () => {
+    await liveStore(30);
+    await bulk(5, 'e2');
+    await db.runAsync(`UPDATE ${P}entries SET title = 'moved' WHERE id = 'e1_0'`);
+    expect(await count('fts_pending')).toBe(6);
+    await new Fts5IndexStrategy(db, P, meta).init();
+    expect(await state()).toBe('live');
   });
 });
 

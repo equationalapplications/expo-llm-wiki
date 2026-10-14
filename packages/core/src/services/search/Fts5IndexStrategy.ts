@@ -60,11 +60,12 @@ export class Fts5IndexStrategy implements IndexStrategy {
   private async initOnce(opts: { entriesExisted?: boolean }): Promise<void> {
     const p = this.prefix;
     const state = await this.metadataRepo.getMeta(FTS5_STATE_KEY);
-    const ftsExists = await this.metadataRepo.tableExists(`${p}entries_fts`);
-    const mapExists = await this.metadataRepo.tableExists(`${p}fts_map`);
-    const pendingExists = await this.metadataRepo.tableExists(`${p}fts_pending`);
-    const trig = await this.triggersPresent();
-    const ftsDdl = ftsExists ? await this.metadataRepo.getTableDdl(`${p}entries_fts`) : null;
+    const schema = await this.readSchema();
+    const ftsExists = schema.tables.has(`${p}entries_fts`);
+    const mapExists = schema.tables.has(`${p}fts_map`);
+    const pendingExists = schema.tables.has(`${p}fts_pending`);
+    const trig = schema.triggersPresent;
+    const ftsDdl = schema.tables.get(`${p}entries_fts`) ?? null;
     const tokenizerOk = ftsDdl === null || /tokenize\s*=\s*['"]porter\s+unicode61['"]/i.test(ftsDdl);
 
     if (state === null && opts.entriesExisted === false) {
@@ -83,7 +84,7 @@ export class Fts5IndexStrategy implements IndexStrategy {
     if (intact && state === 'rebuilding') return; // resume; each quantum re-verifies the fingerprint
     if (intact && state === 'live') {
       await this.ftsOnly(() => this.db.getFirstAsync(`SELECT rowid FROM ${p}entries_fts ORDER BY rowid DESC LIMIT 1`));
-      if (await this.liveRowsButNothingIndexed()) return this.resetAndRearm();
+      if (await this.liveRowUnindexed()) return this.resetAndRearm();
       return; // fast path
     }
     // Marker lost, a trigger lost, or a table missing.
@@ -95,16 +96,21 @@ export class Fts5IndexStrategy implements IndexStrategy {
   }
 
   /**
-   * live, a live entry, an empty fts_map and an empty ledger: the index was lost (rev 8 m3 / rev 9 m4).
-   * Every-open path: the live-row probe reads at most FTS5_DRAIN_CHUNK of the newest rows (final review M1),
-   * so an all-soft-deleted store is never fully scanned; a lost index whose newest rows are all deleted goes undetected.
+   * The index was lost (rev 8 m3 / rev 9 m4): the oldest or the newest live entry is neither mapped nor
+   * ledgered, which `live` never allows. The oldest one keeps detection armed after post-loss writes
+   * repopulate the map and the ledger (#284 review). Every-open path: each side reads at most
+   * FTS5_DRAIN_CHUNK entries rows (final review M1), so an all-soft-deleted store is never fully scanned;
+   * a lost index whose oldest and newest rows are all deleted goes undetected.
    */
-  private async liveRowsButNothingIndexed(): Promise<boolean> {
+  private async liveRowUnindexed(): Promise<boolean> {
     const p = this.prefix;
-    if (await this.db.getFirstAsync(`SELECT 1 AS x FROM ${p}fts_map LIMIT 1`)) return false;
-    if (!(await this.db.getFirstAsync(
-      `SELECT 1 AS x FROM (SELECT deleted_at FROM ${p}entries ORDER BY rowid DESC LIMIT ${FTS5_DRAIN_CHUNK}) WHERE deleted_at IS NULL LIMIT 1`))) return false;
-    return (await this.db.getFirstAsync(`SELECT 1 AS x FROM ${p}fts_pending LIMIT 1`)) === null;
+    const edge = (dir: 'ASC' | 'DESC') => `SELECT id FROM (SELECT id FROM (SELECT id, deleted_at FROM ${p}entries`
+      + ` ORDER BY rowid ${dir} LIMIT ${FTS5_DRAIN_CHUNK}) WHERE deleted_at IS NULL LIMIT 1)`;
+    return (await this.db.getFirstAsync(
+      `SELECT 1 AS x FROM (${edge('ASC')} UNION ALL ${edge('DESC')}) e
+        WHERE NOT EXISTS (SELECT 1 FROM ${p}fts_map m WHERE m.id = e.id)
+          AND NOT EXISTS (SELECT 1 FROM ${p}fts_pending q WHERE q.id = e.id)
+        LIMIT 1`)) !== null;
   }
 
   /**
@@ -150,7 +156,10 @@ export class Fts5IndexStrategy implements IndexStrategy {
     const name = retiredTableName(p, n);
     try {
       await tx.execAsync(`ALTER TABLE ${p}entries_fts RENAME TO ${name}`);
-    } catch {
+    } catch (err) {
+      // Not damage: SQLite may have rolled the transaction back already, so further statements would
+      // autocommit one by one. Fail the reset whole instead (#284 review).
+      if (isTransientOrTxFatal(err)) throw err;
       // Shadow tables too damaged to rename: today's DROP, with its measured floor, for this case only.
       await tx.execAsync(`DROP TABLE ${p}entries_fts`);
       return;
@@ -191,24 +200,34 @@ export class Fts5IndexStrategy implements IndexStrategy {
   }
 
   /**
-   * One full quantum (spec #280 Change 3): ledger first; then, while
-   * `rebuilding`, ≥1 window unless the ledger drain overran the deadline,
-   * one sweep tx, and the flip check. A `live` store reads only the state.
+   * One full quantum (spec #280 Change 3): ledger first (at most half the
+   * budget while `rebuilding`); then, while `rebuilding`, ≥1 window unless
+   * the ledger drain overran the deadline, one sweep tx, and the flip check;
+   * then reclamation. A `live` store reads only the state.
    */
   private async fullQuantum(deadline: number): Promise<void> {
-    const ledgerOverran = await this.drainLedgerUntil(deadline);
-    if ((await this.metadataRepo.getMeta(FTS5_STATE_KEY)) === 'rebuilding') {
+    const rebuilding = (await this.metadataRepo.getMeta(FTS5_STATE_KEY)) === 'rebuilding';
+    // While rebuilding, the ledger stops at half the remaining budget, so a steady write backlog cannot
+    // starve the windows (#284 review). Overrun is still judged against the full deadline.
+    const start = monotonicNow();
+    const ledgerRan = await this.drainLedgerUntil(rebuilding ? start + (deadline - start) / 2 : deadline);
+    const ledgerOverran = ledgerRan && monotonicNow() >= deadline;
+    if (rebuilding) {
       const progress = await readRebuildProgress(this.metadataRepo);
-      if (!progress || !(await this.fingerprintValid(progress.wm))) return this.restartRebuild();
-      if (!ledgerOverran) {
-        let step: WindowStep;
-        do {
-          step = await this.runWindow(progress);
-        } while (step === 'more' && monotonicNow() < deadline);
-        // 'stale': progress moved under this quantum (a VACUUM restart, a re-anchor, a flip); the next quantum re-reads it.
-        if (step !== 'stale') await this.runSweepTx(progress);
+      if (!progress || !(await this.fingerprintValid(progress.wm))) {
+        // Windows resume next quantum; reclamation below still runs (#284 review).
+        await this.restartRebuild();
+      } else {
+        if (!ledgerOverran) {
+          let step: WindowStep;
+          do {
+            step = await this.runWindow(progress);
+          } while (step === 'more' && monotonicNow() < deadline);
+          // 'stale': progress moved under this quantum (a VACUUM restart, a re-anchor, a flip); the next quantum re-reads it.
+          if (step !== 'stale') await this.runSweepTx(progress);
+        }
+        await this.tryFlip();
       }
-      await this.tryFlip();
     }
     try {
       await this.reclaimRetired(deadline);
@@ -225,7 +244,12 @@ export class Fts5IndexStrategy implements IndexStrategy {
       const [name] = await this.retiredList();
       if (name === undefined) return;
       try {
-        await this.reclaimStep(name);
+        // The list and the table are read once per table, not per step (#284 review).
+        if (!(await this.metadataRepo.tableExists(name))) {
+          await this.delistRetired(name, false);
+          continue;
+        }
+        while (!(await this.reclaimStep(name)) && monotonicNow() < deadline);
       } catch (err) {
         if (ftsCorruptionClass(err) === null) throw err;
         // Persistently corrupt (the corruption reset is what retired it): DROP once and delist; if even
@@ -240,14 +264,13 @@ export class Fts5IndexStrategy implements IndexStrategy {
     }
   }
 
-  /** (1) delete <=500 rows, else (2) one bounded merge, else (3) DROP + delist. */
-  private async reclaimStep(name: string): Promise<void> {
-    if (!(await this.metadataRepo.tableExists(name))) return this.delistRetired(name, false);
+  /** (1) delete <=500 rows, else (2) one bounded merge, else (3) DROP + delist. True once delisted. */
+  private async reclaimStep(name: string): Promise<boolean> {
     if (await this.db.getFirstAsync(`SELECT rowid FROM ${name} LIMIT 1`)) {
       await this.db.withTransactionAsync(async (tx) => {
         await tx.runAsync(`DELETE FROM ${name} WHERE rowid IN (SELECT rowid FROM ${name} ORDER BY rowid LIMIT ${FTS5_DRAIN_CHUNK})`);
       });
-      return;
+      return false;
     }
     let merged = false;
     await this.db.withTransactionAsync(async (tx) => {
@@ -257,6 +280,7 @@ export class Fts5IndexStrategy implements IndexStrategy {
       merged = (after?.n ?? 0) - (before?.n ?? 0) >= 2; // FTS5 docs: < 2 means the merge did no work
     });
     if (!merged) await this.delistRetired(name, true);
+    return !merged;
   }
 
   private async delistRetired(name: string, drop: boolean): Promise<void> {
@@ -353,14 +377,14 @@ export class Fts5IndexStrategy implements IndexStrategy {
     });
   }
 
-  /** Seq-ordered ledger chunks until empty or the deadline. True when a chunk ran and the deadline was then reached. */
-  private async drainLedgerUntil(deadline: number): Promise<boolean> {
+  /** Seq-ordered ledger chunks until empty or `stopAt`. True when a chunk ran. */
+  private async drainLedgerUntil(stopAt: number): Promise<boolean> {
     let ran = false;
     while (await this.drainLedgerChunk()) {
       ran = true;
-      if (monotonicNow() >= deadline) return true;
+      if (monotonicNow() >= stopAt) break;
     }
-    return ran && monotonicNow() >= deadline;
+    return ran;
   }
 
   /** The caller's own ids, to completion, ≤ FTS5_DRAIN_CHUNK per transaction. */
@@ -484,11 +508,16 @@ export class Fts5IndexStrategy implements IndexStrategy {
     }
   }
 
-  private async triggersPresent(): Promise<boolean> {
-    const names = fts5TriggerNames(this.prefix);
-    const rows = await this.db.getAllAsync<{ name: string }>(
-      `SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN (?, ?, ?)`, [...names]);
-    return rows.length === names.length;
+  /** The init probes' schema facts in one sqlite_master read (#284 review): FTS tables with their DDL, and the triggers. */
+  private async readSchema(): Promise<{ tables: Map<string, string | null>; triggersPresent: boolean }> {
+    const p = this.prefix;
+    const triggers = fts5TriggerNames(p);
+    const names = [`${p}entries_fts`, `${p}fts_map`, `${p}fts_pending`, ...triggers];
+    const rows = await this.db.getAllAsync<{ type: string; name: string; sql: string | null }>(
+      `SELECT type, name, sql FROM sqlite_master WHERE name IN (${names.map(() => '?').join(', ')})`, names);
+    const tables = new Map(rows.filter((r) => r.type === 'table').map((r) => [r.name, r.sql] as const));
+    const present = new Set(rows.filter((r) => r.type === 'trigger').map((r) => r.name));
+    return { tables, triggersPresent: triggers.every((n) => present.has(n)) };
   }
 }
 
@@ -510,13 +539,28 @@ function unwrapFtsOnly(err: unknown): { cause: unknown; ftsOnly: boolean } {
   return { cause: err, ftsOnly: false };
 }
 
-/** Proxy-safe extractSqliteCode (issue #96): any trap => undefined. */
+/**
+ * Proxy-safe extractSqliteCode (issue #96): any trap => undefined. Also reads
+ * WikiTransactionError's `sqliteErrorCode`: the serialized adapter wraps every
+ * failed transaction in one, so the driver code is not on `code` (#284 review).
+ */
 function safeSqliteCode(err: unknown): string | undefined {
   try {
-    return extractSqliteCode(err);
+    const code = extractSqliteCode(err);
+    if (code !== undefined) return code;
+    const lifted = (err as { sqliteErrorCode?: unknown } | null | undefined)?.sqliteErrorCode;
+    return typeof lifted === 'string' ? lifted : undefined;
   } catch {
     return undefined;
   }
+}
+
+/** Busy/locked, or a code after which SQLite may roll the transaction back (sqlite.org/lang_transaction.html). Extended codes match by primary name. */
+const TRANSIENT_OR_TX_FATAL = ['SQLITE_BUSY', 'SQLITE_LOCKED', 'SQLITE_FULL', 'SQLITE_IOERR', 'SQLITE_NOMEM', 'SQLITE_INTERRUPT', 'SQLITE_ABORT', 'SQLITE_READONLY'];
+
+function isTransientOrTxFatal(err: unknown): boolean {
+  const code = safeSqliteCode(err);
+  return code !== undefined && TRANSIENT_OR_TX_FATAL.some((c) => code === c || code.startsWith(`${c}_`));
 }
 
 /**
