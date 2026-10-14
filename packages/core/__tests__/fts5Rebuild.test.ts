@@ -1,5 +1,7 @@
 // packages/core/__tests__/fts5Rebuild.test.ts
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 import { setupDatabase } from '../src/db/schema';
 import { MetadataRepository } from '../src/repositories/MetadataRepository';
@@ -191,6 +193,17 @@ describe('rebuild windows (#280 B3)', () => {
 });
 
 describe('runPrune re-anchors the fingerprint (#280 B3)', () => {
+  it('every engine hard delete of entries re-anchors the fingerprint (#284 review)', () => {
+    // A hard delete that skips the re-anchor restarts a rebuild from 0 on every prune; this guards new delete sites.
+    const src = resolve(__dirname, '../src');
+    const hardDelete = /DELETE FROM \$\{[\w.]+\}entries[\s`]/;
+    const sites = (readdirSync(src, { recursive: true }) as string[])
+      .filter((f) => f.endsWith('.ts'))
+      .filter((f) => hardDelete.test(readFileSync(join(src, f), 'utf8')));
+    expect(sites).toEqual([join('repositories', 'EntryRepository.ts')]);
+    for (const f of sites) expect(readFileSync(join(src, f), 'utf8')).toMatch(/reanchorRebuildFingerprint\(/);
+  });
+
   it('prune hard-deletes the fingerprint row: re-anchored, no restart, converges exactly once', async () => {
     const wdb = openTestDatabase();
     const stub = { llmProvider: { generateText: async () => '{}' }, config: { indexStrategy: 'fts5' as const } };
