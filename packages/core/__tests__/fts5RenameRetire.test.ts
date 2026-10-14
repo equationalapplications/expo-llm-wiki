@@ -169,6 +169,7 @@ describe('corruption repair (#280 B4, 7(e) corrupt-FTS leg)', () => {
     await expect(s.drain({ mode: 'ledger', ids: ['r10'] })).resolves.toBeUndefined();
     expect(thrown).toBe(true);
     expect(await state()).toBe('rebuilding');
+    expect((await s.search('cedar', { entityIds: ['e1'], limit: 50 })).map((r) => r.id)).toEqual(['r10']);
     await s.drain();
     expect(await state()).toBe('live');
     expect((await s.search('cedar', { entityIds: ['e1'], limit: 50 })).length).toBe(11);
@@ -229,6 +230,8 @@ describe('corruption repair (#280 B4, 7(e) corrupt-FTS leg)', () => {
     expect(thrown).toBe(true);
     expect(await state()).toBe('rebuilding');
     expect(await retired()).toEqual([`${P}entries_fts_retired_1`]);
+    // Resolving means the caller's ids are searchable now, not after the rebuild (#284 review).
+    expect((await s.search('cedar', { entityIds: ['e1'], limit: 50 })).map((r) => r.id)).toEqual(['r10']);
     await s.drain();
     expect(await state()).toBe('live');
     expect((await s.search('cedar', { entityIds: ['e1'], limit: 50 })).length).toBe(11);

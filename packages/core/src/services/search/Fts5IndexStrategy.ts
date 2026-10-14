@@ -5,7 +5,7 @@ import type { DrainOptions, IndexDocument, IndexSearchOptions, IndexSearchResult
 import {
   FTS5_DRAIN_CHUNK, FTS5_RECLAIM_MERGE_PAGES, FTS5_RETIRED_COUNTER_KEY, FTS5_RETIRED_TABLES_KEY, isRetiredTableName, retiredTableName, FTS5_REBUILD_SNAPSHOT_KEY, FTS5_REBUILD_WM_KEY, FTS5_STATE_KEY, FTS5_SWEEP_CURSOR_KEY,
   sweepChunkSql, sweepHiSql, windowChunkSql, windowHiSql, drainChunkSql, drainHiSql, entityDrainChunkSql, entityDrainHiSql, fts5PendingIndexesDdl,
-  fts5TablesDdl, fts5TriggerNames, fts5TriggersDdl, idDrainChunkSql,
+  fts5TablesDdl, fts5TriggerNames, fts5TriggersDdl, idDrainChunkSql, idReindexChunkSql,
 } from './fts5Sql';
 import { readRebuildProgress, writeRebuildStart, type RebuildProgress, type RebuildWatermark } from './fts5Progress';
 import { parseJsonArray } from '../../repositories/rowMappers';
@@ -178,11 +178,13 @@ export class Fts5IndexStrategy implements IndexStrategy {
       await this.drainOnce(opts);
     } catch (err) {
       // SQLITE_CORRUPT_VTAB names the FTS5 table itself, so the reset init() applies is safe here too:
-      // without it every drain fails until the next open (#284 review). The reset clears the ledger, so
-      // the caller's ids converge through the rebuild windows instead. Other corruption may be in
+      // without it every drain fails until the next open (#284 review). Other corruption may be in
       // entries, which this cannot repair: it propagates as before.
       if (ftsCorruptionClass(err) !== 'vtab') throw err;
       await this.resetAndRearm();
+      // The reset cleared the ledger, so the caller's ids are re-indexed from entries: resolving
+      // still means they are searchable (DrainOptions.ids), and the caller may drop them.
+      if (opts.ids && opts.ids.length > 0) await this.drainIds(opts.ids, idReindexChunkSql(this.prefix));
     }
   }
 
@@ -388,9 +390,8 @@ export class Fts5IndexStrategy implements IndexStrategy {
   }
 
   /** The caller's own ids, to completion, ≤ FTS5_DRAIN_CHUNK per transaction. */
-  private async drainIds(ids: readonly string[]): Promise<void> {
+  private async drainIds(ids: readonly string[], chunk: readonly string[] = idDrainChunkSql(this.prefix)): Promise<void> {
     const unique = [...new Set(ids)];
-    const chunk = idDrainChunkSql(this.prefix);
     for (let i = 0; i < unique.length; i += FTS5_DRAIN_CHUNK) {
       const json = JSON.stringify(unique.slice(i, i + FTS5_DRAIN_CHUNK));
       await this.db.withTransactionAsync(async (tx) => {

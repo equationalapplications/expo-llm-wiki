@@ -134,6 +134,15 @@ export function idDrainChunkSql(p: string): readonly string[] {
     'id IN (SELECT value FROM json_each(?))');
 }
 
+/**
+ * Re-index ids straight from entries, ledger or not: after a reset cleared the
+ * ledger, the caller's own ids still complete (DrainOptions.ids). Every
+ * statement binds `?` = a JSON array of ≤ FTS5_DRAIN_CHUNK ids.
+ */
+export function idReindexChunkSql(p: string): readonly string[] {
+  return ledgerChunkSql(p, 'SELECT value FROM json_each(?)', 'id IN (SELECT value FROM json_each(?))');
+}
+
 /** hi for an entity-targeted chunk. Binds `?` = entity_id. */
 export function entityDrainHiSql(p: string): string {
   return `SELECT max(seq) AS hi FROM (SELECT seq FROM ${p}fts_pending WHERE entity_id = ? ORDER BY seq LIMIT ${FTS5_DRAIN_CHUNK})`;
