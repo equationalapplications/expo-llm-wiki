@@ -1,0 +1,12 @@
+{
+  "dataset": "FinanceBench",
+  "model": "BGESmallENV15",
+  "retriever": "expo-llm-wiki hybrid",
+  "date": "2026-10-14T12:40:40.118Z",
+  "metrics": {
+    "mrr@10": 0.7017,
+    "hit_rate@5": 0.9067,
+    "hit_rate@10": 0.9667,
+    "queryCount": 150
+  }
+}

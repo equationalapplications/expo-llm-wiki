@@ -1,0 +1,14 @@
+{
+  "dataset": "SciFact",
+  "model": "BGESmallENV15",
+  "retriever": "expo-llm-wiki hybrid",
+  "date": "2026-10-14T12:47:11.225Z",
+  "metrics": {
+    "ndcg@10": 0.72,
+    "queryCount": 300
+  },
+  "baselines": {
+    "BM25": 0.665,
+    "DPR": 0.318
+  }
+}
