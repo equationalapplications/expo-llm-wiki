@@ -47,6 +47,13 @@
 
 ---
 
+## Resume here (rev 9, 2026-10-14) — B8 measurement step DONE (Kurt ruled it satisfied); STOP per B8 Step 7
+
+- **B8 @1M evaluation ran 2026-10-14** (Kurt's request + approval): harness `bench/issue280/` committed on branch `bench/issue280-b8` (`fbbd34e`), results in `bench/issue280/README.md`, spec **rev 12** carries the numbers. Reclamation rule applied: **in-quantum, no hand-off** (F1 resolved NO; the B4 guard test stays binding). F8/F13 resolved: sweep chunk 500 did not gate convergence; merge pages 500 performed untuned.
+- **Kurt's rulings (2026-10-14, Discord):** (1) commit the harness — done; (2) this run **satisfies** B8's measurement step — the 4.7 GB NVMe legs and the ARM64 leg are waived as follow-ups, not gates; (3) spec record = next logical step — done as rev 12.
+- **Remaining from B8:** Step 3 hand-off implementation is **not needed** (rule resolved bounded). The SynapseTree host-contract sign-off (Step 5's second half) is separate — it needs the maintainer's explicit confirmation and has NOT been recorded. PR-B already shipped (PR #284 merged `b23c301`, v7.13.0), so B8 Steps 6–7 are moot.
+- **Resume-here history:** rev 8 (2026-10-13) — start at Task B8 (B7 done, commit cc549a0). PR-A merged as #281 → `459b84e`; issue #280 reopened after a stray closing keyword auto-closed it. Baseline B0: core 176 files / 1904 tests, 0 failures; typecheck exit 0. A8 was deferred; B8's harness was built under F10.
+
 ## Resume here (rev 8, 2026-10-13) — start at Task B8 (B7 done, commit cc549a0)
 
 - **PR-A is merged:** PR #281 → `main` as merge commit `459b84e`. Issue #280 is open again (a stray closing keyword in commit `cfb56fe` had auto-closed it). Only PR-B's PR body may say `Fixes #280`. No commit message may contain a closing keyword followed by an issue number.
@@ -3684,22 +3691,13 @@ describe('FTS state machine, integration (#280 B7, ≥2k rows)', () => {
 
 **Rev 8 source check:** there is no committed benchmark harness on `main`; A8 (deferred) defines one (F10). The spec's numbering puts PR-A's measurements at rev 12; if A8 has not run by then, B8's spec revision takes the next free number. Check the spec Status line first and never reuse a number.
 
-- [ ] **Step 1: Harness.** If `bench/issue280/` is absent on the branch, do A8 Steps 1–2 first (same rules: stores under `ISSUE280_STORE_DIR`, never `/tmp`, never commit a `.db`, record the machine). Add a `--leg <window|reclaim>` to `profileSetup.ts`:
-  - `window`: on a copy of the 1M store, delete the `fts5_index_state` meta row (marker loss), open once with `setupBudgetMs: 1500`, then time `syncSearchIndex()` calls until `live`. Report the per-quantum wall (median, max), windows per quantum, rows/s, and the max single window-tx commit time (wrap `withTransactionAsync`).
-  - `reclaim`: on a copy, force the tokenizer-mismatch reset (B4 test recipe), time the RENAME tx, then each reclamation step (delete-chunk, merge, final DROP) separately until `fts5_retired_tables` is empty. Report the count, median and max per step type, and the final DROP time.
-  Verify both legs on a 10k store first.
-- [ ] **Step 2: Run @1M**, then add the results to `bench/issue280/README.md` with the machine table.
-- [ ] **Step 3: Reclamation rule.** If the final DROP after reclamation is bounded (≪ 22.3 s, same order as one chunk), keep reclamation in-quantum and stop here. If not, implement the hand-off (F1 shape, after the maintainer confirms the name):
-  - `types.ts`: add `| { type: 'fts_retired_tables'; tables: number }` to `PendingMigrationWork`.
-  - `sourceRefNormalize.ts` `probePendingWork`: after the normalize check, `const retired = parseJsonArray<unknown>(await meta.getMeta('fts5_retired_tables'), [])`; if `retired.length > 0` return `{ type: 'fts_retired_tables', tables: retired.length }`.
-  - `migrationGate.ts`: `'auto'` lets it through (like the normalize); `describePending` gets a third branch: `` `${pending.tables} retired keyword-index table(s) await reclamation` ``.
-  - `Fts5IndexStrategy`: in-quantum reclamation is skipped; plain `setup()` under `'allow'`/`'auto'` reclaims every retired table to completion after `init()` (not budgeted).
-  - Test 7(u)(iv): a store with a retired table → `setup({ migrations: 'refuse' })` rejects with `pendingWork: { type: 'fts_retired_tables', tables: 1 }`; a plain `setup()` then drops it, and a following `'refuse'` open passes.
-  - Commit `feat(core): hand retired FTS table reclamation to the migration gate (#280 B8)`.
-- [ ] **Step 4: 4.7 GB legs** (background, ~30–45 min each, NVMe): Acceptance 4, 5, 6 and the largest chunk commit. Do not tune code to hit a target; record and report misses.
-- [ ] **Step 5: Spec revision (append only).** Add a new revision entry to the spec Status line and a "PR-B measurements" subsection with every number from Steps 2–4, the reclamation decision, and the SynapseTree host-contract sign-off in the review log. **Do not record the sign-off without the maintainer's explicit confirmation.** Commit `docs(spec): issue280 rev <N> - PR-B measurements and sign-off`.
-- [ ] **Step 6: PR.** Push the branch; `gh pr create --base main --title "feat(core): FTS state machine, budgeted drains, rename-retire (#280 PR-B)"`. The body says `Fixes #280` (the ONLY place that keyword may appear) and ends with the attribution line. Then run `git log main..HEAD --format=%B | grep -Ei "(fix|fixes|fixed|close|closes|closed|resolve|resolves|resolved) #[0-9]+"`; it must print nothing. Run `gh pr checks <n>` and do not claim green without seeing it.
-- [ ] **Step 7: STOP.** Report. `gh pr ready` and the merge (merge commit, never squash) are the maintainer's call.
+- [x] **Step 1: Harness.** Built as `bench/issue280/` (`makeStore.ts` + `profileSetup.ts`, legs `open|window|reclaim`), verified on 12k first (2026-10-14). Deviations recorded in `bench/issue280/README.md`: the window leg used the tokenizer-mismatch reset rather than marker loss; reclamation is timed in aggregate rather than per step type.
+- [x] **Step 2: Run @1M** — 2026-10-14, results in `bench/issue280/README.md` with the machine table (and spec rev 12).
+- [x] **Step 3: Reclamation rule.** Resolved **bounded ⇒ in-quantum, no hand-off**: the whole reclaim leg converged in 35 budgeted quanta (~29 s) with the 500-page merge constant untuned; the final DROP runs on an already-emptied table. `probePendingWork` keeps returning `null` for retired tables; the B4 guard test stays binding. Hand-off implementation (F1 shape) not needed.
+- [x] **Step 4: 4.7 GB legs** — **WAIVED by the maintainer** (Kurt, 2026-10-14: this run satisfies B8's measurement step). Follow-up if pro-scale evidence ever contradicts the @1M numbers.
+- [x] **Step 5: Spec revision (append only).** rev 12 on `bench/issue280-b8` records every number from Steps 2–3 and the reclamation decision. The SynapseTree host-contract sign-off is NOT recorded (needs the maintainer's explicit confirmation).
+- [x] **Step 6: PR.** Moot — PR-B already shipped (PR #284 merged `b23c301`, released v7.13.0 on 2026-10-14); this branch carries the harness + records only.
+- [x] **Step 7: STOP.** Reported to the maintainer 2026-10-14.
 
 ---
 
