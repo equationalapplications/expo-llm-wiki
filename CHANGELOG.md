@@ -1,3 +1,27 @@
+## [7.13.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.12.0...v7.13.0) (2026-10-14)
+
+### Features
+
+* **core:** budgeted FTS drain modes, setupBudgetMs and schema v15 ([#280](https://github.com/equationalapplications/expo-llm-wiki/issues/280) B1) ([17bc7ab](https://github.com/equationalapplications/expo-llm-wiki/commit/17bc7ab7b38b598d863575e18d21f5466cd19522))
+* **core:** chunked FTS rebuild windows, fingerprint, orphan sweep and flip ([#280](https://github.com/equationalapplications/expo-llm-wiki/issues/280) B3) ([9074cb5](https://github.com/equationalapplications/expo-llm-wiki/commit/9074cb5215ce245029b8b645a5815d6a09bb7133))
+* **core:** FTS5 init state machine with keep-map re-arm, no single-tx rebuild ([#280](https://github.com/equationalapplications/expo-llm-wiki/issues/280) B2) ([92cefd8](https://github.com/equationalapplications/expo-llm-wiki/commit/92cefd83acef010fd8ca48748bde57dbbb1d6288))
+* **core:** in-process VACUUM restarts a rebuilding FTS index ([#280](https://github.com/equationalapplications/expo-llm-wiki/issues/280) B6) ([c53237d](https://github.com/equationalapplications/expo-llm-wiki/commit/c53237da8e2e34472fccc7d8a766ebc2d5adf30e))
+* **core:** rename-retire FTS resets, bounded reclamation, corruption-class repair ([#280](https://github.com/equationalapplications/expo-llm-wiki/issues/280) B4) ([6e6abd4](https://github.com/equationalapplications/expo-llm-wiki/commit/6e6abd48dd0c51fb6e74ab315e3417ed964ebad9))
+* **core:** thread upsertGraph and import ids into the FTS drain ([#280](https://github.com/equationalapplications/expo-llm-wiki/issues/280) B5) ([57ed7bc](https://github.com/equationalapplications/expo-llm-wiki/commit/57ed7bc5a6a29c5dbf34824838b70e7db107fa75))
+
+### Bug Fixes
+
+* **core:** drain caller ids to completion; forward ids in full sync ([4be46a9](https://github.com/equationalapplications/expo-llm-wiki/commit/4be46a9a0cbaf9696564b1248f6cd27a599b155d))
+* **core:** drain facts superseded by upsertGraph; keep the stash during an outage ([1837ff4](https://github.com/equationalapplications/expo-llm-wiki/commit/1837ff42c9191735cdfce0a5eb844ed8176026e2))
+* **core:** enforce deadline in drain full mode ([b1634b5](https://github.com/equationalapplications/expo-llm-wiki/commit/b1634b5fba8117aab2b18ca9faee054c737cbcfc)), closes [#284](https://github.com/equationalapplications/expo-llm-wiki/issues/284)
+* **core:** FTS rebuild progress, retired-table reclaim, probe bounds ([#280](https://github.com/equationalapplications/expo-llm-wiki/issues/280) final review) ([02e9fc2](https://github.com/equationalapplications/expo-llm-wiki/commit/02e9fc21ce3ad8a8e7284514b3e6f85287f451d1))
+* **core:** harden FTS repair paths found by the PR [#284](https://github.com/equationalapplications/expo-llm-wiki/issues/284) max review ([270952e](https://github.com/equationalapplications/expo-llm-wiki/commit/270952e3b2233e6776bd0c733e07980dc32c4ad2))
+* **core:** keep ids re-stashed during an in-flight drain ([0c28fc4](https://github.com/equationalapplications/expo-llm-wiki/commit/0c28fc4b118cecf02ca8f1c8d358e17452145307))
+* **core:** keep stashed ids until their drain succeeds ([5ed3990](https://github.com/equationalapplications/expo-llm-wiki/commit/5ed3990bc09ddd9dc552e6863726bb8835f0f304))
+* **core:** re-index the caller's ids after a corruption reset in drain ([de6c704](https://github.com/equationalapplications/expo-llm-wiki/commit/de6c7047290b146cbd27fa7943b17e9abbc5b983)), closes [#284](https://github.com/equationalapplications/expo-llm-wiki/issues/284)
+* **core:** reset a corrupt FTS index found during a drain ([d43d42a](https://github.com/equationalapplications/expo-llm-wiki/commit/d43d42a7bb0e23eff0090acf908617999cf91d17))
+* **core:** test FTS-only CORRUPT reset branch, make retired-table reclamation best-effort ([#280](https://github.com/equationalapplications/expo-llm-wiki/issues/280) B4) ([42a0165](https://github.com/equationalapplications/expo-llm-wiki/commit/42a0165fcf3b14287839113b0d5de08e751c3c7e))
+
 ## [7.12.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.11.2...v7.12.0) (2026-10-13)
 
 ### Features
