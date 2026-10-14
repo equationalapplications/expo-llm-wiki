@@ -1312,7 +1312,7 @@ describe('syncEntries', () => {
 
     (service as any).indexStrategy.index.discard('f1'); // index loses f1; tracked set still has it
 
-    await expect(service.syncEntries('e1', ['f1'])).resolves.toBeUndefined();
+    await expect(service.syncEntries('e1', ['f1'])).resolves.toBe(true);
     expect(warn).not.toHaveBeenCalled();
     expect(await hits(service, 'apple')).toEqual(['f1']); // re-added from the live row
 
@@ -1336,7 +1336,7 @@ describe('syncEntries', () => {
     await service.sync('e1');
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    await expect(service.syncEntries('e1', ['nope'])).resolves.toBeUndefined();
+    await expect(service.syncEntries('e1', ['nope'])).resolves.toBe(true);
 
     expect(warn).not.toHaveBeenCalled();
     expect(await hits(service, 'apple')).toEqual(['f1']);
@@ -1441,7 +1441,7 @@ describe('syncEntries', () => {
     findMiniSearchRowsByIds.mockRejectedValueOnce(new Error('boom'));
 
     live.rows.push(makeMiniSearchRow('f2', 'e1', 'banana'));
-    await expect(service.syncEntries('e1', ['f2'])).resolves.toBeUndefined();
+    await expect(service.syncEntries('e1', ['f2'])).resolves.toBe(true);
 
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining('search index incremental sync failed for e1'),

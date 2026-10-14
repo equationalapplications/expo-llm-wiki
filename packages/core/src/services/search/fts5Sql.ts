@@ -4,6 +4,27 @@
 
 export const FTS5_STATE_KEY = 'fts5_index_state';
 export const FTS5_DRAIN_CHUNK = 500;
+export const FTS5_SWEEP_CHUNK = 500;
+/** Retired entries_fts tables awaiting reclamation: JSON array of table names (spec #280 rev 11 rename-retire). */
+export const FTS5_RETIRED_TABLES_KEY = 'fts5_retired_tables';
+/** Monotonic counter for retired-table names, so names never collide. */
+export const FTS5_RETIRED_COUNTER_KEY = 'fts5_retired_counter';
+/** Pages per reclamation 'merge' step (tuned by the B8 measurement). */
+export const FTS5_RECLAIM_MERGE_PAGES = 500;
+
+export function retiredTableName(p: string, n: number): string {
+  return `${p}entries_fts_retired_${n}`;
+}
+/** Only engine-shaped names are ever interpolated into reclamation SQL. */
+export function isRetiredTableName(p: string, name: unknown): name is string {
+  return typeof name === 'string' && name.startsWith(`${p}entries_fts_retired_`) && /^\d+$/.test(name.slice(`${p}entries_fts_retired_`.length));
+}
+/** Rebuild watermark: JSON `{ rowid, id }`; `id` is the fingerprint (the entries id at `rowid`), null at 0 and once windows complete. */
+export const FTS5_REBUILD_WM_KEY = 'fts5_rebuild_wm';
+/** Re-arm snapshot: JSON `{ entries: max(entries.rowid), map: max(fts_map.fts_rowid) }`. */
+export const FTS5_REBUILD_SNAPSHOT_KEY = 'fts5_rebuild_snapshot';
+/** Orphan-sweep cursor over fts_map.fts_rowid (decimal integer). Spec #280 Change 3. */
+export const FTS5_SWEEP_CURSOR_KEY = 'fts5_orphan_sweep_cursor';
 
 export function fts5TriggerNames(prefix: string): readonly [string, string, string] {
   return [`${prefix}entries_fts_ai`, `${prefix}entries_fts_au`, `${prefix}entries_fts_ad`];
@@ -65,9 +86,13 @@ export function drainHiSql(p: string): string {
   return `SELECT max(seq) AS hi FROM (SELECT seq FROM ${p}fts_pending ORDER BY seq LIMIT ${FTS5_DRAIN_CHUNK})`;
 }
 
-/** One drain chunk. Every statement binds `?` = hi. Run in one transaction, in order. */
-export function drainChunkSql(p: string): readonly string[] {
-  const chunkIds = `SELECT id FROM ${p}fts_pending WHERE seq <= ?`;
+/**
+ * One ledger-driven chunk: re-index the ids `chunkIds` selects, then delete
+ * the ledger rows `ledgerWhere` matches. Every statement binds the same
+ * arguments, so `chunkIds` and `ledgerWhere` must take identical placeholders.
+ * Run in one transaction, in order.
+ */
+function ledgerChunkSql(p: string, chunkIds: string, ledgerWhere: string): readonly string[] {
   return [
     `DELETE FROM ${p}entries_fts WHERE rowid IN (SELECT m.fts_rowid FROM ${p}fts_map m WHERE m.id IN (${chunkIds}))`,
     `DELETE FROM ${p}fts_map WHERE id IN (${chunkIds})`,
@@ -77,18 +102,55 @@ export function drainChunkSql(p: string): readonly string[] {
        SELECT m.fts_rowid, e.id, e.entity_id, e.title, e.body, ${tagsExpr('e.tags')}
        FROM ${p}fts_map m JOIN ${p}entries e ON e.id = m.id
        WHERE m.id IN (${chunkIds})`,
-    `DELETE FROM ${p}fts_pending WHERE seq <= ?`,
+    `DELETE FROM ${p}fts_pending WHERE ${ledgerWhere}`,
   ];
 }
 
-/** Full rebuild from live entries. Caller empties the three tables first, in the same transaction. */
-export function rebuildSql(p: string): readonly string[] {
-  return [
-    `INSERT INTO ${p}fts_map (id, entity_id) SELECT id, entity_id FROM ${p}entries WHERE deleted_at IS NULL`,
-    `INSERT INTO ${p}entries_fts (rowid, id, entity_id, title, body, tags)
-       SELECT m.fts_rowid, e.id, e.entity_id, e.title, e.body, ${tagsExpr('e.tags')}
-       FROM ${p}fts_map m JOIN ${p}entries e ON e.id = m.id`,
-  ];
+/** One drain chunk. Every statement binds `?` = hi. */
+export function drainChunkSql(p: string): readonly string[] {
+  return ledgerChunkSql(p, `SELECT id FROM ${p}fts_pending WHERE seq <= ?`, 'seq <= ?');
+}
+
+/**
+ * fts_pending indexes for the ids-first and entity-targeted drains (spec #280
+ * schema v15). Created by MIGRATIONS[15] where the ledger already exists, and
+ * by Fts5IndexStrategy.init together with the ledger table otherwise — never
+ * by setupDatabase and never on the init fast path.
+ */
+export function fts5PendingIndexesDdl(p: string): string {
+  return `
+CREATE INDEX IF NOT EXISTS ${p}fts_pending_id ON ${p}fts_pending(id);
+CREATE INDEX IF NOT EXISTS ${p}fts_pending_entity ON ${p}fts_pending(entity_id);`;
+}
+
+/**
+ * One ids-first drain chunk (the caller's own writes). Every statement binds
+ * `?` = a JSON array of ≤ FTS5_DRAIN_CHUNK ids. Ids with no ledger row are
+ * skipped: chunkIds is filtered through fts_pending.
+ */
+export function idDrainChunkSql(p: string): readonly string[] {
+  return ledgerChunkSql(p,
+    `SELECT id FROM ${p}fts_pending WHERE id IN (SELECT value FROM json_each(?))`,
+    'id IN (SELECT value FROM json_each(?))');
+}
+
+/**
+ * Re-index ids straight from entries, ledger or not: after a reset cleared the
+ * ledger, the caller's own ids still complete (DrainOptions.ids). Every
+ * statement binds `?` = a JSON array of ≤ FTS5_DRAIN_CHUNK ids.
+ */
+export function idReindexChunkSql(p: string): readonly string[] {
+  return ledgerChunkSql(p, 'SELECT value FROM json_each(?)', 'id IN (SELECT value FROM json_each(?))');
+}
+
+/** hi for an entity-targeted chunk. Binds `?` = entity_id. */
+export function entityDrainHiSql(p: string): string {
+  return `SELECT max(seq) AS hi FROM (SELECT seq FROM ${p}fts_pending WHERE entity_id = ? ORDER BY seq LIMIT ${FTS5_DRAIN_CHUNK})`;
+}
+
+/** One entity-targeted drain chunk. Every statement binds [entity_id, hi]. */
+export function entityDrainChunkSql(p: string): readonly string[] {
+  return ledgerChunkSql(p, `SELECT id FROM ${p}fts_pending WHERE entity_id = ? AND seq <= ?`, 'entity_id = ? AND seq <= ?');
 }
 
 /** Remove triggers and ordinary ledger tables. Never touches entries_fts (needs the fts5 module). */
@@ -98,4 +160,43 @@ export function fts5LedgerDropSql(p: string): string {
     `DROP TABLE IF EXISTS ${p}fts_pending;`,
     `DROP TABLE IF EXISTS ${p}fts_map;`,
   ].join('\n');
+}
+
+/** hi of the next rebuild window: max rowid over the next ≤500 EXISTING entries rows in (lo, cap]. Binds [lo, cap]. */
+export function windowHiSql(p: string): string {
+  return `SELECT max(rowid) AS hi FROM (SELECT rowid FROM ${p}entries WHERE rowid > ? AND rowid <= ? ORDER BY rowid LIMIT ${FTS5_DRAIN_CHUNK})`;
+}
+
+/**
+ * One rebuild window (spec #280 DDL note). Every statement binds [lo, hi].
+ * Never touches fts_pending: an id drained ahead of its window is simply
+ * re-done here, and fts_rowid never re-collides because the map is kept.
+ */
+export function windowChunkSql(p: string): readonly string[] {
+  const chunkIds = `SELECT id FROM ${p}entries WHERE rowid > ? AND rowid <= ?`;
+  return [
+    `DELETE FROM ${p}entries_fts WHERE rowid IN (SELECT m.fts_rowid FROM ${p}fts_map m WHERE m.id IN (${chunkIds}))`,
+    `DELETE FROM ${p}fts_map WHERE id IN (${chunkIds})`,
+    `INSERT INTO ${p}fts_map (id, entity_id)
+       SELECT e.id, e.entity_id FROM ${p}entries e WHERE e.rowid > ? AND e.rowid <= ? AND e.deleted_at IS NULL`,
+    `INSERT INTO ${p}entries_fts (rowid, id, entity_id, title, body, tags)
+       SELECT m.fts_rowid, e.id, e.entity_id, e.title, e.body, ${tagsExpr('e.tags')}
+       FROM ${p}entries e JOIN ${p}fts_map m ON m.id = e.id
+       WHERE e.rowid > ? AND e.rowid <= ?`,
+  ];
+}
+
+/** hi of the next sweep window over fts_map.fts_rowid in (lo, cap]. Binds [lo, cap]. */
+export function sweepHiSql(p: string): string {
+  return `SELECT max(fts_rowid) AS hi FROM (SELECT fts_rowid FROM ${p}fts_map WHERE fts_rowid > ? AND fts_rowid <= ? ORDER BY fts_rowid LIMIT ${FTS5_SWEEP_CHUNK})`;
+}
+
+/** Orphan sweep (spec #280 Change 3): map rows whose entry no longer exists. Both bind [lo, hi]; FTS rows first. */
+export function sweepChunkSql(p: string): readonly string[] {
+  const orphans = `SELECT m.fts_rowid FROM ${p}fts_map m
+     WHERE m.fts_rowid > ? AND m.fts_rowid <= ? AND NOT EXISTS (SELECT 1 FROM ${p}entries e WHERE e.id = m.id)`;
+  return [
+    `DELETE FROM ${p}entries_fts WHERE rowid IN (${orphans})`,
+    `DELETE FROM ${p}fts_map WHERE fts_rowid IN (${orphans})`,
+  ];
 }

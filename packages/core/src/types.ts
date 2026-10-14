@@ -392,6 +392,19 @@ export interface WikiConfig {
    * @default 'allow'
    */
   migrations?: MigrationPolicy;
+  /**
+   * Wall-time budget (ms) for each keyword-index quantum: one per `setup()`
+   * (shared by the whole open — the deadline is captured when setup() starts)
+   * and one per no-arg `syncSearchIndex()`. Checked between chunk
+   * transactions, so one quantum can overrun it by up to two chunks. Ids a
+   * write stashed for the call (see `upsertGraph`) drain before the quantum
+   * and outside the budget. An index reset runs as one unchunked transaction and is
+   * not bounded by it either.
+   * Convergence of a large backlog or rebuild continues on later opens and
+   * `syncSearchIndex()` calls. Must be a positive finite number.
+   * @default 1500 (DEFAULT_SETUP_BUDGET_MS)
+   */
+  setupBudgetMs?: number;
 }
 
 export interface ReadOptions {

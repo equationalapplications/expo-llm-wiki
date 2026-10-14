@@ -185,10 +185,12 @@ describe('ImportExportService', () => {
 
       await importExportService.importDump(mockDump, { merge: false });
 
-      // merge=false touches every previously live fact plus the bundle, so the
-      // id list is the whole entity anyway — sync()'s one entity scan beats a
-      // chunked id-parameterized read of those same ids.
-      expect(mockSearchService.sync).toHaveBeenCalledWith('user_1');
+      // merge=false passes every touched id (upserted + soft-deleted) so a
+      // ledger strategy drains them to completion (#280 B5).
+      expect(mockSearchService.sync).toHaveBeenCalledWith('user_1', { ids: expect.arrayContaining(['fact_1']) });
+      const ids = (mockSearchService.sync.mock.calls[0][1] as { ids: string[] }).ids;
+      expect([...ids].sort()).toEqual(['fact_1', 'old_1']);
+      expect(ids).toHaveLength(2);
       expect(mockSearchService.syncEntries).not.toHaveBeenCalled();
     });
 

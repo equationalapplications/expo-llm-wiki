@@ -1,5 +1,6 @@
 import type { SQLiteAdapter } from '../types';
 import { createTemporalIndexesIfColumnsExist } from './schema';
+import { fts5PendingIndexesDdl } from '../services/search/fts5Sql';
 
 export interface Migration {
   version: number;
@@ -348,6 +349,17 @@ export const MIGRATIONS: Migration[] = [
       // ONLY the index. The source_ref normalize is a separate stamp-checked,
       // watermark-resumable step after the migrations loop (sourceRefNormalize.ts).
       await createLegacySourceTypeIndex(db, prefix);
+    },
+  },
+  {
+    version: 15,
+    description: 'fts_pending(id) and fts_pending(entity_id) indexes for the ids-first and entity-targeted drains',
+    run: async (db, prefix) => {
+      // Only where the ledger exists. A MiniSearch or detached store has none;
+      // Fts5IndexStrategy.init creates these with the table when it (re)attaches.
+      const row = await db.getFirstAsync<{ n: number }>(
+        `SELECT count(*) AS n FROM sqlite_master WHERE type = 'table' AND name = ?`, [`${prefix}fts_pending`]);
+      if (row?.n) await db.execAsync(fts5PendingIndexesDdl(prefix));
     },
   },
 ];

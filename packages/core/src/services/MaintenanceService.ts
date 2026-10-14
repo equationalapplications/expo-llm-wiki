@@ -22,6 +22,7 @@ import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
 import { runBatched } from './BoundedLlmCall';
 import { resetNormalizeWatermarks } from '../db/sourceRefNormalize';
+import { restartRebuildAfterVacuum } from './search/fts5Progress';
 import type { BuiltPrompt } from './BoundedLlmCall';
 import { callLlm } from '../utils/llmCall';
 import type { UsageMeter } from '../utils/usage';
@@ -347,6 +348,8 @@ export class MaintenanceService {
         // VACUUM may renumber rowids; a watermark must never survive it.
         await resetNormalizeWatermarks(this.metadataRepo);
         await this.metadataRepo.vacuum();
+        // After it, so the restarted FTS rebuild snapshots the renumbered rowids (spec #280 7(k)).
+        await restartRebuildAfterVacuum(this.db, this.prefix, this.metadataRepo);
       }
 
       await this.searchService.syncEntries(entityId, syncedIds);

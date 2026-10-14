@@ -20,6 +20,8 @@ const SQLITE_RESULT_CODE_NAMES: Record<number, string> = {
   // prefix and we normalize it back to the symbolic name so callers can branch on
   // the same string the rest of the ecosystem uses.
   2067: 'SQLITE_CONSTRAINT_UNIQUE',
+  // 267 = SQLITE_CORRUPT_VTAB — a corrupt FTS5 shadow table (ftsCorruptionClass).
+  267: 'SQLITE_CORRUPT_VTAB',
   100: 'SQLITE_ROW', 101: 'SQLITE_DONE',
 };
 

@@ -82,14 +82,14 @@ describe('normalizeSourceRef', () => {
 
 describe('migration v14: legacy source_type partial index', () => {
   it('is the current schema version', () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(14);
-    expect(MIGRATIONS[MIGRATIONS.length - 1].version).toBe(14);
+    expect(CURRENT_SCHEMA_VERSION).toBe(15);
+    expect(MIGRATIONS[MIGRATIONS.length - 1].version).toBe(15);
   });
 
-  it('fresh store gets the index, the stamp, and schema_version 14', async () => {
+  it('fresh store gets the index, the stamp, and schema_version 15', async () => {
     const db = await freshDb();
     expect(await indexNames(db)).toContain(LEGACY_IDX);
-    expect(await meta(db, 'schema_version')).toBe('14');
+    expect(await meta(db, 'schema_version')).toBe('15');
     expect(JSON.parse((await meta(db, NORMALIZE_STAMP_KEY))!)).toEqual({ schema_version: 14, normalize_alg: 1 });
   });
 
@@ -101,7 +101,7 @@ describe('migration v14: legacy source_type partial index', () => {
     await insertEntry(db, 'f1', ' mail/a.md ');
     await new WikiMemory(db, stubOptions).setup();
     expect(await indexNames(db)).toContain(LEGACY_IDX);
-    expect(await meta(db, 'schema_version')).toBe('14');
+    expect(await meta(db, 'schema_version')).toBe('15');
     expect((await db.getFirstAsync<{ source_ref: string }>(`SELECT source_ref FROM ${P}entries WHERE id = 'f1'`))?.source_ref).toBe('maila.md');
   });
 
@@ -120,7 +120,7 @@ describe('migration v14: legacy source_type partial index', () => {
     failIndex = false;
     await new WikiMemory(db, stubOptions).setup();
     expect(await indexNames(db)).toContain(LEGACY_IDX);
-    expect(await meta(db, 'schema_version')).toBe('14');
+    expect(await meta(db, 'schema_version')).toBe('15');
   });
 
   it('setupDatabase does not create the index on an existing store', async () => {
@@ -259,8 +259,8 @@ describe('probePendingWork + migration gate', () => {
     await db.runAsync(`UPDATE ${P}meta SET value = '13' WHERE key = 'schema_version'`);
     const err = await new WikiMemory(db, stubOptions).setup({ migrations: 'refuse' }).catch((e) => e);
     expect(err).toBeInstanceOf(WikiMigrationRequiredError);
-    expect(err.pendingWork).toEqual({ type: 'schema_migration', fromVersion: 13, toVersion: 14 });
-    expect(err.message).toContain('v13 -> v14');
+    expect(err.pendingWork).toEqual({ type: 'schema_migration', fromVersion: 13, toVersion: 15 });
+    expect(err.message).toContain('v13 -> v15');
     expect(await meta(db, 'schema_version')).toBe('13');
     expect(await indexNames(db)).not.toContain(LEGACY_IDX);
   });

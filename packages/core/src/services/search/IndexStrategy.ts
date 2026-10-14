@@ -38,6 +38,26 @@ export interface IndexSearchResult {
   entity_id: string;
 }
 
+/** One drain turn's shape (spec #280 Change 3 "drain interface"). */
+export interface DrainOptions {
+  /** `monotonicNow()` timestamp, checked between chunk transactions. Full mode only; default now + the strategy's budget. */
+  deadline?: number;
+  /**
+   * `'ledger'` (write turns): `ids` to completion, then at most ONE foreign
+   * chunk. `'full'` (setup(), no-arg syncSearchIndex()): `ids`, then the
+   * ledger until the deadline, then rebuild work. Default `'full'`.
+   */
+  mode?: 'ledger' | 'full';
+  /**
+   * The caller's own ledger ids: drained first, to completion, ≤500 per
+   * transaction. Not deadline-bound: the cost is proportional to a write the
+   * caller already made.
+   */
+  ids?: readonly string[];
+  /** With empty `ids` in ledger mode, the one foreign chunk is `fts_pending WHERE entity_id = ?`. */
+  entityId?: string;
+}
+
 /**
  * Keyword-index abstraction. The strategy owns its own backing store
  * (in-RAM MiniSearch vs on-disk FTS5) and is responsible for keeping it
@@ -114,8 +134,9 @@ export interface IndexStrategy {
   /**
    * Create or verify the strategy's backing schema and run state changes.
    * Called once by `createIndexStrategy`, before the strategy is installed.
+   * `entriesExisted: false` marks a store `setup()` just created: FTS starts `live` with nothing to index.
    */
-  init?(): Promise<void>;
+  init?(opts?: { entriesExisted?: boolean }): Promise<void>;
 
   /**
    * Apply every change recorded in the strategy's durable ledger, in bounded
@@ -125,8 +146,6 @@ export interface IndexStrategy {
    * called from inside a `withTransactionAsync` callback; it opens its own
    * transactions.
    */
-  drain?(): Promise<void>;
+  drain?(opts?: DrainOptions): Promise<void>;
 
-  /** Rebuild entirely in SQL from the source tables; no rows pass through JS. */
-  rebuildFromSource?(): Promise<void>;
 }

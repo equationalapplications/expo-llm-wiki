@@ -3,6 +3,7 @@ import { cosineSimilarity } from '../utils/cosine';
 import { parseEmbedding } from '../utils/embedding';
 import { toIndexDoc } from '../utils/indexDoc';
 import type {
+  DrainOptions,
   IndexSearchOptions,
   IndexSearchResult,
   IndexStrategy,
@@ -100,24 +101,32 @@ export class SearchService {
     return !(this.indexStrategy instanceof UnavailableIndexStrategy);
   }
 
+  /** True when the installed strategy drains a durable ledger (FTS5, or the degraded stand-in). */
+  hasLedger(): boolean {
+    return this.indexStrategy.drain !== undefined;
+  }
+
   /**
    * One serialized drain turn for strategies with a durable ledger. Like
    * sync(), it never rejects: the keyword index is rebuildable, and a failed
-   * drain leaves the ledger rows in place for the next turn.
+   * drain leaves the ledger rows in place for the next turn. Resolves false
+   * when the drain failed.
    */
-  private drainTurn(entityId?: string): Promise<void> {
+  private drainTurn(entityId: string | undefined, opts: DrainOptions): Promise<boolean> {
     const work = this.syncChain.then(async () => {
       try {
         try {
-          await this.indexStrategy.drain!();
+          await this.indexStrategy.drain!(opts);
         } finally {
           this.evictCache(entityId);
         }
+        return true;
       } catch (err) {
         console.warn(`[WikiMemory] search index drain failed for ${entityId ?? '*'}:`, err);
+        return false;
       }
     });
-    this.syncChain = work;
+    this.syncChain = work.then(() => undefined);
     return work;
   }
 
@@ -128,9 +137,21 @@ export class SearchService {
    * Rebuilds are serialized per instance and never reject: the keyword index
    * is a rebuildable cache over SQLite, so degraded keyword search is the
    * correct failure mode and killing the host process is not.
+   *
+   * With a ledger strategy, `sync()` runs one full quantum bounded by
+   * `opts.deadline`; `sync(entityId)` is a write turn (ledger only).
+   * `opts.ids` are the caller's touched ids: a ledger strategy drains them
+   * first, to completion; MiniSearch ignores them and rebuilds the entity in
+   * one scan.
    */
-  async sync(entityId?: string): Promise<void> {
-    if (this.indexStrategy.drain) return this.drainTurn(entityId);
+  async sync(entityId?: string, opts?: { deadline?: number; ids?: readonly string[] }): Promise<void> {
+    if (this.indexStrategy.drain) {
+      // No entity: a full quantum (setup(), re-init). An entity: a write turn, ledger-only.
+      await this.drainTurn(entityId, entityId === undefined
+        ? { mode: 'full', deadline: opts?.deadline, ids: opts?.ids }
+        : { mode: 'ledger', entityId, ids: opts?.ids });
+      return;
+    }
     const work = this.syncChain.then(async () => {
       try {
         // evictCache is inside the guard, not after it: a throw escaping here
@@ -178,9 +199,12 @@ export class SearchService {
    * — including on an empty `ids` list, which is a no-op only for an entity
    * the index already tracks, and even then one that waits for rebuilds
    * already queued on the chain.
+   *
+   * Resolves false only when a ledger drain failed: the caller's ids were not
+   * applied (their ledger rows remain), so a caller holding them retries.
    */
-  async syncEntries(entityId: string, ids: Iterable<string>): Promise<void> {
-    if (this.indexStrategy.drain) return this.drainTurn(entityId);
+  async syncEntries(entityId: string, ids: Iterable<string>): Promise<boolean> {
+    if (this.indexStrategy.drain) return this.drainTurn(entityId, { mode: 'ledger', entityId, ids: [...new Set(ids)] });
     const uniqueIds = [...new Set(ids)];
     // The fast path requires an indexed entity, matching needsRebuild() below:
     // otherwise an empty id set on a never-indexed entity would skip the
@@ -196,7 +220,8 @@ export class SearchService {
       // host that writes (and dedups down to nothing) while a forget() or
       // global sync() is mid-rebuild must not read a pre-rebuild index on
       // its next search.
-      return this.syncChain;
+      await this.syncChain;
+      return true;
     }
 
     const work = this.syncChain.then(async () => {
@@ -237,7 +262,8 @@ export class SearchService {
       }
     });
     this.syncChain = work;
-    return work;
+    await work;
+    return true;
   }
 
   /**
@@ -256,11 +282,13 @@ export class SearchService {
    * so only those entities are rebuilt. Each rebuild still takes its own turn
    * on the sync chain, and like syncEntries this never rejects. With nothing
    * stale it resolves at once, without waiting on work already on the chain.
+   * Resolves false only when a ledger drain failed (see syncEntries).
    */
-  async syncStale(): Promise<void> {
-    if (this.indexStrategy.drain) return this.drainTurn();
+  async syncStale(opts?: { ids?: readonly string[] }): Promise<boolean> {
+    if (this.indexStrategy.drain) return this.drainTurn(undefined, { mode: 'full', ids: opts?.ids });
     const ids = [...this.staleEntities];
     await Promise.all(ids.map((id) => this.syncEntries(id, [])));
+    return true;
   }
 
   /**
