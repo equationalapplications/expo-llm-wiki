@@ -70,11 +70,13 @@ overrides:
   # tooling (css-tree, magicast) — devDependency graph only, never shipped.
   # 1.2.2 published 2026-09-30, clears the 14-day age gate (14.3 days).
   'source-map-js@>=1.0.0 <1.2.2': ^1.2.2
-  # NOTE (age-gated, NOT fixed here): handlebars 4.7.10 (Dependabot #148/#150,
-  # 2 CRITICAL) published 2026-10-05 — only 9.0 days old, still inside the
-  # 14-day cooldown. Kurt chose the conservative path (2026-10-14): add the
-  # override on/after 2026-10-19. Dev-only reach (conventional-changelog-writer,
-  # release tooling); templates are never attacker-supplied in this pipeline.
+  # Dependabot #148/#150 (2x CRITICAL, GHSA-8r5x-fm3f-whwj / GHSA-p8wg-vrv2-v86f)
+  # + #149 (MEDIUM, GHSA-xw65-4hp5-5hc7): handlebars <4.7.10 JS injection via
+  # compile()/lookup helpers. Reach: semantic-release > conventional-changelog-
+  # writer — release tooling only, devDependency graph; templates are never
+  # attacker-supplied in this pipeline. 4.7.10 published 2026-10-05, clears the
+  # 14-day age gate (15.2 days).
+  'handlebars@<4.7.10': ^4.7.10
   tar@<7.5.21: ^7.5.21
   # GHSA-gfhx-hw2g-v5hg (LOW): serialize-javascript >=7.1.1 <7.1.2 XSS via
   # unsanitized serialized strings. Reach: apps/scopelab > vite-plugin-pwa >
@@ -83,6 +85,11 @@ overrides:
   'serialize-javascript@>=7.1.1 <7.1.2': 7.1.2
   undici@>=7.0.0 <7.29.1: 7.29.1
   uuid@<11.1.1: 11.1.1
-  vite@>=8.0.0 <=8.0.15: 8.0.16
+  # Dependabot #151/#152/#153 (MEDIUM, GHSA-587h-7wmj-h5pm): vite <8.1.6 /
+  # 8.3.0-8.3.2. 8.1.6 published 2026-10-06 04:51 UTC, clears the 14-day age
+  # gate 2026-10-20 04:51 UTC (14.92 days); 8.3.3 (scopelab devDep) published
+  # 2026-10-06 04:10 UTC, clears 2026-10-20 04:10 UTC. Dev-only: vite never
+  # ships to production bundles here.
+  vite@>=8.0.0 <8.1.6: 8.1.6
   ws@>=7.0.0 <7.5.11: 7.5.11
   ws@>=8.0.0 <8.21.0: 8.21.0
