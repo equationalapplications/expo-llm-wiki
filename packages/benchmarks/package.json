@@ -16,11 +16,11 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "9.6.0",
-    "@types/node": "26.6.3",
+    "@types/node": "26.6.4",
     "better-sqlite3": "13.0.3",
     "fastembed": "3.0.0",
     "tsx": "4.23.15",
     "typescript": "5.9.3",
-    "vitest": "5.0.2"
+    "vitest": "5.0.3"
   }
 }
