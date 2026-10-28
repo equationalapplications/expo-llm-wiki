@@ -271,8 +271,8 @@ importers:
         specifier: workspace:*
         version: link:../react
       expo-sqlite:
-        specifier: ^14.0.0 || ^15.0.0 || ^55.0.0 || ^56.0.0 || ^57.0.0
-        version: 57.0.2(expo@57.0.20)(react-native@0.87.1(@babel/core@7.29.6)(@types/react@19.3.0)(react@19.3.0))(react@19.3.0)
+        specifier: ^14.0.0 || ^15.0.0 || ^55.0.0 || ^56.0.0 || ^57.0.0 || ^58.0.0
+        version: 58.0.10(expo@57.0.20)(react-native@0.87.1(@babel/core@7.29.6)(@types/react@19.3.0)(react@19.3.0))(react@19.3.0)
       react:
         specifier: 19.3.0
         version: 19.3.0
@@ -1414,10 +1414,6 @@ packages:
 
   '@expo/env@2.4.3':
     resolution: {integrity: sha512-M1NXeZCA1mkMkYOyIe7PlyRX0/jqFtMoJgyblnlq/vpCRfmueFT7RnGSQG8uEFDF5WHOFGijAQ3fogPh3/n5Ng==}
-    engines: {node: '>=20.12.0'}
-
-  '@expo/env@2.5.1':
-    resolution: {integrity: sha512-FXr7sJtusDKrrtfxenRdAwbqARTasYY1+3vL3FjnlvwiWzvItnSBRbcspF6AI45jIBLbi2GHDIAorzAXhmA1+Q==}
     engines: {node: '>=20.12.0'}
 
   '@expo/expo-modules-macros-plugin@0.6.1':
@@ -3769,13 +3765,6 @@ packages:
   expo-server@57.0.3:
     resolution: {integrity: sha512-aK+LdKzauHSGmsOStZtyxdzv0zWssCkxTw3m4QuOhfDSJsZaMRTd9O41d8ixU/QfELTbaJ0oRNcF7JFV/7O9YQ==}
     engines: {node: '>=20.16.0'}
-
-  expo-sqlite@57.0.2:
-    resolution: {integrity: sha512-5KVbT7BQFZlIcQBXKWvwBERK3ODF6PSqct27GQKukZzAjsx2B97R+mwtYqrTUtUbw71VJrQrdr9Yl2OWYC7UpA==}
-    peerDependencies:
-      expo: '*'
-      react: 19.3.0
-      react-native: '*'
 
   expo-sqlite@58.0.10:
     resolution: {integrity: sha512-UBLQUx+3o9Ct0Fz46j+iHjxeIBaXwxLxHGm1p259cC8yBsfAGrn6pCEx38ihCNgznKdzg2GGQvnUxOZAIk5Dlw==}
@@ -7720,7 +7709,7 @@ snapshots:
       '@expo/env': 2.4.3
       '@expo/image-utils': 0.11.6(typescript@5.9.3)
       '@expo/inline-modules': 0.1.7(typescript@5.9.3)
-      '@expo/json-file': 11.2.1
+      '@expo/json-file': 11.0.1
       '@expo/log-box': 57.0.4(@expo/dom-webview@57.0.1)(expo@57.0.20)(react-native@0.87.1(@babel/core@7.29.6)(@types/react@19.3.0)(react@19.3.0))(react@19.3.0)
       '@expo/metro': 56.0.2
       '@expo/metro-config': 57.0.13(expo@57.0.20)(typescript@5.9.3)
@@ -7817,7 +7806,7 @@ snapshots:
     dependencies:
       '@expo/config-plugins': 57.0.10(typescript@5.9.3)
       '@expo/config-types': 57.0.2
-      '@expo/json-file': 11.2.1
+      '@expo/json-file': 11.0.1
       '@expo/require-utils': 57.0.6(typescript@5.9.3)
       deepmerge: 4.3.1
       getenv: 2.0.0
@@ -7857,19 +7846,11 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@expo/env@2.5.1':
-    dependencies:
-      chalk: 4.1.2
-      debug: 4.4.3
-      getenv: 2.0.0
-    transitivePeerDependencies:
-      - supports-color
-
   '@expo/expo-modules-macros-plugin@0.6.1': {}
 
   '@expo/fingerprint@0.20.13':
     dependencies:
-      '@expo/env': 2.5.1
+      '@expo/env': 2.4.3
       '@expo/spawn-async': 1.8.0
       arg: 5.0.2
       chalk: 4.1.2
@@ -8019,7 +8000,7 @@ snapshots:
       '@expo/config-plugins': 57.0.10(typescript@5.9.3)
       '@expo/config-types': 57.0.2
       '@expo/image-utils': 0.11.6(typescript@5.9.3)
-      '@expo/json-file': 11.2.1
+      '@expo/json-file': 11.0.1
       '@react-native/normalize-colors': 0.86.3
       debug: 4.4.3
       expo-modules-autolinking: 57.0.14(typescript@5.9.3)
@@ -9248,7 +9229,7 @@ snapshots:
       obug: 2.2.1
       std-env: 4.3.0
       tinyrainbow: 3.2.0
-      vitest: 5.0.3(@types/node@26.6.4)(@vitest/coverage-v8@5.0.3)(jsdom@30.1.2)(vite@8.3.3(@types/node@26.6.4)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1))
+      vitest: 5.0.3(@types/node@26.6.4)(@vitest/coverage-v8@5.0.3)(jsdom@30.1.2)(vite@8.1.6(@types/node@26.6.4)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15)(yaml@2.9.1))
 
   '@vitest/istanbul-lib-coverage@1.0.2': {}
 
@@ -10407,13 +10388,6 @@ snapshots:
       react-native: 0.87.1(@babel/core@7.29.6)(@types/react@19.3.0)(react@19.3.0)
 
   expo-server@57.0.3: {}
-
-  expo-sqlite@57.0.2(expo@57.0.20)(react-native@0.87.1(@babel/core@7.29.6)(@types/react@19.3.0)(react@19.3.0))(react@19.3.0):
-    dependencies:
-      await-lock: 2.2.2
-      expo: 57.0.20(@babel/core@7.29.6)(@expo/dom-webview@57.0.1)(react-dom@19.3.0(react@19.3.0))(react-native@0.87.1(@babel/core@7.29.6)(@types/react@19.3.0)(react@19.3.0))(react@19.3.0)(typescript@5.9.3)
-      react: 19.3.0
-      react-native: 0.87.1(@babel/core@7.29.6)(@types/react@19.3.0)(react@19.3.0)
 
   expo-sqlite@58.0.10(expo@57.0.20)(react-native@0.87.1(@babel/core@7.29.6)(@types/react@19.3.0)(react@19.3.0))(react@19.3.0):
     dependencies:
