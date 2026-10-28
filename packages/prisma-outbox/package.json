@@ -57,8 +57,8 @@
     "@equationalapplications/core-llm-wiki": "workspace:*",
     "@prisma/client": "7.10.0",
     "prisma": "7.10.0",
-    "tsup": "8.5.1",
+    "tsup": "9.0.0",
     "typescript": "5.9.3",
-    "vitest": "5.0.3"
+    "vitest": "5.0.4"
   }
 }
