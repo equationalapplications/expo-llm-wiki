@@ -69,18 +69,24 @@ jobs:
           # by overrides — PR #288; their entries were removed on expiry
           # (2026-10-15 / 2026-10-20). Remaining entries are no-patch-yet
           # advisories tracked in issue #278.
-          AUDIT_ALLOWLIST: "GHSA-5p2g-fcmc-qvqq,GHSA-w3rx-r6r6-pgpr,GHSA-86w9-cpqp-85rv,GHSA-vfj7-8cjw-p6xm" # image-size DoS (<=2.0.2), ICNS + JXL/HEIF parsers; node-forge PKCS#1 v1.5 nested DigestAlgorithm (<=1.4.0); braces stack-exhaustion (<=3.0.3) — all three via expo-sqlite > expo > @expo/cli transitive; no upstream patch yet as of 2026-10-05
+          AUDIT_ALLOWLIST: "GHSA-5p2g-fcmc-qvqq,GHSA-w3rx-r6r6-pgpr,GHSA-86w9-cpqp-85rv,GHSA-vfj7-8cjw-p6xm,GHSA-mrhx-c7xc-m3w5" # image-size DoS (<=2.0.2), ICNS + JXL/HEIF parsers; node-forge PKCS#1 v1.5 nested DigestAlgorithm (<=1.4.0); braces stack-exhaustion (<=3.0.3) — all three via expo-sqlite > expo > @expo/cli transitive; no upstream patch yet as of 2026-10-05. GHSA-mrhx-c7xc-m3w5: zod memory exhaustion on oversized constrained collections — the 4.x line is PATCHED (4.6.6, applied via the pnpm-workspace.yaml override); the @expo/cli-consumed 3.x line has no in-range patch, which is what this allowlist covers
           # Date-bounded allowlist expiry (JSON, GHSA -> YYYY-MM-DD UTC).
           # An entry that has reached its expiry date is treated as if
           # it were NOT in AUDIT_ALLOWLIST — this step fails until the
           # override is added to pnpm-workspace.yaml or the lockfile is
           # refreshed past the patched version. Add an entry here for
           # every date-bounded GHSA in AUDIT_ALLOWLIST above.
-          # Empty as of PR #290: every date-bounded entry has been
-          # replaced by an override in pnpm-workspace.yaml.
-          AUDIT_ALLOWLIST_EXPIRY: '{}'
+          # Populated 2026-10-28 (PR #298): GHSA-mrhx-c7xc-m3w5 (zod 3.x via
+          # @expo/cli) is date-bounded below; entries whose advisories were
+          # cleared by overrides were removed on their expiries
+          # (2026-10-15 / 2026-10-20).
+          AUDIT_ALLOWLIST_EXPIRY: '{"GHSA-mrhx-c7xc-m3w5": "2026-11-28"}'
         run: |
           set -o pipefail
+          # NOTE: on expiry the step goes red EVEN IF zod 3.x still has no
+          # patch — that is the intended forcing function. Fallback at that
+          # date: extend the expiry date here (with a new rationale comment),
+          # or drop the entry if the advisory is resolved.
           pnpm audit --prod --audit-level=high --json > /tmp/audit.json || true
           node -e '
             const data = require("/tmp/audit.json");
@@ -90,7 +96,7 @@ jobs:
             const today = new Date().toISOString().slice(0, 10);
             const expired = allow.filter(id => expiry[id] && expiry[id] <= today);
             if (expired.length) {
-              for (const id of expired) console.error("AUDIT FAIL: " + id + " is past its expiry date " + expiry[id] + " — add the override to pnpm-workspace.yaml or refresh the lockfile past the patched version.");
+              for (const id of expired) console.error("AUDIT FAIL: " + id + " is past its expiry date " + expiry[id] + " — add the override to pnpm-workspace.yaml, refresh the lockfile past the patched version, or extend AUDIT_ALLOWLIST_EXPIRY with a rationale if still unresolvable.");
               process.exit(1);
             }
             const unhandled = advisories.filter(a => !allow.includes(a.github_advisory_id));
@@ -150,19 +156,18 @@ jobs:
       - name: Audit (fail only on advisories with an upstream patch)
         env:
           # Allowlisted GHSA ids, comma-separated. Keep minimal + commented.
-          # Empty as of the handlebars override PR: GHSA-68fv (source-map-js)
-          # and GHSA-pqg4 (shell-quote) were cleared by PR #288's overrides,
-          # GHSA-8r5x / GHSA-p8wg (handlebars) by this PR — all four entries
-          # were removed on their 2026-10-15/2026-10-20 expiries. Anything
-          # still firing here is either unfixable (WARNING below, tracked in
-          # issue #278) or a new advisory that must be triaged before merge.
-          AUDIT_ALLOWLIST: ""
+          # GHSA-mrhx-c7xc-m3w5 (zod): the 4.x line is cleared by the
+          # pnpm-workspace.yaml override (4.6.6); the @expo/cli 3.25.76
+          # instance has NO in-range patch (fix is a major jump to >=4.6.6),
+          # so it is unfixable-in-range — same class as the WARNING entries,
+          # tracked in issue #278. Expiry mirrors the earlier audit step.
+          AUDIT_ALLOWLIST: "GHSA-mrhx-c7xc-m3w5"
           # Mirrors the expiry map in the earlier audit step. An entry
           # past its expiry date is removed from the allowlist before
           # the fixable/unfixable split below; if any expired entry
           # remains, this step exits 1 to force the lockfile refresh or
           # override addition.
-          AUDIT_ALLOWLIST_EXPIRY: '{}'
+          AUDIT_ALLOWLIST_EXPIRY: '{"GHSA-mrhx-c7xc-m3w5": "2026-11-28"}'
         shell: bash
         run: |
           set -e
@@ -190,7 +195,7 @@ jobs:
           expired = [s for s in allow if expiry.get(s) and expiry[s] <= today]
           if expired:
               for s in expired:
-                  print(f"AUDIT FAIL: {s} is past its expiry date {expiry[s]} — add the override to pnpm-workspace.yaml or refresh the lockfile past the patched version.")
+                  print(f"AUDIT FAIL: {s} is past its expiry date {expiry[s]} — add the override to pnpm-workspace.yaml, refresh the lockfile past the patched version, or extend AUDIT_ALLOWLIST_EXPIRY with a rationale if still unresolvable.")
               sys.exit(1)
           if allow:
               print(f"Audit allowlist (GHSA): {', '.join(allow)}")
