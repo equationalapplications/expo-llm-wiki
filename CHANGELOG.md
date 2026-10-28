@@ -1,3 +1,9 @@
+## [7.13.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.13.0...v7.13.1) (2026-10-28)
+
+### Bug Fixes
+
+* **expo:** widen expo-sqlite peer range to include ^58 ([31973f3](https://github.com/equationalapplications/expo-llm-wiki/commit/31973f33bda421f5303b804d657782352cd70e68))
+
 ## [7.13.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.12.0...v7.13.0) (2026-10-14)
 
 ### Features
