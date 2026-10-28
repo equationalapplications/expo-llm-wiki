@@ -150,19 +150,18 @@ jobs:
       - name: Audit (fail only on advisories with an upstream patch)
         env:
           # Allowlisted GHSA ids, comma-separated. Keep minimal + commented.
-          # Empty as of the handlebars override PR: GHSA-68fv (source-map-js)
-          # and GHSA-pqg4 (shell-quote) were cleared by PR #288's overrides,
-          # GHSA-8r5x / GHSA-p8wg (handlebars) by this PR — all four entries
-          # were removed on their 2026-10-15/2026-10-20 expiries. Anything
-          # still firing here is either unfixable (WARNING below, tracked in
-          # issue #278) or a new advisory that must be triaged before merge.
-          AUDIT_ALLOWLIST: ""
+          # GHSA-mrhx-c7xc-m3w5 (zod): the 4.x line is cleared by the
+          # pnpm-workspace.yaml override (4.6.6); the @expo/cli 3.25.76
+          # instance has NO in-range patch (fix is a major jump to >=4.6.6),
+          # so it is unfixable-in-range — same class as the WARNING entries,
+          # tracked in issue #278. Expiry mirrors the earlier audit step.
+          AUDIT_ALLOWLIST: "GHSA-mrhx-c7xc-m3w5"
           # Mirrors the expiry map in the earlier audit step. An entry
           # past its expiry date is removed from the allowlist before
           # the fixable/unfixable split below; if any expired entry
           # remains, this step exits 1 to force the lockfile refresh or
           # override addition.
-          AUDIT_ALLOWLIST_EXPIRY: '{}'
+          AUDIT_ALLOWLIST_EXPIRY: '{"GHSA-mrhx-c7xc-m3w5": "2026-11-28"}'
         shell: bash
         run: |
           set -e
