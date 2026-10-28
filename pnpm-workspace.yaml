@@ -106,7 +106,8 @@ overrides:
   # workbox-build > @rollup/plugin-terser. 7.1.2 published 2026-09-23,
   # clears the 14-day age gate.
   'serialize-javascript@>=7.1.1 <7.1.2': 7.1.2
-  undici@>=7.0.0 <7.29.1: 7.29.1
+  # (The older undici@>=7.0.0 <7.29.1 → 7.29.1 entry was removed 2026-10-28:
+  # fully subsumed by the >=7.0.0 <7.30.1 → 7.30.1 override above.)
   uuid@<11.1.1: 11.1.1
   # Dependabot #151/#152/#153 (MEDIUM, GHSA-587h-7wmj-h5pm): vite <8.1.6 /
   # 8.3.0-8.3.2. 8.1.6 published 2026-10-06 04:51 UTC, clears the 14-day age

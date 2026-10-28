@@ -76,8 +76,10 @@ jobs:
           # override is added to pnpm-workspace.yaml or the lockfile is
           # refreshed past the patched version. Add an entry here for
           # every date-bounded GHSA in AUDIT_ALLOWLIST above.
-          # Empty as of PR #290: every date-bounded entry has been
-          # replaced by an override in pnpm-workspace.yaml.
+          # Populated 2026-10-28 (PR #298): GHSA-mrhx-c7xc-m3w5 (zod 3.x via
+          # @expo/cli) is date-bounded below; entries whose advisories were
+          # cleared by overrides were removed on their expiries
+          # (2026-10-15 / 2026-10-20).
           AUDIT_ALLOWLIST_EXPIRY: '{"GHSA-mrhx-c7xc-m3w5": "2026-11-28"}'
         run: |
           set -o pipefail
@@ -94,7 +96,7 @@ jobs:
             const today = new Date().toISOString().slice(0, 10);
             const expired = allow.filter(id => expiry[id] && expiry[id] <= today);
             if (expired.length) {
-              for (const id of expired) console.error("AUDIT FAIL: " + id + " is past its expiry date " + expiry[id] + " — add the override to pnpm-workspace.yaml or refresh the lockfile past the patched version.");
+              for (const id of expired) console.error("AUDIT FAIL: " + id + " is past its expiry date " + expiry[id] + " — add the override to pnpm-workspace.yaml, refresh the lockfile past the patched version, or extend AUDIT_ALLOWLIST_EXPIRY with a rationale if still unresolvable.");
               process.exit(1);
             }
             const unhandled = advisories.filter(a => !allow.includes(a.github_advisory_id));
@@ -193,7 +195,7 @@ jobs:
           expired = [s for s in allow if expiry.get(s) and expiry[s] <= today]
           if expired:
               for s in expired:
-                  print(f"AUDIT FAIL: {s} is past its expiry date {expiry[s]} — add the override to pnpm-workspace.yaml or refresh the lockfile past the patched version.")
+                  print(f"AUDIT FAIL: {s} is past its expiry date {expiry[s]} — add the override to pnpm-workspace.yaml, refresh the lockfile past the patched version, or extend AUDIT_ALLOWLIST_EXPIRY with a rationale if still unresolvable.")
               sys.exit(1)
           if allow:
               print(f"Audit allowlist (GHSA): {', '.join(allow)}")
