@@ -27,6 +27,11 @@ minimumReleaseAge: 20160          # minutes; 14 days
 minimumReleaseAgeExclude:
   - '@equationalapplications/*'
   - image-size
+  # Kurt waived the 14-day gate for undici on 2026-10-28 — patches
+  # (8.12.2 / 7.30.1 / 6.29.1) were published 2026-10-15, one day short.
+  # Waiver rode PR #298's CI block; the overrides below pin the patched
+  # versions regardless.
+  - undici
 
 # Single source of truth for overrides. Do NOT add `pnpm.overrides` to the root
 # package.json: when both exist, pnpm 10 silently applies only the package.json
@@ -48,6 +53,17 @@ overrides:
   # age gate. Scoped to the 4.x line — @expo/cli's zod 3.25.76 has no
   # in-range patch and stays on the pnpm-audit allowlist (issue #278).
   'zod@>=4.0.0 <4.6.6': 4.6.6
+  # undici HIGH advisories (GHSA-xjj6-f33q-929c, GHSA-4w7w-5xrc-9h26,
+  # GHSA-2m5v-pch6-74hx, GHSA-qrxm-fqhp-jwvm — fetch/redirect issues;
+  # patches published 2026-10-15, age gate waived by Kurt 2026-10-28,
+  # see minimumReleaseAgeExclude above). One entry per major line in the
+  # tree; in-range minors only.
+  'undici@>=6.0.0 <6.29.1': 6.29.1
+  'undici@>=7.0.0 <7.30.1': 7.30.1
+  'undici@>=8.0.0 <8.12.2': 8.12.2
+  # @semantic-release/github pins undici EXACTLY at 7.29.1; the range
+  # selector above does not match an exact spec, so pin it directly.
+  'undici@7.29.1': 7.30.1
   '@ungap/structured-clone': ^1.3.1
   # GHSA-qhr7-859c-m2p7 / GHSA-6j4f-fj2g-mc7p (HIGH): brace-expansion
   # >=4.0.0 <5.0.11 (DoS via uncontrolled recursion); GHSA-q2hr-2g5m-vwhr
