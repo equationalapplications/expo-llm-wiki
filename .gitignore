@@ -48,3 +48,6 @@ package-lock.json
 
 # Rust build artifacts (Cargo.lock IS committed — locked app dependency set)
 target/
+
+# Curated Thoughts indexer scratch (error logs written into the working tree)
+.brain/

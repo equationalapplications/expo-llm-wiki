@@ -3,6 +3,11 @@
 **Date:** 2026-05-28  
 **Scope:** All 6 READMEs (root + 5 packages) + all 5 `package.json` files
 
+**Status (recorded 2026-10-29):** Implemented — the spec documents its own
+completed changes in past tense, and the nav bars, ecosystem cross-links
+and taglines are live in the READMEs. Recorded during the 2026-10-29
+status-line sweep.
+
 ---
 
 ## Goals

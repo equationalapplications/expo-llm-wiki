@@ -3,6 +3,17 @@
 **Status:** APPROVED — all decisions recorded 2026-09-16 (Phase 2 pin
 devDeps now; all §4 follow-ups; deploy.yml frozen 1a; security bypass
 accepted 2a). Zero open questions. Ready to merge + implement.
+**Status revision (2026-10-29, waiver-rule record):** the gate's actual
+waiver semantics as now practiced and on file — the 14-day
+`minimumReleaseAge` gate is binding for all dependency bumps and
+overrides; the audit steps fail only on high+-severity advisories without
+an allowlist entry, and no-patch advisories ride the allowlist with
+date-bounded expiries as a forcing function. A sub-CRITICAL version may be
+admitted early ONLY with an explicit Kurt waiver recorded in
+`pnpm-workspace.yaml` with date and rationale (precedent: undici HIGH,
+2026-10-28, patches one day short — rode PR #298's CI block). Earlier
+phrasing elsewhere described the standing exemption as "CRITICAL only";
+the operative rule is the written-waiver rule stated here.
 **Status revision (2026-09-16, post-approval, CodeRabbit review):** removed
 the `@equationalapplications/*` age-gate exclusion (§3.1); replaced the
 §5 age-gate recipe with an empirically verified deterministic one; aligned

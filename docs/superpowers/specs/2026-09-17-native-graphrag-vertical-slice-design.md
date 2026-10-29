@@ -1,7 +1,13 @@
 # Native GraphRAG Engine: Vertical Slice & Boundary Design
 
 **Date:** 2026-09-17
-**Status:** Draft revision 5 — review rounds 1–3 plus post-merge baseline review incorporated; ready for plan on approval; native direction accepted, implementation not started
+**Status (2026-10-29 correction):** Implemented — the vertical slice shipped
+in 7.2.0 (2026-09-18, PR #191) after review rounds 1–3 and a post-merge
+baseline review. The REQ-PERF-01 bench-traversal harness is scaffolded but
+its adoption-gate runs have never been executed; live-vs-native production
+routing remains governed by that gate (unexecuted, not abandoned). The
+draft status line that previously stood here ("implementation not started")
+was stale.
 **Builds on:** [Knowledge Graph Traversal API](./2026-06-23-graph-traversal-api-design.md) (implemented); precedence is defined in REQ-DOC-01.
 **Branch:** `spec/native-graphrag-vertical-slice`
 **Repository:** `expo-llm-wiki` (authoritative shared contract)

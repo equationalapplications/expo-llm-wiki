@@ -1,5 +1,10 @@
 ## Phase 4: Prompt & Context Management Extraction.
 
+**Status (recorded 2026-10-29):** Implemented — this spec was written
+alongside the implementation it describes; the code snippets below reflect
+shipped source. Recorded during the repo's 2026-10-29 status-line sweep,
+which found this file missing a status.
+
 > **Note:** This spec was written pre-implementation and describes the state of the codebase _before_ Phase 4 was applied. The "Current implementation state" section below is historical context. All items listed as missing have been implemented in this branch.
 
 ### Current implementation state (pre-implementation snapshot)
