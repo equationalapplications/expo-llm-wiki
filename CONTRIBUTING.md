@@ -30,11 +30,11 @@ pnpm exec tsc --noEmit
 
 **Linking into a local Expo project for manual testing**
 ```bash
-# from the expo-llm-wiki directory
+# from <repo>/packages/expo (the @equationalapplications/expo-llm-wiki package)
 pnpm link --global
 
-# from your Expo project (or your package manager's link equivalent)
-npm link @equationalapplications/expo-llm-wiki
+# from your Expo project
+pnpm link --global @equationalapplications/expo-llm-wiki
 ```
 
 Metro requires extra config for symlinked packages. Add to `metro.config.js`:
@@ -155,7 +155,7 @@ For breaking changes, include a `BREAKING CHANGE:` footer in the commit message 
 **Before opening:**
 - [ ] Branch off latest `main`
 - [ ] `pnpm build` passes
-- [ ] `npx tsc --noEmit` passes with zero errors
+- [ ] `pnpm exec tsc --noEmit` passes with zero errors
 - [ ] Commits follow conventional commit format (merge commits preserve
       branch commits, so the commit messages — not the PR title — are
       what semantic-release reads)

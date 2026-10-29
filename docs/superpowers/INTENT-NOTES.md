@@ -80,9 +80,9 @@ version 7.13.1). Paths below are relative to that repo unless stated.
   the repo; NOW written into the supply-chain spec as a dated 2026-10-29
   status revision (with the PR #300 pack-diff as the executed precedent).
 - **Git history showing merge commits on `main`.** Verified 2026-10-29
-  (post-authoring): `git log --merges main` shows PRs #296-#301 as merge
-  commits, including release PR #299 (`f921b97`). Direct evidence for the
-  merge-commit rule, supplementing `release.yml` and the specs.
+  (post-authoring): `git log --merges main` shows PRs #296, #298-#301 as
+  merge commits, including release PR #299 (`f921b97`). Direct evidence
+  for the merge-commit rule, supplementing `release.yml` and the specs.
 - **"Review gauntlet" / review tiers.** No repo file describes the review
   tiers; INTENT says "reviews run in tiers" without naming them. If a
   spec exists elsewhere it should be linked.
