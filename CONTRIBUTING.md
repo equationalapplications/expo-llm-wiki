@@ -3,7 +3,7 @@
 ## Development Setup
 
 **Prerequisites**
-- Node.js 24+ (current LTS)
+- Node.js >= 20 (CI runs 24.x)
 - An Expo project to test against (the package has no built-in example app)
 
 **Install and build**
@@ -25,17 +25,21 @@ pnpm dev
 
 **Typecheck**
 ```bash
-npx tsc --noEmit
+pnpm exec tsc --noEmit
 ```
 
 **Linking into a local Expo project for manual testing**
 ```bash
-# from the expo-llm-wiki directory
-npm link
+# from <repo>/packages/expo (the @equationalapplications/expo-llm-wiki package)
+pnpm link --global
 
 # from your Expo project
-npm link expo-llm-wiki
+pnpm link --global @equationalapplications/expo-llm-wiki
 ```
+
+`pnpm link --global` needs pnpm's global directory set up once
+(`pnpm setup`). If your app uses npm or yarn, use that package manager's
+`link` equivalent against the same path.
 
 Metro requires extra config for symlinked packages. Add to `metro.config.js`:
 
@@ -134,17 +138,19 @@ Update all callers before upgrading.
 
 Version bumps and `CHANGELOG.md` are managed by [semantic-release](https://github.com/semantic-release/semantic-release), driven through a two-phase gated workflow (see `.releaserc.json` and `.github/workflows/release.yml`):
 
-- **Phase 1** — an ordinary merge to `main` runs `semantic-release --no-ci`, which computes the next version and updates `CHANGELOG.md` + `package.json` files locally (it no longer commits, tags, or publishes). The workflow commits that as a `release/vX.Y.Z` branch, tags it, and opens a release PR with squash auto-merge requested — so the `Test` workflow validates the release commit like any other PR before it lands.
-- **Phase 2** — when that release PR's squash-merge commit lands on `main`, the tag is relocated onto the new commit, packages publish to npm in dependency order, and the GitHub Release is created.
+- **Phase 1** — an ordinary merge to `main` runs `semantic-release --no-ci`, which computes the next version and updates `CHANGELOG.md` + `package.json` files locally (it no longer commits, tags, or publishes). The workflow commits that as a `release/vX.Y.Z` branch, tags it, and opens a release PR with merge auto-merge requested — so the `Test` workflow validates the release commit like any other PR before it lands.
+- **Phase 2** — when that release PR's merge commit lands on `main`, the tag is relocated onto the new commit, packages publish to npm in dependency order, and the GitHub Release is created.
 - **Manual republish (recovery path)** — the workflow also supports a `workflow_dispatch` trigger that accepts a `release_version` input (e.g. `4.15.1`) and reruns Phase 2 against the existing `v<version>` tag. Use this when Phase 2 partially fails — packages already published are skipped via `npm view … version`, so reruns are idempotent.
 
 **Do not edit in PRs:**
 - `CHANGELOG.md`
 - `"version"` in root or workspace `package.json` files (`packages/*/package.json`)
 
-Use conventional commits instead — semantic-release analyzes squash-merge commits on `main` to decide whether (and how) to bump.
+Use conventional commits instead — semantic-release analyzes the commits
+reachable from `main` since the last tag: your branch commits, preserved
+by the merge commit.
 
-For breaking changes, include a `BREAKING CHANGE:` footer in the commit message — release notes are generated from that automatically.
+For breaking changes, include a `BREAKING CHANGE:` footer in the commit message — release notes are generated from that automatically. A `BREAKING CHANGE` footer publishes a major release — get a maintainer ruling before writing one (see `INTENT.md`, "How changes are made").
 
 ---
 
@@ -152,22 +158,18 @@ For breaking changes, include a `BREAKING CHANGE:` footer in the commit message 
 
 **Before opening:**
 - [ ] Branch off latest `main`
-- [ ] `npm run build` passes
-- [ ] `npx tsc --noEmit` passes with zero errors
-- [ ] Commits follow conventional commit format
-- [ ] PR title is a valid conventional commit subject line
+- [ ] `pnpm build` passes
+- [ ] `pnpm exec tsc --noEmit` passes with zero errors
+- [ ] Commits follow conventional commit format (merge commits preserve
+      branch commits, so the commit messages — not the PR title — are
+      what semantic-release reads)
 - [ ] No manual edits to `CHANGELOG.md` or `package.json` versions (semantic-release handles these on merge)
 
-The PR title becomes the squash merge commit message on `main`:
-```
-feat(react): add useWikiForget hook
-fix(ingest): reset checkpoint after clearAll
-```
-
-**PR body:** describe why, not what. Link to the relevant spec in `docs/specs/` if one exists.
+**PR body:** describe why, not what. Link to the relevant spec in `docs/superpowers/specs/` if one exists.
 
 **Merge policy:**
-- Squash merge only. One commit per PR on `main`.
+- Merge commits only — never squash, including release PRs
+  (`release.yml` merges them with `--merge`; see issue #137).
 - Delete the branch after merge.
 
 **Review bar:**

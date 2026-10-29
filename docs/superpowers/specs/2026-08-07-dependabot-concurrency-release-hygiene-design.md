@@ -1,7 +1,15 @@
 # Spec: Dependabot Hygiene, #79 TOCTOU Race Fix, and #76 Two-Phase Release Flow
 
-**Date:** 2026-08-07
-**Status:** Implemented
+**Date:** 2026-08-07  
+**Status:** Implemented  
+**Status revision (2026-10-29, merge-policy supersession):** step 7's
+`gh pr merge --auto --squash` was superseded by `--auto --merge` (issue
+#137; see `release.yml:410,418,477`). Under `--merge` the merge commit
+stays reachable from the tag. Phase 2 still relocates the tag onto the
+main-line merge commit as a normalization safety net on every normal
+(merge-triggered) Phase 2 run (`release.yml:542-566`); a workflow_dispatch
+republish skips the move and checks out the existing `v<version>` tag
+(`release.yml:511`).
 **Addresses:** Dependabot (remaining `fast-uri` advisory + missing audit gate), [#79](https://github.com/equationalapplications/expo-llm-wiki/issues/79) (TOCTOU race in `onDuplicateHash: 'skip'`), [#76](https://github.com/equationalapplications/expo-llm-wiki/issues/76) (two-phase PR release flow)
 **Packages:** `@eq/wiki-core`, root CI/release configuration
 
