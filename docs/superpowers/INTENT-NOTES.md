@@ -76,14 +76,13 @@ version 7.13.1). Paths below are relative to that repo unless stated.
 ## Not verified in this session (marked Open decision or left out)
 
 - **Grouped-bump rule** (tooling majors ride a grouped PR after a
-  pack-diff; runtime/peer majors alone). No file in the repo records it;
-  grep for "pack-diff", "grouped bump", "npm pack" found nothing relevant.
-  Included in INTENT §How-changes-are-made item 6 and in AGENTS on the
-  dossier's authority ("ratified by execution 2026-10-29"). It should be
-  written into the supply-chain spec.
-- **Git history showing merge commits on `main`.** The sandbox blocked
-  `git log` in the target repo. Evidence for the merge-commit rule is the
-  release workflow and the specs, not the commit graph.
+  pack-diff; runtime/peer majors alone). Originally recorded nowhere in
+  the repo; NOW written into the supply-chain spec as a dated 2026-10-29
+  status revision (with the PR #300 pack-diff as the executed precedent).
+- **Git history showing merge commits on `main`.** Verified 2026-10-29
+  (post-authoring): `git log --merges main` shows PRs #296-#301 as merge
+  commits, including release PR #299 (`f921b97`). Direct evidence for the
+  merge-commit rule, supplementing `release.yml` and the specs.
 - **"Review gauntlet" / review tiers.** No repo file describes the review
   tiers; INTENT says "reviews run in tiers" without naming them. If a
   spec exists elsewhere it should be linked.
@@ -93,31 +92,27 @@ version 7.13.1). Paths below are relative to that repo unless stated.
   core package is the general door is cited, not restated; the charter's
   own status ("Where the project stands") was not re-verified here.
 
-## Stale documents found along the way (not fixed here)
+## Stale documents found along the way (all fixed in this PR)
 
 - `CONTRIBUTING.md`: "Squash merge only" and "PR title becomes the squash
-  merge commit message" contradict current practice and `release.yml`.
-- `CONTRIBUTING.md` "Prerequisites" says Node 24+; `engines` says >=20.
+  merge commit message" — FIXED in this PR (merge-commit policy + revised
+  Releases section; the contributing-docs and release-hygiene specs carry
+  dated supersession notes).
+- `CONTRIBUTING.md` "Prerequisites" said Node 24+; `engines` says >=20 —
+  FIXED in this PR.
 - `2026-09-29-competitive-memory-design.md:15` says "zero runtime
   dependencies"; core has one external runtime dependency.
 
-## Tier 1.5 round 1 corrections (2026-10-29, Haiku 5.5 low entry — cost $0.006)
+## Review history (change note, 2026-10-29)
 
-1. BLOCKER fixed: the "release PR squash-merge exception" in INTENT rule
-   (How-changes #3), AGENTS.md, and CONTRIBUTING was wrong —
-   `release.yml:410,418,477` uses `gh pr merge --auto --merge` (issue
-   #137). All three now state merge-commits-only with no exception.
-2. MAJOR fixed: rule 1 and rule 8 claimed platform packages carry "only
-   peer dependencies"; `packages/expo/package.json` has runtime deps on
-   two first-party workspace packages. Both rules now say "first-party
-   workspace packages plus the peer dependencies the host supplies."
-3. MINOR fixed: CONTRIBUTING prerequisites said "Node.js 24+" while
-   `engines` is `>=20`; now "Node.js >= 20 (CI runs 24.x)". `npm run
-   build` -> `pnpm build` in the same section matches the pnpm-only rule.
-
-## Tier 1.5 round 2 (medium delta, cost $0.007): CONTRIBUTING Releases
-section still described the pre-#137 squash flow ("squash auto-merge
-requested", "squash-merge commit lands", "analyzes squash-merge commits").
-Rewritten to merge-commit flow; #137 (CLOSED) confirms release PRs are
-`--merge`-merged. Notes row for expo deps now names react-llm-wiki
-explicitly.
+This PR went through the full review gauntlet: Tier 1 security scan
+(gitleaks clean on every push), the Tier 1.5 Haiku effort ladder
+(low entry + medium and high deltas — findings: release-PR squash
+exception was wrong per issue #137; platform-package dependency wording;
+Node prerequisite; CONTRIBUTING Releases section still described the
+pre-#137 squash flow; PR-title checklist nit), and a Tier 3 Opus
+full-mode review (2 MAJOR fixed: semantic-release reads branch commits
+under merge commits, not the merge commit itself; two specs needed dated
+supersession notes. 6 MINOR fixed, including this evidence file being
+cleaned of review-process noise). All findings resolved or dispositioned
+before the PR was opened for merge approval.

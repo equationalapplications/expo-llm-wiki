@@ -3,6 +3,13 @@
 **Status:** APPROVED — all decisions recorded 2026-09-16 (Phase 2 pin
 devDeps now; all §4 follow-ups; deploy.yml frozen 1a; security bypass
 accepted 2a). Zero open questions. Ready to merge + implement.
+**Status revision (2026-10-29, grouped-bump rule):** a grouped dependency
+PR may carry a MAJOR bump only for build-time tooling, and only after a
+pack-diff of the published `.d.ts`/`.d.mts` outputs against the current
+release proves the declarations semantically unchanged (executed 2026-10-29
+for tsup 9 in PR #300 — only formatting-level `export type` splits and
+chunk-hash renames). A runtime or peer dependency MAJOR gets its own PR
+and its own changelog line.
 **Status revision (2026-10-29, waiver-rule record):** the gate's actual
 waiver semantics as now practiced and on file — the 14-day
 `minimumReleaseAge` gate is binding for all dependency bumps and

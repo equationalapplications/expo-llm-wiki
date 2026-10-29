@@ -321,3 +321,11 @@ runs and who schedules it.
 7. **Changes to this file** go through the same review as code, with a
    dated note of what changed and why. Anything that would change a
    charter promise is a charter amendment first, not an edit here.
+
+## Amendments
+
+- 2026-10-29 — Initial version. Authored by Fable from the Tessera
+  research dossier; every Status checked against the code that day
+  (evidence: `docs/superpowers/INTENT-NOTES.md`). Open decisions on
+  record: 8.0.0 ops/deferred-maintenance defaults; native-engine gate
+  scheduling.

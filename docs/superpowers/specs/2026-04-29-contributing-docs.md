@@ -2,6 +2,12 @@
 
 **Date:** 2026-04-29  
 **Status:** Implemented
+**Status revision (2026-10-29, merge-policy supersession):** the squash
+merge policy this spec prescribes (squash-only, PR title as the squash
+commit message) was superseded by the merge-commit-only policy — issue
+#137, `release.yml` uses `gh pr merge --auto --merge`. `CONTRIBUTING.md`
+now documents merge commits; the squash instructions below (lines ~181,
+193–213) are historical record, not current practice.
 
 ---
 

@@ -25,16 +25,16 @@ pnpm dev
 
 **Typecheck**
 ```bash
-npx tsc --noEmit
+pnpm exec tsc --noEmit
 ```
 
 **Linking into a local Expo project for manual testing**
 ```bash
 # from the expo-llm-wiki directory
-npm link
+pnpm link --global
 
-# from your Expo project
-npm link expo-llm-wiki
+# from your Expo project (or your package manager's link equivalent)
+npm link @equationalapplications/expo-llm-wiki
 ```
 
 Metro requires extra config for symlinked packages. Add to `metro.config.js`:
@@ -142,9 +142,11 @@ Version bumps and `CHANGELOG.md` are managed by [semantic-release](https://githu
 - `CHANGELOG.md`
 - `"version"` in root or workspace `package.json` files (`packages/*/package.json`)
 
-Use conventional commits instead — semantic-release analyzes merge commits on `main` to decide whether (and how) to bump.
+Use conventional commits instead — semantic-release analyzes the commits
+reachable from `main` since the last tag: your branch commits, preserved
+by the merge commit.
 
-For breaking changes, include a `BREAKING CHANGE:` footer in the commit message — release notes are generated from that automatically.
+For breaking changes, include a `BREAKING CHANGE:` footer in the commit message — release notes are generated from that automatically. A `BREAKING CHANGE` footer publishes a major release — get a maintainer ruling before writing one (see `INTENT.md`, "How changes are made").
 
 ---
 

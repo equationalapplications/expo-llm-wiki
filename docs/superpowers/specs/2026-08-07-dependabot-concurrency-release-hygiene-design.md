@@ -2,6 +2,12 @@
 
 **Date:** 2026-08-07
 **Status:** Implemented
+**Status revision (2026-10-29, merge-policy supersession):** step 7's
+`gh pr merge --auto --squash` was superseded by `--auto --merge` (issue
+#137; see `release.yml:406-418`). The tag-relocation concern that step
+describes is resolved by merging with `--merge` — the merge commit keeps
+the tag reachable; Phase 2's tag-move step still runs for workflow_dispatch
+republishes.
 **Addresses:** Dependabot (remaining `fast-uri` advisory + missing audit gate), [#79](https://github.com/equationalapplications/expo-llm-wiki/issues/79) (TOCTOU race in `onDuplicateHash: 'skip'`), [#76](https://github.com/equationalapplications/expo-llm-wiki/issues/76) (two-phase PR release flow)
 **Packages:** `@eq/wiki-core`, root CI/release configuration
 
