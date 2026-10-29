@@ -3,7 +3,7 @@
 ## Development Setup
 
 **Prerequisites**
-- Node.js 24+ (current LTS)
+- Node.js >= 20 (CI runs 24.x)
 - An Expo project to test against (the package has no built-in example app)
 
 **Install and build**
@@ -161,9 +161,8 @@ For breaking changes, include a `BREAKING CHANGE:` footer in the commit message 
 **PR body:** describe why, not what. Link to the relevant spec in `docs/superpowers/specs/` if one exists.
 
 **Merge policy:**
-- Merge commits only — never squash. (The automated release PR is the one
-  exception: it squash-merges by design so the tag lands on a single
-  release commit. See `release.yml`.)
+- Merge commits only — never squash, including release PRs
+  (`release.yml` merges them with `--merge`; see issue #137).
 - Delete the branch after merge.
 
 **Review bar:**

@@ -26,8 +26,7 @@ the SynapseTree founding charter; never re-rule a charter promise here.
   after a pack-diff of the published `.d.ts`; runtime or peer majors get
   their own PR.
 - **Merge commits, never squash.** Every PR into `main`, release PRs
-  included (the release PR's own squash-merge is the one designed
-  exception).
+  included — `release.yml` merges them with `--merge` by design.
 - **Never edit `CHANGELOG.md` or any `"version"` field.** semantic-release
   owns them. Never write a `BREAKING CHANGE` footer without a ruling; it
   publishes 8.0.0.

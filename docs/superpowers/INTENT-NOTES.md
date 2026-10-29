@@ -100,3 +100,17 @@ version 7.13.1). Paths below are relative to that repo unless stated.
 - `CONTRIBUTING.md` "Prerequisites" says Node 24+; `engines` says >=20.
 - `2026-09-29-competitive-memory-design.md:15` says "zero runtime
   dependencies"; core has one external runtime dependency.
+
+## Tier 1.5 round 1 corrections (2026-10-29, Haiku 5.5 low entry — cost $0.006)
+
+1. BLOCKER fixed: the "release PR squash-merge exception" in INTENT rule
+   (How-changes #3), AGENTS.md, and CONTRIBUTING was wrong —
+   `release.yml:410,418,477` uses `gh pr merge --auto --merge` (issue
+   #137). All three now state merge-commits-only with no exception.
+2. MAJOR fixed: rule 1 and rule 8 claimed platform packages carry "only
+   peer dependencies"; `packages/expo/package.json` has runtime deps on
+   two first-party workspace packages. Both rules now say "first-party
+   workspace packages plus the peer dependencies the host supplies."
+3. MINOR fixed: CONTRIBUTING prerequisites said "Node.js 24+" while
+   `engines` is `>=20`; now "Node.js >= 20 (CI runs 24.x)". `npm run
+   build` -> `pnpm build` in the same section matches the pnpm-only rule.

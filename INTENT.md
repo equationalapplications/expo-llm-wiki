@@ -108,8 +108,9 @@ as code. The host decides where thinking comes from; the engine only
 decides what to ask.
 
 **Status: Built.** The only external runtime dependency of the core
-package is the keyword-search library. Platform packages add only the peer
-dependencies the host already has (`expo-sqlite`, `expo-crypto`, `react`).
+package is the keyword-search library. Platform packages add only
+first-party workspace packages plus the peer dependencies the host
+already has (`expo-sqlite`, `expo-crypto`, `react`).
 
 ### 2. Your database stays yours
 
@@ -210,8 +211,9 @@ has not ruled; nothing may flip them before that ruling.
 
 The core package depends on one external library at runtime (keyword
 search) and one first-party workspace package. The OKF and tools packages
-have no runtime dependencies. Platform packages carry only peer
-dependencies the host supplies. The Rust crate depends on four crates.
+have no runtime dependencies. Platform packages depend on first-party
+workspace packages plus the peer dependencies the host supplies. The Rust
+crate depends on four crates.
 This is not "zero dependencies" and should never be described that way.
 
 *Why:* the package is installed into other people's apps. Every
@@ -301,10 +303,9 @@ runs and who schedules it.
    steps, the Rust job). Reviews run in tiers; an unresolved review
    question holds the PR rather than being deferred silently.
 3. **Merge commits, never squash.** Every PR into `main`, including the
-   automated release PRs, merges as a merge commit. Squashing breaks
-   release-tag reachability and the spec-then-code commit record.
-   The release PR itself is the one exception: it squash-merges by design
-   so the tag lands on a single release commit.
+   automated release PRs, merges as a merge commit (`release.yml` uses
+   `gh pr merge --merge`; see issue #137). Squashing breaks release-tag
+   reachability and the spec-then-code commit record.
 4. **Releases are automated.** semantic-release computes the version from
    conventional commits in two phases. Nobody edits `CHANGELOG.md` or any
    `"version"` field in a PR. A `BREAKING CHANGE` footer publishes a major;
