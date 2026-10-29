@@ -37,6 +37,10 @@ pnpm link --global
 pnpm link --global @equationalapplications/expo-llm-wiki
 ```
 
+`pnpm link --global` needs pnpm's global directory set up once
+(`pnpm setup`). If your app uses npm or yarn, use that package manager's
+`link` equivalent against the same path.
+
 Metro requires extra config for symlinked packages. Add to `metro.config.js`:
 
 ```js
