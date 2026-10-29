@@ -10,13 +10,17 @@
 ```bash
 git clone https://github.com/equationalapplications/expo-llm-wiki.git
 cd expo-llm-wiki
-npm install --legacy-peer-deps
-npm run build
+pnpm install
+pnpm build
 ```
+
+This is a pnpm workspace (Corepack: `corepack enable` picks up the
+`packageManager` pin). `npm install` will not set up the workspace
+correctly.
 
 **Watch mode (rebuild on save)**
 ```bash
-npm run dev
+pnpm dev
 ```
 
 **Typecheck**

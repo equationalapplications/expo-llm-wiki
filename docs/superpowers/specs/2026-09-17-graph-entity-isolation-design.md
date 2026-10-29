@@ -2,7 +2,11 @@
 
 **Date:** 2026-09-17
 
-**Status:** Design approved in conversation; specification recorded for review; implementation not started
+**Status (2026-10-29 correction):** Implemented — commit `1aa087c`, shipped
+in 7.1.3 (2026-09-18); the closure is recorded in status revision
+2026-09-17-e below. The line that previously stood here ("implementation
+not started") was stale; all revisions -b through -e below are retained as
+history.
 
 **Status revision 2026-09-17-b:** Specification reviewed against the source baseline. Design decision unchanged and still approved. Nine review findings folded in: the shared `upsertGraphCore` call path and its effect on `ingestDocument` (§3, §6, test 16); a deterministic suppression detector replacing reliance on `changes` alone (§4, tests 13–14); the foreign edge-ID residual, resolved as documented-and-accepted rather than widened scope (§3, §6, test 10); REQ-DAO-01's rationale narrowed from repository-wide to `upsert` (§4); verified confirmation that cross-entity dangling edges do not leak (§6); the import path's differing disclosure posture (§5); both runtime export sites (§5, test 17); the ownership lookup's zero added cost (§4); and the active-only source-hash probe (§3, test 8). Test count 15 → 17; the repository list renumbered accordingly. No requirement was weakened and the approved decision in §1 is unchanged. Implementation remains not started.
 

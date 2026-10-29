@@ -1,7 +1,11 @@
 # Competitive memory: temporal facts, op-based librarian, budgeted maintenance: Design
 
 **Date:** 2026-09-29
-**Status:** Approved
+**Status (2026-10-29 correction):** Implemented — shipped in 7.8.0
+(2026-09-30): migration 13, the operations librarian, deferred maintenance,
+and the benchmarks package (`TemporalService`, `runPendingMaintenance`).
+The 8.0.0 question of flipping the ops/deferred-maintenance defaults for
+existing apps is explicitly NOT yet decided.
 **Branch:** `dev/competitive-memory` (long-lived; cut from `main` at `0f39bf4`, release 7.7.7)
 **Package:** `@equationalapplications/core-llm-wiki` (plus a new private `packages/benchmarks`)
 **Downstream consumers:** Clanker (Expo), Curated Thoughts (Tauri), SynapseTree (SaaS, SQLite-per-tenant on S3)
