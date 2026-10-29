@@ -13,7 +13,7 @@ version 7.13.1). Paths below are relative to that repo unless stated.
 | Rust crate exists, shipped 7.2.0 | fact | `crates/graphrag-core/Cargo.toml`; `CHANGELOG.md:340` (7.2.0, 2026-09-18); native spec status line |
 | Rule 1 BYOI: only `LLMProvider` makes model calls; keyword search without `embed` | Built | README "Key Principles" and "Retrieval Engine Internals"; `RetrievalService.ts` fallback path; `packages/core/package.json` deps |
 | Core's only external runtime dep is `minisearch`; other dep is workspace `core-okf` | fact | `packages/core/package.json:62-65` |
-| expo peers: expo-crypto, expo-sqlite, react; deps are workspace core + react | fact | `packages/expo/package.json:64-72` |
+| expo peers: expo-crypto, expo-sqlite, react; deps are workspace core-llm-wiki + react-llm-wiki (both first-party; `react` itself is a peer) | fact | `packages/expo/package.json:64-72` |
 | react: dep workspace core; peer react | fact | `packages/react/package.json:65-73` |
 | prisma-outbox: no deps; peers core + `@prisma/client` | fact | `packages/prisma-outbox/package.json:52-55` (no `dependencies` block matched) |
 | okf and core-llm-tools: zero runtime deps | fact | multiline grep for `dependencies`/`peerDependencies` blocks matched neither file |
@@ -114,3 +114,10 @@ version 7.13.1). Paths below are relative to that repo unless stated.
 3. MINOR fixed: CONTRIBUTING prerequisites said "Node.js 24+" while
    `engines` is `>=20`; now "Node.js >= 20 (CI runs 24.x)". `npm run
    build` -> `pnpm build` in the same section matches the pnpm-only rule.
+
+## Tier 1.5 round 2 (medium delta, cost $0.007): CONTRIBUTING Releases
+section still described the pre-#137 squash flow ("squash auto-merge
+requested", "squash-merge commit lands", "analyzes squash-merge commits").
+Rewritten to merge-commit flow; #137 (CLOSED) confirms release PRs are
+`--merge`-merged. Notes row for expo deps now names react-llm-wiki
+explicitly.
