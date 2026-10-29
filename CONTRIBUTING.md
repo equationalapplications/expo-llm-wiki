@@ -154,8 +154,9 @@ For breaking changes, include a `BREAKING CHANGE:` footer in the commit message 
 - [ ] Branch off latest `main`
 - [ ] `pnpm build` passes
 - [ ] `npx tsc --noEmit` passes with zero errors
-- [ ] Commits follow conventional commit format
-- [ ] PR title is a valid conventional commit subject line
+- [ ] Commits follow conventional commit format (merge commits preserve
+      branch commits, so the commit messages — not the PR title — are
+      what semantic-release reads)
 - [ ] No manual edits to `CHANGELOG.md` or `package.json` versions (semantic-release handles these on merge)
 
 **PR body:** describe why, not what. Link to the relevant spec in `docs/superpowers/specs/` if one exists.
