@@ -152,22 +152,18 @@ For breaking changes, include a `BREAKING CHANGE:` footer in the commit message 
 
 **Before opening:**
 - [ ] Branch off latest `main`
-- [ ] `npm run build` passes
+- [ ] `pnpm build` passes
 - [ ] `npx tsc --noEmit` passes with zero errors
 - [ ] Commits follow conventional commit format
 - [ ] PR title is a valid conventional commit subject line
 - [ ] No manual edits to `CHANGELOG.md` or `package.json` versions (semantic-release handles these on merge)
 
-The PR title becomes the squash merge commit message on `main`:
-```
-feat(react): add useWikiForget hook
-fix(ingest): reset checkpoint after clearAll
-```
-
-**PR body:** describe why, not what. Link to the relevant spec in `docs/specs/` if one exists.
+**PR body:** describe why, not what. Link to the relevant spec in `docs/superpowers/specs/` if one exists.
 
 **Merge policy:**
-- Squash merge only. One commit per PR on `main`.
+- Merge commits only — never squash. (The automated release PR is the one
+  exception: it squash-merges by design so the tag lands on a single
+  release commit. See `release.yml`.)
 - Delete the branch after merge.
 
 **Review bar:**
