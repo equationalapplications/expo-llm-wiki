@@ -1173,6 +1173,17 @@ flowchart TD
 - [SynapseTree integration guide](docs/synapsetree-integration.md) — recommended configuration, request lifecycle, where maintenance runs, single-writer requirement, `entity_id` scheme, MCP surface, and costs for tenant-aware hosts (e.g. SaaS with per-tenant SQLite files in object storage).
 - [Benchmarks](docs/benchmarks.md) — supersession results and run-level token totals for the 7.8.0 release versus the legacy baseline. LongMemEval accuracy, tokens per answer, and ingestion tokens are not measured yet (issue #247).
 
+## Ecosystem
+
+Built on LLM Wiki:
+
+- **[Curated Thoughts](https://github.com/equationalapplications/curated-thoughts)**: a privacy-first desktop second brain (Tauri, React, Rust) with a built-in MCP server.
+- **[Curated Thoughts Integrations](https://github.com/equationalapplications/curated-thoughts-integrations)**: wires Curated Thoughts into Claude Code, OpenCode, Hermes, and other agent harnesses. A software agency in a box.
+- **[Curated Journal](https://github.com/equationalapplications/curated-journal)**: a fully offline Expo journal, and the reference app for `expo-llm-wiki`.
+- **[SynapseTree](https://synapsetree.dev)**: hosted cloud memory on the same engine. Its MCP server ([`packages/mcp-server`](packages/mcp-server)) is in development.
+
+See the [Ecosystem page](https://equationalapplications.github.io/expo-llm-wiki/start/ecosystem/) in the developer guide.
+
 ---
 
 Made with ❤️ by Equational Applications LLC. [https://equationalapplications.com/](https://equationalapplications.com/)

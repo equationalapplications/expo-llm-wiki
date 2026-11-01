@@ -145,3 +145,10 @@ const context = formatContext(await wiki.read('user-123', 'query'));
 ```
 
 This works the same in Vue, Svelte, Solid, or plain HTML.
+
+## Desktop apps
+
+The same packages work inside desktop shells such as Tauri or Electron.
+[Curated Thoughts](https://github.com/equationalapplications/curated-thoughts) is a Tauri app.
+Its React UI runs `react-llm-wiki`, and a Rust back end handles file watching, local embeddings,
+and an MCP server.

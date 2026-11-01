@@ -35,6 +35,12 @@ await wiki.promoteDraft(facts[0].id, 'user-1', { by: 'human:alice' });
 await wiki.setLifecycleStatus(facts[1].id, 'user-1', 'deprecated'); // or forget()
 ```
 
+:::tip[Seen in production]
+[Curated Thoughts](https://github.com/equationalapplications/curated-thoughts) builds its whole UX
+around this gate. Librarian proposals wait in a **Review desk**, every approval records who
+reviewed it, and agents can't approve anything.
+:::
+
 `promoteDraft` throws `WikiDraftNotFound` if there's no live draft with that ID. Promotion
 doesn't change `updated_at`, so the fact keeps its place in recency ordering.
 

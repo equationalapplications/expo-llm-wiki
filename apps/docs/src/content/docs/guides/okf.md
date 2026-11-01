@@ -67,6 +67,14 @@ writes it back from the dump's `edges`.
   `writeOkfSources`, `setLifecycleStatus`, `setStaleAfter`, and `setGeneratedBy`. Each has a
   `…Task` variant.
 
+## OKF across the ecosystem
+
+OKF is the shared exchange format of the LLM Wiki family.
+[Curated Thoughts](https://github.com/equationalapplications/curated-thoughts) backs up and restores
+its whole brain as OKF v0.2 zip bundles, and
+[Curated Journal](https://github.com/equationalapplications/curated-journal) imports and exports
+the same bundles on mobile. If your app produces `llm-wiki/2` bundles, they're in the same format.
+
 ## Lower-level primitives
 
 Need to produce OKF from your own data model? Use the zero-dependency

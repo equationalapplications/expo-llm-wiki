@@ -7,6 +7,13 @@ sidebar:
 
 `@equationalapplications/mcp-server` · [source](https://github.com/equationalapplications/expo-llm-wiki/tree/main/packages/mcp-server)
 
+:::note[In development]
+This is the upcoming MCP server for [SynapseTree](https://synapsetree.dev). It isn't released yet.
+Want local agent memory today? [Curated Thoughts](https://github.com/equationalapplications/curated-thoughts)
+ships an MCP server and [harness integrations](https://github.com/equationalapplications/curated-thoughts-integrations).
+See the [coding agents recipe](/expo-llm-wiki/recipes/coding-agent-mcp/).
+:::
+
 A small Node program (Node 20+) that your MCP client launches on your machine. It exposes eight
 memory tools and forwards each call to `https://api.synapsetree.dev` with your API key. It
 never sees your conversation, only the tool calls.

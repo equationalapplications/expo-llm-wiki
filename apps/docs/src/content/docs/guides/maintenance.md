@@ -102,6 +102,37 @@ report.stoppedReason.reason; // 'complete' | 'deadline' | 'budget_exhausted' | '
 jobs can finish.
 :::
 
+## On mobile: the Night Shift pattern
+
+Phones are hard on background work: iOS can kill memory-hungry processes, and long LLM passes
+drain the battery. A pattern that works well is to **turn off auto maintenance and run it in the
+foreground while the device is charging**:
+
+```ts
+import * as Battery from 'expo-battery';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
+
+const wiki = createWiki(db, {
+  llmProvider,
+  config: { maintenance: 'deferred', librarian: { strategy: 'ops' } },
+});
+
+export async function runNightShift() {
+  const state = await Battery.getBatteryStateAsync();
+  if (state !== Battery.BatteryState.CHARGING && state !== Battery.BatteryState.FULL) return;
+
+  await activateKeepAwakeAsync();
+  try {
+    await wiki.runPendingMaintenance({ deadlineMs: 15 * 60_000 });
+  } finally {
+    deactivateKeepAwake();
+  }
+}
+```
+
+[Curated Journal](https://github.com/equationalapplications/curated-journal) ships the same idea as its
+**Night Shift** mode: a full-screen maintenance session the user starts when the device is plugged in.
+
 ## Live job status
 
 ```ts

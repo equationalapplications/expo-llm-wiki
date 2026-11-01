@@ -164,5 +164,8 @@ await wiki.runOntologyBackfill('user-1', { classifier: 'llm' }); // force the ge
 - **Classifier mode proposes no edges.** Use `classifier: 'llm'` when you want edges.
 - More than 255 node types, or no `classify` function, means the generative path is used.
 
+[Curated Thoughts](https://github.com/equationalapplications/curated-thoughts) uses this with a
+Jev classifier on Cloudflare Workers AI (`typesafe/jev`), behind its **Type untyped facts** button.
+
 `classify` receives `{ state, questions }`, where each question is `choice`, `binary`, or
 `score`. It returns `{ answers }`, which the engine validates as untrusted input.
