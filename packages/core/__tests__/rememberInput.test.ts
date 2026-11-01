@@ -65,6 +65,7 @@ describe('normalizeRememberInput', () => {
     ['source_type librarian_inferred', 'e1', { title: 'T', body: 'B', source_type: 'librarian_inferred' }],
     ['garbage source_type', 'e1', { title: 'T', body: 'B', source_type: 'oracle' }],
     ['non-string okf_type', 'e1', { title: 'T', body: 'B', okf_type: 3 }],
+    ['blank okf_type', 'e1', { title: 'T', body: 'B', okf_type: '   ' }],
     ['negative valid_from', 'e1', { title: 'T', body: 'B', valid_from: -1 }],
     ['NaN valid_from', 'e1', { title: 'T', body: 'B', valid_from: Number.NaN }],
     ['string valid_from', 'e1', { title: 'T', body: 'B', valid_from: '2026-01-01' }],

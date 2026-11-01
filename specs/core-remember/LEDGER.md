@@ -15,3 +15,4 @@ Baseline (2026-11-01 @ `51ff55a`): core suite 185 files / 2002 tests passed; `ty
 
 - Task 3: plan's test asserted `fact.updated_at === fact.created_at`, but `EntryRepository.upsert` re-stamps `updated_at` with its own `Date.now()` (same as `supersede()`), so it is racy. Relaxed the new test to `updated_at >= created_at`; no spec text changed (spec §3.3 only says the literal is built with both = now). Code untouched.
 - Task 4: events-empty assertion counts `llm_wiki_events` via SQL instead of the plan's `(local as any).eventRepo.getRecent` (same check, no private access). Tests passed first run, no production change.
+- Tier-4 review: plan's Task 2 used `??` defaults, but shipped `rememberInput.ts` rejects explicit `null` for `confidence`/`source_type` (only absence takes the default; matches `valid_from`'s precedent and "nothing coerced silently"). Blank `okf_type` also throws instead of reaching the ontology path. Both pinned with reject-table tests.

@@ -56,8 +56,8 @@ export function normalizeRememberInput(entityId: string, input: RememberInput, n
   }
   let okfType: string | null = null;
   if (input.okf_type !== undefined && input.okf_type !== null) {
-    if (typeof input.okf_type !== 'string') {
-      throw new TypeError('remember(): input.okf_type must be a string or null.');
+    if (typeof input.okf_type !== 'string' || input.okf_type.trim() === '') {
+      throw new TypeError('remember(): input.okf_type must be a non-empty string or null.');
     }
     okfType = input.okf_type;
   }

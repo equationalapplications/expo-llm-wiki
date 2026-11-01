@@ -22,7 +22,7 @@ The engine has no way to store a single mutable fact on request. Today the only 
 
 `write()` is not a fact write: it records an event (`packages/core/src/services/WriteService.ts` L39-89) and, in `'auto'` mode, may start a background librarian/heal job (L96-163). A host that wants "store this fact now, no model" has nothing to call.
 
-SynapseTree's contract already promises that call (`RememberRequest` → `201 Fact`), and the MCP server's `memory_remember` tool is built on it (expo-llm-wiki PR #305 spec, `docs/superpowers/specs/2026-11-01-mcp-server-design.md` L431, L442). Both are blocked on this method.
+SynapseTree's contract already promises that call (`RememberRequest` → `201 Fact`), and the MCP server's `memory_remember` tool is built on it (expo-llm-wiki PR #305 spec, `specs/mcp-server/spec.md` on main (L431, L442 in the pre-move copy)). Both are blocked on this method.
 
 ## 2. Root cause (with evidence)
 
@@ -228,4 +228,4 @@ Re-verified on `5ecd716` (expo-llm-wiki) and SynapseTree `main` @ `a0ae9c7` plus
 - SynapseTree `docs/superpowers/specs/2026-09-30-openapi-contract-design.md` L412-422 (D11), L663-666 (Q4), L726-728 (Q4/Q10 ruling), L733 (Q12), L734-746 (Q13), L756-766 (refinement 2), L775 (refinement 5).
 - SynapseTree `specs/2026-11-01-wire-memory-operations/evidence/data-plane-survey.md` (branch `spec/wire-memory-operations`) L8, L137-172, L211, L253-267, L271-280.
 - SynapseTree `src/data-plane/query-memory.ts` L148-184 (`toContractFact`), `src/data-plane/pool-main.ts` L227 (`wikiOptions`), `src/data-plane/upsert-graph.ts` L17-18, L173, `src/data-plane/embedding-fingerprint.ts` L198-208.
-- expo-llm-wiki PR #305 worktree, `docs/superpowers/specs/2026-11-01-mcp-server-design.md` L431, L442 (read only).
+- expo-llm-wiki PR #305 worktree, `specs/mcp-server/spec.md` on main (L431, L442 in the pre-move copy) (read only).

@@ -84,8 +84,7 @@ const fact = await wiki.remember('user-123', {
 fact.id; // 'fact_…' — the row as stored: timestamps, defaults, isStale, trustTier
 ```
 
-- Validation throws `TypeError` before anything is written: `title` non-empty, `body` a string, `tags` an array of strings, known `confidence` and `source_type` (explicit `null` is rejected; omit the field to take the default), finite and >= 0 `valid_from`. Nothing is clipped; length limits are the host's.
-- The write is one transaction and is not idempotent: the fact is stored before search sync and embedding run post-commit, so a rejection after the write means the fact may already exist and a retry creates a duplicate.
+- Validation throws `TypeError` before anything is written: `title` non-empty, `body` a string, `tags` an array of strings, known `confidence` and `source_type` (explicit `null` is rejected; omit the field to take the default), `okf_type` a non-empty string or null, finite and >= 0 `valid_from`. Nothing is clipped; length limits are the host's.
 - `okf_type` follows the `upsertGraph` rule: the manifest's canonical slug when known; `WikiStrictOntologyViolation` under strict mode otherwise; `null` otherwise.
 - Never starts the librarian or heal and writes no event, in `'auto'` and `'deferred'` mode alike. Embeds through `llmProvider.embed` when present (failures surface as `embedding_failed` with `operation: 'remember'`); keyword-only otherwise, and `getPendingMaintenance().reembedPending` picks it up once an `embed` exists.
 - Not idempotent: two identical calls store two facts. Hosts that expose retries own the idempotency key.
