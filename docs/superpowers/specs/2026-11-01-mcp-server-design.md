@@ -76,8 +76,10 @@ used by CI; both already omit some packages). `pnpm install` must be run
 once so `pnpm-lock.yaml` includes the new dependencies; CI installs with
 `--frozen-lockfile`.
 
-Versioning is lockstep and automatic. The PR squash-merges with a
-`feat(mcp-server): …` title, the next release stamps the package with the
+Versioning is lockstep and automatic. The PR merges as a merge commit,
+never squash (AGENTS.md, INTENT.md "Merge commits, never squash"; the
+merge-commit subject is the `feat(mcp-server): …` conventional title),
+the next release stamps the package with the
 same version as every other package, and that is the first published
 version. No manual version edits, ever (CONTRIBUTING.md).
 
