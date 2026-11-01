@@ -38,6 +38,12 @@ describe('normalizeRememberInput', () => {
     expect(fact.tags).toEqual(['a']);
   });
 
+  it('rejects a sparse tags array (every() skips holes)', () => {
+    const sparse = ['ok'] as unknown as string[];
+    (sparse as any).length = 2;
+    expect(() => normalizeRememberInput('e1', { title: 'T', body: 'B', tags: sparse }, NOW)).toThrow(TypeError);
+  });
+
   it.each<[string, unknown, unknown]>([
     ['empty entityId', '', { title: 'T', body: 'B' }],
     ['entityId > 200 chars', 'x'.repeat(201), { title: 'T', body: 'B' }],

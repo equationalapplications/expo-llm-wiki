@@ -69,7 +69,7 @@ This is the GraphRAG seed path: load a corpus, walk it.
 
 ## Direct fact writes
 
-`remember()` stores one mutable fact in one transaction, with no model call, and returns the stored row. Use it when the host already knows the fact (a user preference, an agent's observation the user approved). To replace a fact, use `supersede()` so history is kept.
+`remember()` stores one mutable fact in one transaction, with no text-generation (LLM) call, and returns the stored row. When `llmProvider.embed` is configured it does await one embedding call before resolving (failures surface as `embedding_failed`, not a throw). Use it when the host already knows the fact (a user preference, an agent's observation the user approved). To replace a fact, use `supersede()` so history is kept.
 
 ```typescript
 const fact = await wiki.remember('user-123', {

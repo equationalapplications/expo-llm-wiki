@@ -32,10 +32,17 @@ export function normalizeRememberInput(entityId: string, input: RememberInput, n
   }
   let tags: string[] = [];
   if (input.tags !== undefined) {
-    if (!Array.isArray(input.tags) || !input.tags.every((t) => typeof t === 'string')) {
+    if (!Array.isArray(input.tags)) {
       throw new TypeError('remember(): input.tags must be an array of strings.');
     }
-    tags = [...input.tags];
+    // Index-based loop on purpose: Array.prototype.every skips holes, so a
+    // sparse array (e.g. new Array(2)) would otherwise pass validation.
+    for (let i = 0; i < input.tags.length; i++) {
+      if (typeof input.tags[i] !== 'string') {
+        throw new TypeError('remember(): input.tags must be an array of strings.');
+      }
+    }
+    tags = [...(input.tags as string[])];
   }
   // null is a supplied value, not absence (spec §3.2: nothing coerced silently);
   // it fails the Set check below with the same message as any other bad value.
