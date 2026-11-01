@@ -227,9 +227,17 @@ Rules (all testable with an injected `fetch`):
   retry of that call.
 - Retry on: network error, 408, 429, 502, 503, 504. At most 2 retries
   (3 attempts). Wait = `Retry-After` seconds when present (integer
-  seconds or HTTP-date), else `min(1000 * 2^attempt, 8000)` plus up to
-  250 ms jitter. Never retry any other 4xx. Never retry a 5xx other than
-  502/503/504 (a 500 `internal` is not retried).
+  seconds or HTTP-date) capped at 30 s, else `min(1000 * 2^attempt,
+  8000)` plus up to 250 ms jitter. Never retry any other 4xx. Never
+  retry a 5xx other than 502/503/504 (a 500 `internal` is not retried).
+- Single-attempt exceptions: `registerAgentIdentity` (mints a claim and
+  sends an email; no idempotency key) and `oauthToken` (each poll can
+  mint the one-time key and free the claim; no idempotency key). An
+  ambiguous failure on these — a network error, a stalled body, or a
+  502/503/504 after the server may have committed — is surfaced, never
+  blindly replayed. In the auth.md poll loop a surviving 429 is treated
+  like `slow_down` (+5 s), and an `invalid_grant` after an ambiguous
+  poll reports that a key may have been issued but not received.
 - Timeout per request: 30 s; `ingestDocument` 120 s. Implemented with
   `AbortController`; a timeout counts as a network error for retry.
 - Response handling: 2xx with JSON body → `data`; 2xx with no body
@@ -390,9 +398,13 @@ register `POST /agent/identity`, poll `POST /oauth2/token`, revoke
    "Check <email> for a SynapseTree approval link (usually within a
    minute; it expires in 15 minutes). Approve only if the page shows this
    code: NNNNNN".
-3. Wait `poll.interval` seconds, then `POST poll.token_endpoint` as form
-   data `grant_type=<poll.grant>&assertion=<claim_token>`. On each
-   answer:
+3. Wait `poll.interval` seconds, then `POST` to the configured base
+   URL's `/oauth2/token` as form data
+   `grant_type=<poll.grant>&assertion=<claim_token>`. (The registration
+   response's `poll.token_endpoint` is validated to equal
+   `<base-url>/oauth2/token`; on any other value the flow fails closed
+   with `invalid_response` rather than sending the claim token to a
+   server-chosen host.) On each answer:
    - 200 `{"access_token": "stree_…", "token_type": "Bearer", "account_id": "…", "scope": "memory:full"}`:
      this is the only copy of the key. Store it (`source: "authmd"`,
      `accountId`) before printing anything. Then run `status` and print it.
