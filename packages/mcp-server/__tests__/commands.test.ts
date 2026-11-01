@@ -35,6 +35,8 @@ describe('parseArgs (spec §6)', () => {
     expect(parseArgs(['status'])).toEqual({ kind: 'status' });
     expect(parseArgs(['config', 'set', 'namespace', 'repo:x'])).toEqual({ kind: 'config-set', key: 'namespace', value: 'repo:x' });
     expect(parseArgs(['config', 'set', 'base-url', 'https://t'])).toEqual({ kind: 'config-set', key: 'base-url', value: 'https://t' });
+    expect(() => parseArgs(['config', 'set', 'base-url', 'http://api.example.com'])).toThrow(UsageError);
+    expect(parseArgs(['config', 'set', 'base-url', 'http://localhost:8080'])).toEqual({ kind: 'config-set', key: 'base-url', value: 'http://localhost:8080' });
     expect(parseArgs(['--help'])).toEqual({ kind: 'help' });
     expect(parseArgs(['--version'])).toEqual({ kind: 'version' });
   });

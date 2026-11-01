@@ -2,7 +2,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { registerByEmail } from './authmd';
 import { SynapseTreeClient } from './client';
 import {
-  KEY_PATTERN, configDir, deleteCredentials, maskKey, readConfig, resolveSettings, writeConfig, writeCredentials, type Settings,
+  KEY_PATTERN, configDir, deleteCredentials, maskKey, readConfig, resolveSettings, validateBaseUrl, writeConfig, writeCredentials, type Settings,
 } from './credentials';
 import { NO_KEY_MESSAGE, SynapseTreeError, UsageError } from './errors';
 import { createServer } from './server';
@@ -59,6 +59,7 @@ export function parseArgs(argv: string[]): Command {
       const baseIdx = rest.indexOf('--base-url');
       const baseUrl = baseIdx >= 0 ? rest[baseIdx + 1] : undefined;
       if (baseIdx >= 0 && !baseUrl) throw new UsageError('--base-url needs a URL.');
+      if (baseUrl) validateBaseUrl(baseUrl);
       return baseUrl ? { kind: 'auth-email', email, baseUrl } : { kind: 'auth-email', email };
     }
     if (flag === '--revoke') return { kind: 'auth-revoke' };
@@ -70,7 +71,7 @@ export function parseArgs(argv: string[]): Command {
       throw new UsageError('usage: config set namespace <name> | config set base-url <url>');
     }
     if (key === 'namespace' && !NAMESPACE_PATTERN.test(value)) throw new UsageError('namespace must match ^[a-z0-9][a-z0-9._:-]{0,127}$ (e.g. repo:myproject).');
-    if (key === 'base-url' && !/^https?:\/\//.test(value)) throw new UsageError('base-url must start with http:// or https://');
+    if (key === 'base-url') validateBaseUrl(value);
     return { kind: 'config-set', key, value };
   }
   throw new UsageError(`unknown command: ${first}\n${HELP}`);

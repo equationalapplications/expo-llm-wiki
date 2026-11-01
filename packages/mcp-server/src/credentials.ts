@@ -96,6 +96,23 @@ export function writeConfig(dir: string, config: Config): Promise<void> {
   return writeJson(dir, CONFIG_FILE, config);
 }
 
+/**
+ * Guards every base-URL source (flag, config file, env): the bearer key may
+ * never traverse plaintext HTTP except to a loopback host.
+ */
+export function validateBaseUrl(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new UsageError(`base-url is not a valid URL: ${url}`);
+  }
+  if (parsed.protocol === 'https:') return url;
+  const loopback = ['localhost', '127.0.0.1', '[::1]', '::1'].includes(parsed.hostname);
+  if (parsed.protocol === 'http:' && loopback) return url;
+  throw new UsageError('base-url must use https:// (http:// is only allowed for localhost) so the API key is never sent in cleartext.');
+}
+
 export interface Settings {
   apiKey?: string;
   keySource: 'env' | 'file' | null;
@@ -114,7 +131,7 @@ export async function resolveSettings(env: NodeJS.ProcessEnv = process.env, dir:
     apiKey,
     keySource: envKey ? 'env' : creds ? 'file' : null,
     accountId: envKey ? null : (creds?.accountId ?? null),
-    baseUrl: (env.SYNAPSETREE_BASE_URL || config.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, ''),
+    baseUrl: validateBaseUrl((env.SYNAPSETREE_BASE_URL || config.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '')),
     namespace: env.SYNAPSETREE_NAMESPACE || config.namespace,
     dir,
   };

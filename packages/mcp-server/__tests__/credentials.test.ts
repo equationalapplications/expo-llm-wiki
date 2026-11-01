@@ -83,6 +83,18 @@ describe('resolveSettings precedence', () => {
     expect(fromEnv).toMatchObject({ apiKey: envKey, keySource: 'env', accountId: null, baseUrl: 'https://env', namespace: 'repo:env' });
   });
 
+  it('rejects an insecure non-localhost base URL from the environment', async () => {
+    const envKey = 'stree_' + 'c'.repeat(43);
+    await expect(resolveSettings({ SYNAPSETREE_API_KEY: envKey, SYNAPSETREE_BASE_URL: 'http://api.example.com' }, dir)).rejects.toBeInstanceOf(UsageError);
+    await expect(resolveSettings({ SYNAPSETREE_API_KEY: envKey, SYNAPSETREE_BASE_URL: 'http://localhost:8080' }, dir)).resolves.toMatchObject({ baseUrl: 'http://localhost:8080' });
+  });
+
+  it('rejects an insecure non-localhost base URL from the config file', async () => {
+    const envKey = 'stree_' + 'c'.repeat(43);
+    await writeConfig(dir, { baseUrl: 'http://api.example.com' });
+    await expect(resolveSettings({ SYNAPSETREE_API_KEY: envKey }, dir)).rejects.toBeInstanceOf(UsageError);
+  });
+
   it('falls back to the production base URL and no key', async () => {
     const s = await resolveSettings({}, dir);
     expect(s).toMatchObject({ apiKey: undefined, keySource: null, baseUrl: 'https://api.synapsetree.dev', namespace: undefined });
