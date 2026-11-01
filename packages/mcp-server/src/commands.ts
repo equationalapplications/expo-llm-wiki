@@ -184,7 +184,15 @@ export async function run(cmd: Command, io: Io): Promise<number> {
         const server = createServer({ client: makeClient(settings, io), defaultNamespace: settings.namespace });
         const transport = new StdioServerTransport();
         await server.connect(transport);
-        await new Promise<void>((resolve) => { transport.onclose = () => resolve(); });
+        // The SDK chains its own onclose handler during connect(); wrap it
+        // instead of replacing it so the SDK's cleanup still runs.
+        const previousOnClose = transport.onclose;
+        await new Promise<void>((resolve) => {
+          transport.onclose = () => {
+            previousOnClose?.();
+            resolve();
+          };
+        });
         return 0;
       }
     }
