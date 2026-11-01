@@ -42,6 +42,9 @@ export async function registerByEmail(client: SynapseTreeClient, email: string, 
   const deadline = now() + (opts.deadlineMs ?? 16 * 60 * 1000);
 
   const reg = (await client.call<Registration>('registerAgentIdentity', { body: { email } })).data;
+  if (!reg || typeof reg !== 'object' || !reg.poll || typeof reg.user_code !== 'string' || typeof reg.claim_token !== 'string') {
+    throw new ClaimError('invalid_response', 'The registration endpoint returned a malformed response.');
+  }
   let intervalSeconds = reg.poll.interval ?? 5;
 
   opts.info(`Check ${email} for a SynapseTree approval link (usually within a minute; it expires in 15 minutes).`);
