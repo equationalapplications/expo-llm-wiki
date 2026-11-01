@@ -30,10 +30,15 @@ the SynapseTree founding charter; never re-rule a charter promise here.
 - **Never edit `CHANGELOG.md` or any `"version"` field.** semantic-release
   owns them. Never write a `BREAKING CHANGE` footer without a ruling; it
   publishes 8.0.0.
-- **Spec status honesty.** Every spec in `docs/superpowers/specs/` has a
-  Status line. Update it in the same PR that changes the behavior. Three
-  specs shipped with stale "not started" headers until 2026-10-29; do not
-  add a fourth.
+- **Spec status honesty.** Every spec (`specs/<name>/spec.md`, and the
+  legacy files in `docs/superpowers/specs/`) has a Status line. Update it
+  in the same PR that changes the behavior. Three specs shipped with stale
+  "not started" headers until 2026-10-29; do not add a fourth.
+- **Spec folders and ledgers.** New work is one folder under `specs/<name>/`
+  with `spec.md`, `plan.md`, `LEDGER.md` (`specs/README.md`). Tick a
+  ledger box only after that task's verification passes. At session start,
+  reconcile the ledger against the disk: if the ledger claims work the disk
+  does not show, trust the disk, roll the ledger back, and log it.
 - **`.brain/` is not ours.** It is scratch written by the Curated Thoughts
   indexer when CT indexes this repo. It is gitignored; never commit it,
   never write into a repo you are indexing from CT.
