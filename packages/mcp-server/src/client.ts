@@ -150,11 +150,12 @@ export class SynapseTreeClient {
 
     let lastError: SynapseTreeError | undefined;
     let waitMs: number | undefined;
-    // registerAgentIdentity is single-attempt: the POST creates a claim (and
-    // triggers an email) as a side effect, and the contract gives it no
-    // Idempotency-Key, so a blind retry on a 503 would consume the
-    // five-claims-per-email cap with a claim nobody polls.
-    const canRetry = opId !== 'registerAgentIdentity';
+    // registerAgentIdentity and oauthToken are single-attempt: neither has
+    // an Idempotency-Key in the contract and both mint server-side state
+    // (a claim; the one-time key that frees the claim). A blind retry after
+    // an ambiguous failure (502/504 or a stalled body after the 200
+    // committed) would burn the claim or orphan a minted key.
+    const canRetry = opId !== 'registerAgentIdentity' && opId !== 'oauthToken';
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       if (attempt > 0) {
         if (!canRetry) break;

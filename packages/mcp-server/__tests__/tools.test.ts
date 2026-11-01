@@ -165,6 +165,12 @@ describe('namespaces_list', () => {
     const { ctx } = harness([{ status: 200, body: { data: [{ namespace: 'a' }], hasMore: false, nextCursor: null } }]);
     expect(await run('namespaces_list', {}, ctx)).toEqual({ namespaces: ['a'], truncated: false });
   });
+
+  it('stops on an empty page even when the server claims there is more', async () => {
+    const endlessEmpty = Array.from({ length: 20 }, () => ({ status: 200, body: { data: [], hasMore: true, nextCursor: 'c' } }));
+    const { ctx } = harness(endlessEmpty);
+    expect(await run('namespaces_list', {}, ctx)).toEqual({ namespaces: [], truncated: false });
+  });
 });
 
 describe('whoami', () => {

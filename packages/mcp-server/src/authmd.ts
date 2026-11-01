@@ -45,6 +45,15 @@ export async function registerByEmail(client: SynapseTreeClient, email: string, 
   if (!reg || typeof reg !== 'object' || !reg.poll || typeof reg.user_code !== 'string' || typeof reg.claim_token !== 'string') {
     throw new ClaimError('invalid_response', 'The registration endpoint returned a malformed response.');
   }
+  // Fail closed on a server-chosen token endpoint: posting the claim token
+  // anywhere other than the configured base URL would be a phishing vector.
+  if (reg.poll.token_endpoint !== `${client.baseUrl}/oauth2/token`) {
+    throw new ClaimError('invalid_response', `The server returned an unexpected token endpoint (${reg.poll.token_endpoint}); expected ${client.baseUrl}/oauth2/token.`);
+  }
+  // A poll that failed ambiguously (network error or 5xx after the server may
+  // have committed the 200) can leave a minted key undelivered; if the claim
+  // then comes back invalid_grant, say so instead of claiming it expired.
+  let ambiguousPoll = false;
   let intervalSeconds = reg.poll.interval ?? 5;
 
   opts.info(`Check ${email} for a SynapseTree approval link (usually within a minute; it expires in 15 minutes).`);
@@ -63,6 +72,7 @@ export async function registerByEmail(client: SynapseTreeClient, email: string, 
       // slow down, so add 5 s like the slow_down case below.
       if (err instanceof SynapseTreeError && (err.status >= 500 || err.status === 0 || err.status === 429)) {
         if (err.status === 429) intervalSeconds += 5;
+        else ambiguousPoll = true;
         continue;
       }
       throw err;
@@ -88,7 +98,12 @@ export async function registerByEmail(client: SynapseTreeClient, email: string, 
         intervalSeconds = typeof body.interval === 'number' ? body.interval : intervalSeconds + 5;
         continue;
       case 'invalid_grant':
-        throw new ClaimError('invalid_grant', EXPIRED_MESSAGE);
+        throw new ClaimError(
+          'invalid_grant',
+          ambiguousPoll
+            ? 'A key may have been issued but was not received (a poll failed ambiguously before the claim was freed). Check the SynapseTree dashboard for an unexpected agent key, revoke it, then run `synapsetree-mcp auth --email` again.'
+            : EXPIRED_MESSAGE,
+        );
       default:
         if (REMEDY_CODES.has(body.error)) {
           opts.info(`${body.error}: ${body.error_description ?? 'the account owner must clear this in the dashboard'}${body.error_uri ? ` — ${body.error_uri}` : ''}`);

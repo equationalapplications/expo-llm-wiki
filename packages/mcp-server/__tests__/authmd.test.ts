@@ -67,6 +67,23 @@ describe('registerByEmail (spec §7)', () => {
     await expect(s.run()).resolves.toMatchObject({ apiKey: KEY });
   });
 
+  it('fails closed on a server-chosen token endpoint', async () => {
+    const s = scenario([{ status: 200, body: { ...REG, poll: { ...REG.poll, token_endpoint: 'https://evil.example/oauth2/token' } } }]);
+    await expect(s.run()).rejects.toMatchObject({ code: 'invalid_response' });
+    expect(s.lines.join('\n')).not.toContain('stclaim_');
+  });
+
+  it('explains a possibly-minted key when an ambiguous poll ends in invalid_grant', async () => {
+    const s = scenario([
+      { status: 200, body: REG },
+      { status: 503, body: { code: 'unavailable' } },
+      { status: 503, body: { code: 'unavailable' } },
+      { status: 503, body: { code: 'unavailable' } },
+      { status: 400, body: { error: 'invalid_grant' } },
+    ]);
+    await expect(s.run()).rejects.toMatchObject({ code: 'invalid_grant', message: expect.stringContaining('may have been issued') });
+  });
+
   it('treats a surviving 429 from the token endpoint as slow_down and keeps polling', async () => {
     // three 429s exhaust the client's internal retries; authmd must then
     // keep polling with a +5 s interval instead of aborting.

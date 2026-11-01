@@ -6,7 +6,9 @@ import type { ToolContext, ToolDefinition } from '../src/tools/shared';
 
 const apiKey = process.env.SYNAPSETREE_API_KEY;
 const baseUrl = process.env.SYNAPSETREE_BASE_URL;
-const enabled = Boolean(apiKey && baseUrl);
+// Double-gated: env credentials AND an explicit opt-in, so a developer with
+// production env vars exported never runs a writing suite by accident.
+const enabled = Boolean(apiKey && baseUrl) && process.env.SYNAPSETREE_LIVE_TESTS === '1';
 
 const tool = (name: string): ToolDefinition => {
   const t = TOOLS.find((x) => x.name === name);

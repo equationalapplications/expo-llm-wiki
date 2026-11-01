@@ -22,6 +22,7 @@ export const namespacesList = defineTool({
     for (;;) {
       const res = await ctx.client.call<Page>('listNamespaces', { query: { prefix: input.prefix, limit: PAGE, after } });
       for (const row of res.data.data) namespaces.push(row.namespace);
+      if (!res.data.data.length) break; // an empty page with hasMore would otherwise loop forever
       if (!res.data.hasMore || !res.data.nextCursor) break;
       if (namespaces.length >= CAP) { truncated = true; break; }
       after = res.data.nextCursor;

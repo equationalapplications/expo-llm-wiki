@@ -149,6 +149,12 @@ describe('SynapseTreeClient (spec §5.2)', () => {
     expect(waits[0]).toBe(30_000);
   });
 
+  it('never retries oauthToken: each poll can mint the one-time key', async () => {
+    const { client, calls } = makeClient([problem(503, 'unavailable')]);
+    await expect(client.call('oauthToken', { form: { grant_type: 'urn:g', assertion: 'a' } })).rejects.toMatchObject({ status: 503 });
+    expect(calls).toHaveLength(1);
+  });
+
   it('gives up after three attempts with the last error', async () => {
     const { client, calls } = makeClient([problem(503, 'unavailable'), problem(503, 'unavailable'), problem(503, 'unavailable')]);
     await expect(client.call('whoami')).rejects.toMatchObject({ code: 'unavailable', status: 503 });

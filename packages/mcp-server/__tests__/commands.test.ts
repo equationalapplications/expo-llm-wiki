@@ -109,7 +109,7 @@ describe('run', () => {
   });
 
   it('auth --email stores the key before printing status', async () => {
-    const REG = { claim_token: 'stclaim_' + 'c'.repeat(43), user_code: '654321', poll: { token_endpoint: 'https://api.test/oauth2/token', grant: 'urn:synapsetree:claim', interval: 0 } };
+    const REG = { claim_token: 'stclaim_' + 'c'.repeat(43), user_code: '654321', poll: { token_endpoint: 'https://api.synapsetree.dev/oauth2/token', grant: 'urn:synapsetree:claim', interval: 0 } };
     const h = io([{ status: 200, body: REG }, { status: 200, body: { access_token: KEY, token_type: 'Bearer', account_id: 'acc', scope: 'memory:full' } }, { status: 200, body: WHOAMI }]);
     expect(await run({ kind: 'auth-email', email: 'a@b.c' }, h.io)).toBe(0);
     expect(await readCredentials(dir)).toMatchObject({ apiKey: KEY, source: 'authmd', accountId: 'acc' });
