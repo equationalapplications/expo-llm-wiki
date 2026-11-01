@@ -8,7 +8,7 @@ Baseline (2026-11-01 @ `51ff55a`): core suite 185 files / 2002 tests passed; `ty
 - [x] 2. `RememberInput` type and the pure normalizer — evidence: rememberInput 24/24 green; typecheck 0
 - [x] 3. `RememberService` and `WikiMemory.remember()` — storage, read-back, `valid_from`, `okf_type` — evidence: remember.test.ts 8/8 green x3 runs; typecheck 0
 - [x] 4. Behaviour guarantees — no maintenance, searchable, embedding, outbox, temporal interplay — evidence: remember.test.ts 17/17; core suite 188 files / 2049 tests green; typecheck 0
-- [ ] 5. Docs and the published surface — evidence:
+- [x] 5. Docs and the published surface — evidence: build 0; dist d.ts has remember + RememberInput; typecheck 0; pnpm test 0 (core 188/2049)
 - [ ] 6. Final cleanup commit (owner-gated) — evidence:
 
 ## Discrepancies
