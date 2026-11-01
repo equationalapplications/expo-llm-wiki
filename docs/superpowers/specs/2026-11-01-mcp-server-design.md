@@ -1,9 +1,10 @@
 # `@equationalapplications/mcp-server` — SynapseTree memory for coding agents
 
 **Date:** 2026-11-01 (rev 1)
-**Status:** DRAFT — design approved in session by Kurt VanDusen 2026-11-01.
-Nothing is built. The implementation plan is
-`docs/superpowers/plans/2026-11-01-mcp-server-plan.md`.
+**Status:** IMPLEMENTED — design approved in session by Kurt VanDusen 2026-11-01;
+the package is built on this branch (ten TDD tasks per
+`docs/superpowers/plans/2026-11-01-mcp-server-plan.md`, tests mocked-only; the
+live chain is gated by spec §12.3 before public launch).
 **Package:** `packages/mcp-server`, published as `@equationalapplications/mcp-server`.
 **Authority:** This spec is the implementer's single source. It is derived
 from SynapseTree's private design spec (`2026-10-31-mcp-server-design.md`
