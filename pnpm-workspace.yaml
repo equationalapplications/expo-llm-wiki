@@ -35,11 +35,12 @@ minimumReleaseAgeExclude:
   # Age-gate waiver, scoped to the exact pinned version (override above):
   # body-parser 2.4.0 (2026-10-22, 10 days old at admission) fixes
   # GHSA-27r3-jxmh-p828, new reach from @modelcontextprotocol/sdk's express
-  # dependency (PR #305). Waiver requested from Kurt VanDusen 2026-11-01 with
-  # PR #305; the node-forge burst does NOT get one here — PR #307 already
-  # ruled that remedy (date-bounded audit allowlist, scheduled bump
-  # 2026-11-10), so the node-forge override/exclusion was dropped to keep a
-  # single decision on main.
+  # dependency (PR #305). WAIVED in writing by Kurt VanDusen 2026-11-01
+  # (option 1 of the recorded ask): same rationale as the undici/image-size
+  # waivers — the advisory is exploitable in the wild. The node-forge burst
+  # does NOT get one here — PR #307 already ruled that remedy (date-bounded
+  # audit allowlist, scheduled bump 2026-11-10), so the node-forge
+  # override/exclusion was dropped to keep a single decision on main.
   - body-parser@2.4.0
 
 # Single source of truth for overrides. Do NOT add `pnpm.overrides` to the root
