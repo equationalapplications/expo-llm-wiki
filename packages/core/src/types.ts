@@ -834,7 +834,7 @@ export type WikiDiagnosticCode =
 
 /** The service run that emitted the diagnostic. */
 export type WikiDiagnosticOperation =
-  | 'ingest' | 'upsertGraph' | 'librarian' | 'heal' | 'ontologyBackfill' | 'reembed' | 'importDump' | 'write' | 'supersede' | 'read' | 'prune';
+  | 'ingest' | 'upsertGraph' | 'librarian' | 'heal' | 'ontologyBackfill' | 'reembed' | 'importDump' | 'write' | 'supersede' | 'remember' | 'read' | 'prune';
 
 /** `'auto'` when a write threshold started the run (auto-librarian / auto-heal); `'call'` when the host did. */
 export type WikiDiagnosticTrigger = 'call' | 'auto';
@@ -1375,6 +1375,28 @@ export type SupersedeReplacement =
       source_type?: 'user_stated' | 'user_confirmed' | 'librarian_inferred';
       valid_from?: number;
     };
+
+/**
+ * Input to `WikiMemory.remember()` (spec `specs/core-remember/spec.md` §3.1).
+ * Only mutable, host-stated facts: `immutable_document` is reserved for
+ * `ingestDocument()`, `librarian_inferred` for the librarian.
+ */
+export interface RememberInput {
+  /** Required; must be non-empty after trim. Stored verbatim. */
+  title: string;
+  /** Required; any string, '' allowed. Stored verbatim. */
+  body: string;
+  /** Default []. Stored verbatim: no trim, no lowercasing, no cap. */
+  tags?: string[];
+  /** Default 'certain'. */
+  confidence?: WikiFact['confidence'];
+  /** Default 'user_stated'. */
+  source_type?: 'user_stated' | 'user_confirmed';
+  /** Resolved against the entity's ontology manifest like an `upsertGraph` node type (spec §3.4). Default null. */
+  okf_type?: string | null;
+  /** Epoch ms the fact became true. Absent ⇒ since `created_at`. */
+  valid_from?: number;
+}
 
 /** One page of `listDrafts`. `nextCursor` is opaque; pass it back unchanged. */
 export interface DraftPage {
