@@ -1,0 +1,129 @@
+# @equationalapplications/mcp-server
+
+SynapseTree memory for coding agents: an MCP server that lets Claude Code, Cursor, Windsurf, Claude Desktop, or any MCP client search, remember, supersede, ingest, log events, and walk the knowledge graph in your [SynapseTree](https://synapsetree.dev) database.
+
+[![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fmcp-server?label=mcp-server)](https://www.npmjs.com/package/@equationalapplications/mcp-server)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/mcp-server/LICENSE)
+
+**[GitHub](https://github.com/equationalapplications/expo-llm-wiki)** · **[ScopeLab](https://equationalapplications.github.io/expo-llm-wiki/scopelab/)** · **[WikiDemo](https://equationalapplications.github.io/expo-llm-wiki/wiki-demo/)** · **[Changelog](https://github.com/equationalapplications/expo-llm-wiki/blob/main/CHANGELOG.md)** · **[Issues](https://github.com/equationalapplications/expo-llm-wiki/issues)**
+
+## What it is
+
+A small Node program your MCP client launches on your own machine over stdio. It exposes eight SynapseTree memory operations as tools and forwards each call to `https://api.synapsetree.dev` with your API key. It stores nothing but that key, a base URL, and a default namespace. It never runs in anyone's cloud, and it never sees your conversation with the model — only tool calls.
+
+## Install
+
+```bash
+npm install -g @equationalapplications/mcp-server
+```
+
+Node 20 or newer. Two commands are installed: `synapsetree-mcp` (canonical) and `mcp-server` (alias). This README uses the canonical name.
+
+## Get a key
+
+**From the dashboard.** Sign in at https://synapsetree.dev/dashboard, open *API keys*, issue a key next to your database, then:
+
+```bash
+synapsetree-mcp auth --key stree_…
+```
+
+**By email, from the terminal** (the [auth.md](https://synapsetree.dev/auth.md) flow):
+
+```bash
+synapsetree-mcp auth --email you@example.com
+```
+
+A six-digit code is printed. SynapseTree emails you an approval link within about a minute; the page shows the same code. Approve only if the codes match. The link expires after 15 minutes. The first poll after approval receives the only copy of the key and stores it.
+
+The key is stored in `credentials.json` under your config directory with mode `0600` and is never printed again; `status` shows the last four characters.
+
+## Set a namespace
+
+Every memory tool needs a namespace. Set a default once per machine, or pass `namespace` on each call:
+
+```bash
+synapsetree-mcp config set namespace repo:myproject
+```
+
+Convention: `repo:<directory name>`. The server never invents a namespace.
+
+## Connect your client
+
+Claude Code:
+
+```bash
+claude mcp add synapsetree -- synapsetree-mcp
+```
+
+Cursor (`.cursor/mcp.json`), Windsurf (`~/.codeium/windsurf/mcp_config.json`), Claude Desktop (`claude_desktop_config.json`):
+
+```json
+{ "mcpServers": { "synapsetree": { "command": "synapsetree-mcp" } } }
+```
+
+## Tools
+
+| Tool | What it does |
+|---|---|
+| `memory_search` | Hybrid search over facts; also returns pending tasks and recent events. Keyword-only until the account owner registers an embeddings provider (`diagnostics.keyword_only`). |
+| `memory_remember` | Store one fact (title, body, tags, confidence, type). Works with no provider. |
+| `memory_supersede` | Replace a fact with a corrected one; history is kept. Never deletes. |
+| `memory_ingest` | Store a whole document and let SynapseTree extract facts. Needs an extraction provider registered in the dashboard (BYOK). |
+| `memory_log_event` | Record an observation, decision, action, or outcome. |
+| `graph_traverse` | Walk the knowledge graph from a fact or node, up to three hops. |
+| `namespaces_list` | List namespaces, optionally by prefix. |
+| `whoami` | Account, database, scope, plan, subscription status. |
+
+## Environment variables
+
+| Variable | Effect |
+|---|---|
+| `SYNAPSETREE_API_KEY` | Use this key instead of the stored one. |
+| `SYNAPSETREE_BASE_URL` | API base URL (default `https://api.synapsetree.dev`). |
+| `SYNAPSETREE_NAMESPACE` | Default namespace, overriding `config.json`. |
+| `SYNAPSETREE_CONFIG_DIR` | Where `credentials.json` and `config.json` live. |
+
+Default config directory: macOS `~/Library/Application Support/synapsetree`, Linux `$XDG_CONFIG_HOME/synapsetree` or `~/.config/synapsetree`, Windows `%APPDATA%\synapsetree`. On Windows the `0600`/`0700` file modes are best-effort.
+
+## What it never does
+
+- Export, delete, or run maintenance on your memory. Those are owner actions in the dashboard, and this server does not expose them even if your key could.
+- Print your key, or the claim token used during email registration.
+- Run anywhere but your machine. Memories go only to SynapseTree; SynapseTree calls an inference provider only if the account owner registered one.
+
+## Verify
+
+```bash
+synapsetree-mcp status
+npx @modelcontextprotocol/inspector synapsetree-mcp
+```
+
+## Release checklist (maintainers)
+
+Before publishing a version, against the SynapseTree **test** stage with a dashboard key:
+
+1. `synapsetree-mcp auth --key …` then `synapsetree-mcp status`.
+2. `SYNAPSETREE_API_KEY=… SYNAPSETREE_BASE_URL=… pnpm --filter @equationalapplications/mcp-server test` — runs the live chain (`whoami` → remember → search → supersede → search → log event → list). Until SynapseTree wires the write operations in production, the chain stops at `memory_remember` with `not_implemented`; that is expected until that gate closes.
+3. `npx @modelcontextprotocol/inspector synapsetree-mcp` and run one `memory_search`.
+4. `synapsetree-mcp auth --email …` once, approve the email, then `synapsetree-mcp auth --revoke`.
+
+The vendored contract in `contract/` is generated in the SynapseTree repository and must not be hand-edited; the unit tests fail if it drifts from what the tools send or if it ever contains an owner-only operation.
+
+## Monorepo Ecosystem
+
+| Package | Purpose |
+| ----- | ----- |
+| [@equationalapplications/core-llm-wiki](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md) | Persistent episodic memory |
+| [@equationalapplications/expo-llm-wiki](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/expo/README.md) | Persistent episodic memory for Expo/React Native |
+| [@equationalapplications/react-llm-wiki](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/react/README.md) | Persistent episodic memory for Web |
+| [@equationalapplications/prisma-outbox](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/prisma-outbox/README.md) | Sync SQLite outbox events to Prisma |
+| [@equationalapplications/core-llm-tools](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core-llm-tools/README.md) | Gemini tool schemas and capability injector |
+| [@equationalapplications/core-okf](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/okf/README.md) | Zero-dependency Open Knowledge Format (OKF) v0.1 + v0.2 primitives — parse and produce interoperable knowledge bundles. |
+| [@equationalapplications/schema-org-llm-wiki](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/schema-org/README.md) | Curated schema.org warm-agent ontology manifest |
+| [@equationalapplications/schema-software-org](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/schema-software-org/README.md) | Software-organization executive ontology manifest — 17 node types, 40 edges, warm-agent superset, data-only |
+| [**@equationalapplications/mcp-server**](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/mcp-server/README.md) | MCP server exposing SynapseTree memory tools to coding agents |
+
+---
+
+Made with ❤️ by Equational Applications LLC. [https://equationalapplications.com/](https://equationalapplications.com/)
