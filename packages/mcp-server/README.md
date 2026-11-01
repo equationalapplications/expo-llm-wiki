@@ -20,7 +20,9 @@ A small Node program your MCP client launches on your own machine over stdio. It
 > pass). Publishing itself happens through the release workflow's
 > trusted-publisher entry once the gates close — or, if that entry is not yet
 > configured, by a one-off manual `pnpm --filter @equationalapplications/mcp-server
-> publish`. Until one of those happens, build from source:
+> publish`. A manual publish only works after the release-wiring follow-up
+> stamps the package's first version (the version-less package.json is
+> deliberate — see CONTRIBUTING.md). Until one of those happens, build from source:
 >
 > ```bash
 > git clone https://github.com/equationalapplications/expo-llm-wiki && cd expo-llm-wiki
@@ -141,6 +143,7 @@ export SYNAPSETREE_CONFIG_DIR=$(mktemp -d)           # isolated credentials
 export SYNAPSETREE_LIVE_TESTS=1                      # opts the live chain into `pnpm test`
 CLI="node $(pwd)/packages/mcp-server/dist/cli.js"    # the built CLI (no bin on PATH yet)
 
+cd "$(git rev-parse --show-toplevel)"                 # all paths below are repo-root paths
 pnpm build
 ```
 
