@@ -52,8 +52,11 @@ async function readJson<T>(path: string): Promise<T | null> {
 
 /** Atomic: temp file in the same directory, mode 0600, then rename over the target. Modes are best-effort on Windows. */
 async function writeJson(dir: string, name: string, value: unknown): Promise<void> {
-  await mkdir(dir, { recursive: true, mode: 0o700 });
-  await chmod(dir, 0o700).catch(() => undefined);
+  // Tighten permissions only on a directory this process just created:
+  // never rechmod a directory the user pointed the config at (it may be
+  // shared or be $HOME itself). The file is still written 0600.
+  const created = await mkdir(dir, { recursive: true, mode: 0o700 });
+  if (created) await chmod(created, 0o700).catch(() => undefined);
   const target = join(dir, name);
   const tmp = join(dir, `${name}.${randomUUID()}.tmp`);
   await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });

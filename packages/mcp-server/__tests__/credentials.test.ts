@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -35,6 +35,15 @@ describe('credentials file', () => {
     await writeCredentials(dir, { apiKey: KEY, accountId: null, source: 'authmd', obtainedAt: 'now' });
     expect((await stat(join(dir, 'credentials.json'))).mode & 0o777).toBe(0o600);
     expect((await stat(dir)).mode & 0o777).toBe(0o700);
+  });
+
+  it('does not rechmod a directory the process did not create', async () => {
+    if (process.platform === 'win32') return;
+    await mkdir(dir, { recursive: true });
+    await chmod(dir, 0o755);
+    await writeCredentials(dir, { apiKey: KEY, accountId: null, source: 'dashboard', obtainedAt: 'now' });
+    expect((await stat(dir)).mode & 0o777).toBe(0o755);
+    expect((await stat(join(dir, 'credentials.json'))).mode & 0o777).toBe(0o600);
   });
 
   it('returns null when missing and deletes idempotently', async () => {
