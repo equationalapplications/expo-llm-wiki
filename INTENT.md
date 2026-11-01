@@ -48,7 +48,9 @@ Three kinds of software depend on what is published from here:
 
 The repository is a pnpm monorepo. Published packages live under
 `packages/` (core, expo, react, okf, core-llm-tools, schema-org,
-schema-software-org, prisma-outbox). Two packages are private and never
+schema-software-org, prisma-outbox, and — gated on the spec §0 gates in
+`specs/mcp-server/spec.md` before its
+first npm publish — `mcp-server`). Two packages are private and never
 published: `integration` (integration tests) and `benchmarks` (the
 benchmark harness). Two browser apps live under `apps/`. A Rust crate,
 `crates/graphrag-core`, holds the start of a native engine.
@@ -104,6 +106,13 @@ Every model call goes through the `LLMProvider` you pass to `createWiki`.
 The package ships no provider, no key handling and no network client of
 its own. Search works without a model at all: when there is no `embed`
 function, retrieval is keyword search in-process.
+
+*(Scope note, added 2026-11-01 with PR #305: this rule governs the engine
+packages — the libraries a host embeds. `packages/mcp-server`, the agent
+door approved by Kurt VanDusen on 2026-11-01, is a credential-carrying
+stdio server by design: it holds the user's SynapseTree API key, calls
+the SynapseTree cloud API, and never embeds this engine or calls any
+model.)*
 
 *Why:* this is the charter's bring-your-own-inference promise, rendered
 as code. The host decides where thinking comes from; the engine only
@@ -331,6 +340,13 @@ runs and who schedules it.
 
 ## Amendments
 
+- 2026-11-01 — PR #305 adds the `mcp-server` agent door (rule 1 scope note,
+  package list). The three §3 release-wiring edits are deferred to a
+  follow-up PR by owner ruling until the spec §0 gates close, and the
+  cycle's `plan.md`/`LEDGER.md` stay in the folder past merge so the
+  wiring PR resumes from them. Why: the gates block any publish, and
+  merging the wiring early would risk one. No rule text changed; the
+  scope note under rule 1 carries the detail.
 - 2026-11-01 — Spec cycles move to one folder each under `specs/<name>/`
   (`spec.md`, `plan.md`, `LEDGER.md`), the pattern ruled 2026-10-23;
   "Below it", "How changes are made" step 1, and rule 10's location
