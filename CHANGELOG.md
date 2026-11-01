@@ -1,3 +1,37 @@
+## [7.14.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.13.1...v7.14.0) (2026-11-01)
+
+### Features
+
+* **mcp-server:** auth.md registration state machine ([6c434f3](https://github.com/equationalapplications/expo-llm-wiki/commit/6c434f3f84057f25e842e0e6dbb6a8c95fb70fc8))
+* **mcp-server:** CLI with serve, auth, status and config commands; stdio smoke test ([fe6a781](https://github.com/equationalapplications/expo-llm-wiki/commit/fe6a7815f837dc02c1af21fc1af3610faf3bdd30))
+* **mcp-server:** contract table from the vendored OpenAPI subset with D3 guards ([65185a3](https://github.com/equationalapplications/expo-llm-wiki/commit/65185a3b9393597d6d7aabcf0914410b5104d9f4))
+* **mcp-server:** contract-driven HTTP client with retries, idempotency keys and typed errors ([7d951c2](https://github.com/equationalapplications/expo-llm-wiki/commit/7d951c21fa2b6c69fbeaed66f1d0dd134ba05df1))
+* **mcp-server:** credentials and config files with atomic 0600 writes and env precedence ([3dcac90](https://github.com/equationalapplications/expo-llm-wiki/commit/3dcac90af248e939dbed77a735a7b0de875baf38))
+* **mcp-server:** error types and the tool-error text mapping ([7725e34](https://github.com/equationalapplications/expo-llm-wiki/commit/7725e349eaf4bdf00beaf3809dbb0561d3a0bb03))
+* **mcp-server:** MCP server registering the eight tools with mapped tool errors ([96c2d02](https://github.com/equationalapplications/expo-llm-wiki/commit/96c2d021e511a19830982417087ea8d85e6db09a))
+* **mcp-server:** package skeleton, build, and version module ([238238c](https://github.com/equationalapplications/expo-llm-wiki/commit/238238cdc65cabe18ac331ae0d724c171f170c39))
+* **mcp-server:** README, gated live test, and release wiring ([66cb196](https://github.com/equationalapplications/expo-llm-wiki/commit/66cb19655eee53a86ba24629c315ab14d38c6296))
+* **mcp-server:** the eight memory tools with the request-fidelity contract guard ([645dbf4](https://github.com/equationalapplications/expo-llm-wiki/commit/645dbf42310611097876aabe03c97e5a8e995a88))
+
+### Bug Fixes
+
+* **mcp-server:** a surviving 429 from the token endpoint slows polling instead of aborting ([5153d68](https://github.com/equationalapplications/expo-llm-wiki/commit/5153d6806883eb68aa7e2692946d9d01b4712734))
+* **mcp-server:** abort timer now covers the response body read ([8e31500](https://github.com/equationalapplications/expo-llm-wiki/commit/8e3150057db5737e1f19466ff90fce39d75429aa))
+* **mcp-server:** auth --revoke revokes the stored credential before an exported env key ([9cd4dbe](https://github.com/equationalapplications/expo-llm-wiki/commit/9cd4dbe5df6f1f3711fa6e49778e2215fc8400b7))
+* **mcp-server:** chmod 0700 only a config dir this process created ([84be874](https://github.com/equationalapplications/expo-llm-wiki/commit/84be8748ad096e45247701f4ec016bc0ae701e53))
+* **mcp-server:** CI gate fixes and CodeRabbit review comments ([2af930f](https://github.com/equationalapplications/expo-llm-wiki/commit/2af930fb1e04cd5b32eded1ebb8dff763bb374e2))
+* **mcp-server:** clear the abort timer when fetch rejects ([562b040](https://github.com/equationalapplications/expo-llm-wiki/commit/562b040e19d2a24d8dcf04ae4344b5b085a75e90))
+* **mcp-server:** drop the generic mcp-server bin alias (owner ruling D2) ([268146f](https://github.com/equationalapplications/expo-llm-wiki/commit/268146f68ce6e71472330020764317398c345b91))
+* **mcp-server:** keep polling through 408; clamp the poll interval to >= 1 s ([63c7284](https://github.com/equationalapplications/expo-llm-wiki/commit/63c7284ae625ab949104b94e5ce37bbed7d2a32f))
+* **mcp-server:** malformed token responses map to invalid_response ([a3b3ff9](https://github.com/equationalapplications/expo-llm-wiki/commit/a3b3ff964994814c0d88680b2ec3a77132f47225))
+* **mcp-server:** map mid-body failures to transient network errors; cap Retry-After ([2dbdc6b](https://github.com/equationalapplications/expo-llm-wiki/commit/2dbdc6bb65da0dd577da5d9019a5397d9cdff508))
+* **mcp-server:** require https for non-loopback base URLs on every source ([5101a50](https://github.com/equationalapplications/expo-llm-wiki/commit/5101a5035e15ff4df6fd4f2d883f4f6c9d5b9303))
+* **mcp-server:** rung-4 review fixes — single-attempt token poll, endpoint pinning, bounded pagination, live-test opt-in ([ca3390d](https://github.com/equationalapplications/expo-llm-wiki/commit/ca3390d42e1d54301752e64025834951b99eb5bd))
+* **mcp-server:** shape-check the registration response ([197adf3](https://github.com/equationalapplications/expo-llm-wiki/commit/197adf3047f56a32c46d0d841a22049e9c7e43bd))
+* **mcp-server:** Tier-4 delta-review resolutions ([c4cc2f2](https://github.com/equationalapplications/expo-llm-wiki/commit/c4cc2f229ffc81de6f7940b89305ae4683496853))
+* **mcp-server:** Tier-4 Fable review resolutions ([aeb241d](https://github.com/equationalapplications/expo-llm-wiki/commit/aeb241d6d04ea1df984c346d8fd84c6a5ae415f3)), closes [#306](https://github.com/equationalapplications/expo-llm-wiki/issues/306)
+* **mcp-server:** wrap the transport onclose instead of replacing it ([00b3fa3](https://github.com/equationalapplications/expo-llm-wiki/commit/00b3fa357aa3e091d050fe5ad1a9892beafec07e))
+
 ## [7.13.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.13.0...v7.13.1) (2026-10-28)
 
 ### Bug Fixes
