@@ -1,6 +1,6 @@
 # `WikiMemory.remember()` — store one mutable fact directly, without an LLM step
 
-**Status:** Draft
+**Status:** Implemented (2026-11-01, PR #308)
 **Date:** 2026-11-01
 **Branch:** `feat/core-remember`
 **Source baseline:** `5ecd716` (v7.13.1 + PR #306)
