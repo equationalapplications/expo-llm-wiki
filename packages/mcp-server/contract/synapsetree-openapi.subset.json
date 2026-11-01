@@ -1,0 +1,3804 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "SynapseTree Memory API (subset for @equationalapplications/mcp-server)",
+    "version": "1.0.0-alpha.1",
+    "summary": "Hosted shared memory for LLM agents, one SQLite database per tenant.",
+    "description": "SynapseTree hosts `core-llm-wiki` memory databases. Each API key reaches exactly one\ntenant database; inside it, data lives in **namespaces** (the engine's `entity_id`).\n\nDesign: `docs/superpowers/specs/2026-09-30-openapi-contract-design.md`.\n\n**Key scope.** Every operation declares `x-synapsetree-scope`: `read` operations accept\n`read` and `read_write` keys; `read_write` operations refuse a `read` key with\n`403 insufficient_scope`.\n\n**Errors.** Errors produced by SynapseTree are RFC 7807 `application/problem+json` with a\nstable `code`. Two responses come from the AWS API Gateway authorizer itself and keep the\ngateway's native shape `{\"message\": \"...\"}`: `401` (missing or malformed bearer token) and\n`403` (unknown or revoked key, or a database that is not routable).\n\n**Writes and billing.** Writes are refused with `402 subscription_inactive` when the\norganization is on a paid plan whose subscription is not `trialing`, `active` or\n`past_due`. Reads always work.\n\n**Inference is bring-your-own-key (BYOK).** SynapseTree runs no inference on its own\naccount: server-side extraction and semantic embeddings run against the organization's own\nprovider keys. Owner/admin register, rotate and delete two custodial registrations per\norganization in the dashboard — an **extraction** registration (required for\n`server_extraction` ingest and consolidation) and an optional **embeddings** registration —\neach envelope-encrypted with KMS, never logged or echoed, surfaced only as `keyLast4`.\nRotation overwrites in place and takes effect on the next call. With no extraction\nregistration `server_extraction` answers `409 inference_not_configured`; a key the provider\nrejects answers `409 inference_config_invalid` and surfaces as failing key health. With no\nembeddings registration namespaces serve **keyword-only** search — a supported\nconfiguration, reported via `diagnostics`, never an error. Provider calls are metered\nagainst the plan's tier caps (one shared window, first-come-first-served); usage is\ndisplayed as token counts, never dollars. Changing a namespace's embedding model is gated by\nits stored fingerprint and takes effect only through a maintenance run\n(`POST /v1/namespaces/{namespace}/maintenance/runs`); while a run is active, vector search\non that namespace pauses to keyword-only.\n\n**Engine extensions.** `x-synapsetree-engine` names the engine entry point. Entries marked\n`upstream:` depend on a core-llm-wiki API that has been requested but not yet released;\nuntil it ships the operation or field answers `501 not_implemented`.\n",
+    "license": {
+      "name": "Proprietary",
+      "identifier": "LicenseRef-Proprietary"
+    },
+    "contact": {
+      "name": "Equational Applications LLC",
+      "url": "https://equationalapplications.com/"
+    },
+    "x-subset-of": "SynapseTree openapi/openapi.yaml",
+    "x-generated-by": "scripts/mcp-contract-subset.py (SynapseTree repo); regenerate, do not hand-edit",
+    "x-operations": [
+      "createEvent",
+      "ingestDocument",
+      "listNamespaces",
+      "oauthRevoke",
+      "oauthToken",
+      "queryMemory",
+      "registerAgentIdentity",
+      "rememberFact",
+      "supersedeFact",
+      "traverseGraph",
+      "whoami"
+    ]
+  },
+  "servers": [
+    {
+      "url": "https://api.synapsetree.dev",
+      "description": "Production"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "paths": {
+    "/v1/memory/query": {
+      "post": {
+        "operationId": "queryMemory",
+        "tags": [
+          "memory"
+        ],
+        "summary": "Search memory",
+        "description": "Ranked top-k hybrid search (semantic + keyword) across one or more namespaces. Returns\nthe highest-scoring facts plus pending tasks and recent events. **Not paginated**: the\nranking is not a stable order; raise `limit` (max 100) for more results.\n\nSemantic scoring needs embeddings. In namespaces under server extraction the query is\nembedded with the organization's embeddings registration (BYOK); an organization without\none serves keyword-only search. When the embeddings path is unavailable — no\nregistration, a key or provider fault, the tier cap exhausted, or a maintenance run\nre-embedding the namespace — the search degrades to keyword-only and reports why via\n`diagnostics`. That degradation is normal operation, not an error. Alternatively pass\n`queryEmbedding` (same dimension as the stored fact vectors) to supply the vector\nyourself.\n",
+        "x-synapsetree-scope": "read",
+        "x-synapsetree-engine": "read",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueryRequest"
+              },
+              "examples": {
+                "single": {
+                  "summary": "One namespace",
+                  "value": {
+                    "namespaces": [
+                      "repo:synapsetree"
+                    ],
+                    "query": "how are API keys hashed",
+                    "limit": 5
+                  }
+                },
+                "weighted": {
+                  "summary": "Two namespaces, weighted, point in time",
+                  "value": {
+                    "namespaces": [
+                      "repo:synapsetree",
+                      "team:platform"
+                    ],
+                    "query": "deployment region",
+                    "weights": {
+                      "repo:synapsetree": 2,
+                      "team:platform": 1
+                    },
+                    "floors": {
+                      "team:platform": 1
+                    },
+                    "asOf": "2026-09-01T00:00:00Z",
+                    "excludeDrafts": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ranked facts with pending tasks and recent events.",
+            "headers": {
+              "Request-Id": {
+                "$ref": "#/components/headers/Request-Id"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryResponse"
+                },
+                "example": {
+                  "facts": [
+                    {
+                      "id": "fact_01j9x7k2m3",
+                      "namespace": "repo:synapsetree",
+                      "sourceType": "immutable_document",
+                      "mutable": false,
+                      "sourceRef": "infra__stack.ts",
+                      "sourceHash": "9f2c4b8e1a7d3f6c5b0e2d4a8c1f3e5b7d9a0c2e4f6b8d0a1c3e5f7b9d1a3c5e",
+                      "title": "SynapseTree",
+                      "body": "Hosted LLM memory API. status active.",
+                      "tags": [],
+                      "confidence": "certain",
+                      "okfType": "software_application",
+                      "lifecycleStatus": "stable",
+                      "trustTier": "unverified",
+                      "isStale": false,
+                      "generatedBy": null,
+                      "lastVerifiedAt": null,
+                      "lastVerifiedBy": null,
+                      "validFrom": null,
+                      "validTo": null,
+                      "supersededBy": null,
+                      "supersededAt": null,
+                      "accessCount": 3,
+                      "lastAccessedAt": "2026-09-30T08:00:00Z",
+                      "createdAt": "2026-09-29T10:00:00Z",
+                      "updatedAt": "2026-09-29T10:00:00Z"
+                    }
+                  ],
+                  "scores": {
+                    "fact_01j9x7k2m3": 0.82
+                  },
+                  "tasks": [
+                    {
+                      "id": "task_01j9x8a1b2",
+                      "namespace": "repo:synapsetree",
+                      "description": "Register the stree_ prefix with GitHub secret scanning",
+                      "status": "pending",
+                      "priority": 5,
+                      "okfType": null,
+                      "createdAt": "2026-09-29T10:00:00Z",
+                      "updatedAt": "2026-09-29T10:00:00Z",
+                      "resolvedAt": null
+                    }
+                  ],
+                  "events": [
+                    {
+                      "id": "evt_01j9x8c3d4",
+                      "namespace": "repo:synapsetree",
+                      "eventType": "decision",
+                      "summary": "Chose DynamoDB for the control plane",
+                      "relatedFactId": null,
+                      "occurredAt": "2026-09-29T09:00:00Z",
+                      "createdAt": "2026-09-29T09:05:00Z"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "503": {
+            "description": "Temporarily unavailable: `unavailable` (tenant cold start or writer handoff)\nor `fenced` (the writer lost its lease). Upstream inference failure never\nsurfaces on the query path — spec §5.2 degrade-never-fail: provider trouble\ndegrades to keyword search with `diagnostics` instead of failing.\n",
+            "headers": {
+              "Request-Id": {
+                "$ref": "#/components/headers/Request-Id"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "fenced": {
+                    "value": {
+                      "type": "urn:synapsetree:problem:fenced",
+                      "title": "Writer fenced",
+                      "status": 503,
+                      "code": "fenced",
+                      "detail": "The write did not commit; retry.",
+                      "requestId": "req_01j9xb7c8d9e",
+                      "retryable": true,
+                      "retryAfterSeconds": 1
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/memory/facts": {
+      "post": {
+        "operationId": "rememberFact",
+        "tags": [
+          "facts"
+        ],
+        "summary": "Store a fact directly",
+        "description": "Stores one mutable fact (`user_stated` by default) without an LLM step. To replace an\nexisting fact, use `supersedeFact` instead so history is kept.\n",
+        "x-synapsetree-scope": "read_write",
+        "x-synapsetree-engine": "upstream:remember",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RememberRequest"
+              },
+              "examples": {
+                "preference": {
+                  "value": {
+                    "namespace": "user:kurt",
+                    "title": "Prefers merge commits",
+                    "body": "Kurt wants PRs merged with merge commits, never squashed.",
+                    "tags": [
+                      "git"
+                    ],
+                    "confidence": "certain"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The stored fact.",
+            "headers": {
+              "Request-Id": {
+                "$ref": "#/components/headers/Request-Id"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "Idempotent-Replayed": {
+                "$ref": "#/components/headers/Idempotent-Replayed"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Fact"
+                },
+                "example": {
+                  "id": "fact_01j9xa0000",
+                  "namespace": "user:kurt",
+                  "sourceType": "user_stated",
+                  "mutable": true,
+                  "sourceRef": null,
+                  "sourceHash": null,
+                  "title": "Lives in San Francisco",
+                  "body": "Moved in March.",
+                  "tags": [],
+                  "confidence": "certain",
+                  "okfType": "place",
+                  "lifecycleStatus": "stable",
+                  "trustTier": "unverified",
+                  "isStale": false,
+                  "generatedBy": null,
+                  "lastVerifiedAt": null,
+                  "lastVerifiedBy": null,
+                  "validFrom": "2026-03-01T00:00:00Z",
+                  "validTo": null,
+                  "supersededBy": null,
+                  "supersededAt": null,
+                  "accessCount": 0,
+                  "lastAccessedAt": null,
+                  "createdAt": "2026-09-30T09:00:00Z",
+                  "updatedAt": "2026-09-30T09:00:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableContent"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/v1/memory/facts/{factId}/supersede": {
+      "post": {
+        "operationId": "supersedeFact",
+        "tags": [
+          "facts"
+        ],
+        "summary": "Replace a fact, keeping its history",
+        "description": "Ends the fact's validity at `validFrom` (default: now) and makes the replacement current\nfrom that instant. The replacement is a new mutable fact or an existing fact id.\n\nRefused with `409 invalid_state` for `immutable_document` facts (re-ingest the document\ninstead), and with `409 conflict` for a fact already superseded or a replacement that\nwould form a cycle.\n",
+        "x-synapsetree-scope": "read_write",
+        "x-synapsetree-engine": "supersede",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/FactId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SupersedeRequest"
+              },
+              "examples": {
+                "newFact": {
+                  "summary": "Replace with a new fact, backdated",
+                  "value": {
+                    "namespace": "user:kurt",
+                    "validFrom": "2026-03-01T00:00:00Z",
+                    "replacement": {
+                      "kind": "new",
+                      "title": "Lives in San Francisco",
+                      "body": "Moved in March."
+                    }
+                  }
+                },
+                "existingFact": {
+                  "summary": "Replace with a fact that already exists",
+                  "value": {
+                    "namespace": "user:kurt",
+                    "replacement": {
+                      "kind": "existing",
+                      "factId": "fact_01j9xa0000"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The superseded fact and its replacement.",
+            "headers": {
+              "Request-Id": {
+                "$ref": "#/components/headers/Request-Id"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "Idempotent-Replayed": {
+                "$ref": "#/components/headers/Idempotent-Replayed"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupersedeResponse"
+                },
+                "example": {
+                  "superseded": {
+                    "id": "fact_01j8z9y8x7",
+                    "namespace": "user:kurt",
+                    "sourceType": "user_stated",
+                    "mutable": true,
+                    "sourceRef": null,
+                    "sourceHash": null,
+                    "title": "Lives in Seattle",
+                    "body": "Rents in Capitol Hill.",
+                    "tags": [],
+                    "confidence": "certain",
+                    "okfType": "place",
+                    "lifecycleStatus": "stable",
+                    "trustTier": "unverified",
+                    "isStale": false,
+                    "generatedBy": null,
+                    "lastVerifiedAt": null,
+                    "lastVerifiedBy": null,
+                    "validFrom": null,
+                    "validTo": "2026-03-01T00:00:00Z",
+                    "supersededBy": "fact_01j9xa0000",
+                    "supersededAt": "2026-09-30T09:00:00Z",
+                    "accessCount": 5,
+                    "lastAccessedAt": "2026-09-28T12:00:00Z",
+                    "createdAt": "2026-01-10T12:00:00Z",
+                    "updatedAt": "2026-01-10T12:00:00Z"
+                  },
+                  "replacement": {
+                    "id": "fact_01j9xa0000",
+                    "namespace": "user:kurt",
+                    "sourceType": "user_stated",
+                    "mutable": true,
+                    "sourceRef": null,
+                    "sourceHash": null,
+                    "title": "Lives in San Francisco",
+                    "body": "Moved in March.",
+                    "tags": [],
+                    "confidence": "certain",
+                    "okfType": "place",
+                    "lifecycleStatus": "stable",
+                    "trustTier": "unverified",
+                    "isStale": false,
+                    "generatedBy": null,
+                    "lastVerifiedAt": null,
+                    "lastVerifiedBy": null,
+                    "validFrom": "2026-03-01T00:00:00Z",
+                    "validTo": null,
+                    "supersededBy": null,
+                    "supersededAt": null,
+                    "accessCount": 0,
+                    "lastAccessedAt": null,
+                    "createdAt": "2026-09-30T09:00:00Z",
+                    "updatedAt": "2026-09-30T09:00:00Z"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableContent"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/v1/memory/ingest": {
+      "post": {
+        "operationId": "ingestDocument",
+        "tags": [
+          "memory"
+        ],
+        "summary": "Ingest a document",
+        "description": "Extracts facts from a document and stores them as `immutable_document` facts under\n`sourceRef`, replacing any earlier version.\n\n- `server_extraction`: SynapseTree runs extraction with the organization's registered\n  provider key (BYOK; envelope-encrypted, managed in the dashboard by owner/admin).\n  `409 inference_not_configured` when the organization has no extraction registration.\n- `client_extraction`: the client ran the extraction itself against an\n  [extraction plan](#operation/createExtractionPlan) and posts each chunk's model\n  output. A plan whose fingerprint no longer matches is refused with\n  `409 extraction_plan_stale`.\n",
+        "x-synapsetree-scope": "read_write",
+        "x-synapsetree-engine": "ingestDocument (server_extraction); upstream:ingestExtracted (client_extraction)",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IngestRequest"
+              },
+              "examples": {
+                "clientExtraction": {
+                  "summary": "Client-side extraction (BYOI)",
+                  "value": {
+                    "mode": "client_extraction",
+                    "namespace": "repo:synapsetree",
+                    "sourceRef": "docs__runbook.md",
+                    "sourceHash": "1b3d5f7a9c0e2b4d6f8a0c2e4b6d8f0a1c3e5b7d9f1a3c5e7b9d1f3a5c7e9b1d",
+                    "planFingerprint": "sha256:4e6a8c0b2d4f6a8c0e2b4d6f8a0c2e4b6d8f0a2c4e6b8d0f2a4c6e8b0d2f4a6c",
+                    "chunks": [
+                      {
+                        "index": 0,
+                        "response": {
+                          "facts": [
+                            {
+                              "title": "Deploys go to us-east-1",
+                              "body": "The test stage deploys to us-east-1.",
+                              "tags": [
+                                "deploy"
+                              ],
+                              "confidence": "certain",
+                              "okfType": "procedure",
+                              "evidence": [
+                                "Region: us-east-1 (Kurt, 2026-09-29)."
+                              ],
+                              "edges": [
+                                {
+                                  "edgeType": "documents",
+                                  "targetTitle": "SynapseTree"
+                                }
+                              ]
+                            }
+                          ],
+                          "tasks": []
+                        }
+                      }
+                    ]
+                  }
+                },
+                "serverExtraction": {
+                  "summary": "Server-side extraction (BYOK)",
+                  "value": {
+                    "mode": "server_extraction",
+                    "namespace": "repo:synapsetree",
+                    "sourceRef": "docs__runbook.md",
+                    "sourceHash": "1b3d5f7a9c0e2b4d6f8a0c2e4b6d8f0a1c3e5b7d9f1a3c5e7b9d1f3a5c7e9b1d",
+                    "content": "# Deploy the test stage ...",
+                    "onDuplicateHash": "skip"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ingest summary.",
+            "headers": {
+              "Request-Id": {
+                "$ref": "#/components/headers/Request-Id"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "Idempotent-Replayed": {
+                "$ref": "#/components/headers/Idempotent-Replayed"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestResponse"
+                },
+                "example": {
+                  "chunks": 1,
+                  "ingestedChunks": 1,
+                  "failedChunks": 0,
+                  "truncated": false,
+                  "duplicateOf": null,
+                  "parseFailures": []
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "description": "The write conflicts with current state: `conflict`, `extraction_plan_stale`,\n`source_hash_conflict` (another sourceRef already holds this content hash),\n`namespace_busy` (the namespace is under another write; retry),\n`inference_not_configured` (server extraction requested but the organization has\nno extraction registration), or `inference_config_invalid` (the provider rejected\nthe organization's key as configuration-invalid — auth or bad option — on every\nextraction call; nothing was written and the response is not retried).\n",
+            "headers": {
+              "Request-Id": {
+                "$ref": "#/components/headers/Request-Id"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "sourceHashConflict": {
+                    "value": {
+                      "type": "urn:synapsetree:problem:source_hash_conflict",
+                      "title": "Source hash already stored",
+                      "status": 409,
+                      "code": "source_hash_conflict",
+                      "detail": "Another sourceRef in this namespace already holds this content.",
+                      "requestId": "req_01j9xb7c8d9e",
+                      "retryable": false,
+                      "duplicateOf": "docs__runbook-old.md"
+                    }
+                  },
+                  "inferenceConfigInvalid": {
+                    "value": {
+                      "type": "urn:synapsetree:problem:inference_config_invalid",
+                      "title": "Inference configuration invalid",
+                      "status": 409,
+                      "code": "inference_config_invalid",
+                      "detail": "The provider rejected the tenant's model key as configuration-invalid on every extraction call; nothing was written.",
+                      "requestId": "req_01j9xb7c8d9e",
+                      "retryable": false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "description": "Well-formed but refused: `ontology_violation`, `ingest_failed`,\n`idempotency_key_reused`, `embedding_dimension_mismatch` (client vector with a\ndifferent dimension), or `embedding_model_mismatch` (the tenant's configured\nembedding model differs from the namespace's stored-vector fingerprint; the\nrefusal precedes any write and points at the re-embed maintenance path).\n",
+            "headers": {
+              "Request-Id": {
+                "$ref": "#/components/headers/Request-Id"
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "ontologyViolation": {
+                    "value": {
+                      "type": "urn:synapsetree:problem:ontology_violation",
+                      "title": "Ontology violation",
+                      "status": 422,
+                      "code": "ontology_violation",
+                      "detail": "Node type \"microservice\" is not in this namespace's strict manifest.",
+                      "requestId": "req_01j9xb7c8d9e",
+                      "retryable": false,
+                      "kind": "node",
+                      "ontologyType": "microservice"
+                    }
+                  },
+                  "embeddingModelMismatch": {
+                    "value": {
+                      "type": "urn:synapsetree:problem:embedding_model_mismatch",
+                      "title": "Embedding model mismatch",
+                      "status": 422,
+                      "code": "embedding_model_mismatch",
+                      "detail": "The configured embedding model differs from the namespace's stored-vector fingerprint; run maintenance to re-embed.",
+                      "requestId": "req_01j9xb7c8d9e",
+                      "retryable": false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "503": {
+            "description": "Temporarily unavailable: `unavailable` (tenant cold start or writer handoff),\n`fenced` (the writer lost its lease; the write did not commit), or\n`upstream_inference_unavailable` (the tenant's inference provider failed on\nevery extraction call, or either BYOK rate cap (extraction or embeddings)\nis exhausted for the window (429/5xx/timeout; nothing was written; safe\nto retry)). When the embeddings rate cap is exhausted by an active\nmaintenance run, the problem `detail` names the run (`mrun_…`) as the\nconsumer.\n",
+            "headers": {
+              "Request-Id": {
+                "$ref": "#/components/headers/Request-Id"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "fenced": {
+                    "value": {
+                      "type": "urn:synapsetree:problem:fenced",
+                      "title": "Writer fenced",
+                      "status": 503,
+                      "code": "fenced",
+                      "detail": "The write did not commit; retry.",
+                      "requestId": "req_01j9xb7c8d9e",
+                      "retryable": true,
+                      "retryAfterSeconds": 1
+                    }
+                  },
+                  "upstreamInferenceUnavailable": {
+                    "value": {
+                      "type": "urn:synapsetree:problem:upstream_inference_unavailable",
+                      "title": "Upstream inference unavailable",
+                      "status": 503,
+                      "code": "upstream_inference_unavailable",
+                      "detail": "The tenant's inference provider failed on every extraction call (429/5xx/timeout); nothing was written.",
+                      "requestId": "req_01j9xb7c8d9e",
+                      "retryable": true,
+                      "retryAfterSeconds": 30
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/memory/events": {
+      "post": {
+        "operationId": "createEvent",
+        "tags": [
+          "memory"
+        ],
+        "summary": "Record an event",
+        "description": "Appends an observation, decision, action, or outcome to a namespace's event log. Events\nare the input to later consolidation into facts; recording one never runs inference.\n",
+        "x-synapsetree-scope": "read_write",
+        "x-synapsetree-engine": "write",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateEventRequest"
+              },
+              "examples": {
+                "decision": {
+                  "value": {
+                    "namespace": "repo:synapsetree",
+                    "eventType": "decision",
+                    "summary": "Chose DynamoDB for the control plane",
+                    "occurredAt": "2026-09-29T09:00:00Z"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The recorded event.",
+            "headers": {
+              "Request-Id": {
+                "$ref": "#/components/headers/Request-Id"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              },
+              "Idempotent-Replayed": {
+                "$ref": "#/components/headers/Idempotent-Replayed"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Event"
+                },
+                "example": {
+                  "id": "evt_01j9x8c3d4",
+                  "namespace": "repo:synapsetree",
+                  "eventType": "decision",
+                  "summary": "Chose DynamoDB for the control plane",
+                  "relatedFactId": null,
+                  "occurredAt": "2026-09-29T09:00:00Z",
+                  "createdAt": "2026-09-29T09:05:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableContent"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/v1/graph/traverse": {
+      "post": {
+        "operationId": "traverseGraph",
+        "tags": [
+          "graph"
+        ],
+        "summary": "Traverse the graph from an anchor fact",
+        "description": "Walks edges from `sourceId` up to `maxDepth` hops (1–3). The anchor is always returned\nfirst; discovered nodes follow in depth order. Only edges whose both endpoints are\nreturned are included. With `asOf`, only facts live at that instant are walked.\nBounded by `maxNodes`; not paginated.\n",
+        "x-synapsetree-scope": "read",
+        "x-synapsetree-engine": "traverseGraph",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TraverseRequest"
+              },
+              "examples": {
+                "twoHops": {
+                  "summary": "Two hops, outbound, dependency edges only",
+                  "value": {
+                    "namespace": "repo:synapsetree",
+                    "sourceId": "app_synapsetree",
+                    "maxDepth": 2,
+                    "direction": "outbound",
+                    "edgeTypes": [
+                      "dependsOn"
+                    ],
+                    "maxNodes": 50
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The anchor's neighbourhood.",
+            "headers": {
+              "Request-Id": {
+                "$ref": "#/components/headers/Request-Id"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TraverseResponse"
+                },
+                "example": {
+                  "nodes": [
+                    {
+                      "id": "fact_01j9x7k2m3",
+                      "namespace": "repo:synapsetree",
+                      "sourceType": "immutable_document",
+                      "mutable": false,
+                      "sourceRef": "infra__stack.ts",
+                      "sourceHash": "9f2c4b8e1a7d3f6c5b0e2d4a8c1f3e5b7d9a0c2e4f6b8d0a1c3e5f7b9d1a3c5e",
+                      "title": "SynapseTree",
+                      "body": "Hosted LLM memory API. status active.",
+                      "tags": [],
+                      "confidence": "certain",
+                      "okfType": "software_application",
+                      "lifecycleStatus": "stable",
+                      "trustTier": "unverified",
+                      "isStale": false,
+                      "generatedBy": null,
+                      "lastVerifiedAt": null,
+                      "lastVerifiedBy": null,
+                      "validFrom": null,
+                      "validTo": null,
+                      "supersededBy": null,
+                      "supersededAt": null,
+                      "accessCount": 3,
+                      "lastAccessedAt": "2026-09-30T08:00:00Z",
+                      "createdAt": "2026-09-29T10:00:00Z",
+                      "updatedAt": "2026-09-29T10:00:00Z"
+                    }
+                  ],
+                  "edges": [
+                    {
+                      "id": "edge_01j9x9e5f6",
+                      "namespace": "repo:synapsetree",
+                      "sourceId": "app_synapsetree",
+                      "targetId": "svc_dynamodb",
+                      "edgeType": "dependsOn",
+                      "createdAt": "2026-09-29T10:00:00Z"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/v1/namespaces": {
+      "get": {
+        "operationId": "listNamespaces",
+        "tags": [
+          "namespaces"
+        ],
+        "summary": "List namespaces",
+        "description": "Namespaces with at least one row, ordered by name (binary ascending). Includes namespaces\nwhose rows are all deleted, until they are pruned.\n",
+        "x-synapsetree-scope": "read",
+        "x-synapsetree-engine": "listEntityIds",
+        "parameters": [
+          {
+            "name": "prefix",
+            "in": "query",
+            "required": false,
+            "description": "Only namespaces starting with this string.",
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "example": "repo:"
+          },
+          {
+            "$ref": "#/components/parameters/After"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of namespaces.",
+            "headers": {
+              "Request-Id": {
+                "$ref": "#/components/headers/Request-Id"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NamespaceList"
+                },
+                "example": {
+                  "data": [
+                    {
+                      "namespace": "repo:synapsetree"
+                    },
+                    {
+                      "namespace": "user:kurt"
+                    }
+                  ],
+                  "hasMore": false,
+                  "nextCursor": null
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/v1/whoami": {
+      "get": {
+        "operationId": "whoami",
+        "tags": [
+          "account"
+        ],
+        "summary": "Describe the calling key",
+        "description": "The routing context the authorizer resolved for this key.",
+        "x-synapsetree-scope": "read",
+        "x-synapsetree-engine": "none (control plane)",
+        "responses": {
+          "200": {
+            "description": "The key's routing context.",
+            "headers": {
+              "Request-Id": {
+                "$ref": "#/components/headers/Request-Id"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Whoami"
+                },
+                "example": {
+                  "apiKeyId": "key_01j9x5v7w8",
+                  "organizationId": "org_01j9x5t3u4",
+                  "tenantDatabaseId": "db_01j9x5r1s2",
+                  "scope": "read_write",
+                  "planCode": "hobby",
+                  "subscriptionStatus": "inactive"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/agent/identity": {
+      "post": {
+        "operationId": "registerAgentIdentity",
+        "tags": [
+          "agent"
+        ],
+        "summary": "Start agent registration for an email",
+        "description": "First step of auth.md agent registration: an agent without an API key\nasks SynapseTree to email the human a claim link. The endpoint is\nunauthenticated; the response is byte-equal for known and unknown\nemails (anti-enumeration). At most 5 claim tokens may be outstanding\nfor one email — the 6th answers `quota_exceeded` (an existing\nProblemCode; errors here are problem+json only). Success returns the\n`stclaim_…` claim token the agent polls with, a short `user_code` the\nhuman confirms on the consent interstitial, and the poll parameters. The\noutstanding-token cap responds `quota_exceeded`.\n",
+        "security": [],
+        "x-synapsetree-engine": "registerAgentIdentity (control plane)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentIdentityRequest"
+              },
+              "example": {
+                "email": "ada@example.com"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The claim is pending; a confirmation email is on its way to the\nhuman. Byte-equal whether or not the email is known to SynapseTree.\n",
+            "headers": {
+              "Request-Id": {
+                "$ref": "#/components/headers/Request-Id"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentIdentityResponse"
+                },
+                "example": {
+                  "claim_token": "stclaim_exampleclaimtoken01",
+                  "user_code": "482913",
+                  "poll": {
+                    "token_endpoint": "https://api.synapsetree.dev/oauth2/token",
+                    "grant": "urn:synapsetree:claim",
+                    "interval": 5
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/QuotaExceeded"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/oauth2/token": {
+      "post": {
+        "operationId": "oauthToken",
+        "tags": [
+          "agent"
+        ],
+        "summary": "Poll the claim grant for the minted API key",
+        "description": "Device-flow style poll (RFC 8628 §3.4/§3.5) with a claim grant: the\nagent presents the `stclaim_…` token from POST /agent/identity as the\n`assertion` (RFC 7523 jwt-bearer shape) with grant type\n`urn:synapsetree:claim`. Before the human approves, the endpoint\nanswers `authorization_pending` (with `interval`) or `slow_down`;\nafter approval the FIRST poll mints exactly one API key (and, in the\nsame transaction, frees the claim token) and answers with it — later\npolls answer `invalid_grant`, as do expiry and absence. If the\norganization already holds 10 live agent keys the poll answers\n`key_limit_reached`, a documented extension of the RFC 6749 §5.2\n`error` member (not a problem+json code). Errors here are RFC 6749\n§5.2 bodies, never problem+json. No per-IP rate limit exists in v1.\n",
+        "security": [],
+        "x-synapsetree-engine": "oauthToken (control plane)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaimGrantRequest"
+              },
+              "example": {
+                "grant_type": "urn:synapsetree:claim",
+                "assertion": "stclaim_exampleclaimtoken01"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The claim was approved and redeemed; exactly one API key was\nminted. Polling again answers `invalid_grant`.\n",
+            "headers": {
+              "Request-Id": {
+                "$ref": "#/components/headers/Request-Id"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                },
+                "example": {
+                  "access_token": "stree_Tq3-vZ8_kLm2NpR5sUw7YxA9bC1dE4fG6hJ0iKlMnOp",
+                  "token_type": "Bearer",
+                  "account_id": "01890a5d-ac96-774b-bcce-b302099a8057",
+                  "scope": "memory:full"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/OauthErrorResponse"
+          },
+          "500": {
+            "$ref": "#/components/responses/OauthServerError"
+          }
+        }
+      }
+    },
+    "/oauth2/revoke": {
+      "post": {
+        "operationId": "oauthRevoke",
+        "tags": [
+          "agent"
+        ],
+        "summary": "Revoke a token (RFC 7009)",
+        "description": "RFC 7009 revocation, bearer-authenticated like every other key-bearing\nendpoint. Revoking an agent key frees its seat against the\norganization's 10-key cap. The endpoint answers 200 on every\nrequest carrying a LIVE bearer — the response is byte-equal whether the\ntoken was revoked or was unknown. A revoked, deleted or unknown CLIENT\nbearer never reaches the handler: the edge answers 401 (the shared\n`unauthorized` problem, RFC 6750 — byte-equal for unknown and revoked\nbearers, anti-enumeration). A request with an ABSENT or MALFORMED\n`Authorization` header is refused by the API Gateway authorizer before\nthe handler runs, with the gateway's default native body\n`{\"message\":\"Unauthorized\"}` (not problem+json, no `WWW-Authenticate`\nchallenge). Errors from the handler are RFC 6749 §5.2 bodies, never\nproblem+json (the two 401 bodies above excepted).\n",
+        "x-synapsetree-engine": "oauthRevoke (control plane)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeRequest"
+              },
+              "example": {
+                "token": "stree_Tq3-vZ8_kLm2NpR5sUw7YxA9bC1dE4fG6hJ0iKlMnOp",
+                "token_type_hint": "access_token"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The token is revoked, or was unknown; byte-equal either way. Requires a live bearer.\n",
+            "headers": {
+              "Request-Id": {
+                "$ref": "#/components/headers/Request-Id"
+              },
+              "RateLimit-Policy": {
+                "$ref": "#/components/headers/RateLimit-Policy"
+              },
+              "RateLimit": {
+                "$ref": "#/components/headers/RateLimit"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Empty body (RFC 7009 §2.2 — 200 confirms processing).",
+                  "additionalProperties": false,
+                  "required": [],
+                  "properties": {}
+                },
+                "example": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/OauthErrorResponse"
+          },
+          "401": {
+            "description": "The CLIENT bearer is unknown, revoked or invalid (RFC 6750). Emitted by the\napplication's shared 401 emitter, byte-equal to the pool's — anti-enumeration\n(unknown and revoked bearers are indistinguishable). A missing/malformed\n`Authorization` header instead yields the API Gateway default 401 body\n`{\"message\":\"Unauthorized\"}` — see the operation description.\n",
+            "headers": {
+              "Request-Id": {
+                "$ref": "#/components/headers/Request-Id"
+              },
+              "WWW-Authenticate": {
+                "$ref": "#/components/headers/WWW-Authenticate"
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "urn:synapsetree:problem:unauthorized",
+                  "title": "Unauthorized",
+                  "status": 401,
+                  "code": "unauthorized",
+                  "detail": "The API key is missing, invalid, or revoked.",
+                  "requestId": "req_01j9x5v7w8example",
+                  "retryable": false
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Per-key throttle (60 requests/min) exceeded.",
+            "headers": {
+              "Request-Id": {
+                "$ref": "#/components/headers/Request-Id"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OauthErrorBody"
+                },
+                "example": {
+                  "error": "server_error",
+                  "error_description": "Too many requests for this key; retry later."
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/OauthServerError"
+          },
+          "503": {
+            "description": "Authorization store unavailable; the request fails closed (RFC 6749 `server_error`).",
+            "headers": {
+              "Request-Id": {
+                "$ref": "#/components/headers/Request-Id"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OauthErrorBody"
+                },
+                "example": {
+                  "error": "server_error",
+                  "error_description": "Authorization is temporarily unavailable; retry later."
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "headers": {
+      "Idempotent-Replayed": {
+        "description": "Present and `true` when the response was replayed for a repeated `Idempotency-Key`.",
+        "schema": {
+          "type": "boolean"
+        },
+        "example": true
+      },
+      "RateLimit": {
+        "description": "Remaining quota in the current window (draft-ietf-httpapi-ratelimit-headers).",
+        "schema": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "example": "\"default\";r=412;t=17"
+      },
+      "RateLimit-Policy": {
+        "description": "Rate-limit policy (draft-ietf-httpapi-ratelimit-headers, structured fields).",
+        "schema": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "example": "\"default\";q=600;w=60"
+      },
+      "Request-Id": {
+        "description": "Identifies this request in logs and support requests.",
+        "schema": {
+          "type": "string",
+          "pattern": "^req_[A-Za-z0-9]{8,64}$"
+        },
+        "example": "req_01j9xb7c8d9e"
+      },
+      "Retry-After": {
+        "description": "Seconds to wait before retrying.",
+        "schema": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "example": 5
+      },
+      "WWW-Authenticate": {
+        "description": "RFC 6750 challenge emitted with application-level 401s on key-bearing\nroutes, pointing at the OAuth 2.0 Protected Resource Metadata document.\n",
+        "schema": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "example": "Bearer resource_metadata=\"https://api.synapsetree.dev/.well-known/oauth-protected-resource\""
+      }
+    },
+    "parameters": {
+      "After": {
+        "name": "after",
+        "in": "query",
+        "required": false,
+        "description": "The `nextCursor` from the previous page. Opaque; never an offset.",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "example": "c_eyJrIjoiZG9jc19fcnVuYm9vay5tZCJ9.k3Jf"
+      },
+      "FactId": {
+        "name": "factId",
+        "in": "path",
+        "required": true,
+        "description": "A fact id.",
+        "schema": {
+          "$ref": "#/components/schemas/FactId"
+        },
+        "example": "fact_01j9x7k2m3"
+      },
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": false,
+        "description": "Makes a retry safe. Retained 24 hours per API key. A replay returns the stored response\nwith `Idempotent-Replayed: true`; the same key with a different body is refused with\n`422 idempotency_key_reused`.\n",
+        "schema": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,255}$"
+        },
+        "example": "7f1c2e9a-ingest-runbook"
+      },
+      "Limit": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "description": "Page size.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 50
+        },
+        "example": 50
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "The request is invalid (`invalid_request`).",
+        "headers": {
+          "Request-Id": {
+            "$ref": "#/components/headers/Request-Id"
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "example": {
+              "type": "urn:synapsetree:problem:invalid_request",
+              "title": "Invalid request",
+              "status": 400,
+              "code": "invalid_request",
+              "detail": "The request body does not match the schema.",
+              "requestId": "req_01j9xb7c8d9e",
+              "retryable": false,
+              "errors": [
+                {
+                  "path": "/sourceRef",
+                  "message": "must match pattern \"^[A-Za-z0-9._\\- ]{1,255}$\""
+                }
+              ]
+            }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "The write conflicts with current state: `conflict`, `invalid_state`,\n`source_hash_conflict`, `node_id_unavailable`, `namespace_busy`,\n`namespace_exists`, `idempotency_in_progress`, `extraction_plan_stale`, or\n`inference_not_configured`.\n",
+        "headers": {
+          "Request-Id": {
+            "$ref": "#/components/headers/Request-Id"
+          },
+          "Retry-After": {
+            "$ref": "#/components/headers/Retry-After"
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "example": {
+              "type": "urn:synapsetree:problem:source_hash_conflict",
+              "title": "Source hash already stored",
+              "status": 409,
+              "code": "source_hash_conflict",
+              "detail": "Another sourceRef in this namespace already holds this content.",
+              "requestId": "req_01j9xb7c8d9e",
+              "retryable": false,
+              "duplicateOf": "docs__runbook-old.md"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "`application/json` (API Gateway): the key is unknown or revoked, or its database is not\nroutable. `application/problem+json`: `insufficient_scope` (a `read` key on a\n`read_write` operation) or `quota_exceeded` (the organization is over its storage quota).\n",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/GatewayError"
+            },
+            "example": {
+              "message": "Forbidden"
+            }
+          },
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "example": {
+              "type": "urn:synapsetree:problem:insufficient_scope",
+              "title": "Insufficient scope",
+              "status": 403,
+              "code": "insufficient_scope",
+              "detail": "This operation needs a read_write key.",
+              "requestId": "req_01j9xb7c8d9e",
+              "retryable": false
+            }
+          }
+        }
+      },
+      "InternalError": {
+        "description": "Unexpected server error (`internal`).",
+        "headers": {
+          "Request-Id": {
+            "$ref": "#/components/headers/Request-Id"
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "example": {
+              "type": "urn:synapsetree:problem:internal",
+              "title": "Internal error",
+              "status": 500,
+              "code": "internal",
+              "detail": "An unexpected error occurred.",
+              "requestId": "req_01j9xb7c8d9e",
+              "retryable": true
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "The fact or draft does not exist in this namespace (`not_found`).",
+        "headers": {
+          "Request-Id": {
+            "$ref": "#/components/headers/Request-Id"
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "example": {
+              "type": "urn:synapsetree:problem:not_found",
+              "title": "Not found",
+              "status": 404,
+              "code": "not_found",
+              "detail": "No fact with that id exists in this namespace.",
+              "requestId": "req_01j9xb7c8d9e",
+              "retryable": false
+            }
+          }
+        }
+      },
+      "NotImplemented": {
+        "description": "The operation or option depends on an engine release that has not shipped (`not_implemented`).",
+        "headers": {
+          "Request-Id": {
+            "$ref": "#/components/headers/Request-Id"
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "example": {
+              "type": "urn:synapsetree:problem:not_implemented",
+              "title": "Not implemented",
+              "status": 501,
+              "code": "not_implemented",
+              "detail": "tokenBudget is not available yet.",
+              "requestId": "req_01j9xb7c8d9e",
+              "retryable": false
+            }
+          }
+        }
+      },
+      "OauthErrorResponse": {
+        "description": "RFC 6749 §5.2 error (or an RFC 8628 §3.5 polling signal). JSON with an\n`error` member — never problem+json.\n",
+        "headers": {
+          "Request-Id": {
+            "$ref": "#/components/headers/Request-Id"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/OauthErrorBody"
+            },
+            "examples": {
+              "authorization_pending": {
+                "value": {
+                  "error": "authorization_pending",
+                  "error_description": "The claim is awaiting human approval.",
+                  "interval": 5
+                }
+              },
+              "slow_down": {
+                "value": {
+                  "error": "slow_down",
+                  "error_description": "Polling faster than the granted interval."
+                }
+              },
+              "invalid_grant": {
+                "value": {
+                  "error": "invalid_grant",
+                  "error_description": "The claim grant is expired, unknown, or already redeemed."
+                }
+              },
+              "key_limit_reached": {
+                "value": {
+                  "error": "key_limit_reached",
+                  "error_description": "The organization already holds the maximum number of live agent keys."
+                }
+              }
+            }
+          }
+        }
+      },
+      "OauthServerError": {
+        "description": "A transient provisioning failure with the claim grant still\nredeemable. RFC 6749 §5.2 `server_error` — retry with the same grant.\n",
+        "headers": {
+          "Request-Id": {
+            "$ref": "#/components/headers/Request-Id"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/OauthErrorBody"
+            },
+            "example": {
+              "error": "server_error",
+              "error_description": "Provisioning failed transiently; retry with the same claim grant."
+            }
+          }
+        }
+      },
+      "PayloadTooLarge": {
+        "description": "The request body is over the limit for this operation (`payload_too_large`).",
+        "headers": {
+          "Request-Id": {
+            "$ref": "#/components/headers/Request-Id"
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "example": {
+              "type": "urn:synapsetree:problem:payload_too_large",
+              "title": "Payload too large",
+              "status": 413,
+              "code": "payload_too_large",
+              "detail": "Request bodies are limited to 1 MiB.",
+              "requestId": "req_01j9xb7c8d9e",
+              "retryable": false
+            }
+          }
+        }
+      },
+      "PaymentRequired": {
+        "description": "The organization's paid subscription is not active (`subscription_inactive`). Reads still work.",
+        "headers": {
+          "Request-Id": {
+            "$ref": "#/components/headers/Request-Id"
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "example": {
+              "type": "urn:synapsetree:problem:subscription_inactive",
+              "title": "Subscription inactive",
+              "status": 402,
+              "code": "subscription_inactive",
+              "detail": "The organization's subscription is canceled; writes are disabled.",
+              "requestId": "req_01j9xb7c8d9e",
+              "retryable": false
+            }
+          }
+        }
+      },
+      "QuotaExceeded": {
+        "description": "The email already has the maximum number of outstanding claim tokens (`quota_exceeded`).",
+        "headers": {
+          "Request-Id": {
+            "$ref": "#/components/headers/Request-Id"
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "example": {
+              "type": "urn:synapsetree:problem:quota_exceeded",
+              "title": "Quota exceeded",
+              "status": 403,
+              "code": "quota_exceeded",
+              "detail": "This email already has the maximum number of pending claim tokens.",
+              "requestId": "req_01j9xb7c8d9e",
+              "retryable": false
+            }
+          }
+        }
+      },
+      "ServiceUnavailable": {
+        "description": "Temporarily unavailable: `unavailable` (tenant cold start or writer handoff) or `fenced`\n(the writer lost its lease; the write did not commit). Safe to retry.\n",
+        "headers": {
+          "Request-Id": {
+            "$ref": "#/components/headers/Request-Id"
+          },
+          "Retry-After": {
+            "$ref": "#/components/headers/Retry-After"
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "example": {
+              "type": "urn:synapsetree:problem:fenced",
+              "title": "Writer fenced",
+              "status": 503,
+              "code": "fenced",
+              "detail": "The write did not commit; retry.",
+              "requestId": "req_01j9xb7c8d9e",
+              "retryable": true,
+              "retryAfterSeconds": 1
+            }
+          }
+        }
+      },
+      "TooManyRequests": {
+        "description": "Rate limit exceeded (`rate_limited`).",
+        "headers": {
+          "Request-Id": {
+            "$ref": "#/components/headers/Request-Id"
+          },
+          "Retry-After": {
+            "$ref": "#/components/headers/Retry-After"
+          },
+          "RateLimit-Policy": {
+            "$ref": "#/components/headers/RateLimit-Policy"
+          },
+          "RateLimit": {
+            "$ref": "#/components/headers/RateLimit"
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "example": {
+              "type": "urn:synapsetree:problem:rate_limited",
+              "title": "Rate limited",
+              "status": 429,
+              "code": "rate_limited",
+              "detail": "Too many requests for this key.",
+              "requestId": "req_01j9xb7c8d9e",
+              "retryable": true,
+              "retryAfterSeconds": 17
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Missing or malformed bearer token. Produced by API Gateway, so the body is the gateway's\nnative shape, not problem+json.\n",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/GatewayError"
+            },
+            "example": {
+              "message": "Unauthorized"
+            }
+          }
+        }
+      },
+      "UnprocessableContent": {
+        "description": "Well-formed but refused: `ontology_violation`, `ingest_failed`,\n`idempotency_key_reused`, or `embedding_dimension_mismatch`.\n",
+        "headers": {
+          "Request-Id": {
+            "$ref": "#/components/headers/Request-Id"
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "example": {
+              "type": "urn:synapsetree:problem:ontology_violation",
+              "title": "Ontology violation",
+              "status": 422,
+              "code": "ontology_violation",
+              "detail": "Node type \"microservice\" is not in this namespace's strict manifest.",
+              "requestId": "req_01j9xb7c8d9e",
+              "retryable": false,
+              "kind": "node",
+              "ontologyType": "microservice"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "AgentIdentityRequest": {
+        "type": "object",
+        "description": "Who the human behind the agent is. `assertion` carries whatever identity assertion the agent can present (it is logged, never used to change the flow).",
+        "additionalProperties": false,
+        "required": [
+          "email"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "The human's email; the claim link is sent here."
+          },
+          "assertion": {
+            "type": "string",
+            "description": "Optional identity assertion from the agent's provider, parsed and logged for audit only."
+          }
+        }
+      },
+      "AgentIdentityResponse": {
+        "type": "object",
+        "description": "The pending claim's poll parameters. Byte-equal for known and unknown emails.",
+        "additionalProperties": false,
+        "required": [
+          "claim_token",
+          "user_code",
+          "poll"
+        ],
+        "properties": {
+          "claim_token": {
+            "type": "string",
+            "pattern": "^stclaim_[A-Za-z0-9._-]{8,128}$",
+            "description": "The claim grant to present as the OAuth `assertion` at POST /oauth2/token."
+          },
+          "user_code": {
+            "type": "string",
+            "pattern": "^[0-9]{6}$",
+            "description": "Six-digit code the human confirms on the consent interstitial."
+          },
+          "poll": {
+            "$ref": "#/components/schemas/PollGrant"
+          }
+        }
+      },
+      "ChunkExtraction": {
+        "type": "object",
+        "description": "One chunk's model output, as described by the plan's `outputSchema`.",
+        "additionalProperties": false,
+        "required": [
+          "facts",
+          "tasks"
+        ],
+        "properties": {
+          "facts": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "$ref": "#/components/schemas/ExtractedFact"
+            }
+          },
+          "tasks": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/ExtractedTask"
+            }
+          }
+        }
+      },
+      "ChunkFailure": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "chunkIndex",
+          "reason"
+        ],
+        "properties": {
+          "chunkIndex": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "parse",
+              "llm",
+              "schema"
+            ],
+            "description": "Why the chunk was not ingested. Messages never include content."
+          }
+        }
+      },
+      "ChunkResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "index",
+          "response"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The chunk's position in the plan's chunking of the source."
+          },
+          "response": {
+            "$ref": "#/components/schemas/ChunkExtraction"
+          }
+        }
+      },
+      "Chunking": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "maxChunkLength",
+          "chunkOverlap"
+        ],
+        "properties": {
+          "maxChunkLength": {
+            "type": "integer",
+            "minimum": 2,
+            "maximum": 100000
+          },
+          "chunkOverlap": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 99999
+          }
+        }
+      },
+      "ClaimGrantRequest": {
+        "type": "object",
+        "description": "Form-urlencoded claim-grant poll body (RFC 8628-style poll with an\nRFC 7523 jwt-bearer-shaped assertion).\n",
+        "additionalProperties": false,
+        "required": [
+          "grant_type",
+          "assertion"
+        ],
+        "properties": {
+          "grant_type": {
+            "type": "string",
+            "const": "urn:synapsetree:claim",
+            "description": "The claim-grant flow's only grant type."
+          },
+          "assertion": {
+            "type": "string",
+            "pattern": "^stclaim_[A-Za-z0-9._-]{8,128}$",
+            "description": "The `stclaim_…` claim token from POST /agent/identity."
+          }
+        }
+      },
+      "ClientExtractionIngest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "mode",
+          "namespace",
+          "sourceRef",
+          "sourceHash",
+          "planFingerprint",
+          "chunks"
+        ],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "const": "client_extraction"
+          },
+          "namespace": {
+            "$ref": "#/components/schemas/Namespace"
+          },
+          "sourceRef": {
+            "$ref": "#/components/schemas/SourceRef"
+          },
+          "sourceHash": {
+            "$ref": "#/components/schemas/SourceHash"
+          },
+          "planFingerprint": {
+            "$ref": "#/components/schemas/PlanFingerprint"
+          },
+          "onDuplicateHash": {
+            "$ref": "#/components/schemas/OnDuplicateHash"
+          },
+          "chunks": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1000,
+            "items": {
+              "$ref": "#/components/schemas/ChunkResult"
+            }
+          }
+        }
+      },
+      "Confidence": {
+        "type": "string",
+        "enum": [
+          "certain",
+          "inferred",
+          "tentative"
+        ]
+      },
+      "CreateEventRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "namespace",
+          "eventType",
+          "summary"
+        ],
+        "properties": {
+          "namespace": {
+            "$ref": "#/components/schemas/Namespace"
+          },
+          "eventType": {
+            "$ref": "#/components/schemas/EventType"
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8000
+          },
+          "relatedFactId": {
+            "$ref": "#/components/schemas/FactId"
+          },
+          "occurredAt": {
+            "description": "When it happened. Defaults to now.",
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "Cursor": {
+        "type": "string",
+        "description": "Opaque pagination cursor.",
+        "minLength": 1,
+        "maxLength": 512,
+        "examples": [
+          "c_eyJrIjoiZG9jc19fcnVuYm9vay5tZCJ9.k3Jf"
+        ]
+      },
+      "Direction": {
+        "type": "string",
+        "enum": [
+          "inbound",
+          "outbound",
+          "both"
+        ]
+      },
+      "Edge": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "namespace",
+          "sourceId",
+          "targetId",
+          "edgeType",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "namespace": {
+            "$ref": "#/components/schemas/Namespace"
+          },
+          "sourceId": {
+            "$ref": "#/components/schemas/FactId"
+          },
+          "targetId": {
+            "$ref": "#/components/schemas/FactId"
+          },
+          "edgeType": {
+            "$ref": "#/components/schemas/EdgeType"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "EdgeType": {
+        "description": "Edge type. Open, like OkfType; the listed values are the schema-software-org edges.",
+        "anyOf": [
+          {
+            "type": "string",
+            "enum": [
+              "knows",
+              "spouse",
+              "parent",
+              "worksFor",
+              "memberOf",
+              "homeLocation",
+              "workLocation",
+              "location",
+              "containedInPlace",
+              "subOrganization",
+              "object",
+              "agent",
+              "attendee",
+              "organizer",
+              "author",
+              "publisher",
+              "about",
+              "itemReviewed",
+              "owns",
+              "dependsOn",
+              "specifies",
+              "documents",
+              "handoffFor",
+              "supersedes",
+              "hasRole",
+              "operates",
+              "provides",
+              "maintains"
+            ]
+          },
+          {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        ]
+      },
+      "Embedding": {
+        "type": "array",
+        "description": "A client-computed embedding vector. All vectors in a namespace must share one model and\ndimension; a different dimension is refused with `422 embedding_dimension_mismatch`.\n",
+        "minItems": 1,
+        "maxItems": 8192,
+        "items": {
+          "type": "number"
+        },
+        "examples": [
+          [
+            0.0123,
+            -0.0456,
+            0.0789
+          ]
+        ]
+      },
+      "Event": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "namespace",
+          "eventType",
+          "summary",
+          "relatedFactId",
+          "occurredAt",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "namespace": {
+            "$ref": "#/components/schemas/Namespace"
+          },
+          "eventType": {
+            "$ref": "#/components/schemas/EventType"
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8000
+          },
+          "relatedFactId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FactId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "occurredAt": {
+            "description": "When the event happened. Null means at `createdAt`.",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "EventType": {
+        "type": "string",
+        "enum": [
+          "observation",
+          "decision",
+          "action",
+          "outcome"
+        ]
+      },
+      "ExistingFactReplacement": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "factId"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "existing"
+          },
+          "factId": {
+            "$ref": "#/components/schemas/FactId"
+          }
+        }
+      },
+      "ExtractedEdge": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "edgeType",
+          "targetTitle"
+        ],
+        "properties": {
+          "edgeType": {
+            "$ref": "#/components/schemas/EdgeType"
+          },
+          "targetTitle": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000,
+            "description": "Title of another fact in this response or already in the namespace."
+          }
+        }
+      },
+      "ExtractedFact": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "title",
+          "body",
+          "tags",
+          "confidence"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "body": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100000
+          },
+          "tags": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            }
+          },
+          "confidence": {
+            "$ref": "#/components/schemas/Confidence"
+          },
+          "okfType": {
+            "$ref": "#/components/schemas/OkfType"
+          },
+          "evidence": {
+            "type": "array",
+            "description": "Quotes copied from the chunk, checked when grounding is on. Never stored.",
+            "maxItems": 10,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            }
+          },
+          "edges": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "$ref": "#/components/schemas/ExtractedEdge"
+            }
+          },
+          "embedding": {
+            "$ref": "#/components/schemas/Embedding"
+          }
+        }
+      },
+      "ExtractedTask": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "description",
+          "priority"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10
+          }
+        }
+      },
+      "Fact": {
+        "description": "A fact, discriminated by `sourceType`.",
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ImmutableDocumentFact"
+          },
+          {
+            "$ref": "#/components/schemas/LibrarianInferredFact"
+          },
+          {
+            "$ref": "#/components/schemas/UserStatedFact"
+          },
+          {
+            "$ref": "#/components/schemas/UserConfirmedFact"
+          }
+        ],
+        "discriminator": {
+          "propertyName": "sourceType",
+          "mapping": {
+            "immutable_document": "#/components/schemas/ImmutableDocumentFact",
+            "librarian_inferred": "#/components/schemas/LibrarianInferredFact",
+            "user_stated": "#/components/schemas/UserStatedFact",
+            "user_confirmed": "#/components/schemas/UserConfirmedFact"
+          }
+        }
+      },
+      "FactBase": {
+        "type": "object",
+        "description": "Fields shared by every fact. Not used on its own; see `Fact`.",
+        "required": [
+          "id",
+          "namespace",
+          "title",
+          "body",
+          "tags",
+          "confidence",
+          "okfType",
+          "lifecycleStatus",
+          "trustTier",
+          "isStale",
+          "generatedBy",
+          "lastVerifiedAt",
+          "lastVerifiedBy",
+          "validFrom",
+          "validTo",
+          "supersededBy",
+          "supersededAt",
+          "accessCount",
+          "lastAccessedAt",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/FactId"
+          },
+          "namespace": {
+            "$ref": "#/components/schemas/Namespace"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 100000
+          },
+          "tags": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            }
+          },
+          "confidence": {
+            "$ref": "#/components/schemas/Confidence"
+          },
+          "okfType": {
+            "description": "Ontology node type, or null when untyped.",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OkfType"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lifecycleStatus": {
+            "$ref": "#/components/schemas/LifecycleStatus"
+          },
+          "trustTier": {
+            "$ref": "#/components/schemas/TrustTier"
+          },
+          "isStale": {
+            "type": "boolean"
+          },
+          "generatedBy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 256,
+            "description": "Producing actor, e.g. `process:librarian` or `human:kurt`."
+          },
+          "lastVerifiedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lastVerifiedBy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 256
+          },
+          "validFrom": {
+            "description": "When the fact became true in the world. Null means since `createdAt`.",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "validTo": {
+            "description": "When the fact stopped being true. Null means still current.",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "supersededBy": {
+            "description": "The fact that replaced this one.",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FactId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "supersededAt": {
+            "description": "When the replacement was recorded.",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "accessCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "lastAccessedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "FactId": {
+        "type": "string",
+        "description": "An opaque fact id. Engine-generated ids start with `fact_`; graph node ids are caller-chosen.",
+        "minLength": 1,
+        "maxLength": 255,
+        "examples": [
+          "fact_01j9x7k2m3"
+        ]
+      },
+      "GatewayError": {
+        "type": "object",
+        "description": "API Gateway's native error body (authorizer denials). Not problem+json.",
+        "additionalProperties": false,
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "ImmutableDocumentFact": {
+        "type": "object",
+        "description": "A fact extracted from or written for a source document. Changes only by re-ingesting the source.",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/FactBase"
+          },
+          {
+            "type": "object",
+            "required": [
+              "sourceType",
+              "mutable",
+              "sourceRef",
+              "sourceHash"
+            ],
+            "properties": {
+              "sourceType": {
+                "type": "string",
+                "const": "immutable_document"
+              },
+              "mutable": {
+                "type": "boolean",
+                "const": false
+              },
+              "sourceRef": {
+                "$ref": "#/components/schemas/SourceRef"
+              },
+              "sourceHash": {
+                "description": "Null after a partially failed ingest; re-ingest to complete it.",
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/SourceHash"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "unevaluatedProperties": false
+      },
+      "IngestRequest": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ServerExtractionIngest"
+          },
+          {
+            "$ref": "#/components/schemas/ClientExtractionIngest"
+          }
+        ],
+        "discriminator": {
+          "propertyName": "mode",
+          "mapping": {
+            "server_extraction": "#/components/schemas/ServerExtractionIngest",
+            "client_extraction": "#/components/schemas/ClientExtractionIngest"
+          }
+        }
+      },
+      "IngestResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "chunks",
+          "ingestedChunks",
+          "failedChunks",
+          "truncated",
+          "duplicateOf",
+          "parseFailures"
+        ],
+        "properties": {
+          "chunks": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "ingestedChunks": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failedChunks": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "True when chunking had to hard-cut text with no natural break."
+          },
+          "duplicateOf": {
+            "description": "Set when `onDuplicateHash` is `skip` and another sourceRef already holds the content.",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "parseFailures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChunkFailure"
+            }
+          },
+          "embeddingFailures": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Write-phase embed failures counted during this ingest (`{ok: false}` per fact);\nthe facts commit keyword-only and the re-embed maintenance path repairs them.\nAbsent when every embed succeeded.\n"
+          }
+        }
+      },
+      "LibrarianInferredFact": {
+        "type": "object",
+        "description": "A fact consolidated from events by the librarian.",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/FactBase"
+          },
+          {
+            "$ref": "#/components/schemas/MutableFactFields"
+          },
+          {
+            "type": "object",
+            "required": [
+              "sourceType"
+            ],
+            "properties": {
+              "sourceType": {
+                "type": "string",
+                "const": "librarian_inferred"
+              }
+            }
+          }
+        ],
+        "unevaluatedProperties": false
+      },
+      "LifecycleStatus": {
+        "type": "string",
+        "enum": [
+          "draft",
+          "stable",
+          "deprecated"
+        ]
+      },
+      "MutableFactFields": {
+        "type": "object",
+        "description": "Fields shared by mutable facts. Not used on its own; see `Fact`.",
+        "required": [
+          "mutable",
+          "sourceRef",
+          "sourceHash"
+        ],
+        "properties": {
+          "mutable": {
+            "type": "boolean",
+            "const": true
+          },
+          "sourceRef": {
+            "type": "null"
+          },
+          "sourceHash": {
+            "type": "null"
+          }
+        }
+      },
+      "MutableSourceType": {
+        "type": "string",
+        "enum": [
+          "user_stated",
+          "user_confirmed",
+          "librarian_inferred"
+        ]
+      },
+      "Namespace": {
+        "type": "string",
+        "description": "A namespace inside the tenant database (the engine's entity_id).",
+        "pattern": "^[a-z0-9][a-z0-9._:-]{0,127}$",
+        "examples": [
+          "repo:synapsetree"
+        ]
+      },
+      "NamespaceList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "hasMore",
+          "nextCursor"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NamespaceSummary"
+            }
+          },
+          "hasMore": {
+            "type": "boolean"
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Cursor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "NamespaceSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "namespace"
+        ],
+        "properties": {
+          "namespace": {
+            "$ref": "#/components/schemas/Namespace"
+          }
+        }
+      },
+      "NewFactReplacement": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "title",
+          "body"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "new"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "body": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100000
+          },
+          "tags": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            }
+          },
+          "confidence": {
+            "$ref": "#/components/schemas/Confidence"
+          },
+          "sourceType": {
+            "$ref": "#/components/schemas/MutableSourceType"
+          },
+          "embedding": {
+            "$ref": "#/components/schemas/Embedding"
+          }
+        }
+      },
+      "OauthErrorBody": {
+        "type": "object",
+        "description": "RFC 6749 §5.2 error body: `error` plus optional `error_description`;\n`interval` rides on `authorization_pending` (RFC 8628 §3.5).\n`key_limit_reached`, `database_name_taken` and `database_quota_exceeded`\nare documented SynapseTree extensions of the `error` member — account\nwalls a human must clear, after which the agent resumes polling (the\nclaim grant survives until its TTL):\n`key_limit_reached` (the organization's 10-key cap — prune keys in the\ndashboard), `database_name_taken` (the default database name is held by\na deleted database until GC cleanup — create a differently-named\ndatabase in the dashboard), `database_quota_exceeded` (the plan has no\nfree database slot — delete a database or upgrade, then poll again).\nThey are error-member values here, not problem+json ProblemCodes.\n",
+        "additionalProperties": false,
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "An RFC 6749 §5.2 code, an RFC 8628 §3.5 code, or a documented SynapseTree extension (`key_limit_reached`, `database_name_taken`, `database_quota_exceeded`).",
+            "enum": [
+              "invalid_request",
+              "invalid_grant",
+              "authorization_pending",
+              "slow_down",
+              "unsupported_grant_type",
+              "server_error",
+              "key_limit_reached",
+              "database_name_taken",
+              "database_quota_exceeded"
+            ]
+          },
+          "error_description": {
+            "type": "string",
+            "description": "Human-readable detail (RFC 6749 §5.2)."
+          },
+          "error_uri": {
+            "type": "string",
+            "format": "uri",
+            "description": "Optional RFC 6749 §5.2 pointer to the dashboard page that clears the wall."
+          },
+          "interval": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Seconds to wait before polling again (RFC 8628 §3.5)."
+          }
+        }
+      },
+      "OkfType": {
+        "description": "Ontology node type. Open: each namespace's manifest defines its own types and `emergent`\nmode adds more; facts imported from OKF bundles keep their original type string. The\nlisted values are the schema-software-org types.\n",
+        "anyOf": [
+          {
+            "type": "string",
+            "enum": [
+              "person",
+              "organization",
+              "place",
+              "event",
+              "project",
+              "action",
+              "creativework",
+              "review",
+              "product",
+              "software_application",
+              "service",
+              "role",
+              "design_spec",
+              "handoff",
+              "procedure",
+              "session_recap",
+              "reference_doc"
+            ]
+          },
+          {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        ]
+      },
+      "OnDuplicateHash": {
+        "type": "string",
+        "description": "When another sourceRef already holds this content: `skip` (write nothing), `ingest` anyway, or `error` (409 source_hash_conflict).",
+        "enum": [
+          "skip",
+          "ingest",
+          "error"
+        ],
+        "default": "skip"
+      },
+      "PlanFingerprint": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$",
+        "examples": [
+          "sha256:4e6a8c0b2d4f6a8c0e2b4d6f8a0c2e4b6d8f0a2c4e6b8d0f2a4c6e8b0d2f4a6c"
+        ]
+      },
+      "PollGrant": {
+        "type": "object",
+        "description": "Where and how to poll for the minted key.",
+        "additionalProperties": false,
+        "required": [
+          "token_endpoint",
+          "grant",
+          "interval"
+        ],
+        "properties": {
+          "token_endpoint": {
+            "type": "string",
+            "format": "uri",
+            "description": "The api.-host token endpoint."
+          },
+          "grant": {
+            "type": "string",
+            "const": "urn:synapsetree:claim",
+            "description": "The claim-grant type to send as `grant_type`."
+          },
+          "interval": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Minimum seconds between polls of `token_endpoint` (the RFC 8628 §3.2\nplacement, ruled 2026-11-01). An `authorization_pending` or\n`slow_down` answer may carry a larger `interval`, which replaces\nthis one from then on.\n"
+          }
+        }
+      },
+      "Problem": {
+        "type": "object",
+        "description": "RFC 7807 problem details.",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "title",
+          "status",
+          "code",
+          "detail",
+          "requestId",
+          "retryable"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "format": "uri",
+            "description": "`urn:synapsetree:problem:<code>`.",
+            "pattern": "^urn:synapsetree:problem:[a-z_]+$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "integer",
+            "minimum": 400,
+            "maximum": 599
+          },
+          "code": {
+            "$ref": "#/components/schemas/ProblemCode"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "requestId": {
+            "type": "string",
+            "pattern": "^req_[A-Za-z0-9]{8,64}$"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "retryAfterSeconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "errors": {
+            "type": "array",
+            "description": "Validation failures (`invalid_request`).",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "message"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "JSON Pointer into the request."
+                },
+                "message": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "parseFailures": {
+            "type": "array",
+            "description": "Per-chunk failures (`ingest_failed`).",
+            "items": {
+              "$ref": "#/components/schemas/ChunkFailure"
+            }
+          },
+          "duplicateOf": {
+            "description": "The sourceRef already holding this content (`source_hash_conflict`).",
+            "$ref": "#/components/schemas/SourceRef"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "node",
+              "edge"
+            ],
+            "description": "What violated the ontology (`ontology_violation`)."
+          },
+          "ontologyType": {
+            "type": "string",
+            "description": "The out-of-manifest type (`ontology_violation`)."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Machine-readable sub-reason, e.g. `immutable_target` for `invalid_state`."
+          }
+        }
+      },
+      "ProblemCode": {
+        "description": "Stable machine-readable error code. Open: new codes may be added in minor versions, so\nclients must treat an unlisted code as a generic error of its HTTP status. The listed\nvalues are the codes this version defines.\n",
+        "anyOf": [
+          {
+            "type": "string",
+            "enum": [
+              "invalid_request",
+              "insufficient_scope",
+              "subscription_inactive",
+              "quota_exceeded",
+              "not_found",
+              "namespace_exists",
+              "conflict",
+              "invalid_state",
+              "source_hash_conflict",
+              "node_id_unavailable",
+              "namespace_busy",
+              "idempotency_in_progress",
+              "extraction_plan_stale",
+              "inference_not_configured",
+              "inference_config_invalid",
+              "payload_too_large",
+              "idempotency_key_reused",
+              "ontology_violation",
+              "ingest_failed",
+              "embedding_dimension_mismatch",
+              "embedding_model_mismatch",
+              "rate_limited",
+              "internal",
+              "not_implemented",
+              "unavailable",
+              "upstream_inference_unavailable",
+              "fenced",
+              "unauthorized"
+            ]
+          },
+          {
+            "type": "string",
+            "pattern": "^[a-z_]+$",
+            "maxLength": 64
+          }
+        ]
+      },
+      "QueryDiagnostics": {
+        "type": "object",
+        "description": "Named BYOK diagnostics for a query response. A typed map: keys are diagnostic\nnames, values are scalars; unknown names are legal and clients must ignore them.\nReported reasons include `keyword_only: true` (the organization has no embeddings\nregistration) and `embed_unavailable: <reason>` (key or provider fault, or the tier\ncap exhausted). While a maintenance run holds the namespace, vector search is\npaused and reads answer keyword-only; the run itself is surfaced through\n`currentRunId` and `currentRunState` on the pending-maintenance object. All of\nthese are normal keyword-only degradation, not errors.\n",
+        "additionalProperties": {
+          "description": "A named diagnostic flag, count or label.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "examples": [
+          {
+            "keyword_only": true
+          }
+        ]
+      },
+      "QueryRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "namespaces",
+          "query"
+        ],
+        "properties": {
+          "namespaces": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/components/schemas/Namespace"
+            }
+          },
+          "query": {
+            "type": "string",
+            "maxLength": 4096,
+            "description": "Search text. Empty returns the most recent facts."
+          },
+          "queryEmbedding": {
+            "$ref": "#/components/schemas/Embedding"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 10
+          },
+          "hybridWeight": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "0 = keyword only, 1 = semantic only. Omit for the default semantic ranking."
+          },
+          "excludeDrafts": {
+            "type": "boolean",
+            "default": false
+          },
+          "asOf": {
+            "description": "Return facts that were true at this instant, using current knowledge.",
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "weights": {
+            "type": "object",
+            "description": "Per-namespace score multipliers (default 1; 0 skips the namespace).",
+            "propertyNames": {
+              "$ref": "#/components/schemas/Namespace"
+            },
+            "additionalProperties": {
+              "type": "number",
+              "minimum": 0
+            }
+          },
+          "floors": {
+            "type": "object",
+            "description": "Minimum results reserved per namespace before the global `limit` cut.",
+            "propertyNames": {
+              "$ref": "#/components/schemas/Namespace"
+            },
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            }
+          },
+          "tokenBudget": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200000,
+            "description": "Pack facts into this many estimated tokens.",
+            "x-synapsetree-engine": "read({ tokenBudget }) (core-llm-wiki 7.8.0 phase D)"
+          }
+        }
+      },
+      "QueryResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "facts",
+          "scores",
+          "tasks",
+          "events"
+        ],
+        "properties": {
+          "facts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Fact"
+            }
+          },
+          "scores": {
+            "type": "object",
+            "description": "Score per returned fact id (empty for recency reads).",
+            "additionalProperties": {
+              "type": "number"
+            }
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Task"
+            }
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Event"
+            }
+          },
+          "diagnostics": {
+            "description": "Additive BYOK diagnostics; present only when there is something to report\n(e.g. the searched namespaces serve keyword-only facts because the org has\nno embeddings registration).\n",
+            "$ref": "#/components/schemas/QueryDiagnostics"
+          }
+        }
+      },
+      "RememberRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "namespace",
+          "title",
+          "body"
+        ],
+        "properties": {
+          "namespace": {
+            "$ref": "#/components/schemas/Namespace"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "body": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100000
+          },
+          "tags": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            }
+          },
+          "confidence": {
+            "$ref": "#/components/schemas/Confidence"
+          },
+          "sourceType": {
+            "type": "string",
+            "enum": [
+              "user_stated",
+              "user_confirmed"
+            ],
+            "default": "user_stated"
+          },
+          "okfType": {
+            "$ref": "#/components/schemas/OkfType"
+          },
+          "validFrom": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "embedding": {
+            "$ref": "#/components/schemas/Embedding"
+          }
+        }
+      },
+      "RevokeRequest": {
+        "type": "object",
+        "description": "Form-urlencoded revocation body (RFC 7009 §2.1).",
+        "additionalProperties": false,
+        "required": [
+          "token"
+        ],
+        "properties": {
+          "token": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The API key to revoke (revocation is defined for keys only)."
+          },
+          "token_type_hint": {
+            "type": "string",
+            "enum": [
+              "access_token"
+            ],
+            "description": "Optional RFC 7009 §2.1 hint."
+          }
+        }
+      },
+      "ServerExtractionIngest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "mode",
+          "namespace",
+          "sourceRef",
+          "sourceHash",
+          "content"
+        ],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "const": "server_extraction"
+          },
+          "namespace": {
+            "$ref": "#/components/schemas/Namespace"
+          },
+          "sourceRef": {
+            "$ref": "#/components/schemas/SourceRef"
+          },
+          "sourceHash": {
+            "$ref": "#/components/schemas/SourceHash"
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 524288
+          },
+          "onDuplicateHash": {
+            "$ref": "#/components/schemas/OnDuplicateHash"
+          },
+          "chunking": {
+            "$ref": "#/components/schemas/Chunking"
+          }
+        }
+      },
+      "SourceHash": {
+        "type": "string",
+        "description": "Lowercase hex SHA-256 of the source's bytes.",
+        "pattern": "^[0-9a-f]{64}$",
+        "examples": [
+          "9f2c4b8e1a7d3f6c5b0e2d4a8c1f3e5b7d9a0c2e4f6b8d0a1c3e5f7b9d1a3c5e"
+        ]
+      },
+      "SourceRef": {
+        "type": "string",
+        "description": "Identifies one source document within a namespace. Restricted to characters the engine\nstores unchanged; the SDK's `toSourceRef(path)` encodes `/` as `__`.\n",
+        "pattern": "^[A-Za-z0-9._\\- ]{1,255}$",
+        "examples": [
+          "infra__stack.ts"
+        ]
+      },
+      "SourceType": {
+        "type": "string",
+        "description": "How a fact was produced. `immutable_document` facts change only by re-ingesting their source.",
+        "enum": [
+          "immutable_document",
+          "librarian_inferred",
+          "user_stated",
+          "user_confirmed"
+        ]
+      },
+      "SupersedeRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "namespace",
+          "replacement"
+        ],
+        "properties": {
+          "namespace": {
+            "$ref": "#/components/schemas/Namespace"
+          },
+          "validFrom": {
+            "description": "When the old fact stopped being true and the replacement became true. Defaults to now.",
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "replacement": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NewFactReplacement"
+              },
+              {
+                "$ref": "#/components/schemas/ExistingFactReplacement"
+              }
+            ],
+            "discriminator": {
+              "propertyName": "kind",
+              "mapping": {
+                "new": "#/components/schemas/NewFactReplacement",
+                "existing": "#/components/schemas/ExistingFactReplacement"
+              }
+            }
+          }
+        }
+      },
+      "SupersedeResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "superseded",
+          "replacement"
+        ],
+        "properties": {
+          "superseded": {
+            "$ref": "#/components/schemas/Fact"
+          },
+          "replacement": {
+            "$ref": "#/components/schemas/Fact"
+          }
+        }
+      },
+      "Task": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "namespace",
+          "description",
+          "status",
+          "priority",
+          "okfType",
+          "createdAt",
+          "updatedAt",
+          "resolvedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "namespace": {
+            "$ref": "#/components/schemas/Namespace"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "in_progress",
+              "done",
+              "abandoned"
+            ]
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10
+          },
+          "okfType": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OkfType"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "resolvedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "Timestamp": {
+        "type": "string",
+        "format": "date-time",
+        "description": "RFC 3339 timestamp, UTC.",
+        "examples": [
+          "2026-09-29T10:00:00Z"
+        ]
+      },
+      "TokenResponse": {
+        "type": "object",
+        "description": "RFC 6749 §5.1 success response — exactly one freshly minted API key.",
+        "additionalProperties": false,
+        "required": [
+          "access_token",
+          "token_type",
+          "account_id",
+          "scope"
+        ],
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "pattern": "^stree_[A-Za-z0-9_-]{43}$",
+            "description": "The minted API key. The only time it is ever shown."
+          },
+          "token_type": {
+            "type": "string",
+            "enum": [
+              "Bearer"
+            ],
+            "description": "RFC 6749 §5.1 — keys authenticate as bearer tokens."
+          },
+          "account_id": {
+            "type": "string",
+            "description": "The organization the key belongs to (its `account_id` context)."
+          },
+          "scope": {
+            "type": "string",
+            "const": "memory:full",
+            "description": "Agent keys always carry the full memory scope."
+          }
+        }
+      },
+      "TraverseRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "namespace",
+          "sourceId"
+        ],
+        "properties": {
+          "namespace": {
+            "$ref": "#/components/schemas/Namespace"
+          },
+          "sourceId": {
+            "$ref": "#/components/schemas/FactId"
+          },
+          "maxDepth": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3,
+            "default": 1
+          },
+          "direction": {
+            "$ref": "#/components/schemas/Direction"
+          },
+          "edgeTypes": {
+            "type": "array",
+            "description": "Allowed edge types. Omit for all; an empty array matches none.",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/EdgeType"
+            }
+          },
+          "maxNodes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 20
+          },
+          "minConfidence": {
+            "$ref": "#/components/schemas/Confidence"
+          },
+          "excludeSourceTypes": {
+            "type": "array",
+            "maxItems": 4,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/components/schemas/SourceType"
+            }
+          },
+          "excludeDrafts": {
+            "type": "boolean",
+            "default": false
+          },
+          "asOf": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "tokenBudget": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200000,
+            "x-synapsetree-engine": "traverseGraph({ tokenBudget }) (core-llm-wiki 7.8.0 phase D)"
+          }
+        }
+      },
+      "TraverseResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "nodes",
+          "edges"
+        ],
+        "properties": {
+          "nodes": {
+            "type": "array",
+            "description": "Anchor first, then neighbours by depth.",
+            "items": {
+              "$ref": "#/components/schemas/Fact"
+            }
+          },
+          "edges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Edge"
+            }
+          }
+        }
+      },
+      "TrustTier": {
+        "type": "string",
+        "enum": [
+          "unverified",
+          "machine-confirmed",
+          "human-reviewed"
+        ]
+      },
+      "UserConfirmedFact": {
+        "type": "object",
+        "description": "A fact a user has confirmed.",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/FactBase"
+          },
+          {
+            "$ref": "#/components/schemas/MutableFactFields"
+          },
+          {
+            "type": "object",
+            "required": [
+              "sourceType"
+            ],
+            "properties": {
+              "sourceType": {
+                "type": "string",
+                "const": "user_confirmed"
+              }
+            }
+          }
+        ],
+        "unevaluatedProperties": false
+      },
+      "UserStatedFact": {
+        "type": "object",
+        "description": "A fact stated directly by a user or agent.",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/FactBase"
+          },
+          {
+            "$ref": "#/components/schemas/MutableFactFields"
+          },
+          {
+            "type": "object",
+            "required": [
+              "sourceType"
+            ],
+            "properties": {
+              "sourceType": {
+                "type": "string",
+                "const": "user_stated"
+              }
+            }
+          }
+        ],
+        "unevaluatedProperties": false
+      },
+      "Whoami": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "apiKeyId",
+          "organizationId",
+          "tenantDatabaseId",
+          "scope",
+          "planCode",
+          "subscriptionStatus"
+        ],
+        "properties": {
+          "apiKeyId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "organizationId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "tenantDatabaseId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "read",
+              "read_write"
+            ]
+          },
+          "planCode": {
+            "description": "Open; new plans may be added.",
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "hobby",
+                  "pro",
+                  "team"
+                ]
+              },
+              {
+                "type": "string",
+                "minLength": 1
+              }
+            ]
+          },
+          "subscriptionStatus": {
+            "type": "string",
+            "enum": [
+              "inactive",
+              "trialing",
+              "active",
+              "past_due",
+              "canceled",
+              "unpaid",
+              "incomplete",
+              "incomplete_expired",
+              "paused"
+            ]
+          }
+        }
+      }
+    }
+  }
+}
