@@ -2,7 +2,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { registerByEmail } from './authmd';
 import { SynapseTreeClient } from './client';
 import {
-  KEY_PATTERN, configDir, deleteCredentials, maskKey, readConfig, resolveSettings, validateBaseUrl, writeConfig, writeCredentials, type Settings,
+  KEY_PATTERN, configDir, deleteCredentials, maskKey, readConfig, readCredentials, resolveSettings, validateBaseUrl, writeConfig, writeCredentials, type Settings,
 } from './credentials';
 import { NO_KEY_MESSAGE, SynapseTreeError, UsageError } from './errors';
 import { stripTrailingSlashes } from './client';
@@ -154,32 +154,51 @@ export async function run(cmd: Command, io: Io): Promise<number> {
         return 0;
       }
       case 'auth-revoke': {
-        const settings = await resolveSettings(io.env, dir);
-        if (!settings.apiKey) { io.err(NO_KEY_MESSAGE); return 3; }
-        const client = makeClient(settings, io);
-        try {
-          await client.call('oauthRevoke', { form: { token: settings.apiKey, token_type_hint: 'access_token' } });
-          io.err('Key revoked.');
-        } catch (err) {
-          if (err instanceof SynapseTreeError && err.status === 401) {
-            io.err('The key was already dead on the server.');
-          } else if (err instanceof SynapseTreeError && err.status === 403) {
-            // The server answered and refused the revocation (e.g. admin-only
-            // or owner mismatch): the local copy is kept so nothing is lost.
-            io.err(`The server refused the revocation (${err.code}); the local key was kept. Remove it in the dashboard if it should die.`);
-            return 1;
-          } else {
-            io.err(`SynapseTree was unreachable or the request failed; the local key was kept. (${err instanceof Error ? err.message : String(err)})`);
-            return 1;
+        // resolveSettings prefers an exported SYNAPSETREE_API_KEY, but the
+        // STORED credential is the one a local user can forget about (e.g.
+        // one left by `auth --email` while an env key shadows it). Revoke
+        // the stored key first, then the env key if one is exported.
+        const stored = await readCredentials(dir);
+        let failed = false;
+        if (stored) {
+          const client = makeClient({ apiKey: stored.apiKey, baseUrl: (await resolveSettings(io.env, dir)).baseUrl }, io);
+          try {
+            await client.call('oauthRevoke', { form: { token: stored.apiKey, token_type_hint: 'access_token' } });
+            io.err('Stored key revoked.');
+          } catch (err) {
+            if (err instanceof SynapseTreeError && err.status === 401) {
+              io.err('The stored key was already dead on the server.');
+            } else if (err instanceof SynapseTreeError && err.status === 403) {
+              // The server answered and refused the revocation (e.g. admin-only
+              // or owner mismatch): the local copy is kept so nothing is lost.
+              io.err(`The server refused the revocation (${err.code}); the local key was kept. Remove it in the dashboard if it should die.`);
+              return 1;
+            } else {
+              io.err(`SynapseTree was unreachable or the request failed; the local key was kept. (${err instanceof Error ? err.message : String(err)})`);
+              return 1;
+            }
           }
-        }
-        if (settings.keySource === 'env') {
-          io.err('The key came from SYNAPSETREE_API_KEY; unset that variable.');
-        } else {
           await deleteCredentials(dir);
           io.err('Local copy deleted.');
         }
-        return 0;
+        const envKey = io.env.SYNAPSETREE_API_KEY;
+        if (envKey) {
+          const settings = await resolveSettings(io.env, dir);
+          const client = makeClient(settings, io);
+          try {
+            await client.call('oauthRevoke', { form: { token: envKey, token_type_hint: 'access_token' } });
+            io.err('Environment key revoked; unset SYNAPSETREE_API_KEY.');
+          } catch (err) {
+            if (err instanceof SynapseTreeError && err.status === 401) {
+              io.err('The environment key was already dead on the server; unset SYNAPSETREE_API_KEY.');
+            } else {
+              io.err(`The environment key could not be revoked; unset SYNAPSETREE_API_KEY and remove it in the dashboard. (${err instanceof Error ? err.message : String(err)})`);
+              failed = true;
+            }
+          }
+        }
+        if (!stored && !envKey) { io.err(NO_KEY_MESSAGE); return 3; }
+        return failed ? 1 : 0;
       }
       case 'status': {
         const settings = await resolveSettings(io.env, dir);

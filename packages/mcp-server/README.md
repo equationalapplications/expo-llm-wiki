@@ -141,9 +141,8 @@ unset SYNAPSETREE_API_KEY                            # an inherited key would ta
 export SYNAPSETREE_BASE_URL=https://test-stage…      # the test stage, for EVERY step below
 export SYNAPSETREE_CONFIG_DIR=$(mktemp -d)           # isolated credentials
 export SYNAPSETREE_LIVE_TESTS=1                      # opts the live chain into `pnpm test`
+cd "$(git rev-parse --show-toplevel)"                 # back to the repo root: all paths below are repo-root paths
 CLI="node $(pwd)/packages/mcp-server/dist/cli.js"    # the built CLI (no bin on PATH yet)
-
-cd "$(git rev-parse --show-toplevel)"                 # all paths below are repo-root paths
 pnpm build
 ```
 
