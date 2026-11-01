@@ -12,8 +12,7 @@
     }
   },
   "bin": {
-    "synapsetree-mcp": "./dist/cli.js",
-    "mcp-server": "./dist/cli.js"
+    "synapsetree-mcp": "./dist/cli.js"
   },
   "scripts": {
     "build": "tsup",

@@ -132,9 +132,12 @@ packages/mcp-server/
 **package.json** (fields beyond the sibling template in
 `packages/core-llm-tools/package.json`, which is copied otherwise):
 
-- `"bin": { "synapsetree-mcp": "./dist/cli.js", "mcp-server": "./dist/cli.js" }`.
-  `synapsetree-mcp` is canonical; `mcp-server` is the alias the SynapseTree
-  website's hero copy uses. Both point at the CommonJS build.
+- `"bin": { "synapsetree-mcp": "./dist/cli.js" }` — one command only.
+  AMENDED 2026-11-01 (owner ruling D2, recorded in the PR #305 decision
+  log): the original draft also aliased `mcp-server`, but that generic name
+  risks npm install conflicts with any other publisher's tool of the same
+  name, and removing a bin after first publish is breaking. The SynapseTree
+  website's hero copy must reference `synapsetree-mcp`.
 - `"files": ["dist", "contract", "LICENSE", "README.md"]` — the contract
   ships for transparency; the build also bundles it (§5.1), so the runtime
   never reads the filesystem to find it.

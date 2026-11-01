@@ -37,7 +37,7 @@ Once published:
 npm install -g @equationalapplications/mcp-server
 ```
 
-Node 20 or newer. Two commands are installed: `synapsetree-mcp` (canonical) and `mcp-server` (alias). This README uses the canonical name.
+Node 20 or newer. One command is installed: `synapsetree-mcp`.
 
 ## Get a key
 
