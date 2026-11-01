@@ -194,7 +194,15 @@ export class SynapseTreeClient {
   private async send(url: string, init: RequestInit, timeoutMs: number): Promise<{ res: Response; done: () => void }> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(new Error(`timeout after ${timeoutMs} ms`)), timeoutMs);
-    const res = await this.fetchImpl(url, { ...init, signal: controller.signal });
+    let res: Response;
+    try {
+      res = await this.fetchImpl(url, { ...init, signal: controller.signal });
+    } catch (err) {
+      // A rejected fetch must not leave the timer pending (it would keep the
+      // process alive until it fires).
+      clearTimeout(timer);
+      throw err;
+    }
     return { res, done: () => clearTimeout(timer) };
   }
 }
