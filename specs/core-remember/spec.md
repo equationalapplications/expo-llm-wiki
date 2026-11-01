@@ -153,7 +153,7 @@ No new error class. SynapseTree maps `TypeError` → `400`/`422` and `WikiStrict
 
 ### 3.9 Where the code lives
 
-- `packages/core/src/services/RememberService.ts` (new): `remember()`; constructed with `db`, `options`, `entryRepo`, `ontologyService`, `searchService`, `embeddingService`, mirroring `TemporalService`'s constructor (`TemporalService.ts` L13-19) plus the ontology service. `TemporalService` keeps "supersession and history" as its single purpose; it is not modified.
+- `packages/core/src/services/RememberService.ts` (new): `remember()`; constructed with `db`, `entryRepo`, `ontologyService`, `searchService`, `embeddingService`. `TemporalService` keeps "supersession and history" as its single purpose; it is not modified.
 - `packages/core/src/utils/entityId.ts` (new): `assertEntityId(entityId)` — the `write()` rule, moved; `WriteService.write` calls it (behaviour and message unchanged).
 - `packages/core/src/utils/rememberInput.ts` (new, pure): `normalizeRememberInput(entityId, input, now): { fact: WikiFact; validFrom?: number; okfType: string | null }` — all §3.2 checks and the fact literal, with no I/O, so the rules are unit-testable without a database.
 - `packages/core/src/WikiMemory.ts`: construct the service (next to L159), expose `remember()` next to `supersede()`/`history()` (L862-874), add `rememberService` to `WikiMemoryTestAccess` (L68-80, L240-270).

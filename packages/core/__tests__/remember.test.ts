@@ -56,6 +56,24 @@ describe('remember(): storage', () => {
     await expect(wiki.remember('e1', { title: '', body: 'B' })).rejects.toThrow(TypeError);
     await expect(wiki.remember('', { title: 'T', body: 'B' })).rejects.toThrow(TypeError);
     await expect(wiki.remember('e1', { title: 'T', body: 'B', source_type: 'immutable_document' as any })).rejects.toThrow(TypeError);
+    await expect(wiki.remember('e1', { title: 'T', body: 'B', confidence: null as any })).rejects.toThrow(TypeError);
+    await expect(wiki.remember('e1', { title: 'T', body: 'B', source_type: null as any })).rejects.toThrow(TypeError);
+    expect(await count()).toBe(before);
+  });
+
+  it('rolls back the whole transaction when a step after the upsert throws (spec §3.3: one transaction)', async () => {
+    const before = await count();
+    const spy = vi.spyOn(wiki.__testAccess.entryRepo, 'setTemporal').mockRejectedValueOnce(new Error('temporal boom'));
+    await expect(wiki.remember('e1', { title: 'T', body: 'B', valid_from: 5_000 })).rejects.toThrow('temporal boom');
+    spy.mockRestore();
+    expect(await count()).toBe(before);
+  });
+
+  it('throws and writes nothing when the read-back finds no row', async () => {
+    const before = await count();
+    const spy = vi.spyOn(wiki.__testAccess.entryRepo, 'findByIds').mockResolvedValueOnce([] as any);
+    await expect(wiki.remember('e1', { title: 'T', body: 'B' })).rejects.toThrow('could not be read back');
+    spy.mockRestore();
     expect(await count()).toBe(before);
   });
 

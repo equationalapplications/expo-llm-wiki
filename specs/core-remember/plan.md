@@ -12,7 +12,7 @@ Spec: `specs/core-remember/spec.md`
 
 ## Global Constraints
 
-- **Branch / PR:** `feat/core-remember`, one draft PR carrying `specs/core-remember/`. Merge commit, never squash. Draft until the final cleanup commit (Task 7).
+- **Branch / PR:** `feat/core-remember`, one draft PR carrying `specs/core-remember/`. Merge commit, never squash. Draft until the final cleanup commit (Task 6).
 - **Commands** (run from the repo root; one-time setup `pnpm install --frozen-lockfile && pnpm --filter @equationalapplications/core-okf build` — core's row mapper imports `@equationalapplications/core-okf` from its `dist`):
   - one file: `pnpm --filter @equationalapplications/core-llm-wiki exec vitest run __tests__/<file>.test.ts`
   - core suite: `pnpm --filter @equationalapplications/core-llm-wiki test`

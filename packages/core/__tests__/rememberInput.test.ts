@@ -52,6 +52,8 @@ describe('normalizeRememberInput', () => {
     ['non-string body', 'e1', { title: 'T', body: null }],
     ['non-array tags', 'e1', { title: 'T', body: 'B', tags: 'git' }],
     ['non-string tag element', 'e1', { title: 'T', body: 'B', tags: ['ok', 2] }],
+    ['null confidence', 'e1', { title: 'T', body: 'B', confidence: null }],
+    ['null source_type', 'e1', { title: 'T', body: 'B', source_type: null }],
     ['unknown confidence', 'e1', { title: 'T', body: 'B', confidence: 'sure' }],
     ['source_type immutable_document', 'e1', { title: 'T', body: 'B', source_type: 'immutable_document' }],
     ['source_type librarian_inferred', 'e1', { title: 'T', body: 'B', source_type: 'librarian_inferred' }],

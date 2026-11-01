@@ -1388,9 +1388,9 @@ export interface RememberInput {
   body: string;
   /** Default []. Stored verbatim: no trim, no lowercasing, no cap. */
   tags?: string[];
-  /** Default 'certain'. */
+  /** Default 'certain'. Explicit `null` is rejected with TypeError (only absence takes the default). */
   confidence?: WikiFact['confidence'];
-  /** Default 'user_stated'. */
+  /** Default 'user_stated'. Explicit `null` is rejected with TypeError (only absence takes the default). */
   source_type?: 'user_stated' | 'user_confirmed';
   /** Resolved against the entity's ontology manifest like an `upsertGraph` node type (spec §3.4). Default null. */
   okf_type?: string | null;

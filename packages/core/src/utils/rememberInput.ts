@@ -37,11 +37,13 @@ export function normalizeRememberInput(entityId: string, input: RememberInput, n
     }
     tags = [...input.tags];
   }
-  const confidence = input.confidence ?? 'certain';
+  // null is a supplied value, not absence (spec §3.2: nothing coerced silently);
+  // it fails the Set check below with the same message as any other bad value.
+  const confidence = input.confidence === undefined ? 'certain' : input.confidence;
   if (!CONFIDENCE_VALUES.has(confidence)) {
     throw new TypeError(`remember(): input.confidence must be certain | inferred | tentative; got ${JSON.stringify(input.confidence)}.`);
   }
-  const sourceType = input.source_type ?? 'user_stated';
+  const sourceType = input.source_type === undefined ? 'user_stated' : input.source_type;
   if (!SOURCE_TYPE_VALUES.has(sourceType)) {
     throw new TypeError(`remember(): input.source_type must be user_stated | user_confirmed; got ${JSON.stringify(input.source_type)}.`);
   }

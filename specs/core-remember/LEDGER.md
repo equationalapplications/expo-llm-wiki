@@ -1,6 +1,6 @@
 # `WikiMemory.remember()` — ledger
 
-In flight: nothing (spec is Draft; implementation has not started)
+In flight: Task 6 (owner-gated cleanup commit) only. Tasks 1-5 are complete and ticked below; the implementation is on this branch.
 
 Baseline (2026-11-01 @ `51ff55a`): core suite 185 files / 2002 tests passed; `typecheck` exit 0. Known on 2026-11-01 @ `5ecd716`: `__tests__/supersede.test.ts` 13/13 green, `typecheck` exit 0.
 
