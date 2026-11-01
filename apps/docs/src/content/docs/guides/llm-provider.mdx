@@ -1,0 +1,169 @@
+---
+title: Connect your LLM provider
+description: Implement the LLMProvider interface — generateText, embed, and the optional usage, token-limit, and classifier members.
+sidebar:
+  order: 1
+---
+
+import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+
+LLM Wiki never calls a model directly. You pass an `llmProvider` object, and the engine calls
+it with ready-made prompts.
+
+```ts
+interface LLMProvider {
+  generateText(p: { systemPrompt: string; userPrompt: string }): Promise<string>; // required
+  embed?(text: string): Promise<number[]>;                                         // semantic search
+  maxOutputTokens?: number;                                                        // batching hint
+  generateTextWithUsage?(p): Promise<{ text: string; usage?: { inputTokens: number; outputTokens: number } }>;
+  classify?(req: ClassifyRequest): Promise<ClassifyResponse>;                      // ontology backfill
+}
+```
+
+The engine calls each method with your provider object as `this`, so class-based providers that
+keep an SDK client on the instance work fine.
+
+## `generateText` (required)
+
+Return the model's raw text. The engine expects JSON and tolerates a markdown code fence around it.
+
+<Tabs syncKey="llm">
+  <TabItem label="OpenAI">
+    ```ts
+    import OpenAI from 'openai';
+    const openai = new OpenAI();
+
+    const llmProvider = {
+      generateText: async ({ systemPrompt, userPrompt }) => {
+        const r = await openai.chat.completions.create({
+          model: 'gpt-4o-mini',
+          response_format: { type: 'json_object' },
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+        });
+        return r.choices[0].message.content ?? '{}';
+      },
+    };
+    ```
+  </TabItem>
+  <TabItem label="Gemini">
+    ```ts
+    import { GoogleGenAI } from '@google/genai';
+    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+    const llmProvider = {
+      generateText: async ({ systemPrompt, userPrompt }) => {
+        const r = await ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents: userPrompt,
+          config: { systemInstruction: systemPrompt, responseMimeType: 'application/json' },
+        });
+        return r.text ?? '{}';
+      },
+    };
+    ```
+  </TabItem>
+  <TabItem label="Anthropic">
+    ```ts
+    import Anthropic from '@anthropic-ai/sdk';
+    const anthropic = new Anthropic();
+
+    const llmProvider = {
+      generateText: async ({ systemPrompt, userPrompt }) => {
+        const r = await anthropic.messages.create({
+          model: 'claude-sonnet-5-5',
+          max_tokens: 4096,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userPrompt }],
+        });
+        return r.content.map((b) => (b.type === 'text' ? b.text : '')).join('');
+      },
+      maxOutputTokens: 4096,
+    };
+    ```
+  </TabItem>
+  <TabItem label="Your backend">
+    ```ts
+    // Recommended for mobile and browser apps: keep provider keys on your server.
+    const llmProvider = {
+      generateText: async ({ systemPrompt, userPrompt }) => {
+        const res = await fetch('https://api.example.com/llm', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${await getToken()}` },
+          body: JSON.stringify({ systemPrompt, userPrompt }),
+        });
+        if (!res.ok) throw new Error(`LLM call failed: ${res.status}`);
+        return res.text();
+      },
+    };
+    ```
+  </TabItem>
+</Tabs>
+
+<Aside type="tip">
+Ask the model for JSON mode or structured output when your provider supports it. Fewer malformed
+responses means fewer failed chunks.
+</Aside>
+
+## `embed` (optional, enables semantic search)
+
+Return a fixed-length vector for any input. The engine calls it once per fact when the fact is
+created or updated, and once per `read()` query.
+
+```ts
+embed: async (text) => {
+  const r = await openai.embeddings.create({ model: 'text-embedding-3-small', input: text });
+  return r.data[0].embedding;
+},
+```
+
+- Without `embed`, or when it throws, `read()` falls back to keyword search.
+- Pass `onRetrievalFallback` (beside `llmProvider`) to find out when an embedding attempt failed.
+- **Changed embedding models?** Run `runReembed()`. Until it finishes, a dimension mismatch makes
+  reads fall back to keyword search instead of returning bad matches.
+- The engine embeds at most `maxEmbedChars` characters of title, body, and tags (6,000 by default).
+
+## `maxOutputTokens` (optional)
+
+This is your model's output-token ceiling. Heal and ontology backfill use it to size their first
+batch correctly, instead of discovering the limit from a truncated response and retrying with a
+smaller batch. It's a hint, not a guarantee.
+
+## `generateTextWithUsage` (optional, for metering)
+
+If you implement this, the engine calls it **instead of** `generateText` and uses the reported
+token counts for `tokenBudget` accounting and `llm_usage` diagnostics. Without it, usage is
+estimated at characters ÷ 4.
+
+```ts
+generateTextWithUsage: async ({ systemPrompt, userPrompt }) => {
+  const r = await openai.chat.completions.create({ /* … */ });
+  return {
+    text: r.choices[0].message.content ?? '{}',
+    usage: { inputTokens: r.usage!.prompt_tokens, outputTokens: r.usage!.completion_tokens },
+  };
+},
+```
+
+## `classify` (optional, non-generative typing)
+
+A System-One classifier can assign ontology types to facts during backfill without generating
+text. It's off until you opt in with `config.ontology.backfillClassifier: 'auto'`. See
+[Ontologies → classifier mode](/expo-llm-wiki/guides/ontologies/#classifier-mode).
+
+## Callbacks that sit beside `llmProvider`
+
+These go on the options object, **not** inside `config`:
+
+```ts
+createWiki(db, {
+  llmProvider,
+  config: { /* … */ },
+  onRetrievalFallback: (err) => showOfflineBadge(),
+  onDiagnostic: (d) => telemetry.record(d),
+  vectorRanker,               // see "Pluggable vector search"
+  vectorRankerFallback: 'js-cosine',
+});
+```

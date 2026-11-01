@@ -1,0 +1,141 @@
+---
+title: GraphRAG
+description: Build and query a knowledge graph inside SQLite — ontology-driven edge extraction, traverseGraph, and deterministic graph seeding.
+sidebar:
+  order: 6
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+
+GraphRAG answers **structural** questions that vector search handles poorly: "who reports to
+Bob?", "what's two hops from this project?". In LLM Wiki it runs entirely on SQLite.
+
+| | Vector / keyword `read()` | Graph `traverseGraph()` |
+|---|---|---|
+| Starts from | A query string | A known **anchor fact** |
+| Returns | Loose top-K matches | A connected subgraph (nodes and edges) |
+| Good for | "What do I know about X?" | "What's connected to X?" |
+
+## End-to-end
+
+<Steps>
+
+1. **Turn on an ontology so the model emits edges**
+
+   ```ts
+   import { createWiki } from '@equationalapplications/core-llm-wiki';
+   import { schemaOrgWarmAgentManifest } from '@equationalapplications/schema-org-llm-wiki';
+
+   const wiki = createWiki(adapter, {
+     llmProvider,
+     config: {
+       ontology: {
+         mode: 'strict',
+         seedManifests: { 'user-123': { mode: 'strict', manifest: schemaOrgWarmAgentManifest } },
+       },
+     },
+   });
+   await wiki.setup();
+   ```
+
+2. **Ingest or write as usual**
+
+   ```ts
+   await wiki.ingestDocument('user-123', {
+     sourceRef: 'onboarding.md',
+     sourceHash,
+     documentChunk: 'Alice joined the data team in March and reports to Bob.',
+   });
+   ```
+
+   In strict mode the model returns typed facts with inline edges, and the engine resolves and
+   stores them.
+
+3. **Find an anchor and walk the graph**
+
+   ```ts
+   const { facts } = await wiki.read('user-123', 'Alice');
+   const graph = await wiki.traverseGraph('user-123', {
+     sourceId: facts[0].id,
+     maxDepth: 2,
+     direction: 'both',
+   });
+   // graph.nodes — anchor first, then neighbours by hop depth
+   // graph.edges — only edges whose two endpoints are in nodes
+   ```
+
+4. **Format it for the prompt**
+
+   ```ts
+   import { formatGraphContext } from '@equationalapplications/core-llm-wiki';
+
+   const answer = await generateText({
+     systemPrompt: `Answer using this memory graph:\n\n${formatGraphContext(graph)}`,
+     userPrompt: 'Who does Alice report to?',
+   });
+   ```
+
+</Steps>
+
+## Traversal options
+
+| Option | Default | Notes |
+|---|---|---|
+| `sourceId` | **required** | The anchor fact ID |
+| `maxDepth` | — | Clamped to the range 1–3 |
+| `direction` | `config.traversalDirection` | `'inbound'`, `'outbound'`, or `'both'` |
+| `edgeTypes` | all | `[]` matches **nothing**. Leave it out to match everything. |
+| `maxTraversalNodes` | `config.maxTraversalNodes` | Cap on the number of nodes returned |
+| `minTraversalConfidence` | `config.minTraversalConfidence` | Skip nodes below `tentative`, `inferred`, or `certain` |
+| `excludeSourceTypes` | `config.excludeSourceTypes` | For example `['immutable_document']` |
+| `excludeDrafts` | `config.excludeDrafts` | Drafts are dead ends. The anchor is always returned. |
+| `asOf` | now | Only walk edges whose two facts were both live at that time |
+| `tokenBudget` | — | Keep nodes in breadth-first order until the budget runs out |
+
+## Seed a graph without an LLM
+
+Have structured data already (a code index, a CSV, an API response)? `upsertGraph()` writes
+nodes and edges directly, with the same `(sourceRef, sourceHash)` ownership as ingest:
+
+```ts
+await db.withTransactionAsync((tx) =>
+  wiki.upsertGraph('repo:app', {
+    sourceRef: 'src_main.ts',
+    sourceHash: sha256(source),
+    nodes: [
+      { id: 'fn_processData', type: 'function', title: 'processData', body: 'Processes user data' },
+      { id: 'class_UserService', type: 'class', title: 'UserService' },
+    ],
+    edges: [{ type: 'calls', sourceId: 'fn_processData', targetId: 'class_UserService' }],
+  }, tx),
+);
+await wiki.syncSearchIndex('repo:app'); // AFTER commit, so keyword reads see the new nodes
+```
+
+- It **joins your transaction** (you pass `tx`). It never begins or commits one itself.
+- Re-writing an identical `(sourceRef, sourceHash)` is a zero-count no-op.
+- The same hash under a different live `sourceRef` throws `WikiSourceRefHashCollision`.
+- A node ID owned by another entity throws `WikiGraphNodeOwnershipConflict`, and nothing is
+  written. Entity-qualified IDs (`repo:app/fn_processData`) avoid accidental collisions.
+- Embeddings aren't computed here. They come from the next maintenance or reembed sweep.
+
+<Aside type="tip">
+Call `syncSearchIndex()` **after** the commit. Inside the transaction, the engine can't yet see
+the rows you wrote.
+</Aside>
+
+## How the query works
+
+`traverseGraph()` is a single recursive CTE. It walks edges in the requested direction, keeps
+a `visited` string to break cycles, filters by confidence and source type, and returns nodes
+ranked by `MIN(depth)` and then recency. The full annotated SQL is in
+[`EdgeRepository.ts`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/src/repositories/EdgeRepository.ts).
+
+## In React
+
+```tsx
+import { useWikiTraversal, formatGraphContext } from '@equationalapplications/react-llm-wiki';
+
+const { nodes, edges, isPending } = useWikiTraversal('user-123', { sourceId, maxDepth: 2 });
+const context = formatGraphContext({ nodes, edges });
+```

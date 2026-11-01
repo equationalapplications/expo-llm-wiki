@@ -56,25 +56,18 @@ jobs:
         working-directory: apps/wiki-demo
         run: pnpm build
 
+      - name: Build Docs
+        working-directory: apps/docs
+        run: pnpm build
+
       - name: Assemble unified output
+        # Docs site at the root; demo apps keep their existing sub-paths.
         run: |
           mkdir -p pages-dist/scopelab pages-dist/wiki-demo
+          cp -r apps/docs/dist/. pages-dist/
           cp -r apps/scopelab/dist/. pages-dist/scopelab/
           cp -r apps/wiki-demo/dist/. pages-dist/wiki-demo/
           touch pages-dist/.nojekyll
-          cat > pages-dist/index.html << 'EOF'
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <meta charset="utf-8">
-            <meta http-equiv="refresh" content="0; url=wiki-demo/">
-            <title>expo-llm-wiki</title>
-          </head>
-          <body>
-            <p><a href="wiki-demo/">Wiki Demo</a> | <a href="scopelab/">ScopeLab</a></p>
-          </body>
-          </html>
-          EOF
 
       - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v4

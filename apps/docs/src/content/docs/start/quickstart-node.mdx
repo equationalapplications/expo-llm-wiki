@@ -1,0 +1,96 @@
+---
+title: 'Quickstart: Node.js'
+description: Use LLM Wiki on a backend or in a script with better-sqlite3.
+sidebar:
+  order: 5
+  label: Quickstart · Node.js
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+<Steps>
+
+1. **Install**
+
+   ```bash
+   npm install @equationalapplications/core-llm-wiki better-sqlite3
+   ```
+
+2. **Create an adapter and the wiki**
+
+   ```ts title="memory.ts"
+   import Database from 'better-sqlite3';
+   import OpenAI from 'openai';
+   import { createWiki, type SQLiteAdapter } from '@equationalapplications/core-llm-wiki';
+
+   const db = new Database('memory.db');
+
+   const adapter: SQLiteAdapter = {
+     async execAsync(sql) { db.exec(sql); },
+     async runAsync(sql, params = []) {
+       const info = db.prepare(sql).run(...(params as any[]));
+       return { changes: info.changes, lastInsertRowId: Number(info.lastInsertRowid) };
+     },
+     async getAllAsync(sql, params = []) { return db.prepare(sql).all(...(params as any[])) as any; },
+     async getFirstAsync(sql, params = []) { return (db.prepare(sql).get(...(params as any[])) ?? null) as any; },
+     async withTransactionAsync(fn) {
+       db.exec('BEGIN');
+       try { const r = await fn(adapter); db.exec('COMMIT'); return r; }
+       catch (e) { db.exec('ROLLBACK'); throw e; }
+     },
+     async closeAsync() { db.close(); },
+   };
+
+   const openai = new OpenAI();
+
+   export const wiki = createWiki(adapter, {
+     llmProvider: {
+       generateText: async ({ systemPrompt, userPrompt }) => {
+         const r = await openai.chat.completions.create({
+           model: 'gpt-4o-mini',
+           messages: [
+             { role: 'system', content: systemPrompt },
+             { role: 'user', content: userPrompt },
+           ],
+         });
+         return r.choices[0].message.content ?? '{}';
+       },
+       embed: async (text) => {
+         const r = await openai.embeddings.create({ model: 'text-embedding-3-small', input: text });
+         return r.data[0].embedding;
+       },
+     },
+   });
+
+   await wiki.setup();
+   ```
+
+3. **Ingest, read, and answer**
+
+   ```ts title="main.ts"
+   import { createHash } from 'node:crypto';
+   import { readFile } from 'node:fs/promises';
+   import { formatContext } from '@equationalapplications/core-llm-wiki';
+   import { wiki } from './memory';
+
+   const content = await readFile('handbook.md', 'utf8');
+   const sourceHash = createHash('sha256').update(content).digest('hex');
+
+   if (await wiki.hasChanged('team', 'handbook.md', sourceHash)) {
+     await wiki.ingestDocument('team', { sourceRef: 'handbook.md', sourceHash, documentChunk: content });
+   }
+
+   const memory = await wiki.read('team', 'what is the on-call policy?');
+   console.log(formatContext(memory));
+   ```
+
+</Steps>
+
+## Server checklist
+
+- **One connection per database file per process.** The engine serializes its own transactions
+  on that connection. Don't open a second writer.
+- **Request-scoped or serverless host?** Turn off background maintenance and run it explicitly.
+  See [Serverless & multi-tenant hosting](/expo-llm-wiki/guides/serverless-hosting/).
+- **Shutting down?** In the default `'auto'` maintenance mode, `await wiki.drain()` before you
+  close, so background librarian and heal jobs can finish.

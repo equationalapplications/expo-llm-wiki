@@ -12,9 +12,11 @@
 [![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fschema-org-llm-wiki?label=@equationalapplications/schema-org-llm-wiki)](https://www.npmjs.com/package/@equationalapplications/schema-org-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fschema-org-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/schema-org-llm-wiki)<br>
 [![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fschema-software-org?label=@equationalapplications/schema-software-org)](https://www.npmjs.com/package/@equationalapplications/schema-software-org) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fschema-software-org?label=downloads)](https://www.npmjs.com/package/@equationalapplications/schema-software-org)
 
-**[GitHub](https://github.com/equationalapplications/expo-llm-wiki)** · **[ScopeLab](https://equationalapplications.github.io/expo-llm-wiki/scopelab/)** · **[WikiDemo](https://equationalapplications.github.io/expo-llm-wiki/wiki-demo/)** · **[Changelog](https://github.com/equationalapplications/expo-llm-wiki/blob/main/CHANGELOG.md)** · **[Issues](https://github.com/equationalapplications/expo-llm-wiki/issues)**
+**[📖 Docs](https://equationalapplications.github.io/expo-llm-wiki/)** · **[GitHub](https://github.com/equationalapplications/expo-llm-wiki)** · **[ScopeLab](https://equationalapplications.github.io/expo-llm-wiki/scopelab/)** · **[WikiDemo](https://equationalapplications.github.io/expo-llm-wiki/wiki-demo/)** · **[Changelog](https://github.com/equationalapplications/expo-llm-wiki/blob/main/CHANGELOG.md)** · **[Issues](https://github.com/equationalapplications/expo-llm-wiki/issues)**
 
 ## Persistent, episodic memory for AI Agents.
+
+> **New here? Start with the [developer guide](https://equationalapplications.github.io/expo-llm-wiki/)**: quickstarts for Expo, React, and Node.js, task-focused guides, recipes, and a full API reference. This README is the dense reference version.
 
 expo-llm-wiki is a cross-platform TypeScript and SQLite library for long-term LLM memory. It bridges the gap between raw conversation logs and a structured knowledge base, supporting background fact extraction, semantic embedding search, and memory pruning.
 

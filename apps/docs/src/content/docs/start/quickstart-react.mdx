@@ -1,0 +1,147 @@
+---
+title: 'Quickstart: React (web)'
+description: Run LLM memory fully in the browser with sql.js and React hooks.
+sidebar:
+  order: 4
+  label: Quickstart · React web
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+
+LLM Wiki runs entirely client-side on [sql.js](https://sql.js.org/), which is SQLite compiled to
+WebAssembly. You don't need a server unless you want one for the LLM call.
+
+<Steps>
+
+1. **Install**
+
+   ```bash
+   npm install @equationalapplications/react-llm-wiki sql.js
+   ```
+
+2. **Wrap sql.js in a `SQLiteAdapter`**
+
+   The engine talks to SQLite through a six-method interface. Here it is for sql.js:
+
+   ```ts title="src/sqljsAdapter.ts"
+   import initSqlJs from 'sql.js';
+   import type { SQLiteAdapter } from '@equationalapplications/react-llm-wiki';
+
+   export async function createSqlJsAdapter(): Promise<SQLiteAdapter> {
+     // Serve sql-wasm.wasm from your public folder (or a CDN).
+     const SQL = await initSqlJs({ locateFile: (file) => `/${file}` });
+     const db = new SQL.Database();
+
+     const adapter: SQLiteAdapter = {
+       async execAsync(sql) { db.exec(sql); },
+       async runAsync(sql, params = []) {
+         db.run(sql, params as any[]);
+         return { changes: db.getRowsModified(), lastInsertRowId: 0 };
+       },
+       async getAllAsync(sql, params = []) {
+         const stmt = db.prepare(sql);
+         stmt.bind(params as any[]);
+         const rows = [];
+         while (stmt.step()) rows.push(stmt.getAsObject());
+         stmt.free();
+         return rows as any;
+       },
+       async getFirstAsync(sql, params = []) {
+         const stmt = db.prepare(sql);
+         stmt.bind(params as any[]);
+         const row = stmt.step() ? stmt.getAsObject() : null;
+         stmt.free();
+         return row as any;
+       },
+       async withTransactionAsync(fn) {
+         db.run('BEGIN');
+         try { const r = await fn(adapter); db.run('COMMIT'); return r; }
+         catch (e) { db.run('ROLLBACK'); throw e; }
+       },
+       async closeAsync() { db.close(); },
+     };
+     return adapter;
+   }
+   ```
+
+   <Aside>
+   `lastInsertRowId: 0` is fine here because the engine generates its own IDs. See
+   [Write a SQLite adapter](/expo-llm-wiki/guides/sqlite-adapter/) for the full contract.
+   </Aside>
+
+3. **Create the wiki and provide it**
+
+   ```tsx title="src/main.tsx"
+   import { createRoot } from 'react-dom/client';
+   import { createWiki, WikiProvider } from '@equationalapplications/react-llm-wiki';
+   import { createSqlJsAdapter } from './sqljsAdapter';
+   import { App } from './App';
+
+   const wiki = createWiki(await createSqlJsAdapter(), {
+     llmProvider: {
+       generateText: async ({ systemPrompt, userPrompt }) => {
+         const res = await fetch('/api/generate', {
+           method: 'POST',
+           body: JSON.stringify({ systemPrompt, userPrompt }),
+         });
+         return res.text();
+       },
+     },
+   });
+   await wiki.setup();
+
+   createRoot(document.getElementById('root')!).render(
+     <WikiProvider wiki={wiki}>
+       <App />
+     </WikiProvider>,
+   );
+   ```
+
+4. **Use the hooks**
+
+   ```tsx title="src/App.tsx"
+   import { useMemoryRead, useWikiWrite } from '@equationalapplications/react-llm-wiki';
+
+   export function App() {
+     const { execute: write, isPending: saving } = useWikiWrite();
+     const { data, refetch } = useMemoryRead('user-123', 'preferences');
+
+     return (
+       <>
+         <button
+           disabled={saving}
+           onClick={async () => {
+             await write('user-123', { event_type: 'observation', summary: 'Prefers dark mode.' });
+             refetch();
+           }}
+         >
+           Remember
+         </button>
+         <ul>{data?.facts.map((f) => <li key={f.id}>{f.title}</li>)}</ul>
+       </>
+     );
+   }
+   ```
+
+</Steps>
+
+<Aside type="note" title="Persistence">
+A `new SQL.Database()` lives in memory and disappears on reload. To persist it, export
+`db.export()` to IndexedDB or OPFS and pass the bytes back to `new SQL.Database(bytes)` on
+startup. The [WikiDemo app](https://github.com/equationalapplications/expo-llm-wiki/tree/main/apps/wiki-demo) is a working example.
+</Aside>
+
+## Not using React?
+
+Use `@equationalapplications/core-llm-wiki` with the same adapter. The API is identical, minus the hooks:
+
+```ts
+import { createWiki, formatContext } from '@equationalapplications/core-llm-wiki';
+
+const wiki = createWiki(adapter, { llmProvider });
+await wiki.setup();
+await wiki.write('user-123', { event_type: 'observation', summary: '…' });
+const context = formatContext(await wiki.read('user-123', 'query'));
+```
+
+This works the same in Vue, Svelte, Solid, or plain HTML.

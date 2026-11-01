@@ -1,0 +1,126 @@
+---
+title: 'Quickstart: Expo'
+description: Add persistent LLM memory to an Expo / React Native app in five minutes.
+sidebar:
+  order: 3
+  label: Quickstart · Expo
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+
+By the end of this page your app will record observations, consolidate them into facts, and
+read relevant memory back in a component.
+
+<Steps>
+
+1. **Install the package and its peers**
+
+   ```bash
+   npx expo install expo-sqlite expo-crypto
+   npm install @equationalapplications/expo-llm-wiki
+   ```
+
+   Use `npx expo install` for the native modules so Expo picks versions that match your SDK.
+   `expo-crypto` is wired in automatically when you import the package, so you don't need a
+   `crypto` polyfill.
+
+2. **Create the wiki once, at startup**
+
+   ```ts title="src/memory.ts"
+   import * as SQLite from 'expo-sqlite';
+   import { createWiki } from '@equationalapplications/expo-llm-wiki';
+
+   export async function openMemory() {
+     const db = await SQLite.openDatabaseAsync('app.db');
+
+     const wiki = createWiki(db, {
+       llmProvider: {
+         // Must return the model's raw text (JSON, optionally inside a ```json fence).
+         generateText: async ({ systemPrompt, userPrompt }) => {
+           const res = await fetch('https://your-api.example.com/llm', {
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify({ systemPrompt, userPrompt }),
+           });
+           return res.text();
+         },
+       },
+     });
+
+     await wiki.setup(); // creates tables + runs migrations; safe to call every launch
+     return wiki;
+   }
+   ```
+
+   <Aside type="caution" title="Keep API keys off the device">
+   Route LLM calls through your own backend (as above) instead of embedding a provider key in
+   the app bundle.
+   </Aside>
+
+3. **Provide it to your component tree**
+
+   ```tsx title="App.tsx"
+   import { useEffect, useState } from 'react';
+   import { WikiProvider, type WikiMemory } from '@equationalapplications/expo-llm-wiki';
+   import { openMemory } from './src/memory';
+   import { Home } from './src/Home';
+
+   export default function App() {
+     const [wiki, setWiki] = useState<WikiMemory | null>(null);
+     useEffect(() => { openMemory().then(setWiki); }, []);
+     if (!wiki) return null; // or a splash screen
+
+     return (
+       <WikiProvider wiki={wiki}>
+         <Home />
+       </WikiProvider>
+     );
+   }
+   ```
+
+4. **Write and read memory with hooks**
+
+   ```tsx title="src/Home.tsx"
+   import { Button, Text, View } from 'react-native';
+   import { useMemoryRead, useWikiWrite } from '@equationalapplications/expo-llm-wiki';
+
+   export function Home() {
+     const { execute: write } = useWikiWrite();
+     const { data, isPending, refetch } = useMemoryRead('user-123', 'hobbies');
+
+     const remember = async () => {
+       await write('user-123', {
+         event_type: 'observation',
+         summary: 'User mentioned they love hiking on weekends.',
+       });
+       refetch(); // writes don't auto-refresh readers
+     };
+
+     return (
+       <View>
+         <Button title="Remember something" onPress={remember} />
+         {isPending ? <Text>Loading…</Text> : data?.facts.map((f) => <Text key={f.id}>{f.title}</Text>)}
+       </View>
+     );
+   }
+   ```
+
+</Steps>
+
+## What just happened?
+
+- `write()` logged an **event**. After 20 events (the `autoLibrarianThreshold` setting), the
+  **librarian** runs in the background and turns them into **facts**.
+- `useMemoryRead()` ran a keyword search over facts. Add an `embed()` function to get semantic
+  search. See [Connect your LLM provider](/expo-llm-wiki/guides/llm-provider/).
+
+<Aside type="tip">
+Want facts right away while you're developing? Call `wiki.runLibrarian('user-123')` yourself, or
+use `useWikiMaintenance().runLibrarian`.
+</Aside>
+
+## Next steps
+
+- [How memory works](/expo-llm-wiki/concepts/how-it-works/): events, facts, tasks, and maintenance.
+- [Recipe: chat assistant with memory](/expo-llm-wiki/recipes/chat-memory/)
+- [React hooks reference](/expo-llm-wiki/reference/hooks/)

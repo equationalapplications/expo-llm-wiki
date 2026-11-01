@@ -30,6 +30,8 @@ docs/superpowers/plans
 node_modules/
 dist/
 dist-ssr/
+# Astro (apps/docs) generated types/cache
+.astro/
 *.local
 *.tsbuildinfo
 
