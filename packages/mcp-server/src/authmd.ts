@@ -54,7 +54,9 @@ export async function registerByEmail(client: SynapseTreeClient, email: string, 
   // have committed the 200) can leave a minted key undelivered; if the claim
   // then comes back invalid_grant, say so instead of claiming it expired.
   let ambiguousPoll = false;
-  let intervalSeconds = reg.poll.interval ?? 5;
+  // Clamp to >= 1 s: a server sending interval 0 (or negative) must not
+  // turn the poll loop into a hammer on /oauth2/token.
+  let intervalSeconds = Math.max(1, reg.poll.interval ?? 5);
 
   opts.info(`Check ${email} for a SynapseTree approval link (usually within a minute; it expires in 15 minutes).`);
   opts.info(`Approve only if the page shows this code: ${reg.user_code}`);
@@ -67,10 +69,12 @@ export async function registerByEmail(client: SynapseTreeClient, email: string, 
     try {
       res = await client.call<TokenOk | TokenErr>('oauthToken', { form: { grant_type: reg.poll.grant, assertion: reg.claim_token } });
     } catch (err) {
-      // server_error (500), network errors, and a surviving 429 are
+      // server_error (500), 408, network errors, and a surviving 429 are
       // transient: keep polling at the current interval. A 429 asks us to
-      // slow down, so add 5 s like the slow_down case below.
-      if (err instanceof SynapseTreeError && (err.status >= 500 || err.status === 0 || err.status === 429)) {
+      // slow down, so add 5 s like the slow_down case below. A 408 is
+      // ambiguous the same way a 5xx is: the server may have committed the
+      // 200 before the request timed out.
+      if (err instanceof SynapseTreeError && (err.status >= 500 || err.status === 0 || err.status === 408 || err.status === 429)) {
         if (err.status === 429) intervalSeconds += 5;
         else ambiguousPoll = true;
         continue;
@@ -92,10 +96,10 @@ export async function registerByEmail(client: SynapseTreeClient, email: string, 
     }
     switch (body.error) {
       case 'authorization_pending':
-        if (typeof body.interval === 'number') intervalSeconds = body.interval;
+        if (typeof body.interval === 'number') intervalSeconds = Math.max(1, body.interval);
         continue;
       case 'slow_down':
-        intervalSeconds = typeof body.interval === 'number' ? body.interval : intervalSeconds + 5;
+        intervalSeconds = typeof body.interval === 'number' ? Math.max(1, body.interval) : intervalSeconds + 5;
         continue;
       case 'invalid_grant':
         throw new ClaimError(

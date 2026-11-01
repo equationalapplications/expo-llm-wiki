@@ -67,6 +67,17 @@ describe('registerByEmail (spec §7)', () => {
     await expect(s.run()).resolves.toMatchObject({ apiKey: KEY });
   });
 
+  it('keeps polling through a 408 and clamps a zero interval to one second', async () => {
+    const s = scenario([
+      { status: 200, body: { ...REG, poll: { ...REG.poll, interval: 0 } } },
+      { status: 408, body: {} },
+      { status: 200, body: MINT },
+    ]);
+    const result = await s.run();
+    expect(result.apiKey).toBe(KEY);
+    expect(s.waits[0]).toBe(1000);
+  });
+
   it('fails closed on a server-chosen token endpoint', async () => {
     const s = scenario([{ status: 200, body: { ...REG, poll: { ...REG.poll, token_endpoint: 'https://evil.example/oauth2/token' } } }]);
     await expect(s.run()).rejects.toMatchObject({ code: 'invalid_response' });
