@@ -69,7 +69,8 @@ jobs:
           # by overrides — PR #288; their entries were removed on expiry
           # (2026-10-15 / 2026-10-20). Remaining entries are no-patch-yet
           # advisories tracked in issue #278.
-          AUDIT_ALLOWLIST: "GHSA-5p2g-fcmc-qvqq,GHSA-w3rx-r6r6-pgpr,GHSA-86w9-cpqp-85rv,GHSA-vfj7-8cjw-p6xm,GHSA-mrhx-c7xc-m3w5" # image-size DoS (<=2.0.2), ICNS + JXL/HEIF parsers; node-forge PKCS#1 v1.5 nested DigestAlgorithm (<=1.4.0); braces stack-exhaustion (<=3.0.3) — all three via expo-sqlite > expo > @expo/cli transitive; no upstream patch yet as of 2026-10-05. GHSA-mrhx-c7xc-m3w5: zod memory exhaustion on oversized constrained collections — the 4.x line is PATCHED (4.6.6, applied via the pnpm-workspace.yaml override); the @expo/cli-consumed 3.x line has no in-range patch, which is what this allowlist covers
+          # node-forge 2026-11-01 advisory burst (5x high) on 1.4.0 via @expo/cli / @expo/code-signing-certificates — dev-toolchain reach only (not bundled into shipped apps). Fix 1.4.2 published 2026-10-27 14:09 UTC, matures 2026-11-10 14:09 UTC under the 14-day gate; scheduled bump job lands the real fix 2026-11-10. Expiry 2026-11-12 gives one working day of slack; entries then go red by themselves.
+          AUDIT_ALLOWLIST: "GHSA-5p2g-fcmc-qvqq,GHSA-w3rx-r6r6-pgpr,GHSA-86w9-cpqp-85rv,GHSA-vfj7-8cjw-p6xm,GHSA-mrhx-c7xc-m3w5,GHSA-7wch-p9px-956x,GHSA-jc66-7q78-782g,GHSA-8hrf-8g6f-7xwp,GHSA-hqq3-7jhf-c5jx,GHSA-5x38-2vff-x55p" # image-size DoS (<=2.0.2), ICNS + JXL/HEIF parsers; node-forge PKCS#1 v1.5 nested DigestAlgorithm (<=1.4.0); braces stack-exhaustion (<=3.0.3) — all three via expo-sqlite > expo > @expo/cli transitive; no upstream patch yet as of 2026-10-05. GHSA-mrhx-c7xc-m3w5: zod memory exhaustion on oversized constrained collections — the 4.x line is PATCHED (4.6.6, applied via the pnpm-workspace.yaml override); the @expo/cli-consumed 3.x line has no in-range patch, which is what this allowlist covers
           # Date-bounded allowlist expiry (JSON, GHSA -> YYYY-MM-DD UTC).
           # An entry that has reached its expiry date is treated as if
           # it were NOT in AUDIT_ALLOWLIST — this step fails until the
@@ -80,7 +81,7 @@ jobs:
           # @expo/cli) is date-bounded below; entries whose advisories were
           # cleared by overrides were removed on their expiries
           # (2026-10-15 / 2026-10-20).
-          AUDIT_ALLOWLIST_EXPIRY: '{"GHSA-mrhx-c7xc-m3w5": "2026-11-28"}'
+          AUDIT_ALLOWLIST_EXPIRY: '{"GHSA-mrhx-c7xc-m3w5": "2026-11-28", "GHSA-7wch-p9px-956x": "2026-11-12", "GHSA-jc66-7q78-782g": "2026-11-12", "GHSA-8hrf-8g6f-7xwp": "2026-11-12", "GHSA-hqq3-7jhf-c5jx": "2026-11-12", "GHSA-5x38-2vff-x55p": "2026-11-12", "GHSA-vfj7-8cjw-p6xm": "2026-11-12"}'
         run: |
           set -o pipefail
           # NOTE: on expiry the step goes red EVEN IF zod 3.x still has no
@@ -161,13 +162,13 @@ jobs:
           # instance has NO in-range patch (fix is a major jump to >=4.6.6),
           # so it is unfixable-in-range — same class as the WARNING entries,
           # tracked in issue #278. Expiry mirrors the earlier audit step.
-          AUDIT_ALLOWLIST: "GHSA-mrhx-c7xc-m3w5"
+          AUDIT_ALLOWLIST: "GHSA-mrhx-c7xc-m3w5,GHSA-7wch-p9px-956x,GHSA-jc66-7q78-782g,GHSA-8hrf-8g6f-7xwp,GHSA-hqq3-7jhf-c5jx,GHSA-5x38-2vff-x55p,GHSA-vfj7-8cjw-p6xm"
           # Mirrors the expiry map in the earlier audit step. An entry
           # past its expiry date is removed from the allowlist before
           # the fixable/unfixable split below; if any expired entry
           # remains, this step exits 1 to force the lockfile refresh or
           # override addition.
-          AUDIT_ALLOWLIST_EXPIRY: '{"GHSA-mrhx-c7xc-m3w5": "2026-11-28"}'
+          AUDIT_ALLOWLIST_EXPIRY: '{"GHSA-mrhx-c7xc-m3w5": "2026-11-28", "GHSA-7wch-p9px-956x": "2026-11-12", "GHSA-jc66-7q78-782g": "2026-11-12", "GHSA-8hrf-8g6f-7xwp": "2026-11-12", "GHSA-hqq3-7jhf-c5jx": "2026-11-12", "GHSA-5x38-2vff-x55p": "2026-11-12", "GHSA-vfj7-8cjw-p6xm": "2026-11-12"}'
         shell: bash
         run: |
           set -e
