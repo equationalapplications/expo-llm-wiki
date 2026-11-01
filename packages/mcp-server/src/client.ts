@@ -155,41 +155,46 @@ export class SynapseTreeClient {
         await this.sleep(waitMs ?? Math.min(1000 * 2 ** attempt, 8000) + Math.floor(this.random() * 250));
       }
       let res: Response;
+      let done: () => void;
       try {
-        res = await this.send(url, { method: op.method, headers, body }, timeoutMs);
+        ({ res, done } = await this.send(url, { method: op.method, headers, body }, timeoutMs));
       } catch (err) {
         lastError = new SynapseTreeError({ status: 0, code: 'network_error', detail: err instanceof Error ? err.message : String(err) });
         waitMs = undefined;
         continue;
       }
-      const parsed = await readBody(res);
-      if (RETRY_STATUSES.has(res.status)) {
-        lastError = toError(res, parsed);
-        waitMs = retryAfterMs(res, parsed.json);
-        continue;
+      // The abort timer stays armed until the body has been consumed: a
+      // server that sends headers and stalls the body must still hit the
+      // timeout instead of hanging the tool call forever.
+      try {
+        const parsed = await readBody(res);
+        if (RETRY_STATUSES.has(res.status)) {
+          lastError = toError(res, parsed);
+          waitMs = retryAfterMs(res, parsed.json);
+          continue;
+        }
+        if (res.ok || (opId === 'oauthToken' && res.status === 400)) {
+          return {
+            status: res.status,
+            data: parsed.json as T,
+            requestId: res.headers.get('request-id') ?? undefined,
+            rateLimit: res.headers.get('ratelimit') ?? undefined,
+            rateLimitPolicy: res.headers.get('ratelimit-policy') ?? undefined,
+            idempotentReplayed: res.headers.get('idempotent-replayed') === 'true',
+          };
+        }
+        throw toError(res, parsed);
+      } finally {
+        done();
       }
-      if (res.ok || (opId === 'oauthToken' && res.status === 400)) {
-        return {
-          status: res.status,
-          data: parsed.json as T,
-          requestId: res.headers.get('request-id') ?? undefined,
-          rateLimit: res.headers.get('ratelimit') ?? undefined,
-          rateLimitPolicy: res.headers.get('ratelimit-policy') ?? undefined,
-          idempotentReplayed: res.headers.get('idempotent-replayed') === 'true',
-        };
-      }
-      throw toError(res, parsed);
     }
     throw lastError ?? new SynapseTreeError({ status: 0, code: 'network_error' });
   }
 
-  private async send(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  private async send(url: string, init: RequestInit, timeoutMs: number): Promise<{ res: Response; done: () => void }> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(new Error(`timeout after ${timeoutMs} ms`)), timeoutMs);
-    try {
-      return await this.fetchImpl(url, { ...init, signal: controller.signal });
-    } finally {
-      clearTimeout(timer);
-    }
+    const res = await this.fetchImpl(url, { ...init, signal: controller.signal });
+    return { res, done: () => clearTimeout(timer) };
   }
 }
