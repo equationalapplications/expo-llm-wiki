@@ -62,10 +62,16 @@ export async function registerByEmail(client: SynapseTreeClient, email: string, 
 
     if (res.status === 200) {
       const ok = res.data as TokenOk;
+      if (!ok || typeof ok !== 'object' || typeof ok.access_token !== 'string') {
+        throw new ClaimError('invalid_response', 'The token endpoint returned a malformed success response.');
+      }
       return { apiKey: ok.access_token, accountId: ok.account_id ?? null };
     }
 
     const body = res.data as TokenErr;
+    if (!body || typeof body !== 'object' || typeof body.error !== 'string') {
+      throw new ClaimError('invalid_response', 'The token endpoint returned a malformed error response.');
+    }
     switch (body.error) {
       case 'authorization_pending':
         if (typeof body.interval === 'number') intervalSeconds = body.interval;

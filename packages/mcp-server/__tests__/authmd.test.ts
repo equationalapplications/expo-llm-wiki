@@ -30,6 +30,13 @@ function scenario(responses: Scripted[]) {
 }
 
 describe('registerByEmail (spec §7)', () => {
+  it('maps a malformed token response to invalid_response instead of a TypeError', async () => {
+    const empty = scenario([{ status: 200, body: REG }, { status: 400, body: undefined }]);
+    await expect(empty.run()).rejects.toMatchObject({ code: 'invalid_response' });
+    const garbage = scenario([{ status: 200, body: REG }, { status: 200, body: { hello: 'world' } }]);
+    await expect(garbage.run()).rejects.toMatchObject({ code: 'invalid_response' });
+  });
+
   it('registers, shows the code, waits poll.interval, then stores the key from the first 200', async () => {
     const s = scenario([{ status: 200, body: REG }, { status: 400, body: { error: 'authorization_pending', interval: 5 } }, { status: 200, body: MINT }]);
     const result = await s.run();
