@@ -136,6 +136,7 @@ export async function run(cmd: Command, io: Io): Promise<number> {
         await client.call('whoami');
         await writeCredentials(dir, { apiKey: cmd.key, accountId: null, source: 'dashboard', obtainedAt: new Date().toISOString() });
         io.err('Key stored.');
+        if (io.env.SYNAPSETREE_API_KEY) io.err('Note: SYNAPSETREE_API_KEY is exported and overrides the stored key until you unset it.');
         await printStatus(client, { ...settings, apiKey: cmd.key, keySource: 'file', accountId: null }, io);
         return 0;
       }
@@ -147,6 +148,7 @@ export async function run(cmd: Command, io: Io): Promise<number> {
         await writeCredentials(dir, { apiKey: result.apiKey, accountId: result.accountId, source: 'authmd', obtainedAt: new Date().toISOString() });
         if (cmd.baseUrl) await writeConfig(dir, { ...(await readConfig(dir)), baseUrl });
         io.err('Approved. Key stored.');
+        if (io.env.SYNAPSETREE_API_KEY) io.err('Note: SYNAPSETREE_API_KEY is exported and overrides the stored key until you unset it.');
         const client = makeClient({ apiKey: result.apiKey, baseUrl }, io);
         await printStatus(client, { ...settings, apiKey: result.apiKey, keySource: 'file', accountId: result.accountId, baseUrl }, io);
         return 0;

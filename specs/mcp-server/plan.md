@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript 5.9, tsup 9 (CJS+ESM, bin shebang), vitest 5, `@modelcontextprotocol/sdk` 1.32.1 (stdio + in-memory transports), `zod` 4.6.7, Node ≥20 built-ins only (`fetch`, `crypto`, `fs/promises`).
 
-**Spec:** `docs/superpowers/specs/2026-11-01-mcp-server-design.md` — read it first; every task cites the sections it implements. The spec wins over this plan; if they disagree, follow the spec and note the disagreement in the PR description.
+**Spec:** `specs/mcp-server/spec.md` — read it first; every task cites the sections it implements. The spec wins over this plan; if they disagree, follow the spec and note the disagreement in the PR description.
 
 ## Global Constraints
 

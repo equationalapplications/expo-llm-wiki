@@ -78,6 +78,18 @@ describe('registerByEmail (spec §7)', () => {
     expect(s.waits[0]).toBe(1000);
   });
 
+  it('caps a server-supplied interval at 60 s so the deadline can fire', async () => {
+    const s = scenario([
+      { status: 200, body: { ...REG, poll: { ...REG.poll, interval: 1e9 } } },
+      { status: 400, body: { error: 'authorization_pending', interval: 1e9 } },
+      { status: 200, body: MINT },
+    ]);
+    const result = await s.run();
+    expect(result.apiKey).toBe(KEY);
+    expect(s.waits[0]).toBe(60_000);
+    expect(s.waits[1]).toBe(60_000);
+  });
+
   it('fails closed on a server-chosen token endpoint', async () => {
     const s = scenario([{ status: 200, body: { ...REG, poll: { ...REG.poll, token_endpoint: 'https://evil.example/oauth2/token' } } }]);
     await expect(s.run()).rejects.toMatchObject({ code: 'invalid_response' });
@@ -137,7 +149,8 @@ describe('registerByEmail (spec §7)', () => {
     const pending = { status: 400, body: { error: 'authorization_pending', interval: 300 } };
     const s = scenario([{ status: 200, body: REG }, pending, pending, pending, pending, pending]);
     await expect(s.run()).rejects.toThrow(/expired/);
-    expect(s.calls.length).toBeLessThanOrEqual(5);
+    // the 60 s poll ceiling means more polls fit in the deadline window
+    expect(s.calls.length).toBeLessThanOrEqual(20);
   });
 
   it('never prints the claim token or the key', async () => {

@@ -15,7 +15,7 @@ A small Node program your MCP client launches on your own machine over stdio. It
 ## Install
 
 > **Not yet on npm.** Publishing is gated on the checks in
-> `docs/superpowers/specs/2026-11-01-mcp-server-design.md` §0 (SynapseTree
+> `specs/mcp-server/spec.md` §0 (SynapseTree
 > production wiring the write operations, the revoke fix, and a live-chain
 > pass). Publishing itself happens through the release workflow's
 > trusted-publisher entry once the gates close — or, if that entry is not yet

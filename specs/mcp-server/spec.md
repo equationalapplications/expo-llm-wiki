@@ -1,10 +1,15 @@
 # `@equationalapplications/mcp-server` — SynapseTree memory for coding agents
 
 **Date:** 2026-11-01 (rev 1)
-**Status:** IMPLEMENTED — design approved in session by Kurt VanDusen 2026-11-01;
-the package is built on this branch (ten TDD tasks per
-`docs/superpowers/plans/2026-11-01-mcp-server-plan.md`, tests mocked-only; the
-live chain is gated by spec §12.3 before public launch).
+**Status:** IMPLEMENTED (package code) — design approved in session by Kurt
+VanDusen 2026-11-01; the package is built on this branch (ten TDD tasks per
+`plan.md` in this folder, tests mocked-only; the live chain is gated by
+§12.3 before public launch). **§3's three repo edits are DEFERRED by owner
+ruling (Kurt VanDusen, 2026-11-01): the release wiring lands in a follow-up
+PR after the §0 gates close, so this PR cannot publish anything. The
+version-less `package.json` is safe in the interim — `release.yml` stages
+`packages/*/package.json` but only `publish_if_needed` entries publish, and
+`mcp-server` is not one until the follow-up adds it.**
 **Package:** `packages/mcp-server`, published as `@equationalapplications/mcp-server`.
 **Authority:** This spec is the implementer's single source. It is derived
 from SynapseTree's private design spec (`2026-10-31-mcp-server-design.md`
@@ -61,7 +66,9 @@ by this spec.
 ## 3. Repo integration
 
 The workspace picks up `packages/mcp-server` automatically
-(`pnpm-workspace.yaml` globs `packages/*`). Three edits outside the package:
+(`pnpm-workspace.yaml` globs `packages/*`). Three edits outside the package —
+**all three deferred to the release-wiring follow-up PR per the owner ruling
+above; none are in this PR:**
 
 1. `.releaserc.json` — add `'mcp-server'` to the directory array in the
    `prepareCmd` that stamps `${nextRelease.version}` into each package.

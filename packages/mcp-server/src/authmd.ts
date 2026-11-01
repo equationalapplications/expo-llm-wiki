@@ -42,7 +42,7 @@ export async function registerByEmail(client: SynapseTreeClient, email: string, 
   const deadline = now() + (opts.deadlineMs ?? 16 * 60 * 1000);
 
   const reg = (await client.call<Registration>('registerAgentIdentity', { body: { email } })).data;
-  if (!reg || typeof reg !== 'object' || !reg.poll || typeof reg.user_code !== 'string' || typeof reg.claim_token !== 'string') {
+  if (!reg || typeof reg !== 'object' || !reg.poll || typeof reg.user_code !== 'string' || typeof reg.claim_token !== 'string' || typeof reg.poll.grant !== 'string') {
     throw new ClaimError('invalid_response', 'The registration endpoint returned a malformed response.');
   }
   // Fail closed on a server-chosen token endpoint: posting the claim token
@@ -62,8 +62,12 @@ export async function registerByEmail(client: SynapseTreeClient, email: string, 
   opts.info(`Approve only if the page shows this code: ${reg.user_code}`);
 
   for (;;) {
-    await sleep(intervalSeconds * 1000);
     if (now() > deadline) throw new ClaimError('invalid_grant', EXPIRED_MESSAGE);
+    // Bound the wait: a hostile or buggy `interval` (or 1e9) must neither
+    // park the CLI past the deadline nor hammer the endpoint (min 1 s,
+    // max 60 s, never past the deadline).
+    const remaining = deadline - now();
+    await sleep(Math.min(Math.max(intervalSeconds, 1), 60, Math.max(remaining, 0)) * 1000);
 
     let res;
     try {

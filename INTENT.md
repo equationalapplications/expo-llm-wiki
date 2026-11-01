@@ -49,7 +49,7 @@ Three kinds of software depend on what is published from here:
 The repository is a pnpm monorepo. Published packages live under
 `packages/` (core, expo, react, okf, core-llm-tools, schema-org,
 schema-software-org, prisma-outbox, and — gated on the spec §0 gates in
-`docs/superpowers/specs/2026-11-01-mcp-server-design.md` before its
+`specs/mcp-server/spec.md` before its
 first npm publish — `mcp-server`). Two packages are private and never
 published: `integration` (integration tests) and `benchmarks` (the
 benchmark harness). Two browser apps live under `apps/`. A Rust crate,
@@ -340,6 +340,11 @@ runs and who schedules it.
 
 ## Amendments
 
+- 2026-11-01 — PR #305 adds the `mcp-server` agent door (rule 1 scope note,
+  package list). The three §3 release-wiring edits are deferred to a
+  follow-up PR by owner ruling until the spec §0 gates close. Why: the
+  gates block any publish, and merging the wiring early would risk one.
+  No rule text changed; the scope note under rule 1 carries the detail.
 - 2026-11-01 — Spec cycles move to one folder each under `specs/<name>/`
   (`spec.md`, `plan.md`, `LEDGER.md`), the pattern ruled 2026-10-23;
   "Below it", "How changes are made" step 1, and rule 10's location
