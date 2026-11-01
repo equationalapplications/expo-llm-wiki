@@ -46,9 +46,10 @@ import { LintRepository } from './repositories/LintRepository';
 import { LintService } from './services/LintService';
 import { OkfTrustWritesRepository } from './db/okf-trust-writes';
 import { TemporalService } from './services/TemporalService';
+import { RememberService } from './services/RememberService';
 import { validateManifest } from './utils/ontology';
 import { DiagnosticBuffer } from './utils/diagnostics';
-import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighborhood, OntologyBackfillResult, HealResult, IngestDocumentResult, ReembedResult, SupersedeReplacement, WikiFact } from './types';
+import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighborhood, OntologyBackfillResult, HealResult, IngestDocumentResult, ReembedResult, SupersedeReplacement, WikiFact, RememberInput } from './types';
 
 export { WikiBusyError, WikiTransactionError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER, WikiStrictOntologyViolation, WikiSourceRefHashCollision, WikiParseError, WikiIngestEmptyError, WikiGraphNodeOwnershipConflict } from './types';
 
@@ -77,6 +78,7 @@ export interface WikiMemoryTestAccess {
   promptService: PromptService;
   graphTraversalService: GraphTraversalService;
   temporalService: TemporalService;
+  rememberService: RememberService;
   entryRepo: EntryRepository;
   sourceRefIndexRepo: SourceRefIndexRepository;
   metadataRepo: MetadataRepository;
@@ -123,6 +125,7 @@ export class WikiMemory {
   private lintRepo: LintRepository;
   private lintService: LintService;
   private temporalService: TemporalService;
+  private rememberService: RememberService;
   private readonly okfTrustWrites: OkfTrustWritesRepository;
 
   constructor(db: SQLiteAdapter, options: WikiOptions) {
@@ -157,6 +160,7 @@ export class WikiMemory {
       new MiniSearchIndexStrategy(),
     );
     this.temporalService = new TemporalService(this.db, this.options, this.entryRepo, this.searchService, this.embeddingService);
+    this.rememberService = new RememberService(this.db, this.entryRepo, this.ontologyService, this.searchService, this.embeddingService);
     this.jobManager = new JobManager(this.prefix);
     this.promptService = new PromptService(options.config?.prompts, resolveGrounding(options.config?.grounding));
     this.ingestionService = new IngestionService(
@@ -262,6 +266,7 @@ export class WikiMemory {
       promptService: this.promptService,
       graphTraversalService: this.graphTraversalService,
       temporalService: this.temporalService,
+      rememberService: this.rememberService,
       entryRepo: this.entryRepo,
       sourceRefIndexRepo: this.sourceRefIndexRepo,
       metadataRepo: this.metadataRepo,
@@ -871,6 +876,24 @@ export class WikiMemory {
   /** The supersession chain containing `factId`, oldest first. [] when unknown. */
   async history(entityId: string, factId: string): Promise<WikiFact[]> {
     return this.temporalService.history(entityId, factId);
+  }
+
+  /**
+   * Store one mutable fact directly, with no LLM step (spec
+   * `specs/core-remember/spec.md`). One transaction; resolves with the stored
+   * row read back (`id`, timestamps, defaults, `isStale`, `trustTier`). Never
+   * starts the librarian or heal and writes no event, in `'auto'` and
+   * `'deferred'` mode alike. Embeds through `llmProvider.embed` when present;
+   * keyword-only otherwise. Not idempotent. To replace an existing fact use
+   * `supersede()` so history is kept. Opens its own transaction: do not call
+   * it inside `withTransactionAsync` (the serialized adapter would deadlock).
+   *
+   * Throws `TypeError` on invalid input and `WikiStrictOntologyViolation` for
+   * an `okf_type` the entity's strict manifest does not define; nothing is
+   * written in either case.
+   */
+  async remember(entityId: string, input: RememberInput): Promise<WikiFact> {
+    return this.rememberService.remember(entityId, input);
   }
 
   /**
