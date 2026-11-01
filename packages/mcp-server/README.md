@@ -14,6 +14,19 @@ A small Node program your MCP client launches on your own machine over stdio. It
 
 ## Install
 
+> **Not yet on npm.** Publishing is gated on the checks in
+> `docs/superpowers/specs/2026-11-01-mcp-server-design.md` §0 (SynapseTree
+> production wiring the write operations, the revoke fix, the trusted-publisher
+> entry, and a live-chain pass). Until then, build from source:
+>
+> ```bash
+> git clone https://github.com/equationalapplications/expo-llm-wiki && cd expo-llm-wiki
+> pnpm install && pnpm --filter @equationalapplications/mcp-server build
+> node packages/mcp-server/dist/cli.js --help
+> ```
+
+Once published:
+
 ```bash
 npm install -g @equationalapplications/mcp-server
 ```
@@ -27,6 +40,10 @@ Node 20 or newer. Two commands are installed: `synapsetree-mcp` (canonical) and 
 ```bash
 synapsetree-mcp auth --key stree_…
 ```
+
+The `--key` form puts the secret in your shell history and process list; if
+that matters to you, export `SYNAPSETREE_API_KEY` for the session instead —
+`synapsetree-mcp status` picks it up and `auth --revoke` still works.
 
 **By email, from the terminal** (the [auth.md](https://synapsetree.dev/auth.md) flow):
 
@@ -103,10 +120,19 @@ npx @modelcontextprotocol/inspector synapsetree-mcp
 
 Before publishing a version, against the SynapseTree **test** stage with a dashboard key:
 
-1. `synapsetree-mcp auth --key …` then `synapsetree-mcp status`.
-2. `SYNAPSETREE_API_KEY=… SYNAPSETREE_BASE_URL=… pnpm --filter @equationalapplications/mcp-server test` — runs the live chain (`whoami` → remember → search → supersede → search → log event → list). Until SynapseTree wires the write operations in production, the chain stops at `memory_remember` with `not_implemented`; that is expected until that gate closes.
-3. `npx @modelcontextprotocol/inspector synapsetree-mcp` and run one `memory_search`.
-4. `synapsetree-mcp auth --email …` once, approve the email, then `synapsetree-mcp auth --revoke`.
+Run the whole sequence against the test stage with an isolated config
+directory, so no step can touch your real credentials:
+
+```bash
+export SYNAPSETREE_BASE_URL=https://test-stage…      # the test stage, for EVERY step below
+export SYNAPSETREE_CONFIG_DIR=$(mktemp -d)           # isolated credentials
+export SYNAPSETREE_LIVE_TESTS=1                      # opts the live chain into `pnpm test`
+```
+
+1. `pnpm build && pnpm --filter @equationalapplications/mcp-server auth --key …` then `… status`.
+2. `SYNAPSETREE_API_KEY=… pnpm --filter @equationalapplications/mcp-server test` — runs the live chain (`whoami` → remember → search → supersede → search → log event → list). The suite is excluded unless `SYNAPSETREE_LIVE_TESTS=1` is set. Until SynapseTree wires the write operations in production, the chain stops at `memory_remember` with `not_implemented`; that is expected until that gate closes.
+3. `npx @modelcontextprotocol/inspector node packages/mcp-server/dist/cli.js serve` and run one `memory_search`.
+4. `… auth --email …` once, approve the email, then `… auth --revoke`.
 
 The vendored contract in `contract/` is generated in the SynapseTree repository and must not be hand-edited; the unit tests fail if it drifts from what the tools send or if it ever contains an owner-only operation.
 

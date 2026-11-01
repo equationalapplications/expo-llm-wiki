@@ -5,6 +5,7 @@ import {
   KEY_PATTERN, configDir, deleteCredentials, maskKey, readConfig, resolveSettings, validateBaseUrl, writeConfig, writeCredentials, type Settings,
 } from './credentials';
 import { NO_KEY_MESSAGE, SynapseTreeError, UsageError } from './errors';
+import { stripTrailingSlashes } from './client';
 import { createServer } from './server';
 import { NAMESPACE_PATTERN } from './tools/shared';
 import type { WhoamiResult } from './tools/whoami';
@@ -124,7 +125,7 @@ export async function run(cmd: Command, io: Io): Promise<number> {
       case 'config-set': {
         const config = await readConfig(dir);
         if (cmd.key === 'namespace') config.namespace = cmd.value;
-        else config.baseUrl = cmd.value.replace(/\/+$/, '');
+        else config.baseUrl = stripTrailingSlashes(cmd.value);
         await writeConfig(dir, config);
         io.err(`${cmd.key} set.`);
         return 0;
@@ -140,7 +141,7 @@ export async function run(cmd: Command, io: Io): Promise<number> {
       }
       case 'auth-email': {
         const settings = await resolveSettings(io.env, dir);
-        const baseUrl = cmd.baseUrl?.replace(/\/+$/, '') ?? settings.baseUrl;
+        const baseUrl = (cmd.baseUrl ? stripTrailingSlashes(cmd.baseUrl) : undefined) ?? settings.baseUrl;
         const anonymous = makeClient({ apiKey: undefined, baseUrl }, io);
         const result = await registerByEmail(anonymous, cmd.email, { info: io.err });
         await writeCredentials(dir, { apiKey: result.apiKey, accountId: result.accountId, source: 'authmd', obtainedAt: new Date().toISOString() });
@@ -158,10 +159,15 @@ export async function run(cmd: Command, io: Io): Promise<number> {
           await client.call('oauthRevoke', { form: { token: settings.apiKey, token_type_hint: 'access_token' } });
           io.err('Key revoked.');
         } catch (err) {
-          if (err instanceof SynapseTreeError && (err.status === 401 || err.status === 403)) {
+          if (err instanceof SynapseTreeError && err.status === 401) {
             io.err('The key was already dead on the server.');
+          } else if (err instanceof SynapseTreeError && err.status === 403) {
+            // The server answered and refused the revocation (e.g. admin-only
+            // or owner mismatch): the local copy is kept so nothing is lost.
+            io.err(`The server refused the revocation (${err.code}); the local key was kept. Remove it in the dashboard if it should die.`);
+            return 1;
           } else {
-            io.err(`SynapseTree was unreachable; the local key was kept. (${err instanceof Error ? err.message : String(err)})`);
+            io.err(`SynapseTree was unreachable or the request failed; the local key was kept. (${err instanceof Error ? err.message : String(err)})`);
             return 1;
           }
         }

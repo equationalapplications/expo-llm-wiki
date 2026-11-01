@@ -32,6 +32,11 @@ minimumReleaseAgeExclude:
   # Waiver rode PR #298's CI block; the overrides below pin the patched
   # versions regardless.
   - undici
+  # node-forge 1.4.2 (2026-10-27) and body-parser 2.4.0 (2026-10-22) pin the
+  # patched lines for the HIGH advisories overridden below — exploitable in
+  # the wild, same waiver rationale as undici/image-size (added with PR #305).
+  - node-forge
+  - body-parser
 
 # Single source of truth for overrides. Do NOT add `pnpm.overrides` to the root
 # package.json: when both exist, pnpm 10 silently applies only the package.json
@@ -53,6 +58,17 @@ overrides:
   # age gate. Scoped to the 4.x line — @expo/cli's zod 3.25.76 has no
   # in-range patch and stays on the pnpm-audit allowlist (issue #278).
   'zod@>=4.0.0 <4.6.6': 4.6.6
+  # node-forge HIGH set (GHSA-7wch-p9px-956x, GHSA-jc66-7q78-782g,
+  # GHSA-8hrf-8g6f-7xwp, GHSA-hqq3-7jhf-c5jx, GHSA-5x38-2vff-x55p;
+  # GHSA-86w9-cpqp-85rv is the older <=1.4.0 entry): patched in 1.4.1+.
+  # 1.4.2 published 2026-10-27 (5 days old); the @expo/cli-consumed 1.4.0
+  # has no patched in-range release, so this override pins the fixed line
+  # like the image-size/undici entries — advisories exploitable in the wild.
+  'node-forge@<1.4.2': 1.4.2
+  # GHSA-27r3-jxmh-p828 (HIGH, body-parser DoS): patched in 2.4.0, published
+  # 2026-10-22 (10 days old). Pulled in by @modelcontextprotocol/sdk's
+  # express dependency (new with packages/mcp-server). Same waiver rationale.
+  'body-parser@>=2.0.0 <2.4.0': 2.4.0
   # undici HIGH advisories (GHSA-xjj6-f33q-929c, GHSA-4w7w-5xrc-9h26,
   # GHSA-2m5v-pch6-74hx, GHSA-qrxm-fqhp-jwvm — fetch/redirect issues;
   # patches published 2026-10-15, age gate waived by Kurt 2026-10-28,

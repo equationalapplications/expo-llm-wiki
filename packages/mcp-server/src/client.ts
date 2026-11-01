@@ -4,6 +4,14 @@ import { NO_KEY_MESSAGE, SynapseTreeError, UsageError } from './errors';
 
 export const DEFAULT_BASE_URL = 'https://api.synapsetree.dev';
 
+/** Strips trailing slashes without a regex: CodeQL flags a slash-repetition
+ * regex applied to library-controlled input as polynomial ReDoS. */
+export function stripTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url[end - 1] === '/') end--;
+  return url.slice(0, end);
+}
+
 export interface ClientOptions {
   /** Optional only so `auth --email` can register and poll; every other operation needs it. */
   apiKey?: string;
@@ -113,7 +121,7 @@ export class SynapseTreeClient {
 
   constructor(opts: ClientOptions) {
     this.apiKey = opts.apiKey;
-    this.baseUrl = opts.baseUrl.replace(/\/+$/, '');
+    this.baseUrl = stripTrailingSlashes(opts.baseUrl);
     this.userAgent = opts.userAgent;
     this.fetchImpl = opts.fetch ?? globalThis.fetch;
     this.sleep = opts.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));

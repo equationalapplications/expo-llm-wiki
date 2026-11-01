@@ -4,9 +4,10 @@ import { existsSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-const CLI = new URL('../dist/cli.js', import.meta.url).pathname;
+const CLI = fileURLToPath(new URL('../dist/cli.js', import.meta.url));
 
 describe('dist/cli.js over stdio (spec §12.1 "stdio")', () => {
   it('serves tools/list from the built bin', async () => {

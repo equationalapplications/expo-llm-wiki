@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { DEFAULT_BASE_URL } from './client';
+import { DEFAULT_BASE_URL, stripTrailingSlashes } from './client';
 import { UsageError } from './errors';
 
 export interface Credentials {
@@ -131,7 +131,7 @@ export async function resolveSettings(env: NodeJS.ProcessEnv = process.env, dir:
     apiKey,
     keySource: envKey ? 'env' : creds ? 'file' : null,
     accountId: envKey ? null : (creds?.accountId ?? null),
-    baseUrl: validateBaseUrl((env.SYNAPSETREE_BASE_URL || config.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '')),
+    baseUrl: validateBaseUrl(stripTrailingSlashes(env.SYNAPSETREE_BASE_URL || config.baseUrl || DEFAULT_BASE_URL)),
     namespace: env.SYNAPSETREE_NAMESPACE || config.namespace,
     dir,
   };

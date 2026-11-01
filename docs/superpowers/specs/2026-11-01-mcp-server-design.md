@@ -349,7 +349,7 @@ because stdout is the MCP channel.
 ```
 synapsetree-mcp                        # = serve
 synapsetree-mcp serve                  # MCP over stdio; what the client launches
-synapsetree-mcp auth --key stree_…     # store a dashboard key
+synapsetree-mcp auth --key stree_…     # store a dashboard key (the key is on argv: shell history + ps see it; prefer exporting SYNAPSETREE_API_KEY when that matters)
 synapsetree-mcp auth --email you@example.com
 synapsetree-mcp auth --revoke          # RFC 7009 revoke the stored key, then delete it locally
 synapsetree-mcp status                 # whoami + key source + base URL + namespace + rate-limit headers
