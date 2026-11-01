@@ -127,6 +127,28 @@ describe('SynapseTreeClient (spec §5.2)', () => {
     expect(withHeader.waits).toEqual([3000]);
   });
 
+  it('maps a mid-body failure to a transient network error and retries', async () => {
+    const failing = (): Response =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"partial"'));
+            controller.error(new Error('terminated'));
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    const { client, calls } = makeClient([failing(), failing(), failing()]);
+    await expect(client.call('whoami')).rejects.toMatchObject({ status: 0, code: 'network_error' });
+    expect(calls).toHaveLength(3);
+  });
+
+  it('caps a Retry-After wait at 30 seconds', async () => {
+    const { client, waits } = makeClient([json(429, { code: 'rate_limited' }, { 'retry-after': '86400' }), json(200, {})]);
+    await client.call('whoami');
+    expect(waits[0]).toBe(30_000);
+  });
+
   it('gives up after three attempts with the last error', async () => {
     const { client, calls } = makeClient([problem(503, 'unavailable'), problem(503, 'unavailable'), problem(503, 'unavailable')]);
     await expect(client.call('whoami')).rejects.toMatchObject({ code: 'unavailable', status: 503 });

@@ -51,16 +51,22 @@ function buildUrl(baseUrl: string, op: Operation, input: CallInput): string {
   return url.toString();
 }
 
+const MAX_RETRY_AFTER_MS = 30_000;
+
 function retryAfterMs(res: Response, body: unknown): number | undefined {
+  // Cap the wait: a huge Retry-After (or a day-long hint in the body) must
+  // not hang a single tool call for that long; the capped wait keeps the
+  // call bounded while still honoring the server's intent.
+  const cap = (ms: number) => Math.min(MAX_RETRY_AFTER_MS, ms);
   const header = res.headers.get('retry-after');
   if (header) {
     const seconds = Number(header);
-    if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+    if (Number.isFinite(seconds)) return cap(Math.max(0, seconds * 1000));
     const date = Date.parse(header);
-    if (Number.isFinite(date)) return Math.max(0, date - Date.now());
+    if (Number.isFinite(date)) return cap(Math.max(0, date - Date.now()));
   }
   const fromBody = (body as { retryAfterSeconds?: unknown } | undefined)?.retryAfterSeconds;
-  return typeof fromBody === 'number' ? fromBody * 1000 : undefined;
+  return typeof fromBody === 'number' ? cap(fromBody * 1000) : undefined;
 }
 
 async function readBody(res: Response): Promise<{ text: string; json: unknown; isProblem: boolean; isJson: boolean }> {
@@ -167,7 +173,19 @@ export class SynapseTreeClient {
       // server that sends headers and stalls the body must still hit the
       // timeout instead of hanging the tool call forever.
       try {
-        const parsed = await readBody(res);
+        let parsed: Awaited<ReturnType<typeof readBody>>;
+        try {
+          parsed = await readBody(res);
+        } catch (err) {
+          // A body that fails after the headers (connection reset mid-body,
+          // or the stall abort firing) is transient: map it so the retry
+          // loop and the auth polling loop treat it like any other
+          // network error instead of surfacing a raw TypeError.
+          if (err instanceof SynapseTreeError) throw err;
+          lastError = new SynapseTreeError({ status: 0, code: 'network_error', detail: err instanceof Error ? err.message : String(err) });
+          waitMs = undefined;
+          continue;
+        }
         if (RETRY_STATUSES.has(res.status)) {
           lastError = toError(res, parsed);
           waitMs = retryAfterMs(res, parsed.json);
