@@ -67,6 +67,15 @@ describe('registerByEmail (spec §7)', () => {
     await expect(s.run()).resolves.toMatchObject({ apiKey: KEY });
   });
 
+  it('treats a surviving 429 from the token endpoint as slow_down and keeps polling', async () => {
+    // three 429s exhaust the client's internal retries; authmd must then
+    // keep polling with a +5 s interval instead of aborting.
+    const s = scenario([{ status: 200, body: REG }, { status: 429, body: { error: 'rate_limited' } }, { status: 429, body: { error: 'rate_limited' } }, { status: 429, body: { error: 'rate_limited' } }, { status: 200, body: MINT }]);
+    const result = await s.run();
+    expect(result.apiKey).toBe(KEY);
+    expect(s.waits[1]).toBe(10_000); // 5 s interval + 5 s slow-down
+  });
+
   it('stops on invalid_grant with the restart message', async () => {
     const s = scenario([{ status: 200, body: REG }, { status: 400, body: { error: 'invalid_grant' } }]);
     await expect(s.run()).rejects.toBeInstanceOf(ClaimError);

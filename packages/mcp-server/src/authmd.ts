@@ -58,8 +58,13 @@ export async function registerByEmail(client: SynapseTreeClient, email: string, 
     try {
       res = await client.call<TokenOk | TokenErr>('oauthToken', { form: { grant_type: reg.poll.grant, assertion: reg.claim_token } });
     } catch (err) {
-      // server_error (500) and network errors: keep polling at the current interval.
-      if (err instanceof SynapseTreeError && (err.status >= 500 || err.status === 0)) continue;
+      // server_error (500), network errors, and a surviving 429 are
+      // transient: keep polling at the current interval. A 429 asks us to
+      // slow down, so add 5 s like the slow_down case below.
+      if (err instanceof SynapseTreeError && (err.status >= 500 || err.status === 0 || err.status === 429)) {
+        if (err.status === 429) intervalSeconds += 5;
+        continue;
+      }
       throw err;
     }
 
