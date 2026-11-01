@@ -1,0 +1,68 @@
+{
+  "name": "@equationalapplications/mcp-server",
+  "description": "MCP server that gives coding agents (Claude Code, Cursor, Windsurf, Claude Desktop) a SynapseTree memory: search, remember, supersede, ingest, log events, and traverse the knowledge graph.",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "bin": {
+    "synapsetree-mcp": "./dist/cli.js",
+    "mcp-server": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "files": [
+    "dist",
+    "contract",
+    "LICENSE",
+    "README.md"
+  ],
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "synapsetree",
+    "memory",
+    "claude-code",
+    "cursor",
+    "windsurf",
+    "llm-wiki"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/equationalapplications/expo-llm-wiki.git",
+    "directory": "packages/mcp-server"
+  },
+  "bugs": {
+    "url": "https://github.com/equationalapplications/expo-llm-wiki/issues"
+  },
+  "homepage": "https://github.com/equationalapplications/expo-llm-wiki/tree/main/packages/mcp-server#readme",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "tsup": "9.0.0",
+    "typescript": "5.9.3",
+    "vitest": "5.0.4"
+  }
+}
