@@ -14,7 +14,7 @@
 
 - Package name exactly `@equationalapplications/mcp-server`; directory `packages/mcp-server` (spec R1, R2).
 - Dependencies pinned exactly: `@modelcontextprotocol/sdk` `1.32.1`, `zod` `4.6.7`. Dev pins copied from `packages/core-llm-tools/package.json` at the time of the work (spec §4). Never add another runtime dependency.
-- `"version"` is copied from `packages/core-llm-tools/package.json` and never edited again (CONTRIBUTING.md; the release stamps it).
+- The package.json carries **no `"version"` field at all** (CONTRIBUTING.md forbids version edits in PRs; the release `prepareCmd` stamps `${nextRelease.version}` into it on the first release — it writes the field whether or not it exists). Do not copy `version` from the sibling template.
 - Node `>=20`; no polyfills (spec §4).
 - Exactly eight tools, in this order: `memory_search`, `memory_remember`, `memory_supersede`, `memory_ingest`, `memory_log_event`, `graph_traverse`, `namespaces_list`, `whoami` (spec §8). No ninth (R4). The seven withheld operations are never called (R5).
 - `contract/synapsetree-openapi.subset.json` is never hand-edited (spec §10.1).
@@ -58,7 +58,6 @@ Note the `version`, `tsup`, `typescript`, `vitest` values and the root `@types/n
 ```json
 {
   "name": "@equationalapplications/mcp-server",
-  "version": "<version from core-llm-tools>",
   "description": "MCP server that gives coding agents (Claude Code, Cursor, Windsurf, Claude Desktop) a SynapseTree memory: search, remember, supersede, ingest, log events, and traverse the knowledge graph.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -1098,8 +1097,14 @@ export class SynapseTreeClient {
 
     let lastError: SynapseTreeError | undefined;
     let waitMs: number | undefined;
+    // registerAgentIdentity is single-attempt: the POST creates a claim (and
+    // triggers an email) as a side effect, and the contract gives it no
+    // Idempotency-Key, so a blind retry on a 503 would consume the
+    // five-claims-per-email cap with a claim nobody polls.
+    const canRetry = opId !== 'registerAgentIdentity';
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       if (attempt > 0) {
+        if (!canRetry) break;
         await this.sleep(waitMs ?? Math.min(1000 * 2 ** attempt, 8000) + Math.floor(this.random() * 250));
       }
       let res: Response;
