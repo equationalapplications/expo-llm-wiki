@@ -2,9 +2,9 @@
 
 Adopted 2026-11-01 (pattern ruled 2026-10-23, SDD decisions D6–D8). The
 canonical mechanics live once, in the knowledge vault's pr-spec-driven
-procedure ("Artifact layout"; the vault lives outside this repo). This
-file is the in-repo summary so that a
-session working from the repository alone can follow it.
+procedure ("Artifact layout"; the vault lives outside this repo). This file
+is the in-repo summary so that a session working from the repository alone
+can follow it.
 
 ## The folder is the unit
 
@@ -42,12 +42,12 @@ history carries the dates.
 2. Add `plan.md` and `LEDGER.md` to the same PR once the spec gate
    closes. There are no spec-only merges.
 3. Implement on the same branch. Conventional commits name the spec
-   section they fulfil. Tick ledger boxes after verification.
+   section they fulfill. Tick ledger boxes after verification.
 4. When review loops converge: one final cleanup commit on the same PR
    flips the spec to **Implemented** and deletes `plan.md` and
    `LEDGER.md` (never a separate cleanup PR). Then `gh pr ready`; bot
    reviews that skip drafts fire on the ready flip. CI runs on every
-   push, draft included.
+   push to the PR, draft included.
 5. After merge, the status-carrying `spec.md` and the code are the record.
    Nothing is left to clean up.
 
@@ -68,9 +68,8 @@ first roadmap.
 
 Specs and plans written before 2026-11-01 live in `docs/superpowers/specs/`
 and `docs/superpowers/plans/` (flat, date-prefixed). They are history and are
-not migrated. The legacy specs' Status lines still bind: update one in
-the same PR that
-changes the behaviour it describes. New work goes here.
+not migrated. The legacy specs' Status lines still bind: update one in the
+same PR that changes the behavior it describes. New work goes here.
 
 ## Skeletons
 

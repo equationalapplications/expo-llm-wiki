@@ -299,8 +299,7 @@ runs and who schedules it.
 
 1. **Spec first.** Write `specs/<name>/spec.md` from an investigation that
    reads the real code, with a spec Status (Draft → Reviewed →
-   Implemented); investigation notes go in `specs/<name>/` or the spec's
-   evidence section.
+   Implemented); investigation notes go in the spec's evidence section.
    Open a draft PR carrying the folder; add `plan.md` and
    `LEDGER.md` to the same PR once the spec is Reviewed; implement on the
    same branch; the final cleanup commit flips the Status to Implemented
@@ -336,8 +335,9 @@ runs and who schedules it.
   (`spec.md`, `plan.md`, `LEDGER.md`), the pattern ruled 2026-10-23;
   "Below it", "How changes are made" step 1, and rule 10's location
   pointer updated. Step 1 now requires one PR per cycle; spec-only merges,
-  previously allowed, are no longer. Why: tracked, resumable plans and
-  ledgers instead of gitignored plans. Legacy specs and plans under
+  previously allowed, are no longer allowed. Why: the plan and ledger live
+  and die in the same PR as the spec, and tracked, resumable plans and
+  ledgers replace gitignored plans. Legacy specs and plans under
   `docs/superpowers/` are not migrated. No rule or Status changed.
 - 2026-10-29 — Initial version. Authored by Fable from the Tessera
   research dossier; every Status checked against the code that day
