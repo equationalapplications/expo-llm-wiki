@@ -32,11 +32,15 @@ minimumReleaseAgeExclude:
   # Waiver rode PR #298's CI block; the overrides below pin the patched
   # versions regardless.
   - undici
-  # node-forge 1.4.2 (2026-10-27) and body-parser 2.4.0 (2026-10-22) pin the
-  # patched lines for the HIGH advisories overridden below — exploitable in
-  # the wild, same waiver rationale as undici/image-size (added with PR #305).
-  - node-forge
-  - body-parser
+  # Age-gate waivers, scoped to the exact pinned versions ( overrides above):
+  # node-forge 1.4.2 (2026-10-27, 5 days old at admission) fixes five HIGH
+  # GHSAs already exploitable in the wild; body-parser 2.4.0 (2026-10-22, 10
+  # days old) fixes GHSA-27r3-jxmh-p828, pulled in by the MCP SDK's express
+  # dependency. Waiver requested from Kurt VanDusen 2026-11-01 with PR #305;
+  # same rationale as the undici/image-size waivers (no older patched release
+  # exists for the @expo/cli line).
+  - node-forge@1.4.2
+  - body-parser@2.4.0
 
 # Single source of truth for overrides. Do NOT add `pnpm.overrides` to the root
 # package.json: when both exist, pnpm 10 silently applies only the package.json

@@ -16,13 +16,17 @@ A small Node program your MCP client launches on your own machine over stdio. It
 
 > **Not yet on npm.** Publishing is gated on the checks in
 > `docs/superpowers/specs/2026-11-01-mcp-server-design.md` §0 (SynapseTree
-> production wiring the write operations, the revoke fix, the trusted-publisher
-> entry, and a live-chain pass). Until then, build from source:
+> production wiring the write operations, the revoke fix, and a live-chain
+> pass). Publishing itself happens through the release workflow's
+> trusted-publisher entry once the gates close — or, if that entry is not yet
+> configured, by a one-off manual `pnpm --filter @equationalapplications/mcp-server
+> publish`. Until one of those happens, build from source:
 >
 > ```bash
 > git clone https://github.com/equationalapplications/expo-llm-wiki && cd expo-llm-wiki
 > pnpm install && pnpm --filter @equationalapplications/mcp-server build
-> node packages/mcp-server/dist/cli.js --help
+> cd packages/mcp-server && pnpm link --global   # puts synapsetree-mcp on PATH
+> synapsetree-mcp --help
 > ```
 
 Once published:
@@ -41,8 +45,13 @@ Node 20 or newer. Two commands are installed: `synapsetree-mcp` (canonical) and 
 synapsetree-mcp auth --key stree_…
 ```
 
-The `--key` form puts the secret in your shell history and process list; if
-that matters to you, export `SYNAPSETREE_API_KEY` for the session instead —
+The `--key` form puts the secret in your shell history and process list. To
+keep it out of both, read it silently and export it for the session:
+
+```bash
+read -rs SYNAPSETREE_API_KEY && export SYNAPSETREE_API_KEY
+```
+
 `synapsetree-mcp status` picks it up and `auth --revoke` still works.
 
 **By email, from the terminal** (the [auth.md](https://synapsetree.dev/auth.md) flow):
@@ -124,15 +133,21 @@ Run the whole sequence against the test stage with an isolated config
 directory, so no step can touch your real credentials:
 
 ```bash
+unset SYNAPSETREE_API_KEY                            # an inherited key would take
+                                                     # precedence over the isolated
+                                                     # credentials file below
 export SYNAPSETREE_BASE_URL=https://test-stage…      # the test stage, for EVERY step below
 export SYNAPSETREE_CONFIG_DIR=$(mktemp -d)           # isolated credentials
 export SYNAPSETREE_LIVE_TESTS=1                      # opts the live chain into `pnpm test`
+CLI="node $(pwd)/packages/mcp-server/dist/cli.js"    # the built CLI (no bin on PATH yet)
+
+pnpm build
 ```
 
-1. `pnpm build && pnpm --filter @equationalapplications/mcp-server auth --key …` then `… status`.
+1. `$CLI auth --key …` then `$CLI status`.
 2. `SYNAPSETREE_API_KEY=… pnpm --filter @equationalapplications/mcp-server test` — runs the live chain (`whoami` → remember → search → supersede → search → log event → list). The suite is excluded unless `SYNAPSETREE_LIVE_TESTS=1` is set. Until SynapseTree wires the write operations in production, the chain stops at `memory_remember` with `not_implemented`; that is expected until that gate closes.
-3. `npx @modelcontextprotocol/inspector node packages/mcp-server/dist/cli.js serve` and run one `memory_search`.
-4. `… auth --email …` once, approve the email, then `… auth --revoke`.
+3. `npx @modelcontextprotocol/inspector $CLI serve` and run one `memory_search`.
+4. `$CLI auth --email …` once, approve the email, then `$CLI auth --revoke`.
 
 The vendored contract in `contract/` is generated in the SynapseTree repository and must not be hand-edited; the unit tests fail if it drifts from what the tools send or if it ever contains an owner-only operation.
 
