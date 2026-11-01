@@ -108,6 +108,26 @@ describe('run', () => {
     expect(h.err.join('\n')).toContain('SYNAPSETREE_API_KEY');
   });
 
+  it('auth --revoke with both stored and env keys revokes the stored one first, then the env key', async () => {
+    await writeCredentials(dir, { apiKey: KEY, accountId: null, source: 'dashboard', obtainedAt: 'now' });
+    const h = io([{ status: 200 }, { status: 200 }], { SYNAPSETREE_API_KEY: 'stree_' + 'e'.repeat(43) });
+    expect(await run({ kind: 'auth-revoke' }, h.io)).toBe(0);
+    expect(await readCredentials(dir)).toBeNull();
+    expect(h.calls).toHaveLength(2);
+    expect(h.err.join('\n')).toContain('Stored key revoked');
+    expect(h.err.join('\n')).toContain('unset SYNAPSETREE_API_KEY');
+  });
+
+  it('auth --revoke exits 1 when the env key revocation fails', async () => {
+    const h = io([{ status: 503 }, { status: 503 }, { status: 503 }], { SYNAPSETREE_API_KEY: KEY });
+    expect(await run({ kind: 'auth-revoke' }, h.io)).toBe(1);
+  });
+
+  it('auth --revoke with neither a stored file nor an env key exits 3', async () => {
+    const h = io([]);
+    expect(await run({ kind: 'auth-revoke' }, h.io)).toBe(3);
+  });
+
   it('auth --email stores the key before printing status', async () => {
     const REG = { claim_token: 'stclaim_' + 'c'.repeat(43), user_code: '654321', poll: { token_endpoint: 'https://api.synapsetree.dev/oauth2/token', grant: 'urn:synapsetree:claim', interval: 0 } };
     const h = io([{ status: 200, body: REG }, { status: 200, body: { access_token: KEY, token_type: 'Bearer', account_id: 'acc', scope: 'memory:full' } }, { status: 200, body: WHOAMI }]);

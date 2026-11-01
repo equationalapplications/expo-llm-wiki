@@ -9,7 +9,9 @@ ruling (Kurt VanDusen, 2026-11-01): the release wiring lands in a follow-up
 PR after the §0 gates close, so this PR cannot publish anything. The
 version-less `package.json` is safe in the interim — `release.yml` stages
 `packages/*/package.json` but only `publish_if_needed` entries publish, and
-`mcp-server` is not one until the follow-up adds it.**
+`mcp-server` is not one until the follow-up adds it. `plan.md` and
+`LEDGER.md` are deliberately kept past merge (not cleaned up per the
+folder lifecycle) because the deferred §3 wiring PR resumes from them.**
 **Package:** `packages/mcp-server`, published as `@equationalapplications/mcp-server`.
 **Authority:** This spec is the implementer's single source. It is derived
 from SynapseTree's private design spec (`2026-10-31-mcp-server-design.md`
@@ -358,7 +360,7 @@ synapsetree-mcp                        # = serve
 synapsetree-mcp serve                  # MCP over stdio; what the client launches
 synapsetree-mcp auth --key stree_…     # store a dashboard key (the key is on argv: shell history + ps see it; prefer exporting SYNAPSETREE_API_KEY when that matters)
 synapsetree-mcp auth --email you@example.com
-synapsetree-mcp auth --revoke          # RFC 7009 revoke the stored key, then delete it locally
+synapsetree-mcp auth --revoke          # RFC 7009 revoke the stored key (and an exported env key), then delete it locally
 synapsetree-mcp status                 # whoami + key source + base URL + namespace + rate-limit headers
 synapsetree-mcp config set namespace repo:myproject
 synapsetree-mcp config set base-url https://…   # for the test stage; rarely used
@@ -377,12 +379,17 @@ failure stores nothing and prints the error.
 
 **`auth --email`.** §7. `--base-url` is accepted for the test stage.
 
-**`auth --revoke`.** `oauthRevoke` with the stored key. On 2xx delete
-`credentials.json` and say so. On a network error or 5xx, keep the file
-and say the server was unreachable. On 401/403, say the key is already
-dead, then delete the file (the server has nothing to revoke). If the key
-came from `SYNAPSETREE_API_KEY`, revoke it and tell the user to unset the
-variable; there is no file to delete.
+**`auth --revoke`.** Revokes every credential it can see, stored key
+first: `oauthRevoke` with the stored key, then — if `SYNAPSETREE_API_KEY`
+is also exported — `oauthRevoke` with that key (resolveSettings prefers
+the env key, so the stored one would otherwise survive the command). On
+2xx for the stored key, delete `credentials.json` and say so. On a
+network error or 5xx for either key, keep that credential and say the
+server was unreachable; on 401 the key is already dead (nothing to
+revoke — delete the file); on 403 the server refused, so the local copy
+is kept and the user is told to remove it in the dashboard. The command
+exits 0 when everything present was revoked or already dead, 3 when no
+credential exists, 1 otherwise.
 
 **`status`.** `whoami`, then print: key source (`env` / `file`), masked
 key, `organizationId`, `tenantDatabaseId`, `scope`, `planCode`,

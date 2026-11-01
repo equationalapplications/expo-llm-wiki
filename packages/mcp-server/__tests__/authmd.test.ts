@@ -78,6 +78,17 @@ describe('registerByEmail (spec §7)', () => {
     expect(s.waits[0]).toBe(1000);
   });
 
+  it('throws at exactly the deadline instead of spinning on a zero-length sleep', async () => {
+    // interval 60 lands the clock exactly on the deadline; remaining is 0,
+    // so the loop must throw rather than sleep(0) forever.
+    const s = scenario([
+      { status: 200, body: { ...REG, poll: { ...REG.poll, interval: 60 } } },
+      { status: 400, body: { error: 'authorization_pending' } },
+      { status: 400, body: { error: 'authorization_pending' } },
+    ]);
+    await expect(s.run()).rejects.toMatchObject({ code: 'invalid_grant' });
+  });
+
   it('caps a server-supplied interval at 60 s so the deadline can fire', async () => {
     const s = scenario([
       { status: 200, body: { ...REG, poll: { ...REG.poll, interval: 1e9 } } },

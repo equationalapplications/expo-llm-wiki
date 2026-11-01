@@ -28,7 +28,7 @@ Usage:
   synapsetree-mcp auth --key stree_…           store a dashboard API key
   synapsetree-mcp auth --email you@example.com [--base-url URL]
                                                register through auth.md: you approve by email
-  synapsetree-mcp auth --revoke                revoke the stored key and delete it locally
+  synapsetree-mcp auth --revoke                revoke the stored key, then an exported env key
   synapsetree-mcp status                       show account, scope, plan, key source, namespace
   synapsetree-mcp config set namespace repo:<name>
   synapsetree-mcp config set base-url URL
@@ -165,21 +165,24 @@ export async function run(cmd: Command, io: Io): Promise<number> {
           try {
             await client.call('oauthRevoke', { form: { token: stored.apiKey, token_type_hint: 'access_token' } });
             io.err('Stored key revoked.');
+            await deleteCredentials(dir);
+            io.err('Local copy deleted.');
           } catch (err) {
             if (err instanceof SynapseTreeError && err.status === 401) {
-              io.err('The stored key was already dead on the server.');
+              // The stored key is already dead on the server: nothing to
+              // revoke, and the file carries nothing of value.
+              await deleteCredentials(dir);
+              io.err('The stored key was already dead on the server; local copy deleted.');
             } else if (err instanceof SynapseTreeError && err.status === 403) {
               // The server answered and refused the revocation (e.g. admin-only
               // or owner mismatch): the local copy is kept so nothing is lost.
               io.err(`The server refused the revocation (${err.code}); the local key was kept. Remove it in the dashboard if it should die.`);
-              return 1;
+              failed = true;
             } else {
               io.err(`SynapseTree was unreachable or the request failed; the local key was kept. (${err instanceof Error ? err.message : String(err)})`);
-              return 1;
+              failed = true;
             }
           }
-          await deleteCredentials(dir);
-          io.err('Local copy deleted.');
         }
         const envKey = io.env.SYNAPSETREE_API_KEY;
         if (envKey) {

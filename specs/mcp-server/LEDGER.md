@@ -15,7 +15,7 @@
 
 ## Review evidence
 
-- SoR full coverage (176/176 clusters) + Tier-1.5 ladder (haiku low/medium/high/xhigh, sonnet-5.5 high) — findings fixed across commits `8e31500..63c7284`, `94cd21d`, `ca3390d`, `2dbdc6b`..`5101a50`; adjudication ledger in session scratch `pr305/adjudication-ledger.md`
+- SoR full coverage (176/176 clusters) + Tier-1.5 ladder (haiku low/medium/high/xhigh, sonnet-5.5 high) — findings fixed across commits `8e31500..63c7284`, `94cd21d`, `ca3390d`, `2dbdc6b`..`5101a50`; verdict JSONs archived in the session workspace (CI-external), summaries in the PR description's review-convergence section
 - CodeRabbit rounds 1–3 — all actionable comments fixed (`2af930f`, `efeafe0`, `2068ba3`)
 - CI green 5/5 (test, rust-test, Analyze, CodeQL, CodeRabbit) on `2068ba3` and later
 - Tier-4 Fable review (35 turns, $4.40) — REQUEST CHANGES; blockers/major resolved in the post-review commits (audit reconciliation with #307, spec status/move, poll-interval clamp, key-source precedence warn, grant shape check, INTENT amendment entry)

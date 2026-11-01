@@ -342,9 +342,11 @@ runs and who schedules it.
 
 - 2026-11-01 — PR #305 adds the `mcp-server` agent door (rule 1 scope note,
   package list). The three §3 release-wiring edits are deferred to a
-  follow-up PR by owner ruling until the spec §0 gates close. Why: the
-  gates block any publish, and merging the wiring early would risk one.
-  No rule text changed; the scope note under rule 1 carries the detail.
+  follow-up PR by owner ruling until the spec §0 gates close, and the
+  cycle's `plan.md`/`LEDGER.md` stay in the folder past merge so the
+  wiring PR resumes from them. Why: the gates block any publish, and
+  merging the wiring early would risk one. No rule text changed; the
+  scope note under rule 1 carries the detail.
 - 2026-11-01 — Spec cycles move to one folder each under `specs/<name>/`
   (`spec.md`, `plan.md`, `LEDGER.md`), the pattern ruled 2026-10-23;
   "Below it", "How changes are made" step 1, and rule 10's location
