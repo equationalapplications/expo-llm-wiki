@@ -2,7 +2,8 @@
 
 Adopted 2026-11-01 (pattern ruled 2026-10-23, SDD decisions D6–D8). The
 canonical mechanics live once, in the knowledge vault's pr-spec-driven
-procedure ("Artifact layout"). This file is the in-repo summary so that a
+procedure ("Artifact layout"; the vault lives outside this repo). This
+file is the in-repo summary so that a
 session working from the repository alone can follow it.
 
 ## The folder is the unit
@@ -11,12 +12,14 @@ Each spec cycle gets one folder, `specs/<name>/`, holding three files:
 
 | File | What it is | Lifetime |
 |---|---|---|
-| `spec.md` | Problem, root cause with evidence from real runs or logs, proposed change, files touched, test plan. Carries a status line: **Draft → Reviewed → Implemented**. | Durable: stays after merge. |
+| `spec.md` | Problem, root cause with evidence from real runs or logs, proposed change, files touched, test plan. Carries a Status line: **Draft → Reviewed → Implemented**. | Durable: stays after merge. |
 | `plan.md` | The ordered implementation plan. | Transient: deleted by the final cleanup commit. |
 | `LEDGER.md` | One checkbox per plan task, an evidence link per tick, and a "what's in flight" line. | Transient: deleted by the final cleanup commit. |
 
-Everything in the folder is tracked in git. Only `.superpowers/` (runtime
-working state, never source) stays gitignored.
+Everything in the folder is tracked in git. Nothing under `specs/` is
+gitignored. `.superpowers/` (runtime working state, never source) stays
+ignored, and so does the legacy `docs/superpowers/plans` line; the nine
+legacy plans there are force-tracked.
 
 `<name>` is a short kebab-case slug, no date prefix: the folder's git
 history carries the dates.
@@ -43,7 +46,8 @@ history carries the dates.
 4. When review loops converge: one final cleanup commit on the same PR
    flips the spec to **Implemented** and deletes `plan.md` and
    `LEDGER.md` (never a separate cleanup PR). Then `gh pr ready`; bot
-   reviews and CI fire on the ready flip.
+   reviews that skip drafts fire on the ready flip. CI runs on every
+   push, draft included.
 5. After merge, the status-carrying `spec.md` and the code are the record.
    Nothing is left to clean up.
 
@@ -56,14 +60,16 @@ stop and ask; never invent.
 ## Larger work: roadmaps
 
 When work will not fit one spec cycle, an optional `docs/roadmaps/<epic>.md`
-sits between INTENT and the specs. It names and orders the slices; it never
-designs them. Create the directory with the first roadmap.
+sits between INTENT and the specs. It names and orders the slices; it
+carries no authority over a spec's content. Create the directory with the
+first roadmap.
 
 ## Legacy layout
 
 Specs and plans written before 2026-11-01 live in `docs/superpowers/specs/`
 and `docs/superpowers/plans/` (flat, date-prefixed). They are history and are
-not migrated. Their status lines still bind: update one in the same PR that
+not migrated. The legacy specs' Status lines still bind: update one in
+the same PR that
 changes the behaviour it describes. New work goes here.
 
 ## Skeletons
