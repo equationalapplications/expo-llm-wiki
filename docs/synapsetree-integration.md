@@ -154,19 +154,24 @@ The wiki does not enforce any of these — it accepts any string. Whatever the c
 
 ## 6. MCP surface
 
-SynapseTree's MCP tool surface maps to core calls. The current `core-llm-tools` package exports Gemini tool schemas for a subset; for the rest, SynapseTree wraps its own MCP handlers until the schemas land.
+SynapseTree's MCP tool surface maps to core calls. Two tool vocabularies exist, and this table keeps them apart:
 
-| Core call | Tool name (real | planned) | `core-llm-tools` schema shipped? |
-|---|---|---|
-| `wiki.getOntology()` | `wiki_get_ontology` | Yes (`wikiGetOntologyManifest`) |
-| `wiki.traverseGraph(entityId, ...)` | `wiki_traverse_graph` | Yes (`wikiTraverseGraphManifest`) |
-| `wiki.getInstructions()` | `wiki_get_instructions` | Yes (`wikiGetInstructionsManifest`) |
-| `wiki.read(entityId, query, { tokenBudget })` | `wiki_read` | **No** — host-defined MCP wrapper |
-| `wiki.read(entityId, query, { asOf })` | folded into `wiki_read` | **No** — host-defined wrapper; spec §7.4 open item |
-| `wiki.write(entityId, ...)` | `wiki_write` | **No** — host-defined MCP wrapper |
-| `wiki.remember(entityId, input)` | `memory_remember` | **No** — host-defined MCP wrapper |
-| `wiki.supersede(entityId, factId, ...)` | `wiki_supersede` | **No** — host-defined MCP wrapper |
-| `wiki.history(entityId, factId)` | `wiki_history` | **No** — host-defined wrapper; spec §7.4 open item |
+- **Host wrapper name** — the name a host that embeds the engine (SynapseTree's server, or your own) gives the tool. The `core-llm-tools` package exports Gemini tool schemas for a subset; for the rest, the host wraps its own MCP handlers until the schemas land.
+- **`mcp-server` tool** — the tool that the local stdio client [`@equationalapplications/mcp-server`](../packages/mcp-server/README.md) exposes for the same capability. It calls SynapseTree's HTTP API, not the engine directly, and its names are fixed by `specs/mcp-server/spec.md` §8 (ruling R9).
+
+| Core call | Host wrapper name (real \| planned) | `core-llm-tools` schema shipped? | `mcp-server` tool |
+|---|---|---|---|
+| `wiki.getOntology()` | `wiki_get_ontology` | Yes (`wikiGetOntologyManifest`) | — |
+| `wiki.traverseGraph(entityId, ...)` | `wiki_traverse_graph` | Yes (`wikiTraverseGraphManifest`) | `graph_traverse` |
+| `wiki.getInstructions()` | `wiki_get_instructions` | Yes (`wikiGetInstructionsManifest`) | — |
+| `wiki.read(entityId, query, { tokenBudget })` | `wiki_read` | **No** — host-defined MCP wrapper | `memory_search` |
+| `wiki.read(entityId, query, { asOf })` | folded into `wiki_read` | **No** — host-defined wrapper; spec §7.4 open item | `memory_search` (`asOf`) |
+| `wiki.write(entityId, ...)` | `wiki_write` | **No** — host-defined MCP wrapper | — |
+| `wiki.remember(entityId, input)` | `memory_remember` | **No** — host-defined MCP wrapper | `memory_remember` |
+| `wiki.supersede(entityId, factId, ...)` | `wiki_supersede` | **No** — host-defined MCP wrapper | `memory_supersede` |
+| `wiki.history(entityId, factId)` | `wiki_history` | **No** — host-defined wrapper; spec §7.4 open item | — |
+
+`mcp-server` also exposes four tools with no single core-call row: `memory_ingest` (document ingest), `memory_log_event` (append an event), `namespaces_list`, and `whoami` (SynapseTree account operations). A "—" means the local client has no tool for that call.
 
 > `core-llm-tools` ships schemas only for `wiki_traverse_graph`, `wiki_get_ontology`, and `wiki_get_instructions`. All other wiki calls (`read`, `write`, `remember`, `supersede`, `history`, the `asOf` form of `read`) require host-defined MCP wrappers with input validation that mirrors the core options — the JSON shapes are stable, only the tool schemas are missing. The `history`/`asOf` schemas are explicitly tracked as spec §7.4 open items.
 
