@@ -176,6 +176,28 @@ describe('forget() after migration v9 is unchanged (#316)', () => {
     expect(row?.deleted_at).not.toBeNull();
   });
 
+  it('boundary: schema_version 9 with source_ref_index missing refuses', async () => {
+    const { db, wiki } = await v15WithIndexedRef();
+    await db.runAsync(`DROP TABLE ${P}source_ref_index`);
+    await db.runAsync(`UPDATE ${P}meta SET value = '9' WHERE key = 'schema_version'`);
+    await expect(wiki.forget('ent', { sourceRef: 'r.md' })).rejects.toThrow(
+      'forget(): source_ref_index is missing on a schema_version=9 database; run setup()',
+    );
+    expect(await liveIds(db)).toEqual(['r1']);
+  });
+
+  it.each([['unparseable', "'abc'"], ['missing', null]])(
+    'boundary: %s schema_version counts as pre-v9 and skips the index',
+    async (_label, value) => {
+      const db = await dupFixture();
+      if (value === null) await db.runAsync(`DELETE FROM ${P}meta WHERE key = 'schema_version'`);
+      else await db.runAsync(`UPDATE ${P}meta SET value = ${value} WHERE key = 'schema_version'`);
+      const wiki = new WikiMemory(db, options);
+      await expect(wiki.forget('ent', { sourceRef: 'b.md' })).resolves.toEqual({ deleted: { entries: 1, tasks: 0 } });
+      expect(await liveIds(db)).toEqual(['a1', 'a2']);
+    },
+  );
+
   it('a v9+ store missing source_ref_index still refuses, with an actionable message, deleting nothing', async () => {
     const { db, wiki } = await v15WithIndexedRef();
     await db.runAsync(`DROP TABLE ${P}source_ref_index`);

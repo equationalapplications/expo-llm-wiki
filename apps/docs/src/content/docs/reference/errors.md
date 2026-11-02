@@ -74,7 +74,10 @@ await wiki.forget(entityId, { sourceRef: loser }); // once per losing sourceRef
 await wiki.setup();
 ```
 
-`forget()` soft-deletes the rows and records outbox `DELETE` events, like any other forget.
+`forget()` soft-deletes the rows (and records outbox `DELETE` events when `enableOutbox` is on),
+like any other forget. Check that each call reports `deleted.entries > 0`: `forget()` normalizes
+the `sourceRef` you pass, so a legacy row whose stored `source_ref` isn't in normalized form (for
+example one containing `/`) won't match. Use the SQL fallback below for those rows.
 Before the release that fixed [#316](https://github.com/equationalapplications/expo-llm-wiki/issues/316),
 `forget()` worked here only after some `setup()` under `'allow'` had opened the database; it
 now works on any open, including one refused under `'refuse'` or `'auto'`.

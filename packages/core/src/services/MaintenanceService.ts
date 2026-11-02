@@ -570,7 +570,7 @@ export class MaintenanceService {
           // the row is already soft-deleted or never existed, and skipped on a
           // pre-v9 store, whose v9 backfill rebuilds the index from live entries.
           const sourceRefIndexPromise = touchSourceRefIndex && sourceRef
-            ?this.sourceRefIndexRepo.softDeleteByEntityAndSourceRef(entityId, sourceRef, tx).then(() => undefined)
+            ? this.sourceRefIndexRepo.softDeleteByEntityAndSourceRef(entityId, sourceRef, tx).then(() => undefined)
             : null;
 
           const [entryResult, taskResult, refResult] = await Promise.all([
@@ -621,8 +621,8 @@ export class MaintenanceService {
    * Whether forget() should soft-delete in source_ref_index (#316,
    * specs/forget-pre-v9 §3.1). Normally true: setup()'s DDL creates the table.
    * False only when the table is absent AND the store is pre-v9 (stored
-   * schema_version < 9; missing/unparseable counts as 0, as in
-   * detectSchemaVersion) — the v9 recovery path, where there is no index row
+   * schema_version < 9; missing/unparseable counts as 0, like
+   * detectSchemaVersion's no-meta fallback) — the v9 recovery path, where there is no index row
    * to retire and v9's backfill reads live entries only. A v9+ store without
    * its index is corrupt: throw rather than skip, so the TOCTOU guard is never
    * silently bypassed.
