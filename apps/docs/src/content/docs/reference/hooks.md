@@ -45,8 +45,15 @@ const { data, isPending, error, refetch } = useMemoryRead(entityId, query, optio
 ```
 
 It fetches on mount, and again when `entityId`, `query`, `wiki`, or relevant `options` change
-(`maxResults`, `preFilterLimit`, `hybridWeight`, `tierWeights`). `entityId` may be an array. An
+(`maxResults`, `preFilterLimit`, `hybridWeight`, `tierWeights`, `includeZeroWeightEntities`,
+`excludeDrafts`). `entityId` may be an array. An
 in-flight result always lands before a queued refetch starts.
+
+- A `tierWeights` entry of `1.0` counts the same as leaving it out, so it doesn't trigger a refetch.
+- `includeZeroWeightEntities: false` and `undefined` behave the same. Only switching to `true`
+  refetches.
+- For multi-entity reads, `data.metadata` is also filled in. `data.factScores` is conditional:
+  it appears only when the query is non-empty and scored results were captured.
 
 ### `useWikiTraversal`
 
@@ -55,6 +62,8 @@ const { nodes, edges, isPending, error, refetch } = useWikiTraversal(entityId, {
 ```
 
 Accepts the same options as [`traverseGraph()`](/expo-llm-wiki/guides/graphrag/#traversal-options).
+`maxDepth` is clamped to 1–3. `edgeTypes: []` matches nothing, while leaving it out matches every
+edge type. Pass the result to `formatGraphContext({ nodes, edges })` for a prompt-ready block.
 
 ### `useOntologyManifest`
 

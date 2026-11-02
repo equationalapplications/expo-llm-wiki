@@ -124,14 +124,14 @@ jobs:
 
       - run: pnpm test
 
-      - name: Verify README GraphRAG SQL is in sync with EdgeRepository
+      - name: Verify docs GraphRAG SQL is in sync with EdgeRepository
         run: |
           REPO=packages/core/src/repositories/EdgeRepository.ts
-          DOC=README.md
+          DOC=apps/docs/src/content/docs/guides/graphrag.mdx
           # Presence checks: both files must still contain each SQL fragment.
           for pat in "WITH RECURSIVE" "instr(w.visited" "WHEN 'certain' THEN 2"; do
             grep -q -- "$pat" "$REPO" || { echo "Missing '$pat' in EdgeRepository"; exit 1; }
-            grep -q -- "$pat" "$DOC" || { echo "Missing '$pat' in README.md"; exit 1; }
+            grep -q -- "$pat" "$DOC" || { echo "Missing '$pat' in $DOC"; exit 1; }
           done
           # Content checks: the depth guard and final ranking clause must match
           # semantically, not just be present — this is what catches an operator
@@ -139,19 +139,19 @@ jobs:
           extract() {
             # $1 = file, $2 = grep pattern; strips SQL comments/template-literal
             # prefix interpolation and collapses whitespace so the two files'
-            # differing styles (raw TS vs abridged, commented README) compare equal.
+            # differing styles (raw TS vs abridged, commented docs) compare equal.
             grep -- "$2" "$1" | head -1 \
               | sed -E 's/--.*$//; s/\$\{this\.prefix\}/llm_wiki_/g; s/[[:space:]]+/ /g; s/^ //; s/ $//'
           }
           repo_depth=$(extract "$REPO" "WHERE w.depth")
           doc_depth=$(extract "$DOC" "WHERE w.depth")
           if [ "$repo_depth" != "$doc_depth" ]; then
-            echo "Depth guard clause differs:"; echo "  EdgeRepository: $repo_depth"; echo "  README:         $doc_depth"; exit 1
+            echo "Depth guard clause differs:"; echo "  EdgeRepository: $repo_depth"; echo "  docs:           $doc_depth"; exit 1
           fi
           repo_order=$(extract "$REPO" "ORDER BY depth ASC")
           doc_order=$(extract "$DOC" "ORDER BY depth ASC")
           if [ "$repo_order" != "$doc_order" ]; then
-            echo "ORDER BY clause differs:"; echo "  EdgeRepository: $repo_order"; echo "  README:         $doc_order"; exit 1
+            echo "ORDER BY clause differs:"; echo "  EdgeRepository: $repo_order"; echo "  docs:           $doc_order"; exit 1
           fi
 
       # Audit runs LAST so a single high-severity advisory introduced by

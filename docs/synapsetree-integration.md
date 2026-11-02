@@ -4,7 +4,7 @@ This guide documents how **SynapseTree**, a SaaS tenant-aware knowledge store, r
 
 The guide follows the [2026-09-29 competitive-memory design spec](superpowers/specs/2026-09-29-competitive-memory-design.md) (target release **7.8.0**) and the spec's host-responsibility section (§6.5) — host-fulfilled contracts the engine does not implement.
 
-> **Audience:** SynapseTree backend and platform engineers integrating `expo-llm-wiki` as a tenant-aware knowledge store. Assumes familiarity with the wiki's core API at [`packages/core/README.md`](../../packages/core/README.md).
+> **Audience:** SynapseTree backend and platform engineers integrating `expo-llm-wiki` as a tenant-aware knowledge store. Assumes familiarity with the wiki's core API in the [API reference](https://equationalapplications.github.io/expo-llm-wiki/reference/wiki-memory/).
 
 ---
 
@@ -189,7 +189,7 @@ The `tokensUsed` field on `RunPendingMaintenanceResult` is your per-request main
 
 - [2026-09-29 competitive-memory design spec](superpowers/specs/2026-09-29-competitive-memory-design.md) — §6.5 host responsibilities, §7.3 docs, §7.4 open item
 - [`docs/benchmarks.md`](./benchmarks.md) — 7.8.0 rerun results
-- [`packages/core/README.md`](../../packages/core/README.md#deferred-maintenance) — deferred maintenance API, `runPendingMaintenance`, `getPendingMaintenance`
-- [`packages/core/README.md`](../../packages/core/README.md#temporal-facts) — temporal API (`supersede`, `history`, `asOf`)
-- [`packages/core/README.md`](../../packages/core/README.md#librarian-strategies) — `'ops'` vs `'legacy'` strategies
-- Root [`README.md`](../../README.md) — engine overview, retrieval pipeline
+- [Deferred maintenance](https://equationalapplications.github.io/expo-llm-wiki/guides/maintenance/#deferred-maintenance) — deferred maintenance API, `runPendingMaintenance`, `getPendingMaintenance`
+- [Temporal facts](https://equationalapplications.github.io/expo-llm-wiki/guides/temporal-facts/) — temporal API (`supersede`, `history`, `asOf`)
+- [Librarian strategies](https://equationalapplications.github.io/expo-llm-wiki/guides/maintenance/#librarian-strategies) — `'ops'` vs `'legacy'` strategies
+- [Developer guide](https://equationalapplications.github.io/expo-llm-wiki/) — engine overview; [retrieval pipeline](https://equationalapplications.github.io/expo-llm-wiki/concepts/retrieval/)

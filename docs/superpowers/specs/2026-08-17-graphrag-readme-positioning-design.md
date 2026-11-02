@@ -305,7 +305,7 @@ const graph = await wiki.traverseGraph(entityId, { sourceId, maxDepth: 2 });
 Insert after the existing `useWikiTraversal` bullet (around line 23) or as the closing bullet of the Features list:
 
 ```markdown
-- **GraphRAG on React Native** — `useWikiTraversal` + `formatGraphContext` give you the same SQLite-only graph retrieval as the core package; pair with `@equationalapplications/schema-org-llm-wiki` for the canonical ontology. See [root README: GraphRAG](../../README.md#graphrag-sql-only-graph-retrieval).
+- **GraphRAG on React Native** — `useWikiTraversal` + `formatGraphContext` give you the same SQLite-only graph retrieval as the core package; pair with `@equationalapplications/schema-org-llm-wiki` for the canonical ontology. See [GraphRAG guide](https://equationalapplications.github.io/expo-llm-wiki/guides/graphrag/).
 ```
 
 #### 5. `packages/react/README.md` — extend existing bullet
@@ -316,14 +316,14 @@ The existing bullet at line 20 reads:
 
 Extend it to:
 
-> **Graph traversal (GraphRAG)** — Walk the knowledge graph N hops from a fact and format the result for LLM prompts (`useWikiTraversal`, `formatGraphContext`). This is the React-web surface of the GraphRAG retrieval layer; pair with `@equationalapplications/schema-org-llm-wiki` for the canonical ontology. See [root README: GraphRAG](../../README.md#graphrag-sql-only-graph-retrieval).
+> **Graph traversal (GraphRAG)** — Walk the knowledge graph N hops from a fact and format the result for LLM prompts (`useWikiTraversal`, `formatGraphContext`). This is the React-web surface of the GraphRAG retrieval layer; pair with `@equationalapplications/schema-org-llm-wiki` for the canonical ontology. See [GraphRAG guide](https://equationalapplications.github.io/expo-llm-wiki/guides/graphrag/).
 
 ### 6. `packages/core-llm-tools/README.md` — one-line cross-link
 
 Append a bullet to the Features list (or wherever the existing tool-schemas bullet lives):
 
 ```markdown
-- **GraphRAG tool schemas** — `wikiTraverseGraphManifest` and `wikiGetOntologyManifest` are pre-built Gemini tool schemas for the GraphRAG retrieval API; see [root README: GraphRAG](../../README.md#graphrag-sql-only-graph-retrieval).
+- **GraphRAG tool schemas** — `wikiTraverseGraphManifest` and `wikiGetOntologyManifest` are pre-built Gemini tool schemas for the GraphRAG retrieval API; see [GraphRAG guide](https://equationalapplications.github.io/expo-llm-wiki/guides/graphrag/).
 ```
 
 ### 7. `packages/okf/README.md` — one-line cross-link
@@ -331,7 +331,7 @@ Append a bullet to the Features list (or wherever the existing tool-schemas bull
 In the existing intro paragraph (line 60 already mentions "knowledge graph edges"), append:
 
 ```markdown
-> **GraphRAG compatibility:** core-okf is database-agnostic. The adapter that can populate `llm_wiki_edges` for `traverseGraph()` lives in `@equationalapplications/core-llm-wiki`. See [root README: GraphRAG](../../README.md#graphrag-sql-only-graph-retrieval).
+> **GraphRAG compatibility:** core-okf is database-agnostic. The adapter that can populate `llm_wiki_edges` for `traverseGraph()` lives in `@equationalapplications/core-llm-wiki`. See [GraphRAG guide](https://equationalapplications.github.io/expo-llm-wiki/guides/graphrag/).
 ```
 
 ### 8. `packages/prisma-outbox/README.md` — one-line cross-link
@@ -339,7 +339,7 @@ In the existing intro paragraph (line 60 already mentions "knowledge graph edges
 This package is orthogonal to the memory engine (transactional outbox for SQLite → Prisma sync). Add a single sentence at the end of the intro:
 
 ```markdown
-For the GraphRAG retrieval surface (`traverseGraph`, `useWikiTraversal`, `formatGraphContext`), see [root README: GraphRAG](../../README.md#graphrag-sql-only-graph-retrieval).
+For the GraphRAG retrieval surface (`traverseGraph`, `useWikiTraversal`, `formatGraphContext`), see [GraphRAG guide](https://equationalapplications.github.io/expo-llm-wiki/guides/graphrag/).
 ```
 
 ### 9. `apps/wiki-demo/README.md` — one-line cross-link
@@ -347,7 +347,7 @@ For the GraphRAG retrieval surface (`traverseGraph`, `useWikiTraversal`, `format
 If `wiki-demo` has a "What's shown here" or intro section, append:
 
 ```markdown
-The demo exercises the GraphRAG retrieval path (`traverseGraph` + `formatGraphContext`) against a seeded schema.org ontology. See [root README: GraphRAG](../../README.md#graphrag-sql-only-graph-retrieval).
+The demo exercises the GraphRAG retrieval path (`traverseGraph` + `formatGraphContext`) against a seeded schema.org ontology. See [GraphRAG guide](https://equationalapplications.github.io/expo-llm-wiki/guides/graphrag/).
 ```
 
 ---
@@ -390,7 +390,7 @@ Before merging the doc updates:
 
 1. **CI guardrail passes** — the three grep patterns all hit `EdgeRepository.ts` (verified at spec time: 2/1/1 matches respectively).
 2. **Manual SQL spot-check** — run `git diff main` and verify the snippet's `UNION` keyword, `instr(w.visited` cycle-guard substring, and `CASE n.confidence` rank expression all appear in `EdgeRepository.ts`.
-3. **Internal links resolve** — every `[root README: GraphRAG](../../README.md#graphrag-sql-only-graph-retrieval)` cross-link targets an actual heading anchor. Verify by clicking each link in the rendered GitHub preview.
+3. **Internal links resolve** — every `[GraphRAG guide](https://equationalapplications.github.io/expo-llm-wiki/guides/graphrag/)` cross-link targets an actual page. Verify by clicking each link in the rendered GitHub preview.
 4. **Mermaid still renders** — the augmented mermaid block must not have syntax errors. Verify by pasting into the GitHub mermaid live editor.
 5. **SEO keyword coverage** — grep the final diff for the strings `GraphRAG`, `graph RAG`, `SQLite`, `WITH RECURSIVE`. Expect at least 12 total hits across all updated READMEs.
 6. **No source code touched** — `git diff --stat main` shows only `.md` files and at most one `.github/workflows/*.yml` changed. Zero files under `packages/*/src/**`.

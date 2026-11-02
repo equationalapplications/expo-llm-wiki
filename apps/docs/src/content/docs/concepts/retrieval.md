@@ -45,8 +45,22 @@ A few properties come out of this design:
 - **It never fails because of the network.** A failed embedding falls back to keyword search,
   and `onRetrievalFallback` tells you it happened so you can show an "offline" hint.
 - **Two-phase reads.** Scoring reads only minimal columns. Full rows are fetched for the winners only.
-- **Vector cache.** Parsed vectors are cached per entity (up to 16 entities and 500 vectors
-  each). Mutations invalidate the cache, and `clearVectorCache()` frees it manually.
+- **Vector cache.** Parsed vectors are cached per entity. See [Vector cache](#vector-cache).
+
+## Vector cache
+
+Full-scan semantic reads cache the parsed `Float32Array` vectors in memory, keyed by entity, so a
+repeated query doesn't parse them again.
+
+- Up to **16 entities** are cached. When the limit is reached, the oldest-inserted entity is evicted.
+- An entity with more than **500** live facts isn't cached at all, and any existing cache for it
+  is dropped.
+- Only single-entity full-scan reads on the built-in cosine path fill the cache. Reads with
+  `preFilterLimit`, multi-entity reads, and reads served by a `vectorRanker` don't fill it. A
+  `preFilterLimit` read still reuses vectors that are already cached.
+- Any mutation clears it: `runLibrarian`, `runHeal`, `runPrune`, `runReembed`, `ingestDocument`,
+  `importDump`, and `forget`.
+- On memory-constrained runtimes, call `wiki.clearVectorCache()` to free it yourself.
 
 ## Keyword index backends
 
@@ -62,6 +76,22 @@ The `indexStrategy` config option picks the keyword engine:
 sql.js ships without FTS5, so browser apps use MiniSearch under `'auto'`. The two backends rank
 results slightly differently.
 :::
+
+Operational details:
+
+- The first `setup()` that adds FTS5 to an existing database rebuilds the index in bounded
+  windows and sweeps, each in its own transaction, so the write lock is not held for the whole
+  rebuild. A rebuild continues across later `setup()` and `syncSearchIndex()` calls until it
+  finishes.
+- Under `'auto'`, a failed FTS5 init is retried once. After that, `setup()` completes with keyword
+  search unavailable: keyword reads throw `WikiSearchUnavailableError`. It never quietly switches
+  to MiniSearch.
+- While search is unavailable, `runHeal` returns `searchUnavailable: true` and
+  `runPendingMaintenance` lists skipped jobs in `perEntity[].searchUnavailable`. Calling
+  `syncSearchIndex()` with no arguments retries the init, backing off from 5 seconds up to 5
+  minutes after a failure.
+- MiniSearch keeps all entry text in the JS heap. The measured ceiling is about 1 million entries
+  on a default Node heap (`--max-old-space-size`).
 
 ## Tuning knobs at a glance
 

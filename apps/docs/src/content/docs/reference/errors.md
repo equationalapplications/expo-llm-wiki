@@ -36,3 +36,38 @@ try {
 | `WikiParseError` | The model's output couldn't be parsed | `tier`, `position` | Usually surfaces as `parseFailures` rather than a throw |
 
 Errors you throw from your own callbacks pass through with their type unchanged.
+
+## Migration v9 fails on existing duplicates
+
+Schema migrations run in `setup()`. They're additive and safe to re-run. Migration v9
+(`add_source_ref_index`) adds a `source_ref_index` table with a unique `(entity_id, source_hash)`
+constraint on live rows, so each content hash belongs to at most one `sourceRef` per entity. It
+closes a race where two concurrent ingests under different `sourceRef`s could both store the same
+content. (One document's facts all share a hash, which is fine. The rule is about `sourceRef`s.)
+
+A database created before that fix may already have a hash held under two or more live
+`sourceRef`s. Then `setup()` throws:
+
+```text
+Migration v9 (add_source_ref_index) failed: existing live rows have multiple sourceRefs sharing a hash. Found N duplicate (entity_id, source_hash) groups. …
+```
+
+The message counts the groups and shows up to five. Nothing is deleted, the table isn't created,
+and the schema version doesn't advance, so it's safe to retry.
+
+To fix it, for each group delete every losing `sourceRef`'s live rows directly — `wiki.forget()`
+does not work here, because the duplicate check behind it queries `source_ref_index`, which v9
+hasn't created yet on an affected database. Run this once per losing `(entityId, sourceRef)` pair,
+then run `setup()` again:
+
+```sql
+BEGIN;
+DELETE FROM llm_wiki_entries
+WHERE entity_id = :entityId AND source_ref = :sourceRef AND deleted_at IS NULL;
+COMMIT;
+```
+
+The prefix in your database may differ from `llm_wiki_` — match the table name in your schema.
+Deleting the rows this way touches only `entries`, so it is safe before the v9 migration runs;
+the keep-side `sourceRef` is untouched, and v9's own duplicate check passes on the next
+`setup()`.

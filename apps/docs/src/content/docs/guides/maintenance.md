@@ -53,9 +53,13 @@ await wiki.runReembed('user-123', { skipExisting: true }); // only facts with no
 - Run it after you **add** `embed()` or **change** embedding models.
 - `deferred` rows are inside an exponential backoff (starting at 60 s, doubling, capped at 24 h).
   That's not an error.
-- `permanentlyFailed` covers overflow or 5 failed attempts. Retry them with `{ force: true }`.
-- A convergence loop should test `failed`, not `deferred`. Repeated `storage_error` failures point
-  to an infrastructure problem, not something to wait out.
+- `permanentlyFailed` covers a `float32_overflow` failure or 5 failed attempts. Retry them with
+  `{ force: true }`, which also skips the backoff window for `deferred` rows.
+- A convergence loop should test `failed`, not `deferred`.
+- A `storage_error` counts in `failed` but never enters backoff, because storage is treated as a
+  separate failure domain from the embedding provider. While writes keep failing, every sweep retries every row, so a loop on
+  `failed` can spin. Treat repeated `storage_error` failures as an infrastructure problem to fix,
+  not something to wait out.
 
 ## Prune
 
@@ -142,5 +146,13 @@ const unsubscribe = wiki.subscribeEntityStatus('user-42', (s) => render(s));
 unsubscribe();
 ```
 
-The callback fires once immediately and then on every change. In React, use
+The callback fires once, synchronously, before `subscribeEntityStatus` returns (treat it as the
+initial value), then again whenever any of the three flags flips.
+
+- Each call may get a fresh object. Compare the three booleans, not object identity.
+- A callback that throws is caught and logged. It doesn't affect other subscribers or the job.
+- A subscription covers one entity. There's no wildcard form.
+- `unsubscribe()` is safe to call more than once.
+
+In React, use
 [`useEntityStatus`](/expo-llm-wiki/reference/hooks/#useentitystatus).

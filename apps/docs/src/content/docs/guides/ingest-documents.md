@@ -81,8 +81,41 @@ sourceRef: 'docs/onboarding.md'  // ⚠ becomes 'docsonboarding.md'
 | `chunkOverlap` | `400` characters | Context repeated across chunk boundaries |
 | `chunkConcurrency` | `1` | Parallel LLM calls per ingest |
 
-Set these globally in `config` or per call. The same chunker is exported as `chunkText()` if you
-need to reproduce chunk boundaries yourself. Surrogate pairs are never split.
+Set these globally in `config` or per call. Surrogate pairs are never split.
+
+To check a batch of sources at once, pass an array to `hasChanged`. Each result is
+`{ sourceRef, changed, duplicateOf? }`. `duplicateOf`, when present, names the different stored
+`sourceRef` that already holds the same hash (in the database's normalized spelling).
+
+### Reproduce chunk boundaries
+
+The same chunker is exported, so you can re-chunk a source exactly as ingest did. That's useful
+for finding the passage a fact came from:
+
+```ts
+import {
+  chunkText,
+  safeSlice,
+  DEFAULT_MAX_CHUNK_LENGTH, // 12000
+  DEFAULT_CHUNK_OVERLAP,    // 400
+} from '@equationalapplications/core-llm-wiki';
+
+const { chunks, truncated } = chunkText(source, DEFAULT_MAX_CHUNK_LENGTH, DEFAULT_CHUNK_OVERLAP);
+```
+
+- Empty or whitespace-only input returns `{ chunks: [], truncated: false }` without checking the
+  other arguments.
+- Otherwise `chunkText` throws unless `maxChunkLength` is an integer of at least 2 and `overlap` is
+  a non-negative integer smaller than `maxChunkLength`.
+- `ingestDocument()` quietly clamps overlap to `maxChunkLength - 1` and rounds non-integer values
+  down, but `chunkText` rejects both. If
+  you configured a custom `maxChunkLength`, apply `Math.min(Math.floor(overlap), maxChunkLength - 1)`
+  yourself (floor first: ingestion rounds non-integer overlap down before clamping, and
+  `chunkText` rejects fractions)
+  before calling it. (For example, `maxChunkLength: 100` with the default overlap ingests at an
+  overlap of `99`.)
+- `safeSlice(value, start, end?)` works like `String.prototype.slice`, but clamps out-of-range
+  indices, swaps a reversed range, and never splits a surrogate pair.
 
 ## Duplicate content under another name
 
@@ -100,6 +133,13 @@ await wiki.ingestDocument('team', params, { onDuplicateHash: 'skip' });
 | `'throw'` | Checks before calling the LLM and throws `WikiDuplicateHashError` (which carries the existing `sourceRef`) |
 
 Only live references count. Soft-deleted ones never trigger the check.
+
+Calls on the same `WikiMemory` instance are serialized per hash. A writer in another process, or
+another `WikiMemory` instance on the same database, can still claim the hash after the pre-check
+passes. The transaction then rolls back after the LLM extraction already ran. You still get the
+diagnostics that describe the extraction (`fact_rejected`, `fact_deduplicated`). Diagnostics tied to the
+rolled-back write (`grounding_*`, `edge_dropped`) are dropped, because the fact IDs they name were
+never committed.
 
 ## Inventory and deletion
 

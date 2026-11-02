@@ -35,7 +35,7 @@ await wiki.setup();
 | Package | Range |
 |---|---|
 | `expo-sqlite` | `^14 \|\| ^15 \|\| ^55 \|\| ^56 \|\| ^57 \|\| ^58` |
-| `expo-crypto` | matching your Expo SDK |
-| `react` | `>=17` (optional, needed for hooks) |
+| `expo-crypto` | `>=12` |
+| `react` | `>=17` |
 
 Start with the [Expo quickstart](/expo-llm-wiki/start/quickstart-expo/).

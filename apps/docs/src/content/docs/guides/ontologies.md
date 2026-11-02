@@ -105,6 +105,29 @@ target, the **exact** type wins over the parent. Validation rejects any of the f
 | Two or more levels | `Parent chain too deep: a → b → c` |
 | Blank or non-string `parent_type` | `Ontology parent_type must be a non-empty string when present` |
 
+How it behaves in detail:
+
+- **One level, checked everywhere.** The manifest is validated whenever it's saved *and* whenever
+  it's read. `setOntologyManifest` rejects a chain up front. The depth check also catches 2-cycles
+  (`a → b → a`).
+- **Absent is fine, blank isn't.** Leaving out `parent_type` means "no parent". A key that is
+  present must be a non-empty string.
+- **Parents are real types.** A fact can be classified as the bare parent (`creativework`). There's
+  no `abstract` flag. To steer the model toward the children, say so in the parent's description.
+- **Matching works on both ends, one hop.** A child satisfies an edge declared on its parent as
+  either the source or the target. Matching never walks further than one level.
+- **The trade-off.** An edge declared to `creativework` admits every child of `creativework`, and
+  there's no way to say "the parent only". A type that needs exact-only targets must not have
+  children.
+- **Emergent mode.** The model may propose `parent_type` in `ontology_updates`. Those proposals are
+  treated as untrusted: an invalid `parent_type` is dropped rather than failing the ingest. To
+  change an existing type's parent, call `setOntologyManifest`.
+- **No migration needed.** `parent_type` is optional, and manifests without it validate exactly as
+  before.
+
+The full design is in the
+[ontology parent field spec](https://github.com/equationalapplications/expo-llm-wiki/blob/main/docs/superpowers/specs/2026-08-28-ontology-parent-field-spec.md).
+
 ## In React
 
 ```tsx
@@ -129,12 +152,19 @@ edges. `runOntologyBackfill()` types them **in place**:
 
 ```ts
 let r;
+let previousRemaining = Infinity;
 do {
   r = await wiki.runOntologyBackfill(entityId);
   // { scanned, typed, failedValidation, edgesAdded, remaining, deferred, skipped }
+  if (r.remaining >= previousRemaining) break; // no progress: stop, retry on the next trigger
+  previousRemaining = r.remaining;
 } while (r.remaining > 0);
 ```
 
+- **Stop when a pass doesn't lower `remaining`.** A fact whose provider call keeps throwing (a
+  `call_error`, or a thrown `classify`) gets no cooldown stamp and stays eligible, so a bare
+  `while (remaining > 0)` loop can spin on it forever. The guard above stops on no progress;
+  the next trigger retries.
 - **You own the trigger.** Running it after each sync or import is a good default. It's safe to
   swallow a `WikiBusyError`, since the next run retries.
 - **It only adds.** It never creates, deletes, or rewrites facts, never overwrites an existing
@@ -168,4 +198,7 @@ await wiki.runOntologyBackfill('user-1', { classifier: 'llm' }); // force the ge
 Jev classifier on Cloudflare Workers AI (`typesafe/jev`), behind its **Type untyped facts** button.
 
 `classify` receives `{ state, questions }`, where each question is `choice`, `binary`, or
-`score`. It returns `{ answers }`, which the engine validates as untrusted input.
+`score`. It returns `{ answers }`, which the engine validates as untrusted input: off-list choices
+and out-of-range probabilities count toward `failedValidation`, and a `classify` call that throws
+counts toward `skipped` and is retried on the next pass. Answers below `classifyMinConfidence` are
+retried after the cooldown.
