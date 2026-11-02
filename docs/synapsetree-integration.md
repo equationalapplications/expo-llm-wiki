@@ -164,10 +164,11 @@ SynapseTree's MCP tool surface maps to core calls. The current `core-llm-tools` 
 | `wiki.read(entityId, query, { tokenBudget })` | `wiki_read` | **No** — host-defined MCP wrapper |
 | `wiki.read(entityId, query, { asOf })` | folded into `wiki_read` | **No** — host-defined wrapper; spec §7.4 open item |
 | `wiki.write(entityId, ...)` | `wiki_write` | **No** — host-defined MCP wrapper |
+| `wiki.remember(entityId, input)` | `memory_remember` | **No** — host-defined MCP wrapper |
 | `wiki.supersede(entityId, factId, ...)` | `wiki_supersede` | **No** — host-defined MCP wrapper |
 | `wiki.history(entityId, factId)` | `wiki_history` | **No** — host-defined wrapper; spec §7.4 open item |
 
-> `core-llm-tools` ships schemas only for `wiki_traverse_graph`, `wiki_get_ontology`, and `wiki_get_instructions`. All other wiki calls (`read`, `write`, `supersede`, `history`, the `asOf` form of `read`) require host-defined MCP wrappers with input validation that mirrors the core options — the JSON shapes are stable, only the tool schemas are missing. The `history`/`asOf` schemas are explicitly tracked as spec §7.4 open items.
+> `core-llm-tools` ships schemas only for `wiki_traverse_graph`, `wiki_get_ontology`, and `wiki_get_instructions`. All other wiki calls (`read`, `write`, `remember`, `supersede`, `history`, the `asOf` form of `read`) require host-defined MCP wrappers with input validation that mirrors the core options — the JSON shapes are stable, only the tool schemas are missing. The `history`/`asOf` schemas are explicitly tracked as spec §7.4 open items.
 
 For now, expose `wiki_traverse_graph` (and optionally `wiki_get_ontology` / `wiki_get_instructions`) via `core-llm-tools` schemas; expose the rest as host-defined MCP wrappers.
 

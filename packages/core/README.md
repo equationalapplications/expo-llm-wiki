@@ -67,6 +67,29 @@ For programmatic pipelines — importing pre-classified data, building a GraphRA
 
 This is the GraphRAG seed path: load a corpus, walk it.
 
+## Direct fact writes
+
+`remember()` stores one mutable fact in one transaction, with no text-generation (LLM) call, and returns the stored row. When `llmProvider.embed` is configured it does await one embedding call before resolving (failures surface as `embedding_failed`, not a throw). Use it when the host already knows the fact (a user preference, an agent's observation the user approved). To replace a fact, use `supersede()` so history is kept.
+
+```typescript
+const fact = await wiki.remember('user-123', {
+  title: 'Prefers merge commits',
+  body: 'Kurt wants PRs merged with merge commits, never squashed.',
+  tags: ['git'],                 // default []
+  confidence: 'certain',         // default
+  source_type: 'user_stated',    // or 'user_confirmed'; default 'user_stated'
+  okf_type: 'Preference',        // optional; resolved like an upsertGraph node type
+  valid_from: Date.parse('2026-03-01'), // optional epoch ms
+});
+fact.id; // 'fact_…' — the row as stored: timestamps, defaults, isStale, trustTier
+```
+
+- Validation throws `TypeError` before anything is written: `title` non-empty, `body` a string, `tags` an array of strings, known `confidence` and `source_type` (explicit `null` is rejected; omit the field to take the default), `okf_type` a non-empty string or null, finite and >= 0 `valid_from`. Nothing is clipped; length limits are the host's.
+- `okf_type` follows the `upsertGraph` rule: the manifest's canonical slug when known; `WikiStrictOntologyViolation` under strict mode otherwise; `null` otherwise.
+- Never starts the librarian or heal and writes no event, in `'auto'` and `'deferred'` mode alike. Embeds through `llmProvider.embed` when present (failures surface as `embedding_failed` with `operation: 'remember'`); keyword-only otherwise, and `getPendingMaintenance().reembedPending` picks it up once an `embed` exists.
+- Not idempotent: two identical calls store two facts. Hosts that expose retries own the idempotency key.
+- Opens its own transaction. Do not call it inside `withTransactionAsync`.
+
 ## Temporal facts
 
 Facts carry an optional validity window. Nothing changes until you use it: facts without validity data are always current.
@@ -132,6 +155,7 @@ const report = await wiki.runPendingMaintenance({ tokenBudget: 20_000, deadlineM
 ```
 
 - `getPendingMaintenance()` shows the backlog per entity without calling a model.
+- `remember()` and `supersede()` never schedule maintenance in either mode; only `write()` does.
 - The budget covers text-generation tokens only; embedding calls are not counted. Figures are provider-reported when `generateTextWithUsage` exists, otherwise estimated at characters ÷ 4.
 - Entities share the budget fairly: each round runs one batch per entity.
 - `budget_too_small` names the first job and entity whose smallest step needed more than the whole budget; other entities may have hit the same limit in that run.
@@ -720,6 +744,7 @@ const wiki = createWiki(db, {
 - **Isolated.** The hook is called synchronously. A throwing or rejecting hook never affects the operation, and its failure is logged with `console.warn`.
 - **After commit.** Transactional diagnostics are delivered after the operation's transaction commits. An operation that throws delivers none; the exception is the signal. `upsertGraph` runs in your transaction, so its diagnostics are delivered when it resolves. Disregard them if you roll back.
 - **`trigger`.** `'auto'` marks work started by `autoLibrarianThreshold` / `autoHealThreshold`. A failed background job is reported as `background_job_failed` with `operation` set to the job.
+- **`operation`** names the entry point: `ingest`, `upsertGraph`, `librarian`, `heal`, `ontologyBackfill`, `reembed`, `importDump`, `write`, `supersede`, `remember`, `read`, `prune`. New values may be added in minor releases.
 - **Forward-compatible.** New codes may be added in minor releases; ignore codes you don't recognize.
 - **Console output is unchanged** when a hook is set and succeeds: every existing core line is identical. A throwing or rejecting hook adds only its own `console.warn`, and a non-function `onDiagnostic` warns once.
 

@@ -1,3 +1,16 @@
+## [7.15.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.14.0...v7.15.0) (2026-11-01)
+
+### Features
+
+* **core:** remember() — store a fact directly without an LLM step ([e87245e](https://github.com/equationalapplications/expo-llm-wiki/commit/e87245e27898356911a0615e83ffc6a68f3d6fdf))
+* **core:** RememberInput type and remember() input normalizer ([d88da97](https://github.com/equationalapplications/expo-llm-wiki/commit/d88da97aca2658d831814e3bd7acd6bd6db4a6d5))
+
+### Bug Fixes
+
+* **core:** remember() CodeRabbit round-1 resolutions ([89261d0](https://github.com/equationalapplications/expo-llm-wiki/commit/89261d0365a3104a0091bc3bc944daf079037e29))
+* **core:** remember() review resolutions - reject explicit null for confidence and source_type ([486fe76](https://github.com/equationalapplications/expo-llm-wiki/commit/486fe76fbf11f2cbac29c284a382984b8ab50440))
+* **core:** remember() Tier-4 Fable review resolutions ([f941111](https://github.com/equationalapplications/expo-llm-wiki/commit/f94111120b56bbc35b3174e7b2afab6fceb775cd))
+
 ## [7.14.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.13.1...v7.14.0) (2026-11-01)
 
 ### Features
