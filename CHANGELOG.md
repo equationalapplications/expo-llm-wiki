@@ -1,3 +1,9 @@
+## [7.15.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.15.0...v7.15.1) (2026-11-02)
+
+### Bug Fixes
+
+* decouple docs build from release path; add docs-site spec (Opus T3) ([3c03cb7](https://github.com/equationalapplications/expo-llm-wiki/commit/3c03cb7ba5cbd90475635d3cba51c95fe6a88cad))
+
 ## [7.15.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.14.0...v7.15.0) (2026-11-01)
 
 ### Features
