@@ -36,6 +36,15 @@ describe('legacy declarations', () => {
     }
   });
 
+  it.each(PAIRS)('%s shares no nested object with %s', (legacyExport, canonicalExport) => {
+    const legacyM = CoreLlmTools[legacyExport];
+    const canonicalM = CoreLlmTools[canonicalExport];
+    expect(legacyM.schema).not.toBe(canonicalM.schema);
+    expect(legacyM.schema.parameters).toBeDefined();
+    expect(legacyM.schema.parameters).not.toBe(canonicalM.schema.parameters);
+    expect(legacyM.schema.parameters?.properties).not.toBe(canonicalM.schema.parameters?.properties);
+  });
+
   it('the canonical and legacy name sets do not overlap', () => {
     const canonical = new Set(PAIRS.map(([, c]) => CoreLlmTools[c].name));
     for (const [l] of PAIRS) expect(canonical.has(CoreLlmTools[l].name)).toBe(false);
@@ -43,13 +52,20 @@ describe('legacy declarations', () => {
 });
 
 describe('canonicalToolName', () => {
+  const WARNED = Symbol.for('equationalapplications.core-llm-tools.canonicalToolName.warned');
+  const resetFlag = () => {
+    delete (globalThis as Record<symbol, unknown>)[WARNED];
+  };
+
   afterEach(() => {
     vi.restoreAllMocks();
     vi.resetModules();
+    resetFlag();
   });
 
   async function fresh() {
     vi.resetModules();
+    resetFlag();
     return (await import('../src/legacy')).canonicalToolName;
   }
 
@@ -88,5 +104,16 @@ describe('canonicalToolName', () => {
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0][0]).toContain('"wiki_get_ontology" is deprecated; use "ontology_get"');
     expect(warn.mock.calls[0][0]).toContain('wiki_traverse_graph → graph_traverse');
+  });
+
+  it('two module instances (CJS + ESM in one process) still warn only once', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const first = await fresh();
+    vi.resetModules(); // second instance, flag deliberately NOT reset
+    const second = (await import('../src/legacy')).canonicalToolName;
+    expect(second).not.toBe(first);
+    first('wiki_get_ontology');
+    second('wiki_traverse_graph');
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 });

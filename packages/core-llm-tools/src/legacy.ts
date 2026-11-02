@@ -18,7 +18,11 @@ export const LEGACY_TOOL_NAMES = Object.freeze({
 /** A deprecated `wiki_*` tool name. */
 export type LegacyToolName = keyof typeof LEGACY_TOOL_NAMES;
 
-let warned = false;
+// Keyed on globalThis, not a module-scoped `let`: the package ships CJS and ESM
+// builds, and a process that loads both gets two module instances. A registry
+// symbol is shared across them, so the warning really is once per process.
+const WARNED = Symbol.for('equationalapplications.core-llm-tools.canonicalToolName.warned');
+type WarnedFlag = { [WARNED]?: true };
 
 /**
  * Returns the canonical name for a legacy `wiki_*` tool name, and any other
@@ -39,8 +43,9 @@ let warned = false;
 export function canonicalToolName(name: string): string {
   if (!Object.prototype.hasOwnProperty.call(LEGACY_TOOL_NAMES, name)) return name;
   const canonical = LEGACY_TOOL_NAMES[name as LegacyToolName];
-  if (!warned) {
-    warned = true;
+  const flag = globalThis as WarnedFlag;
+  if (!flag[WARNED]) {
+    flag[WARNED] = true;
     const map = Object.entries(LEGACY_TOOL_NAMES)
       .map(([from, to]) => `${from} → ${to}`)
       .join(', ');
@@ -55,8 +60,13 @@ export function canonicalToolName(name: string): string {
 /**
  * Derives a manifest from its canonical twin by name substitution only, so a
  * legacy manifest's scope, description and parameters cannot drift.
+ *
+ * Deep-copies, so the two exports share no nested object: mutating one
+ * manifest's `schema.parameters` must not change its twin. Manifests are plain
+ * JSON, so a JSON round-trip preserves them exactly (key order included).
  * @internal
  */
 export function renamed(manifest: AgentToolManifest, name: string): AgentToolManifest {
-  return { ...manifest, name, schema: { ...manifest.schema, name } };
+  const copy = JSON.parse(JSON.stringify(manifest)) as AgentToolManifest;
+  return { ...copy, name, schema: { ...copy.schema, name } };
 }
