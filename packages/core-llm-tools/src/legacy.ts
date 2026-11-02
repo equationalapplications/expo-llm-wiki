@@ -4,9 +4,10 @@ import type { AgentToolManifest } from './types';
  * Old-to-new map for the three `wiki_*` tool names, renamed to the
  * `<resource>_<verb>` convention (SynapseTree spec R6, §3.5.1, 2026-11-02).
  *
- * @deprecated Removed, with the `wiki_*` manifests and `canonicalToolName`,
- * at the next major of core-llm-tools (at least one minor release after the
- * one that added it).
+ * Removed, with the `wiki_*` manifests and `canonicalToolName`, at the next
+ * major of core-llm-tools (at least one minor release after the one that added
+ * it; #324). Deliberately not marked deprecated: hosts are told to use it while they
+ * migrate.
  */
 export const LEGACY_TOOL_NAMES = Object.freeze({
   wiki_traverse_graph: 'graph_traverse',
@@ -31,8 +32,9 @@ let warned = false;
  * Never send the legacy and canonical manifest for one operation to the same
  * model: the model would choose between them.
  *
- * @deprecated Removed at the next major of core-llm-tools, with
- * `LEGACY_TOOL_NAMES` and the `wiki_*` manifests.
+ * Removed at the next major of core-llm-tools, with `LEGACY_TOOL_NAMES` and
+ * the `wiki_*` manifests (#324). Deliberately not marked deprecated: it is the migration
+ * path the docs prescribe.
  */
 export function canonicalToolName(name: string): string {
   if (!Object.prototype.hasOwnProperty.call(LEGACY_TOOL_NAMES, name)) return name;

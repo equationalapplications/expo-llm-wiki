@@ -68,6 +68,16 @@ describe('canonicalToolName', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
+  it('a non-legacy name does not use up the single warning', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const canonicalToolName = await fresh();
+    canonicalToolName('graph_traverse');
+    canonicalToolName('get_current_time');
+    expect(warn).not.toHaveBeenCalled();
+    canonicalToolName('wiki_traverse_graph');
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
   it('warns once per process, naming the replacement, however many legacy names it maps', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const canonicalToolName = await fresh();
