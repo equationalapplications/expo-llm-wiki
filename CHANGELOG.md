@@ -1,3 +1,9 @@
+## [7.17.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.17.0...v7.17.1) (2026-11-02)
+
+### Bug Fixes
+
+* **mcp-server:** print a persisting auth --email remedy once and back off ([#326](https://github.com/equationalapplications/expo-llm-wiki/issues/326)) ([e56ec22](https://github.com/equationalapplications/expo-llm-wiki/commit/e56ec22b2b87680b7218d26d279b7d6e00626122))
+
 ## [7.17.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.16.0...v7.17.0) (2026-11-02)
 
 ### Features
