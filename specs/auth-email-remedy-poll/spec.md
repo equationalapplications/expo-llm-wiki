@@ -122,6 +122,10 @@ All tests use the existing `scenario()` harness in `authmd.test.ts` (L11-30): sc
 11. **Existing tests** L40-134 and L149-173 pass unmodified (pending/slow_down intervals, 408 and zero-interval clamp, exact-deadline throw, 1e9 cap, endpoint pinning, ambiguous-poll message, 429, invalid_grant, unknown error, registration quota, deadline, no secrets in lines).
 12. `pnpm --filter @equationalapplications/mcp-server test`, `typecheck` and `build` green; root `pnpm test` green.
 
+### 8a. Found during implementation (2026-11-02)
+
+Test 9 exposed a bug that predates this change, in the sleep expression §3.2 modifies: `Math.min(…, 60, remaining)` compared `remaining` (milliseconds) with seconds, so the deadline clamp in §4's table never bound, and the last sleep could run up to 60 s past the deadline. That breaks the "never past the deadline" promise in `authmd.ts`'s own comment and in `specs/mcp-server/spec.md` §7 step 4. Fixed in the same commit: `remaining / 1000`. A new test on the plain pending path (7 s interval, which does not divide 960 s) pins it. Both tests fail on the old line. §4's "Deadline" row is now true, where before it was only claimed.
+
 ## 9. Out of scope
 
 - Any change to the SynapseTree server (whether it sends `interval` or `error_uri` with a wall, whether a cleared wall returns the claim to pending or mints on the next poll). The loop handles both orders.
