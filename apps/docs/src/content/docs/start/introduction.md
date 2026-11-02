@@ -13,7 +13,7 @@ memory, stored in SQLite. It sits between raw conversation logs and a curated kn
 - At answer time you `read()` the most relevant memory and inject it into your prompt.
 
 It was inspired by [Andrej Karpathy's LLM Wiki idea](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
-"LLM wiki" has since become a general name for that pattern. Core LLM Wiki is this project's name. Its
+"LLM wiki" has since become a general name for that pattern. Core LLM Wiki's
 packages are published under the `@equationalapplications` npm scope, such as
 `@equationalapplications/core-llm-wiki`, `@equationalapplications/react-llm-wiki`, and
 `@equationalapplications/expo-llm-wiki`. Core LLM Wiki can import and export the
