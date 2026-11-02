@@ -134,6 +134,13 @@ describe('memory_log_event', () => {
   it('rejects an unknown eventType', () => {
     expect(() => byName('memory_log_event').inputSchema.parse({ eventType: 'guess', summary: 's' })).toThrow();
   });
+  it('bounds summary at 1-4000 UTF-16 units after trimming, as the contract does', () => {
+    const schema = byName('memory_log_event').inputSchema;
+    expect(schema.parse({ eventType: 'decision', summary: `  ${'x'.repeat(4000)}  ` })).toMatchObject({ summary: 'x'.repeat(4000) });
+    expect(() => schema.parse({ eventType: 'decision', summary: 'x'.repeat(4001) })).toThrow();
+    expect(() => schema.parse({ eventType: 'decision', summary: '\u{1F600}'.repeat(2001) })).toThrow();
+    expect(() => schema.parse({ eventType: 'decision', summary: '   ' })).toThrow();
+  });
 });
 
 describe('graph_traverse', () => {
@@ -184,5 +191,12 @@ describe('whoami', () => {
     const { ctx } = harness([{ status: 401, body: { message: 'Unauthorized' }, headers: { 'content-type': 'application/json' } }]);
     await expect(run('whoami', {}, ctx)).rejects.toMatchObject({ code: 'unauthorized' });
     expect(new SynapseTreeError({ status: 401, code: 'unauthorized' }).code).toBe('unauthorized');
+  });
+  it('passes through the agent-key scopes the contract admits', async () => {
+    for (const scope of ['memory:full', 'memory:admin']) {
+      const body = { apiKeyId: 'k', organizationId: 'o', tenantDatabaseId: 'd', scope, planCode: null, subscriptionStatus: 'active' };
+      const { ctx } = harness([{ status: 200, body }]);
+      expect(await run('whoami', {}, ctx)).toEqual(body);
+    }
   });
 });

@@ -70,7 +70,8 @@ by this spec.
 The workspace picks up `packages/mcp-server` automatically
 (`pnpm-workspace.yaml` globs `packages/*`). Three edits outside the package —
 **all three deferred to the release-wiring follow-up PR per the owner ruling
-above; none are in this PR:**
+above; none are in PR #305. They land in the release-wiring PR
+(`chore/mcp-server-release-wiring`, 2026-11-02):**
 
 1. `.releaserc.json` — add `'mcp-server'` to the directory array in the
    `prepareCmd` that stamps `${nextRelease.version}` into each package.
@@ -461,7 +462,7 @@ suggests `repo:<directory name>`.
 | `memory_remember` | `rememberFact` | read_write | `title` (1–1000), `body` (1–100000), `tags` (≤100 × ≤100 chars), `confidence` (`certain`/`inferred`/`tentative`), `okfType` (string), `validFrom` | the stored fact |
 | `memory_supersede` | `supersedeFact` | read_write | `factId`, `title`, `body`, `tags`, `confidence`, `validFrom` | `{ superseded, replacement }` |
 | `memory_ingest` | `ingestDocument` | read_write | `sourceRef` (string, encoded by the tool), `content` (1–524288), `onDuplicateHash` (`skip`/`ingest`/`error`, default skip) | `{ chunks, ingestedChunks, failedChunks, truncated, duplicateOf, parseFailures, embeddingFailures }` |
-| `memory_log_event` | `createEvent` | read_write | `eventType` (`observation`/`decision`/`action`/`outcome`), `summary` (1–8000), `relatedFactId`, `occurredAt` | the event |
+| `memory_log_event` | `createEvent` | read_write | `eventType` (`observation`/`decision`/`action`/`outcome`), `summary` (trimmed, then 1–4000 UTF-16 units — SynapseTree ruling Q1, 2026-11-01, narrowed from 1–8000; contract refresh 2026-11-02), `relatedFactId`, `occurredAt` | the event |
 | `graph_traverse` | `traverseGraph` | read | `sourceId`, `maxDepth` (1–3, default 1), `direction` (`inbound`/`outbound`/`both`), `edgeTypes` (string[]), `maxNodes` (1–200, default 20), `excludeDrafts` | `{ nodes, edges }` |
 | `namespaces_list` | `listNamespaces` | read | `prefix` (≤128) | `{ namespaces: string[] }` — the tool follows `nextCursor` with `limit=100` until `hasMore` is false or 500 names are collected, then stops and sets `truncated: true` |
 | `whoami` | `whoami` | read | — | `{ apiKeyId, organizationId, tenantDatabaseId, scope, planCode, subscriptionStatus }` |

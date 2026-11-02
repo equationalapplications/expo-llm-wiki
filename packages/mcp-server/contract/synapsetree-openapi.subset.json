@@ -4,7 +4,7 @@
     "title": "SynapseTree Memory API (subset for @equationalapplications/mcp-server)",
     "version": "1.0.0-alpha.1",
     "summary": "Hosted shared memory for LLM agents, one SQLite database per tenant.",
-    "description": "SynapseTree hosts `core-llm-wiki` memory databases. Each API key reaches exactly one\ntenant database; inside it, data lives in **namespaces** (the engine's `entity_id`).\n\nDesign: `docs/superpowers/specs/2026-09-30-openapi-contract-design.md`.\n\n**Key scope.** Every operation declares `x-synapsetree-scope`: `read` operations accept\n`read` and `read_write` keys; `read_write` operations refuse a `read` key with\n`403 insufficient_scope`.\n\n**Errors.** Errors produced by SynapseTree are RFC 7807 `application/problem+json` with a\nstable `code`. Two responses come from the AWS API Gateway authorizer itself and keep the\ngateway's native shape `{\"message\": \"...\"}`: `401` (missing or malformed bearer token) and\n`403` (unknown or revoked key, or a database that is not routable).\n\n**Writes and billing.** Writes are refused with `402 subscription_inactive` when the\norganization is on a paid plan whose subscription is not `trialing`, `active` or\n`past_due`. Reads always work.\n\n**Inference is bring-your-own-key (BYOK).** SynapseTree runs no inference on its own\naccount: server-side extraction and semantic embeddings run against the organization's own\nprovider keys. Owner/admin register, rotate and delete two custodial registrations per\norganization in the dashboard — an **extraction** registration (required for\n`server_extraction` ingest and consolidation) and an optional **embeddings** registration —\neach envelope-encrypted with KMS, never logged or echoed, surfaced only as `keyLast4`.\nRotation overwrites in place and takes effect on the next call. With no extraction\nregistration `server_extraction` answers `409 inference_not_configured`; a key the provider\nrejects answers `409 inference_config_invalid` and surfaces as failing key health. With no\nembeddings registration namespaces serve **keyword-only** search — a supported\nconfiguration, reported via `diagnostics`, never an error. Provider calls are metered\nagainst the plan's tier caps (one shared window, first-come-first-served); usage is\ndisplayed as token counts, never dollars. Changing a namespace's embedding model is gated by\nits stored fingerprint and takes effect only through a maintenance run\n(`POST /v1/namespaces/{namespace}/maintenance/runs`); while a run is active, vector search\non that namespace pauses to keyword-only.\n\n**Engine extensions.** `x-synapsetree-engine` names the engine entry point. Entries marked\n`upstream:` depend on a core-llm-wiki API that has been requested but not yet released;\nuntil it ships the operation or field answers `501 not_implemented`.\n",
+    "description": "SynapseTree hosts `core-llm-wiki` memory databases. Each API key reaches exactly one\ntenant database; inside it, data lives in **namespaces** (the engine's `entity_id`).\n\nDesign: `docs/superpowers/specs/2026-09-30-openapi-contract-design.md`.\n\n**Key scope.** Every operation declares `x-synapsetree-scope`: `read` operations accept\n`read` and `read_write` keys; `read_write` operations refuse a `read` key with\n`403 insufficient_scope`. Agent keys issued through auth.md carry `memory:full`\n(`memory:admin` is accepted but not issued in v1); both pass `read` and `read_write`\noperations, except that the export\nand destructive operations (`exportMemory`, `forgetFact`, `forgetSource`,\n`deleteNamespace`) refuse a `memory:full` key with `403 insufficient_scope`; a\n`memory:admin` key passes them.\n\n**Errors.** Errors produced by SynapseTree are RFC 7807 `application/problem+json` with a\nstable `code`. Two responses come from the AWS API Gateway authorizer itself and keep the\ngateway's native shape `{\"message\": \"...\"}`: `401` (missing or malformed bearer token) and\n`403` (unknown or revoked key, or a database that is not routable).\n\n**Writes and billing.** Writes are refused with `402 subscription_inactive` when the\norganization is on a paid plan whose subscription is not `trialing`, `active` or\n`past_due`. Reads always work.\n\n**Inference is bring-your-own-key (BYOK).** SynapseTree runs no inference on its own\naccount: server-side extraction and semantic embeddings run against the organization's own\nprovider keys. Owner/admin register, rotate and delete two custodial registrations per\norganization in the dashboard — an **extraction** registration (required for\n`server_extraction` ingest and consolidation) and an optional **embeddings** registration —\neach envelope-encrypted with KMS, never logged or echoed, surfaced only as `keyLast4`.\nRotation overwrites in place and takes effect on the next call. With no extraction\nregistration `server_extraction` answers `409 inference_not_configured`; a key the provider\nrejects answers `409 inference_config_invalid` and surfaces as failing key health. With no\nembeddings registration namespaces serve **keyword-only** search — a supported\nconfiguration, reported via `diagnostics`, never an error. Provider calls are metered\nagainst the plan's tier caps (one shared window, first-come-first-served); usage is\ndisplayed as token counts, never dollars. Changing a namespace's embedding model is gated by\nits stored fingerprint and takes effect only through a maintenance run\n(`POST /v1/namespaces/{namespace}/maintenance/runs`); while a run is active, vector search\non that namespace pauses to keyword-only.\n\n**Engine extensions.** `x-synapsetree-engine` names the engine entry point. Entries marked\n`upstream:` depend on a core-llm-wiki API that has been requested but not yet released;\nuntil it ships the operation or field answers `501 not_implemented`.\n",
     "license": {
       "name": "Proprietary",
       "identifier": "LicenseRef-Proprietary"
@@ -234,7 +234,7 @@
         "summary": "Store a fact directly",
         "description": "Stores one mutable fact (`user_stated` by default) without an LLM step. To replace an\nexisting fact, use `supersedeFact` instead so history is kept.\n",
         "x-synapsetree-scope": "read_write",
-        "x-synapsetree-engine": "upstream:remember",
+        "x-synapsetree-engine": "remember",
         "parameters": [
           {
             "$ref": "#/components/parameters/IdempotencyKey"
@@ -341,9 +341,6 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
-          },
-          "501": {
-            "$ref": "#/components/responses/NotImplemented"
           },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"
@@ -791,7 +788,7 @@
           "memory"
         ],
         "summary": "Record an event",
-        "description": "Appends an observation, decision, action, or outcome to a namespace's event log. Events\nare the input to later consolidation into facts; recording one never runs inference.\n",
+        "description": "Appends an observation, decision, action, or outcome to a namespace's event log. Events\nare the input to later consolidation into facts; recording one never runs inference.\nA relatedFactId that does not exist in the namespace (superseded facts count as existing)\nis refused with 404.\n",
         "x-synapsetree-scope": "read_write",
         "x-synapsetree-engine": "write",
         "parameters": [
@@ -864,6 +861,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
           },
           "409": {
             "$ref": "#/components/responses/Conflict"
@@ -996,14 +996,14 @@
           "404": {
             "$ref": "#/components/responses/NotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
           "429": {
             "$ref": "#/components/responses/TooManyRequests"
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
-          },
-          "501": {
-            "$ref": "#/components/responses/NotImplemented"
           },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"
@@ -1563,7 +1563,7 @@
         }
       },
       "Forbidden": {
-        "description": "`application/json` (API Gateway): the key is unknown or revoked, or its database is not\nroutable. `application/problem+json`: `insufficient_scope` (a `read` key on a\n`read_write` operation) or `quota_exceeded` (the organization is over its storage quota).\n",
+        "description": "`application/json` (API Gateway): the key is unknown or revoked, or its database is not\nroutable. `application/problem+json`: `insufficient_scope` (a `read` key on a\n`read_write` operation, or a `memory:full` key on an export or destructive operation)\nor `quota_exceeded` (the organization is over its storage quota).\n",
         "content": {
           "application/json": {
             "schema": {
@@ -2115,7 +2115,8 @@
           "summary": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 8000
+            "maxLength": 4000,
+            "description": "Trimmed of surrounding whitespace, then at most 4000 UTF-16 code units (the engine's limit; JSON Schema's maxLength counts code points, so astral characters count twice). Narrowed from 8000 by the dated 2026-11-01 D12 exception."
           },
           "relatedFactId": {
             "$ref": "#/components/schemas/FactId"
@@ -3004,7 +3005,7 @@
           "interval": {
             "type": "integer",
             "minimum": 1,
-            "description": "Minimum seconds between polls of `token_endpoint` (the RFC 8628 §3.2\nplacement, ruled 2026-11-01). An `authorization_pending` or\n`slow_down` answer may carry a larger `interval`, which replaces\nthis one from then on.\n"
+            "description": "Seconds to wait between polls of `token_endpoint` (ruled\n2026-11-01). Modeled on the RFC 8628 §3.2 `interval`, but nested in\n`poll` rather than at the top level. An `authorization_pending` or\n`slow_down` answer carries an `interval` too (`slow_down` a larger\none), which replaces this one from then on.\n"
           }
         }
       },
@@ -3763,8 +3764,11 @@
             "type": "string",
             "enum": [
               "read",
-              "read_write"
-            ]
+              "read_write",
+              "memory:full",
+              "memory:admin"
+            ],
+            "description": "The key's scope. `read` and `read_write` are dashboard-issued keys; `memory:full`\nis the agent key issued through auth.md; `memory:admin` is accepted but not issued\nin v1. A `memory:full` key is refused the export and destructive operations;\n`memory:admin` passes them.\n"
           },
           "planCode": {
             "description": "Open; new plans may be added.",
@@ -3799,6 +3803,40 @@
           }
         }
       }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "stree_<43 base64url chars>",
+        "description": "A SynapseTree API key: `Authorization: Bearer stree_…`."
+      }
     }
-  }
+  },
+  "tags": [
+    {
+      "name": "memory",
+      "description": "Search, ingest, and record memory."
+    },
+    {
+      "name": "facts",
+      "description": "Individual facts, their history, and temporal supersession."
+    },
+    {
+      "name": "graph",
+      "description": "Graph traversal and deterministic graph writes."
+    },
+    {
+      "name": "namespaces",
+      "description": "Namespaces inside the tenant database."
+    },
+    {
+      "name": "account",
+      "description": "The calling key's routing context."
+    },
+    {
+      "name": "agent",
+      "description": "auth.md agent registration — an AI agent signs a user up and the human\nstays in charge. Unauthenticated registration, the RFC 8628-style claim\npoll, and RFC 7009 revocation.\n"
+    }
+  ]
 }

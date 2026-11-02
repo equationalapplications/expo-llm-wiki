@@ -8,7 +8,14 @@ export const memoryLogEvent = defineTool({
   inputSchema: z.object({
     namespace: namespaceField,
     eventType: z.enum(['observation', 'decision', 'action', 'outcome']),
-    summary: z.string().min(1).max(8000),
+    // SynapseTree trims, then allows 1-4000 UTF-16 units (contract CreateEventRequest.summary).
+    // zod's max() and JSON Schema's maxLength count code points, so the refine enforces UTF-16 units.
+    summary: z
+      .string()
+      .trim()
+      .min(1)
+      .max(4000)
+      .refine((s) => s.length <= 4000, { message: 'summary is over 4000 UTF-16 code units (astral characters count twice)' }),
     relatedFactId: z.string().min(1).max(255).optional(),
     occurredAt: dateTimeField.optional().describe('When it happened. Defaults to now.'),
   }),
