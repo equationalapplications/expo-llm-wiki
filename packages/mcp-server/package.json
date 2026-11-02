@@ -46,7 +46,7 @@
   "bugs": {
     "url": "https://github.com/equationalapplications/expo-llm-wiki/issues"
   },
-  "homepage": "https://github.com/equationalapplications/expo-llm-wiki/tree/main/packages/mcp-server#readme",
+  "homepage": "https://equationalapplications.github.io/expo-llm-wiki/packages/mcp-server/",
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org"
