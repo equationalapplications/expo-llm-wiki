@@ -26,6 +26,10 @@ await wiki.read('user-bob', 'allergies'); // → nothing from Alice
 Entity IDs are opaque strings to the engine, so pick whatever structure suits your app. Use a
 consistent prefix so you can list entities with `listEntityIds({ prefix })`.
 
+## Writing facts directly
+
+`remember(entityId, { title, body })` stores a fact in one entity without an LLM call, which suits preferences and notes the host already knows. See [Direct fact writes](/expo-llm-wiki/reference/wiki-memory/#direct-fact-writes).
+
 ## Reading across entities
 
 `read()` accepts an array of entity IDs and merges results in one ranking pass. Use weights to
