@@ -14,30 +14,19 @@ A small Node program your MCP client launches on your own machine over stdio. It
 
 ## Install
 
-> **Not yet on npm.** Publishing is gated on the checks in
-> `specs/mcp-server/spec.md` §0 (SynapseTree
-> production wiring the write operations, the revoke fix, and a live-chain
-> pass). Publishing itself happens through the release workflow's
-> trusted-publisher entry once the gates close — or, if that entry is not yet
-> configured, by a one-off manual `pnpm --filter @equationalapplications/mcp-server
-> publish`. A manual publish only works after the release-wiring follow-up
-> stamps the package's first version (the version-less package.json is
-> deliberate — see CONTRIBUTING.md). Until one of those happens, build from source:
->
-> ```bash
-> git clone https://github.com/equationalapplications/expo-llm-wiki && cd expo-llm-wiki
-> pnpm install && pnpm --filter @equationalapplications/mcp-server build
-> cd packages/mcp-server && pnpm link --global   # puts synapsetree-mcp on PATH
-> synapsetree-mcp --help
-> ```
-
-Once published:
-
 ```bash
 npm install -g @equationalapplications/mcp-server
 ```
 
 Node 20 or newer. One command is installed: `synapsetree-mcp`.
+
+To run from source instead:
+
+```bash
+git clone https://github.com/equationalapplications/expo-llm-wiki && cd expo-llm-wiki
+pnpm install && pnpm --filter @equationalapplications/mcp-server build
+cd packages/mcp-server && pnpm link --global   # puts synapsetree-mcp on PATH
+```
 
 ## Get a key
 
@@ -142,12 +131,12 @@ export SYNAPSETREE_BASE_URL=https://test-stage…      # the test stage, for EVE
 export SYNAPSETREE_CONFIG_DIR=$(mktemp -d)           # isolated credentials
 export SYNAPSETREE_LIVE_TESTS=1                      # opts the live chain into `pnpm test`
 cd "$(git rev-parse --show-toplevel)"                 # back to the repo root: all paths below are repo-root paths
-CLI="node $(pwd)/packages/mcp-server/dist/cli.js"    # the built CLI (no bin on PATH yet)
+CLI="node $(pwd)/packages/mcp-server/dist/cli.js"    # the CLI built from this checkout, not a global install
 pnpm build
 ```
 
 1. `$CLI auth --key …` then `$CLI status`.
-2. `SYNAPSETREE_API_KEY=… pnpm --filter @equationalapplications/mcp-server test` — runs the live chain (`whoami` → remember → search → supersede → search → log event → list). The suite is excluded unless `SYNAPSETREE_LIVE_TESTS=1` is set. Until SynapseTree wires the write operations in production, the chain stops at `memory_remember` with `not_implemented`; that is expected until that gate closes.
+2. `SYNAPSETREE_API_KEY=… pnpm --filter @equationalapplications/mcp-server test` — runs the live chain (`whoami` → remember → search → supersede → search → log event → list). The suite is excluded unless `SYNAPSETREE_LIVE_TESTS=1` is set.
 3. `npx @modelcontextprotocol/inspector $CLI serve` and run one `memory_search`.
 4. `$CLI auth --email …` once, approve the email, then `$CLI auth --revoke`.
 
