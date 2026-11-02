@@ -1,3 +1,12 @@
+## [7.15.2](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.15.1...v7.15.2) (2026-11-02)
+
+### Bug Fixes
+
+* **core:** address PR review — version-boundary tests, docs accuracy (spec §3.3, §5) ([7c30652](https://github.com/equationalapplications/expo-llm-wiki/commit/7c306525c2bc769b6415ce5bff268a3f4d246ed7))
+* **core:** forget() tolerates a missing source_ref_index before v9 (spec §3.1) ([89d4945](https://github.com/equationalapplications/expo-llm-wiki/commit/89d494543c1dfa5ec0085e167d8253120694c934)), closes [#316](https://github.com/equationalapplications/expo-llm-wiki/issues/316)
+* **core:** scope v9 recovery to each duplicate group with sourceHash (spec §3.2, §3.3) ([e218512](https://github.com/equationalapplications/expo-llm-wiki/commit/e2185125cbe7366ed1170bd34d08e3a267879003))
+* **core:** v9 error advises a recovery path that works (spec §3.2) ([b8d4c39](https://github.com/equationalapplications/expo-llm-wiki/commit/b8d4c39f8aed2791d89d4065f21fe2a9763b7b33)), closes [#316](https://github.com/equationalapplications/expo-llm-wiki/issues/316)
+
 ## [7.15.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.15.0...v7.15.1) (2026-11-02)
 
 ### Bug Fixes
