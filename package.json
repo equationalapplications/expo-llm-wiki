@@ -20,7 +20,7 @@
     "@equationalapplications/react-llm-wiki": "workspace:*"
   },
   "scripts": {
-    "build": "pnpm -r build && tsup src/index.ts src/react/index.ts --format cjs,esm --dts --external react --external expo-sqlite --external @equationalapplications/core-llm-wiki --external @equationalapplications/expo-llm-wiki --external @equationalapplications/react-llm-wiki --out-dir dist",
+    "build": "pnpm -r --filter './packages/*' build && tsup src/index.ts src/react/index.ts --format cjs,esm --dts --external react --external expo-sqlite --external @equationalapplications/core-llm-wiki --external @equationalapplications/expo-llm-wiki --external @equationalapplications/react-llm-wiki --out-dir dist",
     "build:core": "pnpm --filter @equationalapplications/core-llm-wiki build",
     "build:expo": "pnpm --filter @equationalapplications/expo-llm-wiki build",
     "build:react": "pnpm --filter @equationalapplications/react-llm-wiki build",

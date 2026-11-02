@@ -1,0 +1,14 @@
+/* Brand accent: violet. Starlight derives the rest of the palette from these. */
+:root {
+  --sl-color-accent-low: #2e1065;
+  --sl-color-accent: #8b5cf6;
+  --sl-color-accent-high: #ddd6fe;
+}
+:root[data-theme='light'] {
+  --sl-color-accent-low: #ede9fe;
+  --sl-color-accent: #6d28d9;
+  --sl-color-accent-high: #3b0764;
+}
+.hero .tagline { max-width: 38rem; }
+/* Keep wide API tables readable on small screens. */
+.sl-markdown-content table { display: block; overflow-x: auto; }

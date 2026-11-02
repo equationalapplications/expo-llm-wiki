@@ -116,6 +116,10 @@ jobs:
 
       - run: pnpm run build
 
+      # Docs build checked on PRs but NOT gated into the root build (which the
+      # release workflow also runs) — a docs typo must never block an npm release.
+      - run: pnpm --filter docs build
+
       - run: pnpm run typecheck
 
       - run: pnpm test

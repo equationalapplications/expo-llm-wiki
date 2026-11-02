@@ -12,9 +12,11 @@
 [![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fschema-org-llm-wiki?label=@equationalapplications/schema-org-llm-wiki)](https://www.npmjs.com/package/@equationalapplications/schema-org-llm-wiki) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fschema-org-llm-wiki?label=downloads)](https://www.npmjs.com/package/@equationalapplications/schema-org-llm-wiki)<br>
 [![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fschema-software-org?label=@equationalapplications/schema-software-org)](https://www.npmjs.com/package/@equationalapplications/schema-software-org) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fschema-software-org?label=downloads)](https://www.npmjs.com/package/@equationalapplications/schema-software-org)
 
-**[GitHub](https://github.com/equationalapplications/expo-llm-wiki)** · **[ScopeLab](https://equationalapplications.github.io/expo-llm-wiki/scopelab/)** · **[WikiDemo](https://equationalapplications.github.io/expo-llm-wiki/wiki-demo/)** · **[Changelog](https://github.com/equationalapplications/expo-llm-wiki/blob/main/CHANGELOG.md)** · **[Issues](https://github.com/equationalapplications/expo-llm-wiki/issues)**
+**[📖 Docs](https://equationalapplications.github.io/expo-llm-wiki/)** · **[GitHub](https://github.com/equationalapplications/expo-llm-wiki)** · **[ScopeLab](https://equationalapplications.github.io/expo-llm-wiki/scopelab/)** · **[WikiDemo](https://equationalapplications.github.io/expo-llm-wiki/wiki-demo/)** · **[Changelog](https://github.com/equationalapplications/expo-llm-wiki/blob/main/CHANGELOG.md)** · **[Issues](https://github.com/equationalapplications/expo-llm-wiki/issues)**
 
 ## Persistent, episodic memory for AI Agents.
+
+> **New here? Start with the [developer guide](https://equationalapplications.github.io/expo-llm-wiki/)**: quickstarts for Expo, React, and Node.js, task-focused guides, recipes, and a full API reference. This README is the dense reference version.
 
 expo-llm-wiki is a cross-platform TypeScript and SQLite library for long-term LLM memory. It bridges the gap between raw conversation logs and a structured knowledge base, supporting background fact extraction, semantic embedding search, and memory pruning.
 
@@ -1170,6 +1172,17 @@ flowchart TD
 
 - [SynapseTree integration guide](docs/synapsetree-integration.md) — recommended configuration, request lifecycle, where maintenance runs, single-writer requirement, `entity_id` scheme, MCP surface, and costs for tenant-aware hosts (e.g. SaaS with per-tenant SQLite files in object storage).
 - [Benchmarks](docs/benchmarks.md) — supersession results and run-level token totals for the 7.8.0 release versus the legacy baseline. LongMemEval accuracy, tokens per answer, and ingestion tokens are not measured yet (issue #247).
+
+## Ecosystem
+
+Built on LLM Wiki:
+
+- **[Curated Thoughts](https://github.com/equationalapplications/curated-thoughts)**: a privacy-first desktop second brain (Tauri, React, Rust) with a built-in MCP server.
+- **[Curated Thoughts Integrations](https://github.com/equationalapplications/curated-thoughts-integrations)**: wires Curated Thoughts into Claude Code, OpenCode, Hermes, and other agent harnesses. A software agency in a box.
+- **[Curated Journal](https://github.com/equationalapplications/curated-journal)**: a fully offline Expo journal, and the reference app for `expo-llm-wiki`.
+- **[SynapseTree](https://synapsetree.dev)**: hosted cloud memory on the same engine. Its MCP server ([`packages/mcp-server`](packages/mcp-server)) is in development.
+
+See the [Ecosystem page](https://equationalapplications.github.io/expo-llm-wiki/start/ecosystem/) in the developer guide.
 
 ---
 

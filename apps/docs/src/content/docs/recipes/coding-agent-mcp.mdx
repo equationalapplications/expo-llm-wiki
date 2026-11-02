@@ -1,0 +1,86 @@
+---
+title: Memory for coding agents (MCP)
+description: Give Claude Code, Cursor, OpenCode, and other agents persistent memory — locally with Curated Thoughts today, or in the cloud with SynapseTree.
+sidebar:
+  order: 6
+---
+
+import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+
+**Goal:** let your coding agents remember project decisions, procedures, and context between sessions.
+
+There are two ways to do it, both built on LLM Wiki:
+
+| | **Local: Curated Thoughts** | **Cloud: SynapseTree** |
+|---|---|---|
+| Where memory lives | `brain.db` on your machine | [synapsetree.dev](https://synapsetree.dev) |
+| Status | **Available now** | MCP server **in development** |
+| Human review gate | Yes (Review desk) | — |
+| Harness integrations | Claude Code, OpenCode, Hermes, DeepSeek Harness, OpenClaw, Docker Agent | Any MCP client |
+| Best for | Private, curated memory shared by a "software agency in a box" | Memory that follows you across machines and teams |
+
+<Tabs>
+  <TabItem label="Local · Curated Thoughts">
+    1. Install [Curated Thoughts](https://github.com/equationalapplications/curated-thoughts/releases)
+       for macOS, Linux, or Windows, and point it at a vault folder.
+
+    2. Install the integration for your harness from
+       [curated-thoughts-integrations](https://github.com/equationalapplications/curated-thoughts-integrations).
+       For Claude Code:
+
+       ```bash
+       git clone https://github.com/equationalapplications/curated-thoughts-integrations
+       cd curated-thoughts-integrations/integrations/claude-code
+       ./scripts/install.sh            # prints the registration; writes nothing until asked
+       python3 scripts/ct_doctor.py check
+       ```
+
+    3. Start a session. The integration recalls relevant curated facts at session start and on
+       every turn (*Intuitive Wisdom*), and the agent can search, traverse, and deposit new wisdom
+       through MCP tools. Nothing enters long-term memory until you approve it in the Review desk.
+
+    <Aside type="tip">
+    Any other MCP client can use the app directly: run the Curated Thoughts binary with `--mcp`.
+    See its [MCP Agent Server docs](https://github.com/equationalapplications/curated-thoughts#-mcp-agent-server).
+    </Aside>
+  </TabItem>
+  <TabItem label="Cloud · SynapseTree">
+    <Aside type="caution" title="Not released yet">
+    The SynapseTree MCP server ([`@equationalapplications/mcp-server`](/expo-llm-wiki/packages/mcp-server/))
+    is still in development and isn't on npm. The steps below show the planned flow. To try it now,
+    build it from source.
+    </Aside>
+
+    ```bash
+    synapsetree-mcp auth --email you@example.com
+    synapsetree-mcp config set namespace repo:myproject
+    claude mcp add synapsetree -- synapsetree-mcp
+    ```
+
+    For Cursor, Windsurf, or Claude Desktop:
+
+    ```json
+    { "mcpServers": { "synapsetree": { "command": "synapsetree-mcp" } } }
+    ```
+
+    Check the connection:
+
+    ```bash
+    synapsetree-mcp status
+    npx @modelcontextprotocol/inspector synapsetree-mcp
+    ```
+  </TabItem>
+</Tabs>
+
+## Tell the agent how to use memory
+
+Whichever backend you pick, a few lines in `CLAUDE.md` or `AGENTS.md` help a lot:
+
+```md
+## Memory
+- At the start of a task, search memory for the area you're touching.
+- When you make a decision that future sessions should know, record it.
+- When a remembered fact is wrong, supersede it. Never delete.
+```
+
+The Curated Thoughts integrations ship skills native to each harness that cover this for you.

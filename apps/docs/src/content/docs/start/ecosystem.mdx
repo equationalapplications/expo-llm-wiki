@@ -1,0 +1,121 @@
+---
+title: Ecosystem
+description: Apps and services built on LLM Wiki — Curated Thoughts (desktop + agents), Curated Journal (mobile), and SynapseTree (cloud memory).
+sidebar:
+  order: 6
+---
+
+import { Card, CardGrid, LinkCard, Aside } from '@astrojs/starlight/components';
+
+LLM Wiki is the engine behind a family of products from Equational Applications. They all follow
+the same wiki pattern: events and documents go in, the librarian curates facts and a graph, and
+OKF bundles carry knowledge between products. They run on different platforms.
+
+```text
+                    ┌──────────────────────────── LLM Wiki packages (this repo) ───────────────────────────┐
+                    │  core-llm-wiki · react-llm-wiki · expo-llm-wiki · core-okf · ontologies · tools      │
+                    └──────────────┬──────────────────────────┬───────────────────────────┬────────────────┘
+                                   │                          │                           │
+                       Curated Thoughts               Curated Journal                SynapseTree
+                  desktop · Tauri + React + Rust     mobile · Expo, on-device       cloud memory service
+                                   │                                                      │
+                    curated-thoughts-integrations                                SynapseTree MCP server
+                  Claude Code · OpenCode · Hermes · …                                (in development)
+```
+
+## Curated Thoughts: desktop second brain
+
+<CardGrid>
+  <LinkCard
+    title="Curated Thoughts"
+    description="Privacy-first, local-first desktop second brain for macOS, Linux, and Windows."
+    href="https://github.com/equationalapplications/curated-thoughts"
+  />
+  <LinkCard
+    title="Curated Thoughts Integrations"
+    description="A software agency in a box: one brain wired into every AI agent harness."
+    href="https://github.com/equationalapplications/curated-thoughts-integrations"
+  />
+</CardGrid>
+
+[Curated Thoughts](https://github.com/equationalapplications/curated-thoughts) is a desktop app
+built with **Tauri, React, and Rust**. Its React front end runs `react-llm-wiki`, and a Rust
+engine called the *Active Librarian* follows the same wiki patterns natively: it watches a vault
+of PDFs, DOCX, and Markdown, chunks and embeds them locally, and proposes wiki pages.
+
+It shows several LLM Wiki features in a real product:
+
+- **Human-in-the-loop review.** Librarian proposals wait in a Review desk until you approve them.
+  This is the [draft-review](/expo-llm-wiki/guides/drafts-and-grounding/) idea used as a
+  product workflow.
+- **Ontologies and a classifier.** It ships the schema.org and software-organization
+  [ontology packages](/expo-llm-wiki/packages/ontologies/). It can also type facts with a Jev
+  classifier through [classifier-mode backfill](/expo-llm-wiki/guides/ontologies/#classifier-mode).
+- **OKF backups.** The whole brain exports to, and imports from, OKF v0.2 zip bundles.
+- **An MCP server.** The app binary runs as a stdio MCP server (`--mcp`), so Claude Desktop,
+  Cursor, and other MCP clients can search, traverse, and add to your local brain.
+
+### A software agency in a box
+
+[curated-thoughts-integrations](https://github.com/equationalapplications/curated-thoughts-integrations)
+connects that local brain to AI agent harnesses: **Claude Code, OpenCode, Hermes Agent, DeepSeek
+Harness, OpenClaw, and Docker Agent**. Every integration ships the same layers:
+
+- MCP registration
+- An install doctor
+- Skills native to the harness
+- **Intuitive Wisdom**: relevant curated facts arrive in the agent's context at session start,
+  on each user turn, and during autonomous work, never more than once per fact.
+
+The result is a team of agents that share one curated, human-reviewed memory. A brain exported on
+one machine imports into any harness.
+
+## Curated Journal: mobile, fully offline
+
+<LinkCard
+  title="Curated Journal"
+  description="The reference Expo app: an on-device, NotebookLM-style journal with no backend."
+  href="https://github.com/equationalapplications/curated-journal"
+/>
+
+[Curated Journal](https://github.com/equationalapplications/curated-journal) is the flagship
+reference app for [`expo-llm-wiki`](/expo-llm-wiki/packages/expo/). It runs completely offline on
+iOS and Android, and doubles as a cookbook for on-device memory:
+
+- **On-device inference.** It runs GGUF models with `llama.rn` through a single `generateText`.
+- **Night Shift.** Auto maintenance is off. The librarian and heal run in the foreground, only
+  while the device is charging. See
+  [Maintenance → on mobile](/expo-llm-wiki/guides/maintenance/#on-mobile-the-night-shift-pattern).
+- **Emergent ontology.** The model invents node and edge types, which the app shows in a Skia
+  and d3-force graph explorer.
+- **OKF zip import and export**, using the same format as Curated Thoughts.
+
+Syncing with SynapseTree is on its roadmap, as an explicit, opt-in step.
+
+## SynapseTree: cloud memory
+
+<LinkCard
+  title="SynapseTree"
+  description="Hosted, tenant-aware memory built on LLM Wiki."
+  href="https://synapsetree.dev"
+/>
+
+[SynapseTree](https://synapsetree.dev) is the hosted member of the family. It runs LLM Wiki per
+tenant, with one SQLite file per tenant in object storage. The
+[serverless hosting guide](/expo-llm-wiki/guides/serverless-hosting/) describes that pattern.
+
+<Aside type="note" title="SynapseTree MCP server: coming soon">
+An MCP server for SynapseTree is being built in this repo as
+[`@equationalapplications/mcp-server`](/expo-llm-wiki/packages/mcp-server/). It hasn't been
+released yet.
+</Aside>
+
+## Which one fits?
+
+| You want… | Use |
+|---|---|
+| Memory inside **your own** app | The [LLM Wiki packages](/expo-llm-wiki/start/choose-a-package/) |
+| A personal desktop brain, private and local | Curated Thoughts |
+| One reviewed memory shared by your coding agents | Curated Thoughts + integrations |
+| A private journal on your phone | Curated Journal |
+| Hosted memory with no infrastructure to run | SynapseTree |

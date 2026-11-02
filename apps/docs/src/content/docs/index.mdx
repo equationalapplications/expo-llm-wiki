@@ -1,0 +1,92 @@
+---
+title: LLM Wiki
+description: Persistent, local-first memory for AI agents. TypeScript and SQLite for Expo, React, and Node.js.
+template: splash
+hero:
+  tagline: Long-term memory for your AI agents. Facts, tasks, and a knowledge graph, all stored in SQLite and running wherever your app runs.
+  image:
+    file: ../../assets/logo.svg
+  actions:
+    - text: Get started
+      link: /expo-llm-wiki/start/introduction/
+      icon: right-arrow
+    - text: Try the live demo
+      link: https://equationalapplications.github.io/expo-llm-wiki/wiki-demo/
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid, LinkCard, Tabs, TabItem } from '@astrojs/starlight/components';
+
+## Why LLM Wiki?
+
+<CardGrid>
+  <Card title="Bring your own inference" icon="puzzle">
+    You give it one `generateText` function. It builds the prompts, parses the JSON, and writes to
+    the database. It works with OpenAI, Gemini, Claude, or a local model.
+  </Card>
+  <Card title="Just SQLite" icon="seti:db">
+    Facts, vectors, and graph edges all live in tables in your database, with a
+    `llm_wiki_` prefix by default. You don't run a vector database or Neo4j.
+  </Card>
+  <Card title="Offline first" icon="rocket">
+    Keyword search runs in-process. Semantic search turns on when you provide `embed()`, and
+    falls back to keyword search when the network is down.
+  </Card>
+  <Card title="GraphRAG built in" icon="random">
+    Optional ontologies make the model emit typed edges. `traverseGraph()` then walks them
+    with a single recursive SQL query.
+  </Card>
+</CardGrid>
+
+## Pick your platform
+
+<Tabs syncKey="platform">
+  <TabItem label="Expo / React Native">
+    ```bash
+    npx expo install expo-sqlite expo-crypto
+    npm install @equationalapplications/expo-llm-wiki
+    ```
+    The SQLite adapter, secure ID generation, and React hooks are already wired up.
+    [Expo quickstart →](/expo-llm-wiki/start/quickstart-expo/)
+  </TabItem>
+  <TabItem label="React (web)">
+    ```bash
+    npm install @equationalapplications/react-llm-wiki sql.js
+    ```
+    Runs entirely in the browser on SQLite compiled to WebAssembly.
+    [React quickstart →](/expo-llm-wiki/start/quickstart-react/)
+  </TabItem>
+  <TabItem label="Node.js">
+    ```bash
+    npm install @equationalapplications/core-llm-wiki better-sqlite3
+    ```
+    Use it on a backend or in a worker, with any SQLite driver.
+    [Node.js quickstart →](/expo-llm-wiki/start/quickstart-node/)
+  </TabItem>
+</Tabs>
+
+## Three lines to memory
+
+```ts
+await wiki.write('user-123', { event_type: 'observation', summary: 'Loves hiking on weekends.' });
+const memory = await wiki.read('user-123', 'what should we do on Saturday?');
+const context = formatContext(memory); // → paste into your system prompt
+```
+
+## Built with LLM Wiki
+
+<CardGrid>
+  <LinkCard title="Curated Thoughts" description="Local-first desktop second brain (Tauri + Rust), with integrations that turn it into a software agency in a box for your AI agents." href="/expo-llm-wiki/start/ecosystem/#curated-thoughts-desktop-second-brain" />
+  <LinkCard title="Curated Journal" description="Fully offline Expo journal with on-device LLMs. The reference app for expo-llm-wiki." href="/expo-llm-wiki/start/ecosystem/#curated-journal-mobile-fully-offline" />
+  <LinkCard title="SynapseTree" description="Hosted cloud memory built on the same engine. An MCP server is in development." href="/expo-llm-wiki/start/ecosystem/#synapsetree-cloud-memory" />
+</CardGrid>
+
+## Where to next
+
+<CardGrid>
+  <LinkCard title="How memory works" description="Events, facts, tasks, and the librarian that connects them." href="/expo-llm-wiki/concepts/how-it-works/" />
+  <LinkCard title="Guides" description="Task-focused how-tos: ingest documents, tune retrieval, add a graph." href="/expo-llm-wiki/guides/llm-provider/" />
+  <LinkCard title="Recipes" description="Complete, copy-pasteable examples you can build from." href="/expo-llm-wiki/recipes/chat-memory/" />
+  <LinkCard title="API reference" description="Every method, option, hook, and error class." href="/expo-llm-wiki/reference/wiki-memory/" />
+</CardGrid>
