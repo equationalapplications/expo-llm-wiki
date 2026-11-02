@@ -40,17 +40,19 @@ Errors you throw from your own callbacks pass through with their type unchanged.
 ## Migration v9 fails on existing duplicates
 
 Schema migrations run in `setup()`. They're additive and safe to re-run. Migration v9
-(`add_live_hash_unique_index`) adds a unique index on `(entity_id, source_hash)` for live rows. It
+(`add_source_ref_index`) adds a `source_ref_index` table with a unique `(entity_id, source_hash)`
+constraint on live rows, so each content hash belongs to at most one `sourceRef` per entity. It
 closes a race where two concurrent ingests under different `sourceRef`s could both store the same
-content.
+content. (One document's facts all share a hash, which is fine. The rule is about `sourceRef`s.)
 
-A database created before that fix may already have such duplicates. Then `setup()` throws:
+A database created before that fix may already have a hash held under two or more live
+`sourceRef`s. Then `setup()` throws:
 
 ```text
-Migration v9 (add_live_hash_unique_index) failed: existing live rows violate the new UNIQUE index. …
+Migration v9 (add_source_ref_index) failed: existing live rows have multiple sourceRefs sharing a hash. Found N duplicate (entity_id, source_hash) groups. …
 ```
 
-The message lists the offending `(entity_id, source_hash)` groups. Nothing is deleted, the index
-isn't created, and the schema version doesn't advance, so it's safe to retry. To fix it, keep one
-live row per group: soft-delete the others (or re-ingest them under the correct `sourceRef`), then
-run `setup()` again.
+The message counts the groups and shows up to five. Nothing is deleted, the table isn't created,
+and the schema version doesn't advance, so it's safe to retry. To fix it, for each group call
+`forget({ sourceRef })` on every `sourceRef` except the one you want to keep, then run `setup()`
+again.

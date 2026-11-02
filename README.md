@@ -13,6 +13,7 @@
 [![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fschema-software-org?label=@equationalapplications/schema-software-org)](https://www.npmjs.com/package/@equationalapplications/schema-software-org) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fschema-software-org?label=downloads)](https://www.npmjs.com/package/@equationalapplications/schema-software-org)
 
 **[📖 Docs](https://equationalapplications.github.io/expo-llm-wiki/)** · **[GitHub](https://github.com/equationalapplications/expo-llm-wiki)** · **[ScopeLab](https://equationalapplications.github.io/expo-llm-wiki/scopelab/)** · **[WikiDemo](https://equationalapplications.github.io/expo-llm-wiki/wiki-demo/)** · **[Changelog](https://github.com/equationalapplications/expo-llm-wiki/blob/main/CHANGELOG.md)** · **[Issues](https://github.com/equationalapplications/expo-llm-wiki/issues)**
+
 ## Persistent, episodic memory for AI agents
 
 LLM Wiki is a cross-platform TypeScript and SQLite library for long-term LLM memory. It turns raw conversation logs and documents into a structured knowledge base of facts, tasks and graph edges, with background fact extraction, semantic search and memory pruning. It runs wherever your app runs: Expo, React Native, the browser, or Node.js.
@@ -52,6 +53,8 @@ Use `npx expo install` for the Expo packages so Expo picks native builds that ma
 Then, three lines to memory:
 
 ```ts
+import { formatContext } from '@equationalapplications/core-llm-wiki'; // also exported by the expo and react packages
+
 await wiki.write('user-123', { event_type: 'observation', summary: 'Loves hiking on weekends.' });
 const memory = await wiki.read('user-123', 'what should we do on Saturday?');
 const context = formatContext(memory); // → paste into your system prompt

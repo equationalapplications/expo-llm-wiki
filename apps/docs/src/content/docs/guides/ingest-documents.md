@@ -83,6 +83,10 @@ sourceRef: 'docs/onboarding.md'  // ⚠ becomes 'docsonboarding.md'
 
 Set these globally in `config` or per call. Surrogate pairs are never split.
 
+To check a batch of sources at once, pass an array to `hasChanged`. Each result is
+`{ sourceRef, changed, duplicateOf? }`. `duplicateOf`, when present, names the different stored
+`sourceRef` that already holds the same hash (in the database's normalized spelling).
+
 ### Reproduce chunk boundaries
 
 The same chunker is exported, so you can re-chunk a source exactly as ingest did. That's useful
@@ -103,7 +107,8 @@ const { chunks, truncated } = chunkText(source, DEFAULT_MAX_CHUNK_LENGTH, DEFAUL
   other arguments.
 - Otherwise `chunkText` throws unless `maxChunkLength` is an integer of at least 2 and `overlap` is
   a non-negative integer smaller than `maxChunkLength`.
-- `ingestDocument()` quietly clamps overlap to `maxChunkLength - 1`, but `chunkText` doesn't. If
+- `ingestDocument()` quietly clamps overlap to `maxChunkLength - 1` and rounds non-integer values
+  down, but `chunkText` rejects both. If
   you configured a custom `maxChunkLength`, apply `Math.min(overlap, maxChunkLength - 1)` yourself
   before calling it. (For example, `maxChunkLength: 100` with the default overlap ingests at an
   overlap of `99`.)
@@ -127,9 +132,10 @@ await wiki.ingestDocument('team', params, { onDuplicateHash: 'skip' });
 
 Only live references count. Soft-deleted ones never trigger the check.
 
-A concurrent writer can still claim the hash after the pre-check passes. The transaction then
-rolls back after the LLM extraction already ran. You still get the diagnostics that describe the
-extraction (`ingest_chunk_failed`, `fact_rejected`, `fact_deduplicated`). Diagnostics tied to the
+Calls on the same `WikiMemory` instance are serialized per hash. A writer in another process, or
+another `WikiMemory` instance on the same database, can still claim the hash after the pre-check
+passes. The transaction then rolls back after the LLM extraction already ran. You still get the
+diagnostics that describe the extraction (`fact_rejected`, `fact_deduplicated`). Diagnostics tied to the
 rolled-back write (`grounding_*`, `edge_dropped`) are dropped, because the fact IDs they name were
 never committed.
 

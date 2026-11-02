@@ -53,9 +53,11 @@ Full-scan semantic reads cache the parsed `Float32Array` vectors in memory, keye
 repeated query doesn't parse them again.
 
 - Up to **16 entities** are cached. When the limit is reached, the oldest-inserted entity is evicted.
-- An entity with more than **500** vectors isn't cached at all for that read.
-- Only full scans fill the cache. Reads with `preFilterLimit` score just the keyword top-K and
-  don't use it.
+- An entity with more than **500** live facts isn't cached at all, and any existing cache for it
+  is dropped.
+- Only single-entity full-scan reads on the built-in cosine path fill the cache. Reads with
+  `preFilterLimit`, multi-entity reads, and reads served by a `vectorRanker` don't fill it. A
+  `preFilterLimit` read still reuses vectors that are already cached.
 - Any mutation clears it: `runLibrarian`, `runHeal`, `runPrune`, `runReembed`, `ingestDocument`,
   `importDump`, and `forget`.
 - On memory-constrained runtimes, call `wiki.clearVectorCache()` to free it yourself.
@@ -74,6 +76,20 @@ The `indexStrategy` config option picks the keyword engine:
 sql.js ships without FTS5, so browser apps use MiniSearch under `'auto'`. The two backends rank
 results slightly differently.
 :::
+
+Operational details:
+
+- The first `setup()` that adds FTS5 to an existing database rebuilds the index in one
+  transaction and holds the write lock for the whole rebuild.
+- Under `'auto'`, a failed FTS5 init is retried once. After that, `setup()` completes with keyword
+  search unavailable: keyword reads throw `WikiSearchUnavailableError`. It never quietly switches
+  to MiniSearch.
+- While search is unavailable, `runHeal` returns `searchUnavailable: true` and
+  `runPendingMaintenance` lists skipped jobs in `perEntity[].searchUnavailable`. Calling
+  `syncSearchIndex()` with no arguments retries the init, backing off from 5 seconds up to 5
+  minutes after a failure.
+- MiniSearch keeps all entry text in the JS heap. The measured ceiling is about 1 million entries
+  on a default Node heap (`--max-old-space-size`).
 
 ## Tuning knobs at a glance
 

@@ -56,8 +56,8 @@ await wiki.runReembed('user-123', { skipExisting: true }); // only facts with no
 - `permanentlyFailed` covers a `float32_overflow` failure or 5 failed attempts. Retry them with
   `{ force: true }`, which also skips the backoff window for `deferred` rows.
 - A convergence loop should test `failed`, not `deferred`.
-- A `storage_error` counts in `failed` but never enters backoff, since recording the backoff is
-  itself a database write. While writes keep failing, every sweep retries every row, so a loop on
+- A `storage_error` counts in `failed` but never enters backoff, because storage is treated as a
+  separate failure domain from the embedding provider. While writes keep failing, every sweep retries every row, so a loop on
   `failed` can spin. Treat repeated `storage_error` failures as an infrastructure problem to fix,
   not something to wait out.
 

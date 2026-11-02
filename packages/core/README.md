@@ -10,7 +10,6 @@ Platform-agnostic TypeScript engine for hybrid LLM memory. Features episodic fac
 
 > Inspired by [Andrej Karpathy's LLM Wiki memory spec](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
 
-
 **📖 Documentation: [equationalapplications.github.io/expo-llm-wiki/packages/core](https://equationalapplications.github.io/expo-llm-wiki/packages/core/)**. Start with the [Node.js quickstart](https://equationalapplications.github.io/expo-llm-wiki/start/quickstart-node/), or go straight to the [API reference](https://equationalapplications.github.io/expo-llm-wiki/reference/wiki-memory/).
 
 ## Features

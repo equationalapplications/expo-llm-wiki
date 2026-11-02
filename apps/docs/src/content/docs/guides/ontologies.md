@@ -191,4 +191,7 @@ await wiki.runOntologyBackfill('user-1', { classifier: 'llm' }); // force the ge
 Jev classifier on Cloudflare Workers AI (`typesafe/jev`), behind its **Type untyped facts** button.
 
 `classify` receives `{ state, questions }`, where each question is `choice`, `binary`, or
-`score`. It returns `{ answers }`, which the engine validates as untrusted input.
+`score`. It returns `{ answers }`, which the engine validates as untrusted input: off-list choices
+and out-of-range probabilities count toward `failedValidation`, and a `classify` call that throws
+counts toward `skipped` and is retried on the next pass. Answers below `classifyMinConfidence` are
+retried after the cooldown.

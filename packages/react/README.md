@@ -32,8 +32,9 @@ Peer dependency: `react >=17`. Requires Node.js 20 or later for tooling and serv
 ## Quick look
 
 ```tsx
-import { WikiProvider, useMemoryRead } from '@equationalapplications/react-llm-wiki';
+import { useMemoryRead } from '@equationalapplications/react-llm-wiki';
 
+// Inside a <WikiProvider wiki={wiki}> tree:
 function Preferences() {
   const { data, isPending, error } = useMemoryRead('user-123', 'preferences');
   if (isPending) return <p>Loading…</p>;

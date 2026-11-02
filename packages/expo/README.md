@@ -37,15 +37,18 @@ Use `npx expo install` so Expo picks native builds that match your SDK.
 ## Quick look
 
 ```tsx
-import { WikiProvider, useMemoryRead } from '@equationalapplications/expo-llm-wiki';
+import * as SQLite from 'expo-sqlite';
+import { createWiki, WikiProvider, useMemoryRead } from '@equationalapplications/expo-llm-wiki';
 
-function Preferences() {
-  const { data, isPending } = useMemoryRead('user-123', 'preferences');
-  // render data?.facts
-}
+const db = await SQLite.openDatabaseAsync('app.db');
+const wiki = createWiki(db, { llmProvider }); // pass the expo-sqlite database directly
+await wiki.setup();
+
+// <WikiProvider wiki={wiki}><App /></WikiProvider>, then in any component:
+const { data, isPending } = useMemoryRead('user-123', 'preferences');
 ```
 
-See the [Expo quickstart](https://equationalapplications.github.io/expo-llm-wiki/start/quickstart-expo/) for creating the wiki and wrapping your app in `WikiProvider`. On React Native, give `embed` an absolute URL.
+See the [Expo quickstart](https://equationalapplications.github.io/expo-llm-wiki/start/quickstart-expo/) for a complete app, including the `llmProvider`. On React Native, give `embed` an absolute URL.
 
 ## Monorepo Ecosystem
 

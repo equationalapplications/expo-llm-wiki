@@ -49,10 +49,17 @@ The profile is detected from the root index frontmatter:
 
 | Frontmatter | Parsed as |
 |---|---|
-| `profile: llm-wiki/2` | v0.2, with the trust and provenance fields filled in |
+| `profile: llm-wiki/2` | v0.2 |
+| no `profile`, `okf_version: 0.2` | v0.2 |
+| unknown `profile`, `okf_version: 0.2` | v0.2, best effort |
 | `profile: llm-wiki/1` | v0.1 |
 | no `profile`, `okf_version: 0.1` | v0.1 (legacy) |
 | neither field | profile 0 (the oldest legacy format) |
+
+The profile decides two things. Under v0.2, a task's `status` is its lifecycle and its execution
+state is in `execution_status`. Under v0.1 and profile 0, `status` is the execution state. And
+v0.1 builds edges only from the `## Related` section, while the other formats also turn links in
+the body into edges. Trust and provenance fields are read whatever the profile.
 
 :::tip
 Imported facts usually have no `okf_type` and no edges from the librarian. Run
