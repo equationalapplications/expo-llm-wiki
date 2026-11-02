@@ -169,7 +169,7 @@ SynapseTree's MCP tool surface is shipped. The local stdio client [`@equationala
 
 `ontology_get` is ratified but not wired: no SynapseTree operation or `mcp-server` tool exists for it yet, and it joins the table when the server wires it. `ontology_put` is reserved. Core calls with no tool here (`wiki.history`, `wiki.getInstructions`) have no cloud operation yet.
 
-**Hosts that embed the engine directly** (not through SynapseTree) build their own tools from `core-llm-tools`. That package currently ships Gemini declarations named `wiki_traverse_graph`, `wiki_get_ontology` and `wiki_get_instructions`, and the host dispatches on those names itself. SynapseTree PR #151 ratifies `graph_traverse`, `ontology_get` and `instructions_get` for them, with the `wiki_*` names kept as deprecated aliases; that rename is a separate `core-llm-tools` PR, not this one.
+**Hosts that embed the engine directly** (not through SynapseTree) build their own tools from `core-llm-tools`. That package ships Gemini declarations named `graph_traverse`, `ontology_get` and `instructions_get` (ratified by SynapseTree PR #151), and the host dispatches on those names. The legacy `wiki_traverse_graph`, `wiki_get_ontology` and `wiki_get_instructions` names stay exported as deprecated aliases and are removed at the next major (#324); a host that still dispatches on a legacy name logs one deprecation warning per process.
 
 ---
 
