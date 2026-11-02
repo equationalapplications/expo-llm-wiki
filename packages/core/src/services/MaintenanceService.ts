@@ -549,6 +549,9 @@ export class MaintenanceService {
           const sourceHash = params.sourceHash !== undefined ? normalizeSourceHash(params.sourceHash) : null;
           if (params.sourceHash !== undefined && !sourceHash) throw new Error('Invalid sourceHash (must be 64-char hex string)');
 
+          // Before any mutation: a pre-v9 store has no source_ref_index to update (#316).
+          const touchSourceRefIndex = sourceRef !== null && await this.sourceRefIndexPresent(tx);
+
           if (params.entryId) {
             const entryId = await this.entryRepo.findIdById(params.entryId, entityId, tx);
             if (entryId) deletedEntryIds.push(entryId);
@@ -564,9 +567,10 @@ export class MaintenanceService {
           // Soft-delete the source_ref_index row so a re-ingest of this
           // sourceRef+hash can take ownership. The pre-check at the start of
           // ingestDocument will now see no live ref and proceed. No-op when
-          // the row is already soft-deleted or never existed.
-          const sourceRefIndexPromise = sourceRef
-            ? this.sourceRefIndexRepo.softDeleteByEntityAndSourceRef(entityId, sourceRef, tx).then(() => undefined)
+          // the row is already soft-deleted or never existed, and skipped on a
+          // pre-v9 store, whose v9 backfill rebuilds the index from live entries.
+          const sourceRefIndexPromise = touchSourceRefIndex && sourceRef
+            ?this.sourceRefIndexRepo.softDeleteByEntityAndSourceRef(entityId, sourceRef, tx).then(() => undefined)
             : null;
 
           const [entryResult, taskResult, refResult] = await Promise.all([
@@ -611,6 +615,29 @@ export class MaintenanceService {
     } finally {
       this.jobManager.releaseLock('forget', entityId);
     }
+  }
+
+  /**
+   * Whether forget() should soft-delete in source_ref_index (#316,
+   * specs/forget-pre-v9 §3.1). Normally true: setup()'s DDL creates the table.
+   * False only when the table is absent AND the store is pre-v9 (stored
+   * schema_version < 9; missing/unparseable counts as 0, as in
+   * detectSchemaVersion) — the v9 recovery path, where there is no index row
+   * to retire and v9's backfill reads live entries only. A v9+ store without
+   * its index is corrupt: throw rather than skip, so the TOCTOU guard is never
+   * silently bypassed.
+   *
+   * Every read runs on `tx`, so a v9 committed by another connection between
+   * this probe and forget()'s writes can only fail the write-lock upgrade
+   * (SQLite serializes writers), never make forget() skip a live index.
+   */
+  private async sourceRefIndexPresent(tx: SQLiteAdapter): Promise<boolean> {
+    if (await this.metadataRepo.tableExists(`${this.prefix}source_ref_index`, tx)) return true;
+    const raw = await this.metadataRepo.getMeta('schema_version', tx);
+    const parsed = raw ? parseInt(raw, 10) : 0;
+    const version = Number.isFinite(parsed) ? parsed : 0;
+    if (version < 9) return false;
+    throw new Error(`forget(): source_ref_index is missing on a schema_version=${version} database; run setup()`);
   }
 
   /**
