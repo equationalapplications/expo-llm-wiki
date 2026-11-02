@@ -21,6 +21,10 @@ export default defineConfig({
       editLink: { baseUrl: `${repo}/edit/main/apps/docs/` },
       lastUpdated: false,
       customCss: ['./src/styles/custom.css'],
+      // Search engine ownership verification (Bing Webmaster Tools). The Google
+      // Search Console token is the public/google*.html file. Keep both, or the
+      // properties lose verification.
+      head: [{ tag: 'meta', attrs: { name: 'msvalidate.01', content: '9B4234C102820E0A07B8D9C5B0A06CC0' } }],
       sidebar: [
         { label: 'Start here', items: [{ autogenerate: { directory: 'start' } }] },
         { label: 'Concepts', items: [{ autogenerate: { directory: 'concepts' } }] },
