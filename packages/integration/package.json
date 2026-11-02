@@ -2,7 +2,7 @@
   "name": "@equationalapplications/integration-llm-wiki",
   "version": "0.0.0",
   "private": true,
-  "description": "Integration tests for LLM Wiki Memory \u2014 not published.",
+  "description": "Integration tests for Core LLM Wiki \u2014 not published.",
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
