@@ -620,6 +620,7 @@ jobs:
           publish_if_needed "./packages/expo/package.json" pnpm --filter "./packages/expo" publish --no-git-checks --access public
           publish_if_needed "./packages/prisma-outbox/package.json" pnpm --filter "./packages/prisma-outbox" publish --no-git-checks --access public
           publish_if_needed "./packages/okf/package.json" pnpm --filter "./packages/okf" publish --no-git-checks --access public
+          publish_if_needed "./packages/mcp-server/package.json" pnpm --filter "./packages/mcp-server" publish --no-git-checks --access public
 
           echo "RELEASE_VERSION=${RELEASE_VERSION}" >> "$GITHUB_ENV"
 
