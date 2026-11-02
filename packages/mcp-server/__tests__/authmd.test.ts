@@ -119,8 +119,9 @@ describe('registerByEmail (spec §7)', () => {
   });
 
   it('treats a surviving 429 from the token endpoint as slow_down and keeps polling', async () => {
-    // three 429s exhaust the client's internal retries; authmd must then
-    // keep polling with a +5 s interval instead of aborting.
+    // oauthToken is single-attempt in the client, so each 429 reaches authmd
+    // as one error; authmd must keep polling with a +5 s interval instead of
+    // aborting.
     const s = scenario([{ status: 200, body: REG }, { status: 429, body: { error: 'rate_limited' } }, { status: 429, body: { error: 'rate_limited' } }, { status: 429, body: { error: 'rate_limited' } }, { status: 200, body: MINT }]);
     const result = await s.run();
     expect(result.apiKey).toBe(KEY);
@@ -143,6 +144,7 @@ describe('registerByEmail (spec §7)', () => {
       await expect(s.run()).resolves.toMatchObject({ apiKey: KEY });
       expect(s.lines.join('\n')).toContain('fix it');
       expect(s.lines.join('\n')).toContain('https://synapsetree.dev/dashboard');
+      expect(s.waits).toEqual([5000, 10000]);
     }
   });
 
@@ -170,5 +172,84 @@ describe('registerByEmail (spec §7)', () => {
     const text = s.lines.join('\n');
     expect(text).not.toContain(REG.claim_token);
     expect(text).not.toContain(KEY);
+  });
+});
+
+describe('registerByEmail remedy pacing (#326, spec auth-email-remedy-poll §8)', () => {
+  const Q = { status: 400, body: { error: 'database_quota_exceeded', error_description: 'no free slot', error_uri: 'https://synapsetree.dev/dashboard' } };
+  const K = { status: 400, body: { ...Q.body, error: 'key_limit_reached' } };
+  const P = { status: 400, body: { error: 'authorization_pending' } };
+  const OK = { status: 200, body: MINT };
+  const R = { status: 200, body: REG };
+  const WAIT = 'Waiting; approve again once it is fixed.';
+  const QLINE = 'database_quota_exceeded: no free slot — https://synapsetree.dev/dashboard';
+  const KLINE = 'key_limit_reached: no free slot — https://synapsetree.dev/dashboard';
+  const count = (lines: string[], prefix: string) => lines.filter((l) => l.startsWith(prefix)).length;
+
+  it('1: a persisting wall prints one pair, keyed on the code, and backs off to a 30 s ceiling', async () => {
+    const varied = { status: 400, body: { ...Q.body, error_description: 'still no free slot' } };
+    const s = scenario([R, Q, Q, varied, Q, Q, Q, OK]);
+    await expect(s.run()).resolves.toMatchObject({ apiKey: KEY });
+    expect(s.waits).toEqual([5000, 10000, 15000, 20000, 25000, 30000, 30000]);
+    expect(s.lines.slice(2)).toEqual([QLINE, WAIT]);
+  });
+
+  it('2: a change of code reprints once', async () => {
+    const s = scenario([R, Q, Q, K, K, OK]);
+    await s.run();
+    expect(s.waits).toEqual([5000, 10000, 15000, 20000, 25000]);
+    expect(s.lines.slice(2)).toEqual([QLINE, WAIT, KLINE, WAIT]);
+  });
+
+  it('3: authorization_pending clears the wall; a recurrence reprints and the backoff restarts', async () => {
+    const s = scenario([R, Q, Q, P, Q, OK]);
+    await s.run();
+    expect(s.waits).toEqual([5000, 10000, 15000, 5000, 10000]);
+    expect(count(s.lines, 'database_quota_exceeded')).toBe(2);
+    expect(s.lines.filter((l) => l === WAIT)).toHaveLength(2);
+  });
+
+  it('4: slow_down also clears the wall and zeroes the backoff', async () => {
+    const s = scenario([R, Q, { status: 400, body: { error: 'slow_down' } }, Q, OK]);
+    await s.run();
+    expect(s.waits).toEqual([5000, 10000, 10000, 15000]);
+    expect(count(s.lines, 'database_quota_exceeded')).toBe(2);
+  });
+
+  it('5: a transient error inside a wall neither reprints nor resets', async () => {
+    const s = scenario([R, Q, { status: 503, body: { code: 'unavailable' } }, Q, OK]);
+    await s.run();
+    expect(s.waits).toEqual([5000, 10000, 10000, 15000]);
+    expect(count(s.lines, 'database_quota_exceeded')).toBe(1);
+  });
+
+  it('6: a 429 inside a wall adds to the backoff', async () => {
+    const s = scenario([R, Q, { status: 429, body: { error: 'rate_limited' } }, Q, OK]);
+    await s.run();
+    expect(s.waits).toEqual([5000, 10000, 15000, 20000]);
+    expect(count(s.lines, 'database_quota_exceeded')).toBe(1);
+  });
+
+  it('7: a server interval on a remedy body is adopted as the floor under the backoff', async () => {
+    const s = scenario([R, { status: 400, body: { ...Q.body, interval: 20 } }, Q, OK]);
+    await s.run();
+    expect(s.waits).toEqual([5000, 25000, 30000]);
+  });
+
+  it('8: the 60 s cap still binds', async () => {
+    const s = scenario([{ status: 200, body: { ...REG, poll: { ...REG.poll, interval: 60 } } }, Q, Q, OK]);
+    await s.run();
+    expect(s.waits).toEqual([60000, 60000, 60000]);
+    expect(count(s.lines, 'database_quota_exceeded')).toBe(1);
+  });
+
+  it('9: the deadline still ends a wall, and sleeps never decrease before the final clamp', async () => {
+    const s = scenario([R, ...Array.from({ length: 40 }, () => Q)]);
+    await expect(s.run()).rejects.toMatchObject({ code: 'invalid_grant', message: expect.stringMatching(/expired/) });
+    expect(s.calls.length).toBe(36);
+    expect(Math.max(...s.waits)).toBe(30000);
+    expect(s.waits.at(-1)).toBe(15000);
+    for (let i = 1; i < s.waits.length - 1; i++) expect(s.waits[i]).toBeGreaterThanOrEqual(s.waits[i - 1]);
+    expect(count(s.lines, 'database_quota_exceeded')).toBe(1);
   });
 });
