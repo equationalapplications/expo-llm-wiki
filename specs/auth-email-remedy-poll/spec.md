@@ -3,7 +3,7 @@
 **Status:** Draft — not started
 **Date:** 2026-11-02
 **Branch:** `docs/spec-auth-email-remedy-poll`
-**Source baseline:** `40ff88b6` (main after PR #322)
+**Source baseline:** `40ff88b6` (main after PR #322); rebased 2026-11-02 onto `c6ce6e6e` (7.17.0). `authmd.ts` and its test file are byte-identical between the two, so every code anchor below still holds. `specs/mcp-server/spec.md` changed elsewhere (#323, #328), but the two bullets §6 amends are verbatim unchanged (§7 step 3 remedy bullet ~L452-456, §12.1 L623).
 **Issue:** #326
 **Package spec of record:** `specs/mcp-server/spec.md` (§7 the auth.md flow, §12.1 unit tests). This spec amends two of its bullets (§6 below) and contradicts nothing else in it.
 **Intent check:** INTENT rule 1's scope note (the `mcp-server` door holds the user's key and calls the SynapseTree API; it embeds no engine and calls no model) is untouched: the change is to how often one stderr line is printed and how often one unauthenticated poll is sent. Rule 6 ("Honest reporting", nothing dropped silently) is kept: every distinct account wall is still reported the moment it is first seen, and reported again whenever it recurs; what stops is the *repeat* of an unchanged report. Rule 10 (status lines tell the truth) is met by amending `specs/mcp-server/spec.md` §7/§12.1 in the same PR as the code. Rule 7 (no invisible spend) is not engaged: no model call, no token budget. No INTENT amendment is needed, and no charter promise is touched.
@@ -103,7 +103,7 @@ Made in the implementation PR, as appended text rather than rewrites, with a dat
 
 ## 7. Release
 
-The code change is `fix(mcp-server): …`, a patch on the lockstep version that semantic-release computes from `main` (INTENT "How changes are made" 4; `specs/mcp-server/spec.md` §3 "Versioning is lockstep and automatic"). The package is stamped and published only once PR #323 wires it into `.releaserc.json` and `release.yml`; if this fix merges first it simply rides the first published version. No `BREAKING CHANGE` footer: nothing public changes shape, and no line of the commit body may start with those two words (a body line that does parses as a footer and forces a major). Merge commit, never squash.
+The code change is `fix(mcp-server): …`, a patch on the lockstep version that semantic-release computes from `main` (INTENT "How changes are made" 4; `specs/mcp-server/spec.md` §3 "Versioning is lockstep and automatic"). PR #323 (merged `0d071811`) wired the package into `.releaserc.json` and `release.yml`, so this fix ships in the next patch of the lockstep version. No `BREAKING CHANGE` footer: nothing public changes shape, and no line of the commit body may start with those two words (a body line that does parses as a footer and forces a major). Merge commit, never squash.
 
 ## 8. Test plan (tests first; each new test fails on baseline where stated)
 
