@@ -1,3 +1,13 @@
+## [7.16.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.15.2...v7.16.0) (2026-11-02)
+
+### Features
+
+* **mcp-server:** publish @equationalapplications/mcp-server through the release pipeline ([51443f3](https://github.com/equationalapplications/expo-llm-wiki/commit/51443f392d5072eccfe200ce21f017b42a45815f)), closes [#305](https://github.com/equationalapplications/expo-llm-wiki/issues/305) [post-#320](https://github.com/equationalapplications/post-/issues/320)
+
+### Bug Fixes
+
+* **mcp-server:** review fixes — quote the checklist CLI path; one Status line; npm-normalized bin and repository ([592a855](https://github.com/equationalapplications/expo-llm-wiki/commit/592a855ac83747482bfe1dfa79626e1af23fe956))
+
 ## [7.15.2](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.15.1...v7.15.2) (2026-11-02)
 
 ### Bug Fixes
