@@ -12,7 +12,7 @@
     }
   },
   "bin": {
-    "synapsetree-mcp": "./dist/cli.js"
+    "synapsetree-mcp": "dist/cli.js"
   },
   "scripts": {
     "build": "tsup",
@@ -40,7 +40,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/equationalapplications/expo-llm-wiki.git",
+    "url": "git+https://github.com/equationalapplications/expo-llm-wiki.git",
     "directory": "packages/mcp-server"
   },
   "bugs": {

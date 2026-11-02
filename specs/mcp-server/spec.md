@@ -1,21 +1,12 @@
 # `@equationalapplications/mcp-server` — SynapseTree memory for coding agents
 
 **Date:** 2026-11-01 (rev 1); rev 2 2026-11-02
-**Status:** IMPLEMENTED (package code) — design approved in session by Kurt
-VanDusen 2026-11-01; the package is built on this branch (ten TDD tasks per
-`plan.md` in this folder, tests mocked-only; the live chain is gated by
-§12.3 before public launch). **§3's three repo edits are DEFERRED by owner
-ruling (Kurt VanDusen, 2026-11-01): the release wiring lands in a follow-up
-PR after the §0 gates close, so this PR cannot publish anything. The
-version-less `package.json` is safe in the interim — `release.yml` stages
-`packages/*/package.json` but only `publish_if_needed` entries publish, and
-`mcp-server` is not one until the follow-up adds it. `plan.md` and
-`LEDGER.md` are deliberately kept past merge (not cleaned up per the
-folder lifecycle) because the deferred §3 wiring PR resumes from them.**
-**Status rev 2 (2026-11-02, PR #323):** §3's three repo edits are
-IMPLEMENTED in the release-wiring PR (#323). G1 and G2 are closed (§0).
-G3 is a manual 7.15.2 bootstrap publish followed by the trusted-publisher
-entry (§2 R10); G4 is Kurt's live chain (§12.3). The first release-pipeline
+**Status (rev 2, 2026-11-02, PR #323):** IMPLEMENTED — package code (design
+approved in session by Kurt VanDusen 2026-11-01; built in PR #305, whose rev 1
+status deferred §3's repo edits to this PR) and §3's three repo edits (#323).
+G1 and G2 are closed (§0). G3 is closed: `7.15.2` was published by hand on
+2026-11-02 and the npm trusted-publisher entry (GitHub Actions, `release.yml`)
+exists (§2 R10). G4 is Kurt's live chain (§12.3). The first release-pipeline
 version is the next lockstep release after #323 merges. `plan.md` and
 `LEDGER.md` are deleted in #323 (they remain in git history at PR #305):
 the wiring PR they were kept for is this one, so the folder lifecycle

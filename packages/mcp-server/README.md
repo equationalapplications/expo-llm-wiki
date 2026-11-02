@@ -130,14 +130,14 @@ export SYNAPSETREE_BASE_URL=https://test-stage…      # the test stage, for EVE
 export SYNAPSETREE_CONFIG_DIR=$(mktemp -d)           # isolated credentials
 export SYNAPSETREE_LIVE_TESTS=1                      # opts the live chain into `pnpm test`
 cd "$(git rev-parse --show-toplevel)"                 # back to the repo root: all paths below are repo-root paths
-CLI="node $(pwd)/packages/mcp-server/dist/cli.js"    # the CLI built from this checkout, not a global install
+CLI="$(pwd)/packages/mcp-server/dist/cli.js"    # the CLI built from this checkout, not a global install
 pnpm build
 ```
 
-1. `$CLI auth --key …` then `$CLI status`.
+1. `node "$CLI" auth --key …` then `node "$CLI" status`.
 2. `SYNAPSETREE_API_KEY=… pnpm --filter @equationalapplications/mcp-server test` — runs the live chain (`whoami` → remember → search → supersede → search → log event → list). The suite is excluded unless `SYNAPSETREE_LIVE_TESTS=1` is set.
-3. `npx @modelcontextprotocol/inspector $CLI serve` and run one `memory_search`.
-4. `$CLI auth --email …` once, approve the email, then `$CLI auth --revoke`.
+3. `npx @modelcontextprotocol/inspector node "$CLI" serve` and run one `memory_search`.
+4. `node "$CLI" auth --email …` once, approve the email, then `node "$CLI" auth --revoke`.
 
 The vendored contract in `contract/` is generated in the SynapseTree repository and must not be hand-edited; the unit tests fail if it drifts from what the tools send or if it ever contains an owner-only operation.
 
