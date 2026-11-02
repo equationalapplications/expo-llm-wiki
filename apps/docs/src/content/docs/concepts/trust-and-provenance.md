@@ -1,11 +1,11 @@
 ---
 title: Trust & provenance
-description: Confidence levels, lifecycle status, drafts, grounding, and trust tiers — how LLM Wiki tracks how much to believe a fact.
+description: Confidence levels, lifecycle status, drafts, grounding, and trust tiers — how Core LLM Wiki tracks how much to believe a fact.
 sidebar:
   order: 5
 ---
 
-LLM output is fallible. LLM Wiki records **how** each fact got into memory and **how much to
+LLM output is fallible. Core LLM Wiki records **how** each fact got into memory and **how much to
 trust it**, so your app can decide what to show and what to inject into prompts.
 
 ## The signals on every fact

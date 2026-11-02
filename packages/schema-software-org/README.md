@@ -8,7 +8,7 @@ A custom minimal ontology manifest for an executive agent operating on behalf of
 
 **[📖 Docs](https://equationalapplications.github.io/expo-llm-wiki/)** · **[GitHub](https://github.com/equationalapplications/expo-llm-wiki)** · **[ScopeLab](https://equationalapplications.github.io/expo-llm-wiki/scopelab/)** · **[WikiDemo](https://equationalapplications.github.io/expo-llm-wiki/wiki-demo/)** · **[Changelog](https://github.com/equationalapplications/expo-llm-wiki/blob/main/CHANGELOG.md)** · **[Issues](https://github.com/equationalapplications/expo-llm-wiki/issues)**
 
-> Ontology manifest for [LLM Wiki Memory](https://github.com/equationalapplications/expo-llm-wiki).
+> Ontology manifest for [Core LLM Wiki](https://github.com/equationalapplications/expo-llm-wiki).
 
 ## Node Catalog
 

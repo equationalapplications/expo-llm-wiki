@@ -1,6 +1,6 @@
 ---
 title: Live demos
-description: Try LLM Wiki in your browser — the WikiDemo playground and the ScopeLab tool-scope explorer.
+description: Try Core LLM Wiki in your browser — the WikiDemo playground and the ScopeLab tool-scope explorer.
 ---
 
 Both demos run entirely in the browser on sql.js, with no backend. You bring your own LLM key.

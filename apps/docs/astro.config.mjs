@@ -12,7 +12,7 @@ export default defineConfig({
   trailingSlash: 'always',
   integrations: [
     starlight({
-      title: 'LLM Wiki',
+      title: 'Core LLM Wiki',
       description:
         'Persistent, local-first memory for AI agents. TypeScript + SQLite for Expo, React, and Node.js.',
       logo: { src: './src/assets/logo.svg', replacesTitle: false },

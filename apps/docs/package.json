@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "Developer guide for the LLM Wiki packages, published to GitHub Pages. Not published to npm.",
+  "description": "Developer guide for the Core LLM Wiki packages, published to GitHub Pages. Not published to npm.",
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",

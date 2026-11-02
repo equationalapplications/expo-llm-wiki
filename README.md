@@ -16,13 +16,13 @@
 
 ## Persistent, episodic memory for AI agents
 
-LLM Wiki is a cross-platform TypeScript and SQLite library for long-term LLM memory. It turns raw conversation logs and documents into a structured knowledge base of facts, tasks and graph edges, with background fact extraction, semantic search and memory pruning. It runs wherever your app runs: Expo, React Native, the browser, or Node.js.
+Core LLM Wiki is a cross-platform TypeScript and SQLite library for long-term LLM memory. It turns raw conversation logs and documents into a structured knowledge base of facts, tasks and graph edges, with background fact extraction, semantic search and memory pruning. It runs wherever your app runs: Expo, React Native, the browser, or Node.js.
 
 > Inspired by [Andrej Karpathy's LLM Wiki memory spec](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f). Supports [Open Knowledge Format (OKF) v0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) import and export.
 
 **📖 Full documentation: [equationalapplications.github.io/expo-llm-wiki](https://equationalapplications.github.io/expo-llm-wiki/)**. It has quickstarts, guides, recipes and the complete API reference.
 
-## Why LLM Wiki?
+## Why Core LLM Wiki?
 
 - **Bring your own inference.** You provide one `generateText` function. The library builds the prompts, parses the JSON and writes to the database. Works with OpenAI, Gemini, Claude or a local model.
 - **Just SQLite.** Facts, vectors and graph edges live in prefixed tables (`llm_wiki_` by default) in your own database. No vector database, no Neo4j.
@@ -95,7 +95,7 @@ Both run on sql.js with no backend. You bring your own LLM key.
 
 ## Ecosystem
 
-Built on LLM Wiki:
+Built on Core LLM Wiki:
 
 - **[Curated Thoughts](https://github.com/equationalapplications/curated-thoughts)**: a privacy-first desktop second brain (Tauri, React, Rust) with a built-in MCP server.
 - **[Curated Thoughts Integrations](https://github.com/equationalapplications/curated-thoughts-integrations)**: wires Curated Thoughts into Claude Code, OpenCode, Hermes, and other agent harnesses. A software agency in a box.

@@ -1,6 +1,6 @@
 ---
 title: Choose a package
-description: A quick decision guide for picking the right LLM Wiki package for your platform.
+description: A quick decision guide for picking the right Core LLM Wiki package for your platform.
 sidebar:
   order: 2
 ---

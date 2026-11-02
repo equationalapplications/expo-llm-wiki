@@ -1,18 +1,18 @@
 ---
 title: Ecosystem
-description: Apps and services built on LLM Wiki — Curated Thoughts (desktop + agents), Curated Journal (mobile), and SynapseTree (cloud memory).
+description: Apps and services built on Core LLM Wiki — Curated Thoughts (desktop + agents), Curated Journal (mobile), and SynapseTree (cloud memory).
 sidebar:
   order: 6
 ---
 
 import { Card, CardGrid, LinkCard, Aside } from '@astrojs/starlight/components';
 
-LLM Wiki is the engine behind a family of products from Equational Applications. They all follow
+Core LLM Wiki is the engine behind a family of products from Equational Applications. They all follow
 the same wiki pattern: events and documents go in, the librarian curates facts and a graph, and
 OKF bundles carry knowledge between products. They run on different platforms.
 
 ```text
-                    ┌──────────────────────────── LLM Wiki packages (this repo) ───────────────────────────┐
+                    ┌───────────────────────── Core LLM Wiki packages (this repo) ─────────────────────────┐
                     │  core-llm-wiki · react-llm-wiki · expo-llm-wiki · core-okf · ontologies · tools      │
                     └──────────────┬──────────────────────────┬───────────────────────────┬────────────────┘
                                    │                          │                           │
@@ -43,7 +43,7 @@ built with **Tauri, React, and Rust**. Its React front end runs `react-llm-wiki`
 engine called the *Active Librarian* follows the same wiki patterns natively: it watches a vault
 of PDFs, DOCX, and Markdown, chunks and embeds them locally, and proposes wiki pages.
 
-It shows several LLM Wiki features in a real product:
+It shows several Core LLM Wiki features in a real product:
 
 - **Human-in-the-loop review.** Librarian proposals wait in a Review desk until you approve them.
   This is the [draft-review](/expo-llm-wiki/guides/drafts-and-grounding/) idea used as a
@@ -96,11 +96,11 @@ Syncing with SynapseTree is on its roadmap, as an explicit, opt-in step.
 
 <LinkCard
   title="SynapseTree"
-  description="Hosted, tenant-aware memory built on LLM Wiki."
+  description="Hosted, tenant-aware memory built on Core LLM Wiki."
   href="https://synapsetree.dev"
 />
 
-[SynapseTree](https://synapsetree.dev) is the hosted member of the family. It runs LLM Wiki per
+[SynapseTree](https://synapsetree.dev) is the hosted member of the family. It runs Core LLM Wiki per
 tenant, with one SQLite file per tenant in object storage. The
 [serverless hosting guide](/expo-llm-wiki/guides/serverless-hosting/) describes that pattern.
 
@@ -114,7 +114,7 @@ released yet.
 
 | You want… | Use |
 |---|---|
-| Memory inside **your own** app | The [LLM Wiki packages](/expo-llm-wiki/start/choose-a-package/) |
+| Memory inside **your own** app | The [Core LLM Wiki packages](/expo-llm-wiki/start/choose-a-package/) |
 | A personal desktop brain, private and local | Curated Thoughts |
 | One reviewed memory shared by your coding agents | Curated Thoughts + integrations |
 | A private journal on your phone | Curated Journal |

@@ -1,6 +1,6 @@
 ---
 title: Errors
-description: Every typed error class LLM Wiki throws, when it is thrown, and what to do about it.
+description: Every typed error class Core LLM Wiki throws, when it is thrown, and what to do about it.
 sidebar:
   order: 4
 ---

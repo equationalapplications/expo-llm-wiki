@@ -1,13 +1,13 @@
 ---
 title: Serverless & multi-tenant hosting
-description: Run LLM Wiki per request with one SQLite file per tenant in object storage — the configuration and lifecycle that keep it consistent.
+description: Run Core LLM Wiki per request with one SQLite file per tenant in object storage — the configuration and lifecycle that keep it consistent.
 sidebar:
   order: 17
 ---
 
 A common hosted pattern is **one SQLite file per tenant**, kept in object storage (S3, GCS, R2).
 Each request pulls the file, runs the engine in-process, and pushes the file back. This is how
-[SynapseTree](https://synapsetree.dev), the hosted LLM Wiki service, runs. If you'd rather not run
+[SynapseTree](https://synapsetree.dev), the hosted Core LLM Wiki service, runs. If you'd rather not run
 this yourself, SynapseTree provides it as a service.
 
 ## Recommended config

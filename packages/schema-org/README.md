@@ -8,7 +8,7 @@ Curated [schema.org](https://schema.org/) warm-agent ontology manifest for hybri
 
 **[📖 Docs](https://equationalapplications.github.io/expo-llm-wiki/)** · **[GitHub](https://github.com/equationalapplications/expo-llm-wiki)** · **[ScopeLab](https://equationalapplications.github.io/expo-llm-wiki/scopelab/)** · **[WikiDemo](https://equationalapplications.github.io/expo-llm-wiki/wiki-demo/)** · **[Changelog](https://github.com/equationalapplications/expo-llm-wiki/blob/main/CHANGELOG.md)** · **[Issues](https://github.com/equationalapplications/expo-llm-wiki/issues)**
 
-> Ontology manifest for [LLM Wiki Memory](https://github.com/equationalapplications/expo-llm-wiki), inspired by [Andrej Karpathy's LLM Wiki memory spec](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
+> Ontology manifest for [Core LLM Wiki](https://github.com/equationalapplications/expo-llm-wiki), inspired by [Andrej Karpathy's LLM Wiki memory spec](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
 
 ## Why curated?
 

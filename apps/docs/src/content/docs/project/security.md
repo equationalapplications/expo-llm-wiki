@@ -1,6 +1,6 @@
 ---
 title: Security
-description: How LLM Wiki protects your data, where the host's responsibilities begin, and how to report a vulnerability.
+description: How Core LLM Wiki protects your data, where the host's responsibilities begin, and how to report a vulnerability.
 ---
 
 ## Reporting a vulnerability

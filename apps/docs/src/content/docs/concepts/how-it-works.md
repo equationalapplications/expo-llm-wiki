@@ -1,11 +1,11 @@
 ---
 title: How memory works
-description: The mental model behind LLM Wiki — events, facts, tasks, and the maintenance passes that connect them.
+description: The mental model behind Core LLM Wiki — events, facts, tasks, and the maintenance passes that connect them.
 sidebar:
   order: 1
 ---
 
-LLM Wiki stores three kinds of records per **entity** (a namespace such as a user or an agent),
+Core LLM Wiki stores three kinds of records per **entity** (a namespace such as a user or an agent),
 and runs a few LLM passes that move information between them.
 
 ```text

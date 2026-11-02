@@ -1,6 +1,6 @@
 ---
 title: Gemini agent with scoped memory tools
-description: Give a Gemini model memory tools it is authorized to use, and dispatch its function calls to LLM Wiki.
+description: Give a Gemini model memory tools it is authorized to use, and dispatch its function calls to Core LLM Wiki.
 sidebar:
   order: 5
 ---
