@@ -117,6 +117,15 @@ await wiki.syncSearchIndex('repo:app'); // AFTER commit, so keyword reads see th
 - The same hash under a different live `sourceRef` throws `WikiSourceRefHashCollision`.
 - A node ID owned by another entity throws `WikiGraphNodeOwnershipConflict`, and nothing is
   written. Entity-qualified IDs (`repo:app/fn_processData`) avoid accidental collisions.
+- Entry IDs share **one namespace per database**. An ID belongs to its entity as long as the row
+  exists, including after a soft delete. The error deliberately doesn't say who owns the ID.
+- A foreign **edge** ID collision is caught later and throws a plain `Error` (the foreign edge is
+  never overwritten). Let it propagate so your transaction rolls back. Catching it and committing
+  isn't atomic.
+- `ingestDocument` applies the same ownership rule. It generates fresh IDs, so a collision there is
+  unexpected, and if one happens your transaction's rollback, not a preflight check, keeps the
+  write atomic.
+- Authenticating callers and choosing the right entity ID is still your app's job.
 - Embeddings aren't computed here. They come from the next maintenance or reembed sweep.
 
 <Aside type="tip">

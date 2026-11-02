@@ -1,14 +1,15 @@
 ---
 title: core-llm-wiki
-description: The platform-agnostic memory engine. Zero runtime dependencies, any SQLite driver.
+description: The platform-agnostic memory engine. Pure TypeScript, any SQLite driver.
 sidebar:
   order: 1
 ---
 
 `@equationalapplications/core-llm-wiki` · [npm](https://www.npmjs.com/package/@equationalapplications/core-llm-wiki) · [source](https://github.com/equationalapplications/expo-llm-wiki/tree/main/packages/core)
 
-The engine every other package builds on. Pure TypeScript with **zero runtime dependencies**. You
-bring a [SQLite adapter](/expo-llm-wiki/guides/sqlite-adapter/) and an
+The engine every other package builds on. Pure TypeScript, with two small runtime dependencies
+(`minisearch` and `@equationalapplications/core-okf`) and no native code. It needs Node.js 20 or
+later outside React Native. You bring a [SQLite adapter](/expo-llm-wiki/guides/sqlite-adapter/) and an
 [LLM provider](/expo-llm-wiki/guides/llm-provider/).
 
 ```bash

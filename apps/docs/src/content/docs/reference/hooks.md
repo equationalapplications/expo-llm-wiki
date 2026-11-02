@@ -48,6 +48,11 @@ It fetches on mount, and again when `entityId`, `query`, `wiki`, or relevant `op
 (`maxResults`, `preFilterLimit`, `hybridWeight`, `tierWeights`). `entityId` may be an array. An
 in-flight result always lands before a queued refetch starts.
 
+- A `tierWeights` entry of `1.0` counts the same as leaving it out, so it doesn't trigger a refetch.
+- `includeZeroWeightEntities: false` and `undefined` behave the same. Only switching to `true`
+  refetches.
+- For multi-entity reads, `data.factScores` and `data.metadata` are also filled in.
+
 ### `useWikiTraversal`
 
 ```ts
@@ -55,6 +60,8 @@ const { nodes, edges, isPending, error, refetch } = useWikiTraversal(entityId, {
 ```
 
 Accepts the same options as [`traverseGraph()`](/expo-llm-wiki/guides/graphrag/#traversal-options).
+`maxDepth` is clamped to 1–3. `edgeTypes: []` matches nothing, while leaving it out matches every
+edge type. Pass the result to `formatGraphContext({ nodes, edges })` for a prompt-ready block.
 
 ### `useOntologyManifest`
 

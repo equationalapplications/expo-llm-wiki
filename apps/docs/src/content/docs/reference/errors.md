@@ -36,3 +36,21 @@ try {
 | `WikiParseError` | The model's output couldn't be parsed | `tier`, `position` | Usually surfaces as `parseFailures` rather than a throw |
 
 Errors you throw from your own callbacks pass through with their type unchanged.
+
+## Migration v9 fails on existing duplicates
+
+Schema migrations run in `setup()`. They're additive and safe to re-run. Migration v9
+(`add_live_hash_unique_index`) adds a unique index on `(entity_id, source_hash)` for live rows. It
+closes a race where two concurrent ingests under different `sourceRef`s could both store the same
+content.
+
+A database created before that fix may already have such duplicates. Then `setup()` throws:
+
+```text
+Migration v9 (add_live_hash_unique_index) failed: existing live rows violate the new UNIQUE index. …
+```
+
+The message lists the offending `(entity_id, source_hash)` groups. Nothing is deleted, the index
+isn't created, and the schema version doesn't advance, so it's safe to retry. To fix it, keep one
+live row per group: soft-delete the others (or re-ingest them under the correct `sourceRef`), then
+run `setup()` again.

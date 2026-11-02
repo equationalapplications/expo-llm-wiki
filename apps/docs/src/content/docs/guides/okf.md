@@ -45,7 +45,14 @@ Each concept is routed to facts or tasks by:
 2. the directory it's in (`/facts/` or `/tasks/`),
 3. `defaultSchema` (`'fact'` by default).
 
-The profile is detected from the root index frontmatter.
+The profile is detected from the root index frontmatter:
+
+| Frontmatter | Parsed as |
+|---|---|
+| `profile: llm-wiki/2` | v0.2, with the trust and provenance fields filled in |
+| `profile: llm-wiki/1` | v0.1 |
+| no `profile`, `okf_version: 0.1` | v0.1 (legacy) |
+| neither field | profile 0 (the oldest legacy format) |
 
 :::tip
 Imported facts usually have no `okf_type` and no edges from the librarian. Run

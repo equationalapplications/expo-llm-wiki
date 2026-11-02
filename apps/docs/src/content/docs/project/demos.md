@@ -28,3 +28,8 @@ Run them from the repository root:
 pnpm install
 pnpm --filter llm-wiki-playground dev
 ```
+
+## Benchmarks
+
+Supersession results and run-level token totals for the 7.8.0 release versus the legacy baseline
+are in [`docs/benchmarks.md`](https://github.com/equationalapplications/expo-llm-wiki/blob/main/docs/benchmarks.md).

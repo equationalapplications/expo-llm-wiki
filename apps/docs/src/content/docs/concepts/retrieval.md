@@ -45,8 +45,20 @@ A few properties come out of this design:
 - **It never fails because of the network.** A failed embedding falls back to keyword search,
   and `onRetrievalFallback` tells you it happened so you can show an "offline" hint.
 - **Two-phase reads.** Scoring reads only minimal columns. Full rows are fetched for the winners only.
-- **Vector cache.** Parsed vectors are cached per entity (up to 16 entities and 500 vectors
-  each). Mutations invalidate the cache, and `clearVectorCache()` frees it manually.
+- **Vector cache.** Parsed vectors are cached per entity. See [Vector cache](#vector-cache).
+
+## Vector cache
+
+Full-scan semantic reads cache the parsed `Float32Array` vectors in memory, keyed by entity, so a
+repeated query doesn't parse them again.
+
+- Up to **16 entities** are cached. When the limit is reached, the oldest-inserted entity is evicted.
+- An entity with more than **500** vectors isn't cached at all for that read.
+- Only full scans fill the cache. Reads with `preFilterLimit` score just the keyword top-K and
+  don't use it.
+- Any mutation clears it: `runLibrarian`, `runHeal`, `runPrune`, `runReembed`, `ingestDocument`,
+  `importDump`, and `forget`.
+- On memory-constrained runtimes, call `wiki.clearVectorCache()` to free it yourself.
 
 ## Keyword index backends
 
