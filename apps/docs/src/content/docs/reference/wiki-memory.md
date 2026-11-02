@@ -86,11 +86,12 @@ Stores one mutable fact in one transaction, with no text-generation (LLM) call, 
 | `pendingSources(entityId, [{ sourceRef, sourceHash }])` | `Promise<{ sourceRef, status: 'new' \| 'changed' \| 'partial' \| 'current' }[]>` |
 | `listSourceRefs(entityId)` | `Promise<{ sourceRef, sourceHash, factCount, lastIngestedAt }[]>` |
 
+| `findSourceRefsByHash(entityId, sourceHash)` | `Promise<string[]>` |
+| `listEntityIds({ prefix? }?)` | `Promise<string[]>` |
+
 `listSourceRefs()` returns one row per live `sourceRef`: soft-deleted rows and rows with a null
 `sourceRef` are excluded. `sourceHash` and `lastIngestedAt` come from the most recently updated
 live row for that `sourceRef`, and `factCount` counts the live rows.
-| `findSourceRefsByHash(entityId, sourceHash)` | `Promise<string[]>` |
-| `listEntityIds({ prefix? }?)` | `Promise<string[]>` |
 
 ## Maintenance
 
