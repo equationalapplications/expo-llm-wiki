@@ -17,7 +17,11 @@ export {
   googleSearchManifest,
 } from './manifests/core';
 export {
+  graphTraverseManifest,
+  ontologyGetManifest,
   wikiGetOntologyManifest,
   wikiTraverseGraphManifest,
 } from './manifests/graph';
-export { wikiGetInstructionsManifest } from './manifests/instructions';
+export { instructionsGetManifest, wikiGetInstructionsManifest } from './manifests/instructions';
+export { LEGACY_TOOL_NAMES, canonicalToolName } from './legacy';
+export type { LegacyToolName } from './legacy';

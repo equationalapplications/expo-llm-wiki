@@ -1,10 +1,12 @@
+import { renamed } from '../legacy';
 import type { AgentToolManifest } from '../types';
 
-export const wikiGetOntologyManifest: AgentToolManifest = {
-  name: 'wiki_get_ontology',
+/** `ontology_get`: the entity's ontology manifest. Hosts dispatch it to `WikiMemory.getOntologyManifest`. */
+export const ontologyGetManifest: AgentToolManifest = {
+  name: 'ontology_get',
   scope: 'memory:read',
   schema: {
-    name: 'wiki_get_ontology',
+    name: 'ontology_get',
     description:
       "Retrieve the current ontology manifest (allowed node types and edge types) for the user's memory. Use this to understand the structure of the knowledge graph and what relationships exist.",
     parameters: {
@@ -17,11 +19,12 @@ export const wikiGetOntologyManifest: AgentToolManifest = {
   },
 };
 
-export const wikiTraverseGraphManifest: AgentToolManifest = {
-  name: 'wiki_traverse_graph',
+/** `graph_traverse`: a fact's graph neighborhood. Hosts dispatch it to `WikiMemory.traverseGraph`. */
+export const graphTraverseManifest: AgentToolManifest = {
+  name: 'graph_traverse',
   scope: 'memory:read',
   schema: {
-    name: 'wiki_traverse_graph',
+    name: 'graph_traverse',
     description:
       'Traverse the knowledge graph starting from a specific fact ID to discover connected concepts and relationships. Returns a formatted neighborhood subgraph.',
     parameters: {
@@ -46,3 +49,17 @@ export const wikiTraverseGraphManifest: AgentToolManifest = {
     },
   },
 };
+
+/**
+ * @deprecated Use `ontologyGetManifest` (`ontology_get`) and route your switch
+ * through `canonicalToolName`. Identical except for the name; removed at the
+ * next major.
+ */
+export const wikiGetOntologyManifest: AgentToolManifest = renamed(ontologyGetManifest, 'wiki_get_ontology');
+
+/**
+ * @deprecated Use `graphTraverseManifest` (`graph_traverse`) and route your
+ * switch through `canonicalToolName`. Identical except for the name; removed
+ * at the next major.
+ */
+export const wikiTraverseGraphManifest: AgentToolManifest = renamed(graphTraverseManifest, 'wiki_traverse_graph');
