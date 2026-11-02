@@ -1,19 +1,21 @@
 ---
 title: Introduction
-description: What LLM Wiki is, what problems it solves, and how the packages fit together.
+description: What Core LLM Wiki is, what problems it solves, and how the packages fit together.
 sidebar:
   order: 1
 ---
 
-**LLM Wiki** is a TypeScript library that gives AI agents persistent, structured, long-term
+**Core LLM Wiki** is a TypeScript library that gives AI agents persistent, structured, long-term
 memory, stored in SQLite. It sits between raw conversation logs and a curated knowledge base:
 
 - You log what happens (**events**) and feed it documents.
 - An LLM pass called the **librarian** turns those into durable **facts** and **tasks**.
 - At answer time you `read()` the most relevant memory and inject it into your prompt.
 
-It was inspired by [Andrej Karpathy's LLM Wiki idea](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f),
-and it can import and export the [Open Knowledge Format (OKF)](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf),
+It was inspired by [Andrej Karpathy's LLM Wiki idea](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
+"LLM wiki" has since become a general name for that pattern. **Core LLM Wiki** is the name of this
+project's implementation, published as the `@equationalapplications/*-llm-wiki` packages. It can
+import and export the [Open Knowledge Format (OKF)](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf),
 so your knowledge isn't locked in.
 
 ## What you get
@@ -48,7 +50,7 @@ Not sure which package you need? See [Choose a package](/expo-llm-wiki/start/cho
 
 ## Used in production
 
-LLM Wiki powers [Curated Thoughts](https://github.com/equationalapplications/curated-thoughts),
+Core LLM Wiki powers [Curated Thoughts](https://github.com/equationalapplications/curated-thoughts),
 a desktop second brain whose
 [integrations](https://github.com/equationalapplications/curated-thoughts-integrations) share one
 memory across your AI agents. It also powers

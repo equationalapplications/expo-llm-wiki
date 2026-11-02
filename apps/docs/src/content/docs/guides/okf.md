@@ -6,7 +6,7 @@ sidebar:
 ---
 
 [Open Knowledge Format (OKF)](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf)
-represents a knowledge base as plain markdown files with YAML frontmatter. LLM Wiki exports and
+represents a knowledge base as plain markdown files with YAML frontmatter. Core LLM Wiki exports and
 imports OKF **v0.2** (profile `llm-wiki/2`, the default) and can read v0.1 (`llm-wiki/1`) and
 older bundles.
 
@@ -83,7 +83,7 @@ writes it back from the dump's `edges`.
 
 ## OKF across the ecosystem
 
-OKF is the shared exchange format of the LLM Wiki family.
+OKF is the shared exchange format of the Core LLM Wiki family.
 [Curated Thoughts](https://github.com/equationalapplications/curated-thoughts) backs up and restores
 its whole brain as OKF v0.2 zip bundles, and
 [Curated Journal](https://github.com/equationalapplications/curated-journal) imports and exports

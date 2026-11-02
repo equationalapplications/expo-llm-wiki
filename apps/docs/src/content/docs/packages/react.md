@@ -1,6 +1,6 @@
 ---
 title: react-llm-wiki
-description: React hooks and a context provider for LLM Wiki, for any React app with any SQLite adapter.
+description: React hooks and a context provider for Core LLM Wiki, for any React app with any SQLite adapter.
 sidebar:
   order: 3
 ---
