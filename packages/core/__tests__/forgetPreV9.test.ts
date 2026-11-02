@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import { WikiMemory } from '../src/WikiMemory';
 import { CURRENT_SCHEMA_VERSION } from '../src/db/migrations';
@@ -51,10 +52,10 @@ async function liveIndexRows(db: SQLiteAdapter) {
 
 /** Runs the documented listing query and forgets every ref but the first (sorted) per group. */
 async function forgetLosers(db: SQLiteAdapter, wiki: WikiMemory): Promise<number> {
-  const groups = await db.getAllAsync<{ entity_id: string; source_refs: string }>(listDupGroupsSql(P));
+  const groups = await db.getAllAsync<{ entity_id: string; source_hash: string; source_refs: string }>(listDupGroupsSql(P));
   for (const g of groups) {
     const [, ...losers] = g.source_refs.split(',').sort();
-    for (const loser of losers) await wiki.forget(g.entity_id, { sourceRef: loser });
+    for (const loser of losers) await wiki.forget(g.entity_id, { sourceRef: loser, sourceHash: g.source_hash });
   }
   return groups.length;
 }
@@ -113,7 +114,7 @@ describe('forget() before migration v9 (#316)', () => {
     );
     expect(message).toContain('Found 1 duplicate (entity_id, source_hash) groups.');
     expect(message).toMatch(/\(entity_id=ent, source_hash=d{12}…, n_refs=2\)/);
-    expect(message).toContain('forget(entityId, { sourceRef: <loser> })');
+    expect(message).toContain("forget(entityId, { sourceRef: <loser>, sourceHash: <group's full source_hash> })");
     expect(message).toMatch(/then re-run setup\(\)\.$/);
     expect(await schemaVersion(db)).toBe('8');
 
@@ -146,6 +147,65 @@ describe('forget() before migration v9 (#316)', () => {
       { entity_id: 'ent2', source_hash: H2, source_ref: 'x.md' },
     ]);
     expect(await liveIds(db)).toEqual(['a1', 'a2', 'x1']);
+  });
+});
+
+describe('recovery is scoped per group (#316)', () => {
+  it('a ref that loses one group but keeps another keeps its kept rows', async () => {
+    // a.md keeps H1 (earliest, sorted first) but loses H2 to 0.md; b.md loses H1.
+    const db = await openV8Database();
+    await insertV8Entry(db, { id: 'a1', entityId: 'ent', sourceRef: 'a.md', sourceHash: H1, updatedAt: 1000 });
+    await insertV8Entry(db, { id: 'b1', entityId: 'ent', sourceRef: 'b.md', sourceHash: H1, updatedAt: 1100 });
+    await insertV8Entry(db, { id: 'z1', entityId: 'ent', sourceRef: '0.md', sourceHash: H2, updatedAt: 900 });
+    await insertV8Entry(db, { id: 'a3', entityId: 'ent', sourceRef: 'a.md', sourceHash: H2, updatedAt: 1200 });
+    const wiki = new WikiMemory(db, options);
+
+    expect(await forgetLosers(db, wiki)).toBe(2);
+    expect(await liveIds(db)).toEqual(['a1', 'z1']);
+
+    await wiki.setup();
+    expect(await liveIndexRows(db)).toEqual([
+      { entity_id: 'ent', source_hash: H1, source_ref: 'a.md' },
+      { entity_id: 'ent', source_hash: H2, source_ref: '0.md' },
+    ]);
+  });
+});
+
+describe('custom tablePrefix (#316)', () => {
+  const X = 'x_';
+  const xOptions: WikiOptions = { ...options, config: { ...options.config, tablePrefix: X } };
+
+  it('pre-v9: forget({ sourceRef }) skips the missing x_source_ref_index', async () => {
+    const db = await openV8Database(X);
+    await insertV8Entry(db, { id: 'a1', entityId: 'ent', sourceRef: 'a.md', sourceHash: H1, updatedAt: 1000 }, X);
+    await insertV8Entry(db, { id: 'b1', entityId: 'ent', sourceRef: 'b.md', sourceHash: H1, updatedAt: 1100 }, X);
+    const wiki = new WikiMemory(db, xOptions);
+    await expect(wiki.forget('ent', { sourceRef: 'b.md' })).resolves.toEqual({ deleted: { entries: 1, tasks: 0 } });
+    expect(await sourceRefIndexExists(db, X)).toBe(false);
+    await wiki.setup();
+    expect(await schemaVersion(db, X)).toBe(String(CURRENT_SCHEMA_VERSION));
+  });
+
+  it('post-v9: forget({ sourceRef }) soft-deletes the x_source_ref_index row', async () => {
+    const db = openTestDatabase();
+    const wiki = new WikiMemory(db, xOptions);
+    await wiki.setup();
+    await insertV8Entry(db, { id: 'r1', entityId: 'ent', sourceRef: 'r.md', sourceHash: H1, updatedAt: 1 }, X);
+    await db.runAsync(
+      `INSERT INTO ${X}source_ref_index (id, entity_id, source_hash, source_ref, created_at, deleted_at)
+       VALUES ('sri_test_r', 'ent', ?, 'r.md', 1, NULL)`, [H1]);
+    await expect(wiki.forget('ent', { sourceRef: 'r.md' })).resolves.toEqual({ deleted: { entries: 1, tasks: 0 } });
+    const row = await db.getFirstAsync<{ deleted_at: number | null }>(
+      `SELECT deleted_at FROM ${X}source_ref_index WHERE id = 'sri_test_r'`);
+    expect(row?.deleted_at).not.toBeNull();
+  });
+});
+
+describe('docs recipe (#316)', () => {
+  it('reference/errors.md prints the exact listing query these tests run', () => {
+    const docs = readFileSync(
+      new URL('../../../apps/docs/src/content/docs/reference/errors.md', import.meta.url), 'utf8');
+    expect(docs).toContain(listDupGroupsSql(P));
   });
 });
 

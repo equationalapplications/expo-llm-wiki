@@ -189,7 +189,7 @@ export const MIGRATIONS: Migration[] = [
           `Migration v9 (add_source_ref_index) failed: existing live rows have multiple sourceRefs sharing a hash. ` +
           `Found ${duplicates.length} duplicate (entity_id, source_hash) groups. ` +
           `First ${Math.min(5, duplicates.length)}: ${sample}. ` +
-          `Resolve each group by calling forget(entityId, { sourceRef: <loser> }) for every losing sourceRef (works on pre-v9 databases), then re-run setup().`
+          `Resolve each group by calling forget(entityId, { sourceRef: <loser>, sourceHash: <group's full source_hash> }) for every losing sourceRef in that group (works on pre-v9 databases; list full hashes with the query in the docs' errors reference), then re-run setup().`
         );
       }
       await db.execAsync(

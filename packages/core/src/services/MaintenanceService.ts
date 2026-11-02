@@ -621,15 +621,20 @@ export class MaintenanceService {
    * Whether forget() should soft-delete in source_ref_index (#316,
    * specs/forget-pre-v9 §3.1). Normally true: setup()'s DDL creates the table.
    * False only when the table is absent AND the store is pre-v9 (stored
-   * schema_version < 9; missing/unparseable counts as 0, like
-   * detectSchemaVersion's no-meta fallback) — the v9 recovery path, where there is no index row
+   * schema_version < 9; a missing key or unparseable value counts as 0, like
+   * detectSchemaVersion; a store without the meta table at all is not
+   * supported and fails as before) — the v9 recovery path, where there is no index row
    * to retire and v9's backfill reads live entries only. A v9+ store without
    * its index is corrupt: throw rather than skip, so the TOCTOU guard is never
    * silently bypassed.
    *
-   * Every read runs on `tx`, so a v9 committed by another connection between
+   * Every read runs on `tx`, so a v9 committed by *another connection* between
    * this probe and forget()'s writes can only fail the write-lock upgrade
-   * (SQLite serializes writers), never make forget() skip a live index.
+   * (SQLite serializes writers), never make forget() skip a live index. A
+   * setup() racing forget() on the *same* connection (expo passes the shared
+   * db as tx) is not serialized against it; v9 runs in autocommit, a
+   * pre-existing limit out of scope here. Await setup() before other calls,
+   * as WikiMemory.setup() documents.
    */
   private async sourceRefIndexPresent(tx: SQLiteAdapter): Promise<boolean> {
     if (await this.metadataRepo.tableExists(`${this.prefix}source_ref_index`, tx)) return true;

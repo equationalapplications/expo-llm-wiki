@@ -67,28 +67,41 @@ GROUP BY entity_id, source_hash
 HAVING COUNT(DISTINCT source_ref) > 1;
 ```
 
-Pick the `sourceRef` to keep in each group, forget every other one, then run `setup()` again:
+Pick the `sourceRef` to keep in each group, forget every other one *within that group*, then run
+`setup()` again:
 
 ```ts
-await wiki.forget(entityId, { sourceRef: loser }); // once per losing sourceRef
+// once per losing sourceRef in each group; sourceHash scopes the delete to that group
+await wiki.forget(entityId, { sourceRef: loser, sourceHash: group.source_hash });
 await wiki.setup();
 ```
 
 `forget()` soft-deletes the rows (and records outbox `DELETE` events when `enableOutbox` is on),
-like any other forget. Check that each call reports `deleted.entries > 0`: `forget()` normalizes
-the `sourceRef` you pass, so a legacy row whose stored `source_ref` isn't in normalized form (for
-example one containing `/`) won't match. Use the SQL fallback below for those rows.
+like any other forget. Three cautions:
+
+- Always pass the group's `sourceHash`. Without it, `forget()` removes every live row of that
+  `sourceRef` in the entity, across all hashes, so a ref that loses one group but is the keeper
+  of another would lose its kept rows too. The error message shows only a 12-character hash
+  prefix; take the full `source_hash` from the listing query.
+- `forget()` normalizes the `sourceRef` you pass (to letters, digits, `.`, `_`, `-` and space).
+  Legacy rows on a pre-v9 store may not be normalized yet, because the normalize pass runs only
+  after migrations succeed. If a listed `sourceRef` contains any other character (a `/`, say), it
+  may match nothing (`deleted.entries` is `0`) or match a *different* ref. Use the SQL fallback
+  below for those rows.
+- `GROUP_CONCAT` joins refs with commas, so a legacy ref containing a comma is ambiguous in the
+  listing. Check such groups with `SELECT DISTINCT source_ref …` instead.
 Before the release that fixed [#316](https://github.com/equationalapplications/expo-llm-wiki/issues/316),
 `forget()` worked here only after some `setup()` under `'allow'` had opened the database; it
 now works on any open, including one refused under `'refuse'` or `'auto'`.
 
 If you don't have a `WikiMemory` instance, delete each losing `sourceRef`'s live rows directly
-instead, once per losing `(entityId, sourceRef)` pair, then run `setup()`:
+instead, once per losing `(entityId, sourceRef, sourceHash)` in each group, then run `setup()`:
 
 ```sql
 BEGIN;
 DELETE FROM llm_wiki_entries
-WHERE entity_id = :entityId AND source_ref = :sourceRef AND deleted_at IS NULL;
+WHERE entity_id = :entityId AND source_ref = :sourceRef AND source_hash = :sourceHash
+  AND deleted_at IS NULL;
 COMMIT;
 ```
 
