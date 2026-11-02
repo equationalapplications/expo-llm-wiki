@@ -14,8 +14,9 @@ memory, stored in SQLite. It sits between raw conversation logs and a curated kn
 
 It was inspired by [Andrej Karpathy's LLM Wiki idea](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
 "LLM wiki" has since become a general name for that pattern. **Core LLM Wiki** is the name of this
-project's implementation, published as the `@equationalapplications/*-llm-wiki` packages. It can
-import and export the [Open Knowledge Format (OKF)](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf),
+project: a family of packages published under the `@equationalapplications` npm scope, such as
+`core-llm-wiki`, `react-llm-wiki`, and `expo-llm-wiki`. Core LLM Wiki can import and export the
+[Open Knowledge Format (OKF)](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf),
 so your knowledge isn't locked in.
 
 ## What you get
