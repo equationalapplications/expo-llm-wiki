@@ -1,12 +1,21 @@
 # `@equationalapplications/mcp-server` — SynapseTree memory for coding agents
 
 **Date:** 2026-11-01 (rev 1); rev 2 2026-11-02
-**Status (rev 2, 2026-11-02, PR #323):** IMPLEMENTED — package code (design
-approved in session by Kurt VanDusen 2026-11-01; built in PR #305, whose rev 1
-status deferred §3's repo edits to this PR) and §3's three repo edits (#323).
+**Status rev 1 (2026-11-01, PR #305; superseded by rev 2 below):** IMPLEMENTED (package code) — design approved in session by Kurt
+VanDusen 2026-11-01; the package is built on this branch (ten TDD tasks per
+`plan.md` in this folder, tests mocked-only; the live chain is gated by
+§12.3 before public launch). **§3's three repo edits are DEFERRED by owner
+ruling (Kurt VanDusen, 2026-11-01): the release wiring lands in a follow-up
+PR after the §0 gates close, so this PR cannot publish anything. The
+version-less `package.json` is safe in the interim — `release.yml` stages
+`packages/*/package.json` but only `publish_if_needed` entries publish, and
+`mcp-server` is not one until the follow-up adds it. `plan.md` and
+`LEDGER.md` are deliberately kept past merge (not cleaned up per the
+folder lifecycle) because the deferred §3 wiring PR resumes from them.**
+**Status rev 2 (2026-11-02, PR #323; current):** IMPLEMENTED — §3's three repo edits (#323).
 G1 and G2 are closed (§0). G3 is closed: `7.15.2` was published by hand on
 2026-11-02 and the npm trusted-publisher entry (GitHub Actions, `release.yml`)
-exists (§2 R10). G4 is Kurt's live chain (§12.3). The first release-pipeline
+exists (§2 R10). G4's pre-publish runs passed 2026-11-02 (test stage, and the email-and-revoke sequence on production); its registry smoke closes it after publish (§0). The first release-pipeline
 version is the next lockstep release after #323 merges. `plan.md` and
 `LEDGER.md` are deleted in #323 (they remain in git history at PR #305):
 the wiring PR they were kept for is this one, so the folder lifecycle
@@ -29,9 +38,11 @@ SynapseTree key. The one live check is a documented manual step (§12.3).
 | G1 | SynapseTree production wires `rememberFact`, `supersedeFact`, `createEvent`, `traverseGraph`, `listNamespaces` (they answered `501 not_implemented` at rev 1). **CLOSED 2026-11-02:** SynapseTree PR #145. | SynapseTree |
 | G2 | SynapseTree fixes `POST /oauth2/revoke` answering 401 for a valid key. **CLOSED 2026-11-01:** SynapseTree #136, fixed by PR #141; the live check is the `auth --revoke` step of G4. | SynapseTree |
 | G3 | npm trusted-publisher entry for `@equationalapplications/mcp-server` (the release workflow publishes by OIDC, no token), or a manual first publish | Kurt |
-| G4 | The manual live chain in §12.3 passes against the SynapseTree test stage | Kurt |
+| G4 | The live gate (§12.3), split by the 2026-11-02 round-4 ruling (Tier-4, owner-approved): the email-and-revoke sequence runs on **production** from the packed tarball before publish; the install-and-call smoke runs on the test stage from the tarball before publish and from the registry after. **Before publish, PASSED 2026-11-02** from the #323 branch at `592a855a`, tarball `equationalapplications-mcp-server-7.16.0.tgz` sha256 `04e2b0f820ac294445d4ea82870ea75639d4cf1b5a1c61b1288fafa82a2aa48b`. *Test stage:* CLI live chain 128/128; MCP stdio lists the eight tools; from the tarball `whoami`, `memory_remember` and `memory_search` (hit) all ok; `auth --revoke` then the revoked key answers 403 after the 30 s authorizer cache. Test keys came from the ops `issueApiKey` operation (throwaway users, deleted after). *Production, email half:* a run for the owner's main address (returning-user path) reached approval (code matched, 600132) but the token poll answered `database_quota_exceeded` (Hobby plan, no free database slot), so no key issued; the CLI repeated that message on every poll (follow-up). Rerun as first registration for `info+g4@equationalapplications.com`: code 952059 matched; approval to key 8 min 22 s (17:04:24 to 17:12:46 UTC, including owner response time); expected vs actual: key works pre-revoke `whoami` 200 / 200 with scope `memory:full` (and the MCP `whoami` tool parses it); revoke 200 / 200 (`Stored key revoked.`); second revoke 200 / 200 (RFC 7009); post-revoke after the 30 s TTL 401 revoked-variant / **403 `{"message":"Forbidden"}`**, the contract's API Gateway response for an unknown or revoked key (§0 G2 live check passes); negative-control key not run (no second production key held). Issues: SynapseTree #152 (test-stage claim links go to production), #153 (test-stage claim page; review 2026-12-01). **After publish:** the registry smoke on the test stage closes G4 and is recorded here. | Kurt |
 
 The build is not blocked by any gate. Only the release is.
+
+**Gate ordering (round-4 ruling, 2026-11-02).** Bug gates (G1, G2) close before publish. G4 is the live gate. Its email registration and revoke sequence runs from the packed tarball against production before publish, because the test stage cannot approve a claim (SynapseTree #152) and because production is the environment users run it in. Its install-and-call smoke runs on the test stage from the tarball before publish and from the registry after. G4 closes when both runs are recorded in the gates table. A G4 failure after publish is remedied by a patch release, never an unpublish.
 
 ## 1. Purpose
 
