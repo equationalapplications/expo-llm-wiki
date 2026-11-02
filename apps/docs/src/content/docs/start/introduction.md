@@ -62,7 +62,7 @@ journal, and [SynapseTree](https://synapsetree.dev), a hosted cloud memory servi
 
 ## Design principles
 
-- **Bring your own inference (BYOI).** The library never ships an LLM client or API key. You
+- **Bring your own inference (BYOI).** Core LLM Wiki never ships an LLM client or API key. You
   supply `generateText` and, optionally, `embed`.
 - **Namespace safe.** Every table is prefixed (`llm_wiki_` by default), so it can live inside your
   existing app database.
