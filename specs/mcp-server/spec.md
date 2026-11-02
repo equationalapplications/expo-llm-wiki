@@ -12,6 +12,14 @@ version-less `package.json` is safe in the interim — `release.yml` stages
 `mcp-server` is not one until the follow-up adds it. `plan.md` and
 `LEDGER.md` are deliberately kept past merge (not cleaned up per the
 folder lifecycle) because the deferred §3 wiring PR resumes from them.**
+**Status rev 2 (2026-11-02, PR #323):** §3's three repo edits are
+IMPLEMENTED in the release-wiring PR (#323). G1 and G2 are closed (§0).
+G3 is a manual 7.15.2 bootstrap publish followed by the trusted-publisher
+entry (§2 R10); G4 is Kurt's live chain (§12.3). The first release-pipeline
+version is the next lockstep release after #323 merges. `plan.md` and
+`LEDGER.md` are deleted in #323 (they remain in git history at PR #305):
+the wiring PR they were kept for is this one, so the folder lifecycle
+(`specs/README.md`) applies again.
 **Package:** `packages/mcp-server`, published as `@equationalapplications/mcp-server`.
 **Authority:** This spec is the implementer's single source. It is derived
 from SynapseTree's private design spec (`2026-10-31-mcp-server-design.md`
@@ -27,8 +35,8 @@ SynapseTree key. The one live check is a documented manual step (§12.3).
 
 | Gate | What | Who |
 |---|---|---|
-| G1 | SynapseTree production wires `rememberFact`, `supersedeFact`, `createEvent`, `traverseGraph`, `listNamespaces` (they answer `501 not_implemented` today) | SynapseTree |
-| G2 | SynapseTree fixes `POST /oauth2/revoke` answering 401 for a valid key | SynapseTree |
+| G1 | SynapseTree production wires `rememberFact`, `supersedeFact`, `createEvent`, `traverseGraph`, `listNamespaces` (they answered `501 not_implemented` at rev 1). **CLOSED 2026-11-02:** SynapseTree PR #145. | SynapseTree |
+| G2 | SynapseTree fixes `POST /oauth2/revoke` answering 401 for a valid key. **CLOSED 2026-11-01:** SynapseTree #136, fixed by PR #141; the live check is the `auth --revoke` step of G4. | SynapseTree |
 | G3 | npm trusted-publisher entry for `@equationalapplications/mcp-server` (the release workflow publishes by OIDC, no token), or a manual first publish | Kurt |
 | G4 | The manual live chain in §12.3 passes against the SynapseTree test stage | Kurt |
 
@@ -64,23 +72,25 @@ by this spec.
 | R6 | The vendored contract is a pruned OpenAPI subset of exactly the operations this server calls, committed in this repo and regenerated from SynapseTree. | 2026-11-01 |
 | R7 | The registration response carries the poll interval as `poll.interval` (seconds); a pending or slow-down answer may replace it. | 2026-11-01 |
 | R8 | The implementer verifies with mocks only; the live check is manual, before release. | 2026-11-01 |
+| R9 | Tool names stay as shipped in §8 (`memory_*`, `graph_traverse`, `namespaces_list`, `whoami`); they are not renamed to `wiki_*`. `docs/synapsetree-integration.md` §6 maps core calls to these names in its own column instead. This answers SynapseTree's `2026-11-01-wire-memory-operations` §8 naming cleanup. | 2026-11-02 |
+| R10 | G3 is met by a one-off manual publish of `7.15.2` (the then-current lockstep version) from a local build of the #323 head, then the npm trusted-publisher entry (GitHub Actions, `release.yml`, no environment). That version carries no provenance; every later version comes from `release.yml` by OIDC. Publishing the *next* version by hand is forbidden: `publish_if_needed` would skip it. | 2026-11-02 |
 
 ## 3. Repo integration
 
 The workspace picks up `packages/mcp-server` automatically
 (`pnpm-workspace.yaml` globs `packages/*`). Three edits outside the package —
-**all three deferred to the release-wiring follow-up PR per the owner ruling
-above; none are in PR #305. They land in the release-wiring PR
-(`chore/mcp-server-release-wiring`, 2026-11-02):**
+deferred from PR #305 by owner ruling and landed in the release-wiring
+PR #323 (2026-11-02):
 
 1. `.releaserc.json` — add `'mcp-server'` to the directory array in the
    `prepareCmd` that stamps `${nextRelease.version}` into each package.
-2. `.github/workflows/release.yml` — add, after the `okf` line in the
-   ordered publish list:
+2. `.github/workflows/release.yml` — add, last in the ordered publish
+   list (it has no workspace dependencies, so a failed publish cannot block
+   a sibling):
    `publish_if_needed "./packages/mcp-server/package.json" pnpm --filter "./packages/mcp-server" publish --no-git-checks --access public`
-3. `README.md` — a badge line for the package, a row in the Monorepo
-   Ecosystem table, and "eight packages" becomes "nine". Every other
-   package README's ecosystem table gains the same row.
+3. `README.md` — a badge line for the package and its row in the
+   Packages and Ecosystem tables. (Every package README's ecosystem table
+   already gained the row in PR #305.)
 
 No change to root `tsconfig.json` or root `vitest.config.ts` (neither is
 used by CI; both already omit some packages). `pnpm install` must be run
@@ -89,10 +99,13 @@ once so `pnpm-lock.yaml` includes the new dependencies; CI installs with
 
 Versioning is lockstep and automatic. The PR merges as a merge commit,
 never squash (AGENTS.md, INTENT.md "Merge commits, never squash"; the
-merge-commit subject is the `feat(mcp-server): …` conventional title),
+a release is driven by the conventional commits *inside* the PR, not
+the merge-commit subject, so #323 carries a `feat(mcp-server): …` commit),
 the next release stamps the package with the
-same version as every other package, and that is the first published
-version. No manual version edits, ever (CONTRIBUTING.md).
+same version as every other package, and that is the first
+pipeline-published version. No manual version edits, ever
+(CONTRIBUTING.md), with the single transient exception of the R10
+bootstrap publish, which never commits the stamped version.
 
 ## 4. Package shape
 
@@ -643,8 +656,8 @@ Kurt runs, against the test stage, with a dashboard key:
 `npx @modelcontextprotocol/inspector synapsetree-mcp` and a `memory_search`
 from the inspector. Then `auth --email` once against the test stage, approving
 the email, and `auth --revoke`. The README's release checklist lists these
-steps. Until G1 closes, the five write operations answer 501 and the chain
-stops at `memory_remember`; that is expected and the checklist says so.
+steps. (At rev 1, before G1 closed, the chain stopped at
+`memory_remember` with 501; since 2026-11-02 the whole chain must pass.)
 
 ## 13. README
 
@@ -653,7 +666,7 @@ stops at `memory_remember`; that is expected and the checklist says so.
 
 1. **What it is** — three sentences from §1.
 2. **Install** — `npm install -g @equationalapplications/mcp-server`;
-   Node 20+. Both bin names, canonical first.
+   Node 20+. One command, `synapsetree-mcp` (§4, ruling D2).
 3. **Get a key** — two paths (R3): the dashboard
    (`https://synapsetree.dev/dashboard` → API keys → issue → `auth --key`)
    and `auth --email` with what to expect (the code, the email, the

@@ -340,6 +340,10 @@ runs and who schedules it.
 
 ## Amendments
 
+- 2026-11-02 — PR #323 lands the deferred `mcp-server` release wiring and
+  deletes that cycle's `plan.md`/`LEDGER.md`, ending the 2026-11-01
+  keep-past-merge exception. Why: the wiring PR they were kept for is
+  #323. No rule text changed.
 - 2026-11-01 — PR #305 adds the `mcp-server` agent door (rule 1 scope note,
   package list). The three §3 release-wiring edits are deferred to a
   follow-up PR by owner ruling until the spec §0 gates close, and the
