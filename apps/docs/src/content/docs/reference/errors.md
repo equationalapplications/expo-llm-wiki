@@ -53,6 +53,21 @@ Migration v9 (add_source_ref_index) failed: existing live rows have multiple sou
 ```
 
 The message counts the groups and shows up to five. Nothing is deleted, the table isn't created,
-and the schema version doesn't advance, so it's safe to retry. To fix it, for each group call
-`wiki.forget(entityId, { sourceRef })` on every `sourceRef` except the one you want to keep, then run `setup()`
-again.
+and the schema version doesn't advance, so it's safe to retry.
+
+To fix it, for each group delete every losing `sourceRef`'s live rows directly — `wiki.forget()`
+does not work here, because the duplicate check behind it queries `source_ref_index`, which v9
+hasn't created yet on an affected database. Run this once per losing `(entityId, sourceRef)` pair,
+then run `setup()` again:
+
+```sql
+BEGIN;
+DELETE FROM llm_wiki_entries
+WHERE entity_id = :entityId AND source_ref = :sourceRef AND deleted_at IS NULL;
+COMMIT;
+```
+
+The prefix in your database may differ from `llm_wiki_` — match the table name in your schema.
+Deleting the rows this way touches only `entries`, so it is safe before the v9 migration runs;
+the keep-side `sourceRef` is untouched, and v9's own duplicate check passes on the next
+`setup()`.
