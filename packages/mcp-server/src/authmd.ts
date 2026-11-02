@@ -57,6 +57,12 @@ export async function registerByEmail(client: SynapseTreeClient, email: string, 
   // Clamp to >= 1 s: a server sending interval 0 (or negative) must not
   // turn the poll loop into a hammer on /oauth2/token.
   let intervalSeconds = Math.max(1, reg.poll.interval ?? 5);
+  // Account walls (#326, spec auth-email-remedy-poll §3): print each wall once
+  // per occurrence, keyed on the error code alone, and back off while it
+  // persists. Both reset when the server reports the claim pending again
+  // (authorization_pending or slow_down); a transient error resets neither.
+  let lastRemedy: string | null = null;
+  let remedyBackoffSeconds = 0;
 
   opts.info(`Check ${email} for a SynapseTree approval link (usually within a minute; it expires in 15 minutes).`);
   opts.info(`Approve only if the page shows this code: ${reg.user_code}`);
@@ -68,7 +74,10 @@ export async function registerByEmail(client: SynapseTreeClient, email: string, 
     // park the CLI past the deadline nor hammer the endpoint (min 1 s,
     // max 60 s, never past the deadline — and remaining > 0 is guaranteed
     // by the check above, so the loop always advances the clock).
-    await sleep(Math.min(Math.max(intervalSeconds, 1), 60, remaining) * 1000);
+    // `remaining` is in milliseconds and the other terms in seconds, so it is
+    // converted before the comparison (#326: before that fix the deadline
+    // clamp never bound, and the last sleep could overshoot by up to 60 s).
+    await sleep(Math.min(Math.max(intervalSeconds + remedyBackoffSeconds, 1), 60, remaining / 1000) * 1000);
 
     let res;
     try {
@@ -102,9 +111,13 @@ export async function registerByEmail(client: SynapseTreeClient, email: string, 
     switch (body.error) {
       case 'authorization_pending':
         if (typeof body.interval === 'number') intervalSeconds = Math.max(1, body.interval);
+        lastRemedy = null;
+        remedyBackoffSeconds = 0;
         continue;
       case 'slow_down':
         intervalSeconds = typeof body.interval === 'number' ? Math.max(1, body.interval) : intervalSeconds + 5;
+        lastRemedy = null;
+        remedyBackoffSeconds = 0;
         continue;
       case 'invalid_grant':
         throw new ClaimError(
@@ -115,8 +128,16 @@ export async function registerByEmail(client: SynapseTreeClient, email: string, 
         );
       default:
         if (REMEDY_CODES.has(body.error)) {
-          opts.info(`${body.error}: ${body.error_description ?? 'the account owner must clear this in the dashboard'}${body.error_uri ? ` — ${body.error_uri}` : ''}`);
-          opts.info('Waiting; approve again once it is fixed.');
+          if (body.error !== lastRemedy) {
+            opts.info(`${body.error}: ${body.error_description ?? 'the account owner must clear this in the dashboard'}${body.error_uri ? ` — ${body.error_uri}` : ''}`);
+            opts.info('Waiting; approve again once it is fixed.');
+            lastRemedy = body.error;
+          }
+          // RFC 8628 makes the server's interval a floor: adopt it like
+          // authorization_pending, then add the backoff (+5 s per answer, at
+          // most +25 s, i.e. 30 s at the default interval).
+          if (typeof body.interval === 'number') intervalSeconds = Math.max(1, body.interval);
+          remedyBackoffSeconds = Math.min(remedyBackoffSeconds + 5, 25);
           continue;
         }
         throw new ClaimError(body.error, `${body.error}${body.error_description ? `: ${body.error_description}` : ''}`);

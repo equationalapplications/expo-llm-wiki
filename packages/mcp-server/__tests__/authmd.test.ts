@@ -101,6 +101,17 @@ describe('registerByEmail (spec §7)', () => {
     expect(s.waits[1]).toBe(60_000);
   });
 
+  it('never sleeps past the deadline when the interval does not divide the window', async () => {
+    // 7 s does not divide 960 s: after 137 sleeps the clock is at 959 s and
+    // the final sleep must be clamped to the 1 s that remains (#326: the
+    // clamp compared milliseconds with seconds and never bound).
+    const pending = { status: 400, body: { error: 'authorization_pending', interval: 7 } };
+    const s = scenario([{ status: 200, body: { ...REG, poll: { ...REG.poll, interval: 7 } } }, ...Array.from({ length: 200 }, () => pending)]);
+    await expect(s.run()).rejects.toMatchObject({ code: 'invalid_grant' });
+    expect(s.waits.reduce((a, b) => a + b, 0)).toBe(16 * 60 * 1000);
+    expect(s.waits.at(-1)).toBe(1000);
+  });
+
   it('fails closed on a server-chosen token endpoint', async () => {
     const s = scenario([{ status: 200, body: { ...REG, poll: { ...REG.poll, token_endpoint: 'https://evil.example/oauth2/token' } } }]);
     await expect(s.run()).rejects.toMatchObject({ code: 'invalid_response' });
