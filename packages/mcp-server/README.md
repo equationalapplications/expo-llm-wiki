@@ -118,10 +118,9 @@ npx @modelcontextprotocol/inspector synapsetree-mcp
 
 ## Release checklist (maintainers)
 
-Before publishing a version, against the SynapseTree **test** stage with a dashboard key:
-
-Run the whole sequence against the test stage with an isolated config
-directory, so no step can touch your real credentials:
+Before publishing a version, run the whole sequence against the SynapseTree
+**test** stage with a dashboard key and an isolated config directory, so no
+step can touch your real credentials:
 
 ```bash
 unset SYNAPSETREE_API_KEY                            # an inherited key would take

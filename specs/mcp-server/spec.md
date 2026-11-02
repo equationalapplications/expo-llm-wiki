@@ -1,6 +1,6 @@
 # `@equationalapplications/mcp-server` — SynapseTree memory for coding agents
 
-**Date:** 2026-11-01 (rev 1)
+**Date:** 2026-11-01 (rev 1); rev 2 2026-11-02
 **Status:** IMPLEMENTED (package code) — design approved in session by Kurt
 VanDusen 2026-11-01; the package is built on this branch (ten TDD tasks per
 `plan.md` in this folder, tests mocked-only; the live chain is gated by
@@ -73,7 +73,7 @@ by this spec.
 | R7 | The registration response carries the poll interval as `poll.interval` (seconds); a pending or slow-down answer may replace it. | 2026-11-01 |
 | R8 | The implementer verifies with mocks only; the live check is manual, before release. | 2026-11-01 |
 | R9 | Tool names stay as shipped in §8 (`memory_*`, `graph_traverse`, `namespaces_list`, `whoami`); they are not renamed to `wiki_*`. `docs/synapsetree-integration.md` §6 maps core calls to these names in its own column instead. This answers SynapseTree's `2026-11-01-wire-memory-operations` §8 naming cleanup. | 2026-11-02 |
-| R10 | G3 is met by a one-off manual publish of `7.15.2` (the then-current lockstep version) from a local build of the #323 head, then the npm trusted-publisher entry (GitHub Actions, `release.yml`, no environment). That version carries no provenance; every later version comes from `release.yml` by OIDC. Publishing the *next* version by hand is forbidden: `publish_if_needed` would skip it. | 2026-11-02 |
+| R10 | G3 is met by a one-off manual publish of `7.15.2` (the then-current lockstep version) from a local build of the #323 head, then the npm trusted-publisher entry (GitHub Actions, `release.yml`, no environment). Order matters, because tsup bakes `__PKG_VERSION__` at build time: stamp `7.15.2` into `packages/mcp-server/package.json`, then build, confirm `node dist/cli.js --version` prints `7.15.2`, publish, then `git checkout packages/mcp-server/package.json`. That version carries no provenance; every later version comes from `release.yml` by OIDC. Publishing the *next* version by hand is forbidden: `publish_if_needed` would skip it. | 2026-11-02 |
 
 ## 3. Repo integration
 
