@@ -62,6 +62,8 @@ jobs:
 
       - name: Assemble unified output
         # Docs site at the root; demo apps keep their existing sub-paths.
+        # NOTE: `scopelab/` and `wiki-demo/` are reserved slugs — do not add docs
+        # pages under them, they would be silently overwritten by the copies below.
         run: |
           mkdir -p pages-dist/scopelab pages-dist/wiki-demo
           cp -r apps/docs/dist/. pages-dist/
