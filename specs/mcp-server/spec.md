@@ -454,9 +454,21 @@ register `POST /agent/identity`, poll `POST /oauth2/token`, revoke
      if present (the dashboard page where the human fixes it), then keep
      polling; the claim stays valid until it expires and the human can
      clear the problem and approve.
+     *Amended 2026-11-02 (#326, `specs/auth-email-remedy-poll/spec.md`):*
+     the pair is printed once per occurrence, keyed on the `error` code,
+     and reprinted when the code changes or after an
+     `authorization_pending`/`slow_down` answer. A body `interval` is
+     adopted like `authorization_pending`. Each remedy answer adds 5 s to
+     the sleep, up to +25 s (30 s at the default), reset by
+     `authorization_pending`/`slow_down`. The 60 s cap and the deadline
+     are unchanged.
    - anything else: stop with the body's `error` and `error_description`.
 4. Deadline: 16 minutes after registration. Past it, stop with the
    `invalid_grant` message.
+   *Amended 2026-11-02 (#326):* no sleep runs past the deadline; the last
+   one is clamped to the time that remains. Until #326 the clamp compared
+   milliseconds with seconds and never bound, so the last sleep could
+   overshoot by up to 60 s.
 
 The claim token lives in memory only: never in a file, never in a log
 line, never in an error message. Ctrl-C ends the flow cleanly with a
@@ -620,7 +632,15 @@ CI runs `pnpm run build` before `pnpm test`, so tests may use `dist/`.
   `status` output beyond the last four characters.
 - `authmd`: scripted response sequences for each §7 branch:
   pending→pending→200; `slow_down` raises the interval; `invalid_grant`
-  stops; each remedy code keeps polling; `server_error` and a network
+  stops; each remedy code keeps polling (*amended 2026-11-02, #326:* a
+  persisting remedy prints once and, apart from the final sleep clamped to
+  the deadline, its sleeps never decrease while the
+  server's stated interval holds; a remedy body that lowers `interval`
+  may lower the sleep, but the backoff itself never shrinks until
+  `authorization_pending` or `slow_down` resets it; plus the code-change,
+  clear-and-recur, transient-error, server-interval and deadline cases
+  of `specs/auth-email-remedy-poll/spec.md` §8, and a sleep that never
+  passes the deadline); `server_error` and a network
   error keep polling; deadline stops; the key is stored before any
   output; the claim token appears in no log or error string.
 - `tools`: every tool's happy path (input → request body/query →
