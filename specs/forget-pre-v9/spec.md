@@ -141,3 +141,12 @@ All fixtures use a **genuine v8 schema**: tables and columns as of v8, with no v
 - boundary tests now cover `schema_version` 9 with the table missing (refuses) and a missing or unparseable version (skips). A mutation check (`< 9` → `<= 9`) fails the new test.
 
 The rest were accepted as is: the type-narrowing `&& sourceRef`, the version number missing from the docs line (filled at release time if wanted), and the RED test commit in history (intentional TDD).
+
+**2026-11-01, post-ready review round (Sonnet 5.5 high, second pass; CodeRabbit).** Revision to §3.2/§3.3, appended rather than rewritten:
+- **CodeRabbit (Major), accepted.** `forget(entityId, { sourceRef })` soft-deletes that ref across every hash, so a ref that loses one group but keeps another would lose its kept rows. Sonnet raised the same point as a Minor. The v9 message, the docs recipe and the SQL fallback now scope each delete to the group with `sourceHash` (the full hash comes from the listing query). The §3.2 wording departs from the owner's brief, which named only `sourceRef`, for data-integrity reasons. A new test puts one ref in two groups and fails without the scoping.
+- **Sonnet, accepted:**
+  - custom `tablePrefix` tests, pre-v9 and post-v9;
+  - a test that `errors.md` contains the exact listing query under test;
+  - docs cautions: legacy refs that aren't normalized can match nothing or a different ref; `GROUP_CONCAT` comma ambiguity;
+  - the helper comment now scopes its concurrency claim to *other* connections and notes that a `meta`-less store is unsupported.
+- **Not changed:** "run setup()" advice under `'refuse'` (correct for the common case); version number in the docs line; historical line cites above.
