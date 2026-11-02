@@ -33,7 +33,7 @@ await wiki.history('user-123', seattleFactId);                                  
   late, past queries still come out correct.
 - `traverseGraph({ asOf })` only walks edges whose two facts were both live at that instant.
 
-To record a new fact that replaces nothing, use [`remember()`](/expo-llm-wiki/reference/wiki-memory/#direct-fact-writes) with an optional `valid_from`. It stores the fact directly, with no LLM call. `supersede()` is still the way to replace one.
+To record a new fact that replaces nothing, use [`remember()`](/expo-llm-wiki/reference/wiki-memory/#remember) with an optional `valid_from`. It stores the fact directly, with no LLM call. `supersede()` is still the way to replace one.
 
 ## Rules
 

@@ -28,7 +28,7 @@ consistent prefix so you can list entities with `listEntityIds({ prefix })`.
 
 ## Writing facts directly
 
-`remember(entityId, { title, body })` stores a fact in one entity without an LLM call, which suits preferences and notes the host already knows. See [Direct fact writes](/expo-llm-wiki/reference/wiki-memory/#direct-fact-writes).
+`remember(entityId, { title, body })` stores a fact in one entity without an LLM call, which suits preferences and notes the host already knows. See [Direct fact writes](/expo-llm-wiki/reference/wiki-memory/#remember).
 
 ## Reading across entities
 

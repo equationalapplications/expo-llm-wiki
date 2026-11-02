@@ -32,7 +32,7 @@ and runs a few LLM passes that move information between them.
 | **Fact** | A durable piece of knowledge with a title, body, tags, and a `confidence` of `certain`, `inferred`, or `tentative`. | Librarian, ingest, heal, `upsertGraph()`, import, `remember()` |
 | **Task** | Something to do, with a priority from 0 to 10. Status is pending, in progress, or done. | Librarian |
 
-When the host already knows a fact, `remember()` writes it directly, with no text-generation call. See [Direct fact writes](/expo-llm-wiki/reference/wiki-memory/#direct-fact-writes).
+When the host already knows a fact, `remember()` writes it directly, with no text-generation call. See [Direct fact writes](/expo-llm-wiki/reference/wiki-memory/#remember).
 
 Facts can also have **edges** between them (`reports_to`, `worksFor`, …) when you turn on an
 [ontology](/expo-llm-wiki/concepts/knowledge-graph/).
