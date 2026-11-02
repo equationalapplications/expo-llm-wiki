@@ -42,7 +42,7 @@
   "bugs": {
     "url": "https://github.com/equationalapplications/expo-llm-wiki/issues"
   },
-  "homepage": "https://equationalapplications.github.io/expo-llm-wiki/packages/ontologies/#software-organization",
+  "homepage": "https://equationalapplications.github.io/expo-llm-wiki/packages/ontologies/",
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org"
