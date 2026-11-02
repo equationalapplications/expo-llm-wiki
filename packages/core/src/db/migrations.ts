@@ -168,8 +168,11 @@ export const MIGRATIONS: Migration[] = [
       // app-level guard. The migration aborts with an actionable error
       // rather than auto-resolving — auto-resolving would either destroy
       // facts or pick a wrong canonical, both worse than failing safe. The
-      // thrown error escapes setup() BEFORE the CREATE TABLE runs, so the
-      // new table is never created and schema_version is never advanced.
+      // thrown error escapes setup() BEFORE this migration's CREATE TABLE and
+      // backfill run, so the backfill never runs and schema_version is never
+      // advanced. (Under migrations 'allow', setupDatabase's every-open DDL
+      // has already created source_ref_index, empty; forget() handles the
+      // table being absent on a pre-v9 open too — #316.)
       const duplicates = await db.getAllAsync<{ entity_id: string; source_hash: string; n_refs: number }>(
         `SELECT entity_id, source_hash, COUNT(DISTINCT source_ref) AS n_refs
          FROM ${prefix}entries
@@ -186,7 +189,7 @@ export const MIGRATIONS: Migration[] = [
           `Migration v9 (add_source_ref_index) failed: existing live rows have multiple sourceRefs sharing a hash. ` +
           `Found ${duplicates.length} duplicate (entity_id, source_hash) groups. ` +
           `First ${Math.min(5, duplicates.length)}: ${sample}. ` +
-          `Resolve each by calling forget({ sourceRef: <loser> }) for the offending sourceRef, then re-run setup.`
+          `Resolve each group by calling forget(entityId, { sourceRef: <loser>, sourceHash: <group's full source_hash> }) for every losing sourceRef in that group (works on pre-v9 databases; list full hashes with the query in the docs' errors reference), then re-run setup().`
         );
       }
       await db.execAsync(
