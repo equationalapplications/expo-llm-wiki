@@ -1,3 +1,13 @@
+## [7.17.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.16.0...v7.17.0) (2026-11-02)
+
+### Features
+
+* **core-llm-tools:** add graph_traverse, ontology_get, instructions_get; deprecate wiki_traverse_graph, wiki_get_ontology, wiki_get_instructions ([e57cff5](https://github.com/equationalapplications/expo-llm-wiki/commit/e57cff596006766b0395779a16f2c40c6317acaa)), closes [#151](https://github.com/equationalapplications/expo-llm-wiki/issues/151) [#324](https://github.com/equationalapplications/expo-llm-wiki/issues/324)
+
+### Deprecated
+
+* **core-llm-tools:** wiki_traverse_graph, wiki_get_ontology, wiki_get_instructions — use graph_traverse, ontology_get, instructions_get ([b6e8e48](https://github.com/equationalapplications/expo-llm-wiki/commit/b6e8e48b82cbd2accfeb359a6e20853b71d65bf0)), closes [#324](https://github.com/equationalapplications/expo-llm-wiki/issues/324)
+
 ## [7.16.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.15.2...v7.16.0) (2026-11-02)
 
 ### Features
