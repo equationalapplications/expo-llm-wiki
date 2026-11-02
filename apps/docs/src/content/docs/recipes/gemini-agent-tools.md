@@ -12,10 +12,11 @@ user has granted `memory:read`.
 import { GoogleGenAI } from '@google/genai';
 import {
   buildAuthorizedToolsArray,
+  canonicalToolName,
   escalateToCloudManifest,
-  wikiTraverseGraphManifest,
-  wikiGetOntologyManifest,
-  wikiGetInstructionsManifest,
+  graphTraverseManifest,
+  ontologyGetManifest,
+  instructionsGetManifest,
 } from '@equationalapplications/core-llm-tools';
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
@@ -24,7 +25,7 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const grantedScopes = ['memory:read'];
 
 const tools = buildAuthorizedToolsArray(
-  [escalateToCloudManifest, wikiTraverseGraphManifest, wikiGetOntologyManifest, wikiGetInstructionsManifest],
+  [escalateToCloudManifest, graphTraverseManifest, ontologyGetManifest, instructionsGetManifest],
   grantedScopes,
 );
 
@@ -36,17 +37,19 @@ const response = await ai.models.generateContent({
 
 // Dispatch any function calls to the wiki.
 // The tool schemas include an `entityId` argument. Ignore it and use the session's entity.
+// canonicalToolName maps a deprecated wiki_* name (for example from a stored prompt) to its
+// replacement, so old and new names reach the same handler.
 for (const call of response.functionCalls ?? []) {
   const { entityId: _ignored, ...args } = (call.args ?? {}) as Record<string, any>;
   let result: unknown;
-  switch (call.name) {
-    case 'wiki_traverse_graph':
+  switch (canonicalToolName(call.name ?? '')) {
+    case 'graph_traverse':
       result = await wiki.traverseGraph(entityId, { ...args, sourceId: args.sourceId });
       break;
-    case 'wiki_get_ontology':
+    case 'ontology_get':
       result = await wiki.getOntologyManifest(entityId);
       break;
-    case 'wiki_get_instructions':
+    case 'instructions_get':
       result = await wiki.getInstructions(entityId);
       break;
   }

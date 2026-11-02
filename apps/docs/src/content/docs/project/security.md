@@ -28,7 +28,7 @@ an assessment within 5 business days. The full policy is in [SECURITY.md](https:
 - **Authorization.** Decide which `entityId` a caller may access. The engine scopes queries, but
   it doesn't authenticate anyone.
 - **API keys.** Keep provider keys on a server, not in a mobile or browser bundle.
-- **Secrets in prompts.** `getInstructions()` and the `wiki_get_instructions` tool return
+- **Secrets in prompts.** `getInstructions()` and the `instructions_get` tool (formerly `wiki_get_instructions`) return
   `config.prompts` verbatim to anyone with `memory:read`, so never put secrets in them.
 - **One writer per file**, across processes.
 

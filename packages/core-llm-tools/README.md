@@ -23,7 +23,7 @@ It also introduces a robust **Capability-Based Scope Model** (similar to OAuth 2
 - **Capability-Based Security** — Tools are locked behind specific scopes (e.g., `calendar:read`, `messages:send`). The injector ensures models cannot hallucinate calls to unauthorized tools.
 - **Strict Typings** — Provides rigid interfaces (`AgentToolSchema`, `AgentToolManifest`) to prevent malformed Gemini API requests.
 - **Harmonized Edge/Cloud Routing** — Enables lightweight edge models (like Gemini Nano) to triage intents using the exact same schemas the heavy Cloud Run backend uses to execute them.
-- **GraphRAG tool schemas** — `wikiTraverseGraphManifest` and `wikiGetOntologyManifest` are pre-built Gemini tool schemas for the GraphRAG retrieval API; see [GraphRAG guide](https://equationalapplications.github.io/expo-llm-wiki/guides/graphrag/).
+- **GraphRAG tool schemas** — `graphTraverseManifest` and `ontologyGetManifest` are pre-built Gemini tool schemas for the GraphRAG retrieval API; see [GraphRAG guide](https://equationalapplications.github.io/expo-llm-wiki/guides/graphrag/).
 
 ## Installation
 
@@ -120,7 +120,31 @@ const response = await ai.models.generateContent({
 
 ### Memory manifests
 
-`wiki_get_ontology` (`wikiGetOntologyManifest`), `wiki_traverse_graph` (`wikiTraverseGraphManifest`), and `wiki_get_instructions` (`wikiGetInstructionsManifest`) are schema-only `memory:read` tools. Dispatch them to `WikiMemory.getOntologyManifest`, `traverseGraph`, and `getInstructions`. `wiki_get_instructions` returns your `WikiConfig.prompts` overrides verbatim, so keep secrets out of them.
+`ontology_get` (`ontologyGetManifest`), `graph_traverse` (`graphTraverseManifest`), and `instructions_get` (`instructionsGetManifest`) are schema-only `memory:read` tools. Dispatch them to `WikiMemory.getOntologyManifest`, `traverseGraph`, and `getInstructions`. `instructions_get` returns your `WikiConfig.prompts` overrides verbatim, so keep secrets out of them. The names follow SynapseTree's `<resource>_<verb>` convention, which the `@equationalapplications/mcp-server` tools also use.
+
+### Deprecated: the `wiki_*` tool names
+
+| Deprecated export (tool name) | Replacement |
+|---|---|
+| `wikiTraverseGraphManifest` (`wiki_traverse_graph`) | `graphTraverseManifest` (`graph_traverse`) |
+| `wikiGetOntologyManifest` (`wiki_get_ontology`) | `ontologyGetManifest` (`ontology_get`) |
+| `wikiGetInstructionsManifest` (`wiki_get_instructions`) | `instructionsGetManifest` (`instructions_get`) |
+
+The deprecated manifests are still exported and are identical to their replacements except for the name, so a host that changes nothing keeps sending the same declarations and its `switch` keeps matching. They, `LEGACY_TOOL_NAMES`, and `canonicalToolName` are removed at the next major.
+
+To migrate, switch to the new manifests and route your `switch` through `canonicalToolName` **in the same change**:
+
+```ts
+import { canonicalToolName } from '@equationalapplications/core-llm-tools';
+
+switch (canonicalToolName(call.name)) {
+  case 'graph_traverse': /* … */ break;
+  case 'ontology_get': /* … */ break;
+  case 'instructions_get': /* … */ break;
+}
+```
+
+`canonicalToolName` returns the new name for an old one (logging one deprecation warning per process) and any other name unchanged, so a call that still carries an old name, for example from a stored prompt, reaches the same handler. Never send the old and new manifest for one tool to the same model: it would choose between them.
 
 ## Helpful Resources & Links
 

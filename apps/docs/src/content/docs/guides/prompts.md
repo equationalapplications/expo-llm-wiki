@@ -87,7 +87,7 @@ const { ingest, librarian, heal, ontologyBackfill } = await wiki.getInstructions
 
 This returns each writer's effective system prompt, with overrides, the ontology block, and the
 evidence block applied. Data placeholders stay unfilled. It's useful for debugging, and for
-letting agents see the output contract (via the `wiki_get_instructions` tool).
+letting agents see the output contract (via the `instructions_get` tool, formerly `wiki_get_instructions`).
 
 :::caution
 Overrides are returned verbatim to anyone with `memory:read`. **Never put secrets in
