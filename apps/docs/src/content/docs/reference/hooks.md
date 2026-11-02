@@ -52,7 +52,8 @@ in-flight result always lands before a queued refetch starts.
 - A `tierWeights` entry of `1.0` counts the same as leaving it out, so it doesn't trigger a refetch.
 - `includeZeroWeightEntities: false` and `undefined` behave the same. Only switching to `true`
   refetches.
-- For multi-entity reads, `data.factScores` and `data.metadata` are also filled in.
+- For multi-entity reads, `data.metadata` is also filled in. `data.factScores` is conditional:
+  it appears only when the query is non-empty and scored results were captured.
 
 ### `useWikiTraversal`
 

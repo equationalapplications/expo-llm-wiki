@@ -79,8 +79,10 @@ results slightly differently.
 
 Operational details:
 
-- The first `setup()` that adds FTS5 to an existing database rebuilds the index in one
-  transaction and holds the write lock for the whole rebuild.
+- The first `setup()` that adds FTS5 to an existing database rebuilds the index in bounded
+  windows and sweeps, each in its own transaction, so the write lock is not held for the whole
+  rebuild. A rebuild continues across later `setup()` and `syncSearchIndex()` calls until it
+  finishes.
 - Under `'auto'`, a failed FTS5 init is retried once. After that, `setup()` completes with keyword
   search unavailable: keyword reads throw `WikiSearchUnavailableError`. It never quietly switches
   to MiniSearch.

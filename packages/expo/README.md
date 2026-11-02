@@ -44,8 +44,12 @@ const db = await SQLite.openDatabaseAsync('app.db');
 const wiki = createWiki(db, { llmProvider }); // pass the expo-sqlite database directly
 await wiki.setup();
 
-// <WikiProvider wiki={wiki}><App /></WikiProvider>, then in any component:
-const { data, isPending } = useMemoryRead('user-123', 'preferences');
+function App() {
+  const { data, isPending } = useMemoryRead('user-123', 'preferences');
+  // ...
+}
+
+// <WikiProvider wiki={wiki}><App /></WikiProvider>
 ```
 
 See the [Expo quickstart](https://equationalapplications.github.io/expo-llm-wiki/start/quickstart-expo/) for a complete app, including the `llmProvider`. On React Native, give `embed` an absolute URL.

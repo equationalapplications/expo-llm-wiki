@@ -54,5 +54,5 @@ Migration v9 (add_source_ref_index) failed: existing live rows have multiple sou
 
 The message counts the groups and shows up to five. Nothing is deleted, the table isn't created,
 and the schema version doesn't advance, so it's safe to retry. To fix it, for each group call
-`forget({ sourceRef })` on every `sourceRef` except the one you want to keep, then run `setup()`
+`wiki.forget(entityId, { sourceRef })` on every `sourceRef` except the one you want to keep, then run `setup()`
 again.

@@ -109,7 +109,9 @@ const { chunks, truncated } = chunkText(source, DEFAULT_MAX_CHUNK_LENGTH, DEFAUL
   a non-negative integer smaller than `maxChunkLength`.
 - `ingestDocument()` quietly clamps overlap to `maxChunkLength - 1` and rounds non-integer values
   down, but `chunkText` rejects both. If
-  you configured a custom `maxChunkLength`, apply `Math.min(overlap, maxChunkLength - 1)` yourself
+  you configured a custom `maxChunkLength`, apply `Math.min(Math.floor(overlap), maxChunkLength - 1)`
+  yourself (floor first: ingestion rounds non-integer overlap down before clamping, and
+  `chunkText` rejects fractions)
   before calling it. (For example, `maxChunkLength: 100` with the default overlap ingests at an
   overlap of `99`.)
 - `safeSlice(value, start, end?)` works like `String.prototype.slice`, but clamps out-of-range

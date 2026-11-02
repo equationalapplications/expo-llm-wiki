@@ -152,12 +152,19 @@ edges. `runOntologyBackfill()` types them **in place**:
 
 ```ts
 let r;
+let previousRemaining = Infinity;
 do {
   r = await wiki.runOntologyBackfill(entityId);
   // { scanned, typed, failedValidation, edgesAdded, remaining, deferred, skipped }
+  if (r.remaining >= previousRemaining) break; // no progress: stop, retry on the next trigger
+  previousRemaining = r.remaining;
 } while (r.remaining > 0);
 ```
 
+- **Stop when a pass doesn't lower `remaining`.** A fact whose provider call keeps throwing (a
+  `call_error`, or a thrown `classify`) gets no cooldown stamp and stays eligible, so a bare
+  `while (remaining > 0)` loop can spin on it forever. The guard above stops on no progress;
+  the next trigger retries.
 - **You own the trigger.** Running it after each sync or import is a good default. It's safe to
   swallow a `WikiBusyError`, since the next run retries.
 - **It only adds.** It never creates, deletes, or rewrites facts, never overwrites an existing
