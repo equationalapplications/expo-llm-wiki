@@ -5,7 +5,7 @@ sidebar:
   order: 1
 ---
 
-**Core LLM Wiki** is a TypeScript library that gives AI agents persistent, structured, long-term
+**Core LLM Wiki** is a family of TypeScript packages that give AI agents persistent, structured, long-term
 memory, stored in SQLite. It sits between raw conversation logs and a curated knowledge base:
 
 - You log what happens (**events**) and feed it documents.
@@ -13,9 +13,9 @@ memory, stored in SQLite. It sits between raw conversation logs and a curated kn
 - At answer time you `read()` the most relevant memory and inject it into your prompt.
 
 It was inspired by [Andrej Karpathy's LLM Wiki idea](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
-"LLM wiki" has since become a general name for that pattern. **Core LLM Wiki** is the name of this
-project: a family of packages published under the `@equationalapplications` npm scope, such as
-`core-llm-wiki`, `react-llm-wiki`, and `expo-llm-wiki`. Core LLM Wiki can import and export the
+"LLM wiki" has since become a general name for that pattern. Core LLM Wiki is this project's name. Its
+packages are published under the `@equationalapplications` npm scope, such as `core-llm-wiki`,
+`react-llm-wiki`, and `expo-llm-wiki`. Core LLM Wiki can import and export the
 [Open Knowledge Format (OKF)](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf),
 so your knowledge isn't locked in.
 

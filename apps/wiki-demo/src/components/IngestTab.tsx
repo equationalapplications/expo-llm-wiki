@@ -14,7 +14,7 @@ await execute('user-1', {
 // lastResult: { truncated: boolean, chunks: number }`
 
 const SAMPLE_DOCS: Record<string, string> = {
-  'README': `# LLM Wiki Memory System
+  'README': `# Core LLM Wiki Memory System
 
 A persistent memory layer for AI agents inspired by Andrej Karpathy's LLM Wiki spec.
 

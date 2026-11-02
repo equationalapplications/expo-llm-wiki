@@ -1,4 +1,4 @@
-# LLM Wiki Playground
+# Core LLM Wiki Playground
 
 An interactive playground for learning and exploring the `@equationalapplications/react-llm-wiki` package.
 

@@ -111,7 +111,7 @@ function SetupScreen({ onReady }: { onReady: (wiki: WikiMemory) => void }) {
         <div className="setup-logo">
           <span className="logo-icon">◈</span>
           <div>
-            <h1>LLM Wiki Playground</h1>
+            <h1>Core LLM Wiki Playground</h1>
             <p>Interactive explorer for <code>@equationalapplications/react-llm-wiki</code></p>
           </div>
         </div>
@@ -276,7 +276,7 @@ export default function App() {
         <header className="app-header">
           <div className="header-left">
             <span className="logo-icon">◈</span>
-            <span className="logo-text">LLM Wiki Playground</span>
+            <span className="logo-text">Core LLM Wiki Playground</span>
           </div>
           <nav className="tab-nav">
             {TABS.map(t => (
