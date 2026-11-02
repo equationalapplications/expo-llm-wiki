@@ -8,7 +8,7 @@ const MINT = { access_token: KEY, token_type: 'Bearer', account_id: 'acc_7', sco
 
 type Scripted = { status: number; body: unknown; problem?: boolean } | Error;
 
-function scenario(responses: Scripted[]) {
+function scenario(responses: Scripted[], deadlineMs?: number) {
   const calls: { url: string; body: string | null }[] = [];
   const waits: number[] = [];
   const lines: string[] = [];
@@ -25,6 +25,7 @@ function scenario(responses: Scripted[]) {
     info: (l) => lines.push(l),
     sleep: async (ms) => { waits.push(ms); clock += ms; },
     now: () => clock,
+    deadlineMs,
   });
   return { run, calls, waits, lines };
 }
@@ -110,6 +111,19 @@ describe('registerByEmail (spec §7)', () => {
     await expect(s.run()).rejects.toMatchObject({ code: 'invalid_grant' });
     expect(s.waits.reduce((a, b) => a + b, 0)).toBe(16 * 60 * 1000);
     expect(s.waits.at(-1)).toBe(1000);
+  });
+
+  it('lands the last sleep exactly on a deadline that is not a whole second', async () => {
+    // 960 003 ms leaves 1003 ms after 137 sleeps of 7 s. A seconds round-trip
+    // (1003 / 1000 * 1000) is inexact; the clamp must be done in milliseconds
+    // so the waits sum to the window exactly and no extra near-zero poll follows.
+    const pending = { status: 400, body: { error: 'authorization_pending', interval: 7 } };
+    const s = scenario([{ status: 200, body: { ...REG, poll: { ...REG.poll, interval: 7 } } }, ...Array.from({ length: 200 }, () => pending)], 16 * 60 * 1000 + 3);
+    await expect(s.run()).rejects.toMatchObject({ code: 'invalid_grant' });
+    expect(s.waits.at(-1)).toBe(1003);
+    expect(s.waits.reduce((a, b) => a + b, 0)).toBe(16 * 60 * 1000 + 3);
+    expect(s.calls.length).toBe(1 + 138);
+    expect(s.waits.every((w) => Number.isInteger(w) && w >= 1)).toBe(true);
   });
 
   it('fails closed on a server-chosen token endpoint', async () => {

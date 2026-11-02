@@ -71,13 +71,14 @@ export async function registerByEmail(client: SynapseTreeClient, email: string, 
     const remaining = deadline - now();
     if (remaining <= 0) throw new ClaimError('invalid_grant', EXPIRED_MESSAGE);
     // Bound the wait: a hostile or buggy `interval` (or 1e9) must neither
-    // park the CLI past the deadline nor hammer the endpoint (min 1 s,
-    // max 60 s, never past the deadline — and remaining > 0 is guaranteed
-    // by the check above, so the loop always advances the clock).
-    // `remaining` is in milliseconds and the other terms in seconds, so it is
-    // converted before the comparison (#326: before that fix the deadline
-    // clamp never bound, and the last sleep could overshoot by up to 60 s).
-    await sleep(Math.min(Math.max(intervalSeconds + remedyBackoffSeconds, 1), 60, remaining / 1000) * 1000);
+    // park the CLI past the deadline nor hammer the endpoint. The interval is
+    // floored at 1 s and capped at 60 s, and no sleep runs past the deadline;
+    // remaining > 0 is guaranteed by the check above, so the loop always
+    // advances the clock. The deadline clamp means the single last sleep can
+    // be shorter than 1 s; that is one final poll, not a hammer. The clamp is
+    // done in milliseconds (#326: it used to compare milliseconds with seconds,
+    // so it never bound and the last sleep could overshoot by up to 60 s).
+    await sleep(Math.min(Math.max(intervalSeconds + remedyBackoffSeconds, 1) * 1000, 60_000, remaining));
 
     let res;
     try {
