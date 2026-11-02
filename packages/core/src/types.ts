@@ -325,7 +325,7 @@ export interface WikiConfig {
   /**
    * Global prompt overrides for text generation calls (`ingestDocument`, `runLibrarian`, `runHeal`). Does not affect embedding generation. Runtime overrides on individual method calls take precedence.
    *
-   * Returned verbatim by `getInstructions` and the `wiki_get_instructions` tool (`memory:read`): never put secrets, API keys or private data here.
+   * Returned verbatim by `getInstructions` and the `instructions_get` tool (formerly `wiki_get_instructions`; `memory:read`): never put secrets, API keys or private data here.
    */
   prompts?: PromptOverrides;
   /**

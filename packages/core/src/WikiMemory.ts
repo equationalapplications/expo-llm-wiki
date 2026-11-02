@@ -555,7 +555,7 @@ export class WikiMemory {
 
   /**
    * Effective system prompts for ingest, librarian, heal and ontology backfill
-   * (spec §8.3). Backs the `wiki_get_instructions` tool. Templates only;
+   * (spec §8.3). Backs the `instructions_get` tool (formerly `wiki_get_instructions`). Templates only;
    * overrides are returned verbatim, so keep secrets out of `WikiConfig.prompts`.
    */
   async getInstructions(entityId: string): Promise<WikiInstructions> {
