@@ -56,7 +56,7 @@ So the rendered behaviour is: one pair per *occurrence* of a wall, where an occu
 
 ### 3.2 Back off while a wall persists
 
-Add one loop-scoped variable, `remedyBackoffSeconds = 0`, and change the sleep at L71 to use `intervalSeconds + remedyBackoffSeconds` in place of `intervalSeconds`. The existing clamp (`max(…, 1)`, `min(…, 60, remaining)`) wraps the sum unchanged.
+Add one loop-scoped variable, `remedyBackoffSeconds = 0`, and change the sleep at L71 to use `intervalSeconds + remedyBackoffSeconds` in place of `intervalSeconds`. The existing clamp (`max(…, 1)`, `min(…, 60, remaining)`) wraps the sum unchanged. *Note (2026-11-02, see §8a):* as shipped, the clamp's units changed. It now runs in milliseconds, `min(max(sum, 1) × 1000, 60 000, remaining)`, so the deadline term binds. That is a deliberate change to the deadline path, not "unchanged".
 
 - **Schedule.** On every remedy answer (printed or not, same code or not): `remedyBackoffSeconds = Math.min(remedyBackoffSeconds + 5, 25)`. At the 5 s default this gives sleeps of 5, 10, 15, 20, 25, 30, 30, … seconds: +5 s per answer, the same step `slow_down` and a 429 use (L83, L107), reaching its ceiling after five answers.
 - **Ceiling.** The backoff itself adds at most 25 s, so a default-interval wall settles at **30 s** between polls. That is a deliberate half of the existing 60 s cap. The 60 s cap (L71) is a safety bound against hostile or buggy intervals, not a target, and it stays exactly where it is: a server interval of 60 plus any backoff still sleeps 60. The deadline bound is likewise untouched: the sum is still clamped to `remaining`, and the loop still throws `invalid_grant` at `remaining <= 0` (§4).
@@ -74,13 +74,13 @@ No "still waiting" line is added. Reasons: the ordinary pending state is already
 
 | Path | Today | After |
 |---|---|---|
-| Deadline | `deadline = now + 16 min` (L42); sleep clamped to `remaining` (L71); throw `ClaimError('invalid_grant', EXPIRED_MESSAGE)` at `remaining <= 0` (L66) | Identical. Backoff never extends the window: the last sleep before the deadline is `min(…, remaining)` and the next iteration throws. |
+| Deadline | `deadline = now + 16 min` (L42); sleep clamped to `remaining` (L71); throw `ClaimError('invalid_grant', EXPIRED_MESSAGE)` at `remaining <= 0` (L66) | Identical in intent. *Corrected 2026-11-02 (§8a):* before #326 the `remaining` clamp never bound, so this row described the intended behaviour, not the actual one. It now binds, so the last sleep ends exactly at the deadline and the next iteration throws. Backoff never extends the window. |
 | Success | First 200 returns `{ apiKey, accountId }` (L90-96); malformed 200 → `invalid_response` | Identical, including after a wall. |
 | `ambiguousPoll` / `invalid_grant` | 5xx, status 0, 408 set the flag; 429 adds 5 s; `invalid_grant` picks the message by the flag (L82-84, L109-115) | Identical. The transient arm touches neither new variable. |
 | `authorization_pending`, `slow_down` | Interval handling (L103-108) | Identical, plus the §3.1/§3.2 resets. |
 | Unknown `error` | throw `ClaimError(body.error, …)` (L122) | Identical. |
 | Non-remedy, non-400 errors | Thrown by the client (`client.ts` L213) and re-thrown (L87) | Identical. |
-| `registerAgentIdentity` shape check, token-endpoint pinning, 1 s floor, 60 s cap | L45-52, L59, L71 | Identical. |
+| `registerAgentIdentity` shape check, token-endpoint pinning, 1 s floor, 60 s cap | L45-52, L59, L71 | Identical, with one exception (§8a, 2026-11-02): the single last sleep before the deadline can be shorter than 1 s, because the now-binding deadline clamp wins over the floor. That is one final poll, not repeated polling. |
 | Output text | The two opening lines; the remedy line format; the Waiting line | Identical text; only the repeat count changes. The claim token and the key still appear in no line. |
 
 ## 5. Files touched
@@ -126,6 +126,8 @@ All tests use the existing `scenario()` harness in `authmd.test.ts` (L11-30): sc
 ### 8a. Found during implementation (2026-11-02)
 
 Test 9 exposed a bug that predates this change, in the sleep expression §3.2 modifies: `Math.min(…, 60, remaining)` compared `remaining` (milliseconds) with seconds, so the deadline clamp in §4's table never bound, and the last sleep could run up to 60 s past the deadline. That breaks the "never past the deadline" promise in `authmd.ts`'s own comment and in `specs/mcp-server/spec.md` §7 step 4. Fixed in the same commit: `remaining / 1000`. A new test on the plain pending path (7 s interval, which does not divide 960 s) pins it. Both tests fail on the old line. §4's "Deadline" row is now true, where before it was only claimed.
+
+Review of PR #330 (2026-11-02) refined this. The first form, `min(…, 60, remaining / 1000) × 1000`, round-tripped milliseconds through seconds, which is inexact for many values: 1003 gives 1002.9999999999999. The clamp now runs in integer milliseconds, and a test with a deadline 3 ms past a whole second pins it. One more behaviour the reviews noted, accepted by design and pinned by test 4: after a long wall, a bare `slow_down` resets the backoff and sets the interval to base + 5 s, so the next sleep can be shorter than the last backed-off one (30 s → 10 s at the default). The backoff is client policy. The server's interval, which `slow_down` raises, governs the pending state.
 
 ## 9. Out of scope
 

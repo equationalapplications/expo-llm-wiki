@@ -633,7 +633,8 @@ CI runs `pnpm run build` before `pnpm test`, so tests may use `dist/`.
 - `authmd`: scripted response sequences for each §7 branch:
   pending→pending→200; `slow_down` raises the interval; `invalid_grant`
   stops; each remedy code keeps polling (*amended 2026-11-02, #326:* a
-  persisting remedy prints once and its sleeps never decrease while the
+  persisting remedy prints once and, apart from the final sleep clamped to
+  the deadline, its sleeps never decrease while the
   server's stated interval holds; a remedy body that lowers `interval`
   may lower the sleep, but the backoff itself never shrinks until
   `authorization_pending` or `slow_down` resets it; plus the code-change,
