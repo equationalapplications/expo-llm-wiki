@@ -48,9 +48,8 @@ Three kinds of software depend on what is published from here:
 
 The repository is a pnpm monorepo. Published packages live under
 `packages/` (core, expo, react, okf, core-llm-tools, schema-org,
-schema-software-org, prisma-outbox, and — gated on the spec §0 gates in
-`specs/mcp-server/spec.md` before its
-first npm publish — `mcp-server`). Two packages are private and never
+schema-software-org, prisma-outbox, and `mcp-server`, the SynapseTree
+agent door; see `specs/mcp-server/spec.md`). Two packages are private and never
 published: `integration` (integration tests) and `benchmarks` (the
 benchmark harness). Two browser apps live under `apps/`. A Rust crate,
 `crates/graphrag-core`, holds the start of a native engine.
@@ -340,6 +339,11 @@ runs and who schedules it.
 
 ## Amendments
 
+- 2026-11-02 — PR #323 lands the deferred `mcp-server` release wiring and
+  deletes that cycle's `plan.md`/`LEDGER.md`, ending the 2026-11-01
+  keep-past-merge exception. Why: the wiring PR they were kept for is
+  #323. The package list drops the "gated before its first npm publish"
+  qualifier on `mcp-server`. No rule text changed.
 - 2026-11-01 — PR #305 adds the `mcp-server` agent door (rule 1 scope note,
   package list). The three §3 release-wiring edits are deferred to a
   follow-up PR by owner ruling until the spec §0 gates close, and the

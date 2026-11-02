@@ -46,7 +46,7 @@ The packages are published from one monorepo and versioned together.
 | [`@equationalapplications/schema-org-llm-wiki`](/expo-llm-wiki/packages/ontologies/) | You want a ready-made schema.org ontology for your graph. |
 | [`@equationalapplications/schema-software-org`](/expo-llm-wiki/packages/ontologies/#software-organization) | You want an ontology for a software organization's agent. |
 | [`@equationalapplications/prisma-outbox`](/expo-llm-wiki/guides/prisma-outbox/) | You need to sync memory to a Prisma-backed server database. |
-| [`@equationalapplications/mcp-server`](/expo-llm-wiki/packages/mcp-server/) | You want to give coding agents (Claude Code, Cursor…) hosted [SynapseTree](https://synapsetree.dev) memory. *In development, not released yet.* |
+| [`@equationalapplications/mcp-server`](/expo-llm-wiki/packages/mcp-server/) | You want to give coding agents (Claude Code, Cursor…) hosted [SynapseTree](https://synapsetree.dev) memory. |
 
 Not sure which package you need? See [Choose a package](/expo-llm-wiki/start/choose-a-package/).
 

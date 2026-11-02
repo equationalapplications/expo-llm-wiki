@@ -14,7 +14,7 @@ There are two ways to do it, both built on Core LLM Wiki:
 | | **Local: Curated Thoughts** | **Cloud: SynapseTree** |
 |---|---|---|
 | Where memory lives | `brain.db` on your machine | [synapsetree.dev](https://synapsetree.dev) |
-| Status | **Available now** | MCP server **in development** |
+| Status | **Available now** | **Available now** (`@equationalapplications/mcp-server`) |
 | Human review gate | Yes (Review desk) | — |
 | Harness integrations | Claude Code, OpenCode, Hermes, DeepSeek Harness, OpenClaw, Docker Agent | Any MCP client |
 | Best for | Private, curated memory shared by a "software agency in a box" | Memory that follows you across machines and teams |
@@ -45,11 +45,13 @@ There are two ways to do it, both built on Core LLM Wiki:
     </Aside>
   </TabItem>
   <TabItem label="Cloud · SynapseTree">
-    <Aside type="caution" title="Not released yet">
-    The SynapseTree MCP server ([`@equationalapplications/mcp-server`](/expo-llm-wiki/packages/mcp-server/))
-    is still in development and isn't on npm. The steps below show the planned flow. To try it now,
-    build it from source.
-    </Aside>
+    Install the [SynapseTree MCP server](/expo-llm-wiki/packages/mcp-server/) (Node 20+):
+
+    ```bash
+    npm install -g @equationalapplications/mcp-server
+    ```
+
+    Then sign in, pick a namespace, and register it with your client:
 
     ```bash
     synapsetree-mcp auth --email you@example.com

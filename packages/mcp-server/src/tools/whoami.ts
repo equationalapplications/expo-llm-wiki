@@ -5,7 +5,8 @@ export interface WhoamiResult {
   apiKeyId: string;
   organizationId: string;
   tenantDatabaseId: string;
-  scope: 'read' | 'read_write';
+  /** `read`/`read_write`: dashboard keys; `memory:full`: auth.md agent keys; `memory:admin`: accepted, not issued in v1. */
+  scope: 'read' | 'read_write' | 'memory:full' | 'memory:admin';
   planCode: string | null;
   subscriptionStatus: string;
 }
