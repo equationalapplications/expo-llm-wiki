@@ -1,6 +1,7 @@
 # `auth --email` repeats the remedy error on every poll (#326)
 
-**Status:** Draft — not started
+**Status rev 1 (2026-11-02; superseded by rev 2):** Draft — not started.
+**Status rev 2 (2026-11-02, PR #330; current):** IMPLEMENTED. All five §10 questions were answered by the owner on 2026-11-02, each keeping the default: (1) de-dup key = error code alone; (2) 30 s ceiling; (3) no heartbeat; (4) adopt a remedy body's `interval`; (5) waiting line unchanged. An independent Fable review agreed with all five, as had the earlier Opus review. So no code or test changed from the §3 defaults. Added during implementation: the deadline-clamp fix in §8a.
 **Date:** 2026-11-02
 **Branch:** `docs/spec-auth-email-remedy-poll`
 **Source baseline:** `40ff88b6` (main after PR #322); rebased 2026-11-02 onto `c6ce6e6e` (7.17.0). `authmd.ts` and its test file are byte-identical between the two, so every code anchor below still holds. `specs/mcp-server/spec.md` changed elsewhere (#323, #328), but the two bullets §6 amends are verbatim unchanged (§7 step 3 remedy bullet ~L452-456, §12.1 L623).
@@ -133,7 +134,7 @@ Test 9 exposed a bug that predates this change, in the sleep expression §3.2 mo
 - The stale comment at `authmd.test.ts` L122-123 ("three 429s exhaust the client's internal retries"; the client has been single-attempt on `oauthToken` since `ca3390d4`). The test's assertion is still right. The implementer may fix the comment in passing; it is not a task.
 - Backoff for the plain `authorization_pending` state. The server governs that interval (R7) and the user is waiting on an email, not on the dashboard.
 
-## 10. Open questions for Kurt (defaulted; the build does not wait)
+## 10. Open questions for Kurt (answered 2026-11-02: all five defaults kept, see Status rev 2)
 
 1. **De-duplication key.** Default: the `error` code alone (§3.1). Alternative: the full rendered line (code + description + uri), which would reprint if the server changes its wording. Recommendation: the code; the dashboard carries the detail, and the key must not be reopenable by a variable description.
 2. **Backoff ceiling.** Default: +5 s per remedy answer up to +25 s, i.e. 30 s at the default interval (§3.2). Alternative: climb to the existing 60 s cap, as the issue sketches. Recommendation: 30 s; it keeps the post-approval wait under half a minute and still removes ~80 % of the polls.
