@@ -1,6 +1,6 @@
 # `forget()` on a database stuck before migration v9 (#316)
 
-**Status:** Reviewed (spec review 2026-11-01, see §7)
+**Status:** Implemented (2026-11-01, PR #317)
 **Date:** 2026-11-01
 **Branch:** `fix/forget-pre-v9`
 **Source baseline:** `30922ae1` (main after PR #314)
@@ -133,3 +133,11 @@ All fixtures use a **genuine v8 schema**: tables and columns as of v8, with no v
 | 6 Minor | "Same instance" is the wrong unit: the table persists per database file | Accepted (§2.2, §3.3 rewording). |
 | 7 Nit | Fixture source and the `source_type` trap | Accepted (§5). |
 | 8 Nit | `setupDatabase` line cite; `normalizeSourceRef` `trimEnd` drift | Cite fixed. The drift is negligible (only 255-char refs ending in a space), so no change. |
+
+**2026-11-01, Sonnet 5.5 (high), whole-PR review.** No Critical or Major findings. Accepted and fixed:
+- the docs outbox claim is now conditional on `enableOutbox`;
+- the docs now tell the operator to check `deleted.entries`, because `forget()` normalizes its `sourceRef` and an unnormalized legacy row won't match (old behaviour), and point those rows at the SQL fallback;
+- the v9 abort comment in `migrations.ts` no longer contradicts §2.2;
+- boundary tests now cover `schema_version` 9 with the table missing (refuses) and a missing or unparseable version (skips). A mutation check (`< 9` → `<= 9`) fails the new test.
+
+The rest were accepted as is: the type-narrowing `&& sourceRef`, the version number missing from the docs line (filled at release time if wanted), and the RED test commit in history (intentional TDD).
