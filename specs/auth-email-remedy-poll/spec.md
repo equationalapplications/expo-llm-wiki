@@ -23,7 +23,7 @@ During the G4 live run on 2026-11-02 (production, the packed #323 tarball), the 
 ```ts
 default:
   if (REMEDY_CODES.has(body.error)) {
-    opts.info(`${body.error}: ${body.error_description ?? '…'}${body.error_uri ? ` — ${body.error_uri}` : ''}`);
+    opts.info(`${body.error}: ${body.error_description ?? 'the account owner must clear this in the dashboard'}${body.error_uri ? ` — ${body.error_uri}` : ''}`);
     opts.info('Waiting; approve again once it is fixed.');
     continue;
   }
