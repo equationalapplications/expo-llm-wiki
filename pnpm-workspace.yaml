@@ -53,10 +53,16 @@ overrides:
   # both fixed versions were published 2026-09-14 and the advisories are
   # already exploitable in the wild.
   'image-size@<2.0.3': ^2.0.3
-  # GHSA-qw65-cvwx-89v3 / GHSA-58mr-gqgx-xq4g (HIGH): fast-uri <3.1.7;
-  # GHSA-hrr3-gc8f-f4qj (MEDIUM, host case normalization): fast-uri <3.1.8.
-  # 3.1.8 published 2026-09-15, clears the 14-day age gate.
-  'fast-uri@>=3.0.0 <3.1.8': 3.1.8
+  # Dependabot #164-#167 (GHSA-w74x-v6f9-j3xg, GHSA-xhq7-xmqj-769h,
+  # GHSA-wjr9-j795-jxcr, GHSA-333x-w4r6-6crp — MEDIUM x2 / LOW x2): fast-uri
+  # <3.1.9. Supersedes the earlier <3.1.7 / <3.1.8 floors, which are fully
+  # subsumed by this range. 3.1.9 published 2026-10-19 23:05Z, cleared the
+  # 14-day age gate 2026-11-02 23:05Z.
+  'fast-uri@>=3.0.0 <3.1.9': 3.1.9
+  # Same advisory set on the 2.x line (Dependabot #164-#167): fast-uri <2.4.8.
+  # 2.4.8 published 2026-10-19 23:10Z, cleared the 14-day age gate
+  # 2026-11-02 23:10Z. Supersedes the earlier 2.4.4 floor.
+  'fast-uri@>=2.0.0 <3.0.0': 2.4.8
   '@babel/core@<=7.29.0': 7.29.6
   # GHSA-mrhx-c7xc-m3w5 (HIGH): zod memory exhaustion validating oversized
   # constrained collections; 4.6.6 published 2026-10-11, clears the 14-day
@@ -89,7 +95,6 @@ overrides:
   brace-expansion@>=5.0.0 <5.0.12: 5.0.12
   deepmerge-ts@<8.0.0: 8.0.0
   esbuild@>=0.27.3 <0.28.1: 0.28.1
-  fast-uri@>=2.0.0 <3.0.0: 2.4.4
   js-yaml@>=3.0.0 <3.15.1: 3.15.1
   js-yaml@>=4.0.0 <4.3.2: 4.3.2
   postcss@<8.5.23: ^8.5.23
