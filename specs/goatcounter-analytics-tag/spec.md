@@ -164,9 +164,14 @@ this lane uses non-releasable types (chore/docs/ci).
   stays the right site (Host-header resolution makes a wrong endpoint silently
   count into the wrong site). These assertions live in
   `apps/docs/scripts/check-goatcounter.mjs` (called by the test.yml step),
-  which first runs six self-test fixtures — good, stripped-config, misordered,
-  missing-tag, cross-origin-src, wrong-endpoint — so the negative cases are
-  permanent, and fails CLOSED if zero pages are found. This also catches
+  which first runs eight self-test fixtures — good, stripped-config,
+  misordered, missing-tag, cross-origin-src, wrong-endpoint, two-tags,
+  commented-config — so the negative cases are
+  permanent, and fails CLOSED if zero pages are found. The checker also
+  asserts the stats host appears in each page ONLY inside the endpoint
+  attribute — any OTHER stats-host reference (e.g. a remote `<script src>`
+  without the tracking attribute, which would hand the stats host
+  script-execution privilege over this origin) fails the build. This also catches
   a stripped inline script (exact-text probe, not any `location.host` hit).
 - Pre-merge mechanism check (local): serve the built site UNDER ITS BASE
   (`astro preview` from apps/docs — a plain static server on `dist/` returns

@@ -61,6 +61,14 @@ function checkHtml(html) {
   const iCfg = html.indexOf(INLINE_ELEMENT);
   const iTag = html.indexOf(TAG_ELEMENT);
   if (iCfg > iTag) return 'ORDER WRONG: inline config after count.js tag';
+  // The stats host must appear ONLY inside the endpoint attribute: any other
+  // reference (a remote <script src> from the stats host, even without the
+  // tracking attribute) would grant it script-execution privilege over this
+  // origin — the exact trust extension vendoring exists to remove.
+  const outside = html.replace(TAG_ELEMENT, '');
+  if (outside.includes('stats.equationalapplications.com')) {
+    return 'UNEXPECTED stats-host reference outside the tracking endpoint attribute';
+  }
   return null;
 }
 
@@ -107,6 +115,7 @@ function selfTest() {
     ['wrong-endpoint', wrongEndpoint, 'FAIL'],
     ['two-tags', twoTags, 'FAIL'],
     ['commented-config', commented, 'FAIL'],
+    ['remote-script-no-attr', `<head>${INLINE_ELEMENT}${TAG_ELEMENT}></script></head><body><script src="https://stats.equationalapplications.com/other.js"></script></body>`, 'FAIL'],
   ];
   for (const [name, fx, want] of cases) {
     const got = checkHtml(fx);
