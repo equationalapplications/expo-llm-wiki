@@ -1,6 +1,6 @@
 # LEDGER — GoatCounter analytics tag
 
-What's in flight: implementation commits done (Tasks 1-4); branch rebased to reword feat→chore (npm-release BLOCKER fix, Haiku xhigh); Opus rung done (REQUEST CHANGES 2M/5m) → guard hardened (exact-tag src+endpoint check, 6 self-test fixtures, fileURLToPath+crypto, import-safe) and spec rev 8 folds the drift. Next: Opus delta on the incremental diff, independent reviewer pass, Kurt flag on rev 8, then cleanup/ready.
+What's in flight: Opus rung done (REQUEST CHANGES 2M/5m) → guard hardened (exact-tag src+endpoint check, 8 self-test fixtures incl. two-tags + commented-config, comment-stripping, fileURLToPath+crypto, always-on invocation) and spec rev 8 folds the drift. Next: Kurt flag on rev 8, then cleanup/ready.
 
 - [x] Task 1 — vendor count.js (sha256 `030ad75a…` OK; diff-empty vs upstream v2.7.0 tag clone; commit `dfa40f19`, reworded feat→chore to avoid an npm release trigger)
 - [x] Task 2 — astro.config.mjs head entries (build EXIT=0, 51/51 pages presence+ordering, token file clean, `dist/count.js` hash matches; commit `ff9ee05b`, reworded feat→chore)

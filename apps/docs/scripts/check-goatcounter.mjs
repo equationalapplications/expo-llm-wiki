@@ -24,12 +24,15 @@ const DIST = path.join(REPO_ROOT, 'apps/docs/dist');
 const VENDORED = path.join(REPO_ROOT, 'apps/docs/public/count.js');
 const TOKEN_FILE = 'googleff7d7181e1455d40.html';
 const INLINE_CONFIG = 'window.goatcounter = { path: (p) => location.host + p }';
-// Exact attribute order as emitted by the Starlight head renderer (verified in
-// dist); a reorder of attrs still passes as long as both exact attr substrings
-// appear in this same tag string. Matching the FULL tag (not loose substrings
-// like `count.js`) is what pins the script to the vendored same-origin asset
-// and the correct endpoint.
-const TAG = 'src="/expo-llm-wiki/count.js" data-goatcounter="https://stats.equationalapplications.com/count"';
+// Full element forms as emitted by Starlight (verified in dist). Anchoring on
+// the complete elements — not loose substrings like `count.js` — is what pins
+// the script to the vendored same-origin asset and the correct endpoint, and
+// blocks a SECOND tracking tag with a remote src or wrong endpoint, or either
+// marker hiding inside an HTML comment. NOTE: if the renderer ever reorders
+// the tag's attributes, this fails the build BY DESIGN — update TAG to match
+// and re-verify.
+const INLINE_ELEMENT = `<script>${INLINE_CONFIG}</script>`;
+const TAG_ELEMENT = '<script async src="/expo-llm-wiki/count.js" data-goatcounter="https://stats.equationalapplications.com/count">';
 const TAG_MARKER = 'vendored-sha256:';
 
 function recordedHash() {
@@ -43,20 +46,21 @@ function sha256(file) {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 }
 
-export function checkHtml(html) {
-  if (!html.includes('data-goatcounter')) return 'MISSING data-goatcounter tag';
-  const iCfg = html.indexOf(INLINE_CONFIG);
-  if (iCfg === -1) return 'MISSING exact inline config (silent schema strip?)';
-  if (!html.includes(TAG)) {
-    return 'MISSING exact tag (src must be the VENDORED same-origin /expo-llm-wiki/count.js '
+function checkHtml(html) {
+  // Strip HTML comments first: a commented-out config or tag must NOT count
+  // as present (text inside <!-- --> still substring-matches otherwise).
+  html = html.replace(/<!--[\s\S]*?-->/g, '');
+  const tagCount = (html.match(/<script\b[^>]*data-goatcounter/g) || []).length;
+  if (tagCount === 0) return 'MISSING data-goatcounter tag';
+  if (tagCount > 1) return `SECOND tracking tag present (${tagCount} data-goatcounter scripts)`;
+  if (!html.includes(INLINE_ELEMENT)) return 'MISSING exact inline config element (silent schema strip or commented out?)';
+  if (!html.includes(TAG_ELEMENT)) {
+    return 'MISSING exact vendored tag element (src must be same-origin /expo-llm-wiki/count.js '
       + 'with endpoint https://stats.equationalapplications.com/count)';
   }
-  const iCfgLast = html.lastIndexOf(INLINE_CONFIG);
-  const iTag = html.indexOf(TAG);
-  if (!(iCfg < iTag && iTag < iCfgLast + INLINE_CONFIG.length + iTag)) {
-    // ordering: the FIRST inline config occurrence must precede the tag
-    if (!(iCfg < iTag)) return 'ORDER WRONG: inline config after count.js tag';
-  }
+  const iCfg = html.indexOf(INLINE_ELEMENT);
+  const iTag = html.indexOf(TAG_ELEMENT);
+  if (iCfg > iTag) return 'ORDER WRONG: inline config after count.js tag';
   return null;
 }
 
@@ -86,13 +90,14 @@ function runChecker(distDir) {
 }
 
 function selfTest() {
-  const tag = (attrs) => `<script ${attrs ?? 'async ' + TAG}></script>`;
-  const good = `<head>${INLINE_CONFIG}</head><body>${tag()}</body>`;
-  const stripped = `<head></head><body>${tag()}</body>`;
-  const misordered = `<head>${tag()}${INLINE_CONFIG}</head>`;
-  const missingTag = `<head>${INLINE_CONFIG}</head><body><p>no tag</p></body>`;
-  const crossOrigin = `<head>${INLINE_CONFIG}</head><body>${tag('async src="https://stats.equationalapplications.com/count.js" data-goatcounter="https://stats.equationalapplications.com/count"')}</body>`;
-  const wrongEndpoint = `<head>${INLINE_CONFIG}</head><body>${tag('async src="/expo-llm-wiki/count.js" data-goatcounter="https://stats.example.com/count"')}</body>`;
+  const good = `<head>${INLINE_ELEMENT}</head><body>${TAG_ELEMENT}</script></body>`;
+  const stripped = `<head></head><body>${TAG_ELEMENT}</script></body>`;
+  const misordered = `<head>${TAG_ELEMENT}</script>${INLINE_ELEMENT}</head>`;
+  const missingTag = `<head>${INLINE_ELEMENT}</head><body><p>no tag</p></body>`;
+  const crossOrigin = `<head>${INLINE_ELEMENT}</head><body><script async src="https://stats.equationalapplications.com/count.js" data-goatcounter="https://stats.equationalapplications.com/count"></script></body>`;
+  const wrongEndpoint = `<head>${INLINE_ELEMENT}</head><body><script async src="/expo-llm-wiki/count.js" data-goatcounter="https://stats.example.com/count"></script></body>`;
+  const twoTags = `<head>${INLINE_ELEMENT}${TAG_ELEMENT}</script></head><body><script async src="https://stats.equationalapplications.com/count.js" data-goatcounter="https://stats.equationalapplications.com/count"></script></body>`;
+  const commented = `<head><!-- ${INLINE_ELEMENT} --></head><body>${TAG_ELEMENT}</script></body>`;
   const cases = [
     ['good', good, null],
     ['stripped-config', stripped, 'FAIL'],
@@ -100,17 +105,16 @@ function selfTest() {
     ['missing-tag', missingTag, 'FAIL'],
     ['cross-origin-src', crossOrigin, 'FAIL'],
     ['wrong-endpoint', wrongEndpoint, 'FAIL'],
+    ['two-tags', twoTags, 'FAIL'],
+    ['commented-config', commented, 'FAIL'],
   ];
   for (const [name, fx, want] of cases) {
     const got = checkHtml(fx);
     if (want === null && got !== null) { console.error(`self-test FAIL: ${name} rejected: ${got}`); process.exit(1); }
     if (want === 'FAIL' && got === null) { console.error(`self-test FAIL: ${name} fixture passed`); process.exit(1); }
   }
-  console.log('GoatCounter guard self-test: 6/6 fixtures behave as expected');
+  console.log(`GoatCounter guard self-test: ${cases.length}/${cases.length} fixtures behave as expected`);
 }
 
-const invokedDirectly = process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
-if (invokedDirectly) {
-  selfTest();
-  runChecker(DIST);
-}
+selfTest();
+runChecker(DIST);

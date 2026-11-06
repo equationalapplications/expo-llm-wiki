@@ -1,6 +1,6 @@
 # Spec: GoatCounter analytics tag on the docs site
 
-Status: Reviewed rev 8 (Tier-3 Opus ladder APPROVED r4; Tier-4 Fable spec gate CONVERGED; spec APPROVED by Kurt 2026-11-06, msg 1568319055209955480. Rev 8 = implementation-review drift fold: guard hardened into scripts/check-goatcounter.mjs per Opus T3 MAJOR-1/2 — details flagged to Kurt before the ready flip)
+Status: Reviewed rev 7 (Tier-3 Opus ladder APPROVED r4; Tier-4 Fable spec gate CONVERGED; spec APPROVED by Kurt 2026-11-06, msg 1568319055209955480). Rev 8 = implementation-review drift fold (guard hardened into scripts/check-goatcounter.mjs per Opus T3 MAJOR-1/2) — rev 8 PENDING Kurt's flag before the ready flip
 Date: 2026-11-05 (rev 8: 2026-11-06)
 **Intent check:** Checked 2026-11-05 against INTENT.md / docs pages / deploy config: no "no tracking" promise or CSP on the docs site contradicts this tag (the only "privacy-first" mention in docs source, ecosystem.mdx, describes a desktop product, not this site). Analytics disclosure note is out of scope for this PR (own lane if wanted).
 
