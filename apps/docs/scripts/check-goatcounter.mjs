@@ -46,10 +46,24 @@ function sha256(file) {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 }
 
+// Remove HTML comments by scanning (indexOf walk, not a replace pattern):
+// a commented-out config or tag must NOT count as present.
+function withoutHtmlComments(html) {
+  let out = '';
+  let i = 0;
+  while (i <= html.length) {
+    const open = html.indexOf('<!--', i);
+    if (open === -1) return out + html.slice(i);
+    out += html.slice(i, open);
+    const close = html.indexOf('-->', open + 4);
+    if (close === -1) return out; // unterminated comment swallows the rest
+    i = close + 3;
+  }
+  return out;
+}
+
 function checkHtml(html) {
-  // Strip HTML comments first: a commented-out config or tag must NOT count
-  // as present (text inside <!-- --> still substring-matches otherwise).
-  html = html.replace(/<!--[\s\S]*?-->/g, '');
+  html = withoutHtmlComments(html);
   const tagCount = (html.match(/<script\b[^>]*data-goatcounter/g) || []).length;
   if (tagCount === 0) return 'MISSING data-goatcounter tag';
   if (tagCount > 1) return `SECOND tracking tag present (${tagCount} data-goatcounter scripts)`;
@@ -65,9 +79,11 @@ function checkHtml(html) {
   // reference (a remote <script src> from the stats host, even without the
   // tracking attribute) would grant it script-execution privilege over this
   // origin — the exact trust extension vendoring exists to remove.
-  const outside = html.replace(TAG_ELEMENT, '');
-  if (outside.includes('stats.equationalapplications.com')) {
-    return 'UNEXPECTED stats-host reference outside the tracking endpoint attribute';
+  // Attribute-positioned matches only (src/href/data-goatcounter="..."): the
+  // endpoint attribute of the vendored tag is the ONE allowed occurrence.
+  const attrMatches = html.match(/\s(?:src|href|data-goatcounter)\s*=\s*["'][^"']*stats\.equationalapplications\.com/g) || [];
+  if (attrMatches.length !== 1) {
+    return `UNEXPECTED stats-host reference count (${attrMatches.length}) outside the single allowed endpoint attribute`;
   }
   return null;
 }
