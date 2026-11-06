@@ -121,38 +121,15 @@ jobs:
       - run: pnpm --filter docs build
 
       # GoatCounter analytics guard (spec: specs/goatcounter-analytics-tag/spec.md).
-      # 1) Vendored count.js must hash-match the value recorded in the spec
-      #    (offline check on the COMMITTED file — any edit, incl. line-ending
-      #    normalization, must update the spec hash in the same PR).
-      # 2) Built HTML must carry the inline config BEFORE the count.js tag on
-      #    every generated page except the Search Console token file: a silent
-      #    Starlight schema strip (children vs content) would drop the docs
-      #    path prefix and be unrecoverable in the shared stats bucket.
+      # The checker self-tests its fixtures, pins the vendored sha256 against
+      # the spec's tagged `vendored-sha256:` line (offline, committed file —
+      # any edit must update the spec hash in the same PR), and asserts the
+      # EXACT inline config precedes the count.js tag on every built page
+      # except the Search Console token (fail-closed on zero pages). Upgrade
+      # rule: on a GoatCounter upgrade re-copy public/count.js from the new
+      # tag and update the spec's vendored-sha256 line in the same PR.
       - name: Verify GoatCounter tag (vendored sha256 + strip/order guard)
-        run: |
-          HASH=$(grep -oE '[0-9a-f]{64}' specs/goatcounter-analytics-tag/spec.md | head -1)
-          echo "$HASH  apps/docs/public/count.js" | sha256sum -c -
-          node -e '
-            const fs = require("fs"), path = require("path");
-            const dist = "apps/docs/dist";
-            const excluded = new Set(["googleff7d7181e1455d40.html"]);
-            let fail = 0, checked = 0;
-            (function walk(d) {
-              for (const e of fs.readdirSync(d, { withFileTypes: true })) {
-                const p = path.join(d, e.name);
-                if (e.isDirectory()) { walk(p); continue; }
-                if (!e.name.endsWith(".html") || excluded.has(e.name)) continue;
-                checked++;
-                const html = fs.readFileSync(p, "utf8");
-                if (!html.includes("data-goatcounter")) { console.error("MISSING data-goatcounter:", p); fail++; continue; }
-                const iHost = html.indexOf("location.host"), iCount = html.indexOf("count.js");
-                if (iHost === -1) { console.error("MISSING inline config:", p); fail++; continue; }
-                if (!(iHost < iCount)) { console.error("ORDER WRONG:", p, iHost, iCount); fail++; }
-              }
-            })(dist);
-            console.log(`GoatCounter guard: checked=${checked} failures=${fail}`);
-            process.exit(fail ? 1 : 0);
-          '
+        run: node apps/docs/scripts/check-goatcounter.mjs
 
       - run: pnpm run typecheck
 

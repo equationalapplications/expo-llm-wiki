@@ -4,11 +4,15 @@ import starlight from '@astrojs/starlight';
 
 const repo = 'https://github.com/equationalapplications/expo-llm-wiki';
 
+// Site base — the GoatCounter script src below is DERIVED from this so a base
+// change can never orphan the tag (spec: specs/goatcounter-analytics-tag).
+const base = '/expo-llm-wiki';
+
 // Served from GitHub Pages at https://equationalapplications.github.io/expo-llm-wiki/
 // alongside the ScopeLab and WikiDemo apps (see .github/workflows/deploy.yml).
 export default defineConfig({
   site: 'https://equationalapplications.github.io',
-  base: '/expo-llm-wiki',
+  base,
   trailingSlash: 'always',
   integrations: [
     starlight({
@@ -40,7 +44,7 @@ export default defineConfig({
           tag: 'script',
           attrs: {
             async: true,
-            src: '/expo-llm-wiki/count.js',
+            src: `${base}/count.js`,
             'data-goatcounter': 'https://stats.equationalapplications.com/count',
           },
         },

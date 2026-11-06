@@ -129,8 +129,11 @@ endpoint. Never the default callback verbatim.
   byte-for-byte (diff-empty, tag-cloned 2026-11-06) — the copy is NOT
   trusting what the de-trusted host served on fetch day. CI enforces it
   offline: the test.yml step runs `sha256sum -c` against the recorded hash on
-  the COMMITTED file, so any edit (including line-ending normalization) forces
-  the hash to be updated in the same PR.
+  the COMMITTED file (pinned via the tagged line
+  vendored-sha256: 030ad75a7c80a04107a9b91f79e4b1572da0a583a80a9b67e111b310da11cbe9
+  — the ONLY 64-hex string CI reads; keep it unique in this file), so any edit
+  (including line-ending normalization) forces the hash to be updated in the
+  same PR.
 - Grep built `dist/**/*.html` for `data-goatcounter` — present on every
   generated page EXCEPT the copied Search Console token file
   `dist/googleff7d7181e1455d40.html` (kept intentionally for verification;
