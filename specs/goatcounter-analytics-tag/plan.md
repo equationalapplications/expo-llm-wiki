@@ -14,12 +14,12 @@ Branch: `spec/goatcounter-analytics-tag` (this PR carries spec + plan + implemen
 ### Task 1 — Vendor the tracking script
 - Copy the live stats-host script verbatim to `apps/docs/public/count.js`.
 - Verify BEFORE committing: `sha256sum apps/docs/public/count.js` equals the recorded hash; `diff` against the tag-cloned upstream v2.7.0 `public/count.js` is empty (from the 2026-11-06 clone under /tmp — re-fetch only if /tmp copy is gone).
-- Commit: `feat(docs): vendor GoatCounter count.js (spec: Proposed change)`.
+- Commit: `chore(docs): vendor GoatCounter count.js (spec: Proposed change)` — NON-releasable type: this repo's semantic-release has no scope filter, `feat:`/`fix:` anywhere cuts an unintended npm release (implementation-review BLOCKER, adjudicated by commit reword).
 - Tests: sha256 + diff checks above (read real output, paste into LEDGER evidence).
 
 ### Task 2 — Head entries in astro.config.mjs
 - Append the two entries to the starlight `head` array after the Bing meta, in order: inline `window.goatcounter` config script (`content`, NOT `children`), then the count.js tag (`attrs.async: true`, `src: '/expo-llm-wiki/count.js'`, `data-goatcounter: 'https://stats.equationalapplications.com/count'`).
-- Commit: `feat(docs): add GoatCounter head tag with host-prefix path callback (spec: Proposed change)`.
+- Commit: `chore(docs): add GoatCounter head tag with host-prefix path callback (spec: Proposed change)` — non-releasable type (same constraint).
 - Tests: `pnpm --filter docs build` exits 0; on built dist — `data-goatcounter` present on every generated page EXCEPT `dist/googleff7d7181e1455d40.html`; ordering assertion `html.index('location.host') < html.index('count.js')` holds per file (same exclusion); no file outside `apps/docs/` touched (`git status`).
 
 ### Task 3 — CI strip-guard + sha256 step in test.yml

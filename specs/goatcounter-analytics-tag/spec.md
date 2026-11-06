@@ -1,7 +1,7 @@
 # Spec: GoatCounter analytics tag on the docs site
 
-Status: Reviewed rev 7 (Tier-3 Opus ladder APPROVED r4; Tier-4 Fable spec gate CONVERGED: full r1 REQUEST CHANGES → rev 6 → delta r2 APPROVE WITH NITS; spec APPROVED by Kurt 2026-11-06, msg 1568319055209955480)
-Date: 2026-11-05 (rev 7: 2026-11-06)
+Status: Reviewed rev 8 (Tier-3 Opus ladder APPROVED r4; Tier-4 Fable spec gate CONVERGED; spec APPROVED by Kurt 2026-11-06, msg 1568319055209955480. Rev 8 = implementation-review drift fold: guard hardened into scripts/check-goatcounter.mjs per Opus T3 MAJOR-1/2 — details flagged to Kurt before the ready flip)
+Date: 2026-11-05 (rev 8: 2026-11-06)
 **Intent check:** Checked 2026-11-05 against INTENT.md / docs pages / deploy config: no "no tracking" promise or CSP on the docs site contradicts this tag (the only "privacy-first" mention in docs source, ecosystem.mdx, describes a desktop product, not this site). Analytics disclosure note is out of scope for this PR (own lane if wanted).
 
 ## Problem
@@ -22,8 +22,11 @@ count.js tag, in that order:
     { tag: 'script', content:
         'window.goatcounter = { path: (p) => location.host + p }' },
     { tag: 'script', attrs: { async: true,
-        src: '/expo-llm-wiki/count.js',
+        src: `${base}/count.js`,
         'data-goatcounter': 'https://stats.equationalapplications.com/count' } }
+
+The `src` is DERIVED from the site's `base` constant in astro.config.mjs (a
+base change can never orphan the tag silently).
 
 The script is NOT loaded from the stats host. `apps/docs/public/count.js` is a
 verbatim copy of the script the stats host serves
@@ -117,6 +120,13 @@ endpoint. Never the default callback verbatim.
 - .github/workflows/test.yml (one assertion step after the existing
   `pnpm --filter docs build` step, guarding the inline script against silent
   schema-strip regression — see Test plan)
+- apps/docs/scripts/check-goatcounter.mjs (NEW — the guard checker, extracted
+  so its negative cases run as permanent self-test fixtures; test.yml calls it)
+
+All four are docs-infrastructure only. Commit-type constraint discovered in
+implementation review: this repo's semantic-release has no scope filter, so
+`feat:`/`fix:` anywhere would cut an unintended npm release — every commit in
+this lane uses non-releasable types (chore/docs/ci).
 
 ## Test plan
 
@@ -128,12 +138,13 @@ endpoint. Never the default callback verbatim.
   that hash matches upstream `arp242/goatcounter` v2.7.0 `public/count.js`
   byte-for-byte (diff-empty, tag-cloned 2026-11-06) — the copy is NOT
   trusting what the de-trusted host served on fetch day. CI enforces it
-  offline: the test.yml step runs `sha256sum -c` against the recorded hash on
+  offline: the test.yml step runs the guard checker against the recorded hash on
   the COMMITTED file (pinned via the tagged line
   vendored-sha256: 030ad75a7c80a04107a9b91f79e4b1572da0a583a80a9b67e111b310da11cbe9
-  — the ONLY 64-hex string CI reads; keep it unique in this file), so any edit
+  — the ONLY line CI reads; other hash mentions in this file are prose and not
+  machine-consumed), so any edit
   (including line-ending normalization) forces the hash to be updated in the
-  same PR.
+  same PR. The checker verifies BOTH the repo copy and the built `dist/count.js`.
 - Grep built `dist/**/*.html` for `data-goatcounter` — present on every
   generated page EXCEPT the copied Search Console token file
   `dist/googleff7d7181e1455d40.html` (kept intentionally for verification;
@@ -143,12 +154,20 @@ endpoint. Never the default callback verbatim.
   bucket under paths that no longer carry the docs prefix, so the loss is
   unrecoverable by re-attribution) — the one-off acceptance option was
   rejected for exactly that reason.
-- Ordering assertion, same exclusion (the token file contains neither string,
-  and `html.index` would raise on it): in each generated HTML file, the
-  inline script's `location.host` appears BEFORE the count.js reference
-  (`html.index('location.host') < html.index('count.js')`). This also catches
-  a stripped inline script, because `index` raises if `location.host` is
-  absent. The CI step runs both checks (presence + ordering).
+- Ordering + integrity assertion, same exclusion (the token file contains
+  neither string): in each generated HTML file, the EXACT inline config text
+  appears BEFORE the EXACT tag
+  `src="/expo-llm-wiki/count.js" data-goatcounter="https://stats.equationalapplications.com/count"`.
+  Anchoring on the full tag (not loose substrings) is what also enforces the
+  two properties the design depends on: the script stays VENDORED same-origin
+  (a regression to the remote stats-host src fails the build) and the endpoint
+  stays the right site (Host-header resolution makes a wrong endpoint silently
+  count into the wrong site). These assertions live in
+  `apps/docs/scripts/check-goatcounter.mjs` (called by the test.yml step),
+  which first runs six self-test fixtures — good, stripped-config, misordered,
+  missing-tag, cross-origin-src, wrong-endpoint — so the negative cases are
+  permanent, and fails CLOSED if zero pages are found. This also catches
+  a stripped inline script (exact-text probe, not any `location.host` hit).
 - Pre-merge mechanism check (local): serve the built site UNDER ITS BASE
   (`astro preview` from apps/docs — a plain static server on `dist/` returns
   404 for the absolute `/expo-llm-wiki/count.js` src and the probe would
@@ -170,7 +189,7 @@ endpoint. Never the default callback verbatim.
 - Post-deploy dashboard: confirm a prefixed path shows up, including the home
   page as `/equationalapplications.github.io/expo-llm-wiki`, and that the
   recommended filter matches it.
-- No changes to non-spec files beyond the three files under Files touched.
+- No changes to non-spec files beyond the four files under Files touched.
 
 ## Post-merge checks (NOT part of the implementation ledger)
 
