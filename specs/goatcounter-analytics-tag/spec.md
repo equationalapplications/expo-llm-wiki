@@ -1,6 +1,6 @@
 # Spec: GoatCounter analytics tag on the docs site
 
-Status: Draft rev 5 (Tier-3 round-3 findings applied 2026-11-05; delta confirm pending)
+Status: Draft rev 5 (Tier-3 Opus ladder APPROVED round 4, 2026-11-05; awaiting Kurt's spec approval)
 Date: 2026-11-05
 
 ## Problem
