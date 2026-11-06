@@ -120,11 +120,12 @@ overrides:
   # 14-day age gate (15.2 days).
   'handlebars@<4.7.10': ^4.7.10
   tar@<7.5.21: ^7.5.21
-  # GHSA-gfhx-hw2g-v5hg (LOW): serialize-javascript >=7.1.1 <7.1.2 XSS via
-  # unsanitized serialized strings. Reach: apps/scopelab > vite-plugin-pwa >
-  # workbox-build > @rollup/plugin-terser. 7.1.2 published 2026-09-23,
-  # clears the 14-day age gate.
-  'serialize-javascript@>=7.1.1 <7.1.2': 7.1.2
+  # Dependabot #168 (GHSA-m5mm-p8h7-m29v) plus GHSA-gfhx-hw2g-v5hg (LOW, XSS
+  # via unsanitized serialized strings): serialize-javascript <7.1.3. Reach:
+  # apps/scopelab > vite-plugin-pwa > workbox-build > @rollup/plugin-terser.
+  # 7.1.3 published 2026-10-22 21:24Z, cleared the 14-day age gate
+  # 2026-11-05 21:24Z. Supersedes the earlier >=7.1.1 <7.1.2 floor.
+  'serialize-javascript@>=7.0.0 <7.1.3': 7.1.3
   # (The older undici@>=7.0.0 <7.29.1 → 7.29.1 entry was removed 2026-10-28:
   # fully subsumed by the >=7.0.0 <7.30.1 → 7.30.1 override above.)
   uuid@<11.1.1: 11.1.1
