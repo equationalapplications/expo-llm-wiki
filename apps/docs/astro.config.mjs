@@ -24,7 +24,27 @@ export default defineConfig({
       // Search engine ownership verification (Bing Webmaster Tools). The Google
       // Search Console token is the public/google*.html file. Keep both, or the
       // properties lose verification.
-      head: [{ tag: 'meta', attrs: { name: 'msvalidate.01', content: '9B4234C102820E0A07B8D9C5B0A06CC0' } }],
+      // GoatCounter analytics (spec: specs/goatcounter-analytics-tag/spec.md):
+      // inline config MUST use `content` (Starlight's HeadConfigSchema strips
+      // `children` silently); the script is VENDORED (public/count.js) so the
+      // stats host never gets script-execution privilege on this origin; the
+      // host-prefix path callback is what isolates docs traffic inside the
+      // single shared stats bucket. Keep both entries in this order.
+      head: [
+        { tag: 'meta', attrs: { name: 'msvalidate.01', content: '9B4234C102820E0A07B8D9C5B0A06CC0' } },
+        {
+          tag: 'script',
+          content: 'window.goatcounter = { path: (p) => location.host + p }',
+        },
+        {
+          tag: 'script',
+          attrs: {
+            async: true,
+            src: '/expo-llm-wiki/count.js',
+            'data-goatcounter': 'https://stats.equationalapplications.com/count',
+          },
+        },
+      ],
       sidebar: [
         { label: 'Start here', items: [{ autogenerate: { directory: 'start' } }] },
         { label: 'Concepts', items: [{ autogenerate: { directory: 'concepts' } }] },
