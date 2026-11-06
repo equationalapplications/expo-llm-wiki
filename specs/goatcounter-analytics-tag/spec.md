@@ -1,6 +1,6 @@
 # Spec: GoatCounter analytics tag on the docs site
 
-Status: Draft rev 3 (Tier-3 Opus review round 1 applied 2026-11-05; delta confirm pending)
+Status: Draft rev 4 (Tier-3 round-2 findings applied 2026-11-05; delta confirm pending)
 Date: 2026-11-05
 
 ## Problem
@@ -28,8 +28,12 @@ Mechanism notes (verified against live sources 2026-11-05):
   inline script text MUST use `content` (`children` is silently stripped by
   the zod schema and the build still passes).
 - The live `count.js` saves a function-valued `path` as `pcb` and calls
-  `data.p = pcb(data.p)`, so every hit records as
-  `equationalapplications.github.io/expo-llm-wiki/<path>`.
+  `data.p = pcb(data.p)`, so the client sends
+  `p=equationalapplications.github.io/expo-llm-wiki/<path>`.
+- Server-side normalization (goatcounter `hit.go:78`, verified in source:
+  `h.Path = "/" + strings.Trim(h.Path, "/")`) strips the trailing slash and
+  adds a leading one — the docs HOME page therefore stores as
+  `/equationalapplications.github.io/expo-llm-wiki` with NO trailing slash.
 - No site code in the endpoint URL — on this self-hosted vhost install the
   site is resolved from the Host header of the `/count` request;
   `/count/<code>` is the goatcounter.com SaaS convention and 404s here
@@ -38,10 +42,18 @@ Mechanism notes (verified against live sources 2026-11-05):
   https://www.goatcounter.com/help/domains), this host-prefix is what makes
   per-origin isolation possible inside the one bucket.
 
-Dashboard filtering for docs traffic: filter paths with the prefix
-`equationalapplications.github.io/expo-llm-wiki/` (full prefix — the bare
-github.io host prefix would also match scopelab/wiki-demo traffic if those
-were ever wired, see Out of scope).
+Dashboard filtering for docs traffic: filter paths CONTAINING
+`equationalapplications.github.io/expo-llm-wiki` (no trailing slash — a
+trailing-slash filter misses the home page per the normalization above).
+
+Isolation caveat: this isolates docs traffic ONLY while scopelab and
+wiki-demo stay unwired. Those apps deploy INSIDE the docs output
+(`pages-dist/scopelab`, `pages-dist/wiki-demo` → served under
+`/expo-llm-wiki/scopelab/...`), so the default callback would record their
+hits inside the docs prefix. Any future lane wiring them MUST use either a
+prefix that does not start with `equationalapplications.github.io/expo-llm-wiki`
+(e.g. its own distinguishing prefix in a modified `path` callback) or its own
+stats endpoint — never the default callback verbatim.
 
 ## Files touched
 
@@ -56,13 +68,24 @@ were ever wired, see Out of scope).
   generated page EXCEPT the copied Search Console token file
   `dist/googleff7d7181e1455d40.html` (kept intentionally for verification;
   excluded from the assertion).
-- Ordering assertion: in each generated HTML file, the inline script's
-  `location.host` appears BEFORE the `count.js` reference
-  (`html.index('location.host') < html.index('count.js')`) — a presence-only
-  grep cannot catch a reversed order.
-- Runtime check: load a built page in a browser and confirm the `/count`
-  request carries `p=equationalapplications.github.io%2Fexpo-llm-wiki%2F...`.
-- Post-deploy: confirm a prefixed path shows up in the GoatCounter dashboard.
+- Ordering assertion, same exclusion (the token file contains neither string,
+  and `html.index` would raise on it): in each generated HTML file, the
+  inline script's `location.host` appears BEFORE the `count.js` reference
+  (`html.index('location.host') < html.index('count.js')`). This also catches
+  a stripped inline script, because `index` raises if `location.host` is
+  absent.
+- Pre-merge mechanism check (local): on a locally-served built page, verify
+  `window.goatcounter.get_data().p === location.host + location.pathname`.
+  Do NOT expect a `/count` request locally — count.js's default filter blocks
+  localhost hits unless `allow_local` is set, so `get_data()` (client-side,
+  no network) is the right probe before merge.
+- Post-deploy check (deployed URL only, where `location.host` is the real
+  host): confirm the `/count` request carries
+  `p=equationalapplications.github.io%2Fexpo-llm-wiki%2F...`, including a
+  load of the docs home page.
+- Post-deploy dashboard: confirm a prefixed path shows up, including the home
+  page as `/equationalapplications.github.io/expo-llm-wiki`, and that the
+  recommended filter matches it.
 - No changes to non-spec files beyond `astro.config.mjs`.
 
 ## Ruling: single stats bucket accepted (Kurt, 2026-11-05)
@@ -81,16 +104,18 @@ history recorded until then stays in the shared bucket.
 ## INTENT check (recorded per AGENTS.md)
 
 Checked 2026-11-05 against INTENT.md / docs pages / deploy config: no
-"no tracking" promise or CSP on the docs site contradicts this tag. The docs
-pages currently disclose no analytics; whether to add a short disclosure
-note is an open question for Kurt (GoatCounter sets no cookies).
+"no tracking" promise or CSP on the docs site contradicts this tag (the only
+"privacy-first" mention in docs source, ecosystem.mdx, describes a desktop
+product, not this site). Any analytics disclosure note is OUT OF SCOPE for
+this PR — it ships in its own lane/PR if Kurt asks for one (open question
+raised in the delivery thread; not blocking this PR's file scope).
 
 ## Out of scope
 
-- scopelab and wiki-demo (separate apps deployed under the same Pages host at
-  `scopelab/` and `wiki-demo/`; this tag does not reach them — untracked
-  until their own lane wires them, at which point they must use a
-  distinguishing prefix or their own endpoint)
+- scopelab and wiki-demo (separate apps deployed INSIDE the docs output under
+  the Pages host; this tag does not reach them — untracked until their own
+  lane wires them, at which point they must use a NON-COLLIDING prefix or
+  their own endpoint, see the isolation caveat above)
 - rhyming-game (its own repo + lane; CSP verified clear 2026-11-05)
 - company-in-a-box-tutorial (site still under construction in that repo)
 - hearthlore (analytics-free by design — privacy page + CSP promise)
