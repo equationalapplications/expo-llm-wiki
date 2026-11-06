@@ -1,6 +1,6 @@
 # Spec: GoatCounter analytics tag on the docs site
 
-Status: Draft (awaiting Kurt's spec approval)
+Status: Draft rev 2 (Kurt's ruling folded 2026-11-05; Tier-3 review pending)
 Date: 2026-11-05
 
 ## Problem
@@ -23,23 +23,41 @@ No site code in the URL — on this self-hosted vhost install the site is
 resolved from the Host header; `/count/<code>` is the goatcounter.com SaaS
 convention and 404s on this install.
 
+Because GoatCounter does not store the domain of a pageview (verified against
+https://www.goatcounter.com/help/domains — `a.example.com/x` and
+`b.example.com/x` both record as `/x`), one extra inline script entry goes
+BEFORE the count.js tag so every hit records with its host prefixed:
+
+    { tag: 'script', attrs: {}, children:
+        "window.goatcounter = { path: (p) => location.host + p }" }
+
+Docs traffic is then isolatable in the dashboard by filtering paths with the
+`equationalapplications.github.io/` prefix, per Kurt's intent
+(ruling message 2026-11-05). Order matters: the inline entry must precede the
+count.js entry in the `head` array.
+
 ## Files touched
 
-- apps/docs/astro.config.mjs (one entry appended to the starlight `head` array)
+- apps/docs/astro.config.mjs (two entries appended to the starlight `head`
+  array: one inline `window.goatcounter` config script, then the count.js tag)
 
 ## Test plan
 
 - `pnpm --filter docs build` (or repo's documented docs build command) exits 0
 - Grep the built `dist/**/*.html` for `data-goatcounter` — present on every page
+- Grep the built `dist/**/*.html` for `location.host` — the inline path-prefix
+  script precedes the count.js tag on every page
 - No other changes in the diff
 
-## Known limitation (needs Kurt's awareness)
+## Ruling: single stats bucket accepted (Kurt, 2026-11-05)
 
 This GoatCounter install currently has ONE site (stats.equationalapplications.com),
-and it resolves sites by Host header. Every wired origin therefore counts into the
-single stats site until additional per-site vhosts are created on the VM. Wiring
-the tag now means combined numbers; splitting later needs no tag change (only a
-per-origin vhost + separate stats hostname per site, decided at that time).
+and it resolves sites by Host header. Kurt ruled the combined bucket is a
+perfectly acceptable trade-off to get data flowing today. Correction folded with
+the ruling: GoatCounter does NOT store the domain, so a native "filter by domain"
+does not exist; the path-prefix mechanism above is what makes per-origin
+isolation possible inside the one bucket. Splitting into per-site vhosts later
+stays possible and needs no change to this tag, decided at that time.
 
 ## Out of scope
 
