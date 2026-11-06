@@ -1,7 +1,7 @@
 # Spec: GoatCounter analytics tag on the docs site
 
-Status: Draft rev 6 (Tier-3 Opus ladder APPROVED r4; Tier-4 Fable spec gate r1 REQUEST CHANGES — all findings verified REAL and applied in this rev; delta confirm pending)
-Date: 2026-11-05 (rev 6: 2026-11-06)
+Status: Draft rev 7 (Tier-3 Opus ladder APPROVED r4; Tier-4 Fable spec gate CONVERGED: full r1 REQUEST CHANGES → rev 6 → delta r2 APPROVE WITH NITS — wording fixes applied in this rev; awaiting Kurt's spec approval)
+Date: 2026-11-05 (rev 7: 2026-11-06)
 **Intent check:** Checked 2026-11-05 against INTENT.md / docs pages / deploy config: no "no tracking" promise or CSP on the docs site contradicts this tag (the only "privacy-first" mention in docs source, ecosystem.mdx, describes a desktop product, not this site). Analytics disclosure note is out of scope for this PR (own lane if wanted).
 
 ## Problem
@@ -42,12 +42,14 @@ else?") and SRI ("Use SRI with count.js?") as supported setups; SRI was
 REJECTED even though the stats host does serve the script with permissive CORS
 headers (`access-control-allow-origin: *`, probed 2026-11-06): a hash pin must
 be re-pinned on every script version change (the same maintenance as
-re-copying on upgrade), and it leaves the docs build's inline-script asset
+re-copying on upgrade), and it leaves the docs build's count.js asset
 dependent on the stats host and its CDN being up at page-load time. Vendoring
 achieves the same substitution-integrity property with the file under EA's own
 PR review and no runtime dependency on the stats host for page assets. With
 the script vendored, the only cross-origin surface left is the beacon POST to
 `/count`, whose response is never executed.
+
+## Root cause (with evidence)
 
 Mechanism notes (verified against live sources 2026-11-05/06):
 
@@ -65,7 +67,8 @@ Mechanism notes (verified against live sources 2026-11-05/06):
   dist built 2026-11-06 with config unchanged, incl.
   `404.html` → canonical `/expo-llm-wiki/404/`), the recorded path is the
   canonical pathname and query strings are dropped; all 404 loads therefore
-  collapse into the single row `/equationalapplications.github.io/expo-llm-wiki/404/`.
+  collapse into the single row `/equationalapplications.github.io/expo-llm-wiki/404`
+  (no trailing slash after the server-side normalization below).
   In a locally-served page (hostname mismatch) `get_path()` falls back to
   `location.pathname + location.search`, which is what the pre-merge probe
   below sees.
@@ -119,9 +122,15 @@ endpoint. Never the default callback verbatim.
 
 - `pnpm --filter docs build` exits 0 (workspace deps are built first, same as
   CI's deploy workflow does).
-- Vendored script parity: `apps/docs/public/count.js` is byte-identical to the
-  stats-host script (`curl -s https://stats.equationalapplications.com/count.js
-  | sha256sum` matches the recorded hash).
+- Vendored script parity + provenance: `apps/docs/public/count.js` is
+  byte-identical to the script the stats host served (sha256
+  `030ad75a7c80a04107a9b91f79e4b1572da0a583a80a9b67e111b310da11cbe9`), and
+  that hash matches upstream `arp242/goatcounter` v2.7.0 `public/count.js`
+  byte-for-byte (diff-empty, tag-cloned 2026-11-06) — the copy is NOT
+  trusting what the de-trusted host served on fetch day. CI enforces it
+  offline: the test.yml step runs `sha256sum -c` against the recorded hash on
+  the COMMITTED file, so any edit (including line-ending normalization) forces
+  the hash to be updated in the same PR.
 - Grep built `dist/**/*.html` for `data-goatcounter` — present on every
   generated page EXCEPT the copied Search Console token file
   `dist/googleff7d7181e1455d40.html` (kept intentionally for verification;
@@ -137,9 +146,12 @@ endpoint. Never the default callback verbatim.
   (`html.index('location.host') < html.index('count.js')`). This also catches
   a stripped inline script, because `index` raises if `location.host` is
   absent. The CI step runs both checks (presence + ordering).
-- Pre-merge mechanism check (local): on a locally-served built page (loaded
-  WITHOUT a query string — the fallback path includes `location.search`,
-  so a query string would fail the equality), verify
+- Pre-merge mechanism check (local): serve the built site UNDER ITS BASE
+  (`astro preview` from apps/docs — a plain static server on `dist/` returns
+  404 for the absolute `/expo-llm-wiki/count.js` src and the probe would
+  false-fail with `get_data` undefined), on a page loaded WITHOUT a query
+  string (the fallback path includes `location.search`,
+  so a query string would fail the equality), and verify
   `window.goatcounter.get_data().p === location.host + location.pathname`.
   Locally the script is served same-origin from `public/` (no stats-host
   dependency for the probe). Do NOT expect a `/count` request locally —
@@ -159,14 +171,16 @@ endpoint. Never the default callback verbatim.
 
 ## Post-merge checks (NOT part of the implementation ledger)
 
-The two post-deploy checks above and the dashboard check run AFTER merge, in
-production, and cannot run earlier: they exercise the deployed Pages host.
-specs/README.md's lifecycle flips the spec to Implemented and deletes
-plan/LEDGER BEFORE the merge, so these checks have no ledger slot by design.
-Owner: Tessera (executor), verification window: first 24 h after the deploy
-workflow completes; any failure (no `/count` beacon, unprefixed path, filter
-mismatch) → REVERT the PR first, then diagnose — a mis-shipped tag pollutes
-the shared bucket immediately and unrecoverably.
+The two post-deploy checks above (the `/count` beacon check and the dashboard
+check) run AFTER merge, in production, and cannot run earlier: they exercise
+the deployed Pages host. specs/README.md's lifecycle flips the spec to
+Implemented and deletes plan/LEDGER BEFORE the merge, so these checks have no
+ledger slot by design. Owner: Tessera (executor), verification window: first
+24 h after the deploy workflow completes; run from a blocker-free browser
+profile (an ad blocker or privacy extension dropping the beacon would
+false-fail a healthy deploy); any failure (no `/count` beacon, unprefixed
+path, filter mismatch) → REVERT the PR first, then diagnose — a mis-shipped
+tag pollutes the shared bucket immediately and unrecoverably.
 
 ## Ruling: single stats bucket accepted (Kurt, 2026-11-05)
 
@@ -192,4 +206,9 @@ history recorded until then stays in the shared bucket.
 - hearthlore (analytics-free by design — privacy page + CSP promise)
 - analytics-infra README still says "one GoatCounter site entry each" per
   site — updating it to reflect this ruling is a follow-up in that repo's
-  own lane, not this PR.
+  own lane, not this PR. The same follow-up should record the count.js
+  upgrade rule (when analytics-infra upgrades GoatCounter, re-copy
+  `public/count.js` from the new tag into the docs repo's
+  `apps/docs/public/` and update the recorded sha256) where the person
+  running the upgrade will actually see it — it lives only in this spec
+  otherwise.
