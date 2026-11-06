@@ -1,6 +1,6 @@
 # Spec: GoatCounter analytics tag on the docs site
 
-Status: Draft rev 4 (Tier-3 round-2 findings applied 2026-11-05; delta confirm pending)
+Status: Draft rev 5 (Tier-3 round-3 findings applied 2026-11-05; delta confirm pending)
 Date: 2026-11-05
 
 ## Problem
@@ -50,10 +50,16 @@ Isolation caveat: this isolates docs traffic ONLY while scopelab and
 wiki-demo stay unwired. Those apps deploy INSIDE the docs output
 (`pages-dist/scopelab`, `pages-dist/wiki-demo` → served under
 `/expo-llm-wiki/scopelab/...`), so the default callback would record their
-hits inside the docs prefix. Any future lane wiring them MUST use either a
-prefix that does not start with `equationalapplications.github.io/expo-llm-wiki`
-(e.g. its own distinguishing prefix in a modified `path` callback) or its own
-stats endpoint — never the default callback verbatim.
+hits inside the docs prefix. Any future lane wiring them MUST ensure the
+RECORDED path does not CONTAIN the string
+`equationalapplications.github.io/expo-llm-wiki` anywhere in it — a prefix
+that merely fails to START with that string is not enough, because the
+dashboard filter above matches on containment (e.g. `path: (p) => 'scopelab' + p`
+records as `/scopelab/expo-llm-wiki/scopelab/...` and complies, while
+`'scopelab/' + location.host + p` records as
+`/scopelab/equationalapplications.github.io/expo-llm-wiki/...` and would
+silently inflate docs numbers). Alternatively the lane can use its own stats
+endpoint. Never the default callback verbatim.
 
 ## Files touched
 
@@ -74,11 +80,15 @@ stats endpoint — never the default callback verbatim.
   (`html.index('location.host') < html.index('count.js')`). This also catches
   a stripped inline script, because `index` raises if `location.host` is
   absent.
-- Pre-merge mechanism check (local): on a locally-served built page, verify
+- Pre-merge mechanism check (local): on a locally-served built page (loaded
+  WITHOUT a query string — the default path includes `location.search`,
+  count.js line 98, so a query string would fail the equality), verify
   `window.goatcounter.get_data().p === location.host + location.pathname`.
-  Do NOT expect a `/count` request locally — count.js's default filter blocks
-  localhost hits unless `allow_local` is set, so `get_data()` (client-side,
-  no network) is the right probe before merge.
+  Plain-HTTP local serving is fine: the script src is protocol-relative and
+  the stats host serves port 80 (verified live 2026-11-05). Do NOT expect a
+  `/count` request locally — count.js's filter blocks localhost/private-IP
+  hits unless `allow_local` is set (count.js line 117), so `get_data()`
+  (client-side, no network) is the right probe before merge.
 - Post-deploy check (deployed URL only, where `location.host` is the real
   host): confirm the `/count` request carries
   `p=equationalapplications.github.io%2Fexpo-llm-wiki%2F...`, including a
