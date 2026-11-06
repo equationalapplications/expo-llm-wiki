@@ -1,6 +1,6 @@
 # Spec: GoatCounter analytics tag on the docs site
 
-Status: Draft rev 7 (Tier-3 Opus ladder APPROVED r4; Tier-4 Fable spec gate CONVERGED: full r1 REQUEST CHANGES → rev 6 → delta r2 APPROVE WITH NITS — wording fixes applied in this rev; awaiting Kurt's spec approval)
+Status: Reviewed rev 7 (Tier-3 Opus ladder APPROVED r4; Tier-4 Fable spec gate CONVERGED: full r1 REQUEST CHANGES → rev 6 → delta r2 APPROVE WITH NITS; spec APPROVED by Kurt 2026-11-06, msg 1568319055209955480)
 Date: 2026-11-05 (rev 7: 2026-11-06)
 **Intent check:** Checked 2026-11-05 against INTENT.md / docs pages / deploy config: no "no tracking" promise or CSP on the docs site contradicts this tag (the only "privacy-first" mention in docs source, ecosystem.mdx, describes a desktop product, not this site). Analytics disclosure note is out of scope for this PR (own lane if wanted).
 
