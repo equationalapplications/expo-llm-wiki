@@ -120,6 +120,17 @@ jobs:
       # release workflow also runs) — a docs typo must never block an npm release.
       - run: pnpm --filter docs build
 
+      # GoatCounter analytics guard (spec: specs/goatcounter-analytics-tag/spec.md).
+      # The checker self-tests its fixtures, pins the vendored sha256 against
+      # the spec's tagged `vendored-sha256:` line (offline, committed file —
+      # any edit must update the spec hash in the same PR), and asserts the
+      # EXACT inline config precedes the count.js tag on every built page
+      # except the Search Console token (fail-closed on zero pages). Upgrade
+      # rule: on a GoatCounter upgrade re-copy public/count.js from the new
+      # tag and update the spec's vendored-sha256 line in the same PR.
+      - name: Verify GoatCounter tag (vendored sha256 + strip/order guard)
+        run: node apps/docs/scripts/check-goatcounter.mjs
+
       - run: pnpm run typecheck
 
       - run: pnpm test
