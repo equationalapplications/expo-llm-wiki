@@ -29,7 +29,7 @@ overrides:
   source-map-js@>=1.0.0 <1.2.2: ^1.2.2
   handlebars@<4.7.10: ^4.7.10
   tar@<7.5.21: ^7.5.21
-  serialize-javascript@>=7.1.1 <7.1.2: 7.1.2
+  serialize-javascript@>=7.1.1 <7.1.5: 7.1.4
   uuid@<11.1.1: 11.1.1
   vite@>=8.0.0 <8.1.6: 8.1.6
   ws@>=7.0.0 <7.5.11: 7.5.11
@@ -6818,8 +6818,8 @@ packages:
     resolution: {integrity: sha512-8I8TjW5KMOKsZQTvoxjuSIa7foAwPWGOts+6o7sgjz41/qMD9VQHEDxi6PBvK2l0MXUmqZyNpUK+T2tQaaElvw==}
     engines: {node: '>=10'}
 
-  serialize-javascript@7.1.2:
-    resolution: {integrity: sha512-GL2BWwVa6JydKO6l/ljVgjAZF4QJ3S7dWDWi53s5GZT8PJzD2fNxi67HANQGKAqPrwEpL5ba7gUBGi0Ls/sEoQ==}
+  serialize-javascript@7.1.4:
+    resolution: {integrity: sha512-FqlEuoTq/zRmA4Lg6aOqyH3lCHbUtCB0bmHCeFniX2GBdDqMJM3FwdvEhlE5Pim1dlt2FfBdVPmUNNiGhhKqpw==}
     engines: {node: '>=20.0.0'}
 
   serve-static@1.16.3:
@@ -10432,7 +10432,7 @@ snapshots:
 
   '@rollup/plugin-terser@1.0.0(rollup@4.64.6)':
     dependencies:
-      serialize-javascript: 7.1.2
+      serialize-javascript: 7.1.4
       smob: 1.6.2
       terser: 5.51.2
     optionalDependencies:
@@ -15269,7 +15269,7 @@ snapshots:
     dependencies:
       type-fest: 0.13.1
 
-  serialize-javascript@7.1.2: {}
+  serialize-javascript@7.1.4: {}
 
   serve-static@1.16.3:
     dependencies:
