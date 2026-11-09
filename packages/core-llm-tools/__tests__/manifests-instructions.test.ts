@@ -1,17 +1,29 @@
 import { describe, it, expect } from 'vitest';
-import { wikiGetInstructionsManifest } from '../src/manifests/instructions';
+import { instructionsGetManifest } from '../src/manifests/instructions';
 import * as CoreLlmTools from '../src/index';
 
-describe('wikiGetInstructionsManifest', () => {
-  it('is a memory:read function tool named wiki_get_instructions that requires entityId', () => {
-    expect(wikiGetInstructionsManifest.name).toBe('wiki_get_instructions');
-    expect(wikiGetInstructionsManifest.scope).toBe('memory:read');
-    expect(wikiGetInstructionsManifest.schema.name).toBe(wikiGetInstructionsManifest.name);
-    expect(wikiGetInstructionsManifest.schema.parameters?.required).toEqual(['entityId']);
-    expect((wikiGetInstructionsManifest.schema.parameters?.properties as Record<string, { type: string }>).entityId.type).toBe('string');
+describe('instructionsGetManifest', () => {
+  it('is a memory:read function tool named instructions_get that requires entityId', () => {
+    expect(instructionsGetManifest.name).toBe('instructions_get');
+    expect(instructionsGetManifest.scope).toBe('memory:read');
+    expect(instructionsGetManifest.schema.name).toBe(instructionsGetManifest.name);
+    expect(instructionsGetManifest.schema.parameters?.required).toEqual(['entityId']);
+    expect((instructionsGetManifest.schema.parameters?.properties as Record<string, { type: string }>).entityId.type).toBe('string');
   });
 
   it('is exported from the package entry point', () => {
-    expect(CoreLlmTools.wikiGetInstructionsManifest).toBe(wikiGetInstructionsManifest);
+    expect(CoreLlmTools.instructionsGetManifest).toBe(instructionsGetManifest);
+  });
+
+  it('the removed wiki_* exports are gone from the package entry point (#324)', () => {
+    for (const removed of [
+      'wikiTraverseGraphManifest',
+      'wikiGetOntologyManifest',
+      'wikiGetInstructionsManifest',
+      'LEGACY_TOOL_NAMES',
+      'canonicalToolName',
+    ]) {
+      expect(CoreLlmTools).not.toHaveProperty(removed);
+    }
   });
 });

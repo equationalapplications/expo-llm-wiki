@@ -1,4 +1,3 @@
-import { renamed } from '../legacy';
 import type { AgentToolManifest } from '../types';
 
 /** `ontology_get`: the entity's ontology manifest. Hosts dispatch it to `WikiMemory.getOntologyManifest`. */
@@ -49,17 +48,3 @@ export const graphTraverseManifest: AgentToolManifest = {
     },
   },
 };
-
-/**
- * @deprecated Use `ontologyGetManifest` (`ontology_get`) and route your switch
- * through `canonicalToolName`. Identical except for the name; removed at the
- * next major.
- */
-export const wikiGetOntologyManifest: AgentToolManifest = renamed(ontologyGetManifest, 'wiki_get_ontology');
-
-/**
- * @deprecated Use `graphTraverseManifest` (`graph_traverse`) and route your
- * switch through `canonicalToolName`. Identical except for the name; removed
- * at the next major.
- */
-export const wikiTraverseGraphManifest: AgentToolManifest = renamed(graphTraverseManifest, 'wiki_traverse_graph');
