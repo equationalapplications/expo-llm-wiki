@@ -9,6 +9,7 @@ export class WikiService {
   constructor(adapter: SQLiteAdapter) {
     this.wiki = new WikiMemory(adapter, {
       config: {
+        maintenance: 'auto',
         autoLibrarianThreshold: 10,
         autoHealThreshold: 30,
       },

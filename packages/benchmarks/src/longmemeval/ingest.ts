@@ -182,7 +182,9 @@ export async function ingestQuestion(q: LmeQuestion, opts: IngestOpts): Promise<
         }
       : {
           // Legacy auto-mode — the 7.x default behaviour, stated explicitly so
-          // a future default flip in core does not silently change the baseline.
+          // the 8.0.0 default flip in core does not change the baseline.
+          librarian: { strategy: 'legacy' as const },
+          maintenance: 'auto' as const,
           autoLibrarianThreshold: 20,
         };
 

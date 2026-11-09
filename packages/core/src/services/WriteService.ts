@@ -11,6 +11,7 @@ import { assertEntityId } from '../utils/entityId';
 import { clip } from '../utils/pure';
 import { emitDiagnostic } from '../utils/diagnostics';
 import { assertEpochMs } from '../utils/temporal';
+import { resolveMaintenanceMode } from '../utils/engineDefaults';
 
 export class WriteService {
   constructor(
@@ -81,7 +82,7 @@ export class WriteService {
       occurred_at: occurredAt,
     };
 
-    const deferred = this.options.config?.maintenance === 'deferred';
+    const deferred = resolveMaintenanceMode(this.options.config) === 'deferred';
     if (deferred) {
       await this.eventRepo.add(newEvent);
       return;

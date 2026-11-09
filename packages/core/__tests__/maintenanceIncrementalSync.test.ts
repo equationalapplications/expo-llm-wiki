@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { WikiMemory, PrunePartialFailureError } from '../src/WikiMemory';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 import type { MemoryDump, SQLiteAdapter, WikiFact } from '../src/types';
+import { LEGACY_AUTO } from './helpers/legacyAutoConfig';
 
 // Acceptance for #235: MaintenanceService's prune / forget / librarian / heal
 // passes must update the keyword index at O(rows touched), not O(entity) —
@@ -43,7 +44,7 @@ async function freshWiki(
   const db = openTestDatabase();
   // Pinned: these tests count MiniSearch's per-entity read-backs. FTS5 reads
   // nothing back (the trigger ledger drains in SQL; see fts5Integration).
-  const wiki = new WikiMemory(db, { llmProvider: { generateText }, config: { indexStrategy: 'minisearch', ...config } } as any);
+  const wiki = new WikiMemory(db, { llmProvider: { generateText }, config: { ...LEGACY_AUTO, indexStrategy: 'minisearch', ...config } } as any);
   await wiki.setup();
   return { wiki, db };
 }

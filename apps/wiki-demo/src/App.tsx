@@ -93,6 +93,7 @@ function SetupScreen({ onReady }: { onReady: (wiki: WikiMemory) => void }) {
       const wiki = createWiki(adapter, {
         llmProvider,
         config: {
+          maintenance: 'auto',
           autoLibrarianThreshold: 5,
           autoHealThreshold: 20,
         },

@@ -3,12 +3,13 @@
  *
  * This is the only place that knows which strategies exist. New strategies
  * (PR-B `ops`) register an entry in `STRATEGIES` and the dispatcher picks
- * the right implementation. The default is `'legacy'`, preserving 7.x
- * behaviour for any host that never sets `config.librarian.strategy`.
+ * the right implementation. The default is defined in `utils/engineDefaults`
+ * (`'ops'` since 8.0.0).
  */
 
 import { runLegacyLibrarianPass } from './legacy';
 import { runOpsLibrarianPass } from './ops';
+import { resolveLibrarianStrategy } from '../../utils/engineDefaults';
 import type { LibrarianDeps, LibrarianContext, LibrarianResult, LibrarianStrategy } from './types';
 
 // A Map (not a plain object literal) so inherited Object properties like
@@ -22,7 +23,7 @@ export async function runLibrarianStrategy(
   deps: LibrarianDeps,
   ctx: LibrarianContext,
 ): Promise<LibrarianResult> {
-  const strategy = deps.options.config?.librarian?.strategy ?? 'legacy';
+  const strategy = resolveLibrarianStrategy(deps.options.config);
   const fn = STRATEGIES.get(strategy);
   if (!fn) {
     throw new Error(`Unknown librarian strategy: ${strategy}`);

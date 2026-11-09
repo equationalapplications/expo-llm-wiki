@@ -296,11 +296,16 @@ export class PromptService {
    * placeholders and leaves data placeholders verbatim; heal never receives
    * ontology context, matching `buildHealPrompt`.
    */
-  buildInstructionTemplates(ontologyContext: OntologyPromptContext | null): WikiInstructions {
+  buildInstructionTemplates(
+    ontologyContext: OntologyPromptContext | null,
+    librarianStrategy: 'legacy' | 'ops',
+  ): WikiInstructions {
     const o = this.globalOverrides;
     return {
       ingest: this.appendGrounding(this.buildSystemPrompt(o?.ingestSystemPrompt ?? INGEST_SYSTEM_PROMPT, {}, ontologyContext), 'ingest'),
-      librarian: this.appendGrounding(this.buildSystemPrompt(o?.librarianSystemPrompt ?? LIBRARIAN_SYSTEM_PROMPT, {}, ontologyContext), 'librarian'),
+      librarian: librarianStrategy === 'ops'
+        ? this.appendGrounding(this.appendOntology(OPS_EXTRACT_SYSTEM_PROMPT, ontologyContext), 'librarian')
+        : this.appendGrounding(this.buildSystemPrompt(o?.librarianSystemPrompt ?? LIBRARIAN_SYSTEM_PROMPT, {}, ontologyContext), 'librarian'),
       heal: this.appendGrounding(o?.healSystemPrompt ?? HEAL_SYSTEM_PROMPT, 'heal'),
       ontologyBackfill: this.buildSystemPrompt(o?.ontologyBackfillSystemPrompt ?? ONTOLOGY_BACKFILL_SYSTEM_PROMPT, {}, ontologyContext),
     };

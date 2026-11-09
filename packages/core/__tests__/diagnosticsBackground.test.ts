@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { makeDiagnosticWiki, ofCode } from './helpers/diagnosticsHarness';
 import { WikiSearchUnavailableError } from '../src/types';
+import { LEGACY_AUTO } from './helpers/legacyAutoConfig';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -9,7 +10,7 @@ describe('background job diagnostics', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const failure = new Error('llm offline');
     const { wiki, diagnostics } = await makeDiagnosticWiki({
-      config: { autoLibrarianThreshold: 1 },
+      config: { ...LEGACY_AUTO, autoLibrarianThreshold: 1 },
       generateText: async () => { throw failure; },
     });
     await wiki.write('e1', { event_type: 'observation', summary: 'one' });
@@ -26,7 +27,7 @@ describe('background job diagnostics', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { wiki, diagnostics } = await makeDiagnosticWiki({
-      config: { autoLibrarianThreshold: 1 },
+      config: { ...LEGACY_AUTO, autoLibrarianThreshold: 1 },
       generateText: async () => { throw new WikiSearchUnavailableError(); },
     });
     await wiki.write('e1', { event_type: 'observation', summary: 'one' });
@@ -43,7 +44,7 @@ describe('background job diagnostics', () => {
 
   it('auto-librarian run tags its own diagnostics with trigger auto', async () => {
     const { wiki, diagnostics } = await makeDiagnosticWiki({
-      config: { autoLibrarianThreshold: 1 },
+      config: { ...LEGACY_AUTO, autoLibrarianThreshold: 1 },
       generateText: async () => JSON.stringify({ facts: [{ title: 5, body: 'x' }], tasks: [] }),
     });
     await wiki.write('e1', { event_type: 'observation', summary: 'one' });

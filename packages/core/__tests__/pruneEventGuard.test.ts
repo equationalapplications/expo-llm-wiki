@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { makeDiagnosticWiki, ofCode } from './helpers/diagnosticsHarness';
+import { LEGACY_AUTO } from './helpers/legacyAutoConfig';
 
 const old = Date.now() - 40 * 86_400_000;
 
@@ -14,7 +15,7 @@ const ids = async (db: any) => (await db.getAllAsync(`SELECT id FROM llm_wiki_ev
 
 describe('runPrune event guard', () => {
   it('legacy auto mode: unchanged (all old events pruned)', async () => {
-    const { wiki, db } = await seed({});
+    const { wiki, db } = await seed(LEGACY_AUTO);
     await wiki.runPrune('u');
     expect(await ids(db)).toEqual([]);
   });

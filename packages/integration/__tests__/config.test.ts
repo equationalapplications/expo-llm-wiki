@@ -60,7 +60,7 @@ describe('config — pruneEventsAfter', () => {
     const db = openTestDatabase();
     const wiki = new WikiMemory(db, {
       llmProvider: stubLLM(),
-      config: { pruneEventsAfter: 1 },
+      config: { librarian: { strategy: 'legacy' }, maintenance: 'auto', pruneEventsAfter: 1 },
     });
     await wiki.setup();
 
@@ -129,7 +129,7 @@ describe('config — autoLibrarianThreshold', () => {
     const db = openTestDatabase();
     const wiki = new WikiMemory(db, {
       llmProvider: scriptedLLM([libResp]),
-      config: { autoLibrarianThreshold: 3 },
+      config: { librarian: { strategy: 'legacy' }, maintenance: 'auto', autoLibrarianThreshold: 3 },
     });
     await wiki.setup();
 
@@ -165,7 +165,7 @@ describe('config — autoHealThreshold', () => {
     const db = openTestDatabase();
     const wiki = new WikiMemory(db, {
       llmProvider: scriptedLLM([libResp, healResp]),
-      config: { autoLibrarianThreshold: 1, autoHealThreshold: 1 },
+      config: { librarian: { strategy: 'legacy' }, maintenance: 'auto', autoLibrarianThreshold: 1, autoHealThreshold: 1 },
     });
     await wiki.setup();
 

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { WikiMemory } from '../src/WikiMemory';
 import { CURRENT_SCHEMA_VERSION } from '../src/db/migrations';
 import type { MemoryBundle, MemoryDump, SQLiteAdapter, WikiOptions } from '../src/types';
+import { LEGACY_AUTO } from './helpers/legacyAutoConfig';
 
 function createMockDb(): SQLiteAdapter {
   const mockDb = {
@@ -149,6 +150,7 @@ describe('WikiMemory — prompt override API', () => {
           return JSON.stringify({ facts: [], tasks: [] });
         }),
       },
+      config: LEGACY_AUTO,
     });
     await wiki.setup();
   });
@@ -209,6 +211,7 @@ describe('WikiMemory — prompt override API', () => {
         }),
       },
       config: {
+        ...LEGACY_AUTO,
         prompts: { librarianSystemPrompt: 'global lib from config' },
       },
     });
@@ -230,6 +233,7 @@ describe('WikiMemory — prompt override API', () => {
         }),
       },
       config: {
+        ...LEGACY_AUTO,
         autoLibrarianThreshold: 1,
         prompts: { librarianSystemPrompt: 'auto-run global prompt' },
       },
@@ -260,6 +264,7 @@ describe('WikiMemory — prompt override API', () => {
         }),
       },
       config: {
+        ...LEGACY_AUTO,
         autoLibrarianThreshold: 1,
         autoHealThreshold: 1,
         prompts: {

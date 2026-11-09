@@ -50,6 +50,7 @@ import { RememberService } from './services/RememberService';
 import { validateManifest } from './utils/ontology';
 import { DiagnosticBuffer } from './utils/diagnostics';
 import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighborhood, OntologyBackfillResult, HealResult, IngestDocumentResult, ReembedResult, SupersedeReplacement, WikiFact, RememberInput } from './types';
+import { changedDefaultWarnings, resolveLibrarianStrategy } from './utils/engineDefaults';
 
 export { WikiBusyError, WikiTransactionError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER, WikiStrictOntologyViolation, WikiSourceRefHashCollision, WikiParseError, WikiIngestEmptyError, WikiGraphNodeOwnershipConflict } from './types';
 
@@ -133,6 +134,7 @@ export class WikiMemory {
     // reaches any repository or service. See docs/superpowers/specs/2026-07-09-transaction-serialization-spec.md.
     this.db = withSerializedTransactions(db);
     this.options = options;
+    for (const warning of changedDefaultWarnings(options.config)) console.warn(warning);
     this.prefix = options.config?.tablePrefix ?? 'llm_wiki_';
     if (!TABLE_PREFIX_PATTERN.test(this.prefix)) {
       throw new Error(
@@ -561,7 +563,7 @@ export class WikiMemory {
   async getInstructions(entityId: string): Promise<WikiInstructions> {
     assertEntityId(entityId);
     const ontologyContext = await this.ontologyService.buildPromptContext(entityId);
-    return this.promptService.buildInstructionTemplates(ontologyContext);
+    return this.promptService.buildInstructionTemplates(ontologyContext, resolveLibrarianStrategy(this.options.config));
   }
 
   /**

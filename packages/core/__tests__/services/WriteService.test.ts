@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { WriteService } from '../../src/services/WriteService';
 import { WikiBusyError } from '../../src/types';
 import type { WikiOptions } from '../../src/types';
+import { LEGACY_AUTO } from '../helpers/legacyAutoConfig';
 
 describe('WriteService', () => {
   let mockDb: any;
@@ -24,6 +25,7 @@ describe('WriteService', () => {
     mockOptions = {
       llmProvider: { generateText: vi.fn().mockResolvedValue('{}') },
       config: {
+        ...LEGACY_AUTO,
         autoLibrarianThreshold: 20,
         autoHealThreshold: 100,
       },

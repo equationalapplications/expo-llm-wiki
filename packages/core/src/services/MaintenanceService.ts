@@ -7,6 +7,7 @@ import type { EdgeDrop } from '../utils/ontology';
 import { PromptService } from './PromptService';
 import type { OntologyService, TitleIndexEntry } from './OntologyService';
 import { generateId } from '../utils/ids';
+import { resolveLibrarianStrategy, resolveMaintenanceMode } from '../utils/engineDefaults';
 import { parseEmbedding } from '../utils/embedding';
 import { PrunePartialFailureError } from '../types';
 import { HOOK_TIMEOUT_MARKER } from '../types';
@@ -328,7 +329,7 @@ export class MaintenanceService {
 
       if (retainEventsFor !== null) {
         const cutoff = now - retainEventsFor * 86400000;
-        const guarded = this.options.config?.maintenance === 'deferred' || this.options.config?.librarian?.strategy === 'ops';
+        const guarded = resolveMaintenanceMode(this.options.config) === 'deferred' || resolveLibrarianStrategy(this.options.config) === 'ops';
         if (guarded) {
           // Spec §6: under deferred/ops the librarian re-reads the event log,
           // so prune may only delete events the watermark has already passed.

@@ -4,6 +4,7 @@ import { PromptService } from '../src/services/PromptService';
 import { HEAL_SYSTEM_PROMPT, INGEST_SYSTEM_PROMPT } from '../src/prompts';
 import { resolveGrounding } from '../src/utils/grounding';
 import type { OntologyManifest } from '../src/types';
+import { LEGACY_AUTO } from './helpers/legacyAutoConfig';
 
 const MANIFEST: OntologyManifest = {
   node_types: [{ type: 'person', description: 'A person' }],
@@ -21,6 +22,7 @@ describe('getInstructions', () => {
 
   it('matches the system prompt each writer actually sends, ontology block included', async () => {
     const { wiki, generateText } = await makeDiagnosticWiki({
+      config: LEGACY_AUTO,
       generateText: async () => JSON.stringify({ facts: [], tasks: [] }),
     });
     await wiki.setOntologyManifest('e1', MANIFEST, { mode: 'strict' });

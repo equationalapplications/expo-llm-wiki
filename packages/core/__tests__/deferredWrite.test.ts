@@ -1,10 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import { WikiMemory } from '../src/WikiMemory';
 import { openTestDatabase } from './helpers/sqliteAdapter';
+import { LEGACY_AUTO } from './helpers/legacyAutoConfig';
 
 function mk(config: Record<string, unknown>, generateText = vi.fn(async () => JSON.stringify({ facts: [], tasks: [] }))) {
   const db = openTestDatabase();
-  return { db, generateText, wiki: new WikiMemory(db, { llmProvider: { generateText }, config }) };
+  return { db, generateText, wiki: new WikiMemory(db, { llmProvider: { generateText }, config: { ...LEGACY_AUTO, ...config } }) };
 }
 
 describe("maintenance: 'deferred'", () => {

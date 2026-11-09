@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { WikiMemory } from '../src/WikiMemory';
 import type { EntityStatus } from '../src/types';
+import { LEGACY_AUTO } from './helpers/legacyAutoConfig';
 
 class MockSQLiteDatabase {
   async execAsync(_sql: string): Promise<void> {}
@@ -21,7 +22,7 @@ const slowProvider = (delayMs: number) => ({
 
 async function freshWiki(provider: any) {
   const db = new MockSQLiteDatabase();
-  const wiki = new WikiMemory(db, { llmProvider: provider, config: { tablePrefix: 'sub_' } });
+  const wiki = new WikiMemory(db, { llmProvider: provider, config: { ...LEGACY_AUTO, tablePrefix: 'sub_' } });
   await wiki.setup();
   return wiki;
 }
@@ -131,7 +132,7 @@ describe('subscribeEntityStatus — auto-librarian dispatch', () => {
     };
     const wiki = new WikiMemory(db as any, {
       llmProvider: slowProvider(30),
-      config: { tablePrefix: 'sub_', autoLibrarianThreshold: 1, autoHealThreshold: 1_000_000 },
+      config: { ...LEGACY_AUTO, tablePrefix: 'sub_', autoLibrarianThreshold: 1, autoHealThreshold: 1_000_000 },
     });
     await wiki.setup();
 
@@ -167,7 +168,7 @@ describe('subscribeEntityStatus — auto-heal dispatch', () => {
     };
     const wiki = new WikiMemory(db as any, {
       llmProvider: slowProvider(30),
-      config: { tablePrefix: 'sub_', autoLibrarianThreshold: 1, autoHealThreshold: 1 },
+      config: { ...LEGACY_AUTO, tablePrefix: 'sub_', autoLibrarianThreshold: 1, autoHealThreshold: 1 },
     });
     await wiki.setup();
 
