@@ -9,8 +9,8 @@ sidebar:
 
 | Method | What it does | Auto-triggered? |
 |---|---|---|
-| `runLibrarian(entityId, { promptOverride? })` | Turns recent events into facts and tasks | Every `autoLibrarianThreshold` events (default 20) |
-| `runHeal(entityId, { promptOverride? })` | Resolves contradictions, downgrades stale inferences, removes obsolete facts | Every `autoHealThreshold` events (default 100) |
+| `runLibrarian(entityId, { promptOverride? })` | Turns recent events into facts and tasks | With `runPendingMaintenance()`, or every `autoLibrarianThreshold` events (default 20) in `'auto'` mode |
+| `runHeal(entityId, { promptOverride? })` | Resolves contradictions, downgrades stale inferences, removes obsolete facts | With `runPendingMaintenance()`, or every `autoHealThreshold` events (default 100) in `'auto'` mode |
 | `runReembed(entityId?, { skipExisting?, force? })` | Computes missing or outdated embeddings | No |
 | `runPrune(entityId, opts)` | Hard-deletes aged soft-deleted rows and old events | No |
 | `runOntologyBackfill(entityId)` | Types untyped facts | No |
@@ -21,10 +21,10 @@ is safe to catch and retry later.
 ## Librarian strategies
 
 ```ts
-config: { librarian: { strategy: 'ops' } } // default: 'legacy'
+config: { librarian: { strategy: 'legacy' } } // default: 'ops'
 ```
 
-| | `'legacy'` (default) | `'ops'` |
+| | `'legacy'` | `'ops'` (default) |
 |---|---|---|
 | Input | The newest events, plus existing facts in the prompt | Events since the last pass only |
 | Dedup | Done by the model | An **embedding gate, with no LLM call**: identical facts are a no-op, novel facts are added, and only *similar-but-different* candidates go to the model |
@@ -77,8 +77,10 @@ librarian hasn't processed yet. It emits `event_retention_held` instead.
 
 ## Deferred maintenance
 
-By default, `write()` starts the librarian and heal as background promises. On **serverless or
-request-scoped** hosts those promises can be frozen or killed partway through. Defer them instead:
+Since 8.0.0, `write()` only records the event by default. Nothing runs in the background and no
+model is called until you run maintenance, so **no facts appear from events until you do**. To have
+`write()` start the librarian and heal as background promises, set `maintenance: 'auto'`, but not on
+**serverless or request-scoped** hosts, where those promises can be frozen or killed partway through.
 
 ```ts
 const wiki = new WikiMemory(db, {

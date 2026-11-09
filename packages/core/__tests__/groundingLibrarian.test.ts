@@ -1,12 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { makeDiagnosticWiki, ofCode, expectNoContent, factRows, GROUNDED } from './helpers/groundingHarness';
+import { LEGACY_AUTO } from './helpers/legacyAutoConfig';
 
 const ON = { grounding: { mode: 'draft' as const, writers: ['librarian' as const] } };
 const SUMMARY = 'Ada said "the engine weaves algebraic patterns" \\ then\nleft early';
 const fact = (title: string, evidence?: unknown) => ({ title, body: `${title} body`, tags: [], confidence: 'inferred', ...(evidence !== undefined ? { evidence } : {}) });
 
 async function librarian(config: object, facts: object[]) {
-  const h = await makeDiagnosticWiki({ config, generateText: async () => JSON.stringify({ facts, tasks: [] }) });
+  const h = await makeDiagnosticWiki({ config: { ...LEGACY_AUTO, ...config }, generateText: async () => JSON.stringify({ facts, tasks: [] }) });
   await h.wiki.write('e1', { event_type: 'observation', summary: SUMMARY });
   await h.wiki.runLibrarian('e1');
   return h;
@@ -32,7 +33,7 @@ describe('librarian grounding', () => {
   it('no circular grounding: a quote copied from a current fact fails', async () => {
     let call = 0;
     const h = await makeDiagnosticWiki({
-      config: ON,
+      config: { ...LEGACY_AUTO, ...ON },
       generateText: async () => {
         call++;
         return JSON.stringify({

@@ -4,6 +4,7 @@ import { PromptService } from '../src/services/PromptService';
 import { HEAL_SYSTEM_PROMPT, INGEST_SYSTEM_PROMPT } from '../src/prompts';
 import { resolveGrounding } from '../src/utils/grounding';
 import type { OntologyManifest } from '../src/types';
+import { LEGACY_AUTO } from './helpers/legacyAutoConfig';
 
 const MANIFEST: OntologyManifest = {
   node_types: [{ type: 'person', description: 'A person' }],
@@ -21,6 +22,7 @@ describe('getInstructions', () => {
 
   it('matches the system prompt each writer actually sends, ontology block included', async () => {
     const { wiki, generateText } = await makeDiagnosticWiki({
+      config: LEGACY_AUTO,
       generateText: async () => JSON.stringify({ facts: [], tasks: [] }),
     });
     await wiki.setOntologyManifest('e1', MANIFEST, { mode: 'strict' });
@@ -67,11 +69,19 @@ describe('getInstructions', () => {
   it('PromptService equivalence: instruction templates equal the runtime system prompts for default templates', () => {
     const svc = new PromptService();
     const ctx = { ontologyManifest: '{}', ontologyModeInstructions: 'ONTOLOGY' };
-    const t = svc.buildInstructionTemplates(ctx);
+    const t = svc.buildInstructionTemplates(ctx, 'legacy');
     expect(t.ingest).toBe(svc.buildIngestPrompt('chunk', undefined, ctx).systemPrompt);
     expect(t.librarian).toBe(svc.buildLibrarianPrompt([], [], undefined, ctx).systemPrompt);
     expect(t.heal).toBe(svc.buildHealPrompt([{ id: 'c' }], [], [], [], undefined, 0).prompts.systemPrompt);
     expect(t.ontologyBackfill).toBe(svc.buildOntologyBackfillPrompt([], undefined, ctx).systemPrompt);
+  });
+
+  it('PromptService equivalence: under ops the librarian template is the ops extract system prompt', () => {
+    const svc = new PromptService();
+    const ctx = { ontologyManifest: '{}', ontologyModeInstructions: 'ONTOLOGY' };
+    const t = svc.buildInstructionTemplates(ctx, 'ops');
+    expect(t.librarian).toBe(svc.buildOpsExtractPrompt([], ctx).systemPrompt);
+    expect(t.librarian).not.toBe(svc.buildInstructionTemplates(ctx, 'legacy').librarian);
   });
 });
 
@@ -79,7 +89,7 @@ describe('getInstructions with grounding', () => {
   it('appends the evidence block for grounding writers only, identical to the runtime prompt', () => {
     const svc = new PromptService(undefined, resolveGrounding({ mode: 'draft', writers: ['ingest', 'heal'] }));
     const ctx = { ontologyManifest: '{}', ontologyModeInstructions: 'ONTOLOGY' };
-    const t = svc.buildInstructionTemplates(ctx);
+    const t = svc.buildInstructionTemplates(ctx, 'legacy');
     expect(t.ingest).toContain('EVIDENCE REQUIREMENT');
     expect(t.heal).toContain('EVIDENCE REQUIREMENT');
     expect(t.librarian).not.toContain('EVIDENCE REQUIREMENT');

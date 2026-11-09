@@ -1,4 +1,3 @@
-import { renamed } from '../legacy';
 import type { AgentToolManifest } from '../types';
 
 /**
@@ -24,10 +23,3 @@ export const instructionsGetManifest: AgentToolManifest = {
     },
   },
 };
-
-/**
- * @deprecated Use `instructionsGetManifest` (`instructions_get`) and route your
- * switch through `canonicalToolName`. Identical except for the name; removed
- * at the next major.
- */
-export const wikiGetInstructionsManifest: AgentToolManifest = renamed(instructionsGetManifest, 'wiki_get_instructions');

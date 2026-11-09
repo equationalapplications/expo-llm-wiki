@@ -225,8 +225,8 @@ async function runOneScenario({ scenario, flags, endpoint, fetchImpl, embed }: R
     };
 
     const config = flags.strategy === 'ops'
-      ? { librarian: { strategy: 'ops' as const } }
-      : { autoLibrarianThreshold: 20 };
+      ? { librarian: { strategy: 'ops' as const }, maintenance: 'auto' as const }
+      : { librarian: { strategy: 'legacy' as const }, maintenance: 'auto' as const, autoLibrarianThreshold: 20 };
 
     const wiki = new WikiMemory(adapter, { llmProvider, config });
     await wiki.setup();

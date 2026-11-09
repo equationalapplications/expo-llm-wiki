@@ -41,16 +41,17 @@ Facts can also have **edges** between them (`reports_to`, `worksFor`, …) when 
 
 | Pass | What it does | Triggered |
 |---|---|---|
-| **Librarian** | Reads recent events and turns them into new or updated facts and tasks. | Automatically every `autoLibrarianThreshold` events (default 20), or `runLibrarian()` |
+| **Librarian** | Reads recent events and turns them into new or updated facts and tasks. | `runPendingMaintenance()` or `runLibrarian()`, or automatically every `autoLibrarianThreshold` events in `'auto'` mode |
 | **Ingest** | Splits a document into chunks and extracts facts from each one. | `ingestDocument()` |
-| **Heal** | Reviews the store. It resolves contradictions, downgrades stale inferences, and removes obsolete facts. | Automatically every `autoHealThreshold` events (default 100), or `runHeal()` |
+| **Heal** | Reviews the store. It resolves contradictions, downgrades stale inferences, and removes obsolete facts. | `runPendingMaintenance()` or `runHeal()`, or automatically every `autoHealThreshold` events in `'auto'` mode |
 | **Reembed** | Computes missing or outdated embeddings. | `runReembed()`, or the maintenance scheduler |
 | **Prune** | Hard-deletes old soft-deleted rows and old events. | `runPrune()` |
 | **Ontology backfill** | Assigns types to facts that came in without one, such as imported facts. | `runOntologyBackfill()` |
 
-By default, librarian and heal run **in the background** when `write()` crosses a threshold. On
-serverless hosts you can [defer them](/expo-llm-wiki/guides/maintenance/#deferred-maintenance) and
-run them on your own schedule instead.
+By default, librarian and heal run only when you call them, so nothing spends your model allowance
+behind your back. Call [`runPendingMaintenance()`](/expo-llm-wiki/guides/maintenance/#deferred-maintenance)
+on your own schedule, or set `maintenance: 'auto'` on a long-lived host to run them **in the
+background** when `write()` crosses a threshold.
 
 ## Where facts come from: `source_type`
 

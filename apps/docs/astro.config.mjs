@@ -59,6 +59,7 @@ export default defineConfig({
         {
           label: 'Project',
           items: [
+            { label: 'Upgrading to 8.0.0', slug: 'project/upgrading-8' },
             { label: 'Live demos', slug: 'project/demos' },
             { label: 'Security', slug: 'project/security' },
             { label: 'Contributing', slug: 'project/contributing' },

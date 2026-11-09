@@ -3,12 +3,14 @@ import { WikiMemory } from '../src/WikiMemory';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 import type { WikiOptions, MemoryDump } from '../src/types';
 import * as embeddingModule from '../src/utils/embedding';
+import { LEGACY_AUTO } from './helpers/legacyAutoConfig';
 
 function makeWiki(embedFn?: (text: string) => Promise<number[]>, onFallback?: (e: Error) => void) {
   const db = openTestDatabase();
   const options: WikiOptions = {
     llmProvider: { generateText: async () => '{}', embed: embedFn },
     onRetrievalFallback: onFallback,
+    config: LEGACY_AUTO,
   };
   return { wiki: new WikiMemory(db, options), db };
 }

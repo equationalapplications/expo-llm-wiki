@@ -3,6 +3,7 @@ import { openTestDatabase } from './helpers/sqliteAdapter';
 import { WikiMemory } from '../src/WikiMemory';
 import * as idsModule from '../src/utils/ids';
 import type { SQLiteAdapter, WikiDiagnostic } from '../src/types';
+import { LEGACY_AUTO } from './helpers/legacyAutoConfig';
 
 /**
  * Parity snapshot for `runLibrarian` (spec 2026-09-29 §5.1, §5.8).
@@ -109,6 +110,7 @@ describe('librarian legacy parity (snapshot, recorded before the verbatim move)'
 
     wiki = new WikiMemory(db, {
       llmProvider: { generateText },
+      config: LEGACY_AUTO,
       onDiagnostic: (d) => diagnostics.push(d),
     });
     await wiki.setup();

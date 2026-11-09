@@ -10,6 +10,7 @@ import { MIGRATIONS } from '../../src/db/migrations';
 import { openTestDatabase } from '../helpers/sqliteAdapter';
 import { setupDatabase } from '../../src/db/schema';
 import { LIBRARIAN_SYSTEM_PROMPT, HEAL_SYSTEM_PROMPT } from '../../src/prompts';
+import { LEGACY_AUTO } from '../helpers/legacyAutoConfig';
 
 describe('MaintenanceService — PromptService injection', () => {
   let mockDb: any;
@@ -30,7 +31,7 @@ describe('MaintenanceService — PromptService injection', () => {
       withTransactionAsync: vi.fn(async (fn: (tx: any) => Promise<void>) => fn(mockDb)),
       runAsync: vi.fn().mockResolvedValue({ changes: 0, lastInsertRowId: 0 }),
     };
-    mockOptions = { llmProvider: { generateText: vi.fn() } };
+    mockOptions = { llmProvider: { generateText: vi.fn() }, config: LEGACY_AUTO };
     mockEntryRepo = {
       findRecentByEntityId: vi.fn().mockResolvedValue([]),
       findAllByEntityId: vi.fn().mockResolvedValue([]),
@@ -212,7 +213,7 @@ describe('MaintenanceService — ontology integration', () => {
 
     const svc = new MaintenanceService(
       db, PREFIX,
-      { llmProvider: { generateText: vi.fn().mockResolvedValue(librarianResponse) } },
+      { llmProvider: { generateText: vi.fn().mockResolvedValue(librarianResponse) }, config: LEGACY_AUTO },
       entryRepo,
       { softDeleteByEntityAndSourceRef: vi.fn().mockResolvedValue(0) } as any,
       mockTaskRepo as any,

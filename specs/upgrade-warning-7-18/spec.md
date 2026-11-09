@@ -1,6 +1,6 @@
 # Warn 7.x hosts about the 8.0.0 default changes
 
-**Status:** Implemented (2026-11-09, branch `feat/upgrade-warning-7-18`)
+**Status:** Implemented (2026-11-09, branch `feat/upgrade-warning-7-18`; shipped in 7.18.0). **Removed in 8.0.0 by PR #342**, as §3 anticipates: once the defaults flip, the sentence "8.0.0 changes" stops being true. The 7.x line keeps the warning.
 **Date:** 2026-11-09
 **Branch:** `feat/upgrade-warning-7-18`
 **Source baseline:** `a4968b7f` (main after PR #341)

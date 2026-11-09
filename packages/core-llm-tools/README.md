@@ -122,29 +122,15 @@ const response = await ai.models.generateContent({
 
 `ontology_get` (`ontologyGetManifest`), `graph_traverse` (`graphTraverseManifest`), and `instructions_get` (`instructionsGetManifest`) are schema-only `memory:read` tools. Dispatch them to `WikiMemory.getOntologyManifest`, `traverseGraph`, and `getInstructions`. `instructions_get` returns your `WikiConfig.prompts` overrides verbatim, so keep secrets out of them. The names follow SynapseTree's `<resource>_<verb>` convention, which the `@equationalapplications/mcp-server` tools also use.
 
-### Deprecated: the `wiki_*` tool names
+### Removed in 8.0.0: the `wiki_*` tool names
 
-| Deprecated export (tool name) | Replacement |
+| Removed export (tool name) | Use instead |
 |---|---|
 | `wikiTraverseGraphManifest` (`wiki_traverse_graph`) | `graphTraverseManifest` (`graph_traverse`) |
 | `wikiGetOntologyManifest` (`wiki_get_ontology`) | `ontologyGetManifest` (`ontology_get`) |
 | `wikiGetInstructionsManifest` (`wiki_get_instructions`) | `instructionsGetManifest` (`instructions_get`) |
 
-The deprecated manifests are still exported and are identical to their replacements except for the name, so a host that changes nothing keeps sending the same declarations and its `switch` keeps matching. They, `LEGACY_TOOL_NAMES`, and `canonicalToolName` are removed at the next major.
-
-To migrate, switch to the new manifests and route your `switch` through `canonicalToolName` **in the same change**:
-
-```ts
-import { canonicalToolName } from '@equationalapplications/core-llm-tools';
-
-switch (canonicalToolName(call.name)) {
-  case 'graph_traverse': /* … */ break;
-  case 'ontology_get': /* … */ break;
-  case 'instructions_get': /* … */ break;
-}
-```
-
-`canonicalToolName` returns the new name for an old one (logging one deprecation warning per process) and any other name unchanged, so a call that still carries an old name, for example from a stored prompt, reaches the same handler. Never send the old and new manifest for one tool to the same model: it would choose between them.
+`LEGACY_TOOL_NAMES` and `canonicalToolName` are removed too. Declare the new manifests and dispatch on the new names. A stored prompt that still tells a model to call an old name has to be updated, because the model no longer has a tool by that name.
 
 ## Helpful Resources & Links
 

@@ -1,43 +1,43 @@
 import { describe, it, expect } from 'vitest';
-import { wikiGetOntologyManifest, wikiTraverseGraphManifest } from '../src/manifests/graph';
+import { ontologyGetManifest, graphTraverseManifest } from '../src/manifests/graph';
 
-describe('wikiGetOntologyManifest', () => {
-  it('has name wiki_get_ontology', () => {
-    expect(wikiGetOntologyManifest.name).toBe('wiki_get_ontology');
+describe('ontologyGetManifest', () => {
+  it('has name ontology_get', () => {
+    expect(ontologyGetManifest.name).toBe('ontology_get');
   });
 
   it('scope is memory:read', () => {
-    expect(wikiGetOntologyManifest.scope).toBe('memory:read');
+    expect(ontologyGetManifest.scope).toBe('memory:read');
   });
 
   it('schema name matches manifest name', () => {
-    expect(wikiGetOntologyManifest.schema.name).toBe(wikiGetOntologyManifest.name);
+    expect(ontologyGetManifest.schema.name).toBe(ontologyGetManifest.name);
   });
 
   it('requires entityId', () => {
-    expect(wikiGetOntologyManifest.schema.parameters?.required).toEqual(['entityId']);
+    expect(ontologyGetManifest.schema.parameters?.required).toEqual(['entityId']);
   });
 });
 
-describe('wikiTraverseGraphManifest', () => {
-  it('has name wiki_traverse_graph', () => {
-    expect(wikiTraverseGraphManifest.name).toBe('wiki_traverse_graph');
+describe('graphTraverseManifest', () => {
+  it('has name graph_traverse', () => {
+    expect(graphTraverseManifest.name).toBe('graph_traverse');
   });
 
   it('scope is memory:read', () => {
-    expect(wikiTraverseGraphManifest.scope).toBe('memory:read');
+    expect(graphTraverseManifest.scope).toBe('memory:read');
   });
 
   it('schema name matches manifest name', () => {
-    expect(wikiTraverseGraphManifest.schema.name).toBe(wikiTraverseGraphManifest.name);
+    expect(graphTraverseManifest.schema.name).toBe(graphTraverseManifest.name);
   });
 
   it('requires entityId and sourceId', () => {
-    expect(wikiTraverseGraphManifest.schema.parameters?.required).toEqual(['entityId', 'sourceId']);
+    expect(graphTraverseManifest.schema.parameters?.required).toEqual(['entityId', 'sourceId']);
   });
 
   it('declares maxDepth, direction, and edgeTypes as optional parameters', () => {
-    const props = wikiTraverseGraphManifest.schema.parameters?.properties as Record<string, any>;
+    const props = graphTraverseManifest.schema.parameters?.properties as Record<string, any>;
     expect(props).toHaveProperty('maxDepth');
     expect(props).toHaveProperty('direction');
     expect(props).toHaveProperty('edgeTypes');
@@ -46,8 +46,8 @@ describe('wikiTraverseGraphManifest', () => {
   });
 
   it('declares optional boolean excludeDrafts', () => {
-    const props = wikiTraverseGraphManifest.schema.parameters?.properties as Record<string, any>;
+    const props = graphTraverseManifest.schema.parameters?.properties as Record<string, any>;
     expect(props.excludeDrafts).toMatchObject({ type: 'boolean' });
-    expect(wikiTraverseGraphManifest.schema.parameters?.required).not.toContain('excludeDrafts');
+    expect(graphTraverseManifest.schema.parameters?.required).not.toContain('excludeDrafts');
   });
 });

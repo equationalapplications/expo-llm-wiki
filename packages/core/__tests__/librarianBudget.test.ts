@@ -3,6 +3,7 @@ import { WikiMemory } from '../src/WikiMemory';
 import { UsageMeter } from '../src/utils/usage';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 import type { SQLiteAdapter } from '../src/types';
+import { LEGACY_AUTO } from './helpers/legacyAutoConfig';
 
 /**
  * Budget pre-flight for the legacy librarian pass (spec 2026-09-29 §10 item 5).
@@ -20,7 +21,7 @@ describe('librarian budget pre-flight (legacy strategy)', () => {
   it('declines without calling the LLM when the prompt does not fit, and reports the estimate', async () => {
     const db: SQLiteAdapter = openTestDatabase();
     const generateText = vi.fn();
-    const wiki = new WikiMemory(db, { llmProvider: { generateText } });
+    const wiki = new WikiMemory(db, { llmProvider: { generateText }, config: LEGACY_AUTO });
     await wiki.setup();
 
     // One long event summary pushes the prompt estimate well past 10 tokens.
@@ -41,7 +42,7 @@ describe('librarian budget pre-flight (legacy strategy)', () => {
   it('runs and reports an EventCursor for the newest event when it fits', async () => {
     const db: SQLiteAdapter = openTestDatabase();
     const generateText = vi.fn().mockResolvedValue(JSON.stringify({ facts: [], tasks: [] }));
-    const wiki = new WikiMemory(db, { llmProvider: { generateText } });
+    const wiki = new WikiMemory(db, { llmProvider: { generateText }, config: LEGACY_AUTO });
     await wiki.setup();
 
     // Two events so the "newest" event is unambiguous: with DESC ordering the

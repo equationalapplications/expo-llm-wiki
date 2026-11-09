@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { WikiBusyError } from '../src/types';
 import { WikiMemory } from '../src/WikiMemory';
 import { JobManager } from '../src/services/JobManager';
+import { LEGACY_AUTO } from './helpers/legacyAutoConfig';
 
 class MockSQLiteDatabase {
     async execAsync(_sql: string): Promise<void> {}
@@ -32,7 +33,7 @@ const slowProvider = (delayMs: number) => ({
 
 async function freshWiki(provider: any) {
   const db = new MockSQLiteDatabase();
-  const wiki = new WikiMemory(db, { llmProvider: provider, config: { tablePrefix: 'jobs_' } });
+  const wiki = new WikiMemory(db, { llmProvider: provider, config: { ...LEGACY_AUTO, tablePrefix: 'jobs_' } });
   await wiki.setup();
   return wiki;
 }

@@ -141,9 +141,11 @@ function makeMockDb(opts: {
 import { WikiMemory } from '../src/WikiMemory';
 import { WikiBusyError } from '../src/types';
 import type { WikiOptions } from '../src/types';
+import { LEGACY_AUTO } from './helpers/legacyAutoConfig';
 
 const stubOptions: WikiOptions = {
   llmProvider: { generateText: async () => '{}' },
+  config: LEGACY_AUTO,
 };
 
 const now = Date.now();

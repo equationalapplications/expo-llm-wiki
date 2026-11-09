@@ -19,9 +19,5 @@ export {
 export {
   graphTraverseManifest,
   ontologyGetManifest,
-  wikiGetOntologyManifest,
-  wikiTraverseGraphManifest,
 } from './manifests/graph';
-export { instructionsGetManifest, wikiGetInstructionsManifest } from './manifests/instructions';
-export { LEGACY_TOOL_NAMES, canonicalToolName } from './legacy';
-export type { LegacyToolName } from './legacy';
+export { instructionsGetManifest } from './manifests/instructions';

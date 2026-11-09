@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { makeDiagnosticWiki, ofCode, expectNoContent } from './helpers/diagnosticsHarness';
 import type { OntologyManifest } from '../src/types';
+import { LEGACY_AUTO } from './helpers/legacyAutoConfig';
 
 const MANIFEST: OntologyManifest = {
   node_types: [{ type: 'person', description: 'A person' }, { type: 'place', description: 'A place' }],
@@ -13,6 +14,7 @@ describe('librarian diagnostics', () => {
   it('reports rejected facts, rejected tasks, fuzzy dedupe and dropped edges with trigger call', async () => {
     let calls = 0;
     const { wiki, diagnostics } = await makeDiagnosticWiki({
+      config: LEGACY_AUTO,
       generateText: async () => {
         calls++;
         if (calls === 1) {

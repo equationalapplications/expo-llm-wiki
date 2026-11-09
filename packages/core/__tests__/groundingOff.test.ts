@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { makeDiagnosticWiki, factRows, HASH_A } from './helpers/groundingHarness';
 import type { WikiConfig } from '../src/types';
+import { LEGACY_AUTO } from './helpers/legacyAutoConfig';
 
 // Random ids and wall-clock timestamps differ between the two runs; mask them.
 const mask = (s: string) => s
@@ -9,7 +10,7 @@ const mask = (s: string) => s
 
 async function run(config: WikiConfig) {
   const h = await makeDiagnosticWiki({
-    config,
+    config: { ...LEGACY_AUTO, ...config },
     generateText: async ({ userPrompt }) => userPrompt.startsWith('Heal Candidates')
       ? JSON.stringify({ downgraded: [], deleted: [], newFacts: [{ title: 'Healed', body: 'healed body', tags: [], confidence: 'inferred', evidence: ['anything at all goes here'] }] })
       : JSON.stringify({ facts: [{ title: 'Engine', body: 'engine body', tags: [], confidence: 'certain', evidence: ['not in the source at all'] }], tasks: [] }),

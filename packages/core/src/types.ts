@@ -265,7 +265,7 @@ export interface LibrarianGateConfig {
   /** Best-neighbour cosine below which a candidate is novel. Default 0.30 (calibrated against the 30 supersession scenarios). */
   novelThreshold?: number;
 }
-/** `'legacy'` is the 7.x add-only librarian. `'ops'` is the spec §5.1 / §5.3 dispatcher. */
+/** `'legacy'` is the 7.x add-only librarian. `'ops'` (default since 8.0.0) is the spec §5.1 / §5.3 dispatcher. */
 export interface LibrarianConfig {
   strategy?: 'legacy' | 'ops';
   gate?: LibrarianGateConfig;
@@ -371,15 +371,16 @@ export interface WikiConfig {
   grounding?: GroundingConfig;
   /** Emit an `llm_usage` diagnostic after every LLM text call. Default false. */
   reportLlmUsage?: boolean;
-  /** Librarian strategy selection (spec 2026-09-29 §5.1). Default `{ strategy: 'legacy' }`. */
+  /** Librarian strategy selection (spec 2026-09-29 §5.1). Default `{ strategy: 'ops' }` since 8.0.0. */
   librarian?: LibrarianConfig;
   /**
-   * `'auto'` (default): write() starts librarian/heal in the background when
-   * thresholds are crossed. `'deferred'`: write() only records the event; the
-   * host runs `runPendingMaintenance()` (spec 2026-09-29 §6). Pair with
-   * `librarian: { strategy: 'ops' }`: the legacy strategy reads only the
-   * newest 50 events per pass and advances the watermark past them, so a
-   * deferred backlog larger than that is never extracted.
+   * `'deferred'` (default since 8.0.0): write() only records the event, and
+   * nothing is extracted or healed until the host runs
+   * `runPendingMaintenance()` (spec 2026-09-29 §6). `'auto'`: write() starts
+   * librarian/heal in the background when thresholds are crossed. Don't pair
+   * `'deferred'` with `librarian: { strategy: 'legacy' }`: the legacy strategy
+   * reads only the newest 50 events per pass and advances the watermark past
+   * them, so a deferred backlog larger than that is never extracted.
    */
   maintenance?: 'auto' | 'deferred';
   /** `'auto'` mode only: also trigger the librarian when pending event text reaches ~this many tokens (chars/4). */

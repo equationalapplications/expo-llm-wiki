@@ -47,10 +47,10 @@ import { LintService } from './services/LintService';
 import { OkfTrustWritesRepository } from './db/okf-trust-writes';
 import { TemporalService } from './services/TemporalService';
 import { RememberService } from './services/RememberService';
-import { warnUpcomingDefaultsOnce } from './utils/upgradeNotice';
 import { validateManifest } from './utils/ontology';
 import { DiagnosticBuffer } from './utils/diagnostics';
 import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighborhood, OntologyBackfillResult, HealResult, IngestDocumentResult, ReembedResult, SupersedeReplacement, WikiFact, RememberInput } from './types';
+import { resolveLibrarianStrategy, warnChangedDefaultsOnce } from './utils/engineDefaults';
 
 export { WikiBusyError, WikiTransactionError, PrunePartialFailureError, HOOK_TIMEOUT_MARKER, WikiStrictOntologyViolation, WikiSourceRefHashCollision, WikiParseError, WikiIngestEmptyError, WikiGraphNodeOwnershipConflict } from './types';
 
@@ -134,6 +134,7 @@ export class WikiMemory {
     // reaches any repository or service. See docs/superpowers/specs/2026-07-09-transaction-serialization-spec.md.
     this.db = withSerializedTransactions(db);
     this.options = options;
+    warnChangedDefaultsOnce(options.config);
     this.prefix = options.config?.tablePrefix ?? 'llm_wiki_';
     if (!TABLE_PREFIX_PATTERN.test(this.prefix)) {
       throw new Error(
@@ -141,7 +142,6 @@ export class WikiMemory {
           `Must match ${TABLE_PREFIX_PATTERN} (letter, then alphanumeric/underscore, ending in "_", max 32 chars total).`,
       );
     }
-    warnUpcomingDefaultsOnce(options.config);
     this.outboxRepo = new OutboxRepository(this.db, this.prefix, !!options.config?.enableOutbox);
     this.entryRepo = new EntryRepository(this.db, this.prefix, this.outboxRepo);
     this.sourceRefIndexRepo = new SourceRefIndexRepository(this.db, this.prefix);
@@ -563,7 +563,7 @@ export class WikiMemory {
   async getInstructions(entityId: string): Promise<WikiInstructions> {
     assertEntityId(entityId);
     const ontologyContext = await this.ontologyService.buildPromptContext(entityId);
-    return this.promptService.buildInstructionTemplates(ontologyContext);
+    return this.promptService.buildInstructionTemplates(ontologyContext, resolveLibrarianStrategy(this.options.config));
   }
 
   /**

@@ -12,7 +12,6 @@ user has granted `memory:read`.
 import { GoogleGenAI } from '@google/genai';
 import {
   buildAuthorizedToolsArray,
-  canonicalToolName,
   escalateToCloudManifest,
   graphTraverseManifest,
   ontologyGetManifest,
@@ -37,12 +36,10 @@ const response = await ai.models.generateContent({
 
 // Dispatch any function calls to the wiki.
 // The tool schemas include an `entityId` argument. Ignore it and use the session's entity.
-// canonicalToolName maps a deprecated wiki_* name (for example from a stored prompt) to its
-// replacement, so old and new names reach the same handler.
 for (const call of response.functionCalls ?? []) {
   const { entityId: _ignored, ...args } = (call.args ?? {}) as Record<string, any>;
   let result: unknown;
-  switch (canonicalToolName(call.name ?? '')) {
+  switch (call.name) {
     case 'graph_traverse':
       result = await wiki.traverseGraph(entityId, { ...args, sourceId: args.sourceId });
       break;

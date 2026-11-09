@@ -68,12 +68,9 @@ The memory manifests are schema-only. Dispatch them to `traverseGraph`,
 `getOntologyManifest`, and `getInstructions`. See the
 [Gemini agent recipe](/expo-llm-wiki/recipes/gemini-agent-tools/).
 
-:::caution[Deprecated: the `wiki_*` names]
+:::caution[Removed in 8.0.0: the `wiki_*` names]
 `wikiTraverseGraphManifest` (`wiki_traverse_graph`), `wikiGetOntologyManifest`
-(`wiki_get_ontology`) and `wikiGetInstructionsManifest` (`wiki_get_instructions`) are still
-exported, identical to their replacements except for the name, and are removed at the next major.
-Migrate by switching to the new manifests and routing your `switch` through
-`canonicalToolName(call.name)` in the same change. It maps an old name to the new one
-(`LEGACY_TOOL_NAMES` holds the map) and returns any other name unchanged. Never send the old and
-new manifest for one tool to the same model.
+(`wiki_get_ontology`) and `wikiGetInstructionsManifest` (`wiki_get_instructions`) are gone, along
+with `LEGACY_TOOL_NAMES` and `canonicalToolName`. Use the manifests above. See
+[Upgrading to 8.0.0](/expo-llm-wiki/project/upgrading-8/).
 :::

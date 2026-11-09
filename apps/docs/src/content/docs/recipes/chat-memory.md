@@ -32,7 +32,7 @@ export async function chatTurn(wiki: WikiMemory, userId: string, userMessage: st
 }
 ```
 
-Every 20 events, the librarian turns these into facts such as *"Prefers vegetarian recipes"* and
+When maintenance runs (call `runPendingMaintenance()`, or set `maintenance: 'auto'` for every 20 events), the librarian turns these into facts such as *"Prefers vegetarian recipes"* and
 tasks such as *"Remind the user about the dentist on Friday"*.
 
 ## In an Expo screen

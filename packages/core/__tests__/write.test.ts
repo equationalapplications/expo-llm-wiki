@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { WikiMemory } from '../src/WikiMemory';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 import type { WikiOptions } from '../src/types';
+import { LEGACY_AUTO } from './helpers/legacyAutoConfig';
 
 const PREFIX = 'llm_wiki_';
 
@@ -9,9 +10,7 @@ function makeWiki(autoLibrarianThreshold?: number) {
   const db = openTestDatabase();
   const options: WikiOptions = {
     llmProvider: { generateText: async () => '{}' },
-    ...(autoLibrarianThreshold !== undefined
-      ? { config: { autoLibrarianThreshold } }
-      : {}),
+    config: { ...LEGACY_AUTO, ...(autoLibrarianThreshold !== undefined ? { autoLibrarianThreshold } : {}) },
   };
   return { wiki: new WikiMemory(db, options), db };
 }

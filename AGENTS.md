@@ -52,5 +52,8 @@ the SynapseTree founding charter; never re-rule a charter promise here.
 - **Benchmarks spend real tokens and never touch a live store.** The CLI
   in `packages/benchmarks` refuses to run without `--yes` and opens only
   in-memory or cache-directory SQLite files. Keep it that way.
-- **Defaults are frozen pending 8.0.0.** `librarian.strategy` stays
-  `'legacy'` and `maintenance` stays `'auto'` by default until Kurt rules.
+- **The 8.0.0 defaults are ruled (2026-11-09).** `librarian.strategy`
+  defaults to `'ops'` and `maintenance` to `'deferred'`, defined once in
+  `packages/core/src/utils/engineDefaults.ts`. Don't hard-code either, and
+  don't claim accuracy or cost gains for them: they shipped unbenchmarked
+  (`INTENT.md` rule 11).
