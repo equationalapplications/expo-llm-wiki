@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WikiMemory } from '../src/WikiMemory';
 import { OPS_EXTRACT_SYSTEM_PROMPT } from '../src/prompts';
 import { changedDefaultWarnings, resolveLibrarianStrategy, resolveMaintenanceMode } from '../src/utils/engineDefaults';
+import type { WikiConfig } from '../src/types';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 
 describe('8.0.0 engine defaults', () => {
@@ -63,6 +64,7 @@ describe('8.0.0 engine defaults', () => {
       expect(changedDefaultWarnings({ maintenance: 'deferred', autoHealThreshold: 5 })).toEqual([]);
       expect(changedDefaultWarnings({
         librarian: { strategy: 'legacy' },
+        maintenance: 'auto',
         prompts: { librarianSystemPrompt: 'x' },
       })).toEqual([]);
     });
@@ -81,12 +83,31 @@ describe('8.0.0 engine defaults', () => {
       expect(warning).toContain("strategy: 'legacy'");
     });
 
-    it('WikiMemory logs each warning at construction', () => {
+    it('warns when a legacy pin keeps only half of the 7.x behavior', () => {
+      const [warning, ...rest] = changedDefaultWarnings({ librarian: { strategy: 'legacy' } });
+      expect(rest).toEqual([]);
+      expect(warning).toContain("'deferred'");
+      expect(warning).toContain("maintenance: 'auto'");
+      // With thresholds present, the thresholds warning already covers maintenance; no double warn.
+      expect(changedDefaultWarnings({
+        librarian: { strategy: 'legacy' },
+        autoLibrarianThreshold: 5,
+      })).toHaveLength(1);
+    });
+
+    it('WikiMemory logs each distinct warning once per process', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      new WikiMemory(openTestDatabase(), {
+      const make = (config: WikiConfig) => new WikiMemory(openTestDatabase(), {
         llmProvider: { generateText: async () => '{}' },
-        config: { autoLibrarianThreshold: 5, prompts: { librarianSystemPrompt: 'x' } },
+        config,
       });
+      make({ autoLibrarianThreshold: 5 });
+      expect(warn).toHaveBeenCalledTimes(1);
+      make({ autoLibrarianThreshold: 5 });
+      expect(warn).toHaveBeenCalledTimes(1);
+      make({ prompts: { librarianSystemPrompt: 'x' } });
+      expect(warn).toHaveBeenCalledTimes(2);
+      make({ autoLibrarianThreshold: 5, prompts: { librarianSystemPrompt: 'x' } });
       expect(warn).toHaveBeenCalledTimes(2);
     });
   });

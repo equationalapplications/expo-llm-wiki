@@ -39,5 +39,27 @@ export function changedDefaultWarnings(config: WikiConfig | undefined): string[]
       + "which does not use it. Set `librarian: { strategy: 'legacy' }` to keep the override.",
     );
   }
+  if (config?.librarian?.strategy === 'legacy' && config?.maintenance === undefined && !hasThreshold) {
+    warnings.push(
+      "[core-llm-wiki] `librarian.strategy` is pinned to 'legacy', but `maintenance` now defaults to 'deferred', "
+      + "so write() will not start the librarian or heal, and a deferred backlog run keeps only the newest 50 "
+      + "events. Set `maintenance: 'auto'` to keep 7.x auto-run behavior.",
+    );
+  }
   return warnings;
+}
+
+const warnedDefaults = new Set<string>();
+
+/**
+ * Logs each distinct {@link changedDefaultWarnings} message at most once per
+ * process (specs/upgrade-warning-7-18 §2.3: hosts build one WikiMemory per
+ * entity, per request, or per test, and must not spam stderr per construction).
+ */
+export function warnChangedDefaultsOnce(config: WikiConfig | undefined): void {
+  for (const message of changedDefaultWarnings(config)) {
+    if (warnedDefaults.has(message)) continue;
+    warnedDefaults.add(message);
+    console.warn(message);
+  }
 }
