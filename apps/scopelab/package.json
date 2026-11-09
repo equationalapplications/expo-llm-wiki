@@ -12,9 +12,9 @@
   "dependencies": {
     "@equationalapplications/core-llm-tools": "workspace:*",
     "@equationalapplications/core-llm-wiki": "workspace:*",
-    "react": "19.3.0",
-    "react-dom": "19.3.0",
-    "sql.js": "^1.14.2"
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "sql.js": "^1.15.2"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
@@ -22,8 +22,8 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
     "typescript": "~5.9.3",
-    "vite": "8.3.4",
+    "vite": "8.3.5",
     "vite-plugin-pwa": "^2.0.0",
-    "vitest": "^5.0.4"
+    "vitest": "^5.0.5"
   }
 }
