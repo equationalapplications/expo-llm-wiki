@@ -12,7 +12,8 @@ async function runScenario(withHook: boolean): Promise<string[]> {
   vi.spyOn(console, 'error').mockImplementation(record);
   const { wiki } = await makeDiagnosticWiki({
     withHook,
-    config: { maxChunkLength: 30, chunkOverlap: 0 },
+    // Both options set so the once-per-process 8.0.0 upgrade warning isn't in the compared output.
+    config: { maxChunkLength: 30, chunkOverlap: 0, librarian: { strategy: 'legacy' }, maintenance: 'auto' },
     embed: async () => { throw new Error('embed down'); },
     generateText: async ({ userPrompt }) => userPrompt.includes('BROKEN')
       ? 'not json'

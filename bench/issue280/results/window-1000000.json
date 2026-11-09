@@ -1,0 +1,63 @@
+{
+  "leg": "window",
+  "store": "issue280-1000000.db",
+  "storeBytes": 3524747264,
+  "budgetMs": 1500,
+  "at": "2026-11-09T16:08:44.849Z",
+  "machine": {
+    "cpu": "Intel(R) Core(TM) i7-8559U CPU @ 2.70GHz",
+    "cores": 8,
+    "memGb": 16,
+    "os": "Darwin 24.6.0 x64",
+    "disk": "File System Personality: APFS Protocol: PCI-Express Solid State: Yes",
+    "node": "v24.22.1",
+    "loadAverageAtEnd": [
+      6.1982421875,
+      18.041015625,
+      23.06640625
+    ],
+    "betterSqlite3": {
+      "v": "3.53.4"
+    }
+  },
+  "converged": true,
+  "state": "live",
+  "firstOpenMs": 1585,
+  "quantaToLive": 170,
+  "quantum": {
+    "count": 170,
+    "medianMs": 1566.4,
+    "p95Ms": 1761.3,
+    "maxMs": 2005.8,
+    "totalMs": 268564.7
+  },
+  "totalSeconds": 270,
+  "windowsPerQuantum": 11.770588235294118,
+  "rowsPerSecond": 3702,
+  "tx": {
+    "window": {
+      "count": 2001,
+      "medianMs": 122.7,
+      "p95Ms": 286.1,
+      "maxMs": 689.9,
+      "totalMs": 269079.4
+    },
+    "other": {
+      "count": 342,
+      "medianMs": 0.1,
+      "p95Ms": 0.3,
+      "maxMs": 2.4,
+      "totalMs": 52.3
+    },
+    "sweep": {
+      "count": 171,
+      "medianMs": 2,
+      "p95Ms": 6.9,
+      "maxMs": 32,
+      "totalMs": 503.4
+    }
+  },
+  "targets": {
+    "convergedOpenMs": 3500
+  }
+}

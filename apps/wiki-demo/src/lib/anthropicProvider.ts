@@ -1,4 +1,5 @@
 import type { LLMProvider } from '@equationalapplications/react-llm-wiki'
+import { providerRequestError } from './providerError'
 
 export function createAnthropicProvider(apiKey: string, model: string): LLMProvider {
   return {
@@ -18,10 +19,7 @@ export function createAnthropicProvider(apiKey: string, model: string): LLMProvi
           messages: [{ role: 'user', content: userPrompt }],
         }),
       })
-      if (!response.ok) {
-        const err = await response.text()
-        throw new Error(`Anthropic API error ${response.status}: ${err}`)
-      }
+      if (!response.ok) throw await providerRequestError(response)
       const data = await response.json()
       const text = data.content?.[0]?.text
       if (typeof text !== 'string') throw new Error('Anthropic API error: unexpected response shape (missing content[0].text)')

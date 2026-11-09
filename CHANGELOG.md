@@ -1,3 +1,15 @@
+## [7.18.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.17.2...v7.18.0) (2026-11-09)
+
+### Features
+
+* **core:** warn hosts that leave 8.0.0-affected options unset ([5050d44](https://github.com/equationalapplications/expo-llm-wiki/commit/5050d4428f3018118c1bfaf46e6b7ab378236788)), closes [#324](https://github.com/equationalapplications/expo-llm-wiki/issues/324)
+
+## [7.17.2](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.17.1...v7.17.2) (2026-11-09)
+
+### Bug Fixes
+
+* **apps:** scrub provider errors and delimit search_memory results ([c62010e](https://github.com/equationalapplications/expo-llm-wiki/commit/c62010e41b392051466edb34a44ba6099680a8b4))
+
 ## [7.17.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.17.0...v7.17.1) (2026-11-02)
 
 ### Bug Fixes

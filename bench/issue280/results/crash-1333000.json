@@ -1,0 +1,37 @@
+{
+  "leg": "crash",
+  "store": "issue280-1333000.db",
+  "storeBytes": 4698263552,
+  "budgetMs": 1500,
+  "at": "2026-11-09T16:47:53.874Z",
+  "machine": {
+    "cpu": "Intel(R) Core(TM) i7-8559U CPU @ 2.70GHz",
+    "cores": 8,
+    "memGb": 16,
+    "os": "Darwin 24.6.0 x64",
+    "disk": "File System Personality: APFS Protocol: PCI-Express Solid State: Yes",
+    "node": "v24.22.1",
+    "loadAverageAtEnd": [
+      4.24267578125,
+      3.9560546875,
+      5.21826171875
+    ],
+    "betterSqlite3": {
+      "v": "3.53.4"
+    }
+  },
+  "childSignal": "SIGKILL",
+  "crashRows": 5000,
+  "openMs": 1550,
+  "ledgerRowsLeftAfterOpen": 1500,
+  "tx": {
+    "ledger": {
+      "count": 7,
+      "medianMs": 180.6,
+      "p95Ms": 488.8,
+      "maxMs": 488.8,
+      "totalMs": 1526.7
+    }
+  },
+  "targetFenceMs": 15000
+}
