@@ -66,6 +66,8 @@ createWiki(db, {
 
 ## Maintenance
 
+8.0.0 changes the defaults for `maintenance` to `'deferred'` and `librarian.strategy` to `'ops'`. From 7.18.0, a host that leaves either unset gets one console warning per process. Set both explicitly to keep today's behavior: `maintenance: 'auto'` and `librarian: { strategy: 'legacy' }`.
+
 | Field | Default | Description |
 |---|---|---|
 | `maintenance` | `'auto'` | `'deferred'` means you call `runPendingMaintenance()` yourself |
