@@ -6,7 +6,7 @@ description: How Core LLM Wiki protects your data, where the host's responsibili
 ## Reporting a vulnerability
 
 **Don't open a public issue.** Use [GitHub private vulnerability reporting](https://github.com/equationalapplications/expo-llm-wiki/security/advisories/new),
-or email **admin@equationalapplications.com**. You'll get an acknowledgement within 48 hours and
+or email **info@equationalapplications.com**. You'll get an acknowledgement within 48 hours and
 an assessment within 5 business days. The full policy is in [SECURITY.md](https://github.com/equationalapplications/expo-llm-wiki/blob/main/SECURITY.md).
 
 ## What the engine guarantees
