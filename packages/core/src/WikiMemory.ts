@@ -47,6 +47,7 @@ import { LintService } from './services/LintService';
 import { OkfTrustWritesRepository } from './db/okf-trust-writes';
 import { TemporalService } from './services/TemporalService';
 import { RememberService } from './services/RememberService';
+import { warnUpcomingDefaultsOnce } from './utils/upgradeNotice';
 import { validateManifest } from './utils/ontology';
 import { DiagnosticBuffer } from './utils/diagnostics';
 import type { OntologyManifest, OntologyMode, GraphTraversalOptions, GraphNeighborhood, OntologyBackfillResult, HealResult, IngestDocumentResult, ReembedResult, SupersedeReplacement, WikiFact, RememberInput } from './types';
@@ -140,6 +141,7 @@ export class WikiMemory {
           `Must match ${TABLE_PREFIX_PATTERN} (letter, then alphanumeric/underscore, ending in "_", max 32 chars total).`,
       );
     }
+    warnUpcomingDefaultsOnce(options.config);
     this.outboxRepo = new OutboxRepository(this.db, this.prefix, !!options.config?.enableOutbox);
     this.entryRepo = new EntryRepository(this.db, this.prefix, this.outboxRepo);
     this.sourceRefIndexRepo = new SourceRefIndexRepository(this.db, this.prefix);
