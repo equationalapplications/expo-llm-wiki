@@ -1,3 +1,20 @@
+## [8.0.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.18.0...v8.0.0) (2026-11-09)
+
+### ⚠ BREAKING CHANGES
+
+* **core:** default to the ops librarian and deferred maintenance
+* **core-llm-tools:** remove deprecated wiki_* tool names (#324)
+
+### Features
+
+* **core-llm-tools:** remove deprecated wiki_* tool names ([#324](https://github.com/equationalapplications/expo-llm-wiki/issues/324)) ([9aa17a0](https://github.com/equationalapplications/expo-llm-wiki/commit/9aa17a0230449d2146247253206dce3656ffc3d2))
+* **core:** default to the ops librarian and deferred maintenance ([d5317e3](https://github.com/equationalapplications/expo-llm-wiki/commit/d5317e31428cbe96c0f4847ce84c41db5ba97006))
+* **core:** drop the 7.x defaults warning on the 8.0.0 line ([7e4b7ed](https://github.com/equationalapplications/expo-llm-wiki/commit/7e4b7ed5b6883c1a5eae614550c75c15f61c4d2a))
+
+### Bug Fixes
+
+* **core:** warn the legacy-pinned host about deferred, once per process ([9200e1f](https://github.com/equationalapplications/expo-llm-wiki/commit/9200e1f8f45edfacb2c7217b068a8fa0ea785d10))
+
 ## [7.18.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.17.2...v7.18.0) (2026-11-09)
 
 ### Features
