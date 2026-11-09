@@ -12,7 +12,7 @@ Merging this PR publishes 8.0.0. Don't merge until all are done:
 - [x] (a) A minor release after 7.17.0 has shipped (#324 floor). 7.18.0 shipped via #346 and is on npm (confirmed 2026-11-09).
 - [x] (b) clanker's default flip is settled. `src/services/wikiService.ts` sets neither `librarian.strategy` nor `maintenance` and relies on `autoLibrarianThreshold` and `autoHealThreshold`. Clanker PR #905 (merged to `staging` 2026-11-09, `814479dc`) pins `'legacy'` and `'auto'`.
 - [x] (c) #318 is settled: measured in #343, no gate variant needed, F8 accepted by the owner on 2026-11-09. The issue was closed the same day with the unrun measurements waived.
-- [ ] (d) The node-forge PR is merged, and the Expo SDK 58 work is merged. Expo SDK 58 is merged (#340). node-forge 1.4.2 clears the 14-day `minimumReleaseAge` gate 2026-11-10 14:09 UTC; the merge must follow the gate (no waiver, owner ruling 2026-11-09).
+- [x] (d) Expo SDK 58 is merged (#340). The node-forge clause is **waived by the owner's merge-now ruling of 2026-11-09**: 8.0.0 ships before 1.4.2 clears the gate (2026-11-10 14:09 UTC), and the bump — a `chore(deps)` that cuts no release — lands on main 2026-11-10 and reaches npm at the next release-cutting merge.
 
 ## Rulings
 
@@ -20,6 +20,7 @@ Owner rulings, 2026-11-09, given in session in answer to explicit questions:
 
 1. 8.0.0 flips **both** defaults: `librarian.strategy` `'legacy'` → `'ops'`, and `maintenance` `'auto'` → `'deferred'`.
 2. 8.0.0 removes the deprecated tool names per #324.
+3. 2026-11-09, post-review: merge #342 once checks are green and review threads are clear, **before** the node-forge gate clears. The owner chose the trade-off knowingly: 8.0.0 carries node-forge 1.3.x with 9 open Dependabot alerts, and the 1.4.2 fix (a `chore(deps)` that cuts no release) waits on main for the next release-cutting merge.
 
 **The flips were ruled without benchmark evidence.** LongMemEval is unrun by the owner's choice, and the 7.8.0 supersession results are the only published comparison. So this release makes no accuracy or cost claim about the new defaults.
 
