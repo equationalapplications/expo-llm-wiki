@@ -1,6 +1,6 @@
 # Release 8.0.0: ops + deferred defaults and `wiki_*` tool-name removal
 
-**Status:** Draft (2026-11-09). Code on branch `feat/8.0.0`, not merged. Merging publishes 8.0.0.
+**Status:** Implemented (2026-11-09, ships via PR #342 — merging it publishes 8.0.0).
 **Date:** 2026-11-09
 **Branch:** `feat/8.0.0`
 **Source baseline:** `65d9318b` (7.17.1 + #338, #339)
@@ -9,10 +9,10 @@
 
 Merging this PR publishes 8.0.0. Don't merge until all are done:
 
-- [ ] (a) A minor release after 7.17.0 has shipped (#324 floor). Latest is 7.17.1, so a 7.18.0 is needed.
-- [ ] (b) clanker's default flip is settled. `src/services/wikiService.ts` sets neither `librarian.strategy` nor `maintenance` and relies on `autoLibrarianThreshold` and `autoHealThreshold`. Draft clanker PR #905 (pins `'legacy'` and `'auto'`) lands, or the owner decides clanker adopts the new defaults.
-- [ ] (c) #318 is settled.
-- [ ] (d) The node-forge PR is merged, and the Expo SDK 58 work is merged.
+- [x] (a) A minor release after 7.17.0 has shipped (#324 floor). 7.18.0 shipped via #346 and is on npm (confirmed 2026-11-09).
+- [x] (b) clanker's default flip is settled. `src/services/wikiService.ts` sets neither `librarian.strategy` nor `maintenance` and relies on `autoLibrarianThreshold` and `autoHealThreshold`. Clanker PR #905 (merged to `staging` 2026-11-09, `814479dc`) pins `'legacy'` and `'auto'`.
+- [x] (c) #318 is settled: measured in #343, no gate variant needed, F8 accepted by the owner on 2026-11-09. The issue was closed the same day with the unrun measurements waived.
+- [ ] (d) The node-forge PR is merged, and the Expo SDK 58 work is merged. Expo SDK 58 is merged (#340). node-forge 1.4.2 clears the 14-day `minimumReleaseAge` gate 2026-11-10 14:09 UTC; the merge must follow the gate (no waiver, owner ruling 2026-11-09).
 
 ## Rulings
 
