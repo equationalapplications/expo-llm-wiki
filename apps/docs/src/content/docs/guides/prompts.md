@@ -23,7 +23,7 @@ parser depends on. Always tell the model to return raw JSON in the required shap
 
 ## Global overrides (apply to auto-runs)
 
-Use these if you rely on `write()` triggering the librarian and heal automatically:
+Use these if the librarian and heal run from `'auto'` maintenance or `runPendingMaintenance()`:
 
 ```ts
 createWiki(db, {

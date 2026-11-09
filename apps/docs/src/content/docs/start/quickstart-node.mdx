@@ -90,7 +90,8 @@ import { Steps } from '@astrojs/starlight/components';
 
 - **One connection per database file per process.** The engine serializes its own transactions
   on that connection. Don't open a second writer.
-- **Request-scoped or serverless host?** Turn off background maintenance and run it explicitly.
-  See [Serverless & multi-tenant hosting](/expo-llm-wiki/guides/serverless-hosting/).
-- **Shutting down?** In the default `'auto'` maintenance mode, `await wiki.drain()` before you
+- **Turning events into facts.** Maintenance doesn't run by itself: call
+  `runPendingMaintenance()` on your own schedule, or set `maintenance: 'auto'` on a long-lived host.
+  On a request-scoped or serverless host, always run it explicitly. See [Serverless & multi-tenant hosting](/expo-llm-wiki/guides/serverless-hosting/).
+- **Shutting down?** In `'auto'` maintenance mode, `await wiki.drain()` before you
   close, so background librarian and heal jobs can finish.

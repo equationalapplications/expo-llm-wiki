@@ -68,11 +68,11 @@ createWiki(db, {
 
 | Field | Default | Description |
 |---|---|---|
-| `maintenance` | `'auto'` | `'deferred'` means you call `runPendingMaintenance()` yourself |
-| `librarian` | `{ strategy: 'legacy' }` | `{ strategy: 'ops', gate: { k, dupThreshold, novelThreshold } }` |
-| `autoLibrarianThreshold` | `20` | Events before the librarian auto-runs |
-| `autoLibrarianTokenThreshold` | — | Also triggers on pending text size (about N tokens) |
-| `autoHealThreshold` | `100` | Events before heal auto-runs |
+| `maintenance` | `'deferred'` | `'deferred'` means you call `runPendingMaintenance()` yourself. `'auto'` starts the librarian and heal from `write()` |
+| `librarian` | `{ strategy: 'ops' }` | `{ strategy: 'ops' \| 'legacy', gate: { k, dupThreshold, novelThreshold } }` |
+| `autoLibrarianThreshold` | `20` | `'auto'` maintenance only: events before the librarian auto-runs |
+| `autoLibrarianTokenThreshold` | — | `'auto'` maintenance only: also triggers on pending text size (about N tokens) |
+| `autoHealThreshold` | `100` | `'auto'` maintenance only: events before heal auto-runs. Also the `healDue` rule in `getPendingMaintenance()` |
 | `orphanAfterDays` | `30` | Heal flags facts with no source. `null` turns it off. |
 | `staleInferredAfterDays` | `60` | Heal downgrades old inferred facts. `null` turns it off. |
 | `pruneRetainSoftDeletedFor` | `7` | Days before soft-deleted rows are hard-deleted |

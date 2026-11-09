@@ -212,10 +212,10 @@ decides when and how much.
 that burns a user's allowance without saying so is the failure this rule
 exists to prevent.
 
-**Status: Built** for hosts that opt in (7.8.0, 2026-09-30). The defaults
-for existing apps are still the legacy librarian and automatic
-maintenance. **Open decision:** whether 8.0.0 flips those defaults. Kurt
-has not ruled; nothing may flip them before that ruling.
+**Status: Built** (7.8.0, 2026-09-30, opt-in; the default from 8.0.0).
+Kurt ruled on 2026-11-09 that 8.0.0 flips both defaults: `librarian.strategy`
+to `'ops'` and `maintenance` to `'deferred'`. Hosts can restore either with
+explicit configuration. See the 2026-11-09 amendment.
 
 ### 8. A small, first-party, auditable dependency surface
 
@@ -293,8 +293,9 @@ runs and who schedules it.
 - A bundled model, a default provider, or key storage. See rule 1.
 - An external graph database. Graph retrieval runs on SQLite with one
   recursive query, and stays that way.
-- Flipping the ops-librarian or deferred-maintenance defaults for
-  existing apps before an explicit 8.0.0 ruling. See rule 7.
+- Flipping the ops-librarian or deferred-maintenance defaults in any
+  release before 8.0.0. The ruling is made (2026-11-09); it lands only
+  with 8.0.0. See rule 7.
 - Routing production reads through the native crate before its adoption
   gates pass. See rule 11.
 - Prompt-injection defense inside the engine. User text is interpolated
@@ -339,6 +340,15 @@ runs and who schedules it.
 
 ## Amendments
 
+- 2026-11-09 — Kurt rules that 8.0.0 flips `librarian.strategy` to `'ops'`
+  and `maintenance` to `'deferred'` and removes the deprecated `wiki_*`
+  tool names (#324); recorded with `specs/release-8-0-0/`. Why: the owner's
+  goal is to release 8.0.0, and `'deferred'` makes "no invisible spend" the
+  default. The flips were ruled **without benchmark evidence**: LongMemEval
+  remains unrun by the owner's choice, and rule 11 still binds, so no
+  accuracy or cost claim about the new defaults may be published until it
+  is measured. Rule 7's Status and the out-of-scope line are updated; no
+  rule text changed.
 - 2026-11-02 — PR #323 lands the deferred `mcp-server` release wiring and
   deletes that cycle's `plan.md`/`LEDGER.md`, ending the 2026-11-01
   keep-past-merge exception. Why: the wiring PR they were kept for is

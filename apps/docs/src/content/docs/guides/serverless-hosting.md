@@ -63,7 +63,7 @@ try {
 ## Hard rules
 
 - **Single writer per file.** In-process locks don't protect you across processes, so use a lease.
-- **Never persist mid-maintenance** in `'auto'` mode. Use `'deferred'`, or call `drain()` first.
+- **Never persist mid-maintenance** in `'auto'` mode. Use `'deferred'` (the default), or call `drain()` first.
 - **Entity IDs come from your auth layer**, never from request input you haven't checked.
 
 The full SynapseTree write-up, covering costs, the MCP surface, and the `entity_id` scheme, is in

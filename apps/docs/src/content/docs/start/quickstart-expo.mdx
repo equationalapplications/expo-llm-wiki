@@ -109,8 +109,8 @@ read relevant memory back in a component.
 
 ## What just happened?
 
-- `write()` logged an **event**. After 20 events (the `autoLibrarianThreshold` setting), the
-  **librarian** runs in the background and turns them into **facts**.
+- `write()` logged an **event**. The **librarian** turns events into **facts** when you call
+  `runPendingMaintenance()`, or automatically every 20 events if you set `maintenance: 'auto'`.
 - `useMemoryRead()` ran a keyword search over facts. Add an `embed()` function to get semantic
   search. See [Connect your LLM provider](/expo-llm-wiki/guides/llm-provider/).
 

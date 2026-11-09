@@ -24,7 +24,7 @@ so your knowledge isn't locked in.
 
 | Capability | What it means for you |
 |---|---|
-| **Episodic → semantic memory** | Events consolidate into facts in the background, so you never hand-write a summarizer. |
+| **Episodic → semantic memory** | Events consolidate into facts when maintenance runs, so you never hand-write a summarizer. |
 | **Hybrid retrieval** | Vector search when you provide `embed()`, keyword search otherwise (offline-safe), or a weighted blend. |
 | **GraphRAG** | Typed edges between facts, walked with one recursive SQL query. No graph database required. |
 | **Multi-entity** | Many independent "brains" in one file (per user, per agent, per tier), readable together with weights. |
