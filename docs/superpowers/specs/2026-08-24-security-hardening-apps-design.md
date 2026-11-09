@@ -7,6 +7,41 @@
 - **Source audit:** `~/security-audit-expo-llm-wiki-2026-08-24.md`
 - **Status:** APPROVED by Kurt 2026-08-24, with three amendments (see
   "Approved amendments" below)
+- **Status revision (2026-11-09):** Partially implemented. The fixes shipped
+  in PR #105 (merge `d45ad5f8`, 2026-08-25; release 6.0.1) and follow-up
+  `ceb033ec`. Each item below was checked against `main` @ `09c90258`.
+  - **H-1:** resolved before this spec, as recorded in the table below.
+  - **H-2 / amendment 1 (Fix 1):** shipped. Lower-case `x-goog-api-key` on
+    both calls in `function-caller.ts`; no `?key=` anywhere in `apps/`.
+  - **H-3 / amendment 2 (Fix 2):** code shipped (`sessionConfig.ts`, opt-in
+    checkbox in `App.tsx`, legacy purge, in-memory fallback). **Not shipped:**
+    the `expo-secure-store` / WebCrypto note in the wiki-demo README, and
+    `apps/wiki-demo/README.md:52` still says keys are stored in localStorage.
+  - **M-1 (Fix 3):** shipped differently. Delimiters, standing instruction,
+    delimiter escaping and the SECURITY.md section are in. The Gemini
+    `system`→`user` mapping remains (`function-caller.ts:51,94`), which is the
+    spec's fallback: the safety text arrives in the first user turn. PR #105
+    left it "pending live verification", and no verification is recorded.
+    `apps/wiki-demo/src` has no `getContext` prompt-assembly site to wrap.
+  - **M-2 (Fix 4):** shipped differently. Fail-closed check, missing-scope
+    rejection and advertised-name re-validation are in `function-caller.ts`.
+    `AUTHORIZED_SCOPES` moved to `packages/core-llm-tools/src/scopes.ts`.
+  - **M-3 / amendment 4 (Fix 5):** shipped differently. Private Vulnerability
+    Reporting is primary, but the fallback in `SECURITY.md:8` is
+    `admin@equationalapplications.com`, not the `info@` address the amendment
+    names (commit `dbae90a7`, no rationale recorded).
+  - **L-1 (Fix 5):** shipped (`*.deb` in `.gitignore`).
+  - **L-2:** no fix was proposed. Still one tool round-trip.
+  - **L-3 (Fix 5):** scopelab shipped with different wording (`Gemini API
+    error: HTTP <status>`, raw body behind `VITE_DEBUG_LLM_RAW_ERRORS`).
+    **Not shipped:** wiki-demo's providers still put the full response body in
+    thrown errors (`anthropicProvider.ts:23`, `openaiCompatProvider.ts:34,51`).
+    Those files were not in this spec's "Files touched" list.
+  - **L-4 / amendment 3 (Fix 5):** audit gate with explicit GHSA allowlist
+    shipped (`test.yml`). **Not shipped:** the explicit YAML parse check of
+    `pnpm-workspace.yaml`; no workflow step performs one.
+  - **Test plan:** unit tests and the `?key=` grep hold today. **Not
+    recorded:** the live Gemini smoke test (item 4).
 
 ## Problem
 

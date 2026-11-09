@@ -8,6 +8,8 @@ pending merge. §2/§4 and §6 pending in their own PRs.
 
 **Status (2026-09-04):** §2, §4.1, §4.3, §4.4 implemented via `feat/marker-lifecycle` (2026-09-04), pending merge. §5, §6 pending in their own PRs.
 
+**Status (2026-11-09):** Implemented. All three PRs merged 2026-09-05: §6 in #131 (`01854434`), §5 in #132 (`e846b36d`), §2, §4.1, §4.3, §4.4 in #133 (`0563fb3f`). §3 and §4.2 needed no code, per §7's issue-closure note.
+
 **Issues addressed:** #121 (markers survive provider/dimension change), #129
 (deferred #125/#126 self-review findings), #123 (executor off deprecated
 injector helper), #122 (scopelab suite needs built dist), #124 (index on
