@@ -1,4 +1,5 @@
 import type { AgentToolManifest } from '@equationalapplications/core-llm-tools'
+import { wrapRetrievedMemory } from './memory-delimiters'
 
 let wikiInstance: { getContext(query: string): Promise<string> } | null = null
 
@@ -11,7 +12,7 @@ export async function executeTool(tool: AgentToolManifest, args: Record<string, 
     const query = (args.query as string) ?? ''
     if (wikiInstance) {
       const context = await wikiInstance.getContext(query)
-      return { result: context || 'No relevant memories found.', query }
+      return { result: context ? wrapRetrievedMemory(context) : 'No relevant memories found.', query }
     }
     return { result: `Search executed for query: ${query}`, query }
   }

@@ -1,4 +1,5 @@
 import type { LLMProvider } from '@equationalapplications/react-llm-wiki'
+import { providerRequestError } from './providerError'
 
 export interface OpenAICompatConfig {
   baseUrl: string
@@ -29,10 +30,7 @@ export function createOpenAICompatProvider(config: OpenAICompatConfig): LLMProvi
           ],
         }),
       })
-      if (!response.ok) {
-        const err = await response.text()
-        throw new Error(`LLM API error ${response.status}: ${err}`)
-      }
+      if (!response.ok) throw await providerRequestError(response)
       const data = await response.json()
       const content = data.choices?.[0]?.message?.content
       if (typeof content !== 'string') throw new Error('LLM API error: unexpected response shape (missing choices[0].message.content)')
@@ -46,10 +44,7 @@ export function createOpenAICompatProvider(config: OpenAICompatConfig): LLMProvi
             headers,
             body: JSON.stringify({ model: embedModel, input: text }),
           })
-          if (!response.ok) {
-            const err = await response.text()
-            throw new Error(`Embed API error ${response.status}: ${err}`)
-          }
+          if (!response.ok) throw await providerRequestError(response)
           const data = (await response.json()) as {
             data?: Array<{ embedding?: unknown }>
           }

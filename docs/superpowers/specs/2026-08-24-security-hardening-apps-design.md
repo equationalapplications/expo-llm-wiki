@@ -42,6 +42,24 @@
     `pnpm-workspace.yaml`; no workflow step performs one.
   - **Test plan:** unit tests and the `?key=` grep hold today. **Not
     recorded:** the live Gemini smoke test (item 4).
+- **Status revision (2026-11-09, branch `fix/security-hardening-gaps`):**
+  closes four gaps left by the revision above; still Partially implemented.
+  - **H-3 / amendment 2:** the wiki-demo README now states the real storage
+    behavior and names `expo-secure-store` / WebCrypto as the production path.
+  - **L-3:** wiki-demo's providers throw `Provider request failed: HTTP
+    <status>` through `providerError.ts`; the raw body is only logged, and
+    truncated, behind `VITE_DEBUG_LLM_RAW_ERRORS`.
+  - **L-4 / amendment 3:** `test.yml` parses `pnpm-workspace.yaml` as its first
+    step after checkout.
+  - **M-1, found in review of #338:** the scopelab `search_memory` tool returned
+    `getContext()` output without delimiters, and `function-caller.ts` passed it
+    to Gemini as the function response. It now goes through the same wrapper
+    (`memory-delimiters.ts`) as the prompt path. The standing-instruction text
+    travels with the tool result.
+  - **M-3 / amendment 4:** closed. The owner ruled for amendment 4's address,
+    so the fallback contact is now `info@equationalapplications.com`.
+  - **Remaining:** the live Gemini smoke test and the `system`-role
+    verification are still unrecorded.
 
 ## Problem
 
