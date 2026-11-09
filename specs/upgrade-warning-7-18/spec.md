@@ -1,6 +1,6 @@
 # Warn 7.x hosts about the 8.0.0 default changes
 
-**Status:** Draft
+**Status:** Implemented (2026-11-09, branch `feat/upgrade-warning-7-18`)
 **Date:** 2026-11-09
 **Branch:** `feat/upgrade-warning-7-18`
 **Source baseline:** `a4968b7f` (main after PR #341)
@@ -44,6 +44,7 @@ Nothing else changes: resolved defaults, `write()`, the librarian, and maintenan
 - `packages/core/src/utils/upgradeNotice.ts` (new): message construction and the once-per-process guard.
 - `packages/core/src/WikiMemory.ts`: one import, one constructor call.
 - `packages/core/__tests__/upgradeNotice.test.ts` (new).
+- `packages/core/__tests__/diagnosticsConsoleCompat.test.ts`: sets both options, because that test compares console output between two constructions and the once-per-process warning appears only in the first.
 - `apps/docs/src/content/docs/reference/configuration.md`: short note under Maintenance.
 
 The new file is deliberately not `utils/engineDefaults.ts`, which #342 adds, so #342 rebases without an add/add conflict. #342 deletes this file and its call when it ships, because the sentence "8.0.0 changes" stops being true.
