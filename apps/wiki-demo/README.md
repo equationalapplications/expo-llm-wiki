@@ -49,6 +49,6 @@ src/
 
 **OpenAI-compatible:** Use your provider's base URL (e.g. `https://api.openai.com`) and API key. The base URL should be the host root without a trailing `/v1`.
 
-API keys are used only for LLM calls (Librarian/Heal/Ingest). By default a key stays in memory and is gone when the page reloads. If you opt in on the setup screen, it is kept in `sessionStorage` until the tab closes. Keys are never written to `localStorage`, and any left there by older versions are removed on load.
+API keys are used only for LLM calls (Librarian/Heal/Ingest). By default a key stays in memory and is gone when the page reloads. If you opt in on the setup screen, it is kept in `sessionStorage` until the tab closes. Keys are never written to `localStorage`. Any left there by older versions are removed on load on a best-effort basis, so a blocked `localStorage` can leave them in place.
 
-This is demo-grade storage: any script running in the page can read a key held in memory or `sessionStorage`. For production, keep keys out of the JavaScript-readable store, using `expo-secure-store` on native and WebCrypto with a non-extractable key on the web, or call the provider through your own backend.
+This is demo-grade storage: any script running in the page can read a key held in memory or `sessionStorage`. For production, use `expo-secure-store` on native and WebCrypto encryption with a non-extractable key on the web to protect keys at rest. Neither hides a key from your own running JavaScript, since `expo-secure-store` returns the value and a non-extractable key can still decrypt it. If the provider key must stay out of reach of client scripts, call the provider through your own backend.
