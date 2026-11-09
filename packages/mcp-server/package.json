@@ -55,14 +55,14 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.32.1",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/node": "26.6.5",
     "tsup": "9.0.0",
     "typescript": "5.9.3",
-    "vitest": "5.0.4"
+    "vitest": "5.0.5"
   },
   "version": "7.17.1"
 }
