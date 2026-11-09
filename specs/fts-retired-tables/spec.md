@@ -1,6 +1,7 @@
 # FTS retired-table reclamation: measurements and the hand-off rule (#318)
 
 **Status:** Draft (2026-11-09). Measurements done, no engine code changed. F8 waits on the owner.
+**Status (2026-11-09, ruling):** Implemented. The owner accepted F8 with no chunk or budget change. Measurements are the deliverable: no engine code changed.
 **Branch:** `feat/issue318-fts-measurements`
 **Source baseline:** `65d9318b` (main after PR #338)
 **Issue:** #318, the deferred remainder of #280
@@ -68,7 +69,7 @@ Measured at 1M rows with the default 1,500 ms budget: **170 quanta to `live`**, 
 
 The second assumption does not hold. Plan finding F8 said the sweep's limit of one 500-row transaction per quantum would gate convergence at about 2,000 quanta. Each window re-inserts its `fts_map` rows with new `fts_rowid` values above the snapshot, so rows the windows have passed leave the sweep's range, and the sweep's cursor jumps across the gaps. It took 171 sweep transactions, none of them over 32 ms. Windows gate convergence, not the sweep.
 
-**Owner decision (not made here):** is this convergence acceptable? **Recommendation: accept, with no chunk or budget change.** Total work is about 2,000 windows whatever the quantum count, each window stays well inside the fence, and a smaller quantum count needs a longer lease hold. What a host should weigh is how often it calls `syncSearchIndex()`, since convergence time is quanta multiplied by that interval.
+**Owner decision (2026-11-09): accepted, with no chunk or budget change**, as recommended here. Total work is about 2,000 windows whatever the quantum count, each window stays well inside the fence, and a smaller quantum count needs a longer lease hold. What a host should weigh is how often it calls `syncSearchIndex()`, since convergence time is quanta multiplied by that interval.
 
 ## 3. Proposed change
 
