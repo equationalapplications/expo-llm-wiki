@@ -1,3 +1,9 @@
+## [7.17.2](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.17.1...v7.17.2) (2026-11-09)
+
+### Bug Fixes
+
+* **apps:** scrub provider errors and delimit search_memory results ([c62010e](https://github.com/equationalapplications/expo-llm-wiki/commit/c62010e41b392051466edb34a44ba6099680a8b4))
+
 ## [7.17.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.17.0...v7.17.1) (2026-11-02)
 
 ### Bug Fixes
