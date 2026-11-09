@@ -1,0 +1,41 @@
+{
+  "leg": "migration",
+  "store": "issue280-1333000.db",
+  "storeBytes": 4698263552,
+  "budgetMs": 1500,
+  "at": "2026-11-09T16:49:54.346Z",
+  "machine": {
+    "cpu": "Intel(R) Core(TM) i7-8559U CPU @ 2.70GHz",
+    "cores": 8,
+    "memGb": 16,
+    "os": "Darwin 24.6.0 x64",
+    "disk": "File System Personality: APFS Protocol: PCI-Express Solid State: Yes",
+    "node": "v24.22.1",
+    "loadAverageAtEnd": [
+      9.107421875,
+      6.93017578125,
+      6.2958984375
+    ],
+    "betterSqlite3": {
+      "v": "3.53.4"
+    }
+  },
+  "migrationOpenMs": 101116,
+  "tx": {
+    "normalize": {
+      "count": 2934,
+      "medianMs": 15.9,
+      "p95Ms": 94.1,
+      "maxMs": 267.8,
+      "totalMs": 87898.9
+    },
+    "other": {
+      "count": 1,
+      "medianMs": 0.3,
+      "p95Ms": 0.3,
+      "maxMs": 0.3,
+      "totalMs": 0.3
+    }
+  },
+  "targetMs": 240000
+}

@@ -2,6 +2,7 @@
 
 **Date:** 2026-10-10
 **Status:** Implemented — PR-A #281 (merged 2026-10-13), PR-B #284 (merged 2026-10-14, shipped in 7.13.0); core now 7.13.1. Issue #280 closed. Remainder tracked in **follow-up issue #318** (rev 12, 2026-11-02): B8/A8 measurements (Acceptance 4/6 evidence), the `fts5_retired_tables` third `PendingMigrationWork` variant + gate probe (spec L98, L596-605), the F8 convergence decision (~1000-2000 quanta at 1M), and the harness commit. The rev-11h adjudication run-on that previously lived here is retained in git history (see `git log -1` pre-rev-12) — 2026-11-02.
+**Status rev 13 (2026-11-09, #318):** B8 and A8 are measured; see `specs/fts-retired-tables/spec.md` and `bench/issue280/`. The final DROP after reclamation took 333 ms at 1M rows, against 14.1 s for a full DROP on the same machine, so reclamation is bounded and stays in-quantum: the third `PendingMigrationWork` variant is not built, under the rule at lines 600-605. Acceptance 4 holds at every size measured, warm and after a crash. Acceptance 6 measured 101.1 s at 4.7 GB (inside 240 s) and 258.6 s at 14.8 GB. F8 measured 170 quanta at 1M rows, and the owner accepted it on 2026-11-09 with no chunk or budget change. Not measured: cold opens, ARM64 and the 52.9 MB store, Acceptance 5.
 **Branch:** PR-A rode `spec/issue280-setup-walltime` (#281, merged); PR-B was `feat/issue280-fts-state-machine` (#284, merged)
 **Priority:** High — blocks the SynapseTree ARM64 gate (15 s writer-lease fence vs 693 s measured setup)
 
