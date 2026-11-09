@@ -15,15 +15,21 @@ parser depends on. Always tell the model to return raw JSON in the required shap
 
 ## Required JSON shapes
 
-| Operation | Shape |
-|---|---|
-| Ingest | `{ "facts": [{ "title", "body", "tags": [], "confidence": "certain\|inferred\|tentative" }] }` |
-| Librarian | `{ "facts": [...], "tasks": [{ "description", "priority": 0–10 }] }` |
-| Heal | `{ "downgraded": ["factId"], "deleted": ["factId"], "newFacts": [...] }` |
+| Operation | Strategy | Shape |
+|---|---|---|
+| Ingest | both | `{ "facts": [{ "title", "body", "tags": [], "confidence": "certain\|inferred\|tentative" }] }` |
+| Librarian extract | both | `{ "facts": [...], "tasks": [{ "description", "priority": 0–10 }] }` — under `'ops'` (the default) every fact also needs `"source_event"` (the event label, e.g. `"e1"`) and may carry `"valid_from"` (ISO-8601) |
+| Librarian resolve | `'ops'` only | `{ "ops": [{ "item": 0, "op": "ADD\|UPDATE\|SUPERSEDE\|NOOP", "target": "n1", "title": "UPDATE only", "body": "UPDATE only" }] }` |
+| Heal | both | `{ "downgraded": ["factId"], "deleted": ["factId"], "newFacts": [...] }` |
 
 ## Global overrides (apply to auto-runs)
 
-Use these if the librarian and heal run from `'auto'` maintenance or `runPendingMaintenance()`:
+Use these if the librarian and heal run from `'auto'` maintenance or `runPendingMaintenance()`.
+
+Under the default `librarian.strategy: 'ops'`, the librarian does **not** read
+`librarianSystemPrompt` — `WikiMemory` warns at construction when it's set. That override
+applies only when you pin `librarian: { strategy: 'legacy' }`. `healSystemPrompt` applies
+under both strategies:
 
 ```ts
 createWiki(db, {
@@ -57,7 +63,8 @@ await wiki.runHeal('user-123', { promptOverride: '…' });
 ```
 
 A `promptOverride` is **never** forwarded to auto-runs started by `write()`. Use `config.prompts`
-for those.
+for those. Under `'ops'`, `runLibrarian`'s `promptOverride` is ignored too — it is a
+legacy-strategy knob.
 
 ## Template variables
 
@@ -86,7 +93,8 @@ const { ingest, librarian, heal, ontologyBackfill } = await wiki.getInstructions
 ```
 
 This returns each writer's effective system prompt, with overrides, the ontology block, and the
-evidence block applied. Data placeholders stay unfilled. It's useful for debugging, and for
+evidence block applied. Data placeholders stay unfilled. Under `'ops'`, the `librarian` entry is
+the ops extract system prompt the engine actually sends. It's useful for debugging, and for
 letting agents see the output contract (via the `instructions_get` tool, formerly `wiki_get_instructions`).
 
 :::caution
