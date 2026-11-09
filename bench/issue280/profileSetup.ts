@@ -118,6 +118,10 @@ async function crashLeg(): Promise<void> {
   const copy = workCopy('crash');
   const rows = Number(arg('crash-rows', '5000'));
   const child = spawnSync(process.execPath, [...process.execArgv, fileURLToPath(import.meta.url), '--leg', 'crash-child', '--store', copy, '--crash-rows', String(rows)], { stdio: 'inherit' });
+  if (child.signal !== 'SIGKILL') {
+    removeCopy(copy);
+    throw new Error(`crash-child did not die by SIGKILL (status ${child.status}, signal ${child.signal})`);
+  }
   const { ms, records } = await timedOpen(copy);
   const raw = new Database(copy, { readonly: true });
   const left = (raw.prepare(`SELECT count(*) AS n FROM ${P}fts_pending`).get() as { n: number }).n;

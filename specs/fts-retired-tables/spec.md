@@ -1,13 +1,12 @@
 # FTS retired-table reclamation: measurements and the hand-off rule (#318)
 
-**Status:** Draft (2026-11-09). Measurements done, no engine code changed. F8 waits on the owner.
-**Status (2026-11-09, ruling):** Implemented. The owner accepted F8 with no chunk or budget change. Measurements are the deliverable: no engine code changed.
+**Status:** Implemented (2026-11-09). Measurements are the deliverable, and no engine code changed. The owner accepted F8 with no chunk or budget change.
 **Branch:** `feat/issue318-fts-measurements`
 **Source baseline:** `65d9318b` (main after PR #338)
 **Issue:** #318, the deferred remainder of #280
 **Intent check:** INTENT rule 11 ("Benchmarks gate behavior changes") and rule 6 ("Honest reporting"): this cycle replaces extrapolated claims with measurements and states what remains unmeasured. Rule 10: the #280 spec's Status gets an appended revision. No contradiction with INTENT. No retrieval or maintenance behavior changes.
 
-**Delivery:** one PR, draft until the owner rules on F8, per `specs/README.md`. Commit types are `test` and `docs`, so nothing releases.
+**Delivery:** one PR, per `specs/README.md`. Commit types are `test` and `docs`, so nothing releases.
 
 ---
 
