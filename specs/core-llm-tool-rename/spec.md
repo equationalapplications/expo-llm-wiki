@@ -30,6 +30,8 @@ Three core-llm-tools declarations used a `wiki_<verb>_<noun>` scheme: `wiki_trav
 
 The legacy exports, `LEGACY_TOOL_NAMES` and `canonicalToolName` are removed at the next major of core-llm-tools, at least one minor release after 7.17.0. The `graph.ts` `sourceId` description wording (kept now for byte-identity, N1) is revisited in the same change.
 
+**2026-11-10:** that revisit was missed. 8.0.0 removed the legacy exports but still shipped the `sourceId` description pointing models at `wiki_read`, a host-side wrapper name that was never a tool here. The wording is fixed in #349, which ships in the next patch release.
+
 ## 4. Tests
 
 `packages/core-llm-tools/__tests__/legacy.test.ts` covers:

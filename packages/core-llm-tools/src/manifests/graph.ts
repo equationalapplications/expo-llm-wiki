@@ -30,7 +30,7 @@ export const graphTraverseManifest: AgentToolManifest = {
       type: 'object',
       properties: {
         entityId: { type: 'string', description: 'The namespace/entity ID to traverse.' },
-        sourceId: { type: 'string', description: 'The exact ID of the starting fact node (obtained from a previous wiki_read call).' },
+        sourceId: { type: 'string', description: 'The exact ID of the starting fact node (taken from a fact returned by an earlier memory read or search).' },
         maxDepth: {
           type: 'integer',
           minimum: 1,
