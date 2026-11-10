@@ -2,27 +2,27 @@ import { WikiMemory } from '@equationalapplications/core-llm-wiki'
 import type { LLMProvider } from '@equationalapplications/core-llm-wiki'
 import type { SQLiteAdapter } from '../database/sqljs-adapter'
 
-/**
- * ScopeLab has no maintenance LLM. `WikiOptions.llmProvider` is required:
- * without one, every non-empty `read()` threw on `llmProvider.embed`. This
- * provider has no `embed`, so reads use keyword search, and its
- * `generateText` fails loudly if anything ever runs the librarian.
- */
-const noMaintenanceLlm: LLMProvider = {
-  generateText: async () => {
-    throw new Error('ScopeLab has no maintenance LLM: run the librarian from a host with an LLM provider.')
-  },
+/** Stands in when no maintenance model is given; `consolidate()` never calls it. */
+const noMaintenanceLlm: LLMProvider['generateText'] = async () => {
+  throw new Error('ScopeLab has no maintenance LLM.')
 }
 
 export class WikiService {
   private wiki: WikiMemory
   private readonly entityId = 'scopelab-user'
+  private readonly canConsolidate: boolean
+  private consolidating: Promise<unknown> = Promise.resolve()
 
-  constructor(adapter: SQLiteAdapter) {
-    // `maintenance` is left to the engine default (deferred): the old
-    // `'auto'` setting ran the librarian every 10 events, and with no LLM
-    // every pass failed and logged an error.
-    this.wiki = new WikiMemory(adapter, { llmProvider: noMaintenanceLlm })
+  /**
+   * `generateText` is the maintenance model that turns chat events into
+   * facts. The provider has no `embed`, so reads use keyword search (without
+   * an `llmProvider` at all, every non-empty `read()` threw).
+   */
+  constructor(adapter: SQLiteAdapter, opts: { generateText?: LLMProvider['generateText'] } = {}) {
+    this.canConsolidate = opts.generateText !== undefined
+    // `maintenance` stays at the engine default (deferred): `consolidate()`
+    // runs the librarian once per answered turn instead of every N writes.
+    this.wiki = new WikiMemory(adapter, { llmProvider: { generateText: opts.generateText ?? noMaintenanceLlm } })
   }
 
   async init(): Promise<void> {
@@ -36,6 +36,22 @@ export class WikiService {
       summary: message,
       ...(opts.occurredAt !== undefined ? { occurred_at: opts.occurredAt } : {}),
     })
+  }
+
+  /**
+   * Turn the chat events written so far into facts, so `getContext` and the
+   * `search_memory` tool can find them. Resolves false when there is no
+   * maintenance model. Calls are serialized: the librarian takes a
+   * per-entity lock, so an overlapping run would otherwise throw.
+   */
+  consolidate(): Promise<boolean> {
+    if (!this.canConsolidate) return Promise.resolve(false)
+    const run = this.consolidating.then(async () => {
+      await this.wiki.runLibrarian(this.entityId)
+      return true
+    })
+    this.consolidating = run.catch(() => undefined)
+    return run
   }
 
   async getContext(query: string, maxFacts = 5): Promise<string> {

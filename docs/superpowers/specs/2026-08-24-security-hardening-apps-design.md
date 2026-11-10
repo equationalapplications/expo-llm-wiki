@@ -127,6 +127,18 @@
   events are never turned into facts and `search_memory` finds only facts
   created some other way. Wiring a Gemini-backed librarian would spend the
   user's key, so it is left for the owner to decide. Scopelab suite 40/40.
+- **Status revision (2026-11-10, maintenance LLM):** the known gap above is
+  closed. ScopeLab is for outside developers trying the library with their
+  own Gemini key, so the owner ruled that memory must work there. The
+  librarian now runs on the key the developer enters, read when it runs,
+  once after each answered turn (`WikiService.consolidate()`, serialized).
+  Maintenance stays deferred. The sql.js adapter now meets core's
+  `SQLiteAdapter` contract (it passes the `tx` handle and returns the real
+  `last_insert_rowid`, which core keys FTS rows on — review of this PR
+  found the hardcoded 0 pointed every `entries_fts` row at rowid 0), and
+  `build` runs `tsc -b`: the old `tsc -p tsconfig.json` checked no files,
+  which hid 5 type errors. Every Gemini call is bounded by an AbortSignal.
+  Scopelab suite 51/51.
 
 ## Problem
 
