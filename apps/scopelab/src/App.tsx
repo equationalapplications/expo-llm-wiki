@@ -61,10 +61,9 @@ export default function App() {
     if (!wiki || !apiKey.trim() || !message.trim()) return
     setStatus('Querying Gemini…')
     const userMessage = message.trim()
-    const nextHistory = [...history, { role: 'user', content: userMessage }]
-    setHistory(nextHistory)
     setMessage('')
     try {
+      // `history` excludes this turn: chatWithMemory appends userMessage.
       const result = await chatWithMemory({
         userMessage,
         tools,
@@ -74,7 +73,15 @@ export default function App() {
         history,
       })
       setResponse(result.response)
-      setHistory(prev => [...prev, { role: 'assistant', content: result.response }])
+      // Commit the pair only on a real answer, so a failed or status-only
+      // turn never replays as two user turns or a placeholder model turn.
+      if (result.stored) {
+        setHistory(prev => [
+          ...prev,
+          { role: 'user', content: userMessage },
+          { role: 'assistant', content: result.response },
+        ])
+      }
       setStatus('Received response')
     } catch (error) {
       setStatus(`Chat failed: ${(error as Error).message}`)

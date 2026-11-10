@@ -20,14 +20,14 @@ function geminiResponse(body: any) {
 
 function geminiFunctionCall(name: string, args: object = {}) {
   return geminiResponse({
-    candidates: [{ content: { parts: [{ functionCall: { name, args } }] } }],
+    candidates: [{ content: { role: 'model', parts: [{ functionCall: { name, args } }] } }],
   })
 }
 
 function geminiText(text: string) {
   const part = { text: text }
   const parts = [part]
-  const content = { parts: parts }
+  const content = { role: 'model', parts: parts }
   const candidate = { content: content }
   const candidates = [candidate]
   return geminiResponse({ candidates: candidates })
