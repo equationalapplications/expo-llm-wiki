@@ -8,15 +8,37 @@ sidebar:
 **Goal:** let a Gemini agent read the knowledge graph through function calling, but only if the
 user has granted `memory:read`.
 
+`graph_traverse` starts from a fact ID, and core-llm-tools ships no tool that searches memory.
+So the recipe defines one, `memory_search`, whose results carry each fact's `id`. Without it the
+model has no ID to start from and may invent one.
+
 ```ts
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, type Tool } from '@google/genai';
 import {
   buildAuthorizedToolsArray,
   escalateToCloudManifest,
   graphTraverseManifest,
   ontologyGetManifest,
   instructionsGetManifest,
+  type AgentToolManifest,
 } from '@equationalapplications/core-llm-tools';
+
+// Host-defined: core-llm-tools has no memory search tool. Its results must
+// include fact IDs, because graph_traverse's sourceId comes from them.
+const memorySearchManifest: AgentToolManifest = {
+  name: 'memory_search',
+  scope: 'memory:read',
+  schema: {
+    name: 'memory_search',
+    description:
+      "Search the user's memory. Returns matching facts, each with an `id` you can pass to graph_traverse as sourceId.",
+    parameters: {
+      type: 'object',
+      properties: { query: { type: 'string', description: 'What to look for.' } },
+      required: ['query'],
+    },
+  },
+};
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
@@ -24,14 +46,16 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const grantedScopes = ['memory:read'];
 
 const tools = buildAuthorizedToolsArray(
-  [escalateToCloudManifest, graphTraverseManifest, ontologyGetManifest, instructionsGetManifest],
+  [escalateToCloudManifest, memorySearchManifest, graphTraverseManifest, ontologyGetManifest, instructionsGetManifest],
   grantedScopes,
 );
 
 const response = await ai.models.generateContent({
-  model: 'gemini-2.5-flash',
+  model: 'gemini-flash-latest',
   contents: 'What projects is Alice connected to?',
-  config: { tools },
+  // The cast is type-only: the declarations pass through unchanged, but
+  // core-llm-tools types `parameters` more loosely than the SDK's Schema.
+  config: { tools: tools as Tool[] },
 });
 
 // Dispatch any function calls to the wiki.
@@ -40,9 +64,19 @@ for (const call of response.functionCalls ?? []) {
   const { entityId: _ignored, ...args } = (call.args ?? {}) as Record<string, any>;
   let result: unknown;
   switch (call.name) {
-    case 'graph_traverse':
-      result = await wiki.traverseGraph(entityId, { ...args, sourceId: args.sourceId });
+    case 'memory_search': {
+      // excludeDrafts: reviewed facts only. Drop it to let unreviewed drafts through.
+      const { facts } = await wiki.read(entityId, String(args.query ?? ''), { maxResults: 5, excludeDrafts: true });
+      // Keep `id`: it is the only way the model can reach graph_traverse.
+      result = facts.map(({ id, title, body }) => ({ id, title, body }));
       break;
+    }
+    case 'graph_traverse': {
+      // Pass only the schema's keys, so the model can't set options it was never offered.
+      const { sourceId, maxDepth, direction, edgeTypes, excludeDrafts } = args;
+      result = await wiki.traverseGraph(entityId, { sourceId, maxDepth, direction, edgeTypes, excludeDrafts });
+      break;
+    }
     case 'ontology_get':
       result = await wiki.getOntologyManifest(entityId);
       break;
