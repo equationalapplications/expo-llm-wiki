@@ -26,7 +26,10 @@ export async function chatWithMemory({
 }): Promise<{
   response: string
   toolCalls?: Array<{ name: string; args?: Record<string, unknown>; result: unknown }>
-  /** False when `response` is a status message, not a model answer: keep it out of chat history. */
+  /**
+   * True when `response` is a model answer, remembered as such. False when it
+   * is a status message: it is not remembered and must stay out of chat history.
+   */
   stored: boolean
 }> {
   await wiki.remember(userMessage, { timestamp: Date.now() })
@@ -58,8 +61,11 @@ export async function chatWithMemory({
       body: JSON.stringify({
         systemInstruction,
         contents,
-        tools: authorizedTools.length ? authorizedTools : undefined,
-        tool_config: { function_calling_config: { mode: 'AUTO' } },
+        // tool_config only alongside tools: with every scope toggled off
+        // there are no declarations, and a lone tool_config can be rejected.
+        ...(authorizedTools.length
+          ? { tools: authorizedTools, tool_config: { function_calling_config: { mode: 'AUTO' } } }
+          : {}),
       }),
     },
   )
@@ -116,8 +122,19 @@ export async function chatWithMemory({
     for (const { call, tool } of resolved) {
       // Gemini requires one functionResponse per functionCall, in order;
       // an unauthorized call in a mixed turn gets an error, never a run.
-      const result = tool ? await executeTool(tool, call.args || {}) : { error: 'Tool not enabled.' }
-      if (tool) toolCalls.push({ name: call.name, args: call.args, result })
+      // A handler that throws gets an error too, so one failing call
+      // neither breaks the count nor discards the calls that already ran.
+      let result: unknown
+      if (!tool) {
+        result = { error: 'Tool not enabled.' }
+      } else {
+        try {
+          result = await executeTool(tool, call.args || {})
+          toolCalls.push({ name: call.name, args: call.args, result })
+        } catch {
+          result = { error: 'Tool failed.' }
+        }
+      }
       responseParts.push({
         functionResponse: { ...(call.id ? { id: call.id } : {}), name: call.name, response: { result } },
       })
@@ -150,19 +167,23 @@ export async function chatWithMemory({
       throw new Error(`Gemini API follow-up error: HTTP ${followup.status}`)
     }
 
+    const finalData = await followup.json()
+    // Tool executions are remembered once the follow-up parses, whether or
+    // not it carries text: the calls did run.
     for (const { name, args, result } of toolCalls) {
       await wiki.remember(`Tool call: ${name}(${JSON.stringify(args)}) → ${JSON.stringify(result).slice(0, 200)}`, {
         type: 'tool_execution',
         tool: name,
       })
     }
-    const finalData = await followup.json()
     const finalCandidate = finalData.candidates?.[0]
     const finalText = joinText(finalCandidate?.content?.parts)
     if (!finalText) {
       const reason = finalData.promptFeedback?.blockReason ?? finalCandidate?.finishReason ?? 'no text'
       return { response: `The tool ran, but Gemini returned no answer (${reason}).`, toolCalls, stored: false }
     }
+    // Same contract as the text path: a stored answer is in memory too.
+    await wiki.remember(`Assistant: ${finalText.slice(0, 500)}`, { type: 'assistant_response' })
     return { response: finalText, toolCalls, stored: true }
   }
 

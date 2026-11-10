@@ -498,4 +498,67 @@ describe('chatWithMemory — Gemini request shape (live-verified 2026-11-10)', (
     expect(out.stored).toBe(false)
     expect(out.response).toBe('The tool ran, but Gemini returned no answer (MALFORMED_FUNCTION_CALL).')
   })
+
+  it('answers a throwing handler with an error and keeps the calls that ran', async () => {
+    const modelTurn = {
+      role: 'model',
+      parts: [
+        { functionCall: { name: 'search_memory', args: { query: 'q' } } },
+        // `no_handler` is authorized but executeTool has no handler for it.
+        { functionCall: { name: 'no_handler', args: {} } },
+      ],
+    }
+    fetchMock
+      .mockResolvedValueOnce(geminiResponse({ candidates: [{ content: modelTurn }] }))
+      .mockResolvedValueOnce(geminiText('partial'))
+    const out = await chatWithMemory({
+      userMessage: 'hi',
+      tools: [makeTool(), makeTool({ name: 'no_handler' })],
+      enabledScopes: [],
+      apiKey: 'k',
+      wiki: mockWiki('ctx'),
+      history: [],
+    })
+    expect(out.response).toBe('partial')
+    expect(out.toolCalls?.map(c => c.name)).toEqual(['search_memory'])
+    const parts = bodyOf(1).contents.at(-1).parts
+    expect(parts).toHaveLength(2)
+    expect(parts[1].functionResponse).toEqual({ name: 'no_handler', response: { result: { error: 'Tool failed.' } } })
+  })
+
+  it('sends neither tools nor tool_config when no tool is authorized', async () => {
+    fetchMock.mockResolvedValueOnce(geminiText('ok'))
+    await chatWithMemory({
+      userMessage: 'hi',
+      tools: [makeTool({ scope: 'memory:write' })],
+      enabledScopes: [],
+      apiKey: 'k',
+      wiki: mockWiki(),
+      history: [],
+    })
+    expect(bodyOf(0)).not.toHaveProperty('tools')
+    expect(bodyOf(0)).not.toHaveProperty('tool_config')
+  })
+
+  it('remembers the tool execution and the final answer on a stored tool turn', async () => {
+    fetchMock
+      .mockResolvedValueOnce(geminiFunctionCall('search_memory', { query: 'q' }))
+      .mockResolvedValueOnce(geminiText('answer'))
+    const wiki = mockWiki('ctx')
+    const out = await chatWithMemory({ userMessage: 'hi', tools: [makeTool()], enabledScopes: [], apiKey: 'k', wiki, history: [] })
+    expect(out.stored).toBe(true)
+    expect(wiki.remember.mock.calls.map((c: any[]) => c[1]?.type)).toEqual([undefined, 'tool_execution', 'assistant_response'])
+  })
+
+  it('remembers no tool execution when the follow-up fails', async () => {
+    fetchMock
+      .mockResolvedValueOnce(geminiFunctionCall('search_memory', { query: 'q' }))
+      .mockResolvedValueOnce(new Response('{}', { status: 500 }))
+    const wiki = mockWiki('ctx')
+    await expect(
+      chatWithMemory({ userMessage: 'hi', tools: [makeTool()], enabledScopes: [], apiKey: 'k', wiki, history: [] }),
+    ).rejects.toThrow(/HTTP 500/)
+    expect(wiki.remember).toHaveBeenCalledTimes(1)
+  })
 })
+

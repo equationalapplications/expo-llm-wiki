@@ -81,9 +81,13 @@ export default function App() {
           { role: 'user', content: userMessage },
           { role: 'assistant', content: result.response },
         ])
+        setStatus('Received response')
+      } else {
+        setStatus('No answer from Gemini; see the response box.')
       }
-      setStatus('Received response')
     } catch (error) {
+      // Give the typed message back so a retry doesn't mean retyping it.
+      setMessage(userMessage)
       setStatus(`Chat failed: ${(error as Error).message}`)
     }
   }
