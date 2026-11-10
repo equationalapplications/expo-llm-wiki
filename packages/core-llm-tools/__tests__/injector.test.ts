@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { buildAuthorizedToolsArray } from '../src/injector';
+import { buildAuthorizedToolsArray, GEMINI_BUILT_IN_TOOL_KEYS } from '../src/injector';
+import type { GeminiToolEntry } from '../src/injector';
 import type { AgentToolManifest, AnyAgentToolManifest, BuiltInToolManifest } from '../src/types';
 
 const coreTool: AgentToolManifest = {
@@ -41,13 +42,13 @@ describe('buildAuthorizedToolsArray', () => {
     const result = buildAuthorizedToolsArray(mixedTools, []);
     expect(result).toHaveLength(2);
     expect(result).toContainEqual({ functionDeclarations: [coreTool.schema] });
-    expect(result).toContainEqual({ google_search: {} });
+    expect(result).toContainEqual({ googleSearch: {} });
   });
 
   it('omits the functionDeclarations entry when no function manifests are authorized', () => {
     const result = buildAuthorizedToolsArray([googleSearchTool], []);
     expect(result).toHaveLength(1);
-    expect(result).toContainEqual({ google_search: {} });
+    expect(result).toContainEqual({ googleSearch: {} });
   });
 
   it('omits built-in entries when none are authorized', () => {
@@ -58,7 +59,7 @@ describe('buildAuthorizedToolsArray', () => {
 
   it('always includes core-scoped built-in tools regardless of granted scopes', () => {
     const result = buildAuthorizedToolsArray([googleSearchTool], []);
-    expect(result).toContainEqual({ google_search: {} });
+    expect(result).toContainEqual({ googleSearch: {} });
   });
 
   it('excludes a non-core built-in tool scope mismatch and a non-core function tool together', () => {
@@ -67,7 +68,27 @@ describe('buildAuthorizedToolsArray', () => {
       []
     );
     expect(result).toHaveLength(1);
-    expect(result).toContainEqual({ google_search: {} });
+    expect(result).toContainEqual({ googleSearch: {} });
+  });
+
+  it('emits the camelCase key @google/genai reads, never the snake_case manifest name', () => {
+    const [entry] = buildAuthorizedToolsArray([googleSearchTool], []);
+    expect(Object.keys(entry)).toEqual(['googleSearch']);
+  });
+
+  it('keeps the pre-rename google_search spelling assignable for source compatibility', () => {
+    // The wire key renamed in a fix release; constructing the old shape
+    // must keep compiling (annotations make the typecheck load-bearing).
+    const snake: GeminiToolEntry = { google_search: {} };
+    const camel: GeminiToolEntry = { googleSearch: {} };
+    expect(snake).toEqual({ google_search: {} });
+    expect(camel).toEqual({ googleSearch: {} });
+  });
+
+  it('maps every built-in tool name to a camelCase wire key', () => {
+    for (const key of Object.values(GEMINI_BUILT_IN_TOOL_KEYS)) {
+      expect(key).toMatch(/^[a-z][a-zA-Z]*$/);
+    }
   });
 
   it('treats an explicit kind: undefined manifest as a function manifest', () => {

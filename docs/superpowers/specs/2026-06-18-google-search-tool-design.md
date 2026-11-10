@@ -1,6 +1,6 @@
 # Design: `google_search` Built-In Tool Support in `core-llm-tools`
 
-**Status:** Implemented
+**Status:** Implemented. Revised 2026-11-10: the wire key is now `googleSearch`, not `google_search`. `@google/genai` reads only the camelCase key and silently dropped the tool; the REST API accepts both. Manifest `name` and `builtIn` stay `google_search`. The `{ google_search: {} }` shapes below record the original design. Follow-up, same day (PR review): the `GeminiToolEntry` type accepts both spellings, so consumers written against the pre-rename shape keep compiling — the rename ships in a fix release, not a major.
 **Package:** `@equationalapplications/core-llm-tools`
 **Date:** 2026-06-18
 

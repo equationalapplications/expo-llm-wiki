@@ -105,7 +105,11 @@ const userGrantedScopes: string[] = [];
 // Returns the full Gemini tools[] array: a functionDeclarations group (if any
 // function tools are authorized) plus one entry per authorized built-in tool.
 const tools = buildAuthorizedToolsArray(allAppTools, userGrantedScopes);
-// => [{ functionDeclarations: [...] }, { google_search: {} }]
+// => [{ functionDeclarations: [...] }, { googleSearch: {} }]
+// The manifest is named `google_search`; the wire key is `googleSearch`,
+// the only spelling @google/genai reads. The REST API accepts it too.
+// The GeminiToolEntry type accepts both spellings, so call sites written
+// against the pre-rename `google_search` shape keep compiling.
 
 const response = await ai.models.generateContent({
   model: 'gemini-flash-latest',
