@@ -4,8 +4,9 @@ import { WikiService } from './lib/memory/wiki-service'
 import { chatWithMemory } from './lib/llm/function-caller'
 import { setToolWiki } from './lib/llm/tool-executor'
 import { ScopeToggle } from './components/Tools/ScopeToggle'
+import type { AgentToolManifest } from '@equationalapplications/core-llm-tools'
 
-const DEFAULT_SCOPES = ['tools:search', 'tools:memory']
+const DEFAULT_SCOPES = ['memory:read']
 
 export default function App() {
   const [apiKey, setApiKey] = useState('')
@@ -17,18 +18,24 @@ export default function App() {
   const [history, setHistory] = useState<Array<{ role: string; content: string }>>([])
   const [status, setStatus] = useState('Ready to launch ScopeLab')
 
-  const tools = useMemo(
+  // buildAuthorizedToolsArray reads `schema`; a flat manifest without it
+  // was advertised to Gemini as `functionDeclarations: [null]`, so the
+  // model never saw the tool (live smoke, 2026-11-10).
+  const tools = useMemo<AgentToolManifest[]>(
     () => [
       {
         name: 'search_memory',
-        description: 'Search saved memories for relevant facts',
-        scope: 'tools:memory',
-        parameters: {
-          type: 'object',
-          properties: {
-            query: { type: 'string', description: 'Search query' },
+        scope: 'memory:read',
+        schema: {
+          name: 'search_memory',
+          description: 'Search saved memories for relevant facts',
+          parameters: {
+            type: 'object',
+            properties: {
+              query: { type: 'string', description: 'Search query' },
+            },
+            required: ['query'],
           },
-          required: ['query'],
         },
       },
     ],
@@ -54,10 +61,12 @@ export default function App() {
     if (!wiki || !apiKey.trim() || !message.trim()) return
     setStatus('Querying Gemini…')
     const userMessage = message.trim()
-    const nextHistory = [...history, { role: 'user', content: userMessage }]
-    setHistory(nextHistory)
     setMessage('')
+    // Give the message back for a retry, unless the user has already started
+    // typing a new one while this turn was in flight.
+    const restoreMessage = () => setMessage(current => (current.trim() ? current : userMessage))
     try {
+      // `history` excludes this turn: chatWithMemory appends userMessage.
       const result = await chatWithMemory({
         userMessage,
         tools,
@@ -67,9 +76,21 @@ export default function App() {
         history,
       })
       setResponse(result.response)
-      setHistory(prev => [...prev, { role: 'assistant', content: result.response }])
-      setStatus('Received response')
+      // Commit the pair only on a real answer, so a failed or status-only
+      // turn never replays as two user turns or a placeholder model turn.
+      if (result.stored) {
+        setHistory(prev => [
+          ...prev,
+          { role: 'user', content: userMessage },
+          { role: 'assistant', content: result.response },
+        ])
+        setStatus('Received response')
+      } else {
+        restoreMessage()
+        setStatus('No answer from Gemini; see the response box.')
+      }
     } catch (error) {
+      restoreMessage()
       setStatus(`Chat failed: ${(error as Error).message}`)
     }
   }
@@ -103,7 +124,7 @@ export default function App() {
             The app keeps memory in-browser using sql.js and lets you enable scoped tool access.
           </div>
           <div className="tool-toggle">
-            <ScopeToggle tools={tools as any} enabledScopes={enabledScopes} onToggle={setEnabledScopes} />
+            <ScopeToggle tools={tools} enabledScopes={enabledScopes} onToggle={setEnabledScopes} />
           </div>
         </section>
 

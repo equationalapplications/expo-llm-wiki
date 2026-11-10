@@ -60,6 +60,73 @@
     so the fallback contact is now `info@equationalapplications.com`.
   - **Remaining:** the live Gemini smoke test and the `system`-role
     verification are still unrecorded.
+- **Status revision (2026-11-10, branch `fix/scopelab-gemini-live`):**
+  Implemented. The two unrecorded items were run live against the Gemini
+  API (v1beta `generateContent`) with the owner's key.
+  - **Test plan item 4 / H-2:** the key in the `x-goog-api-key` header
+    authenticates (models lookup 200; the same request with no key 403).
+  - **M-1 `system` role:** Gemini rejects `role: 'system'` inside `contents`
+    (400 "Role 'system' is not supported"), so this spec's first option
+    (remove the downgrade, send `system` as a turn) does not work as written.
+    `systemInstruction` does work and the model obeys it, so the system
+    prompt, with the retrieved-memory delimiters, now goes there instead of
+    the first-user-turn fallback.
+  - **The live run found three defects that the mocked tests could not see,**
+    all fixed in the same branch. Scopelab chat and tool use were broken
+    before them:
+    1. `gemini-2.0-flash` is retired: every generate call returned 404 while
+       its `models/` metadata still returned 200. The URL now uses the
+       `gemini-flash-latest` alias.
+    2. `App.tsx` defined `search_memory` without the `schema` field that
+       `buildAuthorizedToolsArray` reads, so Gemini received
+       `functionDeclarations: [null]` and never saw the tool. Its scope
+       `tools:memory` was also not a valid `AgentScope`; it is now
+       `memory:read`.
+    3. The tool follow-up sent the result with `role: 'function'` (400) and
+       re-built the model turn without its `thoughtSignature` (400). It now
+       echoes the model turn verbatim and returns the result as a `user`
+       turn. App-side `assistant` history turns map to `model`.
+  - **Evidence:** a temporary live test drove the real `chatWithMemory`
+    through a first turn, a history turn and a `search_memory` round trip,
+    and the answer used the tool result. The new unit tests in
+    `function-caller.test.ts` pin each request shape. Scopelab suite 22/22.
+- **Status revision (2026-11-10, review of PR #350):** still Implemented.
+  A high-effort review of the branch found that the verbatim echo from
+  item 3 broke parallel function calling: a turn with N `functionCall` parts
+  got a single `functionResponse` back, and Gemini rejects a mismatched
+  count. The fix answers every call in order and echoes `functionCall.id`.
+  An unauthorized call in a mixed turn gets an error response and never
+  runs. M-2 is unchanged: when no requested call is authorized, nothing runs
+  and no follow-up is sent. Safety blocks and text-less replies now return a
+  status message and are no longer stored as "No response." / "Tool
+  executed." placeholders. The parallel-call shape is unit-tested only, not
+  live-verified. Scopelab suite 30/30.
+  App.tsx now adds the user/assistant pair to chat history only for a stored
+  answer, so a failed or status-only turn is never replayed.
+- **Status revision (2026-11-10, second review of PR #350):** still
+  Implemented. A tool handler that throws now gets an error
+  `functionResponse`, so one failing call no longer aborts the turn. Tool
+  executions are remembered only after the follow-up parses. A stored tool
+  answer is remembered like a text answer. `tool_config` is sent only
+  together with `tools`. None of these paths is live-verified. Scopelab
+  suite 34/34.
+  Follow-up, same day: a turn is written to memory (user message, tool
+  executions, answer) only once it has produced an answer, so retrying a
+  failed or status-only turn no longer stores the user message twice.
+  Scopelab suite 36/36.
+- **Status revision (2026-11-10, third review of PR #350):** still
+  Implemented for this spec's security items. One correction to the record
+  above: "Scopelab chat and tool use were broken" understated it. The live
+  run exercised `chatWithMemory`, not the in-app `WikiService`, and that
+  service built `WikiMemory` with no `llmProvider`. So every non-empty
+  `read()` threw on `llmProvider.embed`, and chat failed in the app before
+  Gemini was ever called. It now passes a provider with no `embed`, so
+  reads use keyword search, and maintenance is left to the engine default
+  (deferred). A real-engine test covers it.
+  Known gap, not fixed here: ScopeLab has no maintenance LLM, so chat
+  events are never turned into facts and `search_memory` finds only facts
+  created some other way. Wiring a Gemini-backed librarian would spend the
+  user's key, so it is left for the owner to decide. Scopelab suite 40/40.
 
 ## Problem
 
