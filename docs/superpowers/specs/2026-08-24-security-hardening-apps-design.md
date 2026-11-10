@@ -101,6 +101,15 @@
   status message and are no longer stored as "No response." / "Tool
   executed." placeholders. The parallel-call shape is unit-tested only, not
   live-verified. Scopelab suite 30/30.
+  App.tsx now adds the user/assistant pair to chat history only for a stored
+  answer, so a failed or status-only turn is never replayed.
+- **Status revision (2026-11-10, second review of PR #350):** still
+  Implemented. A tool handler that throws now gets an error
+  `functionResponse`, so one failing call no longer aborts the turn. Tool
+  executions are remembered only after the follow-up parses. A stored tool
+  answer is remembered like a text answer. `tool_config` is sent only
+  together with `tools`. None of these paths is live-verified. Scopelab
+  suite 34/34.
 
 ## Problem
 
