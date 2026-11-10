@@ -64,7 +64,25 @@ export function calibrateTexts(s: Scenario): string[] {
   ];
 }
 
-export async function decisionLog(scenario: Scenario, embed: EmbedFn): Promise<DecisionRow[]> {
+export async function decisionLog(scenario: Scenario, inner: EmbedFn): Promise<DecisionRow[]> {
+  // Core swallows embed errors (EmbeddingService.embedTextForFact returns
+  // { ok: false }; the gate then falls back to keyword mode), so a sidecar
+  // miss would silently change decisions. Record misses here and fail loudly.
+  const misses: unknown[] = [];
+  const embed: EmbedFn = async (text) => {
+    try {
+      return await inner(text);
+    } catch (e) {
+      misses.push(e);
+      throw e;
+    }
+  };
+  const assertNoMisses = () => {
+    if (misses.length > 0) {
+      const first = misses[0] instanceof Error ? misses[0].message : String(misses[0]);
+      throw new Error(`decisionLog(${scenario.name}): ${misses.length} embed failure(s); ${first}`);
+    }
+  };
   const handle = openDb();
   try {
     const llmProvider = {
@@ -80,6 +98,7 @@ export async function decisionLog(scenario: Scenario, embed: EmbedFn): Promise<D
     await wiki.setup();
     await insertExistingFacts(handle.adapter, scenario.existing);
     await wiki.runReembed(SUPERSESSION_ENTITY);
+    assertNoMisses();
 
     const candidates: Candidate[] = [];
     scenario.extract.facts.forEach((raw, index) => {
@@ -90,6 +109,7 @@ export async function decisionLog(scenario: Scenario, embed: EmbedFn): Promise<D
     const deps = (wiki.__testAccess.maintenanceService as unknown as { librarianDeps(): Parameters<typeof gateCandidates>[0] }).librarianDeps();
     const cfg = resolveGateConfig();
     const { gated, inBatchDuplicates } = await gateCandidates(deps, { entityId: SUPERSESSION_ENTITY, trigger: 'call' }, candidates, cfg);
+    assertNoMisses();
 
     const margin = (best: number | null): number | null =>
       best === null ? null : Math.min(best - cfg.novelThreshold, cfg.dupThreshold - best);

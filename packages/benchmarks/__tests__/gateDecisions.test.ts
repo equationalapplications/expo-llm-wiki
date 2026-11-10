@@ -101,6 +101,18 @@ describe('calibrate on the sidecar', () => {
   });
 });
 
+describe('decisionLog with an incomplete sidecar', () => {
+  it('throws the re-run message instead of silently falling back to keyword mode', async () => {
+    const full = loadSidecar(SIDECAR_PATH);
+    const s = scenarios.find((x) => x.name === 'relocation-1-seattle-to-sf')!;
+    // Drop the vectors of the scenario's existing facts (core swallows embed
+    // errors in runReembed / embedTextForFact, so only decisionLog can notice).
+    const partial = new Map([...full].filter(([text]) => !s.existing.some((f) => text.includes(f.title))));
+    expect(partial.size).toBeLessThan(full.size);
+    await expect(decisionLog(s, sidecarEmbed(partial))).rejects.toThrow(/re-run pnpm fixture:gate-embeddings/);
+  });
+});
+
 describe('sidecarEmbed', () => {
   it('fails loudly on a text with no recorded vector', async () => {
     await expect(sidecarEmbed(new Map())('x')).rejects.toThrow(/re-run pnpm fixture:gate-embeddings/);
