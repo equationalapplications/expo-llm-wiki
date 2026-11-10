@@ -20,9 +20,15 @@ export const GEMINI_BUILT_IN_TOOL_KEYS = {
 /** A Gemini `tools[]` key for a built-in tool, e.g. `googleSearch`. */
 export type GeminiBuiltInToolKey = (typeof GEMINI_BUILT_IN_TOOL_KEYS)[BuiltInToolName];
 
-/** One entry of a Gemini `tools[]` array: a function-declarations group, or a built-in tool. */
+/**
+ * One entry of a Gemini `tools[]` array: a function-declarations group, or a
+ * built-in tool. Entries this module builds always carry the camelCase wire
+ * key; the snake_case manifest spelling stays accepted so consumers of the
+ * pre-rename shape keep compiling.
+ */
 export type GeminiToolEntry =
   | { functionDeclarations: AgentToolSchema[] }
+  | { [K in keyof typeof GEMINI_BUILT_IN_TOOL_KEYS]: Record<string, never> }
   | { [K in GeminiBuiltInToolKey]: Record<string, never> };
 
 /**

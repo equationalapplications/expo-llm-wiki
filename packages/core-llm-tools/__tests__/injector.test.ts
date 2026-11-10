@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildAuthorizedToolsArray, GEMINI_BUILT_IN_TOOL_KEYS } from '../src/injector';
+import type { GeminiToolEntry } from '../src/injector';
 import type { AgentToolManifest, AnyAgentToolManifest, BuiltInToolManifest } from '../src/types';
 
 const coreTool: AgentToolManifest = {
@@ -73,6 +74,15 @@ describe('buildAuthorizedToolsArray', () => {
   it('emits the camelCase key @google/genai reads, never the snake_case manifest name', () => {
     const [entry] = buildAuthorizedToolsArray([googleSearchTool], []);
     expect(Object.keys(entry)).toEqual(['googleSearch']);
+  });
+
+  it('keeps the pre-rename google_search spelling assignable for source compatibility', () => {
+    // The wire key renamed in a fix release; constructing the old shape
+    // must keep compiling (annotations make the typecheck load-bearing).
+    const snake: GeminiToolEntry = { google_search: {} };
+    const camel: GeminiToolEntry = { googleSearch: {} };
+    expect(snake).toEqual({ google_search: {} });
+    expect(camel).toEqual({ googleSearch: {} });
   });
 
   it('maps every built-in tool name to a camelCase wire key', () => {
