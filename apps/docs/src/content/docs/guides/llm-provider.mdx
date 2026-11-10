@@ -56,7 +56,7 @@ Return the model's raw text. The engine expects JSON and tolerates a markdown co
     const llmProvider = {
       generateText: async ({ systemPrompt, userPrompt }) => {
         const r = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
+          model: 'gemini-flash-latest',
           contents: userPrompt,
           config: { systemInstruction: systemPrompt, responseMimeType: 'application/json' },
         });

@@ -45,7 +45,7 @@ const tools = buildAuthorizedToolsArray(
 // → [{ functionDeclarations: [get_calendar_events, escalate_to_cloud_agent] }, { google_search: {} }]
 //   (escalate_to_cloud_agent and google_search are in the always-on 'core' scope)
 
-await ai.models.generateContent({ model: 'gemini-2.5-flash', contents, config: { tools } });
+await ai.models.generateContent({ model: 'gemini-flash-latest', contents, config: { tools } });
 ```
 
 - Tools in the `core` scope are always included.

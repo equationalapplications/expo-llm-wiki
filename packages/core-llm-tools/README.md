@@ -78,7 +78,7 @@ const tools = buildAuthorizedToolsArray(allAppTools, userGrantedScopes);
 
 // 4. Pass safely to Gemini
 const response = await ai.models.generateContent({
-  model: 'gemini-2.5-flash',
+  model: 'gemini-flash-latest',
   contents: userInput,
   tools,
 });
@@ -108,7 +108,7 @@ const tools = buildAuthorizedToolsArray(allAppTools, userGrantedScopes);
 // => [{ functionDeclarations: [...] }, { google_search: {} }]
 
 const response = await ai.models.generateContent({
-  model: 'gemini-2.5-flash',
+  model: 'gemini-flash-latest',
   contents: userInput,
   tools,
 });
