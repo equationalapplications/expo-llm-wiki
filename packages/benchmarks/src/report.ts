@@ -42,7 +42,13 @@ export const EMBED_MODEL = 'fastembed/BGESmallENV15';
  * though the body is otherwise I/O-light — keeps the call site consistent
  * with the rest of the pipeline.
  */
-export async function engineInfo(cwd: string = process.cwd()): Promise<{ version: string; gitSha: string }> {
+/**
+ * `version` is core's package.json version, which semantic-release bumps only
+ * at release, so a run on unreleased code records the previous version (e.g.
+ * `supersession-7.8.0.json` says 7.7.7). `gitSha` and `gitDescribe` identify
+ * the code that actually ran.
+ */
+export async function engineInfo(cwd: string = process.cwd()): Promise<{ version: string; gitSha: string; gitDescribe: string }> {
   const pkg = JSON.parse(readFileSync(CORE_PACKAGE_JSON, 'utf8')) as { version?: string };
   const version = typeof pkg.version === 'string' ? pkg.version : 'unknown';
   let gitSha: string;
@@ -51,7 +57,13 @@ export async function engineInfo(cwd: string = process.cwd()): Promise<{ version
   } catch {
     gitSha = 'unknown';
   }
-  return { version, gitSha };
+  let gitDescribe: string;
+  try {
+    gitDescribe = execFileSync('git', ['describe', '--tags', '--always'], { cwd, encoding: 'utf8' }).trim() || 'unknown';
+  } catch {
+    gitDescribe = 'unknown';
+  }
+  return { version, gitSha, gitDescribe };
 }
 
 /**

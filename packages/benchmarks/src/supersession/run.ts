@@ -89,11 +89,19 @@ export interface SupersessionResultRow {
   error?: string;
 }
 
+/** Maintenance sequence every strategy runs per segment (spec targeted-diagnostics §2.2). */
+export const SUPERSESSION_SEQUENCE = 'librarian+heal' as const;
+
 export interface SupersessionReport {
   kind: 'supersession';
   createdAt: string;
   strategy: 'legacy' | 'ops';
-  engine: { version: string; gitSha: string; flags: { strategy: 'legacy' | 'ops' } };
+  engine: {
+    version: string;
+    gitSha: string;
+    gitDescribe?: string;
+    flags: { strategy: 'legacy' | 'ops'; sequence?: typeof SUPERSESSION_SEQUENCE };
+  };
   passed: number;
   total: number;
   skipped: number;
@@ -231,6 +239,10 @@ async function runOneScenario({ scenario, flags, endpoint, fetchImpl, embed }: R
     const wiki = new WikiMemory(adapter, { llmProvider, config });
     await wiki.setup();
 
+    // Both strategies run the same explicit sequence per segment —
+    // runLibrarian, then runHeal — so a strategy comparison varies only the
+    // strategy. Before 2026-11-10 heal ran for legacy only
+    // (spec targeted-diagnostics §2.2).
     await insertExistingFacts(adapter, scenario.existing);
     await wiki.runReembed(ENTITY);
 
@@ -240,16 +252,12 @@ async function runOneScenario({ scenario, flags, endpoint, fetchImpl, embed }: R
 
     await writeScenarioEvents(adapter, first);
     await wiki.runLibrarian(ENTITY);
-    if (flags.strategy === 'legacy') {
-      await wiki.runHeal(ENTITY);
-    }
+    await wiki.runHeal(ENTITY);
 
     if (second.length > 0) {
       await writeScenarioEvents(adapter, second, first.length);
       await wiki.runLibrarian(ENTITY);
-      if (flags.strategy === 'legacy') {
-        await wiki.runHeal(ENTITY);
-      }
+      await wiki.runHeal(ENTITY);
     }
 
     const current = await readCurrentFacts(wiki);
@@ -312,7 +320,8 @@ export async function runSupersession(opts: RunSupersessionOpts): Promise<Supers
     engine: {
       version: engine.version,
       gitSha: engine.gitSha,
-      flags,
+      gitDescribe: engine.gitDescribe,
+      flags: { ...flags, sequence: SUPERSESSION_SEQUENCE },
     },
     passed,
     total: rows.length,

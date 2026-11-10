@@ -128,6 +128,14 @@ field when a scenario threw. A scenario **passes** when every expected
 current title is contained (case-insensitively) in some current fact's title
 **and** no `expectSuperseded` id is still current.
 
+**Errata (2026-11-10).** `results/supersession-7.8.0.json` ran on the 7.8.0
+code but records `engine.version: "7.7.7"`: `engine.version` is core's
+`package.json` version, which semantic-release bumps only at release. Use
+`gitSha` (and, from 2026-11-10, `gitDescribe`) to identify the code that ran.
+Supersession reports written before 2026-11-10 also ran heal for legacy only;
+newer reports run `librarian+heal` for both strategies
+(`engine.flags.sequence`), so the two are not directly comparable.
+
 To re-read the committed baselines without an API key (the LongMemEval
 baseline is not committed yet; see issue #247):
 
