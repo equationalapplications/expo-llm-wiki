@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, existsSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import Database from 'better-sqlite3';
-import { flagsKey, cacheFilePath, ingestQuestion } from '../src/longmemeval/ingest';
+import { flagsKey, cacheFilePath, ingestQuestion, engineConfigFor } from '../src/longmemeval/ingest';
 import type { LmeQuestion } from '../src/longmemeval/dataset';
 
 function makeSyntheticQuestion(): LmeQuestion {
@@ -94,6 +94,24 @@ describe('flagsKey', () => {
     expect(flagsKey({ strategy: 'ops', maintenance: 'deferred' })).toBe('ops-deferred');
     expect(flagsKey({ strategy: 'ops', maintenance: 'deferred', readTokenBudget: 800 })).toBe('ops-deferred-b800');
     expect(flagsKey({ strategy: 'legacy', maintenance: 'auto', readTokenBudget: 0 })).toBe('legacy-auto');
+  });
+});
+
+describe('engineConfigFor', () => {
+  it('legacy-deferred builds the engine with maintenance deferred', () => {
+    const c = engineConfigFor({ strategy: 'legacy', maintenance: 'deferred' });
+    expect(c.librarian.strategy).toBe('legacy');
+    expect(c.maintenance).toBe('deferred');
+    expect(c.autoLibrarianThreshold).toBeUndefined();
+  });
+  it('legacy-auto keeps the 7.x auto threshold', () => {
+    const c = engineConfigFor({ strategy: 'legacy', maintenance: 'auto' });
+    expect(c.maintenance).toBe('auto');
+    expect(c.autoLibrarianThreshold).toBe(20);
+  });
+  it('ops follows the maintenance flag', () => {
+    expect(engineConfigFor({ strategy: 'ops', maintenance: 'auto' }).maintenance).toBe('auto');
+    expect(engineConfigFor({ strategy: 'ops', maintenance: 'deferred' }).maintenance).toBe('deferred');
   });
 });
 
