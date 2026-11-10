@@ -98,10 +98,16 @@ export async function runPromptVolume(config: VolumeConfig, stream: readonly Str
         }
         if (!drained) throw new Error(`promptVolume: ${flagsKey(config)} did not drain in ${DRAIN_CAP} rounds`);
       } else {
-        // Tail pass, as the LongMemEval ingest does: process events written
-        // since the last auto pass.
-        await wiki.runLibrarian(ENTITY);
-        await waitIdle(wiki);
+        // Tail pass, exactly as the LongMemEval ingest does: only when events
+        // were written after the last auto pass's checkpoint.
+        const cp = await handle.adapter.getFirstAsync<{ memory_checkpoint: number }>(
+          'SELECT memory_checkpoint FROM llm_wiki_checkpoints WHERE entity_id = ?',
+          [ENTITY],
+        );
+        if (stream.length - (cp?.memory_checkpoint ?? 0) > 0) {
+          await wiki.runLibrarian(ENTITY);
+          await waitIdle(wiki);
+        }
       }
     } finally {
       handle.close();

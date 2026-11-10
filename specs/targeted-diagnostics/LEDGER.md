@@ -2,10 +2,10 @@
 
 In flight: nothing
 
-- [ ] 1. Determinism harness — evidence:
-- [ ] 2. LongMemEval ingest honours maintenance flag — evidence:
-- [ ] 3. Supersession parity + version label — evidence:
-- [ ] 4. Prompt-volume ledger — evidence:
+- [x] 1. Determinism harness — evidence: 9502267, determinism.test.ts 5/5
+- [x] 2. LongMemEval ingest honours maintenance flag — evidence: a42e1ea, ingest.test.ts 6/6
+- [x] 3. Supersession parity + version label — evidence: 0b5d690, package 117/117
+- [x] 4. Prompt-volume ledger — evidence: a148cc0, promptVolume.test.ts 9/9
 - [ ] 5. Strategy-aware dry-run estimate — evidence:
 - [ ] 6. Gate decision log — evidence:
 - [ ] 7. Retrieval miss attribution — evidence:
@@ -31,8 +31,9 @@ In flight: nothing
   - On a 60-event backlog, events 1-10 are never seen (`eventsSeen` 50 of
     56).
 - 2026-11-10 (Task 4). **Legacy prompt volume.**
-  - Under the scripted provider, legacy-auto sent 132,556 user characters
-    in 4 calls, about 34x the raw event text.
+  - Under the scripted provider, legacy-auto sent 75,857 user characters
+    in 3 calls, about 20x the raw event text. Before the Task 5 tail fix the
+    reading was 132,556 in 4 calls.
   - ops-deferred sent 8,175 in 3 calls.
   - Caveat: the scripted provider returns one fact per event, which inflates
     legacy's fact-row context. This is prompt volume, not billed tokens.
@@ -48,5 +49,10 @@ In flight: nothing
 - Task 4. Ruling: replaced the absolute 1.25 extract-ratio cap with per-site baseline checks.
   - Why: the cap came from long turns, and short events have a ratio near 1.6. Revision recorded in spec §3.
   - Cost if wrong: a slow extract-prompt bloat that stays within 10% per run could go unflagged.
+- Task 5. Ruling: the ledger's auto tail pass now runs only when events remain past `memory_checkpoint`, as `ingest.ts` does. The baseline was regenerated (legacy-auto went from 4 calls to 3).
+  - Why: an unconditional tail added a pass the real harness never makes.
+  - Cost if wrong: none.
+- Task 5. Ruling: the legacy estimate models a 190-char event-row overhead and a 700-char fact row, both measured from the legacy prompt. The plan had only a 200-char fact allowance. The estimate is 0.93x the ledger.
+  - Cost if wrong: the estimate overstates legacy when a real model extracts fewer facts than there are turns. That is conservative.
 
 ## Discrepancies

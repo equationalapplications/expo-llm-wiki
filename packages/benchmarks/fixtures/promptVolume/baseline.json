@@ -5,9 +5,9 @@
    "config": "legacy-auto",
    "bySite": {
     "librarian": {
-     "calls": 4,
-     "systemChars": 1964,
-     "userChars": 132556
+     "calls": 3,
+     "systemChars": 1473,
+     "userChars": 75857
     }
    },
    "rawEventChars": 3874,
