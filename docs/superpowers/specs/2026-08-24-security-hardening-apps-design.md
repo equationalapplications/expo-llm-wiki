@@ -114,6 +114,19 @@
   executions, answer) only once it has produced an answer, so retrying a
   failed or status-only turn no longer stores the user message twice.
   Scopelab suite 36/36.
+- **Status revision (2026-11-10, third review of PR #350):** still
+  Implemented for this spec's security items. One correction to the record
+  above: "Scopelab chat and tool use were broken" understated it. The live
+  run exercised `chatWithMemory`, not the in-app `WikiService`, and that
+  service built `WikiMemory` with no `llmProvider`. So every non-empty
+  `read()` threw on `llmProvider.embed`, and chat failed in the app before
+  Gemini was ever called. It now passes a provider with no `embed`, so
+  reads use keyword search, and maintenance is left to the engine default
+  (deferred). A real-engine test covers it.
+  Known gap, not fixed here: ScopeLab has no maintenance LLM, so chat
+  events are never turned into facts and `search_memory` finds only facts
+  created some other way. Wiring a Gemini-backed librarian would spend the
+  user's key, so it is left for the owner to decide. Scopelab suite 40/40.
 
 ## Problem
 
