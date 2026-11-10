@@ -1,0 +1,25 @@
+{
+ "note": "Retrieval guards (spec targeted-diagnostics \u00a75): metric = measured - 0.02, miss-class counts = measured + 3. Regenerate with BENCH_UPDATE_BASELINE=1 and say why in the commit.",
+ "datasets": {
+  "scifact": {
+   "metric": 0.7,
+   "classes": {
+    "keyword-miss": 21,
+    "vector-miss": 3,
+    "fusion-demotion": 3,
+    "both-miss": 28,
+    "unscorable": 3
+   }
+  },
+  "financebench": {
+   "metric": 0.6817,
+   "classes": {
+    "keyword-miss": 27,
+    "vector-miss": 3,
+    "fusion-demotion": 3,
+    "both-miss": 5,
+    "unscorable": 3
+   }
+  }
+ }
+}

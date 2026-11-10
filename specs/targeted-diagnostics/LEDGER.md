@@ -7,7 +7,7 @@ In flight: nothing
 - [x] 3. Supersession parity + version label — evidence: 0b5d690, package 117/117
 - [x] 4. Prompt-volume ledger — evidence: a148cc0, promptVolume.test.ts 9/9
 - [x] 5. Strategy-aware dry-run estimate — evidence: 60fe6f8, cli.test.ts, 0.93x the ledger
-- [ ] 6. Gate decision log — evidence:
+- [x] 6. Gate decision log — evidence: bc86485, gateDecisions.test.ts 6/6, calibrate CLI smoke
 - [ ] 7. Retrieval miss attribution — evidence:
 - [ ] 8. Docs + full verification — evidence:
 
@@ -46,6 +46,22 @@ In flight: nothing
   - Three true duplicates clear 0.89 by only 0.009 to 0.028.
   - A small change to the embedding model or the embed text flips NOOP to
     resolve, or resolve to NOOP. This is a tuning lever.
+- 2026-11-10 (Task 7). **Retrieval: the shipped default is pure vector, and a 0.5 blend hurts.**
+  - With `hybridWeight` unset, the default is pure semantic search
+    (`core types.ts` WikiConfig.hybridWeight). The integration reports label
+    this "hybrid".
+  - Default NDCG@10 is 0.7200 on SciFact and MRR@10 is 0.7017 on FinanceBench,
+    reproducing the integration numbers exactly.
+  - Keyword-only gives 0.6917 and 0.4367.
+  - A 0.5 blend gives 0.7170 and 0.5135: 24 of 150 FinanceBench queries
+    (and 18 of 300 SciFact) that vector search ranks in the top 10 fall out
+    once keyword is blended in.
+  - Keyword search never rescues a vector miss on either set (`vector-miss`
+    0).
+  - Hard misses (`both-miss`): 25 on SciFact and 2 on FinanceBench.
+  - Lever: anyone setting `hybridWeight` should know it costs accuracy on
+    both sets. The keyword score normalisation (`getKeywordScores` divides
+    by max(1, top)) is the first suspect.
 
 ## Rulings
 
@@ -65,6 +81,12 @@ In flight: nothing
   - Cost if wrong: the estimate overstates legacy when a real model extracts fewer facts than there are turns. That is conservative.
 - Task 6. Ruling: in-batch duplicates are logged as `noop` rows with `inBatchDuplicate: true`, since `gateCandidates` drops them before neighbour lookup.
   - Why: this keeps one row per candidate.
+  - Cost if wrong: none.
+- Task 7. Ruling: the modes are keyword (`hybridWeight` 0), default (unset, which is pure vector) and a 0.5 blend. `AttributionReport.vectorOnly` became `defaultMode`.
+  - Why: weight 1 and unset both mean vector, so a "vector-only" mode would duplicate the default.
+  - Cost if wrong: another blend weight may behave differently. The 0.5 blend is one point, not a sweep.
+- Task 7. Ruling: the guards exclude the `hit` class.
+  - Why: an upper bound on hits would fail an improvement.
   - Cost if wrong: none.
 
 ## Discrepancies

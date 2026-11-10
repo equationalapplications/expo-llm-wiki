@@ -10,7 +10,8 @@
     "bench": "tsx src/cli.ts",
     "bench:fts5-memory": "tsx src/fts5Memory.ts",
     "fixture:search-parity": "tsx src/searchParity/buildFixture.ts",
-    "fixture:gate-embeddings": "tsx src/gate/buildEmbeddings.ts"
+    "fixture:gate-embeddings": "tsx src/gate/buildEmbeddings.ts",
+    "fixture:retrieval-queries": "tsx src/retrieval/buildQueryEmbeddings.ts"
   },
   "dependencies": {
     "@equationalapplications/core-llm-wiki": "workspace:*"
