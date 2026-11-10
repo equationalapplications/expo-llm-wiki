@@ -110,6 +110,10 @@
   answer is remembered like a text answer. `tool_config` is sent only
   together with `tools`. None of these paths is live-verified. Scopelab
   suite 34/34.
+  Follow-up, same day: a turn is written to memory (user message, tool
+  executions, answer) only once it has produced an answer, so retrying a
+  failed or status-only turn no longer stores the user message twice.
+  Scopelab suite 36/36.
 
 ## Problem
 
