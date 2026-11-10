@@ -4,8 +4,9 @@ import { WikiService } from './lib/memory/wiki-service'
 import { chatWithMemory } from './lib/llm/function-caller'
 import { setToolWiki } from './lib/llm/tool-executor'
 import { ScopeToggle } from './components/Tools/ScopeToggle'
+import type { AgentToolManifest } from '@equationalapplications/core-llm-tools'
 
-const DEFAULT_SCOPES = ['tools:search', 'tools:memory']
+const DEFAULT_SCOPES = ['memory:read']
 
 export default function App() {
   const [apiKey, setApiKey] = useState('')
@@ -17,18 +18,24 @@ export default function App() {
   const [history, setHistory] = useState<Array<{ role: string; content: string }>>([])
   const [status, setStatus] = useState('Ready to launch ScopeLab')
 
-  const tools = useMemo(
+  // buildAuthorizedToolsArray reads `schema`; a flat manifest without it
+  // was advertised to Gemini as `functionDeclarations: [null]`, so the
+  // model never saw the tool (live smoke, 2026-11-10).
+  const tools = useMemo<AgentToolManifest[]>(
     () => [
       {
         name: 'search_memory',
-        description: 'Search saved memories for relevant facts',
-        scope: 'tools:memory',
-        parameters: {
-          type: 'object',
-          properties: {
-            query: { type: 'string', description: 'Search query' },
+        scope: 'memory:read',
+        schema: {
+          name: 'search_memory',
+          description: 'Search saved memories for relevant facts',
+          parameters: {
+            type: 'object',
+            properties: {
+              query: { type: 'string', description: 'Search query' },
+            },
+            required: ['query'],
           },
-          required: ['query'],
         },
       },
     ],
@@ -103,7 +110,7 @@ export default function App() {
             The app keeps memory in-browser using sql.js and lets you enable scoped tool access.
           </div>
           <div className="tool-toggle">
-            <ScopeToggle tools={tools as any} enabledScopes={enabledScopes} onToggle={setEnabledScopes} />
+            <ScopeToggle tools={tools} enabledScopes={enabledScopes} onToggle={setEnabledScopes} />
           </div>
         </section>
 
