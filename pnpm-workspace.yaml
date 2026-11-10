@@ -38,9 +38,8 @@ minimumReleaseAgeExclude:
   # dependency (PR #305). WAIVED in writing by Kurt VanDusen 2026-11-01
   # (option 1 of the recorded ask): same rationale as the undici/image-size
   # waivers — the advisory is exploitable in the wild. The node-forge burst
-  # does NOT get one here — PR #307 already ruled that remedy (date-bounded
-  # audit allowlist, scheduled bump 2026-11-10), so the node-forge
-  # override/exclusion was dropped to keep a single decision on main.
+  # never got a waiver — PR #307 ruled a date-bounded audit allowlist until
+  # the fix matured; the override below landed 2026-11-10 with no exclusion.
   - body-parser@2.4.0
 
 # Single source of truth for overrides. Do NOT add `pnpm.overrides` to the root
@@ -73,6 +72,13 @@ overrides:
   # 2026-10-22 (10 days old). Pulled in by @modelcontextprotocol/sdk's
   # express dependency (new with packages/mcp-server). Same waiver rationale.
   'body-parser@>=2.0.0 <2.4.0': 2.4.0
+  # node-forge 2026-11-01 advisory burst (GHSA-7wch-p9px-956x,
+  # GHSA-jc66-7q78-782g, GHSA-8hrf-8g6f-7xwp, GHSA-hqq3-7jhf-c5jx,
+  # GHSA-5x38-2vff-x55p HIGH, plus moderate/low siblings): all patched in
+  # 1.4.1, published 2026-10-27 04:44Z, cleared the 14-day age gate
+  # 2026-11-10 04:44Z. Reach is @expo/cli dev tooling. GHSA-86w9-cpqp-85rv
+  # has no patch and stays allowlisted (issue #278).
+  'node-forge@<1.4.1': 1.4.1
   # undici HIGH advisories (GHSA-xjj6-f33q-929c, GHSA-4w7w-5xrc-9h26,
   # GHSA-2m5v-pch6-74hx, GHSA-qrxm-fqhp-jwvm — fetch/redirect issues;
   # patches published 2026-10-15, age gate waived by Kurt 2026-10-28,
