@@ -1,30 +1,40 @@
 import { WikiMemory } from '@equationalapplications/core-llm-wiki'
+import type { LLMProvider } from '@equationalapplications/core-llm-wiki'
 import type { SQLiteAdapter } from '../database/sqljs-adapter'
-import { SqlJsAdapter } from '../database/sqljs-adapter'
+
+/**
+ * ScopeLab has no maintenance LLM. `WikiOptions.llmProvider` is required:
+ * without one, every non-empty `read()` threw on `llmProvider.embed`. This
+ * provider has no `embed`, so reads use keyword search, and its
+ * `generateText` fails loudly if anything ever runs the librarian.
+ */
+const noMaintenanceLlm: LLMProvider = {
+  generateText: async () => {
+    throw new Error('ScopeLab has no maintenance LLM: run the librarian from a host with an LLM provider.')
+  },
+}
 
 export class WikiService {
   private wiki: WikiMemory
   private readonly entityId = 'scopelab-user'
 
   constructor(adapter: SQLiteAdapter) {
-    this.wiki = new WikiMemory(adapter, {
-      config: {
-        maintenance: 'auto',
-        autoLibrarianThreshold: 10,
-        autoHealThreshold: 30,
-      },
-    })
+    // `maintenance` is left to the engine default (deferred): the old
+    // `'auto'` setting ran the librarian every 10 events, and with no LLM
+    // every pass failed and logged an error.
+    this.wiki = new WikiMemory(adapter, { llmProvider: noMaintenanceLlm })
   }
 
   async init(): Promise<void> {
     await this.wiki.setup()
   }
 
-  async remember(message: string, metadata?: Record<string, unknown>): Promise<void> {
+  /** Append a chat event. `occurredAt` is when it happened (e.g. when the user sent it). */
+  async remember(message: string, opts: { occurredAt?: number } = {}): Promise<void> {
     await this.wiki.write(this.entityId, {
-      event_type: 'user_message',
+      event_type: 'observation',
       summary: message,
-      metadata,
+      ...(opts.occurredAt !== undefined ? { occurred_at: opts.occurredAt } : {}),
     })
   }
 

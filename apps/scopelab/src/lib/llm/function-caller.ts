@@ -38,7 +38,16 @@ export async function chatWithMemory({
   // failed or status-only turn leaves nothing behind, so retrying it never
   // stores the user message (or its tool calls) twice.
   const sentAt = Date.now()
-  const rememberUserMessage = () => wiki.remember(userMessage, { timestamp: sentAt })
+  // Memory is best effort once Gemini has answered: a failed write is logged
+  // and the answer is still returned, so the user never loses it.
+  const persistTurn = async (entries: string[]) => {
+    try {
+      await wiki.remember(userMessage, { occurredAt: sentAt })
+      for (const entry of entries) await wiki.remember(entry)
+    } catch (error) {
+      console.error(`ScopeLab: could not write the turn to memory: ${(error as Error).message}`)
+    }
+  }
   const memoryContext = await wiki.getContext(userMessage)
   const authorizedTools = buildAuthorizedToolsArray(tools, enabledScopes)
   // `gemini-flash-latest` is Google's rolling alias. The previous pin,
@@ -182,14 +191,11 @@ export async function chatWithMemory({
     }
     // The turn produced an answer: record it in order (user message, tool
     // executions, answer), the same contract as the text path.
-    await rememberUserMessage()
-    for (const { name, args, result } of toolCalls) {
-      await wiki.remember(`Tool call: ${name}(${JSON.stringify(args)}) → ${JSON.stringify(result).slice(0, 200)}`, {
-        type: 'tool_execution',
-        tool: name,
-      })
-    }
-    await wiki.remember(`Assistant: ${finalText.slice(0, 500)}`, { type: 'assistant_response' })
+    await persistTurn([
+      ...toolCalls.map(({ name, args, result }) =>
+        `Tool call: ${name}(${JSON.stringify(args)}) → ${JSON.stringify(result).slice(0, 200)}`),
+      `Assistant: ${finalText.slice(0, 500)}`,
+    ])
     return { response: finalText, toolCalls, stored: true }
   }
 
@@ -197,7 +203,6 @@ export async function chatWithMemory({
   if (!text) {
     return { response: `Gemini returned no answer (${candidate.finishReason ?? 'no text'}).`, stored: false }
   }
-  await rememberUserMessage()
-  await wiki.remember(`Assistant: ${text.slice(0, 500)}`, { type: 'assistant_response' })
+  await persistTurn([`Assistant: ${text.slice(0, 500)}`])
   return { response: text, stored: true }
 }

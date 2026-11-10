@@ -62,6 +62,9 @@ export default function App() {
     setStatus('Querying Gemini…')
     const userMessage = message.trim()
     setMessage('')
+    // Give the message back for a retry, unless the user has already started
+    // typing a new one while this turn was in flight.
+    const restoreMessage = () => setMessage(current => (current.trim() ? current : userMessage))
     try {
       // `history` excludes this turn: chatWithMemory appends userMessage.
       const result = await chatWithMemory({
@@ -83,11 +86,11 @@ export default function App() {
         ])
         setStatus('Received response')
       } else {
+        restoreMessage()
         setStatus('No answer from Gemini; see the response box.')
       }
     } catch (error) {
-      // Give the typed message back so a retry doesn't mean retyping it.
-      setMessage(userMessage)
+      restoreMessage()
       setStatus(`Chat failed: ${(error as Error).message}`)
     }
   }

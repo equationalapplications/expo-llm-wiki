@@ -494,9 +494,11 @@ describe('chatWithMemory — Gemini request shape (live-verified 2026-11-10)', (
     fetchMock
       .mockResolvedValueOnce(geminiFunctionCall('search_memory', { query: 'q' }))
       .mockResolvedValueOnce(geminiResponse({ candidates: [{ finishReason: 'MALFORMED_FUNCTION_CALL', content: { role: 'model', parts: [] } }] }))
-    const out = await chatWithMemory({ userMessage: 'hi', tools: [makeTool()], enabledScopes: [], apiKey: 'k', wiki: mockWiki('ctx'), history: [] })
+    const wiki = mockWiki('ctx')
+    const out = await chatWithMemory({ userMessage: 'hi', tools: [makeTool()], enabledScopes: [], apiKey: 'k', wiki, history: [] })
     expect(out.stored).toBe(false)
     expect(out.response).toBe('The tool ran, but Gemini returned no answer (MALFORMED_FUNCTION_CALL).')
+    expect(wiki.remember).not.toHaveBeenCalled()
   })
 
   it('answers a throwing handler with an error and keeps the calls that ran', async () => {
@@ -547,7 +549,11 @@ describe('chatWithMemory — Gemini request shape (live-verified 2026-11-10)', (
     const wiki = mockWiki('ctx')
     const out = await chatWithMemory({ userMessage: 'hi', tools: [makeTool()], enabledScopes: [], apiKey: 'k', wiki, history: [] })
     expect(out.stored).toBe(true)
-    expect(wiki.remember.mock.calls.map((c: any[]) => c[1]?.type)).toEqual([undefined, 'tool_execution', 'assistant_response'])
+    const written = wiki.remember.mock.calls.map((c: any[]) => c[0] as string)
+    expect(written[0]).toBe('hi')
+    expect(written[1]).toMatch(/^Tool call: search_memory\(/)
+    expect(written[2]).toBe('Assistant: answer')
+    expect(written).toHaveLength(3)
   })
 
   it('remembers no tool execution when the follow-up fails', async () => {
@@ -577,6 +583,30 @@ describe('chatWithMemory — Gemini request shape (live-verified 2026-11-10)', (
     await expect(turn()).rejects.toThrow(/HTTP 503/)
     await turn()
     expect(wiki.remember.mock.calls.filter((c: any[]) => c[0] === 'hi')).toHaveLength(1)
+  })
+
+  it('still returns the answer when writing the turn to memory fails', async () => {
+    fetchMock.mockResolvedValueOnce(geminiText('hello'))
+    const wiki = mockWiki()
+    wiki.remember.mockRejectedValue(new Error('disk full'))
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const out = await chatWithMemory({ userMessage: 'hi', tools: [], enabledScopes: [], apiKey: 'k', wiki, history: [] })
+      expect(out).toEqual({ response: 'hello', stored: true })
+      expect(errors).toHaveBeenCalledOnce()
+    } finally {
+      errors.mockRestore()
+    }
+  })
+
+  it('records when the user sent the message, not when it was written', async () => {
+    fetchMock.mockResolvedValueOnce(geminiText('hello'))
+    const wiki = mockWiki()
+    const before = Date.now()
+    await chatWithMemory({ userMessage: 'hi', tools: [], enabledScopes: [], apiKey: 'k', wiki, history: [] })
+    const [, opts] = wiki.remember.mock.calls[0]
+    expect(opts.occurredAt).toBeGreaterThanOrEqual(before)
+    expect(opts.occurredAt).toBeLessThanOrEqual(Date.now())
   })
 })
 
