@@ -26,14 +26,14 @@ export class SqlJsAdapter implements SQLiteAdapter {
   }
 
   async runAsync(sql: string, params: unknown[] = []): Promise<{ changes: number; lastInsertRowId: number }> {
-    const stmt = this.db.prepare(sql)
-    try {
-      stmt.bind(params as any[])
-      stmt.step()
-    } finally {
-      stmt.free()
+    this.db.run(sql, params as any)
+    return {
+      changes: this.db.getRowsModified(),
+      // Core keys FTS rows on this (Fts5IndexStrategy.insertDocs); a
+      // hardcoded 0 pointed every entries_fts row at rowid 0, so keyword
+      // search on an FTS5-capable sql.js build found nothing.
+      lastInsertRowId: Number(this.db.exec('SELECT last_insert_rowid()')[0]?.values[0]?.[0] ?? 0),
     }
-    return { changes: this.db.getRowsModified(), lastInsertRowId: 0 }
   }
 
   async getAllAsync<T>(sql: string, params: unknown[] = []): Promise<T[]> {
