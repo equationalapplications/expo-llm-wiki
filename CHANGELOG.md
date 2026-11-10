@@ -1,3 +1,9 @@
+## [8.0.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v8.0.0...v8.0.1) (2026-11-10)
+
+### Bug Fixes
+
+* **core-llm-tools:** drop the removed wiki_read name from graph_traverse ([043a2c1](https://github.com/equationalapplications/expo-llm-wiki/commit/043a2c1bfc22fb1ea07d4c5b5fa4589eab83f6e8)), closes [#324](https://github.com/equationalapplications/expo-llm-wiki/issues/324)
+
 ## [8.0.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v7.18.0...v8.0.0) (2026-11-09)
 
 ### ⚠ BREAKING CHANGES
