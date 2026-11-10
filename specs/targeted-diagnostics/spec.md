@@ -155,8 +155,12 @@ Each fix ships with a unit test that fails on the current code.
   `BENCH_WRITE_RESULTS=1`.
 - **Baseline.** Totals are compared against a committed
   `fixtures/promptVolume/baseline.json`. The test fails if any config's
-  total user characters or calls rise more than 10% above baseline, or
-  if extract's ratio rises above 1.25. A deliberate change updates the
+  total user characters or calls, or any single call site's, rise more
+  than 10% above baseline. (Revised 2026-11-10: the first draft also
+  capped extract's ratio at 1.25. That figure came from long LongMemEval
+  turns. On this stream's short events, the per-line label and ISO
+  timestamp alone put ops extract near 1.6, so the per-site baseline check
+  replaced the absolute cap.) A deliberate change updates the
   baseline in the same commit, with the reason in the message.
 - **Findings check.** An assertion pins the number of distinct events
   each config's librarian actually saw. It exposes whether legacy-deferred
