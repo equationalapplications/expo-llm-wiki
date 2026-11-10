@@ -1,3 +1,13 @@
+## [8.0.2](https://github.com/equationalapplications/expo-llm-wiki/compare/v8.0.1...v8.0.2) (2026-11-10)
+
+### Bug Fixes
+
+* **scopelab:** answer every parallel Gemini call and stop storing placeholders ([e12277b](https://github.com/equationalapplications/expo-llm-wiki/commit/e12277b56552580e55e09f5bb54fdaf105dea25c)), closes [#350](https://github.com/equationalapplications/expo-llm-wiki/issues/350)
+* **scopelab:** contain a failing tool handler and align the stored contract ([40952ba](https://github.com/equationalapplications/expo-llm-wiki/commit/40952ba0d58ff19816f86f2134c0470cc70d70ce))
+* **scopelab:** give WikiService a provider so chat stops throwing in the app ([beb7d1f](https://github.com/equationalapplications/expo-llm-wiki/commit/beb7d1fff332cefc00e369060848b30f1dc5603a)), closes [#350](https://github.com/equationalapplications/expo-llm-wiki/issues/350)
+* **scopelab:** repair Gemini chat and tool calls found broken by the live smoke ([a17bd63](https://github.com/equationalapplications/expo-llm-wiki/commit/a17bd63b079d0ee2749f16c1bf3f20fa72e9f1a6))
+* **scopelab:** write a chat turn to memory only once it has an answer ([916140c](https://github.com/equationalapplications/expo-llm-wiki/commit/916140cf7a3d216daf47426685ab478938249be3))
+
 ## [8.0.1](https://github.com/equationalapplications/expo-llm-wiki/compare/v8.0.0...v8.0.1) (2026-11-10)
 
 ### Bug Fixes
