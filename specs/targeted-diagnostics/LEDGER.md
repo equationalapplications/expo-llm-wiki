@@ -14,8 +14,9 @@ In flight: nothing
 ## Findings
 
 - 2026-11-10 (Task 4). **ops + auto skips the first auto batch on a fresh entity.**
-  - `WriteService.ts:126` sets `memory_checkpoint` to the write count inside
-    the trigger transaction, before the pass runs.
+  - `WriteService.ts:115` (count path) and `:126` (token path) set
+    `memory_checkpoint` to the write count inside the trigger transaction,
+    before the pass runs.
   - The ops pass then calls `seedLibrarianWatermark`
     (`MaintenanceService.ts:760`). That function exists to migrate legacy
     databases, and here it anchors the watermark at event 20.
@@ -28,8 +29,9 @@ In flight: nothing
     baseline pins `eventsSeen` at 40, so the fix will flip this test.
 - 2026-11-10 (Task 4). **legacy + deferred sees only the newest 50 events.**
   - `legacy.ts:35` uses `getRecent(entityId, 50)`.
-  - On a 60-event backlog, events 1-10 are never seen (`eventsSeen` 50 of
-    56).
+  - On a 60-event backlog it saw 50 of 56 distinct summaries: 6 were never
+    read, and 4 others survived only as later restatements. `eventsSeen`
+    counts distinct summaries, per the review.
 - 2026-11-10 (Task 4). **Legacy prompt volume.**
   - Under the scripted provider, legacy-auto sent 75,857 user characters
     in 3 calls, about 20x the raw event text. Before the Task 5 tail fix the
@@ -88,5 +90,25 @@ In flight: nothing
 - Task 7. Ruling: the guards exclude the `hit` class.
   - Why: an upper bound on hits would fail an improvement.
   - Cost if wrong: none.
+- Final. Ruling: the spec Status stays Draft for now. The flip to Implemented happens in the PR's final cleanup commit, together with deleting `plan.md` and `LEDGER.md` (specs/README lifecycle).
+  - Why: the spec should change only after the owner has reviewed the PR. The findings have been moved into the spec now so they outlast the ledger.
+  - Cost if wrong: none; the flip happens in the same PR.
+- Final: fixed decisionLog silently falling back to keyword mode on a sidecar miss.
+  - Test: `decisionLog with an incomplete sidecar` went RED→GREEN.
+  - Suite: gateDecisions 7/7.
+
+## Final review — deferred minors
+
+- `eventsSeen` counts distinct summaries. The 4 restatements are byte-identical, so the denominator is 56 rather than 60.
+- Retrieval guards give +3 slack to miss classes measured at 0 (`unscorable`, `vector-miss`, `fusion-demotion`). `unscorable` only fires when every gold id is missing.
+- Only the default-mode retrieval metric is guarded; keyword-only and the blend are not.
+- `worst` lists the first 10 misses in file order, not the worst 10.
+- `SteppingDate`: a Date created before install is not `instanceof Date` while installed, and calling `Date()` without `new` throws. Core uses neither today.
+- The `restore puts globals back` test has no try/finally.
+- `monotonicNow()` budgets expire after N clock reads under the stepping clock, not after N ms. Add a docstring caveat before the Option 2 replays.
+- `estimateIngestTokens` ignores maintenance: it runs about 5x high for legacy-deferred. This errs conservative.
+- The README says "dated report", but the files are named by `gitDescribe`.
+- `promptVolume.test.ts` writes its bad-stream fixture into the gitignored `.cache/`; it should use a temp directory.
+- The three reads per query each call `trackAccess`, and `access_count` is a tie-break, so the modes are not fully independent.
 
 ## Discrepancies

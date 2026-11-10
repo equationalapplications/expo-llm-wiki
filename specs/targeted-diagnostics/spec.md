@@ -234,6 +234,57 @@ is the tight one.
 - Running the heavy benchmarks.
 - Mining old `benchmark-results` JSON files: they hold aggregates only.
 
+## Findings from the first runs (2026-11-10)
+
+These came from the suites in this spec, at zero tokens. They are
+recorded here because the ledger is deleted at merge. Fixes to core are
+out of scope for this spec.
+
+1. **ops + `maintenance: 'auto'` permanently skips the first auto batch on
+   a fresh entity.** This is a core bug, confirmed by the whole-branch
+   review.
+   - `WriteService.write` sets `memory_checkpoint` to the write count inside
+     the trigger transaction (`WriteService.ts:115` on the count path,
+     `:126` on the token path), before the pass runs.
+   - `runOpsLibrarianPass` then calls `seedWatermark`. That call goes to
+     `seedLibrarianWatermark` (`MaintenanceService.ts:760-768`), which is
+     meant for migrating legacy databases. It finds no watermark and
+     anchors at event 20.
+   - The first `autoLibrarianThreshold` events are never extracted, and a
+     later `runLibrarian` does not recover them.
+   - Reproduced with the real clock. The 8.0.0 default (ops + deferred) is
+     not affected.
+   - The prompt-volume baseline pins ops-auto `eventsSeen` at 40, so a fix
+     will flip that test.
+2. **legacy + deferred reads only the newest 50 events** (`legacy.ts:35`).
+   On the 60-event stream it saw 50 of 56 distinct summaries: 6 were never
+   read, and 4 others survived only as later restatements. After the §2.1
+   fix, the LongMemEval legacy-deferred cell reproduces this loss
+   faithfully.
+3. **Legacy prompt volume.** With the scripted provider, legacy-auto sent
+   75,857 user characters in 3 calls, about 20x the raw event text.
+   ops-deferred sent 8,175 in 3 calls. The one-fact-per-event script
+   inflates legacy's fact-row context, so treat 20x as an upper figure.
+   This is prompt volume, not billed tokens. Do not quote the ops-auto
+   figure as a strategy comparison, because finding 1 depresses it.
+4. **The gate's duplicate threshold has almost no headroom.**
+   - At production thresholds the real gate misroutes the same 2 rows that
+     calibration found (`mixed-1::1`, `mixed-1::2`). Both are safe-direction
+     errors: one extra resolve item each.
+   - `job-1` sits 0.001 below `dupThreshold` (0.889 against 0.89).
+   - Three true duplicates clear it by only 0.009 to 0.028.
+5. **Retrieval.**
+   - With `hybridWeight` unset, the shipped default is pure vector search.
+     The integration reports call it "hybrid".
+   - Default NDCG@10 is 0.7200 on SciFact and MRR@10 is 0.7017 on
+     FinanceBench, reproducing the integration figures.
+   - Keyword-only gives 0.6917 and 0.4367. A 0.5 blend gives 0.7170 and
+     0.5135.
+   - Keyword search never rescues a vector miss on either set, while
+     blending pushes 18 SciFact and 24 FinanceBench gold documents out of
+     the top 10.
+   - Hard misses: 25 on SciFact and 2 on FinanceBench.
+
 ## Files touched
 
 - New: `packages/benchmarks/src/determinism.ts`, `src/scriptedProvider.ts`,
