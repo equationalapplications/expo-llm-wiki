@@ -60,6 +60,36 @@
     so the fallback contact is now `info@equationalapplications.com`.
   - **Remaining:** the live Gemini smoke test and the `system`-role
     verification are still unrecorded.
+- **Status revision (2026-11-10, branch `fix/scopelab-gemini-live`):**
+  Implemented. The two unrecorded items were run live against the Gemini
+  API (v1beta `generateContent`) with the owner's key.
+  - **Test plan item 4 / H-2:** the key in the `x-goog-api-key` header
+    authenticates (models lookup 200; the same request with no key 403).
+  - **M-1 `system` role:** Gemini rejects `role: 'system'` inside `contents`
+    (400 "Role 'system' is not supported"), so this spec's first option
+    (remove the downgrade, send `system` as a turn) does not work as written.
+    `systemInstruction` does work and the model obeys it, so the system
+    prompt, with the retrieved-memory delimiters, now goes there instead of
+    the first-user-turn fallback.
+  - **The live run found three defects that the mocked tests could not see,**
+    all fixed in the same branch. Scopelab chat and tool use were broken
+    before them:
+    1. `gemini-2.0-flash` is retired: every generate call returned 404 while
+       its `models/` metadata still returned 200. The URL now uses the
+       `gemini-flash-latest` alias.
+    2. `App.tsx` defined `search_memory` without the `schema` field that
+       `buildAuthorizedToolsArray` reads, so Gemini received
+       `functionDeclarations: [null]` and never saw the tool. Its scope
+       `tools:memory` was also not a valid `AgentScope`; it is now
+       `memory:read`.
+    3. The tool follow-up sent the result with `role: 'function'` (400) and
+       re-built the model turn without its `thoughtSignature` (400). It now
+       echoes the model turn verbatim and returns the result as a `user`
+       turn. App-side `assistant` history turns map to `model`.
+  - **Evidence:** a temporary live test drove the real `chatWithMemory`
+    through a first turn, a history turn and a `search_memory` round trip,
+    and the answer used the tool result. The new unit tests in
+    `function-caller.test.ts` pin each request shape. Scopelab suite 22/22.
 
 ## Problem
 
