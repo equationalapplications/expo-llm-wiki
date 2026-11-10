@@ -133,9 +133,12 @@
   librarian now runs on the key the developer enters, read when it runs,
   once after each answered turn (`WikiService.consolidate()`, serialized).
   Maintenance stays deferred. The sql.js adapter now meets core's
-  `SQLiteAdapter` contract (it passes the `tx` handle), and `build` runs
-  `tsc -b`: the old `tsc -p tsconfig.json` checked no files, which hid 5
-  type errors. Scopelab suite 48/48.
+  `SQLiteAdapter` contract (it passes the `tx` handle and returns the real
+  `last_insert_rowid`, which core keys FTS rows on — review of this PR
+  found the hardcoded 0 pointed every `entries_fts` row at rowid 0), and
+  `build` runs `tsc -b`: the old `tsc -p tsconfig.json` checked no files,
+  which hid 5 type errors. Every Gemini call is bounded by an AbortSignal.
+  Scopelab suite 51/51.
 
 ## Problem
 
