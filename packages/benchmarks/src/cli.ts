@@ -866,8 +866,11 @@ async function main(): Promise<void> {
   if (command === 'calibrate') {
     const scenariosFile = join(REPO_ROOT, 'packages', 'benchmarks', 'fixtures', 'supersession', 'scenarios.json');
     const scenarios = JSON.parse(readFileSync(scenariosFile, 'utf8')) as Scenario[];
-    const { getEmbedder } = await import('./embed');
-    const embed = await getEmbedder();
+    // Recorded BGE-small vectors (spec targeted-diagnostics §4): no fastembed
+    // download. A changed scenario fails loudly; rebuild the sidecar with
+    // `pnpm fixture:gate-embeddings`.
+    const { loadSidecar, sidecarEmbed, SIDECAR_PATH } = await import('./gate/decisionLog');
+    const embed = sidecarEmbed(loadSidecar(SIDECAR_PATH));
     const r = await runCalibrateCommand({ argv, scenarios, embed });
     process.exitCode = r.exitCode;
     return;

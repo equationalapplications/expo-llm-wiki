@@ -109,6 +109,7 @@ export interface SupersessionReport {
 }
 
 const ENTITY = 'bench-user';
+export const SUPERSESSION_ENTITY = ENTITY;
 
 /** ISO timestamp for the report. */
 function nowIso(): string {
@@ -124,7 +125,7 @@ function nowIso(): string {
  */
 const EXISTING_CREATED_AT = Date.UTC(2020, 0, 1);
 
-async function insertExistingFacts(adapter: SQLiteAdapter, facts: ScenarioExistingFact[]): Promise<void> {
+export async function insertExistingFacts(adapter: SQLiteAdapter, facts: ScenarioExistingFact[]): Promise<void> {
   for (const f of facts) {
     await adapter.runAsync(
       `INSERT INTO llm_wiki_entries

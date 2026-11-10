@@ -6,7 +6,7 @@ In flight: nothing
 - [x] 2. LongMemEval ingest honours maintenance flag — evidence: a42e1ea, ingest.test.ts 6/6
 - [x] 3. Supersession parity + version label — evidence: 0b5d690, package 117/117
 - [x] 4. Prompt-volume ledger — evidence: a148cc0, promptVolume.test.ts 9/9
-- [ ] 5. Strategy-aware dry-run estimate — evidence:
+- [x] 5. Strategy-aware dry-run estimate — evidence: 60fe6f8, cli.test.ts, 0.93x the ledger
 - [ ] 6. Gate decision log — evidence:
 - [ ] 7. Retrieval miss attribution — evidence:
 - [ ] 8. Docs + full verification — evidence:
@@ -37,6 +37,15 @@ In flight: nothing
   - ops-deferred sent 8,175 in 3 calls.
   - Caveat: the scripted provider returns one fact per event, which inflates
     legacy's fact-row context. This is prompt volume, not billed tokens.
+- 2026-11-10 (Task 6). **The gate's duplicate threshold has almost no headroom.**
+  - At production thresholds the real `gateCandidates` misroutes the same 2
+    rows calibration found (`mixed-1::1`, `mixed-1::2`, labelled ADD, routed
+    to resolve). Both errors go in the safe direction.
+  - The ambiguous row `job-1` sits 0.001 below `dupThreshold` (cosine
+    0.889).
+  - Three true duplicates clear 0.89 by only 0.009 to 0.028.
+  - A small change to the embedding model or the embed text flips NOOP to
+    resolve, or resolve to NOOP. This is a tuning lever.
 
 ## Rulings
 
@@ -54,5 +63,8 @@ In flight: nothing
   - Cost if wrong: none.
 - Task 5. Ruling: the legacy estimate models a 190-char event-row overhead and a 700-char fact row, both measured from the legacy prompt. The plan had only a 200-char fact allowance. The estimate is 0.93x the ledger.
   - Cost if wrong: the estimate overstates legacy when a real model extracts fewer facts than there are turns. That is conservative.
+- Task 6. Ruling: in-batch duplicates are logged as `noop` rows with `inBatchDuplicate: true`, since `gateCandidates` drops them before neighbour lookup.
+  - Why: this keeps one row per candidate.
+  - Cost if wrong: none.
 
 ## Discrepancies
