@@ -1,3 +1,14 @@
+## [8.0.3](https://github.com/equationalapplications/expo-llm-wiki/compare/v8.0.2...v8.0.3) (2026-11-10)
+
+### Bug Fixes
+
+* **core-llm-tools:** emit googleSearch, the key @google/genai reads ([195c6a5](https://github.com/equationalapplications/expo-llm-wiki/commit/195c6a51e0ca6adebdffaadba57395e7d8383ac6))
+* **core-llm-tools:** keep google_search assignable on GeminiToolEntry ([d1d0164](https://github.com/equationalapplications/expo-llm-wiki/commit/d1d01640656cdfc00afe95bf6e6b26ffdd440ab3))
+* **scopelab:** guard in-flight turns, sync the key ref after commit ([4b2303d](https://github.com/equationalapplications/expo-llm-wiki/commit/4b2303ded155dfa8be0f0134347597bba470b6a3))
+* **scopelab:** return the real last_insert_rowid from the sql.js adapter ([cceb2e5](https://github.com/equationalapplications/expo-llm-wiki/commit/cceb2e5c9006230fd94e3b760bc4c5a385091051))
+* **scopelab:** run the librarian on the developer's Gemini key ([831de7a](https://github.com/equationalapplications/expo-llm-wiki/commit/831de7a5ffab6dd42f878a06bff35e297f573639))
+* **scopelab:** share one Gemini client and bound every call with a timeout ([40a1a93](https://github.com/equationalapplications/expo-llm-wiki/commit/40a1a93549f2e06742cdf87f609c7ad839a72d67))
+
 ## [8.0.2](https://github.com/equationalapplications/expo-llm-wiki/compare/v8.0.1...v8.0.2) (2026-11-10)
 
 ### Bug Fixes
