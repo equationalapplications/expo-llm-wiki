@@ -90,6 +90,17 @@
     through a first turn, a history turn and a `search_memory` round trip,
     and the answer used the tool result. The new unit tests in
     `function-caller.test.ts` pin each request shape. Scopelab suite 22/22.
+- **Status revision (2026-11-10, review of PR #350):** still Implemented.
+  A high-effort review of the branch found that the verbatim echo from
+  item 3 broke parallel function calling: a turn with N `functionCall` parts
+  got a single `functionResponse` back, and Gemini rejects a mismatched
+  count. The fix answers every call in order and echoes `functionCall.id`.
+  An unauthorized call in a mixed turn gets an error response and never
+  runs. M-2 is unchanged: when no requested call is authorized, nothing runs
+  and no follow-up is sent. Safety blocks and text-less replies now return a
+  status message and are no longer stored as "No response." / "Tool
+  executed." placeholders. The parallel-call shape is unit-tested only, not
+  live-verified. Scopelab suite 30/30.
 
 ## Problem
 
