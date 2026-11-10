@@ -214,8 +214,8 @@ describe('chatWithMemory — fail-closed scope authorization (M-2)', () => {
     })
     expect(out.stored).toBe(false)
     expect(out.response).toMatch(/not enabled \(search_memory\)/)
-    // Only the user message is remembered, never a placeholder answer.
-    expect(wiki.remember).toHaveBeenCalledTimes(1)
+    // Nothing from a status-only turn is remembered, so a retry can't duplicate it.
+    expect(wiki.remember).not.toHaveBeenCalled()
   })
 
   it('rejects a tool with no scope property (fail-closed on missing/unknown scope)', async () => {
@@ -487,7 +487,7 @@ describe('chatWithMemory — Gemini request shape (live-verified 2026-11-10)', (
     const wiki = mockWiki()
     const out = await chatWithMemory({ userMessage: 'hi', tools: [], enabledScopes: [], apiKey: 'k', wiki, history: [] })
     expect(out).toEqual({ response: 'Gemini returned no answer (SAFETY).', stored: false })
-    expect(wiki.remember).toHaveBeenCalledTimes(1)
+    expect(wiki.remember).not.toHaveBeenCalled()
   })
 
   it('reports a text-less follow-up instead of storing "Tool executed."', async () => {
@@ -558,7 +558,25 @@ describe('chatWithMemory — Gemini request shape (live-verified 2026-11-10)', (
     await expect(
       chatWithMemory({ userMessage: 'hi', tools: [makeTool()], enabledScopes: [], apiKey: 'k', wiki, history: [] }),
     ).rejects.toThrow(/HTTP 500/)
-    expect(wiki.remember).toHaveBeenCalledTimes(1)
+    expect(wiki.remember).not.toHaveBeenCalled()
+  })
+
+  it('stores the user message then the answer on a text turn', async () => {
+    fetchMock.mockResolvedValueOnce(geminiText('hello'))
+    const wiki = mockWiki()
+    await chatWithMemory({ userMessage: 'hi', tools: [], enabledScopes: [], apiKey: 'k', wiki, history: [] })
+    expect(wiki.remember.mock.calls.map((c: any[]) => c[0])).toEqual(['hi', 'Assistant: hello'])
+  })
+
+  it('stores the user message once across a failed turn and its retry', async () => {
+    fetchMock
+      .mockResolvedValueOnce(new Response('{}', { status: 503 }))
+      .mockResolvedValueOnce(geminiText('hello'))
+    const wiki = mockWiki()
+    const turn = () => chatWithMemory({ userMessage: 'hi', tools: [], enabledScopes: [], apiKey: 'k', wiki, history: [] })
+    await expect(turn()).rejects.toThrow(/HTTP 503/)
+    await turn()
+    expect(wiki.remember.mock.calls.filter((c: any[]) => c[0] === 'hi')).toHaveLength(1)
   })
 })
 

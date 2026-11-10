@@ -27,12 +27,18 @@ export async function chatWithMemory({
   response: string
   toolCalls?: Array<{ name: string; args?: Record<string, unknown>; result: unknown }>
   /**
-   * True when `response` is a model answer, remembered as such. False when it
-   * is a status message: it is not remembered and must stay out of chat history.
+   * True when `response` is a model answer: the whole turn (user message,
+   * tool executions, answer) was remembered. False when it is a status
+   * message: nothing from the turn was remembered, and it must stay out of
+   * chat history.
    */
   stored: boolean
 }> {
-  await wiki.remember(userMessage, { timestamp: Date.now() })
+  // A turn is written to memory only once it has produced an answer. A
+  // failed or status-only turn leaves nothing behind, so retrying it never
+  // stores the user message (or its tool calls) twice.
+  const sentAt = Date.now()
+  const rememberUserMessage = () => wiki.remember(userMessage, { timestamp: sentAt })
   const memoryContext = await wiki.getContext(userMessage)
   const authorizedTools = buildAuthorizedToolsArray(tools, enabledScopes)
   // `gemini-flash-latest` is Google's rolling alias. The previous pin,
@@ -168,21 +174,21 @@ export async function chatWithMemory({
     }
 
     const finalData = await followup.json()
-    // Tool executions are remembered once the follow-up parses, whether or
-    // not it carries text: the calls did run.
-    for (const { name, args, result } of toolCalls) {
-      await wiki.remember(`Tool call: ${name}(${JSON.stringify(args)}) → ${JSON.stringify(result).slice(0, 200)}`, {
-        type: 'tool_execution',
-        tool: name,
-      })
-    }
     const finalCandidate = finalData.candidates?.[0]
     const finalText = joinText(finalCandidate?.content?.parts)
     if (!finalText) {
       const reason = finalData.promptFeedback?.blockReason ?? finalCandidate?.finishReason ?? 'no text'
       return { response: `The tool ran, but Gemini returned no answer (${reason}).`, toolCalls, stored: false }
     }
-    // Same contract as the text path: a stored answer is in memory too.
+    // The turn produced an answer: record it in order (user message, tool
+    // executions, answer), the same contract as the text path.
+    await rememberUserMessage()
+    for (const { name, args, result } of toolCalls) {
+      await wiki.remember(`Tool call: ${name}(${JSON.stringify(args)}) → ${JSON.stringify(result).slice(0, 200)}`, {
+        type: 'tool_execution',
+        tool: name,
+      })
+    }
     await wiki.remember(`Assistant: ${finalText.slice(0, 500)}`, { type: 'assistant_response' })
     return { response: finalText, toolCalls, stored: true }
   }
@@ -191,6 +197,7 @@ export async function chatWithMemory({
   if (!text) {
     return { response: `Gemini returned no answer (${candidate.finishReason ?? 'no text'}).`, stored: false }
   }
+  await rememberUserMessage()
   await wiki.remember(`Assistant: ${text.slice(0, 500)}`, { type: 'assistant_response' })
   return { response: text, stored: true }
 }
