@@ -1,0 +1,58 @@
+{
+ "note": "Prompt-volume baseline (spec targeted-diagnostics §3). Regenerate with BENCH_UPDATE_BASELINE=1 and say why in the commit.",
+ "rows": [
+  {
+   "config": "legacy-auto",
+   "bySite": {
+    "librarian": {
+     "calls": 4,
+     "systemChars": 1964,
+     "userChars": 132556
+    }
+   },
+   "rawEventChars": 3874,
+   "eventsSeen": 56
+  },
+  {
+   "config": "legacy-deferred",
+   "bySite": {
+    "librarian": {
+     "calls": 1,
+     "systemChars": 491,
+     "userChars": 14626
+    }
+   },
+   "rawEventChars": 3874,
+   "eventsSeen": 50
+  },
+  {
+   "config": "ops-auto",
+   "bySite": {
+    "extract": {
+     "calls": 2,
+     "systemChars": 1352,
+     "userChars": 4400
+    }
+   },
+   "rawEventChars": 3874,
+   "eventsSeen": 40
+  },
+  {
+   "config": "ops-deferred",
+   "bySite": {
+    "extract": {
+     "calls": 2,
+     "systemChars": 1352,
+     "userChars": 6630
+    },
+    "resolve": {
+     "calls": 1,
+     "systemChars": 910,
+     "userChars": 1545
+    }
+   },
+   "rawEventChars": 3874,
+   "eventsSeen": 56
+  }
+ ]
+}
