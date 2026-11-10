@@ -80,7 +80,7 @@ const tools = buildAuthorizedToolsArray(allAppTools, userGrantedScopes);
 const response = await ai.models.generateContent({
   model: 'gemini-flash-latest',
   contents: userInput,
-  tools,
+  config: { tools }, // @google/genai reads tools only from config
 });
 ```
 
@@ -110,7 +110,7 @@ const tools = buildAuthorizedToolsArray(allAppTools, userGrantedScopes);
 const response = await ai.models.generateContent({
   model: 'gemini-flash-latest',
   contents: userInput,
-  tools,
+  config: { tools }, // @google/genai reads tools only from config
 });
 ```
 

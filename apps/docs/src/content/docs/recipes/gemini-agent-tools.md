@@ -13,7 +13,7 @@ So the recipe defines one, `memory_search`, whose results carry each fact's `id`
 model has no ID to start from and may invent one.
 
 ```ts
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, type Tool } from '@google/genai';
 import {
   buildAuthorizedToolsArray,
   escalateToCloudManifest,
@@ -53,7 +53,9 @@ const tools = buildAuthorizedToolsArray(
 const response = await ai.models.generateContent({
   model: 'gemini-flash-latest',
   contents: 'What projects is Alice connected to?',
-  config: { tools },
+  // The cast is type-only: the declarations pass through unchanged, but
+  // core-llm-tools types `parameters` more loosely than the SDK's Schema.
+  config: { tools: tools as Tool[] },
 });
 
 // Dispatch any function calls to the wiki.
@@ -63,14 +65,18 @@ for (const call of response.functionCalls ?? []) {
   let result: unknown;
   switch (call.name) {
     case 'memory_search': {
-      const { facts } = await wiki.read(entityId, String(args.query ?? ''), { maxResults: 5 });
+      // excludeDrafts: reviewed facts only. Drop it to let unreviewed drafts through.
+      const { facts } = await wiki.read(entityId, String(args.query ?? ''), { maxResults: 5, excludeDrafts: true });
       // Keep `id`: it is the only way the model can reach graph_traverse.
       result = facts.map(({ id, title, body }) => ({ id, title, body }));
       break;
     }
-    case 'graph_traverse':
-      result = await wiki.traverseGraph(entityId, { ...args, sourceId: args.sourceId });
+    case 'graph_traverse': {
+      // Pass only the schema's keys, so the model can't set options it was never offered.
+      const { sourceId, maxDepth, direction, edgeTypes, excludeDrafts } = args;
+      result = await wiki.traverseGraph(entityId, { sourceId, maxDepth, direction, edgeTypes, excludeDrafts });
       break;
+    }
     case 'ontology_get':
       result = await wiki.getOntologyManifest(entityId);
       break;
