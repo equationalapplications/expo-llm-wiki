@@ -14,6 +14,8 @@ describe('geminiGenerateText', () => {
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
     expect(url).not.toContain('key-1')
     expect((init.headers as Record<string, string>)['x-goog-api-key']).toBe('key-1')
+    // A hung maintenance call must not hold the consolidate chain forever.
+    expect(init.signal).toBeInstanceOf(AbortSignal)
     const body = JSON.parse(init.body as string)
     expect(body.systemInstruction.parts[0].text).toBe('sys')
     expect(body.contents).toEqual([{ role: 'user', parts: [{ text: 'usr' }] }])

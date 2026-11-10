@@ -3,11 +3,8 @@ import type { AgentToolManifest } from '@equationalapplications/core-llm-tools'
 import { executeTool } from './tool-executor'
 import { WikiService } from '../memory/wiki-service'
 import { wrapRetrievedMemory } from './memory-delimiters'
-
-/** Concatenate the visible text parts of a Gemini candidate, skipping thoughts. */
-function joinText(parts: Array<{ text?: string; thought?: boolean }> | undefined): string {
-  return (parts ?? []).filter(p => typeof p.text === 'string' && !p.thought).map(p => p.text).join('')
-}
+import { callGemini, joinText } from './gemini-client'
+import { errorMessage } from '../errors'
 
 export async function chatWithMemory({
   userMessage,
@@ -45,19 +42,11 @@ export async function chatWithMemory({
       await wiki.remember(userMessage, { occurredAt: sentAt })
       for (const entry of entries) await wiki.remember(entry)
     } catch (error) {
-      console.error(`ScopeLab: could not write the turn to memory: ${(error as Error).message}`)
+      console.error(`ScopeLab: could not write the turn to memory: ${errorMessage(error)}`)
     }
   }
   const memoryContext = await wiki.getContext(userMessage)
   const authorizedTools = buildAuthorizedToolsArray(tools, enabledScopes)
-  // `gemini-flash-latest` is Google's rolling alias. The previous pin,
-  // gemini-2.0-flash, was retired and 404'd on every generate call while
-  // its models/ metadata still answered 200 (live smoke, 2026-11-10).
-  const GEMINI_URL =
-    'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent'
-  // Auth goes in a lower-case header (never the URL) so web/Expo fetch
-  // polyfills normalize it consistently and the key can't leak into URL logs.
-  const headers = { 'content-type': 'application/json', 'x-goog-api-key': apiKey }
 
   const systemPrompt = `You are a helpful assistant with access to tools.\n${memoryContext ? `${wrapRetrievedMemory(memoryContext)}\n` : ''}Only use tools whose scopes are enabled.`
   // The system prompt travels in `systemInstruction`: Gemini rejects a
@@ -70,32 +59,16 @@ export async function chatWithMemory({
     parts: [{ text: m.content }],
   }))
 
-  const response = await fetch(GEMINI_URL, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        systemInstruction,
-        contents,
-        // tool_config only alongside tools: with every scope toggled off
-        // there are no declarations, and a lone tool_config can be rejected.
-        ...(authorizedTools.length
-          ? { tools: authorizedTools, tool_config: { function_calling_config: { mode: 'AUTO' } } }
-          : {}),
-      }),
-    },
-  )
+  // tool_config only alongside tools: with every scope toggled off there
+  // are no declarations, and a lone tool_config can be rejected.
+  const data = await callGemini(apiKey, {
+    systemInstruction,
+    contents,
+    ...(authorizedTools.length
+      ? { tools: authorizedTools, tool_config: { function_calling_config: { mode: 'AUTO' } } }
+      : {}),
+  })
 
-  if (!response.ok) {
-    // Generic message only: provider bodies can contain account/project
-    // identifiers. Raw body available behind DEBUG_LLM_RAW_ERRORS.
-    if (import.meta.env.VITE_DEBUG_LLM_RAW_ERRORS === 'true') {
-      const errorText = await response.text()
-      console.error(`Gemini API error body: ${errorText.slice(0, 500)}`)
-    }
-    throw new Error(`Gemini API error: HTTP ${response.status}`)
-  }
-
-  const data = await response.json()
   const candidate = data.candidates?.[0]
   if (!candidate?.content?.parts?.length) {
     // Safety block, recitation stop, or empty candidate: tell the user
@@ -155,34 +128,21 @@ export async function chatWithMemory({
       })
     }
 
-    const followup = await fetch(GEMINI_URL, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          systemInstruction,
-          // Echo the model's turn verbatim: thinking models attach a
-          // `thoughtSignature` to the (first) functionCall part and reject
-          // the follow-up without it. The function responses go back as a
-          // `user` turn; Gemini rejects a `function` role. One tool round
-          // only: `tools` is not resent, so the model must answer in text.
-          contents: [
-            ...contents,
-            { ...candidate.content, role: 'model' },
-            { role: 'user', parts: responseParts },
-          ],
-        }),
-      },
-    )
+    const followup = await callGemini(apiKey, {
+      systemInstruction,
+      // Echo the model's turn verbatim: thinking models attach a
+      // `thoughtSignature` to the (first) functionCall part and reject
+      // the follow-up without it. The function responses go back as a
+      // `user` turn; Gemini rejects a `function` role. One tool round
+      // only: `tools` is not resent, so the model must answer in text.
+      contents: [
+        ...contents,
+        { ...candidate.content, role: 'model' },
+        { role: 'user', parts: responseParts },
+      ],
+    }, 'API follow-up')
 
-    if (!followup.ok) {
-      if (import.meta.env.VITE_DEBUG_LLM_RAW_ERRORS === 'true') {
-        const errorText = await followup.text()
-        console.error(`Gemini API follow-up error body: ${errorText.slice(0, 500)}`)
-      }
-      throw new Error(`Gemini API follow-up error: HTTP ${followup.status}`)
-    }
-
-    const finalData = await followup.json()
+    const finalData = followup
     const finalCandidate = finalData.candidates?.[0]
     const finalText = joinText(finalCandidate?.content?.parts)
     if (!finalText) {
