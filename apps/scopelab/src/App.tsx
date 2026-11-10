@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { SqlJsAdapter } from './lib/database/sqljs-adapter'
 import { WikiService } from './lib/memory/wiki-service'
 import { chatWithMemory } from './lib/llm/function-caller'
+import { geminiGenerateText } from './lib/llm/gemini-provider'
 import { setToolWiki } from './lib/llm/tool-executor'
 import { ScopeToggle } from './components/Tools/ScopeToggle'
 import type { AgentToolManifest } from '@equationalapplications/core-llm-tools'
@@ -17,6 +18,10 @@ export default function App() {
   const [enabledScopes, setEnabledScopes] = useState<string[]>(DEFAULT_SCOPES)
   const [history, setHistory] = useState<Array<{ role: string; content: string }>>([])
   const [status, setStatus] = useState('Ready to launch ScopeLab')
+  // Memory maintenance reads the key when it runs, so a key typed (or
+  // changed) after Initialize is the one it uses.
+  const apiKeyRef = useRef('')
+  apiKeyRef.current = apiKey
 
   // buildAuthorizedToolsArray reads `schema`; a flat manifest without it
   // was advertised to Gemini as `functionDeclarations: [null]`, so the
@@ -46,7 +51,7 @@ export default function App() {
     setStatus('Initializing memory…')
     try {
       const adapter = await SqlJsAdapter.create()
-      const service = new WikiService(adapter)
+      const service = new WikiService(adapter, { generateText: geminiGenerateText(() => apiKeyRef.current) })
       await service.init()
       setWiki(service)
       setToolWiki(service)
@@ -84,7 +89,16 @@ export default function App() {
           { role: 'user', content: userMessage },
           { role: 'assistant', content: result.response },
         ])
-        setStatus('Received response')
+        // Turn the new messages into facts so search_memory can find them.
+        // This is one more Gemini call on the developer's key, after the
+        // answer is already on screen.
+        setStatus('Received response. Saving to memory…')
+        try {
+          await wiki.consolidate()
+          setStatus('Received response. Memory updated.')
+        } catch (error) {
+          setStatus(`Received response, but saving to memory failed: ${(error as Error).message}`)
+        }
       } else {
         restoreMessage()
         setStatus('No answer from Gemini; see the response box.')
@@ -121,7 +135,7 @@ export default function App() {
             {initialized ? 'Memory initialized' : 'Initialize ScopeLab'}
           </button>
           <div className="hint">
-            The app keeps memory in-browser using sql.js and lets you enable scoped tool access.
+            The app keeps memory in-browser using sql.js and lets you enable scoped tool access. After each answer, one more Gemini call on your key turns the chat into facts that search_memory can find.
           </div>
           <div className="tool-toggle">
             <ScopeToggle tools={tools} enabledScopes={enabledScopes} onToggle={setEnabledScopes} />
