@@ -8,8 +8,8 @@ In flight: nothing
 - [x] 4. Prompt-volume ledger — evidence: a148cc0, promptVolume.test.ts 9/9
 - [x] 5. Strategy-aware dry-run estimate — evidence: 60fe6f8, cli.test.ts, 0.93x the ledger
 - [x] 6. Gate decision log — evidence: bc86485, gateDecisions.test.ts 6/6, calibrate CLI smoke
-- [ ] 7. Retrieval miss attribution — evidence:
-- [ ] 8. Docs + full verification — evidence:
+- [x] 7. Retrieval miss attribution — evidence: cf5242b, retrievalAttribution.test.ts 5/5 in 42 s
+- [x] 8. Docs + full verification — evidence: root pnpm test green in 1:33 (benchmarks +~41 s), pnpm -r typecheck exit 0
 
 ## Findings
 
