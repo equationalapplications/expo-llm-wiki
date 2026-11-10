@@ -26,4 +26,23 @@ describe('instructionsGetManifest', () => {
       expect(CoreLlmTools).not.toHaveProperty(removed);
     }
   });
+
+  it('no exported manifest still points the model at a removed wiki_* tool name (#324)', () => {
+    const strings = (v: unknown): string[] =>
+      typeof v === 'string' ? [v]
+        : Array.isArray(v) ? v.flatMap(strings)
+        : v && typeof v === 'object' ? Object.values(v).flatMap(strings)
+        : [];
+    const manifests = Object.entries(CoreLlmTools).filter(
+      ([, v]) => v !== null && typeof v === 'object' && 'name' in v && 'schema' in v,
+    );
+    expect(manifests.length).toBeGreaterThan(0);
+    for (const [exportName, manifest] of manifests) {
+      for (const text of strings(manifest)) {
+        // `llm_wiki_*` (the MCP server's names) is fine; a bare `wiki_*` is not.
+        expect(text, `${exportName}: ${text}`).not.toMatch(/(^|[^A-Za-z0-9_])wiki_[a-z]/);
+      }
+    }
+  });
 });
+
