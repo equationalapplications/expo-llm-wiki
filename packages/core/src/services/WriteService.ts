@@ -3,7 +3,7 @@ import type { WikiOptions, WikiEvent } from '../types';
 import { WikiBusyError, isWikiSearchUnavailableError } from '../types';
 import type { EntryRepository } from '../repositories/EntryRepository';
 import type { EventRepository } from '../repositories/EventRepository';
-import type { MetadataRepository } from '../repositories/MetadataRepository';
+import type { LibrarianWatermark, MetadataRepository } from '../repositories/MetadataRepository';
 import type { JobManager } from './JobManager';
 import type { MaintenanceService } from './MaintenanceService';
 import { generateId } from '../utils/ids';
@@ -110,9 +110,10 @@ export class WriteService {
     // or the pass reads the advanced counter as "legacy already read these"
     // and skips them (spec ops-auto-first-batch §1).
     const isOps = resolveLibrarianStrategy(this.options.config) === 'ops';
-    const anchorOps = async (preCheckpoint: number, tx: SQLiteAdapter): Promise<void> => {
-      if (isOps) await this.maintenanceService.anchorWatermarkBeforeTrigger(entityId, preCheckpoint, tx);
-    };
+    const anchorOps = async (preCheckpoint: number, total: number, tx: SQLiteAdapter): Promise<LibrarianWatermark | null> =>
+      isOps
+        ? this.maintenanceService.anchorWatermarkBeforeTrigger(entityId, preCheckpoint, total, tx)
+        : this.metadataRepo.getLibrarianWatermark(entityId, tx);
 
     await this.db.withTransactionAsync(async (tx) => {
       await stampCreatedAt(tx);
@@ -134,7 +135,7 @@ export class WriteService {
           shouldRunLibrarian = true;
           librarianCount = count;
           prevMemoryCheckpoint = memoryCheckpoint;
-          await anchorOps(memoryCheckpoint, tx);
+          if (isOps) await anchorOps(memoryCheckpoint, count, tx);
           await this.metadataRepo.updateCheckpoint(entityId, { memory: count }, tx);
         }
       } else {
@@ -142,8 +143,7 @@ export class WriteService {
         if (typeof tokenThreshold === 'number' && tokenThreshold > 0 && !this.jobManager.isBlocked('librarian', entityId)) {
           // Anchor first: with no watermark yet, the sum below would count
           // events legacy already read and fire a pass early.
-          await anchorOps(memoryCheckpoint, tx);
-          const wm = await this.metadataRepo.getLibrarianWatermark(entityId, tx);
+          const wm = await anchorOps(memoryCheckpoint, count, tx);
           const chars = await this.eventRepo.sumSummaryCharsAfter(entityId, wm, tx);
           if (Math.ceil(chars / 4) >= tokenThreshold) {
             shouldRunLibrarian = true;
@@ -170,7 +170,15 @@ export class WriteService {
         this.track(job);
       } catch (e) {
         if (!(e instanceof WikiBusyError)) throw e;
-        await this.metadataRepo.updateCheckpoint(entityId, { memory: prevMemoryCheckpoint }, this.db);
+        // Undo only what this trigger added. A prune that took its lock
+        // before ours may already have lowered the counter (spec
+        // ops-auto-first-batch §4); restoring the absolute pre-trigger value
+        // would overwrite that decrement and leave the counter too high.
+        const added = librarianCount - prevMemoryCheckpoint;
+        await this.db.withTransactionAsync(async (tx) => {
+          const memory = (await this.metadataRepo.getCheckpoint(entityId, tx)).memory ?? 0;
+          await this.metadataRepo.updateCheckpoint(entityId, { memory: Math.max(0, memory - added) }, tx);
+        });
       }
     } else if (!this.jobManager.isBlocked('librarian', entityId)) {
       // Auto-heal is evaluated on every write, not only on writes that also

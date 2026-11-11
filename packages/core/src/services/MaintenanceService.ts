@@ -770,20 +770,22 @@ export class MaintenanceService {
    * `memory_checkpoint` (spec ops-auto-first-batch §1). No-op when a
    * watermark exists. With legacy history (`preCheckpoint > 0`) it anchors
    * where legacy stopped, as {@link seedLibrarianWatermark} does; without
-   * it, it writes {@link START_OF_LOG_WATERMARK}. All reads and the write use
-   * the trigger's transaction. Package-internal.
+   * it, it writes {@link START_OF_LOG_WATERMARK}. `total` is the entity's
+   * event count, already read by the caller in the same transaction. All
+   * reads and the write use the trigger's transaction. Returns the watermark
+   * in force afterwards, so the caller need not read it again.
+   * Package-internal.
    */
-  async anchorWatermarkBeforeTrigger(entityId: string, preCheckpoint: number, tx: SQLiteAdapter): Promise<void> {
-    if (await this.metadataRepo.getLibrarianWatermark(entityId, tx)) return;
+  async anchorWatermarkBeforeTrigger(entityId: string, preCheckpoint: number, total: number, tx: SQLiteAdapter): Promise<LibrarianWatermark> {
+    const existing = await this.metadataRepo.getLibrarianWatermark(entityId, tx);
+    if (existing) return existing;
+    let wm: LibrarianWatermark = START_OF_LOG_WATERMARK;
     if (preCheckpoint > 0) {
-      const total = await this.eventRepo.count(entityId, tx);
       const ev = await this.eventRepo.getAtOffset(entityId, Math.min(preCheckpoint, total) - 1, tx);
-      if (ev) {
-        await this.metadataRepo.setLibrarianWatermark(entityId, { at: ev.created_at, id: ev.id }, tx);
-        return;
-      }
+      if (ev) wm = { at: ev.created_at, id: ev.id };
     }
-    await this.metadataRepo.setLibrarianWatermark(entityId, START_OF_LOG_WATERMARK, tx);
+    await this.metadataRepo.setLibrarianWatermark(entityId, wm, tx);
+    return wm;
   }
 
   /**

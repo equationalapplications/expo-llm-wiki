@@ -240,6 +240,25 @@ describe('WriteService', () => {
 
       expect(mockMaintenanceService.doRunLibrarian).not.toHaveBeenCalled();
     });
+
+    it('rollback keeps a prune decrement that landed between the trigger commit and the lock', async () => {
+      mockEventRepo.count.mockResolvedValue(25);
+      // Pre-trigger checkpoint 5; the trigger moves it to 25. A prune that
+      // holds the lock then deletes 3 old events and lowers it to 22 before
+      // the busy rollback reads it (spec ops-auto-first-batch §4).
+      mockMetadataRepo.getCheckpoint
+        .mockResolvedValueOnce({ memory: 5 })
+        .mockResolvedValueOnce({ memory: 22 });
+      mockJobManager.acquireLock.mockImplementation(() => {
+        throw new WikiBusyError('prune', 'user_1');
+      });
+
+      await writeService.write('user_1', { summary: 'test', event_type: 'observation' });
+
+      // Undo only the trigger's +20: 22 - 20 = 2, not the stale absolute 5.
+      expect(mockMetadataRepo.updateCheckpoint).toHaveBeenLastCalledWith('user_1', { memory: 2 }, mockDb);
+      expect(mockMaintenanceService.doRunLibrarian).not.toHaveBeenCalled();
+    });
   });
 
   describe('Input Validation', () => {
