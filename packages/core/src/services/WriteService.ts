@@ -136,7 +136,7 @@ export class WriteService {
             shouldRunLibrarian = true;
             librarianCount = count;
             prevMemoryCheckpoint = memoryCheckpoint;
-            await anchorOps(memoryCheckpoint, tx);
+            // Already anchored above, before the sum.
             await this.metadataRepo.updateCheckpoint(entityId, { memory: count }, tx);
           }
         }
