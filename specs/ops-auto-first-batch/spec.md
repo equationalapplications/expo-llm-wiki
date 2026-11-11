@@ -1,7 +1,9 @@
 # ops + auto: the first auto pass skips the events that triggered it
 
 **Status:** Implemented (PR #358). §4 (prune keeps the counter in step) was
-added after the second review and ruled 2026-11-10; it ships in the same PR.
+added after the second review and ruled 2026-11-10. §5 (`created_at` strictly
+increases) was added after the fourth review and CodeRabbit. Both ship in
+the same PR.
 **Date:** 2026-11-10
 **Intent check:** This is a data-loss bug fix inside the engine. It changes
 no public API, no default and no prompt. INTENT's promise that memory
@@ -34,8 +36,10 @@ bookmark is what lets the pass misread the already-advanced counter.
   `librarian.strategy: 'ops'` and `maintenance: 'auto'`. That covers both a
   fresh entity and one the legacy librarian had already processed, for
   example a pre-7.8 entity upgraded to 8.x. The 8.0.0 upgrade warning
-  suggests setting `maintenance: 'auto'` to keep the old behaviour, which
-  puts such an entity on exactly this path. (Corrected 2026-11-10 after the
+  that suggests setting `maintenance: 'auto'` to keep the old threshold
+  behaviour puts such an entity on exactly this path. (The other warning,
+  which suggests pinning `strategy: 'legacy'`, keeps it on legacy, which is
+  not affected.) (Corrected 2026-11-10 after the
   #358 review. The first draft said fresh entities only.) ops has been
   opt-in since 7.8.0 and the default strategy since 8.0.0. Its default
   maintenance is `'deferred'`, which is unaffected.
@@ -97,7 +101,8 @@ Why no test caught it:
   - **It is 0** (no history): write the start-of-log marker
     `START_OF_LOG_WATERMARK = { at: Number.MIN_SAFE_INTEGER, id: '' }`.
   - A checkpoint above the event count is clamped to 0 by `WriteService`,
-    for example after an import replaced the log. It therefore gets the
+    for example one an older version's prune left behind (§4). It
+    therefore gets the
     marker: the first pass re-reads the log, and the gate dedups what
     already exists. It re-reads; it never skips.
 - **Why the marker is safe:** `AFTER_SQL` treats it exactly like "no
@@ -197,6 +202,42 @@ the next pass re-read the newest events. Now the next pass reads only
 events written after the prune. The re-read was redundant: legacy had
 already processed those events.
 
+### §5 `created_at` strictly increases per entity
+
+**Found by the fourth #358 review and by CodeRabbit, 2026-11-10. The bug is
+on main too.**
+
+The ops watermark and every ops read order events by `(created_at, id)`.
+`write()` stamped `created_at = Date.now()`, and ids are random, so a new
+event could sort at or before an event that already exists:
+
+- **Two events in the same millisecond.** A pass's watermark is its
+  batch's newest event. An event written in the same millisecond, after
+  the batch was selected, with a smaller id, sorts behind that watermark
+  and is never extracted. The reviewer lost 0–16 of 40 events this way
+  with back-to-back writes during a pass, every loss a same-millisecond
+  tie. main loses them too.
+- **The clock steps back** (NTP, or a phone's clock being changed). The new
+  event sorts before events already read.
+- **The §1 anchor** (CodeRabbit). On an entity with legacy history and no
+  watermark, a triggering event that sorts at or before the legacy
+  boundary takes that boundary's offset. The anchor then lands on the new
+  event itself, and the event is skipped.
+
+**The change.** `write()` reads the entity's newest `created_at` inside its
+transaction and stamps the new event at `max(Date.now(), newest + 1)`. The
+deferred path now runs its insert in a transaction for the same read. Every
+written event then sorts after every event already in the log, which
+settles all three cases. The anchor needs no special case for the new event.
+
+- `created_at` stays wall-clock time unless writes outrun the clock or the
+  clock steps back. Then it runs ahead by at most one millisecond per
+  event. `occurred_at` is untouched.
+- Imported events keep their own `created_at`. An import with
+  `created_at` values in the future pushes later writes past them. This is
+  accepted: it keeps the ordering correct.
+- Events already stored with tied timestamps are not repaired.
+
 ## Files touched
 
 - `packages/core/src/services/WriteService.ts`: anchor before the counter
@@ -208,6 +249,7 @@ already processed those events.
 - `packages/core/__tests__/`: new tests (see below).
 - §4: `MaintenanceService.runPrune` and `EventRepository.prune` /
   `pruneThrough` (transaction-aware).
+- §5: `WriteService.write` and `EventRepository.latestCreatedAt`.
 - `apps/docs/src/content/docs/guides/maintenance.md`: the known-issue note
   (§3).
 - `packages/benchmarks/fixtures/promptVolume/baseline.json`: ops-auto
@@ -265,5 +307,13 @@ Each test must fail before the fix:
    - A checkpoint below the number deleted floors at 0.
    - A guarded prune that deletes nothing (deferred, no watermark) leaves
      the checkpoint unchanged.
+
+9. **`created_at` strictly increases (§5).**
+   - With `Date.now()` frozen, 30 events across two passes are all
+     extracted, and their `created_at` values are distinct.
+   - A clock that steps back stamps `newest + 1`.
+10. **Trigger lock busy.** When the trigger's `acquireLock` throws
+    `WikiBusyError`, the checkpoint is restored, the anchor is kept, and the
+    next trigger extracts from event 1.
 
 Then run the core suite, root `pnpm test` and `pnpm -r typecheck`.
