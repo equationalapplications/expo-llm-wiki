@@ -51,6 +51,8 @@ A SynapseTree request is a single in-process window over one tenant's SQLite fil
 
 If you skip step 4, the maintenance backlog carries over to the next request — events pile up until `runPendingMaintenance` is called for that tenant. Under `'deferred'`, `runPrune` will refuse to delete events the librarian has not processed, and emits `event_retention_held` when retention is held back by an unprocessed backlog; surface this diagnostic so SynapseTree ops can re-budget.
 
+A deletion the user requests is different: `wiki.forget(entityId, { clearAll: true, includeEvents: true })` deletes the entity's events too, read or not, before `runPrune`. How the service applies its 30-day deletion grace (charter rule 8) is decided in the SynapseTree repository.
+
 ### `getPendingMaintenance(entityIds?)`
 
 Before step 4 (or in a separate queue worker), inspect the backlog without calling a model:

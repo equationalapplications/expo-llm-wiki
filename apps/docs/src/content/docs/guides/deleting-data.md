@@ -12,8 +12,11 @@ await wiki.forget('user-123', { entryId: 'fact_abc' });     // one fact
 await wiki.forget('user-123', { taskId: 'task_xyz' });      // one task
 await wiki.forget('user-123', { sourceRef: 'doc.md' });     // every fact from one document
 await wiki.forget('user-123', { clearAll: true });          // the whole entity
-// → { deleted: { entries, tasks } }
+// → { deleted: { entries, tasks }, metadataReset: true }
 ```
+
+`clearAll` soft-deletes every fact and task, deletes the entity's graph edges, and removes the
+entity summary. It keeps the entity's events unless you add `includeEvents: true` (below).
 
 Preview it first:
 
@@ -58,22 +61,19 @@ Retry hook failures, or queue them for reconciliation. Don't swallow them.
 ## Wipe an entity completely
 
 ```ts
-await wiki.forget(entityId, { clearAll: true });   // soft-delete facts and tasks, incl. entity summary
+await wiki.forget(entityId, { clearAll: true, includeEvents: true });
+// → { deleted: { entries, tasks, events }, metadataReset: true }
 await wiki.runPrune(entityId, { retainSoftDeletedFor: 0, retainEventsFor: 0, vacuum: true });
 ```
 
-:::caution[Events the librarian has not read are kept]
-`forget()` does not delete events. Under the default `'ops'` strategy or `'deferred'`
-maintenance, `runPrune()` deletes only events the librarian has already read. It keeps the rest
-and emits `event_retention_held` with their count. So these two calls can leave events in the log,
-and a later maintenance run turns them into facts again. No API deletes unread events today.
+`includeEvents: true` hard-deletes every event of the entity, whether the librarian has read it or
+not, and resets the librarian's position. It's allowed only with `clearAll: true`. The prune then
+hard-deletes the soft-deleted facts and tasks, and `vacuum` reclaims the space. `dryRun` reports
+the event count without deleting anything.
 
-To clear them, run the librarian first, so it reads every event, and then run the two calls
-above. This costs model calls:
-
-```ts
-await wiki.runPendingMaintenance({ entityIds: [entityId], jobs: ['librarian'] });
-```
-
-Then check that the prune emits no `event_retention_held` diagnostic.
-:::
+- **Stop writes to the entity first.** An event written after the wipe is a new event.
+- **Without `includeEvents`, events stay.** Under the default `'ops'` strategy or `'deferred'`
+  maintenance, `runPrune()` keeps events the librarian hasn't read and emits
+  `event_retention_held`. A later maintenance run then reads them into facts again. Under
+  `'legacy'`, the librarian re-reads the newest events on every pass.
+- **Re-importing an old export brings the data back**, events included.

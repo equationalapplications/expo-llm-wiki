@@ -27,7 +27,9 @@ Those settings apply only in `'auto'` mode. The engine logs a console warning at
 it sees one without an explicit `maintenance` value. It also warns when `librarian.strategy` is
 pinned to `'legacy'` with no `maintenance` value. Each warning is logged once per process. Until the librarian has processed an entity's
 events, `runPrune()` keeps them and emits `event_retention_held`, so the event log grows if nothing
-runs maintenance.
+runs maintenance. A wipe that must remove events too uses
+`forget(entityId, { clearAll: true, includeEvents: true })` (see
+[Deleting data](/expo-llm-wiki/guides/deleting-data/#wipe-an-entity-completely)).
 
 **`librarian.strategy: 'ops'`.** The librarian works through events since its last pass, skips
 candidates an embedding gate finds identical, and supersedes changed facts instead of overwriting

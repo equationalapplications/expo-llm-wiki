@@ -299,6 +299,11 @@ The options and reasons are kept below as the record.
   batch. Separate fix, tracked as #366.
 - Question 3: #358 is a hard prerequisite, as stated.
 
+**Status note (2026-11-11, wipe):** the retention guard described here
+covers `runPrune`. A wipe the user requests,
+`forget(entityId, { clearAll: true, includeEvents: true })`, deletes unread
+events too (`specs/import-followups/spec.md` §6, ruling §5.9).
+
 **Status note (2026-11-11):** questions 1 and 2 are now specified and
 implemented by `specs/import-followups/spec.md` (§3 deterministic ids for
 id-less OKF lines, #365; §2 default `valid_from`, #366). The references to

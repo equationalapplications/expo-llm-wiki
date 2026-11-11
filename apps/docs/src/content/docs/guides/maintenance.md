@@ -106,7 +106,9 @@ await wiki.runPrune('user-123', {
 ```
 
 Under `'deferred'` maintenance or the `'ops'` strategy, prune never deletes events the
-librarian hasn't processed yet. It emits `event_retention_held` instead.
+librarian hasn't processed yet. It emits `event_retention_held` instead. To delete an entity's
+events on request, read or not, use
+[`forget(entityId, { clearAll: true, includeEvents: true })`](/expo-llm-wiki/guides/deleting-data/#wipe-an-entity-completely).
 
 ## Deferred maintenance
 

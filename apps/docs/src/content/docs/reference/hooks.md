@@ -88,7 +88,7 @@ It's push-based, with no polling, and updates on every job transition.
 |---|---|---|
 | `useWikiWrite()` | `(entityId, event)` | — |
 | `useWikiIngest()` | `(entityId, params)` | `IngestResult` |
-| `useWikiForget()` | `(entityId, params)` | `{ deleted: { entries, tasks } }` |
+| `useWikiForget()` | `(entityId, params)` | `{ deleted: { entries, tasks, events? }, metadataReset? }` |
 | `useWikiHasChanged()` | `(entityId, sourceRef, sourceHash)` | `boolean` |
 | `useWikiExport()` | `(entityIds)` | `MemoryDump` |
 | `useSetOntologyManifest()` | `(entityId, manifest, { mode? })` | — |

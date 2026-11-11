@@ -111,7 +111,7 @@ live row for that `sourceRef`, and `factCount` counts the live rows.
 
 | Method | Returns |
 |---|---|
-| `forget(entityId, { entryId? \| taskId? \| sourceRef? \| sourceHash? \| clearAll? }, { dryRun? }?)` | `Promise<{ deleted: { entries, tasks } }>` |
+| `forget(entityId, { entryId? \| taskId? \| sourceRef? \| sourceHash? \| clearAll?, includeEvents? }, { dryRun? }?)` | `Promise<{ deleted: { entries, tasks, events? }, metadataReset? }>` |
 
 ## Ontology
 
