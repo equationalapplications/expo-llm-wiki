@@ -34,6 +34,7 @@ export function parseSourceWatermark(raw: unknown): LibrarianWatermark | null {
   return { at, id };
 }
 
+/** Three-way compare for sort keys and ids: -1, 0 or 1. */
 const cmp = (a: number | string, b: number | string): number => (a === b ? 0 : a < b ? -1 : 1);
 
 /**
@@ -49,6 +50,7 @@ export function planEventStamps(
   ctx: { now: number; floor: number; merge: boolean; localWm: LibrarianWatermark | null; sourceWm: LibrarianWatermark | null },
 ): Map<WikiEvent, PlannedStamp> {
   const { now, floor, merge, localWm, sourceWm } = ctx;
+  /** True when (v, id) sorts strictly after `wm`, the same ordering as AFTER_SQL. */
   const after = (v: number, id: string, wm: LibrarianWatermark) => v > wm.at || (v === wm.at && id > wm.id);
   const plan = new Map<WikiEvent, PlannedStamp>();
   const restamp: { e: WikiEvent; key: number; stamp: PlannedStamp }[] = [];

@@ -62,7 +62,7 @@ const MESSAGE: Record<WikiDiagnosticCode, string> = {
   read_budget: 'A read was packed to a token budget.',
   event_retention_held: 'Event pruning was held back because the librarian has not processed those events yet.',
   event_created_at_clamped: 'Imported events dated in the future were re-dated just after the current time, or after the librarian position if that is later, keeping their order.',
-  event_created_at_restamped: 'Imported events that would have sorted behind the librarian position, or had an unusable date, were re-dated just after the current time, or after the librarian position if that is later, keeping their order.',
+  event_created_at_restamped: 'Imported events that would have sorted behind the librarian position, or had an unusable date, were adjusted: an affected created_at was re-dated just after the current time, or after the librarian position if that is later, keeping their order; an unusable occurred_at was cleared.',
 };
 
 const warnedNonFunction = new WeakSet<object>();

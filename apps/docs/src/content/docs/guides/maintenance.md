@@ -66,7 +66,7 @@ those events in the same way.
 
 ## Merge imports and the librarian position
 
-A merge import re-dates events that would sort behind the destination's librarian position, so the next pass reads them. Every import, `merge: false` included, re-stamps events whose date is unusable. Bundles from `exportDump()` and `getMemoryBundle()` carry the source's `librarian_watermark`; events at or before it were consolidated at the source and keep their dates. If you split a bundle into chunks, copy `librarian_watermark` onto each chunk.
+A merge import re-dates events that would sort behind the destination's librarian position, so the next pass reads them. Every import, `merge: false` included, re-stamps events whose date is unusable. Bundles from `exportDump()` and `getMemoryBundle()` carry the source's `librarian_watermark`; events at or before it were consolidated at the source and keep their dates. If you split a bundle into chunks, copy `librarian_watermark` onto a chunk only if that chunk also carries the source's facts; otherwise omit it. A chunk that keeps the watermark but drops the facts makes the importer treat its older events as already read, so they are never extracted and a later prune deletes them.
 
 ## Heal
 
