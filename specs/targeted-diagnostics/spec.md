@@ -1,6 +1,6 @@
 # Targeted diagnostics: zero-token replacements for the heavy benchmarks
 
-**Status:** Draft
+**Status:** Implemented (PR #357)
 **Date:** 2026-11-10
 **Intent check:** Rule 11 and "How changes are made" item 5. Benchmarks
 gate behavior changes, are measured on scratch stores with the harness in
@@ -205,23 +205,35 @@ behavior of any real model.
   `fixtures/retrieval/{scifact,financebench}-query-embeddings.json.gz`,
   built by `src/retrieval/buildQueryEmbeddings.ts` (local fastembed). The
   test then needs no fastembed and no network.
-- **Per query:** the rank of each gold document under keyword-only,
-  vector-only and the default hybrid blend.
-- **Miss classes:**
-  - `keyword-miss`: hybrid misses, vector hits;
-  - `vector-miss`: hybrid misses, keyword hits;
-  - `fusion-demotion`: hybrid ranks gold below both single modes;
-  - `both-miss`.
-- **Output.** Per-class counts and the worst 10 queries, written as a
-  JSON report (same `BENCH_WRITE_RESULTS` rule).
-- **Guards.** The aggregate guards are pinned near the measured values
-  (NDCG@10 and MRR@10 at measured minus 0.02), and so are the per-class
-  counts (measured plus 3).
-- **What "keyword-only" and "vector-only" mean.** Before the guards are
-  pinned, the plan's first task confirms how `hybridWeight` (see
-  `packages/core/src/services/RetrievalService.ts:105`) maps onto these
-  two modes. If neither extreme isolates one mode, the suite calls the
-  keyword and vector scorers directly instead.
+- **Modes, as built.** The suite ranks each query three ways:
+  - **keyword-only**: `hybridWeight: 0`, which skips embedding;
+  - **the shipped default**: `hybridWeight` unset, which is pure vector
+    search (core `types.ts` WikiConfig.hybridWeight). Weight 1 is the same
+    mode, so no separate "vector-only" run is needed;
+  - **a 0.5 blend**: `hybridWeight: 0.5`, the hybrid point.
+- **Miss classes.** These are defined against the 0.5 blend, so any blend
+  hit counts as `hit`:
+  - `keyword-miss`: the blend misses, the default hits;
+  - `vector-miss`: the blend misses, keyword-only hits;
+  - `fusion-demotion`: the blend misses while both single modes hit;
+  - `both-miss`: all three miss;
+  - `unscorable`: no gold id exists in the corpus.
+- **`rescuedByKeyword`.** A separate count of queries where the default
+  misses and keyword-only hits. The classes cannot show these.
+- **Output.** Per-class counts, `rescuedByKeyword`, and `worst`, written as
+  a JSON report (same `BENCH_WRITE_RESULTS` rule). `worst` is the first 10
+  scorable queries the shipped default misses, in fixture order. It is a
+  sample for inspection, not a ranking.
+- **Guards.** The default-mode metric is pinned at measured minus 0.02. Each
+  miss-class count is pinned at measured plus 3; `hit` is not pinned,
+  because more hits is an improvement.
+- **Sidecar misses fail loudly.** Both `attribute()` and the generator
+  record embed failures and throw, because core's `read()` would otherwise
+  fall back to keyword search silently.
+
+(Revised 2026-11-10, after the CodeRabbit review on PR #357. The first
+draft listed a separate vector-only mode and a "default hybrid blend",
+which `RetrievalService` does not have.)
 
 The slack guards in `packages/integration` stay as they are; this suite
 is the tight one.
@@ -300,6 +312,29 @@ out of scope for this spec.
      keyword never rescues a vector miss. The miss classes cannot show
      that, because any blend hit counts as `hit`.)
    - Hard misses: 25 on SciFact and 2 on FinanceBench.
+
+## Known limitations (deferred review minors)
+
+These were found in review and deliberately left for later:
+- **`eventsSeen` counts distinct summaries.** The stream's 4 restatements
+  are byte-identical, so the denominator is 56, not 60.
+- **Some retrieval guards are slack.** Miss classes measured at 0 get +3
+  slack, and `unscorable` only fires when every gold id is missing.
+- **Only the default-mode retrieval metric is guarded.** Keyword-only and
+  the blend are reported but not guarded.
+- **`SteppingDate` has gaps.** While it is installed, a `Date` created
+  before installation is not `instanceof Date`, and `Date()` without `new`
+  throws. Core uses neither today.
+- **Core time budgets count clock reads.** Under the stepping clock,
+  `monotonicNow()` budgets expire after N clock reads, not N ms. Revisit
+  this before Option 2's replays.
+- **One determinism test can leak the fake clock.** `restore puts globals
+  back` has no try/finally. File isolation keeps the leak inside that file.
+- **One test writes into `.cache/`.** The `promptVolume` bad-stream
+  fixture goes into the gitignored `.cache/`, not a temp directory.
+- **The retrieval modes share access counts.** The three reads per query
+  each call `trackAccess`, and `access_count` is a ranking tie-break. The
+  results are deterministic, but the modes are not fully independent.
 
 ## Files touched
 
