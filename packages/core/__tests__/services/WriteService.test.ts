@@ -147,6 +147,20 @@ describe('WriteService', () => {
       expect(mockMetadataRepo.updateCheckpoint).toHaveBeenCalledWith('user_1', { heal: 120 }, mockDb);
     });
 
+    it('caps the heal checkpoint at the live event count when a prune ran before the pass', async () => {
+      // The write's transaction sees 120 events; a prune then deletes 20
+      // before the heal finishes, so the live count is 100.
+      mockEventRepo.count.mockResolvedValueOnce(120).mockResolvedValue(100);
+      mockMetadataRepo.getCheckpoint.mockResolvedValue({ memory: 120, heal: 0 });
+
+      await writeService.write('user_1', { summary: 'test', event_type: 'observation' });
+      await new Promise<void>((r) => setImmediate(r));
+
+      expect(mockMaintenanceService.doRunHeal).toHaveBeenCalledWith('user_1', { trigger: 'auto' });
+      expect(mockMetadataRepo.updateCheckpoint).toHaveBeenCalledWith('user_1', { heal: 100 }, mockDb);
+      expect(mockMetadataRepo.updateCheckpoint).not.toHaveBeenCalledWith('user_1', { heal: 120 }, mockDb);
+    });
+
     it('does not advance the heal checkpoint when the pass did not converge', async () => {
       mockEventRepo.count.mockResolvedValue(120);
       mockMetadataRepo.getCheckpoint.mockResolvedValueOnce({ memory: 90, heal: 0 });

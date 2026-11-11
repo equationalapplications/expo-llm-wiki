@@ -141,6 +141,37 @@ describe('ops + auto: first auto pass', () => {
     for (let i = 1; i <= 5; i++) expect(extractPrompts[0]).toContain(summary(i));
   });
 
+  it('a checkpoint one above the old log (equal to the new count) is drift too, on the token path', async () => {
+    // 4 events, checkpoint 5: drift by one. The write makes count 5. Without
+    // the >= clamp the anchor lands on offset 4, the new event, and skips it.
+    const { db, wiki, extractPrompts } = mk({ autoLibrarianThreshold: 1000, autoLibrarianTokenThreshold: 5 });
+    await wiki.setup();
+    for (let i = 2; i <= 5; i++) {
+      await db.runAsync(
+        `INSERT INTO llm_wiki_events (id, entity_id, event_type, summary, created_at) VALUES (?, ?, 'observation', ?, ?)`,
+        [`evt_legacy_${i}`, ENTITY, summary(i), i],
+      );
+    }
+    await meta(wiki).updateCheckpoint(ENTITY, { memory: 5 }, db);
+    await writeN(wiki, 6, 6);
+    expect(extractPrompts.join('\n')).toContain(summary(6));
+  });
+
+  it('an explicit runLibrarian with a checkpoint above the event count re-reads, never skips', async () => {
+    const { db, wiki, extractPrompts } = mk({ maintenance: 'deferred' });
+    await wiki.setup();
+    for (let i = 3; i <= 5; i++) {
+      await db.runAsync(
+        `INSERT INTO llm_wiki_events (id, entity_id, event_type, summary, created_at) VALUES (?, ?, 'observation', ?, ?)`,
+        [`evt_legacy_${i}`, ENTITY, summary(i), i],
+      );
+    }
+    await meta(wiki).updateCheckpoint(ENTITY, { memory: 5 }, db);
+    await writeN(wiki, 6, 6);
+    await wiki.runLibrarian(ENTITY);
+    expect(extractPrompts.join('\n')).toContain(summary(6));
+  });
+
   it('a failed first pass leaves the log re-readable from the start', async () => {
     const { db, wiki, extractPrompts, failNextCalls } = mk({ autoLibrarianThreshold: 5 });
     await wiki.setup();
@@ -281,7 +312,7 @@ describe('prune keeps memory_checkpoint in step (spec §4)', () => {
     expect(await meta(legacy).getCheckpoint(ENTITY, db)).toEqual({ memory: 5, heal: 4 });
   });
 
-  it('a heal_checkpoint below the number deleted floors at 0, and an unset one stays unset', async () => {
+  it('a heal_checkpoint below the number deleted floors at 0', async () => {
     const db = openTestDatabase();
     const legacy = new WikiMemory(db, {
       llmProvider: { generateText: async () => '{}' },

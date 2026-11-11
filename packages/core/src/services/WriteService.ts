@@ -92,7 +92,7 @@ export class WriteService {
       // Past 2^53 - 1, latest + 1 rounds back to latest and the tie returns.
       // Only an imported timestamp can get here; fail loudly, not silently.
       if (latest >= Number.MAX_SAFE_INTEGER) {
-        throw new RangeError(`Cannot stamp event created_at for entity: the newest stored created_at (${latest}) is at Number.MAX_SAFE_INTEGER, so no later timestamp exists.`);
+        throw new RangeError(`Cannot stamp event created_at: the newest stored created_at (${latest}) is at Number.MAX_SAFE_INTEGER, so no later timestamp can be ordered safely.`);
       }
       newEvent.created_at = latest + 1;
     };
@@ -133,8 +133,13 @@ export class WriteService {
       ]);
       eventCount = count;
 
+      // count already includes the event just added, so a checkpoint the
+      // old log could hold is at most count - 1. Anything at or above count
+      // is drift (an older prune), read as no history: re-read, never skip.
+      // At exactly count the anchor would otherwise land on the new event
+      // and skip it (spec ops-auto-first-batch §1).
       let memoryCheckpoint = cp.memory ?? 0;
-      if (memoryCheckpoint > count) memoryCheckpoint = 0;
+      if (memoryCheckpoint >= count) memoryCheckpoint = 0;
 
       if (count - memoryCheckpoint >= threshold) {
         if (!this.jobManager.isBlocked('librarian', entityId)) {
@@ -251,7 +256,12 @@ export class WriteService {
         // Sits inside the try, after the call: on a throw the checkpoint is not
         // advanced, exactly as before this change.
         if (result.remaining === 0) {
-          await this.metadataRepo.updateCheckpoint(entityId, { heal: currentEventCount }, this.db);
+          // currentEventCount was read before this pass. A prune that ran in
+          // between deleted events, so cap at the live count: heal above the
+          // event count reads as 0 and starts a full re-heal (spec
+          // ops-auto-first-batch §4).
+          const live = await this.eventRepo.count(entityId, this.db);
+          await this.metadataRepo.updateCheckpoint(entityId, { heal: Math.min(currentEventCount, live) }, this.db);
         }
       } finally {
         this.jobManager.releaseLock('heal', entityId);

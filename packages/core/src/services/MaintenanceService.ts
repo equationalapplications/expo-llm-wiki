@@ -809,7 +809,8 @@ export class MaintenanceService {
    * Spec §10.3: first ops pass on a legacy DB starts after what the count
    * checkpoint already covered. No-op when a watermark already exists or the
    * memory checkpoint is 0; otherwise anchor the watermark to the event at
-   * offset `min(memory_checkpoint, totalEvents) - 1`.
+   * offset `memory_checkpoint - 1`. A checkpoint above the event count is
+   * drift and gets {@link START_OF_LOG_WATERMARK} (spec ops-auto-first-batch §2).
    */
   async seedLibrarianWatermark(entityId: string): Promise<void> {
     if (await this.metadataRepo.getLibrarianWatermark(entityId, this.db)) return;
@@ -817,6 +818,13 @@ export class MaintenanceService {
     const memory = cp.memory ?? 0;
     if (memory <= 0) return;
     const total = await this.eventRepo.count(entityId, this.db);
+    // A checkpoint above the event count is drift left by an older prune,
+    // not legacy history. Anchoring at the last event would skip every
+    // unread event; read from the start instead, as the write path does.
+    if (memory > total) {
+      await this.metadataRepo.setLibrarianWatermark(entityId, START_OF_LOG_WATERMARK, this.db);
+      return;
+    }
     await this.anchorAtLegacyBoundary(entityId, memory, total, this.db);
   }
 
