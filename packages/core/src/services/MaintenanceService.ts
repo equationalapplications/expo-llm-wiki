@@ -17,7 +17,8 @@ import type { EntryRepository } from '../repositories/EntryRepository';
 import type { SourceRefIndexRepository } from '../repositories/SourceRefIndexRepository';
 import type { TaskRepository } from '../repositories/TaskRepository';
 import type { EventRepository } from '../repositories/EventRepository';
-import { entitySummaryMetaKey, type LibrarianWatermark, type MetadataRepository } from '../repositories/MetadataRepository';
+import { anchorAtLegacyBoundary, seedLegacyWatermark } from './legacyWatermark';
+import { entitySummaryMetaKey, START_OF_LOG_WATERMARK, type LibrarianWatermark, type MetadataRepository } from '../repositories/MetadataRepository';
 import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
@@ -330,18 +331,37 @@ export class MaintenanceService {
       if (retainEventsFor !== null) {
         const cutoff = now - retainEventsFor * 86400000;
         const guarded = resolveMaintenanceMode(this.options.config) === 'deferred' || resolveLibrarianStrategy(this.options.config) === 'ops';
+        let wm: LibrarianWatermark | null = null;
+        await this.db.withTransactionAsync(async (tx) => {
+          if (guarded) {
+            // Spec §6: under deferred/ops the librarian re-reads the event log,
+            // so prune may only delete events the watermark has already passed.
+            wm = await this.metadataRepo.getLibrarianWatermark(entityId, tx);
+            deletedEvents = (await this.eventRepo.pruneThrough(entityId, cutoff, wm, tx)).changes;
+          } else {
+            deletedEvents = (await this.eventRepo.prune(entityId, cutoff, tx)).changes;
+          }
+          // memory_checkpoint and heal_checkpoint count the oldest events
+          // already accounted for. Both prune queries delete a prefix of that
+          // same order, so lower each count by what was deleted. Otherwise
+          // memory points past unread events, and heal ends up above the
+          // event count, reads as 0 and starts a full re-heal (spec
+          // ops-auto-first-batch §4).
+          if (deletedEvents > 0) {
+            const cp = await this.metadataRepo.getCheckpoint(entityId, tx);
+            const updates: { memory?: number; heal?: number } = {};
+            if ((cp.memory ?? 0) > 0) updates.memory = Math.max(0, cp.memory! - deletedEvents);
+            if ((cp.heal ?? 0) > 0) updates.heal = Math.max(0, cp.heal! - deletedEvents);
+            if (updates.memory !== undefined || updates.heal !== undefined) {
+              await this.metadataRepo.updateCheckpoint(entityId, updates, tx);
+            }
+          }
+        });
         if (guarded) {
-          // Spec §6: under deferred/ops the librarian re-reads the event log,
-          // so prune may only delete events the watermark has already passed.
-          const wm = await this.metadataRepo.getLibrarianWatermark(entityId, this.db);
-          deletedEvents = (await this.eventRepo.pruneThrough(entityId, cutoff, wm)).changes;
           const held = await this.eventRepo.countHeldBack(entityId, cutoff, wm);
           if (held > 0) {
             emitDiagnostic(this.options, { code: 'event_retention_held', operation: 'prune', trigger: 'call', entityId, detail: { count: held } });
           }
-        } else {
-          const eventResult = await this.eventRepo.prune(entityId, cutoff);
-          deletedEvents = eventResult.changes;
         }
       }
 
@@ -752,19 +772,44 @@ export class MaintenanceService {
   }
 
   /**
+   * Anchor the ops watermark before an auto trigger advances
+   * `memory_checkpoint` (spec ops-auto-first-batch §1). No-op when a
+   * watermark exists. With legacy history (`preCheckpoint > 0`) it anchors
+   * where legacy stopped, as {@link seedLibrarianWatermark} does; without
+   * it, it writes {@link START_OF_LOG_WATERMARK}. `total` is the entity's
+   * event count, already read by the caller in the same transaction. All
+   * reads and the write use the trigger's transaction. Returns the watermark
+   * in force afterwards, so the caller need not read it again.
+   * Package-internal.
+   */
+  async anchorWatermarkBeforeTrigger(entityId: string, preCheckpoint: number, total: number, tx: SQLiteAdapter): Promise<LibrarianWatermark> {
+    const existing = await this.metadataRepo.getLibrarianWatermark(entityId, tx);
+    if (existing) return existing;
+    const wm = await this.anchorAtLegacyBoundary(entityId, preCheckpoint, total, tx);
+    if (wm) return wm;
+    await this.metadataRepo.setLibrarianWatermark(entityId, START_OF_LOG_WATERMARK, tx);
+    return START_OF_LOG_WATERMARK;
+  }
+
+  /**
+   * The one definition of "where legacy stopped" (spec §10.3): anchor the
+   * watermark at the event at offset `min(checkpoint, total) - 1`. Writes
+   * nothing and returns null when there is no legacy history or no such
+   * event; each caller picks its own fallback.
+   */
+  private anchorAtLegacyBoundary(entityId: string, checkpoint: number, total: number, db: SQLiteAdapter): Promise<LibrarianWatermark | null> {
+    return anchorAtLegacyBoundary(this.metadataRepo, this.eventRepo, entityId, checkpoint, total, db);
+  }
+
+  /**
    * Spec §10.3: first ops pass on a legacy DB starts after what the count
    * checkpoint already covered. No-op when a watermark already exists or the
    * memory checkpoint is 0; otherwise anchor the watermark to the event at
-   * offset `min(memory_checkpoint, totalEvents) - 1`.
+   * offset `memory_checkpoint - 1`. A checkpoint above the event count is
+   * drift and gets {@link START_OF_LOG_WATERMARK} (spec ops-auto-first-batch §2).
    */
   async seedLibrarianWatermark(entityId: string): Promise<void> {
-    if (await this.metadataRepo.getLibrarianWatermark(entityId, this.db)) return;
-    const cp = await this.metadataRepo.getCheckpoint(entityId, this.db);
-    const memory = cp.memory ?? 0;
-    if (memory <= 0) return;
-    const total = await this.eventRepo.count(entityId);
-    const ev = await this.eventRepo.getAtOffset(entityId, Math.min(memory, total) - 1);
-    if (ev) await this.metadataRepo.setLibrarianWatermark(entityId, { at: ev.created_at, id: ev.id }, this.db);
+    await seedLegacyWatermark(this.metadataRepo, this.eventRepo, entityId, this.db);
   }
 
   /**

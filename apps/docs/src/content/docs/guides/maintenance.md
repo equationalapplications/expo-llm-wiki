@@ -35,6 +35,35 @@ Gate thresholds (`gate: { k: 5, dupThreshold: 0.89, novelThreshold: 0.30 }`) dep
 embedding model. The defaults were calibrated on BGE-small and are provisional for other models.
 Without `embed`, the gate uses keyword search, and every match goes to the model.
 
+:::caution[Known issue: ops with `maintenance: 'auto'`, fixed]
+From 7.8.0 until the release that fixes this, `strategy: 'ops'` with
+`maintenance: 'auto'` skipped the first batch of events the first
+automatic pass should have read. With the count trigger that is
+`autoLibrarianThreshold` events (20 by default); with
+`autoLibrarianTokenThreshold`, it is the events that crossed the token
+threshold. The batch is counted from where the legacy librarian had
+stopped, if it had run before. It happened both on new entities and on entities upgraded
+from the legacy strategy. The pass made no model call for them, so they
+never became facts. The default `maintenance: 'deferred'` was not
+affected.
+
+The skipped events are still in the event log unless they were pruned.
+After you upgrade, call `write()` again for the affected events to bring
+them into memory. Those are the first batch that crossed the threshold
+(`autoLibrarianThreshold` events, or the events that crossed
+`autoLibrarianTokenThreshold`): on a new entity from its first event, on an
+upgraded entity from the point where the legacy librarian stopped (some may
+predate the switch to ops). Each call adds a new event; the original rows stay in
+the log. Re-ingesting documents does not restore them, because `ingest()`
+does not write to the event log.
+
+If an entity pruned events under the legacy strategy with
+`maintenance: 'auto'` and then switched to ops, the first ops pass also
+skipped as many of the post-switch events as were pruned. The fix also
+stops prune from causing this; for entities already affected, re-write
+those events in the same way.
+:::
+
 ## Heal
 
 Heal looks at candidates such as orphaned facts (no source for `orphanAfterDays`, default 30) and

@@ -25,9 +25,15 @@ const wiki = createWiki(db, {
   They never carry fact text, LLM output, provider error messages, or content hashes, so they're
   safe to send to third-party telemetry.
 - **Isolated.** The hook is called synchronously, and a throwing hook never affects the operation.
-- **Delivered after commit.** An operation that throws delivers no diagnostics, because the
-  exception is the signal. `upsertGraph` runs in your transaction, so ignore its diagnostics if
-  you roll back.
+- **Delivered after commit.** Diagnostics describe work that really happened. Most are delivered
+  after the transaction commits, and an operation that throws before it commits delivers none.
+  `upsertGraph` runs in your transaction, so ignore its diagnostics if you roll back. Some calls
+  deliver diagnostics and then still throw, and those diagnostics are accurate:
+  - `importDump` commits each entity separately. If an entity throws, the entities already
+    committed have delivered theirs, and so may the entity that threw, if it threw after its own
+    commit.
+  - Ingest delivers its LLM-pass diagnostics when a duplicate-hash race rolls back its write.
+  - `llm_usage` is delivered as each model call returns.
 - **Forward-compatible.** New codes are added in minor releases. Ignore codes you don't recognize.
 
 ## Codes
@@ -48,6 +54,7 @@ const wiki = createWiki(db, {
 | `llm_usage` | Token usage per LLM call (requires `config.reportLlmUsage: true`) |
 | `read_budget` | How many facts a `tokenBudget` read packed |
 | `event_retention_held` | Prune kept events because the librarian hasn't processed them yet |
+| `event_created_at_clamped` | `importDump` re-dated future-dated events just after the current time, or after the librarian position if later (`detail.count`) |
 
 ## A practical router
 

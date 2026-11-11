@@ -213,6 +213,7 @@ export class WikiMemory {
       this.searchService,
       this.jobManager,
       this.embeddingService,
+      this.options,
     );
     this.retrievalService = new RetrievalService(
       this.options,

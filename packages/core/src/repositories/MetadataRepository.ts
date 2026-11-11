@@ -14,6 +14,18 @@ export function entitySummaryMetaKey(entityId: string): string {
  */
 export type LibrarianWatermark = { at: number; id: string };
 
+/**
+ * Explicit "nothing read yet" watermark. `at` is the smallest safe integer,
+ * so every reader (`AFTER_SQL`) treats it exactly like no watermark for any
+ * `created_at` a JavaScript Date can hold (±8.64e15 ms), including the zero
+ * or negative values an import or OKF bundle with pre-1970 dates can carry.
+ * Import does not range-check `created_at`; a value below
+ * `Number.MIN_SAFE_INTEGER` would sort before the marker. Written when an auto trigger starts
+ * ops on an entity with no legacy history, so the pass cannot misread the
+ * trigger's already-advanced `memory_checkpoint` (spec ops-auto-first-batch §1).
+ */
+export const START_OF_LOG_WATERMARK: LibrarianWatermark = Object.freeze({ at: Number.MIN_SAFE_INTEGER, id: '' }) as LibrarianWatermark;
+
 export class MetadataRepository extends BaseRepository {
   // CHECKPOINTS TABLE METHODS
 

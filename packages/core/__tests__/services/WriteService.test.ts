@@ -39,6 +39,7 @@ describe('WriteService', () => {
     mockEventRepo = {
       add: vi.fn().mockResolvedValue(undefined),
       count: vi.fn().mockResolvedValue(10), // Default: 10 total events
+      latestCreatedAt: vi.fn().mockResolvedValue(null),
     };
 
     mockMetadataRepo = {
@@ -146,6 +147,20 @@ describe('WriteService', () => {
       expect(mockMetadataRepo.updateCheckpoint).toHaveBeenCalledWith('user_1', { heal: 120 }, mockDb);
     });
 
+    it('caps the heal checkpoint at the live event count when a prune ran before the pass', async () => {
+      // The write's transaction sees 120 events; a prune then deletes 20
+      // before the heal finishes, so the live count is 100.
+      mockEventRepo.count.mockResolvedValueOnce(120).mockResolvedValue(100);
+      mockMetadataRepo.getCheckpoint.mockResolvedValue({ memory: 120, heal: 0 });
+
+      await writeService.write('user_1', { summary: 'test', event_type: 'observation' });
+      await new Promise<void>((r) => setImmediate(r));
+
+      expect(mockMaintenanceService.doRunHeal).toHaveBeenCalledWith('user_1', { trigger: 'auto' });
+      expect(mockMetadataRepo.updateCheckpoint).toHaveBeenCalledWith('user_1', { heal: 100 }, mockDb);
+      expect(mockMetadataRepo.updateCheckpoint).not.toHaveBeenCalledWith('user_1', { heal: 120 }, mockDb);
+    });
+
     it('does not advance the heal checkpoint when the pass did not converge', async () => {
       mockEventRepo.count.mockResolvedValue(120);
       mockMetadataRepo.getCheckpoint.mockResolvedValueOnce({ memory: 90, heal: 0 });
@@ -237,6 +252,25 @@ describe('WriteService', () => {
       // Expect the catch block to roll the checkpoint back to what it was (0)
       expect(mockMetadataRepo.updateCheckpoint).toHaveBeenCalledWith('user_1', { memory: 0 }, mockDb);
 
+      expect(mockMaintenanceService.doRunLibrarian).not.toHaveBeenCalled();
+    });
+
+    it('rollback keeps a prune decrement that landed between the trigger commit and the lock', async () => {
+      mockEventRepo.count.mockResolvedValue(25);
+      // Pre-trigger checkpoint 5; the trigger moves it to 25. A prune that
+      // holds the lock then deletes 3 old events and lowers it to 22 before
+      // the busy rollback reads it (spec ops-auto-first-batch §4).
+      mockMetadataRepo.getCheckpoint
+        .mockResolvedValueOnce({ memory: 5 })
+        .mockResolvedValueOnce({ memory: 22 });
+      mockJobManager.acquireLock.mockImplementation(() => {
+        throw new WikiBusyError('prune', 'user_1');
+      });
+
+      await writeService.write('user_1', { summary: 'test', event_type: 'observation' });
+
+      // Undo only the trigger's +20: 22 - 20 = 2, not the stale absolute 5.
+      expect(mockMetadataRepo.updateCheckpoint).toHaveBeenLastCalledWith('user_1', { memory: 2 }, mockDb);
       expect(mockMaintenanceService.doRunLibrarian).not.toHaveBeenCalled();
     });
   });
