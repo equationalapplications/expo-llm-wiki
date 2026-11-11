@@ -29,8 +29,20 @@ here.
 
 ## Root cause (with evidence)
 
-**Where the benchmark cost goes.**
-- The 80-question LongMemEval sample is ~9.8M input tokens per config.
+**Where the benchmark cost goes.** These figures are estimates, not
+measurements. They come from offline arithmetic during the 2026-11-10
+design consultation:
+- character counts over the committed 80-question sample
+  (`fixtures/longmemeval-sample.json`), applied to the downloaded
+  LongMemEval-S file;
+- the one partial ingest cache at
+  `.cache/ingest/8.0.0/legacy-auto/6a27ffc2.sqlite`, which is local and not
+  committed.
+
+No run produced them. Per INTENT rule 11 they are for sizing this work,
+and are not to be quoted as results.
+- The 80-question LongMemEval sample is ~9.8M input tokens per config, by
+  the dry-run estimate.
 - The 150 answer-bearing turns total ~12.5k tokens, and evidence sessions
   are 5.8% of haystack characters. Almost all of the spend is distractor
   ingestion.
@@ -139,7 +151,7 @@ Each fix ships with a unit test that fails on the current code.
   and two relocations, each event with `occurred_at`.
 - **Provider.** A scripted provider returns well-formed canned responses
   per call site, classified with `classifyCallSite`
-  (`src/instrument.ts:57`):
+  (`src/instrument.ts:56`):
   - extract and the legacy librarian: facts derived deterministically
     from the batch;
   - resolve: ADD for every candidate;
@@ -147,16 +159,22 @@ Each fix ships with a unit test that fails on the current code.
   Embeddings come from a deterministic hash embedder.
 - **Configs.** The stream is replayed through all four: legacy-auto,
   legacy-deferred, ops-auto and ops-deferred, under §1 determinism.
-- **Recorded per config and call site:** calls, system characters, user
-  characters, events seen per pass, and the ratio of user characters to
-  raw event characters.
+- **Recorded:**
+  - per config and call site: calls, system characters and user
+    characters;
+  - per config: the total distinct stream events any librarian prompt
+    showed (`eventsSeen`), the live fact entries after the run (`entries`),
+    and the ratio of user characters to raw event characters.
 - **Output.** A per-config table, written to
   `results/prompt-volume-<gitDescribe>.json` only when
   `BENCH_WRITE_RESULTS=1`.
 - **Baseline.** Totals are compared against a committed
   `fixtures/promptVolume/baseline.json`. The test fails if any config's
-  total user characters or calls, or any single call site's, rise more
-  than 10% above baseline. (Revised 2026-11-10: the first draft also
+  total user characters, system characters or calls, or any single call
+  site's, rise more than 10% above baseline. Drops pass. To stop a run
+  that silently stopped producing facts from passing as a drop, `entries`
+  and the set of call sites are pinned exactly, along with `eventsSeen`.
+  (Revised 2026-11-10 after the PR #357 review.) (Revised 2026-11-10: the first draft also
   capped extract's ratio at 1.25. That figure came from long LongMemEval
   turns. On this stream's short events, the per-line label and ISO
   timestamp alone put ops extract near 1.6, so the per-site baseline check
@@ -184,7 +202,8 @@ behavior of any real model.
   hand, never in CI.
 - **Missing vectors.** A missing key fails with "re-run
   fixture:gate-embeddings".
-- **Log.** Per candidate: neighbour ids, cosine, title Jaccard, decision,
+- **Log.** Per candidate: neighbour ids, titles and cosines; the title
+  Jaccard against the best neighbour; the decision;
   and the margin to the nearest threshold.
 - **Expected labels.** The labels come from `expectedClass`
   (`src/calibrate.ts`). The test asserts every row matches, except an
@@ -193,8 +212,9 @@ behavior of any real model.
   a known row must remove it from the list, and a new misroute fails.
 - **Margins.** Margins are printed so a threshold change shows its
   headroom.
-- **calibrate.ts.** It keeps its CLI role and switches to the same
-  sidecar.
+- **`bench calibrate`.** It keeps its CLI role and reads the same sidecar.
+  The switch is wired in `src/cli.ts`; `src/calibrate.ts` itself is
+  unchanged.
 
 ### §5 Retrieval miss attribution (`__tests__/retrievalAttribution.test.ts`)
 
@@ -224,9 +244,17 @@ behavior of any real model.
   a JSON report (same `BENCH_WRITE_RESULTS` rule). `worst` is the first 10
   scorable queries the shipped default misses, in fixture order. It is a
   sample for inspection, not a ranking.
-- **Guards.** The default-mode metric is pinned at measured minus 0.02. Each
-  miss-class count is pinned at measured plus 3; `hit` is not pinned,
-  because more hits is an improvement.
+- **Guards.** These live in `fixtures/retrieval/guards.json`:
+  - the default-mode metric is pinned at measured minus 0.02;
+  - each miss-class count, and `rescuedByKeyword`, is pinned at measured
+    plus 3 as an upper bound. `hit` is not pinned, because more hits is an
+    improvement;
+  - `corpusEmbeddingsSha256` pins the integration corpus embeddings the
+    query sidecars were built against, so a re-embedded corpus fails
+    loudly.
+
+  `BENCH_UPDATE_BASELINE=1` regenerates each dataset's guard before its
+  guard tests run, so an update needs only one pass.
 - **Sidecar misses fail loudly.** Both `attribute()` and the generator
   record embed failures and throw, because core's `read()` would otherwise
   fall back to keyword search silently.
@@ -292,6 +320,11 @@ out of scope for this spec.
      errors: one extra resolve item each.
    - `job-1` sits 0.0015 below `dupThreshold` (cosine 0.8885 against 0.89).
    - Three true duplicates clear it by only 0.009 to 0.028.
+   - The novel side has no data. The lowest best cosine across all 36
+     rows is 0.658, against `novelThreshold` 0.30, so no row is gated to
+     ADD at production thresholds. The only ADD-labelled rows are the two
+     known misroutes. The 0.30 value is untested by this fixture; adding
+     clearly novel candidates to the scenarios would cover it.
 5. **Retrieval.**
    - With `hybridWeight` unset, the shipped default is pure vector search.
      The integration reports call it "hybrid".
@@ -332,6 +365,11 @@ These were found in review and deliberately left for later:
   back` has no try/finally. File isolation keeps the leak inside that file.
 - **One test writes into `.cache/`.** The `promptVolume` bad-stream
   fixture goes into the gitignored `.cache/`, not a temp directory.
+- **The legacy estimate is calibrated on one stream.** The 700-char fact
+  row is about 560 chars of row metadata plus a title and body of about
+  65 chars. Real fact bodies are longer, so the estimate's fact-row cost
+  runs low. Assuming one fact per turn runs high, which roughly offsets
+  it. The ±25% test is a regression pin, not independent validation.
 - **The retrieval modes share access counts.** The three reads per query
   each call `trackAccess`, and `access_count` is a ranking tie-break. The
   results are deterministic, but the modes are not fully independent.
@@ -343,7 +381,7 @@ These were found in review and deliberately left for later:
   `src/retrieval/attribution.ts`, and the three `__tests__` suites with
   their fixtures.
 - Changed: `src/longmemeval/ingest.ts`, `src/supersession/run.ts`,
-  `src/cli.ts`, `src/report.ts`, `src/calibrate.ts`, `README.md`,
+  `src/cli.ts` (including the `bench calibrate` switch to the gate sidecar), `src/report.ts`, `README.md`,
   `package.json` (fixture scripts only, no new dependencies).
 
 ## Test plan
