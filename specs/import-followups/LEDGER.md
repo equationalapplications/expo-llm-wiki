@@ -1,6 +1,6 @@
 # Import follow-ups — ledger
 
-In flight: 11. wipe design — Fable (high) consulted 2026-11-11 at the owner's request; spec §6 to follow
+In flight: 8. review of the rev 2/3 code, then final cleanup
 
 - [x] 1. #367 guard the no-vector hook call (spec §1) — evidence: c131fb40; diagnosticsEmbedding 12/12, 5 failed without the fix
 - [x] 2. #366 default valid_from newest, capped at now (spec §2) — evidence: a573a228 (fix) + 48e3d3bf (docs); ops suites 67/67, 4 failed on main
@@ -11,7 +11,7 @@ In flight: 11. wipe design — Fable (high) consulted 2026-11-11 at the owner's 
 - [x] 7. Profile and docs (spec §3.7, §4) — evidence: docs commit after 7a5deb51; docs site build passes (52 pages)
 - [x] 9. Docs: 8.0.0+ release gaps and full docs review (owner request 2026-11-11, Fable high) — evidence: 047441d9; findings verified against source; docs build passes
 - [x] 10. Rev 2: skip taken derived ids; profile precedence sentence (spec §3.2, §3.7, rulings §5.5-5.6) — evidence: a02ce5d2 spec, 649a87c3 code (parse/conformance/reimport 62 pass; 2 new fail without fix), 3d246200 profile
-- [ ] 11. Rev 3: entity wipe deletes unread events (ruling §5.7) — evidence:
+- [x] 11. Rev 3: entity wipe (spec §6, rulings §5.8-5.10) — evidence: aba5aece spec, c6a7e900 core (forgetWipe 12/12, 8 fail without), 2eeaaafe react (76/76), 4923ed6b docs; full build + typecheck + pnpm test green, docs build passes
 - [ ] 8. Whole-branch verification and cleanup — evidence:
 
 ## Discrepancies
