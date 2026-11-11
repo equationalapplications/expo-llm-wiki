@@ -7,6 +7,8 @@ the same PR. The §4 busy-rollback bullet, the §4 `heal_checkpoint` revision an
 the §5 safe-integer guard were added after the fifth review (2026-11-11).
 The §1 `>=` clamp, the §2 seed drift rule and the §4 heal-write fixes were
 added after the Haiku re-review the same day.
+The Sonnet review (2026-11-11) found no code bug; it corrected two sentences
+(§3 release notes, §5 clock step-back) and added a scheduler lock test.
 **Date:** 2026-11-10
 **Intent check:** This is a data-loss bug fix inside the engine. It changes
 no public API, no default and no prompt. INTENT's promise that memory
@@ -162,7 +164,13 @@ repair. Affected users are told what happened and what to do:
 - **The `fix(core)` commit body** states the impact: which configs are
   affected, since 7.8.0, which events are lost, and that they remain in
   the event log unless pruned. semantic-release carries the body into the
-  release notes; nobody edits `CHANGELOG.md` by hand.
+  release notes; nobody edits `CHANGELOG.md` by hand. (Corrected
+  2026-11-11 after the Sonnet review: the `conventionalcommits` notes
+  generator prints only the commit subject, so the body does not reach
+  the release notes. The body of `126eefcb` also gives a wrong remedy,
+  "re-ingest or re-write", from before the docs correction. It stays as
+  history and must not be quoted. The maintenance guide's note below is
+  the user-facing channel and is accurate.)
 - **`apps/docs/src/content/docs/guides/maintenance.md` gains a short
   "Known issue fixed in <next patch>" note** with the same facts and the
   remedy: call `write()` again for the affected events after upgrading.
@@ -258,7 +266,11 @@ settles all three cases. The anchor needs no special case for the new event.
 
 - `created_at` stays wall-clock time unless writes outrun the clock or the
   clock steps back. Then it runs ahead by at most one millisecond per
-  event. `occurred_at` is untouched.
+  event. `occurred_at` is untouched. (Corrected 2026-11-11 after the
+  Sonnet review: after a clock step back, later writes stay pinned to the
+  old high-water mark, about 1 ms apart, until wall time passes it. They
+  run ahead by the size of the step, not by 1 ms per event. This is the
+  same trade-off as the future-dated import case below.)
 - Imported events keep their own `created_at`. An import with
   `created_at` values in the future pushes later writes past them. This is
   accepted: it keeps the ordering correct.
