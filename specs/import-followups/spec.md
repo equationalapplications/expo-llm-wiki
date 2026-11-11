@@ -474,8 +474,12 @@ and both are kept.
     `INSERT OR IGNORE` with no signal (rule 6).
   - Because explicit ids are collected first, the result does not depend
     on where the explicit lines sit in the file.
-  - It also covers two summaries that differ only in lone surrogates:
-    they are different keys for the count but hash to the same bytes.
+  - The count compares summaries as the hash sees them, with lone UTF-16
+    surrogates read as U+FFFD (revision 3, from the rev 2/3 code review).
+    Two summaries that differ only in lone surrogates therefore share one
+    count and get occurrences `0` and `1`. Keyed on the raw string instead,
+    N such variants each walk past every id the others took: quadratic,
+    53 s for 4,000 lines on one date.
 
 Why a count and not the line number: the set of ids is then decided by
 which lines are in the file, not by their order.
