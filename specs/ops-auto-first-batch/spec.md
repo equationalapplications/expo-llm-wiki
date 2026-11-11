@@ -1,6 +1,7 @@
 # ops + auto: the first auto pass skips the events that triggered it
 
-**Status:** Implemented (PR #358)
+**Status:** Implemented (PR #358). §4 (prune keeps the counter in step) was
+added after the second review and ruled 2026-11-10; it ships in the same PR.
 **Date:** 2026-11-10
 **Intent check:** This is a data-loss bug fix inside the engine. It changes
 no public API, no default and no prompt. INTENT's promise that memory
@@ -125,7 +126,8 @@ Why no test caught it:
 - Rollback on a failed pass is unchanged. The checkpoint returns to its
   pre-trigger value, and the anchored bookmark stays where it was put. That
   is correct, because nothing past it was processed.
-- Legacy strategy, deferred maintenance and the read path do not change.
+- Deferred maintenance and the read path do not change. Legacy changes
+  only as §4 describes: prune now lowers `memory_checkpoint`.
 
 ### §3 Already-affected entities
 
@@ -145,10 +147,53 @@ repair. Affected users are told what happened and what to do:
   release notes; nobody edits `CHANGELOG.md` by hand.
 - **`apps/docs/src/content/docs/guides/maintenance.md` gains a short
   "Known issue fixed in <next patch>" note** with the same facts and the
-  remedy: re-ingest the affected entity's early source material, or
-  re-write those events, after upgrading. The heading names the version
+  remedy: call `write()` again for the affected events after upgrading.
+  Re-ingesting does not help, because `ingest()` writes no events. The heading names the version
   generically ("the release that fixes this"), because the number is
   computed at release time.
+
+### §4 Prune keeps the counter in step
+
+**Found by the second #358 review; ruled 2026-11-10 (owner): fix at the
+source.**
+
+`memory_checkpoint` is a count: "the oldest N events in the log are
+accounted for." Prune deletes the oldest events but never lowers it, so
+afterwards the count points past events no pass has read. Two things read
+that count as an offset into the log, and both then skip events:
+
+- the §1 anchor, on the first auto trigger after a switch to ops;
+- `seedLibrarianWatermark`, on an explicit `runLibrarian` or a deferred
+  drain after the switch.
+
+Example: legacy + auto, 20 events, checkpoint 20. Prune deletes the 5
+oldest. The checkpoint stays at 20 while the log holds 15. Switch to ops
+and write 5 more. The anchor lands on offset 19, which is now the 5th new
+event, so those 5 events are never extracted. With §1 alone, events lost
+in this case equal the number pruned. Before §1 the whole batch was lost.
+
+**The change.** `runPrune` deletes events and lowers the checkpoint in one
+transaction:
+
+- `memory_checkpoint` becomes `max(0, checkpoint - deleted)`. Both prune
+  queries (`prune` and the watermark-guarded `pruneThrough`) delete a
+  prefix of the log in `(created_at, id)` order, and the checkpoint counts
+  a prefix of the same order, so every deleted event was inside it, up to
+  the checkpoint itself.
+- This applies on both prune branches. On the guarded branch (ops, or
+  deferred) it keeps the ops + auto trigger on time after a prune;
+  without it, the next pass waits for one extra event per pruned event.
+- The watermark read and the delete move into the same transaction, so a
+  concurrent write's trigger cannot interleave between them.
+- `heal_checkpoint` is also a count and drifts the same way, but drift
+  there only delays or advances a heal pass; no events are lost. It is
+  left unchanged and noted as a follow-up.
+
+**Behaviour change for legacy.** Before, a prune under legacy + auto left
+the checkpoint above the event count, so `WriteService` read it as 0 and
+the next pass re-read the newest events. Now the next pass reads only
+events written after the prune. The re-read was redundant: legacy had
+already processed those events.
 
 ## Files touched
 
@@ -159,6 +204,8 @@ repair. Affected users are told what happened and what to do:
 - Possibly `packages/core/src/repositories/EventRepository.ts`:
   transaction-aware `getAtOffset`/`count` if they lack a `tx` parameter.
 - `packages/core/__tests__/`: new tests (see below).
+- §4: `MaintenanceService.runPrune` and `EventRepository.prune` /
+  `pruneThrough` (transaction-aware).
 - `apps/docs/src/content/docs/guides/maintenance.md`: the known-issue note
   (§3).
 - `packages/benchmarks/fixtures/promptVolume/baseline.json`: ops-auto
@@ -207,5 +254,12 @@ Each test must fail before the fix:
      spec), so the test stays below both thresholds.
    - A failed first pass on the token path leaves the log re-readable from
      the start.
+
+8. **Prune keeps the counter in step (§4).**
+   - Legacy + auto with checkpoint 20, prune of the 5 oldest: the
+     checkpoint becomes 15. After a switch to ops + auto, the next 5
+     writes trigger a pass that extracts exactly those 5 events.
+   - Guarded prune under ops: the checkpoint drops by the number deleted.
+   - A checkpoint below the number deleted floors at 0.
 
 Then run the core suite, root `pnpm test` and `pnpm -r typecheck`.
