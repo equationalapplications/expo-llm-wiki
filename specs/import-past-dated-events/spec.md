@@ -79,7 +79,8 @@ The fix has two parts.
 Line numbers are on `origin/main`.
 
 1. `ImportExportService.doImportEntity` inserts each bundle event with its
-   own `created_at` (`packages/core/src/services/ImportExportService.ts:415-426`).
+   own `created_at` (`packages/core/src/services/ImportExportService.ts:467-482` on main at
+   `cf06ed11`).
 2. Ops `selectBatch` reads `getAfter(entityId, wm)`
    (`packages/core/src/services/librarian/ops/extract.ts:40`), which uses
    `AFTER_SQL = (created_at > ?) OR (created_at = ? AND id > ?)`
@@ -89,7 +90,7 @@ Line numbers are on `origin/main`.
    (`packages/core/src/services/librarian/legacy.ts:35`).
 4. Under ops or deferred, `runPrune` uses `pruneThrough`, which deletes
    `created_at <= cutoff AND NOT AFTER wm`
-   (`packages/core/src/repositories/EventRepository.ts:113-119`).
+   (`packages/core/src/repositories/EventRepository.ts:115-121`).
 5. Export carries no watermark (`MemoryBundle`,
    `packages/core/src/types.ts`), so an importer cannot tell a
    consolidated event from an unread one.
@@ -339,10 +340,102 @@ The questions as raised:
   the source read nothing, so every event is eligible.
 - **Export.** `getFullBundle` sets `librarian_watermark` only when the
   entity has one. `read()` bundles never carry it. OKF output
-  (`formatMemoryDump`) does not carry it, so OKF imports take the
-  fallback.
+  (`formatOkfBundle`) does not carry it, so OKF imports take the fallback;
+  `formatMemoryDump`'s JSON manifest does, through the bundle spread.
+  (Corrected in rev 4.)
 - **Merge only** for the behind-watermark rule (step 3). Step 5 (invalid)
   and #362's future rule run in both modes.
+
+## §7 Precise rules (rev 4, after Fable's builder review)
+
+These supersede earlier wording in this spec where they differ.
+
+**Planning (one pass over the bundle, before any insert):**
+- `v = createdAtValue(created_at)` (#362: numbers as-is, decimal strings
+  parsed, anything else `NaN`).
+- **Reason, first match wins:**
+  1. `invalid`: `v` is `NaN`, or `v < -8.64e15` (outside the JS `Date`
+     range, which makes `new Date(v).toISOString()` throw; this covers
+     `-Infinity`). `null`, `undefined`, booleans and objects are `invalid`.
+  2. `future`: `v > now` (#362's rule, count and `warn` diagnostic
+     unchanged). A future event gets no `occurred_at` copy, even if it is
+     also behind a future local watermark.
+  3. `behind_watermark`: merge mode only; a local watermark exists with a
+     finite `at`; the event is not after it,
+     `v < wm.at || (v === wm.at && id <= wm.id)`; and either the bundle has
+     no valid source watermark or the event is after it (same comparison,
+     reversed). A local watermark whose `at` is not finite gives no
+     candidates; such stored rows are not repaired.
+- **Run order:** sort key `invalid ? -Infinity : v`, ties by id (JS string
+  compare, as #362). The run is therefore invalid events by id, then the
+  rest by `(v, id)`. Stamp `floor + 1 + i`. #362's `RangeError` guard
+  applies to the whole run.
+- **`occurred_at` copy** (`behind_watermark` only): when `occurred_at == null`
+  (absent key included) and `v` is finite and `>= 0`, set
+  `occurred_at = Math.trunc(v)`. The check never throws. A pre-1970
+  `created_at` is re-stamped without a copy, so its facts are dated at
+  import time; noted, not fixed.
+
+**What main does with invalid values today** (rule 6 evidence, Fable probe
+P2): `NaN`, `null` and `undefined` bind as NULL, the `NOT NULL` violation is
+swallowed by `INSERT OR IGNORE`, and the event is silently dropped. Text
+(`'abc'`, `'0x10'`) is stored as TEXT, and `-Infinity` and values below
+the Date range are stored as numbers; all of these make every ops pass
+throw. `true` and `{}` make the import throw a bind error. With this spec
+every invalid value is stored with a real number, and these errors go away.
+
+**Diagnostic** (supersedes §5's "once per entity"):
+- At most one `event_created_at_restamped` emission per entity per
+  non-zero reason (`behind_watermark`, `invalid`), after commit.
+- It carries `detail: { count, reason }`. `count` counts inserted rows
+  only.
+- Nothing is emitted when the count is 0.
+- Message: "Imported events that would have sorted behind the librarian
+  position, or had an unusable date, were re-dated just after the current
+  time, or after the librarian position if that is later, keeping their
+  order."
+- Invalid dates are reported at `info` under this code, as ruled.
+
+**Export:**
+- `getFullBundle` reads the watermark *first*, awaits it, and only then
+  reads facts and events. A pass that commits during the export can then
+  only make the watermark older than the facts, which at worst causes a
+  re-read, never a skip.
+- Both `exportDump` and `getMemoryBundle` (its other caller) carry the
+  field; `read()` never does.
+- `merge: false` ignores the field.
+- In `types.ts`, declare it inline as
+  `librarian_watermark?: { at: number; id: string }`.
+- The start-of-log marker survives JSON. A non-finite `at` serializes as
+  `null`, fails validation and takes the fallback.
+- A truncated event list (`getMemoryBundle`, 10 events) is still classified
+  correctly: the test is per event, and facts are complete.
+
+**Cost claim** (supersedes the Intent check and option D's "For"): D keeps
+the *extra* spend caused by re-stamping to events the source never
+consolidated. A source-consolidated event that lands *after* the local
+watermark is still read by the target, as today. A bounced event is
+inserted unchanged only if the sender's own watermark has passed it. No
+docs or changelog text makes a cost claim (rule 11).
+
+**Out of scope:**
+- Rows already stranded behind the watermark are not repaired. A
+  re-import does not help, because the id is ignored as a duplicate.
+- A host that splits a bundle must copy `librarian_watermark` to every
+  chunk, or that chunk takes the fallback. A host that strips facts from a
+  bundle must drop the field.
+- `merge: false` under legacy still reads only the newest 50 events
+  (§4), so "not affected" holds for ops only.
+- Chunked imports interleave, as #362 §3 accepts.
+- A re-stamped run of k events is dated up to k ms ahead of the clock.
+  Re-exporting within that window makes the receiver treat them as future
+  and emit #362's `warn`. No event is lost.
+- Imported `occurred_at` validation, OKF dating and legacy-source trust:
+  see §8 (owner decisions).
+
+## §8 Decisions for the owner (rev 4)
+
+Pending. See the PR thread.
 
 ## Files touched (expected)
 
@@ -355,9 +448,10 @@ The questions as raised:
   rule~~ Done by #362 (`services/legacyWatermark.ts`).
 - `apps/docs/src/content/docs/reference/types.md`: the new optional
   `MemoryBundle.librarian_watermark` field.
-- Docs: `apps/docs/src/content/docs/guides/diagnostics.md`, the
-  maintenance guide's import notes, and the import/export or OKF guide for
-  the new bundle field.
+- Docs (rev 4, named): `guides/diagnostics.md` (one table row),
+  `reference/types.md` (the field), `guides/okf.md` (merge imports re-date
+  old log entries and take the fallback), `guides/maintenance.md` (a new
+  short paragraph on imports).
 - `packages/core/__tests__/importPastDatedEvents.test.ts`.
 
 ## Test plan
@@ -388,6 +482,33 @@ The questions as raised:
 12. An event after the local watermark but before now is stored unchanged.
 13. Legacy with more than 50 re-stamped events: document the loss (§4),
     asserting today's behaviour.
-14. `event_created_at_restamped` fires once per entity, `info`, with the
-    right `count` and `reason`. #362's `event_created_at_clamped` still
-    covers only future dates.
+14. `event_created_at_restamped` fires once per non-zero reason, `info`,
+    with the right `count` and `reason`; two reasons in one entity give two
+    emissions. #362's `event_created_at_clamped` still covers only future
+    dates.
+
+Added in rev 4:
+
+15. `exportDump` and `getMemoryBundle` carry the field when a watermark
+    exists and omit it otherwise. It survives a JSON round trip, the
+    start-of-log marker included.
+16. A malformed field takes the fallback: `at` as a string, `NaN` or
+    `null`; `id` not a string; the field `null` or an array.
+17. Events exactly at the source watermark and exactly at the local
+    watermark.
+18. A source watermark with no local watermark re-stamps nothing.
+19. Step 4 guards:
+    - a supplied `occurred_at` is kept;
+    - a negative or decimal-string `created_at` behaves as specified;
+    - future and invalid events get no copy.
+20. A `RangeError` on a combined run stores nothing and emits nothing.
+21. A source-consolidated event behind the local watermark keeps its
+    `created_at` and `occurred_at`.
+22. Invalid values: `null`, `undefined`, `NaN`, `'abc'`, `'0x10'`,
+    `-Infinity`, `-9e15`, `-1e300`, `true`, `{}`. Each is stored with a
+    real number, counted, and does not make the librarian throw.
+
+Preconditions (rev 4):
+- Test 4 needs B's watermark later than all of A's events.
+- Test 5 needs B's watermark to have passed E.
+- Test 9 asserts no `restamped` emission, rather than a count of 0.
