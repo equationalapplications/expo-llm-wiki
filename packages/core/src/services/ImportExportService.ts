@@ -11,43 +11,11 @@ import { clip, normalizeSourceRef } from '../utils/pure';
 import { latestVerified } from '@equationalapplications/core-okf';
 import { emitDiagnostic } from '../utils/diagnostics';
 import { seedLegacyWatermark } from './legacyWatermark';
+import { planEventStamps } from './importEventStamps';
 
 const MAX_EMBEDDING_BLOB_BYTES = 32 * 1024; // 8192-dim float32 ceiling
 const IMPORT_TITLE_MAX = 500;
 const IMPORT_BODY_MAX = 8000;
-
-/** Decimal numeric text, which SQLite's INTEGER affinity converts to a number. Hex, binary and octal stay TEXT there. */
-const DECIMAL_TEXT = /^\s*[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?\s*$/;
-
-/** A bundle created_at as SQLite's INTEGER column would read it: numbers as-is, decimal strings parsed, anything else NaN. */
-function createdAtValue(v: unknown): number {
-  if (typeof v === 'number') return v;
-  if (typeof v === 'string' && DECIMAL_TEXT.test(v)) return Number(v);
-  return NaN;
-}
-
-/**
- * New created_at for each bundle event dated after `now` (Infinity and
- * numeric strings included): `floor + 1 + i` in (created_at, id) order, so
- * clamped events keep their relative order and never tie with each other
- * or with a row at `floor`. `floor` is `now`, or the ops watermark when an
- * older version left it in the future, so a clamped event never lands
- * behind it. Other events are absent from the map and keep their own value
- * (spec import-clamp-created-at §1).
- */
-function clampFutureCreatedAt(events: readonly WikiEvent[], now: number, floor: number): Map<WikiEvent, number> {
-  const future = events
-    .map((e) => ({ e, at: createdAtValue(e.created_at) }))
-    .filter((x) => x.at > now)
-    .sort((x, y) => (x.at === y.at ? 0 : x.at < y.at ? -1 : 1) || (x.e.id < y.e.id ? -1 : x.e.id > y.e.id ? 1 : 0));
-  // Past 2^53 - 1, floor + 1 + i rounds and the stamps tie with each other
-  // and the watermark. Only an absurd stored date gets here; fail loudly,
-  // as write() does, rather than store events that sort behind it.
-  if (future.length > 0 && floor + future.length > Number.MAX_SAFE_INTEGER) {
-    throw new RangeError(`importDump: cannot re-date ${future.length} future-dated event(s): the floor (${floor}) is too close to Number.MAX_SAFE_INTEGER to keep them ordered.`);
-  }
-  return new Map(future.map((x, i) => [x.e, floor + 1 + i]));
-}
 
 export class ImportExportService {
   constructor(
@@ -463,9 +431,9 @@ export class ImportExportService {
         ? await seedLegacyWatermark(this.metadataRepo, this.eventRepo, entityId, tx)
         : await this.metadataRepo.getLibrarianWatermark(entityId, tx);
       const floor = wm && Number.isFinite(wm.at) && wm.at > now ? wm.at : now;
-      const clampedAt = clampFutureCreatedAt(bundle.events, now, floor);
+      const planned = planEventStamps(bundle.events, { now, floor, merge: false, localWm: null, sourceWm: null });
       for (const event of bundle.events) {
-        const stamped = clampedAt.get(event);
+        const stamp = planned.get(event)!;
         const inserted = await this.eventRepo.addIgnoreDuplicate(
           {
             id: event.id,
@@ -473,12 +441,12 @@ export class ImportExportService {
             event_type: event.event_type,
             summary: event.summary,
             related_entry_id: event.related_entry_id ?? null,
-            created_at: stamped ?? event.created_at,
-            occurred_at: event.occurred_at ?? null,
+            created_at: stamp.createdAt,
+            occurred_at: stamp.occurredAt,
           },
           tx,
         );
-        if (inserted && stamped !== undefined) clampedEvents++;
+        if (inserted && stamp.reason === 'future') clampedEvents++;
       }
 
       for (const edge of bundle.edges ?? []) {
