@@ -49,10 +49,11 @@ affected.
 
 The skipped events are still in the event log unless they were pruned.
 After you upgrade, call `write()` again for the affected events to bring
-them into memory. Those are the first `autoLibrarianThreshold` events on a
-new entity, or, on an upgraded entity, the first `autoLibrarianThreshold`
-events after the point where the legacy librarian stopped (some may predate
-the switch to ops). Each call adds a new event; the original rows stay in
+them into memory. Those are the first batch that crossed the threshold
+(`autoLibrarianThreshold` events, or the events that crossed
+`autoLibrarianTokenThreshold`): on a new entity from its first event, on an
+upgraded entity from the point where the legacy librarian stopped (some may
+predate the switch to ops). Each call adds a new event; the original rows stay in
 the log. Re-ingesting documents does not restore them, because `ingest()`
 does not write to the event log.
 
