@@ -1,3 +1,18 @@
+## [8.2.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v8.1.0...v8.2.0) (2026-11-11)
+
+### Features
+
+* **core:** bundles carry the source librarian watermark ([096cba1](https://github.com/equationalapplications/expo-llm-wiki/commit/096cba1a15f6a31ebb55bb8caef2ef6cda30e945))
+* **core:** merge import re-dates events behind the watermark and unusable dates ([2bea8e0](https://github.com/equationalapplications/expo-llm-wiki/commit/2bea8e060f498145dbc98c1238c9cbf9170c7ad9))
+
+### Bug Fixes
+
+* **core:** OKF dates a log entry by occurred_at only when it is not in the future ([8ddb6db](https://github.com/equationalapplications/expo-llm-wiki/commit/8ddb6db3f30bfa7461375aed5d0815586dbeb2ee))
+* **core:** OKF export tolerates unusable occurred_at; import review fixes ([ecea223](https://github.com/equationalapplications/expo-llm-wiki/commit/ecea223e55e569556e8e57d3c4d87c99ddb54874))
+* **core:** OKF log dates fall back to created_at outside years 0000-9999 ([63deecf](https://github.com/equationalapplications/expo-llm-wiki/commit/63deecf96a21cee5dd7d0d1389aff1fa42791557))
+* **core:** OKF log entries are dated by occurred_at when set ([db877ff](https://github.com/equationalapplications/expo-llm-wiki/commit/db877ff6bfb2de19619b7f61de3d51841d20ef43))
+* **core:** restamped diagnostic names cleared occurred_at; splitting guidance keeps facts with the watermark ([100923b](https://github.com/equationalapplications/expo-llm-wiki/commit/100923b7234d1d304ceb025c10d6dfea309c1ae5))
+
 ## [8.1.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v8.0.5...v8.1.0) (2026-11-11)
 
 ### Features
