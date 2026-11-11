@@ -233,8 +233,8 @@ behavior of any real model.
   - **a 0.5 blend**: `hybridWeight: 0.5`, the hybrid point.
 - **Miss classes.** These are defined against the 0.5 blend, so any blend
   hit counts as `hit`:
-  - `keyword-miss`: the blend misses, the default hits;
-  - `vector-miss`: the blend misses, keyword-only hits;
+  - `keyword-miss`: the blend and keyword-only both miss, the default hits;
+  - `vector-miss`: the blend and the default both miss, keyword-only hits;
   - `fusion-demotion`: the blend misses while both single modes hit;
   - `both-miss`: all three miss;
   - `unscorable`: no gold id exists in the corpus.
