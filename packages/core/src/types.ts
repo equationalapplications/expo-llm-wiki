@@ -1201,7 +1201,7 @@ export interface ForgetParams {
   taskId?: string;
   sourceRef?: string;
   sourceHash?: string;
-  /** Soft-delete every fact and task of the entity, delete its edges, and retire its source-ref rows. */
+  /** Soft-delete every fact and task of the entity, delete its edges, and delete its source-ref index rows. */
   clearAll?: boolean;
   /**
    * With `clearAll: true` only: also hard-delete every event of the entity,

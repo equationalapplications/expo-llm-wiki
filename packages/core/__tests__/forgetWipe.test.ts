@@ -35,8 +35,8 @@ async function mk(extra: Record<string, unknown> = {}) {
   };
   const edge = (entityId: string, id: string) =>
     db.runAsync(`INSERT INTO llm_wiki_edges (id, entity_id, source_id, target_id, edge_type, created_at) VALUES (?, ?, 'a', 'b', ?, 1)`, [id, entityId, id]);
-  const ref = (entityId: string, id: string) =>
-    db.runAsync(`INSERT INTO llm_wiki_source_ref_index (id, entity_id, source_hash, source_ref, created_at, deleted_at) VALUES (?, ?, ?, ?, 1, NULL)`, [id, entityId, id.padEnd(64, '0'), `doc-${id}.md`]);
+  const ref = (entityId: string, id: string, deletedAt: number | null = null) =>
+    db.runAsync(`INSERT INTO llm_wiki_source_ref_index (id, entity_id, source_hash, source_ref, created_at, deleted_at) VALUES (?, ?, ?, ?, 1, ?)`, [id, entityId, id.padEnd(64, '0'), `doc-${id}.md`, deletedAt]);
   const checkpoint = (entityId: string) => db.getFirstAsync<Record<string, unknown>>(`SELECT * FROM llm_wiki_checkpoints WHERE entity_id = ?`, [entityId]);
   return { db, wiki, diagnostics, generateText, count, write, edge, ref, checkpoint };
 }
@@ -74,14 +74,15 @@ describe('forget({ clearAll: true, includeEvents: true })', () => {
     expect([after?.librarian_watermark_at, after?.librarian_watermark_id]).toEqual([before?.librarian_watermark_at, before?.librarian_watermark_id]);
   });
 
-  it('clearAll deletes the entity\'s edges and retires its live source-ref rows, and leaves other entities alone', async () => {
+  it('clearAll deletes the entity\'s edges and source-ref rows (live or not, rev 4), and leaves other entities alone', async () => {
     const { wiki, count, edge, ref } = await mk();
     await edge('e1', 'x1'); await edge('e1', 'x2'); await edge('e2', 'y1');
-    await ref('e1', 'r1'); await ref('e2', 'r2');
+    await ref('e1', 'r1'); await ref('e1', 'r1old', 5); await ref('e2', 'r2'); await ref('e2', 'r2old', 5);
     await wiki.forget('e1', { clearAll: true });
     expect(await count('edges', 'e1')).toBe(0);
     expect(await count('edges', 'e2')).toBe(1);
-    expect(await count('source_ref_index', 'e1', ' AND deleted_at IS NULL')).toBe(0);
+    expect(await count('source_ref_index', 'e1')).toBe(0);
+    expect(await count('source_ref_index', 'e2')).toBe(2);
     expect(await count('source_ref_index', 'e2', ' AND deleted_at IS NULL')).toBe(1);
   });
 

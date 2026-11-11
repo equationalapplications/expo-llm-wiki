@@ -554,15 +554,14 @@ export class MaintenanceService {
           deletedEntryIds.push(...await this.entryRepo.findIdsBySource(entityId, null, null, tx, true));
           deletedEntries = await this.entryRepo.bulkSoftDeleteByEntityId(entityId, tx);
           deletedTasks = await this.taskRepo.bulkSoftDeleteByEntityId(entityId, tx);
-          // Mirror the clearAll to source_ref_index so the post-clearAll state
-          // has no live index rows for the entity. Hard-delete via the soft-delete
-          // path keeps the CDC contract identical to entries (outbox events are
-          // not fired for source_ref_index, so this is purely an internal
-          // invariant cleanup).
+          // Remove the entity's source_ref_index rows, live or not. The table
+          // is internal (no outbox events), and soft-deleted rows are never
+          // read or pruned, so a wipe hard-deletes them (spec
+          // import-followups §6 rev 4).
           // Skipped on a pre-v9 store, whose v9 backfill rebuilds the index from
           // live entries (same rule as the by-source path below).
           if (await this.sourceRefIndexPresent(tx)) {
-            await this.sourceRefIndexRepo.softDeleteByEntityId(entityId, tx);
+            await this.sourceRefIndexRepo.deleteByEntityId(entityId, tx);
           }
           // Edges have no soft delete, and a soft-deleted fact is never
           // restored, so the entity's edges can never be used again (spec
