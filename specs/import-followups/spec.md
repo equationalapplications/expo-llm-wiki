@@ -7,6 +7,10 @@ derived id governs over the tuple rule (owner rulings §5.5 and §5.6).
 §5.7 records the entity-wipe ruling; its design (§6) follows in revision 3.
 Revision 3 (2026-11-11): §6 entity wipe, designed with a Fable (high)
 consultation at the owner's request; owner rulings §5.8-§5.10.
+Revision 4 (2026-11-11), after the PR #371 bot review (owner-approved):
+§6 hard-deletes the entity's source-ref index rows instead of soft-deleting
+them. Nothing reads a soft-deleted row and `runPrune` never sweeps the table,
+so soft-deleted rows would stay forever.
 **Date:** 2026-11-11
 **Issues:** #367, #366, #365. Issue #278 (the upstream sprintf-js /
 node-forge watch) is out of scope: there is nothing to do until upstream
@@ -932,8 +936,10 @@ existing `clearAll` exclusivity check, and writes nothing.
   the call import's replace mode already makes). Edges have no soft delete,
   and nothing restores a soft-deleted fact, so its edges can never be used
   again.
-- The entity's live source-ref index rows are soft-deleted (new
-  `SourceRefIndexRepository.softDeleteByEntityId`), skipped on a pre-v9 store
+- The entity's source-ref index rows are hard-deleted, live or not (new
+  `SourceRefIndexRepository.deleteByEntityId`; revision 4, was soft-deleted:
+  nothing reads a soft-deleted row and `runPrune` never sweeps the table),
+  skipped on a pre-v9 store
   under the same `sourceRefIndexPresent` rule the by-source path uses. This
   closes the TODO.
 - Entity summary deleted, as today.
@@ -984,8 +990,8 @@ maintenance claim (INTENT rule 11).
    `runPendingMaintenance()` makes no model call and leaves zero live facts.
 2. `clearAll` without `includeEvents`: events kept, no `events` key in the
    result, librarian watermark unchanged.
-3. `clearAll` deletes the entity's edges and soft-deletes its live
-   source-ref rows; another entity's edges and rows are untouched.
+3. `clearAll` deletes the entity's edges and its source-ref rows (revision 4:
+   hard-deleted); another entity's edges and rows are untouched.
 4. Bookkeeping: with an advanced watermark and non-zero counters, the
    checkpoint row is gone after the wipe; an event written afterwards under
    a mocked earlier clock is read by the next pass.
