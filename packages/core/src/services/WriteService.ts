@@ -127,6 +127,9 @@ export class WriteService {
       } else {
         const tokenThreshold = this.options.config?.autoLibrarianTokenThreshold;
         if (typeof tokenThreshold === 'number' && tokenThreshold > 0 && !this.jobManager.isBlocked('librarian', entityId)) {
+          // Anchor first: with no watermark yet, the sum below would count
+          // events legacy already read and fire a pass early.
+          await anchorOps(memoryCheckpoint, tx);
           const wm = await this.metadataRepo.getLibrarianWatermark(entityId, tx);
           const chars = await this.eventRepo.sumSummaryCharsAfter(entityId, wm, tx);
           if (Math.ceil(chars / 4) >= tokenThreshold) {

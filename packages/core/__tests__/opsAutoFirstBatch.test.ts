@@ -9,6 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import { WikiMemory } from '../src/WikiMemory';
 import { openTestDatabase } from './helpers/sqliteAdapter';
+import { START_OF_LOG_WATERMARK } from '../src/repositories/MetadataRepository';
 
 const ENTITY = 'u';
 const embed = async (t: string) => [t.length % 7, (t.charCodeAt(0) || 1) % 5, 1, 0.5];
@@ -80,8 +81,9 @@ describe('ops + auto: first auto pass', () => {
     const { wiki, extractPrompts } = mk({ autoLibrarianThreshold: 1000, autoLibrarianTokenThreshold: 20 });
     await wiki.setup();
     await writeN(wiki, 1, 2);
-    expect(extractPrompts.length).toBeGreaterThanOrEqual(1);
+    expect(extractPrompts).toHaveLength(1);
     expect(extractPrompts[0]).toContain(summary(1));
+    expect(extractPrompts[0]).toContain(summary(2));
   });
 
   it('does not re-read events legacy already covered', async () => {
@@ -100,13 +102,51 @@ describe('ops + auto: first auto pass', () => {
     for (let i = 4; i <= 8; i++) expect(extractPrompts[0]).toContain(summary(i));
   });
 
+  it('token trigger with legacy history counts only events after the legacy checkpoint', async () => {
+    // Anchoring must precede the token sum: with no watermark yet, the sum
+    // would include events legacy already read and fire a pass early.
+    const { db, wiki, extractPrompts } = mk({ autoLibrarianThreshold: 1000, autoLibrarianTokenThreshold: 30 });
+    await wiki.setup();
+    for (let i = 1; i <= 3; i++) {
+      await db.runAsync(
+        `INSERT INTO llm_wiki_events (id, entity_id, event_type, summary, created_at) VALUES (?, ?, 'observation', ?, ?)`,
+        [`evt_legacy_${i}`, ENTITY, summary(i), i],
+      );
+    }
+    await meta(wiki).updateCheckpoint(ENTITY, { memory: 3 }, db);
+    await writeN(wiki, 4, 4); // ~12 tokens after the legacy checkpoint: below 30
+    expect(extractPrompts).toHaveLength(0);
+    await writeN(wiki, 5, 7); // now >= 30 tokens after the checkpoint
+    expect(extractPrompts).toHaveLength(1);
+    for (let i = 1; i <= 3; i++) expect(extractPrompts[0]).not.toContain(summary(i));
+    expect(extractPrompts[0]).toContain(summary(4));
+  });
+
+  it('a memory_checkpoint above the event count is treated as no history (re-reads, never skips)', async () => {
+    // WriteService clamps checkpoint > count to 0 (e.g. after an import
+    // replaced the log), so the anchor is the start-of-log marker and the
+    // first pass re-reads everything; the gate dedups what already exists.
+    const { db, wiki, extractPrompts } = mk({ autoLibrarianThreshold: 5 });
+    await wiki.setup();
+    for (let i = 1; i <= 3; i++) {
+      await db.runAsync(
+        `INSERT INTO llm_wiki_events (id, entity_id, event_type, summary, created_at) VALUES (?, ?, 'observation', ?, ?)`,
+        [`evt_legacy_${i}`, ENTITY, summary(i), i],
+      );
+    }
+    await meta(wiki).updateCheckpoint(ENTITY, { memory: 50 }, db);
+    await writeN(wiki, 4, 5);
+    expect(extractPrompts).toHaveLength(1);
+    for (let i = 1; i <= 5; i++) expect(extractPrompts[0]).toContain(summary(i));
+  });
+
   it('a failed first pass leaves the log re-readable from the start', async () => {
     const { db, wiki, extractPrompts, failNextCalls } = mk({ autoLibrarianThreshold: 5 });
     await wiki.setup();
     failNextCalls(1);
     await writeN(wiki, 1, 5);
     expect((await meta(wiki).getCheckpoint(ENTITY, db)).memory ?? 0).toBe(0);
-    expect(await meta(wiki).getLibrarianWatermark(ENTITY)).toEqual({ at: 0, id: '' });
+    expect(await meta(wiki).getLibrarianWatermark(ENTITY)).toEqual(START_OF_LOG_WATERMARK);
     await writeN(wiki, 6, 6);
     expect(extractPrompts).toHaveLength(1);
     expect(extractPrompts[0]).toContain(summary(1));
@@ -117,14 +157,17 @@ describe('start-of-log watermark marker', () => {
   it('reads like no watermark and prunes nothing', async () => {
     const { db, wiki } = mk({ autoLibrarianThreshold: 1000 });
     await wiki.setup();
-    for (let i = 1; i <= 3; i++) {
+    // Imported or OKF events can carry created_at <= 0 (pre-1970 dates);
+    // the marker must still read exactly like no watermark.
+    for (const [i, at] of [[1, -5_000], [2, 0], [3, 10], [4, 20]] as const) {
       await db.runAsync(
         `INSERT INTO llm_wiki_events (id, entity_id, event_type, summary, created_at) VALUES (?, ?, 'observation', ?, ?)`,
-        [`evt_${i}`, ENTITY, summary(i), i * 10],
+        [`evt_${i}`, ENTITY, summary(i), at],
       );
     }
     const ev = (wiki.__testAccess as any).eventRepo ?? (wiki.__testAccess as any).maintenanceService.eventRepo;
-    const marker = { at: 0, id: '' };
+    const marker = START_OF_LOG_WATERMARK;
+    expect((await ev.getAfter(ENTITY, null)).length).toBe(4);
     expect((await ev.getAfter(ENTITY, marker)).map((e: { id: string }) => e.id)).toEqual(
       (await ev.getAfter(ENTITY, null)).map((e: { id: string }) => e.id),
     );
