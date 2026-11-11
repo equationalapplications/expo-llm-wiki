@@ -239,6 +239,17 @@ describe('prune keeps memory_checkpoint in step (spec §4)', () => {
     expect((await meta(wiki).getCheckpoint(ENTITY, db)).memory).toBe(4);
   });
 
+  it('a guarded prune that deletes nothing leaves the checkpoint alone', async () => {
+    // Deferred, no watermark yet: pruneThrough holds every event back.
+    const { db, wiki } = mk({ maintenance: 'deferred' });
+    await wiki.setup();
+    for (let i = 1; i <= 5; i++) await insert(db, i, OLD + i);
+    await meta(wiki).updateCheckpoint(ENTITY, { memory: 3 }, db);
+    const pruned = await wiki.runPrune(ENTITY, { retainEventsFor: 30 });
+    expect(pruned.events).toBe(0);
+    expect((await meta(wiki).getCheckpoint(ENTITY, db)).memory).toBe(3);
+  });
+
   it('a checkpoint below the number deleted floors at 0', async () => {
     const db = openTestDatabase();
     const legacy = new WikiMemory(db, {
