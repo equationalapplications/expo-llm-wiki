@@ -50,9 +50,15 @@ function corpusSha(dataset: Dataset): string {
 
 /** Regenerate this dataset's guard before the guard tests read it, so an update run passes in one go. */
 function updateGuard(r: AttributionReport): void {
-  const current: Guards = existsSync(GUARDS_PATH)
-    ? (JSON.parse(readFileSync(GUARDS_PATH, 'utf8')) as Guards)
-    : { note: GUARDS_NOTE, datasets: {} };
+  // Read directly and treat ENOENT as "no guards yet", rather than checking
+  // existence first (CodeQL js/file-system-race).
+  let current: Guards;
+  try {
+    current = JSON.parse(readFileSync(GUARDS_PATH, 'utf8')) as Guards;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+    current = { note: GUARDS_NOTE, datasets: {} };
+  }
   current.note = GUARDS_NOTE;
   current.datasets[r.dataset] = {
     metric: Math.round((r.defaultMode - 0.02) * 1e4) / 1e4,
