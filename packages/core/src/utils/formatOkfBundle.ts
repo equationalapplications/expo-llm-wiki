@@ -178,12 +178,20 @@ function buildEventLogEntries(
       ? `(${e.event_type}) [${summary}](./facts/${factFilename}.md)`
       : `(${e.event_type}) ${summary}`;
     // An occurred_at left as text or out of range by an older import would
-    // throw in toISOString; fall back to created_at for those.
+    // throw in toISOString, and one outside years 0000-9999 (e.g. a
+    // microsecond epoch) renders a heading parseOkfBundle cannot read back.
+    // Fall back to created_at for those.
     const occurred = createdAtValue(e.occurred_at);
-    const logTime = e.occurred_at != null && isUsableDate(occurred) ? occurred : e.created_at;
+    const logTime = e.occurred_at != null && isUsableDate(occurred) && occurred >= OKF_DATE_MIN && occurred <= OKF_DATE_MAX
+      ? occurred
+      : e.created_at;
     return { date: formatLogDate(logTime), text: appendEventIdComment(text, e.id) };
   });
 }
+
+/** Epoch-ms range whose ISO date is a four-digit year (0000-01-01 to 9999-12-31), the only headings parseOkfBundle reads. */
+const OKF_DATE_MIN = -62167219200000;
+const OKF_DATE_MAX = 253402300799999;
 
 export function formatOkfBundle(
   dump: MemoryDump,

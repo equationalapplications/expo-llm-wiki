@@ -306,11 +306,19 @@ describe('bundles carry the source librarian watermark', () => {
     const e = (wiki as any).entryRepo;
     const origWm = m.getLibrarianWatermark.bind(m);
     const origFacts = e.findAllByEntityId.bind(e);
-    vi.spyOn(m, 'getLibrarianWatermark').mockImplementation(async (...a: unknown[]) => { order.push('wm'); return origWm(...a); });
+    // The watermark read resolves only after a macrotask; the facts read
+    // must not start before it has resolved (awaited, not just issued first).
+    vi.spyOn(m, 'getLibrarianWatermark').mockImplementation(async (...a: unknown[]) => {
+      order.push('wm-start');
+      const r = await origWm(...a);
+      await new Promise((res) => setTimeout(res, 0));
+      order.push('wm-done');
+      return r;
+    });
     vi.spyOn(e, 'findAllByEntityId').mockImplementation(async (...a: unknown[]) => { order.push('facts'); return origFacts(...a); });
     await wiki.getMemoryBundle(ENTITY);
-    expect(order[0]).toBe('wm');
-    expect(order).toContain('facts');
+    expect(order.indexOf('wm-done')).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('facts')).toBeGreaterThan(order.indexOf('wm-done'));
   });
 
   it.each([
@@ -467,6 +475,15 @@ describe('OKF log entries are dated by real-world time', () => {
     let log = '';
     expect(() => { log = formatOkfBundle(d).files.find((f) => /log\.md$/.test(f.path))!.content; }).not.toThrow();
     expect(log).toContain('## 2026-11-11');
+  });
+
+  it('formatOkfBundle falls back to created_at for an occurred_at outside years 0000-9999, so the entry parses back', () => {
+    const created = Date.UTC(2026, 10, 11, 9);
+    const micro = 1_700_000_000_000_000; // a microsecond epoch: a usable Date, but year ~55800
+    const d = dump([{ ...ev('e1', created), occurred_at: micro }, { ...ev('e2', created), occurred_at: -8.64e15 }]);
+    const log = formatOkfBundle(d).files.find((f) => /log\.md$/.test(f.path))!.content;
+    expect(log).toContain('## 2026-11-11');
+    expect(log).not.toMatch(/^## [+-]/m);
   });
 
   it('an OKF-parsed merge bundle behind the watermark is re-stamped and keeps its midnight date', async () => {
