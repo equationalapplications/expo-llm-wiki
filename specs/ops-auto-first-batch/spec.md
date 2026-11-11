@@ -3,7 +3,8 @@
 **Status:** Implemented (PR #358). §4 (prune keeps the counter in step) was
 added after the second review and ruled 2026-11-10. §5 (`created_at` strictly
 increases) was added after the fourth review and CodeRabbit. Both ship in
-the same PR.
+the same PR. The §4 busy-rollback bullet was added after the fifth review
+(2026-11-11).
 **Date:** 2026-11-10
 **Intent check:** This is a data-loss bug fix inside the engine. It changes
 no public API, no default and no prompt. INTENT's promise that memory
@@ -195,6 +196,12 @@ transaction:
 - `heal_checkpoint` is also a count and drifts the same way, but drift
   there only delays or advances a heal pass; no events are lost. It is
   left unchanged and noted as a follow-up.
+- **The busy rollback undoes a delta, not a value** (added 2026-11-11
+  after the fifth review). When the trigger's lock is busy, `write()` used
+  to restore the absolute pre-trigger checkpoint. A prune that took its
+  lock first can lower the counter in between, and the absolute restore
+  overwrote that. The rollback now subtracts only what the trigger added,
+  `max(0, current - (count - preTrigger))`, in one transaction.
 
 **Behaviour change for legacy.** Before, a prune under legacy + auto left
 the checkpoint above the event count, so `WriteService` read it as 0 and
