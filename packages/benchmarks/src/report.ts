@@ -37,12 +37,10 @@ const CORE_PACKAGE_JSON = join(dirname(fileURLToPath(import.meta.url)), '..', '.
 export const EMBED_MODEL = 'fastembed/BGESmallENV15';
 
 /**
- * Read engine version (from core's package.json) and short git SHA (from
- * `git rev-parse --short HEAD`). Async per the published contract even
- * though the body is otherwise I/O-light — keeps the call site consistent
- * with the rest of the pipeline.
- */
-/**
+ * Read engine version (from core's package.json), short git SHA (from
+ * `git rev-parse --short HEAD`) and `git describe --tags --always`. Async
+ * per the published contract even though the body is I/O-light.
+ *
  * `version` is core's package.json version, which semantic-release bumps only
  * at release, so a run on unreleased code records the previous version (e.g.
  * `supersession-7.8.0.json` says 7.7.7). `gitSha` and `gitDescribe` identify

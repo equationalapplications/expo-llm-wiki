@@ -13,8 +13,10 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
+import { createHash } from 'crypto';
 import {
   attribute,
+  INTEGRATION_FIXTURES,
   MISS_CLASSES,
   loadQuerySidecar,
   queryEmbedder,
@@ -25,9 +27,40 @@ import { engineInfo } from '../src/report';
 
 const GUARDS_PATH = join(__dirname, '..', 'fixtures', 'retrieval', 'guards.json');
 
+interface DatasetGuard {
+  metric: number;
+  classes: Record<string, number>;
+  /** Upper bound: default (vector) misses that keyword-only rescues. */
+  rescuedByKeyword: number;
+  /** sha256 of packages/integration/fixtures/<dataset>-embeddings.json.gz the query sidecar was built against. */
+  corpusEmbeddingsSha256: string;
+}
+
 interface Guards {
   note: string;
-  datasets: Record<Dataset, { metric: number; classes: Record<string, number> }>;
+  datasets: Partial<Record<Dataset, DatasetGuard>>;
+}
+
+const GUARDS_NOTE =
+  'Retrieval guards (spec targeted-diagnostics §5): metric = measured - 0.02; miss-class counts and rescuedByKeyword = measured + 3; corpusEmbeddingsSha256 pins the corpus the query sidecars match. Regenerate with BENCH_UPDATE_BASELINE=1 and say why in the commit.';
+
+function corpusSha(dataset: Dataset): string {
+  return createHash('sha256').update(readFileSync(join(INTEGRATION_FIXTURES, `${dataset}-embeddings.json.gz`))).digest('hex');
+}
+
+/** Regenerate this dataset's guard before the guard tests read it, so an update run passes in one go. */
+function updateGuard(r: AttributionReport): void {
+  const current: Guards = existsSync(GUARDS_PATH)
+    ? (JSON.parse(readFileSync(GUARDS_PATH, 'utf8')) as Guards)
+    : { note: GUARDS_NOTE, datasets: {} };
+  current.note = GUARDS_NOTE;
+  current.datasets[r.dataset] = {
+    metric: Math.round((r.defaultMode - 0.02) * 1e4) / 1e4,
+    classes: Object.fromEntries(MISS_CLASSES.filter((c) => c !== 'hit').map((c) => [c, r.classes[c] + 3])),
+    rescuedByKeyword: r.rescuedByKeyword + 3,
+    corpusEmbeddingsSha256: corpusSha(r.dataset),
+  };
+  writeFileSync(GUARDS_PATH, JSON.stringify(current, null, 1) + '\n');
 }
 
 beforeAll(() => {
@@ -43,21 +76,6 @@ const reports: Partial<Record<Dataset, AttributionReport>> = {};
 
 afterAll(async () => {
   const done = Object.values(reports);
-  if (process.env.BENCH_UPDATE_BASELINE === '1' && done.length === 2) {
-    const guards: Guards = {
-      note: 'Retrieval guards (spec targeted-diagnostics §5): metric = measured - 0.02, miss-class counts = measured + 3. Regenerate with BENCH_UPDATE_BASELINE=1 and say why in the commit.',
-      datasets: Object.fromEntries(
-        done.map((r) => [
-          r.dataset,
-          {
-            metric: Math.round((r.defaultMode - 0.02) * 1e4) / 1e4,
-            classes: Object.fromEntries(MISS_CLASSES.filter((c) => c !== 'hit').map((c) => [c, r.classes[c] + 3])),
-          },
-        ]),
-      ) as Guards['datasets'],
-    };
-    writeFileSync(GUARDS_PATH, JSON.stringify(guards, null, 1) + '\n');
-  }
   if (process.env.BENCH_WRITE_RESULTS === '1' && done.length > 0) {
     const info = await engineInfo();
     const out = join(__dirname, '..', 'results', `retrieval-attribution-${info.gitDescribe}.json`);
@@ -72,6 +90,7 @@ describe.each(['scifact', 'financebench'] as const)('%s attribution', (dataset) 
   beforeAll(async () => {
     report = await attribute(dataset);
     reports[dataset] = report;
+    if (process.env.BENCH_UPDATE_BASELINE === '1') updateGuard(report);
     console.log(
       `${dataset} ${report.metric}: keyword=${report.keywordOnly.toFixed(4)} default(vector)=${report.defaultMode.toFixed(4)} hybrid0.5=${report.hybrid.toFixed(4)} rescuedByKeyword=${report.rescuedByKeyword}`,
     );
@@ -84,17 +103,19 @@ describe.each(['scifact', 'financebench'] as const)('%s attribution', (dataset) 
     expect(sum).toBe(report.queryCount);
   });
 
-  it('counts keyword rescues of default (vector) misses separately from miss classes', () => {
-    // Measured independently by the PR #357 review probe: queries the default
-    // misses in the top 10 while keyword-only hits. The miss classes cannot
-    // show these, because classify() reports any blend hit as 'hit'.
-    expect(report.rescuedByKeyword).toBe(dataset === 'scifact' ? 18 : 1);
+  it('query sidecar was built against the corpus embeddings in packages/integration', () => {
+    // A re-embedded corpus with the same dimension would silently invalidate
+    // the query sidecar; only the metric guard would notice.
+    const g = (JSON.parse(readFileSync(GUARDS_PATH, 'utf8')) as Guards).datasets[dataset]!;
+    expect(corpusSha(dataset)).toBe(g.corpusEmbeddingsSha256);
   });
 
   it('stays within the committed guards', () => {
     expect(existsSync(GUARDS_PATH)).toBe(true);
-    const g = (JSON.parse(readFileSync(GUARDS_PATH, 'utf8')) as Guards).datasets[dataset];
+    const g = (JSON.parse(readFileSync(GUARDS_PATH, 'utf8')) as Guards).datasets[dataset]!;
     expect(report.defaultMode).toBeGreaterThanOrEqual(g.metric);
+    // Upper bound, like the miss classes: fewer rescues (vector found more) never fails.
+    expect(report.rescuedByKeyword).toBeLessThanOrEqual(g.rescuedByKeyword);
     // Miss classes only: more hits is an improvement, never a failure.
     for (const c of MISS_CLASSES) if (c !== 'hit') expect(report.classes[c], c).toBeLessThanOrEqual(g.classes[c]!);
   });

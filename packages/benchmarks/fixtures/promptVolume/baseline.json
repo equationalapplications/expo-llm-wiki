@@ -11,7 +11,8 @@
     }
    },
    "rawEventChars": 3874,
-   "eventsSeen": 56
+   "eventsSeen": 56,
+   "entries": 53
   },
   {
    "config": "legacy-deferred",
@@ -23,7 +24,8 @@
     }
    },
    "rawEventChars": 3874,
-   "eventsSeen": 50
+   "eventsSeen": 50,
+   "entries": 48
   },
   {
    "config": "ops-auto",
@@ -35,7 +37,8 @@
     }
    },
    "rawEventChars": 3874,
-   "eventsSeen": 40
+   "eventsSeen": 40,
+   "entries": 40
   },
   {
    "config": "ops-deferred",
@@ -52,7 +55,8 @@
     }
    },
    "rawEventChars": 3874,
-   "eventsSeen": 56
+   "eventsSeen": 56,
+   "entries": 56
   }
  ]
 }

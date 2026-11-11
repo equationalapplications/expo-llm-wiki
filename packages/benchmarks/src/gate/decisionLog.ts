@@ -16,6 +16,7 @@ import { gateCandidates, resolveGateConfig } from '../../../core/src/services/li
 import type { Candidate } from '../../../core/src/services/librarian/ops/extract';
 import { validateFact } from '../../../core/src/utils/pure';
 import { openDb } from '../db';
+import { pairJaccard } from '../calibrate';
 import { insertExistingFacts, SUPERSESSION_ENTITY, type Scenario } from '../supersession/run';
 
 export type EmbedFn = (text: string) => Promise<number[]>;
@@ -37,7 +38,9 @@ export interface DecisionRow {
   /** True when the candidate was dropped as an in-batch duplicate (logged as noop). */
   inBatchDuplicate: boolean;
   bestCosine: number | null;
-  neighbours: Array<{ title: string; score: number | null }>;
+  /** Title Jaccard between the candidate and the best neighbour (drives the NOOP rule); null without neighbours. */
+  titleJaccard: number | null;
+  neighbours: Array<{ id: string; title: string; score: number | null }>;
   /** Signed distance from bestCosine to the nearer threshold (positive = inside the ambiguous band). */
   margin: number | null;
 }
@@ -125,7 +128,8 @@ export async function decisionLog(scenario: Scenario, inner: EmbedFn): Promise<D
         decision: g.decision.kind,
         inBatchDuplicate: false,
         bestCosine: best,
-        neighbours: g.neighbours.map((n) => ({ title: n.title, score: n.score })),
+        titleJaccard: g.neighbours[0] ? pairJaccard(g.candidate.fact.title, g.neighbours[0].title) : null,
+        neighbours: g.neighbours.map((n) => ({ id: n.id, title: n.title, score: n.score })),
         margin: margin(best),
       });
     }
@@ -138,6 +142,7 @@ export async function decisionLog(scenario: Scenario, inner: EmbedFn): Promise<D
         decision: 'noop',
         inBatchDuplicate: true,
         bestCosine: null,
+        titleJaccard: null,
         neighbours: [],
         margin: null,
       });

@@ -101,6 +101,19 @@ describe('prompt-volume ledger', () => {
     }
   });
 
+  it('live entries and the set of call sites per config match the baseline', () => {
+    // Drops in volume pass by design, so a scripted provider that stops
+    // producing facts (e.g. a prompt-format change breaks its parser) would
+    // otherwise stay green. Pin what the run produced, not only what it sent.
+    const baseline = JSON.parse(readFileSync(BASELINE_PATH, 'utf8')) as BaselineFile;
+    for (const r of rows) {
+      const b = baseline.rows.find((x) => x.config === r.config)!;
+      expect(r.entries, r.config).toBeGreaterThan(0);
+      expect(r.entries, r.config).toBe(b.entries);
+      expect(Object.keys(r.bySite).sort(), r.config).toEqual(Object.keys(b.bySite).sort());
+    }
+  });
+
   it('final fact, event and checkpoint tables are byte-identical across replays (spec §1)', async () => {
     for (const config of CONFIGS) {
       const again = await runPromptVolume(config, stream);
@@ -119,12 +132,29 @@ describe('prompt-volume ledger', () => {
   }, 120_000);
 });
 
+describe('compareToBaseline systemChars', () => {
+  it('flags a system-prompt rise, which is paid on every call', () => {
+    const mkRow = (systemChars: number): VolumeRow => ({
+      config: 'ops-deferred',
+      bySite: { extract: { calls: 1, systemChars, userChars: 100 } } as VolumeRow['bySite'],
+      rawEventChars: 100,
+      eventsSeen: 1,
+      entries: 1,
+      promptLog: '',
+      stateDump: '',
+    });
+    const base: BaselineFile = { note: '', rows: [mkRow(1000) as never] };
+    expect(compareToBaseline([mkRow(1200)], base).some((m) => m.includes('systemChars'))).toBe(true);
+  });
+});
+
 describe('compareToBaseline', () => {
   const row = (userChars: number, calls: number): VolumeRow => ({
     config: 'ops-deferred',
     bySite: { extract: { calls, systemChars: 0, userChars } } as VolumeRow['bySite'],
     rawEventChars: 1_000_000,
     eventsSeen: 1,
+    entries: 1,
     promptLog: '',
     stateDump: '',
   });

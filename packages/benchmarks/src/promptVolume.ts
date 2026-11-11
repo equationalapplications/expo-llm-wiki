@@ -38,6 +38,8 @@ export interface VolumeRow {
   bySite: Partial<Record<CallSite, SiteVolume>>;
   rawEventChars: number;
   eventsSeen: number;
+  /** Live (not superseded, not deleted) fact entries after the run: what the run produced, not what it sent. */
+  entries: number;
   promptLog: string;
   /** JSON of the final entries, events and checkpoints tables (embeddings excluded); byte-identical across replays under the harness. */
   stateDump: string;
@@ -82,6 +84,7 @@ export async function runPromptVolume(config: VolumeConfig, stream: readonly Str
     const { provider, log } = createScriptedProvider(stream);
     const handle = openDb();
     let stateDump = '';
+    let entries = 0;
     try {
       const wiki = new WikiMemory(handle.adapter, { llmProvider: provider, config: engineConfigFor(config) });
       await wiki.setup();
@@ -118,6 +121,11 @@ export async function runPromptVolume(config: VolumeConfig, stream: readonly Str
         dump[t] = rows.map(({ embedding: _e, embedding_blob: _b, ...rest }) => rest);
       }
       stateDump = JSON.stringify(dump);
+      const live = await handle.adapter.getFirstAsync<{ n: number }>(
+        'SELECT COUNT(*) AS n FROM llm_wiki_entries WHERE entity_id = ? AND deleted_at IS NULL AND superseded_by IS NULL',
+        [ENTITY],
+      );
+      entries = Number(live?.n ?? 0);
     } finally {
       handle.close();
     }
@@ -138,6 +146,7 @@ export async function runPromptVolume(config: VolumeConfig, stream: readonly Str
       bySite,
       rawEventChars: stream.reduce((a, e) => a + e.summary.length, 0),
       eventsSeen,
+      entries,
       promptLog: log.map((c) => `${c.site}\n${c.userPrompt}`).join('\n␞\n'),
       stateDump,
     };
@@ -150,8 +159,10 @@ const total = (r: Pick<VolumeRow, 'bySite'>, k: keyof SiteVolume): number =>
   Object.values(r.bySite).reduce((a, s) => a + (s?.[k] ?? 0), 0);
 
 /**
- * Violations: a rise of more than 10% over baseline in total user chars or
- * calls, or in any one call site's user chars or calls. Drops pass.
+ * Violations: a rise of more than 10% over baseline in total user chars,
+ * system chars or calls, or in any one call site's. Drops pass; the
+ * entries and call-site-set checks in the test catch a run that stopped
+ * producing facts.
  *
  * An absolute extract-ratio cap (1.25, from long LongMemEval turns) was in
  * the first draft of the spec; on short events the per-line label and ISO
@@ -166,7 +177,7 @@ export function compareToBaseline(rows: readonly VolumeRow[], baseline: Baseline
       out.push(`${r.config}: no baseline row`);
       continue;
     }
-    for (const k of ['userChars', 'calls'] as const) {
+    for (const k of ['userChars', 'systemChars', 'calls'] as const) {
       const now = total(r, k);
       const was = total(b, k);
       if (now > was * TOLERANCE) out.push(`${r.config}: total ${k} ${now} > baseline ${was} +10%`);

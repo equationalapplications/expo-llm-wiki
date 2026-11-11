@@ -11,7 +11,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { calibrationRows, expectedClass, recommendThresholds } from '../src/calibrate';
+import { calibrationRows, expectedClass, pairJaccard, recommendThresholds } from '../src/calibrate';
 import { decisionLog, loadSidecar, sidecarEmbed, SIDECAR_PATH, type DecisionRow } from '../src/gate/decisionLog';
 import type { Scenario } from '../src/supersession/run';
 
@@ -60,6 +60,15 @@ describe('gate decision log', () => {
     console.table(table);
   }, 120_000);
 
+  it('logs neighbour ids and the best neighbour title Jaccard (spec §4)', () => {
+    const withNeighbours = rows.filter((r) => r.neighbours.length > 0);
+    expect(withNeighbours.length).toBeGreaterThan(0);
+    for (const r of withNeighbours) {
+      for (const n of r.neighbours) expect(n.id, r.key).toMatch(/\S/);
+      expect(r.titleJaccard, r.key).toBe(pairJaccard(r.candidate, r.neighbours[0]!.title));
+    }
+  });
+
   it('logs one row per candidate', () => {
     const expected = scenarios.reduce((a, s) => a + s.extract.facts.length, 0);
     expect(rows).toHaveLength(expected);
@@ -98,7 +107,13 @@ describe('decisionLog with an incomplete sidecar', () => {
     // errors in runReembed / embedTextForFact, so only decisionLog can notice).
     const partial = new Map([...full].filter(([text]) => !s.existing.some((f) => text.includes(f.title))));
     expect(partial.size).toBeLessThan(full.size);
-    await expect(decisionLog(s, sidecarEmbed(partial))).rejects.toThrow(/re-run pnpm fixture:gate-embeddings/);
+    // Core logs each swallowed embed failure with a stack trace; that noise is the point of this test.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await expect(decisionLog(s, sidecarEmbed(partial))).rejects.toThrow(/re-run pnpm fixture:gate-embeddings/);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
