@@ -801,7 +801,6 @@ export class MaintenanceService {
     return anchorAtLegacyBoundary(this.metadataRepo, this.eventRepo, entityId, checkpoint, total, db);
   }
 
-
   /**
    * Spec §10.3: first ops pass on a legacy DB starts after what the count
    * checkpoint already covered. No-op when a watermark already exists or the
@@ -812,7 +811,6 @@ export class MaintenanceService {
   async seedLibrarianWatermark(entityId: string): Promise<void> {
     await seedLegacyWatermark(this.metadataRepo, this.eventRepo, entityId, this.db);
   }
-
 
   /**
    * Core heal pass (locks handled by {@link runHeal}). Package-internal orchestration hook.

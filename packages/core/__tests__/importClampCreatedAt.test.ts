@@ -7,6 +7,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { MemoryDump, WikiDiagnostic, WikiEvent } from '../src/types';
 import { WikiMemory } from '../src/WikiMemory';
 import { openTestDatabase } from './helpers/sqliteAdapter';
+import { START_OF_LOG_WATERMARK } from '../src/repositories/MetadataRepository';
 
 const ENTITY = 'u';
 const NOW = 1_800_000_000_000;
@@ -146,6 +147,65 @@ describe('importDump clamps future-dated event created_at', () => {
     expect(extractPrompts.join('\n')).toContain('Synced again from the fast clock');
   });
 
+  describe('seeding legacy history during import', () => {
+    const meta = (wiki: WikiMemory) => (wiki.__testAccess as any).metadataRepo;
+    const insert = (db: ReturnType<typeof openTestDatabase>, id: string, at: number) =>
+      db.runAsync(`INSERT INTO llm_wiki_events (id, entity_id, event_type, summary, created_at) VALUES (?, ?, 'observation', ?, ?)`, [id, ENTITY, `s ${id}`, at]);
+
+    it('a checkpoint above the event count (drift) seeds the start-of-log marker', async () => {
+      vi.spyOn(Date, 'now').mockReturnValue(NOW);
+      const { db, wiki } = await mk();
+      await insert(db, 'evt_1', NOW - 20);
+      await insert(db, 'evt_2', NOW - 10);
+      await meta(wiki).updateCheckpoint(ENTITY, { memory: 5 }, db);
+      await wiki.importDump(dump([ev('evt_new', NOW - 5)]), { merge: true });
+      expect(await meta(wiki).getLibrarianWatermark(ENTITY, db)).toEqual(START_OF_LOG_WATERMARK);
+    });
+
+    it('merge: false clears the checkpoint first, so nothing is seeded', async () => {
+      vi.spyOn(Date, 'now').mockReturnValue(NOW);
+      const { db, wiki } = await mk();
+      await insert(db, 'evt_1', NOW - 20);
+      await meta(wiki).updateCheckpoint(ENTITY, { memory: 1 }, db);
+      await wiki.importDump(dump([ev('evt_new', NOW - 5)]));
+      expect(await meta(wiki).getLibrarianWatermark(ENTITY, db)).toBeNull();
+    });
+
+    it('a facts-only merge import leaves the librarian state alone', async () => {
+      vi.spyOn(Date, 'now').mockReturnValue(NOW);
+      const { db, wiki } = await mk();
+      await insert(db, 'evt_1', NOW - 20);
+      await meta(wiki).updateCheckpoint(ENTITY, { memory: 1 }, db);
+      await wiki.importDump(dump([]), { merge: true });
+      expect(await meta(wiki).getLibrarianWatermark(ENTITY, db)).toBeNull();
+    });
+
+    it('seeds under strategy legacy too', async () => {
+      vi.spyOn(Date, 'now').mockReturnValue(NOW);
+      const { db, wiki } = await mk({ librarian: { strategy: 'legacy' } });
+      await insert(db, 'evt_1', NOW - 20);
+      await insert(db, 'evt_2', NOW - 10);
+      await meta(wiki).updateCheckpoint(ENTITY, { memory: 1 }, db);
+      await wiki.importDump(dump([ev('evt_new', NOW - 5)]), { merge: true });
+      expect(await meta(wiki).getLibrarianWatermark(ENTITY, db)).toEqual({ at: NOW - 20, id: 'evt_1' });
+    });
+  });
+
+  it('refuses to re-date when the floor is too close to Number.MAX_SAFE_INTEGER, storing nothing', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    const { db, wiki } = await mk();
+    await (wiki.__testAccess as any).metadataRepo.setLibrarianWatermark(ENTITY, { at: 1e20, id: 'evt_old' }, db);
+    await expect(wiki.importDump(dump([ev('evt_a', 2e20), ev('evt_b', 3e20)]), { merge: true })).rejects.toThrow(RangeError);
+    expect(await rows(db)).toEqual([]);
+  });
+
+  it('a hex string created_at is not read as a number', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    const { diagnostics, wiki } = await mk();
+    await wiki.importDump(dump([{ ...ev('evt_hex', 0), created_at: '0xFFFFFFFFFFFF' as unknown as number }]));
+    expect(clamped(diagnostics)).toHaveLength(0);
+  });
+
   it('legacy history with no watermark is seeded before the import, so a clamped event is not skipped', async () => {
     // memory_checkpoint 1 covers one event dated 2100. The clamp stores the
     // new event at now + 1, before it; seeding at pass time would anchor on
@@ -165,16 +225,21 @@ describe('importDump clamps future-dated event created_at', () => {
     expect(extractPrompts.join('\n')).not.toContain('covered by legacy');
   });
 
-  it('under ops, writes after a future-dated import are still extracted', async () => {
-    // Without the clamp the watermark lands on 2100 after the first pass, and
-    // every later write (stamped with the real clock) sorts behind it.
+  it('under ops, writes after a future-dated import are extracted and stamped near the real clock', async () => {
+    // Since #358, write() stamps max(now, newest + 1), so a later write is
+    // extracted even without the clamp, but it is pinned to 2100 and never
+    // ages out of retention. The clamp keeps it on the real clock.
     let t = NOW;
     vi.spyOn(Date, 'now').mockImplementation(() => (t += 10));
-    const { wiki, extractPrompts } = await mk();
+    const { db, wiki, extractPrompts } = await mk();
     await wiki.importDump(dump([ev('evt_future', FUTURE, 'Imported note from a fast clock')]));
     await wiki.runLibrarian(ENTITY);
     await wiki.write(ENTITY, { event_type: 'observation', summary: 'Written after the import' });
     await wiki.runLibrarian(ENTITY);
     expect(extractPrompts.join('\n')).toContain('Written after the import');
+    const written = (await db.getFirstAsync<{ created_at: number }>(
+      `SELECT created_at FROM llm_wiki_events WHERE entity_id = ? AND summary = 'Written after the import'`, [ENTITY],
+    ))!.created_at;
+    expect(written).toBeLessThan(NOW + 1_000_000);
   });
 });

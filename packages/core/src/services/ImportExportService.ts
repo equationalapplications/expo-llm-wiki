@@ -16,10 +16,13 @@ const MAX_EMBEDDING_BLOB_BYTES = 32 * 1024; // 8192-dim float32 ceiling
 const IMPORT_TITLE_MAX = 500;
 const IMPORT_BODY_MAX = 8000;
 
-/** A bundle created_at as SQLite's INTEGER column would read it: numbers as-is, numeric strings parsed, anything else NaN. */
+/** Decimal numeric text, which SQLite's INTEGER affinity converts to a number. Hex, binary and octal stay TEXT there. */
+const DECIMAL_TEXT = /^\s*[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?\s*$/;
+
+/** A bundle created_at as SQLite's INTEGER column would read it: numbers as-is, decimal strings parsed, anything else NaN. */
 function createdAtValue(v: unknown): number {
   if (typeof v === 'number') return v;
-  if (typeof v === 'string' && v.trim() !== '') return Number(v);
+  if (typeof v === 'string' && DECIMAL_TEXT.test(v)) return Number(v);
   return NaN;
 }
 
@@ -37,6 +40,12 @@ function clampFutureCreatedAt(events: readonly WikiEvent[], now: number, floor: 
     .map((e) => ({ e, at: createdAtValue(e.created_at) }))
     .filter((x) => x.at > now)
     .sort((x, y) => (x.at === y.at ? 0 : x.at < y.at ? -1 : 1) || (x.e.id < y.e.id ? -1 : x.e.id > y.e.id ? 1 : 0));
+  // Past 2^53 - 1, floor + 1 + i rounds and the stamps tie with each other
+  // and the watermark. Only an absurd stored date gets here; fail loudly,
+  // as write() does, rather than store events that sort behind it.
+  if (future.length > 0 && floor + future.length > Number.MAX_SAFE_INTEGER) {
+    throw new RangeError(`importDump: cannot re-date ${future.length} future-dated event(s): the floor (${floor}) is too close to Number.MAX_SAFE_INTEGER to keep them ordered.`);
+  }
   return new Map(future.map((x, i) => [x.e, floor + 1 + i]));
 }
 
@@ -448,7 +457,11 @@ export class ImportExportService {
       // Resolve legacy history to a watermark on the log as it stood before
       // this import: inserted events would shift the offset the seed reads,
       // and a clamped event could become the anchor itself and be skipped.
-      const wm = await seedLegacyWatermark(this.metadataRepo, this.eventRepo, entityId, tx);
+      // Only when the bundle brings events: a facts-only import leaves the
+      // log untouched, so it leaves the librarian state as it was.
+      const wm = bundle.events.length > 0
+        ? await seedLegacyWatermark(this.metadataRepo, this.eventRepo, entityId, tx)
+        : await this.metadataRepo.getLibrarianWatermark(entityId, tx);
       const floor = wm && Number.isFinite(wm.at) && wm.at > now ? wm.at : now;
       const clampedAt = clampFutureCreatedAt(bundle.events, now, floor);
       for (const event of bundle.events) {
