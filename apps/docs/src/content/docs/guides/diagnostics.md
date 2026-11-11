@@ -27,7 +27,8 @@ const wiki = createWiki(db, {
 - **Isolated.** The hook is called synchronously, and a throwing hook never affects the operation.
 - **Delivered after commit.** An operation that throws delivers no diagnostics, because the
   exception is the signal. `upsertGraph` runs in your transaction, so ignore its diagnostics if
-  you roll back.
+  you roll back. `importDump` commits each entity separately: if a later entity throws, the
+  entities already committed have delivered theirs, and those diagnostics are accurate.
 - **Forward-compatible.** New codes are added in minor releases. Ignore codes you don't recognize.
 
 ## Codes
@@ -48,7 +49,7 @@ const wiki = createWiki(db, {
 | `llm_usage` | Token usage per LLM call (requires `config.reportLlmUsage: true`) |
 | `read_budget` | How many facts a `tokenBudget` read packed |
 | `event_retention_held` | Prune kept events because the librarian hasn't processed them yet |
-| `event_created_at_clamped` | `importDump` stored future-dated events at the current time (`detail.count`) |
+| `event_created_at_clamped` | `importDump` stored future-dated events just after the current time (`detail.count`) |
 
 ## A practical router
 
