@@ -6,6 +6,11 @@
 and the benchmarks package (`TemporalService`, `runPendingMaintenance`).
 The 8.0.0 question of flipping the ops/deferred-maintenance defaults for
 existing apps is explicitly NOT yet decided.
+**Status note (2026-11-11):** §5.5's `valid_from` default ("the newest
+event in the batch") was implemented as the last event by storage order.
+`specs/import-followups/spec.md` §2 (#366) restores the design and adds a
+cap the design did not state: the default is the newest event date in the
+batch, never later than the time of the pass.
 **Branch:** `dev/competitive-memory` (long-lived; cut from `main` at `0f39bf4`, release 7.7.7)
 **Package:** `@equationalapplications/core-llm-wiki` (plus a new private `packages/benchmarks`)
 **Downstream consumers:** Clanker (Expo), Curated Thoughts (Tauri), SynapseTree (SaaS, SQLite-per-tenant on S3)
