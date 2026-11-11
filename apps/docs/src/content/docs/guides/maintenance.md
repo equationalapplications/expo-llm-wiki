@@ -38,17 +38,20 @@ Without `embed`, the gate uses keyword search, and every match goes to the model
 :::caution[Known issue: ops with `maintenance: 'auto'`, fixed]
 From 7.8.0 until the release that fixes this, `strategy: 'ops'` with
 `maintenance: 'auto'` skipped the first batch of events the first
-automatic pass should have read. That is `autoLibrarianThreshold` events
-(20 by default), counted from where the legacy librarian had stopped if it
-had run before. It happened both on new entities and on entities upgraded
+automatic pass should have read. With the count trigger that is
+`autoLibrarianThreshold` events (20 by default); with
+`autoLibrarianTokenThreshold`, it is the events that crossed the token
+threshold. The batch is counted from where the legacy librarian had
+stopped, if it had run before. It happened both on new entities and on entities upgraded
 from the legacy strategy. The pass made no model call for them, so they
 never became facts. The default `maintenance: 'deferred'` was not
 affected.
 
 The skipped events are still in the event log unless they were pruned.
-After you upgrade, re-ingest or re-write the affected events to bring them
-into memory: the entity's earliest material, or, for an upgraded entity,
-whatever was written just after the switch to ops.
+After you upgrade, call `write()` again for the affected events to bring
+them into memory: the entity's earliest events, or, for an upgraded entity,
+the events written just after the switch to ops. Re-ingesting documents
+does not restore them, because `ingest()` does not write to the event log.
 :::
 
 ## Heal

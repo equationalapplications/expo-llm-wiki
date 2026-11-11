@@ -79,9 +79,14 @@ Why no test caught it:
 ### §1 Anchor the bookmark before the trigger moves the counter
 
 - **Where:** in `WriteService.write`, inside the trigger transaction.
-- **When:** only when the resolved librarian strategy is `'ops'`, no
-  watermark exists, and a librarian pass is about to be triggered. This
-  covers both the count path and the token path.
+- **When:** only when the resolved librarian strategy is `'ops'` and no
+  watermark exists. On the count path, the anchor runs only when a pass is
+  about to be triggered. On the token path, it runs before the character
+  sum, on every non-blocked write that reaches that path, whether or not
+  the write triggers a pass. Without a watermark the sum would count
+  events legacy already read and fire a pass early. An anchor written by a
+  non-triggering write is the same one the trigger would write later, so
+  the outcome is unchanged.
 - **What:** anchor the watermark *before* `updateCheckpoint(memory: count)`:
   - **The pre-trigger `memory_checkpoint` is > 0** (legacy history): anchor
     exactly as `seedLibrarianWatermark` does today, at the event at offset
@@ -126,7 +131,8 @@ Why no test caught it:
 
 The fix cannot tell a bookmark this bug misplaced from a correct
 legacy-migration bookmark, so it repairs nothing automatically. Affected
-entities (ops + auto, created on 7.8.0 or later) have lost their first
+entities (running ops + auto on 7.8.0 or later, both new entities and
+entities upgraded from legacy) have lost their first
 `autoLibrarianThreshold` events from memory. The raw events are still in
 the event log unless pruning has removed them.
 
@@ -185,8 +191,21 @@ Each test must fail before the fix:
    - The token trigger with legacy history fires only on characters written
      after the legacy checkpoint.
    - A checkpoint above the event count re-reads the whole log.
-   - The token test asserts exactly one pass, containing events 1 and 2.
+   - The fresh-entity token test asserts exactly one pass, containing
+     events 1 and 2.
 6. **Benchmarks.** Once #357 has merged, the prompt-volume suite shows
-   ops-auto `eventsSeen` at 56 against the regenerated baseline.
+   ops-auto `eventsSeen` at 56 against the regenerated baseline. Done in
+   `0ef428c6`: extract goes from 2 calls to 3, and resolve now runs (3
+   calls), because the first batch's candidates now reach it. `entries`
+   rises from 40 to 59 for the same reason.
+7. **Unaffected configurations, added after the second #358 review.**
+   - ops + deferred leaves the watermark unset after writes that cross
+     both thresholds.
+   - Under legacy + auto, a below-threshold write on the token path leaves
+     the watermark unset, where ops sets the start-of-log marker. Legacy
+     passes still advance the watermark themselves (§10.3 of the 2026-09-29
+     spec), so the test stays below both thresholds.
+   - A failed first pass on the token path leaves the log re-readable from
+     the start.
 
 Then run the core suite, root `pnpm test` and `pnpm -r typecheck`.
