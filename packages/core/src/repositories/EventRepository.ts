@@ -94,6 +94,11 @@ export class EventRepository extends BaseRepository {
     return rows.map(mapEvent);
   }
 
+  /** Hard-delete every event of the entity, read or not (requested wipe, spec import-followups §6). */
+  async deleteByEntityId(entityId: string, tx: SQLiteAdapter): Promise<{ changes: number }> {
+    return tx.runAsync(`DELETE FROM ${this.prefix}events WHERE entity_id = ?`, [entityId]);
+  }
+
   /**
    * Delete events for an entity that were created at or before the given cutoff timestamp.
    * Returns the number of deleted rows.

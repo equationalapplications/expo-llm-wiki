@@ -1195,6 +1195,28 @@ export class WikiTransactionError extends Error {
   }
 }
 
+/** Selectors for {@link WikiMemory.forget}. `clearAll` excludes the other selectors. */
+export interface ForgetParams {
+  entryId?: string;
+  taskId?: string;
+  sourceRef?: string;
+  sourceHash?: string;
+  /** Soft-delete every fact and task of the entity, delete its edges, and retire its source-ref rows. */
+  clearAll?: boolean;
+  /**
+   * With `clearAll: true` only: also hard-delete every event of the entity,
+   * read by the librarian or not, and reset the librarian's position. Without
+   * it, events stay and a later maintenance run can read them into facts again.
+   */
+  includeEvents?: boolean;
+}
+
+/** Result of {@link WikiMemory.forget}. `deleted.events` is present only with `includeEvents`. */
+export interface ForgetResult {
+  deleted: { entries: number; tasks: number; events?: number };
+  metadataReset?: boolean;
+}
+
 export class PrunePartialFailureError extends Error {
   readonly deleted: number;
   readonly failedAt: string;

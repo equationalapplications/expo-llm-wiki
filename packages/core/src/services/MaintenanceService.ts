@@ -12,7 +12,8 @@ import { parseEmbedding } from '../utils/embedding';
 import { PrunePartialFailureError } from '../types';
 import { HOOK_TIMEOUT_MARKER } from '../types';
 import type { WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedTask, ExtractedFactWithOntology, WikiFact, WikiTask, OntologyUpdates, OntologyBackfillResult, HealResult, DegradedRecord, ReembedResult, ClassifierQuestion, OntologyManifest, WikiDiagnosticTrigger } from '../types';
-import type { SQLiteAdapter } from '../types';
+import type { SQLiteAdapter, ForgetParams, ForgetResult } from '../types';
+import { EdgeRepository } from '../repositories/EdgeRepository';
 import type { EntryRepository } from '../repositories/EntryRepository';
 import type { SourceRefIndexRepository } from '../repositories/SourceRefIndexRepository';
 import type { TaskRepository } from '../repositories/TaskRepository';
@@ -232,10 +233,14 @@ export class MaintenanceService {
     private embeddingService: EmbeddingService,
     promptService?: PromptService,
     private ontologyService?: OntologyService,
+    edgeRepo?: EdgeRepository,
   ) {
     // Fallback for direct instantiation outside WikiMemory facade (e.g. isolated tests).
     this.promptService = promptService ?? new PromptService(this.options.config?.prompts, resolveGrounding(this.options.config?.grounding));
+    this.edgeRepo = edgeRepo ?? new EdgeRepository(this.db, this.prefix);
   }
+
+  private edgeRepo: EdgeRepository;
 
   async runPrune(entityId: string, options?: { retainSoftDeletedFor?: number | null; retainEventsFor?: number | null; vacuum?: boolean }): Promise<{ entries: number; tasks: number; events: number }> {
     this.jobManager.acquireLock('prune', entityId);
@@ -520,11 +525,14 @@ export class MaintenanceService {
 
   async forget(
     entityId: string,
-    params: { entryId?: string; taskId?: string; sourceRef?: string; sourceHash?: string; clearAll?: boolean },
+    params: ForgetParams,
     opts?: { dryRun?: boolean },
-  ): Promise<{ deleted: { entries: number; tasks: number }; metadataReset?: boolean }> {
+  ): Promise<ForgetResult> {
     if (params.clearAll && (params.entryId !== undefined || params.taskId !== undefined || params.sourceRef !== undefined || params.sourceHash !== undefined)) {
       throw new Error('forget() clearAll is mutually exclusive with entryId, taskId, sourceRef, and sourceHash');
+    }
+    if (params.includeEvents && !params.clearAll) {
+      throw new Error('forget() includeEvents requires clearAll: true');
     }
 
     // Dry-run: read-only, no lock, no outbox events, no embedding hooks.
@@ -538,6 +546,7 @@ export class MaintenanceService {
       const now = Date.now();
       let deletedEntries = 0;
       let deletedTasks = 0;
+      let deletedEvents = 0;
       const deletedEntryIds: string[] = [];
 
       await this.db.withTransactionAsync(async (tx) => {
@@ -550,11 +559,25 @@ export class MaintenanceService {
           // path keeps the CDC contract identical to entries (outbox events are
           // not fired for source_ref_index, so this is purely an internal
           // invariant cleanup).
-          // TODO: add a bulk source_ref_index soft-delete once the v9 backfill
-          // gap is closed; for now, leaving the rows in place is safe because
-          // the partial UNIQUE index excludes deleted_at != NULL rows from
-          // re-ingest — a re-ingest would correctly take ownership.
-          await this.metadataRepo.updateCheckpoint(entityId, { memory: 0, heal: 0 }, tx);
+          // Skipped on a pre-v9 store, whose v9 backfill rebuilds the index from
+          // live entries (same rule as the by-source path below).
+          if (await this.sourceRefIndexPresent(tx)) {
+            await this.sourceRefIndexRepo.softDeleteByEntityId(entityId, tx);
+          }
+          // Edges have no soft delete, and a soft-deleted fact is never
+          // restored, so the entity's edges can never be used again (spec
+          // import-followups §6).
+          await this.edgeRepo.bulkDeleteByEntityId(entityId, tx);
+          if (params.includeEvents) {
+            // A requested wipe deletes every event, read or not (§6, ruling
+            // §5.9). Deleting the checkpoint row also clears the librarian
+            // watermark: with an empty log, a watermark ahead of the clock
+            // would hide every new event.
+            deletedEvents = (await this.eventRepo.deleteByEntityId(entityId, tx)).changes;
+            await this.metadataRepo.deleteCheckpoint(entityId, tx);
+          } else {
+            await this.metadataRepo.updateCheckpoint(entityId, { memory: 0, heal: 0 }, tx);
+          }
           await this.metadataRepo.deleteMeta(entitySummaryMetaKey(entityId), tx);
         } else {
           const hasIdSelectors = params.entryId !== undefined || params.taskId !== undefined;
@@ -630,9 +653,10 @@ export class MaintenanceService {
         }
       }
 
-      return params.clearAll
-        ? { deleted: { entries: deletedEntries, tasks: deletedTasks }, metadataReset: true }
-        : { deleted: { entries: deletedEntries, tasks: deletedTasks } };
+      if (!params.clearAll) return { deleted: { entries: deletedEntries, tasks: deletedTasks } };
+      return params.includeEvents
+        ? { deleted: { entries: deletedEntries, tasks: deletedTasks, events: deletedEvents }, metadataReset: true }
+        : { deleted: { entries: deletedEntries, tasks: deletedTasks }, metadataReset: true };
     } finally {
       this.jobManager.releaseLock('forget', entityId);
     }
@@ -680,8 +704,8 @@ export class MaintenanceService {
    */
   private async forgetDryRun(
     entityId: string,
-    params: { entryId?: string; taskId?: string; sourceRef?: string; sourceHash?: string; clearAll?: boolean },
-  ): Promise<{ deleted: { entries: number; tasks: number }; metadataReset?: boolean }> {
+    params: ForgetParams,
+  ): Promise<ForgetResult> {
     // Note: the clearAll mutual-exclusion check is performed by the public
     // forget() before dispatching here. forgetDryRun is private and unreachable
     // for callers that violate that contract, so it does not re-validate.
@@ -693,6 +717,10 @@ export class MaintenanceService {
     if (params.clearAll) {
       const entries = await this.entryRepo.countLiveByEntityId(entityId);
       const tasks = await this.taskRepo.countLiveByEntityId(entityId);
+      if (params.includeEvents) {
+        const events = await this.eventRepo.count(entityId);
+        return { deleted: { entries, tasks, events }, metadataReset: true };
+      }
       return { deleted: { entries, tasks }, metadataReset: true };
     }
 

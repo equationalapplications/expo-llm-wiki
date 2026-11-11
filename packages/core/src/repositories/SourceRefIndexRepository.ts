@@ -49,6 +49,19 @@ export class SourceRefIndexRepository extends BaseRepository {
    * index row, so the new upsert doesn't collide with itself. No-op when the
    * row is already soft-deleted or never existed.
    */
+  /** Soft-delete every live row of the entity (forget clearAll, spec import-followups §6). */
+  async softDeleteByEntityId(entityId: string, tx: SQLiteAdapter): Promise<number> {
+    const executor = this.getExecutor(tx);
+    const now = Date.now();
+    const result = await executor.runAsync(
+      `UPDATE ${this.prefix}source_ref_index
+       SET deleted_at = ?, created_at = ?
+       WHERE entity_id = ? AND deleted_at IS NULL`,
+      [now, now, entityId],
+    );
+    return result.changes;
+  }
+
   async softDeleteByEntityAndSourceRef(
     entityId: string,
     sourceRef: string,
