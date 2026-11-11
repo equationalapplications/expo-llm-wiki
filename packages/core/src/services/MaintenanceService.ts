@@ -330,18 +330,32 @@ export class MaintenanceService {
       if (retainEventsFor !== null) {
         const cutoff = now - retainEventsFor * 86400000;
         const guarded = resolveMaintenanceMode(this.options.config) === 'deferred' || resolveLibrarianStrategy(this.options.config) === 'ops';
+        let wm: LibrarianWatermark | null = null;
+        await this.db.withTransactionAsync(async (tx) => {
+          if (guarded) {
+            // Spec §6: under deferred/ops the librarian re-reads the event log,
+            // so prune may only delete events the watermark has already passed.
+            wm = await this.metadataRepo.getLibrarianWatermark(entityId, tx);
+            deletedEvents = (await this.eventRepo.pruneThrough(entityId, cutoff, wm, tx)).changes;
+          } else {
+            deletedEvents = (await this.eventRepo.prune(entityId, cutoff, tx)).changes;
+          }
+          // memory_checkpoint counts the oldest events already accounted for.
+          // Both prune queries delete a prefix of that same order, so lower
+          // the count by what was deleted, or it points past unread events
+          // (spec ops-auto-first-batch §4).
+          if (deletedEvents > 0) {
+            const memory = (await this.metadataRepo.getCheckpoint(entityId, tx)).memory ?? 0;
+            if (memory > 0) {
+              await this.metadataRepo.updateCheckpoint(entityId, { memory: Math.max(0, memory - deletedEvents) }, tx);
+            }
+          }
+        });
         if (guarded) {
-          // Spec §6: under deferred/ops the librarian re-reads the event log,
-          // so prune may only delete events the watermark has already passed.
-          const wm = await this.metadataRepo.getLibrarianWatermark(entityId, this.db);
-          deletedEvents = (await this.eventRepo.pruneThrough(entityId, cutoff, wm)).changes;
           const held = await this.eventRepo.countHeldBack(entityId, cutoff, wm);
           if (held > 0) {
             emitDiagnostic(this.options, { code: 'event_retention_held', operation: 'prune', trigger: 'call', entityId, detail: { count: held } });
           }
-        } else {
-          const eventResult = await this.eventRepo.prune(entityId, cutoff);
-          deletedEvents = eventResult.changes;
         }
       }
 

@@ -192,6 +192,67 @@ describe('configurations the anchor must not touch', () => {
   });
 });
 
+describe('prune keeps memory_checkpoint in step (spec §4)', () => {
+  const OLD = 1; // far older than any retention cutoff
+  const insert = async (db: ReturnType<typeof openTestDatabase>, i: number, at: number) =>
+    db.runAsync(
+      `INSERT INTO llm_wiki_events (id, entity_id, event_type, summary, created_at) VALUES (?, ?, 'observation', ?, ?)`,
+      [`evt_${String(i).padStart(3, '0')}`, ENTITY, summary(i), at],
+    );
+
+  it('legacy prune lowers the checkpoint, so a later switch to ops reads every unread event', async () => {
+    const db = openTestDatabase();
+    const legacy = new WikiMemory(db, {
+      llmProvider: { generateText: async () => '{}' },
+      config: { librarian: { strategy: 'legacy' }, maintenance: 'auto', autoLibrarianThreshold: 5 },
+    });
+    await legacy.setup();
+    const recent = Date.now() - 60_000;
+    for (let i = 1; i <= 5; i++) await insert(db, i, OLD + i);
+    for (let i = 6; i <= 20; i++) await insert(db, i, recent + i);
+    await meta(legacy).updateCheckpoint(ENTITY, { memory: 20 }, db);
+
+    const pruned = await legacy.runPrune(ENTITY, { retainEventsFor: 30 });
+    expect(pruned.events).toBe(5);
+    expect((await meta(legacy).getCheckpoint(ENTITY, db)).memory).toBe(15);
+
+    const s = scripted();
+    const ops = new WikiMemory(db, {
+      llmProvider: { generateText: s.generateText, embed },
+      config: { librarian: { strategy: 'ops' }, maintenance: 'auto', autoLibrarianThreshold: 5 },
+    });
+    await ops.setup();
+    await writeN(ops, 21, 25);
+    expect(s.extractPrompts).toHaveLength(1);
+    for (let i = 6; i <= 20; i++) expect(s.extractPrompts[0]).not.toContain(summary(i));
+    for (let i = 21; i <= 25; i++) expect(s.extractPrompts[0]).toContain(summary(i));
+  });
+
+  it('guarded prune under ops lowers the checkpoint by the number deleted', async () => {
+    const { db, wiki } = mk({ autoLibrarianThreshold: 1000 });
+    await wiki.setup();
+    for (let i = 1; i <= 10; i++) await insert(db, i, OLD + i);
+    await meta(wiki).updateCheckpoint(ENTITY, { memory: 10 }, db);
+    await meta(wiki).setLibrarianWatermark(ENTITY, { at: OLD + 6, id: 'evt_006' }, db);
+    const pruned = await wiki.runPrune(ENTITY, { retainEventsFor: 30 });
+    expect(pruned.events).toBe(6);
+    expect((await meta(wiki).getCheckpoint(ENTITY, db)).memory).toBe(4);
+  });
+
+  it('a checkpoint below the number deleted floors at 0', async () => {
+    const db = openTestDatabase();
+    const legacy = new WikiMemory(db, {
+      llmProvider: { generateText: async () => '{}' },
+      config: { librarian: { strategy: 'legacy' }, maintenance: 'auto', autoLibrarianThreshold: 1000 },
+    });
+    await legacy.setup();
+    for (let i = 1; i <= 5; i++) await insert(db, i, OLD + i);
+    await meta(legacy).updateCheckpoint(ENTITY, { memory: 2 }, db);
+    await legacy.runPrune(ENTITY, { retainEventsFor: 30 });
+    expect((await meta(legacy).getCheckpoint(ENTITY, db)).memory).toBe(0);
+  });
+});
+
 describe('start-of-log watermark marker', () => {
   it('reads like no watermark and prunes nothing', async () => {
     const { db, wiki } = mk({ autoLibrarianThreshold: 1000 });
