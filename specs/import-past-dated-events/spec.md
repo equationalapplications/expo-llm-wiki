@@ -1,6 +1,7 @@
 # Import: past-dated events behind the watermark are never read
 
-**Status:** Reviewed (owner, 2026-11-11). Revision 2 was written after
+**Status:** Reviewed (owner, 2026-11-11). Revision 3 (2026-11-11) updates
+§1 and the file list for what #358 and #362 delivered once merged. Revision 2 was written after
 the Opus spec review and Fable's decision memo; the owner then ruled on the
 three §6 decisions and the open questions. Second half of #361. Depends on
 #362 (`import-clamp-created-at`) and #358 (`ops-auto-first-batch`); both
@@ -142,7 +143,10 @@ watermark.
 In `doImportEntity`, merge mode only. The watermark read and seed happen
 inside the import transaction, before the event loop.
 
-1. **Local watermark.** Read it (#362 already does). If the entity has
+1. **Local watermark.** **Delivered by #362** (rev 3): `doImportEntity`
+   already calls `seedLegacyWatermark` (`services/legacyWatermark.ts`)
+   inside the import transaction, before inserting, whenever the bundle
+   brings events. Read it otherwise. If the entity has
    none but `memory_checkpoint > 0` (legacy history from before 7.8, never
    seeded), seed it now with the same rule as `seedLibrarianWatermark`,
    on the log *before* inserting.
@@ -178,6 +182,12 @@ inside the import transaction, before the event loop.
    good (Opus probe).
 6. **Stamping.** Candidates and #362's future-dated events form one run,
    sorted by `(created_at, id)` with #362's `createdAtValue` comparator.
+   (Rev 3: `createdAtValue` reads numbers as-is and decimal strings only;
+   it returns `NaN` for everything else, including hex/binary/octal text,
+   which SQLite keeps as TEXT. "Invalid" in step 5 means `createdAtValue`
+   is `NaN` or `-Infinity`; `+Infinity` is already #362's future case.
+   #362's `RangeError` when `floor + run length` passes
+   `Number.MAX_SAFE_INTEGER` applies to the whole combined run.)
    It is stamped from #362's `floor + 1`, so no two tie and none
    interleave.
    - Invalid values sort first in the run.
@@ -304,6 +314,36 @@ The questions as raised:
    potentially thousands of events. With #358 as a hard prerequisite this
    case disappears, which is one reason the dependency is required.
 
+## Implementation notes (rev 3)
+
+- **One planner, not two passes.** Generalize #362's
+  `clampFutureCreatedAt` into a single function that, given the bundle
+  events, `now`, `floor`, the local watermark and the source watermark,
+  returns for each event to re-date its new `created_at`, its reason
+  (`'future' | 'behind_watermark' | 'invalid'`) and, for
+  `behind_watermark` only, the `occurred_at` to fill. The event loop applies
+  the plan and counts inserted rows per reason.
+- **Two diagnostics.** `future` counts go to #362's
+  `event_created_at_clamped` (`warn`), unchanged. `behind_watermark` and
+  `invalid` counts go to the new `event_created_at_restamped` (`info`).
+  It is emitted once per entity, after commit, with `detail: { count,
+  reason }`: one emission per non-zero reason, so a host can tell them
+  apart. Both are content-free.
+- **"Not after the local watermark"** is the `AFTER_SQL` ordering computed
+  in JS on `createdAtValue`: `at < wm.at || (at === wm.at && id <= wm.id)`.
+  With the start-of-log marker, only values below `Number.MIN_SAFE_INTEGER`
+  qualify, and those are already invalid in practice.
+- **Source watermark** is read from `bundle.librarian_watermark` and used
+  only when `at` is a finite number and `id` a string. "After the source
+  watermark" uses the same comparison. The marker from the source means
+  the source read nothing, so every event is eligible.
+- **Export.** `getFullBundle` sets `librarian_watermark` only when the
+  entity has one. `read()` bundles never carry it. OKF output
+  (`formatMemoryDump`) does not carry it, so OKF imports take the
+  fallback.
+- **Merge only** for the behind-watermark rule (step 3). Step 5 (invalid)
+  and #362's future rule run in both modes.
+
 ## Files touched (expected)
 
 - `packages/core/src/services/ImportExportService.ts`: §1, §2.
@@ -311,8 +351,10 @@ The questions as raised:
   the `event_created_at_restamped` code.
 - `packages/core/src/utils/diagnostics.ts`: its severity (`info`) and
   message.
-- `packages/core/src/services/MaintenanceService.ts`: expose the seed rule
-  to `ImportExportService` (today it is private).
+- ~~`packages/core/src/services/MaintenanceService.ts`: expose the seed
+  rule~~ Done by #362 (`services/legacyWatermark.ts`).
+- `apps/docs/src/content/docs/reference/types.md`: the new optional
+  `MemoryBundle.librarian_watermark` field.
 - Docs: `apps/docs/src/content/docs/guides/diagnostics.md`, the
   maintenance guide's import notes, and the import/export or OKF guide for
   the new bundle field.
