@@ -5,6 +5,8 @@ Revision 2 (2026-11-11), after the whole-branch code review and the docs
 review: §3.2 skips derived ids already used in the log, and §3.7 says the
 derived id governs over the tuple rule (owner rulings §5.5 and §5.6).
 §5.7 records the entity-wipe ruling; its design (§6) follows in revision 3.
+Revision 3 (2026-11-11): §6 entity wipe, designed with a Fable (high)
+consultation at the owner's request; owner rulings §5.8-§5.10.
 **Date:** 2026-11-11
 **Issues:** #367, #366, #365. Issue #278 (the upstream sprintf-js /
 node-forge watch) is out of scope: there is nothing to do until upstream
@@ -873,6 +875,124 @@ The owner accepted the recommendation on all four questions on 2026-11-11. Each 
    librarian has not read, and no API deletes them. Open an issue, or fix
    here?**
    - **Ruled 2026-11-11:** fix in this PR. Design in §6 (revision 3).
+8. **(Revision 3.) Wipe API: an opt-in `includeEvents` flag on
+   `forget({ clearAll: true })`, or delete events by default?**
+   - **Ruled 2026-11-11:** opt-in flag. Defaulting it on is a 9.0.0
+     question, not decided.
+9. **(Revision 3, charter.) Charter rule 12 says events are "never deleted
+   unconsolidated". Is a requested wipe of unread events allowed?**
+   - **Ruled 2026-11-11:** allowed. Rule 12 limits the service's own
+     automatic retention ("quietly threw away", charter rule 12 *Why*); a
+     deletion the user asks for is rule 8 ("Your data is yours to take or
+     delete"). The owner may add a clarifying sentence to the charter in
+     the SynapseTree repository; this repository does not edit it.
+10. **(Revision 3.) `clearAll` also leaves the entity's edges and
+    source-ref index rows. Fix here?**
+    - **Ruled 2026-11-11:** fix in this PR (§6).
+
+## §6 Entity wipe: `forget({ clearAll: true })` leaves events, edges and source-ref rows
+
+### Problem
+
+- **Who hits it:** a host that wipes an entity with the documented recipe
+  `forget(entityId, { clearAll: true })` then `runPrune(entityId, { retainSoftDeletedFor: 0, retainEventsFor: 0, vacuum: true })`.
+- **What happens:**
+  - Under the 8.0.0 defaults, `runPrune` deletes only events the librarian
+    watermark has passed and emits `event_retention_held` for the rest
+    (`packages/core/src/services/MaintenanceService.ts:331-365`). `forget()`
+    never deletes events. No public API deletes unread events. A later
+    maintenance run turns them back into facts.
+  - Under `'legacy'`, the librarian re-reads the 50 newest events every pass
+    (`packages/core/src/services/librarian/legacy.ts:35`), so `clearAll`
+    without a prune resurrects facts in every mode.
+  - `clearAll` never deletes edges (`MaintenanceService.ts` has no edge
+    repository), and `runPrune` does not either, so the entity's edges stay
+    for good, dangling once the facts are hard-deleted. Source-ref index rows
+    are left too (the TODO at `MaintenanceService.ts:548-556`).
+- **Found by:** the Fable docs review on 2026-11-11 (§5.7).
+
+### Proposed change
+
+**API.** `forget(entityId, params, opts?)` gains `params.includeEvents?: boolean`.
+The result gains `deleted.events?: number`, present only when
+`includeEvents` is true. Default behaviour of `forget()` is unchanged
+except for the edge and source-ref cleanup below.
+
+**Validation.** `includeEvents` is accepted only with `clearAll: true`.
+Otherwise `forget` throws a plain `Error` before taking the lock, next to the
+existing `clearAll` exclusivity check, and writes nothing.
+
+**`clearAll` (with or without `includeEvents`), in forget's one transaction:**
+- Facts and tasks are soft-deleted, as today.
+- The entity's edges are hard-deleted (`EdgeRepository.bulkDeleteByEntityId`,
+  the call import's replace mode already makes). Edges have no soft delete,
+  and nothing restores a soft-deleted fact, so its edges can never be used
+  again.
+- The entity's live source-ref index rows are soft-deleted (new
+  `SourceRefIndexRepository.softDeleteByEntityId`), skipped on a pre-v9 store
+  under the same `sourceRefIndexPresent` rule the by-source path uses. This
+  closes the TODO.
+- Entity summary deleted, as today.
+
+**`includeEvents: true` additionally, in the same transaction:**
+- Every event of the entity is hard-deleted, read or not, with no date
+  cutoff (new `EventRepository.deleteByEntityId`). Hard, because events have
+  no `deleted_at`. Scoped by `entity_id`, because the events table has one
+  primary key for all entities.
+- The checkpoint row is deleted (`MetadataRepository.deleteCheckpoint`, as
+  import's replace mode does) instead of zeroing `memory`/`heal`. This also
+  clears the librarian watermark. It must: with an empty log, a watermark
+  ahead of the clock would hide every new event (`EventRepository.ts:9`).
+  With no row, every reader behaves as "nothing read yet".
+- Without `includeEvents`, the checkpoint is zeroed as today.
+
+**Locks and errors.** Unchanged: the forget lock already excludes librarian,
+heal, prune, import and ingest (`JobManager.ts:238-250`). `WikiBusyError`
+deletes nothing. A deletion-hook failure still throws after commit; a retry
+is safe and returns `events: 0`.
+
+**`dryRun`.** With `clearAll` and `includeEvents`, the preview adds
+`deleted.events` (the entity's event count). No writes.
+
+**Diagnostics.** None new. A requested delete is reported by its return
+value (`deleted.events`, a count), which meets INTENT rule 6.
+
+**Other surfaces.** `packages/react` `useWikiForget` passes the option and
+result through. `mcp-server` does not expose forget (charter rule 10).
+
+**Semver.** `feat(core)`; additive. No breaking footer. No retrieval or
+maintenance claim (INTENT rule 11).
+
+### Files touched
+
+- `packages/core/src/services/MaintenanceService.ts`, `packages/core/src/WikiMemory.ts` (signature, JSDoc), `packages/core/src/repositories/EventRepository.ts`, `packages/core/src/repositories/SourceRefIndexRepository.ts`, `packages/react/src/useWikiForget.ts`.
+- Tests: `packages/core/__tests__/forgetWipe.test.ts` (new); `packages/react` hook test if one covers `useWikiForget`.
+- Docs: `apps/docs/src/content/docs/guides/deleting-data.md` (new recipe, replaces the caution; stop writes first; a re-import brings events back), `reference/wiki-memory.md`, `guides/maintenance.md`, `guides/diagnostics.md` (`event_retention_held` points at the option), `project/upgrading-8.md`, `docs/synapsetree-integration.md`.
+- Status note: `specs/import-past-dated-events/spec.md` (the retention guard covers prune, not a requested wipe).
+
+### Test plan
+
+`packages/core/__tests__/forgetWipe.test.ts`:
+
+1. **Reproduction (fails on main).** Under defaults, write events, run no
+   maintenance. `forget(e, { clearAll: true, includeEvents: true })`, then
+   the recipe's prune. Zero event rows; no `event_retention_held`;
+   `runPendingMaintenance()` makes no model call and leaves zero live facts.
+2. `clearAll` without `includeEvents`: events kept, no `events` key in the
+   result, librarian watermark unchanged.
+3. `clearAll` deletes the entity's edges and soft-deletes its live
+   source-ref rows; another entity's edges and rows are untouched.
+4. Bookkeeping: with an advanced watermark and non-zero counters, the
+   checkpoint row is gone after the wipe; an event written afterwards under
+   a mocked earlier clock is read by the next pass.
+5. Two entities: wiping A leaves B's events, checkpoint and watermark alone.
+6. `includeEvents` without `clearAll`, or with a selector, throws and writes
+   nothing.
+7. `dryRun` returns the event count and deletes nothing.
+8. With the librarian lock held: `WikiBusyError`, nothing deleted.
+9. A rejecting deletion hook: throws, events gone; the retry succeeds and
+   returns `events: 0`.
+10. The wipe emits no diagnostics.
 
 ## Out of scope
 
