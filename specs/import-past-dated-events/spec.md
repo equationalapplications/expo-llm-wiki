@@ -397,7 +397,12 @@ every invalid value is stored with a real number, and these errors go away.
 - Message: "Imported events that would have sorted behind the librarian
   position, or had an unusable date, were re-dated just after the current
   time, or after the librarian position if that is later, keeping their
-  order."
+  order." (Revised 2026-11-11 after CodeRabbit on #364: an event whose
+  only problem is an unusable `occurred_at` keeps its `created_at`, and its
+  `occurred_at` is cleared. The message now says "were adjusted: an
+  affected created_at was re-dated just after the current time, or after
+  the librarian position if that is later, keeping their order; an
+  unusable occurred_at was cleared.")
 - Invalid dates are reported at `info` under this code, as ruled.
 
 **Export:**
@@ -427,7 +432,10 @@ docs or changelog text makes a cost claim (rule 11).
   re-import does not help, because the id is ignored as a duplicate.
 - A host that splits a bundle must copy `librarian_watermark` to every
   chunk, or that chunk takes the fallback. A host that strips facts from a
-  bundle must drop the field.
+  bundle must drop the field. (Clarified 2026-11-11 after CodeRabbit on #364: copy it
+  only onto chunks that also carry the source's facts. A chunk that keeps
+  the field without the facts makes its older events look consolidated, so
+  they are skipped and later pruned.)
 - `merge: false` under legacy still reads only the newest 50 events
   (§4), so "not affected" holds for ops only.
 - Chunked imports interleave, as #362 §3 accepts.
