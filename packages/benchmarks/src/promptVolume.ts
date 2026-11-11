@@ -39,11 +39,13 @@ export interface VolumeRow {
   rawEventChars: number;
   eventsSeen: number;
   promptLog: string;
+  /** JSON of the final entries, events and checkpoints tables (embeddings excluded); byte-identical across replays under the harness. */
+  stateDump: string;
 }
 
 export interface BaselineFile {
   note: string;
-  rows: Array<Omit<VolumeRow, 'promptLog'>>;
+  rows: Array<Omit<VolumeRow, 'promptLog' | 'stateDump'>>;
 }
 
 const ENTITY = 'pv-user';
@@ -79,6 +81,7 @@ export async function runPromptVolume(config: VolumeConfig, stream: readonly Str
   return withDeterminism({ seed: 1 }, async () => {
     const { provider, log } = createScriptedProvider(stream);
     const handle = openDb();
+    let stateDump = '';
     try {
       const wiki = new WikiMemory(handle.adapter, { llmProvider: provider, config: engineConfigFor(config) });
       await wiki.setup();
@@ -109,6 +112,12 @@ export async function runPromptVolume(config: VolumeConfig, stream: readonly Str
           await waitIdle(wiki);
         }
       }
+      const dump: Record<string, unknown[]> = {};
+      for (const t of ['llm_wiki_entries', 'llm_wiki_events', 'llm_wiki_checkpoints']) {
+        const rows = await handle.adapter.getAllAsync<Record<string, unknown>>(`SELECT * FROM ${t} ORDER BY rowid`);
+        dump[t] = rows.map(({ embedding: _e, embedding_blob: _b, ...rest }) => rest);
+      }
+      stateDump = JSON.stringify(dump);
     } finally {
       handle.close();
     }
@@ -130,6 +139,7 @@ export async function runPromptVolume(config: VolumeConfig, stream: readonly Str
       rawEventChars: stream.reduce((a, e) => a + e.summary.length, 0),
       eventsSeen,
       promptLog: log.map((c) => `${c.site}\n${c.userPrompt}`).join('\n␞\n'),
+      stateDump,
     };
   });
 }

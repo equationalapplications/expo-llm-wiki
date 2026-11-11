@@ -13,7 +13,6 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { calibrationRows, expectedClass, recommendThresholds } from '../src/calibrate';
 import { decisionLog, loadSidecar, sidecarEmbed, SIDECAR_PATH, type DecisionRow } from '../src/gate/decisionLog';
-import { withDeterminism } from '../src/determinism';
 import type { Scenario } from '../src/supersession/run';
 
 const scenarios = JSON.parse(
@@ -82,16 +81,6 @@ describe('gate decision log', () => {
       expect(r!.decision, key).not.toBe(expectedClass(s, r!.candidateIndex));
     }
   });
-
-  it('gate is deterministic', async () => {
-    const embed = sidecarEmbed(loadSidecar(SIDECAR_PATH));
-    const run = () => withDeterminism({ seed: 5 }, async () => {
-      const out: DecisionRow[] = [];
-      for (const s of scenarios.slice(0, 6)) out.push(...(await decisionLog(s, embed)));
-      return out;
-    });
-    expect(await run()).toEqual(await run());
-  }, 60_000);
 });
 
 describe('calibrate on the sidecar', () => {

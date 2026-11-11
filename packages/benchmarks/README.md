@@ -73,7 +73,7 @@ pnpm --filter @equationalapplications/benchmarks-llm-wiki fixture:gate-embedding
 pnpm --filter @equationalapplications/benchmarks-llm-wiki fixture:retrieval-queries
 ```
 
-Set `BENCH_WRITE_RESULTS=1` to write a dated report to `results/`.
+Set `BENCH_WRITE_RESULTS=1` to write a report to `results/`, named by `git describe`.
 
 ## Commands
 
@@ -158,6 +158,11 @@ with the fact titles that were current after the replay plus an `error`
 field when a scenario threw. A scenario **passes** when every expected
 current title is contained (case-insensitively) in some current fact's title
 **and** no `expectSuperseded` id is still current.
+
+**Stale caches (2026-11-10).** Before the spec targeted-diagnostics §2.1
+fix, a `legacy-deferred` LongMemEval ingest actually ran legacy-auto writes.
+It is still filed under the same cache key, so delete
+`.cache/ingest/*/legacy-deferred/` before reusing any such cache.
 
 **Errata (2026-11-10).** `results/supersession-7.8.0.json` ran on the 7.8.0
 code but records `engine.version: "7.7.7"`: `engine.version` is core's

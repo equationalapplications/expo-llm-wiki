@@ -70,7 +70,7 @@ describe('prompt-volume ledger', () => {
     if (process.env.BENCH_UPDATE_BASELINE === '1') {
       const baseline: BaselineFile = {
         note: 'Prompt-volume baseline (spec targeted-diagnostics §3). Regenerate with BENCH_UPDATE_BASELINE=1 and say why in the commit.',
-        rows: rows.map(({ promptLog: _p, ...rest }) => rest),
+        rows: rows.map(({ promptLog: _p, stateDump: _s, ...rest }) => rest),
       };
       writeFileSync(BASELINE_PATH, JSON.stringify(baseline, null, 1) + '\n');
     }
@@ -100,6 +100,15 @@ describe('prompt-volume ledger', () => {
     }
   });
 
+  it('final fact, event and checkpoint tables are byte-identical across replays (spec §1)', async () => {
+    for (const config of CONFIGS) {
+      const again = await runPromptVolume(config, stream);
+      const first = rows.find((r) => r.config === again.config)!;
+      expect(first.stateDump.length, config.strategy + config.maintenance).toBeGreaterThan(100);
+      expect(again.stateDump === first.stateDump, again.config).toBe(true);
+    }
+  }, 120_000);
+
   it('replay is byte-stable', async () => {
     for (const config of [CONFIGS[0]!, CONFIGS[3]!]) {
       const again = await runPromptVolume(config, stream);
@@ -116,6 +125,7 @@ describe('compareToBaseline', () => {
     rawEventChars: 1_000_000,
     eventsSeen: 1,
     promptLog: '',
+    stateDump: '',
   });
   const baseline: BaselineFile = { note: '', rows: [{ ...row(1000, 10), promptLog: undefined } as never] };
 

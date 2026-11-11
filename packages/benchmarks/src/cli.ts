@@ -152,7 +152,9 @@ const LEGACY_FACT_ROW_CHARS = 700;
  *   earlier turn. That assumption is an upper bound: real models extract
  *   fewer facts than turns.
  *
- * Validated against the prompt-volume ledger (`__tests__/cli.test.ts`, ±25%).
+ * Calibrated to the prompt-volume ledger (`__tests__/cli.test.ts`, ±25%):
+ * the row constants were measured from the same scripted stream, so that
+ * test is a regression pin, not independent validation.
  * Before 2026-11-10 both strategies used the ops formula, which put legacy
  * roughly 6x low (spec targeted-diagnostics §2.3).
  */
