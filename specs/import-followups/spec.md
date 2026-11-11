@@ -1,6 +1,6 @@
 # Import follow-ups: hook isolation, default `valid_from`, deterministic OKF event ids
 
-**Status:** Reviewed (approved by the owner on PR #371, 2026-11-11).
+**Status:** Implemented (PR #371, 2026-11-11). Previously Reviewed (approved by the owner on PR #371, 2026-11-11).
 Revision 2 (2026-11-11), after the whole-branch code review and the docs
 review: §3.2 skips derived ids already used in the log, and §3.7 says the
 derived id governs over the tuple rule (owner rulings §5.5 and §5.6).
