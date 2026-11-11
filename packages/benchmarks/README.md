@@ -159,6 +159,13 @@ field when a scenario threw. A scenario **passes** when every expected
 current title is contained (case-insensitively) in some current fact's title
 **and** no `expectSuperseded` id is still current.
 
+**legacy-deferred loses old events (2026-11-10).** A `legacy-deferred`
+LongMemEval ingest writes every turn before maintenance runs, and the
+legacy librarian reads only the newest 50 events (`legacy.ts`). On a
+haystack longer than 50 turns, older turns are never extracted, yet the
+cache is still marked complete. That is the engine's real behavior, not a
+harness bug, so `legacy-deferred` accuracy reflects it.
+
 **Stale caches (2026-11-10).** Before the spec targeted-diagnostics §2.1
 fix, a `legacy-deferred` LongMemEval ingest actually ran legacy-auto writes.
 It is still filed under the same cache key, so delete

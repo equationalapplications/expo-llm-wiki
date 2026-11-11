@@ -106,37 +106,49 @@ describe('estimateIngestTokens', () => {
     const q = makeQ('single-session-user', 'q1', 100);
     // session has 2 turns × 100 chars = 200 chars => ceil(200 / 4) = 50
     // + 2000 flat
-    expect(estimateIngestTokens([q], 'ops')).toBe(50 + 2000);
+    expect(estimateIngestTokens([q], { strategy: 'ops', maintenance: 'auto' })).toBe(50 + 2000);
   });
 
   it('rounds up when the char count is not a multiple of 4', () => {
     // 5 chars over 2 turns = 10 chars total => ceil(10/4) = 3
     const q = makeQ('single-session-user', 'q1', 5);
-    expect(estimateIngestTokens([q], 'ops')).toBe(3 + 2000);
+    expect(estimateIngestTokens([q], { strategy: 'ops', maintenance: 'auto' })).toBe(3 + 2000);
   });
 
   it('scales linearly across multiple questions', () => {
     const q = makeQ('knowledge-update', 'q', 16);
     // 32 chars => 8 ingest tokens per question; 2000 per question.
-    expect(estimateIngestTokens([q, q, q], 'ops')).toBe((8 + 2000) * 3);
+    expect(estimateIngestTokens([q, q, q], { strategy: 'ops', maintenance: 'auto' })).toBe((8 + 2000) * 3);
   });
 
   it('legacy estimate exceeds ops by more than 3x on a 60-turn question', () => {
     const q = streamQuestion();
-    expect(estimateIngestTokens([q], 'legacy')).toBeGreaterThan(3 * estimateIngestTokens([q], 'ops'));
+    expect(estimateIngestTokens([q], { strategy: 'legacy', maintenance: 'auto' })).toBeGreaterThan(3 * estimateIngestTokens([q], { strategy: 'ops', maintenance: 'auto' }));
   });
 
   it('legacy estimate tracks the prompt-volume ledger within 25%', async () => {
     const stream = loadStream(join(__dirname, '..', 'fixtures', 'promptVolume', 'stream.json'));
     const row = await runPromptVolume({ strategy: 'legacy', maintenance: 'auto' }, stream);
     const measured = row.bySite.librarian!.userChars;
-    const estimatedChars = (estimateIngestTokens([streamQuestion()], 'legacy') - 2000) * 4;
+    const estimatedChars = (estimateIngestTokens([streamQuestion()], { strategy: 'legacy', maintenance: 'auto' }) - 2000) * 4;
     expect(estimatedChars / measured).toBeGreaterThan(0.75);
     expect(estimatedChars / measured).toBeLessThan(1.25);
   }, 60_000);
 
+  it('legacy-deferred estimates one pass over the newest 50 turns, not the auto cadence', async () => {
+    const q = streamQuestion();
+    const deferred = estimateIngestTokens([q], { strategy: 'legacy', maintenance: 'deferred' });
+    const auto = estimateIngestTokens([q], { strategy: 'legacy', maintenance: 'auto' });
+    expect(deferred).toBeLessThan(auto);
+    const stream = loadStream(join(__dirname, '..', 'fixtures', 'promptVolume', 'stream.json'));
+    const row = await runPromptVolume({ strategy: 'legacy', maintenance: 'deferred' }, stream);
+    const ratio = ((deferred - 2000) * 4) / row.bySite.librarian!.userChars;
+    expect(ratio).toBeGreaterThan(0.75);
+    expect(ratio).toBeLessThan(1.25);
+  }, 60_000);
+
   it('returns 0 for an empty question list', () => {
-    expect(estimateIngestTokens([], 'ops')).toBe(0);
+    expect(estimateIngestTokens([], { strategy: 'ops', maintenance: 'auto' })).toBe(0);
   });
 });
 

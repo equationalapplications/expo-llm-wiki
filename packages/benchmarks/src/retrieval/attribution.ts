@@ -167,15 +167,15 @@ export async function attribute(
         default: (await wiki.read(ENTITY[dataset], query)).facts.map((f) => f.id),
         hybrid: (await wiki.read(ENTITY[dataset], query, { hybridWeight: HYBRID_BLEND })).facts.map((f) => f.id),
       };
+      if (misses.length > 0) {
+        throw new Error(`attribute(${dataset}): ${misses.length} query embed failure(s); ${misses[0]}`);
+      }
       for (const m of ['keyword', 'default', 'hybrid'] as const) sums[m] += score(ranked[m], gold, K);
       const ranks: Ranks = {
         keyword: bestRank(ranked.keyword, gold),
         default: bestRank(ranked.default, gold),
         hybrid: bestRank(ranked.hybrid, gold),
       };
-      if (misses.length > 0) {
-        throw new Error(`attribute(${dataset}): ${misses.length} query embed failure(s); ${misses[0]}`);
-      }
       classes[classify(ranks, scorable)] += 1;
       if (ranks.default === null && ranks.keyword !== null) rescuedByKeyword += 1;
       if (scorable && ranks.default === null && worst.length < 10) worst.push({ queryId, query, goldRanks: ranks });

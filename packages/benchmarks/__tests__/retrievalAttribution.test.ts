@@ -11,8 +11,8 @@
  *   BENCH_UPDATE_BASELINE=1 pnpm --filter @equationalapplications/benchmarks-llm-wiki test __tests__/retrievalAttribution.test.ts
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { existsSync, readFileSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { dirname, join } from 'path';
 import {
   attribute,
   MISS_CLASSES,
@@ -61,6 +61,7 @@ afterAll(async () => {
   if (process.env.BENCH_WRITE_RESULTS === '1' && done.length > 0) {
     const info = await engineInfo();
     const out = join(__dirname, '..', 'results', `retrieval-attribution-${info.gitDescribe}.json`);
+    mkdirSync(dirname(out), { recursive: true });
     writeFileSync(out, JSON.stringify({ kind: 'retrieval-attribution', engine: info, reports: done }, null, 1) + '\n');
   }
 });
@@ -112,4 +113,17 @@ describe('queryEmbedder', () => {
   it('never computes an embedding: a text outside the sidecar throws', async () => {
     await expect(queryEmbedder(new Map())('a query nobody recorded')).rejects.toThrow(/fixture:retrieval-queries/);
   });
+});
+
+describe('query sidecar generator', () => {
+  it('fails the build when an embed error would silently fall back to keyword search', async () => {
+    const { recordQueryVectors } = await import('../src/retrieval/buildQueryEmbeddings');
+    const { queries } = (await import('../src/retrieval/attribution')).loadQueries('financebench');
+    const victim = Object.values(queries)[3]!.trim();
+    const fake = async (t: string) => {
+      if (t === victim) throw new Error('onnx exploded');
+      return new Array(384).fill(0).map((_, i) => (i === t.length % 384 ? 1 : 0));
+    };
+    await expect(recordQueryVectors('financebench', fake)).rejects.toThrow(/1 query embed failure/);
+  }, 300_000);
 });

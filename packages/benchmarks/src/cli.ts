@@ -145,8 +145,9 @@ const LEGACY_FACT_ROW_CHARS = 700;
  *
  * - `ops`: `ceil(Σ_turns(content.length) / 4)`. Ops extract sends each event
  *   once, with a short label and timestamp.
- * - `legacy`: legacy re-sends context on every pass. A pass runs every 20
- *   turns, plus a tail pass for any remainder. Each pass sends the last
+ * - `legacy`: legacy re-sends context on every pass. Under `auto` a pass
+ *   runs every 20 turns, plus a tail pass for any remainder; under
+ *   `deferred` one drain pass runs after every turn is written. Each pass sends the last
  *   `min(50, n)` turns as JSON rows (content + 190 chars) and
  *   `min(100, facts so far)` fact rows at 700 chars, assuming one fact per
  *   earlier turn. That assumption is an upper bound: real models extract
@@ -158,7 +159,11 @@ const LEGACY_FACT_ROW_CHARS = 700;
  * Before 2026-11-10 both strategies used the ops formula, which put legacy
  * roughly 6x low (spec targeted-diagnostics §2.3).
  */
-export function estimateIngestTokens(questions: LmeQuestion[], strategy: 'legacy' | 'ops'): number {
+export function estimateIngestTokens(
+  questions: LmeQuestion[],
+  flags: { strategy: 'legacy' | 'ops'; maintenance: 'auto' | 'deferred' },
+): number {
+  const { strategy, maintenance } = flags;
   let total = 0;
   for (const q of questions) {
     const turns = q.haystack_sessions.flat().map((t) => t.content.length);
@@ -166,9 +171,15 @@ export function estimateIngestTokens(questions: LmeQuestion[], strategy: 'legacy
     if (strategy === 'ops') {
       for (const c of turns) chars += c;
     } else {
+      // auto: a pass every 20 turns plus a tail. deferred: every turn is
+      // written first, then one drain pass sees only the newest 50.
       const passAt: number[] = [];
-      for (let n = LEGACY_PASS_EVERY; n <= turns.length; n += LEGACY_PASS_EVERY) passAt.push(n);
-      if (turns.length % LEGACY_PASS_EVERY !== 0) passAt.push(turns.length);
+      if (maintenance === 'deferred') {
+        if (turns.length > 0) passAt.push(turns.length);
+      } else {
+        for (let n = LEGACY_PASS_EVERY; n <= turns.length; n += LEGACY_PASS_EVERY) passAt.push(n);
+        if (turns.length % LEGACY_PASS_EVERY !== 0) passAt.push(turns.length);
+      }
       let factsSoFar = 0;
       for (const n of passAt) {
         const window = turns.slice(Math.max(0, n - LEGACY_EVENT_WINDOW), n);
@@ -302,7 +313,7 @@ export async function runLongMemEvalCommand(deps: LongMemEvalDeps): Promise<Comm
       .map((id) => datasetById.get(id))
       .filter((q): q is LmeQuestion => q !== undefined);
     const questionCount = dryRunQuestions.length;
-    const tokenEstimate = estimateIngestTokens(dryRunQuestions, flags.strategy);
+    const tokenEstimate = estimateIngestTokens(dryRunQuestions, flags);
     stdout(renderEstimate({
       engine,
       flags,
@@ -341,7 +352,7 @@ export async function runLongMemEvalCommand(deps: LongMemEvalDeps): Promise<Comm
 
   const engine = await engineInfo();
   const cachedCount = countCachedQuestions(cacheDir, engine.version, flags, questions.map((q) => q.question_id));
-  const tokenEstimate = estimateIngestTokens(questions, flags.strategy);
+  const tokenEstimate = estimateIngestTokens(questions, flags);
 
   stdout(renderEstimate({
     engine,

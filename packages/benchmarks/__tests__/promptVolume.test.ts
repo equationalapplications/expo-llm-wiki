@@ -10,7 +10,7 @@
  */
 import { beforeAll, afterAll, describe, expect, it, vi } from 'vitest';
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import {
   CONFIGS,
   compareToBaseline,
@@ -77,6 +77,7 @@ describe('prompt-volume ledger', () => {
     if (process.env.BENCH_WRITE_RESULTS === '1') {
       const info = await engineInfo();
       const out = join(__dirname, '..', 'results', `prompt-volume-${info.gitDescribe}.json`);
+      mkdirSync(dirname(out), { recursive: true });
       writeFileSync(out, JSON.stringify({ kind: 'prompt-volume', engine: info, rows: table }, null, 1) + '\n');
     }
   }, 120_000);
