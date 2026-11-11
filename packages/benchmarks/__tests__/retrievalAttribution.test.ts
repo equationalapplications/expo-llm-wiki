@@ -16,6 +16,7 @@ import { join } from 'path';
 import {
   attribute,
   MISS_CLASSES,
+  loadQuerySidecar,
   queryEmbedder,
   type AttributionReport,
   type Dataset,
@@ -71,7 +72,7 @@ describe.each(['scifact', 'financebench'] as const)('%s attribution', (dataset) 
     report = await attribute(dataset);
     reports[dataset] = report;
     console.log(
-      `${dataset} ${report.metric}: keyword=${report.keywordOnly.toFixed(4)} default(vector)=${report.defaultMode.toFixed(4)} hybrid0.5=${report.hybrid.toFixed(4)}`,
+      `${dataset} ${report.metric}: keyword=${report.keywordOnly.toFixed(4)} default(vector)=${report.defaultMode.toFixed(4)} hybrid0.5=${report.hybrid.toFixed(4)} rescuedByKeyword=${report.rescuedByKeyword}`,
     );
     console.table(report.classes);
     console.table(report.worst);
@@ -82,6 +83,13 @@ describe.each(['scifact', 'financebench'] as const)('%s attribution', (dataset) 
     expect(sum).toBe(report.queryCount);
   });
 
+  it('counts keyword rescues of default (vector) misses separately from miss classes', () => {
+    // Measured independently by the PR #357 review probe: queries the default
+    // misses in the top 10 while keyword-only hits. The miss classes cannot
+    // show these, because classify() reports any blend hit as 'hit'.
+    expect(report.rescuedByKeyword).toBe(dataset === 'scifact' ? 18 : 1);
+  });
+
   it('stays within the committed guards', () => {
     expect(existsSync(GUARDS_PATH)).toBe(true);
     const g = (JSON.parse(readFileSync(GUARDS_PATH, 'utf8')) as Guards).datasets[dataset];
@@ -89,6 +97,15 @@ describe.each(['scifact', 'financebench'] as const)('%s attribution', (dataset) 
     // Miss classes only: more hits is an improvement, never a failure.
     for (const c of MISS_CLASSES) if (c !== 'hit') expect(report.classes[c], c).toBeLessThanOrEqual(g.classes[c]!);
   });
+});
+
+describe('attribute with an incomplete query sidecar', () => {
+  it('throws the re-run message instead of silently falling back to keyword search', async () => {
+    const full = loadQuerySidecar('financebench');
+    const dropped = [...full.keys()][0]!;
+    const partial = new Map([...full].filter(([k]) => k !== dropped));
+    await expect(attribute('financebench', { sidecar: partial })).rejects.toThrow(/re-run pnpm fixture:retrieval-queries/);
+  }, 300_000);
 });
 
 describe('queryEmbedder', () => {

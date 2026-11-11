@@ -49,6 +49,8 @@ export interface AttributionReport {
   /** Shipped default: hybridWeight unset = pure vector. */
   defaultMode: number;
   hybrid: number;
+  /** Queries the default (vector) misses in the top 10 while keyword-only hits. Not visible in `classes`, which classify on the blend. */
+  rescuedByKeyword: number;
   classes: Record<MissClass, number>;
   /** Up to 10 queries the shipped default misses, with the best gold rank per mode (1-based, null = not in top 10). */
   worst: Array<{ queryId: string; query: string; goldRanks: Ranks }>;
@@ -129,14 +131,31 @@ export function classify(r: Ranks, scorable: boolean): MissClass {
   return 'both-miss';
 }
 
-export async function attribute(dataset: Dataset): Promise<AttributionReport> {
+export async function attribute(
+  dataset: Dataset,
+  opts: { sidecar?: ReadonlyMap<string, number[]> } = {},
+): Promise<AttributionReport> {
   const { queries, qrels } = loadQueries(dataset);
-  const { wiki, ids, close } = await loadCorpus(dataset, queryEmbedder(loadQuerySidecar(dataset)));
+  // Core's read() catches embed errors and silently falls back to keyword
+  // search, so a sidecar miss would corrupt the "default" numbers. Record
+  // misses and fail loudly (same guard as gate/decisionLog.ts).
+  const inner = queryEmbedder(opts.sidecar ?? loadQuerySidecar(dataset));
+  const misses: string[] = [];
+  const embed: EmbedFn = async (text) => {
+    try {
+      return await inner(text);
+    } catch (e) {
+      misses.push(e instanceof Error ? e.message : String(e));
+      throw e;
+    }
+  };
+  const { wiki, ids, close } = await loadCorpus(dataset, embed);
   const score = METRIC[dataset] === 'ndcg@10' ? computeNDCG : computeMRR;
   const sums = { keyword: 0, default: 0, hybrid: 0 };
   const classes = Object.fromEntries(MISS_CLASSES.map((c) => [c, 0])) as Record<MissClass, number>;
   const worst: AttributionReport['worst'] = [];
   let queryCount = 0;
+  let rescuedByKeyword = 0;
   try {
     for (const [queryId, query] of Object.entries(queries)) {
       const gold = new Set(qrels[queryId] ?? []);
@@ -154,7 +173,11 @@ export async function attribute(dataset: Dataset): Promise<AttributionReport> {
         default: bestRank(ranked.default, gold),
         hybrid: bestRank(ranked.hybrid, gold),
       };
+      if (misses.length > 0) {
+        throw new Error(`attribute(${dataset}): ${misses.length} query embed failure(s); ${misses[0]}`);
+      }
       classes[classify(ranks, scorable)] += 1;
+      if (ranks.default === null && ranks.keyword !== null) rescuedByKeyword += 1;
       if (scorable && ranks.default === null && worst.length < 10) worst.push({ queryId, query, goldRanks: ranks });
     }
   } finally {
@@ -167,6 +190,7 @@ export async function attribute(dataset: Dataset): Promise<AttributionReport> {
     keywordOnly: sums.keyword / queryCount,
     defaultMode: sums.default / queryCount,
     hybrid: sums.hybrid / queryCount,
+    rescuedByKeyword,
     classes,
     worst,
   };
