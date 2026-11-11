@@ -59,3 +59,49 @@ describe('runExtract', () => {
     expect(generateText.mock.calls[0][0].userPrompt).not.toContain('Current Facts');
   });
 });
+
+// spec specs/import-followups §2 (#366): the default valid_from is the newest date in the batch, never later than now.
+describe('runExtract default valid_from', () => {
+  const fact = (title: string, extra: Record<string, unknown> = {}) => ({ title, body: 'b', tags: [], confidence: 'certain', ...extra });
+  async function extract(facts: unknown[], events: Array<[string, number, number?]>) {
+    const generateText = vi.fn(async () => JSON.stringify({ facts, tasks: [] }));
+    const { deps, ev } = await mk(generateText);
+    for (const [id, at, occurred] of events) await ev(id, at, 's', occurred);
+    const { batch }: any = await selectBatch(deps, 'u', null);
+    const out = await runExtract(deps, { entityId: 'u', trigger: 'call' }, batch);
+    return out.candidates.map((c) => [c.fact.title, c.validFrom]);
+  }
+
+  it('uses the newest date, not the last stored event (fails on main)', async () => {
+    expect(await extract(
+      [fact('User owns a cat named Mo'), fact('User owns a dog named Rex', { source_event: 'e9' })],
+      [['evt_a', 100], ['evt_b', 200, 5]],
+    )).toEqual([['User owns a cat named Mo', 100], ['User owns a dog named Rex', 100]]);
+  });
+
+  it('keeps the order of preference: own valid_from, then the labelled event, then the default', async () => {
+    expect(await extract(
+      [fact('User owns a cat named Mo', { source_event: 'e2' }), fact('User started a new job', { valid_from: '2026-02-01' })],
+      [['evt_a', 100], ['evt_b', 200, 5]],
+    )).toEqual([['User owns a cat named Mo', 5], ['User started a new job', Date.parse('2026-02-01')]]);
+  });
+
+  it('a batch of one event uses that event\'s date', async () => {
+    expect(await extract([fact('User owns a cat named Mo')], [['evt_a', 100, 42]])).toEqual([['User owns a cat named Mo', 42]]);
+  });
+
+  it('a future event date is capped at now', async () => {
+    const now = Date.parse('2026-11-11T12:00:00Z');
+    const day = 86_400_000;
+    vi.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      expect(await extract([fact('User owns a cat named Mo')], [['evt_a', 100], ['evt_b', 200, now + 30 * day]]))
+        .toEqual([['User owns a cat named Mo', now]]);
+      // every event in the future: exactly now, not the earliest future date
+      expect(await extract([fact('User owns a cat named Mo')], [['evt_a', 100, now + 2 * day], ['evt_b', 200, now + 30 * day]]))
+        .toEqual([['User owns a cat named Mo', now]]);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+});
