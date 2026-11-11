@@ -60,7 +60,7 @@ const MESSAGE: Record<WikiDiagnosticCode, string> = {
   resolve_failed: 'Reconciliation failed for a candidate; it was stored as a draft.',
   read_budget: 'A read was packed to a token budget.',
   event_retention_held: 'Event pruning was held back because the librarian has not processed those events yet.',
-  event_created_at_clamped: 'Imported events dated in the future were stored with the current time.',
+  event_created_at_clamped: 'Imported events dated in the future were re-dated just after the current time, or after the librarian position if that is later, keeping their order.',
 };
 
 const warnedNonFunction = new WeakSet<object>();

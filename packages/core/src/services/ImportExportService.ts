@@ -10,6 +10,7 @@ import type { EmbeddingService } from './EmbeddingService';
 import { clip, normalizeSourceRef } from '../utils/pure';
 import { latestVerified } from '@equationalapplications/core-okf';
 import { emitDiagnostic } from '../utils/diagnostics';
+import { seedLegacyWatermark } from './legacyWatermark';
 
 const MAX_EMBEDDING_BLOB_BYTES = 32 * 1024; // 8192-dim float32 ceiling
 const IMPORT_TITLE_MAX = 500;
@@ -444,7 +445,10 @@ export class ImportExportService {
       // after a watermark already in the future), in (created_at, id) order
       // so they keep their order without ties (spec import-clamp-created-at §1).
       const now = Date.now();
-      const wm = await this.metadataRepo.getLibrarianWatermark(entityId, tx);
+      // Resolve legacy history to a watermark on the log as it stood before
+      // this import: inserted events would shift the offset the seed reads,
+      // and a clamped event could become the anchor itself and be skipped.
+      const wm = await seedLegacyWatermark(this.metadataRepo, this.eventRepo, entityId, tx);
       const floor = wm && Number.isFinite(wm.at) && wm.at > now ? wm.at : now;
       const clampedAt = clampFutureCreatedAt(bundle.events, now, floor);
       for (const event of bundle.events) {

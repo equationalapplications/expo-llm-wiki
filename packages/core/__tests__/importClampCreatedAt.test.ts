@@ -146,6 +146,25 @@ describe('importDump clamps future-dated event created_at', () => {
     expect(extractPrompts.join('\n')).toContain('Synced again from the fast clock');
   });
 
+  it('legacy history with no watermark is seeded before the import, so a clamped event is not skipped', async () => {
+    // memory_checkpoint 1 covers one event dated 2100. The clamp stores the
+    // new event at now + 1, before it; seeding at pass time would anchor on
+    // offset 0, the new event, and skip it.
+    vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    const { db, wiki, extractPrompts } = await mk();
+    await db.runAsync(
+      `INSERT INTO llm_wiki_events (id, entity_id, event_type, summary, created_at) VALUES ('evt_old', ?, 'observation', 'covered by legacy', ?)`,
+      [ENTITY, FUTURE],
+    );
+    await (wiki.__testAccess as any).metadataRepo.updateCheckpoint(ENTITY, { memory: 1 }, db);
+    await wiki.importDump(dump([ev('evt_new', FUTURE + 5, 'New import from the fast clock')]), { merge: true });
+    expect(await (wiki.__testAccess as any).metadataRepo.getLibrarianWatermark(ENTITY, db)).toEqual({ at: FUTURE, id: 'evt_old' });
+    expect((await rows(db)).find((r) => r.id === 'evt_new')!.created_at).toBe(FUTURE + 1);
+    await wiki.runLibrarian(ENTITY);
+    expect(extractPrompts.join('\n')).toContain('New import from the fast clock');
+    expect(extractPrompts.join('\n')).not.toContain('covered by legacy');
+  });
+
   it('under ops, writes after a future-dated import are still extracted', async () => {
     // Without the clamp the watermark lands on 2100 after the first pass, and
     // every later write (stamped with the real clock) sorts behind it.

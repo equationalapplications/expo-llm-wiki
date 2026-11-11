@@ -54,7 +54,7 @@ const wiki = createWiki(db, {
 | `llm_usage` | Token usage per LLM call (requires `config.reportLlmUsage: true`) |
 | `read_budget` | How many facts a `tokenBudget` read packed |
 | `event_retention_held` | Prune kept events because the librarian hasn't processed them yet |
-| `event_created_at_clamped` | `importDump` stored future-dated events just after the current time (`detail.count`) |
+| `event_created_at_clamped` | `importDump` re-dated future-dated events just after the current time, or after the librarian position if later (`detail.count`) |
 
 ## A practical router
 

@@ -54,6 +54,7 @@ describe('ImportExportService', () => {
       getDistinctEntityIds: vi.fn().mockResolvedValue(['user_1', 'user_2']),
       deleteCheckpoint: vi.fn().mockResolvedValue(undefined),
       getLibrarianWatermark: vi.fn().mockResolvedValue(null),
+      getCheckpoint: vi.fn().mockResolvedValue({}),
       getMeta: vi.fn().mockResolvedValue(null),
       setMeta: vi.fn().mockResolvedValue(undefined),
       deleteMeta: vi.fn().mockResolvedValue(undefined),
