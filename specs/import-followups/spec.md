@@ -1,6 +1,10 @@
 # Import follow-ups: hook isolation, default `valid_from`, deterministic OKF event ids
 
-**Status:** Reviewed (approved by the owner on PR #371, 2026-11-11)
+**Status:** Reviewed (approved by the owner on PR #371, 2026-11-11).
+Revision 2 (2026-11-11), after the whole-branch code review and the docs
+review: §3.2 skips derived ids already used in the log, and §3.7 says the
+derived id governs over the tuple rule (owner rulings §5.5 and §5.6).
+§5.7 records the entity-wipe ruling; its design (§6) follows in revision 3.
 **Date:** 2026-11-11
 **Issues:** #367, #366, #365. Issue #278 (the upstream sprintf-js /
 node-forge watch) is out of scope: there is nothing to do until upstream
@@ -456,6 +460,20 @@ and both are kept.
   with the same day, event type and summary. The first is `0`.
 - Lines with an explicit id do not count.
 - Two headings with the same date share one count.
+- **Taken ids are skipped** (revision 2, ruled §5.5). Before any id is
+  derived, collect the explicit ids of every line in the log that produces
+  an event. When a line's derived id is already taken, by one of those
+  explicit ids or by an id derived for an earlier line, the line takes the
+  next occurrence number until its id is free. The count for that day,
+  type and summary then continues after the number used.
+  - Why: after one export every line carries its derived id as an
+    explicit comment. A hand-added identical line would otherwise derive
+    occurrence `0` again, match the exported id, and be dropped by
+    `INSERT OR IGNORE` with no signal (rule 6).
+  - Because explicit ids are collected first, the result does not depend
+    on where the explicit lines sit in the file.
+  - It also covers two summaries that differ only in lone surrogates:
+    they are different keys for the count but hash to the same bytes.
 
 Why a count and not the line number: the set of ids is then decided by
 which lines are in the file, not by their order.
@@ -661,6 +679,13 @@ in the same style as the #364 amendment:
 - A new short subsection gives §3.2 and §3.3 of this spec: the six fields,
   the encoding, SHA-256, the prefix, the occurrence count and the test
   vectors.
+- **Revision 2 (ruled §5.6):** after the rule-2 amendment, add "Where the
+  two differ (identical lines under one date), the derived id governs:
+  each line is stored." The tuple rule would keep one of two identical
+  lines; the derived ids keep both.
+- The occurrence rule includes the taken-id skip of §3.2, and the test
+  vectors gain one case: an explicit id equal to vector 2 followed by the
+  identical id-less line, which gets vector 3's id.
 - The round-trip table row "Event identity" changes from
   "tuple-approximated otherwise" to "derived from the line otherwise".
 - The Changelog gets a dated line. The profile identifier does not change.
@@ -718,7 +743,11 @@ in the same style as the #364 amendment:
     gives another id.
 13. Two headings with the same date share the occurrence count.
 14. A line with an explicit id that is identical to an id-less line: the
-    id-less one gets occurrence `0`.
+    id-less one gets occurrence `0` when the explicit id differs from that
+    derived id, and occurrence `1` when the explicit id equals it
+    (revision 2). Both events are kept, whichever line comes first.
+14a. Two id-less summaries that differ only by a lone surrogate
+    (`x\uD800`, `x\uFFFD`) give two different ids (revision 2).
 15. `(approved) X` and `(observation) X` on one day are both stored as
     `observation`, with occurrences `0` and `1`.
 16. A line that does not parse, or sits under an invalid date, uses up no
@@ -829,6 +858,21 @@ The owner accepted the recommendation on all four questions on 2026-11-11. Each 
      affected log and is visible in diagnostics. Its facts go through the
      ops librarian like those of any repeated event.
    - **Ruled 2026-11-11:** yes, accept the one-time duplicate and document it.
+
+5. **(Revision 2, #365.) A hand-added line identical to an exported one
+   derives the exported line's id and is dropped. How should the rule
+   handle it?**
+   - **Ruled 2026-11-11:** skip taken ids (§3.2): collect the log's explicit
+     ids first, and give a line whose derived id is taken the next
+     occurrence.
+6. **(Revision 2, profile.) The tuple SHOULD and the derived-id SHOULD
+   disagree on identical lines under one date. Say which governs?**
+   - **Ruled 2026-11-11:** yes, the derived id governs (§3.7).
+7. **(Revision 2, found in the docs review.) Under the 8.0.0 defaults,
+   `forget(entityId, { clearAll: true })` plus `runPrune` leaves events the
+   librarian has not read, and no API deletes them. Open an issue, or fix
+   here?**
+   - **Ruled 2026-11-11:** fix in this PR. Design in §6 (revision 3).
 
 ## Out of scope
 
