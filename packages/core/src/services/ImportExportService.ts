@@ -81,6 +81,8 @@ export class ImportExportService {
     entityId: string,
     opts?: { maxEvents?: number; includeBlobs?: boolean },
   ): Promise<MemoryBundle> {
+    // Read first: the watermark must not be newer than the events exported with it.
+    const wm = await this.metadataRepo.getLibrarianWatermark(entityId, this.db);
     const [factsRaw, tasks, events, edges, summaryValue] = await Promise.all([
       opts?.includeBlobs
         ? this.entryRepo.findAllByEntityIdWithBlobs(entityId)
@@ -124,6 +126,7 @@ export class ImportExportService {
       events,
       edges,
       ...(summaryValue != null ? { summary: summaryValue } : {}),
+      ...(wm ? { librarian_watermark: wm } : {}),
     };
   }
 
@@ -432,7 +435,7 @@ export class ImportExportService {
         ? await seedLegacyWatermark(this.metadataRepo, this.eventRepo, entityId, tx)
         : await this.metadataRepo.getLibrarianWatermark(entityId, tx);
       const floor = wm && Number.isFinite(wm.at) && wm.at > now ? wm.at : now;
-      const planned = planEventStamps(bundle.events, { now, floor, merge, localWm: wm, sourceWm: parseSourceWatermark((bundle as { librarian_watermark?: unknown }).librarian_watermark) });
+      const planned = planEventStamps(bundle.events, { now, floor, merge, localWm: wm, sourceWm: parseSourceWatermark(bundle.librarian_watermark) });
       for (const event of bundle.events) {
         const stamp = planned.get(event)!;
         const inserted = await this.eventRepo.addIgnoreDuplicate(

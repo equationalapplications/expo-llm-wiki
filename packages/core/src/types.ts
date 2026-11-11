@@ -983,6 +983,11 @@ export interface MemoryBundle {
   edges?: WikiEdge[];
   /** Entity summary prose for OKF profile ≥ 1 round-trip. Omitted = no summary (Clanker default). */
   summary?: string;
+  /**
+   * The source store's librarian position. Set by export only; the importer
+   * trusts events at or before it as consolidated at the source.
+   */
+  librarian_watermark?: { at: number; id: string };
   factScores?: Record<string, number>;
   metadata?: {
     query: string;

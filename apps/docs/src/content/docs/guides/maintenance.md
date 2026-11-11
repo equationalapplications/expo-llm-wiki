@@ -64,6 +64,10 @@ stops prune from causing this; for entities already affected, re-write
 those events in the same way.
 :::
 
+## Merge imports and the librarian position
+
+A merge import re-dates events that would sort behind the destination's librarian position, so the next pass reads them, and it stamps events whose date is unusable. Bundles from `exportDump()` and `getMemoryBundle()` carry the source's `librarian_watermark`; events at or before it were consolidated at the source and keep their dates. If you split a bundle into chunks, copy `librarian_watermark` onto each chunk.
+
 ## Heal
 
 Heal looks at candidates such as orphaned facts (no source for `orphanAfterDays`, default 30) and

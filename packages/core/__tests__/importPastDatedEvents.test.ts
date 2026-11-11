@@ -7,6 +7,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { MemoryDump, WikiDiagnostic, WikiEvent } from '../src/types';
 import { WikiMemory } from '../src/WikiMemory';
 import { openTestDatabase } from './helpers/sqliteAdapter';
+import { START_OF_LOG_WATERMARK } from '../src/repositories/MetadataRepository';
 
 const ENTITY = 'u';
 const NOW = 1_800_000_000_000;
@@ -206,5 +207,186 @@ describe('importDump re-dates events behind the librarian position', () => {
     await expect(wiki.importDump(dump([ev('a', PAST), ev('b', 'x')]), { merge: true })).rejects.toThrow(RangeError);
     expect(await rows(db)).toEqual([]);
     expect(diagnostics.filter((d) => /created_at/.test(d.code))).toEqual([]);
+  });
+});
+
+const wmOf = (wiki: WikiMemory, db: Db) => (wiki as any).metadataRepo.getLibrarianWatermark(ENTITY, db);
+function withWm(d: MemoryDump, wm: unknown): MemoryDump {
+  return { generatedAt: NOW, entities: { [ENTITY]: { ...d.entities[ENTITY]!, librarian_watermark: wm as { at: number; id: string } } } };
+}
+const clock = () => {
+  let t = NOW;
+  vi.spyOn(Date, 'now').mockImplementation(() => (t += 10));
+};
+
+describe('bundles carry the source librarian watermark', () => {
+  it('exportDump and getMemoryBundle carry it when set, omit it when not, and it survives JSON', async () => {
+    clock();
+    const { db, wiki } = await mk();
+    await wiki.write(ENTITY, { event_type: 'observation', summary: 'one' });
+    expect((await wiki.exportDump()).entities[ENTITY]).not.toHaveProperty('librarian_watermark');
+    expect(await wiki.getMemoryBundle(ENTITY)).not.toHaveProperty('librarian_watermark');
+    await wiki.runLibrarian(ENTITY);
+    const wm = await wmOf(wiki, db);
+    expect(wm).not.toBeNull();
+    const d = await wiki.exportDump();
+    expect(d.entities[ENTITY]!.librarian_watermark).toEqual(wm);
+    expect((await wiki.getMemoryBundle(ENTITY)).librarian_watermark).toEqual(wm);
+    expect(JSON.parse(JSON.stringify(d)).entities[ENTITY].librarian_watermark).toEqual(wm);
+  });
+
+  it('a start-of-log marker survives export and a JSON round trip', async () => {
+    clock();
+    const { db, wiki } = await mk();
+    await wiki.write(ENTITY, { event_type: 'observation', summary: 'one' });
+    await (wiki as any).metadataRepo.setLibrarianWatermark(ENTITY, START_OF_LOG_WATERMARK, db);
+    const d = JSON.parse(JSON.stringify(await wiki.exportDump()));
+    expect(d.entities[ENTITY].librarian_watermark).toEqual({ at: START_OF_LOG_WATERMARK.at, id: '' });
+  });
+
+  it('getFullBundle reads the watermark before the facts', async () => {
+    clock();
+    const { wiki } = await mk();
+    const order: string[] = [];
+    const m = (wiki as any).metadataRepo;
+    const e = (wiki as any).entryRepo;
+    const origWm = m.getLibrarianWatermark.bind(m);
+    const origFacts = e.findAllByEntityId.bind(e);
+    vi.spyOn(m, 'getLibrarianWatermark').mockImplementation(async (...a: unknown[]) => { order.push('wm'); return origWm(...a); });
+    vi.spyOn(e, 'findAllByEntityId').mockImplementation(async (...a: unknown[]) => { order.push('facts'); return origFacts(...a); });
+    await wiki.getMemoryBundle(ENTITY);
+    expect(order[0]).toBe('wm');
+    expect(order).toContain('facts');
+  });
+
+  it.each([
+    ['at as a string', { at: '5', id: 'x' }],
+    ['at NaN', { at: NaN, id: 'x' }],
+    ['at null', { at: null, id: 'x' }],
+    ['id as a number', { at: 5, id: 7 }],
+    ['the field null', null],
+    ['an array', []],
+  ])('a malformed watermark (%s) takes the fallback', async (_n, bad) => {
+    clock();
+    const { wiki, diagnostics } = await mk();
+    await wiki.write(ENTITY, { event_type: 'observation', summary: 'local' });
+    await wiki.runLibrarian(ENTITY);
+    await wiki.importDump(withWm(dump([ev('p1', PAST)]), bad), { merge: true });
+    expect(restamped(diagnostics).map((d) => d.detail)).toEqual([{ count: 1, reason: 'behind_watermark' }]);
+  });
+
+  it('device sync: events the source consolidated are neither re-stamped nor re-extracted', async () => {
+    clock();
+    const a = await mk();
+    for (let i = 0; i < 5; i++) await a.wiki.write(ENTITY, { event_type: 'observation', summary: `Alpha device note ${i}` });
+    await a.wiki.runLibrarian(ENTITY);
+    const bundle = JSON.parse(JSON.stringify(await a.wiki.exportDump())) as MemoryDump;
+    const aEvents = bundle.entities[ENTITY]!.events;
+    expect(aEvents).toHaveLength(5);
+    const b = await mk();
+    await writeMany(b.wiki, 3);
+    await b.wiki.runLibrarian(ENTITY);
+    const bwm = await wmOf(b.wiki, b.db);
+    expect(bwm.at).toBeGreaterThan(Math.max(...aEvents.map((e) => e.created_at)));
+    await b.wiki.importDump(bundle, { merge: true });
+    expect(restamped(b.diagnostics)).toHaveLength(0);
+    const stored = await rows(b.db);
+    for (const e of aEvents) expect(stored.find((r) => r.id === e.id)!.created_at).toBe(e.created_at);
+    b.extractPrompts.length = 0;
+    await b.wiki.runLibrarian(ENTITY);
+    expect(b.extractPrompts.join('\n')).not.toContain('Alpha device note');
+  });
+
+  it('bounce: an event pruned on A comes back from B unchanged and is not re-extracted', async () => {
+    clock();
+    const a = await mk();
+    await a.wiki.write(ENTITY, { event_type: 'observation', summary: 'Bounce event E' });
+    await a.wiki.runLibrarian(ENTITY);
+    const e = (await a.wiki.exportDump()).entities[ENTITY]!.events[0]!;
+    const b = await mk();
+    await b.wiki.importDump(JSON.parse(JSON.stringify(await a.wiki.exportDump())));
+    await writeMany(b.wiki, 2);
+    await b.wiki.runLibrarian(ENTITY);
+    expect((await wmOf(b.wiki, b.db)).at).toBeGreaterThan(e.created_at);
+    await a.db.runAsync(`DELETE FROM llm_wiki_events WHERE id = ?`, [e.id]);
+    expect((await wmOf(a.wiki, a.db)).at).toBeGreaterThanOrEqual(e.created_at);
+    expect((await rows(a.db)).find((r) => r.id === e.id)).toBeUndefined();
+    await a.wiki.importDump(JSON.parse(JSON.stringify(await b.wiki.exportDump())), { merge: true });
+    expect(restamped(a.diagnostics)).toHaveLength(0);
+    expect((await rows(a.db)).find((r) => r.id === e.id)!.created_at).toBe(e.created_at);
+    a.extractPrompts.length = 0;
+    await a.wiki.runLibrarian(ENTITY);
+    expect(a.extractPrompts.join('\n')).not.toContain('Bounce event E');
+  });
+
+  it('a source-consolidated event behind the local watermark keeps created_at and occurred_at', async () => {
+    clock();
+    const { db, wiki, diagnostics } = await mk();
+    await wiki.write(ENTITY, { event_type: 'observation', summary: 'local' });
+    await wiki.runLibrarian(ENTITY);
+    const e = { ...ev('old', PAST), occurred_at: 99 };
+    await wiki.importDump(withWm(dump([e]), { at: PAST + 100, id: '' }), { merge: true });
+    const r = (await rows(db)).find((x) => x.id === 'old')!;
+    expect([r.created_at, r.occurred_at]).toEqual([PAST, 99]);
+    expect(restamped(diagnostics)).toHaveLength(0);
+  });
+
+  it('a source watermark with no local watermark re-stamps nothing', async () => {
+    clock();
+    const { db, wiki, diagnostics } = await mk();
+    await wiki.importDump(withWm(dump([ev('old', PAST)]), { at: PAST + 100, id: '' }), { merge: true });
+    expect((await rows(db))[0]!.created_at).toBe(PAST);
+    expect(restamped(diagnostics)).toHaveLength(0);
+  });
+
+  it('a self round trip re-stamps nothing', async () => {
+    clock();
+    const { db, wiki, diagnostics } = await mk();
+    await writeMany(wiki, 4);
+    await wiki.runLibrarian(ENTITY);
+    const before = await rows(db);
+    await wiki.importDump(JSON.parse(JSON.stringify(await wiki.exportDump())), { merge: true });
+    expect(restamped(diagnostics)).toHaveLength(0);
+    expect(await rows(db)).toEqual(before);
+  });
+
+  it('a getMemoryBundle bundle classifies each of its 10 events correctly in a peer', async () => {
+    clock();
+    const a = await mk();
+    await writeMany(a.wiki, 12);
+    await a.wiki.runLibrarian(ENTITY);
+    for (let i = 0; i < 3; i++) await a.wiki.write(ENTITY, { event_type: 'observation', summary: `Unread ${i}` });
+    const bundle = JSON.parse(JSON.stringify(await a.wiki.getMemoryBundle(ENTITY))) as MemoryDump['entities'][string];
+    expect(bundle.events).toHaveLength(10);
+    const b = await mk();
+    await writeMany(b.wiki, 2);
+    await b.wiki.runLibrarian(ENTITY);
+    await b.wiki.importDump({ generatedAt: NOW, entities: { [ENTITY]: bundle } }, { merge: true });
+    // 3 events written after the source pass sort behind the peer's position; 7 were consolidated.
+    expect(restamped(b.diagnostics).map((d) => d.detail)).toEqual([{ count: 3, reason: 'behind_watermark' }]);
+  });
+
+  it('a start-of-log source watermark makes every event behind the local watermark eligible', async () => {
+    clock();
+    const { wiki, diagnostics } = await mk();
+    await wiki.write(ENTITY, { event_type: 'observation', summary: 'local' });
+    await wiki.runLibrarian(ENTITY);
+    await wiki.importDump(withWm(dump([ev('p1', PAST), ev('p2', PAST + 1)]), { at: START_OF_LOG_WATERMARK.at, id: '' }), { merge: true });
+    expect(restamped(diagnostics).map((d) => d.detail)).toEqual([{ count: 2, reason: 'behind_watermark' }]);
+  });
+
+  it('legacy: only the first 50 re-stamped events are read next pass (documented limit)', async () => {
+    clock();
+    const { wiki, extractPrompts } = await mk({ librarian: { strategy: 'legacy' } });
+    await writeMany(wiki, 5);
+    await wiki.runLibrarian(ENTITY);
+    const events = Array.from({ length: 60 }, (_, i) => ev(`p${String(i).padStart(2, '0')}`, PAST + i, `Legacy bulk ${i}`));
+    await wiki.importDump(dump(events), { merge: true });
+    extractPrompts.length = 0;
+    await wiki.runLibrarian(ENTITY);
+    const prompt = extractPrompts.join('\n');
+    const seen = events.filter((e) => new RegExp(`${e.summary}(?!\\d)`).test(prompt)).length;
+    // Documented limit (spec §4): one legacy pass reads 50 events; the rest wait for the next.
+    expect(seen).toBe(50);
   });
 });
