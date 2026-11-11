@@ -3,7 +3,7 @@ import type { WikiOptions, WikiEvent } from '../types';
 import { WikiBusyError, isWikiSearchUnavailableError } from '../types';
 import type { EntryRepository } from '../repositories/EntryRepository';
 import type { EventRepository } from '../repositories/EventRepository';
-import type { MetadataRepository } from '../repositories/MetadataRepository';
+import type { LibrarianWatermark, MetadataRepository } from '../repositories/MetadataRepository';
 import type { JobManager } from './JobManager';
 import type { MaintenanceService } from './MaintenanceService';
 import { generateId } from '../utils/ids';
@@ -11,7 +11,7 @@ import { assertEntityId } from '../utils/entityId';
 import { clip } from '../utils/pure';
 import { emitDiagnostic } from '../utils/diagnostics';
 import { assertEpochMs } from '../utils/temporal';
-import { resolveMaintenanceMode } from '../utils/engineDefaults';
+import { resolveLibrarianStrategy, resolveMaintenanceMode } from '../utils/engineDefaults';
 
 export class WriteService {
   constructor(
@@ -82,9 +82,27 @@ export class WriteService {
       occurred_at: occurredAt,
     };
 
+    // created_at strictly increases per entity. Ids are random, so two
+    // events in the same millisecond (or after the clock steps back) could
+    // otherwise sort behind an ops watermark that already passed them, and
+    // never be extracted (spec ops-auto-first-batch §5).
+    const stampCreatedAt = async (tx: SQLiteAdapter): Promise<void> => {
+      const latest = await this.eventRepo.latestCreatedAt(entityId, tx);
+      if (latest === null || latest < newEvent.created_at) return;
+      // Past 2^53 - 1, latest + 1 rounds back to latest and the tie returns.
+      // Only an imported timestamp can get here; fail loudly, not silently.
+      if (latest >= Number.MAX_SAFE_INTEGER) {
+        throw new RangeError(`Cannot stamp event created_at: the newest stored created_at (${latest}) is at Number.MAX_SAFE_INTEGER, so no later timestamp can be ordered safely.`);
+      }
+      newEvent.created_at = latest + 1;
+    };
+
     const deferred = resolveMaintenanceMode(this.options.config) === 'deferred';
     if (deferred) {
-      await this.eventRepo.add(newEvent);
+      await this.db.withTransactionAsync(async (tx) => {
+        await stampCreatedAt(tx);
+        await this.eventRepo.add(newEvent, tx);
+      });
       return;
     }
 
@@ -93,7 +111,18 @@ export class WriteService {
     let prevMemoryCheckpoint = 0;
     let eventCount = 0;
 
+    // Under ops, the first triggered pass seeds its watermark from
+    // memory_checkpoint. Anchor it before the trigger advances the counter,
+    // or the pass reads the advanced counter as "legacy already read these"
+    // and skips them (spec ops-auto-first-batch §1).
+    const isOps = resolveLibrarianStrategy(this.options.config) === 'ops';
+    const anchorOps = async (preCheckpoint: number, total: number, tx: SQLiteAdapter): Promise<LibrarianWatermark | null> =>
+      isOps
+        ? this.maintenanceService.anchorWatermarkBeforeTrigger(entityId, preCheckpoint, total, tx)
+        : this.metadataRepo.getLibrarianWatermark(entityId, tx);
+
     await this.db.withTransactionAsync(async (tx) => {
+      await stampCreatedAt(tx);
       await this.eventRepo.add(newEvent, tx);
 
       const threshold = this.options.config?.autoLibrarianThreshold || 20;
@@ -104,25 +133,34 @@ export class WriteService {
       ]);
       eventCount = count;
 
+      // count already includes the event just added, so a checkpoint the
+      // old log could hold is at most count - 1. Anything at or above count
+      // is drift (an older prune), read as no history: re-read, never skip.
+      // At exactly count the anchor would otherwise land on the new event
+      // and skip it (spec ops-auto-first-batch §1).
       let memoryCheckpoint = cp.memory ?? 0;
-      if (memoryCheckpoint > count) memoryCheckpoint = 0;
+      if (memoryCheckpoint >= count) memoryCheckpoint = 0;
 
       if (count - memoryCheckpoint >= threshold) {
         if (!this.jobManager.isBlocked('librarian', entityId)) {
           shouldRunLibrarian = true;
           librarianCount = count;
           prevMemoryCheckpoint = memoryCheckpoint;
+          if (isOps) await anchorOps(memoryCheckpoint, count, tx);
           await this.metadataRepo.updateCheckpoint(entityId, { memory: count }, tx);
         }
       } else {
         const tokenThreshold = this.options.config?.autoLibrarianTokenThreshold;
         if (typeof tokenThreshold === 'number' && tokenThreshold > 0 && !this.jobManager.isBlocked('librarian', entityId)) {
-          const wm = await this.metadataRepo.getLibrarianWatermark(entityId, tx);
+          // Anchor first: with no watermark yet, the sum below would count
+          // events legacy already read and fire a pass early.
+          const wm = await anchorOps(memoryCheckpoint, count, tx);
           const chars = await this.eventRepo.sumSummaryCharsAfter(entityId, wm, tx);
           if (Math.ceil(chars / 4) >= tokenThreshold) {
             shouldRunLibrarian = true;
             librarianCount = count;
             prevMemoryCheckpoint = memoryCheckpoint;
+            // Already anchored above, before the sum.
             await this.metadataRepo.updateCheckpoint(entityId, { memory: count }, tx);
           }
         }
@@ -143,7 +181,15 @@ export class WriteService {
         this.track(job);
       } catch (e) {
         if (!(e instanceof WikiBusyError)) throw e;
-        await this.metadataRepo.updateCheckpoint(entityId, { memory: prevMemoryCheckpoint }, this.db);
+        // Undo only what this trigger added. A prune that took its lock
+        // before ours may already have lowered the counter (spec
+        // ops-auto-first-batch §4); restoring the absolute pre-trigger value
+        // would overwrite that decrement and leave the counter too high.
+        const added = librarianCount - prevMemoryCheckpoint;
+        await this.db.withTransactionAsync(async (tx) => {
+          const memory = (await this.metadataRepo.getCheckpoint(entityId, tx)).memory ?? 0;
+          await this.metadataRepo.updateCheckpoint(entityId, { memory: Math.max(0, memory - added) }, tx);
+        });
       }
     } else if (!this.jobManager.isBlocked('librarian', entityId)) {
       // Auto-heal is evaluated on every write, not only on writes that also
@@ -210,7 +256,12 @@ export class WriteService {
         // Sits inside the try, after the call: on a throw the checkpoint is not
         // advanced, exactly as before this change.
         if (result.remaining === 0) {
-          await this.metadataRepo.updateCheckpoint(entityId, { heal: currentEventCount }, this.db);
+          // currentEventCount was read before this pass. A prune that ran in
+          // between deleted events, so cap at the live count: heal above the
+          // event count reads as 0 and starts a full re-heal (spec
+          // ops-auto-first-batch §4).
+          const live = await this.eventRepo.count(entityId, this.db);
+          await this.metadataRepo.updateCheckpoint(entityId, { heal: Math.min(currentEventCount, live) }, this.db);
         }
       } finally {
         this.jobManager.releaseLock('heal', entityId);

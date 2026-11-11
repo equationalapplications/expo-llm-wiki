@@ -31,14 +31,19 @@
    "config": "ops-auto",
    "bySite": {
     "extract": {
-     "calls": 2,
-     "systemChars": 1352,
-     "userChars": 4400
+     "calls": 3,
+     "systemChars": 2028,
+     "userChars": 6628
+    },
+    "resolve": {
+     "calls": 3,
+     "systemChars": 2730,
+     "userChars": 6040
     }
    },
    "rawEventChars": 3874,
-   "eventsSeen": 40,
-   "entries": 40
+   "eventsSeen": 56,
+   "entries": 59
   },
   {
    "config": "ops-deferred",
