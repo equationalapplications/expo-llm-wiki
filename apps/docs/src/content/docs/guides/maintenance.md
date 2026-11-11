@@ -35,6 +35,18 @@ Gate thresholds (`gate: { k: 5, dupThreshold: 0.89, novelThreshold: 0.30 }`) dep
 embedding model. The defaults were calibrated on BGE-small and are provisional for other models.
 Without `embed`, the gate uses keyword search, and every match goes to the model.
 
+:::caution[Known issue: ops with `maintenance: 'auto'`, fixed]
+From 7.8.0 until the release that fixes this, `strategy: 'ops'` with
+`maintenance: 'auto'` skipped the first `autoLibrarianThreshold` events
+(20 by default) on a new entity. The first automatic pass made no model call
+for them, so they never became facts. The default `maintenance: 'deferred'`
+was not affected.
+
+The skipped events are still in the event log unless they were pruned.
+After you upgrade, re-ingest or re-write an affected entity's early
+material to bring it into memory.
+:::
+
 ## Heal
 
 Heal looks at candidates such as orphaned facts (no source for `orphanAfterDays`, default 30) and
