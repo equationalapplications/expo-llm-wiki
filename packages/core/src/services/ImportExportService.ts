@@ -11,43 +11,11 @@ import { clip, normalizeSourceRef } from '../utils/pure';
 import { latestVerified } from '@equationalapplications/core-okf';
 import { emitDiagnostic } from '../utils/diagnostics';
 import { seedLegacyWatermark } from './legacyWatermark';
+import { parseSourceWatermark, planEventStamps } from './importEventStamps';
 
 const MAX_EMBEDDING_BLOB_BYTES = 32 * 1024; // 8192-dim float32 ceiling
 const IMPORT_TITLE_MAX = 500;
 const IMPORT_BODY_MAX = 8000;
-
-/** Decimal numeric text, which SQLite's INTEGER affinity converts to a number. Hex, binary and octal stay TEXT there. */
-const DECIMAL_TEXT = /^\s*[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?\s*$/;
-
-/** A bundle created_at as SQLite's INTEGER column would read it: numbers as-is, decimal strings parsed, anything else NaN. */
-function createdAtValue(v: unknown): number {
-  if (typeof v === 'number') return v;
-  if (typeof v === 'string' && DECIMAL_TEXT.test(v)) return Number(v);
-  return NaN;
-}
-
-/**
- * New created_at for each bundle event dated after `now` (Infinity and
- * numeric strings included): `floor + 1 + i` in (created_at, id) order, so
- * clamped events keep their relative order and never tie with each other
- * or with a row at `floor`. `floor` is `now`, or the ops watermark when an
- * older version left it in the future, so a clamped event never lands
- * behind it. Other events are absent from the map and keep their own value
- * (spec import-clamp-created-at §1).
- */
-function clampFutureCreatedAt(events: readonly WikiEvent[], now: number, floor: number): Map<WikiEvent, number> {
-  const future = events
-    .map((e) => ({ e, at: createdAtValue(e.created_at) }))
-    .filter((x) => x.at > now)
-    .sort((x, y) => (x.at === y.at ? 0 : x.at < y.at ? -1 : 1) || (x.e.id < y.e.id ? -1 : x.e.id > y.e.id ? 1 : 0));
-  // Past 2^53 - 1, floor + 1 + i rounds and the stamps tie with each other
-  // and the watermark. Only an absurd stored date gets here; fail loudly,
-  // as write() does, rather than store events that sort behind it.
-  if (future.length > 0 && floor + future.length > Number.MAX_SAFE_INTEGER) {
-    throw new RangeError(`importDump: cannot re-date ${future.length} future-dated event(s): the floor (${floor}) is too close to Number.MAX_SAFE_INTEGER to keep them ordered.`);
-  }
-  return new Map(future.map((x, i) => [x.e, floor + 1 + i]));
-}
 
 export class ImportExportService {
   constructor(
@@ -113,6 +81,8 @@ export class ImportExportService {
     entityId: string,
     opts?: { maxEvents?: number; includeBlobs?: boolean },
   ): Promise<MemoryBundle> {
+    // Read first: the watermark must not be newer than the events exported with it.
+    const wm = await this.metadataRepo.getLibrarianWatermark(entityId, this.db);
     const [factsRaw, tasks, events, edges, summaryValue] = await Promise.all([
       opts?.includeBlobs
         ? this.entryRepo.findAllByEntityIdWithBlobs(entityId)
@@ -156,6 +126,7 @@ export class ImportExportService {
       events,
       edges,
       ...(summaryValue != null ? { summary: summaryValue } : {}),
+      ...(wm ? { librarian_watermark: wm } : {}),
     };
   }
 
@@ -172,6 +143,7 @@ export class ImportExportService {
     const softDeletedFactIds: string[] = [];
     const clippedTextByFactId = new Map<string, { title: string; body: string }>();
     let clampedEvents = 0;
+    const restamped = { behind_watermark: 0, invalid: 0 };
 
     await this.db.withTransactionAsync(async (tx) => {
       if (!merge) {
@@ -448,11 +420,15 @@ export class ImportExportService {
         });
       }
 
-      // created_at means "when stored". A future value (a fast device clock,
-      // a crafted bundle) would sort every later write behind the ops
-      // watermark, or pin it to the future. Store those just after now (or
-      // after a watermark already in the future), in (created_at, id) order
-      // so they keep their order without ties (spec import-clamp-created-at §1).
+      // created_at means "when stored". Three kinds of value break that: a
+      // future date (a fast device clock, a crafted bundle) would sort every
+      // later write behind the ops watermark; a date behind the librarian
+      // watermark (merge only, unless the source already consolidated it)
+      // would never be read; an unusable date cannot be ordered at all.
+      // Re-stamp those just after now (or after a watermark already in the
+      // future), in (created_at, id) order so they keep their order without
+      // ties (spec import-clamp-created-at §1, #362; spec
+      // import-past-dated-events §1, §7).
       const now = Date.now();
       // Resolve legacy history to a watermark on the log as it stood before
       // this import: inserted events would shift the offset the seed reads,
@@ -463,9 +439,9 @@ export class ImportExportService {
         ? await seedLegacyWatermark(this.metadataRepo, this.eventRepo, entityId, tx)
         : await this.metadataRepo.getLibrarianWatermark(entityId, tx);
       const floor = wm && Number.isFinite(wm.at) && wm.at > now ? wm.at : now;
-      const clampedAt = clampFutureCreatedAt(bundle.events, now, floor);
+      const planned = planEventStamps(bundle.events, { now, floor, merge, localWm: wm, sourceWm: parseSourceWatermark(bundle.librarian_watermark) });
       for (const event of bundle.events) {
-        const stamped = clampedAt.get(event);
+        const stamp = planned.get(event)!;
         const inserted = await this.eventRepo.addIgnoreDuplicate(
           {
             id: event.id,
@@ -473,12 +449,14 @@ export class ImportExportService {
             event_type: event.event_type,
             summary: event.summary,
             related_entry_id: event.related_entry_id ?? null,
-            created_at: stamped ?? event.created_at,
-            occurred_at: event.occurred_at ?? null,
+            created_at: stamp.createdAt,
+            occurred_at: stamp.occurredAt,
           },
           tx,
         );
-        if (inserted && stamped !== undefined) clampedEvents++;
+        if (!inserted || stamp.reason === null) continue;
+        if (stamp.reason === 'future') clampedEvents++;
+        else restamped[stamp.reason]++;
       }
 
       for (const edge of bundle.edges ?? []) {
@@ -501,6 +479,14 @@ export class ImportExportService {
         code: 'event_created_at_clamped', operation: 'importDump', trigger: 'call', entityId,
         detail: { count: clampedEvents },
       });
+    }
+    for (const reason of ['behind_watermark', 'invalid'] as const) {
+      if (restamped[reason] > 0) {
+        emitDiagnostic(this.options, {
+          code: 'event_created_at_restamped', operation: 'importDump', trigger: 'call', entityId,
+          detail: { count: restamped[reason], reason },
+        });
+      }
     }
 
     // Index only what this call wrote (#232): a whole-entity rebuild here made

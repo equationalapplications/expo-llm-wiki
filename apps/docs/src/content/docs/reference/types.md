@@ -58,6 +58,7 @@ interface MemoryBundle {
   events: WikiEvent[];
   edges?: WikiEdge[];
   summary?: string;
+  librarian_watermark?: { at: number; id: string }; // set by export only
   factScores?: Record<string, number>; // multi-entity reads with a non-empty query
   metadata?: {                         // multi-entity reads
     query: string;
@@ -67,6 +68,8 @@ interface MemoryBundle {
   };
 }
 ```
+
+`librarian_watermark` is the source store's librarian position, set by `exportDump()` and `getMemoryBundle()` when the entity has one. A merge import trusts events at or before it as already consolidated at the source and keeps their dates.
 
 ## `WikiEdge`
 

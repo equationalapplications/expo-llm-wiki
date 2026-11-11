@@ -13,6 +13,7 @@ import {
   type OkfIndexSection,
   type OkfLogEntry,
 } from '@equationalapplications/core-okf';
+import { createdAtValue, isUsableDate } from '../services/importEventStamps';
 import { sanitizeConceptId, sanitizeForFilename } from './sanitizeForFilename';
 
 export type OkfFormatProfile = 'llm-wiki/1' | 'llm-wiki/2';
@@ -176,9 +177,25 @@ function buildEventLogEntries(
     const text = factFilename
       ? `(${e.event_type}) [${summary}](./facts/${factFilename}.md)`
       : `(${e.event_type}) ${summary}`;
-    return { date: formatLogDate(e.created_at), text: appendEventIdComment(text, e.id) };
+    // An occurred_at left as text or out of range by an older import would
+    // throw in toISOString, and one outside years 0000-9999 (e.g. a
+    // microsecond epoch) renders a heading parseOkfBundle cannot read back.
+    // Fall back to created_at for those.
+    const occurred = createdAtValue(e.occurred_at);
+    // A future occurred_at (e.g. an appointment) is not used either: the
+    // re-imported entry would look future-dated and be clamped, losing the
+    // date. The dates this preserves are past ones (spec §8.2).
+    const logTime = e.occurred_at != null && isUsableDate(occurred) && occurred >= OKF_DATE_MIN && occurred <= OKF_DATE_MAX
+      && occurred <= e.created_at
+      ? occurred
+      : e.created_at;
+    return { date: formatLogDate(logTime), text: appendEventIdComment(text, e.id) };
   });
 }
+
+/** Epoch-ms range whose ISO date is a four-digit year (0000-01-01 to 9999-12-31), the only headings parseOkfBundle reads. */
+const OKF_DATE_MIN = -62167219200000;
+const OKF_DATE_MAX = 253402300799999;
 
 export function formatOkfBundle(
   dump: MemoryDump,

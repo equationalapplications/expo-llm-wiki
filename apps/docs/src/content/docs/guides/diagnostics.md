@@ -55,6 +55,7 @@ const wiki = createWiki(db, {
 | `read_budget` | How many facts a `tokenBudget` read packed |
 | `event_retention_held` | Prune kept events because the librarian hasn't processed them yet |
 | `event_created_at_clamped` | `importDump` re-dated future-dated events just after the current time, or after the librarian position if later (`detail.count`) |
+| `event_created_at_restamped` | `importDump` re-dated events that would have sorted behind the librarian position or had an unusable `created_at`, or cleared an unusable `occurred_at` (`detail.count`, `detail.reason`) |
 
 ## A practical router
 

@@ -5,6 +5,11 @@ on 2026-11-11: clamp, don't reject, in its own spec and PR. Issue #361.
 §1 and §3 were revised after the Fable review the same day.
 The legacy-history seed (§1) and the message template (§2) were revised
 after CodeRabbit the same day.
+**Superseded in part by `import-past-dated-events` (PR #364):** imported
+`occurred_at` is now sanitized (§8.1 there), not "never touched", and
+`-Infinity` and other unusable `created_at` values are re-stamped (§7
+there), not left as they are. The future-date clamp described here is
+unchanged.
 The Sonnet review (same day) found no correctness bug; it narrowed numeric
 strings to decimal, added the safe-integer guard and the facts-only seed
 gate, and corrected the stale post-#358 text.
