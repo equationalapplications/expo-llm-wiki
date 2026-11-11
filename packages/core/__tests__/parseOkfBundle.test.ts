@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { buildConceptDocument, buildLogMd, buildRootIndexMd } from '@equationalapplications/core-okf';
+import { buildConceptDocument, buildLogMd, buildRootIndexMd, deriveEventId } from '@equationalapplications/core-okf';
 import type { OkfFile, OkfFrontmatter } from '@equationalapplications/core-okf';
 import { parseOkfBundle } from '../src/utils/parseOkfBundle';
 import { formatOkfBundle } from '../src/utils/formatOkfBundle';
@@ -433,7 +433,7 @@ describe('parseOkfBundle — log and round-trip', () => {
     const events = parseOkfBundle('alice', files).entities.alice.events;
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
-      id: 'evt_generated',
+      id: deriveEventId({ entityId: 'alice', date: '2023-11-14', eventType: 'observation', summary: 'Noted preference', occurrence: 0 }),
       event_type: 'observation',
       summary: 'Noted preference',
       related_entry_id: 'fact_aaa',
@@ -564,5 +564,91 @@ describe('parseOkfBundle — linear-time log lines (CodeQL #1 #8)', () => {
     ).entities.alice.events;
     expect(events[0].summary).toBe('[a[b](./facts/fact_aaa.md)');
     expect(events[0].related_entry_id).toBeNull();
+  });
+});
+
+// spec specs/import-followups §3.1, §3.6 (#365): id-less log lines get a derived id; plain summaries are unescaped.
+describe('parseOkfBundle — derived event ids', () => {
+  const log = (content: string, entityId = 'alice'): WikiEvent[] =>
+    parseOkfBundle(entityId, [{ path: `entities/${entityId}/log.md`, content }]).entities[entityId].events;
+  const id = (date: string, eventType: string, summary: string, occurrence = 0, entityId = 'alice') =>
+    deriveEventId({ entityId, date, eventType, summary, occurrence });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it('parsing the same id-less log twice gives the same ids (fails on main)', () => {
+    const md = '## 2023-11-14\n\n- (observation) A\n- (decision) B\n';
+    expect(log(md).map((e) => e.id)).toEqual(log(md).map((e) => e.id));
+    expect(log(md).map((e) => e.id)).toEqual([id('2023-11-14', 'observation', 'A'), id('2023-11-14', 'decision', 'B')]);
+  });
+
+  it('an explicit id is used as written; an illegal id comment gives a derived id', () => {
+    const events = log('## 2023-11-14\n\n- (observation) A <!-- id: evt_keep -->\n- (observation) B <!-- id: bad/id -->\n');
+    expect(events.map((e) => [e.id, e.summary])).toEqual([['evt_keep', 'A'], [id('2023-11-14', 'observation', 'B'), 'B']]);
+  });
+
+  it('two identical lines give two events; swapping lines keeps the same set of ids', () => {
+    const a = log('## 2023-11-14\n\n- (observation) X\n- (decision) Y\n- (observation) X\n').map((e) => e.id);
+    expect(a).toEqual([id('2023-11-14', 'observation', 'X', 0), id('2023-11-14', 'decision', 'Y'), id('2023-11-14', 'observation', 'X', 1)]);
+    const b = log('## 2023-11-14\n\n- (decision) Y\n- (observation) X\n- (observation) X\n').map((e) => e.id);
+    expect([...b].sort()).toEqual([...a].sort());
+  });
+
+  it('removing an unrelated line leaves the other ids unchanged', () => {
+    const full = log('## 2023-11-14\n\n- (observation) A\n- (observation) B\n- (observation) C\n').map((e) => e.id);
+    const less = log('## 2023-11-14\n\n- (observation) A\n- (observation) C\n').map((e) => e.id);
+    expect(less).toEqual([full[0], full[2]]);
+  });
+
+  it('another date or another entity gives another id', () => {
+    const base = log('## 2023-11-14\n\n- (observation) A\n')[0].id;
+    expect(log('## 2023-11-15\n\n- (observation) A\n')[0].id).not.toBe(base);
+    expect(log('## 2023-11-14\n\n- (observation) A\n', 'bob')[0].id).toBe(id('2023-11-14', 'observation', 'A', 0, 'bob'));
+    expect(log('## 2023-11-14\n\n- (observation) A\n', 'bob')[0].id).not.toBe(base);
+  });
+
+  it('two headings with the same date share one occurrence count', () => {
+    const events = log('## 2023-11-14\n\n- (observation) X\n\n## 2023-11-13\n\n- (observation) X\n\n## 2023-11-14\n\n- (observation) X\n');
+    expect(events.map((e) => e.id)).toEqual([
+      id('2023-11-14', 'observation', 'X', 0), id('2023-11-13', 'observation', 'X', 0), id('2023-11-14', 'observation', 'X', 1),
+    ]);
+  });
+
+  it('a line with an explicit id uses up no occurrence', () => {
+    const events = log('## 2023-11-14\n\n- (observation) X <!-- id: evt_keep -->\n- (observation) X\n');
+    expect(events.map((e) => e.id)).toEqual(['evt_keep', id('2023-11-14', 'observation', 'X', 0)]);
+  });
+
+  it('an unknown type is hashed as the stored observation and shares its count', () => {
+    const events = log('## 2023-11-14\n\n- (approved) X\n- (observation) X\n');
+    expect(events.map((e) => [e.event_type, e.id])).toEqual([
+      ['observation', id('2023-11-14', 'observation', 'X', 0)], ['observation', id('2023-11-14', 'observation', 'X', 1)],
+    ]);
+  });
+
+  it('a line that does not parse, sits under an invalid date, or has an empty summary uses up no occurrence', () => {
+    const events = log('## 2023-13-45\n\n- (observation) X\n\n## 2023-11-14\n\n- not a log line\n- (observation)\n- (observation)   \n- (observation) X\n');
+    expect(events.map((e) => e.id)).toEqual([id('2023-11-14', 'observation', 'X', 0)]);
+  });
+
+  it('never calls generateId for an event', () => {
+    const spy = vi.spyOn(ids, 'generateId');
+    log('## 2023-11-14\n\n- (observation) A\n- (observation) A\n');
+    expect(spy.mock.calls.filter((c) => c[0] === 'evt_')).toEqual([]);
+  });
+
+  it('a plain summary with \\, [ and ] survives three export and import cycles', () => {
+    for (const summary of ['see [docs] at C:\\tmp', 'C:\\', '\\]', 'a\\[b]']) {
+      let events: WikiEvent[] = [{ id: 'evt_1', entity_id: 'alice', event_type: 'observation', summary, related_entry_id: null, created_at: Date.parse('2023-11-14') }];
+      for (let i = 0; i < 3; i++) {
+        const dump: MemoryDump = { generatedAt: 0, entities: { alice: { facts: [], tasks: [], events, edges: [] } } };
+        events = parseOkfBundle('alice', formatOkfBundle(dump).files).entities.alice.events;
+      }
+      expect(events.map((e) => [e.id, e.summary])).toEqual([['evt_1', summary]]);
+    }
+  });
+
+  it('a plain line with no backslashes parses as before', () => {
+    expect(log('## 2023-11-14\n\n- (observation) see [docs] here\n')[0].summary).toBe('see [docs] here');
   });
 });

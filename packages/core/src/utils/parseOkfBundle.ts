@@ -6,6 +6,7 @@ import {
   parseRootIndexMd,
   parseEntityIndexMd,
   parseEventIdComment,
+  deriveEventId,
   splitRelatedSection,
   isAllowedOkfPath,
   extractMarkdownLinks,
@@ -179,7 +180,8 @@ function parseLogEntryText(text: string): {
   if (linkPath) {
     return { event_type, summary: unescapeLogSummary(linkedSummary), linkPath };
   }
-  return { event_type, summary: (plainSummary ?? '').trim() };
+  // Producers escape `\`, `[` and `]` in every summary (profile §7), so the plain form is unescaped too.
+  return { event_type, summary: unescapeLogSummary((plainSummary ?? '').trim()) };
 }
 
 function frontmatterToFact(
@@ -510,6 +512,8 @@ export function parseOkfBundle(
   }
 
   const events: WikiEvent[] = [];
+  // Occurrence count per (day, type, summary) for id-less lines (spec import-followups §3.2).
+  const occurrences = new Map<string, number>();
   if (logContent != null) {
     const logPath = logMdPath ?? `entities/${entityId}/log.md`;
     for (const entry of parseLogMd(logContent)) {
@@ -529,8 +533,16 @@ export function parseOkfBundle(
       const created_at = new Date(`${entry.date}T00:00:00.000Z`).getTime();
       if (!Number.isFinite(created_at)) continue;
 
+      let id = eventId;
+      if (id === undefined) {
+        const key = JSON.stringify([entry.date, parsed.event_type, parsed.summary]);
+        const occurrence = occurrences.get(key) ?? 0;
+        occurrences.set(key, occurrence + 1);
+        id = deriveEventId({ entityId, date: entry.date, eventType: parsed.event_type, summary: parsed.summary, occurrence });
+      }
+
       events.push({
-        id: eventId ?? generateId('evt_'),
+        id,
         entity_id: entityId,
         event_type: parsed.event_type,
         summary: parsed.summary,

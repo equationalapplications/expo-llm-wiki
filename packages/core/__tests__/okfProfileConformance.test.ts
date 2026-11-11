@@ -34,6 +34,14 @@ describe('OKF profile conformance', () => {
     vi.restoreAllMocks();
   });
 
+  it('golden-v1 and golden-v2 keep their explicit event ids (no derived ids)', () => {
+    for (const name of ['golden-v1', 'golden-v2'] as const) {
+      const events = parseOkfBundle('demo', loadFixture(name)).entities.demo.events;
+      expect(events.length).toBeGreaterThan(0);
+      expect(events.some(e => e.id.startsWith('evt_okf1_'))).toBe(false);
+    }
+  });
+
   it('imports golden-v1 with summary, Related edges, and stable event ids', () => {
     const dump = parseOkfBundle('demo', loadFixture('golden-v1'));
     const bundle = dump.entities.demo;
@@ -79,6 +87,11 @@ describe('OKF profile conformance', () => {
     const dump = parseOkfBundle('demo', files);
     expect(dump.entities.demo.summary).toBeUndefined();
     expect(dump.entities.demo.events.every(e => e.id.startsWith('evt_'))).toBe(true);
+    // spec specs/import-followups §3.3: pins the id derivation to a committed fixture.
+    expect(dump.entities.demo.events.map(e => e.id)).toEqual([
+      'evt_okf1_02dd42bf329719f258ab93b373f44506',
+      'evt_okf1_9a70e3a388247f9c27f96fc3855b3975',
+    ]);
   });
 
   it('rejects README.md mis-parse via allow-list', () => {
