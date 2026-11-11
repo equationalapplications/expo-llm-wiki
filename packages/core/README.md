@@ -19,7 +19,7 @@ Platform-agnostic TypeScript engine for hybrid LLM memory. Features episodic fac
 - **Hybrid retrieval.** Vector cosine ranking with a keyword fallback (SQLite FTS5 or in-memory MiniSearch), [tunable](https://equationalapplications.github.io/expo-llm-wiki/guides/tune-retrieval/) per call.
 - **Multi-entity reads.** Search several namespaces in one pass with `tierWeights` and `tierFloors`.
 - **GraphRAG.** Per-entity [seeded ontologies](https://equationalapplications.github.io/expo-llm-wiki/guides/ontologies/) (Strict, Emergent or Off) and SQL-only [graph traversal](https://equationalapplications.github.io/expo-llm-wiki/guides/graphrag/).
-- **Background maintenance.** Librarian, heal, reembed and prune jobs, run inline or [deferred](https://equationalapplications.github.io/expo-llm-wiki/guides/maintenance/).
+- **Maintenance.** Librarian, heal, reembed and prune jobs. By default you run them on your own schedule ([deferred](https://equationalapplications.github.io/expo-llm-wiki/guides/maintenance/)), or set `maintenance: 'auto'` to start them from `write()`.
 - **Temporal facts, drafts and grounding** for [trust and provenance](https://equationalapplications.github.io/expo-llm-wiki/concepts/trust-and-provenance/).
 - **OKF v0.1 and v0.2** [import and export](https://equationalapplications.github.io/expo-llm-wiki/guides/okf/).
 - **Diagnostics.** An optional `onDiagnostic` hook with typed, content-free reports.

@@ -104,5 +104,6 @@ Operational details:
 | `excludeDrafts` | `false` | Hide unreviewed draft facts |
 | `asOf` | now | Answer as of a point in time ([temporal facts](/expo-llm-wiki/guides/temporal-facts/)) |
 
-All of these can be set globally in `config` or per call in `read()` options. See
+`maxResults`, `hybridWeight`, `preFilterLimit` and `excludeDrafts` can be set globally in
+`config` or per call in `read()` options. `tokenBudget` and `asOf` are per call only. See
 [Tune retrieval](/expo-llm-wiki/guides/tune-retrieval/).

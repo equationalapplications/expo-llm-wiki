@@ -50,10 +50,10 @@ createWiki(db, {
 | `preFilterLimit` | unset | Keyword top-K before cosine scoring |
 | `excludeDrafts` | `false` | Default for reads and traversal |
 | `maxEmbedChars` | `6000` | Characters sent to `embed()` (hard ceiling 16000) |
-| `maxTraversalNodes` | — | Default traversal cap |
-| `minTraversalConfidence` | — | `'certain'`, `'inferred'`, or `'tentative'` |
-| `traversalDirection` | — | `'inbound'`, `'outbound'`, or `'both'` |
-| `excludeSourceTypes` | — | Source types skipped in traversal |
+| `maxTraversalNodes` | `20` | Default traversal cap |
+| `minTraversalConfidence` | `'tentative'` | `'certain'`, `'inferred'`, or `'tentative'` |
+| `traversalDirection` | `'both'` | `'inbound'`, `'outbound'`, or `'both'` |
+| `excludeSourceTypes` | `[]` | Source types skipped in traversal |
 
 ## Ingest
 

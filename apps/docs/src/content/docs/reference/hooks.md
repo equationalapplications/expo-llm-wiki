@@ -46,7 +46,8 @@ const { data, isPending, error, refetch } = useMemoryRead(entityId, query, optio
 
 It fetches on mount, and again when `entityId`, `query`, `wiki`, or relevant `options` change
 (`maxResults`, `preFilterLimit`, `hybridWeight`, `tierWeights`, `includeZeroWeightEntities`,
-`excludeDrafts`). `entityId` may be an array. An
+`excludeDrafts`). Changing `tierFloors`, `asOf` or `tokenBudget` alone does not refetch; call
+`refetch()`. `entityId` may be an array. An
 in-flight result always lands before a queued refetch starts.
 
 - A `tierWeights` entry of `1.0` counts the same as leaving it out, so it doesn't trigger a refetch.

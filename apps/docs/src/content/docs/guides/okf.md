@@ -39,6 +39,9 @@ const dump = parseOkfBundle('user-123', files, {
 await wiki.importDump(dump, { merge: true });
 ```
 
+Without `merge: true`, `importDump` replaces the entity: it soft-deletes the entity's facts and
+tasks and deletes its edges before importing. Stored events are kept.
+
 Each concept is routed to facts or tasks by:
 
 1. `typeMapping` (an OKF `type` mapped to `'fact'`, `'task'`, or `'ignore'`),
@@ -76,16 +79,27 @@ old entry is treated as not yet read.
 
 ## Event ids
 
-Every log line this library exports ends with an `<!-- id: … -->` comment, and importing an
-event whose id is already stored is skipped. A line without one (a hand-written log, an older
-bundle, or a log run through a formatter that strips HTML comments) gets an id computed from the
-entity id, the date, the event type, the summary and how many identical lines came before it. So
-importing the same log twice stores each event once.
+Log lines this library exports end with an `<!-- id: … -->` comment. An event whose id is
+already stored is skipped on import. A line without a valid id comment (a hand-written log, an
+older bundle, or a log run through a formatter that strips HTML comments) gets an id computed from
+the entity id, the date, the event type, the summary, and how many identical lines came before it.
+Importing that log again then skips every line.
 
-This holds only while the earlier events are still stored. After `runPrune()` deletes them, a
-later import of the same log stores them again. A store that imported an id-less log before this
-change gets one extra copy of each event the next time it imports that log, and none after. The
-rule is in the [profile, §7](https://github.com/equationalapplications/expo-llm-wiki/blob/main/docs/okf-profile.md),
+In a summary, `\\`, `\[` and `\]` are escapes: they are stored as `\`, `[` and `]`. Exports write
+them that way, and a hand-written log must too, so a path like `\\server` is written `\\\\server`.
+
+Limits:
+
+- The id depends on the summary. Edit a line and it imports as a new event.
+- It holds only while the earlier events are stored. After `runPrune()` deletes them, a later
+  import stores them again.
+- Two cases store one extra copy of each event, once: a store that imported the id-less log with
+  a release before derived ids, and a log whose id comments were stripped after its events were
+  imported. The librarian reads the copies on its next pass.
+- Keep one day's entries in one bundle. Identical lines split across two bundles get the same id,
+  and the second is skipped.
+
+The rule is in the [profile, §7](https://github.com/equationalapplications/expo-llm-wiki/blob/main/docs/okf-profile.md),
 and [`deriveEventId`](/expo-llm-wiki/packages/core-okf/) computes it.
 
 ## Edges and `## Related`

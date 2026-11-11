@@ -35,8 +35,8 @@ Gate thresholds (`gate: { k: 5, dupThreshold: 0.89, novelThreshold: 0.30 }`) dep
 embedding model. The defaults were calibrated on BGE-small and are provisional for other models.
 Without `embed`, the gate uses keyword search, and every match goes to the model.
 
-:::caution[Known issue: ops with `maintenance: 'auto'`, fixed]
-From 7.8.0 until the release that fixes this, `strategy: 'ops'` with
+:::caution[Known issue: ops with `maintenance: 'auto'` (fixed in 8.0.5)]
+From 7.8.0 through 8.0.4, `strategy: 'ops'` with
 `maintenance: 'auto'` skipped the first batch of events the first
 automatic pass should have read. With the count trigger that is
 `autoLibrarianThreshold` events (20 by default); with

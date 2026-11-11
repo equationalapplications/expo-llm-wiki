@@ -68,8 +68,8 @@ export function ChatScreen({ userId }: { userId: string }) {
   statement instead of every message. You get fewer events and better facts.
 - **Let users correct memory.** Show `read(userId, '')` (the most recent facts) in a settings
   screen with a delete button that calls `forget({ entryId })`.
-- **Keep history when facts change.** Use the `'ops'` librarian strategy so "moved to SF"
-  supersedes "lives in Seattle" instead of overwriting it.
+- **Keep history when facts change.** The default `'ops'` librarian strategy supersedes "lives in
+  Seattle" with "moved to SF" instead of overwriting it.
 
 :::caution
 Messages from users flow into LLM prompts. Treat librarian output as untrusted input. See

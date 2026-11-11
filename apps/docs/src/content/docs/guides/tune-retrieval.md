@@ -5,8 +5,8 @@ sidebar:
   order: 4
 ---
 
-Every option below can be set **globally** in `config`, or **per call** in `read()` options. A
-per-call value wins.
+`maxResults`, `hybridWeight` and `preFilterLimit` can be set **globally** in `config`, or **per
+call** in `read()` options. A per-call value wins. `tokenBudget` is per call only.
 
 ```ts
 // Global defaults

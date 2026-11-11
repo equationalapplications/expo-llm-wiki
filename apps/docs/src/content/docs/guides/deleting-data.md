@@ -58,6 +58,22 @@ Retry hook failures, or queue them for reconciliation. Don't swallow them.
 ## Wipe an entity completely
 
 ```ts
-await wiki.forget(entityId, { clearAll: true });   // soft-delete everything, incl. entity summary
+await wiki.forget(entityId, { clearAll: true });   // soft-delete facts and tasks, incl. entity summary
 await wiki.runPrune(entityId, { retainSoftDeletedFor: 0, retainEventsFor: 0, vacuum: true });
 ```
+
+:::caution[Events the librarian has not read are kept]
+`forget()` does not delete events. Under the default `'ops'` strategy or `'deferred'`
+maintenance, `runPrune()` deletes only events the librarian has already read. It keeps the rest
+and emits `event_retention_held` with their count. So these two calls can leave events in the log,
+and a later maintenance run turns them into facts again. No API deletes unread events today.
+
+To clear them, run the librarian first, so it reads every event, and then run the two calls
+above. This costs model calls:
+
+```ts
+await wiki.runPendingMaintenance({ entityIds: [entityId], jobs: ['librarian'] });
+```
+
+Then check that the prune emits no `event_retention_held` diagnostic.
+:::
