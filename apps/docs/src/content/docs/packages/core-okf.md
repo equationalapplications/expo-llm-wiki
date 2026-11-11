@@ -22,6 +22,7 @@ npm install @equationalapplications/core-okf
 | `buildIndexMd(sections)` / `buildRootIndexMd(version, sections)` | Directory and root indexes |
 | `buildLogMd(entries)` / `parseLogMd(text)` | Append-only chronological logs |
 | `extractMarkdownLinks(text)` | Relative links → `{ text, path }` (graph edges) |
+| `deriveEventId(input)` | Deterministic id for a log line with no id comment ([profile §7](https://github.com/equationalapplications/expo-llm-wiki/blob/main/docs/okf-profile.md)) |
 
 ```ts
 const md = buildConceptDocument({ type: 'task', id: 'task_1' }, '# Buy groceries');
