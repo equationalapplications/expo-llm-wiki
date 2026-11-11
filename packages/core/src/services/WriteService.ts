@@ -11,7 +11,7 @@ import { assertEntityId } from '../utils/entityId';
 import { clip } from '../utils/pure';
 import { emitDiagnostic } from '../utils/diagnostics';
 import { assertEpochMs } from '../utils/temporal';
-import { resolveMaintenanceMode } from '../utils/engineDefaults';
+import { resolveLibrarianStrategy, resolveMaintenanceMode } from '../utils/engineDefaults';
 
 export class WriteService {
   constructor(
@@ -93,6 +93,15 @@ export class WriteService {
     let prevMemoryCheckpoint = 0;
     let eventCount = 0;
 
+    // Under ops, the first triggered pass seeds its watermark from
+    // memory_checkpoint. Anchor it before the trigger advances the counter,
+    // or the pass reads the advanced counter as "legacy already read these"
+    // and skips them (spec ops-auto-first-batch §1).
+    const isOps = resolveLibrarianStrategy(this.options.config) === 'ops';
+    const anchorOps = async (preCheckpoint: number, tx: SQLiteAdapter): Promise<void> => {
+      if (isOps) await this.maintenanceService.anchorWatermarkBeforeTrigger(entityId, preCheckpoint, tx);
+    };
+
     await this.db.withTransactionAsync(async (tx) => {
       await this.eventRepo.add(newEvent, tx);
 
@@ -112,6 +121,7 @@ export class WriteService {
           shouldRunLibrarian = true;
           librarianCount = count;
           prevMemoryCheckpoint = memoryCheckpoint;
+          await anchorOps(memoryCheckpoint, tx);
           await this.metadataRepo.updateCheckpoint(entityId, { memory: count }, tx);
         }
       } else {
@@ -123,6 +133,7 @@ export class WriteService {
             shouldRunLibrarian = true;
             librarianCount = count;
             prevMemoryCheckpoint = memoryCheckpoint;
+            await anchorOps(memoryCheckpoint, tx);
             await this.metadataRepo.updateCheckpoint(entityId, { memory: count }, tx);
           }
         }

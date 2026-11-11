@@ -17,7 +17,7 @@ import type { EntryRepository } from '../repositories/EntryRepository';
 import type { SourceRefIndexRepository } from '../repositories/SourceRefIndexRepository';
 import type { TaskRepository } from '../repositories/TaskRepository';
 import type { EventRepository } from '../repositories/EventRepository';
-import { entitySummaryMetaKey, type LibrarianWatermark, type MetadataRepository } from '../repositories/MetadataRepository';
+import { entitySummaryMetaKey, START_OF_LOG_WATERMARK, type LibrarianWatermark, type MetadataRepository } from '../repositories/MetadataRepository';
 import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
@@ -749,6 +749,27 @@ export class MaintenanceService {
     const current = await this.metadataRepo.getLibrarianWatermark(entityId, this.db);
     const newer = !current || next.at > current.at || (next.at === current.at && next.id > current.id);
     if (newer) await this.metadataRepo.setLibrarianWatermark(entityId, next, this.db);
+  }
+
+  /**
+   * Anchor the ops watermark before an auto trigger advances
+   * `memory_checkpoint` (spec ops-auto-first-batch §1). No-op when a
+   * watermark exists. With legacy history (`preCheckpoint > 0`) it anchors
+   * where legacy stopped, as {@link seedLibrarianWatermark} does; without
+   * it, it writes {@link START_OF_LOG_WATERMARK}. All reads and the write use
+   * the trigger's transaction. Package-internal.
+   */
+  async anchorWatermarkBeforeTrigger(entityId: string, preCheckpoint: number, tx: SQLiteAdapter): Promise<void> {
+    if (await this.metadataRepo.getLibrarianWatermark(entityId, tx)) return;
+    if (preCheckpoint > 0) {
+      const total = await this.eventRepo.count(entityId, tx);
+      const ev = await this.eventRepo.getAtOffset(entityId, Math.min(preCheckpoint, total) - 1, tx);
+      if (ev) {
+        await this.metadataRepo.setLibrarianWatermark(entityId, { at: ev.created_at, id: ev.id }, tx);
+        return;
+      }
+    }
+    await this.metadataRepo.setLibrarianWatermark(entityId, START_OF_LOG_WATERMARK, tx);
   }
 
   /**
