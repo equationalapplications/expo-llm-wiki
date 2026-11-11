@@ -153,6 +153,45 @@ describe('ops + auto: first auto pass', () => {
   });
 });
 
+describe('ops + auto: token path failure', () => {
+  it('a failed first token-triggered pass leaves the log re-readable from the start', async () => {
+    const { db, wiki, extractPrompts, failNextCalls } = mk({ autoLibrarianThreshold: 1000, autoLibrarianTokenThreshold: 20 });
+    await wiki.setup();
+    failNextCalls(1);
+    await writeN(wiki, 1, 2);
+    expect((await meta(wiki).getCheckpoint(ENTITY, db)).memory ?? 0).toBe(0);
+    expect(await meta(wiki).getLibrarianWatermark(ENTITY)).toEqual(START_OF_LOG_WATERMARK);
+    await writeN(wiki, 3, 3);
+    expect(extractPrompts).toHaveLength(1);
+    expect(extractPrompts[0]).toContain(summary(1));
+  });
+});
+
+describe('configurations the anchor must not touch', () => {
+  it('ops + deferred: writes past the threshold set no watermark', async () => {
+    const { wiki } = mk({ maintenance: 'deferred', autoLibrarianThreshold: 5, autoLibrarianTokenThreshold: 20 });
+    await wiki.setup();
+    await writeN(wiki, 1, 6);
+    expect(await meta(wiki).getLibrarianWatermark(ENTITY)).toBeNull();
+  });
+
+  it('legacy + auto: the token path does not anchor', async () => {
+    // Under ops, this below-threshold write would set the start-of-log
+    // marker. Legacy passes advance the watermark themselves (spec §10.3),
+    // so this write stays below both thresholds to isolate the anchor.
+    const legacy = mk({ librarian: { strategy: 'legacy' }, autoLibrarianThreshold: 1000, autoLibrarianTokenThreshold: 10_000 });
+    await legacy.wiki.setup();
+    await writeN(legacy.wiki, 1, 1);
+    expect(await meta(legacy.wiki).getLibrarianWatermark(ENTITY)).toBeNull();
+    expect(legacy.extractPrompts).toHaveLength(0);
+
+    const ops = mk({ autoLibrarianThreshold: 1000, autoLibrarianTokenThreshold: 10_000 });
+    await ops.wiki.setup();
+    await writeN(ops.wiki, 1, 1);
+    expect(await meta(ops.wiki).getLibrarianWatermark(ENTITY)).toEqual(START_OF_LOG_WATERMARK);
+  });
+});
+
 describe('start-of-log watermark marker', () => {
   it('reads like no watermark and prunes nothing', async () => {
     const { db, wiki } = mk({ autoLibrarianThreshold: 1000 });
