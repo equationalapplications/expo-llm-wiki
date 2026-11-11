@@ -1,15 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
+import type { ForgetParams, ForgetResult } from '@equationalapplications/core-llm-wiki';
 import { useWiki } from './WikiContext';
-
-interface ForgetParams {
-  entryId?: string;
-  taskId?: string;
-  sourceRef?: string;
-  sourceHash?: string;
-  clearAll?: boolean;
-}
-
-type ForgetResult = { deleted: { entries: number; tasks: number } };
 
 export function useWikiForget() {
   const wiki = useWiki();
