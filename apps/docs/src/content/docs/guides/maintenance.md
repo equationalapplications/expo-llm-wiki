@@ -49,9 +49,12 @@ affected.
 
 The skipped events are still in the event log unless they were pruned.
 After you upgrade, call `write()` again for the affected events to bring
-them into memory: the entity's earliest events, or, for an upgraded entity,
-the events written just after the switch to ops. Re-ingesting documents
-does not restore them, because `ingest()` does not write to the event log.
+them into memory. Those are the first `autoLibrarianThreshold` events on a
+new entity, or, on an upgraded entity, the first `autoLibrarianThreshold`
+events after the point where the legacy librarian stopped (some may predate
+the switch to ops). Each call adds a new event; the original rows stay in
+the log. Re-ingesting documents does not restore them, because `ingest()`
+does not write to the event log.
 
 If an entity pruned events under the legacy strategy with
 `maintenance: 'auto'` and then switched to ops, the first ops pass also
