@@ -34,6 +34,12 @@ describe('OKF profile conformance', () => {
     vi.restoreAllMocks();
   });
 
+  it('profile §7 taken-id vector: an explicit id equal to vector 2, then the identical id-less line, gives vector 3', () => {
+    const log = '## 2026-07-05\n\n- (decision) Chose path B <!-- id: evt_okf1_9a70e3a388247f9c27f96fc3855b3975 -->\n- (decision) Chose path B\n';
+    const events = parseOkfBundle('demo', [{ path: 'entities/demo/log.md', content: log }]).entities.demo.events;
+    expect(events.map(e => e.id)).toEqual(['evt_okf1_9a70e3a388247f9c27f96fc3855b3975', 'evt_okf1_549570648f50f8a88e414df0285d1de9']);
+  });
+
   it('golden-v1 and golden-v2 keep their explicit event ids (no derived ids)', () => {
     for (const name of ['golden-v1', 'golden-v2'] as const) {
       const events = parseOkfBundle('demo', loadFixture(name)).entities.demo.events;

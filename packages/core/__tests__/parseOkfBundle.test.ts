@@ -614,6 +614,25 @@ describe('parseOkfBundle — derived event ids', () => {
     ]);
   });
 
+  it('an id-less line identical to an exported one gets the next occurrence, wherever the explicit line sits (rev 2)', () => {
+    const exported = id('2023-11-14', 'observation', 'X', 0);
+    const after = log(`## 2023-11-14\n\n- (observation) X <!-- id: ${exported} -->\n- (observation) X\n`);
+    expect(after.map((e) => e.id)).toEqual([exported, id('2023-11-14', 'observation', 'X', 1)]);
+    const before = log(`## 2023-11-14\n\n- (observation) X\n- (observation) X <!-- id: ${exported} -->\n`);
+    expect(before.map((e) => e.id)).toEqual([id('2023-11-14', 'observation', 'X', 1), exported]);
+  });
+
+  it('the count continues after a skipped occurrence', () => {
+    const taken = id('2023-11-14', 'observation', 'X', 0);
+    const events = log(`## 2023-11-14\n\n- (observation) X <!-- id: ${taken} -->\n- (observation) X\n- (observation) X\n`);
+    expect(events.map((e) => e.id)).toEqual([taken, id('2023-11-14', 'observation', 'X', 1), id('2023-11-14', 'observation', 'X', 2)]);
+  });
+
+  it('summaries that differ only by a lone surrogate get different ids', () => {
+    const events = log('## 2023-11-14\n\n- (observation) x\uD800\n- (observation) x\uFFFD\n');
+    expect(new Set(events.map((e) => e.id)).size).toBe(2);
+  });
+
   it('a line with an explicit id uses up no occurrence', () => {
     const events = log('## 2023-11-14\n\n- (observation) X <!-- id: evt_keep -->\n- (observation) X\n');
     expect(events.map((e) => e.id)).toEqual(['evt_keep', id('2023-11-14', 'observation', 'X', 0)]);

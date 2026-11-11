@@ -512,9 +512,10 @@ export function parseOkfBundle(
   }
 
   const events: WikiEvent[] = [];
-  // Occurrence count per (day, type, summary) for id-less lines (spec import-followups §3.2).
-  const occurrences = new Map<string, number>();
   if (logContent != null) {
+    // Id-less lines get a derived id after the whole log is read, so explicit ids
+    // anywhere in the file are known first (spec import-followups §3.2).
+    const pending: Array<{ index: number; date: string }> = [];
     const logPath = logMdPath ?? `entities/${entityId}/log.md`;
     for (const entry of parseLogMd(logContent)) {
       const { text, eventId } = parseEventIdComment(entry.text);
@@ -533,22 +534,33 @@ export function parseOkfBundle(
       const created_at = new Date(`${entry.date}T00:00:00.000Z`).getTime();
       if (!Number.isFinite(created_at)) continue;
 
-      let id = eventId;
-      if (id === undefined) {
-        const key = JSON.stringify([entry.date, parsed.event_type, parsed.summary]);
-        const occurrence = occurrences.get(key) ?? 0;
-        occurrences.set(key, occurrence + 1);
-        id = deriveEventId({ entityId, date: entry.date, eventType: parsed.event_type, summary: parsed.summary, occurrence });
-      }
-
+      if (eventId === undefined) pending.push({ index: events.length, date: entry.date });
       events.push({
-        id,
+        id: eventId ?? '',
         entity_id: entityId,
         event_type: parsed.event_type,
         summary: parsed.summary,
         related_entry_id,
         created_at,
       });
+    }
+
+    // Occurrence per (day, type, summary); a derived id already taken by an explicit
+    // id or an earlier derived id moves to the next occurrence, so no line is dropped.
+    const taken = new Set(events.map(e => e.id).filter(id => id !== ''));
+    const nextOccurrence = new Map<string, number>();
+    for (const { index, date } of pending) {
+      const e = events[index];
+      const key = JSON.stringify([date, e.event_type, e.summary]);
+      let occurrence = nextOccurrence.get(key) ?? 0;
+      let id = deriveEventId({ entityId, date, eventType: e.event_type, summary: e.summary, occurrence });
+      while (taken.has(id)) {
+        occurrence += 1;
+        id = deriveEventId({ entityId, date, eventType: e.event_type, summary: e.summary, occurrence });
+      }
+      taken.add(id);
+      nextOccurrence.set(key, occurrence + 1);
+      e.id = id;
     }
   }
 

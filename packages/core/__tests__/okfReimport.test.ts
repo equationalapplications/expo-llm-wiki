@@ -98,6 +98,18 @@ describe('re-importing an id-less OKF log', () => {
     expect(parseOkfBundle('u', exported).entities.u.events.map((e) => e.id).sort()).toEqual(ids);
   });
 
+  it('a line hand-added to an exported log, identical to an exported line, is stored (rev 2)', async () => {
+    const { wiki, events, importLog } = await mk();
+    await importLog();
+    const exported = formatOkfBundle(await wiki.exportDump(['u'])).files.find((f) => f.path.endsWith('/log.md'))!.content;
+    const edited = exported.replace(/(## 2023-03-01\n\n)/, '$1- (decision) Ride to work\n');
+    expect(edited).not.toBe(exported);
+    await importLog('u', edited);
+    expect(await events()).toHaveLength(4);
+    await importLog('u', edited);
+    expect(await events()).toHaveLength(4);
+  });
+
   it('accepted (§3.5 case 1): a row stored under a random id gets one duplicate, then no more', async () => {
     const { wiki, events, importLog } = await mk();
     const legacy: MemoryDump = {
