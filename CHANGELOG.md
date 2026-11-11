@@ -1,3 +1,16 @@
+## [8.0.4](https://github.com/equationalapplications/expo-llm-wiki/compare/v8.0.3...v8.0.4) (2026-11-11)
+
+### Bug Fixes
+
+* **benchmarks:** CodeRabbit review on [#357](https://github.com/equationalapplications/expo-llm-wiki/issues/357) ([7e34d4c](https://github.com/equationalapplications/expo-llm-wiki/commit/7e34d4cecf9684b84fd68dc61f775b1de19a2add))
+* **benchmarks:** dry-run estimate models the legacy re-send window (spec §2.3) ([60fe6f8](https://github.com/equationalapplications/expo-llm-wiki/commit/60fe6f88ed56adbb00172ecdb70eb8d64ac61d87))
+* **benchmarks:** gate decision log fails loudly on a sidecar miss ([7caf814](https://github.com/equationalapplications/expo-llm-wiki/commit/7caf8145646dd76fa7a05f0bde3193dc6eacf157))
+* **benchmarks:** legacy-deferred ingest no longer runs as auto (spec §2.1) ([a42e1ea](https://github.com/equationalapplications/expo-llm-wiki/commit/a42e1eaef0b6b3d0f8aa61e2943a9c81f3184ef1))
+* **benchmarks:** read guards.json without a check-then-read race ([d005d49](https://github.com/equationalapplications/expo-llm-wiki/commit/d005d49e375ab130564c514c6b66d838a5af9c39))
+* **benchmarks:** retrieval attribution fails loudly on a sidecar miss; count keyword rescues ([ef373b5](https://github.com/equationalapplications/expo-llm-wiki/commit/ef373b572c7ccf2e1f9b3feb1442d1e59d612993))
+* **benchmarks:** review on [#357](https://github.com/equationalapplications/expo-llm-wiki/issues/357) at a512a274 ([0c82087](https://github.com/equationalapplications/expo-llm-wiki/commit/0c82087ee21b2679cc60a98e33b6bf35b06c84a7))
+* **benchmarks:** same maintenance sequence for both strategies; record gitDescribe (spec §2.2, §2.4) ([0b5d690](https://github.com/equationalapplications/expo-llm-wiki/commit/0b5d690a720d4dbb1dfe4244993955720ac984b9))
+
 ## [8.0.3](https://github.com/equationalapplications/expo-llm-wiki/compare/v8.0.2...v8.0.3) (2026-11-10)
 
 ### Bug Fixes
