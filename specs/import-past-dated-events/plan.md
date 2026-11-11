@@ -97,17 +97,18 @@ full. §7 and §8 supersede earlier wording where they differ.
   - `isUsableDate(o)` gives `Math.trunc(o)`;
   - anything else gives `null`, which counts as an `invalid` flag.
 - Reason, first match wins:
-  - `invalid` when `!(Number.isFinite(v) && v >= -8.64e15)`. NaN, -Infinity
-    and values below the Date range land here. +Infinity is handled by the
-    future rule, which catches it before this check matters, so order the
-    check after `v > now`.
+  - `invalid` when `Number.isNaN(v) || v < -8.64e15`. This covers NaN,
+    -Infinity and values below the Date range. +Infinity is not invalid; it
+    falls to the next rule.
   - `future` when `v > now`.
   - `behind_watermark` when all of these hold: `merge`; `localWm` is
     non-null with a finite `at`; the event is not after `localWm`
     (`v < wm.at || (v === wm.at && id <= wm.id)`); and either `sourceWm`
     is null or the event is after it.
   - Otherwise `null`. If the `occurred_at` flag is set, the reason becomes
-    `invalid`, but `createdAt` stays `v`.
+    `invalid` and `createdAt` stays `v` (not re-stamped). If the event is
+    re-stamped for a `created_at` reason, that reason wins and it is
+    counted once (spec §8.1).
 - Re-stamped set: reasons `invalid` (created_at), `future` and
   `behind_watermark`.
   - Sort it by key `invalidCreatedAt ? -Infinity : v`, ties by id (`<`
