@@ -1,6 +1,6 @@
 # ops + auto: the first auto pass skips the events that triggered it
 
-**Status:** Implemented (PR #358), except test-plan item 6, the benchmarks baseline, which waits for #357 to merge
+**Status:** Implemented (PR #358)
 **Date:** 2026-11-10
 **Intent check:** This is a data-loss bug fix inside the engine. It changes
 no public API, no default and no prompt. INTENT's promise that memory
