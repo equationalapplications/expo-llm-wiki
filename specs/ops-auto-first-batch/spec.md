@@ -5,6 +5,8 @@ added after the second review and ruled 2026-11-10. §5 (`created_at` strictly
 increases) was added after the fourth review and CodeRabbit. Both ship in
 the same PR. The §4 busy-rollback bullet, the §4 `heal_checkpoint` revision and
 the §5 safe-integer guard were added after the fifth review (2026-11-11).
+The §1 `>=` clamp, the §2 seed drift rule and the §4 heal-write fixes were
+added after the Haiku re-review the same day.
 **Date:** 2026-11-10
 **Intent check:** This is a data-loss bug fix inside the engine. It changes
 no public API, no default and no prompt. INTENT's promise that memory
@@ -105,7 +107,11 @@ Why no test caught it:
     for example one an older version's prune left behind (§4). It
     therefore gets the
     marker: the first pass re-reads the log, and the gate dedups what
-    already exists. It re-reads; it never skips.
+    already exists. It re-reads; it never skips. (Revised 2026-11-11
+    after the Haiku re-review: the count already includes the new event,
+    so a checkpoint *equal* to it is drift too, and the clamp is `>=`, not
+    `>`. At exactly the count the anchor would land on the new event and
+    skip it.)
 - **Why the marker is safe:** `AFTER_SQL` treats it exactly like "no
   watermark" for every `created_at`. That includes the zero or negative
   values that an import or an OKF bundle with pre-1970 dates can carry;
@@ -126,7 +132,11 @@ Why no test caught it:
 ### §2 Leave everything else as it is
 
 - `seedLibrarianWatermark` keeps its contract: it is still a no-op at
-  checkpoint 0, and the existing tests stay valid. It still covers explicit
+  checkpoint 0, and the existing tests stay valid. (Revised 2026-11-11
+  after the Haiku re-review: a checkpoint above the event count is drift,
+  so seeding now writes the start-of-log marker instead of anchoring on
+  the newest event and skipping every unread one. This matches the write
+  path. The bug was on main too.) It still covers explicit
   `runLibrarian` calls and deferred drains, where the counter is not moved
   before the pass.
 - The pass's own `seedWatermark` call becomes a no-op on the auto path,
@@ -198,8 +208,13 @@ transaction:
   left unchanged and noted as a follow-up. (Revised 2026-11-11 after the
   fifth review: drift above the event count reads as 0 and starts a full
   re-heal after every prune, so prune now lowers `heal_checkpoint` the
-  same way, `max(0, heal - deleted)`, in the same transaction. An unset
-  `heal_checkpoint` stays unset.)
+  same way, `max(0, heal - deleted)`, in the same transaction.)
+  (Revised again 2026-11-11 after the Haiku re-review. The column
+  defaults to 0, so "unset" is 0 and the floor covers it. Two heal writes
+  could still land above the count after a prune: `write()`'s auto-heal
+  wrote the event count read before the pass, and the scheduler wrote the
+  checkpoint after releasing its heal lock. The auto-heal write now caps
+  at the live count, and the scheduler writes inside the lock.)
 - **The busy rollback undoes a delta, not a value** (added 2026-11-11
   after the fifth review). When the trigger's lock is busy, `write()` used
   to restore the absolute pre-trigger checkpoint. A prune that took its
