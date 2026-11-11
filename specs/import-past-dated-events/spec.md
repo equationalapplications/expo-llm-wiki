@@ -1,9 +1,10 @@
 # Import: past-dated events behind the watermark are never read
 
-**Status:** Draft, revision 2 (2026-11-11, after the Opus spec review and
-Fable's decision memo). Second half of #361. Depends on #362
-(`import-clamp-created-at`) and #358 (`ops-auto-first-batch`); both must
-merge first. Three decisions await the owner (§6).
+**Status:** Reviewed (owner, 2026-11-11). Revision 2 was written after
+the Opus spec review and Fable's decision memo; the owner then ruled on the
+three §6 decisions and the open questions. Second half of #361. Depends on
+#362 (`import-clamp-created-at`) and #358 (`ops-auto-first-batch`); both
+must merge first, and the plan and ledger follow after they do.
 **Date:** 2026-11-11
 **Intent check:**
 - **Charter rule 12** ("Your events become lasting memory") says events are
@@ -44,7 +45,7 @@ The fix has two parts.
   the source bookmark, or every event when the bundle has no bookmark.
   When such an event would land behind this store's bookmark, it is stored
   just after it, the same way #362 stores future-dated events. Its
-  original date is kept in `occurred_at` (§1.4, pending owner approval).
+  original date is kept in `occurred_at` (§1 step 4).
 
 ## Problem
 
@@ -149,7 +150,7 @@ inside the import transaction, before the event loop.
      count writes the start-of-log marker, never the newest event.
    - It is not strategy-gated. Legacy stores need the watermark too, or
      the rest of §1 never applies.
-   - *Pending owner approval (§6, decision 2).*
+   - *Ruled 2026-11-11 (§6, decision 2).*
 2. **Source watermark.** `bundle.librarian_watermark`, when present and
    valid.
 3. **Candidates:** inserted events that are
@@ -167,7 +168,7 @@ inside the import transaction, before the event loop.
      (`ops/extract.ts:85`). Without the copy, a fact from an old event is
      dated at import time.
    - Not done for #362's future-dated events, whose date is the bad one.
-   - *Pending owner approval (§6, decision 3).*
+   - *Ruled 2026-11-11 (§6, decision 3).*
 5. **Invalid dates.** Every inserted event whose `created_at` is
    non-numeric or non-finite is a candidate too, whether or not either
    watermark exists. This includes `-Infinity`, which #362 §3 handed to
@@ -214,14 +215,34 @@ its new `created_at`.
 
 ### §5 Diagnostic
 
-Shape depends on decision 1 (§6). Either way:
+New code `event_created_at_restamped`, severity `info`, operation
+`importDump`, trigger `call`, `detail: { count, reason }` with `reason`
+`'behind_watermark'` or `'invalid'` (§6, decision 1). #362's
+`event_created_at_clamped` stays as it is for future dates. Adding a code is
+a minor release (`feat`).
 - it is emitted once per entity after the import transaction commits;
 - it carries `count`, and `reason` where the code is shared;
 - a duplicate id that is ignored is not counted;
 - the future-dated, behind-watermark and invalid-date cases can be told
   apart.
 
-## §6 Decisions for the owner
+## §6 Decisions (ruled by the owner 2026-11-11)
+
+The options and reasons are kept below as the record.
+
+**Rulings:**
+1. **(b) A new code `event_created_at_restamped`, severity `info`.** A
+   behind-watermark re-stamp is a normal part of multi-device sync. Putting
+   it under #362's `warn` code, which flags real anomalies such as a broken
+   clock, would cause alarm fatigue.
+2. **Seed the watermark during import: approved.** It prevents the offset
+   drift for legacy histories. Doing it inside the import lock is safe and
+   follows #358's precedent.
+3. **Copy the original `created_at` into a missing `occurred_at`:
+   approved.** Losing the historical date in a routine re-stamp would make
+   the resulting facts' `valid_from` useless.
+
+**The options as presented:**
 
 1. **Diagnostic code.** The two reviews disagree.
    - **(b) A new code `event_created_at_restamped`, severity `info`**
@@ -256,6 +277,15 @@ Shape depends on decision 1 (§6). Either way:
 
 ## Open questions
 
+**Ruled 2026-11-11 (owner):**
+- Question 1: OKF must derive deterministic ids. Fast-follow, tracked as
+  #365.
+- Question 2: the default `valid_from` becomes the newest date in the
+  batch. Separate fix, tracked as #366.
+- Question 3: #358 is a hard prerequisite, as stated.
+
+The questions as raised:
+
 1. **OKF logs without id comments** get a fresh id on every parse
    (`parseOkfBundle.ts:533`, `generateId('evt_')`). Re-importing the same
    hand-written log therefore inserts duplicate events, as it does today.
@@ -277,9 +307,10 @@ Shape depends on decision 1 (§6). Either way:
 ## Files touched (expected)
 
 - `packages/core/src/services/ImportExportService.ts`: §1, §2.
-- `packages/core/src/types.ts`: `MemoryBundle.librarian_watermark?`, plus
-  the diagnostic per decision 1.
-- `packages/core/src/utils/diagnostics.ts`: per decision 1.
+- `packages/core/src/types.ts`: `MemoryBundle.librarian_watermark?` and
+  the `event_created_at_restamped` code.
+- `packages/core/src/utils/diagnostics.ts`: its severity (`info`) and
+  message.
 - `packages/core/src/services/MaintenanceService.ts`: expose the seed rule
   to `ImportExportService` (today it is private).
 - Docs: `apps/docs/src/content/docs/guides/diagnostics.md`, the
@@ -315,4 +346,6 @@ Shape depends on decision 1 (§6). Either way:
 12. An event after the local watermark but before now is stored unchanged.
 13. Legacy with more than 50 re-stamped events: document the loss (§4),
     asserting today's behaviour.
-14. Diagnostic count and reason per decision 1.
+14. `event_created_at_restamped` fires once per entity, `info`, with the
+    right `count` and `reason`. #362's `event_created_at_clamped` still
+    covers only future dates.
