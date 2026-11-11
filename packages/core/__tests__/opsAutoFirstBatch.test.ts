@@ -6,10 +6,11 @@
  * the first ops pass then seeded its watermark from that moved counter, past
  * every event it was supposed to read.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { WikiMemory } from '../src/WikiMemory';
 import { openTestDatabase } from './helpers/sqliteAdapter';
 import { START_OF_LOG_WATERMARK } from '../src/repositories/MetadataRepository';
+import { WikiBusyError } from '../src/types';
 
 const ENTITY = 'u';
 const embed = async (t: string) => [t.length % 7, (t.charCodeAt(0) || 1) % 5, 1, 0.5];
@@ -123,8 +124,8 @@ describe('ops + auto: first auto pass', () => {
   });
 
   it('a memory_checkpoint above the event count is treated as no history (re-reads, never skips)', async () => {
-    // WriteService clamps checkpoint > count to 0 (e.g. after an import
-    // replaced the log), so the anchor is the start-of-log marker and the
+    // WriteService clamps checkpoint > count to 0 (e.g. a checkpoint an
+    // older version's prune left behind), so the anchor is the marker and the
     // first pass re-reads everything; the gate dedups what already exists.
     const { db, wiki, extractPrompts } = mk({ autoLibrarianThreshold: 5 });
     await wiki.setup();
@@ -261,6 +262,67 @@ describe('prune keeps memory_checkpoint in step (spec §4)', () => {
     await meta(legacy).updateCheckpoint(ENTITY, { memory: 2 }, db);
     await legacy.runPrune(ENTITY, { retainEventsFor: 30 });
     expect((await meta(legacy).getCheckpoint(ENTITY, db)).memory).toBe(0);
+  });
+});
+
+describe('ops + auto: trigger lock busy', () => {
+  it('restores the checkpoint, keeps the anchor, and the next trigger reads from the start', async () => {
+    const { db, wiki, extractPrompts } = mk({ autoLibrarianThreshold: 5 });
+    await wiki.setup();
+    const jm = (wiki.__testAccess as any).jobManager;
+    const orig = jm.acquireLock.bind(jm);
+    let busy = true;
+    jm.acquireLock = (op: string, entityId: string, sourceRef?: string) => {
+      if (op === 'librarian' && busy) {
+        busy = false;
+        throw new WikiBusyError('prune', entityId);
+      }
+      return orig(op, entityId, sourceRef);
+    };
+    await writeN(wiki, 1, 5);
+    expect((await meta(wiki).getCheckpoint(ENTITY, db)).memory ?? 0).toBe(0);
+    expect(await meta(wiki).getLibrarianWatermark(ENTITY)).toEqual(START_OF_LOG_WATERMARK);
+    expect(extractPrompts).toHaveLength(0);
+    await writeN(wiki, 6, 6);
+    expect(extractPrompts).toHaveLength(1);
+    for (let i = 1; i <= 6; i++) expect(extractPrompts[0]).toContain(summary(i));
+  });
+});
+
+describe('created_at strictly increases per entity (spec §5)', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('events written in the same millisecond stay after the watermark', async () => {
+    // Frozen clock: without §5 every event shares one created_at, and with
+    // random ids some later events sort behind the first pass's watermark.
+    vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000);
+    const { db, wiki, extractPrompts } = mk({ maintenance: 'deferred' });
+    await wiki.setup();
+    await writeN(wiki, 1, 10);
+    await wiki.runLibrarian(ENTITY);
+    await writeN(wiki, 11, 30);
+    await wiki.runLibrarian(ENTITY);
+    const all = extractPrompts.join('\n');
+    for (let i = 1; i <= 30; i++) expect(all).toContain(summary(i));
+    const rows = await db.getAllAsync<{ created_at: number }>(
+      `SELECT created_at FROM llm_wiki_events WHERE entity_id = ? ORDER BY created_at`,
+      [ENTITY],
+    );
+    expect(new Set(rows.map((r) => r.created_at)).size).toBe(30);
+  });
+
+  it('a clock that steps back still stamps after the newest event', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000);
+    const { db, wiki } = mk({ autoLibrarianThreshold: 1000 });
+    await wiki.setup();
+    await writeN(wiki, 1, 1);
+    now.mockReturnValue(1_799_999_000_000);
+    await writeN(wiki, 2, 2);
+    const rows = await db.getAllAsync<{ created_at: number }>(
+      `SELECT created_at FROM llm_wiki_events WHERE entity_id = ? ORDER BY created_at`,
+      [ENTITY],
+    );
+    expect(rows.map((r) => r.created_at)).toEqual([1_800_000_000_000, 1_800_000_000_001]);
   });
 });
 

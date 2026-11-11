@@ -133,6 +133,19 @@ export class EventRepository extends BaseRepository {
   }
 
   /**
+   * The newest `created_at` stored for an entity, or null when it has no
+   * events. `write()` reads it inside its transaction to keep `created_at`
+   * strictly increasing per entity (spec ops-auto-first-batch §5).
+   */
+  async latestCreatedAt(entityId: string, tx?: SQLiteAdapter): Promise<number | null> {
+    const row = await (tx ?? this.db).getFirstAsync<{ at: number | null }>(
+      `SELECT MAX(created_at) AS at FROM ${this.prefix}events WHERE entity_id = ?`,
+      [entityId],
+    );
+    return row?.at ?? null;
+  }
+
+  /**
    * Return the total number of events stored for an entity.
    * `tx` is optional — pass an active transaction handle for atomic reads.
    */

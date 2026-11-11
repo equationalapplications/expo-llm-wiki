@@ -39,6 +39,7 @@ describe('WriteService', () => {
     mockEventRepo = {
       add: vi.fn().mockResolvedValue(undefined),
       count: vi.fn().mockResolvedValue(10), // Default: 10 total events
+      latestCreatedAt: vi.fn().mockResolvedValue(null),
     };
 
     mockMetadataRepo = {

@@ -82,9 +82,21 @@ export class WriteService {
       occurred_at: occurredAt,
     };
 
+    // created_at strictly increases per entity. Ids are random, so two
+    // events in the same millisecond (or after the clock steps back) could
+    // otherwise sort behind an ops watermark that already passed them, and
+    // never be extracted (spec ops-auto-first-batch §5).
+    const stampCreatedAt = async (tx: SQLiteAdapter): Promise<void> => {
+      const latest = await this.eventRepo.latestCreatedAt(entityId, tx);
+      if (latest !== null && latest >= newEvent.created_at) newEvent.created_at = latest + 1;
+    };
+
     const deferred = resolveMaintenanceMode(this.options.config) === 'deferred';
     if (deferred) {
-      await this.eventRepo.add(newEvent);
+      await this.db.withTransactionAsync(async (tx) => {
+        await stampCreatedAt(tx);
+        await this.eventRepo.add(newEvent, tx);
+      });
       return;
     }
 
@@ -103,6 +115,7 @@ export class WriteService {
     };
 
     await this.db.withTransactionAsync(async (tx) => {
+      await stampCreatedAt(tx);
       await this.eventRepo.add(newEvent, tx);
 
       const threshold = this.options.config?.autoLibrarianThreshold || 20;
