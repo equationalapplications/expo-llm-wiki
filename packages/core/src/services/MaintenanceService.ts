@@ -340,14 +340,19 @@ export class MaintenanceService {
           } else {
             deletedEvents = (await this.eventRepo.prune(entityId, cutoff, tx)).changes;
           }
-          // memory_checkpoint counts the oldest events already accounted for.
-          // Both prune queries delete a prefix of that same order, so lower
-          // the count by what was deleted, or it points past unread events
-          // (spec ops-auto-first-batch §4).
+          // memory_checkpoint and heal_checkpoint count the oldest events
+          // already accounted for. Both prune queries delete a prefix of that
+          // same order, so lower each count by what was deleted. Otherwise
+          // memory points past unread events, and heal ends up above the
+          // event count, reads as 0 and starts a full re-heal (spec
+          // ops-auto-first-batch §4).
           if (deletedEvents > 0) {
-            const memory = (await this.metadataRepo.getCheckpoint(entityId, tx)).memory ?? 0;
-            if (memory > 0) {
-              await this.metadataRepo.updateCheckpoint(entityId, { memory: Math.max(0, memory - deletedEvents) }, tx);
+            const cp = await this.metadataRepo.getCheckpoint(entityId, tx);
+            const updates: { memory?: number; heal?: number } = {};
+            if ((cp.memory ?? 0) > 0) updates.memory = Math.max(0, cp.memory! - deletedEvents);
+            if ((cp.heal ?? 0) > 0) updates.heal = Math.max(0, cp.heal! - deletedEvents);
+            if (updates.memory !== undefined || updates.heal !== undefined) {
+              await this.metadataRepo.updateCheckpoint(entityId, updates, tx);
             }
           }
         });
@@ -779,12 +784,24 @@ export class MaintenanceService {
   async anchorWatermarkBeforeTrigger(entityId: string, preCheckpoint: number, total: number, tx: SQLiteAdapter): Promise<LibrarianWatermark> {
     const existing = await this.metadataRepo.getLibrarianWatermark(entityId, tx);
     if (existing) return existing;
-    let wm: LibrarianWatermark = START_OF_LOG_WATERMARK;
-    if (preCheckpoint > 0) {
-      const ev = await this.eventRepo.getAtOffset(entityId, Math.min(preCheckpoint, total) - 1, tx);
-      if (ev) wm = { at: ev.created_at, id: ev.id };
-    }
-    await this.metadataRepo.setLibrarianWatermark(entityId, wm, tx);
+    const wm = await this.anchorAtLegacyBoundary(entityId, preCheckpoint, total, tx);
+    if (wm) return wm;
+    await this.metadataRepo.setLibrarianWatermark(entityId, START_OF_LOG_WATERMARK, tx);
+    return START_OF_LOG_WATERMARK;
+  }
+
+  /**
+   * The one definition of "where legacy stopped" (spec §10.3): anchor the
+   * watermark at the event at offset `min(checkpoint, total) - 1`. Writes
+   * nothing and returns null when there is no legacy history or no such
+   * event; each caller picks its own fallback.
+   */
+  private async anchorAtLegacyBoundary(entityId: string, checkpoint: number, total: number, db: SQLiteAdapter): Promise<LibrarianWatermark | null> {
+    if (checkpoint <= 0 || total <= 0) return null;
+    const ev = await this.eventRepo.getAtOffset(entityId, Math.min(checkpoint, total) - 1, db);
+    if (!ev) return null;
+    const wm = { at: ev.created_at, id: ev.id };
+    await this.metadataRepo.setLibrarianWatermark(entityId, wm, db);
     return wm;
   }
 
@@ -799,9 +816,8 @@ export class MaintenanceService {
     const cp = await this.metadataRepo.getCheckpoint(entityId, this.db);
     const memory = cp.memory ?? 0;
     if (memory <= 0) return;
-    const total = await this.eventRepo.count(entityId);
-    const ev = await this.eventRepo.getAtOffset(entityId, Math.min(memory, total) - 1);
-    if (ev) await this.metadataRepo.setLibrarianWatermark(entityId, { at: ev.created_at, id: ev.id }, this.db);
+    const total = await this.eventRepo.count(entityId, this.db);
+    await this.anchorAtLegacyBoundary(entityId, memory, total, this.db);
   }
 
   /**

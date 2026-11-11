@@ -263,6 +263,38 @@ describe('prune keeps memory_checkpoint in step (spec §4)', () => {
     await legacy.runPrune(ENTITY, { retainEventsFor: 30 });
     expect((await meta(legacy).getCheckpoint(ENTITY, db)).memory).toBe(0);
   });
+
+  it('prune lowers heal_checkpoint by the number deleted too', async () => {
+    const db = openTestDatabase();
+    const legacy = new WikiMemory(db, {
+      llmProvider: { generateText: async () => '{}' },
+      config: { librarian: { strategy: 'legacy' }, maintenance: 'auto', autoLibrarianThreshold: 1000 },
+    });
+    await legacy.setup();
+    const recent = Date.now() - 60_000;
+    for (let i = 1; i <= 5; i++) await insert(db, i, OLD + i);
+    for (let i = 6; i <= 10; i++) await insert(db, i, recent + i);
+    // heal 9 of 10; deleting 5 must leave it at 4, not above the new count
+    // of 5, where it would read as 0 and start a full re-heal.
+    await meta(legacy).updateCheckpoint(ENTITY, { memory: 10, heal: 9 }, db);
+    await legacy.runPrune(ENTITY, { retainEventsFor: 30 });
+    expect(await meta(legacy).getCheckpoint(ENTITY, db)).toEqual({ memory: 5, heal: 4 });
+  });
+
+  it('a heal_checkpoint below the number deleted floors at 0, and an unset one stays unset', async () => {
+    const db = openTestDatabase();
+    const legacy = new WikiMemory(db, {
+      llmProvider: { generateText: async () => '{}' },
+      config: { librarian: { strategy: 'legacy' }, maintenance: 'auto', autoLibrarianThreshold: 1000 },
+    });
+    await legacy.setup();
+    for (let i = 1; i <= 5; i++) await insert(db, i, OLD + i);
+    await meta(legacy).updateCheckpoint(ENTITY, { heal: 2 }, db);
+    await legacy.runPrune(ENTITY, { retainEventsFor: 30 });
+    const cp = await meta(legacy).getCheckpoint(ENTITY, db);
+    expect(cp.heal).toBe(0);
+    expect(cp.memory ?? 0).toBe(0);
+  });
 });
 
 describe('ops + auto: trigger lock busy', () => {
@@ -323,6 +355,18 @@ describe('created_at strictly increases per entity (spec §5)', () => {
       [ENTITY],
     );
     expect(rows.map((r) => r.created_at)).toEqual([1_800_000_000_000, 1_800_000_000_001]);
+  });
+
+  it('refuses to stamp past Number.MAX_SAFE_INTEGER instead of tying', async () => {
+    const { db, wiki } = mk({ autoLibrarianThreshold: 1000 });
+    await wiki.setup();
+    await db.runAsync(
+      `INSERT INTO llm_wiki_events (id, entity_id, event_type, summary, created_at) VALUES ('evt_max', ?, 'observation', 'imported', ?)`,
+      [ENTITY, Number.MAX_SAFE_INTEGER],
+    );
+    await expect(wiki.write(ENTITY, { event_type: 'observation', summary: 'next' })).rejects.toThrow(RangeError);
+    const n = await db.getFirstAsync<{ n: number }>(`SELECT COUNT(*) AS n FROM llm_wiki_events WHERE entity_id = ?`, [ENTITY]);
+    expect(n!.n).toBe(1);
   });
 });
 

@@ -88,7 +88,13 @@ export class WriteService {
     // never be extracted (spec ops-auto-first-batch §5).
     const stampCreatedAt = async (tx: SQLiteAdapter): Promise<void> => {
       const latest = await this.eventRepo.latestCreatedAt(entityId, tx);
-      if (latest !== null && latest >= newEvent.created_at) newEvent.created_at = latest + 1;
+      if (latest === null || latest < newEvent.created_at) return;
+      // Past 2^53 - 1, latest + 1 rounds back to latest and the tie returns.
+      // Only an imported timestamp can get here; fail loudly, not silently.
+      if (latest >= Number.MAX_SAFE_INTEGER) {
+        throw new RangeError(`Cannot stamp event created_at for entity: the newest stored created_at (${latest}) is at Number.MAX_SAFE_INTEGER, so no later timestamp exists.`);
+      }
+      newEvent.created_at = latest + 1;
     };
 
     const deferred = resolveMaintenanceMode(this.options.config) === 'deferred';
