@@ -2,6 +2,9 @@
 
 **Date:** 2026-07-05
 **Status:** Implemented
+**Status note (2026-11-11):** the engine now gives id-less events a derived id
+(`docs/okf-profile.md` §7, `specs/import-followups/spec.md` §3, #365) instead of
+leaving tuple deduplication to the host application.
 **Deliverable:** `docs/okf-profile.md` (the normative profile document)
 **Related:** Clanker `2026-07-03-okf-export-design.md` and `2026-07-04-okf-import-support-design.md`; Curated Thoughts `2026-07-05-okf-backend-migration-design.md` and `2026-07-05-ux-vision-okf-native-design.md`
 

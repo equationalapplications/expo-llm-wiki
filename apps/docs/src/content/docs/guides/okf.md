@@ -74,6 +74,20 @@ re-dates log entries that would sort behind the librarian position to just after
 later, and keeps the original date in `occurred_at`. OKF bundles carry no source watermark, so every
 old entry is treated as not yet read.
 
+## Event ids
+
+Every log line this library exports ends with an `<!-- id: … -->` comment, and importing an
+event whose id is already stored is skipped. A line without one (a hand-written log, an older
+bundle, or a log run through a formatter that strips HTML comments) gets an id computed from the
+entity id, the date, the event type, the summary and how many identical lines came before it. So
+importing the same log twice stores each event once.
+
+This holds only while the earlier events are still stored. After `runPrune()` deletes them, a
+later import of the same log stores them again. A store that imported an id-less log before this
+change gets one extra copy of each event the next time it imports that log, and none after. The
+rule is in the [profile, §7](https://github.com/equationalapplications/expo-llm-wiki/blob/main/docs/okf-profile.md),
+and [`deriveEventId`](/expo-llm-wiki/packages/core-okf/) computes it.
+
 ## Edges and `## Related`
 
 In OKF, edges between concepts are written as a trailing `## Related` section of markdown links.
