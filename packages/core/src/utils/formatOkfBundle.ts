@@ -13,6 +13,7 @@ import {
   type OkfIndexSection,
   type OkfLogEntry,
 } from '@equationalapplications/core-okf';
+import { createdAtValue, isUsableDate } from '../services/importEventStamps';
 import { sanitizeConceptId, sanitizeForFilename } from './sanitizeForFilename';
 
 export type OkfFormatProfile = 'llm-wiki/1' | 'llm-wiki/2';
@@ -176,7 +177,11 @@ function buildEventLogEntries(
     const text = factFilename
       ? `(${e.event_type}) [${summary}](./facts/${factFilename}.md)`
       : `(${e.event_type}) ${summary}`;
-    return { date: formatLogDate(e.occurred_at ?? e.created_at), text: appendEventIdComment(text, e.id) };
+    // An occurred_at left as text or out of range by an older import would
+    // throw in toISOString; fall back to created_at for those.
+    const occurred = createdAtValue(e.occurred_at);
+    const logTime = e.occurred_at != null && isUsableDate(occurred) ? occurred : e.created_at;
+    return { date: formatLogDate(logTime), text: appendEventIdComment(text, e.id) };
   });
 }
 

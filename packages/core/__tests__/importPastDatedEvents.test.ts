@@ -151,6 +151,58 @@ describe('importDump re-dates events behind the librarian position', () => {
     await wiki.runLibrarian(ENTITY);
   });
 
+  it('stores hex text, -Infinity and huge negatives as finite numbers', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    const { db, wiki } = await mk();
+    const bad: unknown[] = ['0x10', -Infinity, -9e15, -1e300, true];
+    await wiki.importDump(dump(bad.map((v, i) => ev(`b${i}`, v))));
+    const stored = await rows(db);
+    expect(stored).toHaveLength(bad.length);
+    for (const r of stored) expect(Number.isFinite(r.created_at)).toBe(true);
+    await wiki.runLibrarian(ENTITY);
+  });
+
+  it('legacy history: the seed lands before insert, the import is read next pass, old events are not re-read', async () => {
+    let t = NOW;
+    vi.spyOn(Date, 'now').mockImplementation(() => (t += 10));
+    const { db, wiki, extractPrompts } = await mk();
+    await writeMany(wiki, 5);
+    await wiki.runLibrarian(ENTITY);
+    // Legacy history: a checkpoint from before watermarks, no watermark.
+    await db.runAsync(
+      `UPDATE llm_wiki_checkpoints SET memory_checkpoint = 5, librarian_watermark_at = NULL, librarian_watermark_id = NULL WHERE entity_id = ?`,
+      [ENTITY],
+    );
+    expect(await wmOf(wiki, db)).toBeNull();
+    const before = extractPrompts.length;
+    await wiki.importDump(dump([ev('evt_past', PAST, 'Legacy seeded import')]), { merge: true });
+    const wm = await wmOf(wiki, db);
+    expect(wm).not.toBeNull();
+    const row = (await rows(db)).find((r) => r.id === 'evt_past')!;
+    expect(row.created_at).toBeGreaterThan(wm.at);
+    await wiki.runLibrarian(ENTITY);
+    const fresh = extractPrompts.slice(before).join('\n');
+    const lines = fresh.split('\n').filter((l) => /^e\d+ \[/.test(l));
+    expect(lines.some((l) => l.includes('Legacy seeded import'))).toBe(true);
+    expect(lines.some((l) => l.includes('Local note number'))).toBe(false);
+  });
+
+  it('an invalid occurred_at is stored NULL and counted once as invalid', async () => {
+    let t = NOW;
+    vi.spyOn(Date, 'now').mockImplementation(() => (t += 10));
+    const { db, wiki, diagnostics } = await mk();
+    await wiki.write(ENTITY, { event_type: 'observation', summary: 'local' });
+    await wiki.runLibrarian(ENTITY);
+    const at = NOW + 5;
+    t = NOW + 1000;
+    const e = { ...ev('badocc', at + 100), occurred_at: 'abc' as unknown as number };
+    await wiki.importDump(dump([e]), { merge: true });
+    const r = (await rows(db)).find((x) => x.id === 'badocc')!;
+    expect(r.created_at).toBe(at + 100);
+    expect(r.occurred_at).toBeNull();
+    expect(restamped(diagnostics).map((d) => d.detail)).toEqual([{ count: 1, reason: 'invalid' }]);
+  });
+
   it('emits one restamped per non-zero reason with the right count', async () => {
     let t = NOW;
     vi.spyOn(Date, 'now').mockImplementation(() => (t += 10));
@@ -404,6 +456,17 @@ describe('OKF log entries are dated by real-world time', () => {
     const log = files.find((f) => /log\.md$/.test(f.path))!.content;
     expect(log).toContain('## 2023-01-05');
     expect(log).not.toContain('## 2026-11-11');
+  });
+
+  it('formatOkfBundle falls back to created_at for an unusable occurred_at', () => {
+    const created = Date.UTC(2026, 10, 11, 9);
+    const d = dump([
+      { ...ev('e1', created), occurred_at: 'abc' as unknown as number },
+      { ...ev('e2', created), occurred_at: 1e16 },
+    ]);
+    let log = '';
+    expect(() => { log = formatOkfBundle(d).files.find((f) => /log\.md$/.test(f.path))!.content; }).not.toThrow();
+    expect(log).toContain('## 2026-11-11');
   });
 
   it('an OKF-parsed merge bundle behind the watermark is re-stamped and keeps its midnight date', async () => {

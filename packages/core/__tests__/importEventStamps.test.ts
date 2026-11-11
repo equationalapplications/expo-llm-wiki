@@ -52,6 +52,11 @@ describe('planEventStamps', () => {
     expect(s.createdAt).toBe(FLOOR + 1);
     expect(s.occurredAt).toBe(99);
   });
+  it('gives a future or invalid event with no occurred_at no occurredAt copy', () => {
+    expect(one(ev('a', NOW + 5000)).occurredAt).toBeNull();
+    expect(one(ev('b', 'abc')).occurredAt).toBeNull();
+    expect(one(ev('c', null, { occurred_at: null })).occurredAt).toBeNull();
+  });
   it('flags invalid occurred_at without re-stamping', () => {
     const s = one(ev('a', WM.at + 10, { occurred_at: 'abc' }));
     expect(s).toEqual({ createdAt: WM.at + 10, occurredAt: null, reason: 'invalid' });

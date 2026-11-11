@@ -420,11 +420,15 @@ export class ImportExportService {
         });
       }
 
-      // created_at means "when stored". A future value (a fast device clock,
-      // a crafted bundle) would sort every later write behind the ops
-      // watermark, or pin it to the future. Store those just after now (or
-      // after a watermark already in the future), in (created_at, id) order
-      // so they keep their order without ties (spec import-clamp-created-at §1).
+      // created_at means "when stored". Three kinds of value break that: a
+      // future date (a fast device clock, a crafted bundle) would sort every
+      // later write behind the ops watermark; a date behind the librarian
+      // watermark (merge only, unless the source already consolidated it)
+      // would never be read; an unusable date cannot be ordered at all.
+      // Re-stamp those just after now (or after a watermark already in the
+      // future), in (created_at, id) order so they keep their order without
+      // ties (spec import-clamp-created-at §1, #362; spec
+      // import-past-dated-events §1, §7).
       const now = Date.now();
       // Resolve legacy history to a watermark on the log as it stood before
       // this import: inserted events would shift the offset the seed reads,
