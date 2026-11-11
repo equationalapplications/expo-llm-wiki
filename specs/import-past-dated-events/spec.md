@@ -444,6 +444,19 @@ docs or changelog text makes a cost claim (rule 11).
   and emit #362's `warn`. No event is lost.
 - Imported `occurred_at` validation, OKF dating and legacy-source trust:
   see §8 (owner decisions).
+- **An event written with an old `occurred_at`, then moved through OKF into
+  a legacy + auto store that has no watermark** (a fresh store, or
+  `merge: false`), is deleted by the next unguarded prune before any pass
+  reads it. The OKF heading gives it the old day as `created_at`. Accepted
+  2026-11-11 by the owner: there are few or no legacy users. Ops and
+  deferred stores, and any store with a watermark, are not affected.
+  Carrying both dates in OKF (heading on `created_at`, `occurred_at` in a
+  comment) was considered and dropped as a format change for a near-empty
+  audience.
+- **OKF profile amended** (`docs/okf-profile.md`): the log heading is
+  `occurred_at`'s UTC day when it is a usable past date, and the id-less
+  dedup tuple uses that same day. This is a meaning change for outside
+  readers that assume heading = storage day.
 
 ## §8 Decisions (ruled by the owner 2026-11-11, rev 4)
 

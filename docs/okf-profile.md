@@ -145,12 +145,12 @@ Line grammar: `- ({event_type}) {summary}` with two optional parts — the summa
 
 - Id comment grammar: `<!-- id: {event_id} -->` at end of line. Consumers MUST tolerate arbitrary whitespace between the summary/link, the comment opener, the `id:` token, the value, and the closer (`/<!--\s*id:\s*(\S+)\s*-->\s*$/`). Markdown formatters may strip or move HTML comments; a missing or unparseable id comment MUST degrade gracefully, never fail the line.
 - Summary text MUST have `\`, `[`, `]` escaped and newlines collapsed to spaces (matching index-entry escaping).
-- Date granularity is the `## YYYY-MM-DD` heading (UTC of `created_at`); intra-day ordering is not preserved.
+- Date granularity is the `## YYYY-MM-DD` heading; intra-day ordering is not preserved. The heading is the UTC day of the event's `occurred_at` when that is a usable past date (a number in years 0000–9999, not later than `created_at`), otherwise of `created_at`. Consumers that parse the heading into `created_at` therefore receive the real-world day for events that carry one. (Amended 2026-11-11 by PR #364; earlier producers always used `created_at`. Golden fixtures are unaffected, because they carry no `occurred_at`.)
 
 **Idempotency (normative consumer behavior):**
 
 1. When an event line carries an id, the consumer MUST use it as the event's identity: importing an event whose id already exists is a no-op.
-2. When the id is absent (profile 0 bundles, stripped comments), the consumer SHOULD deduplicate by the tuple `(event_type, summary, UTC-day)` against its existing events — the granularity this format actually preserves. This is the documented fix for the duplicate-events-on-every-restore failure in profile 0.
+2. When the id is absent (profile 0 bundles, stripped comments), the consumer SHOULD deduplicate by the tuple `(event_type, summary, UTC-day)` against its existing events, where UTC-day is the heading's day: `occurred_at`'s when the producer used it, per the date rule above — the granularity this format actually preserves. This is the documented fix for the duplicate-events-on-every-restore failure in profile 0.
 
 ## 8. Consumer Robustness Requirements
 
