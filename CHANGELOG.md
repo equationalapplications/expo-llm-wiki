@@ -1,3 +1,15 @@
+## [8.1.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v8.0.5...v8.1.0) (2026-11-11)
+
+### Features
+
+* **core:** import clamps future-dated event created_at ([292cc7f](https://github.com/equationalapplications/expo-llm-wiki/commit/292cc7f820cab577d4fa9e3da2c0ebbae170f438))
+
+### Bug Fixes
+
+* **core:** clamped import events land after a future watermark and never tie ([af18796](https://github.com/equationalapplications/expo-llm-wiki/commit/af187968e8282e3dd7502d675ecd00b60f83d871))
+* **core:** import clamp reads only decimal strings and refuses an unsafe floor ([1e7f471](https://github.com/equationalapplications/expo-llm-wiki/commit/1e7f4710dcc352f4538bd4051b66737071cc129f)), closes [#358](https://github.com/equationalapplications/expo-llm-wiki/issues/358)
+* **core:** import seeds legacy history before clamping, so a clamped event is not skipped ([8909747](https://github.com/equationalapplications/expo-llm-wiki/commit/89097471371a418bee48c392d9bfdafb106d7d40)), closes [#358](https://github.com/equationalapplications/expo-llm-wiki/issues/358)
+
 ## [8.0.5](https://github.com/equationalapplications/expo-llm-wiki/compare/v8.0.4...v8.0.5) (2026-11-11)
 
 ### Bug Fixes
