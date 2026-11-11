@@ -50,6 +50,7 @@ describe('planEventStamps', () => {
     expect(s.reason).toBe('invalid');
     expect(Number.isFinite(s.createdAt)).toBe(true);
     expect(s.createdAt).toBe(FLOOR + 1);
+    expect(s.occurredAt).toBe(99);
   });
   it('flags invalid occurred_at without re-stamping', () => {
     const s = one(ev('a', WM.at + 10, { occurred_at: 'abc' }));
@@ -69,7 +70,8 @@ describe('planEventStamps', () => {
     expect(s.occurredAt).toBeNull();
   });
   it('copies a numeric-string created_at as a number', () => {
-    expect(one(ev('a', '1700000000000', { }), ctx({ now: NOW * 2, localWm: { at: 1.8e12, id: '' } })).occurredAt).toBe(1700000000000);
+    // now is raised so the decimal string is behind the watermark but not future.
+    expect(one(ev('a', '1700000000000'), ctx({ now: NOW * 2, localWm: { at: 1.8e12, id: '' } })).occurredAt).toBe(1700000000000);
   });
   it('stamps invalid, then behind, then future, consecutively', () => {
     const events = [ev('f2', NOW + 2), ev('f1', NOW + 2), ev('b2', WM.at - 1), ev('b1', WM.at - 2), ev('i2', 'x'), ev('i1', null)];

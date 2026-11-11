@@ -92,7 +92,7 @@ export function planEventStamps(
   // and the watermark. Only an absurd stored date gets here; fail loudly,
   // as write() does, rather than store events that sort behind it.
   if (restamp.length > 0 && floor + restamp.length > Number.MAX_SAFE_INTEGER) {
-    throw new RangeError(`importDump: cannot re-date ${restamp.length} future-dated event(s): the floor (${floor}) is too close to Number.MAX_SAFE_INTEGER to keep them ordered.`);
+    throw new RangeError(`importDump: cannot re-date ${restamp.length} event(s): the floor (${floor}) is too close to Number.MAX_SAFE_INTEGER to keep them ordered.`);
   }
   restamp.forEach((x, i) => {
     x.stamp.createdAt = floor + 1 + i;

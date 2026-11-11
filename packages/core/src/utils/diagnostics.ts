@@ -36,6 +36,7 @@ const SEVERITY: Record<WikiDiagnosticCode, WikiDiagnosticSeverity> = {
   read_budget: 'info',
   event_retention_held: 'info',
   event_created_at_clamped: 'warn',
+  event_created_at_restamped: 'info',
 };
 
 // Fixed templates (REQ-DIAG-03): never interpolate content into these.
@@ -61,6 +62,7 @@ const MESSAGE: Record<WikiDiagnosticCode, string> = {
   read_budget: 'A read was packed to a token budget.',
   event_retention_held: 'Event pruning was held back because the librarian has not processed those events yet.',
   event_created_at_clamped: 'Imported events dated in the future were re-dated just after the current time, or after the librarian position if that is later, keeping their order.',
+  event_created_at_restamped: 'Imported events that would have sorted behind the librarian position, or had an unusable date, were re-dated just after the current time, or after the librarian position if that is later, keeping their order.',
 };
 
 const warnedNonFunction = new WeakSet<object>();

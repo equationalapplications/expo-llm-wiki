@@ -11,7 +11,7 @@ import { clip, normalizeSourceRef } from '../utils/pure';
 import { latestVerified } from '@equationalapplications/core-okf';
 import { emitDiagnostic } from '../utils/diagnostics';
 import { seedLegacyWatermark } from './legacyWatermark';
-import { planEventStamps } from './importEventStamps';
+import { parseSourceWatermark, planEventStamps } from './importEventStamps';
 
 const MAX_EMBEDDING_BLOB_BYTES = 32 * 1024; // 8192-dim float32 ceiling
 const IMPORT_TITLE_MAX = 500;
@@ -140,6 +140,7 @@ export class ImportExportService {
     const softDeletedFactIds: string[] = [];
     const clippedTextByFactId = new Map<string, { title: string; body: string }>();
     let clampedEvents = 0;
+    const restamped = { behind_watermark: 0, invalid: 0 };
 
     await this.db.withTransactionAsync(async (tx) => {
       if (!merge) {
@@ -431,7 +432,7 @@ export class ImportExportService {
         ? await seedLegacyWatermark(this.metadataRepo, this.eventRepo, entityId, tx)
         : await this.metadataRepo.getLibrarianWatermark(entityId, tx);
       const floor = wm && Number.isFinite(wm.at) && wm.at > now ? wm.at : now;
-      const planned = planEventStamps(bundle.events, { now, floor, merge: false, localWm: null, sourceWm: null });
+      const planned = planEventStamps(bundle.events, { now, floor, merge, localWm: wm, sourceWm: parseSourceWatermark((bundle as { librarian_watermark?: unknown }).librarian_watermark) });
       for (const event of bundle.events) {
         const stamp = planned.get(event)!;
         const inserted = await this.eventRepo.addIgnoreDuplicate(
@@ -446,7 +447,9 @@ export class ImportExportService {
           },
           tx,
         );
-        if (inserted && stamp.reason === 'future') clampedEvents++;
+        if (!inserted || stamp.reason === null) continue;
+        if (stamp.reason === 'future') clampedEvents++;
+        else restamped[stamp.reason]++;
       }
 
       for (const edge of bundle.edges ?? []) {
@@ -469,6 +472,14 @@ export class ImportExportService {
         code: 'event_created_at_clamped', operation: 'importDump', trigger: 'call', entityId,
         detail: { count: clampedEvents },
       });
+    }
+    for (const reason of ['behind_watermark', 'invalid'] as const) {
+      if (restamped[reason] > 0) {
+        emitDiagnostic(this.options, {
+          code: 'event_created_at_restamped', operation: 'importDump', trigger: 'call', entityId,
+          detail: { count: restamped[reason], reason },
+        });
+      }
     }
 
     // Index only what this call wrote (#232): a whole-entity rebuild here made
