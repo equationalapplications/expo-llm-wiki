@@ -464,7 +464,10 @@ docs or changelog text makes a cost claim (rule 11).
    in `formatOkfBundle`, in this spec. A re-stamped historical event keeps
    its real date across an OKF export and re-import. This also changes OKF
    output for events whose caller supplied `occurred_at`: they now appear
-   under that date. That date is the real-world one the field documents.
+   under that date. That date is the real-world one the field documents. (Narrowed 2026-11-11 after the
+   Sonnet re-review: only an `occurred_at` in years 0000-9999 is used. A
+   value outside that range, such as a microsecond epoch, renders a heading
+   `parseOkfBundle` cannot read back, so it falls back to `created_at`.)
 3. **A legacy source's watermark is trusted.** It can cover events legacy
    never read (legacy reads only the newest 50). The importer treats them
    as consolidated. This is documented in §4, not fixed. A store can
