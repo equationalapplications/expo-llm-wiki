@@ -182,7 +182,11 @@ function buildEventLogEntries(
     // microsecond epoch) renders a heading parseOkfBundle cannot read back.
     // Fall back to created_at for those.
     const occurred = createdAtValue(e.occurred_at);
+    // A future occurred_at (e.g. an appointment) is not used either: the
+    // re-imported entry would look future-dated and be clamped, losing the
+    // date. The dates this preserves are past ones (spec §8.2).
     const logTime = e.occurred_at != null && isUsableDate(occurred) && occurred >= OKF_DATE_MIN && occurred <= OKF_DATE_MAX
+      && occurred <= e.created_at
       ? occurred
       : e.created_at;
     return { date: formatLogDate(logTime), text: appendEventIdComment(text, e.id) };

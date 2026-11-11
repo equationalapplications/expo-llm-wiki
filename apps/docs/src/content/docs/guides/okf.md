@@ -69,7 +69,7 @@ so traversal can reach them.
 
 ## Log dates
 
-Log entries are dated by `occurred_at` when it is set, and by `created_at` otherwise. A merge import
+Log entries are dated by `occurred_at` when it is a usable past date (years 0000-9999, not later than `created_at`), and by `created_at` otherwise. A merge import
 re-dates log entries that would sort behind the librarian position to just after the current time, or after the librarian position if that is
 later, and keeps the original date in `occurred_at`. OKF bundles carry no source watermark, so every
 old entry is treated as not yet read.

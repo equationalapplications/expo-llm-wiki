@@ -477,6 +477,14 @@ describe('OKF log entries are dated by real-world time', () => {
     expect(log).toContain('## 2026-11-11');
   });
 
+  it('formatOkfBundle dates a future occurred_at by created_at, so a re-import is not clamped as future', () => {
+    const created = Date.UTC(2026, 10, 11, 9);
+    const d = dump([{ ...ev('e1', created), occurred_at: created + 21 * 86_400_000 }]);
+    const log = formatOkfBundle(d).files.find((f) => /log\.md$/.test(f.path))!.content;
+    expect(log).toContain('## 2026-11-11');
+    expect(log).not.toContain('## 2026-12-02');
+  });
+
   it('formatOkfBundle falls back to created_at for an occurred_at outside years 0000-9999, so the entry parses back', () => {
     const created = Date.UTC(2026, 10, 11, 9);
     const micro = 1_700_000_000_000_000; // a microsecond epoch: a usable Date, but year ~55800
