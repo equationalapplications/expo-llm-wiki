@@ -49,9 +49,10 @@ export class EventRepository extends BaseRepository {
     );
   }
 
-  async addIgnoreDuplicate(event: WikiEvent, tx?: SQLiteAdapter): Promise<void> {
+  /** Insert unless the id already exists. Returns true when a row was inserted. */
+  async addIgnoreDuplicate(event: WikiEvent, tx?: SQLiteAdapter): Promise<boolean> {
     const executor = this.getExecutor(tx);
-    await executor.runAsync(
+    const result = await executor.runAsync(
       `INSERT OR IGNORE INTO ${this.prefix}events (id, entity_id, event_type, summary, related_entry_id, created_at, occurred_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
@@ -64,6 +65,7 @@ export class EventRepository extends BaseRepository {
         event.occurred_at ?? null,
       ],
     );
+    return result.changes > 0;
   }
 
   /**
