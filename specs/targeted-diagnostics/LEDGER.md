@@ -43,8 +43,8 @@ In flight: nothing
   - At production thresholds the real `gateCandidates` misroutes the same 2
     rows calibration found (`mixed-1::1`, `mixed-1::2`, labelled ADD, routed
     to resolve). Both errors go in the safe direction.
-  - The ambiguous row `job-1` sits 0.001 below `dupThreshold` (cosine
-    0.889).
+  - The ambiguous row `job-1` sits 0.0015 below `dupThreshold` (cosine
+    0.8885).
   - Three true duplicates clear 0.89 by only 0.009 to 0.028.
   - A small change to the embedding model or the embed text flips NOOP to
     resolve, or resolve to NOOP. This is a tuning lever.
@@ -58,11 +58,13 @@ In flight: nothing
   - A 0.5 blend gives 0.7170 and 0.5135: 24 of 150 FinanceBench queries
     (and 18 of 300 SciFact) that vector search ranks in the top 10 fall out
     once keyword is blended in.
-  - Keyword search never rescues a vector miss on either set (`vector-miss`
-    0).
+  - Corrected after the PR #357 review: keyword-only rescues 18 SciFact
+    and 1 FinanceBench default misses (`rescuedByKeyword`), and the blend
+    keeps all of them. The earlier "never rescues" claim misread
+    `vector-miss` = 0.
   - Hard misses (`both-miss`): 25 on SciFact and 2 on FinanceBench.
-  - Lever: anyone setting `hybridWeight` should know it costs accuracy on
-    both sets. The keyword score normalisation (`getKeywordScores` divides
+  - Lever: a 0.5 blend is a wash on SciFact (-0.003) and clearly worse on
+    FinanceBench. The keyword score normalisation (`getKeywordScores` divides
     by max(1, top)) is the first suspect.
 
 ## Rulings
@@ -110,5 +112,14 @@ In flight: nothing
 - The README says "dated report", but the files are named by `gitDescribe`.
 - `promptVolume.test.ts` writes its bad-stream fixture into the gitignored `.cache/`; it should use a temp directory.
 - The three reads per query each call `trackAccess`, and `access_count` is a tie-break, so the modes are not fully independent.
+- PR #357 Sonnet review: fixed the retrieval sidecar miss, which silently fell back to keyword search.
+  - Test: `attribute with an incomplete query sidecar` went RED→GREEN.
+- PR #357 Sonnet review: added `rescuedByKeyword` and corrected spec Finding 5.
+  - Test: `counts keyword rescues` went RED→GREEN, and its 18/1 counts match the reviewer's independent probe.
+- PR #357 Sonnet review: replaced the always-passing "gate is deterministic" test with a test pinning the §1 claim that final tables are byte-identical across all four configs.
+  - Test: `final fact, event and checkpoint tables are byte-identical` went RED→GREEN.
+- PR #357 Sonnet review: corrected the wording.
+  - Doc fixes: the estimate is "calibrated to" the ledger, not validated by it; spec line cites fixed (`gate.ts:44-45`, `:168`); the `job-1` margin is 0.0015; the Finding 3 rule-11 caveat was strengthened.
+  - README warning: clear `legacy-deferred` LongMemEval caches built before the §2.1 fix.
 
 ## Discrepancies

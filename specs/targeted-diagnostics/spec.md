@@ -45,7 +45,7 @@ here.
 **Gaps in the current zero-token tests.**
 - `packages/core/__tests__/supersessionReplay.test.ts:13-24` uses a 16-dim
   keyword embedder with `novelThreshold: 0`. The production thresholds
-  (0.30 / 0.89, `packages/core/src/services/librarian/ops/gate.ts:43-44`)
+  (0.30 / 0.89, `packages/core/src/services/librarian/ops/gate.ts:44-45`)
   are never exercised against real embeddings in CI.
 - `packages/benchmarks/src/calibrate.ts` re-implements the gate's
   arithmetic, needs fastembed at run time, and does not run in CI. Its
@@ -80,7 +80,7 @@ here.
   `new Date()`), plus `performance.now()` in `utils/monotonicNow.ts`.
 - Legacy prompts serialise whole event and fact rows, so ids and
   timestamps land in prompt bytes.
-- Gate ties break on fact id (`gate.ts:180`), so random ids can reorder
+- Gate ties break on fact id (`gate.ts:168`), so random ids can reorder
   neighbour aliases.
 
 ## Proposed change
@@ -261,17 +261,24 @@ out of scope for this spec.
    read, and 4 others survived only as later restatements. After the §2.1
    fix, the LongMemEval legacy-deferred cell reproduces this loss
    faithfully.
-3. **Legacy prompt volume.** With the scripted provider, legacy-auto sent
-   75,857 user characters in 3 calls, about 20x the raw event text.
-   ops-deferred sent 8,175 in 3 calls. The one-fact-per-event script
-   inflates legacy's fact-row context, so treat 20x as an upper figure.
-   This is prompt volume, not billed tokens. Do not quote the ops-auto
-   figure as a strategy comparison, because finding 1 depresses it.
+3. **Legacy prompt volume (engineering signal, not a cost claim).**
+   - With the scripted provider, legacy-auto sent 75,857 user characters
+     in 3 calls, about 20x the raw event text. ops-deferred sent 8,175 in
+     3 calls.
+   - The one-fact-per-event script inflates legacy's fact-row context, so
+     treat 20x as an upper figure.
+   - These are characters sent under a scripted model, not billed tokens.
+     They say nothing about cost or accuracy under a real model.
+   - INTENT rule 11 still bars publishing any cost comparison of the 8.0.0
+     defaults from these figures. Use them only to find where prompt
+     volume goes and to catch regressions.
+   - Do not quote the ops-auto figure at all, because finding 1 depresses
+     it.
 4. **The gate's duplicate threshold has almost no headroom.**
    - At production thresholds the real gate misroutes the same 2 rows that
      calibration found (`mixed-1::1`, `mixed-1::2`). Both are safe-direction
      errors: one extra resolve item each.
-   - `job-1` sits 0.001 below `dupThreshold` (0.889 against 0.89).
+   - `job-1` sits 0.0015 below `dupThreshold` (cosine 0.8885 against 0.89).
    - Three true duplicates clear it by only 0.009 to 0.028.
 5. **Retrieval.**
    - With `hybridWeight` unset, the shipped default is pure vector search.
@@ -280,9 +287,18 @@ out of scope for this spec.
      FinanceBench, reproducing the integration figures.
    - Keyword-only gives 0.6917 and 0.4367. A 0.5 blend gives 0.7170 and
      0.5135.
-   - Keyword search never rescues a vector miss on either set, while
-     blending pushes 18 SciFact and 24 FinanceBench gold documents out of
-     the top 10.
+   - Keyword rescues: keyword-only finds the gold document that the
+     default misses on 18 SciFact queries and 1 FinanceBench query
+     (`rescuedByKeyword`). The blend keeps all of those rescues.
+   - Blend losses: the blend also pushes gold documents that the default
+     found out of the top 10, on 18 SciFact and 24 FinanceBench queries
+     (`keyword-miss`).
+   - Net effect: on SciFact the blend loses 18 and rescues 18, a wash
+     (-0.003 NDCG). Only FinanceBench gets clearly worse (MRR 0.70 to
+     0.51).
+   - (Corrected 2026-11-10 after the PR #357 review. The first draft said
+     keyword never rescues a vector miss. The miss classes cannot show
+     that, because any blend hit counts as `hit`.)
    - Hard misses: 25 on SciFact and 2 on FinanceBench.
 
 ## Files touched
