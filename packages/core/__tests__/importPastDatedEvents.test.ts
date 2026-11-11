@@ -7,6 +7,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { MemoryDump, WikiDiagnostic, WikiEvent } from '../src/types';
 import { WikiMemory } from '../src/WikiMemory';
 import { openTestDatabase } from './helpers/sqliteAdapter';
+import { formatOkfBundle } from '../src/utils/formatOkfBundle';
+import { parseOkfBundle } from '../src/utils/parseOkfBundle';
 import { START_OF_LOG_WATERMARK } from '../src/repositories/MetadataRepository';
 
 const ENTITY = 'u';
@@ -388,5 +390,39 @@ describe('bundles carry the source librarian watermark', () => {
     const seen = events.filter((e) => new RegExp(`${e.summary}(?!\\d)`).test(prompt)).length;
     // Documented limit (spec §4): one legacy pass reads 50 events; the rest wait for the next.
     expect(seen).toBe(50);
+  });
+});
+
+describe('OKF log entries are dated by real-world time', () => {
+  const DAY = Math.floor(NOW / 86_400_000) * 86_400_000;
+
+  it('formatOkfBundle dates an event by occurred_at when set', () => {
+    const created = Date.UTC(2026, 10, 11, 9);
+    const occurred = Date.UTC(2023, 0, 5, 9);
+    const d = dump([{ ...ev('e1', created), occurred_at: occurred }]);
+    const { files } = formatOkfBundle(d);
+    const log = files.find((f) => /log\.md$/.test(f.path))!.content;
+    expect(log).toContain('## 2023-01-05');
+    expect(log).not.toContain('## 2026-11-11');
+  });
+
+  it('an OKF-parsed merge bundle behind the watermark is re-stamped and keeps its midnight date', async () => {
+    let t = DAY + 5 * 3_600_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => (t += 10));
+    const { db, wiki, extractPrompts, diagnostics } = await mk();
+    await writeMany(wiki, 3);
+    await wiki.runLibrarian(ENTITY);
+    const source = dump([{ ...ev('okf_old', DAY, 'Okf imported note'), occurred_at: null }]);
+    const parsed = parseOkfBundle(ENTITY, formatOkfBundle(source).files);
+    const evt = parsed.entities[ENTITY]!.events[0]!;
+    expect(evt.created_at).toBe(DAY);
+    expect(evt.occurred_at ?? null).toBeNull();
+    await wiki.importDump(parsed, { merge: true });
+    expect(restamped(diagnostics)).toHaveLength(1);
+    const row = (await rows(db)).find((r) => r.id === evt.id)!;
+    expect(row.created_at).toBeGreaterThan(DAY + 5 * 3_600_000);
+    expect(row.occurred_at).toBe(DAY);
+    await wiki.runLibrarian(ENTITY);
+    expect(extractPrompts.join('\n')).toContain('Okf imported note');
   });
 });

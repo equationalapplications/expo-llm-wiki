@@ -67,6 +67,12 @@ Imported facts usually have no `okf_type` and no edges from the librarian. Run
 so traversal can reach them.
 :::
 
+## Log dates
+
+Log entries are dated by `occurred_at` when it is set, and by `created_at` otherwise. A merge import
+re-dates old log entries to just after the librarian position and keeps the original date in
+`occurred_at`. OKF bundles carry no source watermark, so they take the fallback.
+
 ## Edges and `## Related`
 
 In OKF, edges between concepts are written as a trailing `## Related` section of markdown links.

@@ -176,7 +176,7 @@ function buildEventLogEntries(
     const text = factFilename
       ? `(${e.event_type}) [${summary}](./facts/${factFilename}.md)`
       : `(${e.event_type}) ${summary}`;
-    return { date: formatLogDate(e.created_at), text: appendEventIdComment(text, e.id) };
+    return { date: formatLogDate(e.occurred_at ?? e.created_at), text: appendEventIdComment(text, e.id) };
   });
 }
 
