@@ -114,13 +114,19 @@ entities (ops + auto, created on 7.8.0 or later) have lost their first
 `autoLibrarianThreshold` events from memory. The raw events are still in
 the event log unless pruning has removed them.
 
-**Open question for the owner:** ship a remedy, or document only?
-- Document only: a changelog/README note telling affected users to re-run
-  ingestion.
-- Remedy: a package-internal or public way to reset an entity's watermark
-  to the start-of-log marker, so the next pass re-reads the log. This adds
-  API surface and risks re-extracting facts that do exist. Ops dedups them
-  through the gate, at the cost of LLM calls.
+**Ruled 2026-11-10 (owner): document only.** No reset API and no automatic
+repair. Affected users are told what happened and what to do:
+
+- **The `fix(core)` commit body** states the impact: which configs are
+  affected, since 7.8.0, which events are lost, and that they remain in
+  the event log unless pruned. semantic-release carries the body into the
+  release notes; nobody edits `CHANGELOG.md` by hand.
+- **`apps/docs/src/content/docs/guides/maintenance.md` gains a short
+  "Known issue fixed in <next patch>" note** with the same facts and the
+  remedy: re-ingest the affected entity's early source material, or
+  re-write those events, after upgrading. The heading names the version
+  generically ("the release that fixes this"), because the number is
+  computed at release time.
 
 ## Files touched
 
@@ -131,6 +137,8 @@ the event log unless pruning has removed them.
 - Possibly `packages/core/src/repositories/EventRepository.ts`:
   transaction-aware `getAtOffset`/`count` if they lack a `tx` parameter.
 - `packages/core/__tests__/`: new tests (see below).
+- `apps/docs/src/content/docs/guides/maintenance.md`: the known-issue note
+  (§3).
 - `packages/benchmarks/fixtures/promptVolume/baseline.json`: ops-auto
   `eventsSeen` moves from 40 to 56, with calls and characters rising
   accordingly. Regenerate it with `BENCH_UPDATE_BASELINE=1`. This needs
