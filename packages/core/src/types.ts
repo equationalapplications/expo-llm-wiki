@@ -831,7 +831,8 @@ export type WikiDiagnosticCode =
   | 'contradicts_document'
   | 'resolve_failed'
   | 'read_budget'
-  | 'event_retention_held';
+  | 'event_retention_held'
+  | 'event_created_at_clamped';
 
 /** The service run that emitted the diagnostic. */
 export type WikiDiagnosticOperation =

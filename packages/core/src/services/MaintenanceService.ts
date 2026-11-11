@@ -17,6 +17,7 @@ import type { EntryRepository } from '../repositories/EntryRepository';
 import type { SourceRefIndexRepository } from '../repositories/SourceRefIndexRepository';
 import type { TaskRepository } from '../repositories/TaskRepository';
 import type { EventRepository } from '../repositories/EventRepository';
+import { anchorAtLegacyBoundary, seedLegacyWatermark } from './legacyWatermark';
 import { entitySummaryMetaKey, START_OF_LOG_WATERMARK, type LibrarianWatermark, type MetadataRepository } from '../repositories/MetadataRepository';
 import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
@@ -796,13 +797,8 @@ export class MaintenanceService {
    * nothing and returns null when there is no legacy history or no such
    * event; each caller picks its own fallback.
    */
-  private async anchorAtLegacyBoundary(entityId: string, checkpoint: number, total: number, db: SQLiteAdapter): Promise<LibrarianWatermark | null> {
-    if (checkpoint <= 0 || total <= 0) return null;
-    const ev = await this.eventRepo.getAtOffset(entityId, Math.min(checkpoint, total) - 1, db);
-    if (!ev) return null;
-    const wm = { at: ev.created_at, id: ev.id };
-    await this.metadataRepo.setLibrarianWatermark(entityId, wm, db);
-    return wm;
+  private anchorAtLegacyBoundary(entityId: string, checkpoint: number, total: number, db: SQLiteAdapter): Promise<LibrarianWatermark | null> {
+    return anchorAtLegacyBoundary(this.metadataRepo, this.eventRepo, entityId, checkpoint, total, db);
   }
 
   /**
@@ -813,19 +809,7 @@ export class MaintenanceService {
    * drift and gets {@link START_OF_LOG_WATERMARK} (spec ops-auto-first-batch §2).
    */
   async seedLibrarianWatermark(entityId: string): Promise<void> {
-    if (await this.metadataRepo.getLibrarianWatermark(entityId, this.db)) return;
-    const cp = await this.metadataRepo.getCheckpoint(entityId, this.db);
-    const memory = cp.memory ?? 0;
-    if (memory <= 0) return;
-    const total = await this.eventRepo.count(entityId, this.db);
-    // A checkpoint above the event count is drift left by an older prune,
-    // not legacy history. Anchoring at the last event would skip every
-    // unread event; read from the start instead, as the write path does.
-    if (memory > total) {
-      await this.metadataRepo.setLibrarianWatermark(entityId, START_OF_LOG_WATERMARK, this.db);
-      return;
-    }
-    await this.anchorAtLegacyBoundary(entityId, memory, total, this.db);
+    await seedLegacyWatermark(this.metadataRepo, this.eventRepo, entityId, this.db);
   }
 
   /**
