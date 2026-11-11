@@ -1,6 +1,6 @@
 # Import follow-ups: hook isolation, default `valid_from`, deterministic OKF event ids
 
-**Status:** Draft
+**Status:** Reviewed (approved by the owner on PR #371, 2026-11-11)
 **Date:** 2026-11-11
 **Issues:** #367, #366, #365. Issue #278 (the upstream sprintf-js /
 node-forge watch) is out of scope: there is nothing to do until upstream
