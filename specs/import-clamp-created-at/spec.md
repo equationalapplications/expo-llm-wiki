@@ -1,7 +1,8 @@
 # Import clamps future-dated event `created_at`
 
-**Status:** Reviewed. The owner ruled the approach in chat on 2026-11-11:
-clamp, don't reject, in its own spec and PR. Issue #361.
+**Status:** Implemented (PR #362). The owner ruled the approach in chat
+on 2026-11-11: clamp, don't reject, in its own spec and PR. Issue #361.
+§1 and §3 were revised after the Fable review the same day.
 **Date:** 2026-11-11
 **Intent check:** This is a data-integrity fix on the import path. It
 honours rule 6 (honest reporting): every clamped event is counted in a new
