@@ -53,7 +53,3 @@ target/
 
 # Curated Thoughts indexer scratch (error logs written into the working tree)
 .brain/
-
-# Per-run reports from the integration scifact/financebench suites (one JSON
-# per run). The few already committed stay tracked; new ones stay local.
-packages/integration/benchmark-results/
