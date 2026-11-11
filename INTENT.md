@@ -198,7 +198,10 @@ review is worth more than a silent rejection.
 
 **Status: Built.** Diagnostics (7.x), draft review, grounding, `lint` and
 `pendingSources` all ship. Diagnostics are delivered after the
-transaction commits; an operation that throws delivers none.
+transaction commits; an operation that throws delivers none. One
+exception: `importDump` commits each entity in its own transaction. If a
+later entity throws, the entities already committed have delivered
+theirs, and those diagnostics are accurate.
 
 ### 7. Nothing spends your allowance invisibly
 
@@ -340,6 +343,13 @@ runs and who schedules it.
 
 ## Amendments
 
+- 2026-11-11 — Rule 6's Status now says `importDump` commits each entity
+  in its own transaction, so the entities committed before a later entity
+  throws have already delivered their diagnostics. Why: "an operation that
+  throws delivers none" was not true for `importDump`, and those
+  diagnostics describe data that really was committed, so hiding them
+  would break rule 6. PR #362 makes the same correction in the diagnostics
+  guide. No rule text changed.
 - 2026-11-09 — Kurt rules that 8.0.0 flips `librarian.strategy` to `'ops'`
   and `maintenance` to `'deferred'` and removes the deprecated `wiki_*`
   tool names (#324); recorded with `specs/release-8-0-0/`. Why: the owner's
