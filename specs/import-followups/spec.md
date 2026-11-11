@@ -34,13 +34,13 @@ contradiction found. Rule by rule:
 - **Rule 10 (spec first).** This is the spec. §4 lists the Status notes
   that older specs need in the implementing PR.
 - **Charter rule 8** ("a standard, documented format"): the id derivation
-  is written into `docs/okf-profile.md` (open question 1).
+  is written into `docs/okf-profile.md` (ruled 2026-11-11, §5.1).
 - **Rulings already made.** The owner ruled on 2026-11-11 that OKF must
   derive deterministic ids (#365) and that the default `valid_from` is the
   newest date in the batch (#366); both are recorded in
   `specs/import-past-dated-events/spec.md` under "Open questions". Where
   this spec goes past the words of those rulings, the point is listed in
-  §5 and not decided here.
+  §5, where the owner ruled on each one on 2026-11-11.
 
 ## The fixes in plain words
 
@@ -261,7 +261,7 @@ corrections to its framing:
   - Today, one future-dated event (an appointment) hides the batch's
     unlabeled facts only when it happens to be last.
   - With a plain maximum, it hides them wherever it sits in the batch.
-  - See open question 3.
+  - Ruled: capped at now (§5.3).
 
 Existing coverage: `packages/core/__tests__/opsExtract.test.ts:37-58`
 asserts the default, but in its batch the last event is also the newest
@@ -279,7 +279,7 @@ In `runExtract` (`ops/extract.ts`):
      one first (`packages/core/src/services/PromptService.ts:277`), which
      throws on an unusable value.
    - Use a loop or `reduce`, not `Math.max(...spread)`.
-2. **Pending open question 3 (recommended):** cap it at the time of the
+2. **Ruled 2026-11-11 (§5.3):** cap it at the time of the
    pass, `Math.min(maxAt, Date.now())`. In words: the newest event date in
    the batch, but never later than now.
 3. Line 85 keeps its order of preference: the model's own `valid_from`,
@@ -304,7 +304,7 @@ Not changed:
   dates a fact (the model's date, else its source event's date, else the
   newest date in the batch). The guide does not say this today.
 - `docs/superpowers/specs/2026-09-29-competitive-memory-design.md`: append
-  a dated Status note only if the cap in step 2 is adopted, since §179 does
+  a dated Status note recording the cap in step 2 (ruled §5.3), since §179 does
   not mention one.
 
 ### Test plan
@@ -320,7 +320,7 @@ the file's `mk()` helper):
 3. **Order of preference kept.** In the same batch, a fact labelled `e2`
    gets 5, and a fact with its own `valid_from` gets that value.
 4. **Single event.** A batch of one gives that event's date.
-5. **Future date** (open question 3). `evt_a` at 100; `evt_b` with
+5. **Future date** (§5.3). `evt_a` at 100; `evt_b` with
    `occurred_at` 30 days after a mocked `Date.now()`. An unlabeled fact
    gets the mocked now. If the owner rules against the cap, this test
    asserts the future value instead and the guide sentence says so.
@@ -590,7 +590,7 @@ keeps using `generateId`.
   the same dump under two entity ids gets the second set ignored, as
   today. Parse once per entity.
 
-**Two cases deterministic ids do not cover** (open question 4):
+**Two cases deterministic ids do not cover** (ruled acceptable, §5.4):
 
 1. **Stores that imported an id-less log before this change.** Those rows
    have random ids. The first import of the same log after upgrading adds
@@ -639,7 +639,7 @@ This is outside the three issues. It is here because it decides what
   (`docs/okf-profile.md:147`), so a consumer must unescape them.
 - No test covers a plain summary with these characters.
 
-**Proposed (open question 2):** unescape the plain form too, in the same
+**Ruled 2026-11-11 (§5.2):** unescape the plain form too, in the same
 PR as §3.1, before the id is derived.
 
 - A hand-written line with no backslashes is unaffected, so its derived id
@@ -652,7 +652,7 @@ PR as §3.1, before the id is derived.
 
 #### §3.7 Profile text
 
-Pending open question 1, amend `docs/okf-profile.md` §7 with a dated note,
+Ruled 2026-11-11 (§5.1): amend `docs/okf-profile.md` §7 with a dated note,
 in the same style as the #364 amendment:
 
 - Idempotency rule 2 gains: "A consumer SHOULD assign an id-less event the
@@ -724,7 +724,7 @@ in the same style as the #364 amendment:
 16. A line that does not parse, or sits under an invalid date, uses up no
     occurrence.
 17. `generateId` is never called with `'evt_'`.
-18. If open question 2 is ruled yes: a plain summary containing `\`, `[`
+18. A plain summary containing `\`, `[`
     and `]` is unchanged after three export and import cycles; a plain
     line with no backslashes parses as before.
 
@@ -769,19 +769,15 @@ in the same style as the #364 amendment:
 
   Merged as a merge commit, each group stays separately revertable. The
   release is one minor, because of the `feat`.
-- **When to split.** #367 has no open question and #366 has one small one.
-  #365 has three and touches the published profile. An unresolved question
-  holds the whole PR. If the owner does not rule on §5 at spec review,
-  move §3 into its own folder (`specs/okf-deterministic-event-ids/`) and
-  PR, and ship §1 and §2 from this one as a patch.
+- **When to split.** Not needed: the owner ruled on all four §5 questions on 2026-11-11, so all three issues ship in one PR.
 - **Status notes owed in the implementing PR** (append, never replace):
   - `specs/import-past-dated-events/spec.md`: its "Open questions" text on
     `extract.ts:74` and `parseOkfBundle.ts:533` is superseded by this
     spec.
   - `docs/superpowers/specs/2026-07-05-okf-profile-design.md`: id-less
     events now get derived ids in the engine.
-  - `docs/superpowers/specs/2026-09-29-competitive-memory-design.md`: only
-    if the cap in §2 is adopted.
+  - `docs/superpowers/specs/2026-09-29-competitive-memory-design.md`: record
+    the cap in §2 (ruled §5.3).
 - **Curated Thoughts.** It pins an exact core version, so it takes these
   on its next bump. Nothing here changes the wiki tables' schema. Its Rust
   importer keeps its own id-less behaviour until it adopts §3.2 and §3.3;
@@ -790,9 +786,9 @@ in the same style as the #364 amendment:
 - **No release mechanics in the PR.** No edit to `CHANGELOG.md` or any
   `"version"` field, and no major-release footer.
 
-## §5 Open questions for owner
+## §5 Owner rulings (2026-11-11)
 
-Each has a recommendation. None is decided by this spec.
+The owner accepted the recommendation on all four questions on 2026-11-11. Each question keeps its original wording and recommendation below as the record.
 
 1. **(#365, published format.) Does the id derivation go into
    `docs/okf-profile.md` as a rule for all consumers, or stay an
@@ -805,12 +801,14 @@ Each has a recommendation. None is decided by this spec.
      vectors, as a dated amendment to §7, with no profile bump (§3.7). An
      id that only one implementation can compute does not deduplicate
      across implementations.
+   - **Ruled 2026-11-11:** yes, profile SHOULD rule with test vectors, dated §7 amendment, no profile bump.
 2. **(#365, scope.) Fix the plain-summary unescape defect (§3.6) in the
    same PR?**
    - It is a fourth bug, not one of the three issues. It changes what an
      import stores for a plain log line that contains `\[`, `\]` or `\\`.
    - *Recommendation:* yes. Fixing it later changes the derived id of
      every affected line once, and it is a few lines with one test.
+   - **Ruled 2026-11-11:** yes, fixed in this PR.
 3. **(#366, wording of the ruling.) Cap the default at the time of the
    pass?**
    - The ruling says "the maximum date in the batch". Taken literally, one
@@ -820,6 +818,7 @@ Each has a recommendation. None is decided by this spec.
    - *Recommendation:* yes, `min(newest date in the batch, now)`. It keeps
      the ruling's meaning for every past date and removes the one case
      where it hides facts.
+   - **Ruled 2026-11-11:** yes, default is `min(newest date in the batch, now)`.
 4. **(#365, compatibility.) Accept a one-time duplicate in the two cases
    of §3.5?**
    - The alternative is an importer-side match on
@@ -829,6 +828,7 @@ Each has a recommendation. None is decided by this spec.
    - *Recommendation:* accept and document. The duplicate happens once per
      affected log and is visible in diagnostics. Its facts go through the
      ops librarian like those of any repeated event.
+   - **Ruled 2026-11-11:** yes, accept the one-time duplicate and document it.
 
 ## Out of scope
 
