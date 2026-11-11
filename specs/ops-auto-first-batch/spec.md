@@ -1,6 +1,6 @@
 # ops + auto: the first auto pass skips the events that triggered it
 
-**Status:** Draft
+**Status:** Implemented (PR #358), except test-plan item 6, the benchmarks baseline, which waits for #357 to merge
 **Date:** 2026-11-10
 **Intent check:** This is a data-loss bug fix inside the engine. It changes
 no public API, no default and no prompt. INTENT's promise that memory
@@ -29,12 +29,18 @@ bookmark is what lets the pass misread the already-advanced counter.
 
 ## Problem
 
-- **Who hits it:** an entity on a fresh database (no legacy history) with
-  `librarian.strategy: 'ops'` and `maintenance: 'auto'`. ops has been
+- **Who hits it:** any entity with no ops watermark yet, under
+  `librarian.strategy: 'ops'` and `maintenance: 'auto'`. That covers both a
+  fresh entity and one the legacy librarian had already processed, for
+  example a pre-7.8 entity upgraded to 8.x. The 8.0.0 upgrade warning
+  suggests setting `maintenance: 'auto'` to keep the old behaviour, which
+  puts such an entity on exactly this path. (Corrected 2026-11-10 after the
+  #358 review. The first draft said fresh entities only.) ops has been
   opt-in since 7.8.0 and the default strategy since 8.0.0. Its default
   maintenance is `'deferred'`, which is unaffected.
-- **What happens:** the first `autoLibrarianThreshold` events (default 20)
-  are never extracted.
+- **What happens:** the first triggered batch is never extracted. That is
+  the first `autoLibrarianThreshold` events (default 20), counted from
+  where the legacy librarian stopped if it ran before.
   - No LLM call is made, and no error or diagnostic is raised.
   - A later explicit `runLibrarian` does not recover them, because the
     bookmark is already past them.
@@ -81,12 +87,22 @@ Why no test caught it:
     exactly as `seedLibrarianWatermark` does today, at the event at offset
     `min(checkpoint, total) - 1`.
   - **It is 0** (no history): write the start-of-log marker
-    `{ at: 0, id: '' }`.
+    `START_OF_LOG_WATERMARK = { at: Number.MIN_SAFE_INTEGER, id: '' }`.
+  - A checkpoint above the event count is clamped to 0 by `WriteService`,
+    for example after an import replaced the log. It therefore gets the
+    marker: the first pass re-reads the log, and the gate dedups what
+    already exists. It re-reads; it never skips.
 - **Why the marker is safe:** `AFTER_SQL` treats it exactly like "no
-  watermark". It selects every event with `created_at > 0`, and core
-  requires `created_at` to be positive epoch ms. `sumSummaryCharsAfter`,
+  watermark" for every `created_at`. That includes the zero or negative
+  values that an import or an OKF bundle with pre-1970 dates can carry;
+  `write()` itself only produces positive values. `sumSummaryCharsAfter`,
   `countAfter`, `pruneThrough` and `countHeldBack` all read it the same
-  way.
+  way. (Revised 2026-11-10 after the #358 review. The first draft used
+  `at: 0`, which skipped, and could prune, events at or below 0.)
+- **Token trigger.** Under ops, the token path anchors *before* summing
+  characters after the watermark. Otherwise, with legacy history and no
+  watermark yet, the sum would include events legacy had already read and
+  fire a pass early.
 - **Transaction:** the anchor's reads and write run on the trigger's
   transaction, so they commit or roll back with the counter move.
 - **Implementation:** a new package-internal method, e.g.
@@ -162,9 +178,14 @@ Each test must fail before the fix:
    - Setup: the first triggered pass throws.
    - Assert: the checkpoint is rolled back and the watermark is the
      start-of-log marker. The next trigger extracts events from 1.
-5. **Marker semantics.** `{ at: 0, id: '' }` returns the same rows as
+5. **Marker semantics.** `START_OF_LOG_WATERMARK` returns the same rows as
    `null` from `getAfter`, `countAfter` and `sumSummaryCharsAfter`, and
-   prunes nothing.
+   prunes nothing. This holds even with events at `created_at` -5000 and 0.
+5b. **Added after the #358 review.**
+   - The token trigger with legacy history fires only on characters written
+     after the legacy checkpoint.
+   - A checkpoint above the event count re-reads the whole log.
+   - The token test asserts exactly one pass, containing events 1 and 2.
 6. **Benchmarks.** Once #357 has merged, the prompt-volume suite shows
    ops-auto `eventsSeen` at 56 against the regenerated baseline.
 
