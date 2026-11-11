@@ -1,6 +1,6 @@
 # Import: past-dated events behind the watermark are never read
 
-**Status:** Reviewed (owner, 2026-11-11). Revision 3 (2026-11-11) updates
+**Status:** Reviewed (owner, 2026-11-11; §8 ruled the same day). Revision 3 (2026-11-11) updates
 §1 and the file list for what #358 and #362 delivered once merged. Revision 2 was written after
 the Opus spec review and Fable's decision memo; the owner then ruled on the
 three §6 decisions and the open questions. Second half of #361. Depends on
@@ -223,6 +223,10 @@ its new `created_at`.
 - Under ops the same run is read in full (120 of 120).
 - The legacy prompt serializes raw event JSON, so it shows both the
   re-stamped `created_at` and `occurred_at`.
+- **As a source** (§8 ruling 3): a legacy pass advances the watermark to
+  the newest event it saw, while reading only the newest 50. A bundle from
+  a legacy store can therefore mark events as consolidated that legacy
+  never read, and the importer trusts it.
 
 ### §5 Diagnostic
 
@@ -433,9 +437,31 @@ docs or changelog text makes a cost claim (rule 11).
 - Imported `occurred_at` validation, OKF dating and legacy-source trust:
   see §8 (owner decisions).
 
-## §8 Decisions for the owner (rev 4)
+## §8 Decisions (ruled by the owner 2026-11-11, rev 4)
 
-Pending. See the PR thread.
+1. **Imported `occurred_at` is sanitized here.** An imported `occurred_at`
+   that is not a finite number within the JS Date range
+   (`-8.64e15 <= v <= 8.64e15`) is stored as `null`, using the same
+   `createdAtValue` reading, so decimal strings are parsed. Each such
+   event is counted under reason `invalid`. Step 4 may then fill it with
+   the original `created_at` (behind-watermark events only). Reason: the
+   librarian dates an event by `occurred_at ?? created_at`, so a bad
+   `occurred_at` stalls every ops pass exactly like a bad `created_at`.
+   It is the same planner and only a few lines.
+   - An event can have a bad `occurred_at` and a valid `created_at`. It is
+     then counted once, under `invalid`, and its `created_at` is handled
+     by the normal reason order. If that order also re-stamps it, it is
+     counted once under the re-stamp reason instead.
+2. **OKF dates log entries by `occurred_at ?? created_at`.** This is done
+   in `formatOkfBundle`, in this spec. A re-stamped historical event keeps
+   its real date across an OKF export and re-import. This also changes OKF
+   output for events whose caller supplied `occurred_at`: they now appear
+   under that date. That date is the real-world one the field documents.
+3. **A legacy source's watermark is trusted.** It can cover events legacy
+   never read (legacy reads only the newest 50). The importer treats them
+   as consolidated. This is documented in §4, not fixed. A store can
+   change strategy over its life, and the watermark does not record who
+   advanced it.
 
 ## Files touched (expected)
 
@@ -452,6 +478,9 @@ Pending. See the PR thread.
   `reference/types.md` (the field), `guides/okf.md` (merge imports re-date
   old log entries and take the fallback), `guides/maintenance.md` (a new
   short paragraph on imports).
+- `packages/core/src/utils/formatOkfBundle.ts` (§8 ruling 2): log entries
+  are dated by `occurred_at ?? created_at`. Check `parseOkfBundle`'s
+  round-trip tests.
 - `packages/core/__tests__/importPastDatedEvents.test.ts`.
 
 ## Test plan
