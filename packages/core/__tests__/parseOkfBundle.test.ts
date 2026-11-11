@@ -628,6 +628,15 @@ describe('parseOkfBundle — derived event ids', () => {
     expect(events.map((e) => e.id)).toEqual([taken, id('2023-11-14', 'observation', 'X', 1), id('2023-11-14', 'observation', 'X', 2)]);
   });
 
+  it('many summaries that differ only in lone surrogates parse in linear time', () => {
+    const lines = Array.from({ length: 4000 }, (_, i) =>
+      `- (observation) x${String.fromCharCode(0xd800 + (i % 1024))}y${String.fromCharCode(0xd800 + Math.floor(i / 1024))}z`);
+    const t0 = performance.now();
+    const events = log(`## 2023-11-14\n\n${lines.join('\n')}\n`);
+    expect(performance.now() - t0).toBeLessThan(2000);
+    expect(new Set(events.map((e) => e.id)).size).toBe(4000);
+  });
+
   it('summaries that differ only by a lone surrogate get different ids', () => {
     const events = log('## 2023-11-14\n\n- (observation) x\uD800\n- (observation) x\uFFFD\n');
     expect(new Set(events.map((e) => e.id)).size).toBe(2);

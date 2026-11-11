@@ -43,12 +43,6 @@ export class SourceRefIndexRepository extends BaseRepository {
     );
   }
 
-  /**
-   * Idempotent soft-delete of the live row for (entity_id, source_ref).
-   * Called at the start of every ingestDocument to remove the prior run's
-   * index row, so the new upsert doesn't collide with itself. No-op when the
-   * row is already soft-deleted or never existed.
-   */
   /** Soft-delete every live row of the entity (forget clearAll, spec import-followups §6). */
   async softDeleteByEntityId(entityId: string, tx: SQLiteAdapter): Promise<number> {
     const executor = this.getExecutor(tx);
@@ -62,6 +56,12 @@ export class SourceRefIndexRepository extends BaseRepository {
     return result.changes;
   }
 
+  /**
+   * Idempotent soft-delete of the live row for (entity_id, source_ref).
+   * Called at the start of every ingestDocument to remove the prior run's
+   * index row, so the new upsert doesn't collide with itself. No-op when the
+   * row is already soft-deleted or never existed.
+   */
   async softDeleteByEntityAndSourceRef(
     entityId: string,
     sourceRef: string,

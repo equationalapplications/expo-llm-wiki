@@ -161,6 +161,23 @@ function parseStaleAfterRaw(raw: unknown): number | null {
   return ms;
 }
 
+/** Lone UTF-16 surrogates → U+FFFD, matching how deriveEventId's UTF-8 encoding hashes them. */
+function replaceLoneSurrogates(s: string): string {
+  let out = '';
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c >= 0xd800 && c <= 0xdbff) {
+      const n = i + 1 < s.length ? s.charCodeAt(i + 1) : 0;
+      if (n >= 0xdc00 && n <= 0xdfff) { out += s[i] + s[i + 1]; i++; } else out += '\uFFFD';
+    } else if (c >= 0xdc00 && c <= 0xdfff) {
+      out += '\uFFFD';
+    } else {
+      out += s[i];
+    }
+  }
+  return out;
+}
+
 function unescapeLogSummary(summary: string): string {
   return summary.replace(/\\\]/g, ']').replace(/\\\[/g, '[').replace(/\\\\/g, '\\');
 }
@@ -551,7 +568,9 @@ export function parseOkfBundle(
     const nextOccurrence = new Map<string, number>();
     for (const { index, date } of pending) {
       const e = events[index];
-      const key = JSON.stringify([date, e.event_type, e.summary]);
+      // Keyed by the text the hash sees: lone surrogates hash as U+FFFD, so
+      // variants that differ only in them share one count (keeps this linear).
+      const key = JSON.stringify([date, e.event_type, replaceLoneSurrogates(e.summary)]);
       let occurrence = nextOccurrence.get(key) ?? 0;
       let id = deriveEventId({ entityId, date, eventType: e.event_type, summary: e.summary, occurrence });
       while (taken.has(id)) {
