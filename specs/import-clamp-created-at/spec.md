@@ -3,6 +3,8 @@
 **Status:** Implemented (PR #362). The owner ruled the approach in chat
 on 2026-11-11: clamp, don't reject, in its own spec and PR. Issue #361.
 §1 and §3 were revised after the Fable review the same day.
+The legacy-history seed (§1) and the message template (§2) were revised
+after CodeRabbit the same day.
 **Date:** 2026-11-11
 **Intent check:** This is a data-integrity fix on the import path. It
 honours rule 6 (honest reporting): every clamped event is counted in a new
@@ -76,13 +78,27 @@ first draft; these replace them where they differ):
   `"4102444800000"` is stored as that integer, so it is clamped too.
   `Infinity` (JSON `1e999`) is `> now` and is clamped; stored as-is it
   makes the librarian prompt throw. `NaN` and other values are left alone.
+- **Legacy history is resolved first** (added 2026-11-11 after CodeRabbit).
+  When the entity has no watermark but `memory_checkpoint > 0`, the import
+  seeds the watermark inside its transaction, on the log *before* inserting
+  any event. It uses the same rule as `seedLibrarianWatermark`, shared in
+  `services/legacyWatermark.ts`, including #358's drift rule (checkpoint
+  above the count gives the start-of-log marker). Without this, seeding at
+  pass time reads offset `memory_checkpoint - 1` of the modified log. A
+  clamped event stored before a covered future-dated event can become that
+  anchor, and is then skipped. This also delivers
+  `import-past-dated-events` §1 step 1 (ruled 2026-11-11).
 
 ### §2 Report it
 
 - New diagnostic code `event_created_at_clamped`, severity `warn`,
   operation `importDump`, trigger `call`, with `detail: { count }`.
 - Message template: "Imported events dated in the future were stored with
-  the current time."
+  the current time." (Revised 2026-11-11 after CodeRabbit: with the §1
+  watermark floor, events can stay dated after a future watermark, so the
+  template now reads "Imported events dated in the future were re-dated
+  just after the current time, or after the librarian position if that is
+  later, keeping their order.")
 - `count` is the number of clamped events actually inserted.
   `EventRepository.addIgnoreDuplicate` returns whether the row was
   inserted, so a clamped event that is skipped as a duplicate is not
