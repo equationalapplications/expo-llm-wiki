@@ -1,3 +1,7 @@
 local_cache/
 fixtures/scifact-corpus.jsonl
 fixtures/financebench-corpus.jsonl
+# Per-run reports from the scifact/financebench suites (one JSON per run).
+# The 2026-10-14 evaluation reports committed in 450c7a27 (#280 PR-B) stay
+# tracked; to record a new evaluation run, `git add -f` its report.
+benchmark-results/
