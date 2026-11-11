@@ -5,13 +5,24 @@ on 2026-11-11: clamp, don't reject, in its own spec and PR. Issue #361.
 §1 and §3 were revised after the Fable review the same day.
 The legacy-history seed (§1) and the message template (§2) were revised
 after CodeRabbit the same day.
+The Sonnet review (same day) found no correctness bug; it narrowed numeric
+strings to decimal, added the safe-integer guard and the facts-only seed
+gate, and corrected the stale post-#358 text.
 **Date:** 2026-11-11
 **Intent check:** This is a data-integrity fix on the import path. It
 honours rule 6 (honest reporting): every clamped event is counted in a new
 typed, content-free diagnostic, so nothing changes silently. It touches no
 retrieval or maintenance logic, so rule 11 does not apply. The only public
 surface added is one diagnostic code. `WikiDiagnosticCode` says new codes
-arrive in minor versions, so this ships as `feat(core)`.
+arrive in minor versions, so this ships as `feat(core)`. (Corrected
+2026-11-11 after the Sonnet review: the §1 legacy-history seed does touch
+maintenance state. An events-bearing merge import into an entity with
+`memory_checkpoint > 0` and no watermark now writes the watermark, so a
+later guarded prune may delete events the legacy checkpoint already counted
+as read, and `getPendingMaintenance` stops reporting them. Those events
+were consolidated by legacy, so this is the intended reading of the
+checkpoint, as #364 ruled. It makes no accuracy or cost claim, so rule 11
+still needs no benchmark.)
 
 ## The fix in plain words
 
@@ -29,15 +40,17 @@ touched.
 
 Both effects come from the ordering every ops read uses: `(created_at, id)`.
 
-- **On main:** after the ops watermark passes a future-dated imported
-  event, every later `write()` is stamped `Date.now()`. That sorts *before*
+- **On main before #358:** after the ops watermark passes a future-dated
+  imported event, every later `write()` is stamped `Date.now()`. That sorts *before*
   the watermark, so every event written afterwards is never extracted. No
   error and no diagnostic.
 - **With #358** (spec `ops-auto-first-batch` §5): `write()` stamps
   `max(Date.now(), newest + 1)`, so later writes are ordered correctly but
   pinned to the future date. Retention prune (`created_at <= now - N days`)
   never deletes them, and `created_at` stops reflecting real time. That
-  spec accepted this and left import validation to #361.
+  spec accepted this and left import validation to #361. (#358 is merged
+  as of 2026-11-11, so this is now the behaviour on main, and the clamp's
+  remaining job is to keep later writes on the real clock.)
 
 ## Root cause (with evidence)
 
@@ -74,10 +87,22 @@ first draft; these replace them where they differ):
   `floor + 1 + i`. Starting at `floor` could tie with a row already there,
   or with an unclamped bundle event at `now`, and the tie is broken by id.
 - **What counts as future.** `created_at` is read the way SQLite's INTEGER
-  column reads it: numbers as-is, numeric strings parsed. A string such as
+  column reads it: numbers as-is, numeric strings parsed. (Narrowed
+  2026-11-11 after the Sonnet review: decimal strings only. SQLite keeps
+  hex, binary and octal text such as `"0x10"` as TEXT, so it is not read
+  as a number here either. Such values are #364's invalid-date case.) A
+  string such as
   `"4102444800000"` is stored as that integer, so it is clamped too.
   `Infinity` (JSON `1e999`) is `> now` and is clamped; stored as-is it
   makes the librarian prompt throw. `NaN` and other values are left alone.
+- **Only for imports that bring events** (added 2026-11-11 after the
+  Sonnet review). A facts-only merge import leaves the event log, and so
+  the librarian state, as it was.
+- **A floor near the safe-integer limit throws** (added 2026-11-11 after
+  the Sonnet review). Past `2^53 - 1`, `floor + 1 + i` rounds, and the
+  stamps would tie with each other and the watermark and sort behind it
+  silently. The import throws `RangeError` and rolls that entity back, as
+  `write()` does at the same limit.
 - **Legacy history is resolved first** (added 2026-11-11 after CodeRabbit).
   When the entity has no watermark but `memory_checkpoint > 0`, the import
   seeds the watermark inside its transaction, on the log *before* inserting
@@ -123,6 +148,8 @@ first draft; these replace them where they differ):
   that window can sort among them and, if a pass already read past it, be
   skipped. #358 (`ops-auto-first-batch` §5) stamps writes at
   `max(Date.now(), newest + 1)`, which closes this. Accepted until then.
+  (Closed 2026-11-11: #358 is merged, and a write after a clamped run is
+  stamped after it. Confirmed by the Sonnet review's probe.)
 - **`-Infinity` and other non-numeric values** are left as they are; they
   are past-dated, the other half of #361.
 - **Diagnostics when a later entity throws.** `importDump` commits each
@@ -151,6 +178,10 @@ clamped events. The diagnostic is the signal that this happened.
   the new code, its severity and its message.
 - `apps/docs/src/content/docs/guides/diagnostics.md`: one table row.
 - `packages/core/__tests__/importClampCreatedAt.test.ts`: new tests.
+- Added after CodeRabbit: `packages/core/src/services/legacyWatermark.ts`,
+  the shared seed rule; `MaintenanceService.ts`, where
+  `seedLibrarianWatermark` delegates to it; `WikiMemory.ts`, which passes
+  `options` through; and the `ImportExportService.test.ts` mocks.
 
 ## Test plan
 
@@ -161,9 +192,17 @@ clamped events. The diagnostic is the signal that this happened.
 3. The diagnostic fires once with the right `count`, and does not fire
    when nothing was clamped.
 4. In merge mode, a clamped event whose id already exists is not counted.
-5. The regression on main: under ops, a future-dated import followed by
-   `runLibrarian` and further writes still extracts the later writes.
+5. Under ops, a future-dated import followed by `runLibrarian` and
+   further writes still extracts the later writes, *and* those writes are
+   stamped near the real clock, not pinned to the future date. With #358
+   merged, extraction alone no longer proves the clamp (Sonnet review).
 6. A clamped event never sorts before an unclamped bundle event at `now`.
 7. Numeric-string and `Infinity` values are clamped and counted.
 8. With a watermark already in the future, a clamped event lands after it
    and is extracted.
+9. Legacy history is seeded before the import: checkpoint 1 with a covered
+   future event; drift (checkpoint above the count) gives the start-of-log
+   marker; `merge: false` seeds nothing; a facts-only merge import seeds
+   nothing; strategy `legacy` seeds too.
+10. A floor too close to `Number.MAX_SAFE_INTEGER` makes the import throw
+    `RangeError` and store nothing. A hex string is not read as a number.
