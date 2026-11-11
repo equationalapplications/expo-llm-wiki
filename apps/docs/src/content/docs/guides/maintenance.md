@@ -52,6 +52,12 @@ After you upgrade, call `write()` again for the affected events to bring
 them into memory: the entity's earliest events, or, for an upgraded entity,
 the events written just after the switch to ops. Re-ingesting documents
 does not restore them, because `ingest()` does not write to the event log.
+
+If an entity pruned events under the legacy strategy with
+`maintenance: 'auto'` and then switched to ops, the first ops pass also
+skipped as many of the post-switch events as were pruned. The fix also
+stops prune from causing this; for entities already affected, re-write
+those events in the same way.
 :::
 
 ## Heal

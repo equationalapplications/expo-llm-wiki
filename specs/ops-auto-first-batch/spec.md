@@ -50,6 +50,8 @@ bookmark is what lets the pass misread the already-advanced counter.
 
 ## Root cause (with evidence)
 
+Line numbers below refer to the code before this PR (parent of `349067e3`).
+
 1. `WriteService.write`, inside the trigger transaction, sets
    `memory_checkpoint = count` (`packages/core/src/services/WriteService.ts:115`
    and `:126`), then starts `runLibrarianThenMaybeHeal`.
@@ -126,8 +128,8 @@ Why no test caught it:
 - Rollback on a failed pass is unchanged. The checkpoint returns to its
   pre-trigger value, and the anchored bookmark stays where it was put. That
   is correct, because nothing past it was processed.
-- Deferred maintenance and the read path do not change. Legacy changes
-  only as §4 describes: prune now lowers `memory_checkpoint`.
+- The read path does not change. Legacy and deferred maintenance change
+  only as §4 describes: prune now lowers a non-zero `memory_checkpoint`.
 
 ### §3 Already-affected entities
 
@@ -261,5 +263,7 @@ Each test must fail before the fix:
      writes trigger a pass that extracts exactly those 5 events.
    - Guarded prune under ops: the checkpoint drops by the number deleted.
    - A checkpoint below the number deleted floors at 0.
+   - A guarded prune that deletes nothing (deferred, no watermark) leaves
+     the checkpoint unchanged.
 
 Then run the core suite, root `pnpm test` and `pnpm -r typecheck`.
