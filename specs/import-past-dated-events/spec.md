@@ -1,6 +1,6 @@
 # Import: past-dated events behind the watermark are never read
 
-**Status:** Reviewed (owner, 2026-11-11; §8 ruled the same day). Revision 3 (2026-11-11) updates
+**Status:** Implemented (PR #364, 2026-11-11). Previously Reviewed (owner, 2026-11-11; §8 ruled the same day). Revision 3 (2026-11-11) updates
 §1 and the file list for what #358 and #362 delivered once merged. Revision 2 was written after
 the Opus spec review and Fable's decision memo; the owner then ruled on the
 three §6 decisions and the open questions. Second half of #361. Depends on
