@@ -66,13 +66,13 @@ const clamped = (ds: WikiDiagnostic[]) => ds.filter((d) => d.code === 'event_cre
 afterEach(() => vi.restoreAllMocks());
 
 describe('importDump clamps future-dated event created_at', () => {
-  it('stores a future event at now and leaves past events and occurred_at alone', async () => {
+  it('stores a future event just after now and leaves past events and occurred_at alone', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(NOW);
     const { db, wiki } = await mk();
     await wiki.importDump(dump([ev('evt_past', NOW - 5000), ev('evt_future', FUTURE)]));
     expect(await rows(db)).toEqual([
       { id: 'evt_past', created_at: NOW - 5000, occurred_at: 1_700_000_000_000 },
-      { id: 'evt_future', created_at: NOW, occurred_at: 1_700_000_000_000 },
+      { id: 'evt_future', created_at: NOW + 1, occurred_at: 1_700_000_000_000 },
     ]);
   });
 
@@ -82,9 +82,9 @@ describe('importDump clamps future-dated event created_at', () => {
     // Bundle order differs from (created_at, id) order on purpose.
     await wiki.importDump(dump([ev('evt_c', FUTURE + 2), ev('evt_b', FUTURE), ev('evt_a', FUTURE)]));
     expect((await rows(db)).map((r) => [r.id, r.created_at])).toEqual([
-      ['evt_a', NOW],
-      ['evt_b', NOW + 1],
-      ['evt_c', NOW + 2],
+      ['evt_a', NOW + 1],
+      ['evt_b', NOW + 2],
+      ['evt_c', NOW + 3],
     ]);
   });
 
@@ -109,6 +109,41 @@ describe('importDump clamps future-dated event created_at', () => {
     const ds = clamped(diagnostics);
     expect(ds).toHaveLength(1);
     expect(ds[0]!.detail).toEqual({ count: 1 });
+  });
+
+  it('a clamped event never ties with, or sorts before, an unclamped event at now', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    const { db, wiki } = await mk();
+    await wiki.importDump(dump([ev('evt_z_first', NOW), ev('evt_a_second', NOW + 1)]));
+    expect((await rows(db)).map((r) => r.id)).toEqual(['evt_z_first', 'evt_a_second']);
+  });
+
+  it('clamps numeric-string and Infinity created_at too', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    const { db, wiki, diagnostics } = await mk();
+    await wiki.importDump(dump([
+      { ...ev('evt_str', 0), created_at: String(FUTURE) as unknown as number },
+      ev('evt_inf', Infinity),
+    ]));
+    expect((await rows(db)).map((r) => [r.id, r.created_at])).toEqual([
+      ['evt_str', NOW + 1],
+      ['evt_inf', NOW + 2],
+    ]);
+    expect(clamped(diagnostics)[0]!.detail).toEqual({ count: 2 });
+  });
+
+  it('with an ops watermark already in the future, clamped events land after it and are extracted', async () => {
+    // A store an older version left with a watermark at 2100: clamping to
+    // now would put new imports behind it, never extracted.
+    vi.spyOn(Date, 'now').mockReturnValue(NOW);
+    const { db, wiki, extractPrompts } = await mk();
+    await wiki.importDump(dump([ev('evt_old', FUTURE)]));
+    await db.runAsync(`UPDATE llm_wiki_events SET created_at = ? WHERE id = 'evt_old'`, [FUTURE]);
+    await (wiki.__testAccess as any).metadataRepo.setLibrarianWatermark(ENTITY, { at: FUTURE, id: 'evt_old' }, db);
+    await wiki.importDump(dump([ev('evt_new', FUTURE + 3_600_000, 'Synced again from the fast clock')]), { merge: true });
+    expect((await rows(db)).find((r) => r.id === 'evt_new')!.created_at).toBe(FUTURE + 1);
+    await wiki.runLibrarian(ENTITY);
+    expect(extractPrompts.join('\n')).toContain('Synced again from the fast clock');
   });
 
   it('under ops, writes after a future-dated import are still extracted', async () => {

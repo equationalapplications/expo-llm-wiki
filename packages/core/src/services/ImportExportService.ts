@@ -15,17 +15,28 @@ const MAX_EMBEDDING_BLOB_BYTES = 32 * 1024; // 8192-dim float32 ceiling
 const IMPORT_TITLE_MAX = 500;
 const IMPORT_BODY_MAX = 8000;
 
+/** A bundle created_at as SQLite's INTEGER column would read it: numbers as-is, numeric strings parsed, anything else NaN. */
+function createdAtValue(v: unknown): number {
+  if (typeof v === 'number') return v;
+  if (typeof v === 'string' && v.trim() !== '') return Number(v);
+  return NaN;
+}
+
 /**
- * New created_at for each bundle event dated after `now`: `now + i` in
- * (created_at, id) order, so clamped events keep their relative order and
- * never tie. Events at or before now, and non-finite values, are absent
- * from the map and keep their own value (spec import-clamp-created-at §1).
+ * New created_at for each bundle event dated after `now` (Infinity and
+ * numeric strings included): `floor + 1 + i` in (created_at, id) order, so
+ * clamped events keep their relative order and never tie with each other
+ * or with a row at `floor`. `floor` is `now`, or the ops watermark when an
+ * older version left it in the future, so a clamped event never lands
+ * behind it. Other events are absent from the map and keep their own value
+ * (spec import-clamp-created-at §1).
  */
-function clampFutureCreatedAt(events: readonly WikiEvent[], now: number): Map<WikiEvent, number> {
+function clampFutureCreatedAt(events: readonly WikiEvent[], now: number, floor: number): Map<WikiEvent, number> {
   const future = events
-    .filter((e) => typeof e.created_at === 'number' && Number.isFinite(e.created_at) && e.created_at > now)
-    .sort((a, b) => a.created_at - b.created_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  return new Map(future.map((e, i) => [e, now + i]));
+    .map((e) => ({ e, at: createdAtValue(e.created_at) }))
+    .filter((x) => x.at > now)
+    .sort((x, y) => (x.at === y.at ? 0 : x.at < y.at ? -1 : 1) || (x.e.id < y.e.id ? -1 : x.e.id > y.e.id ? 1 : 0));
+  return new Map(future.map((x, i) => [x.e, floor + 1 + i]));
 }
 
 export class ImportExportService {
@@ -429,10 +440,13 @@ export class ImportExportService {
 
       // created_at means "when stored". A future value (a fast device clock,
       // a crafted bundle) would sort every later write behind the ops
-      // watermark, or pin it to the future. Store those at now, now + 1, ...
-      // in (created_at, id) order so they keep their order without ties
-      // (spec import-clamp-created-at §1).
-      const clampedAt = clampFutureCreatedAt(bundle.events, Date.now());
+      // watermark, or pin it to the future. Store those just after now (or
+      // after a watermark already in the future), in (created_at, id) order
+      // so they keep their order without ties (spec import-clamp-created-at §1).
+      const now = Date.now();
+      const wm = await this.metadataRepo.getLibrarianWatermark(entityId, tx);
+      const floor = wm && Number.isFinite(wm.at) && wm.at > now ? wm.at : now;
+      const clampedAt = clampFutureCreatedAt(bundle.events, now, floor);
       for (const event of bundle.events) {
         const stamped = clampedAt.get(event);
         const inserted = await this.eventRepo.addIgnoreDuplicate(
