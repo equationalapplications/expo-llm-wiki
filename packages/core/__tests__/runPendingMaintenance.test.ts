@@ -14,6 +14,23 @@ async function mk(opts: { generateText?: any; config?: Record<string, unknown> }
 }
 
 describe('runPendingMaintenance', () => {
+  it('writes heal_checkpoint while the heal lock still blocks prune (spec ops-auto-first-batch §4)', async () => {
+    // A prune between the count read and the write would leave heal above
+    // the event count, which reads as 0 and starts a full re-heal.
+    const { wiki } = await mk({ config: { autoHealThreshold: 1 } });
+    for (let i = 0; i < 3; i++) await wiki.write('a', { event_type: 'observation', summary: `e ${i}` });
+    const { metadataRepo, jobManager } = wiki.__testAccess as any;
+    const orig = metadataRepo.updateCheckpoint.bind(metadataRepo);
+    const pruneBlockedAtHealWrite: boolean[] = [];
+    vi.spyOn(metadataRepo, 'updateCheckpoint').mockImplementation(async (id: string, u: { heal?: number }, tx: unknown) => {
+      if (u.heal !== undefined) pruneBlockedAtHealWrite.push(jobManager.isBlocked('prune', id));
+      return orig(id, u, tx);
+    });
+    const r = await wiki.runPendingMaintenance();
+    expect(r.perEntity[0]!.healPasses).toBeGreaterThan(0);
+    expect(pruneBlockedAtHealWrite).toEqual([true]);
+  });
+
   it('processes every pending entity and reports complete', async () => {
     const { wiki } = await mk();
     await wiki.write('a', { event_type: 'observation', summary: 'hello' });

@@ -98,8 +98,8 @@ export class EventRepository extends BaseRepository {
    * Delete events for an entity that were created at or before the given cutoff timestamp.
    * Returns the number of deleted rows.
    */
-  async prune(entityId: string, cutoff: number): Promise<{ changes: number }> {
-    return this.db.runAsync(
+  async prune(entityId: string, cutoff: number, tx?: SQLiteAdapter): Promise<{ changes: number }> {
+    return (tx ?? this.db).runAsync(
       `DELETE FROM ${this.prefix}events WHERE entity_id = ? AND created_at <= ?`,
       [entityId, cutoff],
     );
@@ -112,9 +112,9 @@ export class EventRepository extends BaseRepository {
    * deleted. `wm = null` (no watermark yet) deletes nothing.
    * Used by runPrune under the deferred/ops strategies.
    */
-  async pruneThrough(entityId: string, cutoff: number, wm: LibrarianWatermark | null): Promise<{ changes: number }> {
+  async pruneThrough(entityId: string, cutoff: number, wm: LibrarianWatermark | null, tx?: SQLiteAdapter): Promise<{ changes: number }> {
     if (!wm) return { changes: 0 };
-    return this.db.runAsync(
+    return (tx ?? this.db).runAsync(
       `DELETE FROM ${this.prefix}events WHERE entity_id = ? AND created_at <= ? AND NOT ${AFTER_SQL}`,
       [entityId, cutoff, ...afterArgs(wm)],
     );
@@ -132,6 +132,19 @@ export class EventRepository extends BaseRepository {
       [entityId, cutoff, ...(wm ? afterArgs(wm) : [])],
     );
     return Number(row?.n ?? 0);
+  }
+
+  /**
+   * The newest `created_at` stored for an entity, or null when it has no
+   * events. `write()` reads it inside its transaction to keep `created_at`
+   * strictly increasing per entity (spec ops-auto-first-batch §5).
+   */
+  async latestCreatedAt(entityId: string, tx?: SQLiteAdapter): Promise<number | null> {
+    const row = await (tx ?? this.db).getFirstAsync<{ at: number | null }>(
+      `SELECT MAX(created_at) AS at FROM ${this.prefix}events WHERE entity_id = ?`,
+      [entityId],
+    );
+    return row?.at ?? null;
   }
 
   /**

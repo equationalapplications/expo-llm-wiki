@@ -170,6 +170,13 @@ export class MaintenanceScheduler {
           let h: HealResult;
           try {
             h = await this.maintenanceService.doRunHeal(entityId, { trigger: 'call', meter });
+            // Write the checkpoint while the heal lock still blocks prune. A
+            // prune between the count read and the write would leave heal
+            // above the event count, which reads as 0 and starts a full
+            // re-heal (spec ops-auto-first-batch §4).
+            if (h.remaining === 0 && !(h.budgetStop && h.scanned === 0)) {
+              await this.metadataRepo.updateCheckpoint(entityId, { heal: await this.eventRepo.count(entityId) }, this.db);
+            }
           } finally {
             this.jobManager.releaseLock('heal', entityId);
           }
@@ -192,10 +199,7 @@ export class MaintenanceScheduler {
           }
           st.report.healPasses++;
           progressed = true;
-          if (h.remaining === 0) {
-            st.heal = false;
-            await this.metadataRepo.updateCheckpoint(entityId, { heal: await this.eventRepo.count(entityId) }, this.db);
-          }
+          if (h.remaining === 0) st.heal = false;
           if (h.budgetStop) { stopped = exhaustedStop(); break rounds; }
           continue;
         }

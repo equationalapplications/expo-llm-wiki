@@ -1,3 +1,15 @@
+## [8.0.5](https://github.com/equationalapplications/expo-llm-wiki/compare/v8.0.4...v8.0.5) (2026-11-11)
+
+### Bug Fixes
+
+* **core:** busy rollback keeps a concurrent prune's checkpoint decrement ([2ea0710](https://github.com/equationalapplications/expo-llm-wiki/commit/2ea0710d5936c0063fb801e95f3032c21c02a27c))
+* **core:** checkpoint drift re-reads on every path; heal writes never exceed the count ([0e382ae](https://github.com/equationalapplications/expo-llm-wiki/commit/0e382aea0b0bceea81e9ceb1a1a9b3dff8321e81))
+* **core:** harden the ops start-of-log watermark and the token trigger ([b0f320b](https://github.com/equationalapplications/expo-llm-wiki/commit/b0f320bf2a26292257564106d36140f55f664d23))
+* **core:** keep event created_at strictly increasing per entity ([ca8dcea](https://github.com/equationalapplications/expo-llm-wiki/commit/ca8dcea8146942603c973a75a1b6c17c390042ea))
+* **core:** ops + auto first auto pass no longer skips the events that triggered it ([126eefc](https://github.com/equationalapplications/expo-llm-wiki/commit/126eefcba7c8e149ee03324f6f3f2fcf3a3e9cb7))
+* **core:** prune lowers heal_checkpoint and write() refuses an unsafe created_at ([f8e74f5](https://github.com/equationalapplications/expo-llm-wiki/commit/f8e74f56b8b8fa0f7437ac6334f3b197c2cf82f4))
+* **core:** prune lowers memory_checkpoint by the events it deletes ([52c551c](https://github.com/equationalapplications/expo-llm-wiki/commit/52c551c472387ee59efe3db67f11d605c5925062))
+
 ## [8.0.4](https://github.com/equationalapplications/expo-llm-wiki/compare/v8.0.3...v8.0.4) (2026-11-11)
 
 ### Bug Fixes

@@ -197,8 +197,15 @@ result with the failures listed; only a total failure throws.
 review is worth more than a silent rejection.
 
 **Status: Built.** Diagnostics (7.x), draft review, grounding, `lint` and
-`pendingSources` all ship. Diagnostics are delivered after the
-transaction commits; an operation that throws delivers none.
+`pendingSources` all ship. Diagnostics describe work that really
+happened. Most are delivered after the transaction commits, and an
+operation that throws before it commits delivers none. Some calls deliver
+diagnostics and then still throw. `importDump` commits each entity in its
+own transaction, so entities committed before the throw have delivered
+theirs, and so may the entity that threw, if it threw after its own
+commit. Ingest delivers its LLM-pass diagnostics when a duplicate-hash
+race rolls back its write. `llm_usage` goes out as each model call
+returns. A diagnostic delivered before a throw is still accurate.
 
 ### 7. Nothing spends your allowance invisibly
 
@@ -340,6 +347,12 @@ runs and who schedules it.
 
 ## Amendments
 
+- 2026-11-11 — Rule 6's Status no longer says an operation that throws
+  delivers no diagnostics. `importDump` commits each entity separately;
+  ingest's duplicate-hash path and `llm_usage` also deliver diagnostics
+  before a throw. Why: those diagnostics describe work that really
+  happened, and hiding them would break rule 6. The diagnostics guide
+  carries the per-operation detail. No rule text changed.
 - 2026-11-09 — Kurt rules that 8.0.0 flips `librarian.strategy` to `'ops'`
   and `maintenance` to `'deferred'` and removes the deprecated `wiki_*`
   tool names (#324); recorded with `specs/release-8-0-0/`. Why: the owner's
