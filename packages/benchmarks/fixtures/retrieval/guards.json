@@ -1,0 +1,29 @@
+{
+ "note": "Retrieval guards (spec targeted-diagnostics §5): metric = measured - 0.02; miss-class counts and rescuedByKeyword = measured + 3; corpusEmbeddingsSha256 pins the corpus the query sidecars match. Regenerate with BENCH_UPDATE_BASELINE=1 and say why in the commit.",
+ "datasets": {
+  "scifact": {
+   "metric": 0.7,
+   "classes": {
+    "keyword-miss": 21,
+    "vector-miss": 3,
+    "fusion-demotion": 3,
+    "both-miss": 28,
+    "unscorable": 3
+   },
+   "rescuedByKeyword": 21,
+   "corpusEmbeddingsSha256": "bd0b1e4aa0618d27795c39714702541e2523a37ab499f43a4ff767a191c91bbc"
+  },
+  "financebench": {
+   "metric": 0.6817,
+   "classes": {
+    "keyword-miss": 27,
+    "vector-miss": 3,
+    "fusion-demotion": 3,
+    "both-miss": 5,
+    "unscorable": 3
+   },
+   "rescuedByKeyword": 4,
+   "corpusEmbeddingsSha256": "4bc444b2eab86ada429e66c786313c57c80b9632478d4957a8c685f326e25fbb"
+  }
+ }
+}

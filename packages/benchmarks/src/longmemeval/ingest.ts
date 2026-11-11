@@ -53,6 +53,28 @@ export function flagsKey(f: EngineFlags): string {
   return `${f.strategy}-${f.maintenance}${budget}`;
 }
 
+export interface EngineConfig {
+  librarian: { strategy: 'legacy' | 'ops' };
+  maintenance: 'auto' | 'deferred';
+  autoLibrarianThreshold?: number;
+}
+
+/**
+ * Engine config for one benchmark cell. Strategy and maintenance both follow
+ * the flags, so the cell runs what its cache key (`flagsKey`) says. Legacy
+ * under `auto` pins the 7.x threshold of 20 explicitly, so core's 8.0.0
+ * default flip does not move the baseline. Before 2026-11-10 legacy was
+ * forced to `auto` here, so a "legacy-deferred" cell actually ran
+ * legacy-auto writes (spec targeted-diagnostics §2.1).
+ */
+export function engineConfigFor(flags: Pick<EngineFlags, 'strategy' | 'maintenance'>): EngineConfig {
+  return {
+    librarian: { strategy: flags.strategy },
+    maintenance: flags.maintenance,
+    ...(flags.strategy === 'legacy' && flags.maintenance === 'auto' ? { autoLibrarianThreshold: 20 } : {}),
+  };
+}
+
 export interface IngestOpts {
   flags: EngineFlags;
   provider: { generateText: (p: { systemPrompt: string; userPrompt: string }) => Promise<string> };
@@ -175,18 +197,7 @@ export async function ingestQuestion(q: LmeQuestion, opts: IngestOpts): Promise<
       embed: opts.embed,
     };
 
-    const config = opts.flags.strategy === 'ops'
-      ? {
-          librarian: { strategy: 'ops' as const },
-          maintenance: opts.flags.maintenance,
-        }
-      : {
-          // Legacy auto-mode — the 7.x default behaviour, stated explicitly so
-          // the 8.0.0 default flip in core does not change the baseline.
-          librarian: { strategy: 'legacy' as const },
-          maintenance: 'auto' as const,
-          autoLibrarianThreshold: 20,
-        };
+    const config = engineConfigFor(opts.flags);
 
     const wiki = new WikiMemory(adapter, { llmProvider, config });
     await wiki.setup();

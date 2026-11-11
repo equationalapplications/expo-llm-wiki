@@ -253,3 +253,35 @@ describe('runSupersession (legacy)', () => {
     expect(goodRow).toBeDefined();
   });
 });
+describe('runSupersession maintenance parity (spec targeted-diagnostics §2.2)', () => {
+  it.each(['legacy', 'ops'] as const)('%s runs librarian then heal once per segment', async (strategy) => {
+    const { WikiMemory } = await import('@equationalapplications/core-llm-wiki');
+    const heal = vi.spyOn(WikiMemory.prototype, 'runHeal');
+    const lib = vi.spyOn(WikiMemory.prototype, 'runLibrarian');
+    try {
+      const one = scenarios.find((s) => s.secondRunFrom === undefined && !s.liveSkip)!;
+      const report = await runSupersession({
+        scenarios: [one],
+        strategy,
+        endpoint: FAKE_ENDPOINT,
+        fetchImpl: (async () => ANTHROPIC_OK('{}', 0, 0)) as unknown as typeof fetch,
+        embed: async (_t: string) => [0.1, 0.2, 0.3],
+      });
+      expect(lib).toHaveBeenCalledTimes(1);
+      expect(heal).toHaveBeenCalledTimes(1);
+      expect(report.engine.flags.sequence).toBe('librarian+heal');
+    } finally {
+      heal.mockRestore();
+      lib.mockRestore();
+    }
+  });
+});
+
+describe('engineInfo', () => {
+  it('records gitDescribe alongside version and gitSha', async () => {
+    const { engineInfo } = await import('../src/report');
+    const info = await engineInfo();
+    expect(typeof info.gitDescribe).toBe('string');
+    expect(info.gitDescribe.length).toBeGreaterThan(0);
+  });
+});

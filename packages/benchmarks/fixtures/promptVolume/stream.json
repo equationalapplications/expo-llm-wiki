@@ -1,0 +1,245 @@
+{
+ "note": "Hand-authored 60-event stream for the prompt-volume ledger (spec targeted-diagnostics \u00a73): mixed topics, 4 verbatim restatements, relocations Seattle->Portland->Seattle. One event per day from 2026-01-01.",
+ "events": [
+  {
+   "summary": "user: I just started a new job as a backend engineer at Acme Logistics.",
+   "occurred_at": 1767225600000
+  },
+  {
+   "summary": "user: My manager at Acme is called Priya and she runs the routing team.",
+   "occurred_at": 1767312000000
+  },
+  {
+   "summary": "user: I live in Seattle in a small apartment near Green Lake.",
+   "occurred_at": 1767398400000
+  },
+  {
+   "summary": "user: I have a tabby cat named Miso who is four years old.",
+   "occurred_at": 1767484800000
+  },
+  {
+   "summary": "user: I am allergic to peanuts, so please never suggest satay recipes.",
+   "occurred_at": 1767571200000
+  },
+  {
+   "summary": "user: My sister Dana is getting married in Lisbon next June.",
+   "occurred_at": 1767657600000
+  },
+  {
+   "summary": "user: I usually drink black coffee in the morning, two cups.",
+   "occurred_at": 1767744000000
+  },
+  {
+   "summary": "user: I am training for a half marathon in October.",
+   "occurred_at": 1767830400000
+  },
+  {
+   "summary": "user: My long run this weekend was fourteen kilometres along the canal.",
+   "occurred_at": 1767916800000
+  },
+  {
+   "summary": "user: I prefer Python for scripts and Go for services.",
+   "occurred_at": 1768003200000
+  },
+  {
+   "summary": "user: Our team ships the route planner service every Thursday.",
+   "occurred_at": 1768089600000
+  },
+  {
+   "summary": "user: I am learning Portuguese before the wedding trip to Lisbon.",
+   "occurred_at": 1768176000000
+  },
+  {
+   "summary": "user: My Portuguese tutor is Ana and we meet on Tuesday evenings.",
+   "occurred_at": 1768262400000
+  },
+  {
+   "summary": "user: I just started a new job as a backend engineer at Acme Logistics.",
+   "occurred_at": 1768348800000
+  },
+  {
+   "summary": "user: I bought a road bike, a steel Surly frame, for commuting.",
+   "occurred_at": 1768435200000
+  },
+  {
+   "summary": "user: Miso the cat needs her vaccination booster in March.",
+   "occurred_at": 1768521600000
+  },
+  {
+   "summary": "user: I am reading a book about distributed systems called Designing Data-Intensive Applications.",
+   "occurred_at": 1768608000000
+  },
+  {
+   "summary": "user: I switched from black coffee to green tea in the afternoons.",
+   "occurred_at": 1768694400000
+  },
+  {
+   "summary": "user: My half marathon goal time is under one hour fifty minutes.",
+   "occurred_at": 1768780800000
+  },
+  {
+   "summary": "user: I volunteer at the food bank on the first Saturday of each month.",
+   "occurred_at": 1768867200000
+  },
+  {
+   "summary": "user: The routing team is migrating the planner from Postgres to CockroachDB.",
+   "occurred_at": 1768953600000
+  },
+  {
+   "summary": "user: I live in Seattle in a small apartment near Green Lake.",
+   "occurred_at": 1769040000000
+  },
+  {
+   "summary": "user: My favourite restaurant is a Ethiopian place on Rainier Avenue.",
+   "occurred_at": 1769126400000
+  },
+  {
+   "summary": "user: I keep a vegetable garden on my balcony with tomatoes and basil.",
+   "occurred_at": 1769212800000
+  },
+  {
+   "summary": "user: My dad lives in Spokane and I visit him at Thanksgiving.",
+   "occurred_at": 1769299200000
+  },
+  {
+   "summary": "user: I have been sleeping badly because of the upstairs neighbours.",
+   "occurred_at": 1769385600000
+  },
+  {
+   "summary": "user: Priya asked me to lead the on-call rotation redesign.",
+   "occurred_at": 1769472000000
+  },
+  {
+   "summary": "user: The on-call redesign moves pages from PagerDuty to Opsgenie.",
+   "occurred_at": 1769558400000
+  },
+  {
+   "summary": "user: I am saving for a down payment on a house.",
+   "occurred_at": 1769644800000
+  },
+  {
+   "summary": "user: My budget for the house is around six hundred thousand dollars.",
+   "occurred_at": 1769731200000
+  },
+  {
+   "summary": "user: I moved from Seattle to Portland last week for a cheaper rent.",
+   "occurred_at": 1769817600000
+  },
+  {
+   "summary": "user: My new apartment in Portland is in the Pearl District.",
+   "occurred_at": 1769904000000
+  },
+  {
+   "summary": "user: Miso the cat hated the car ride to Portland.",
+   "occurred_at": 1769990400000
+  },
+  {
+   "summary": "user: I am still working for Acme Logistics remotely from Portland.",
+   "occurred_at": 1770076800000
+  },
+  {
+   "summary": "user: The half marathon is now in November because the October race was cancelled.",
+   "occurred_at": 1770163200000
+  },
+  {
+   "summary": "user: I joined a running club in Portland that meets on Wednesdays.",
+   "occurred_at": 1770249600000
+  },
+  {
+   "summary": "user: I am allergic to peanuts, so please never suggest satay recipes.",
+   "occurred_at": 1770336000000
+  },
+  {
+   "summary": "user: Ana the tutor says my Portuguese pronunciation is improving.",
+   "occurred_at": 1770422400000
+  },
+  {
+   "summary": "user: I want to cook more fish, especially salmon.",
+   "occurred_at": 1770508800000
+  },
+  {
+   "summary": "user: I sold the steel Surly road bike and bought an e-bike.",
+   "occurred_at": 1770595200000
+  },
+  {
+   "summary": "user: Dana changed the wedding venue from Lisbon to Porto.",
+   "occurred_at": 1770681600000
+  },
+  {
+   "summary": "user: Our flights to Porto are booked for June ninth.",
+   "occurred_at": 1770768000000
+  },
+  {
+   "summary": "user: I finished the distributed systems book and started one on Rust.",
+   "occurred_at": 1770854400000
+  },
+  {
+   "summary": "user: I prefer Python for scripts and Go for services.",
+   "occurred_at": 1770940800000
+  },
+  {
+   "summary": "user: I am thinking about learning Rust for the routing service.",
+   "occurred_at": 1771027200000
+  },
+  {
+   "summary": "user: Priya promoted me to senior engineer at Acme Logistics.",
+   "occurred_at": 1771113600000
+  },
+  {
+   "summary": "user: My salary went up by twelve percent with the promotion.",
+   "occurred_at": 1771200000000
+  },
+  {
+   "summary": "user: I want to adopt a second cat so Miso has company.",
+   "occurred_at": 1771286400000
+  },
+  {
+   "summary": "user: We adopted a grey kitten called Tofu from the Portland shelter.",
+   "occurred_at": 1771372800000
+  },
+  {
+   "summary": "user: Tofu and Miso are slowly getting used to each other.",
+   "occurred_at": 1771459200000
+  },
+  {
+   "summary": "user: My long run this weekend was eighteen kilometres along the Willamette.",
+   "occurred_at": 1771545600000
+  },
+  {
+   "summary": "user: I stopped volunteering at the food bank after the move.",
+   "occurred_at": 1771632000000
+  },
+  {
+   "summary": "user: I started volunteering at a Portland library literacy program instead.",
+   "occurred_at": 1771718400000
+  },
+  {
+   "summary": "user: The upstairs neighbours in Portland are quiet, I sleep much better.",
+   "occurred_at": 1771804800000
+  },
+  {
+   "summary": "user: I moved back from Portland to Seattle because Acme wants me in the office.",
+   "occurred_at": 1771891200000
+  },
+  {
+   "summary": "user: I live in Seattle again, this time in Fremont.",
+   "occurred_at": 1771977600000
+  },
+  {
+   "summary": "user: My house budget is now seven hundred thousand dollars.",
+   "occurred_at": 1772064000000
+  },
+  {
+   "summary": "user: I drink green tea in the afternoons and still one coffee in the morning.",
+   "occurred_at": 1772150400000
+  },
+  {
+   "summary": "user: The route planner migration to CockroachDB finished in May.",
+   "occurred_at": 1772236800000
+  },
+  {
+   "summary": "user: Tofu the kitten knocked over the basil plant.",
+   "occurred_at": 1772323200000
+  }
+ ]
+}

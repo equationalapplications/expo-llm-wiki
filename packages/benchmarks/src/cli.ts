@@ -130,23 +130,62 @@ export function parseArgs(argv: string[]): ParsedArgs {
 // Cost estimate
 // --------------------------------------------------------------------------
 
+/** Legacy librarian pass cadence (`autoLibrarianThreshold` pinned by the harness). */
+const LEGACY_PASS_EVERY = 20;
+/** Legacy re-send window: `legacy.ts` reads the last 50 events and up to 100 fact rows. */
+const LEGACY_EVENT_WINDOW = 50;
+const LEGACY_FACT_WINDOW = 100;
+/** Pretty-printed event row overhead around the summary (ids, timestamps, keys); measured 2026-11-10. */
+const LEGACY_EVENT_ROW_OVERHEAD = 190;
+/** Pretty-printed fact row, including its body; measured 2026-11-10 at ~700 chars. */
+const LEGACY_FACT_ROW_CHARS = 700;
+
 /**
  * Per-question ingest token estimate plus a flat 2 000 for answer+judge.
  *
- *   `Σ_questions( ceil(Σ_turns(content.length) / 4) + 2000 )`
+ * - `ops`: `ceil(Σ_turns(content.length) / 4)`. Ops extract sends each event
+ *   once, with a short label and timestamp.
+ * - `legacy`: legacy re-sends context on every pass. Under `auto` a pass
+ *   runs every 20 turns, plus a tail pass for any remainder; under
+ *   `deferred` one drain pass runs after every turn is written. Each pass sends the last
+ *   `min(50, n)` turns as JSON rows (content + 190 chars) and
+ *   `min(100, facts so far)` fact rows at 700 chars, assuming one fact per
+ *   earlier turn. That assumption is an upper bound: real models extract
+ *   fewer facts than turns.
  *
- * Ingestion is the dominant cost driver — the haystack sessions contribute
- * most of the tokens. Answer + judge are short prompts capped at 2 000
- * input tokens per question by the GLM 5.3 Flash defaults; the flat 2 000
- * is a deliberate overestimate so the printed estimate is conservative.
+ * Calibrated to the prompt-volume ledger (`__tests__/cli.test.ts`, ±25%):
+ * the row constants were measured from the same scripted stream, so that
+ * test is a regression pin, not independent validation.
+ * Before 2026-11-10 both strategies used the ops formula, which put legacy
+ * roughly 6x low (spec targeted-diagnostics §2.3).
  */
-export function estimateIngestTokens(questions: LmeQuestion[]): number {
+export function estimateIngestTokens(
+  questions: LmeQuestion[],
+  flags: { strategy: 'legacy' | 'ops'; maintenance: 'auto' | 'deferred' },
+): number {
+  const { strategy, maintenance } = flags;
   let total = 0;
   for (const q of questions) {
+    const turns = q.haystack_sessions.flat().map((t) => t.content.length);
     let chars = 0;
-    for (const session of q.haystack_sessions) {
-      for (const turn of session) {
-        chars += turn.content.length;
+    if (strategy === 'ops') {
+      for (const c of turns) chars += c;
+    } else {
+      // auto: a pass every 20 turns plus a tail. deferred: every turn is
+      // written first, then one drain pass sees only the newest 50.
+      const passAt: number[] = [];
+      if (maintenance === 'deferred') {
+        if (turns.length > 0) passAt.push(turns.length);
+      } else {
+        for (let n = LEGACY_PASS_EVERY; n <= turns.length; n += LEGACY_PASS_EVERY) passAt.push(n);
+        if (turns.length % LEGACY_PASS_EVERY !== 0) passAt.push(turns.length);
+      }
+      let factsSoFar = 0;
+      for (const n of passAt) {
+        const window = turns.slice(Math.max(0, n - LEGACY_EVENT_WINDOW), n);
+        for (const c of window) chars += c + LEGACY_EVENT_ROW_OVERHEAD;
+        chars += Math.min(LEGACY_FACT_WINDOW, factsSoFar) * LEGACY_FACT_ROW_CHARS;
+        factsSoFar = n;
       }
     }
     total += Math.ceil(chars / 4) + 2000;
@@ -274,7 +313,7 @@ export async function runLongMemEvalCommand(deps: LongMemEvalDeps): Promise<Comm
       .map((id) => datasetById.get(id))
       .filter((q): q is LmeQuestion => q !== undefined);
     const questionCount = dryRunQuestions.length;
-    const tokenEstimate = estimateIngestTokens(dryRunQuestions);
+    const tokenEstimate = estimateIngestTokens(dryRunQuestions, flags);
     stdout(renderEstimate({
       engine,
       flags,
@@ -313,7 +352,7 @@ export async function runLongMemEvalCommand(deps: LongMemEvalDeps): Promise<Comm
 
   const engine = await engineInfo();
   const cachedCount = countCachedQuestions(cacheDir, engine.version, flags, questions.map((q) => q.question_id));
-  const tokenEstimate = estimateIngestTokens(questions);
+  const tokenEstimate = estimateIngestTokens(questions, flags);
 
   stdout(renderEstimate({
     engine,
@@ -840,8 +879,11 @@ async function main(): Promise<void> {
   if (command === 'calibrate') {
     const scenariosFile = join(REPO_ROOT, 'packages', 'benchmarks', 'fixtures', 'supersession', 'scenarios.json');
     const scenarios = JSON.parse(readFileSync(scenariosFile, 'utf8')) as Scenario[];
-    const { getEmbedder } = await import('./embed');
-    const embed = await getEmbedder();
+    // Recorded BGE-small vectors (spec targeted-diagnostics §4): no fastembed
+    // download. A changed scenario fails loudly; rebuild the sidecar with
+    // `pnpm fixture:gate-embeddings`.
+    const { loadSidecar, sidecarEmbed, SIDECAR_PATH } = await import('./gate/decisionLog');
+    const embed = sidecarEmbed(loadSidecar(SIDECAR_PATH));
     const r = await runCalibrateCommand({ argv, scenarios, embed });
     process.exitCode = r.exitCode;
     return;

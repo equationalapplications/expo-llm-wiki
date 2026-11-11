@@ -18,6 +18,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { mkdtempSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { loadStream, runPromptVolume } from '../src/promptVolume';
 import {
   parseArgs,
   estimateIngestTokens,
@@ -87,28 +88,67 @@ describe('parseArgs', () => {
   });
 });
 
+function streamQuestion(): LmeQuestion {
+  const stream = loadStream(join(__dirname, '..', 'fixtures', 'promptVolume', 'stream.json'));
+  return {
+    question_id: 'pv-stream',
+    question_type: 'single-session-user',
+    question: 'q',
+    answer: 'a',
+    question_date: '2026/03/01 (Sun) 00:00',
+    haystack_dates: ['2026/01/01 (Thu) 00:00'],
+    haystack_sessions: [stream.map((e) => ({ role: 'user' as const, content: e.summary.replace(/^user: /, '') }))],
+  };
+}
+
 describe('estimateIngestTokens', () => {
   it('is the sum of ceil(turn chars / 4) plus 2000 per question (answer+judge)', () => {
     const q = makeQ('single-session-user', 'q1', 100);
     // session has 2 turns × 100 chars = 200 chars => ceil(200 / 4) = 50
     // + 2000 flat
-    expect(estimateIngestTokens([q])).toBe(50 + 2000);
+    expect(estimateIngestTokens([q], { strategy: 'ops', maintenance: 'auto' })).toBe(50 + 2000);
   });
 
   it('rounds up when the char count is not a multiple of 4', () => {
     // 5 chars over 2 turns = 10 chars total => ceil(10/4) = 3
     const q = makeQ('single-session-user', 'q1', 5);
-    expect(estimateIngestTokens([q])).toBe(3 + 2000);
+    expect(estimateIngestTokens([q], { strategy: 'ops', maintenance: 'auto' })).toBe(3 + 2000);
   });
 
   it('scales linearly across multiple questions', () => {
     const q = makeQ('knowledge-update', 'q', 16);
     // 32 chars => 8 ingest tokens per question; 2000 per question.
-    expect(estimateIngestTokens([q, q, q])).toBe((8 + 2000) * 3);
+    expect(estimateIngestTokens([q, q, q], { strategy: 'ops', maintenance: 'auto' })).toBe((8 + 2000) * 3);
   });
 
+  it('legacy estimate exceeds ops by more than 3x on a 60-turn question', () => {
+    const q = streamQuestion();
+    expect(estimateIngestTokens([q], { strategy: 'legacy', maintenance: 'auto' })).toBeGreaterThan(3 * estimateIngestTokens([q], { strategy: 'ops', maintenance: 'auto' }));
+  });
+
+  it('legacy estimate tracks the prompt-volume ledger within 25%', async () => {
+    const stream = loadStream(join(__dirname, '..', 'fixtures', 'promptVolume', 'stream.json'));
+    const row = await runPromptVolume({ strategy: 'legacy', maintenance: 'auto' }, stream);
+    const measured = row.bySite.librarian!.userChars;
+    const estimatedChars = (estimateIngestTokens([streamQuestion()], { strategy: 'legacy', maintenance: 'auto' }) - 2000) * 4;
+    expect(estimatedChars / measured).toBeGreaterThan(0.75);
+    expect(estimatedChars / measured).toBeLessThan(1.25);
+  }, 60_000);
+
+  it('legacy-deferred estimates one pass over the newest 50 turns, not the auto cadence', async () => {
+    const q = streamQuestion();
+    const deferred = estimateIngestTokens([q], { strategy: 'legacy', maintenance: 'deferred' });
+    const auto = estimateIngestTokens([q], { strategy: 'legacy', maintenance: 'auto' });
+    expect(deferred).toBeLessThan(auto);
+    const stream = loadStream(join(__dirname, '..', 'fixtures', 'promptVolume', 'stream.json'));
+    const row = await runPromptVolume({ strategy: 'legacy', maintenance: 'deferred' }, stream);
+    const ratio = ((deferred - 2000) * 4) / row.bySite.librarian!.userChars;
+    expect(ratio).toBeGreaterThan(0.75);
+    expect(ratio).toBeLessThan(1.25);
+  }, 60_000);
+
   it('returns 0 for an empty question list', () => {
-    expect(estimateIngestTokens([])).toBe(0);
+    expect(estimateIngestTokens([], { strategy: 'ops', maintenance: 'auto' })).toBe(0);
   });
 });
 
@@ -177,7 +217,7 @@ describe('runLongMemEvalCommand (spend guard)', () => {
 
   it('estimates only the sampled questions, not the whole dataset', async () => {
     const stdout = vi.fn();
-    const small = makeQ('single-session-user', 'q1', 100); // ceil(200/4) + 2000 = 2,050
+    const small = makeQ('single-session-user', 'q1', 100); // legacy (CLI default): one tail pass, 2 × (100 + 190) = 580 chars => 145 + 2000 = 2,145
     const huge = makeQ('multi-session', 'q2', 4_000_000); // 1,000,000 + 2000 = 1,002,000
 
     const r = await runLongMemEvalCommand({
@@ -195,7 +235,7 @@ describe('runLongMemEvalCommand (spend guard)', () => {
 
     expect(r.exitCode).toBe(0);
     const combined = stdout.mock.calls.map((c) => String(c[0])).join('');
-    expect(combined).toContain('2,050');
+    expect(combined).toContain('2,145');
     expect(combined).not.toContain('1,002,000');
   });
 
