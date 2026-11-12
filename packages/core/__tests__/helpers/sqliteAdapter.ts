@@ -1,8 +1,8 @@
 import Database from 'better-sqlite3';
 import type { SQLiteAdapter } from '../../src/types';
 
-export function openTestDatabase(): SQLiteAdapter {
-  const db = new Database(':memory:');
+export function openTestDatabase(path: string = ':memory:'): SQLiteAdapter {
+  const db = new Database(path);
 
   const adapter: SQLiteAdapter = {
     async execAsync(sql: string): Promise<void> {

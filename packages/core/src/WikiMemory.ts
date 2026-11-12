@@ -1,5 +1,6 @@
 import type { SQLiteAdapter } from './types';
 import type { WikiOutboxEvent } from './outbox/types';
+import { emitDiagnostic } from './utils/diagnostics';
 import { setupDatabaseWithGate } from './db/migrationGate';
 import { detectSchemaVersion, runSourceRefNormalize, writeNormalizeStamp } from './db/sourceRefNormalize';
 import { withSerializedTransactions } from './db/serializedAdapter';
@@ -213,6 +214,8 @@ export class WikiMemory {
       this.eventRepo,
       this.entryRepo,
       this.jobManager,
+      this.vectorRemovalService,
+      this.vectorRemovalRepo,
     );
     this.importExportService = new ImportExportService(
       this.db,
@@ -428,6 +431,65 @@ export class WikiMemory {
     );
     // FTS5: one budgeted quantum (no global read). MiniSearch: full rebuild, as before.
     await this.searchService.sync(undefined, { deadline: openDeadline });
+    await this.startSetupRemovalDrain();
+  }
+
+  private setupRemovalDrain: Promise<void> | null = null;
+
+  /** Marks the external index in use, then drains owed removals in the background (spec §5.7). */
+  private async startSetupRemovalDrain(): Promise<void> {
+    const gate = this.vectorRemovalService.gate();
+    if (gate !== 'hook') return;
+    await this.db.withTransactionAsync((tx) => this.vectorRemovalService.markExternalIndexInUse(tx));
+    if ((await this.vectorRemovalRepo.pendingStats()).count === 0) return;
+    if (this.options.drainExternalDeletionsOnSetup === false) {
+      await this.vectorRemovalService.emitPending(undefined, 'auto');
+      return;
+    }
+    const p = (async () => {
+      try {
+        const r = await this.vectorRemovalService.drain(
+          { all: true },
+          { backoff: true, deadlineAt: Date.now() + 10_000, trigger: 'auto' },
+        );
+        if (r.pending > 0) await this.vectorRemovalService.emitPending(undefined, 'auto');
+      } catch {
+        emitDiagnostic(this.options, {
+          code: 'background_job_failed', operation: 'externalDeletion', trigger: 'auto', entityId: '', // all-entity drain
+          detail: { reason: 'unhandled_rejection' },
+        });
+      }
+    })();
+    this.setupRemovalDrain = p;
+    void p.then(() => { if (this.setupRemovalDrain === p) this.setupRemovalDrain = null; });
+  }
+
+  /**
+   * Delivers owed vector-index removals now (spec §5.9). No backoff. With an
+   * entity id only that entity's rows; otherwise all. `deadlineMs` is a duration.
+   */
+  async runExternalDeletions(
+    entityId?: string,
+    opts?: { deadlineMs?: number },
+  ): Promise<{ confirmed: number; pending: number; failedIds: string[]; timedOut: boolean }> {
+    if (entityId !== undefined) assertEntityId(entityId);
+    const ms = opts?.deadlineMs;
+    if (ms !== undefined && (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0)) {
+      throw new TypeError('deadlineMs must be a finite number >= 0');
+    }
+    const r = await this.vectorRemovalService.drain(
+      entityId === undefined ? { all: true } : { entityId },
+      { trigger: 'call', ...(ms !== undefined ? { deadlineAt: Date.now() + ms } : {}) },
+    );
+    return { confirmed: r.confirmed, pending: r.pending, failedIds: r.failedIds, timedOut: r.timedOut };
+  }
+
+  /** Removals still owed to the host's vector index (all entities, or one). */
+  async getPendingExternalDeletions(
+    entityId?: string,
+  ): Promise<{ count: number; oldestEnqueuedAt: number | null; maxAttempts: number }> {
+    if (entityId !== undefined) assertEntityId(entityId);
+    return this.vectorRemovalRepo.pendingStats(entityId);
   }
 
   async hasChanged(
@@ -669,6 +731,7 @@ export class WikiMemory {
 
   /** Await auto-mode background librarian/heal jobs started by write(). No-op in 'deferred' mode. */
   async drain(): Promise<void> {
+    await this.setupRemovalDrain;
     return this.writeService.drain();
   }
 

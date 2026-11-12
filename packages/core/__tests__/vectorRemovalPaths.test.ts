@@ -98,7 +98,7 @@ describe('heal on the ledger', () => {
     expect((await rows(t.raw)).filter((r) => r.confirmed_at === null)).toHaveLength(1);
     fail = false;
     t.calls.length = 0;
-    await drainAll(t.wiki); // Task 7: switch to runPendingMaintenance
+    await t.wiki.runPendingMaintenance();
     expect(t.calls.map((c) => c.factId)).toEqual(['o1']);
     expect((await rows(t.raw)).filter((r) => r.confirmed_at === null)).toHaveLength(0);
   });

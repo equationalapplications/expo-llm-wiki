@@ -311,7 +311,7 @@ export class VectorRemovalService {
     return (await this.repo.pendingStats(entityId)).count;
   }
 
-  private async emitPending(entityId: string | undefined, trigger: WikiDiagnosticTrigger) {
+  async emitPending(entityId: string | undefined, trigger: WikiDiagnosticTrigger) {
     const entities = entityId === undefined ? await this.repo.entitiesWithPending() : [entityId];
     for (const e of entities) {
       const st = await this.repo.pendingStats(e);

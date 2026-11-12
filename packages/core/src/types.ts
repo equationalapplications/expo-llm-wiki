@@ -975,6 +975,14 @@ export interface WikiOptions {
   forceDeleteIgnoreRankerHook?: boolean;
 
   /**
+   * When a removal hook is configured and removals are owed, `setup()` starts
+   * one background drain (not awaited; `drain()` joins it, 10 s deadline,
+   * backoff). Set `false` to make no call on open: `setup()` then only emits
+   * `external_deletion_pending` per entity with owed removals. Default true.
+   */
+  drainExternalDeletionsOnSetup?: boolean;
+
+  /**
    * Receives typed, content-free diagnostics for events core previously
    * dropped silently or only logged (spec §4). Synchronous; a returned promise
    * is ignored. A throwing or rejecting hook never affects the operation that
@@ -1512,7 +1520,7 @@ export interface WikiInstructions {
   ontologyBackfill: string;
 }
 
-export type MaintenanceJob = 'librarian' | 'heal' | 'reembed';
+export type MaintenanceJob = 'librarian' | 'heal' | 'reembed' | 'externalDeletions';
 
 export interface PendingMaintenance {
   entityId: string;
@@ -1528,6 +1536,8 @@ export interface PendingMaintenance {
    * Always false without `embed`.
    */
   reembedPending: boolean;
+  /** Removals still owed to the host's vector index for this entity (absent when none). */
+  pendingExternalDeletions?: number;
 }
 
 export interface RunPendingMaintenanceOptions {
@@ -1537,7 +1547,7 @@ export interface RunPendingMaintenanceOptions {
   tokenBudget?: number;
   /** Wall-clock milliseconds from the call. Checked between units; a unit in flight is never interrupted. */
   deadlineMs?: number;
-  /** Default all three. */
+  /** Default all four. `externalDeletions` runs first and is not metered by `tokenBudget`. */
   jobs?: MaintenanceJob[];
 }
 
@@ -1571,6 +1581,8 @@ export interface RunPendingMaintenanceResult {
   /** null when no tokenBudget was given. */
   remaining: number | null;
   stoppedReason: MaintenanceStopReason;
+  /** Vector-index removals this run confirmed, and those still owed (all entities in scope). */
+  externalDeletions: { confirmed: number; pending: number };
 }
 
 export type MigrationPolicy = 'allow' | 'refuse' | 'auto';
