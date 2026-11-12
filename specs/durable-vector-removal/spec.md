@@ -1,6 +1,6 @@
 # Durable removal of forgotten facts from the host's vector index
 
-**Status:** Implemented (PR #372, 2026-11-11; revision 4 implemented 2026-11-12; revision 6 implemented 2026-11-12; O1 answered and O2, O3 closed 2026-11-12; no open questions remain). Previously draft until open question O1 was answered. Previously Reviewed (2026-11-11: Opus high review, revision 2; owner directed implementation). Previously Draft (2026-11-11).
+**Status:** Implemented (PR #372, 2026-11-11; revision 4 implemented 2026-11-12; revision 6 implemented 2026-11-12; revision 7 implemented 2026-11-12; O1 answered and O2, O3 closed 2026-11-12; no open questions remain). Previously draft until open question O1 was answered. Previously Reviewed (2026-11-11: Opus high review, revision 2; owner directed implementation). Previously Draft (2026-11-11).
 Revision 2 (2026-11-11), after an Opus (high) review of revision 1:
 - The ledger is filled by SQLite triggers, not by call-site edits (§5.2).
 - A process without the hook never clears an obligation (§5.3).
@@ -51,6 +51,15 @@ Revision 6 (2026-11-12), from CodeRabbit's follow-up on revision 5:
   - **A fact restored after its removal was confirmed is embedded again** (§5.2). `upsertGraph` now sends `null` for a node it drops, but a later `upsertGraph` that re-adds the id restored the row with its old blob, so the reembed job skipped it and the host never got the vector back. The resurrect trigger now clears `embedding_blob` and `embedding` when a confirmed row exists, then drops the row; the reembed job embeds the fact and sends its vector. This covers every restore path, host SQL included, at one embedding call per restored fact. A fact restored before its removal was confirmed keeps its blob.
   - **The direct `null` waits for a pending row** (§5.7). The liveness read sees a host transaction's uncommitted writes, so a delete inside an open host transaction looked committed, the guarded write failed because that transaction was open, and a live fact got `null` when the host rolled back or restored it. A delete in that transaction also wrote a pending row in it, so when the write fails and the fact's row is pending, nothing is sent: a commit leaves the row for the next drain, a rollback leaves the fact live. The direct `null` is now only for a row that is confirmed or missing.
   - **Prune counts as kept only ids still owed** (§5.6). An id its DELETE skipped because the fact was restored, or was already gone with no pending row, is neither deleted nor kept, so `PrunePartialFailureError` no longer names it.
+
+Revision 7 (2026-11-12), from CodeRabbit's review of `6dab60ae`:
+- **The resurrect trigger also clears the embedding failure markers** (§5.2). A restored fact that kept `embedding_failed_at`, `embedding_failure_kind` or `embedding_attempts` could be deferred or skipped by the reembed job, so its vector never reached the host. The markers are cleared only with the confirmed-row blob clear; a fact restored before confirmation keeps both.
+  - The trigger is built for the columns that exist. On an upgrade, the every-open DDL runs before migrations 3 (`embedding_blob`) and 11 (the markers) add them, and a body naming a missing column would fail every restore, so the trigger leaves out what's missing and those migrations rebuild it. A trigger built for fewer columns, such as revision 6's on a dev store, is replaced at the next `setup()`.
+- **A store without the ledger gets the embed-race `null` too** (§5.7). On a store whose `setup()` never ran, `forget` calls the hook directly (§5.5.5), so a vector call in flight could land after its `null`. With no ledger to record into, a fact known not live gets a direct `null` after its vector call; a live one gets nothing.
+- Docs: the deleting-data guide names the in-flight window (§5.4) and points to `runReembed(entityId)` to restore recall.
+- Not changed, accepted windows:
+  - A restore inside an uncommitted host transaction that rolls back while a vector call is in flight. The post-call liveness read sees the restore, so nothing is owed; the rollback brings the confirmed row back and the vector stays in the host's index. Reads on the shared connection can't see transaction boundaries, and the engine has no way to defer the check until the host's transaction ends. Same class as the host-transaction cases in revision 6.
+  - A failed `statusFor` read after a failed guarded write still sends the direct `null`. It needs a read to fail right after one succeeded on the same connection. A wrong `null` costs recall that `runReembed` restores; a missed one leaves a deleted fact's vector in the host's index, so the code keeps the privacy side.
 
 **Date:** 2026-11-11
 **Branch:** `docs/spec-durable-vector-removal`, stacked on PR #371 (`docs/spec-import-followups`); retargets to `main` after #371 merges.
@@ -201,7 +210,7 @@ END;
 
 - **Coverage.** `ON CONFLICT DO UPDATE` fires UPDATE triggers. So the upsert in `upsertGraph` (G9), tombstones written by `upsertForImport` and `upsert` (G8), and every bulk soft delete enqueue with no code change.
 - **Bulk wipes.** A 120,000-row `clearAll` is still one statement from JS; SQLite runs the trigger per row in C.
-- **Resurrection after a confirmed removal (rev 6).** The resurrect trigger clears the fact's stored vector when its row is confirmed and drops the row, so the reembed job sends the vector again.
+- **Resurrection after a confirmed removal (rev 6).** The resurrect trigger clears the fact's stored vector when its row is confirmed and drops the row, so the reembed job sends the vector again. Rev 7: it clears the fact's embedding failure markers with it, so the reembed job doesn't defer or skip the fact.
 - **Resurrection in the same transaction.** Supersede-then-upsert of the same ids (`upsertGraph`, replace-mode import of a backup) inserts and then deletes the row in one transaction. The commit leaves no ledger row, and no `null` is sent.
 - **Re-delete.** `INSERT OR REPLACE` resets `attempts`, `last_attempt_at` and `confirmed_at`, and takes a new `seq`. A fact deleted again after a confirmation is owed again.
 - **Gating.** The triggers fire whether or not a hook is configured. The gate is at drain and prune time (§5.3, §5.6). An app with no external index pays one small insert per deleted fact. Prune removes it with the fact (§5.6).
@@ -317,6 +326,7 @@ One routine, `drainVectorRemovals(scope, opts)`, in a new `VectorRemovalService`
   - **Rev 4.** The check runs in `EmbeddingService.storeFactVector`, after the vector call, so every path that sends a vector has it: remember, supersede, ingest, librarian (both strategies), heal, reembed and import. Import's preserved-blob loop calls the hook directly and runs the same check (`settleAfterVectorCall`) itself. It runs only when a vector call was actually made (the blob was stored and the hook is configured). An embed that ended as `fact_deleted` or failed before the call no longer re-owes a removal already confirmed.
   - **Rev 6.** If the record fails and the direct `null` call fails too, the record is tried once more after the call. A recorded row (even over a confirmed one) is owed again and delivered by the next drain.
   - **Rev 6.** `null` is sent directly only when a successful read showed the fact not live and its row is confirmed or missing. A pending row is left for the next drain. If the read fails, the guarded write runs anyway; if it fails too, nothing is sent.
+  - **Rev 7.** On a store without the ledger (`setup()` never ran), a fact a successful read shows not live gets `null` directly after its vector call.
 - **`forceDeleteIgnoreRankerHook` scope (behavior change, called out).**
   - Today heal, ingest and import still call the hook when the flag is set, because `notifyEmbeddingPersisted` has no force check. Under this spec, the flag means "the index is decommissioned": no removal calls anywhere, and the ledger is discarded (§5.3).
   - The legacy spec `docs/superpowers/specs/2026-05-07-vectorranker-security-hardening.md` gets an appended Status note.
@@ -485,6 +495,8 @@ One routine, `drainVectorRemovals(scope, opts)`, in a new `VectorRemovalService`
 43. Rev 6: a node re-added by `upsertGraph` after its removal was confirmed gets its vector again from the reembed job.
 44. Rev 6: a delete inside an open host transaction that is undone sends the live fact no `null`; one that commits is delivered by the next drain (44b).
 45. Rev 6: prune does not report a fact restored during its drain as an unconfirmed removal.
+46. Rev 7: a restore after a confirmed removal clears the embedding failure markers; one before confirmation keeps them. A store set up before migration 11, and a revision 6 trigger, get the marker clear after `setup()`.
+47. Rev 7: on a store without the ledger, a fact deleted during its vector call ends with a `null` call; a live one gets none.
 
 ## 9. Follow-ups (not in this PR)
 
