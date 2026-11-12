@@ -85,14 +85,21 @@ The engine can't do these for you:
   stay owed. Retry later, or let a drain below finish them.
 - `runPrune()` drains the ids it is about to hard-delete. It keeps rows that aren't confirmed, then
   finishes its other work and throws `PrunePartialFailureError` if rows remain.
-- `setup()` starts one background drain of the owed removals when a hook is configured, or, under `forceDeleteIgnoreRankerHook`, to discard them. It makes no
+- By default `setup()` makes no removal call. When a hook is configured and removals are owed, it
+  emits `external_deletion_pending`, and the calls below deliver them.
+- `drainExternalDeletionsOnSetup: true` (beside `vectorRanker`) makes `setup()` start one background
+  drain of the owed removals, or, under `forceDeleteIgnoreRankerHook`, discard them. It makes no
   model call, isn't awaited by `setup()`, uses backoff and stops after 10 s. `wiki.drain()` waits for
-  it. Turn it off with `drainExternalDeletionsOnSetup: false` (beside `vectorRanker`); `setup()` then
-  only emits `external_deletion_pending`.
+  it. Turn it on **only if your app never opens its own transactions** on the connection you gave
+  `createWiki`, such as `db.withTransactionAsync(tx => wiki.upsertGraph(…, tx))`. The drain's short
+  transactions use that connection too, and your `BEGIN` throws "cannot start a transaction within a
+  transaction" while one of them is open.
 - `runPendingMaintenance()` has an `'externalDeletions'` job. It runs first, doesn't use
   `tokenBudget`, and its result carries `externalDeletions: { confirmed, pending }`.
 - `runExternalDeletions(entityId?, { deadlineMs? })` delivers now, for one entity or all of them. It
-  ignores backoff and returns `{ confirmed, pending, failedIds, timedOut }`.
+  ignores backoff and returns `{ confirmed, pending, failedIds, timedOut }`, plus `transient: true`
+  when it couldn't read or write the ledger (for example, you held a transaction open). Those rows
+  stay pending.
 - `getPendingExternalDeletions(entityId?)` returns `{ count, oldestEnqueuedAt, maxAttempts }`
   without calling your hook.
 
@@ -126,7 +133,9 @@ no fact content:
   `forceDeleteIgnoreRankerHook`. `detail.count` says how many.
 
 If you loop "while `getPendingMaintenance()` is non-empty, call `runPendingMaintenance()`", bound
-the iterations. A hook that always rejects keeps its removals pending, so the loop would not end.
+the iterations. Each pass stops delivering after 5 rejections in a row or one timeout, so a hook that
+keeps failing can keep an entity listed for several passes, and with a large backlog for much
+longer.
 
 ### `forceDeleteIgnoreRankerHook`
 

@@ -27,7 +27,7 @@ const wiki = new WikiMemory(db, {
 ## Request lifecycle
 
 1. **Pull** the tenant's `.sqlite` file. Use a conditional fetch (ETag) to skip unchanged files.
-2. **Open.** `new WikiMemory(…)` and `await wiki.setup()`. This is cheap when the schema is current. If your wiki has a removal hook and removals are owed, `setup()` may also start a background drain of them (under `forceDeleteIgnoreRankerHook` the drain runs too, to discard the owed rows). It makes no model call. On a serverless host, set `drainExternalDeletionsOnSetup: false` and let the `'externalDeletions'` job in `runPendingMaintenance` deliver them: that job honours `deadlineMs`.
+2. **Open.** `new WikiMemory(…)` and `await wiki.setup()`. This is cheap when the schema is current. `setup()` starts no background work by default. Leave `drainExternalDeletionsOnSetup` off on a serverless host and let the `'externalDeletions'` job in `runPendingMaintenance` deliver owed removals: that job honours `deadlineMs`.
 3. **Handle the request:**
    - `write(entityId, { …, occurred_at: clientTimestamp })`
    - `read(entityId, query, { tokenBudget })`
@@ -35,7 +35,7 @@ const wiki = new WikiMemory(db, {
    ```ts
    const r = await wiki.runPendingMaintenance({ tokenBudget: 20_000, deadlineMs: remainingMs - 1500 });
    ```
-   Nothing is still running when this resolves, with one exception: if `deadlineMs` cuts short its wait for the setup removal drain, that drain may still be running. Set `drainExternalDeletionsOnSetup: false` on serverless (the `'externalDeletions'` job here honours `deadlineMs`), or call `await wiki.drain()` before you push.
+   Nothing is still running when this resolves, unless you turned on `drainExternalDeletionsOnSetup` and `deadlineMs` cut short the wait for that drain. Then call `await wiki.drain()` before you push.
 5. **Push** the file back. It's consistent, because there's no detached work and no open transaction.
 
 `runPendingMaintenance()` waits for that drain. If you skip step 4, call `await wiki.drain()` before you push, so no removal call is still running.

@@ -19,7 +19,7 @@ In Expo, `createWiki` takes an `expo-sqlite` database instead of an adapter.
 | Method | Returns | Notes |
 |---|---|---|
 | `setup(opts?: { migrations?: 'allow' \| 'refuse' \| 'auto' })` | `Promise<void>` | Creates tables and runs migrations. Idempotent. [Leases →](/expo-llm-wiki/guides/serverless-hosting/#long-migrations-inside-a-lease) |
-| `drain()` | `Promise<void>` | Waits for background jobs in auto mode, and for the removal drain that `setup()` started |
+| `drain()` | `Promise<void>` | Waits for background jobs in auto mode, and for the removal drain that `setup()` started when `drainExternalDeletionsOnSetup` is on |
 | `clearVectorCache()` | `void` | Frees cached parsed vectors |
 | `syncSearchIndex(entityId?)` | `Promise<void>` | Re-syncs the keyword index after `upsertGraph`. With no argument, it also retries a failed FTS5 init. It also calls the removal hook for the ids `upsertGraph` superseded, which can take up to `deletionHookTimeoutMs` per id. It never drains an entity's wider backlog. |
 
@@ -103,8 +103,8 @@ live row for that `sourceRef`, and `factCount` counts the live rows.
 | `runPrune(entityId, { retainSoftDeletedFor?, retainEventsFor?, vacuum? }?)` | `{ entries, tasks, events }` | |
 | `runOntologyBackfill(entityId, { batchSize?, promptOverride?, classifier? }?)` | `{ scanned, typed, failedValidation, edgesAdded, remaining, deferred, skipped }` | [Ontologies](/expo-llm-wiki/guides/ontologies/#backfill-untyped-facts) |
 | `getPendingMaintenance(entityIds?)` | `PendingMaintenance[]` (adds `pendingExternalDeletions?`; removal-only entities are listed only while a row is outside backoff) | [Deferred](/expo-llm-wiki/guides/maintenance/#deferred-maintenance) |
-| `runPendingMaintenance({ entityIds?, tokenBudget?, deadlineMs?, jobs? }?)` | `{ perEntity, tokensUsed, estimated, remaining, stoppedReason, externalDeletions }` | `jobs` accepts `'librarian'`, `'heal'`, `'reembed'`, `'externalDeletions'` (default all). `externalDeletions` is `{ confirmed, pending }`. It runs first and doesn't use `tokenBudget`. It awaits the `setup()` removal drain first. |
-| `runExternalDeletions(entityId?, { deadlineMs? }?)` | `{ confirmed, pending, failedIds, timedOut }` | Delivers owed vector-index removals now. [Deleting data](/expo-llm-wiki/guides/deleting-data/#run-and-watch-the-removals) |
+| `runPendingMaintenance({ entityIds?, tokenBudget?, deadlineMs?, jobs? }?)` | `{ perEntity, tokensUsed, estimated, remaining, stoppedReason, externalDeletions }` | `jobs` accepts `'librarian'`, `'heal'`, `'reembed'`, `'externalDeletions'` (default all). `externalDeletions` is `{ confirmed, pending }`. It runs first and doesn't use `tokenBudget`. It awaits the `setup()` removal drain first, when one was started. |
+| `runExternalDeletions(entityId?, { deadlineMs? }?)` | `{ confirmed, pending, failedIds, timedOut, transient? }` | Delivers owed vector-index removals now. [Deleting data](/expo-llm-wiki/guides/deleting-data/#run-and-watch-the-removals) |
 | `getPendingExternalDeletions(entityId?)` | `{ count, oldestEnqueuedAt, maxAttempts }` | Owed removals, without calling your hook |
 | `getEntityStatus(entityId)` | `{ ingesting, librarian, heal }` | |
 | `subscribeEntityStatus(entityId, cb)` | `() => void` (unsubscribe) | |

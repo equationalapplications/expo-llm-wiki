@@ -1,6 +1,6 @@
 # Durable removal of forgotten facts from the host's vector index
 
-**Status:** Implemented (PR #372, 2026-11-11; draft until open question O1 is answered). Previously Reviewed (2026-11-11: Opus high review, revision 2; owner directed implementation). Previously Draft (2026-11-11).
+**Status:** Implemented (PR #372, 2026-11-11; revision 4 implemented 2026-11-12; draft until open question O1 is answered). Previously Reviewed (2026-11-11: Opus high review, revision 2; owner directed implementation). Previously Draft (2026-11-11).
 Revision 2 (2026-11-11), after an Opus (high) review of revision 1:
 - The ledger is filled by SQLite triggers, not by call-site edits (§5.2).
 - A process without the hook never clears an obligation (§5.3).

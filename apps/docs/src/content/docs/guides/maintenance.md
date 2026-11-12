@@ -128,11 +128,12 @@ await wiki.write(entityId, { event_type: 'observation', summary, occurred_at });
 const report = await wiki.runPendingMaintenance({ tokenBudget: 20_000, deadlineMs: 8_000 });
 report.stoppedReason.reason; // 'complete' | 'deadline' | 'budget_exhausted' | 'budget_too_small'
 // Nothing is still running at this point, so it's safe to persist the DB file
-// (unless deadlineMs cut short the wait for the setup removal drain: then await wiki.drain()).
+// (unless you set drainExternalDeletionsOnSetup and deadlineMs cut short the wait for it:
+// then await wiki.drain()).
 ```
 
-- `getPendingMaintenance()` shows the backlog per entity without calling a model. It also reports `pendingExternalDeletions` when your vector index still owes removals and this process can act on them (a hook is configured, or `forceDeleteIgnoreRankerHook` is on). An entity with only owed removals is listed only while at least one of its rows is outside backoff (never attempted, or last attempted longer ago than `min(2^attempts, 3600)` seconds), so a loop over `getPendingMaintenance()` ends even when the hook keeps failing.
-- `runPendingMaintenance()` also delivers those owed removals first (the `'externalDeletions'` job). That work makes no model call and doesn't use the token budget. If you loop until nothing is pending, bound the iterations: a hook that always rejects keeps removals pending.
+- `getPendingMaintenance()` shows the backlog per entity without calling a model. It also reports `pendingExternalDeletions` when your vector index still owes removals and this process can act on them (a hook is configured, or `forceDeleteIgnoreRankerHook` is on). An entity with only owed removals is listed only while at least one of its rows is outside backoff (never attempted, or last attempted longer ago than `min(2^attempts, 3600)` seconds). That doesn't make a loop over `getPendingMaintenance()` end on its own: each pass stops after 5 rejections in a row or one timeout, so the rows it didn't try keep the entity listed.
+- `runPendingMaintenance()` also delivers those owed removals first (the `'externalDeletions'` job). That work makes no model call and doesn't use the token budget. If you loop until nothing is pending, bound the iterations: a hook that keeps failing keeps removals pending, possibly for many passes.
 - The budget counts **text-generation tokens only**, not embedding calls. The counts come from
   the provider when you implement `generateTextWithUsage`, and are estimated otherwise.
 - Entities share the budget fairly: each round runs one batch per entity.
