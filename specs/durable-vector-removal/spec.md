@@ -186,6 +186,12 @@ The ledger has three cases, decided per process:
 
 - **Hookless prune with the marker (rev 4).** It keeps the pending ledger rows of the facts it hard-deletes, and deletes their confirmed rows in the same transaction. Nothing reads a confirmed row once its fact is gone.
 - **First hook `setup()` (rev 4, not changed).** Rows enqueued before the marker was first set are delivered, not discarded. They may be removals a hookless process sharing the store owes on behalf of a hook process. For a store that never had an index, they are calls for ids the index never held, which a hook must already treat as success (§4.1). An outside consult (Gemini, 2026-11-12) agreed, and pointed out the cost on a mature store: one call per unpruned soft-deleted fact. `guides/deleting-data.md` ("Adding an index to an existing store") tells hosts to check the count first and batch, or to discard with force when no other process shares the store.
+- **No separate "inherited backlog" diagnostic (decided 2026-11-12, after Gemini and Fable consults).** Gemini proposed a one-time `external_deletion_inherited_backlog` at the marker transition. Not added, because:
+  - `external_deletion_pending` already fires with the count on that same `setup()`, before any call.
+  - The engine can't know the rows are inherited (the reason above), so the name would invite hosts to discard real removals.
+  - A one-shot isn't persisted; a crash between the marker write and the emit loses it. The pending diagnostic repeats at every `setup()`.
+  - It isn't blocked by API concerns: new diagnostic codes are allowed in minors (`WikiDiagnosticCode` JSDoc).
+  - The docs (`guides/diagnostics.md`, `guides/deleting-data.md`) say how to read the first pending count instead. A `firstHookSetup` detail flag was also considered and skipped; it would add little beyond the count.
 
 `notifyEmbeddingPersistedOrThrow` returns early as success when there is no hook or force is set (`EmbeddingService.ts:275-276`). So the drain checks the gate itself, before calling. It never relies on that early return.
 

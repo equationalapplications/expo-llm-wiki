@@ -148,6 +148,11 @@ hook may share the store with your app. So the first time you configure a hook, 
 fact that prune hasn't removed yet is owed a `null` call, including ids your new index never held.
 Your hook must treat an unknown id as success.
 
+That first `setup()` emits `external_deletion_pending` with the count, before any call is made. A
+count with `maxAttempts: 0` and an old `oldestEnqueuedAt` is this backlog. The engine sends no
+separate "inherited" signal, because it can't tell these rows apart from removals another process
+owes.
+
 On a store with many soft-deleted facts, that's a burst of calls to your index provider. Check
 `getPendingExternalDeletions()` before you turn the hook on. If the count is large, deliver them with
 `runExternalDeletions(undefined, { deadlineMs })` in bounded batches, or have your hook batch its
