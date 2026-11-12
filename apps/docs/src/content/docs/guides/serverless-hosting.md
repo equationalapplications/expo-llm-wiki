@@ -35,10 +35,10 @@ const wiki = new WikiMemory(db, {
    ```ts
    const r = await wiki.runPendingMaintenance({ tokenBudget: 20_000, deadlineMs: remainingMs - 1500 });
    ```
-   Nothing is still running when this resolves, unless you turned on `drainExternalDeletionsOnSetup` and `deadlineMs` cut short the wait for that drain. Then call `await wiki.drain()` before you push.
+   When this resolves the database has no open work, so the file is consistent to push. One exception to "nothing is running": a call to your removal hook that hit `deletionHookTimeoutMs` may still be running in your hook. The engine has stopped waiting for it, and its delete stays owed and is retried on a later run. If you turned on `drainExternalDeletionsOnSetup` and `deadlineMs` cut short the wait for that drain, call `await wiki.drain()` before you push.
 5. **Push** the file back. It's consistent, because there's no detached work and no open transaction.
 
-`runPendingMaintenance()` waits for that drain. If you skip step 4, call `await wiki.drain()` before you push, so no removal call is still running.
+`runPendingMaintenance()` waits for that drain, up to its `deadlineMs`. If you skip step 4, call `await wiki.drain()` before you push. Neither waits for a hook call that already timed out; its delete stays owed.
 
 Skipping step 4 is fine. The backlog carries over to the next request or to a queue worker that
 calls `getPendingMaintenance()`.

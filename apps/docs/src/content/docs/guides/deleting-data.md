@@ -142,10 +142,16 @@ longer.
 
 ### If your app writes to the wiki tables itself
 
-The removal record is kept by SQLite triggers on the entries table, so soft deletes your own SQL
-makes are recorded too. If your SQL hard-deletes facts instead of letting `runPrune()` do it,
-`setup()` cleans up the records nothing can still owe: confirmed ones always, and all of them on a
-store that has never had a removal hook. Don't drop the `llm_wiki_vector_removals` table (your `tablePrefix` + `vector_removals`) while its triggers
+The removal record is kept by SQLite triggers on the entries table, so deletes your own SQL makes
+are recorded too:
+
+- A soft delete (`UPDATE … SET deleted_at`) is owed like any other.
+- A hard delete of a live fact (`DELETE FROM … entries` without a soft delete first) is owed on a
+  store that has used a removal hook, and ignored on one that never has.
+- A hard delete of a soft-deleted fact drops the records nothing can still owe: confirmed ones
+  always, and all of them on a store that has never had a removal hook.
+
+ Don't drop the `llm_wiki_vector_removals` table (your `tablePrefix` + `vector_removals`) while its triggers
 exist: every soft delete then fails with `no such table` until the next `setup()` recreates it.
 
 ### Adding an index to an existing store

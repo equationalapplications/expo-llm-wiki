@@ -20,8 +20,11 @@ an assessment within 5 business days. The full policy is in [SECURITY.md](https:
   they reach adapters.
 - **Credential scrubbing.** Ranker errors are sanitized before they appear in `error.cause` or callbacks.
 - **Deletes are sent to external indexes, and kept owed until confirmed.** The engine records each
-  deleted fact and keeps calling your deletion hook until it succeeds once, across retries and
-  restarts. Your hook must tolerate repeats, and the app has to run again to finish. See
+  deleted fact and keeps it owed until your deletion hook succeeds once, across retries and
+  restarts. A restart alone doesn't send them: `runPendingMaintenance()`, `runExternalDeletions()`,
+  `forget()` and `runPrune()` (for the ids they touch) do, and so does `setup()` when you turn on
+  `drainExternalDeletionsOnSetup`. Your hook must tolerate repeats, and the app has to run again to
+  finish. See
   [Deleting data](/expo-llm-wiki/guides/deleting-data/#right-to-be-forgotten-gdpr) for what stays with you.
 - **Content-free diagnostics.** `onDiagnostic` never carries fact text or model output.
 
