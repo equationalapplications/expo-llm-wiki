@@ -42,6 +42,16 @@ export class VectorRemovalRepository extends BaseRepository {
     return `${this.prefix}vector_removals`;
   }
 
+  /** Owe the host a removal for `factId` unless a live row exists (a missing row counts as not live). Returns whether a row was enqueued. */
+  async enqueueIfNotLive(entityId: string, factId: string, now: number): Promise<boolean> {
+    const r = await this.db.runAsync(
+      `INSERT OR REPLACE INTO ${this.prefix}vector_removals (entity_id, fact_id, enqueued_at)
+       SELECT ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM ${this.prefix}entries WHERE id = ? AND deleted_at IS NULL)`,
+      [entityId, factId, now, factId],
+    );
+    return (r?.changes ?? 0) > 0;
+  }
+
   /** Unconfirmed rows after `cursor`, ordered by (attempts, seq). */
   async readPage(
     scope: VectorRemovalScope,

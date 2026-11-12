@@ -1174,19 +1174,6 @@ export class EntryRepository extends BaseRepository {
     return { changes: r?.changes ?? 0 };
   }
 
-  get ledgerTableName(): string {
-    return `${this.prefix}vector_removals`;
-  }
-
-  /** Owe the host a removal for `factId` unless a live row exists (a missing row counts as not live). */
-  async enqueueRemovalIfNotLive(entityId: string, factId: string, now: number): Promise<void> {
-    await this.db.runAsync(
-      `INSERT OR REPLACE INTO ${this.prefix}vector_removals (entity_id, fact_id, enqueued_at)
-       SELECT ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM ${this.prefix}entries WHERE id = ? AND deleted_at IS NULL)`,
-      [entityId, factId, now, factId],
-    );
-  }
-
   /**
    * Record a failed embedding attempt. Deliberately does NOT touch updated_at
    * (import merge is last-write-wins on it) and pushes no outbox event —

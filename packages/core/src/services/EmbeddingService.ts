@@ -4,6 +4,8 @@ import type { EntryRepository } from '../repositories/EntryRepository';
 import type { MetadataRepository } from '../repositories/MetadataRepository';
 import { clip } from '../utils/pure';
 import { DEFAULT_MAX_EMBED_CHARS, EMBED_CHARS_CEILING } from '../utils/embedDefaults';
+import type { VectorRemovalService } from './VectorRemovalService';
+import type { VectorRemovalRepository } from '../repositories/VectorRemovalRepository';
 import { emitDiagnostic } from '../utils/diagnostics';
 
 export type { EmbeddingMarkerKind };
@@ -187,8 +189,10 @@ export class EmbeddingService {
 
   /**
    * Storage half: persist the computed vector to the entry row, then fire the
-   * `onEmbeddingPersisted` hook. Failure kinds: `storage_error` only — embed
-   * failures do not originate here, so they cannot be marked as such (spec §3.2, D3).
+   * `onEmbeddingPersisted` hook. Failure kinds: `storage_error` (a DB error) and
+   * `fact_deleted` (the row was soft-deleted or gone: no blob, no vector call, no
+   * marker). Embed failures do not originate here, so they cannot be marked as
+   * such (spec §3.2, D3).
    */
   async storeFactVector(fact: {
     id: string;
@@ -262,16 +266,24 @@ export class EmbeddingService {
     return result.ok;
   }
 
+  private vectorRemoval?: { service: VectorRemovalService; repo: VectorRemovalRepository };
+
+  /** Wired by WikiMemory (VectorRemovalService itself depends on this class). */
+  attachVectorRemoval(service: VectorRemovalService, repo: VectorRemovalRepository): void {
+    this.vectorRemoval = { service, repo };
+  }
+
   /**
    * After an embed (and its vector call) settles: owe a removal if the fact is
    * no longer live, so a vector the host just received is taken back (§5.7, G10).
-   * No-op without a ledger table or without a removal hook.
+   * Returns true only when a ledger row was enqueued; false without a ledger
+   * table, without a removal hook, or when the fact is live.
    */
-  async afterVectorCall(entityId: string, factId: string): Promise<void> {
-    if (this.options.forceDeleteIgnoreRankerHook === true) return;
-    if (!this.options.vectorRanker?.onEmbeddingPersisted) return;
-    if (!(await this.metadataRepo.tableExists(this.entryRepo.ledgerTableName))) return;
-    await this.entryRepo.enqueueRemovalIfNotLive(entityId, factId, Date.now());
+  async afterVectorCall(entityId: string, factId: string): Promise<boolean> {
+    const vr = this.vectorRemoval;
+    if (!vr || vr.service.gate() !== 'hook') return false;
+    if (!(await vr.service.ledgerPresent())) return false;
+    return vr.repo.enqueueIfNotLive(entityId, factId, Date.now());
   }
 
   async notifyEmbeddingPersisted(entityId: string, factId: string, vector: Float32Array | null): Promise<void> {

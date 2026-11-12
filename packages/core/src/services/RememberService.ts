@@ -63,8 +63,9 @@ export class RememberService {
   private async settleAfterEmbed(entityId: string, id: string, operation: 'remember'): Promise<void> {
     if (!this.vectorRemoval) return;
     try {
-      await this.embeddingService.afterVectorCall(entityId, id);
-      await this.vectorRemoval.deliverRemovals(entityId, [id], operation, 'call');
+      if (await this.embeddingService.afterVectorCall(entityId, id)) {
+        await this.vectorRemoval.deliverRemovals(entityId, [id], operation, 'call', []);
+      }
     } catch (err) {
       console.warn(`[WikiMemory] post-embed removal check failed for ${id}:`, err);
     }

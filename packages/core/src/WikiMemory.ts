@@ -163,6 +163,7 @@ export class WikiMemory {
     this.embeddingService = new EmbeddingService(this.db, this.options, this.entryRepo, this.metadataRepo);
     this.vectorRemovalRepo = new VectorRemovalRepository(this.db, this.prefix);
     this.vectorRemovalService = new VectorRemovalService(this.db, this.options, this.vectorRemovalRepo, this.embeddingService, this.metadataRepo);
+    this.embeddingService.attachVectorRemoval(this.vectorRemovalService, this.vectorRemovalRepo);
     this.searchService = new SearchService(
       this.entryRepo,
       new MiniSearchIndexStrategy(),

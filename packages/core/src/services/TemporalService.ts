@@ -105,8 +105,9 @@ export class TemporalService {
         // G10 (spec §5.7): a fact deleted while its embed ran ends with a removal call. Never throws.
         if (this.vectorRemoval) {
           try {
-            await this.embeddingService.afterVectorCall(entityId, created.id);
-            await this.vectorRemoval.deliverRemovals(entityId, [created.id], 'supersede', 'call');
+            if (await this.embeddingService.afterVectorCall(entityId, created.id)) {
+              await this.vectorRemoval.deliverRemovals(entityId, [created.id], 'supersede', 'call', []);
+            }
           } catch (err) {
             console.warn(`[WikiMemory] post-embed removal check failed for ${created.id}:`, err);
           }

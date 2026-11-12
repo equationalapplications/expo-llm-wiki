@@ -562,6 +562,7 @@ export class MaintenanceService {
 
           const result = await this.embeddingService.tryEmbedFact(row, { operation: 'reembed', trigger: 'call' });
           if (result.ok) embedded++;
+          else if (result.kind === 'fact_deleted') skipped++; // deleted mid-sweep: not a failure
           else failed++;
         }
 
