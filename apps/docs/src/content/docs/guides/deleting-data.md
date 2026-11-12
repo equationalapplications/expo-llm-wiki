@@ -26,7 +26,8 @@ const preview = await wiki.forget('user-123', { sourceRef: 'doc.md' }, { dryRun:
 // no writes; same result shape
 ```
 
-`forget()` is a **soft delete** and is idempotent: calling it again returns zero counts.
+`forget()` **soft-deletes** facts and tasks and is idempotent: calling it again returns zero counts.
+(`clearAll` hard-deletes edges and, with `includeEvents`, events; there is nothing to soft-delete there.)
 Forgotten facts disappear from reads immediately.
 
 ## Hard delete: prune
@@ -57,7 +58,9 @@ to reach that index too:
 createWiki(db, { llmProvider, vectorRanker, deletionHookTimeoutMs: 5_000 }); // options beside llmProvider
 ```
 
-Retry hook failures, or queue them for reconciliation. Don't swallow them.
+Retry hook failures, or queue them for reconciliation. Don't swallow them. `forget()` stops at
+the first id whose hook fails, and a retry calls the hook again for ids it already removed, so
+make your delete idempotent: deleting an id that isn't in the index must succeed.
 
 ## Wipe an entity completely
 

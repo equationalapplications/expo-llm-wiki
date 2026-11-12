@@ -25,7 +25,7 @@ await wiki.runPendingMaintenance();
 An app that set only `autoLibrarianThreshold` or `autoHealThreshold` stops getting automatic runs.
 Those settings apply only in `'auto'` mode. The engine logs a console warning at construction when
 it sees one without an explicit `maintenance` value. It also warns when `librarian.strategy` is
-pinned to `'legacy'` with no `maintenance` value. Each warning is logged once per process. Until the librarian has processed an entity's
+pinned to `'legacy'` with no `maintenance` value and no auto-run threshold. Each warning is logged once per process. Until the librarian has processed an entity's
 events, `runPrune()` keeps them and emits `event_retention_held`, so the event log grows if nothing
 runs maintenance. A wipe that must remove events too uses
 `forget(entityId, { clearAll: true, includeEvents: true })` (see
