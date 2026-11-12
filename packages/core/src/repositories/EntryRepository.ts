@@ -816,15 +816,21 @@ export class EntryRepository extends BaseRepository {
     cutoff: number,
     ids: string[],
     tx: SQLiteAdapter,
+    opts: { keepUnconfirmedRemovals?: boolean } = {},
   ): Promise<number> {
     const executor = this.getExecutor(tx);
+    // Spec durable-vector-removal §5.6.4: under a removal hook, never hard-delete
+    // a fact whose vector-index removal is still owed.
+    const guard = opts.keepUnconfirmedRemovals
+      ? ` AND NOT EXISTS (SELECT 1 FROM ${this.prefix}vector_removals v WHERE v.fact_id = ${this.prefix}entries.id AND v.confirmed_at IS NULL)`
+      : '';
     let totalChanges = 0;
     const chunkSize = 500;
     for (let i = 0; i < ids.length; i += chunkSize) {
       const chunk = ids.slice(i, i + chunkSize);
       const placeholders = chunk.map(() => '?').join(',');
       const result = await executor.runAsync(
-        `DELETE FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ? AND id IN (${placeholders})`,
+        `DELETE FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ? AND id IN (${placeholders})${guard}`,
         [entityId, cutoff, ...chunk],
       );
       totalChanges += result.changes;

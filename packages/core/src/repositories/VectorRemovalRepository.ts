@@ -186,13 +186,26 @@ export class VectorRemovalRepository extends BaseRepository {
     return inserted;
   }
 
-  /** Remove rows together with a hard delete of the facts. */
-  async deleteForFacts(entityId: string, ids: string[], tx: SQLiteAdapter): Promise<void> {
+  /**
+   * Remove rows together with a hard delete of the facts. `'all'` drops every
+   * row of those ids; `'confirmedGone'` drops only confirmed rows whose fact
+   * row no longer exists, so a removal re-owed meanwhile is never erased.
+   */
+  async deleteForFacts(
+    entityId: string,
+    ids: string[],
+    tx: SQLiteAdapter,
+    mode: 'all' | 'confirmedGone' = 'all',
+  ): Promise<void> {
     const executor = this.getExecutor(tx);
+    const extra = mode === 'all'
+      ? ''
+      : ` AND confirmed_at IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM ${this.prefix}entries e WHERE e.id = ${this.prefix}vector_removals.fact_id)`;
     for (const c of chunks(ids, CHUNK)) {
       await executor.runAsync(
         `DELETE FROM ${this.prefix}vector_removals
-          WHERE entity_id = ? AND fact_id IN (${marks(c.length)})`,
+          WHERE entity_id = ? AND fact_id IN (${marks(c.length)})${extra}`,
         [entityId, ...c],
       );
     }
@@ -254,10 +267,11 @@ export class VectorRemovalRepository extends BaseRepository {
     return rows.map((r) => r.entity_id);
   }
 
-  async statusFor(ids: string[]): Promise<Map<string, 'pending' | 'confirmed'>> {
+  async statusFor(ids: string[], tx?: SQLiteAdapter): Promise<Map<string, 'pending' | 'confirmed'>> {
+    const executor = this.getExecutor(tx);
     const out = new Map<string, 'pending' | 'confirmed'>();
     for (const c of chunks(ids, CHUNK)) {
-      const rows = await this.db.getAllAsync<{ fact_id: string; confirmed_at: number | null }>(
+      const rows = await executor.getAllAsync<{ fact_id: string; confirmed_at: number | null }>(
         `SELECT fact_id, confirmed_at FROM ${this.prefix}vector_removals
           WHERE fact_id IN (${marks(c.length)})`,
         c,

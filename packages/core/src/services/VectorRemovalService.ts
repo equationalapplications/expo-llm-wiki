@@ -177,9 +177,11 @@ export class VectorRemovalService {
     let transient = false;
     const tried = new Set<number>();
 
+    // Every entity is drained one entity at a time: a page read without an
+    // entity filter can't use the partial index and scans the whole ledger.
     const scopes: VectorRemovalScope[] =
       entityId === undefined
-        ? [{}]
+        ? (await this.repo.entitiesWithPending()).map((e) => ({ entityId: e }))
         : ids === undefined
           ? [{ entityId }]
           : chunk(ids, ID_CHUNK).map((c) => ({ entityId, ids: c }));

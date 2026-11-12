@@ -312,6 +312,7 @@ export class MaintenanceService {
         let timedOut = false;
         let cause: unknown;
         let firstFailed: string | undefined;
+        let failedOrder: string[] = [];
 
         if (ledgerOn && vr && vrRepo) {
           if (gate === 'hook' && prunableIds.length > 0) {
@@ -323,13 +324,12 @@ export class MaintenanceService {
             ? await vr.drain({ entityId, ids: prunableIds })
             : { failedIds: [] as string[], timedOut: false, firstCause: undefined as unknown };
           if (gate === 'hook') {
-            const status = await vrRepo.statusFor(prunableIds);
-            deletable = prunableIds.filter((id) => { const st = status.get(id); return st === 'confirmed' || st === undefined; });
-            kept = prunableIds.filter((id) => status.get(id) === 'pending');
+            // The confirmed/pending split is read inside the delete
+            // transaction below (rev 4), so a removal re-owed by an embed
+            // that settles meanwhile keeps its fact.
             timedOut = result.timedOut;
             cause = result.firstCause;
-            const keptSet = new Set(kept);
-            firstFailed = result.failedIds.find((id) => keptSet.has(id)) ?? kept[0];
+            failedOrder = result.failedIds;
           } else if (gate === 'force') {
             removeLedger = true;
           } else {
@@ -363,15 +363,30 @@ export class MaintenanceService {
         // discards each id before re-reading it, so a stale document left
         // behind by a path that never passed ids to syncEntries is scrubbed
         // here (§2.2).
-        syncedIds = [...syncedIds, ...deletable];
-
+        const hookLedger = ledgerOn && !!vrRepo && gate === 'hook';
         await this.db.withTransactionAsync(async (tx) => {
+          if (hookLedger && vrRepo && prunableIds.length > 0) {
+            const status = await vrRepo.statusFor(prunableIds, tx);
+            deletable = prunableIds.filter((id) => status.get(id) !== 'pending');
+            kept = prunableIds.filter((id) => status.get(id) === 'pending');
+          }
           if (deletable.length > 0) {
-            deletedEntries = await this.entryRepo.bulkDeletePruned(entityId, cutoff, deletable, tx);
-            if (vrRepo && ledgerOn && (removeLedger || gate === 'hook')) await vrRepo.deleteForFacts(entityId, deletable, tx);
+            deletedEntries = await this.entryRepo.bulkDeletePruned(entityId, cutoff, deletable, tx, { keepUnconfirmedRemovals: hookLedger });
+            if (vrRepo && ledgerOn) {
+              // Hook: only confirmed rows of facts now gone. Force, or a store
+              // that never had an index: every row. Hookless with the marker:
+              // confirmed rows only; pending ones wait for a hook process.
+              if (removeLedger) await vrRepo.deleteForFacts(entityId, deletable, tx, 'all');
+              else await vrRepo.deleteForFacts(entityId, deletable, tx, 'confirmedGone');
+            }
           }
           deletedTasks = await this.taskRepo.bulkDeletePruned(entityId, cutoff, tx);
         });
+        if (hookLedger) {
+          const keptSet = new Set(kept);
+          firstFailed = failedOrder.find((id) => keptSet.has(id)) ?? kept[0];
+        }
+        syncedIds = [...syncedIds, ...deletable];
 
         if (kept.length > 0) {
           if (timedOut) {

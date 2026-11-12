@@ -220,7 +220,30 @@ export class EmbeddingService {
       console.warn(`[WikiMemory] onEmbeddingPersisted hook failed for ${fact.id}:`, hookErr);
       this.reportEmbed(ctx, fact, 'hook_failed', 'on_embedding_persisted');
     }
+    // A vector call was made (resolved or not): if the fact was deleted while
+    // it ran, take the vector back. Every embed path passes here (spec §5.7, G10).
+    if (this.options.vectorRanker?.onEmbeddingPersisted) {
+      await this.settleAfterVectorCall(fact.entity_id, fact.id, ctx?.operation ?? 'externalDeletion', ctx?.trigger ?? 'call');
+    }
     return { ok: true, dimension: float32Vector.length };
+  }
+
+  /** Never throws: a failure here leaves the removal owed or unrecorded, as before. */
+  private async settleAfterVectorCall(
+    entityId: string,
+    factId: string,
+    operation: WikiDiagnosticOperation,
+    trigger: WikiDiagnosticTrigger,
+  ): Promise<void> {
+    const vr = this.vectorRemoval;
+    if (!vr) return;
+    try {
+      if (await this.afterVectorCall(entityId, factId)) {
+        await vr.service.deliverRemovals(entityId, [factId], operation, trigger, []);
+      }
+    } catch (err) {
+      console.warn(`[WikiMemory] post-embed removal check failed for ${factId}:`, err);
+    }
   }
 
   private reportEmbed(

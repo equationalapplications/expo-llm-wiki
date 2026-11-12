@@ -3,7 +3,6 @@ import { WikiSupersedeError } from '../types';
 import type { EntryRepository } from '../repositories/EntryRepository';
 import type { SearchService } from './SearchService';
 import type { EmbeddingService } from './EmbeddingService';
-import type { VectorRemovalService } from './VectorRemovalService';
 import { generateId } from '../utils/ids';
 import { assertEpochMs } from '../utils/temporal';
 
@@ -17,7 +16,6 @@ export class TemporalService {
     private entryRepo: EntryRepository,
     private searchService: SearchService,
     private embeddingService: EmbeddingService,
-    private vectorRemoval?: VectorRemovalService,
   ) {}
 
   /**
@@ -96,23 +94,11 @@ export class TemporalService {
 
     await this.searchService.syncEntries(entityId, [oldId, newId]);
     if (created) {
-      try {
-        await this.embeddingService.embedFact(
-          { id: created.id, entity_id: entityId, title: created.title, body: created.body, tags: created.tags },
-          { operation: 'supersede', trigger: 'call' },
-        );
-      } finally {
-        // G10 (spec §5.7): a fact deleted while its embed ran ends with a removal call. Never throws.
-        if (this.vectorRemoval) {
-          try {
-            if (await this.embeddingService.afterVectorCall(entityId, created.id)) {
-              await this.vectorRemoval.deliverRemovals(entityId, [created.id], 'supersede', 'call', []);
-            }
-          } catch (err) {
-            console.warn(`[WikiMemory] post-embed removal check failed for ${created.id}:`, err);
-          }
-        }
-      }
+      // A delete during the vector call is settled in storeFactVector (G10).
+      await this.embeddingService.embedFact(
+        { id: created.id, entity_id: entityId, title: created.title, body: created.body, tags: created.tags },
+        { operation: 'supersede', trigger: 'call' },
+      );
     }
     this.searchService.evictCache(entityId);
     return { newId };

@@ -169,8 +169,8 @@ export class WikiMemory {
       this.entryRepo,
       new MiniSearchIndexStrategy(),
     );
-    this.temporalService = new TemporalService(this.db, this.options, this.entryRepo, this.searchService, this.embeddingService, this.vectorRemovalService);
-    this.rememberService = new RememberService(this.db, this.entryRepo, this.ontologyService, this.searchService, this.embeddingService, this.vectorRemovalService);
+    this.temporalService = new TemporalService(this.db, this.options, this.entryRepo, this.searchService, this.embeddingService);
+    this.rememberService = new RememberService(this.db, this.entryRepo, this.ontologyService, this.searchService, this.embeddingService);
     this.jobManager = new JobManager(this.prefix);
     this.promptService = new PromptService(options.config?.prompts, resolveGrounding(options.config?.grounding));
     this.ingestionService = new IngestionService(
@@ -329,7 +329,7 @@ export class WikiMemory {
 
   /**
    * Overflow past the cap drops the id from the stash only: the trigger already
-   * put it on the ledger, so it stays owed and the setup drain or
+   * put it on the ledger, so it stays owed and runExternalDeletions or
    * runPendingMaintenance delivers it later.
    */
   private stashRemovalIds(entityId: string, ids: readonly string[]): void {
@@ -487,7 +487,7 @@ export class WikiMemory {
         if (gate === 'force') await this.vectorRemovalService.clearExternalIndexMarker();
         return { drain: null };
       }
-      if (this.options.drainExternalDeletionsOnSetup === false) {
+      if (this.options.drainExternalDeletionsOnSetup !== true) {
         if (gate === 'hook') await this.vectorRemovalService.emitPending(undefined, 'auto');
         return { drain: null };
       }
@@ -516,11 +516,13 @@ export class WikiMemory {
   /**
    * Delivers owed vector-index removals now (spec §5.9). No backoff. With an
    * entity id only that entity's rows; otherwise all. `deadlineMs` is a duration.
+   * `transient: true` means a ledger read or write could not run (for example,
+   * you held a transaction open on the connection); the rows stay pending.
    */
   async runExternalDeletions(
     entityId?: string,
     opts?: { deadlineMs?: number },
-  ): Promise<{ confirmed: number; pending: number; failedIds: string[]; timedOut: boolean }> {
+  ): Promise<{ confirmed: number; pending: number; failedIds: string[]; timedOut: boolean; transient?: boolean }> {
     if (entityId !== undefined) assertEntityId(entityId);
     const ms = opts?.deadlineMs;
     if (ms !== undefined && (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0)) {
@@ -530,7 +532,10 @@ export class WikiMemory {
       entityId === undefined ? { all: true } : { entityId },
       { trigger: 'call', ...(ms !== undefined ? { deadlineAt: Date.now() + ms } : {}) },
     );
-    return { confirmed: r.confirmed, pending: r.pending, failedIds: r.failedIds, timedOut: r.timedOut };
+    return {
+      confirmed: r.confirmed, pending: r.pending, failedIds: r.failedIds, timedOut: r.timedOut,
+      ...(r.transient ? { transient: true } : {}),
+    };
   }
 
   /** Removals still owed to the host's vector index (all entities, or one). */
@@ -778,7 +783,7 @@ export class WikiMemory {
     return this.writeService.write(entityId, event);
   }
 
-  /** Await auto-mode background librarian/heal jobs started by write(), and the removal drain `setup()` started. */
+  /** Await auto-mode background librarian/heal jobs started by write(), and the removal drain `setup()` started under `drainExternalDeletionsOnSetup`. */
   async drain(): Promise<void> {
     await this.setupRemovalDrain;
     return this.writeService.drain();
@@ -794,7 +799,7 @@ export class WikiMemory {
     return this.maintenanceScheduler.getPending(entityIds);
   }
 
-  /** Run pending removals, librarian, heal and reembed work under an optional token budget and deadline (spec §6.2). Awaits the setup removal drain first. */
+  /** Run pending removals, librarian, heal and reembed work under an optional token budget and deadline (spec §6.2). Awaits the setup removal drain first, when `drainExternalDeletionsOnSetup` started one. */
   async runPendingMaintenance(options?: RunPendingMaintenanceOptions): Promise<RunPendingMaintenanceResult> {
     let opts = options;
     const setupDrain = this.setupRemovalDrain;

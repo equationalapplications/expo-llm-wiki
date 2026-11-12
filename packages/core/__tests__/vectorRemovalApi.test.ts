@@ -62,7 +62,7 @@ describe('public API and setup drain', () => {
     await seed(raw, ['a']);
     let release!: () => void;
     const gate = new Promise<void>((r) => { release = r; });
-    const t = open(raw, () => gate);
+    const t = open(raw, () => gate, { drainExternalDeletionsOnSetup: true });
     await t.wiki.setup();
     let drained = false;
     const d = t.wiki.drain().then(() => { drained = true; });
@@ -90,7 +90,7 @@ describe('public API and setup drain', () => {
     const raw = openTestDatabase();
     await open(raw).wiki.setup();
     await seed(raw, ['a', 'b']);
-    const t = open(raw, () => new Promise<void>(() => {}), { deletionHookTimeoutMs: 50 });
+    const t = open(raw, () => new Promise<void>(() => {}), { deletionHookTimeoutMs: 50, drainExternalDeletionsOnSetup: true });
     await t.wiki.setup();
     const start = Date.now();
     await t.wiki.drain();
@@ -174,7 +174,7 @@ describe('public API and setup drain', () => {
     const raw = openTestDatabase();
     await open(raw).wiki.setup();
     await seed(raw, ['a']);
-    const t = open(raw, () => new Promise<void>((r) => setTimeout(r, 80)));
+    const t = open(raw, () => new Promise<void>((r) => setTimeout(r, 80)), { drainExternalDeletionsOnSetup: true });
     const svc = (t.wiki as any).vectorRemovalService;
     const orig = svc.drain.bind(svc);
     let allDrains = 0;
@@ -191,7 +191,7 @@ describe('public API and setup drain', () => {
     const raw = openTestDatabase();
     await open(raw).wiki.setup();
     await seed(raw, ['a']);
-    const t = open(raw, () => {}, { forceDeleteIgnoreRankerHook: true });
+    const t = open(raw, () => {}, { forceDeleteIgnoreRankerHook: true, drainExternalDeletionsOnSetup: true });
     await t.wiki.setup();
     await t.wiki.drain();
     expect(t.calls).toEqual([]);
@@ -203,7 +203,7 @@ describe('public API and setup drain', () => {
     const raw = openTestDatabase();
     await open(raw).wiki.setup();
     await seed(raw, ['a']);
-    const t = open(raw, () => {});
+    const t = open(raw, () => {}, { drainExternalDeletionsOnSetup: true });
     const svc = (t.wiki as any).vectorRemovalService;
     const orig = svc.drain.bind(svc);
     const seen: any[] = [];
@@ -247,7 +247,7 @@ describe('public API and setup drain', () => {
     const raw = openTestDatabase();
     await open(raw).wiki.setup();
     await seed(raw, ['a', 'b']);
-    const t = open(raw, () => new Promise<void>((r) => setTimeout(r, 20)));
+    const t = open(raw, () => new Promise<void>((r) => setTimeout(r, 20)), { drainExternalDeletionsOnSetup: true });
     const svc = (t.wiki as any).vectorRemovalService;
     const orig = svc.drain.bind(svc);
     let allDrains = 0;

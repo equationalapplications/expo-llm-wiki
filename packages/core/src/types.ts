@@ -978,10 +978,18 @@ export interface WikiOptions {
   forceDeleteIgnoreRankerHook?: boolean;
 
   /**
-   * When a removal hook is configured and removals are owed, `setup()` starts
-   * one background drain (not awaited; `drain()` joins it, 10 s deadline,
-   * backoff). Set `false` to make no call on open: `setup()` then only emits
-   * `external_deletion_pending` per entity with owed removals. Default true.
+   * Opt in to a background drain of owed removals after `setup()`: when a
+   * removal hook is configured and removals are owed, `setup()` starts one
+   * drain (not awaited; `drain()` joins it, 10 s deadline, backoff).
+   *
+   * Default false. The drain opens short transactions on the connection you
+   * gave `createWiki`; a transaction you open on that connection yourself (for
+   * example `db.withTransactionAsync(tx => wiki.upsertGraph(…, tx))`) throws
+   * "cannot start a transaction within a transaction" while one of them is
+   * open. Turn it on only if you never open your own transactions on it.
+   * When off, `setup()` emits `external_deletion_pending` per entity with
+   * owed removals, and `runPendingMaintenance()`, `runExternalDeletions()`,
+   * `forget()` and `runPrune()` deliver them.
    */
   drainExternalDeletionsOnSetup?: boolean;
 
