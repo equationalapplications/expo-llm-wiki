@@ -75,6 +75,8 @@ describe('ImportExportService', () => {
     mockEmbeddingService = {
       embedFact: vi.fn().mockResolvedValue(true),
       notifyEmbeddingPersisted: vi.fn().mockResolvedValue(undefined),
+      hasVectorHook: vi.fn().mockReturnValue(false),
+      settleAfterVectorCall: vi.fn().mockResolvedValue(undefined),
       storeEmbeddingDimension: vi.fn().mockResolvedValue(undefined),
       reconcileEmbeddingDimension: vi.fn().mockResolvedValue(undefined),
     };

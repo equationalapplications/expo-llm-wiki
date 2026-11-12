@@ -94,6 +94,7 @@ export class TemporalService {
 
     await this.searchService.syncEntries(entityId, [oldId, newId]);
     if (created) {
+      // A delete during the vector call is settled in storeFactVector (G10).
       await this.embeddingService.embedFact(
         { id: created.id, entity_id: entityId, title: created.title, body: created.body, tags: created.tags },
         { operation: 'supersede', trigger: 'call' },

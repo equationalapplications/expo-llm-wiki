@@ -84,5 +84,5 @@ call it on every startup.
 
 :::note
 Deletes are **soft** at first: rows get a `deleted_at` timestamp. `runPrune()` hard-deletes them
-after a retention window (7 days by default).
+after a retention window (7 days by default). With an external vector index configured, `runPrune()` hard-deletes a soft-deleted fact only once its external removal is confirmed.
 :::

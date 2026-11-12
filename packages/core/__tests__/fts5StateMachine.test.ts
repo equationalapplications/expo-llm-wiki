@@ -32,7 +32,7 @@ async function bulk(n: number, entity = 'e1'): Promise<void> {
 const count = async (t: string) => (await db.getFirstAsync<{ n: number }>(`SELECT count(*) AS n FROM ${P}${t}`))!.n;
 const state = () => meta.getMeta(FTS5_STATE_KEY);
 const triggers = async () => (await db.getAllAsync<{ name: string }>(
-  `SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name`)).map((r) => r.name);
+  `SELECT name FROM sqlite_master WHERE type = 'trigger' AND name NOT LIKE '%vector_removals%' ORDER BY name`)).map((r) => r.name);
 const ftsDdl = () => meta.getTableDdl(`${P}entries_fts`);
 
 /** A live store with n indexed rows. */

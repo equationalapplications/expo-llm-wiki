@@ -7,6 +7,7 @@ import { entitySummaryMetaKey, type MetadataRepository } from '../repositories/M
 import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
+import type { VectorRemovalService } from './VectorRemovalService';
 import { clip, normalizeSourceRef } from '../utils/pure';
 import { latestVerified } from '@equationalapplications/core-okf';
 import { emitDiagnostic } from '../utils/diagnostics';
@@ -28,7 +29,8 @@ export class ImportExportService {
     private searchService: SearchService,
     private jobManager: JobManager,
     private embeddingService: EmbeddingService,
-    private options: Pick<WikiOptions, 'onDiagnostic'> = {},
+    private options: Pick<WikiOptions, 'onDiagnostic' | 'forceDeleteIgnoreRankerHook'> = {},
+    private vectorRemoval?: VectorRemovalService,
   ) {}
 
   async exportDump(entityIds?: string[]): Promise<MemoryDump> {
@@ -518,7 +520,8 @@ export class ImportExportService {
               ? fact.tags
               : [],
         }, { operation: 'importDump', trigger: 'call' });
-        if (!embedded) {
+        // Under forceDeleteIgnoreRankerHook the index is decommissioned: no removal calls.
+        if (!embedded && this.options.forceDeleteIgnoreRankerHook !== true) {
           try {
             await this.embeddingService.notifyEmbeddingPersisted(entityId, fact.id, null);
           } catch (hookErr) {
@@ -561,17 +564,30 @@ export class ImportExportService {
             fact.id,
           );
         }
+        // Same post-check as storeFactVector: a delete during the call ends with null (G10).
+        if (this.embeddingService.hasVectorHook()) {
+          await this.embeddingService.settleAfterVectorCall(entityId, fact.id, 'importDump', 'call');
+        }
       }
     }
 
-    for (const factId of softDeletedFactIds) {
-      if (!upsertedFactIds.has(factId) || upsertedDeletedFactIds.has(factId)) {
+    const removedIds = softDeletedFactIds.filter(
+      (id) => !upsertedFactIds.has(id) || upsertedDeletedFactIds.has(id),
+    );
+    if (this.vectorRemoval) {
+      // Merge-mode tombstones (G8) are soft deletes of live facts too; the
+      // ledger holds them, so deliver those ids with the replace-mode ones.
+      await this.vectorRemoval.deliverRemovals(
+        entityId,
+        Array.from(new Set([...removedIds, ...upsertedDeletedFactIds])),
+        'importDump',
+        'call',
+        removedIds,
+      );
+    } else if (this.options.forceDeleteIgnoreRankerHook !== true) {
+      for (const factId of removedIds) {
         try {
-          await this.embeddingService.notifyEmbeddingPersisted(
-            entityId,
-            factId,
-            null,
-          );
+          await this.embeddingService.notifyEmbeddingPersisted(entityId, factId, null);
         } catch (hookErr) {
           console.warn(
             `[WikiMemory] onEmbeddingPersisted(vector=null) hook failed for soft-deleted fact ${factId}:`,

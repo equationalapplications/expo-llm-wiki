@@ -31,7 +31,7 @@ describe('EmbeddingService', () => {
     };
 
     mockEntryRepo = {
-      updateEmbeddingBlob: vi.fn().mockResolvedValue(undefined),
+      updateEmbeddingBlob: vi.fn().mockResolvedValue({ changes: 1 }),
       markEmbeddingFailure: vi.fn().mockResolvedValue(undefined),
       countStaleEmbeddings: vi.fn().mockResolvedValue(0),
       clearEmbeddingFailureMarkers: vi.fn().mockResolvedValue(0),

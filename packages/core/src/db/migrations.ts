@@ -1,5 +1,5 @@
 import type { SQLiteAdapter } from '../types';
-import { createTemporalIndexesIfColumnsExist } from './schema';
+import { createResurrectTrigger, createTemporalIndexesIfColumnsExist } from './schema';
 import { fts5PendingIndexesDdl } from '../services/search/fts5Sql';
 
 export interface Migration {
@@ -53,6 +53,8 @@ export const MIGRATIONS: Migration[] = [
           `ALTER TABLE ${prefix}entries ADD COLUMN embedding_blob BLOB`
         );
       }
+      // The resurrect trigger was built without this column; rebuild it with it.
+      await createResurrectTrigger(db, prefix);
     },
   },
   {
@@ -294,6 +296,8 @@ export const MIGRATIONS: Migration[] = [
       for (const [name, sql] of adds) {
         if (!existing.has(name)) await db.execAsync(sql);
       }
+      // The resurrect trigger was built without these columns; rebuild it with them.
+      await createResurrectTrigger(db, prefix);
     },
   },
   {

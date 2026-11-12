@@ -146,6 +146,51 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
       ON ${prefix}outbox (created_at);
   `);
 
+  // Vector-removal ledger (spec durable-vector-removal §5.1-5.2). Filled by
+  // triggers on entries so every soft-delete path, including host raw SQL,
+  // enqueues. No schema_version bump: created on every open.
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS ${prefix}vector_removals (
+      seq             INTEGER PRIMARY KEY AUTOINCREMENT,
+      entity_id       TEXT NOT NULL,
+      fact_id         TEXT NOT NULL UNIQUE,
+      enqueued_at     INTEGER NOT NULL,
+      attempts        INTEGER NOT NULL DEFAULT 0,
+      last_attempt_at INTEGER,
+      confirmed_at    INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS ${prefix}vector_removals_pending
+      ON ${prefix}vector_removals (entity_id, attempts, seq) WHERE confirmed_at IS NULL;
+
+    CREATE TRIGGER IF NOT EXISTS ${prefix}vector_removals_enqueue
+    AFTER UPDATE OF deleted_at ON ${prefix}entries
+    WHEN OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL
+    BEGIN
+      -- DELETE then INSERT, not INSERT OR REPLACE: an outer UPSERT's conflict
+      -- handling would override OR REPLACE and abort on fact_id (spec rev 5).
+      DELETE FROM ${prefix}vector_removals WHERE fact_id = NEW.id;
+      INSERT INTO ${prefix}vector_removals (entity_id, fact_id, enqueued_at)
+      VALUES (NEW.entity_id, NEW.id, CAST(strftime('%s','now') AS INTEGER) * 1000);
+    END;
+
+    -- A hard delete outside prune (host SQL, an older engine after a
+    -- downgrade). A live fact is owed only where an external index was in use;
+    -- a soft-deleted one drops the rows nothing can owe (spec rev 5).
+    CREATE TRIGGER IF NOT EXISTS ${prefix}vector_removals_hard_delete
+    AFTER DELETE ON ${prefix}entries
+    BEGIN
+      DELETE FROM ${prefix}vector_removals
+       WHERE fact_id = OLD.id
+         AND (OLD.deleted_at IS NULL
+              OR confirmed_at IS NOT NULL
+              OR NOT EXISTS (SELECT 1 FROM ${prefix}meta WHERE key = 'external_index_in_use' AND value = '1'));
+      INSERT INTO ${prefix}vector_removals (entity_id, fact_id, enqueued_at)
+      SELECT OLD.entity_id, OLD.id, CAST(strftime('%s','now') AS INTEGER) * 1000
+       WHERE OLD.deleted_at IS NULL
+         AND EXISTS (SELECT 1 FROM ${prefix}meta WHERE key = 'external_index_in_use' AND value = '1');
+    END;
+  `);
+
   // OKF v0.2 indexes — gated on column existence so we never try to create an
   // index on a column that hasn't been added yet (upgrade-from-pre-v10 case).
   // The columns themselves are in the CREATE TABLE above (fresh installs get
@@ -154,6 +199,59 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
   // makes either path safe.
   await createOkfV02IndexesIfColumnsExist(db, prefix);
   await createTemporalIndexesIfColumnsExist(db, prefix);
+  await createResurrectTrigger(db, prefix);
+}
+
+const EMBED_MARKER_COLUMNS = ['embedding_failed_at', 'embedding_failure_kind', 'embedding_attempts'];
+
+/** 0: no vector columns yet; 1: clears the vector (rev 6); 2: also clears the failure markers (rev 7). */
+function resurrectLevel(sql: string): 0 | 1 | 2 {
+  if (sql.includes('embedding_failed_at')) return 2;
+  return sql.includes('embedding_blob') ? 1 : 0;
+}
+
+/**
+ * The ledger's resurrect trigger (spec durable-vector-removal §5.2). A
+ * confirmed removal means the host's index no longer holds the vector, so a
+ * restore clears the stored one and the reembed job embeds the fact and
+ * sends it again (rev 6). Its embed failure markers are cleared too, or the
+ * job could defer or skip the fact for good (rev 7).
+ *
+ * Gated on column existence like the indexes below: on an upgrade this runs
+ * before migrations 3 and 11 add the columns, and a trigger body naming a
+ * missing column fails every restore. Those migrations call it again, and a
+ * trigger built for fewer columns is replaced once more of them exist.
+ */
+export async function createResurrectTrigger(db: SQLiteAdapter, prefix: string): Promise<void> {
+  const name = `${prefix}vector_removals_resurrect`;
+  const cols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(${prefix}entries)`);
+  const names = new Set(cols.map((c) => c.name));
+  const want: 0 | 1 | 2 = !(names.has('embedding_blob') && names.has('embedding'))
+    ? 0
+    : EMBED_MARKER_COLUMNS.every((c) => names.has(c)) ? 2 : 1;
+  const existing = await db.getFirstAsync<{ sql: string | null }>(
+    `SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?`,
+    [name],
+  );
+  if (existing) {
+    if (resurrectLevel(existing.sql ?? '') >= want) return;
+    await db.execAsync(`DROP TRIGGER IF EXISTS ${name};`);
+  }
+  // Embedding columns don't fire FTS triggers.
+  const clearVector = want === 0 ? '' : `
+      UPDATE ${prefix}entries
+         SET embedding_blob = NULL, embedding = NULL${want === 2 ? `,
+             embedding_failed_at = NULL, embedding_failure_kind = NULL, embedding_attempts = 0` : ''}
+       WHERE id = NEW.id
+         AND EXISTS (SELECT 1 FROM ${prefix}vector_removals WHERE fact_id = NEW.id AND confirmed_at IS NOT NULL);`;
+  await db.execAsync(`
+    CREATE TRIGGER IF NOT EXISTS ${name}
+    AFTER UPDATE OF deleted_at ON ${prefix}entries
+    WHEN OLD.deleted_at IS NOT NULL AND NEW.deleted_at IS NULL
+    BEGIN${clearVector}
+      DELETE FROM ${prefix}vector_removals WHERE fact_id = NEW.id;
+    END;
+  `);
 }
 
 async function createOkfV02IndexesIfColumnsExist(db: SQLiteAdapter, prefix: string): Promise<void> {

@@ -1,5 +1,6 @@
 import type { SQLiteAdapter } from './types';
 import type { WikiOutboxEvent } from './outbox/types';
+import { emitDiagnostic } from './utils/diagnostics';
 import { setupDatabaseWithGate } from './db/migrationGate';
 import { detectSchemaVersion, runSourceRefNormalize, writeNormalizeStamp } from './db/sourceRefNormalize';
 import { withSerializedTransactions } from './db/serializedAdapter';
@@ -37,6 +38,8 @@ import { MaintenanceService } from './services/MaintenanceService';
 import { MaintenanceScheduler } from './services/MaintenanceScheduler';
 import { ImportExportService } from './services/ImportExportService';
 import { EmbeddingService } from './services/EmbeddingService';
+import { VectorRemovalService } from './services/VectorRemovalService';
+import { VectorRemovalRepository } from './repositories/VectorRemovalRepository';
 import { RetrievalService } from './services/RetrievalService';
 import { WriteService } from './services/WriteService';
 import { PromptService } from './services/PromptService';
@@ -112,6 +115,8 @@ export class WikiMemory {
   private edgeRepo: EdgeRepository;
   private metadataRepo: MetadataRepository;
   private embeddingService: EmbeddingService;
+  private vectorRemovalRepo: VectorRemovalRepository;
+  private vectorRemovalService: VectorRemovalService;
   private searchService: SearchService;
   private jobManager: JobManager;
   private ingestionService: IngestionService;
@@ -157,6 +162,9 @@ export class WikiMemory {
     );
     this.lintService = new LintService(this.lintRepo, this.ontologyService);
     this.embeddingService = new EmbeddingService(this.db, this.options, this.entryRepo, this.metadataRepo);
+    this.vectorRemovalRepo = new VectorRemovalRepository(this.db, this.prefix);
+    this.vectorRemovalService = new VectorRemovalService(this.db, this.options, this.vectorRemovalRepo, this.embeddingService, this.metadataRepo);
+    this.embeddingService.attachVectorRemoval(this.vectorRemovalService, this.vectorRemovalRepo);
     this.searchService = new SearchService(
       this.entryRepo,
       new MiniSearchIndexStrategy(),
@@ -178,6 +186,7 @@ export class WikiMemory {
       this.embeddingService,
       this.promptService,
       this.ontologyService,
+      this.vectorRemovalService,
     );
     this.maintenanceService = new MaintenanceService(
       this.db,
@@ -194,6 +203,8 @@ export class WikiMemory {
       this.promptService,
       this.ontologyService,
       this.edgeRepo,
+      this.vectorRemovalService,
+      this.vectorRemovalRepo,
     );
     this.maintenanceScheduler = new MaintenanceScheduler(
       this.db,
@@ -203,6 +214,8 @@ export class WikiMemory {
       this.eventRepo,
       this.entryRepo,
       this.jobManager,
+      this.vectorRemovalService,
+      this.vectorRemovalRepo,
     );
     this.importExportService = new ImportExportService(
       this.db,
@@ -215,6 +228,7 @@ export class WikiMemory {
       this.jobManager,
       this.embeddingService,
       this.options,
+      this.vectorRemovalService,
     );
     this.retrievalService = new RetrievalService(
       this.options,
@@ -278,7 +292,7 @@ export class WikiMemory {
     };
   }
 
-  /** Max upsertGraph node ids held for their post-commit sync (spec #280 id threading). */
+  /** Max upsertGraph node and superseded-fact ids held for their post-commit sync (spec #280 id threading). */
   static readonly UPSERT_ID_STASH_CAP = 10_000;
   /**
    * upsertGraph node and superseded-fact ids per entity, awaiting syncSearchIndex(), each with the
@@ -292,7 +306,8 @@ export class WikiMemory {
   private upsertIdStashGen = 0;
 
   private stashUpsertIds(entityId: string, ids: readonly string[]): void {
-    // Only a ledger strategy drains by id; MiniSearch rebuilds the stale entity instead.
+    // Only a ledger strategy drains the search index by id; MiniSearch rebuilds the stale entity instead.
+    // (Removal delivery has its own stash, stashRemovalIds, independent of the strategy.)
     if (!this.searchService.hasLedger()) return;
     const cap = (this.constructor as typeof WikiMemory).UPSERT_ID_STASH_CAP;
     const stash = this.upsertIdStash.get(entityId) ?? new Map<string, number>();
@@ -304,6 +319,41 @@ export class WikiMemory {
       stash.set(id, ++this.upsertIdStashGen);
     }
     if (stash.size > 0) this.upsertIdStash.set(entityId, stash);
+  }
+
+  /** Max superseded-fact ids held for post-commit removal delivery. */
+  static readonly REMOVAL_STASH_CAP = 10_000;
+  /** Superseded fact ids per entity awaiting a post-commit delivery from syncSearchIndex(). */
+  private removalStash = new Map<string, Set<string>>();
+  private removalStashSize = 0;
+
+  /**
+   * Overflow past the cap drops the id from the stash only: the trigger already
+   * put it on the ledger, so it stays owed and runExternalDeletions or
+   * runPendingMaintenance delivers it later.
+   */
+  private stashRemovalIds(entityId: string, ids: readonly string[]): void {
+    const cap = (this.constructor as typeof WikiMemory).REMOVAL_STASH_CAP;
+    const stash = this.removalStash.get(entityId) ?? new Set<string>();
+    for (const id of ids) {
+      if (stash.has(id)) continue;
+      if (this.removalStashSize >= cap) continue;
+      stash.add(id);
+      this.removalStashSize++;
+    }
+    if (stash.size > 0) this.removalStash.set(entityId, stash);
+  }
+
+  /** Removes and returns the stashed removal ids (one entity, or all). */
+  private takeRemovalIds(entityId?: string): Map<string, string[]> {
+    const out = new Map<string, string[]>();
+    for (const [e, set] of [...this.removalStash]) {
+      if (entityId !== undefined && e !== entityId) continue;
+      out.set(e, [...set]);
+      this.removalStashSize -= set.size;
+      this.removalStash.delete(e);
+    }
+    return out;
   }
 
   /** Snapshot of the stash (one entity, or all) with generations, without removing anything. */
@@ -417,6 +467,88 @@ export class WikiMemory {
     );
     // FTS5: one budgeted quantum (no global read). MiniSearch: full rebuild, as before.
     await this.searchService.sync(undefined, { deadline: openDeadline });
+    await this.startSetupRemovalDrain();
+  }
+
+  private setupRemovalDrain: Promise<void> | null = null;
+
+  /** Marks the external index in use, then drains owed removals in the background (spec §5.7). */
+  private async startSetupRemovalDrain(): Promise<void> {
+    if (this.setupRemovalDrain) return; // a second setup() reuses the running drain
+    const gate = this.vectorRemovalService.gate();
+    if (gate === 'none') return;
+    // Assigned before the first await so a concurrent setup() sees it.
+    const prelude = (async (): Promise<{ drain: Promise<void> | null }> => {
+      if (gate === 'hook' && !(await this.vectorRemovalService.externalIndexInUse())) {
+        await this.db.withTransactionAsync((tx) => this.vectorRemovalService.markExternalIndexInUse(tx));
+      }
+      if ((await this.vectorRemovalRepo.pendingStats()).count === 0) {
+        // Under force nothing is owed, so the marker has nothing left to guard (spec §5.3).
+        if (gate === 'force') await this.vectorRemovalService.clearExternalIndexMarker();
+        return { drain: null };
+      }
+      if (this.options.drainExternalDeletionsOnSetup !== true) {
+        if (gate === 'hook') await this.vectorRemovalService.emitPending(undefined, 'auto');
+        return { drain: null };
+      }
+      const drain = (async () => {
+        try {
+          const r = await this.vectorRemovalService.drain(
+            { all: true },
+            { backoff: true, deadlineAt: Date.now() + 10_000, trigger: 'auto' },
+          );
+          if (r.pending > 0) await this.vectorRemovalService.emitPending(undefined, 'auto');
+        } catch {
+          emitDiagnostic(this.options, {
+            code: 'background_job_failed', operation: 'externalDeletion', trigger: 'auto', entityId: '', // store-wide drain
+            detail: { reason: 'unhandled_rejection' },
+          });
+        }
+      })();
+      return { drain };
+    })();
+    const joined: Promise<void> = prelude.then((r) => r.drain ?? undefined, () => undefined);
+    this.setupRemovalDrain = joined;
+    void joined.then(() => { if (this.setupRemovalDrain === joined) this.setupRemovalDrain = null; });
+    await prelude; // marker or ledger errors surface from setup()
+  }
+
+  /**
+   * Delivers owed vector-index removals now (spec §5.9). No backoff. With an
+   * entity id only that entity's rows; otherwise all. `deadlineMs` is a duration.
+   * `transient: true` means a ledger read or write could not run (for example,
+   * you held a transaction open on the connection); the rows stay pending.
+   */
+  async runExternalDeletions(
+    entityId?: string,
+    opts?: { deadlineMs?: number },
+  ): Promise<{ confirmed: number; pending: number; failedIds: string[]; timedOut: boolean; transient?: boolean }> {
+    if (entityId !== undefined) assertEntityId(entityId);
+    const ms = opts?.deadlineMs;
+    if (ms !== undefined && (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0)) {
+      throw new TypeError('deadlineMs must be a finite number >= 0');
+    }
+    // A store whose setup() never ran has no ledger: nothing is recorded as owed.
+    if (!(await this.vectorRemovalService.ledgerPresent())) {
+      return { confirmed: 0, pending: 0, failedIds: [], timedOut: false };
+    }
+    const r = await this.vectorRemovalService.drain(
+      entityId === undefined ? { all: true } : { entityId },
+      { trigger: 'call', ...(ms !== undefined ? { deadlineAt: Date.now() + ms } : {}) },
+    );
+    return {
+      confirmed: r.confirmed, pending: r.pending, failedIds: r.failedIds, timedOut: r.timedOut,
+      ...(r.transient ? { transient: true } : {}),
+    };
+  }
+
+  /** Removals still owed to the host's vector index (all entities, or one). */
+  async getPendingExternalDeletions(
+    entityId?: string,
+  ): Promise<{ count: number; oldestEnqueuedAt: number | null; maxAttempts: number }> {
+    if (entityId !== undefined) assertEntityId(entityId);
+    if (!(await this.vectorRemovalService.ledgerPresent())) return { count: 0, oldestEnqueuedAt: null, maxAttempts: 0 };
+    return this.vectorRemovalRepo.pendingStats(entityId);
   }
 
   async hasChanged(
@@ -656,8 +788,9 @@ export class WikiMemory {
     return this.writeService.write(entityId, event);
   }
 
-  /** Await auto-mode background librarian/heal jobs started by write(). No-op in 'deferred' mode. */
+  /** Await auto-mode background librarian/heal jobs started by write(), and the removal drain `setup()` started under `drainExternalDeletionsOnSetup`. */
   async drain(): Promise<void> {
+    await this.setupRemovalDrain;
     return this.writeService.drain();
   }
 
@@ -671,9 +804,31 @@ export class WikiMemory {
     return this.maintenanceScheduler.getPending(entityIds);
   }
 
-  /** Run pending librarian/heal/reembed work under an optional token budget and deadline (spec §6.2). Nothing runs after it resolves. */
+  /** Run pending removals, librarian, heal and reembed work under an optional token budget and deadline (spec §6.2). Awaits the setup removal drain first, when `drainExternalDeletionsOnSetup` started one. */
   async runPendingMaintenance(options?: RunPendingMaintenanceOptions): Promise<RunPendingMaintenanceResult> {
-    return this.maintenanceScheduler.run(options);
+    let opts = options;
+    const ms = options?.deadlineMs;
+    // Reject a bad deadline before waiting: unchecked, it would skip the bounded
+    // wait below and block on the whole setup drain before the scheduler throws.
+    if (ms !== undefined && (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0)) {
+      throw new TypeError('deadlineMs must be a finite number >= 0');
+    }
+    const setupDrain = this.setupRemovalDrain;
+    if (setupDrain) {
+      if (ms !== undefined) {
+        // Bound the wait by deadlineMs and hand the scheduler only what is left.
+        const started = Date.now();
+        let handle: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+          setupDrain,
+          new Promise<void>((resolve) => { handle = setTimeout(resolve, ms); }),
+        ]).finally(() => { if (handle) clearTimeout(handle); });
+        opts = { ...options, deadlineMs: Math.max(0, ms - (Date.now() - started)) };
+      } else {
+        await setupDrain;
+      }
+    }
+    return this.maintenanceScheduler.run(opts);
   }
 
   /**
@@ -774,6 +929,11 @@ export class WikiMemory {
    * waits at least 5 s, doubling per consecutive failure up to 5 min (longer
    * when an attempt is itself slow), before retrying again.
    *
+   * It also calls the host's removal hook (`onEmbeddingPersisted(…, null)`) for
+   * the stashed ids that `upsertGraph` superseded, and can take up to
+   * `deletionHookTimeoutMs` per id when the host's index is slow. It never
+   * drains an entity's wider removal backlog.
+   *
    * Call only after the host's transaction commits: called inside it, the
    * rebuild may index rows that later roll back, or miss them and clear the
    * stale flag anyway. Serialized with core's internal index syncs and takes
@@ -789,6 +949,24 @@ export class WikiMemory {
    * @throws {TypeError} when `entityId` is given but is not a non-empty string.
    */
   async syncSearchIndex(entityId?: string): Promise<void> {
+    if (entityId !== undefined) assertEntityId(entityId);
+    // Capture the removal ids before the sync; delivery is non-throwing and
+    // leaves anything unconfirmed owed on the ledger.
+    const removals = this.takeRemovalIds(entityId);
+    try {
+      await this.syncSearchIndexCore(entityId);
+    } catch (err) {
+      // Put the ids back so the next call delivers them (the cap still applies;
+      // overflow stays owed on the ledger).
+      for (const [e, ids] of removals) this.stashRemovalIds(e, ids);
+      throw err;
+    }
+    for (const [e, ids] of removals) {
+      await this.vectorRemovalService.deliverRemovals(e, ids, 'upsertGraph', 'call');
+    }
+  }
+
+  private async syncSearchIndexCore(entityId?: string): Promise<void> {
     if (entityId === undefined) {
       // A long-lived host that never re-opens still recovers from a failed init (spec #280 Change 4).
       // After a failed re-init, back off before the next: each attempt costs
@@ -864,6 +1042,14 @@ export class WikiMemory {
    * hard-deletes the soft-deleted rows once they are older than
    * `retainSoftDeletedFor` (7 days by default; pass 0 to remove them now).
    * `dryRun` previews the counts.
+   *
+   * With a removal hook (`vectorRanker.onEmbeddingPersisted`), the deleted
+   * facts are recorded as owed in the same transaction and then delivered to
+   * the hook before this resolves.
+   *
+   * @throws {WikiExternalDeletionError} when the hook didn't confirm every
+   *   removal. The local delete stays committed and the rest stay owed; retry,
+   *   or call `runExternalDeletions()`.
    */
   async forget(
     entityId: string,
@@ -942,12 +1128,15 @@ export class WikiMemory {
    * semantics identical to `ingestDocument`, minus the LLM extraction step.
    *
    * MUST be called from inside an open `db.withTransactionAsync` callback —
-   * the third argument is the caller's `tx`. The method does not open a
+   * the third argument is the caller's `tx`, and that transaction must be
+   * opened through the adapter given to `createWiki` (the removal ledger is
+   * filled by triggers inside it, and a rollback discards the rows). The method does not open a
    * nested transaction, does not acquire any lock, and does not perform
    * post-commit work (search sync, embedding, cache eviction). After the
    * transaction commits, call `syncSearchIndex(entityId)` — or
    * `syncSearchIndex()` after writing several entities in one transaction —
-   * to make the new nodes keyword-searchable: both forms drain this call's node ids
+   * to make the new nodes keyword-searchable and to deliver, through the
+   * host's removal hook, the vectors of any facts the call superseded: both forms drain this call's node ids
    * first, to completion, so the nodes are searchable under any backlog (up to
    * `WikiMemory.UPSERT_ID_STASH_CAP` pending ids; beyond that they converge with
    * the backlog). Embeddings still come from the maintenance
@@ -1025,11 +1214,12 @@ export class WikiMemory {
       { diag: { buffer: diagBuffer, operation: 'upsertGraph' } },
     );
     // Core never sees this commit. Under a ledger strategy the triggers already
-    // recorded the rows: stash the node ids, and the facts this call
-    // superseded (as ingestDocument threads them), so the host's post-commit
-    // syncSearchIndex() drains them first, to completion, under any backlog.
+    // recorded the rows: stash the node ids and superseded ids for the search
+    // drain. The superseded ids also go in the removal stash (any strategy), so
+    // the host's post-commit syncSearchIndex() delivers their removals.
     // MiniSearch has no ledger: markStale makes that sync rebuild the entity.
     this.stashUpsertIds(entityId, [...supersededFactIds, ...params.nodes.map((n) => n.id)]);
+    this.stashRemovalIds(entityId, supersededFactIds);
     this.searchService.markStale(entityId);
     diagBuffer.flush(this.options);
     return result;

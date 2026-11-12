@@ -784,11 +784,11 @@ export interface VectorRanker {
    * Called after a fact's embedding is successfully persisted to embedding_blob (or cleared).
    * Hosts use this to keep sqlite-vec / external indexes consistent with SQLite as source of truth.
    *
-   * On forget and prune, core awaits this hook with `vector: null` after the delete commits, and
-   * a failure or timeout rejects the call. Cleanup is not yet durable: the loop stops at the
-   * first failing id, a retry re-sends ids already removed (make deletes idempotent), and a crash
-   * after commit loses the pending calls. Heal, re-ingest and replace-mode import only report
-   * failures (`hook_failed`). See the "Deleting data" guide.
+   * When a fact is deleted, core records it and calls this hook with `vector: null` until it
+   * resolves once for that id, across retries, restarts and crashes. Delivery is at least once:
+   * make removal idempotent (a missing id must succeed) and do not resolve without removing.
+   * One failing id does not block the others. `forget()` throws `WikiExternalDeletionError` for
+   * ids not confirmed; `runPrune()` keeps unconfirmed rows. See the "Deleting data" guide.
    *
    * Treat `vector` as readonly — core provides a defensive copy, but adapters MUST NOT mutate.
    *
@@ -835,11 +835,13 @@ export type WikiDiagnosticCode =
   | 'read_budget'
   | 'event_retention_held'
   | 'event_created_at_clamped'
-  | 'event_created_at_restamped';
+  | 'event_created_at_restamped'
+  | 'external_deletion_pending'
+  | 'external_deletion_discarded';
 
 /** The service run that emitted the diagnostic. */
 export type WikiDiagnosticOperation =
-  | 'ingest' | 'upsertGraph' | 'librarian' | 'heal' | 'ontologyBackfill' | 'reembed' | 'importDump' | 'write' | 'supersede' | 'remember' | 'read' | 'prune';
+  | 'ingest' | 'upsertGraph' | 'librarian' | 'heal' | 'ontologyBackfill' | 'reembed' | 'importDump' | 'write' | 'supersede' | 'remember' | 'read' | 'prune' | 'externalDeletion';
 
 /** `'auto'` when a write threshold started the run (auto-librarian / auto-heal); `'call'` when the host did. */
 export type WikiDiagnosticTrigger = 'call' | 'auto';
@@ -880,6 +882,10 @@ export interface WikiDiagnosticDetail {
   packed?: number;
   /** read_budget only. */
   tokensUsed?: number;
+  /** external_deletion_pending only: epoch milliseconds (second resolution) of the oldest pending row. */
+  oldestEnqueuedAt?: number;
+  /** external_deletion_pending only: highest attempt count among pending rows. */
+  maxAttempts?: number;
 }
 
 export interface WikiDiagnostic {
@@ -887,6 +893,7 @@ export interface WikiDiagnostic {
   severity: WikiDiagnosticSeverity;
   operation: WikiDiagnosticOperation;
   trigger: WikiDiagnosticTrigger;
+  /** Entity the diagnostic concerns; `''` means store-wide (e.g. the setup removal drain's `background_job_failed`). */
   entityId: string;
   /** Epoch ms, sampled at emission. */
   at: number;
@@ -964,9 +971,27 @@ export interface WikiOptions {
    * Escape hatch: skip onEmbeddingPersisted on deletion paths entirely.
    * Use ONLY when the ANN backend is permanently decommissioned. Vectors
    * orphaned in the (unreachable) external index are accepted as a tradeoff.
-   * NOT GDPR-safe for live indexes. Default false.
+   * Means the index is decommissioned: no removal call is made on any path
+   * (forget, prune, heal, ingest, import), and owed removals are discarded
+   * (`external_deletion_discarded`). NOT GDPR-safe for live indexes. Default false.
    */
   forceDeleteIgnoreRankerHook?: boolean;
+
+  /**
+   * Opt in to a background drain of owed removals after `setup()`: when a
+   * removal hook is configured and removals are owed, `setup()` starts one
+   * drain (not awaited; `drain()` joins it, 10 s deadline, backoff).
+   *
+   * Default false. The drain opens short transactions on the connection you
+   * gave `createWiki`; a transaction you open on that connection yourself (for
+   * example `db.withTransactionAsync(tx => wiki.upsertGraph(…, tx))`) throws
+   * "cannot start a transaction within a transaction" while one of them is
+   * open. Turn it on only if you never open your own transactions on it.
+   * When off, `setup()` emits `external_deletion_pending` per entity with
+   * owed removals. `runPendingMaintenance()` and `runExternalDeletions()`
+   * deliver them; `forget()` and `runPrune()` deliver the ids they touch.
+   */
+  drainExternalDeletionsOnSetup?: boolean;
 
   /**
    * Receives typed, content-free diagnostics for events core previously
@@ -1065,6 +1090,32 @@ export class WikiBusyError extends Error {
     this.name = 'WikiBusyError';
     this.operation = operation;
     this.entityId = entityId;
+  }
+}
+
+/**
+ * Thrown by forget() when the external vector index has not confirmed the
+ * removal of every selected id. The local delete stays committed and the
+ * unconfirmed ids stay owed in the ledger.
+ */
+export class WikiExternalDeletionError extends Error {
+  readonly code = 'WIKI_EXTERNAL_DELETION' as const;
+  readonly entityId: string;
+  /** At most 100 ids; see unconfirmedCount for the full count. */
+  readonly unconfirmedIds: string[];
+  readonly unconfirmedCount: number;
+  readonly timedOut: boolean;
+
+  constructor(
+    message: string,
+    params: { entityId: string; unconfirmedIds: string[]; unconfirmedCount: number; timedOut: boolean; cause?: Error },
+  ) {
+    super(message, params.cause ? { cause: params.cause } : undefined);
+    this.name = 'WikiExternalDeletionError';
+    this.entityId = params.entityId;
+    this.unconfirmedIds = params.unconfirmedIds;
+    this.unconfirmedCount = params.unconfirmedCount;
+    this.timedOut = params.timedOut;
   }
 }
 
@@ -1219,6 +1270,13 @@ export interface ForgetResult {
   metadataReset?: boolean;
 }
 
+/**
+ * Thrown by `runPrune()` after it has finished its other work, when the host's
+ * removal hook did not confirm some prunable facts. Those rows are kept, every
+ * other prunable row is hard-deleted. The deleted and kept rows are not
+ * contiguous: `deleted` counts rows hard-deleted, `remaining` counts rows kept,
+ * and `failedAt` names the first unconfirmed id in drain order.
+ */
 export class PrunePartialFailureError extends Error {
   readonly deleted: number;
   readonly failedAt: string;
@@ -1473,7 +1531,10 @@ export interface WikiInstructions {
   ontologyBackfill: string;
 }
 
-export type MaintenanceJob = 'librarian' | 'heal' | 'reembed';
+export type MaintenanceJob = 'librarian' | 'heal' | 'reembed' | 'externalDeletions';
+
+/** The jobs that hold a per-entity lock (everything but `externalDeletions`). */
+export type LockedMaintenanceJob = Exclude<MaintenanceJob, 'externalDeletions'>;
 
 export interface PendingMaintenance {
   entityId: string;
@@ -1489,6 +1550,8 @@ export interface PendingMaintenance {
    * Always false without `embed`.
    */
   reembedPending: boolean;
+  /** Removals still owed to the host's vector index for this entity (absent when none). */
+  pendingExternalDeletions?: number;
 }
 
 export interface RunPendingMaintenanceOptions {
@@ -1498,7 +1561,7 @@ export interface RunPendingMaintenanceOptions {
   tokenBudget?: number;
   /** Wall-clock milliseconds from the call. Checked between units; a unit in flight is never interrupted. */
   deadlineMs?: number;
-  /** Default all three. */
+  /** Default all four. `externalDeletions` runs first and is not metered by `tokenBudget`. */
   jobs?: MaintenanceJob[];
 }
 
@@ -1515,13 +1578,13 @@ export interface EntityMaintenanceReport {
   healPasses: number;
   reembedded: boolean;
   /** Set when a lock was held elsewhere; nothing ran for that job. */
-  busy?: MaintenanceJob[];
+  busy?: LockedMaintenanceJob[];
   /**
    * Set when keyword search is unavailable and the job could not run for this
    * entity (spec #280). Its watermark/checkpoint is kept; retry after
    * `syncSearchIndex()` restores keyword search.
    */
-  searchUnavailable?: MaintenanceJob[];
+  searchUnavailable?: LockedMaintenanceJob[];
 }
 
 export interface RunPendingMaintenanceResult {
@@ -1532,6 +1595,8 @@ export interface RunPendingMaintenanceResult {
   /** null when no tokenBudget was given. */
   remaining: number | null;
   stoppedReason: MaintenanceStopReason;
+  /** Vector-index removals this run confirmed, and those still owed (all entities in scope). */
+  externalDeletions: { confirmed: number; pending: number };
 }
 
 export type MigrationPolicy = 'allow' | 'refuse' | 'auto';

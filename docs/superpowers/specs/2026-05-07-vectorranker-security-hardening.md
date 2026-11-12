@@ -2,6 +2,8 @@
 
 **Date:** 2026-05-07  
 **Status:** Implemented
+
+**Status note (2026-11-11):** `specs/durable-vector-removal/spec.md` supersedes two behaviors described here. Deletion no longer stops at the first failing hook call: the engine records each owed removal and keeps trying the rest. And `forceDeleteIgnoreRankerHook` now means the external index is decommissioned: no removal calls on any path (heal, ingest and import included), and owed removals are discarded.
 **Builds on:** [`2026-05-07-pluggable-vector-retrieval.md`](2026-05-07-pluggable-vector-retrieval.md)  
 **Target version:** v3.2.0 (minor — new public option)
 

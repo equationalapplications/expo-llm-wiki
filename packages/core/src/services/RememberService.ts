@@ -45,6 +45,8 @@ export class RememberService {
     });
 
     await this.searchService.syncEntries(entityId, [fact.id]);
+    // A delete that lands during the vector call is settled inside
+    // storeFactVector (spec durable-vector-removal §5.7, G10).
     await this.embeddingService.embedFact(
       { id: fact.id, entity_id: entityId, title: fact.title, body: fact.body, tags: fact.tags },
       { operation: 'remember', trigger: 'call' },
@@ -52,4 +54,5 @@ export class RememberService {
     this.searchService.evictCache(entityId);
     return stored!;
   }
+
 }

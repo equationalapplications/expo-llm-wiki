@@ -19,8 +19,16 @@ an assessment within 5 business days. The full policy is in [SECURITY.md](https:
   back to keyword search until `runReembed()` completes. Vectors are copied defensively before
   they reach adapters.
 - **Credential scrubbing.** Ranker errors are sanitized before they appear in `error.cause` or callbacks.
-- **Deletes are sent to external indexes.** `forget()` and `runPrune()` call the deletion hook and
-  reject if it fails. The cleanup isn't durable yet, so read its current limits in [Deleting data](/expo-llm-wiki/guides/deleting-data/#right-to-be-forgotten-gdpr).
+- **Deletes are sent to external indexes, and kept owed until confirmed.** The engine records each
+  deleted fact and keeps it owed until your deletion hook succeeds once, across retries and
+  restarts. A restart alone doesn't send them: `runPendingMaintenance()`, `runExternalDeletions()`,
+  `forget()` and `runPrune()` (for the ids they touch) do, and so does `setup()` when you turn on
+  `drainExternalDeletionsOnSetup`. Your hook must tolerate repeats, and the app has to run again to
+  finish. Two cases keep no record, because the engine can't write one: a store whose `setup()`
+  never ran (each removal is one hook call; for a failed call, `forget()` and `runPrune()` throw and
+  other paths emit `hook_failed`, so the retry is yours), and an embed that lands after its fact was deleted while the database refuses writes
+  and your hook also fails (only a `hook_failed` diagnostic remains). See
+  [Deleting data](/expo-llm-wiki/guides/deleting-data/#right-to-be-forgotten-gdpr) for what stays with you.
 - **Content-free diagnostics.** `onDiagnostic` never carries fact text or model output.
 
 ## Your responsibilities as the host

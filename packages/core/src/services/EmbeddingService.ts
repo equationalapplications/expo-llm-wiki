@@ -4,6 +4,8 @@ import type { EntryRepository } from '../repositories/EntryRepository';
 import type { MetadataRepository } from '../repositories/MetadataRepository';
 import { clip } from '../utils/pure';
 import { DEFAULT_MAX_EMBED_CHARS, EMBED_CHARS_CEILING } from '../utils/embedDefaults';
+import type { VectorRemovalService } from './VectorRemovalService';
+import type { VectorRemovalRepository } from '../repositories/VectorRemovalRepository';
 import { emitDiagnostic } from '../utils/diagnostics';
 
 export type { EmbeddingMarkerKind };
@@ -11,7 +13,8 @@ export type { EmbeddingMarkerKind };
 export type EmbedFailureKind =
   | EmbeddingMarkerKind
   | 'no_provider'
-  | 'storage_error';
+  | 'storage_error'
+  | 'fact_deleted';
 
 export type EmbedFactResult =
   | { ok: true; dimension: number }
@@ -186,8 +189,10 @@ export class EmbeddingService {
 
   /**
    * Storage half: persist the computed vector to the entry row, then fire the
-   * `onEmbeddingPersisted` hook. Failure kinds: `storage_error` only — embed
-   * failures do not originate here, so they cannot be marked as such (spec §3.2, D3).
+   * `onEmbeddingPersisted` hook. Failure kinds: `storage_error` (a DB error) and
+   * `fact_deleted` (the row was soft-deleted or gone: no blob, no vector call, no
+   * marker). Embed failures do not originate here, so they cannot be marked as
+   * such (spec §3.2, D3).
    */
   async storeFactVector(fact: {
     id: string;
@@ -195,15 +200,19 @@ export class EmbeddingService {
   }, float32Vector: Float32Array, ctx?: EmbedDiagnosticContext): Promise<EmbedFactResult> {
     // Storage is a separate failure domain: a DB error here is NOT an
     // embedding failure and must not be marked as one (spec §3.2, D3).
+    let stored = true;
     try {
       await this.storeEmbeddingDimension(float32Vector.length);
       const blob = new Uint8Array(float32Vector.buffer);
-      await this.entryRepo.updateEmbeddingBlob(fact.id, blob);
+      stored = (await this.entryRepo.updateEmbeddingBlob(fact.id, blob)).changes > 0;
     } catch (err) {
       console.warn(`[WikiMemory] embedFact: persisting embedding failed for ${fact.id}:`, err);
       this.reportEmbed(ctx, fact, 'embedding_failed', 'persist_failed');
       return { ok: false, kind: 'storage_error' };
     }
+
+    // The fact was deleted while its embed was in flight: no blob, no vector call (G10).
+    if (!stored) return { ok: false, kind: 'fact_deleted' };
 
     try {
       await this.notifyEmbeddingPersisted(fact.entity_id, fact.id, float32Vector);
@@ -211,7 +220,59 @@ export class EmbeddingService {
       console.warn(`[WikiMemory] onEmbeddingPersisted hook failed for ${fact.id}:`, hookErr);
       this.reportEmbed(ctx, fact, 'hook_failed', 'on_embedding_persisted');
     }
+    // A vector call was made (resolved or not): if the fact was deleted while
+    // it ran, take the vector back. Every embed path passes here; import's
+    // preserved-blob loop calls settleAfterVectorCall itself (spec §5.7, G10).
+    if (this.hasVectorHook()) {
+      await this.settleAfterVectorCall(fact.entity_id, fact.id, ctx?.operation ?? 'externalDeletion', ctx?.trigger ?? 'call');
+    }
     return { ok: true, dimension: float32Vector.length };
+  }
+
+  hasVectorHook(): boolean {
+    return !!this.options.vectorRanker?.onEmbeddingPersisted;
+  }
+
+  /**
+   * Run after a vector call (resolved or not) by every path that sends one.
+   * Never throws: a failure here leaves the removal owed or unrecorded, as before.
+   */
+  async settleAfterVectorCall(
+    entityId: string,
+    factId: string,
+    operation: WikiDiagnosticOperation,
+    trigger: WikiDiagnosticTrigger,
+  ): Promise<void> {
+    const vr = this.vectorRemoval;
+    if (!vr) return;
+    const outcome = await this.recordAfterVectorCall(entityId, factId);
+    if (outcome === 'enqueued') {
+      try {
+        await vr.service.deliverRemovals(entityId, [factId], operation, trigger, []);
+      } catch (err) {
+        console.warn(`[WikiMemory] post-embed removal delivery failed for ${factId}:`, err);
+      }
+      return;
+    }
+    // 'none'/'live': nothing to record. 'owed': a pending row already holds
+    // the removal. 'unknown': liveness couldn't be read and the guarded write
+    // failed, so a null could remove a live fact's vector; send nothing.
+    if (outcome !== 'write_failed') return;
+    // The removal finished before this vector landed (its row is confirmed or
+    // missing) and can't be recorded again (for example the host holds a
+    // transaction on the connection). Send null now so the last call the host
+    // sees for a deleted fact is still a removal.
+    try {
+      await this.callRemovalHook(entityId, factId, this.validateDeletionTimeout());
+    } catch (hookErr) {
+      console.warn(`[WikiMemory] onEmbeddingPersisted(vector=null) hook failed for ${factId}:`, hookErr);
+      this.reportHookFailed({ operation, trigger }, entityId, factId);
+      // Neither the record nor the call landed. Try the record once more (the
+      // hook wait gave the host time to finish its transaction): an owed row
+      // is retried by the next drain. If this fails too, nothing durable is
+      // left to write to, as in the never-set-up fallbacks (§5.5.5).
+      await this.recordAfterVectorCall(entityId, factId);
+    }
   }
 
   private reportEmbed(
@@ -257,6 +318,66 @@ export class EmbeddingService {
     return result.ok;
   }
 
+  private vectorRemoval?: { service: VectorRemovalService; repo: VectorRemovalRepository };
+
+  /** Wired by WikiMemory (VectorRemovalService itself depends on this class). */
+  attachVectorRemoval(service: VectorRemovalService, repo: VectorRemovalRepository): void {
+    this.vectorRemoval = { service, repo };
+  }
+
+  /**
+   * After an embed (and its vector call) settles: owe a removal if the fact is
+   * no longer live, so a vector the host just received is taken back (§5.7, G10).
+   * Never throws. `'enqueued'`: a ledger row was written. `'none'`: no
+   * removal hook (or the hook gate is off). `'live'`: the fact is live. A row already pending is
+   * replaced (attempts reset, spec §5.2), so it counts as `'enqueued'` and
+   * is sent now: the last call the host sees after this vector is `null`.
+   * `'owed'`: the write failed but a pending row already holds the removal.
+   * `'write_failed'`: the fact is known not live, the write failed, and its
+   * row is confirmed or missing; or the store has no ledger table and the
+   * fact is known not live.
+   * `'unknown'`: the liveness read and the guarded write both failed.
+   */
+  private async recordAfterVectorCall(
+    entityId: string,
+    factId: string,
+  ): Promise<'none' | 'live' | 'enqueued' | 'owed' | 'write_failed' | 'unknown'> {
+    const vr = this.vectorRemoval;
+    if (!vr || vr.service.gate() !== 'hook') return 'none';
+    let live: boolean | undefined;
+    try {
+      if (!(await vr.service.ledgerPresent())) {
+        // No ledger (setup() never ran on this store), so nothing durable can
+        // hold the removal. A fact known not live gets a direct null, like the
+        // never-set-up fallbacks of forget and deliverRemovals (§5.5.5).
+        return (await vr.repo.isLive(factId)) ? 'live' : 'write_failed';
+      }
+      // A read first: the common case (fact live) opens no write transaction.
+      live = await vr.repo.isLive(factId);
+    } catch (err) {
+      // The guarded write below still decides liveness atomically.
+      console.warn(`[WikiMemory] post-embed liveness read failed for ${factId}:`, err);
+    }
+    if (live) return 'live';
+    try {
+      // No row written means the guarded NOT EXISTS found the fact live.
+      return (await vr.repo.enqueueIfNotLive(entityId, factId, Date.now())) ? 'enqueued' : 'live';
+    } catch (err) {
+      console.warn(`[WikiMemory] post-embed removal could not be recorded for ${factId}:`, err);
+      if (live !== false) return 'unknown';
+      // The read sees a host transaction's uncommitted writes. A delete inside
+      // one wrote a pending row in the same transaction: if it commits, a
+      // drain sends null after it; if it rolls back, the fact is live again.
+      // Either way a direct null now would be wrong or redundant (spec rev 6).
+      try {
+        if ((await vr.repo.statusFor([factId])).get(factId) === 'pending') return 'owed';
+      } catch {
+        // Status unknown: fall back to the direct null.
+      }
+      return 'write_failed';
+    }
+  }
+
   async notifyEmbeddingPersisted(entityId: string, factId: string, vector: Float32Array | null): Promise<void> {
     if (!this.options.vectorRanker?.onEmbeddingPersisted) return;
     const vectorCopy = vector ? vector.slice() : null;
@@ -265,6 +386,73 @@ export class EmbeddingService {
       factId,
       vector: vectorCopy,
     });
+  }
+
+  validateDeletionTimeout(): number {
+    const rawTimeout = this.options.deletionHookTimeoutMs ?? 30_000;
+    if (typeof rawTimeout !== 'number' || !Number.isFinite(rawTimeout) || rawTimeout <= 0) {
+      throw new Error('Invalid deletionHookTimeoutMs: must be a positive finite number');
+    }
+    return rawTimeout;
+  }
+
+  /** Send a removal (`vector: null`) to the hook. No gate check; the caller owns the gate. */
+  async callRemovalHook(entityId: string, factId: string, timeoutMs: number): Promise<void> {
+    if (!this.options.vectorRanker?.onEmbeddingPersisted) {
+      throw new Error('callRemovalHook requires vectorRanker.onEmbeddingPersisted');
+    }
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        const timeoutError = new Error(`onEmbeddingPersisted timed out after ${timeoutMs}ms`);
+        (timeoutError as any)[HOOK_TIMEOUT_MARKER] = true;
+        reject(timeoutError);
+      }, timeoutMs);
+    });
+    const hookPromise = Promise.resolve().then(() =>
+      this.options.vectorRanker!.onEmbeddingPersisted!({ entityId, factId, vector: null }),
+    );
+    try {
+      await Promise.race([hookPromise, timeoutPromise]);
+    } catch (err) {
+      hookPromise.catch(() => {});
+      throw err;
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+    }
+  }
+
+  /**
+   * One removal call per id for a store with no ledger table (setup() never
+   * ran), so nothing records what is owed (spec §5.5.5). Stops at the first
+   * timeout: a dead index costs one timeout, as in a drain (spec rev 5).
+   * `failed` lists the ids not confirmed, in order; after a timeout it ends
+   * with the timed-out id and every id after it. Throws only for an invalid
+   * `deletionHookTimeoutMs`.
+   */
+  async callRemovalHookEach(
+    entityId: string,
+    ids: readonly string[],
+    opts: { warn?: boolean } = {},
+  ): Promise<{ failed: string[]; timedOut: boolean; timedOutId?: string; cause?: unknown }> {
+    const timeoutMs = this.validateDeletionTimeout();
+    const failed: string[] = [];
+    let firstRejection: unknown;
+    for (let i = 0; i < ids.length; i++) {
+      const factId = ids[i];
+      try {
+        await this.callRemovalHook(entityId, factId, timeoutMs);
+      } catch (hookErr) {
+        if (opts.warn) console.warn(`[WikiMemory] onEmbeddingPersisted(vector=null) hook failed for ${factId}:`, hookErr);
+        if ((hookErr as any)?.[HOOK_TIMEOUT_MARKER] === true) {
+          failed.push(...ids.slice(i));
+          return { failed, timedOut: true, timedOutId: factId, cause: hookErr };
+        }
+        failed.push(factId);
+        firstRejection ??= hookErr;
+      }
+    }
+    return { failed, timedOut: false, cause: firstRejection };
   }
 
   async notifyEmbeddingPersistedOrThrow(
@@ -276,11 +464,7 @@ export class EmbeddingService {
     if (this.options.forceDeleteIgnoreRankerHook === true) return;
 
     const vectorCopy = vector ? vector.slice() : null;
-    const rawTimeout = this.options.deletionHookTimeoutMs ?? 30_000;
-    if (typeof rawTimeout !== 'number' || !Number.isFinite(rawTimeout) || rawTimeout <= 0) {
-      throw new Error('Invalid deletionHookTimeoutMs: must be a positive finite number');
-    }
-    const timeoutMs = rawTimeout;
+    const timeoutMs = this.validateDeletionTimeout();
 
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {

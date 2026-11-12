@@ -81,12 +81,13 @@ createWiki(db, {
   lag. Reads may miss new facts until the index catches up.
 - If `onEmbeddingPersisted` **throws** while a fact is written or imported, the engine reports
   `hook_failed` with the fact id and carries on, so your index can miss that fact. Reconcile from
-  the diagnostic.
+  the diagnostic. (Removals are different: a failed removal stays owed and is retried.)
 
 :::caution[Deletes must reach your index]
-`forget()` and `runPrune()` **reject** if `onEmbeddingPersisted` fails or times out on deletion.
-This stops "forgotten" facts from staying retrievable in an external index. See
-[Deleting data](/expo-llm-wiki/guides/deleting-data/).
+When a fact is deleted, the engine records it and keeps calling `onEmbeddingPersisted` with
+`vector: null` until your hook resolves once for that id. Make that call idempotent, and don't
+resolve without removing. `forget()` throws `WikiExternalDeletionError` if an id isn't confirmed;
+`runPrune()` keeps unconfirmed rows. See [Deleting data](/expo-llm-wiki/guides/deleting-data/).
 :::
 
 Hybrid blending still applies on top of ranker scores when `hybridWeight` is set.

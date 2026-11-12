@@ -10,7 +10,9 @@ import { generateId } from '../utils/ids';
 import { resolveLibrarianStrategy, resolveMaintenanceMode } from '../utils/engineDefaults';
 import { parseEmbedding } from '../utils/embedding';
 import { PrunePartialFailureError } from '../types';
-import { HOOK_TIMEOUT_MARKER } from '../types';
+import { WikiExternalDeletionError } from '../types';
+import { removalGate, type VectorRemovalService } from './VectorRemovalService';
+import type { VectorRemovalRepository } from '../repositories/VectorRemovalRepository';
 import type { WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedTask, ExtractedFactWithOntology, WikiFact, WikiTask, OntologyUpdates, OntologyBackfillResult, HealResult, DegradedRecord, ReembedResult, ClassifierQuestion, OntologyManifest, WikiDiagnosticTrigger } from '../types';
 import type { SQLiteAdapter, ForgetParams, ForgetResult } from '../types';
 import { EdgeRepository } from '../repositories/EdgeRepository';
@@ -234,6 +236,8 @@ export class MaintenanceService {
     promptService?: PromptService,
     private ontologyService?: OntologyService,
     edgeRepo?: EdgeRepository,
+    private vectorRemoval?: VectorRemovalService,
+    private vectorRemovalRepo?: VectorRemovalRepository,
   ) {
     // Fallback for direct instantiation outside WikiMemory facade (e.g. isolated tests).
     this.promptService = promptService ?? new PromptService(this.options.config?.prompts, resolveGrounding(this.options.config?.grounding));
@@ -255,6 +259,11 @@ export class MaintenanceService {
       const pruneSupersededAfter = this.options.config?.pruneSupersededAfter ?? null;
       this._validatePruneDuration(pruneSupersededAfter, 'pruneSupersededAfter');
 
+      // Spec durable-vector-removal §5.6.7: a bad deletionHookTimeoutMs fails
+      // before any write.
+      const gate = removalGate(this.options);
+      if (gate === 'hook') this.embeddingService.validateDeletionTimeout();
+
       const now = Date.now();
       // The full-entity rebuild is deferred until the touched-id set is known:
       // prune always knows exactly which rows it removed, so the index update
@@ -264,6 +273,7 @@ export class MaintenanceService {
       let deletedEntries = 0;
       let deletedTasks = 0;
       let deletedEvents = 0;
+      let prunePartial: { failedAt: string; remaining: number; cause: Error } | null = null;
 
       // Spec §4.4 / §10.10: expired and superseded history is soft-deleted
       // here; the soft-delete retention below (on a later run) hard-deletes
@@ -276,6 +286,13 @@ export class MaintenanceService {
             await this.entryRepo.softDeleteByIds(expiredIds, entityId, tx);
           });
           syncedIds = [...expiredIds];
+          // The trigger enqueued them; send removal now, not 7 days later
+          // (spec durable-vector-removal §5.6.1). A failure leaves them
+          // pending (with hook_failed / external_deletion_pending, as on every
+          // other post-commit path), and the hard-delete step below keeps them.
+          if (this.vectorRemoval && await this.vectorRemoval.ledgerPresent()) {
+            await this.vectorRemoval.deliverRemovals(entityId, expiredIds, 'prune', 'call', []);
+          }
         }
       }
 
@@ -283,53 +300,106 @@ export class MaintenanceService {
         const cutoff = now - retainSoftDeletedFor * 86400000;
         const entriesToDelete = await this.entryRepo.getPrunableMetadata(entityId, cutoff);
 
-        const succeeded: Array<{ entity_id: string; id: string }> = [];
-        let failure: { factId: string; cause: unknown } | null = null;
+        const prunableIds = entriesToDelete.map((r) => r.id);
+        const vr = this.vectorRemoval;
+        const vrRepo = this.vectorRemovalRepo;
+        const ledgerOn = !!vr && !!vrRepo && await vr.ledgerPresent();
+        // Spec durable-vector-removal §5.6: rows are hard-deleted only when
+        // their removal is confirmed (hook) or the gate allows it.
+        let deletable: string[] = prunableIds;
+        let removeLedger = false;
+        let kept: string[] = [];
+        let timedOut = false;
+        let cause: unknown;
+        let firstFailed: string | undefined;
+        let failedOrder: string[] = [];
 
-        for (const row of entriesToDelete) {
-          try {
-            await this.embeddingService.notifyEmbeddingPersistedOrThrow(row.entity_id, row.id, null);
-            succeeded.push({ entity_id: row.entity_id, id: row.id });
-          } catch (err) {
-            failure = { factId: row.id, cause: err };
-            break;
+        if (ledgerOn && vr && vrRepo) {
+          if (gate === 'hook' && prunableIds.length > 0) {
+            await this.db.withTransactionAsync(async (tx) => {
+              await vrRepo.backstopEnqueue(entityId, prunableIds, now, tx);
+            });
           }
+          const result = prunableIds.length > 0
+            ? await vr.drain({ entityId, ids: prunableIds })
+            : { failedIds: [] as string[], timedOut: false, firstCause: undefined as unknown };
+          if (gate === 'hook') {
+            // The confirmed/pending split is read inside the delete
+            // transaction below (rev 4), so a removal re-owed by an embed
+            // that settles meanwhile keeps its fact.
+            timedOut = result.timedOut;
+            cause = result.firstCause;
+            failedOrder = result.failedIds;
+          } else if (gate === 'force') {
+            removeLedger = true;
+          } else {
+            removeLedger = !(await vr.externalIndexInUse());
+          }
+        } else if (gate === 'hook') {
+          // Store whose setup() never ran: no ledger table, so call the hook
+          // per row and keep the rows that fail (mirrors forget's fallback).
+          const r = await this.embeddingService.callRemovalHookEach(entityId, prunableIds);
+          const failedSet = new Set(r.failed);
+          kept = r.failed;
+          deletable = prunableIds.filter((id) => !failedSet.has(id));
+          timedOut = r.timedOut;
+          cause = r.cause;
+          firstFailed = kept[0];
         }
 
-        const succeededIds = succeeded.map(r => r.id);
         // ids whose documents leave the index. Every pruned row was already
         // soft-deleted (and thus already absent from the live read), so this is
         // drift repair, not the primary removal mechanism — syncEntries still
         // discards each id before re-reading it, so a stale document left
         // behind by a path that never passed ids to syncEntries is scrubbed
         // here (§2.2).
-        syncedIds = [...syncedIds, ...succeededIds];
-
+        const hookLedger = ledgerOn && !!vrRepo && gate === 'hook';
         await this.db.withTransactionAsync(async (tx) => {
-          if (succeededIds.length > 0) {
-            deletedEntries = await this.entryRepo.bulkDeletePruned(entityId, cutoff, succeededIds, tx);
+          if (hookLedger && vrRepo && prunableIds.length > 0) {
+            const status = await vrRepo.statusFor(prunableIds, tx);
+            deletable = prunableIds.filter((id) => status.get(id) !== 'pending');
+            kept = prunableIds.filter((id) => status.get(id) === 'pending');
+          }
+          if (deletable.length > 0) {
+            const deletedIds: string[] = [];
+            deletedEntries = await this.entryRepo.bulkDeletePruned(entityId, cutoff, deletable, tx, { keepUnconfirmedRemovals: hookLedger, deletedIds });
+            if (hookLedger) {
+              // A removal re-owed inside this transaction (host raw SQL on the
+              // shared connection) made the guard keep its fact: count it as
+              // kept. An id skipped because it was restored or already gone
+              // owes nothing, so it is neither deleted nor kept (spec rev 6).
+              const gone = new Set(deletedIds);
+              const skipped = deletable.filter((id) => !gone.has(id));
+              if (skipped.length > 0) {
+                const after = await vrRepo!.statusFor(skipped, tx);
+                kept = [...kept, ...skipped.filter((id) => after.get(id) === 'pending')];
+              }
+              deletable = deletedIds;
+            }
+            if (vrRepo && ledgerOn) {
+              // Hook: only confirmed rows of facts now gone. Force, or a store
+              // that never had an index: every row. Hookless with the marker:
+              // confirmed rows only; pending ones wait for a hook process.
+              if (removeLedger) await vrRepo.deleteForFacts(entityId, deletable, tx, 'all');
+              else await vrRepo.deleteForFacts(entityId, deletable, tx, 'confirmedGone');
+            }
           }
           deletedTasks = await this.taskRepo.bulkDeletePruned(entityId, cutoff, tx);
         });
+        if (hookLedger) {
+          const keptSet = new Set(kept);
+          firstFailed = failedOrder.find((id) => keptSet.has(id)) ?? kept[0];
+        }
+        syncedIds = [...syncedIds, ...deletable];
 
-        if (failure) {
-          await this.searchService.syncEntries(entityId, syncedIds);
-          const remaining = entriesToDelete.length - succeeded.length - 1;
-          const isTimeout = (failure.cause as any)?.[HOOK_TIMEOUT_MARKER] === true;
-
-          if (isTimeout) {
-            throw new PrunePartialFailureError(
-              succeeded.length, failure.factId, remaining, new Error('Deletion hook timed out'), deletedTasks, 0
-            );
+        if (kept.length > 0) {
+          if (timedOut) {
+            prunePartial = { failedAt: firstFailed ?? kept[0], remaining: kept.length, cause: new Error('Deletion hook timed out') };
+          } else if (cause === undefined) {
+            prunePartial = { failedAt: firstFailed ?? kept[0], remaining: kept.length, cause: new Error('external removal not confirmed') };
+          } else {
+            prunePartial = { failedAt: firstFailed ?? kept[0], remaining: kept.length, cause: this._sanitizeRankerError(cause) };
           }
-
-          const errMsg = (failure.cause as Error)?.message ?? '';
-          const isValidationError = errMsg.startsWith('Invalid deletionHookTimeoutMs');
-          const sanitizedCause = isValidationError ? failure.cause as Error : this._sanitizeRankerError(failure.cause);
-
-          throw new PrunePartialFailureError(
-            succeeded.length, failure.factId, remaining, sanitizedCause, deletedTasks, 0
-          );
         }
       }
 
@@ -379,6 +449,11 @@ export class MaintenanceService {
       }
 
       await this.searchService.syncEntries(entityId, syncedIds);
+      if (prunePartial) {
+        throw new PrunePartialFailureError(
+          deletedEntries, prunePartial.failedAt, prunePartial.remaining, prunePartial.cause, deletedTasks, deletedEvents,
+        );
+      }
       return { entries: deletedEntries, tasks: deletedTasks, events: deletedEvents };
     } finally {
       this.jobManager.releaseLock('prune', entityId);
@@ -507,6 +582,7 @@ export class MaintenanceService {
 
           const result = await this.embeddingService.tryEmbedFact(row, { operation: 'reembed', trigger: 'call' });
           if (result.ok) embedded++;
+          else if (result.kind === 'fact_deleted') skipped++; // deleted mid-sweep: not a failure
           else failed++;
         }
 
@@ -548,6 +624,8 @@ export class MaintenanceService {
       let deletedTasks = 0;
       let deletedEvents = 0;
       const deletedEntryIds: string[] = [];
+      // A store whose setup() never ran has no ledger table (#316 recovery).
+      const ledgerOn = !!this.vectorRemoval && !!this.vectorRemovalRepo && await this.vectorRemoval.ledgerPresent();
 
       await this.db.withTransactionAsync(async (tx) => {
         if (params.clearAll) {
@@ -628,6 +706,11 @@ export class MaintenanceService {
           if (taskResult) deletedTasks++;
           deletedEntries += refResult;
         }
+        // Backstop (spec durable-vector-removal §5.5): ids soft-deleted before
+        // the ledger existed get a row so a retry still sends them.
+        if (ledgerOn && this.vectorRemoval?.gate() === 'hook' && deletedEntryIds.length > 0) {
+          await this.vectorRemovalRepo?.backstopEnqueue(entityId, Array.from(new Set(deletedEntryIds)), now, tx);
+        }
       });
 
       // Every branch that soft-deletes entries also enumerates the ids into
@@ -637,19 +720,54 @@ export class MaintenanceService {
       // branch. So the index update is O(deleted), not O(entity) (spec §2.1).
       const uniqueDeletedIds = Array.from(new Set(deletedEntryIds));
       await this.searchService.syncEntries(entityId, uniqueDeletedIds);
-      for (const factId of uniqueDeletedIds) {
+      if (uniqueDeletedIds.length > 0) {
+        const firstId = uniqueDeletedIds[0];
+        const vr = this.vectorRemoval;
+        const vrRepo = this.vectorRemovalRepo;
+        let unconfirmed: string[] = [];
+        let timedOut = false;
+        let cause: unknown;
+        let timedOutId: string | undefined;
         try {
-          await this.embeddingService.notifyEmbeddingPersistedOrThrow(entityId, factId, null);
-        } catch (hookErr) {
-          const isTimeout = (hookErr as any)?.[HOOK_TIMEOUT_MARKER] === true;
-          if (isTimeout) {
-            throw new Error(`forget(${entityId}/${factId}) failed: ${(hookErr as Error).message}`);
+          if (vr && vrRepo && ledgerOn) {
+            const result = await vr.drain({ entityId, ids: uniqueDeletedIds });
+            if (vr.gate() === 'hook') {
+              const status = await vrRepo.statusFor(uniqueDeletedIds);
+              unconfirmed = uniqueDeletedIds.filter((id) => status.get(id) === 'pending');
+              timedOut = result.timedOut;
+              timedOutId = result.timedOutId;
+              cause = result.firstCause;
+            }
+          } else if (this.options.vectorRanker?.onEmbeddingPersisted && this.options.forceDeleteIgnoreRankerHook !== true) {
+            // Store whose setup() never ran (#316 recovery): no ledger table, so
+            // call the hook directly and record nothing (spec §5.5.5).
+            const r = await this.embeddingService.callRemovalHookEach(entityId, uniqueDeletedIds);
+            unconfirmed = r.failed;
+            timedOut = r.timedOut;
+            timedOutId = r.timedOutId;
+            cause = r.cause;
           }
+        } catch (hookErr) {
           const errMsg = (hookErr as Error)?.message ?? '';
           if (errMsg.startsWith('Invalid deletionHookTimeoutMs')) {
-            throw new Error(`forget(${entityId}/${factId}) failed: ${errMsg}`, { cause: hookErr });
+            throw new Error(`forget(${entityId}/${firstId}) failed: ${errMsg}`, { cause: hookErr });
           }
-          throw new Error(`forget(${entityId}/${factId}) failed: ANN cleanup hook rejected`, { cause: this._sanitizeRankerError(hookErr) });
+          throw hookErr;
+        }
+        if (unconfirmed.length > 0) {
+          const head = `forget(${entityId}/${(timedOut ? timedOutId : undefined) ?? unconfirmed[0]}) failed: `;
+          const message = timedOut
+            ? head + ((cause as Error)?.message ?? 'onEmbeddingPersisted timed out')
+            : cause === undefined
+              ? head + 'ANN cleanup not confirmed'
+              : head + 'ANN cleanup hook rejected';
+          throw new WikiExternalDeletionError(message, {
+            entityId,
+            unconfirmedIds: unconfirmed.slice(0, 100),
+            unconfirmedCount: unconfirmed.length,
+            timedOut,
+            cause: timedOut || cause === undefined ? undefined : this._sanitizeRankerError(cause),
+          });
         }
       }
 
@@ -659,6 +777,23 @@ export class MaintenanceService {
         : { deleted: { entries: deletedEntries, tasks: deletedTasks }, metadataReset: true };
     } finally {
       this.jobManager.releaseLock('forget', entityId);
+    }
+  }
+
+  /** Heal's post-commit removal delivery (spec §5.7). Never throws. */
+  private async deliverHealRemovals(entityId: string, ids: string[], trigger: WikiDiagnosticTrigger): Promise<void> {
+    if (this.vectorRemoval) {
+      await this.vectorRemoval.deliverRemovals(entityId, ids, 'heal', trigger);
+      return;
+    }
+    if (this.options.forceDeleteIgnoreRankerHook === true) return;
+    for (const factId of ids) {
+      try {
+        await this.embeddingService.notifyEmbeddingPersisted(entityId, factId, null);
+      } catch (hookErr) {
+        console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during heal for ${factId}:`, hookErr);
+        emitDiagnostic(this.options, { entityId, operation: 'heal', trigger, code: 'hook_failed', detail: { factId, reason: 'on_embedding_persisted' } });
+      }
     }
   }
 
@@ -901,14 +1036,7 @@ export class MaintenanceService {
       }
     });
 
-    for (const factId of orphanedIds) {
-      try {
-        await this.embeddingService.notifyEmbeddingPersisted(entityId, factId, null);
-      } catch (hookErr) {
-        console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during heal orphan pass for ${factId}:`, hookErr);
-        emitDiagnostic(this.options, { ...diagBase, code: 'hook_failed', detail: { factId, reason: 'on_embedding_persisted' } });
-      }
-    }
+    await this.deliverHealRemovals(entityId, orphanedIds, trigger);
 
     const healCandidates = await this.entryRepo.findHealCandidatesByEntityId(entityId, batchSize, recheckCutoff);
     // Keyword outage: heal anchors need keyword search, so skip the LLM pass
@@ -1184,14 +1312,7 @@ export class MaintenanceService {
     ]));
     await this.searchService.syncEntries(entityId, healSyncIds);
 
-    for (const factId of uniqueDeletedFactIds) {
-      try {
-        await this.embeddingService.notifyEmbeddingPersisted(entityId, factId, null);
-      } catch (hookErr) {
-        console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during heal for ${factId}:`, hookErr);
-        emitDiagnostic(this.options, { ...diagBase, code: 'hook_failed', detail: { factId, reason: 'on_embedding_persisted' } });
-      }
-    }
+    await this.deliverHealRemovals(entityId, uniqueDeletedFactIds, trigger);
 
     for (const fact of insertedFacts) {
       await this.embeddingService.embedFact(fact, { operation: 'heal', trigger });

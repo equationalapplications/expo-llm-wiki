@@ -816,21 +816,30 @@ export class EntryRepository extends BaseRepository {
     cutoff: number,
     ids: string[],
     tx: SQLiteAdapter,
+    opts: { keepUnconfirmedRemovals?: boolean; deletedIds?: string[] } = {},
   ): Promise<number> {
     const executor = this.getExecutor(tx);
+    // Spec durable-vector-removal §5.6.4: under a removal hook, never hard-delete
+    // a fact whose vector-index removal is still owed.
+    const guard = opts.keepUnconfirmedRemovals
+      ? ` AND NOT EXISTS (SELECT 1 FROM ${this.prefix}vector_removals v WHERE v.fact_id = ${this.prefix}entries.id AND v.confirmed_at IS NULL)`
+      : '';
     let totalChanges = 0;
     const chunkSize = 500;
     for (let i = 0; i < ids.length; i += chunkSize) {
       const chunk = ids.slice(i, i + chunkSize);
       const placeholders = chunk.map(() => '?').join(',');
-      const result = await executor.runAsync(
-        `DELETE FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ? AND id IN (${placeholders})`,
+      // RETURNING names exactly the rows this statement removed: not a row the
+      // guard kept, and not a row that was already gone before it ran.
+      const deleted = (await executor.getAllAsync<{ id: string }>(
+        `DELETE FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ? AND id IN (${placeholders})${guard} RETURNING id`,
         [entityId, cutoff, ...chunk],
-      );
-      totalChanges += result.changes;
+      )).map((r) => r.id);
+      totalChanges += deleted.length;
+      opts.deletedIds?.push(...deleted);
       // Stage outbox entries for permanently deleted records
-      if (result.changes > 0) {
-        for (const id of chunk) {
+      if (deleted.length > 0) {
+        for (const id of deleted) {
           await this.outbox.push({
             entityId,
             tableName: 'entries',
@@ -959,12 +968,14 @@ export class EntryRepository extends BaseRepository {
     const executor = this.getExecutor(tx);
     const now = Date.now();
     const placeholders = ids.map(() => '?').join(',');
-    await executor.runAsync(
-      `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE id IN (${placeholders}) AND entity_id = ?`,
+    // RETURNING: a row already soft-deleted keeps its deleted_at, so it gets no
+    // outbox event carrying a deleted_at the row doesn't have.
+    const updated = await executor.getAllAsync<{ id: string }>(
+      `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE id IN (${placeholders}) AND entity_id = ? AND deleted_at IS NULL RETURNING id`,
       [now, now, ...ids, entityId],
     );
     // Stage outbox entries for soft-deleted records
-    for (const id of ids) {
+    for (const { id } of updated) {
       await this.outbox.push({
         entityId,
         tableName: 'entries',
@@ -1158,18 +1169,20 @@ export class EntryRepository extends BaseRepository {
     return rows;
   }
 
-  async updateEmbeddingBlob(id: string, blob: Uint8Array, tx?: SQLiteAdapter): Promise<void> {
+  /** Returns `changes: 0` when the row is soft-deleted or gone (spec durable-vector-removal §5.7, G10). */
+  async updateEmbeddingBlob(id: string, blob: Uint8Array, tx?: SQLiteAdapter): Promise<{ changes: number }> {
     const executor = this.getExecutor(tx);
-    await executor.runAsync(
+    const r = await executor.runAsync(
       `UPDATE ${this.prefix}entries
          SET embedding_blob = ?,
              embedding = NULL,
              embedding_failed_at = NULL,
              embedding_failure_kind = NULL,
              embedding_attempts = 0
-       WHERE id = ?`,
+       WHERE id = ? AND deleted_at IS NULL`,
       [blob, id],
     );
+    return { changes: r?.changes ?? 0 };
   }
 
   /**

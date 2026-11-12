@@ -3,6 +3,7 @@ import type {
   WikiOptions,
   PendingMaintenance,
   MaintenanceJob,
+  LockedMaintenanceJob,
   MaintenanceStopReason,
   EntityMaintenanceReport,
   RunPendingMaintenanceOptions,
@@ -17,6 +18,8 @@ import { MetadataRepository } from '../repositories/MetadataRepository';
 import { EventRepository } from '../repositories/EventRepository';
 import { EntryRepository } from '../repositories/EntryRepository';
 import { JobManager } from './JobManager';
+import type { VectorRemovalService } from './VectorRemovalService';
+import type { VectorRemovalRepository } from '../repositories/VectorRemovalRepository';
 
 /**
  * Read-side report for the deferred maintenance mode: which entities have
@@ -32,6 +35,8 @@ export class MaintenanceScheduler {
     private eventRepo: EventRepository,
     private entryRepo: EntryRepository,
     private jobManager: JobManager,
+    private vectorRemovalService: VectorRemovalService,
+    private vectorRemovalRepo: VectorRemovalRepository,
   ) {}
 
   /**
@@ -44,7 +49,18 @@ export class MaintenanceScheduler {
     const autoHealThreshold = this.options.config?.autoHealThreshold || 100;
     const canEmbed = typeof this.options.llmProvider.embed === 'function';
     const out: PendingMaintenance[] = [];
-    for (const entityId of ids) {
+    const owed = new Map<string, number>();
+    if (this.vectorRemovalService.gate() !== 'none' && (await this.vectorRemovalService.ledgerPresent())) {
+      const scope = entityIds === undefined ? undefined : new Set(entityIds);
+      // Only entities with a row outside backoff: a failing hook must not keep the list non-empty.
+      for (const e of await this.vectorRemovalRepo.entitiesWithDuePending(Date.now())) {
+        if (scope !== undefined && !scope.has(e)) continue;
+        owed.set(e, (await this.vectorRemovalRepo.pendingStats(e)).count);
+      }
+    }
+    const listed = new Set(ids);
+    const scan = [...ids, ...[...owed.keys()].filter((e) => !listed.has(e))];
+    for (const entityId of scan) {
       const wm = await this.metadataRepo.getLibrarianWatermark(entityId, this.db);
       const pendingEvents = await this.eventRepo.countAfter(entityId, wm);
       const chars = pendingEvents > 0 ? await this.eventRepo.sumSummaryCharsAfter(entityId, wm) : 0;
@@ -58,8 +74,12 @@ export class MaintenanceScheduler {
       if (healCheckpoint > eventCount) healCheckpoint = 0;
       const healDue = eventCount - healCheckpoint >= autoHealThreshold;
       const reembedPending = canEmbed && (await this.entryRepo.countReembedPending(entityId, MAX_EMBED_ATTEMPTS)) > 0;
-      if (pendingEvents > 0 || healDue || reembedPending) {
-        out.push({ entityId, pendingEvents, pendingTokensEstimate: Math.ceil(chars / 4), healDue, reembedPending });
+      const owedCount = owed.get(entityId) ?? 0;
+      if (pendingEvents > 0 || healDue || reembedPending || owedCount > 0) {
+        out.push({
+          entityId, pendingEvents, pendingTokensEstimate: Math.ceil(chars / 4), healDue, reembedPending,
+          ...(owedCount > 0 ? { pendingExternalDeletions: owedCount } : {}),
+        });
       }
     }
     return out.sort((x, y) => (y.pendingEvents - x.pendingEvents) || (x.entityId < y.entityId ? -1 : x.entityId > y.entityId ? 1 : 0));
@@ -89,8 +109,10 @@ export class MaintenanceScheduler {
     const meter = new UsageMeter(opts.tokenBudget);
     const budget = opts.tokenBudget;
     const deadline = opts.deadlineMs !== undefined ? Date.now() + Math.max(0, opts.deadlineMs) : Infinity;
-    const jobs = new Set<MaintenanceJob>(opts.jobs ?? ['librarian', 'heal', 'reembed']);
-    const pending = await this.getPending(opts.entityIds);
+    const jobs = new Set<MaintenanceJob>(opts.jobs ?? ['librarian', 'heal', 'reembed', 'externalDeletions']);
+    const externalDeletions = await this.runExternalDeletions(opts.entityIds, jobs.has('externalDeletions'), deadline);
+    // Removal-only entities are reported by externalDeletions, not as per-entity maintenance.
+    const pending = (await this.getPending(opts.entityIds)).filter((p) => p.pendingEvents > 0 || p.healDue || p.reembedPending);
 
     type State = { p: PendingMaintenance; report: EntityMaintenanceReport; librarian: boolean; heal: boolean; reembed: boolean };
     const states: State[] = pending.map((p) => ({
@@ -117,8 +139,8 @@ export class MaintenanceScheduler {
     // only runs before a unit starts, never after one ends.
     const exhaustedStop = (): MaintenanceStopReason =>
       Date.now() >= deadline ? { reason: 'deadline' } : { reason: 'budget_exhausted' };
-    const markBusy = (st: State, job: MaintenanceJob) => { (st.report.busy ??= []).push(job); };
-    const markSearchUnavailable = (st: State, job: MaintenanceJob) => { (st.report.searchUnavailable ??= []).push(job); };
+    const markBusy = (st: State, job: LockedMaintenanceJob) => { (st.report.busy ??= []).push(job); };
+    const markSearchUnavailable = (st: State, job: LockedMaintenanceJob) => { (st.report.searchUnavailable ??= []).push(job); };
 
     // Open job flags across all entities. Flags only ever clear, so a round
     // that clears one (a skip: busy, outage, too small, nothing processed)
@@ -226,6 +248,46 @@ export class MaintenanceScheduler {
       estimated: meter.estimated,
       remaining: budget === undefined ? null : meter.remaining,
       stoppedReason: stopped,
+      externalDeletions,
     };
+  }
+
+  /**
+   * Runs first and outside the token budget: delivers owed vector-index
+   * removals per entity (wiped entities included), without backoff. Pending is
+   * reported even when the job is not listed or no hook is configured.
+   */
+  private async runExternalDeletions(
+    entityIds: string[] | undefined,
+    enabled: boolean,
+    deadline: number,
+  ): Promise<{ confirmed: number; pending: number }> {
+    if (!(await this.vectorRemovalService.ledgerPresent())) return { confirmed: 0, pending: 0 };
+    const all = await this.vectorRemovalRepo.entitiesWithPending();
+    const scope = entityIds === undefined ? undefined : new Set(entityIds);
+    const entities = scope === undefined ? all : all.filter((e) => scope.has(e));
+    let confirmed = 0;
+    let pending = 0;
+    // Entities a drain reported on; the drain already counted their pending rows.
+    const counted = new Set<string>();
+    if (enabled) {
+      for (const e of entities) {
+        if (Date.now() >= deadline) break;
+        const r = await this.vectorRemovalService.drain(
+          { entityId: e },
+          { trigger: 'call', ...(deadline === Infinity ? {} : { deadlineAt: deadline }) },
+        );
+        confirmed += r.confirmed;
+        if (!r.transient) {
+          pending += r.pending;
+          counted.add(e);
+        }
+        if (r.timedOut) break;
+      }
+    }
+    for (const e of entities) {
+      if (!counted.has(e)) pending += (await this.vectorRemovalRepo.pendingStats(e)).count;
+    }
+    return { confirmed, pending };
   }
 }

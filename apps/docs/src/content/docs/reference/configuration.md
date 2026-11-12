@@ -28,8 +28,9 @@ createWiki(db, {
 | `vectorRankerFallback` | `'js-cosine'` | `'js-cosine'`, `'keyword'`, `'empty'`, or `'throw'` |
 | `onVectorRankerFallback(info)` | — | |
 | `sanitizeRankerErrors` | `true` | Scrub credentials from ranker errors |
-| `deletionHookTimeoutMs` | `30000` | Timeout for the per-row deletion hook |
-| `forceDeleteIgnoreRankerHook` | `false` | Skips deletion-hook failures. Use only after the index is decommissioned. |
+| `deletionHookTimeoutMs` | `30000` | Timeout for each deletion hook call |
+| `forceDeleteIgnoreRankerHook` | `false` | The index is decommissioned: no removal calls on any path, and owed removals are discarded. Use only then. |
+| `drainExternalDeletionsOnSetup` | `false` | `true` makes `setup()` start one background drain of owed removals (no model call, 10 s deadline). Turn it on only if your app never opens its own transactions on the wiki's connection: the drain's transactions make yours throw while one is open. |
 
 ## `WikiConfig`: storage & setup
 

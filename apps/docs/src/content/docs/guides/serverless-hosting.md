@@ -17,7 +17,7 @@ const wiki = new WikiMemory(db, {
   llmProvider: tenantProvider,       // tenant's own key; implement generateTextWithUsage for exact metering
   config: {
     librarian: { strategy: 'ops' },  // similarity-gated, supersedes instead of overwriting
-    maintenance: 'deferred',         // no detached background promises
+    maintenance: 'deferred',         // no background maintenance; setup may start a no-model removal drain
     reportLlmUsage: true,            // emit llm_usage diagnostics
   },
   onDiagnostic: (d) => meter.record(tenantId, d),
@@ -27,7 +27,7 @@ const wiki = new WikiMemory(db, {
 ## Request lifecycle
 
 1. **Pull** the tenant's `.sqlite` file. Use a conditional fetch (ETag) to skip unchanged files.
-2. **Open.** `new WikiMemory(…)` and `await wiki.setup()`. This is cheap when the schema is current.
+2. **Open.** `new WikiMemory(…)` and `await wiki.setup()`. This is cheap when the schema is current. `setup()` starts no background work by default. Leave `drainExternalDeletionsOnSetup` off on a serverless host and let the `'externalDeletions'` job in `runPendingMaintenance` deliver owed removals: that job honours `deadlineMs`.
 3. **Handle the request:**
    - `write(entityId, { …, occurred_at: clientTimestamp })`
    - `read(entityId, query, { tokenBudget })`
@@ -35,8 +35,10 @@ const wiki = new WikiMemory(db, {
    ```ts
    const r = await wiki.runPendingMaintenance({ tokenBudget: 20_000, deadlineMs: remainingMs - 1500 });
    ```
-   Nothing is still running when this resolves.
+   When this resolves the database has no open work, so the file is consistent to push. One exception to "nothing is running": a call to your removal hook that hit `deletionHookTimeoutMs` may still be running in your hook. The engine has stopped waiting for it, and its delete stays owed and is retried on a later run. If you turned on `drainExternalDeletionsOnSetup` and `deadlineMs` cut short the wait for that drain, call `await wiki.drain()` before you push.
 5. **Push** the file back. It's consistent, because there's no detached work and no open transaction.
+
+`runPendingMaintenance()` waits for that drain, up to its `deadlineMs`. If you skip step 4, call `await wiki.drain()` before you push. Neither waits for a hook call that already timed out; its delete stays owed.
 
 Skipping step 4 is fine. The backlog carries over to the next request or to a queue worker that
 calls `getPendingMaintenance()`.
