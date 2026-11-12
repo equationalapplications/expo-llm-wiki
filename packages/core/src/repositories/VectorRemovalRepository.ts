@@ -37,13 +37,9 @@ const marks = (n: number) => new Array(n).fill('?').join(',');
  * triggers on `entries`; this class reads and settles them.
  */
 export class VectorRemovalRepository extends BaseRepository {
-  /** True when the ledger table exists (false for a store whose setup never ran). */
-  async tablePresent(): Promise<boolean> {
-    const row = await this.getExecutor().getFirstAsync<{ name: string }>(
-      `SELECT name FROM sqlite_master WHERE type='table' AND name=?`,
-      [`${this.prefix}vector_removals`],
-    );
-    return row != null;
+  /** Name of the ledger table. */
+  get ledgerTable(): string {
+    return `${this.prefix}vector_removals`;
   }
 
   /** Unconfirmed rows after `cursor`, ordered by (attempts, seq). */
@@ -219,20 +215,6 @@ export class VectorRemovalRepository extends BaseRepository {
         WHERE confirmed_at IS NULL ORDER BY entity_id`,
     );
     return rows.map((r) => r.entity_id);
-  }
-
-  /** Groups pending ledger fact ids by entity, for diagnostics on an all-entities drain. */
-  async entitiesForIds(ids: string[]): Promise<Map<string, string[]>> {
-    const out = new Map<string, string[]>();
-    for (const c of chunks(ids, CHUNK)) {
-      const rows = await this.db.getAllAsync<{ entity_id: string; fact_id: string }>(
-        `SELECT DISTINCT entity_id, fact_id FROM ${this.prefix}vector_removals
-          WHERE confirmed_at IS NULL AND fact_id IN (${marks(c.length)})`,
-        c,
-      );
-      for (const r of rows) out.set(r.entity_id, [...(out.get(r.entity_id) ?? []), r.fact_id]);
-    }
-    return out;
   }
 
   async statusFor(ids: string[]): Promise<Map<string, 'pending' | 'confirmed'>> {

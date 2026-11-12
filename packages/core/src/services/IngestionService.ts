@@ -469,7 +469,7 @@ export class IngestionService {
         const uniqueDeletedSourceFactIds = Array.from(new Set(deletedSourceFactIds));
         if (this.vectorRemoval) {
           await this.vectorRemoval.deliverRemovals(entityId, uniqueDeletedSourceFactIds, 'ingest', 'call');
-        } else {
+        } else if (this.options.forceDeleteIgnoreRankerHook !== true) {
           for (const factId of uniqueDeletedSourceFactIds) {
             try {
               await this.embeddingService.notifyEmbeddingPersisted(entityId, factId, null);

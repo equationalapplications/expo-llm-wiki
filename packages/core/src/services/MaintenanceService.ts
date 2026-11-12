@@ -290,7 +290,7 @@ export class MaintenanceService {
           // The trigger enqueued them; send removal now, not 7 days later
           // (spec durable-vector-removal §5.6.1). A failure leaves them
           // pending, and the hard-delete step below keeps them.
-          if (this.vectorRemoval && await this.ledgerTablePresent()) {
+          if (this.vectorRemoval && await this.vectorRemoval.ledgerPresent()) {
             await this.vectorRemoval.drain({ entityId, ids: expiredIds });
           }
         }
@@ -303,7 +303,7 @@ export class MaintenanceService {
         const prunableIds = entriesToDelete.map((r) => r.id);
         const vr = this.vectorRemoval;
         const vrRepo = this.vectorRemovalRepo;
-        const ledgerOn = !!vr && !!vrRepo && await this.ledgerTablePresent();
+        const ledgerOn = !!vr && !!vrRepo && await vr.ledgerPresent();
         // Spec durable-vector-removal §5.6: rows are hard-deleted only when
         // their removal is confirmed (hook) or the gate allows it.
         let deletable: string[] = prunableIds;
@@ -604,7 +604,7 @@ export class MaintenanceService {
       let deletedEvents = 0;
       const deletedEntryIds: string[] = [];
       // A store whose setup() never ran has no ledger table (#316 recovery).
-      const ledgerOn = !!this.vectorRemoval && !!this.vectorRemovalRepo && await this.ledgerTablePresent();
+      const ledgerOn = !!this.vectorRemoval && !!this.vectorRemovalRepo && await this.vectorRemoval.ledgerPresent();
 
       await this.db.withTransactionAsync(async (tx) => {
         if (params.clearAll) {
@@ -766,6 +766,23 @@ export class MaintenanceService {
     }
   }
 
+  /** Heal's post-commit removal delivery (spec §5.7). Never throws. */
+  private async deliverHealRemovals(entityId: string, ids: string[], trigger: WikiDiagnosticTrigger): Promise<void> {
+    if (this.vectorRemoval) {
+      await this.vectorRemoval.deliverRemovals(entityId, ids, 'heal', trigger);
+      return;
+    }
+    if (this.options.forceDeleteIgnoreRankerHook === true) return;
+    for (const factId of ids) {
+      try {
+        await this.embeddingService.notifyEmbeddingPersisted(entityId, factId, null);
+      } catch (hookErr) {
+        console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during heal for ${factId}:`, hookErr);
+        emitDiagnostic(this.options, { entityId, operation: 'heal', trigger, code: 'hook_failed', detail: { factId, reason: 'on_embedding_persisted' } });
+      }
+    }
+  }
+
   /**
    * Whether forget() should soft-delete in source_ref_index (#316,
    * specs/forget-pre-v9 §3.1). Normally true: setup()'s DDL creates the table.
@@ -785,29 +802,6 @@ export class MaintenanceService {
    * pre-existing limit out of scope here. Await setup() before other calls,
    * as WikiMemory.setup() documents.
    */
-  /** Heal's post-commit removal delivery (spec §5.7). Never throws. */
-  private async deliverHealRemovals(entityId: string, ids: string[], trigger: WikiDiagnosticTrigger): Promise<void> {
-    if (this.vectorRemoval) {
-      await this.vectorRemoval.deliverRemovals(entityId, ids, 'heal', trigger);
-      return;
-    }
-    for (const factId of ids) {
-      try {
-        await this.embeddingService.notifyEmbeddingPersisted(entityId, factId, null);
-      } catch (hookErr) {
-        console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during heal for ${factId}:`, hookErr);
-        emitDiagnostic(this.options, { entityId, operation: 'heal', trigger, code: 'hook_failed', detail: { factId, reason: 'on_embedding_persisted' } });
-      }
-    }
-  }
-
-  private ledgerSeen = false;
-  private async ledgerTablePresent(): Promise<boolean> {
-    if (this.ledgerSeen) return true;
-    this.ledgerSeen = await this.metadataRepo.tableExists(`${this.prefix}vector_removals`);
-    return this.ledgerSeen;
-  }
-
   private async sourceRefIndexPresent(tx: SQLiteAdapter): Promise<boolean> {
     if (await this.metadataRepo.tableExists(`${this.prefix}source_ref_index`, tx)) return true;
     const raw = await this.metadataRepo.getMeta('schema_version', tx);

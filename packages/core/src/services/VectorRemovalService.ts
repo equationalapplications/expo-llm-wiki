@@ -54,9 +54,9 @@ export class VectorRemovalService {
   }
 
   private ledgerSeen = false;
-  private async ledgerPresent(): Promise<boolean> {
+  async ledgerPresent(): Promise<boolean> {
     if (this.ledgerSeen) return true;
-    this.ledgerSeen = await this.repo.tablePresent();
+    this.ledgerSeen = await this.metadataRepo.tableExists(this.repo.ledgerTable);
     return this.ledgerSeen;
   }
 
@@ -93,6 +93,7 @@ export class VectorRemovalService {
         if (ids.length === 0) return;
         const r = await this.drain({ entityId, ids }, { trigger });
         this.emitHookFailed(entityId, r.failedIds, operation, trigger);
+        if (r.pending > 0) await this.emitPending(entityId, trigger);
         return;
       }
       if (this.gate() !== 'hook') return;
@@ -106,7 +107,14 @@ export class VectorRemovalService {
       }
     } catch (err) {
       console.warn('[WikiMemory] removal delivery failed:', err);
-      this.emitHookFailed(entityId, ids, operation, trigger);
+      let stillPending = ids;
+      try {
+        const st = await this.repo.statusFor(ids);
+        stillPending = ids.filter((id) => st.get(id) === 'pending');
+      } catch {
+        // keep the full list: better a spurious diagnostic than a silent one
+      }
+      this.emitHookFailed(entityId, stillPending, operation, trigger);
     }
   }
 

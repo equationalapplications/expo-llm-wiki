@@ -37,7 +37,7 @@ import { MaintenanceService } from './services/MaintenanceService';
 import { MaintenanceScheduler } from './services/MaintenanceScheduler';
 import { ImportExportService } from './services/ImportExportService';
 import { EmbeddingService } from './services/EmbeddingService';
-import { VectorRemovalService, type DrainScope } from './services/VectorRemovalService';
+import { VectorRemovalService } from './services/VectorRemovalService';
 import { VectorRemovalRepository } from './repositories/VectorRemovalRepository';
 import { RetrievalService } from './services/RetrievalService';
 import { WriteService } from './services/WriteService';
@@ -784,6 +784,11 @@ export class WikiMemory {
    * waits at least 5 s, doubling per consecutive failure up to 5 min (longer
    * when an attempt is itself slow), before retrying again.
    *
+   * It also calls the host's removal hook (`onEmbeddingPersisted(…, null)`) for
+   * the stashed ids that `upsertGraph` superseded, and can take up to
+   * `deletionHookTimeoutMs` per id when the host's index is slow. It never
+   * drains an entity's wider removal backlog.
+   *
    * Call only after the host's transaction commits: called inside it, the
    * rebuild may index rows that later roll back, or miss them and clear the
    * stale flag anyway. Serialized with core's internal index syncs and takes
@@ -799,29 +804,25 @@ export class WikiMemory {
    * @throws {TypeError} when `entityId` is given but is not a non-empty string.
    */
   async syncSearchIndex(entityId?: string): Promise<void> {
+    // Capture the ids upsertGraph stashed for this sync before the sync clears them.
+    if (entityId !== undefined) assertEntityId(entityId);
+    const stashed = this.peekStashedIds(entityId);
     await this.syncSearchIndexCore(entityId);
-    // upsertGraph supersedes facts inside the host's transaction; its removals
-    // are on the ledger. Deliver them now (non-throwing, no backoff).
-    if (entityId !== undefined) {
-      await this.deliverUpsertRemovals({ entityId }, entityId);
-    } else {
-      await this.deliverUpsertRemovals({ all: true });
+    // Deliver removals for only those ids (non-throwing, no backoff). The
+    // entity's wider backlog belongs to runPendingMaintenance / setup drain.
+    for (const [e, ids] of stashed) {
+      if (ids.size === 0) continue;
+      await this.deliverUpsertRemovals(e, [...ids.keys()]);
     }
   }
 
-  private async deliverUpsertRemovals(scope: DrainScope, entityId?: string): Promise<void> {
+  private async deliverUpsertRemovals(entityId: string, ids: string[]): Promise<void> {
     try {
-      const r = await this.vectorRemovalService.drain(scope, { trigger: 'call' });
-      if (r.failedIds.length === 0) return;
-      if (entityId !== undefined) {
-        this.vectorRemovalService.emitHookFailed(entityId, r.failedIds, 'upsertGraph', 'call');
-        return;
-      }
-      // {all} scope: the failed ids' entities are not in the result; look them up.
-      const byEntity = await this.vectorRemovalRepo.entitiesForIds(r.failedIds);
-      for (const [e, ids] of byEntity) this.vectorRemovalService.emitHookFailed(e, ids, 'upsertGraph', 'call');
+      const r = await this.vectorRemovalService.drain({ entityId, ids }, { trigger: 'call' });
+      this.vectorRemovalService.emitHookFailed(entityId, r.failedIds, 'upsertGraph', 'call');
     } catch (err) {
       console.warn('[WikiMemory] removal drain after syncSearchIndex failed:', err);
+      this.vectorRemovalService.emitHookFailed(entityId, ids, 'upsertGraph', 'call');
     }
   }
 

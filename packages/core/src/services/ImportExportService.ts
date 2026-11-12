@@ -29,7 +29,7 @@ export class ImportExportService {
     private searchService: SearchService,
     private jobManager: JobManager,
     private embeddingService: EmbeddingService,
-    private options: Pick<WikiOptions, 'onDiagnostic'> = {},
+    private options: Pick<WikiOptions, 'onDiagnostic' | 'forceDeleteIgnoreRankerHook'> = {},
     private vectorRemoval?: VectorRemovalService,
   ) {}
 
@@ -579,7 +579,7 @@ export class ImportExportService {
         'call',
         removedIds,
       );
-    } else {
+    } else if (this.options.forceDeleteIgnoreRankerHook !== true) {
       for (const factId of removedIds) {
         try {
           await this.embeddingService.notifyEmbeddingPersisted(entityId, factId, null);

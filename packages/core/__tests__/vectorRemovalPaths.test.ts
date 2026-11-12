@@ -43,6 +43,51 @@ const rows = async (raw: any) =>
 const failed = (diags: any[]) => diags.filter((d) => d.code === 'hook_failed').map((d) => d.detail.factId).sort();
 const drainAll = (wiki: any) => (wiki as any).vectorRemovalService.drain({ all: true });
 
+const allConfirmed = async (raw: any) => {
+  const r = await rows(raw);
+  return r.length > 0 && r.every((x) => x.confirmed_at !== null);
+};
+
+describe('healthy-hook settlement', () => {
+  it('heal orphan and heal delete settle their rows; a later drain makes no call', async () => {
+    const gen = async () => JSON.stringify({ downgraded: [], deleted: ['d1'], newFacts: [] });
+    const t = await make(() => {}, { config: { orphanAfterDays: null, staleInferredAfterDays: null } }, gen);
+    await ins(t.raw, 'd1');
+    await t.wiki.runHeal('e1');
+    expect(await allConfirmed(t.raw)).toBe(true);
+    t.calls.length = 0;
+    await drainAll(t.wiki);
+    expect(t.calls).toEqual([]);
+    const o = await make(() => {}, { config: { orphanAfterDays: 0, staleInferredAfterDays: null } });
+    await ins(o.raw, 'o1');
+    await o.wiki.runHeal('e1');
+    expect(await allConfirmed(o.raw)).toBe(true);
+    o.calls.length = 0;
+    await drainAll(o.wiki);
+    expect(o.calls).toEqual([]);
+  });
+
+  it('full re-ingest settles superseded rows; a later drain makes no call', async () => {
+    const t = await make(() => {});
+    await t.wiki.ingestDocument('e1', { sourceRef: 'doc', sourceHash: H1, documentChunk: 'hello world' });
+    await t.wiki.ingestDocument('e1', { sourceRef: 'doc', sourceHash: H2, documentChunk: 'hello again' });
+    expect(await allConfirmed(t.raw)).toBe(true);
+    t.calls.length = 0;
+    await drainAll(t.wiki);
+    expect(t.calls).toEqual([]);
+  });
+
+  it('replace import settles removed rows; a later drain makes no call', async () => {
+    const t = await make(() => {});
+    await ins(t.raw, 'old1');
+    await t.wiki.importDump(dump([{ id: 'new1' }]));
+    expect(await allConfirmed(t.raw)).toBe(true);
+    t.calls.length = 0;
+    await drainAll(t.wiki);
+    expect(t.calls).toEqual([]);
+  });
+});
+
 describe('heal on the ledger', () => {
   it('orphan with a rejecting hook: pending, hook_failed, delivered by a later drain', async () => {
     let fail = true;
@@ -104,6 +149,19 @@ describe('ingest on the ledger', () => {
     expect((await rows(t.raw)).filter((r) => r.confirmed_at === null).map((r) => r.fact_id).sort()).toEqual(ids);
   });
 
+  it('superseded ids left pending by a rejecting hook are delivered by a later drain', async () => {
+    let fail = true;
+    const t = await make(() => { if (fail) throw new Error('nope'); });
+    await t.wiki.ingestDocument('e1', { sourceRef: 'doc', sourceHash: H1, documentChunk: 'hello world' });
+    const first = ((await t.raw.getAllAsync(`SELECT id FROM ${P}entries`)) as any[]).map((r) => r.id).sort();
+    await t.wiki.ingestDocument('e1', { sourceRef: 'doc', sourceHash: H2, documentChunk: 'hello again' });
+    fail = false;
+    t.calls.length = 0;
+    await drainAll(t.wiki);
+    expect(t.calls.map((c) => c.factId).sort()).toEqual(first);
+    expect(await allConfirmed(t.raw)).toBe(true);
+  });
+
   it('force: ingest makes no removal call', async () => {
     const t = await make(() => {}, { forceDeleteIgnoreRankerHook: true });
     await t.wiki.ingestDocument('e1', { sourceRef: 'doc', sourceHash: H1, documentChunk: 'hello world' });
@@ -112,6 +170,7 @@ describe('ingest on the ledger', () => {
   });
 });
 
+const BLOB = new Uint8Array(new Float32Array([0.1, 0.2, 0.3, 0.4]).buffer);
 function dump(facts: Array<{ id: string; deleted_at?: number | null }>) {
   return {
     generatedAt: Date.now(),
@@ -121,6 +180,7 @@ function dump(facts: Array<{ id: string; deleted_at?: number | null }>) {
           id: f.id, entity_id: 'e1', title: 'T ' + f.id, body: 'body content', tags: [],
           confidence: 'certain', source_type: 'immutable_document', source_hash: null, source_ref: 'x.pdf',
           created_at: 1000, updated_at: 1000, last_accessed_at: null, access_count: 0, deleted_at: f.deleted_at ?? null,
+          embedding_blob: BLOB,
         })),
         tasks: [], events: [], edges: [],
       },
@@ -149,8 +209,7 @@ describe('importDump on the ledger', () => {
     await t.wiki.importDump(dump([{ id: 'same' }]));
     t.calls.length = 0;
     await t.wiki.importDump(dump([{ id: 'same' }]));
-    // The only null call is the live-fact clear for an unembedded fact (§523, no vector), not a removal.
-    expect(t.calls.filter((c) => c.vector === null).length).toBeLessThanOrEqual(1);
+    expect(t.calls.filter((c) => c.vector === null)).toEqual([]);
     expect(await rows(t.raw)).toEqual([]);
   });
 
@@ -205,5 +264,18 @@ describe('upsertGraph on the ledger', () => {
     await t.wiki.syncSearchIndex('e1');
     expect(await rows(t.raw)).toEqual([]);
     expect(t.calls).toEqual([]);
+  });
+
+  it('syncSearchIndex calls the hook only for the superseded id, not the entity backlog', async () => {
+    const t = await make(() => {});
+    for (const id of ['b1', 'b2', 'b3']) {
+      await ins(t.raw, id);
+      await t.raw.runAsync(`UPDATE ${P}entries SET deleted_at = 1 WHERE id = ?`, [id]);
+    }
+    await t.raw.withTransactionAsync(async (tx: any) => { await t.wiki.upsertGraph('e1', graph('n1', H1), tx); });
+    await t.raw.withTransactionAsync(async (tx: any) => { await t.wiki.upsertGraph('e1', graph('n2', H2), tx); });
+    await t.wiki.syncSearchIndex('e1');
+    expect(t.calls.map((c) => c.factId)).toEqual(['n1']);
+    expect((await rows(t.raw)).filter((r) => r.confirmed_at === null).map((r) => r.fact_id)).toEqual(['b1', 'b2', 'b3']);
   });
 });
