@@ -1,6 +1,6 @@
 # Durable removal of forgotten facts from the host's vector index
 
-**Status:** Implemented (PR #372, 2026-11-11; revision 4 implemented 2026-11-12; O1 answered 2026-11-12). Previously draft until open question O1 was answered. Previously Reviewed (2026-11-11: Opus high review, revision 2; owner directed implementation). Previously Draft (2026-11-11).
+**Status:** Implemented (PR #372, 2026-11-11; revision 4 implemented 2026-11-12; O1 answered and O2, O3 closed 2026-11-12; no open questions remain). Previously draft until open question O1 was answered. Previously Reviewed (2026-11-11: Opus high review, revision 2; owner directed implementation). Previously Draft (2026-11-11).
 Revision 2 (2026-11-11), after an Opus (high) review of revision 1:
 - The ledger is filled by SQLite triggers, not by call-site edits (§5.2).
 - A process without the hook never clears an obligation (§5.3).
@@ -366,7 +366,9 @@ One routine, `drainVectorRemovals(scope, opts)`, in a new `VectorRemovalService`
     - **SynapseTree** (pins 7.17.1): it opens its own transactions on the shared adapter, including `withTransactionAsync(tx => wiki.upsertGraph(…, tx))`, which is why the setup drain stays off by default (§6.3). It prunes with `retainSoftDeletedFor: null`, so its ledger keeps one row per soft-deleted fact it keeps (O3).
   - Each consumer gets an issue in its own repository for the upgrade.
 - **O2.** Is 10 s the right total deadline for the setup drain on mobile?
+  - **Closed 2026-11-12 (owner): keep 10 s.** The drain is opt-in, isn't awaited, and leaves undelivered rows owed, so a shorter limit only delays delivery and a longer one buys little on a mobile app that can be suspended. Hosts that want a different bound call `runExternalDeletions(undefined, { deadlineMs })` themselves. No setting added.
 - **O3.** Should confirmed ledger rows for facts that are never pruned (`pruneRetainSoftDeletedFor: null`) be purged? Proposed: no. The rows are small, and prune removes them with their fact.
+  - **Closed 2026-11-12 (owner): no purge, for confirmed or pending rows of facts that still exist.** Removing a confirmed row of a still-soft-deleted fact makes the next `forget()` retry or prune backstop re-enqueue it, so the index gets a repeat call. Removing a pending row on a hookless store could drop a removal a hook process sharing the store still owes (the reasoning in §5.3 for pre-marker rows). The cost is one small row per fact the store already keeps (SynapseTree's case: pending rows on a hookless store). A host that wants them gone sets a soft-delete retention; prune then removes facts and rows together. Rows whose fact is gone are handled by the setup sweep (§5.3).
 
 ## 8. Test plan
 
