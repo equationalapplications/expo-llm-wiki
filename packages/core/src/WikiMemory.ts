@@ -441,30 +441,36 @@ export class WikiMemory {
     if (this.setupRemovalDrain) return; // a second setup() reuses the running drain
     const gate = this.vectorRemovalService.gate();
     if (gate === 'none') return;
-    if (gate === 'hook') {
-      await this.db.withTransactionAsync((tx) => this.vectorRemovalService.markExternalIndexInUse(tx));
-    }
-    if ((await this.vectorRemovalRepo.pendingStats()).count === 0) return;
-    if (this.options.drainExternalDeletionsOnSetup === false) {
-      if (gate === 'hook') await this.vectorRemovalService.emitPending(undefined, 'auto');
-      return;
-    }
-    const p = (async () => {
-      try {
-        const r = await this.vectorRemovalService.drain(
-          { all: true },
-          { backoff: true, deadlineAt: Date.now() + 10_000, trigger: 'auto' },
-        );
-        if (r.pending > 0) await this.vectorRemovalService.emitPending(undefined, 'auto');
-      } catch {
-        emitDiagnostic(this.options, {
-          code: 'background_job_failed', operation: 'externalDeletion', trigger: 'auto', entityId: '', // all-entity drain
-          detail: { reason: 'unhandled_rejection' },
-        });
+    // Assigned before the first await so a concurrent setup() sees it.
+    const prelude = (async (): Promise<{ drain: Promise<void> | null }> => {
+      if (gate === 'hook') {
+        await this.db.withTransactionAsync((tx) => this.vectorRemovalService.markExternalIndexInUse(tx));
       }
+      if ((await this.vectorRemovalRepo.pendingStats()).count === 0) return { drain: null };
+      if (this.options.drainExternalDeletionsOnSetup === false) {
+        if (gate === 'hook') await this.vectorRemovalService.emitPending(undefined, 'auto');
+        return { drain: null };
+      }
+      const drain = (async () => {
+        try {
+          const r = await this.vectorRemovalService.drain(
+            { all: true },
+            { backoff: true, deadlineAt: Date.now() + 10_000, trigger: 'auto' },
+          );
+          if (r.pending > 0) await this.vectorRemovalService.emitPending(undefined, 'auto');
+        } catch {
+          emitDiagnostic(this.options, {
+            code: 'background_job_failed', operation: 'externalDeletion', trigger: 'auto', entityId: '', // store-wide drain
+            detail: { reason: 'unhandled_rejection' },
+          });
+        }
+      })();
+      return { drain };
     })();
-    this.setupRemovalDrain = p;
-    void p.then(() => { if (this.setupRemovalDrain === p) this.setupRemovalDrain = null; });
+    const joined: Promise<void> = prelude.then((r) => r.drain ?? undefined, () => undefined);
+    this.setupRemovalDrain = joined;
+    void joined.then(() => { if (this.setupRemovalDrain === joined) this.setupRemovalDrain = null; });
+    await prelude; // marker or ledger errors surface from setup()
   }
 
   /**

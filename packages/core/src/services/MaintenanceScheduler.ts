@@ -50,7 +50,7 @@ export class MaintenanceScheduler {
     const canEmbed = typeof this.options.llmProvider.embed === 'function';
     const out: PendingMaintenance[] = [];
     const owed = new Map<string, number>();
-    if (this.vectorRemovalService.gate() === 'hook' && (await this.vectorRemovalService.ledgerPresent())) {
+    if (this.vectorRemovalService.gate() !== 'none' && (await this.vectorRemovalService.ledgerPresent())) {
       for (const e of await this.vectorRemovalRepo.entitiesWithPending()) {
         if (entityIds !== undefined && !entityIds.includes(e)) continue;
         owed.set(e, (await this.vectorRemovalRepo.pendingStats(e)).count);

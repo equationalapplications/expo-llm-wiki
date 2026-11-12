@@ -181,7 +181,7 @@ describe('public API and setup drain', () => {
     svc.drain = (scope: any, o: any) => { if ('all' in scope) allDrains++; return orig(scope, o); };
     await t.wiki.setup();
     await t.wiki.setup();
-    await t.wiki.runPendingMaintenance();
+    await t.wiki.runPendingMaintenance({ jobs: ['librarian'] });
     expect(allDrains).toBe(1);
     expect(await pendingRows(raw)).toEqual([]);
     expect(t.calls).toHaveLength(1);
@@ -230,5 +230,31 @@ describe('public API and setup drain', () => {
     await t.wiki.runPendingMaintenance();
     expect(order[0]).toBe('hook');
     expect(order).toContain('llm');
+  });
+
+  it('force: getPendingMaintenance lists the owed entity until runPendingMaintenance discards it', async () => {
+    const raw = openTestDatabase();
+    await open(raw).wiki.setup();
+    await seed(raw, ['a']);
+    const t = open(raw, () => {}, { forceDeleteIgnoreRankerHook: true, drainExternalDeletionsOnSetup: false });
+    await t.wiki.setup();
+    expect((await t.wiki.getPendingMaintenance()).map((p) => p.entityId)).toEqual(['e1']);
+    await t.wiki.runPendingMaintenance();
+    expect(await t.wiki.getPendingMaintenance()).toEqual([]);
+  });
+
+  it('concurrent setup() calls start one drain and call each id once', async () => {
+    const raw = openTestDatabase();
+    await open(raw).wiki.setup();
+    await seed(raw, ['a', 'b']);
+    const t = open(raw, () => new Promise<void>((r) => setTimeout(r, 20)));
+    const svc = (t.wiki as any).vectorRemovalService;
+    const orig = svc.drain.bind(svc);
+    let allDrains = 0;
+    svc.drain = (scope: any, o: any) => { if ('all' in scope) allDrains++; return orig(scope, o); };
+    await Promise.all([t.wiki.setup(), t.wiki.setup()]);
+    await t.wiki.drain();
+    expect(allDrains).toBe(1);
+    expect(t.calls.map((c) => c.factId).sort()).toEqual(['a', 'b']);
   });
 });
