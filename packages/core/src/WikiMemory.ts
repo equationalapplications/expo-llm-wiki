@@ -37,7 +37,7 @@ import { MaintenanceService } from './services/MaintenanceService';
 import { MaintenanceScheduler } from './services/MaintenanceScheduler';
 import { ImportExportService } from './services/ImportExportService';
 import { EmbeddingService } from './services/EmbeddingService';
-import { VectorRemovalService } from './services/VectorRemovalService';
+import { VectorRemovalService, type DrainScope } from './services/VectorRemovalService';
 import { VectorRemovalRepository } from './repositories/VectorRemovalRepository';
 import { RetrievalService } from './services/RetrievalService';
 import { WriteService } from './services/WriteService';
@@ -184,6 +184,7 @@ export class WikiMemory {
       this.embeddingService,
       this.promptService,
       this.ontologyService,
+      this.vectorRemovalService,
     );
     this.maintenanceService = new MaintenanceService(
       this.db,
@@ -223,6 +224,7 @@ export class WikiMemory {
       this.jobManager,
       this.embeddingService,
       this.options,
+      this.vectorRemovalService,
     );
     this.retrievalService = new RetrievalService(
       this.options,
@@ -797,6 +799,33 @@ export class WikiMemory {
    * @throws {TypeError} when `entityId` is given but is not a non-empty string.
    */
   async syncSearchIndex(entityId?: string): Promise<void> {
+    await this.syncSearchIndexCore(entityId);
+    // upsertGraph supersedes facts inside the host's transaction; its removals
+    // are on the ledger. Deliver them now (non-throwing, no backoff).
+    if (entityId !== undefined) {
+      await this.deliverUpsertRemovals({ entityId }, entityId);
+    } else {
+      await this.deliverUpsertRemovals({ all: true });
+    }
+  }
+
+  private async deliverUpsertRemovals(scope: DrainScope, entityId?: string): Promise<void> {
+    try {
+      const r = await this.vectorRemovalService.drain(scope, { trigger: 'call' });
+      if (r.failedIds.length === 0) return;
+      if (entityId !== undefined) {
+        this.vectorRemovalService.emitHookFailed(entityId, r.failedIds, 'upsertGraph', 'call');
+        return;
+      }
+      // {all} scope: the failed ids' entities are not in the result; look them up.
+      const byEntity = await this.vectorRemovalRepo.entitiesForIds(r.failedIds);
+      for (const [e, ids] of byEntity) this.vectorRemovalService.emitHookFailed(e, ids, 'upsertGraph', 'call');
+    } catch (err) {
+      console.warn('[WikiMemory] removal drain after syncSearchIndex failed:', err);
+    }
+  }
+
+  private async syncSearchIndexCore(entityId?: string): Promise<void> {
     if (entityId === undefined) {
       // A long-lived host that never re-opens still recovers from a failed init (spec #280 Change 4).
       // After a failed re-init, back off before the next: each attempt costs
@@ -950,12 +979,15 @@ export class WikiMemory {
    * semantics identical to `ingestDocument`, minus the LLM extraction step.
    *
    * MUST be called from inside an open `db.withTransactionAsync` callback —
-   * the third argument is the caller's `tx`. The method does not open a
+   * the third argument is the caller's `tx`, and that transaction must be
+   * opened through the adapter given to `createWiki` (the removal ledger is
+   * filled by triggers inside it, and a rollback discards the rows). The method does not open a
    * nested transaction, does not acquire any lock, and does not perform
    * post-commit work (search sync, embedding, cache eviction). After the
    * transaction commits, call `syncSearchIndex(entityId)` — or
    * `syncSearchIndex()` after writing several entities in one transaction —
-   * to make the new nodes keyword-searchable: both forms drain this call's node ids
+   * to make the new nodes keyword-searchable and to deliver, through the
+   * host's removal hook, the vectors of any facts the call superseded: both forms drain this call's node ids
    * first, to completion, so the nodes are searchable under any backlog (up to
    * `WikiMemory.UPSERT_ID_STASH_CAP` pending ids; beyond that they converge with
    * the backlog). Embeddings still come from the maintenance

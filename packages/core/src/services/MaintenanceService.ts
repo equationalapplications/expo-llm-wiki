@@ -785,6 +785,22 @@ export class MaintenanceService {
    * pre-existing limit out of scope here. Await setup() before other calls,
    * as WikiMemory.setup() documents.
    */
+  /** Heal's post-commit removal delivery (spec §5.7). Never throws. */
+  private async deliverHealRemovals(entityId: string, ids: string[], trigger: WikiDiagnosticTrigger): Promise<void> {
+    if (this.vectorRemoval) {
+      await this.vectorRemoval.deliverRemovals(entityId, ids, 'heal', trigger);
+      return;
+    }
+    for (const factId of ids) {
+      try {
+        await this.embeddingService.notifyEmbeddingPersisted(entityId, factId, null);
+      } catch (hookErr) {
+        console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during heal for ${factId}:`, hookErr);
+        emitDiagnostic(this.options, { entityId, operation: 'heal', trigger, code: 'hook_failed', detail: { factId, reason: 'on_embedding_persisted' } });
+      }
+    }
+  }
+
   private ledgerSeen = false;
   private async ledgerTablePresent(): Promise<boolean> {
     if (this.ledgerSeen) return true;
@@ -1012,14 +1028,7 @@ export class MaintenanceService {
       }
     });
 
-    for (const factId of orphanedIds) {
-      try {
-        await this.embeddingService.notifyEmbeddingPersisted(entityId, factId, null);
-      } catch (hookErr) {
-        console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during heal orphan pass for ${factId}:`, hookErr);
-        emitDiagnostic(this.options, { ...diagBase, code: 'hook_failed', detail: { factId, reason: 'on_embedding_persisted' } });
-      }
-    }
+    await this.deliverHealRemovals(entityId, orphanedIds, trigger);
 
     const healCandidates = await this.entryRepo.findHealCandidatesByEntityId(entityId, batchSize, recheckCutoff);
     // Keyword outage: heal anchors need keyword search, so skip the LLM pass
@@ -1295,14 +1304,7 @@ export class MaintenanceService {
     ]));
     await this.searchService.syncEntries(entityId, healSyncIds);
 
-    for (const factId of uniqueDeletedFactIds) {
-      try {
-        await this.embeddingService.notifyEmbeddingPersisted(entityId, factId, null);
-      } catch (hookErr) {
-        console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during heal for ${factId}:`, hookErr);
-        emitDiagnostic(this.options, { ...diagBase, code: 'hook_failed', detail: { factId, reason: 'on_embedding_persisted' } });
-      }
-    }
+    await this.deliverHealRemovals(entityId, uniqueDeletedFactIds, trigger);
 
     for (const fact of insertedFacts) {
       await this.embeddingService.embedFact(fact, { operation: 'heal', trigger });

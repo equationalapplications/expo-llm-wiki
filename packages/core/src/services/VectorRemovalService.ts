@@ -1,4 +1,4 @@
-import type { SQLiteAdapter, WikiOptions, WikiDiagnosticTrigger } from '../types';
+import type { SQLiteAdapter, WikiOptions, WikiDiagnosticTrigger, WikiDiagnosticOperation } from '../types';
 import { HOOK_TIMEOUT_MARKER } from '../types';
 import type {
   VectorRemovalRepository,
@@ -51,6 +51,63 @@ export class VectorRemovalService {
     if (this.options.forceDeleteIgnoreRankerHook === true) return 'force';
     if (this.options.vectorRanker?.onEmbeddingPersisted) return 'hook';
     return 'none';
+  }
+
+  private ledgerSeen = false;
+  private async ledgerPresent(): Promise<boolean> {
+    if (this.ledgerSeen) return true;
+    this.ledgerSeen = await this.repo.tablePresent();
+    return this.ledgerSeen;
+  }
+
+  /** One `hook_failed` diagnostic per id (the removal stays owed). */
+  emitHookFailed(
+    entityId: string,
+    ids: string[],
+    operation: WikiDiagnosticOperation,
+    trigger: WikiDiagnosticTrigger,
+  ): void {
+    for (const factId of ids) {
+      emitDiagnostic(this.options, {
+        entityId, operation, trigger, code: 'hook_failed',
+        detail: { factId, reason: 'on_embedding_persisted' },
+      });
+    }
+  }
+
+  /**
+   * Post-commit delivery for heal, ingest and import (spec §5.7). Never throws:
+   * a failed id emits `hook_failed` and stays owed on the ledger. Without a
+   * ledger table (setup never ran) it falls back to a best-effort call per id.
+   * Under `forceDeleteIgnoreRankerHook` no removal call is made.
+   */
+  async deliverRemovals(
+    entityId: string,
+    ids: string[],
+    operation: WikiDiagnosticOperation,
+    trigger: WikiDiagnosticTrigger,
+    fallbackIds: string[] = ids,
+  ): Promise<void> {
+    try {
+      if (await this.ledgerPresent()) {
+        if (ids.length === 0) return;
+        const r = await this.drain({ entityId, ids }, { trigger });
+        this.emitHookFailed(entityId, r.failedIds, operation, trigger);
+        return;
+      }
+      if (this.gate() !== 'hook') return;
+      for (const factId of new Set(fallbackIds)) {
+        try {
+          await this.embeddingService.notifyEmbeddingPersisted(entityId, factId, null);
+        } catch (hookErr) {
+          console.warn(`[WikiMemory] onEmbeddingPersisted(vector=null) hook failed for ${factId}:`, hookErr);
+          this.emitHookFailed(entityId, [factId], operation, trigger);
+        }
+      }
+    } catch (err) {
+      console.warn('[WikiMemory] removal delivery failed:', err);
+      this.emitHookFailed(entityId, ids, operation, trigger);
+    }
   }
 
   async markExternalIndexInUse(tx: SQLiteAdapter): Promise<void> {

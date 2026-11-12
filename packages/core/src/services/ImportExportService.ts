@@ -7,6 +7,7 @@ import { entitySummaryMetaKey, type MetadataRepository } from '../repositories/M
 import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
+import type { VectorRemovalService } from './VectorRemovalService';
 import { clip, normalizeSourceRef } from '../utils/pure';
 import { latestVerified } from '@equationalapplications/core-okf';
 import { emitDiagnostic } from '../utils/diagnostics';
@@ -29,6 +30,7 @@ export class ImportExportService {
     private jobManager: JobManager,
     private embeddingService: EmbeddingService,
     private options: Pick<WikiOptions, 'onDiagnostic'> = {},
+    private vectorRemoval?: VectorRemovalService,
   ) {}
 
   async exportDump(entityIds?: string[]): Promise<MemoryDump> {
@@ -564,14 +566,23 @@ export class ImportExportService {
       }
     }
 
-    for (const factId of softDeletedFactIds) {
-      if (!upsertedFactIds.has(factId) || upsertedDeletedFactIds.has(factId)) {
+    const removedIds = softDeletedFactIds.filter(
+      (id) => !upsertedFactIds.has(id) || upsertedDeletedFactIds.has(id),
+    );
+    if (this.vectorRemoval) {
+      // Merge-mode tombstones (G8) are soft deletes of live facts too; the
+      // ledger holds them, so deliver those ids with the replace-mode ones.
+      await this.vectorRemoval.deliverRemovals(
+        entityId,
+        Array.from(new Set([...removedIds, ...upsertedDeletedFactIds])),
+        'importDump',
+        'call',
+        removedIds,
+      );
+    } else {
+      for (const factId of removedIds) {
         try {
-          await this.embeddingService.notifyEmbeddingPersisted(
-            entityId,
-            factId,
-            null,
-          );
+          await this.embeddingService.notifyEmbeddingPersisted(entityId, factId, null);
         } catch (hookErr) {
           console.warn(
             `[WikiMemory] onEmbeddingPersisted(vector=null) hook failed for soft-deleted fact ${factId}:`,

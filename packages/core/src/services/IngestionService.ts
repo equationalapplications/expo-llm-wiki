@@ -15,6 +15,7 @@ import type { EdgeRepository } from '../repositories/EdgeRepository';
 import type { SearchService } from './SearchService';
 import type { JobManager } from './JobManager';
 import type { EmbeddingService } from './EmbeddingService';
+import type { VectorRemovalService } from './VectorRemovalService';
 import type { OntologyService, TitleIndexEntry } from './OntologyService';
 import { PromptService } from './PromptService';
 import { DEFAULT_MAX_CHUNK_LENGTH, DEFAULT_CHUNK_OVERLAP } from '../utils/chunkingDefaults';
@@ -100,6 +101,7 @@ export class IngestionService {
     private embeddingService: EmbeddingService,
     promptService?: PromptService,
     private ontologyService?: OntologyService,
+    private vectorRemoval?: VectorRemovalService,
   ) {
     // Fallback for direct instantiation outside WikiMemory facade (e.g. isolated tests).
     this.promptService = promptService ?? new PromptService(this.options.config?.prompts, resolveGrounding(this.options.config?.grounding));
@@ -465,15 +467,19 @@ export class IngestionService {
       // this block on the partial path and was the bug copilot flagged.)
       if (failedChunks === 0) {
         const uniqueDeletedSourceFactIds = Array.from(new Set(deletedSourceFactIds));
-        for (const factId of uniqueDeletedSourceFactIds) {
-          try {
-            await this.embeddingService.notifyEmbeddingPersisted(entityId, factId, null);
-          } catch (hookErr) {
-            console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during ingest for ${factId}:`, hookErr);
-            emitDiagnostic(this.options, {
-              entityId, operation: 'ingest', trigger: 'call', code: 'hook_failed',
-              detail: { factId, reason: 'on_embedding_persisted' },
-            });
+        if (this.vectorRemoval) {
+          await this.vectorRemoval.deliverRemovals(entityId, uniqueDeletedSourceFactIds, 'ingest', 'call');
+        } else {
+          for (const factId of uniqueDeletedSourceFactIds) {
+            try {
+              await this.embeddingService.notifyEmbeddingPersisted(entityId, factId, null);
+            } catch (hookErr) {
+              console.warn(`[WikiMemory] onEmbeddingPersisted hook failed during ingest for ${factId}:`, hookErr);
+              emitDiagnostic(this.options, {
+                entityId, operation: 'ingest', trigger: 'call', code: 'hook_failed',
+                detail: { factId, reason: 'on_embedding_persisted' },
+              });
+            }
           }
         }
       }
