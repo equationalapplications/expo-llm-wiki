@@ -212,8 +212,7 @@ returns. A diagnostic delivered before a throw is still accurate.
 Every model call in a maintenance run draws from one token budget the
 host can set. Usage is reported per call through a diagnostic when the
 host asks for it, marked `estimated` when the provider did not report real
-counts. In deferred mode nothing runs in the background at all; the host
-decides when and how much.
+counts. In deferred mode nothing runs in the background, with one exception that makes no model call: after `setup()` the engine finishes removals from the host's vector index that the host already requested (`drainExternalDeletionsOnSetup`, on by default). The host decides when and how much.
 
 *Why:* this is the charter's "no invisible spend" promise. Background work
 that burns a user's allowance without saying so is the failure this rule
@@ -223,6 +222,10 @@ exists to prevent.
 Kurt ruled on 2026-11-09 that 8.0.0 flips both defaults: `librarian.strategy`
 to `'ops'` and `maintenance` to `'deferred'`. Hosts can restore either with
 explicit configuration. See the 2026-11-09 amendment.
+Amended 2026-11-11 (owner ruling): the "nothing runs in the background"
+sentence gained one exception, the no-model drain of owed vector-index
+removals after `setup()`. See the 2026-11-11 amendment and
+`specs/durable-vector-removal/spec.md`.
 
 ### 8. A small, first-party, auditable dependency surface
 
@@ -347,6 +350,16 @@ runs and who schedules it.
 
 ## Amendments
 
+- 2026-11-11 — Rule 7 allows one background job in deferred mode: after
+  `setup()`, the engine finishes removals from the host's vector index that
+  the host already requested through `forget()`, prune or the other delete
+  paths. It makes no model call and spends no tokens. It runs only when a
+  removal hook is configured, is not awaited by `setup()`, stops after 10
+  seconds, and hosts turn it off with `drainExternalDeletionsOnSetup: false`.
+  Why: charter rule 8 promises deletion, and a delete the host's index never
+  heard about is not done; retrying only when the host asks leaves it undone
+  after a crash. Owner ruling, 2026-11-11; recorded with
+  `specs/durable-vector-removal/`.
 - 2026-11-11 — Rule 6's Status no longer says an operation that throws
   delivers no diagnostics. `importDump` commits each entity separately;
   ingest's duplicate-hash path and `llm_usage` also deliver diagnostics
