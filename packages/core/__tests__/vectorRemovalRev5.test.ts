@@ -65,8 +65,10 @@ describe('revision 5', () => {
     await t.wiki.forget('e1', { entryId: f.id });
     await t.wiki.importDump(live);
     const tomb = JSON.parse(JSON.stringify(live));
-    tomb.entities.e1.facts[0].deleted_at = Date.now();
-    tomb.entities.e1.facts[0].updated_at = Date.now(); // newer, so merge applies it
+    const restoredAt = (await raw.getFirstAsync(`SELECT updated_at FROM ${P}entries WHERE id = ?`, [f.id])).updated_at;
+    const tombAt = Math.max(Date.now(), restoredAt + 1); // strictly newer, so merge applies it
+    tomb.entities.e1.facts[0].deleted_at = tombAt;
+    tomb.entities.e1.facts[0].updated_at = tombAt;
     const before = t.calls.length;
     await expect(t.wiki.importDump(tomb, { merge: true })).resolves.toBeUndefined();
     // The tombstone is owed again and delivered by the import itself.
@@ -188,6 +190,39 @@ describe('revision 5', () => {
     const before = t.calls.length;
     await t.wiki.runExternalDeletions('e1');
     expect(t.calls.slice(before).map((c) => [c.factId, c.vector])).toEqual([['x', null]]);
+  });
+
+  it('38d: when the liveness read and the guarded write both fail, a live fact gets no null', async () => {
+    const raw = openTestDatabase();
+    const t = open(raw, () => {});
+    await t.wiki.setup();
+    await ins(raw, 'x');
+    const repo = (t.wiki as any).vectorRemovalRepo;
+    repo.isLive = () => Promise.reject(new Error('read failed'));
+    repo.enqueueIfNotLive = () => Promise.reject(new Error('busy'));
+    const svc = (t.wiki as any).embeddingService;
+    await svc.storeFactVector({ id: 'x', entity_id: 'e1' }, new Float32Array([0.1, 0.2]), { operation: 'ingest', trigger: 'call' });
+    expect(t.calls.map((c) => c.vector === null)).toEqual([false]);
+  });
+
+  it('38e: when the liveness read fails, the guarded write still owes a deleted fact and delivers null', async () => {
+    const raw = openTestDatabase();
+    let confirmed = false;
+    const t = open(raw, async (c) => {
+      if (c.vector !== null && !confirmed) {
+        confirmed = true;
+        await softDel(raw, c.factId);
+        await t.wiki.runExternalDeletions('e1');
+      }
+    });
+    await t.wiki.setup();
+    await ins(raw, 'x');
+    (t.wiki as any).vectorRemovalRepo.isLive = () => Promise.reject(new Error('read failed'));
+    const svc = (t.wiki as any).embeddingService;
+    await svc.storeFactVector({ id: 'x', entity_id: 'e1' }, new Float32Array([0.1, 0.2]), { operation: 'ingest', trigger: 'call' });
+    const mine = t.calls.filter((c) => c.factId === 'x');
+    expect(mine[mine.length - 1].vector).toBeNull();
+    expect(await ledger(raw)).toEqual([{ fact_id: 'x', confirmed_at: expect.any(Number) }]);
   });
 
   it('38b: a vector call for a live fact opens no write transaction for the race check', async () => {

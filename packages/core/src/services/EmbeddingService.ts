@@ -245,36 +245,32 @@ export class EmbeddingService {
   ): Promise<void> {
     const vr = this.vectorRemoval;
     if (!vr) return;
-    let enqueued: boolean;
-    try {
-      enqueued = await this.afterVectorCall(entityId, factId);
-    } catch (err) {
-      // The removal couldn't be recorded (for example the host holds a
-      // transaction on the connection). Send null now so the last call the
-      // host sees for a deleted fact is still a removal (spec rev 5).
-      console.warn(`[WikiMemory] post-embed removal check failed for ${factId}:`, err);
+    const outcome = await this.recordAfterVectorCall(entityId, factId);
+    if (outcome === 'enqueued') {
       try {
-        await this.callRemovalHook(entityId, factId, this.validateDeletionTimeout());
-      } catch (hookErr) {
-        console.warn(`[WikiMemory] onEmbeddingPersisted(vector=null) hook failed for ${factId}:`, hookErr);
-        this.reportHookFailed({ operation, trigger }, entityId, factId);
-        // Neither the record nor the call landed. Try the record once more (the
-        // hook wait gave the host time to finish its transaction): an owed row
-        // is retried by the next drain. If this fails too, nothing durable is
-        // left to write to, as in the never-set-up fallbacks (§5.5.5).
-        try {
-          await this.afterVectorCall(entityId, factId);
-        } catch (retryErr) {
-          console.warn(`[WikiMemory] post-embed removal could not be recorded for ${factId}:`, retryErr);
-        }
+        await vr.service.deliverRemovals(entityId, [factId], operation, trigger, []);
+      } catch (err) {
+        console.warn(`[WikiMemory] post-embed removal delivery failed for ${factId}:`, err);
       }
       return;
     }
-    if (!enqueued) return;
+    // 'none': live, already owed, or nothing to record. 'unknown': liveness
+    // couldn't be read and the guarded write failed, so a null could remove a
+    // live fact's vector; send nothing (spec rev 6).
+    if (outcome !== 'write_failed') return;
+    // The fact is known not live but the removal couldn't be recorded (for
+    // example the host holds a transaction on the connection). Send null now
+    // so the last call the host sees for a deleted fact is still a removal.
     try {
-      await vr.service.deliverRemovals(entityId, [factId], operation, trigger, []);
-    } catch (err) {
-      console.warn(`[WikiMemory] post-embed removal delivery failed for ${factId}:`, err);
+      await this.callRemovalHook(entityId, factId, this.validateDeletionTimeout());
+    } catch (hookErr) {
+      console.warn(`[WikiMemory] onEmbeddingPersisted(vector=null) hook failed for ${factId}:`, hookErr);
+      this.reportHookFailed({ operation, trigger }, entityId, factId);
+      // Neither the record nor the call landed. Try the record once more (the
+      // hook wait gave the host time to finish its transaction): an owed row
+      // is retried by the next drain. If this fails too, nothing durable is
+      // left to write to, as in the never-set-up fallbacks (§5.5.5).
+      await this.recordAfterVectorCall(entityId, factId);
     }
   }
 
@@ -331,14 +327,33 @@ export class EmbeddingService {
   /**
    * After an embed (and its vector call) settles: owe a removal if the fact is
    * no longer live, so a vector the host just received is taken back (§5.7, G10).
-   * Returns true only when a ledger row was enqueued; false without a ledger
-   * table, without a removal hook, or when the fact is live.
+   * Never throws. `'enqueued'`: a ledger row was written. `'none'`: no ledger
+   * table, no removal hook, the fact is live, or a row was already owed.
+   * `'write_failed'`: the fact is known not live but the write failed.
+   * `'unknown'`: the liveness read and the guarded write both failed.
    */
-  async afterVectorCall(entityId: string, factId: string): Promise<boolean> {
+  private async recordAfterVectorCall(
+    entityId: string,
+    factId: string,
+  ): Promise<'none' | 'enqueued' | 'write_failed' | 'unknown'> {
     const vr = this.vectorRemoval;
-    if (!vr || vr.service.gate() !== 'hook') return false;
-    if (!(await vr.service.ledgerPresent())) return false;
-    return vr.repo.enqueueIfNotLive(entityId, factId, Date.now());
+    if (!vr || vr.service.gate() !== 'hook') return 'none';
+    let live: boolean | undefined;
+    try {
+      if (!(await vr.service.ledgerPresent())) return 'none';
+      // A read first: the common case (fact live) opens no write transaction.
+      live = await vr.repo.isLive(factId);
+    } catch (err) {
+      // The guarded write below still decides liveness atomically.
+      console.warn(`[WikiMemory] post-embed liveness read failed for ${factId}:`, err);
+    }
+    if (live) return 'none';
+    try {
+      return (await vr.repo.enqueueIfNotLive(entityId, factId, Date.now())) ? 'enqueued' : 'none';
+    } catch (err) {
+      console.warn(`[WikiMemory] post-embed removal could not be recorded for ${factId}:`, err);
+      return live === false ? 'write_failed' : 'unknown';
+    }
   }
 
   async notifyEmbeddingPersisted(entityId: string, factId: string, vector: Float32Array | null): Promise<void> {

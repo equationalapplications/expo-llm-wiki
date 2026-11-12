@@ -47,14 +47,21 @@ export class VectorRemovalRepository extends BaseRepository {
     return `${this.prefix}vector_removals`;
   }
 
-  /** Owe the host a removal for `factId` unless a live row exists (a missing row counts as not live). Returns whether a row was enqueued. */
-  async enqueueIfNotLive(entityId: string, factId: string, now: number): Promise<boolean> {
-    // A read first: the common case (fact live) opens no write transaction.
-    const live = await this.db.getFirstAsync<{ x: number }>(
+  /** Whether `factId` exists and is not soft-deleted. */
+  async isLive(factId: string): Promise<boolean> {
+    const row = await this.db.getFirstAsync<{ x: number }>(
       `SELECT 1 AS x FROM ${this.prefix}entries WHERE id = ? AND deleted_at IS NULL`,
       [factId],
     );
-    if (live) return false;
+    return !!row;
+  }
+
+  /**
+   * Owe the host a removal for `factId` unless a live row exists (a missing row
+   * counts as not live). The liveness test is part of the write, so it is
+   * atomic. Returns whether a row was enqueued.
+   */
+  async enqueueIfNotLive(entityId: string, factId: string, now: number): Promise<boolean> {
     // In its own transaction so it can't join a host's open raw transaction.
     return this.db.withTransactionAsync(async (tx) => {
       const r = await tx.runAsync(
