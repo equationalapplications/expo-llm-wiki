@@ -96,6 +96,10 @@ Limits:
 - Two cases store one extra copy of each event, once: a store that imported the id-less log with
   a release before derived ids, and a log whose id comments were stripped after its events were
   imported. The librarian reads the copies on its next pass.
+- An event whose stored id can't be written as an id comment (only letters, digits, `.`, `_` and
+  `-` can, so not `msg:42` from a JSON dump) is exported without one. Each export and merge
+  import of such a log adds one more copy of that event, since the derived id it gets is already
+  taken by the copy from the last round. Importing the same file twice still adds nothing.
 - Keep one day's entries in one bundle. Identical lines split across two bundles get the same id,
   and the second is skipped.
 

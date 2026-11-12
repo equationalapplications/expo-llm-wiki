@@ -23,6 +23,7 @@ npm install @equationalapplications/core-okf
 | `buildLogMd(entries)` / `parseLogMd(text)` | Append-only chronological logs |
 | `extractMarkdownLinks(text)` | Relative links → `{ text, path }` (graph edges) |
 | `deriveEventId(input)` | Deterministic id for a log line with no id comment ([profile §7](https://github.com/equationalapplications/expo-llm-wiki/blob/main/docs/okf-profile.md)) |
+| `createEventIdDeriver(input)` | The same id at many occurrences: returns `(occurrence) => id`, hashing the summary once |
 
 ```ts
 const md = buildConceptDocument({ type: 'task', id: 'task_1' }, '# Buy groceries');

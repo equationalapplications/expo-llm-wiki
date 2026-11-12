@@ -81,6 +81,9 @@ the event count without deleting anything.
   `event_retention_held`. A later maintenance run then reads them into facts again. Under
   `'legacy'`, the librarian re-reads the newest events on every pass.
 - **Re-importing an old export brings the data back**, events included.
+- **Drain the outbox.** With `enableOutbox: true`, outbox rows your worker hasn't acknowledged
+  still hold the entity's fact text. They leave the database only through `markOutboxEventsProcessed()`, so
+  run your worker (or acknowledge them) before the prune and vacuum.
 - **The ontology manifest stays.** The wipe leaves the entity's ontology manifest and mode. Under
   `'emergent'`, the manifest holds node and edge types learned from the entity's facts. To reset
   it, write an empty one:
