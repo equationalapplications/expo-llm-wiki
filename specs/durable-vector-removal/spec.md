@@ -11,7 +11,7 @@ Revision 2 (2026-11-11), after an Opus (high) review of revision 1:
 - The INTENT §7 wording is corrected (§5.11).
 - The test plan is rewritten (§8).
 
-Revision 3 (2026-11-11), from the Task 2 review: calls in flight are keyed by ledger row (`seq`), not by fact (§5.4); the drain's deadline is an absolute time named `deadlineAt`; a failed write transaction stops the drain as transient; liveness is checked per page (§5.4). From the Task 3 review: forget on a never-set-up store falls back to per-id hook calls (§5.5.5); a hookless store without the marker emits no pending diagnostic (§5.3).
+Revision 3 (2026-11-11), from the Task 2 review: calls in flight are keyed by ledger row (`seq`), not by fact (§5.4); the drain's deadline is an absolute time named `deadlineAt`; a failed write transaction stops the drain as transient; liveness is checked per page (§5.4). From the Task 3 review: forget on a never-set-up store falls back to per-id hook calls (§5.5.5); a hookless store without the marker emits no pending diagnostic (§5.3). From the Task 7 review: removal-only entities are listed only when this process can act; job-list output fields exclude 'externalDeletions'; runPendingMaintenance awaits the setup drain; the setup drain discards under force (§5.7, §5.9).
 
 **Date:** 2026-11-11
 **Branch:** `docs/spec-durable-vector-removal`, stacked on PR #371 (`docs/spec-import-followups`); retargets to `main` after #371 merges.
@@ -236,7 +236,8 @@ One routine, `drainVectorRemovals(scope, opts)`, in a new `VectorRemovalService`
 - **After `setup()` (owner ruling 2026-11-11).** When the hook is configured and the ledger has pending rows, `setup()` starts one `{ all: true }` drain.
   - It isn't awaited, uses backoff, and has a 10 s total deadline. Because of the per-call cap in §5.4, its real worst case is 10 s.
   - It emits `background_job_failed` if it throws, and `external_deletion_pending` per entity when it ends with rows pending.
-  - `wiki.drain()` awaits it (today `drain()` is "a no-op in 'deferred' mode"; it now joins this drain).
+  - `wiki.drain()` awaits it (today `drain()` is "a no-op in 'deferred' mode"; it now joins this drain). `runPendingMaintenance()` awaits it before its own work, so a host that opens, maintains and pushes (serverless) never pushes mid-drain. A second `setup()` while it runs reuses it.
+  - Under `forceDeleteIgnoreRankerHook`, the setup drain still runs: it discards pending rows and clears the marker (§5.3). No hook or model call.
   - Hosts turn it off with `WikiOptions.drainExternalDeletionsOnSetup: false`. That option sits beside `vectorRanker`, `deletionHookTimeoutMs` and `forceDeleteIgnoreRankerHook`.
 - **`runPendingMaintenance()`.** A new job, `'externalDeletions'`, is added to `MaintenanceJob`.
   - It runs first, for entities taken from the ledger (filtered by `entityIds` when given), so fully pruned and wiped entities are included.
@@ -281,8 +282,8 @@ One routine, `drainVectorRemovals(scope, opts)`, in a new `VectorRemovalService`
   - `external_deletion_discarded` with `{ count }`.
   - New `WikiDiagnosticOperation` value: `'externalDeletion'`.
   - `WikiDiagnosticDetail` gains `oldestEnqueuedAt?` and `maxAttempts?`.
-- **`PendingMaintenance.pendingExternalDeletions?: number`** (optional, so hosts that build the type still compile). `getPendingMaintenance()` lists an entity whose only pending work is removals.
-- **`MaintenanceJob`** gains `'externalDeletions'`. `RunPendingMaintenanceResult` gains `externalDeletions`.
+- **`PendingMaintenance.pendingExternalDeletions?: number`** (optional, so hosts that build the type still compile). `getPendingMaintenance()` lists an entity whose only pending work is removals, **only when this process can act on them** (gate 'hook' or 'force'). A hookless process never lists removal-only entities, so the documented "loop until nothing is pending" host code still ends.
+- **`MaintenanceJob`** gains `'externalDeletions'` (an input to `jobs`). Output fields that list jobs that hit a lock or a missing search index (`EntityMaintenanceReport.busy`, `.searchUnavailable`) use `Exclude<MaintenanceJob, 'externalDeletions'>`, so hosts that switch over them exhaustively keep compiling. `RunPendingMaintenanceResult` gains `externalDeletions`.
 - **`WikiOptions.drainExternalDeletionsOnSetup?: boolean`**, default `true`.
 - **React.** No new hook. `useWikiForget` surfaces `WikiExternalDeletionError` like any rejection.
 
