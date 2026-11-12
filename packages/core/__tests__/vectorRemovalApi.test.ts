@@ -158,4 +158,77 @@ describe('public API and setup drain', () => {
     expect(r.externalDeletions).toEqual({ confirmed: 0, pending: 1 });
     expect(await raw.getAllAsync(`SELECT * FROM ${P}vector_removals`)).toEqual(before);
   });
+
+  it('hookless store: getPendingMaintenance is empty after runPendingMaintenance', async () => {
+    const raw = openTestDatabase();
+    await open(raw).wiki.setup();
+    await seed(raw, ['a']);
+    const t = open(raw);
+    await t.wiki.setup();
+    const r = await t.wiki.runPendingMaintenance();
+    expect(r.perEntity).toEqual([]);
+    expect(await t.wiki.getPendingMaintenance()).toEqual([]);
+  });
+
+  it('runPendingMaintenance awaits the in-flight setup drain; a second setup reuses it', async () => {
+    const raw = openTestDatabase();
+    await open(raw).wiki.setup();
+    await seed(raw, ['a']);
+    const t = open(raw, () => new Promise<void>((r) => setTimeout(r, 80)));
+    const svc = (t.wiki as any).vectorRemovalService;
+    const orig = svc.drain.bind(svc);
+    let allDrains = 0;
+    svc.drain = (scope: any, o: any) => { if ('all' in scope) allDrains++; return orig(scope, o); };
+    await t.wiki.setup();
+    await t.wiki.setup();
+    await t.wiki.runPendingMaintenance();
+    expect(allDrains).toBe(1);
+    expect(await pendingRows(raw)).toEqual([]);
+    expect(t.calls).toHaveLength(1);
+  });
+
+  it('force: the setup drain discards pending rows and emits external_deletion_discarded', async () => {
+    const raw = openTestDatabase();
+    await open(raw).wiki.setup();
+    await seed(raw, ['a']);
+    const t = open(raw, () => {}, { forceDeleteIgnoreRankerHook: true });
+    await t.wiki.setup();
+    await t.wiki.drain();
+    expect(t.calls).toEqual([]);
+    expect(await pendingRows(raw)).toEqual([]);
+    expect(t.diags.filter((d) => d.code === 'external_deletion_discarded')).toHaveLength(1);
+  });
+
+  it('the setup drain starts with a 10 s deadline and backoff', async () => {
+    const raw = openTestDatabase();
+    await open(raw).wiki.setup();
+    await seed(raw, ['a']);
+    const t = open(raw, () => {});
+    const svc = (t.wiki as any).vectorRemovalService;
+    const orig = svc.drain.bind(svc);
+    const seen: any[] = [];
+    svc.drain = (scope: any, o: any) => { seen.push({ scope, o, now: Date.now() }); return orig(scope, o); };
+    await t.wiki.setup();
+    await t.wiki.drain();
+    expect(seen[0].scope).toEqual({ all: true });
+    expect(seen[0].o.backoff).toBe(true);
+    expect(Math.abs(seen[0].o.deadlineAt - seen[0].now - 10_000)).toBeLessThan(1000);
+  });
+
+  it('externalDeletions runs before the librarian', async () => {
+    const raw = openTestDatabase();
+    await open(raw).wiki.setup();
+    await seed(raw, ['a']);
+    const order: string[] = [];
+    const t = open(raw, () => { order.push('hook'); }, {
+      drainExternalDeletionsOnSetup: false,
+      llmProvider: { generateText: async () => { order.push('llm'); return JSON.stringify({ facts: [] }); } },
+      config: { maintenance: 'deferred' },
+    });
+    await t.wiki.setup();
+    await t.wiki.write('e1', { type: 'note', summary: 'hello world' } as any);
+    await t.wiki.runPendingMaintenance();
+    expect(order[0]).toBe('hook');
+    expect(order).toContain('llm');
+  });
 });

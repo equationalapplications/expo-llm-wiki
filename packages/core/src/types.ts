@@ -893,6 +893,7 @@ export interface WikiDiagnostic {
   severity: WikiDiagnosticSeverity;
   operation: WikiDiagnosticOperation;
   trigger: WikiDiagnosticTrigger;
+  /** Entity the diagnostic concerns; `''` means store-wide (e.g. the setup removal drain's `background_job_failed`). */
   entityId: string;
   /** Epoch ms, sampled at emission. */
   at: number;
@@ -1522,6 +1523,9 @@ export interface WikiInstructions {
 
 export type MaintenanceJob = 'librarian' | 'heal' | 'reembed' | 'externalDeletions';
 
+/** The jobs that hold a per-entity lock (everything but `externalDeletions`). */
+export type LockedMaintenanceJob = Exclude<MaintenanceJob, 'externalDeletions'>;
+
 export interface PendingMaintenance {
   entityId: string;
   /** Events after the librarian watermark. */
@@ -1564,13 +1568,13 @@ export interface EntityMaintenanceReport {
   healPasses: number;
   reembedded: boolean;
   /** Set when a lock was held elsewhere; nothing ran for that job. */
-  busy?: MaintenanceJob[];
+  busy?: LockedMaintenanceJob[];
   /**
    * Set when keyword search is unavailable and the job could not run for this
    * entity (spec #280). Its watermark/checkpoint is kept; retry after
    * `syncSearchIndex()` restores keyword search.
    */
-  searchUnavailable?: MaintenanceJob[];
+  searchUnavailable?: LockedMaintenanceJob[];
 }
 
 export interface RunPendingMaintenanceResult {

@@ -3,6 +3,7 @@ import type {
   WikiOptions,
   PendingMaintenance,
   MaintenanceJob,
+  LockedMaintenanceJob,
   MaintenanceStopReason,
   EntityMaintenanceReport,
   RunPendingMaintenanceOptions,
@@ -49,7 +50,7 @@ export class MaintenanceScheduler {
     const canEmbed = typeof this.options.llmProvider.embed === 'function';
     const out: PendingMaintenance[] = [];
     const owed = new Map<string, number>();
-    if (await this.vectorRemovalService.ledgerPresent()) {
+    if (this.vectorRemovalService.gate() === 'hook' && (await this.vectorRemovalService.ledgerPresent())) {
       for (const e of await this.vectorRemovalRepo.entitiesWithPending()) {
         if (entityIds !== undefined && !entityIds.includes(e)) continue;
         owed.set(e, (await this.vectorRemovalRepo.pendingStats(e)).count);
@@ -107,7 +108,8 @@ export class MaintenanceScheduler {
     const deadline = opts.deadlineMs !== undefined ? Date.now() + Math.max(0, opts.deadlineMs) : Infinity;
     const jobs = new Set<MaintenanceJob>(opts.jobs ?? ['librarian', 'heal', 'reembed', 'externalDeletions']);
     const externalDeletions = await this.runExternalDeletions(opts.entityIds, jobs.has('externalDeletions'), deadline);
-    const pending = await this.getPending(opts.entityIds);
+    // Removal-only entities are reported by externalDeletions, not as per-entity maintenance.
+    const pending = (await this.getPending(opts.entityIds)).filter((p) => p.pendingEvents > 0 || p.healDue || p.reembedPending);
 
     type State = { p: PendingMaintenance; report: EntityMaintenanceReport; librarian: boolean; heal: boolean; reembed: boolean };
     const states: State[] = pending.map((p) => ({
@@ -134,8 +136,8 @@ export class MaintenanceScheduler {
     // only runs before a unit starts, never after one ends.
     const exhaustedStop = (): MaintenanceStopReason =>
       Date.now() >= deadline ? { reason: 'deadline' } : { reason: 'budget_exhausted' };
-    const markBusy = (st: State, job: MaintenanceJob) => { (st.report.busy ??= []).push(job); };
-    const markSearchUnavailable = (st: State, job: MaintenanceJob) => { (st.report.searchUnavailable ??= []).push(job); };
+    const markBusy = (st: State, job: LockedMaintenanceJob) => { (st.report.busy ??= []).push(job); };
+    const markSearchUnavailable = (st: State, job: LockedMaintenanceJob) => { (st.report.searchUnavailable ??= []).push(job); };
 
     // Open job flags across all entities. Flags only ever clear, so a round
     // that clears one (a skip: busy, outage, too small, nothing processed)

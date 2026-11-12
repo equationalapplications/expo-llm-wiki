@@ -438,12 +438,15 @@ export class WikiMemory {
 
   /** Marks the external index in use, then drains owed removals in the background (spec §5.7). */
   private async startSetupRemovalDrain(): Promise<void> {
+    if (this.setupRemovalDrain) return; // a second setup() reuses the running drain
     const gate = this.vectorRemovalService.gate();
-    if (gate !== 'hook') return;
-    await this.db.withTransactionAsync((tx) => this.vectorRemovalService.markExternalIndexInUse(tx));
+    if (gate === 'none') return;
+    if (gate === 'hook') {
+      await this.db.withTransactionAsync((tx) => this.vectorRemovalService.markExternalIndexInUse(tx));
+    }
     if ((await this.vectorRemovalRepo.pendingStats()).count === 0) return;
     if (this.options.drainExternalDeletionsOnSetup === false) {
-      await this.vectorRemovalService.emitPending(undefined, 'auto');
+      if (gate === 'hook') await this.vectorRemovalService.emitPending(undefined, 'auto');
       return;
     }
     const p = (async () => {
@@ -729,7 +732,7 @@ export class WikiMemory {
     return this.writeService.write(entityId, event);
   }
 
-  /** Await auto-mode background librarian/heal jobs started by write(). No-op in 'deferred' mode. */
+  /** Await auto-mode background librarian/heal jobs started by write(), and the removal drain `setup()` started. */
   async drain(): Promise<void> {
     await this.setupRemovalDrain;
     return this.writeService.drain();
@@ -745,8 +748,9 @@ export class WikiMemory {
     return this.maintenanceScheduler.getPending(entityIds);
   }
 
-  /** Run pending librarian/heal/reembed work under an optional token budget and deadline (spec §6.2). Nothing runs after it resolves. */
+  /** Run pending removals, librarian, heal and reembed work under an optional token budget and deadline (spec §6.2). Awaits the setup removal drain first. */
   async runPendingMaintenance(options?: RunPendingMaintenanceOptions): Promise<RunPendingMaintenanceResult> {
+    await this.setupRemovalDrain;
     return this.maintenanceScheduler.run(options);
   }
 

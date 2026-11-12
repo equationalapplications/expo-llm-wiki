@@ -106,7 +106,7 @@ export class VectorRemovalRepository extends BaseRepository {
     for (const c of chunks(seqs, CHUNK)) {
       const r = await executor.runAsync(
         `UPDATE ${this.prefix}vector_removals SET confirmed_at = ?
-          WHERE seq IN (${marks(c.length)})`,
+          WHERE confirmed_at IS NULL AND seq IN (${marks(c.length)})`,
         [now, ...c],
       );
       changed += r.changes;
