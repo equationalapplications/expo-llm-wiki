@@ -971,7 +971,9 @@ export interface WikiOptions {
    * Escape hatch: skip onEmbeddingPersisted on deletion paths entirely.
    * Use ONLY when the ANN backend is permanently decommissioned. Vectors
    * orphaned in the (unreachable) external index are accepted as a tradeoff.
-   * NOT GDPR-safe for live indexes. Default false.
+   * Means the index is decommissioned: no removal call is made on any path
+   * (forget, prune, heal, ingest, import), and owed removals are discarded
+   * (`external_deletion_discarded`). NOT GDPR-safe for live indexes. Default false.
    */
   forceDeleteIgnoreRankerHook?: boolean;
 

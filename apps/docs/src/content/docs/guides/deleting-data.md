@@ -85,7 +85,7 @@ The engine can't do these for you:
   stay owed. Retry later, or let a drain below finish them.
 - `runPrune()` drains the ids it is about to hard-delete. It keeps rows that aren't confirmed, then
   finishes its other work and throws `PrunePartialFailureError` if rows remain.
-- `setup()` starts one background drain of the owed removals when a hook is configured. It makes no
+- `setup()` starts one background drain of the owed removals when a hook is configured, or, under `forceDeleteIgnoreRankerHook`, to discard them. It makes no
   model call, isn't awaited by `setup()`, uses backoff and stops after 10 s. `wiki.drain()` waits for
   it. Turn it off with `drainExternalDeletionsOnSetup: false` (beside `vectorRanker`); `setup()` then
   only emits `external_deletion_pending`.
@@ -115,7 +115,7 @@ try {
 ```
 
 `WikiExternalDeletionError` has `code = 'WIKI_EXTERNAL_DELETION'`, `entityId`, `unconfirmedIds`
-(at most 100), `unconfirmedCount`, `timedOut` and a sanitized `cause`.
+(at most 100), `unconfirmedCount`, `timedOut` and `cause`. `cause` is sanitized, and absent on a timeout or when no cause is known.
 
 Two [diagnostics](/expo-llm-wiki/guides/diagnostics/), both with `operation: 'externalDeletion'` and
 no fact content:

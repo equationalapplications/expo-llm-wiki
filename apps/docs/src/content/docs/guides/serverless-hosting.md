@@ -17,7 +17,7 @@ const wiki = new WikiMemory(db, {
   llmProvider: tenantProvider,       // tenant's own key; implement generateTextWithUsage for exact metering
   config: {
     librarian: { strategy: 'ops' },  // similarity-gated, supersedes instead of overwriting
-    maintenance: 'deferred',         // no detached background promises
+    maintenance: 'deferred',         // no background maintenance; setup may start a no-model removal drain
     reportLlmUsage: true,            // emit llm_usage diagnostics
   },
   onDiagnostic: (d) => meter.record(tenantId, d),
