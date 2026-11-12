@@ -30,7 +30,7 @@ and runs a few LLM passes that move information between them.
 |---|---|---|
 | **Event** | Something that happened: `observation`, `decision`, `action`, or `outcome`. Raw, append-only, short-lived. | `write()` |
 | **Fact** | A durable piece of knowledge with a title, body, tags, and a `confidence` of `certain`, `inferred`, or `tentative`. | Librarian, ingest, heal, `upsertGraph()`, import, `remember()` |
-| **Task** | Something to do, with a priority from 0 to 10. Status is pending, in progress, or done. | Librarian |
+| **Task** | Something to do, with a priority from 0 to 10. Status is pending, in progress, done, or abandoned. | Librarian |
 
 When the host already knows a fact, `remember()` writes it directly, with no text-generation call. See [Direct fact writes](/expo-llm-wiki/reference/wiki-memory/#remember).
 

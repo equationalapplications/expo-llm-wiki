@@ -21,8 +21,9 @@ try {
 
 | Error | Thrown when | Useful fields | What to do |
 |---|---|---|---|
-| `WikiBusyError` | A conflicting job (librarian, heal, ingest, prune, or reembed) is already running for the entity | `operation`, `entityId` | Retry later. It's usually safe to swallow. |
+| `WikiBusyError` | A conflicting job (librarian, heal, ingest, prune, reembed, import, forget, or ontology backfill) is already running for the entity | `operation`, `entityId` | Retry later. It's usually safe to swallow. |
 | `WikiTransactionError` | A driver error escaped a transaction | `cause`, `sqliteErrorCode` | Alert, grouping by `sqliteErrorCode` |
+| `PrunePartialFailureError` | A deletion hook failed partway through `runPrune` | `deleted`, `failedAt`, `remaining`, `deletedTasks`, `deletedEvents`, `cause` | Fix the hook, then run prune again |
 | `WikiIngestEmptyError` | **Every** chunk of an ingest failed | `parseFailures`, `sourceRef`, `chunks` | Check the provider's output format |
 | `WikiDuplicateHashError` | The same content is held under another live `sourceRef` | `canonical`, `sourceHash`, `entityId` | Skip, or use `onDuplicateHash: 'skip'` |
 | `WikiSourceRefHashCollision` | `upsertGraph` hash collision | `existingSourceRef`, `sourceHash` | Use the existing ref, or change the content |

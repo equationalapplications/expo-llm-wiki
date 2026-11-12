@@ -33,7 +33,7 @@ import { schemaOrgWarmAgentManifest } from '@equationalapplications/schema-org-l
 
 A curated subset of schema.org covering personal and professional knowledge: **9 node types and
 28 edge rows** (19 property names). It's about 2 KB serialized, compared with about 50 KB for
-the full catalog, so prompts stay small and classification stays accurate. Every name is standard
+the full catalog, so prompts stay small. Every name is standard
 schema.org, which keeps future JSON-LD export straightforward.
 
 | Node types | |

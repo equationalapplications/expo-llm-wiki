@@ -784,9 +784,11 @@ export interface VectorRanker {
    * Called after a fact's embedding is successfully persisted to embedding_blob (or cleared).
    * Hosts use this to keep sqlite-vec / external indexes consistent with SQLite as source of truth.
    *
-   * On deletion paths (forget, prune, hard-delete), core awaits this hook to ensure ANN cleanup
-   * completes before the deletion call resolves (GDPR compliance). Hook failures or timeouts on
-   * those paths reject the deletion call.
+   * On forget and prune, core awaits this hook with `vector: null` after the delete commits, and
+   * a failure or timeout rejects the call. Cleanup is not yet durable: the loop stops at the
+   * first failing id, a retry re-sends ids already removed (make deletes idempotent), and a crash
+   * after commit loses the pending calls. Heal, re-ingest and replace-mode import only report
+   * failures (`hook_failed`). See the "Deleting data" guide.
    *
    * Treat `vector` as readonly — core provides a defensive copy, but adapters MUST NOT mutate.
    *
@@ -1193,6 +1195,28 @@ export class WikiTransactionError extends Error {
     this.name = 'WikiTransactionError';
     this.sqliteErrorCode = extractSqliteCode(options.cause);
   }
+}
+
+/** Selectors for {@link WikiMemory.forget}. `clearAll` excludes the other selectors. */
+export interface ForgetParams {
+  entryId?: string;
+  taskId?: string;
+  sourceRef?: string;
+  sourceHash?: string;
+  /** Soft-delete every fact and task of the entity, delete its edges, and delete its source-ref index rows. */
+  clearAll?: boolean;
+  /**
+   * With `clearAll: true` only: also hard-delete every event of the entity,
+   * read by the librarian or not, and reset the librarian's position. Without
+   * it, events stay and a later maintenance run can read them into facts again.
+   */
+  includeEvents?: boolean;
+}
+
+/** Result of {@link WikiMemory.forget}. `deleted.events` is present only with `includeEvents`. */
+export interface ForgetResult {
+  deleted: { entries: number; tasks: number; events?: number };
+  metadataReset?: boolean;
 }
 
 export class PrunePartialFailureError extends Error {

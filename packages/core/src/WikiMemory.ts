@@ -15,7 +15,7 @@ import {
   WikiDraftNotFound,
   WikiSupersedeError,
 } from './types';
-import type { DraftPage, MigrationPolicy } from './types';
+import type { DraftPage, MigrationPolicy, ForgetParams, ForgetResult } from './types';
 import type { PendingSourceStatus, WikiLintReport, WikiInstructions, PendingMaintenance, RunPendingMaintenanceOptions, RunPendingMaintenanceResult } from './types';
 import { EntryRepository } from './repositories/EntryRepository';
 import { OutboxRepository } from './repositories/OutboxRepository';
@@ -193,6 +193,7 @@ export class WikiMemory {
       this.embeddingService,
       this.promptService,
       this.ontologyService,
+      this.edgeRepo,
     );
     this.maintenanceScheduler = new MaintenanceScheduler(
       this.db,
@@ -854,11 +855,21 @@ export class WikiMemory {
     return this.importExportService.importDump(dump, opts);
   }
 
+  /**
+   * Soft-delete facts and tasks by id, by source, or all of them (`clearAll`).
+   * `clearAll` also deletes the entity's edges and its source-ref index rows.
+   * Add `includeEvents: true` to `clearAll` to hard-delete every event too,
+   * read or not, and reset the librarian's position: without it a later
+   * maintenance run can read the events into facts again. `runPrune()` then
+   * hard-deletes the soft-deleted rows once they are older than
+   * `retainSoftDeletedFor` (7 days by default; pass 0 to remove them now).
+   * `dryRun` previews the counts.
+   */
   async forget(
     entityId: string,
-    params: { entryId?: string; taskId?: string; sourceRef?: string; sourceHash?: string; clearAll?: boolean },
+    params: ForgetParams,
     opts?: { dryRun?: boolean },
-  ): Promise<{ deleted: { entries: number; tasks: number }; metadataReset?: boolean }> {
+  ): Promise<ForgetResult> {
     return this.maintenanceService.forget(entityId, params, opts);
   }
 

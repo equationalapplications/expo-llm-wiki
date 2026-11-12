@@ -144,13 +144,46 @@ Events are date-grouped, newest date first:
 Line grammar: `- ({event_type}) {summary}` with two optional parts — the summary MAY be a markdown link to the related fact file when the event has a `related_entry_id`, and the line SHOULD end with a **stable id comment** (new in profile 1):
 
 - Id comment grammar: `<!-- id: {event_id} -->` at end of line. Consumers MUST tolerate arbitrary whitespace between the summary/link, the comment opener, the `id:` token, the value, and the closer (`/<!--\s*id:\s*(\S+)\s*-->\s*$/`). Markdown formatters may strip or move HTML comments; a missing or unparseable id comment MUST degrade gracefully, never fail the line.
-- Summary text MUST have `\`, `[`, `]` escaped and newlines collapsed to spaces (matching index-entry escaping).
+- Summary text MUST have `\`, `[`, `]` escaped and newlines collapsed to spaces (matching index-entry escaping). Consumers unescape them in both the linked and the plain form (clarified 2026-11-11; the reference consumer unescaped only the linked form before then).
 - Date granularity is the `## YYYY-MM-DD` heading; intra-day ordering is not preserved. The heading is the UTC day of the event's `occurred_at` when that is a usable past date (a number in years 0000–9999, not later than `created_at`), otherwise of `created_at`. Consumers that parse the heading into `created_at` therefore receive the real-world day for events that carry one. (Amended 2026-11-11 by PR #364; earlier producers always used `created_at`. Golden fixtures are unaffected, because they carry no `occurred_at`.)
 
 **Idempotency (normative consumer behavior):**
 
 1. When an event line carries an id, the consumer MUST use it as the event's identity: importing an event whose id already exists is a no-op.
 2. When the id is absent (profile 0 bundles, stripped comments), the consumer SHOULD deduplicate by the tuple `(event_type, summary, UTC-day)` against its existing events, where UTC-day is the heading's day: `occurred_at`'s when the producer used it, per the date rule above — the granularity this format actually preserves. This is the documented fix for the duplicate-events-on-every-restore failure in profile 0.
+
+   A consumer SHOULD assign an id-less event the derived id defined below. Importing it again is then a no-op under rule 1, for as long as the earlier copy is still stored. Where the two rules differ (identical lines under one date), the derived id governs: each line is stored. (Amended 2026-11-11 by `specs/import-followups/spec.md` §3, #365. A consumer that stored id-less events under other ids before adopting the derivation gets one duplicate per event on the next import of the same log, and none after.)
+
+**Derived event ids (added 2026-11-11).** For a log line with no valid id comment:
+
+- **Fields**, in order: the tag `llm-wiki/event-id/1`; the id of the entity being imported into (not a bundle directory name); the heading's date text `YYYY-MM-DD` as written; the event type as stored (an unknown type stored as `observation` is hashed as `observation`); the summary as stored, after unescaping `\`, `[` and `]`, with no Unicode normalization; the occurrence, in decimal.
+- **Occurrence:** walk the log in file order, counting only id-less lines that produce an event (the line parses and its date is valid). A line's occurrence is the number of earlier such lines in the same log with the same date, event type and summary (compared as encoded, so lone surrogates count as U+FFFD); the first is `0`. Lines with an explicit id do not count, and two headings with the same date share one count.
+- **Taken ids:** first collect the explicit ids of every line in the log that produces an event. If a line's derived id is already taken, by one of those or by an id derived for an earlier line, the line takes the next occurrence number until its id is free, and the count for that date, type and summary continues after the number used. So a line added by hand next to an identical exported line is stored, wherever the two lines sit.
+- **Encoding:** each field as its UTF-8 byte length in decimal, `:`, the UTF-8 bytes, then `,`, concatenated with nothing between. A lone UTF-16 surrogate encodes as U+FFFD (`EF BF BD`).
+- **Id:** `evt_okf1_` followed by the first 32 lowercase hex characters of the SHA-256 digest of those bytes. The id fits the id-comment alphabet, so it survives an export as an ordinary id comment.
+- Not hashed: the linked fact, the time of day, the line's position.
+
+Example (first id-less line of `legacy-profile-0`, imported as entity `demo`):
+
+```text
+bytes: 19:llm-wiki/event-id/1,4:demo,10:2026-07-05,11:observation,15:Linked to alpha,1:0,
+id:    evt_okf1_02dd42bf329719f258ab93b373f44506
+```
+
+Test vectors:
+
+| entity id | date | event type | summary | occurrence | id |
+|---|---|---|---|---|---|
+| `demo` | `2026-07-05` | `observation` | `Linked to alpha` | 0 | `evt_okf1_02dd42bf329719f258ab93b373f44506` |
+| `demo` | `2026-07-05` | `decision` | `Chose path B` | 0 | `evt_okf1_9a70e3a388247f9c27f96fc3855b3975` |
+| `demo` | `2026-07-05` | `decision` | `Chose path B` | 1 | `evt_okf1_549570648f50f8a88e414df0285d1de9` |
+| `other` | `2026-07-05` | `decision` | `Chose path B` | 0 | `evt_okf1_0a2faa6618933c9e9d106a5b164bab90` |
+| `user-123` | `2023-11-14` | `observation` | `Café ☕ visit — see [docs]` | 0 | `evt_okf1_bb987e1897dec93aec0ac282799ebc58` |
+| (empty) | `2026-01-01` | `action` | (empty) | 0 | `evt_okf1_a24645f15c6bdc6a079fb283dfc059eb` |
+
+Taken-id case: under `## 2026-07-05` in entity `demo`, the line `- (decision) Chose path B <!-- id: evt_okf1_9a70e3a388247f9c27f96fc3855b3975 -->` followed by the id-less line `- (decision) Chose path B` gives the id-less line `evt_okf1_549570648f50f8a88e414df0285d1de9` (occurrence 1), because occurrence 0's id is taken.
+
+The reference implementation is `deriveEventId` in `@equationalapplications/core-okf`. An explicit id always wins and is never recomputed. Deduplication by derived id holds only while the earlier copy is stored: an event deleted by a prune is stored again by a later import of the same log.
 
 ## 8. Consumer Robustness Requirements
 
@@ -178,7 +211,7 @@ Line grammar: `- ({event_type}) {summary}` with two optional parts — the summa
 | Entity summary prose | Yes (profile ≥ 1) |
 | Edge `(source, target, type)` | Yes (profile ≥ 1 producer, or profile-0 bundle with call-site `## Related` augmentation) |
 | Edge row id, edge `created_at` | No — regenerated on import |
-| Event identity | Yes with id comment (profile ≥ 1); tuple-approximated otherwise |
+| Event identity | Yes with id comment (profile ≥ 1); derived from the line otherwise (§7) |
 | Intra-day event ordering | No — date granularity only |
 | access_count / last_accessed_at | Carried, consumer MAY ignore |
 | Ontology / entity manifests | Not serialized in profile 1 |
@@ -276,5 +309,6 @@ For consumers reading a v0.2 bundle:
 
 ## Changelog
 
+- **2026-11-11** (no profile change, `llm-wiki/2` stays): §7 adds derived ids for id-less event lines (SHOULD), with test vectors and a taken-id rule, says the derived id governs over the tuple rule where they differ, and states that consumers unescape plain summaries as well as linked ones.
 - **llm-wiki/2** (2026-08-14): OKF v0.2 conformance. New frontmatter families (`sources`, `generated`, `verified`, `status`, `stale_after`, `usage_window`). Hand-rolled flow-mapping parser (no anchor/alias expansion). Hybrid DB schema (discrete + JSON). `status` rename rule for tasks (`status` = lifecycle, `execution_status` = execution). `generated.at` mapped onto existing `updated_at` with strict DAO discipline. `Attested Computation` deferred. Footnotes verbatim on round-trip (no synthesis). `isStale` and trust tier surfaced on read, never auto-filtered.
 - **llm-wiki/1** (2026-07-05): first normative profile. Additions over the de-facto profile 0: `profile` root key; `## Related` moves from call-site convention to producer-MUST with consumer strip-on-parse; event id comments; entity summary prose block; explicit YAML-subset and robustness requirements.

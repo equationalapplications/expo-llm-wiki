@@ -44,6 +44,20 @@ export class SourceRefIndexRepository extends BaseRepository {
   }
 
   /**
+   * Hard-delete every row of the entity, live or soft-deleted (forget clearAll,
+   * spec import-followups §6 rev 4). Nothing reads a soft-deleted row and
+   * runPrune never sweeps this table, so a wipe leaves no tombstones.
+   */
+  async deleteByEntityId(entityId: string, tx: SQLiteAdapter): Promise<number> {
+    const executor = this.getExecutor(tx);
+    const result = await executor.runAsync(
+      `DELETE FROM ${this.prefix}source_ref_index WHERE entity_id = ?`,
+      [entityId],
+    );
+    return result.changes;
+  }
+
+  /**
    * Idempotent soft-delete of the live row for (entity_id, source_ref).
    * Called at the start of every ingestDocument to remove the prior run's
    * index row, so the new upsert doesn't collide with itself. No-op when the

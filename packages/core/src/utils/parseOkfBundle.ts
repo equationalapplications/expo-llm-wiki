@@ -6,6 +6,7 @@ import {
   parseRootIndexMd,
   parseEntityIndexMd,
   parseEventIdComment,
+  createEventIdDeriver,
   splitRelatedSection,
   isAllowedOkfPath,
   extractMarkdownLinks,
@@ -160,6 +161,23 @@ function parseStaleAfterRaw(raw: unknown): number | null {
   return ms;
 }
 
+/** Lone UTF-16 surrogates → U+FFFD, matching how deriveEventId's UTF-8 encoding hashes them. */
+function replaceLoneSurrogates(s: string): string {
+  let out = '';
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c >= 0xd800 && c <= 0xdbff) {
+      const n = i + 1 < s.length ? s.charCodeAt(i + 1) : 0;
+      if (n >= 0xdc00 && n <= 0xdfff) { out += s[i] + s[i + 1]; i++; } else out += '\uFFFD';
+    } else if (c >= 0xdc00 && c <= 0xdfff) {
+      out += '\uFFFD';
+    } else {
+      out += s[i];
+    }
+  }
+  return out;
+}
+
 function unescapeLogSummary(summary: string): string {
   return summary.replace(/\\\]/g, ']').replace(/\\\[/g, '[').replace(/\\\\/g, '\\');
 }
@@ -179,7 +197,8 @@ function parseLogEntryText(text: string): {
   if (linkPath) {
     return { event_type, summary: unescapeLogSummary(linkedSummary), linkPath };
   }
-  return { event_type, summary: (plainSummary ?? '').trim() };
+  // Producers escape `\`, `[` and `]` in every summary (profile §7), so the plain form is unescaped too.
+  return { event_type, summary: unescapeLogSummary((plainSummary ?? '').trim()) };
 }
 
 function frontmatterToFact(
@@ -511,6 +530,9 @@ export function parseOkfBundle(
 
   const events: WikiEvent[] = [];
   if (logContent != null) {
+    // Id-less lines get a derived id after the whole log is read, so explicit ids
+    // anywhere in the file are known first (spec import-followups §3.2).
+    const pending: Array<{ index: number; date: string }> = [];
     const logPath = logMdPath ?? `entities/${entityId}/log.md`;
     for (const entry of parseLogMd(logContent)) {
       const { text, eventId } = parseEventIdComment(entry.text);
@@ -529,14 +551,38 @@ export function parseOkfBundle(
       const created_at = new Date(`${entry.date}T00:00:00.000Z`).getTime();
       if (!Number.isFinite(created_at)) continue;
 
+      if (eventId === undefined) pending.push({ index: events.length, date: entry.date });
       events.push({
-        id: eventId ?? generateId('evt_'),
+        id: eventId ?? '',
         entity_id: entityId,
         event_type: parsed.event_type,
         summary: parsed.summary,
         related_entry_id,
         created_at,
       });
+    }
+
+    // Occurrence per (day, type, summary); a derived id already taken by an explicit
+    // id or an earlier derived id moves to the next occurrence, so no line is dropped.
+    const taken = new Set(events.map(e => e.id).filter(id => id !== ''));
+    const nextOccurrence = new Map<string, number>();
+    for (const { index, date } of pending) {
+      const e = events[index];
+      // Keyed by the text the hash sees: lone surrogates hash as U+FFFD, so
+      // variants that differ only in them share one count (keeps this linear).
+      const key = JSON.stringify([date, e.event_type, replaceLoneSurrogates(e.summary)]);
+      let occurrence = nextOccurrence.get(key) ?? 0;
+      // Hash the shared fields once: explicit ids can take a long line's whole
+      // chain of occurrences, and re-hashing the summary per step is quadratic.
+      const derive = createEventIdDeriver({ entityId, date, eventType: e.event_type, summary: e.summary });
+      let id = derive(occurrence);
+      while (taken.has(id)) {
+        occurrence += 1;
+        id = derive(occurrence);
+      }
+      taken.add(id);
+      nextOccurrence.set(key, occurrence + 1);
+      e.id = id;
     }
   }
 

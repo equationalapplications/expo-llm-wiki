@@ -519,7 +519,19 @@ export class ImportExportService {
               : [],
         }, { operation: 'importDump', trigger: 'call' });
         if (!embedded) {
-          await this.embeddingService.notifyEmbeddingPersisted(entityId, fact.id, null);
+          try {
+            await this.embeddingService.notifyEmbeddingPersisted(entityId, fact.id, null);
+          } catch (hookErr) {
+            console.warn(
+              `[WikiMemory] onEmbeddingPersisted hook failed for unembedded fact ${fact.id}:`,
+              hookErr,
+            );
+            this.embeddingService.reportHookFailed(
+              { operation: 'importDump', trigger: 'call' },
+              entityId,
+              fact.id,
+            );
+          }
         }
       }
     }

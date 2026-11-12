@@ -71,7 +71,11 @@ export async function runExtract(deps: LibrarianDeps, ctx: LibrarianPassContext,
   const base = { entityId, operation: 'librarian' as const, trigger };
   const diagnostics: WikiDiagnosticInput[] = [];
   const byLabel = new Map(batch.map((l) => [l.label, l]));
-  const newestAt = batch[batch.length - 1].at;
+  // Newest real-world date in the batch, never later than now (spec import-followups §2).
+  // Batch order is created_at; `at` is occurred_at ?? created_at, so the last element is not the newest.
+  let newestAt = batch[0].at;
+  for (const l of batch) if (l.at > newestAt) newestAt = l.at;
+  const defaultValidFrom = Math.min(newestAt, Date.now());
 
   const candidates: Candidate[] = [];
   (Array.isArray(parsed.facts) ? parsed.facts : []).forEach((raw: unknown, index: number) => {
@@ -82,7 +86,7 @@ export async function runExtract(deps: LibrarianDeps, ctx: LibrarianPassContext,
     }
     const r = raw as { source_event?: unknown; valid_from?: unknown };
     const sourceLabel = typeof r.source_event === 'string' && byLabel.has(r.source_event) ? r.source_event : null;
-    const validFrom = parseValidFrom(r.valid_from) ?? (sourceLabel ? byLabel.get(sourceLabel)!.at : newestAt);
+    const validFrom = parseValidFrom(r.valid_from) ?? (sourceLabel ? byLabel.get(sourceLabel)!.at : defaultValidFrom);
     candidates.push({ index, fact, sourceLabel, validFrom });
   });
 

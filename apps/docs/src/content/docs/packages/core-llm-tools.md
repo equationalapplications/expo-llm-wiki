@@ -42,8 +42,9 @@ const tools = buildAuthorizedToolsArray(
   [escalateToCloudManifest, getCalendarEventsManifest, googleSearchManifest],
   ['calendar:read'], // the user's granted scopes
 );
-// → [{ functionDeclarations: [get_calendar_events, escalate_to_cloud_agent] }, { google_search: {} }]
-//   (escalate_to_cloud_agent and google_search are in the always-on 'core' scope)
+// → [{ functionDeclarations: [escalate_to_cloud_agent, get_calendar_events] }, { googleSearch: {} }]
+//   (escalate_to_cloud_agent and google_search are in the always-on 'core' scope;
+//    the manifest is named google_search, and the key Gemini reads is googleSearch)
 
 await ai.models.generateContent({ model: 'gemini-flash-latest', contents, config: { tools } });
 ```

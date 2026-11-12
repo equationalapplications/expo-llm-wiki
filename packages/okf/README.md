@@ -57,6 +57,27 @@ const log = buildLogMd([{ date: '2026-06-23', text: 'Observation made' }]);
 const events = parseLogMd(logContent);
 ```
 
+### `deriveEventId`
+
+Computes the deterministic id an OKF consumer gives a `log.md` line that has no
+`<!-- id: … -->` comment (profile §7). The same line in the same entity always gets
+the same id, so importing the log again skips it while the earlier copy is stored.
+
+```typescript
+const id = deriveEventId({
+  entityId: 'demo',
+  date: '2026-07-05',        // the heading text
+  eventType: 'observation',
+  summary: 'Linked to alpha',
+  occurrence: 0,             // earlier id-less lines with the same date, type and summary
+});
+// 'evt_okf1_02dd42bf329719f258ab93b373f44506'
+```
+
+`createEventIdDeriver({ entityId, date, eventType, summary })` returns
+`(occurrence) => id` with the same results, hashing the summary only once. Use it
+when you need many occurrences of one line.
+
 ### `extractMarkdownLinks`
 
 Parses relative markdown cross-links to map knowledge graph edges.

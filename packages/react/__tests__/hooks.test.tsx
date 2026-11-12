@@ -925,6 +925,17 @@ describe('useWikiForget', () => {
     expect(result.current.lastResult).toEqual({ deleted: { entries: 2, tasks: 1 } });
   });
 
+  it('passes includeEvents through and returns the events count', async () => {
+    wiki.forget.mockResolvedValue({ deleted: { entries: 0, tasks: 0, events: 3 }, metadataReset: true });
+    const { result } = renderHook(() => useWikiForget(), { wrapper: wrapper(wiki) });
+    let forgetResult: unknown;
+    await act(async () => {
+      forgetResult = await result.current.execute('user-1', { clearAll: true, includeEvents: true });
+    });
+    expect(wiki.forget).toHaveBeenCalledWith('user-1', { clearAll: true, includeEvents: true });
+    expect(forgetResult).toEqual({ deleted: { entries: 0, tasks: 0, events: 3 }, metadataReset: true });
+  });
+
   it('sets error state and re-throws when forget rejects', async () => {
     const boom = new Error('forget failed');
     wiki.forget.mockRejectedValue(boom);

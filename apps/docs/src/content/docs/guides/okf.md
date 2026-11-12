@@ -39,6 +39,9 @@ const dump = parseOkfBundle('user-123', files, {
 await wiki.importDump(dump, { merge: true });
 ```
 
+Without `merge: true`, `importDump` replaces the entity: it soft-deletes the entity's facts and
+tasks and deletes its edges before importing. Stored events are kept.
+
 Each concept is routed to facts or tasks by:
 
 1. `typeMapping` (an OKF `type` mapped to `'fact'`, `'task'`, or `'ignore'`),
@@ -73,6 +76,35 @@ Log entries are dated by `occurred_at` when it is a usable past date (years 0000
 re-dates log entries that would sort behind the librarian position to just after the current time, or after the librarian position if that is
 later, and keeps the original date in `occurred_at`. OKF bundles carry no source watermark, so every
 old entry is treated as not yet read.
+
+## Event ids
+
+Log lines this library exports end with an `<!-- id: … -->` comment. An event whose id is
+already stored is skipped on import. A line without a valid id comment (a hand-written log, an
+older bundle, or a log run through a formatter that strips HTML comments) gets an id computed from
+the entity id, the date, the event type, the summary, and how many identical lines came before it.
+Importing that log again then skips every line.
+
+In a summary, `\\`, `\[` and `\]` are escapes: they are stored as `\`, `[` and `]`. Exports write
+them that way, and a hand-written log must too, so a path like `\\server` is written `\\\\server`.
+
+Limits:
+
+- The id depends on the summary. Edit a line and it imports as a new event.
+- It holds only while the earlier events are stored. After `runPrune()` deletes them, a later
+  import stores them again.
+- Two cases store one extra copy of each event, once: a store that imported the id-less log with
+  a release before derived ids, and a log whose id comments were stripped after its events were
+  imported. The librarian reads the copies on its next pass.
+- An event whose stored id can't be written as an id comment (only letters, digits, `.`, `_` and
+  `-` can, so not `msg:42` from a JSON dump) is exported without one. Each export and merge
+  import of such a log adds one more copy of that event, since the derived id it gets is already
+  taken by the copy from the last round. Importing the same file twice still adds nothing.
+- Keep one day's entries in one bundle. Identical lines split across two bundles get the same id,
+  and the second is skipped.
+
+The rule is in the [profile, §7](https://github.com/equationalapplications/expo-llm-wiki/blob/main/docs/okf-profile.md),
+and [`deriveEventId`](/expo-llm-wiki/packages/core-okf/) computes it.
 
 ## Edges and `## Related`
 

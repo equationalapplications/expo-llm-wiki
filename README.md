@@ -17,7 +17,7 @@
 
 ## Persistent, episodic memory for AI agents
 
-Core LLM Wiki is a family of cross-platform TypeScript packages for long-term LLM memory, built on SQLite. It turns raw conversation logs and documents into a structured knowledge base of facts, tasks and graph edges, with background fact extraction, semantic search and memory pruning. It runs wherever your app runs: Expo, React Native, the browser, or Node.js.
+Core LLM Wiki is a family of cross-platform TypeScript packages for long-term LLM memory, built on SQLite. It turns raw conversation logs and documents into a structured knowledge base of facts, tasks and graph edges, with fact extraction, semantic search and memory pruning. It runs wherever your app runs: Expo, React Native, the browser, or Node.js.
 
 > Inspired by [Andrej Karpathy's LLM Wiki memory spec](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f). Supports [Open Knowledge Format (OKF) v0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf) import and export.
 

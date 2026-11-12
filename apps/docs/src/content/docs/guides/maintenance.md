@@ -35,8 +35,8 @@ Gate thresholds (`gate: { k: 5, dupThreshold: 0.89, novelThreshold: 0.30 }`) dep
 embedding model. The defaults were calibrated on BGE-small and are provisional for other models.
 Without `embed`, the gate uses keyword search, and every match goes to the model.
 
-:::caution[Known issue: ops with `maintenance: 'auto'`, fixed]
-From 7.8.0 until the release that fixes this, `strategy: 'ops'` with
+:::caution[Known issue: ops with `maintenance: 'auto'` (fixed in 8.0.5)]
+From 7.8.0 through 8.0.4, `strategy: 'ops'` with
 `maintenance: 'auto'` skipped the first batch of events the first
 automatic pass should have read. With the count trigger that is
 `autoLibrarianThreshold` events (20 by default); with
@@ -106,7 +106,9 @@ await wiki.runPrune('user-123', {
 ```
 
 Under `'deferred'` maintenance or the `'ops'` strategy, prune never deletes events the
-librarian hasn't processed yet. It emits `event_retention_held` instead.
+librarian hasn't processed yet. It emits `event_retention_held` instead. To delete an entity's
+events on request, read or not, use
+[`forget(entityId, { clearAll: true, includeEvents: true })`](/expo-llm-wiki/guides/deleting-data/#wipe-an-entity-completely).
 
 ## Deferred maintenance
 

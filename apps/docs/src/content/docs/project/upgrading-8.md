@@ -24,9 +24,12 @@ await wiki.runPendingMaintenance();
 
 An app that set only `autoLibrarianThreshold` or `autoHealThreshold` stops getting automatic runs.
 Those settings apply only in `'auto'` mode. The engine logs a console warning at construction when
-it sees one without an explicit `maintenance` value. Until the librarian has processed an entity's
+it sees one without an explicit `maintenance` value. It also warns when `librarian.strategy` is
+pinned to `'legacy'` with no `maintenance` value and no auto-run threshold. Each warning is logged once per process. Until the librarian has processed an entity's
 events, `runPrune()` keeps them and emits `event_retention_held`, so the event log grows if nothing
-runs maintenance.
+runs maintenance. A wipe that must remove events too uses
+`forget(entityId, { clearAll: true, includeEvents: true })` (see
+[Deleting data](/expo-llm-wiki/guides/deleting-data/#wipe-an-entity-completely)).
 
 **`librarian.strategy: 'ops'`.** The librarian works through events since its last pass, skips
 candidates an embedding gate finds identical, and supersedes changed facts instead of overwriting
@@ -53,6 +56,10 @@ const wiki = new WikiMemory(db, {
 
 `'deferred'` with `'legacy'` is unsafe: the legacy strategy reads only the newest 50 events per pass
 and advances past them, so a larger backlog is never extracted.
+
+If you set `maintenance: 'auto'` and keep the default `'ops'` strategy, use 8.0.5 or later.
+Earlier 8.0.x releases skipped the first batch of events. See
+[Maintenance](/expo-llm-wiki/guides/maintenance/#librarian-strategies).
 
 `'auto'` isn't safe on serverless or request-scoped hosts, because its background promises can be
 frozen or killed partway through. See

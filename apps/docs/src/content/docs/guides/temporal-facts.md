@@ -56,6 +56,12 @@ await wiki.write('user-123', {
 
 Pass the **client's** timestamp, so a delayed or queued write still reflects when the event happened.
 
+The `'ops'` librarian sets `valid_from` on each fact it extracts. It uses the date the model
+gives, if any. Otherwise it uses the source event's `occurred_at`, or the time the event was stored
+when that is not set. If the model names no source event, it uses the newest such date in the
+batch, but never a date later than the time of the pass. A fact taken from an event with a future
+`occurred_at` keeps that future date, so current reads leave it out until then.
+
 ## Retention
 
 History is kept indefinitely by default. Set `config.pruneSupersededAfter` (in days) to let

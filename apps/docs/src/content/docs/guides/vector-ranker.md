@@ -79,6 +79,9 @@ createWiki(db, {
 - **Cap `limit` and `candidateIds.length`**, and don't keep references to `vector` after the call returns.
 - If `onEmbeddingPersisted` is **eventually consistent** (for example a remote index), document the
   lag. Reads may miss new facts until the index catches up.
+- If `onEmbeddingPersisted` **throws** while a fact is written or imported, the engine reports
+  `hook_failed` with the fact id and carries on, so your index can miss that fact. Reconcile from
+  the diagnostic.
 
 :::caution[Deletes must reach your index]
 `forget()` and `runPrune()` **reject** if `onEmbeddingPersisted` fails or times out on deletion.

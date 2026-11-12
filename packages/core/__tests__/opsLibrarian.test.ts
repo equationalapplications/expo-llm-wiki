@@ -176,4 +176,42 @@ describe('ops librarian end to end', () => {
     expect(newRow.body).toBe('Principal engineer since 2020');
     expect(ofCode(diagnostics, 'librarian_op_rejected')).toHaveLength(0);
   });
+
+  // spec specs/import-followups §2 (#366): an event re-stamped by a merge import sorts last but carries its old date.
+  describe('default valid_from after an import', () => {
+    const OLD = Date.parse('2023-06-01T00:00:00Z');
+
+    it('dates an unlabeled fact by the newest event, and a current read returns it', async () => {
+      const { db, wiki } = mk([
+        () => ({ facts: [{ title: 'User has a dog named Rex', body: 'b', tags: [], confidence: 'certain' }], tasks: [] }),
+      ]);
+      await wiki.setup();
+      const today = Date.now() - 1000;
+      await db.runAsync(`INSERT INTO llm_wiki_events (id, entity_id, event_type, summary, created_at) VALUES ('evt_local','u','observation','dog',?)`, [today]);
+      await db.runAsync(`INSERT INTO llm_wiki_events (id, entity_id, event_type, summary, created_at, occurred_at) VALUES ('evt_imported','u','observation','old note',?,?)`, [today + 500, OLD]);
+      await wiki.runLibrarian('u');
+      const row = await db.getFirstAsync<any>(`SELECT id, valid_from FROM llm_wiki_entries WHERE title = 'User has a dog named Rex'`);
+      expect(row.valid_from).toBe(today);
+      expect((await wiki.read('u', 'dog named Rex')).facts.map((f) => f.id)).toContain(row.id);
+    });
+
+    it('a SUPERSEDE with no date of its own ends the old fact at the same newest date', async () => {
+      const { db, wiki } = mk([
+        () => ({ facts: [{ title: 'User moved to San Francisco', body: 'b', tags: [], confidence: 'certain' }], tasks: [] }),
+        () => ({ ops: [{ item: 0, op: 'SUPERSEDE', target: 'n1' }] }),
+      ]);
+      await wiki.setup();
+      await db.runAsync(`INSERT INTO llm_wiki_entries (id, entity_id, title, body, source_type, confidence, created_at, updated_at)
+        VALUES ('seattle','u','User lives in Seattle','b','user_stated','certain',1,1)`);
+      await wiki.runReembed();
+      const today = Date.now() - 1000;
+      await db.runAsync(`INSERT INTO llm_wiki_events (id, entity_id, event_type, summary, created_at) VALUES ('evt_local','u','observation','I moved to San Francisco',?)`, [today]);
+      await db.runAsync(`INSERT INTO llm_wiki_events (id, entity_id, event_type, summary, created_at, occurred_at) VALUES ('evt_imported','u','observation','old note',?,?)`, [today + 500, OLD]);
+      await wiki.runLibrarian('u');
+      const old = await db.getFirstAsync<any>(`SELECT valid_to, superseded_by FROM llm_wiki_entries WHERE id='seattle'`);
+      const sf = await db.getFirstAsync<any>(`SELECT valid_from FROM llm_wiki_entries WHERE id = ?`, [old.superseded_by]);
+      expect(sf.valid_from).toBe(today);
+      expect(old.valid_to).toBe(today);
+    });
+  });
 });
