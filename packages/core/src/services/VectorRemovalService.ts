@@ -69,7 +69,7 @@ export class VectorRemovalService {
 
     if (gate === 'none') {
       const pending = await this.pendingFor(entityId, ids);
-      await this.emitPending(entityId, trigger);
+      if (pending > 0 && (await this.externalIndexInUse())) await this.emitPending(entityId, trigger);
       return { confirmed: 0, pending, failedIds: [], timedOut: false };
     }
 

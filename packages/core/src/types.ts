@@ -1075,12 +1075,6 @@ export class WikiBusyError extends Error {
 }
 
 /**
- * Thrown by `ingestDocument({ onDuplicateHash: 'throw' })` when a different
- * source_ref in the same entity already holds the supplied source_hash against
- * a live row. Mirrors {@link WikiBusyError}'s anchoring of canonical metadata
- * on the error instance for stable observability.
- */
-/**
  * Thrown by forget() when the external vector index has not confirmed the
  * removal of every selected id. The local delete stays committed and the
  * unconfirmed ids stay owed in the ledger.
@@ -1106,6 +1100,12 @@ export class WikiExternalDeletionError extends Error {
   }
 }
 
+/**
+ * Thrown by `ingestDocument({ onDuplicateHash: 'throw' })` when a different
+ * source_ref in the same entity already holds the supplied source_hash against
+ * a live row. Mirrors {@link WikiBusyError}'s anchoring of canonical metadata
+ * on the error instance for stable observability.
+ */
 export class WikiDuplicateHashError extends Error {
   readonly canonical: string;
   readonly sourceHash: string;

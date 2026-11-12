@@ -128,3 +128,69 @@ describe('forget on the ledger', () => {
     );
   });
 });
+
+describe('forget on the ledger (review fixes)', () => {
+  it('never-set-up store with a hook: one null call per id', async () => {
+    const { openV8Database, insertV8Entry } = await import('./helpers/v8Schema');
+    const db = await openV8Database();
+    await insertV8Entry(db, { id: 'a1', entityId: 'ent', sourceRef: 'a.md', sourceHash: 'd'.repeat(64), updatedAt: 1 });
+    const calls: Call[] = [];
+    const wiki = new WikiMemory(db, {
+      llmProvider: llm,
+      vectorRanker: { rankBySimilarity: async () => [], onEmbeddingPersisted: async (c: Call) => { calls.push(c); } },
+    } as any);
+    await wiki.forget('ent', { sourceRef: 'a.md' });
+    expect(calls.map((c) => [c.factId, c.vector])).toEqual([['a1', null]]);
+  });
+
+  it('never-set-up store with a rejecting hook: WikiExternalDeletionError', async () => {
+    const { openV8Database, insertV8Entry } = await import('./helpers/v8Schema');
+    const db = await openV8Database();
+    for (const id of ['a1', 'a2']) await insertV8Entry(db, { id, entityId: 'ent', sourceRef: 'a.md', sourceHash: 'd'.repeat(64), updatedAt: 1 });
+    const calls: Call[] = [];
+    const wiki = new WikiMemory(db, {
+      llmProvider: llm,
+      vectorRanker: { rankBySimilarity: async () => [], onEmbeddingPersisted: async (c: Call) => { calls.push(c); throw new Error('nope'); } },
+    } as any);
+    let err: any;
+    try { await wiki.forget('ent', { sourceRef: 'a.md' }); } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(WikiExternalDeletionError);
+    expect(err.unconfirmedCount).toBe(2);
+    expect(calls).toHaveLength(2);
+    expect(err.message).toMatch(/failed: ANN cleanup hook rejected$/);
+  });
+
+  it('hookless store without the marker emits nothing; with the marker it emits', async () => {
+    const diags: any[] = [];
+    const raw = openTestDatabase();
+    const wiki = new WikiMemory(raw, { llmProvider: llm, onDiagnostic: (d: any) => diags.push(d) } as any);
+    await wiki.setup();
+    await ins(raw, 'a');
+    await wiki.forget('e1', { entryId: 'a' });
+    expect(diags.filter((d) => d.code === 'external_deletion_pending')).toEqual([]);
+    await raw.runAsync(`INSERT OR REPLACE INTO ${P}meta (key, value) VALUES ('external_index_in_use', '1')`);
+    await ins(raw, 'b');
+    await wiki.forget('e1', { entryId: 'b' });
+    expect(diags.filter((d) => d.code === 'external_deletion_pending').length).toBeGreaterThan(0);
+  });
+
+  it('no hook: forget resolves and the ledger rows stay', async () => {
+    const t = await make();
+    await ins(t.raw, 'a');
+    await t.wiki.forget('e1', { entryId: 'a' });
+    const rows = await t.raw.getAllAsync<any>(`SELECT fact_id FROM ${P}vector_removals`);
+    expect(rows.map((r) => r.fact_id)).toEqual(['a']);
+  });
+
+  it('error code, sanitized cause, and the 100-id cap', async () => {
+    const t = await make(() => { throw new Error('secret-detail'); });
+    for (let i = 0; i < 120; i++) await ins(t.raw, `f${String(i).padStart(3, '0')}`);
+    let err: any;
+    try { await t.wiki.forget('e1', { sourceRef: 'doc' }); } catch (e) { err = e; }
+    expect(err.code).toBe('WIKI_EXTERNAL_DELETION');
+    expect(err.unconfirmedIds).toHaveLength(100);
+    expect(err.unconfirmedCount).toBe(120);
+    expect(err.cause).toBeInstanceOf(Error);
+    expect(err.cause.message).not.toContain('secret-detail');
+  });
+});

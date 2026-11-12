@@ -94,6 +94,10 @@ describe('VectorRemovalService.drain', () => {
     const t = await make();
     await del(t.db, 'a');
     const before = await ledger(t.db);
+    const quiet = await t.svc.drain({ all: true });
+    expect(quiet.pending).toBe(1);
+    expect(t.diags.filter((x) => x.code === 'external_deletion_pending')).toHaveLength(0);
+    await t.db.runAsync(`INSERT OR REPLACE INTO ${P}meta (key, value) VALUES ('external_index_in_use', '1')`);
     const r = await t.svc.drain({ all: true });
     expect(r.pending).toBe(1);
     expect(r.confirmed).toBe(0);

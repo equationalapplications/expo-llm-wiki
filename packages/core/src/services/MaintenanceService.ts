@@ -552,9 +552,8 @@ export class MaintenanceService {
       let deletedTasks = 0;
       let deletedEvents = 0;
       const deletedEntryIds: string[] = [];
-      // A never-set-up (pre-v9) store has no ledger table; skip ledger work.
-      const ledgerOn = !!this.vectorRemoval
-        && await this.metadataRepo.tableExists(`${this.prefix}vector_removals`);
+      // A store whose setup() never ran has no ledger table (#316 recovery).
+      const ledgerOn = !!this.vectorRemoval && !!this.vectorRemovalRepo && await this.ledgerTablePresent();
 
       await this.db.withTransactionAsync(async (tx) => {
         if (params.clearAll) {
@@ -638,7 +637,7 @@ export class MaintenanceService {
         // Backstop (spec durable-vector-removal §5.5): ids soft-deleted before
         // the ledger existed get a row so a retry still sends them.
         if (ledgerOn && this.vectorRemoval?.gate() === 'hook' && deletedEntryIds.length > 0) {
-          await this.vectorRemovalRepo!.backstopEnqueue(entityId, Array.from(new Set(deletedEntryIds)), now, tx);
+          await this.vectorRemovalRepo?.backstopEnqueue(entityId, Array.from(new Set(deletedEntryIds)), now, tx);
         }
       });
 
@@ -649,11 +648,40 @@ export class MaintenanceService {
       // branch. So the index update is O(deleted), not O(entity) (spec §2.1).
       const uniqueDeletedIds = Array.from(new Set(deletedEntryIds));
       await this.searchService.syncEntries(entityId, uniqueDeletedIds);
-      if (ledgerOn && this.vectorRemoval && uniqueDeletedIds.length > 0) {
+      if (uniqueDeletedIds.length > 0) {
         const firstId = uniqueDeletedIds[0];
-        let result;
+        const vr = this.vectorRemoval;
+        const vrRepo = this.vectorRemovalRepo;
+        let unconfirmed: string[] = [];
+        let timedOut = false;
+        let cause: unknown;
         try {
-          result = await this.vectorRemoval.drain({ entityId, ids: uniqueDeletedIds });
+          if (vr && vrRepo && ledgerOn) {
+            const result = await vr.drain({ entityId, ids: uniqueDeletedIds });
+            if (vr.gate() === 'hook') {
+              const status = await vrRepo.statusFor(uniqueDeletedIds);
+              unconfirmed = uniqueDeletedIds.filter((id) => status.get(id) === 'pending');
+              timedOut = result.timedOut;
+              cause = result.firstCause;
+            }
+          } else if (this.options.vectorRanker?.onEmbeddingPersisted && this.options.forceDeleteIgnoreRankerHook !== true) {
+            // Store whose setup() never ran (#316 recovery): no ledger table, so
+            // call the hook directly and record nothing (spec §5.5.5).
+            const timeoutMs = this.embeddingService.validateDeletionTimeout();
+            let firstRejection: unknown;
+            let timeoutErr: unknown;
+            for (const factId of uniqueDeletedIds) {
+              try {
+                await this.embeddingService.callRemovalHook(entityId, factId, timeoutMs);
+              } catch (hookErr) {
+                unconfirmed.push(factId);
+                if ((hookErr as any)?.[HOOK_TIMEOUT_MARKER] === true) timeoutErr ??= hookErr;
+                else firstRejection ??= hookErr;
+              }
+            }
+            timedOut = timeoutErr !== undefined;
+            cause = timeoutErr ?? firstRejection;
+          }
         } catch (hookErr) {
           const errMsg = (hookErr as Error)?.message ?? '';
           if (errMsg.startsWith('Invalid deletionHookTimeoutMs')) {
@@ -661,22 +689,20 @@ export class MaintenanceService {
           }
           throw hookErr;
         }
-        if (this.vectorRemoval.gate() === 'hook') {
-          const status = await this.vectorRemovalRepo!.statusFor(uniqueDeletedIds);
-          const unconfirmed = uniqueDeletedIds.filter((id) => status.get(id) === 'pending');
-          if (unconfirmed.length > 0) {
-            const cause = result.firstCause;
-            const message = result.timedOut
-              ? `forget(${entityId}/${unconfirmed[0]}) failed: ${cause?.message ?? 'onEmbeddingPersisted timed out'}`
-              : `forget(${entityId}/${unconfirmed[0]}) failed: ANN cleanup hook rejected`;
-            throw new WikiExternalDeletionError(message, {
-              entityId,
-              unconfirmedIds: unconfirmed.slice(0, 100),
-              unconfirmedCount: unconfirmed.length,
-              timedOut: result.timedOut,
-              cause: result.timedOut ? undefined : this._sanitizeRankerError(cause),
-            });
-          }
+        if (unconfirmed.length > 0) {
+          const head = `forget(${entityId}/${unconfirmed[0]}) failed: `;
+          const message = timedOut
+            ? head + ((cause as Error)?.message ?? 'onEmbeddingPersisted timed out')
+            : cause === undefined
+              ? head + 'ANN cleanup not confirmed'
+              : head + 'ANN cleanup hook rejected';
+          throw new WikiExternalDeletionError(message, {
+            entityId,
+            unconfirmedIds: unconfirmed.slice(0, 100),
+            unconfirmedCount: unconfirmed.length,
+            timedOut,
+            cause: timedOut || cause === undefined ? undefined : this._sanitizeRankerError(cause),
+          });
         }
       }
 
@@ -708,6 +734,13 @@ export class MaintenanceService {
    * pre-existing limit out of scope here. Await setup() before other calls,
    * as WikiMemory.setup() documents.
    */
+  private ledgerSeen = false;
+  private async ledgerTablePresent(): Promise<boolean> {
+    if (this.ledgerSeen) return true;
+    this.ledgerSeen = await this.metadataRepo.tableExists(`${this.prefix}vector_removals`);
+    return this.ledgerSeen;
+  }
+
   private async sourceRefIndexPresent(tx: SQLiteAdapter): Promise<boolean> {
     if (await this.metadataRepo.tableExists(`${this.prefix}source_ref_index`, tx)) return true;
     const raw = await this.metadataRepo.getMeta('schema_version', tx);
