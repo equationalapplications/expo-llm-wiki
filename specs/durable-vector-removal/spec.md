@@ -1,6 +1,6 @@
 # Durable removal of forgotten facts from the host's vector index
 
-**Status:** Implemented (PR #372, 2026-11-11; revision 4 implemented 2026-11-12; draft until open question O1 is answered). Previously Reviewed (2026-11-11: Opus high review, revision 2; owner directed implementation). Previously Draft (2026-11-11).
+**Status:** Implemented (PR #372, 2026-11-11; revision 4 implemented 2026-11-12; O1 answered 2026-11-12). Previously draft until open question O1 was answered. Previously Reviewed (2026-11-11: Opus high review, revision 2; owner directed implementation). Previously Draft (2026-11-11).
 Revision 2 (2026-11-11), after an Opus (high) review of revision 1:
 - The ledger is filled by SQLite triggers, not by call-site edits (§5.2).
 - A process without the hook never clears an obligation (§5.3).
@@ -21,6 +21,8 @@ Revision 4 (2026-11-12), from a Fable (high) review of the PR head `2c3fbbfc`:
 - The embed-race check moves into `storeFactVector`, so every embed path has it, and runs only after a real vector call (§5.7).
 - The "loop until nothing is pending" claim is corrected (§5.9). `runExternalDeletions()` returns `transient` (§5.9).
 - From the scoped re-review: five consecutive rejections end only the current entity in a drain of every entity, so a failing entity can't starve the others, while a timeout or the deadline still ends the drain (§5.4). Prune counts, outboxes and keeps exactly the rows its SQL guard let through (§5.6). Import's preserved-blob vector calls get the embed-race check too (§5.7). Ledger reads before the first page return `transient` instead of throwing (§5.4).
+- **O1 answered (2026-11-12).** Curated Thoughts' startup guard checks only the column sets of 9 named tables, so the new objects pass in both states (§7). The owner ruled that core is designed for correctness first and consumers adopt it (§6.4).
+- **Orphan sweep (2026-11-12).** `setup()` deletes ledger rows whose fact row no longer exists, when nothing can still owe them: every confirmed one, and, on a store without the marker, every one (§5.3). It closes a leak found in the O1 check: a host that hard-deletes `entries` rows itself, bypassing prune (Curated Thoughts' Rust does), left the deleted facts' ids in the ledger forever.
 - Not changed: the first `setup()` with a hook still delivers removals enqueued before the marker existed. Discarding them would drop real removals owed by a hookless process that shares the store with a hook process (the MCP server beside an app), which the deletion promise forbids. A hook already must treat an unknown id as success (§4.1). §5.3 records why.
 
 **Date:** 2026-11-11
@@ -185,6 +187,7 @@ The ledger has three cases, decided per process:
 **The marker.** `setup()` records a sticky meta key, `external_index_in_use = 1`, whenever `vectorRanker.onEmbeddingPersisted` is configured. Prune in a process without the hook removes ledger rows with their facts only while the marker is absent. Without the marker, the store has never had an external index, so nothing is owed. A force-mode drain clears the marker.
 
 - **Hookless prune with the marker (rev 4).** It keeps the pending ledger rows of the facts it hard-deletes, and deletes their confirmed rows in the same transaction. Nothing reads a confirmed row once its fact is gone.
+- **Orphan sweep at `setup()` (2026-11-12).** One statement, keyed on `fact_id` store-wide (not the ledger's `entity_id`: a wiped entity is never pruned again, and a host may change `entity_id` in the same update as the soft delete). It deletes rows whose fact row is gone when they are confirmed, under any gate, or when the gate is not `'hook'` and the store has no marker. Pending rows whose fact is gone are kept while a hook could still owe them: under the hook gate a drain delivers and removes them; in a hookless process on a marked store they wait for the hook process. A failure is logged and doesn't fail `setup()`.
 - **First hook `setup()` (rev 4, not changed).** Rows enqueued before the marker was first set are delivered, not discarded. They may be removals a hookless process sharing the store owes on behalf of a hook process. For a store that never had an index, they are calls for ids the index never held, which a hook must already treat as success (§4.1). An outside consult (Gemini, 2026-11-12) agreed, and pointed out the cost on a mature store: one call per unpruned soft-deleted fact. `guides/deleting-data.md` ("Adding an index to an existing store") tells hosts to check the count first and batch, or to discard with force when no other process shares the store.
 - **No separate "inherited backlog" diagnostic (decided 2026-11-12, after Gemini and Fable consults).** Gemini proposed a one-time `external_deletion_inherited_backlog` at the marker transition. Not added, because:
   - `external_deletion_pending` already fires with the count on that same `setup()`, before any call.
@@ -350,10 +353,18 @@ One routine, `drainVectorRemovals(scope, opts)`, in a new `VectorRemovalService`
 1. **Ship in its own spec and PR, after #371.** Ruled 2026-11-11 (accepted).
 2. **Finish owed removals in the background after `setup()`, in deferred mode too.** Ruled 2026-11-11: allowed. The guardrails are those in §5.7: no model call, hook configured, not awaited, a 10 s deadline, and an opt-out flag.
 3. **The setup drain is off by default.** Ruled 2026-11-12, after the rev 4 review showed its transactions collide with the host's own (§5.7). It partly reverses ruling 2: the drain stays available as an opt-in.
+4. **Core first; consumers adopt.** Ruled 2026-11-12: core is designed to work as well as it can. If a change breaks Curated Thoughts or another consumer, that consumer is updated to the new pattern; core is not weakened to fit it. O1 therefore lists the consumer follow-ups rather than gating the design.
 
 ## 7. Open questions
 
 - **O1.** Does the Curated Thoughts startup schema check accept the new table, index and two triggers on `entries`? Its Rust check runs before the JS engine creates them, so on the first launch of the new version it also sees a store without them. Does it accept both states? To be answered from the Curated Thoughts side. Until then this PR stays draft.
+  - **Answered 2026-11-12: yes, in both states.** Evidence: `curated-thoughts` at `3d61117a` (3.11.5), `src-tauri/src/db/schema_guard.rs::verify_llm_wiki_schema`, called at open from `db/connection.rs:952`. For 9 named `llm_wiki_*` tables it checks that each exists and that its `PRAGMA table_info` column set matches exactly. It never lists `sqlite_master` as a whole, never inspects indexes or triggers, and never reads `schema_version` in `llm_wiki_meta`. A run of core 8.0.2's `setup()` and then this branch's on one file adds exactly six objects (the table, `…_pending`, the table's unique autoindex, `sqlite_sequence`, the two triggers) and changes no existing table's columns. No `schema_version` bump is needed. Keeping the ledger out of `entries` was required: a new `entries` column fails that guard.
+  - **Consumers checked 2026-11-12.** None configures `vectorRanker.onEmbeddingPersisted`, so none sends removal calls.
+    - **Curated Thoughts** (pins 8.0.2): passes the guard. Its Rust code hard-deletes `entries` rows directly (`db/commit.rs`, `db/bundle_apply.rs`, `db/queries.rs`), which the orphan sweep now cleans up after.
+    - **clanker** (`^8.0.2`, so it takes minors automatically): prune with a 3-day retention removes ledger rows with their facts.
+    - **curated-journal** (pins 8.2.0): prune removes ledger rows with their facts.
+    - **SynapseTree** (pins 7.17.1): it opens its own transactions on the shared adapter, including `withTransactionAsync(tx => wiki.upsertGraph(…, tx))`, which is why the setup drain stays off by default (§6.3). It prunes with `retainSoftDeletedFor: null`, so its ledger keeps one row per soft-deleted fact it keeps (O3).
+  - Each consumer gets an issue in its own repository for the upgrade.
 - **O2.** Is 10 s the right total deadline for the setup drain on mobile?
 - **O3.** Should confirmed ledger rows for facts that are never pruned (`pruneRetainSoftDeletedFor: null`) be purged? Proposed: no. The rows are small, and prune removes them with their fact.
 
