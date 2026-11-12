@@ -11,7 +11,7 @@ Revision 2 (2026-11-11), after an Opus (high) review of revision 1:
 - The INTENT §7 wording is corrected (§5.11).
 - The test plan is rewritten (§8).
 
-Revision 3 (2026-11-11), from the Task 2 review: calls in flight are keyed by ledger row (`seq`), not by fact (§5.4); the drain's deadline is an absolute time named `deadlineAt`; a failed write transaction stops the drain as transient; liveness is checked per page (§5.4).
+Revision 3 (2026-11-11), from the Task 2 review: calls in flight are keyed by ledger row (`seq`), not by fact (§5.4); the drain's deadline is an absolute time named `deadlineAt`; a failed write transaction stops the drain as transient; liveness is checked per page (§5.4). From the Task 3 review: forget on a never-set-up store falls back to per-id hook calls (§5.5.5); a hookless store without the marker emits no pending diagnostic (§5.3).
 
 **Date:** 2026-11-11
 **Branch:** `docs/spec-durable-vector-removal`, stacked on PR #371 (`docs/spec-import-followups`); retargets to `main` after #371 merges.
@@ -169,7 +169,7 @@ The ledger has three cases, decided per process:
 | Process state | Drains | Prune |
 |---|---|---|
 | Hook configured, no force | Call the hook (§5.4) | Hard-delete only confirmed rows (§5.6) |
-| No hook configured | **No change to the ledger.** Report `{ pending }` and emit `external_deletion_pending` when any are pending | Hard-delete the fact. Keep its ledger row unless the store has never had a hook (below) |
+| No hook configured | **No change to the ledger.** Report `{ pending }`. Emit `external_deletion_pending` when rows are pending **and** the store has the marker (below); a store that never had an external index stays quiet | Hard-delete the fact. Keep its ledger row unless the store has never had a hook (below) |
 | `forceDeleteIgnoreRankerHook: true` | Delete pending rows without calling (the index was decommissioned). Report the count in a content-free `external_deletion_discarded` diagnostic | Hard-delete freely, and remove the ledger rows |
 
 **The marker.** `setup()` records a sticky meta key, `external_index_in_use = 1`, whenever `vectorRanker.onEmbeddingPersisted` is configured. Prune in a process without the hook removes ledger rows with their facts only while the marker is absent. Without the marker, the store has never had an external index, so nothing is owed. A force-mode drain clears the marker.
@@ -215,6 +215,8 @@ One routine, `drainVectorRemovals(scope, opts)`, in a new `VectorRemovalService`
    - Otherwise it throws `WikiExternalDeletionError` (§5.9). The local delete stays committed, and the unconfirmed ids stay owed.
    - Under the no-hook row of §5.3, it resolves, and the obligations stay recorded.
 4. **A retry** sends only ids still unconfirmed (closes G1 and G2).
+5. **Store whose `setup()` never ran** (the #316 recovery path): the ledger table doesn't exist yet. With a hook configured, forget falls back to calling the hook per selected id, continuing past failures, and throws `WikiExternalDeletionError` for the ids not confirmed. Nothing is recorded, because there is nowhere to record it; the error tells the host to retry.
+6. **Outcome message when no cause is known** (an id still pending after a shared in-flight call or a transient stop): `forget(<entityId>/<id>) failed: ANN cleanup not confirmed`.
 
 ### 5.6 `runPrune()`
 
