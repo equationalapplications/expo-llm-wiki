@@ -44,3 +44,18 @@ describe('deriveEventId', () => {
     expect(() => deriveEventId({ entityId: 'demo', date: '2026-07-05', eventType: 'observation', summary: 's', occurrence })).toThrow(TypeError);
   });
 });
+
+describe('createEventIdDeriver', () => {
+  it('returns the same ids as deriveEventId for the spec vectors', async () => {
+    const { createEventIdDeriver } = await import('../src/index');
+    for (const [entityId, date, eventType, summary, occurrence, want] of VECTORS) {
+      expect(createEventIdDeriver({ entityId, date, eventType, summary })(occurrence)).toBe(want);
+    }
+  });
+
+  it('rejects a bad occurrence like deriveEventId', async () => {
+    const { createEventIdDeriver } = await import('../src/index');
+    const d = createEventIdDeriver({ entityId: 'e', date: '2026-01-01', eventType: 'observation', summary: 'x' });
+    for (const bad of [-1, 1.5, NaN]) expect(() => d(bad)).toThrow(TypeError);
+  });
+});

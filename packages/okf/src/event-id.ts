@@ -1,4 +1,4 @@
-import { sha256, utf8Encode } from './sha256';
+import { sha256WithPrefix, utf8Encode } from './sha256';
 
 export interface DeriveEventIdInput {
   /** The entity the log is imported into (not a directory name in the bundle). */
@@ -16,9 +16,7 @@ export interface DeriveEventIdInput {
 const TAG = 'llm-wiki/event-id/1';
 const PREFIX = 'evt_okf1_';
 
-/** Length-prefixed field encoding hashed by {@link deriveEventId}. Internal; exported for tests. */
-export function encodeEventIdInput(input: DeriveEventIdInput): Uint8Array {
-  const fields = [TAG, input.entityId, input.date, input.eventType, input.summary, String(input.occurrence)];
+function encodeFields(fields: readonly string[]): Uint8Array {
   const parts: Uint8Array[] = [];
   let total = 0;
   for (const field of fields) {
@@ -40,6 +38,33 @@ export function encodeEventIdInput(input: DeriveEventIdInput): Uint8Array {
   return out;
 }
 
+const prefixFields = (input: Omit<DeriveEventIdInput, 'occurrence'>) =>
+  [TAG, input.entityId, input.date, input.eventType, input.summary];
+
+/** Length-prefixed field encoding hashed by {@link deriveEventId}. Internal; exported for tests. */
+export function encodeEventIdInput(input: DeriveEventIdInput): Uint8Array {
+  return encodeFields([...prefixFields(input), String(input.occurrence)]);
+}
+
+/**
+ * {@link deriveEventId} for one (entity, date, type, summary) at many
+ * occurrences: the shared fields are encoded and hashed once, so each call
+ * costs the same however long the summary is. Returns the same ids as
+ * `deriveEventId({ ...input, occurrence })`.
+ */
+export function createEventIdDeriver(input: Omit<DeriveEventIdInput, 'occurrence'>): (occurrence: number) => string {
+  const finish = sha256WithPrefix(encodeFields(prefixFields(input)));
+  return (occurrence) => {
+    if (!Number.isInteger(occurrence) || occurrence < 0) {
+      throw new TypeError(`deriveEventId: occurrence must be an integer >= 0, got ${String(occurrence)}`);
+    }
+    const digest = finish(encodeFields([String(occurrence)]));
+    let hex = '';
+    for (let i = 0; i < 16; i++) hex += digest[i].toString(16).padStart(2, '0');
+    return PREFIX + hex;
+  };
+}
+
 /**
  * Deterministic id for an OKF log line that carries no id comment
  * (`docs/okf-profile.md` §7): `evt_okf1_` + the first 32 hex characters of
@@ -48,11 +73,5 @@ export function encodeEventIdInput(input: DeriveEventIdInput): Uint8Array {
  * copy is stored.
  */
 export function deriveEventId(input: DeriveEventIdInput): string {
-  if (!Number.isInteger(input.occurrence) || input.occurrence < 0) {
-    throw new TypeError(`deriveEventId: occurrence must be an integer >= 0, got ${String(input.occurrence)}`);
-  }
-  const digest = sha256(encodeEventIdInput(input));
-  let hex = '';
-  for (let i = 0; i < 16; i++) hex += digest[i].toString(16).padStart(2, '0');
-  return PREFIX + hex;
+  return createEventIdDeriver(input)(input.occurrence);
 }

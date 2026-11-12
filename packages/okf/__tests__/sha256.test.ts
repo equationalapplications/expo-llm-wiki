@@ -36,3 +36,18 @@ describe('utf8Encode', () => {
     expect(Array.from(utf8Encode('\uD83D'))).toEqual(Array.from(enc.encode('\uD83D')));
   });
 });
+
+describe('sha256WithPrefix', () => {
+  it('matches node:crypto over prefix + suffix at every block boundary', async () => {
+    const { createHash } = await import('node:crypto');
+    const { sha256WithPrefix } = await import('../src/sha256');
+    const bytes = (n: number, seed: number) => Uint8Array.from({ length: n }, (_, i) => (i * 31 + seed) & 0xff);
+    for (const p of [0, 1, 55, 56, 63, 64, 65, 119, 128, 1000]) {
+      const finish = sha256WithPrefix(bytes(p, 7));
+      for (const q of [0, 1, 8, 55, 64, 200]) {
+        const want = createHash('sha256').update(bytes(p, 7)).update(bytes(q, 3)).digest('hex');
+        expect(Buffer.from(finish(bytes(q, 3))).toString('hex'), `p=${p} q=${q}`).toBe(want);
+      }
+    }
+  });
+});

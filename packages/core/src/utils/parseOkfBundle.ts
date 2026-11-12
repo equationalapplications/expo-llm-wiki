@@ -6,7 +6,7 @@ import {
   parseRootIndexMd,
   parseEntityIndexMd,
   parseEventIdComment,
-  deriveEventId,
+  createEventIdDeriver,
   splitRelatedSection,
   isAllowedOkfPath,
   extractMarkdownLinks,
@@ -572,10 +572,13 @@ export function parseOkfBundle(
       // variants that differ only in them share one count (keeps this linear).
       const key = JSON.stringify([date, e.event_type, replaceLoneSurrogates(e.summary)]);
       let occurrence = nextOccurrence.get(key) ?? 0;
-      let id = deriveEventId({ entityId, date, eventType: e.event_type, summary: e.summary, occurrence });
+      // Hash the shared fields once: explicit ids can take a long line's whole
+      // chain of occurrences, and re-hashing the summary per step is quadratic.
+      const derive = createEventIdDeriver({ entityId, date, eventType: e.event_type, summary: e.summary });
+      let id = derive(occurrence);
       while (taken.has(id)) {
         occurrence += 1;
-        id = deriveEventId({ entityId, date, eventType: e.event_type, summary: e.summary, occurrence });
+        id = derive(occurrence);
       }
       taken.add(id);
       nextOccurrence.set(key, occurrence + 1);

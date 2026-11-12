@@ -74,6 +74,10 @@ const id = deriveEventId({
 // 'evt_okf1_02dd42bf329719f258ab93b373f44506'
 ```
 
+`createEventIdDeriver({ entityId, date, eventType, summary })` returns
+`(occurrence) => id` with the same results, hashing the summary only once. Use it
+when you need many occurrences of one line.
+
 ### `extractMarkdownLinks`
 
 Parses relative markdown cross-links to map knowledge graph edges.

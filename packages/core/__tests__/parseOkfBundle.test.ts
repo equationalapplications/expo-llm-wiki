@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { buildConceptDocument, buildLogMd, buildRootIndexMd, deriveEventId } from '@equationalapplications/core-okf';
+import { buildConceptDocument, buildLogMd, buildRootIndexMd, createEventIdDeriver, deriveEventId } from '@equationalapplications/core-okf';
 import type { OkfFile, OkfFrontmatter } from '@equationalapplications/core-okf';
 import { parseOkfBundle } from '../src/utils/parseOkfBundle';
 import { formatOkfBundle } from '../src/utils/formatOkfBundle';
@@ -635,6 +635,17 @@ describe('parseOkfBundle — derived event ids', () => {
     const events = log(`## 2023-11-14\n\n${lines.join('\n')}\n`);
     expect(performance.now() - t0).toBeLessThan(2000);
     expect(new Set(events.map((e) => e.id)).size).toBe(4000);
+  });
+
+  it('explicit ids that take a long line\'s whole occurrence chain parse in linear time', () => {
+    const long = 'L'.repeat(200_000);
+    const K = 2000;
+    const derive = createEventIdDeriver({ entityId: 'alice', date: '2023-11-14', eventType: 'observation', summary: long });
+    const chain = Array.from({ length: K }, (_, i) => `- (observation) s${i} <!-- id: ${derive(i)} -->`);
+    const t0 = performance.now();
+    const events = log(`## 2023-11-14\n\n${chain.join('\n')}\n- (observation) ${long}\n`);
+    expect(performance.now() - t0).toBeLessThan(2000);
+    expect(events.at(-1)!.id).toBe(id('2023-11-14', 'observation', long, K));
   });
 
   it('summaries that differ only by a lone surrogate get different ids', () => {
