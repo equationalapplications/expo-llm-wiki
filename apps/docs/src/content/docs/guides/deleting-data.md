@@ -86,7 +86,10 @@ The engine can't do these for you:
 - `runPrune()` drains the ids it is about to hard-delete. It keeps rows that aren't confirmed, then
   finishes its other work and throws `PrunePartialFailureError` if rows remain.
 - By default `setup()` makes no removal call. When a hook is configured and removals are owed, it
-  emits `external_deletion_pending`, and the calls below deliver them.
+  emits `external_deletion_pending`. `runPendingMaintenance()` and `runExternalDeletions()` deliver
+  them; `forget()` and `runPrune()` deliver only the ids they touch. Under
+  `forceDeleteIgnoreRankerHook` with the drain off, owed rows and the store's "external index in use"
+  record stay until the next of these calls discards them.
 - `drainExternalDeletionsOnSetup: true` (beside `vectorRanker`) makes `setup()` start one background
   drain of the owed removals, or, under `forceDeleteIgnoreRankerHook`, discard them. It makes no
   model call, isn't awaited by `setup()`, uses backoff and stops after 10 s. `wiki.drain()` waits for
@@ -136,6 +139,22 @@ If you loop "while `getPendingMaintenance()` is non-empty, call `runPendingMaint
 the iterations. Each pass stops delivering after 5 rejections in a row or one timeout, so a hook that
 keeps failing can keep an entity listed for several passes, and with a large backlog for much
 longer.
+
+### Adding an index to an existing store
+
+The engine records every delete, with or without a hook, and it can't tell a delete made before
+your store had an index from one another process owes your index. For example, a server without a
+hook may share the store with your app. So the first time you configure a hook, every soft-deleted
+fact that prune hasn't removed yet is owed a `null` call, including ids your new index never held.
+Your hook must treat an unknown id as success.
+
+On a store with many soft-deleted facts, that's a burst of calls to your index provider. Check
+`getPendingExternalDeletions()` before you turn the hook on. If the count is large, deliver them with
+`runExternalDeletions(undefined, { deadlineMs })` in bounded batches, or have your hook batch its
+requests. If you're sure nothing else ever wrote to an index from this store, you can discard them
+first by opening it once with `forceDeleteIgnoreRankerHook: true` and calling
+`runExternalDeletions()`. Don't do that if any other process with a hook shares the store: its owed
+removals would be dropped too.
 
 ### `forceDeleteIgnoreRankerHook`
 

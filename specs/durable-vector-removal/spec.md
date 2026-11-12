@@ -20,6 +20,7 @@ Revision 4 (2026-11-12), from a Fable (high) review of the PR head `2c3fbbfc`:
 - A hookless prune of a store with the marker also deletes the confirmed ledger rows of the facts it removes (§5.3).
 - The embed-race check moves into `storeFactVector`, so every embed path has it, and runs only after a real vector call (§5.7).
 - The "loop until nothing is pending" claim is corrected (§5.9). `runExternalDeletions()` returns `transient` (§5.9).
+- From the scoped re-review: five consecutive rejections end only the current entity in a drain of every entity, so a failing entity can't starve the others, while a timeout or the deadline still ends the drain (§5.4). Prune counts, outboxes and keeps exactly the rows its SQL guard let through (§5.6). Import's preserved-blob vector calls get the embed-race check too (§5.7). Ledger reads before the first page return `transient` instead of throwing (§5.4).
 - Not changed: the first `setup()` with a hook still delivers removals enqueued before the marker existed. Discarding them would drop real removals owed by a hookless process that shares the store with a hook process (the MCP server beside an app), which the deletion promise forbids. A hook already must treat an unknown id as success (§4.1). §5.3 records why.
 
 **Date:** 2026-11-11
@@ -184,7 +185,7 @@ The ledger has three cases, decided per process:
 **The marker.** `setup()` records a sticky meta key, `external_index_in_use = 1`, whenever `vectorRanker.onEmbeddingPersisted` is configured. Prune in a process without the hook removes ledger rows with their facts only while the marker is absent. Without the marker, the store has never had an external index, so nothing is owed. A force-mode drain clears the marker.
 
 - **Hookless prune with the marker (rev 4).** It keeps the pending ledger rows of the facts it hard-deletes, and deletes their confirmed rows in the same transaction. Nothing reads a confirmed row once its fact is gone.
-- **First hook `setup()` (rev 4, not changed).** Rows enqueued before the marker was first set are delivered, not discarded. They may be removals a hookless process sharing the store owes on behalf of a hook process. For a store that never had an index, they are calls for ids the index never held, which a hook must already treat as success (§4.1).
+- **First hook `setup()` (rev 4, not changed).** Rows enqueued before the marker was first set are delivered, not discarded. They may be removals a hookless process sharing the store owes on behalf of a hook process. For a store that never had an index, they are calls for ids the index never held, which a hook must already treat as success (§4.1). An outside consult (Gemini, 2026-11-12) agreed, and pointed out the cost on a mature store: one call per unpruned soft-deleted fact. `guides/deleting-data.md` ("Adding an index to an existing store") tells hosts to check the count first and batch, or to discard with force when no other process shares the store.
 
 `notifyEmbeddingPersistedOrThrow` returns early as success when there is no hook or force is set (`EmbeddingService.ts:275-276`). So the drain checks the gate itself, before calling. It never relies on that early return.
 
@@ -204,7 +205,7 @@ One routine, `drainVectorRemovals(scope, opts)`, in a new `VectorRemovalService`
   - At start, the drain reads `maxSeq`.
   - It pages with `WHERE confirmed_at IS NULL AND seq <= :maxSeq AND (attempts, seq) > (:lastAttempts, :lastSeq) ORDER BY attempts, seq LIMIT 100`. Each row is tried at most once per drain, and every drain ends.
   - For `{ entityId, ids }`, it pages over those ids first (§5.5).
-  - For `{ all: true }` under the hook gate, it pages one entity at a time, in `entitiesWithPending()` order (rev 4). A page read with no entity filter can't use the partial index and scans the whole ledger, which made a 60,000-row drain take 88 s instead of 4.3 s.
+  - For `{ all: true }` under the hook gate, it pages one entity at a time, in `entitiesWithPending()` order (rev 4). The 5-consecutive-rejections stop ends only the current entity there; a timeout and `deadlineAt` still end the whole drain. A failure reading the entity list or `maxSeq` returns `transient: true`. A page read with no entity filter can't use the partial index and scans the whole ledger, which made a 60,000-row drain take 88 s instead of 4.3 s.
 - **Page reads.** Each page is read in one statement, `LEFT JOIN {p}entries`, so the drain knows whether the fact is live, soft-deleted or gone. The read runs inside a short `withTransactionAsync` on the serialized adapter, and no hook is called until that transaction closes.
   - If the read can't begin (for example, the host holds an open transaction on the same connection), the drain stops as transient. Rows aren't touched.
   - A settling write that fails stops the drain the same way. That page's results are lost, the rows stay pending (safe; at worst a repeat call), and the result carries `transient: true`.
@@ -237,7 +238,7 @@ One routine, `drainVectorRemovals(scope, opts)`, in a new `VectorRemovalService`
 2. **Backstop.** Prunable rows with no ledger row get `INSERT OR IGNORE`, when the hook is configured.
 3. **Drain** `{ entityId, ids: <prunable ids> }`.
 4. **Hard delete.** It hard-deletes the prunable rows the §5.3 table allows, and deletes their ledger rows in the same transaction. An unconfirmed row is never hard-deleted while a hook is configured (closes G3).
-   - **Rev 4.** The confirmed/pending split is read inside the delete transaction, not before it. Under the hook gate, the ledger delete is limited in SQL to confirmed rows whose fact is gone. An embed-race check that re-owes a removal while prune runs (§5.7) therefore either lands before the transaction, and the fact is kept, or after it, and the new row is delivered later.
+   - **Rev 4.** The confirmed/pending split is read inside the delete transaction, not before it. Under the hook gate, the ledger delete is limited in SQL to confirmed rows whose fact is gone. An embed-race check that re-owes a removal while prune runs (§5.7) therefore either lands before the transaction, and the fact is kept, or after it, and the new row is delivered later. Under the guard, `bulkDeletePruned` selects the deletable ids in the transaction first, so `deleted`, `remaining`, `failedAt` and the outbox `DELETE` entries name only the rows actually deleted.
 5. **Then it finishes event retention, vacuum and the final sync**, and only then throws `PrunePartialFailureError` if rows remain.
    - The class and fields stay the same, and `deletedEvents` is filled in.
    - `deleted` counts rows hard-deleted, `remaining` counts rows kept, and `failedAt` names the first unconfirmed id in drain order. Rows are no longer contiguous; the JSDoc says so.
@@ -269,7 +270,7 @@ One routine, `drainVectorRemovals(scope, opts)`, in a new `VectorRemovalService`
   - `updateEmbeddingBlob` gains `AND deleted_at IS NULL` and returns the change count. On 0 changes `embedFact` skips the hook.
   - After the vector call settles, resolved or rejected, one statement runs: `INSERT OR REPLACE … SELECT … WHERE NOT EXISTS (SELECT 1 FROM {p}entries WHERE id = ? AND deleted_at IS NULL)`. A missing row counts as not live.
   - Then an awaited drain of that id. So the last call the host sees for a deleted id is `null`.
-  - **Rev 4.** The check runs in `EmbeddingService.storeFactVector`, after the vector call, so every path that sends a vector has it: remember, supersede, ingest, librarian (both strategies), heal, reembed and import. It runs only when a vector call was actually made (the blob was stored and the hook is configured). An embed that ended as `fact_deleted` or failed before the call no longer re-owes a removal already confirmed.
+  - **Rev 4.** The check runs in `EmbeddingService.storeFactVector`, after the vector call, so every path that sends a vector has it: remember, supersede, ingest, librarian (both strategies), heal, reembed and import. Import's preserved-blob loop calls the hook directly and runs the same check (`settleAfterVectorCall`) itself. It runs only when a vector call was actually made (the blob was stored and the hook is configured). An embed that ended as `fact_deleted` or failed before the call no longer re-owes a removal already confirmed.
 - **`forceDeleteIgnoreRankerHook` scope (behavior change, called out).**
   - Today heal, ingest and import still call the hook when the flag is set, because `notifyEmbeddingPersisted` has no force check. Under this spec, the flag means "the index is decommissioned": no removal calls anywhere, and the ledger is discarded (§5.3).
   - The legacy spec `docs/superpowers/specs/2026-05-07-vectorranker-security-hardening.md` gets an appended Status note.
