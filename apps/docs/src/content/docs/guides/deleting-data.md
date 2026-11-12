@@ -11,6 +11,7 @@ sidebar:
 await wiki.forget('user-123', { entryId: 'fact_abc' });     // one fact
 await wiki.forget('user-123', { taskId: 'task_xyz' });      // one task
 await wiki.forget('user-123', { sourceRef: 'doc.md' });     // every fact from one document
+// → { deleted: { entries, tasks } }
 await wiki.forget('user-123', { clearAll: true });          // the whole entity
 // → { deleted: { entries, tasks }, metadataReset: true }
 ```
@@ -77,3 +78,7 @@ the event count without deleting anything.
   `event_retention_held`. A later maintenance run then reads them into facts again. Under
   `'legacy'`, the librarian re-reads the newest events on every pass.
 - **Re-importing an old export brings the data back**, events included.
+- **The ontology manifest stays.** The wipe leaves the entity's ontology manifest and mode. Under
+  `'emergent'`, the manifest holds node and edge types learned from the entity's facts. To reset
+  it, write an empty one:
+  `await wiki.setOntologyManifest(entityId, { node_types: [], edge_types: [] }, { mode: 'off' })`.
