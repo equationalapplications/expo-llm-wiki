@@ -150,13 +150,19 @@ describe('revision 5', () => {
 
   it('38: when the embed-race enqueue fails, the hook gets null directly', async () => {
     const raw = openTestDatabase();
+    let confirmed = false;
     const t = open(raw, async (c) => {
-      if (c.vector !== null) await softDel(raw, c.factId);
+      if (c.vector !== null && !confirmed) {
+        // forget() runs and confirms its removal while the vector call is in flight.
+        confirmed = true;
+        await softDel(raw, c.factId);
+        await t.wiki.runExternalDeletions('e1');
+      }
     });
     await t.wiki.setup();
     await ins(raw, 'x');
     (t.wiki as any).vectorRemovalRepo.enqueueIfNotLive = () => Promise.reject(new Error('busy'));
-    // The forget-time row exists already (trigger); make it look confirmed so only the fallback can send null.
+    // The row is confirmed, so only the fallback can send null after the vector.
     const svc = (t.wiki as any).embeddingService;
     await svc.storeFactVector({ id: 'x', entity_id: 'e1' }, new Float32Array([0.1, 0.2]), { operation: 'ingest', trigger: 'call' });
     const mine = t.calls.filter((c) => c.factId === 'x');

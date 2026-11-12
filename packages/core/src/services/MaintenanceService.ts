@@ -381,9 +381,15 @@ export class MaintenanceService {
             deletedEntries = await this.entryRepo.bulkDeletePruned(entityId, cutoff, deletable, tx, { keepUnconfirmedRemovals: hookLedger, deletedIds });
             if (hookLedger) {
               // A removal re-owed inside this transaction (host raw SQL on the
-              // shared connection) made the guard keep its fact: count it as kept.
+              // shared connection) made the guard keep its fact: count it as
+              // kept. An id skipped because it was restored or already gone
+              // owes nothing, so it is neither deleted nor kept (spec rev 6).
               const gone = new Set(deletedIds);
-              kept = [...kept, ...deletable.filter((id) => !gone.has(id))];
+              const skipped = deletable.filter((id) => !gone.has(id));
+              if (skipped.length > 0) {
+                const after = await vrRepo!.statusFor(skipped, tx);
+                kept = [...kept, ...skipped.filter((id) => after.get(id) === 'pending')];
+              }
               deletable = deletedIds;
             }
             if (vrRepo && ledgerOn) {

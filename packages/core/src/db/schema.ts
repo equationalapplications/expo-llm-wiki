@@ -177,7 +177,13 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
     AFTER UPDATE OF deleted_at ON ${prefix}entries
     WHEN OLD.deleted_at IS NOT NULL AND NEW.deleted_at IS NULL
     BEGIN
-      DELETE FROM ${prefix}vector_removals WHERE fact_id = NEW.id AND confirmed_at IS NULL;
+      -- A confirmed removal means the host's index no longer holds this
+      -- vector: clear the stored one so the reembed job embeds the fact and
+      -- sends it again (spec rev 6). Embedding columns don't fire FTS triggers.
+      UPDATE ${prefix}entries SET embedding_blob = NULL, embedding = NULL
+       WHERE id = NEW.id
+         AND EXISTS (SELECT 1 FROM ${prefix}vector_removals WHERE fact_id = NEW.id AND confirmed_at IS NOT NULL);
+      DELETE FROM ${prefix}vector_removals WHERE fact_id = NEW.id;
     END;
 
     -- A hard delete outside prune (host SQL, an older engine after a

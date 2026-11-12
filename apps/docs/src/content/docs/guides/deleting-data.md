@@ -78,6 +78,14 @@ The engine can't do these for you:
    your other systems.
 5. **Deadlines.** The engine delivers eventually while the app runs. You monitor the pending count.
 
+### A restored fact is embedded again
+
+When a fact whose removal your index already confirmed comes back (`upsertGraph` re-adds a node,
+an import brings back a live version, or your own SQL sets `deleted_at` back to `NULL`), the engine
+clears its stored vector. The reembed job (`runPendingMaintenance()` or `runReembed()`) then embeds
+it and sends the vector to your hook again. That costs one embedding call per restored fact. A
+fact restored before its removal was confirmed keeps its vector, because your index still has it.
+
 ### Run and watch the removals
 
 - `forget()` drains its own ids after the commit. If your index didn't confirm every one, it

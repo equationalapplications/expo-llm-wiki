@@ -254,13 +254,14 @@ export class EmbeddingService {
       }
       return;
     }
-    // 'none': live, or nothing to record. 'unknown': liveness
-    // couldn't be read and the guarded write failed, so a null could remove a
-    // live fact's vector; send nothing (spec rev 6).
+    // 'none'/'live': nothing to record. 'owed': a pending row already holds
+    // the removal. 'unknown': liveness couldn't be read and the guarded write
+    // failed, so a null could remove a live fact's vector; send nothing.
     if (outcome !== 'write_failed') return;
-    // The fact is known not live but the removal couldn't be recorded (for
-    // example the host holds a transaction on the connection). Send null now
-    // so the last call the host sees for a deleted fact is still a removal.
+    // The removal finished before this vector landed (its row is confirmed or
+    // missing) and can't be recorded again (for example the host holds a
+    // transaction on the connection). Send null now so the last call the host
+    // sees for a deleted fact is still a removal.
     try {
       await this.callRemovalHook(entityId, factId, this.validateDeletionTimeout());
     } catch (hookErr) {
@@ -328,16 +329,18 @@ export class EmbeddingService {
    * After an embed (and its vector call) settles: owe a removal if the fact is
    * no longer live, so a vector the host just received is taken back (§5.7, G10).
    * Never throws. `'enqueued'`: a ledger row was written. `'none'`: no ledger
-   * table, no removal hook, or the fact is live. A row already pending is
+   * table or no removal hook. `'live'`: the fact is live. A row already pending is
    * replaced (attempts reset, spec §5.2), so it counts as `'enqueued'` and
    * is sent now: the last call the host sees after this vector is `null`.
-   * `'write_failed'`: the fact is known not live but the write failed.
+   * `'owed'`: the write failed but a pending row already holds the removal.
+   * `'write_failed'`: the fact is known not live, the write failed, and its
+   * row is confirmed or missing.
    * `'unknown'`: the liveness read and the guarded write both failed.
    */
   private async recordAfterVectorCall(
     entityId: string,
     factId: string,
-  ): Promise<'none' | 'enqueued' | 'write_failed' | 'unknown'> {
+  ): Promise<'none' | 'live' | 'enqueued' | 'owed' | 'write_failed' | 'unknown'> {
     const vr = this.vectorRemoval;
     if (!vr || vr.service.gate() !== 'hook') return 'none';
     let live: boolean | undefined;
@@ -349,12 +352,23 @@ export class EmbeddingService {
       // The guarded write below still decides liveness atomically.
       console.warn(`[WikiMemory] post-embed liveness read failed for ${factId}:`, err);
     }
-    if (live) return 'none';
+    if (live) return 'live';
     try {
-      return (await vr.repo.enqueueIfNotLive(entityId, factId, Date.now())) ? 'enqueued' : 'none';
+      // No row written means the guarded NOT EXISTS found the fact live.
+      return (await vr.repo.enqueueIfNotLive(entityId, factId, Date.now())) ? 'enqueued' : 'live';
     } catch (err) {
       console.warn(`[WikiMemory] post-embed removal could not be recorded for ${factId}:`, err);
-      return live === false ? 'write_failed' : 'unknown';
+      if (live !== false) return 'unknown';
+      // The read sees a host transaction's uncommitted writes. A delete inside
+      // one wrote a pending row in the same transaction: if it commits, a
+      // drain sends null after it; if it rolls back, the fact is live again.
+      // Either way a direct null now would be wrong or redundant (spec rev 6).
+      try {
+        if ((await vr.repo.statusFor([factId])).get(factId) === 'pending') return 'owed';
+      } catch {
+        // Status unknown: fall back to the direct null.
+      }
+      return 'write_failed';
     }
   }
 
