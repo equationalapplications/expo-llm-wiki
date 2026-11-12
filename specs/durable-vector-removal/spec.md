@@ -134,7 +134,7 @@ The docs state these plainly (§5.11):
 
 ### 5.1 Schema: the removal ledger
 
-One table, one index and two triggers, all created in the every-open base DDL (`packages/core/src/db/schema.ts`), so no code path can see them missing (the #316 lesson):
+One table, one index and two triggers (rev 5 adds a third, on hard delete, §5.2), all created in the every-open base DDL (`packages/core/src/db/schema.ts`), so no code path can see them missing (the #316 lesson):
 
 ```sql
 CREATE TABLE IF NOT EXISTS {p}vector_removals (
@@ -377,6 +377,7 @@ One routine, `drainVectorRemovals(scope, opts)`, in a new `VectorRemovalService`
 
 - **O1.** Does the Curated Thoughts startup schema check accept the new table, index and two triggers on `entries`? Its Rust check runs before the JS engine creates them, so on the first launch of the new version it also sees a store without them. Does it accept both states? To be answered from the Curated Thoughts side. Until then this PR stays draft.
   - **Answered 2026-11-12: yes, in both states.** Evidence: `curated-thoughts` at `3d61117a` (3.11.5), `src-tauri/src/db/schema_guard.rs::verify_llm_wiki_schema`, called at open from `db/connection.rs:952`. For 9 named `llm_wiki_*` tables it checks that each exists and that its `PRAGMA table_info` column set matches exactly. It never lists `sqlite_master` as a whole, never inspects indexes or triggers, and never reads `schema_version` in `llm_wiki_meta`. A run of core 8.0.2's `setup()` and then this branch's on one file adds exactly six objects (the table, `…_pending`, the table's unique autoindex, `sqlite_sequence`, the two triggers) and changes no existing table's columns. No `schema_version` bump is needed. Keeping the ledger out of `entries` was required: a new `entries` column fails that guard.
+  - Rev 5 adds a third trigger on `entries` (`AFTER DELETE`). The guard never inspects triggers, so the answer stands.
   - **Consumers checked 2026-11-12.** None configures `vectorRanker.onEmbeddingPersisted`, so none sends removal calls.
     - **Curated Thoughts** (pins 8.0.2): passes the guard. Its Rust code hard-deletes `entries` rows directly (`db/commit.rs`, `db/bundle_apply.rs`, `db/queries.rs`), which the orphan sweep now cleans up after.
     - **clanker** (`^8.0.2`, so it takes minors automatically): prune with a 3-day retention removes ledger rows with their facts.
