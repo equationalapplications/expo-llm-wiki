@@ -265,6 +265,38 @@ describe('revision 4, re-review', () => {
     expect(out.map((r) => r.record_id)).toEqual(['b']);
   });
 
+  it('prune outboxes only the rows its DELETE removed when another selected row vanished first', async () => {
+    const raw = openTestDatabase();
+    await open(raw, () => {}).wiki.setup();
+    const t = open(raw, () => {}, { config: { enableOutbox: true } });
+    await t.wiki.setup();
+    await seed(raw, ['a', 'b']);
+    await t.wiki.runExternalDeletions('e1');
+    const orig = raw.getAllAsync.bind(raw);
+    let fired = false;
+    raw.getAllAsync = async (sql: string, ...args: any[]) => {
+      const out = await orig(sql, ...args);
+      if (!fired && /SELECT fact_id, confirmed_at FROM \S*vector_removals/.test(sql)) {
+        fired = true;
+        // A host raw statement hard-deletes 'a' after prune selected it.
+        await raw.runAsync(`DELETE FROM ${P}entries WHERE id = 'a'`);
+      }
+      return out;
+    };
+    try {
+      await t.wiki.runPrune('e1', { retainSoftDeletedFor: 0 });
+    } catch {
+      // A partial-failure report for 'a' is acceptable; the outbox is what matters.
+    }
+    raw.getAllAsync = orig;
+    expect(fired).toBe(true);
+    expect(await factExists(raw, 'b')).toBe(false);
+    const out = await raw.getAllAsync(
+      `SELECT record_id FROM ${P}outbox WHERE table_name = 'entries' AND operation = 'DELETE' ORDER BY record_id`,
+    ) as any[];
+    expect(out.map((r) => r.record_id)).toEqual(['b']);
+  });
+
   it('a ledger read that fails before paging returns transient instead of throwing', async () => {
     const raw = await markedStore();
     await seed(raw, ['a']);

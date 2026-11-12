@@ -161,6 +161,35 @@ describe('revision 5', () => {
     expect(mine[mine.length - 1].vector).toBeNull();
   });
 
+  it('38c: when the enqueue and the direct null call both fail, a retried enqueue re-owes a confirmed row', async () => {
+    const raw = openTestDatabase();
+    let failNull = false;
+    const t = open(raw, async (c) => {
+      if (c.vector === null && failNull) throw new Error('index down');
+      if (c.vector !== null) {
+        // forget() runs and confirms its removal while the vector call is in flight.
+        await softDel(raw, c.factId);
+        await t.wiki.runExternalDeletions('e1');
+        failNull = true;
+      }
+    });
+    await t.wiki.setup();
+    await ins(raw, 'x');
+    const repo = (t.wiki as any).vectorRemovalRepo;
+    const real = repo.enqueueIfNotLive.bind(repo);
+    let tries = 0;
+    repo.enqueueIfNotLive = (...a: any[]) => (++tries === 1 ? Promise.reject(new Error('busy')) : real(...a));
+    const svc = (t.wiki as any).embeddingService;
+    await svc.storeFactVector({ id: 'x', entity_id: 'e1' }, new Float32Array([0.1, 0.2]), { operation: 'ingest', trigger: 'call' });
+    expect(tries).toBe(2);
+    expect(t.diags.some((d) => d.code === 'hook_failed')).toBe(true);
+    expect(await ledger(raw)).toEqual([{ fact_id: 'x', confirmed_at: null }]);
+    failNull = false;
+    const before = t.calls.length;
+    await t.wiki.runExternalDeletions('e1');
+    expect(t.calls.slice(before).map((c) => [c.factId, c.vector])).toEqual([['x', null]]);
+  });
+
   it('38b: a vector call for a live fact opens no write transaction for the race check', async () => {
     const raw = openTestDatabase();
     const t = open(raw, () => {});

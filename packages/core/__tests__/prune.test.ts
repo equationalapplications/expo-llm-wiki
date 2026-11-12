@@ -116,6 +116,13 @@ function makeMockDb(opts: {
       return null;
     },
     async getAllAsync<T>(sql: string, args: any[] = []): Promise<T[]> {
+      // Hard delete entries by ID list, naming the removed rows (DELETE … RETURNING id)
+      if (sql.includes('DELETE FROM') && sql.includes('entries') && sql.includes('RETURNING id')) {
+        const [entityId, cutoff, ...idsToDelete] = args;
+        const gone = entries.filter(e => e.entity_id === entityId && e.deleted_at !== null && e.deleted_at <= cutoff && idsToDelete.includes(e.id));
+        entries = entries.filter(e => !gone.includes(e));
+        return gone.map(e => ({ id: e.id })) as any;
+      }
       // Get entries to delete (for hook-before-delete pattern)
       if (sql.includes('SELECT') && sql.includes('entries') && sql.includes('deleted_at IS NOT NULL') && sql.includes('deleted_at <=')) {
         const entityId = args[0];

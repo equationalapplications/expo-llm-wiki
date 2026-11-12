@@ -829,24 +829,16 @@ export class EntryRepository extends BaseRepository {
     for (let i = 0; i < ids.length; i += chunkSize) {
       const chunk = ids.slice(i, i + chunkSize);
       const placeholders = chunk.map(() => '?').join(',');
-      const result = await executor.runAsync(
-        `DELETE FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ? AND id IN (${placeholders})${guard}`,
+      // RETURNING names exactly the rows this statement removed: not a row the
+      // guard kept, and not a row that was already gone before it ran.
+      const deleted = (await executor.getAllAsync<{ id: string }>(
+        `DELETE FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ? AND id IN (${placeholders})${guard} RETURNING id`,
         [entityId, cutoff, ...chunk],
-      );
-      totalChanges += result.changes;
-      // Name only the rows this DELETE removed: when it skipped some (the
-      // guard, or a row that changed), read back which ids still exist.
-      let deleted = chunk;
-      if (result.changes < chunk.length) {
-        const left = new Set((await executor.getAllAsync<{ id: string }>(
-          `SELECT id FROM ${this.prefix}entries WHERE id IN (${placeholders})`,
-          chunk,
-        )).map((r) => r.id));
-        deleted = chunk.filter((id) => !left.has(id));
-      }
+      )).map((r) => r.id);
+      totalChanges += deleted.length;
       opts.deletedIds?.push(...deleted);
       // Stage outbox entries for permanently deleted records
-      if (result.changes > 0) {
+      if (deleted.length > 0) {
         for (const id of deleted) {
           await this.outbox.push({
             entityId,

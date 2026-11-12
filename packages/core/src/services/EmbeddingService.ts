@@ -258,6 +258,15 @@ export class EmbeddingService {
       } catch (hookErr) {
         console.warn(`[WikiMemory] onEmbeddingPersisted(vector=null) hook failed for ${factId}:`, hookErr);
         this.reportHookFailed({ operation, trigger }, entityId, factId);
+        // Neither the record nor the call landed. Try the record once more (the
+        // hook wait gave the host time to finish its transaction): an owed row
+        // is retried by the next drain. If this fails too, nothing durable is
+        // left to write to, as in the never-set-up fallbacks (§5.5.5).
+        try {
+          await this.afterVectorCall(entityId, factId);
+        } catch (retryErr) {
+          console.warn(`[WikiMemory] post-embed removal could not be recorded for ${factId}:`, retryErr);
+        }
       }
       return;
     }
