@@ -1158,17 +1158,32 @@ export class EntryRepository extends BaseRepository {
     return rows;
   }
 
-  async updateEmbeddingBlob(id: string, blob: Uint8Array, tx?: SQLiteAdapter): Promise<void> {
+  /** Returns `changes: 0` when the row is soft-deleted or gone (spec durable-vector-removal §5.7, G10). */
+  async updateEmbeddingBlob(id: string, blob: Uint8Array, tx?: SQLiteAdapter): Promise<{ changes: number }> {
     const executor = this.getExecutor(tx);
-    await executor.runAsync(
+    const r = await executor.runAsync(
       `UPDATE ${this.prefix}entries
          SET embedding_blob = ?,
              embedding = NULL,
              embedding_failed_at = NULL,
              embedding_failure_kind = NULL,
              embedding_attempts = 0
-       WHERE id = ?`,
+       WHERE id = ? AND deleted_at IS NULL`,
       [blob, id],
+    );
+    return { changes: r?.changes ?? 0 };
+  }
+
+  get ledgerTableName(): string {
+    return `${this.prefix}vector_removals`;
+  }
+
+  /** Owe the host a removal for `factId` unless a live row exists (a missing row counts as not live). */
+  async enqueueRemovalIfNotLive(entityId: string, factId: string, now: number): Promise<void> {
+    await this.db.runAsync(
+      `INSERT OR REPLACE INTO ${this.prefix}vector_removals (entity_id, fact_id, enqueued_at)
+       SELECT ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM ${this.prefix}entries WHERE id = ? AND deleted_at IS NULL)`,
+      [entityId, factId, now, factId],
     );
   }
 

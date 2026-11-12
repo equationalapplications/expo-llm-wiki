@@ -11,7 +11,8 @@ export type { EmbeddingMarkerKind };
 export type EmbedFailureKind =
   | EmbeddingMarkerKind
   | 'no_provider'
-  | 'storage_error';
+  | 'storage_error'
+  | 'fact_deleted';
 
 export type EmbedFactResult =
   | { ok: true; dimension: number }
@@ -195,15 +196,19 @@ export class EmbeddingService {
   }, float32Vector: Float32Array, ctx?: EmbedDiagnosticContext): Promise<EmbedFactResult> {
     // Storage is a separate failure domain: a DB error here is NOT an
     // embedding failure and must not be marked as one (spec §3.2, D3).
+    let stored = true;
     try {
       await this.storeEmbeddingDimension(float32Vector.length);
       const blob = new Uint8Array(float32Vector.buffer);
-      await this.entryRepo.updateEmbeddingBlob(fact.id, blob);
+      stored = (await this.entryRepo.updateEmbeddingBlob(fact.id, blob)).changes > 0;
     } catch (err) {
       console.warn(`[WikiMemory] embedFact: persisting embedding failed for ${fact.id}:`, err);
       this.reportEmbed(ctx, fact, 'embedding_failed', 'persist_failed');
       return { ok: false, kind: 'storage_error' };
     }
+
+    // The fact was deleted while its embed was in flight: no blob, no vector call (G10).
+    if (!stored) return { ok: false, kind: 'fact_deleted' };
 
     try {
       await this.notifyEmbeddingPersisted(fact.entity_id, fact.id, float32Vector);
@@ -255,6 +260,18 @@ export class EmbeddingService {
   }, ctx?: EmbedDiagnosticContext): Promise<boolean> {
     const result = await this.tryEmbedFact(fact, ctx);
     return result.ok;
+  }
+
+  /**
+   * After an embed (and its vector call) settles: owe a removal if the fact is
+   * no longer live, so a vector the host just received is taken back (§5.7, G10).
+   * No-op without a ledger table or without a removal hook.
+   */
+  async afterVectorCall(entityId: string, factId: string): Promise<void> {
+    if (this.options.forceDeleteIgnoreRankerHook === true) return;
+    if (!this.options.vectorRanker?.onEmbeddingPersisted) return;
+    if (!(await this.metadataRepo.tableExists(this.entryRepo.ledgerTableName))) return;
+    await this.entryRepo.enqueueRemovalIfNotLive(entityId, factId, Date.now());
   }
 
   async notifyEmbeddingPersisted(entityId: string, factId: string, vector: Float32Array | null): Promise<void> {

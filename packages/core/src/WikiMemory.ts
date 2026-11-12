@@ -167,8 +167,8 @@ export class WikiMemory {
       this.entryRepo,
       new MiniSearchIndexStrategy(),
     );
-    this.temporalService = new TemporalService(this.db, this.options, this.entryRepo, this.searchService, this.embeddingService);
-    this.rememberService = new RememberService(this.db, this.entryRepo, this.ontologyService, this.searchService, this.embeddingService);
+    this.temporalService = new TemporalService(this.db, this.options, this.entryRepo, this.searchService, this.embeddingService, this.vectorRemovalService);
+    this.rememberService = new RememberService(this.db, this.entryRepo, this.ontologyService, this.searchService, this.embeddingService, this.vectorRemovalService);
     this.jobManager = new JobManager(this.prefix);
     this.promptService = new PromptService(options.config?.prompts, resolveGrounding(options.config?.grounding));
     this.ingestionService = new IngestionService(
