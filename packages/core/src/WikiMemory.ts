@@ -292,10 +292,10 @@ export class WikiMemory {
     };
   }
 
-  /** Max upsertGraph node ids held for their post-commit sync (spec #280 id threading). */
+  /** Max upsertGraph node and superseded-fact ids held for their post-commit sync (spec #280 id threading). */
   static readonly UPSERT_ID_STASH_CAP = 10_000;
   /**
-   * upsertGraph node ids per entity, awaiting syncSearchIndex(), each with the
+   * upsertGraph node and superseded-fact ids per entity, awaiting syncSearchIndex(), each with the
    * generation of its latest stash. Ids leave the stash only once a drain
    * succeeded, so a failed drain retries them next call.
    */

@@ -35,7 +35,7 @@ const wiki = new WikiMemory(db, {
    ```ts
    const r = await wiki.runPendingMaintenance({ tokenBudget: 20_000, deadlineMs: remainingMs - 1500 });
    ```
-   Nothing is still running when this resolves.
+   Nothing is still running when this resolves, with one exception: if `deadlineMs` cuts short its wait for the setup removal drain, that drain may still be running. Set `drainExternalDeletionsOnSetup: false` on serverless (the `'externalDeletions'` job here honours `deadlineMs`), or call `await wiki.drain()` before you push.
 5. **Push** the file back. It's consistent, because there's no detached work and no open transaction.
 
 `runPendingMaintenance()` waits for that drain. If you skip step 4, call `await wiki.drain()` before you push, so no removal call is still running.

@@ -127,7 +127,8 @@ await wiki.write(entityId, { event_type: 'observation', summary, occurred_at });
 
 const report = await wiki.runPendingMaintenance({ tokenBudget: 20_000, deadlineMs: 8_000 });
 report.stoppedReason.reason; // 'complete' | 'deadline' | 'budget_exhausted' | 'budget_too_small'
-// Nothing is still running at this point, so it's safe to persist the DB file.
+// Nothing is still running at this point, so it's safe to persist the DB file
+// (unless deadlineMs cut short the wait for the setup removal drain: then await wiki.drain()).
 ```
 
 - `getPendingMaintenance()` shows the backlog per entity without calling a model. It also reports `pendingExternalDeletions` when your vector index still owes removals and this process can act on them (a hook is configured, or `forceDeleteIgnoreRankerHook` is on). An entity with only owed removals is listed only while at least one of its rows is outside backoff (never attempted, or last attempted longer ago than `min(2^attempts, 3600)` seconds), so a loop over `getPendingMaintenance()` ends even when the hook keeps failing.
