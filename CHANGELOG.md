@@ -1,3 +1,40 @@
+## [8.4.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v8.3.0...v8.4.0) (2026-11-12)
+
+### Features
+
+* **core:** forget delivers removals through the ledger (§5.5) ([8fee02f](https://github.com/equationalapplications/expo-llm-wiki/commit/8fee02f1d8fbe4d18f24c7b2d6a243572b24a499))
+* **core:** heal, ingest, import and upsertGraph deliver removals through the ledger (§5.7) ([0d3395b](https://github.com/equationalapplications/expo-llm-wiki/commit/0d3395bf5bb741189210a7c747fe5fbc769b735c))
+* **core:** runExternalDeletions, getPendingExternalDeletions, setup drain and maintenance job (§5.7, §5.9) ([19dee14](https://github.com/equationalapplications/expo-llm-wiki/commit/19dee14cee1abd4068e377295d4f7fc5dfe2c404))
+* **core:** runPrune hard-deletes only confirmed removals and finishes before throwing (§5.6) ([eba33cb](https://github.com/equationalapplications/expo-llm-wiki/commit/eba33cb411b7dc9de60d93f4a182dde16b01c45e))
+* **core:** vector_removals ledger filled by triggers on entries (spec durable-vector-removal §5.1-5.2) ([d9f9985](https://github.com/equationalapplications/expo-llm-wiki/commit/d9f9985d4f40fbb08a51512fba6f52f5402b971f))
+* **core:** VectorRemovalService drain with hook gate, keyset paging and in-flight map (§5.3-5.4) ([9b37add](https://github.com/equationalapplications/expo-llm-wiki/commit/9b37add6e8f341825b16e684407e302b4056acd4))
+
+### Bug Fixes
+
+* **core:** a failing entity no longer starves an all-entity drain; prune accounts exactly under its guard; import vector calls get the embed-race check ([c8694a7](https://github.com/equationalapplications/expo-llm-wiki/commit/c8694a72888edaf80b627653d649da4da5b3a03f))
+* **core:** a restored fact is re-embedded even with failure markers; no-ledger embed race ends with null ([1c61759](https://github.com/equationalapplications/expo-llm-wiki/commit/1c6175977c21bb7ffe8aaf154b14a9157af2ee2b))
+* **core:** an embed that lands after its fact was deleted ends with a null call (§5.7 G10) ([96493d2](https://github.com/equationalapplications/expo-llm-wiki/commit/96493d2ed179de3bbbafb5ecc31fc15cf3936b34))
+* **core:** bound setup-drain await by deadlineMs; setup writes marker once and clears it under force ([8ae0f67](https://github.com/equationalapplications/expo-llm-wiki/commit/8ae0f678e73427e62092a69c3a07dec01a21182f))
+* **core:** callFor returns a discriminated outcome; joiners confirm resolved calls; forget names the timed-out id ([2aff687](https://github.com/equationalapplications/expo-llm-wiki/commit/2aff687f4260ac7fb6e40f18ff9e471a940f063d))
+* **core:** deliverRemovals emits pending only under a hook (§5.3) ([c10655a](https://github.com/equationalapplications/expo-llm-wiki/commit/c10655acf1db8981e2fe44ead3a0a030c1e99cad))
+* **core:** embed-race review fixes (§5.7 G10) ([aa5e5b5](https://github.com/equationalapplications/expo-llm-wiki/commit/aa5e5b5373d01ede480b89dcf53d3b0460b26e46))
+* **core:** embed-race sends null only after a read shows the fact not live ([b6b354c](https://github.com/equationalapplications/expo-llm-wiki/commit/b6b354c02d18db80df6026f74650be26de492bfa))
+* **core:** forget review fixes (§5.3, §5.5 rev 3b) ([ef94be7](https://github.com/equationalapplications/expo-llm-wiki/commit/ef94be7ac28454f604b1b02bef7b83dd56390d55))
+* **core:** getPendingMaintenance lists removal-only entities only while a row is outside backoff ([21f5717](https://github.com/equationalapplications/expo-llm-wiki/commit/21f57177cf4699e5a8f753ea59e4c8b28f81494d))
+* **core:** id-scoped ledger queries use the fact_id index; chunk backstop inserts; enqueueIfNotLive in own tx ([a4f06f9](https://github.com/equationalapplications/expo-llm-wiki/commit/a4f06f9406801061ffb3bcd9636de4f423a5c867))
+* **core:** ledger delivery review fixes for heal, ingest, import and syncSearchIndex (§5.7) ([cd6a866](https://github.com/equationalapplications/expo-llm-wiki/commit/cd6a8666901108c098677acfb47166442fa40b22))
+* **core:** ledger triggers survive upserts and hard deletes; bounded fallbacks; embed-race fallback ([e22cc18](https://github.com/equationalapplications/expo-llm-wiki/commit/e22cc180614924ac216c0f3ee5b1ef4de159921d)), closes [#372](https://github.com/equationalapplications/expo-llm-wiki/issues/372)
+* **core:** prune outboxes only rows its DELETE removed; retry the embed-race record after a failed null call ([a75c2a2](https://github.com/equationalapplications/expo-llm-wiki/commit/a75c2a2e0ef4e460dd8dcd452eddc4d26fc2b9f9))
+* **core:** prune reports expired-fact removal failures; outbox only rows soft-deleted ([252badb](https://github.com/equationalapplications/expo-llm-wiki/commit/252badbc4919378a13b07308bf16f2eb4559fd7c))
+* **core:** public API review fixes (§5.7, §5.9) ([17a0f4b](https://github.com/equationalapplications/expo-llm-wiki/commit/17a0f4b6c1f9d430b905c143f049807ebaf4588e))
+* **core:** public API review fixes, round 2 (§5.9) ([0fe1f9f](https://github.com/equationalapplications/expo-llm-wiki/commit/0fe1f9f7aabea05ef5479a800b2341e80811b4a1))
+* **core:** re-embed a fact restored after its removal; no null for a pending row; prune keeps only owed ids ([6dab60a](https://github.com/equationalapplications/expo-llm-wiki/commit/6dab60ae4329919049834d5bf943c6cb9eadf8b9))
+* **core:** runPrune validates the hook timeout before any write (§5.6.7) ([f434a8f](https://github.com/equationalapplications/expo-llm-wiki/commit/f434a8fd1cbb7d65abf6ed8b77bdfb6d6062ed97))
+* **core:** setup drain off by default; prune keeps re-owed removals; per-entity drains; embed-race check on every path ([fe121a9](https://github.com/equationalapplications/expo-llm-wiki/commit/fe121a9b3db84ec89993f345ef2eac4304a1436a)), closes [#372](https://github.com/equationalapplications/expo-llm-wiki/issues/372)
+* **core:** setup() sweeps removal-ledger rows whose fact a host hard-deleted ([52cbc34](https://github.com/equationalapplications/expo-llm-wiki/commit/52cbc34118637711cc32dcdd274cc4b96231594d))
+* **core:** upsertGraph removals use their own stash, independent of the search strategy ([7b1f5a8](https://github.com/equationalapplications/expo-llm-wiki/commit/7b1f5a873a5bbac149969cd9aa3bc751240ee50b))
+* **core:** VectorRemovalService review fixes (§5.4 rev 3) ([7f8075e](https://github.com/equationalapplications/expo-llm-wiki/commit/7f8075e32895861b88d37f751d181bf3421bd978))
+
 ## [8.3.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v8.2.0...v8.3.0) (2026-11-12)
 
 ### Features
