@@ -11,6 +11,10 @@ Revision 4 (2026-11-11), after the PR #371 bot review (owner-approved):
 §6 hard-deletes the entity's source-ref index rows instead of soft-deleting
 them. Nothing reads a soft-deleted row and `runPrune` never sweeps the table,
 so soft-deleted rows would stay forever.
+Revision 5 (2026-11-11), after the Fable re-review: §3.2's taken-id walk
+hashes the shared fields once per line (`createEventIdDeriver` in core-okf);
+re-hashing the summary per step made a crafted log quadratic. Ids are
+unchanged.
 **Date:** 2026-11-11
 **Issues:** #367, #366, #365. Issue #278 (the upstream sprintf-js /
 node-forge watch) is out of scope: there is nothing to do until upstream
