@@ -18,7 +18,16 @@ type Call = { entityId: string; factId: string; vector: unknown };
 async function make(hook?: (c: Call) => Promise<void> | void, extra: any = {}) {
   const raw = openTestDatabase();
   await new WikiMemory(raw, { llmProvider: llm } as any).setup();
-  const db = withSerializedTransactions(raw);
+  const ser = withSerializedTransactions(raw);
+  const ctl = { txCount: 0, failFrom: Infinity };
+  const db: SQLiteAdapter = {
+    ...ser,
+    withTransactionAsync: (fn: any) => {
+      ctl.txCount++;
+      if (ctl.txCount >= ctl.failFrom) return Promise.reject(new Error('tx failed'));
+      return ser.withTransactionAsync(fn);
+    },
+  } as SQLiteAdapter;
   const calls: Call[] = [];
   const diags: any[] = [];
   const options: any = {
@@ -41,7 +50,7 @@ async function make(hook?: (c: Call) => Promise<void> | void, extra: any = {}) {
   const emb = new EmbeddingService(db, options, entryRepo, meta);
   const repo = new VectorRemovalRepository(db, P);
   const svc = new VectorRemovalService(db, options, repo, emb, meta);
-  return { raw, db, calls, diags, svc, repo, meta };
+  return { raw, ctl, db, calls, diags, svc, repo, meta };
 }
 
 async function del(db: SQLiteAdapter, id: string, entity = 'e1') {
@@ -119,7 +128,6 @@ describe('VectorRemovalService.drain', () => {
   });
 
   it("entity A's drain never sends entity B's ids", async () => {
-    const t = await make();
     const t2 = await make(() => {});
     await del(t2.db, 'a1', 'A');
     await del(t2.db, 'b1', 'B');
@@ -128,11 +136,9 @@ describe('VectorRemovalService.drain', () => {
     expect(t2.calls.every((c) => c.entityId === 'A')).toBe(true);
     await t2.svc.drain({ entityId: 'A', ids: ['b1'] });
     expect(t2.calls).toHaveLength(1);
-    void t;
   });
 
   it('a re-delete during an in-flight confirmation stays pending', async () => {
-    const t = await make();
     let db: SQLiteAdapter;
     const t2 = await make(async () => {
       await db.runAsync(`UPDATE ${P}entries SET deleted_at = NULL WHERE id = 'a'`);
@@ -144,7 +150,6 @@ describe('VectorRemovalService.drain', () => {
     const rows = await ledger(t2.db);
     expect(rows).toHaveLength(1);
     expect(rows[0].confirmed_at).toBeNull();
-    void t;
   });
 
   it('a host-held transaction makes the drain stop with no calls', async () => {
@@ -189,15 +194,163 @@ describe('VectorRemovalService.drain', () => {
   });
 
   it('resolved for a gone fact deletes the ledger row', async () => {
-    const t = await make(async (c) => {
-      await t.db.runAsync(`DELETE FROM ${P}entries WHERE id = ?`, [c.factId]);
-    });
+    const t = await make(() => {});
     await del(t.db, 'a');
-    // hard delete before the page read: simulate a gone fact
-    await t.db.runAsync(`DELETE FROM ${P}entries WHERE id = 'a'`);
+    await t.db.runAsync(`DELETE FROM ${P}entries WHERE id = 'a'`); // gone before the page read
     const r = await t.svc.drain({ all: true });
     expect(t.calls).toHaveLength(1);
     expect(await ledger(t.db)).toHaveLength(0);
     expect(r.pending).toBe(0);
+    expect(r.confirmed).toBe(1);
+  });
+
+  it('stops after 5 consecutive rejections', async () => {
+    const t = await make(() => {
+      throw new Error('x');
+    });
+    for (let i = 0; i < 8; i++) await del(t.db, `f${i}`);
+    const r = await t.svc.drain({ all: true });
+    expect(t.calls).toHaveLength(5);
+    expect(r.failedIds).toHaveLength(5);
+    expect(r.pending).toBe(8);
+  });
+
+  it('deadlineAt caps the per-call budget below deletionHookTimeoutMs', async () => {
+    const t = await make(() => new Promise<void>(() => {}), { deletionHookTimeoutMs: 10_000 });
+    await del(t.db, 'a');
+    await del(t.db, 'b');
+    const start = Date.now();
+    const r = await t.svc.drain({ all: true }, { deadlineAt: Date.now() + 100 });
+    expect(Date.now() - start).toBeLessThan(2000);
+    expect(r.timedOut).toBe(true);
+    expect(t.calls).toHaveLength(1);
+  });
+
+  it('a past deadlineAt makes no calls', async () => {
+    const t = await make(() => {});
+    await del(t.db, 'a');
+    const r = await t.svc.drain({ all: true }, { deadlineAt: Date.now() - 1 });
+    expect(t.calls).toHaveLength(0);
+    expect(r.pending).toBe(1);
+  });
+
+  it('backoff skips a row attempted just now; without it the row is called', async () => {
+    let fail = true;
+    const t = await make(() => {
+      if (fail) throw new Error('x');
+    });
+    await del(t.db, 'a');
+    await t.svc.drain({ all: true });
+    fail = false;
+    const r1 = await t.svc.drain({ all: true }, { backoff: true });
+    expect(t.calls).toHaveLength(1);
+    expect(r1.pending).toBe(1);
+    const r2 = await t.svc.drain({ all: true });
+    expect(t.calls).toHaveLength(2);
+    expect(r2.pending).toBe(0);
+  });
+
+  it('no hook call happens inside a transaction', async () => {
+    let ok = 0;
+    const t = await make();
+    const t2 = await make(async () => {
+      await t2.raw.execAsync('BEGIN');
+      await t2.raw.execAsync('ROLLBACK');
+      ok++;
+    });
+    for (const id of ['a', 'b', 'c']) await del(t2.db, id);
+    await t2.svc.drain({ all: true });
+    expect(ok).toBe(3);
+    expect(t2.calls).toHaveLength(3);
+    void t;
+  });
+
+  it('a row live at read time is deleted without a call', async () => {
+    const t = await make(() => {});
+    await t.db.runAsync(
+      `INSERT INTO ${P}entries (id, entity_id, title, body, created_at, updated_at) VALUES ('a','e1','t','b',1,1)`,
+    );
+    await t.db.runAsync(`INSERT INTO ${P}vector_removals (entity_id, fact_id, enqueued_at) VALUES ('e1','a',1)`);
+    const r = await t.svc.drain({ all: true });
+    expect(t.calls).toHaveLength(0);
+    expect(await ledger(t.db)).toHaveLength(0);
+    expect(r.pending).toBe(0);
+  });
+
+  it("a joining drain gets its own budget and does not settle the row", async () => {
+    let release!: () => void;
+    const gateP = new Promise<void>((res) => (release = res));
+    const t = await make(() => gateP, { deletionHookTimeoutMs: 10_000 });
+    await del(t.db, 'a');
+    const p1 = t.svc.drain({ all: true });
+    await new Promise((r) => setTimeout(r, 30));
+    const start = Date.now();
+    const r2 = await t.svc.drain({ all: true }, { deadlineAt: Date.now() + 80 });
+    expect(Date.now() - start).toBeLessThan(2000);
+    expect(r2.timedOut).toBe(true);
+    expect(t.calls).toHaveLength(1);
+    expect((await ledger(t.db))[0].attempts).toBe(0);
+    release();
+    await p1;
+    expect((await ledger(t.db))[0].confirmed_at).not.toBeNull();
+  });
+
+  it('an in-flight call for an older seq does not confirm a re-delete; a fresh call is made', async () => {
+    let release!: () => void;
+    const gateP = new Promise<void>((res) => (release = res));
+    let n = 0;
+    const t = await make(() => (n++ === 0 ? gateP : undefined));
+    await del(t.db, 'a');
+    const p1 = t.svc.drain({ all: true });
+    await new Promise((r) => setTimeout(r, 30));
+    await t.db.runAsync(`UPDATE ${P}entries SET deleted_at = NULL WHERE id = 'a'`);
+    await t.db.runAsync(`UPDATE ${P}entries SET deleted_at = 2 WHERE id = 'a'`);
+    const p2 = t.svc.drain({ all: true });
+    await new Promise((r) => setTimeout(r, 30));
+    release();
+    await Promise.all([p1, p2]);
+    expect(t.calls).toHaveLength(2);
+    const rows = await ledger(t.db);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].confirmed_at).not.toBeNull();
+  });
+
+  it('a failing read or settling write stops the drain as transient', async () => {
+    const t = await make(() => {});
+    await del(t.db, 'a');
+    t.ctl.failFrom = t.ctl.txCount + 2; // read ok, settle fails
+    const r = await t.svc.drain({ all: true });
+    expect(r.transient).toBe(true);
+    expect(r.confirmed).toBe(0);
+    expect((await ledger(t.db))[0].confirmed_at).toBeNull();
+    t.ctl.failFrom = t.ctl.txCount + 1; // read fails
+    const r2 = await t.svc.drain({ all: true });
+    expect(r2.transient).toBe(true);
+  });
+
+  it("pending for {entityId, ids} ignores another entity's ids", async () => {
+    const t = await make(() => {});
+    await del(t.db, 'b1', 'B');
+    const r = await t.svc.drain({ entityId: 'A', ids: ['b1'] });
+    expect(r.pending).toBe(0);
+    expect(t.calls).toHaveLength(0);
+  });
+
+  it('force emits a discarded diagnostic per entity with rows, none when empty', async () => {
+    const t = await make(() => {}, { forceDeleteIgnoreRankerHook: true });
+    await t.svc.drain({ all: true });
+    expect(t.diags.filter((d) => d.code === 'external_deletion_discarded')).toHaveLength(0);
+    await del(t.db, 'a', 'A');
+    await del(t.db, 'b', 'B');
+    await del(t.db, 'b2', 'B');
+    await t.svc.drain({ all: true });
+    const d = t.diags.filter((x) => x.code === 'external_deletion_discarded');
+    expect(d.map((x) => [x.entityId, x.detail.count]).sort()).toEqual([['A', 1], ['B', 2]]);
+  });
+
+  it('callRemovalHook throws when no hook is configured', async () => {
+    const t = await make();
+    const emb = new EmbeddingService(t.db, { llmProvider: llm } as any, null as any, null as any);
+    await expect(emb.callRemovalHook('e', 'f', 50)).rejects.toThrow();
   });
 });

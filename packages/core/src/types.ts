@@ -882,7 +882,7 @@ export interface WikiDiagnosticDetail {
   packed?: number;
   /** read_budget only. */
   tokensUsed?: number;
-  /** external_deletion_pending only: epoch seconds of the oldest pending row. */
+  /** external_deletion_pending only: epoch milliseconds (second resolution) of the oldest pending row. */
   oldestEnqueuedAt?: number;
   /** external_deletion_pending only: highest attempt count among pending rows. */
   maxAttempts?: number;

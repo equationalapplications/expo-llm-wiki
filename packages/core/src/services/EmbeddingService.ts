@@ -277,8 +277,9 @@ export class EmbeddingService {
 
   /** Send a removal (`vector: null`) to the hook. No gate check; the caller owns the gate. */
   async callRemovalHook(entityId: string, factId: string, timeoutMs: number): Promise<void> {
-    const hook = this.options.vectorRanker?.onEmbeddingPersisted;
-    if (!hook) return;
+    if (!this.options.vectorRanker?.onEmbeddingPersisted) {
+      throw new Error('callRemovalHook requires vectorRanker.onEmbeddingPersisted');
+    }
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeoutHandle = setTimeout(() => {

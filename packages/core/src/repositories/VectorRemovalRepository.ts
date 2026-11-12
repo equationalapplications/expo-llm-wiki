@@ -84,15 +84,19 @@ export class VectorRemovalRepository extends BaseRepository {
     return row?.m ?? 0;
   }
 
-  async confirm(seqs: number[], now: number, tx: SQLiteAdapter): Promise<void> {
+  /** Returns the number of rows changed. */
+  async confirm(seqs: number[], now: number, tx: SQLiteAdapter): Promise<number> {
     const executor = this.getExecutor(tx);
+    let changed = 0;
     for (const c of chunks(seqs, CHUNK)) {
-      await executor.runAsync(
+      const r = await executor.runAsync(
         `UPDATE ${this.prefix}vector_removals SET confirmed_at = ?
           WHERE seq IN (${marks(c.length)})`,
         [now, ...c],
       );
+      changed += r.changes;
     }
+    return changed;
   }
 
   async bumpAttempts(seqs: number[], now: number, tx: SQLiteAdapter): Promise<void> {
@@ -108,14 +112,31 @@ export class VectorRemovalRepository extends BaseRepository {
   }
 
   /** For stale, gone or resurrected rows. Applies to the given seqs only. */
-  async deleteBySeq(seqs: number[], tx: SQLiteAdapter): Promise<void> {
+  async deleteBySeq(seqs: number[], tx: SQLiteAdapter): Promise<number> {
     const executor = this.getExecutor(tx);
+    let changed = 0;
     for (const c of chunks(seqs, CHUNK)) {
-      await executor.runAsync(
+      const r = await executor.runAsync(
         `DELETE FROM ${this.prefix}vector_removals WHERE seq IN (${marks(c.length)})`,
         c,
       );
+      changed += r.changes;
     }
+    return changed;
+  }
+
+  /** Unconfirmed rows of `entityId` among `ids`. */
+  async pendingCountForIds(entityId: string, ids: string[]): Promise<number> {
+    let n = 0;
+    for (const c of chunks(ids, CHUNK)) {
+      const row = await this.db.getFirstAsync<{ c: number }>(
+        `SELECT COUNT(*) AS c FROM ${this.prefix}vector_removals
+          WHERE confirmed_at IS NULL AND entity_id = ? AND fact_id IN (${marks(c.length)})`,
+        [entityId, ...c],
+      );
+      n += row?.c ?? 0;
+    }
+    return n;
   }
 
   /** Enqueue ids that have no row yet. Returns the number inserted. */
