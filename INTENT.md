@@ -354,7 +354,8 @@ runs and who schedules it.
   `setup()`, the engine finishes removals from the host's vector index that
   the host already requested through `forget()`, prune or the other delete
   paths. It makes no model call and spends no tokens. It runs only when a
-  removal hook is configured, is not awaited by `setup()`, stops after 10
+  removal hook is configured, or when the index is marked decommissioned
+  (`forceDeleteIgnoreRankerHook`), in which case it only discards; it is not awaited by `setup()`, stops after 10
   seconds, and hosts turn it off with `drainExternalDeletionsOnSetup: false`.
   Why: charter rule 8 promises deletion, and a delete the host's index never
   heard about is not done; retrying only when the host asks leaves it undone
