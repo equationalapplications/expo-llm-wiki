@@ -259,6 +259,12 @@ export class MaintenanceService {
       const pruneSupersededAfter = this.options.config?.pruneSupersededAfter ?? null;
       this._validatePruneDuration(pruneSupersededAfter, 'pruneSupersededAfter');
 
+      // Spec durable-vector-removal §5.6.7: a bad deletionHookTimeoutMs fails
+      // before any write.
+      const gate = this.vectorRemoval?.gate()
+        ?? (this.options.forceDeleteIgnoreRankerHook === true ? 'force' : this.options.vectorRanker?.onEmbeddingPersisted ? 'hook' : 'none');
+      if (gate === 'hook') this.embeddingService.validateDeletionTimeout();
+
       const now = Date.now();
       // The full-entity rebuild is deferred until the touched-id set is known:
       // prune always knows exactly which rows it removed, so the index update
@@ -298,7 +304,6 @@ export class MaintenanceService {
         const vr = this.vectorRemoval;
         const vrRepo = this.vectorRemovalRepo;
         const ledgerOn = !!vr && !!vrRepo && await this.ledgerTablePresent();
-        const gate = vr?.gate() ?? (this.options.forceDeleteIgnoreRankerHook === true ? 'force' : this.options.vectorRanker?.onEmbeddingPersisted ? 'hook' : 'none');
         // Spec durable-vector-removal §5.6: rows are hard-deleted only when
         // their removal is confirmed (hook) or the gate allows it.
         let deletable: string[] = prunableIds;
@@ -362,8 +367,7 @@ export class MaintenanceService {
         await this.db.withTransactionAsync(async (tx) => {
           if (deletable.length > 0) {
             deletedEntries = await this.entryRepo.bulkDeletePruned(entityId, cutoff, deletable, tx);
-            if (removeLedger && vrRepo) await vrRepo.deleteForFacts(entityId, deletable, tx);
-            else if (gate === 'hook' && ledgerOn && vrRepo) await vrRepo.deleteForFacts(entityId, deletable, tx);
+            if (vrRepo && ledgerOn && (removeLedger || gate === 'hook')) await vrRepo.deleteForFacts(entityId, deletable, tx);
           }
           deletedTasks = await this.taskRepo.bulkDeletePruned(entityId, cutoff, tx);
         });
@@ -374,13 +378,7 @@ export class MaintenanceService {
           } else if (cause === undefined) {
             prunePartial = { failedAt: firstFailed ?? kept[0], remaining: kept.length, cause: new Error('external removal not confirmed') };
           } else {
-            const errMsg = (cause as Error)?.message ?? '';
-            const isValidationError = errMsg.startsWith('Invalid deletionHookTimeoutMs');
-            prunePartial = {
-              failedAt: firstFailed ?? kept[0],
-              remaining: kept.length,
-              cause: isValidationError ? cause as Error : this._sanitizeRankerError(cause),
-            };
+            prunePartial = { failedAt: firstFailed ?? kept[0], remaining: kept.length, cause: this._sanitizeRankerError(cause) };
           }
         }
       }

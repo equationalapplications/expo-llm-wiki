@@ -50,6 +50,11 @@ describe('prune on the ledger', () => {
     await t.raw.runAsync(
       `INSERT INTO ${P}events (id, entity_id, event_type, summary, created_at) VALUES ('ev', 'e1', 'observation', 's', 1000)`,
     );
+    const sqls: string[] = [];
+    for (const m of ['execAsync', 'runAsync'] as const) {
+      const orig = (t.raw as any)[m].bind(t.raw);
+      (t.raw as any)[m] = (sql: string, ...a: any[]) => { sqls.push(String(sql)); return orig(sql, ...a); };
+    }
     let err: any;
     try {
       await t.wiki.runPrune('e1', { retainEventsFor: 30, vacuum: true } as any);
@@ -64,6 +69,7 @@ describe('prune on the ledger', () => {
     const ids = (await t.raw.getAllAsync(`SELECT id FROM ${P}entries`)).map((r: any) => r.id);
     expect(ids).toEqual(['a']);
     expect(await count(t.raw, 'events')).toBe(0);
+    expect(sqls.some((q) => /VACUUM/i.test(q))).toBe(true);
   });
 
   it('ids confirmed at forget time are not sent again by prune', async () => {
@@ -122,5 +128,25 @@ describe('prune on the ledger', () => {
     await t.wiki.runPrune('e1', {} as any);
     expect(t.calls.map((c) => c.factId)).toEqual(['a']);
     expect(await count(t.raw, 'entries')).toBe(0);
+  });
+
+  it('an invalid deletionHookTimeoutMs fails before any write', async () => {
+    const t = await make(() => {}, {
+      deletionHookTimeoutMs: -1,
+      config: { ...LEGACY_AUTO, pruneSupersededAfter: 0 },
+    });
+    await old(t.raw, 'a');
+    await ins(t.raw, 'x');
+    await t.raw.runAsync(`UPDATE ${P}entries SET valid_to = 1 WHERE id = 'x'`);
+    await t.raw.runAsync(
+      `INSERT INTO ${P}events (id, entity_id, event_type, summary, created_at) VALUES ('ev', 'e1', 'observation', 's', 1000)`,
+    );
+    const snap = async () => ({
+      entries: await t.raw.getAllAsync(`SELECT id, deleted_at FROM ${P}entries ORDER BY id`),
+      events: await count(t.raw, 'events'),
+    });
+    const before = await snap();
+    await expect(t.wiki.runPrune('e1', { retainEventsFor: 30 } as any)).rejects.toThrow(/Invalid deletionHookTimeoutMs/);
+    expect(await snap()).toEqual(before);
   });
 });

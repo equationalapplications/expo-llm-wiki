@@ -1650,15 +1650,14 @@ describe('VectorRanker integration', () => {
         { id: 'fact-4', title: 'apple e', body: 'x' },
       ]));
 
-      // Soft-delete via forget(); the test's flakyRanker only fails when callIndex===3,
-      // and forget() is index 1,2 (not 3) so soft-deletes succeed for all 5 rows.
-      // Reset callIndex AFTER setup so the prune phase observes index 1..N.
+      // Soft-delete via forget(); flakyRanker fails on its 3rd null call, so
+      // forget() confirms fact-0, fact-1, fact-3, fact-4 and leaves fact-2 pending.
       for (let i = 0; i < 5; i++) {
         await wiki.forget('user-1', { entryId: `fact-${i}` }).catch(() => {});
       }
       // forget() left only fact-2 unconfirmed (its call was index 3), and
       // prune sends only unconfirmed ids, so start the count at 2 to make
-      // prune's call the third one.
+      // prune's single call the failing third one.
       callIndex = 2;
 
       // Small delay to ensure deleted_at timestamps are before prune cutoff
@@ -1666,11 +1665,11 @@ describe('VectorRanker integration', () => {
 
       await expect(wiki.runPrune('user-1')).rejects.toThrow(/partially failed|partial/i);
 
-      // Some rows remain (the failing one + ones after it).
+      // Only the unconfirmed row remains; the four confirmed ones are hard-deleted.
       const remaining = await db.getAllAsync<{ id: string }>(
         `SELECT id FROM llm_wiki_entries WHERE deleted_at IS NOT NULL`,
       );
-      expect(remaining.length).toBeGreaterThan(0);
+      expect(remaining.map((r) => r.id)).toEqual(['fact-2']);
     });
   });
 });
