@@ -229,6 +229,7 @@ One routine, `drainVectorRemovals(scope, opts)`, in a new `VectorRemovalService`
    - `deleted` counts rows hard-deleted, `remaining` counts rows kept, and `failedAt` names the first unconfirmed id in drain order. Rows are no longer contiguous; the JSDoc says so.
    - `cause`: a timeout takes precedence, otherwise the first rejection, sanitized as today.
 6. Ids confirmed at forget time aren't sent again.
+7. **Invalid `deletionHookTimeoutMs`.** Under gate 'hook', prune validates it once, before any write, and throws the existing `Invalid deletionHookTimeoutMs: must be a positive finite number` error. Nothing is soft-deleted, hard-deleted or pruned. (Before this spec the error came wrapped in `PrunePartialFailureError`; a misconfiguration now fails before any work.)
 
 ### 5.7 Drains outside `forget` and `runPrune`
 
