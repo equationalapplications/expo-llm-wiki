@@ -13,6 +13,15 @@ Revision 2 (2026-11-11), after an Opus (high) review of revision 1:
 
 Revision 3 (2026-11-11), from the Task 2 review: calls in flight are keyed by ledger row (`seq`), not by fact (§5.4); the drain's deadline is an absolute time named `deadlineAt`; a failed write transaction stops the drain as transient; liveness is checked per page (§5.4). From the Task 3 review: forget on a never-set-up store falls back to per-id hook calls (§5.5.5); a hookless store without the marker emits no pending diagnostic (§5.3). From the Task 7 review: removal-only entities are listed only when this process can act; job-list output fields exclude 'externalDeletions'; runPendingMaintenance awaits the setup drain; the setup drain discards under force (§5.7, §5.9). From the final review: upsertGraph removals get their own stash, independent of the search strategy (§5.7); the setup-drain await in runPendingMaintenance is bounded by `deadlineMs` (§5.7); removal-only entities are listed only while some row is outside backoff (§5.9); joiners of an in-flight call confirm a resolved call themselves (§5.4); the forget backstop stays gated to a hook (§5.5).
 
+Revision 4 (2026-11-12), from a Fable (high) review of the PR head `2c3fbbfc`:
+- **The setup drain is off by default** (owner ruling 2026-11-12, §6.3). Its background transactions made a host's own transactions on the shared connection throw "cannot start a transaction within a transaction" (§5.7). INTENT rule 7's exception becomes opt-in (§5.11).
+- Prune re-reads ledger status inside its delete transaction, and deletes only confirmed ledger rows of facts it removed, so a removal re-owed during prune is never erased (§5.6).
+- A drain of every entity pages one entity at a time, so each page read uses the partial index (§5.4).
+- A hookless prune of a store with the marker also deletes the confirmed ledger rows of the facts it removes (§5.3).
+- The embed-race check moves into `storeFactVector`, so every embed path has it, and runs only after a real vector call (§5.7).
+- The "loop until nothing is pending" claim is corrected (§5.9). `runExternalDeletions()` returns `transient` (§5.9).
+- Not changed: the first `setup()` with a hook still delivers removals enqueued before the marker existed. Discarding them would drop real removals owed by a hookless process that shares the store with a hook process (the MCP server beside an app), which the deletion promise forbids. A hook already must treat an unknown id as success (§4.1). §5.3 records why.
+
 **Date:** 2026-11-11
 **Branch:** `docs/spec-durable-vector-removal`, stacked on PR #371 (`docs/spec-import-followups`); retargets to `main` after #371 merges.
 **Source baseline:** `889da3f5` (PR #371 head).
@@ -174,6 +183,9 @@ The ledger has three cases, decided per process:
 
 **The marker.** `setup()` records a sticky meta key, `external_index_in_use = 1`, whenever `vectorRanker.onEmbeddingPersisted` is configured. Prune in a process without the hook removes ledger rows with their facts only while the marker is absent. Without the marker, the store has never had an external index, so nothing is owed. A force-mode drain clears the marker.
 
+- **Hookless prune with the marker (rev 4).** It keeps the pending ledger rows of the facts it hard-deletes, and deletes their confirmed rows in the same transaction. Nothing reads a confirmed row once its fact is gone.
+- **First hook `setup()` (rev 4, not changed).** Rows enqueued before the marker was first set are delivered, not discarded. They may be removals a hookless process sharing the store owes on behalf of a hook process. For a store that never had an index, they are calls for ids the index never held, which a hook must already treat as success (§4.1).
+
 `notifyEmbeddingPersistedOrThrow` returns early as success when there is no hook or force is set (`EmbeddingService.ts:275-276`). So the drain checks the gate itself, before calling. It never relies on that early return.
 
 ### 5.4 Drain
@@ -192,6 +204,7 @@ One routine, `drainVectorRemovals(scope, opts)`, in a new `VectorRemovalService`
   - At start, the drain reads `maxSeq`.
   - It pages with `WHERE confirmed_at IS NULL AND seq <= :maxSeq AND (attempts, seq) > (:lastAttempts, :lastSeq) ORDER BY attempts, seq LIMIT 100`. Each row is tried at most once per drain, and every drain ends.
   - For `{ entityId, ids }`, it pages over those ids first (§5.5).
+  - For `{ all: true }` under the hook gate, it pages one entity at a time, in `entitiesWithPending()` order (rev 4). A page read with no entity filter can't use the partial index and scans the whole ledger, which made a 60,000-row drain take 88 s instead of 4.3 s.
 - **Page reads.** Each page is read in one statement, `LEFT JOIN {p}entries`, so the drain knows whether the fact is live, soft-deleted or gone. The read runs inside a short `withTransactionAsync` on the serialized adapter, and no hook is called until that transaction closes.
   - If the read can't begin (for example, the host holds an open transaction on the same connection), the drain stops as transient. Rows aren't touched.
   - A settling write that fails stops the drain the same way. That page's results are lost, the rows stay pending (safe; at worst a repeat call), and the result carries `transient: true`.
@@ -224,6 +237,7 @@ One routine, `drainVectorRemovals(scope, opts)`, in a new `VectorRemovalService`
 2. **Backstop.** Prunable rows with no ledger row get `INSERT OR IGNORE`, when the hook is configured.
 3. **Drain** `{ entityId, ids: <prunable ids> }`.
 4. **Hard delete.** It hard-deletes the prunable rows the §5.3 table allows, and deletes their ledger rows in the same transaction. An unconfirmed row is never hard-deleted while a hook is configured (closes G3).
+   - **Rev 4.** The confirmed/pending split is read inside the delete transaction, not before it. Under the hook gate, the ledger delete is limited in SQL to confirmed rows whose fact is gone. An embed-race check that re-owes a removal while prune runs (§5.7) therefore either lands before the transaction, and the fact is kept, or after it, and the new row is delivered later.
 5. **Then it finishes event retention, vacuum and the final sync**, and only then throws `PrunePartialFailureError` if rows remain.
    - The class and fields stay the same, and `deletedEvents` is filled in.
    - `deleted` counts rows hard-deleted, `remaining` counts rows kept, and `failedAt` names the first unconfirmed id in drain order. Rows are no longer contiguous; the JSDoc says so.
@@ -239,6 +253,7 @@ One routine, `drainVectorRemovals(scope, opts)`, in a new `VectorRemovalService`
   - `wiki.drain()` awaits it (today `drain()` is "a no-op in 'deferred' mode"; it now joins this drain). `runPendingMaintenance()` awaits it before its own work, but never longer than the call's `deadlineMs`, so a host that opens, maintains and pushes (serverless) never overruns its deadline. If the deadline cuts the wait short, the drain may still be running; serverless hosts set `drainExternalDeletionsOnSetup: false` (the `'externalDeletions'` job honours `deadlineMs`) or call `drain()` before pushing. A second `setup()` while it runs reuses it.
   - Under `forceDeleteIgnoreRankerHook`, the setup drain still runs: it discards pending rows and clears the marker (§5.3). No hook or model call.
   - Hosts turn it off with `WikiOptions.drainExternalDeletionsOnSetup: false`. That option sits beside `vectorRanker`, `deletionHookTimeoutMs` and `forceDeleteIgnoreRankerHook`.
+  - **Rev 4: off by default (owner ruling 2026-11-12).** The drain opens short transactions on the connection the host shares. A transaction the host opens on that connection itself, such as the documented `db.withTransactionAsync(tx => wiki.upsertGraph(…, tx))`, is outside the engine's lock, so its `BEGIN` throws "cannot start a transaction within a transaction" while a drain transaction is open (43 of 300 host transactions in the review's test; 0 with the drain off). The engine can't serialize transactions it doesn't own, and a delay or retry only narrows the window. So the drain runs only when `drainExternalDeletionsOnSetup: true`, which is safe for a host that never opens its own transactions on that connection. Otherwise `setup()` still writes the marker and, when rows are pending under the hook gate, emits `external_deletion_pending`. Owed removals are still delivered by `runPendingMaintenance()`, `runExternalDeletions()`, `forget()` and prune. Under force with the option off, the discard happens at the next drain.
 - **`runPendingMaintenance()`.** A new job, `'externalDeletions'`, is added to `MaintenanceJob`.
   - It runs first, for entities taken from the ledger (filtered by `entityIds` when given), so fully pruned and wiped entities are included.
   - It honors `deadlineMs`, doesn't draw from `tokenBudget`, and ignores backoff.
@@ -254,6 +269,7 @@ One routine, `drainVectorRemovals(scope, opts)`, in a new `VectorRemovalService`
   - `updateEmbeddingBlob` gains `AND deleted_at IS NULL` and returns the change count. On 0 changes `embedFact` skips the hook.
   - After the vector call settles, resolved or rejected, one statement runs: `INSERT OR REPLACE … SELECT … WHERE NOT EXISTS (SELECT 1 FROM {p}entries WHERE id = ? AND deleted_at IS NULL)`. A missing row counts as not live.
   - Then an awaited drain of that id. So the last call the host sees for a deleted id is `null`.
+  - **Rev 4.** The check runs in `EmbeddingService.storeFactVector`, after the vector call, so every path that sends a vector has it: remember, supersede, ingest, librarian (both strategies), heal, reembed and import. It runs only when a vector call was actually made (the blob was stored and the hook is configured). An embed that ended as `fact_deleted` or failed before the call no longer re-owes a removal already confirmed.
 - **`forceDeleteIgnoreRankerHook` scope (behavior change, called out).**
   - Today heal, ingest and import still call the hook when the flag is set, because `notifyEmbeddingPersisted` has no force check. Under this spec, the flag means "the index is decommissioned": no removal calls anywhere, and the ledger is discarded (§5.3).
   - The legacy spec `docs/superpowers/specs/2026-05-07-vectorranker-security-hardening.md` gets an appended Status note.
@@ -266,7 +282,7 @@ One routine, `drainVectorRemovals(scope, opts)`, in a new `VectorRemovalService`
 ### 5.9 Public API (all additive)
 
 - **`wiki.runExternalDeletions(entityId?: string, opts?: { deadlineMs?: number })`**
-  - Returns `Promise<{ confirmed: number; pending: number; failedIds: string[]; timedOut: boolean }>`.
+  - Returns `Promise<{ confirmed: number; pending: number; failedIds: string[]; timedOut: boolean; transient?: boolean }>`. `transient: true` (rev 4) means a page read or settling write failed, for example because the host held a transaction open on the connection; the rows stay pending.
   - No `entityId` means every entity in the ledger. Ignores backoff.
 - **`wiki.getPendingExternalDeletions(entityId?: string)`**
   - Returns `Promise<{ count: number; oldestEnqueuedAt: number | null; maxAttempts: number }>`.
@@ -283,8 +299,9 @@ One routine, `drainVectorRemovals(scope, opts)`, in a new `VectorRemovalService`
   - New `WikiDiagnosticOperation` value: `'externalDeletion'`.
   - `WikiDiagnosticDetail` gains `oldestEnqueuedAt?` and `maxAttempts?`.
 - **`PendingMaintenance.pendingExternalDeletions?: number`** (optional, so hosts that build the type still compile). `getPendingMaintenance()` lists an entity whose only pending work is removals, **only when this process can act on them** (gate 'hook' or 'force'). A hookless process never lists removal-only entities, and a removal-only entity is listed only while at least one of its rows is outside backoff (`last_attempt_at` older than `min(2^attempts, 3600)` s, or never attempted). So the documented "loop until nothing is pending" host code ends after one failed pass even when the hook keeps rejecting.
+  - **Rev 4 correction.** That holds only for an entity with at most 5 failing rows. A pass stops after 5 consecutive rejections or one timeout, so rows it never tried stay outside backoff and the entity stays listed: 23 always-rejected rows took 5 passes. With a large backlog, early rows can leave backoff before the sweep ends. The docs tell hosts to bound such a loop and make no termination claim.
 - **`MaintenanceJob`** gains `'externalDeletions'` (an input to `jobs`). Output fields that list jobs that hit a lock or a missing search index (`EntityMaintenanceReport.busy`, `.searchUnavailable`) use `Exclude<MaintenanceJob, 'externalDeletions'>`, so hosts that switch over them exhaustively keep compiling. `RunPendingMaintenanceResult` gains `externalDeletions`.
-- **`WikiOptions.drainExternalDeletionsOnSetup?: boolean`**, default `true`.
+- **`WikiOptions.drainExternalDeletionsOnSetup?: boolean`**, default `true`. Rev 4: default `false` (§5.7).
 - **React.** No new hook. `useWikiForget` surfaces `WikiExternalDeletionError` like any rejection.
 
 ### 5.10 Files touched
@@ -316,6 +333,7 @@ One routine, `drainVectorRemovals(scope, opts)`, in a new `VectorRemovalService`
 - **`reference/*`:** the new methods, error, option and job, in the existing layout.
 - **INTENT rule 7:**
   - The sentence "In deferred mode nothing runs in the background at all; the host decides when and how much." becomes "In deferred mode nothing runs in the background, with one exception that makes no model call: after `setup()` the engine finishes removals from the host's vector index that the host already requested (`drainExternalDeletionsOnSetup`, on by default). The host decides when and how much."
+  - Rev 4: the exception is opt-in. The sentence reads "…after `setup()` the engine finishes removals from the host's vector index that the host already requested, when the host turns on `drainExternalDeletionsOnSetup` (off by default)…", and the Amendments section gets a dated 2026-11-12 entry.
   - Rule 7's Status line records the change.
   - The Amendments section gets a dated 2026-11-11 entry.
 - **Status notes (appended, never replacing):** `specs/import-followups/spec.md` §6, and the 2026-05-07 vectorranker-security-hardening spec.
@@ -324,6 +342,7 @@ One routine, `drainVectorRemovals(scope, opts)`, in a new `VectorRemovalService`
 
 1. **Ship in its own spec and PR, after #371.** Ruled 2026-11-11 (accepted).
 2. **Finish owed removals in the background after `setup()`, in deferred mode too.** Ruled 2026-11-11: allowed. The guardrails are those in §5.7: no model call, hook configured, not awaited, a 10 s deadline, and an opt-out flag.
+3. **The setup drain is off by default.** Ruled 2026-11-12, after the rev 4 review showed its transactions collide with the host's own (§5.7). It partly reverses ruling 2: the drain stays available as an opt-in.
 
 ## 7. Open questions
 
@@ -382,6 +401,16 @@ One routine, `drainVectorRemovals(scope, opts)`, in a new `VectorRemovalService`
 23. Schema: fresh and upgraded stores both have the table, the index and the triggers. `setup({ migrations: 'refuse' })` doesn't throw for them.
 24. A background drain while the host holds an open transaction on the same connection stops as transient, with rows untouched and no hook calls.
 25. Every drain ends: 300 rows, with the hook rejecting every third, finish in one drain with at most 300 calls.
+
+**Rev 4 tests:**
+
+26. A removal re-owed between prune's drain and its delete transaction keeps the fact and its pending row.
+27. With the default options, `setup()` with pending rows makes no hook call and emits `external_deletion_pending`. With `drainExternalDeletionsOnSetup: true`, it delivers them.
+28. A `{ all: true }` drain reads its pages per entity (adapter spy: every page read has an entity filter).
+29. A hookless prune of a marked store deletes the confirmed ledger rows of the pruned facts and keeps the pending ones.
+30. A forget during a slow `embed()`, before the vector call: exactly one `null` call, and the row stays confirmed.
+31. An ingest embed whose fact is deleted while its vector call is in flight ends with a `null` call.
+32. `runExternalDeletions()` returns `transient: true` when the host holds a transaction open.
 
 ## 9. Follow-ups (not in this PR)
 

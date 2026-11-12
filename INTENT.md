@@ -212,7 +212,7 @@ returns. A diagnostic delivered before a throw is still accurate.
 Every model call in a maintenance run draws from one token budget the
 host can set. Usage is reported per call through a diagnostic when the
 host asks for it, marked `estimated` when the provider did not report real
-counts. In deferred mode nothing runs in the background, with one exception that makes no model call: after `setup()` the engine finishes removals from the host's vector index that the host already requested (`drainExternalDeletionsOnSetup`, on by default). The host decides when and how much.
+counts. In deferred mode nothing runs in the background, with one exception that makes no model call: after `setup()` the engine finishes removals from the host's vector index that the host already requested, when the host turns on `drainExternalDeletionsOnSetup` (off by default). The host decides when and how much.
 
 *Why:* this is the charter's "no invisible spend" promise. Background work
 that burns a user's allowance without saying so is the failure this rule
@@ -226,6 +226,8 @@ Amended 2026-11-11 (owner ruling): the "nothing runs in the background"
 sentence gained one exception, the no-model drain of owed vector-index
 removals after `setup()`. See the 2026-11-11 amendment and
 `specs/durable-vector-removal/spec.md`.
+Amended 2026-11-12 (owner ruling): that exception is opt-in. See the
+2026-11-12 amendment.
 
 ### 8. A small, first-party, auditable dependency surface
 
@@ -350,6 +352,15 @@ runs and who schedules it.
 
 ## Amendments
 
+- 2026-11-12 — Rule 7's one background job in deferred mode (the
+  2026-11-11 entry below) is now off by default. Hosts turn it on with
+  `drainExternalDeletionsOnSetup: true`. Why: the drain's short
+  transactions share the host's connection, and a transaction the host
+  opens on that connection itself throws while one of them is open. The
+  engine can't serialize transactions it doesn't own. Owed removals are
+  still recorded and still delivered by `runPendingMaintenance()`,
+  `runExternalDeletions()`, `forget()` and prune. Owner ruling,
+  2026-11-12; recorded with `specs/durable-vector-removal/`.
 - 2026-11-11 — Rule 7 allows one background job in deferred mode: after
   `setup()`, the engine finishes removals from the host's vector index that
   the host already requested through `forget()`, prune or the other delete
