@@ -835,11 +835,13 @@ export type WikiDiagnosticCode =
   | 'read_budget'
   | 'event_retention_held'
   | 'event_created_at_clamped'
-  | 'event_created_at_restamped';
+  | 'event_created_at_restamped'
+  | 'external_deletion_pending'
+  | 'external_deletion_discarded';
 
 /** The service run that emitted the diagnostic. */
 export type WikiDiagnosticOperation =
-  | 'ingest' | 'upsertGraph' | 'librarian' | 'heal' | 'ontologyBackfill' | 'reembed' | 'importDump' | 'write' | 'supersede' | 'remember' | 'read' | 'prune';
+  | 'ingest' | 'upsertGraph' | 'librarian' | 'heal' | 'ontologyBackfill' | 'reembed' | 'importDump' | 'write' | 'supersede' | 'remember' | 'read' | 'prune' | 'externalDeletion';
 
 /** `'auto'` when a write threshold started the run (auto-librarian / auto-heal); `'call'` when the host did. */
 export type WikiDiagnosticTrigger = 'call' | 'auto';
@@ -880,6 +882,10 @@ export interface WikiDiagnosticDetail {
   packed?: number;
   /** read_budget only. */
   tokensUsed?: number;
+  /** external_deletion_pending only: epoch seconds of the oldest pending row. */
+  oldestEnqueuedAt?: number;
+  /** external_deletion_pending only: highest attempt count among pending rows. */
+  maxAttempts?: number;
 }
 
 export interface WikiDiagnostic {

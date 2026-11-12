@@ -37,6 +37,8 @@ const SEVERITY: Record<WikiDiagnosticCode, WikiDiagnosticSeverity> = {
   event_retention_held: 'info',
   event_created_at_clamped: 'warn',
   event_created_at_restamped: 'info',
+  external_deletion_pending: 'warn',
+  external_deletion_discarded: 'warn',
 };
 
 // Fixed templates (REQ-DIAG-03): never interpolate content into these.
@@ -63,6 +65,8 @@ const MESSAGE: Record<WikiDiagnosticCode, string> = {
   event_retention_held: 'Event pruning was held back because the librarian has not processed those events yet.',
   event_created_at_clamped: 'Imported events dated in the future were re-dated just after the current time, or after the librarian position if that is later, keeping their order.',
   event_created_at_restamped: 'Imported events that would have sorted behind the librarian position, or had an unusable date, were adjusted: an affected created_at was re-dated just after the current time, or after the librarian position if that is later, keeping their order; an unusable occurred_at was cleared.',
+  external_deletion_pending: 'Removals owed to the external vector index are still pending.',
+  external_deletion_discarded: 'Pending external vector removals were discarded because forceDeleteIgnoreRankerHook is set.',
 };
 
 const warnedNonFunction = new WeakSet<object>();

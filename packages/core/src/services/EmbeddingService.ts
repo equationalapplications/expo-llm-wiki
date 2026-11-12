@@ -267,6 +267,39 @@ export class EmbeddingService {
     });
   }
 
+  validateDeletionTimeout(): number {
+    const rawTimeout = this.options.deletionHookTimeoutMs ?? 30_000;
+    if (typeof rawTimeout !== 'number' || !Number.isFinite(rawTimeout) || rawTimeout <= 0) {
+      throw new Error('Invalid deletionHookTimeoutMs: must be a positive finite number');
+    }
+    return rawTimeout;
+  }
+
+  /** Send a removal (`vector: null`) to the hook. No gate check; the caller owns the gate. */
+  async callRemovalHook(entityId: string, factId: string, timeoutMs: number): Promise<void> {
+    const hook = this.options.vectorRanker?.onEmbeddingPersisted;
+    if (!hook) return;
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        const timeoutError = new Error(`onEmbeddingPersisted timed out after ${timeoutMs}ms`);
+        (timeoutError as any)[HOOK_TIMEOUT_MARKER] = true;
+        reject(timeoutError);
+      }, timeoutMs);
+    });
+    const hookPromise = Promise.resolve().then(() =>
+      this.options.vectorRanker!.onEmbeddingPersisted!({ entityId, factId, vector: null }),
+    );
+    try {
+      await Promise.race([hookPromise, timeoutPromise]);
+    } catch (err) {
+      hookPromise.catch(() => {});
+      throw err;
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+    }
+  }
+
   async notifyEmbeddingPersistedOrThrow(
     entityId: string,
     factId: string,
@@ -276,11 +309,7 @@ export class EmbeddingService {
     if (this.options.forceDeleteIgnoreRankerHook === true) return;
 
     const vectorCopy = vector ? vector.slice() : null;
-    const rawTimeout = this.options.deletionHookTimeoutMs ?? 30_000;
-    if (typeof rawTimeout !== 'number' || !Number.isFinite(rawTimeout) || rawTimeout <= 0) {
-      throw new Error('Invalid deletionHookTimeoutMs: must be a positive finite number');
-    }
-    const timeoutMs = rawTimeout;
+    const timeoutMs = this.validateDeletionTimeout();
 
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
