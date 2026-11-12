@@ -60,6 +60,12 @@ Revision 7 (2026-11-12), from CodeRabbit's review of `6dab60ae`:
 - Not changed, accepted windows:
   - A restore inside an uncommitted host transaction that rolls back while a vector call is in flight. The post-call liveness read sees the restore, so nothing is owed; the rollback brings the confirmed row back and the vector stays in the host's index. Reads on the shared connection can't see transaction boundaries, and the engine has no way to defer the check until the host's transaction ends. Same class as the host-transaction cases in revision 6.
   - A failed `statusFor` read after a failed guarded write still sends the direct `null`. It needs a read to fail right after one succeeded on the same connection. A wrong `null` costs recall that `runReembed` restores; a missed one leaves a deleted fact's vector in the host's index, so the code keeps the privacy side.
+- From an Opus (high) code review of `1c617597`:
+  - **Prune's expired-fact pass reports failures** (§5.6.1). It went through a bare drain, so a rejecting or slow hook left those facts owed with no `hook_failed` or `external_deletion_pending`. It now uses `deliverRemovals`, like heal, ingest and import.
+  - **`softDeleteByIds` outboxes only the rows it changed.** Its `deleted_at IS NULL` guard skipped rows already deleted, but it still staged an outbox `DELETE` with a new `deleted_at` for them. It now uses `UPDATE … RETURNING id`.
+  - **`runPendingMaintenance` rejects a bad `deadlineMs` before it waits on the setup drain**, with the scheduler's `TypeError`.
+  - No behavior change: the no-ledger per-id fallback is one helper (`callRemovalHookEach`), the gate rule is one function (`removalGate`), and the scheduler reuses each drain's pending count.
+  - Not changed: a drain cut short by its deadline still counts as a timeout attempt. If it didn't, a hanging hook would never back off, and a host that loops until nothing is pending would never stop. `PrunePartialFailureError.remaining` counts every kept row, as this spec's behavior-change note says.
 
 **Date:** 2026-11-11
 **Branch:** `docs/spec-durable-vector-removal`, stacked on PR #371 (`docs/spec-import-followups`); retargets to `main` after #371 merges.
