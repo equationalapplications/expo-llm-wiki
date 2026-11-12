@@ -19,12 +19,12 @@ async function make(hook?: (c: Call) => Promise<void> | void, extra: any = {}) {
   const raw = openTestDatabase();
   await new WikiMemory(raw, { llmProvider: llm } as any).setup();
   const ser = withSerializedTransactions(raw);
-  const ctl = { txCount: 0, failFrom: Infinity };
+  const ctl = { txCount: 0, failFrom: Infinity, failAt: -1 };
   const db: SQLiteAdapter = {
     ...ser,
     withTransactionAsync: (fn: any) => {
       ctl.txCount++;
-      if (ctl.txCount >= ctl.failFrom) return Promise.reject(new Error('tx failed'));
+      if (ctl.txCount >= ctl.failFrom || ctl.txCount === ctl.failAt) return Promise.reject(new Error('tx failed'));
       return ser.withTransactionAsync(fn);
     },
   } as SQLiteAdapter;
@@ -296,6 +296,24 @@ describe('VectorRemovalService.drain', () => {
     expect((await ledger(t.db))[0].attempts).toBe(0);
     release();
     await p1;
+    expect((await ledger(t.db))[0].confirmed_at).not.toBeNull();
+  });
+
+  it('a joiner of a resolved shared call confirms the row itself when the owner cannot settle', async () => {
+    let release!: () => void;
+    const gateP = new Promise<void>((res) => (release = res));
+    const t = await make(() => gateP, { deletionHookTimeoutMs: 10_000 });
+    await del(t.db, 'a');
+    const p1 = t.svc.drain({ all: true });
+    await new Promise((r) => setTimeout(r, 30));
+    const p2 = t.svc.drain({ all: true });
+    await new Promise((r) => setTimeout(r, 30));
+    t.ctl.failAt = t.ctl.txCount + 1; // the owner's settle (first tx after release) fails
+    release();
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r1.transient).toBe(true);
+    expect(r2.timedOut).toBe(false);
+    expect(r2.failedIds).toEqual([]);
     expect((await ledger(t.db))[0].confirmed_at).not.toBeNull();
   });
 

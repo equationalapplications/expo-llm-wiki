@@ -328,7 +328,8 @@ export class MaintenanceService {
             kept = prunableIds.filter((id) => status.get(id) === 'pending');
             timedOut = result.timedOut;
             cause = result.firstCause;
-            firstFailed = result.failedIds.find((id) => kept.includes(id)) ?? kept[0];
+            const keptSet = new Set(kept);
+            firstFailed = result.failedIds.find((id) => keptSet.has(id)) ?? kept[0];
           } else if (gate === 'force') {
             removeLedger = true;
           } else {
@@ -707,6 +708,7 @@ export class MaintenanceService {
         let unconfirmed: string[] = [];
         let timedOut = false;
         let cause: unknown;
+        let timedOutId: string | undefined;
         try {
           if (vr && vrRepo && ledgerOn) {
             const result = await vr.drain({ entityId, ids: uniqueDeletedIds });
@@ -714,6 +716,7 @@ export class MaintenanceService {
               const status = await vrRepo.statusFor(uniqueDeletedIds);
               unconfirmed = uniqueDeletedIds.filter((id) => status.get(id) === 'pending');
               timedOut = result.timedOut;
+              timedOutId = result.timedOutId;
               cause = result.firstCause;
             }
           } else if (this.options.vectorRanker?.onEmbeddingPersisted && this.options.forceDeleteIgnoreRankerHook !== true) {
@@ -727,7 +730,7 @@ export class MaintenanceService {
                 await this.embeddingService.callRemovalHook(entityId, factId, timeoutMs);
               } catch (hookErr) {
                 unconfirmed.push(factId);
-                if ((hookErr as any)?.[HOOK_TIMEOUT_MARKER] === true) timeoutErr ??= hookErr;
+                if ((hookErr as any)?.[HOOK_TIMEOUT_MARKER] === true) { timeoutErr ??= hookErr; timedOutId ??= factId; }
                 else firstRejection ??= hookErr;
               }
             }
@@ -742,7 +745,7 @@ export class MaintenanceService {
           throw hookErr;
         }
         if (unconfirmed.length > 0) {
-          const head = `forget(${entityId}/${unconfirmed[0]}) failed: `;
+          const head = `forget(${entityId}/${(timedOut ? timedOutId : undefined) ?? unconfirmed[0]}) failed: `;
           const message = timedOut
             ? head + ((cause as Error)?.message ?? 'onEmbeddingPersisted timed out')
             : cause === undefined

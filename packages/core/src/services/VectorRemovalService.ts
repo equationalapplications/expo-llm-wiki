@@ -1,5 +1,6 @@
 import type { SQLiteAdapter, WikiOptions, WikiDiagnosticTrigger, WikiDiagnosticOperation } from '../types';
 import { HOOK_TIMEOUT_MARKER } from '../types';
+import { removalBackoffMs } from '../repositories/VectorRemovalRepository';
 import type {
   VectorRemovalRepository,
   VectorRemovalScope,
@@ -16,6 +17,8 @@ export interface DrainResult {
   pending: number;
   failedIds: string[];
   timedOut: boolean;
+  /** Fact id of the call that timed out, when known. */
+  timedOutId?: string;
   /** True when a page read or a settling write failed; rows stay pending. */
   transient?: boolean;
   firstCause?: Error;
@@ -28,7 +31,10 @@ export interface DrainOptions {
   trigger?: WikiDiagnosticTrigger;
 }
 
-const JOINED = Symbol('vectorRemovalJoined');
+type CallOutcome =
+  | { ok: true; joined: boolean }
+  | { ok: false; joined: boolean; timedOut: boolean; cause: Error };
+
 const MARKER_KEY = 'external_index_in_use';
 const PAGE = 100;
 const ID_CHUNK = 500;
@@ -123,6 +129,10 @@ export class VectorRemovalService {
     await this.metadataRepo.setMeta(MARKER_KEY, '1', tx);
   }
 
+  async clearExternalIndexMarker(): Promise<void> {
+    await this.metadataRepo.deleteMeta(MARKER_KEY);
+  }
+
   async externalIndexInUse(): Promise<boolean> {
     return (await this.metadataRepo.getMeta(MARKER_KEY)) === '1';
   }
@@ -206,8 +216,7 @@ export class VectorRemovalService {
             continue;
           }
           if (opts.backoff === true && row.last_attempt_at !== null) {
-            const waitMs = Math.min(2 ** row.attempts, 3600) * 1000;
-            if (Date.now() - row.last_attempt_at < waitMs) continue;
+            if (Date.now() - row.last_attempt_at < removalBackoffMs(row.attempts)) continue;
           }
           let budget = timeoutMs;
           if (opts.deadlineAt !== undefined) {
@@ -219,24 +228,24 @@ export class VectorRemovalService {
             budget = Math.min(timeoutMs, left);
           }
           tried.add(row.seq);
-          try {
-            const joined = await this.callFor(row, budget);
+          const outcome = await this.callFor(row, budget);
+          if (outcome.ok) {
             consecutive = 0;
-            if (!joined) {
-              if (row.fact_state === 'gone') goneSeqs.push(row.seq);
-              else confirmSeqs.push(row.seq);
-            }
-          } catch (err) {
-            const e = err instanceof Error ? err : new Error(String(err));
-            if (!(e as any)[JOINED]) bumpSeqs.push(row.seq);
+            // A joiner of a resolved call confirms the row itself (idempotent).
+            if (row.fact_state === 'gone') goneSeqs.push(row.seq);
+            else confirmSeqs.push(row.seq);
+          } else {
+            // Only the drain that made the call bumps attempts.
+            if (!outcome.joined) bumpSeqs.push(row.seq);
             if (result.failedIds.length < MAX_FAILED_IDS) result.failedIds.push(row.fact_id);
-            if ((e as any)[HOOK_TIMEOUT_MARKER] === true) {
+            if (outcome.timedOut) {
               result.timedOut = true;
-              timeoutErr ??= e;
+              result.timedOutId ??= row.fact_id;
+              timeoutErr ??= outcome.cause;
               stop = true;
               break;
             }
-            firstRejection ??= e;
+            firstRejection ??= outcome.cause;
             if (++consecutive >= MAX_CONSECUTIVE_REJECTIONS) {
               stop = true;
               break;
@@ -272,37 +281,42 @@ export class VectorRemovalService {
   }
 
   /**
-   * Resolves `true` when this drain joined another drain's call for the same
-   * seq (the caller then settles nothing), `false` when it made the call.
-   * Rejections from a joined call carry the JOINED flag so they are not bumped twice.
+   * Makes the removal call for `row`, or joins another drain's call for the
+   * same seq. Never throws: the outcome says whether it succeeded, whether
+   * this drain joined (only the owner bumps attempts on failure), and whether
+   * the failure was a timeout.
    */
-  private async callFor(row: LedgerRow, budgetMs: number): Promise<boolean> {
+  private async callFor(row: LedgerRow, budgetMs: number): Promise<CallOutcome> {
     const end = Date.now() + budgetMs;
     const left = () => Math.max(1, end - Date.now());
-    let existing = this.inFlight.get(row.fact_id);
-    while (existing && existing.seq !== row.seq) {
-      await withBudget(existing.promise.catch(() => {}), left());
-      const next = this.inFlight.get(row.fact_id);
-      existing = next === existing ? undefined : next;
-    }
-    if (existing) {
-      try {
-        await withBudget(existing.promise, left());
-      } catch (err) {
-        if (err instanceof Error) (err as any)[JOINED] = true;
-        throw err;
+    let joined = false;
+    try {
+      let existing = this.inFlight.get(row.fact_id);
+      while (existing && existing.seq !== row.seq) {
+        joined = true;
+        await withBudget(existing.promise.catch(() => {}), left());
+        const next = this.inFlight.get(row.fact_id);
+        existing = next === existing ? undefined : next;
       }
-      return true;
+      if (existing) {
+        joined = true;
+        await withBudget(existing.promise, left());
+        return { ok: true, joined: true };
+      }
+      joined = false;
+      const p = this.embeddingService.callRemovalHook(row.entity_id, row.fact_id, left());
+      const entry = { seq: row.seq, promise: p };
+      this.inFlight.set(row.fact_id, entry);
+      const clear = () => {
+        if (this.inFlight.get(row.fact_id) === entry) this.inFlight.delete(row.fact_id);
+      };
+      p.then(clear, clear);
+      await p;
+      return { ok: true, joined: false };
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err));
+      return { ok: false, joined, timedOut: (e as any)[HOOK_TIMEOUT_MARKER] === true, cause: e };
     }
-    const p = this.embeddingService.callRemovalHook(row.entity_id, row.fact_id, left());
-    const entry = { seq: row.seq, promise: p };
-    this.inFlight.set(row.fact_id, entry);
-    const clear = () => {
-      if (this.inFlight.get(row.fact_id) === entry) this.inFlight.delete(row.fact_id);
-    };
-    p.then(clear, clear);
-    await p;
-    return false;
   }
 
   private async pendingFor(entityId?: string, ids?: string[]): Promise<number> {
@@ -345,7 +359,6 @@ function withBudget<T>(p: Promise<T>, ms: number): Promise<T> {
     handle = setTimeout(() => {
       const e = new Error(`onEmbeddingPersisted timed out after ${ms}ms`);
       (e as any)[HOOK_TIMEOUT_MARKER] = true;
-      (e as any)[JOINED] = true;
       reject(e);
     }, ms);
   });

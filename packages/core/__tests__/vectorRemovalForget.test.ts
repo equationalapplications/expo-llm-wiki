@@ -110,7 +110,7 @@ describe('forget on the ledger', () => {
     }
     expect(err).toBeInstanceOf(WikiExternalDeletionError);
     expect(err.timedOut).toBe(true);
-    expect(err.message).toMatch(/^forget\(e1\/a\) failed: onEmbeddingPersisted timed out after 20ms/);
+    expect(err.message).toMatch(/^forget\(e1\/b\) failed: onEmbeddingPersisted timed out after 20ms/);
   });
 
   it('forceDeleteIgnoreRankerHook: forget makes no call and resolves', async () => {
