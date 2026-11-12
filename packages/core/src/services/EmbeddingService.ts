@@ -245,12 +245,27 @@ export class EmbeddingService {
   ): Promise<void> {
     const vr = this.vectorRemoval;
     if (!vr) return;
+    let enqueued: boolean;
     try {
-      if (await this.afterVectorCall(entityId, factId)) {
-        await vr.service.deliverRemovals(entityId, [factId], operation, trigger, []);
-      }
+      enqueued = await this.afterVectorCall(entityId, factId);
     } catch (err) {
+      // The removal couldn't be recorded (for example the host holds a
+      // transaction on the connection). Send null now so the last call the
+      // host sees for a deleted fact is still a removal (spec rev 5).
       console.warn(`[WikiMemory] post-embed removal check failed for ${factId}:`, err);
+      try {
+        await this.callRemovalHook(entityId, factId, this.validateDeletionTimeout());
+      } catch (hookErr) {
+        console.warn(`[WikiMemory] onEmbeddingPersisted(vector=null) hook failed for ${factId}:`, hookErr);
+        this.reportHookFailed({ operation, trigger }, entityId, factId);
+      }
+      return;
+    }
+    if (!enqueued) return;
+    try {
+      await vr.service.deliverRemovals(entityId, [factId], operation, trigger, []);
+    } catch (err) {
+      console.warn(`[WikiMemory] post-embed removal delivery failed for ${factId}:`, err);
     }
   }
 

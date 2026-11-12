@@ -103,7 +103,7 @@ describe('vector_removals triggers', () => {
     expect(t).toHaveLength(0);
   });
 
-  it('a fresh setup creates the table, index and both triggers; setup twice is idempotent', async () => {
+  it('a fresh setup creates the table, index and all three triggers; setup twice is idempotent', async () => {
     const db = openTestDatabase();
     const wiki = new WikiMemory(db, { llmProvider: llm });
     await wiki.setup();
@@ -113,6 +113,7 @@ describe('vector_removals triggers', () => {
     expect(names).toEqual([
       'llm_wiki_vector_removals',
       'llm_wiki_vector_removals_enqueue',
+      'llm_wiki_vector_removals_hard_delete',
       'llm_wiki_vector_removals_pending',
       'llm_wiki_vector_removals_resurrect',
     ]);

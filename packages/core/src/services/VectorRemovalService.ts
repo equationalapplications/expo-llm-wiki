@@ -104,11 +104,19 @@ export class VectorRemovalService {
         return;
       }
       if (this.gate() !== 'hook') return;
-      for (const factId of new Set(fallbackIds)) {
+      // Bounded like a drain: the per-call timeout, and a stop at the first one.
+      const timeoutMs = this.embeddingService.validateDeletionTimeout();
+      const list = [...new Set(fallbackIds)];
+      for (let i = 0; i < list.length; i++) {
+        const factId = list[i];
         try {
-          await this.embeddingService.notifyEmbeddingPersisted(entityId, factId, null);
+          await this.embeddingService.callRemovalHook(entityId, factId, timeoutMs);
         } catch (hookErr) {
           console.warn(`[WikiMemory] onEmbeddingPersisted(vector=null) hook failed for ${factId}:`, hookErr);
+          if ((hookErr as any)?.[HOOK_TIMEOUT_MARKER] === true) {
+            this.emitHookFailed(entityId, list.slice(i), operation, trigger);
+            break;
+          }
           this.emitHookFailed(entityId, [factId], operation, trigger);
         }
       }
@@ -279,7 +287,12 @@ export class VectorRemovalService {
           try {
             const changed = await this.db.withTransactionAsync(async (tx) => {
               let n = 0;
-              if (confirmSeqs.length) n += await this.repo.confirm(confirmSeqs, now, tx);
+              if (confirmSeqs.length) {
+                n += await this.repo.confirm(confirmSeqs, now, tx);
+                // The fact may have been hard-deleted during the call: a
+                // confirmed row of a gone fact has nothing left to do.
+                await this.repo.deleteConfirmedGone(confirmSeqs, tx);
+              }
               if (bumpSeqs.length) await this.repo.bumpAttempts(bumpSeqs, now, tx);
               if (goneSeqs.length) n += await this.repo.deleteBySeq(goneSeqs, tx);
               if (deleteSeqs.length) await this.repo.deleteBySeq(deleteSeqs, tx);
@@ -297,7 +310,12 @@ export class VectorRemovalService {
     }
 
     result.firstCause = timeoutErr ?? firstRejection;
-    result.pending = await this.pendingFor(entityId, ids);
+    try {
+      result.pending = await this.pendingFor(entityId, ids);
+    } catch {
+      // The ledger became unreadable: report transient rather than throw.
+      result.transient = true;
+    }
     return result;
   }
 

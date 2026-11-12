@@ -199,6 +199,8 @@ describe('VectorRemovalService.drain', () => {
 
   it('resolved for a gone fact deletes the ledger row', async () => {
     const t = await make(() => {});
+    // Marked store: a hard-deleted fact's pending row stays owed (rev 5 hard-delete trigger).
+    await t.db.withTransactionAsync((tx: any) => t.svc.markExternalIndexInUse(tx));
     await del(t.db, 'a');
     await t.db.runAsync(`DELETE FROM ${P}entries WHERE id = 'a'`); // gone before the page read
     const r = await t.svc.drain({ all: true });

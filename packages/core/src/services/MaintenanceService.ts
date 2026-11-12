@@ -342,14 +342,20 @@ export class MaintenanceService {
           deletable = [];
           let firstRejection: unknown;
           let timeoutErr: unknown;
-          for (const id of prunableIds) {
+          for (let i = 0; i < prunableIds.length; i++) {
+            const id = prunableIds[i];
             try {
               await this.embeddingService.callRemovalHook(entityId, id, timeoutMs);
               deletable.push(id);
             } catch (hookErr) {
               kept.push(id);
-              if ((hookErr as any)?.[HOOK_TIMEOUT_MARKER] === true) timeoutErr ??= hookErr;
-              else firstRejection ??= hookErr;
+              if ((hookErr as any)?.[HOOK_TIMEOUT_MARKER] === true) {
+                // A dead index costs one timeout, as in a drain (spec rev 5).
+                timeoutErr ??= hookErr;
+                kept.push(...prunableIds.slice(i + 1));
+                break;
+              }
+              firstRejection ??= hookErr;
             }
           }
           timedOut = timeoutErr !== undefined;
@@ -748,13 +754,20 @@ export class MaintenanceService {
             const timeoutMs = this.embeddingService.validateDeletionTimeout();
             let firstRejection: unknown;
             let timeoutErr: unknown;
-            for (const factId of uniqueDeletedIds) {
+            for (let i = 0; i < uniqueDeletedIds.length; i++) {
+              const factId = uniqueDeletedIds[i];
               try {
                 await this.embeddingService.callRemovalHook(entityId, factId, timeoutMs);
               } catch (hookErr) {
                 unconfirmed.push(factId);
-                if ((hookErr as any)?.[HOOK_TIMEOUT_MARKER] === true) { timeoutErr ??= hookErr; timedOutId ??= factId; }
-                else firstRejection ??= hookErr;
+                if ((hookErr as any)?.[HOOK_TIMEOUT_MARKER] === true) {
+                  // A dead index costs one timeout, as in a drain (spec rev 5).
+                  timeoutErr ??= hookErr;
+                  timedOutId ??= factId;
+                  unconfirmed.push(...uniqueDeletedIds.slice(i + 1));
+                  break;
+                }
+                firstRejection ??= hookErr;
               }
             }
             timedOut = timeoutErr !== undefined;

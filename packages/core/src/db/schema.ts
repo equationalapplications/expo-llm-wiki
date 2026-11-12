@@ -166,7 +166,10 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
     AFTER UPDATE OF deleted_at ON ${prefix}entries
     WHEN OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL
     BEGIN
-      INSERT OR REPLACE INTO ${prefix}vector_removals (entity_id, fact_id, enqueued_at)
+      -- DELETE then INSERT, not INSERT OR REPLACE: an outer UPSERT's conflict
+      -- handling would override OR REPLACE and abort on fact_id (spec rev 5).
+      DELETE FROM ${prefix}vector_removals WHERE fact_id = NEW.id;
+      INSERT INTO ${prefix}vector_removals (entity_id, fact_id, enqueued_at)
       VALUES (NEW.entity_id, NEW.id, CAST(strftime('%s','now') AS INTEGER) * 1000);
     END;
 
@@ -175,6 +178,23 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
     WHEN OLD.deleted_at IS NOT NULL AND NEW.deleted_at IS NULL
     BEGIN
       DELETE FROM ${prefix}vector_removals WHERE fact_id = NEW.id AND confirmed_at IS NULL;
+    END;
+
+    -- A hard delete outside prune (host SQL, an older engine after a
+    -- downgrade). A live fact is owed only where an external index was in use;
+    -- a soft-deleted one drops the rows nothing can owe (spec rev 5).
+    CREATE TRIGGER IF NOT EXISTS ${prefix}vector_removals_hard_delete
+    AFTER DELETE ON ${prefix}entries
+    BEGIN
+      DELETE FROM ${prefix}vector_removals
+       WHERE fact_id = OLD.id
+         AND (OLD.deleted_at IS NULL
+              OR confirmed_at IS NOT NULL
+              OR NOT EXISTS (SELECT 1 FROM ${prefix}meta WHERE key = 'external_index_in_use' AND value = '1'));
+      INSERT INTO ${prefix}vector_removals (entity_id, fact_id, enqueued_at)
+      SELECT OLD.entity_id, OLD.id, CAST(strftime('%s','now') AS INTEGER) * 1000
+       WHERE OLD.deleted_at IS NULL
+         AND EXISTS (SELECT 1 FROM ${prefix}meta WHERE key = 'external_index_in_use' AND value = '1');
     END;
   `);
 

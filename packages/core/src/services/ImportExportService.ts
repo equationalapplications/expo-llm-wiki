@@ -520,7 +520,8 @@ export class ImportExportService {
               ? fact.tags
               : [],
         }, { operation: 'importDump', trigger: 'call' });
-        if (!embedded) {
+        // Under forceDeleteIgnoreRankerHook the index is decommissioned: no removal calls.
+        if (!embedded && this.options.forceDeleteIgnoreRankerHook !== true) {
           try {
             await this.embeddingService.notifyEmbeddingPersisted(entityId, fact.id, null);
           } catch (hookErr) {

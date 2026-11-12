@@ -308,7 +308,7 @@ describe('revision 4, import preserved-blob path', () => {
   });
 });
 
-describe('orphan sweep at setup()', () => {
+describe('orphan rows of hard-deleted facts (hard-delete trigger, rev 5)', () => {
   const hardDelete = (raw: any, id: string) => raw.runAsync(`DELETE FROM ${P}entries WHERE id = ?`, [id]);
 
   it('a store that never had a hook drops rows whose fact a host hard-deleted', async () => {
@@ -344,15 +344,5 @@ describe('orphan sweep at setup()', () => {
     const rows = await ledger(raw);
     expect(rows.map((r) => r.fact_id)).toEqual(['owed']);
     expect(rows[0].confirmed_at).toBeNull();
-  });
-
-  it('a failing sweep does not fail setup()', async () => {
-    const raw = openTestDatabase();
-    await open(raw).wiki.setup();
-    const orig = raw.runAsync.bind(raw);
-    raw.runAsync = (sql: string, ...args: any[]) =>
-      /DELETE FROM \S*vector_removals[\s\S]*NOT EXISTS/.test(sql) ? Promise.reject(new Error('busy')) : orig(sql, ...args);
-    await expect(open(raw).wiki.setup()).resolves.toBeUndefined();
-    raw.runAsync = orig;
   });
 });

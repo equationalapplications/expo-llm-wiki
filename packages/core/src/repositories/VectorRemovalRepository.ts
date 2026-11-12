@@ -49,6 +49,12 @@ export class VectorRemovalRepository extends BaseRepository {
 
   /** Owe the host a removal for `factId` unless a live row exists (a missing row counts as not live). Returns whether a row was enqueued. */
   async enqueueIfNotLive(entityId: string, factId: string, now: number): Promise<boolean> {
+    // A read first: the common case (fact live) opens no write transaction.
+    const live = await this.db.getFirstAsync<{ x: number }>(
+      `SELECT 1 AS x FROM ${this.prefix}entries WHERE id = ? AND deleted_at IS NULL`,
+      [factId],
+    );
+    if (live) return false;
     // In its own transaction so it can't join a host's open raw transaction.
     return this.db.withTransactionAsync(async (tx) => {
       const r = await tx.runAsync(
@@ -136,6 +142,19 @@ export class VectorRemovalRepository extends BaseRepository {
     }
   }
 
+  /** Delete the given rows when they are confirmed and their fact row is gone. */
+  async deleteConfirmedGone(seqs: number[], tx: SQLiteAdapter): Promise<void> {
+    const executor = this.getExecutor(tx);
+    for (const c of chunks(seqs, CHUNK)) {
+      await executor.runAsync(
+        `DELETE FROM ${this.prefix}vector_removals
+          WHERE seq IN (${marks(c.length)}) AND confirmed_at IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM ${this.prefix}entries e WHERE e.id = ${this.prefix}vector_removals.fact_id)`,
+        c,
+      );
+    }
+  }
+
   /** For stale, gone or resurrected rows. Applies to the given seqs only. */
   async deleteBySeq(seqs: number[], tx: SQLiteAdapter): Promise<number> {
     const executor = this.getExecutor(tx);
@@ -209,20 +228,6 @@ export class VectorRemovalRepository extends BaseRepository {
         [entityId, ...c],
       );
     }
-  }
-
-  /**
-   * Delete rows whose fact row no longer exists: confirmed ones always, and
-   * pending ones too when `includePending` (nothing can still owe them).
-   * Keyed on `fact_id` store-wide. Returns the count removed.
-   */
-  async sweepOrphans(includePending: boolean, tx?: SQLiteAdapter): Promise<number> {
-    const r = await this.getExecutor(tx).runAsync(
-      `DELETE FROM ${this.prefix}vector_removals
-        WHERE ${includePending ? '1 = 1' : 'confirmed_at IS NOT NULL'}
-          AND NOT EXISTS (SELECT 1 FROM ${this.prefix}entries e WHERE e.id = ${this.prefix}vector_removals.fact_id)`,
-    );
-    return r?.changes ?? 0;
   }
 
   /** Drop unconfirmed rows. Returns the count removed. */

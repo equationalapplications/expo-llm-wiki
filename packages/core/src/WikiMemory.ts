@@ -467,23 +467,7 @@ export class WikiMemory {
     );
     // FTS5: one budgeted quantum (no global read). MiniSearch: full rebuild, as before.
     await this.searchService.sync(undefined, { deadline: openDeadline });
-    await this.sweepOrphanRemovals();
     await this.startSetupRemovalDrain();
-  }
-
-  /**
-   * Drop ledger rows whose fact a host hard-deleted itself, bypassing prune,
-   * when nothing can still owe them (spec durable-vector-removal §5.3). Never
-   * fails setup().
-   */
-  private async sweepOrphanRemovals(): Promise<void> {
-    try {
-      const includePending =
-        this.vectorRemovalService.gate() !== 'hook' && !(await this.vectorRemovalService.externalIndexInUse());
-      await this.db.withTransactionAsync((tx) => this.vectorRemovalRepo.sweepOrphans(includePending, tx));
-    } catch (err) {
-      console.warn('[WikiMemory] removal ledger sweep failed:', err);
-    }
   }
 
   private setupRemovalDrain: Promise<void> | null = null;
@@ -544,6 +528,10 @@ export class WikiMemory {
     if (ms !== undefined && (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0)) {
       throw new TypeError('deadlineMs must be a finite number >= 0');
     }
+    // A store whose setup() never ran has no ledger: nothing is recorded as owed.
+    if (!(await this.vectorRemovalService.ledgerPresent())) {
+      return { confirmed: 0, pending: 0, failedIds: [], timedOut: false };
+    }
     const r = await this.vectorRemovalService.drain(
       entityId === undefined ? { all: true } : { entityId },
       { trigger: 'call', ...(ms !== undefined ? { deadlineAt: Date.now() + ms } : {}) },
@@ -559,6 +547,7 @@ export class WikiMemory {
     entityId?: string,
   ): Promise<{ count: number; oldestEnqueuedAt: number | null; maxAttempts: number }> {
     if (entityId !== undefined) assertEntityId(entityId);
+    if (!(await this.vectorRemovalService.ledgerPresent())) return { count: 0, oldestEnqueuedAt: null, maxAttempts: 0 };
     return this.vectorRemovalRepo.pendingStats(entityId);
   }
 
@@ -959,7 +948,14 @@ export class WikiMemory {
     // Capture the removal ids before the sync; delivery is non-throwing and
     // leaves anything unconfirmed owed on the ledger.
     const removals = this.takeRemovalIds(entityId);
-    await this.syncSearchIndexCore(entityId);
+    try {
+      await this.syncSearchIndexCore(entityId);
+    } catch (err) {
+      // Put the ids back so the next call delivers them (the cap still applies;
+      // overflow stays owed on the ledger).
+      for (const [e, ids] of removals) this.stashRemovalIds(e, ids);
+      throw err;
+    }
     for (const [e, ids] of removals) {
       await this.vectorRemovalService.deliverRemovals(e, ids, 'upsertGraph', 'call');
     }
@@ -1041,6 +1037,14 @@ export class WikiMemory {
    * hard-deletes the soft-deleted rows once they are older than
    * `retainSoftDeletedFor` (7 days by default; pass 0 to remove them now).
    * `dryRun` previews the counts.
+   *
+   * With a removal hook (`vectorRanker.onEmbeddingPersisted`), the deleted
+   * facts are recorded as owed in the same transaction and then delivered to
+   * the hook before this resolves.
+   *
+   * @throws {WikiExternalDeletionError} when the hook didn't confirm every
+   *   removal. The local delete stays committed and the rest stay owed; retry,
+   *   or call `runExternalDeletions()`.
    */
   async forget(
     entityId: string,
