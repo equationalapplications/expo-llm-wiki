@@ -807,10 +807,15 @@ export class WikiMemory {
   /** Run pending removals, librarian, heal and reembed work under an optional token budget and deadline (spec §6.2). Awaits the setup removal drain first, when `drainExternalDeletionsOnSetup` started one. */
   async runPendingMaintenance(options?: RunPendingMaintenanceOptions): Promise<RunPendingMaintenanceResult> {
     let opts = options;
+    const ms = options?.deadlineMs;
+    // Reject a bad deadline before waiting: unchecked, it would skip the bounded
+    // wait below and block on the whole setup drain before the scheduler throws.
+    if (ms !== undefined && (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0)) {
+      throw new TypeError('deadlineMs must be a finite number >= 0');
+    }
     const setupDrain = this.setupRemovalDrain;
     if (setupDrain) {
-      const ms = options?.deadlineMs;
-      if (typeof ms === 'number' && Number.isFinite(ms) && ms >= 0) {
+      if (ms !== undefined) {
         // Bound the wait by deadlineMs and hand the scheduler only what is left.
         const started = Date.now();
         let handle: ReturnType<typeof setTimeout> | undefined;

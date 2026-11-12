@@ -1,6 +1,6 @@
 import type { SQLiteAdapter, WikiOptions, WikiDiagnosticTrigger, WikiDiagnosticOperation } from '../types';
 import { HOOK_TIMEOUT_MARKER } from '../types';
-import { removalBackoffMs } from '../repositories/VectorRemovalRepository';
+import { removalBackoffMs, chunks } from '../repositories/VectorRemovalRepository';
 import type {
   VectorRemovalRepository,
   VectorRemovalScope,
@@ -41,6 +41,13 @@ const ID_CHUNK = 500;
 const MAX_FAILED_IDS = 100;
 const MAX_CONSECUTIVE_REJECTIONS = 5;
 
+/** Which removal behavior the options select (spec §5.3). */
+export function removalGate(options: Pick<WikiOptions, 'forceDeleteIgnoreRankerHook' | 'vectorRanker'>): 'hook' | 'none' | 'force' {
+  if (options.forceDeleteIgnoreRankerHook === true) return 'force';
+  if (options.vectorRanker?.onEmbeddingPersisted) return 'hook';
+  return 'none';
+}
+
 /** Drains the vector_removals ledger through the host's removal hook (spec §5.3-5.4). */
 export class VectorRemovalService {
   private inFlight = new Map<string, { seq: number; promise: Promise<void> }>();
@@ -54,9 +61,7 @@ export class VectorRemovalService {
   ) {}
 
   gate(): 'hook' | 'none' | 'force' {
-    if (this.options.forceDeleteIgnoreRankerHook === true) return 'force';
-    if (this.options.vectorRanker?.onEmbeddingPersisted) return 'hook';
-    return 'none';
+    return removalGate(this.options);
   }
 
   private ledgerSeen = false;
@@ -105,21 +110,8 @@ export class VectorRemovalService {
       }
       if (this.gate() !== 'hook') return;
       // Bounded like a drain: the per-call timeout, and a stop at the first one.
-      const timeoutMs = this.embeddingService.validateDeletionTimeout();
-      const list = [...new Set(fallbackIds)];
-      for (let i = 0; i < list.length; i++) {
-        const factId = list[i];
-        try {
-          await this.embeddingService.callRemovalHook(entityId, factId, timeoutMs);
-        } catch (hookErr) {
-          console.warn(`[WikiMemory] onEmbeddingPersisted(vector=null) hook failed for ${factId}:`, hookErr);
-          if ((hookErr as any)?.[HOOK_TIMEOUT_MARKER] === true) {
-            this.emitHookFailed(entityId, list.slice(i), operation, trigger);
-            break;
-          }
-          this.emitHookFailed(entityId, [factId], operation, trigger);
-        }
-      }
+      const r = await this.embeddingService.callRemovalHookEach(entityId, [...new Set(fallbackIds)], { warn: true });
+      this.emitHookFailed(entityId, r.failed, operation, trigger);
     } catch (err) {
       console.warn('[WikiMemory] removal delivery failed:', err);
       let stillPending = ids;
@@ -195,7 +187,7 @@ export class VectorRemovalService {
           ? (await this.repo.entitiesWithPending()).map((e) => ({ entityId: e }))
           : ids === undefined
             ? [{ entityId }]
-            : chunk(ids, ID_CHUNK).map((c) => ({ entityId, ids: c }));
+            : chunks(ids, ID_CHUNK).map((c) => ({ entityId, ids: c }));
       maxSeq = await this.repo.maxSeq();
     } catch {
       result.transient = true;
@@ -383,12 +375,6 @@ export class VectorRemovalService {
       });
     }
   }
-}
-
-function chunk<T>(xs: T[], n: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n));
-  return out;
 }
 
 /** Race `p` against a timer; the timeout error carries HOOK_TIMEOUT_MARKER and `p` keeps running. */

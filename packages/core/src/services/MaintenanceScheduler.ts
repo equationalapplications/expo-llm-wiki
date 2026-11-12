@@ -51,13 +51,15 @@ export class MaintenanceScheduler {
     const out: PendingMaintenance[] = [];
     const owed = new Map<string, number>();
     if (this.vectorRemovalService.gate() !== 'none' && (await this.vectorRemovalService.ledgerPresent())) {
+      const scope = entityIds === undefined ? undefined : new Set(entityIds);
       // Only entities with a row outside backoff: a failing hook must not keep the list non-empty.
       for (const e of await this.vectorRemovalRepo.entitiesWithDuePending(Date.now())) {
-        if (entityIds !== undefined && !entityIds.includes(e)) continue;
+        if (scope !== undefined && !scope.has(e)) continue;
         owed.set(e, (await this.vectorRemovalRepo.pendingStats(e)).count);
       }
     }
-    const scan = [...ids, ...[...owed.keys()].filter((e) => !ids.includes(e))];
+    const listed = new Set(ids);
+    const scan = [...ids, ...[...owed.keys()].filter((e) => !listed.has(e))];
     for (const entityId of scan) {
       const wm = await this.metadataRepo.getLibrarianWatermark(entityId, this.db);
       const pendingEvents = await this.eventRepo.countAfter(entityId, wm);
@@ -262,8 +264,12 @@ export class MaintenanceScheduler {
   ): Promise<{ confirmed: number; pending: number }> {
     if (!(await this.vectorRemovalService.ledgerPresent())) return { confirmed: 0, pending: 0 };
     const all = await this.vectorRemovalRepo.entitiesWithPending();
-    const entities = entityIds === undefined ? all : all.filter((e) => entityIds.includes(e));
+    const scope = entityIds === undefined ? undefined : new Set(entityIds);
+    const entities = scope === undefined ? all : all.filter((e) => scope.has(e));
     let confirmed = 0;
+    let pending = 0;
+    // Entities a drain reported on; the drain already counted their pending rows.
+    const counted = new Set<string>();
     if (enabled) {
       for (const e of entities) {
         if (Date.now() >= deadline) break;
@@ -272,11 +278,16 @@ export class MaintenanceScheduler {
           { trigger: 'call', ...(deadline === Infinity ? {} : { deadlineAt: deadline }) },
         );
         confirmed += r.confirmed;
+        if (!r.transient) {
+          pending += r.pending;
+          counted.add(e);
+        }
         if (r.timedOut) break;
       }
     }
-    let pending = 0;
-    for (const e of entities) pending += (await this.vectorRemovalRepo.pendingStats(e)).count;
+    for (const e of entities) {
+      if (!counted.has(e)) pending += (await this.vectorRemovalRepo.pendingStats(e)).count;
+    }
     return { confirmed, pending };
   }
 }

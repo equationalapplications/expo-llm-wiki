@@ -10,8 +10,8 @@ import { generateId } from '../utils/ids';
 import { resolveLibrarianStrategy, resolveMaintenanceMode } from '../utils/engineDefaults';
 import { parseEmbedding } from '../utils/embedding';
 import { PrunePartialFailureError } from '../types';
-import { HOOK_TIMEOUT_MARKER, WikiExternalDeletionError } from '../types';
-import type { VectorRemovalService } from './VectorRemovalService';
+import { WikiExternalDeletionError } from '../types';
+import { removalGate, type VectorRemovalService } from './VectorRemovalService';
 import type { VectorRemovalRepository } from '../repositories/VectorRemovalRepository';
 import type { WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedTask, ExtractedFactWithOntology, WikiFact, WikiTask, OntologyUpdates, OntologyBackfillResult, HealResult, DegradedRecord, ReembedResult, ClassifierQuestion, OntologyManifest, WikiDiagnosticTrigger } from '../types';
 import type { SQLiteAdapter, ForgetParams, ForgetResult } from '../types';
@@ -261,8 +261,7 @@ export class MaintenanceService {
 
       // Spec durable-vector-removal §5.6.7: a bad deletionHookTimeoutMs fails
       // before any write.
-      const gate = this.vectorRemoval?.gate()
-        ?? (this.options.forceDeleteIgnoreRankerHook === true ? 'force' : this.options.vectorRanker?.onEmbeddingPersisted ? 'hook' : 'none');
+      const gate = removalGate(this.options);
       if (gate === 'hook') this.embeddingService.validateDeletionTimeout();
 
       const now = Date.now();
@@ -289,9 +288,10 @@ export class MaintenanceService {
           syncedIds = [...expiredIds];
           // The trigger enqueued them; send removal now, not 7 days later
           // (spec durable-vector-removal §5.6.1). A failure leaves them
-          // pending, and the hard-delete step below keeps them.
+          // pending (with hook_failed / external_deletion_pending, as on every
+          // other post-commit path), and the hard-delete step below keeps them.
           if (this.vectorRemoval && await this.vectorRemoval.ledgerPresent()) {
-            await this.vectorRemoval.drain({ entityId, ids: expiredIds });
+            await this.vectorRemoval.deliverRemovals(entityId, expiredIds, 'prune', 'call', []);
           }
         }
       }
@@ -338,28 +338,12 @@ export class MaintenanceService {
         } else if (gate === 'hook') {
           // Store whose setup() never ran: no ledger table, so call the hook
           // per row and keep the rows that fail (mirrors forget's fallback).
-          const timeoutMs = this.embeddingService.validateDeletionTimeout();
-          deletable = [];
-          let firstRejection: unknown;
-          let timeoutErr: unknown;
-          for (let i = 0; i < prunableIds.length; i++) {
-            const id = prunableIds[i];
-            try {
-              await this.embeddingService.callRemovalHook(entityId, id, timeoutMs);
-              deletable.push(id);
-            } catch (hookErr) {
-              kept.push(id);
-              if ((hookErr as any)?.[HOOK_TIMEOUT_MARKER] === true) {
-                // A dead index costs one timeout, as in a drain (spec rev 5).
-                timeoutErr ??= hookErr;
-                kept.push(...prunableIds.slice(i + 1));
-                break;
-              }
-              firstRejection ??= hookErr;
-            }
-          }
-          timedOut = timeoutErr !== undefined;
-          cause = timeoutErr ?? firstRejection;
+          const r = await this.embeddingService.callRemovalHookEach(entityId, prunableIds);
+          const failedSet = new Set(r.failed);
+          kept = r.failed;
+          deletable = prunableIds.filter((id) => !failedSet.has(id));
+          timedOut = r.timedOut;
+          cause = r.cause;
           firstFailed = kept[0];
         }
 
@@ -757,27 +741,11 @@ export class MaintenanceService {
           } else if (this.options.vectorRanker?.onEmbeddingPersisted && this.options.forceDeleteIgnoreRankerHook !== true) {
             // Store whose setup() never ran (#316 recovery): no ledger table, so
             // call the hook directly and record nothing (spec §5.5.5).
-            const timeoutMs = this.embeddingService.validateDeletionTimeout();
-            let firstRejection: unknown;
-            let timeoutErr: unknown;
-            for (let i = 0; i < uniqueDeletedIds.length; i++) {
-              const factId = uniqueDeletedIds[i];
-              try {
-                await this.embeddingService.callRemovalHook(entityId, factId, timeoutMs);
-              } catch (hookErr) {
-                unconfirmed.push(factId);
-                if ((hookErr as any)?.[HOOK_TIMEOUT_MARKER] === true) {
-                  // A dead index costs one timeout, as in a drain (spec rev 5).
-                  timeoutErr ??= hookErr;
-                  timedOutId ??= factId;
-                  unconfirmed.push(...uniqueDeletedIds.slice(i + 1));
-                  break;
-                }
-                firstRejection ??= hookErr;
-              }
-            }
-            timedOut = timeoutErr !== undefined;
-            cause = timeoutErr ?? firstRejection;
+            const r = await this.embeddingService.callRemovalHookEach(entityId, uniqueDeletedIds);
+            unconfirmed = r.failed;
+            timedOut = r.timedOut;
+            timedOutId = r.timedOutId;
+            cause = r.cause;
           }
         } catch (hookErr) {
           const errMsg = (hookErr as Error)?.message ?? '';

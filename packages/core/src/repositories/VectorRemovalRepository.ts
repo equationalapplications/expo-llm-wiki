@@ -28,7 +28,7 @@ export function removalBackoffMs(attempts: number): number {
   return Math.min(2 ** attempts, 3600) * 1000;
 }
 
-function chunks<T>(xs: T[], n: number): T[][] {
+export function chunks<T>(xs: T[], n: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n));
   return out;

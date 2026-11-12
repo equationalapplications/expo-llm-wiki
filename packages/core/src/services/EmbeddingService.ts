@@ -422,6 +422,39 @@ export class EmbeddingService {
     }
   }
 
+  /**
+   * One removal call per id for a store with no ledger table (setup() never
+   * ran), so nothing records what is owed (spec §5.5.5). Stops at the first
+   * timeout: a dead index costs one timeout, as in a drain (spec rev 5).
+   * `failed` lists the ids not confirmed, in order; after a timeout it ends
+   * with the timed-out id and every id after it. Throws only for an invalid
+   * `deletionHookTimeoutMs`.
+   */
+  async callRemovalHookEach(
+    entityId: string,
+    ids: readonly string[],
+    opts: { warn?: boolean } = {},
+  ): Promise<{ failed: string[]; timedOut: boolean; timedOutId?: string; cause?: unknown }> {
+    const timeoutMs = this.validateDeletionTimeout();
+    const failed: string[] = [];
+    let firstRejection: unknown;
+    for (let i = 0; i < ids.length; i++) {
+      const factId = ids[i];
+      try {
+        await this.callRemovalHook(entityId, factId, timeoutMs);
+      } catch (hookErr) {
+        if (opts.warn) console.warn(`[WikiMemory] onEmbeddingPersisted(vector=null) hook failed for ${factId}:`, hookErr);
+        if ((hookErr as any)?.[HOOK_TIMEOUT_MARKER] === true) {
+          failed.push(...ids.slice(i));
+          return { failed, timedOut: true, timedOutId: factId, cause: hookErr };
+        }
+        failed.push(factId);
+        firstRejection ??= hookErr;
+      }
+    }
+    return { failed, timedOut: false, cause: firstRejection };
+  }
+
   async notifyEmbeddingPersistedOrThrow(
     entityId: string,
     factId: string,
