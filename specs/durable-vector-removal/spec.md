@@ -25,6 +25,23 @@ Revision 4 (2026-11-12), from a Fable (high) review of the PR head `2c3fbbfc`:
 - **Orphan sweep (2026-11-12).** `setup()` deletes ledger rows whose fact row no longer exists, when nothing can still owe them: every confirmed one, and, on a store without the marker, every one (§5.3). It closes a leak found in the O1 check: a host that hard-deletes `entries` rows itself, bypassing prune (Curated Thoughts' Rust does), left the deleted facts' ids in the ledger forever.
 - Not changed: the first `setup()` with a hook still delivers removals enqueued before the marker existed. Discarding them would drop real removals owed by a hookless process that shares the store with a hook process (the MCP server beside an app), which the deletion promise forbids. A hook already must treat an unknown id as success (§4.1). §5.3 records why.
 
+Revision 5 (2026-11-12), from a Sonnet (high) review of the whole PR and CodeRabbit's review:
+- **The enqueue trigger deletes, then inserts** (§5.2). An `INSERT … ON CONFLICT DO UPDATE` that soft-deletes a fact overrides the trigger's `OR REPLACE`, so a re-delete of a fact with a confirmed row threw `UNIQUE constraint failed` and rolled back the import or upsert. Reproduced.
+- **A third trigger, on hard delete of `entries`, replaces the setup sweep** (§5.2, §5.3). A live fact deleted directly is now owed on a store with the marker. A hard-deleted soft-deleted fact drops the rows nothing can owe. That costs O(1) per delete instead of a full ledger scan at every `setup()`, and it also covers deletes made by an older engine after a downgrade.
+- **A confirm whose fact is already gone deletes the row** in the same write (§5.4).
+- **The never-set-up fallbacks stop at the first timeout,** and deliverRemovals' fallback is bounded by `deletionHookTimeoutMs` (§5.5.5).
+- **If the embed-race check can't record a removal, it calls the hook with `null` directly** and emits `hook_failed` if that fails. It checks liveness with a read first, so a live fact opens no write transaction (§5.7).
+- **Smaller fixes:**
+  - `runExternalDeletions` and `getPendingExternalDeletions` work on a store whose `setup()` never ran;
+  - the drain's final count can't turn a transient result into a throw;
+  - `syncSearchIndex` restores its removal stash when the sync fails;
+  - prune's outbox and `deletedIds` name only rows actually deleted;
+  - import's `null` for an unembedded live fact is skipped under force;
+  - docs: serverless "nothing is still running", security summary, `forget` JSDoc.
+- **Not changed, two rejections:**
+  - Serializing removal calls with import's vector writes. That is the accepted window in §5.4: a resurrect during an in-flight `null` costs recall, not privacy, and `runReembed` restores it.
+  - Keying obligations by `(entity_id, fact_id)`. `entries.id` is a global primary key, so the failure needs a hookless prune on a marked store and then another entity reusing the same id. That is too narrow to justify changing the ledger's key and every query.
+
 **Date:** 2026-11-11
 **Branch:** `docs/spec-durable-vector-removal`, stacked on PR #371 (`docs/spec-import-followups`); retargets to `main` after #371 merges.
 **Source baseline:** `889da3f5` (PR #371 head).
@@ -187,7 +204,8 @@ The ledger has three cases, decided per process:
 **The marker.** `setup()` records a sticky meta key, `external_index_in_use = 1`, whenever `vectorRanker.onEmbeddingPersisted` is configured. Prune in a process without the hook removes ledger rows with their facts only while the marker is absent. Without the marker, the store has never had an external index, so nothing is owed. A force-mode drain clears the marker.
 
 - **Hookless prune with the marker (rev 4).** It keeps the pending ledger rows of the facts it hard-deletes, and deletes their confirmed rows in the same transaction. Nothing reads a confirmed row once its fact is gone.
-- **Orphan sweep at `setup()` (2026-11-12).** One statement, keyed on `fact_id` store-wide (not the ledger's `entity_id`: a wiped entity is never pruned again, and a host may change `entity_id` in the same update as the soft delete). It deletes rows whose fact row is gone when they are confirmed, under any gate, or when the gate is not `'hook'` and the store has no marker. Pending rows whose fact is gone are kept while a hook could still owe them: under the hook gate a drain delivers and removes them; in a hookless process on a marked store they wait for the hook process. A failure is logged and doesn't fail `setup()`.
+- **Rev 5: the hard-delete trigger replaces this sweep.** It applies the same rule per deleted row, so nothing scans the ledger at `setup()`. The text below is the rule it applies. A hard-deleted *live* fact is owed only on a store with the marker. On a store without one, nothing can owe it, the same as for pending rows of gone facts.
+- **Orphan sweep at `setup()` (2026-11-12, superseded by rev 5).** One statement, keyed on `fact_id` store-wide (not the ledger's `entity_id`: a wiped entity is never pruned again, and a host may change `entity_id` in the same update as the soft delete). It deletes rows whose fact row is gone when they are confirmed, under any gate, or when the gate is not `'hook'` and the store has no marker. Pending rows whose fact is gone are kept while a hook could still owe them: under the hook gate a drain delivers and removes them; in a hookless process on a marked store they wait for the hook process. A failure is logged and doesn't fail `setup()`.
 - **First hook `setup()` (rev 4, not changed).** Rows enqueued before the marker was first set are delivered, not discarded. They may be removals a hookless process sharing the store owes on behalf of a hook process. For a store that never had an index, they are calls for ids the index never held, which a hook must already treat as success (§4.1). An outside consult (Gemini, 2026-11-12) agreed, and pointed out the cost on a mature store: one call per unpruned soft-deleted fact. `guides/deleting-data.md` ("Adding an index to an existing store") tells hosts to check the count first and batch, or to discard with force when no other process shares the store.
 - **No separate "inherited backlog" diagnostic (decided 2026-11-12, after Gemini and Fable consults).** Gemini proposed a one-time `external_deletion_inherited_backlog` at the marker transition. Not added, because:
   - `external_deletion_pending` already fires with the count on that same `setup()`, before any call.
@@ -238,7 +256,7 @@ One routine, `drainVectorRemovals(scope, opts)`, in a new `VectorRemovalService`
    - Otherwise it throws `WikiExternalDeletionError` (§5.9). The local delete stays committed, and the unconfirmed ids stay owed.
    - Under the no-hook row of §5.3, it resolves, and the obligations stay recorded.
 4. **A retry** sends only ids still unconfirmed (closes G1 and G2).
-5. **Store whose `setup()` never ran** (the #316 recovery path): the ledger table doesn't exist yet. With a hook configured, forget falls back to calling the hook per selected id, continuing past failures, and throws `WikiExternalDeletionError` for the ids not confirmed. Nothing is recorded, because there is nowhere to record it; the error tells the host to retry.
+5. **Store whose `setup()` never ran** (the #316 recovery path): the ledger table doesn't exist yet. With a hook configured, forget falls back to calling the hook per selected id, continuing past failures, and throws `WikiExternalDeletionError` for the ids not confirmed. Nothing is recorded, because there is nowhere to record it; the error tells the host to retry. Rev 5: the loop stops at the first timeout, like a drain; ids not tried count as unconfirmed. The same applies to prune's and deliverRemovals' fallbacks, and deliverRemovals' is bounded by `deletionHookTimeoutMs`.
 6. **Outcome message when no cause is known** (an id still pending after a shared in-flight call or a transient stop): `forget(<entityId>/<id>) failed: ANN cleanup not confirmed`.
 
 ### 5.6 `runPrune()`
@@ -411,7 +429,7 @@ One routine, `drainVectorRemovals(scope, opts)`, in a new `VectorRemovalService`
 
 17. Crash recovery. Enqueue through the trigger in a committed transaction on a better-sqlite3 temp file, then open a second `WikiMemory` on that file with a healthy hook. `runExternalDeletions()` calls every id, and pending becomes 0.
 18. The setup drain:
-    - under the same setup as test 17, every id is delivered after `await wiki.drain()`;
+    - under the same setup as test 17, with `drainExternalDeletionsOnSetup: true` (rev 4: off by default), every id is delivered after `await wiki.drain()`;
     - with `drainExternalDeletionsOnSetup: false`, no call is made and `external_deletion_pending` fires;
     - the drain stops within the deadline when the hook hangs.
 19. `clearAll` on 1,000 facts: one statement enqueues them all (adapter spy).
@@ -431,6 +449,18 @@ One routine, `drainVectorRemovals(scope, opts)`, in a new `VectorRemovalService`
 30. A forget during a slow `embed()`, before the vector call: exactly one `null` call, and the row stays confirmed.
 31. An ingest embed whose fact is deleted while its vector call is in flight ends with a `null` call.
 32. `runExternalDeletions()` returns `transient: true` when the host holds a transaction open.
+
+**Rev 5 tests:**
+
+33. A fact soft-deleted, confirmed, restored, then soft-deleted again through `INSERT … ON CONFLICT DO UPDATE` (and through `importDump` with a tombstone) succeeds, and the fact is pending again.
+34. Hard-deleting a live fact on a marked store owes it, and a drain sends `null`. On a store without the marker it leaves no row.
+35. Hard-deleting a soft-deleted fact drops its confirmed row. On a store without the marker it drops its pending row too. On a marked store the pending row is kept.
+36. A confirm whose fact was hard-deleted meanwhile leaves no row.
+37. The never-set-up fallbacks of forget and deliverRemovals stop at the first timeout.
+38. When the embed-race enqueue fails, the hook gets `null` directly.
+39. `runExternalDeletions()` and `getPendingExternalDeletions()` on a never-set-up store return zeros.
+40. `syncSearchIndex()` that throws keeps its stashed ids for the next call.
+41. Under force, importing an unembedded live fact makes no hook call.
 
 ## 9. Follow-ups (not in this PR)
 
