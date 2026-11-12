@@ -280,6 +280,22 @@ describe('upsertGraph on the ledger', () => {
   });
 });
 
+describe('upsertGraph removals independent of the search strategy', () => {
+  const graph = (id: string, hash: string) => ({
+    sourceRef: 'src/a.ts', sourceHash: hash, nodes: [{ id, type: '', title: 'sym ' + id }], edges: [],
+  });
+
+  it('MiniSearch: syncSearchIndex delivers null for the superseded id only', async () => {
+    const t = await make(() => {}, { config: { indexStrategy: 'minisearch' } });
+    await t.raw.withTransactionAsync(async (tx: any) => { await t.wiki.upsertGraph('e1', graph('n1', H1), tx); });
+    await t.raw.withTransactionAsync(async (tx: any) => { await t.wiki.upsertGraph('e1', graph('n2', H2), tx); });
+    expect(t.calls).toEqual([]);
+    await t.wiki.syncSearchIndex('e1');
+    expect(t.calls.map((c) => c.factId)).toEqual(['n1']);
+    expect(t.calls[0].vector).toBeNull();
+  });
+});
+
 describe('deliverRemovals pending diagnostic gate (§5.3)', () => {
   const gen = async () => JSON.stringify({ downgraded: [], deleted: ['d1'], newFacts: [] });
   const pending = (diags: any[]) => diags.filter((d) => d.code === 'external_deletion_pending');

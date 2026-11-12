@@ -295,7 +295,7 @@ export class WikiMemory {
   /** Max upsertGraph node ids held for their post-commit sync (spec #280 id threading). */
   static readonly UPSERT_ID_STASH_CAP = 10_000;
   /**
-   * upsertGraph node and superseded-fact ids per entity, awaiting syncSearchIndex(), each with the
+   * upsertGraph node ids per entity, awaiting syncSearchIndex(), each with the
    * generation of its latest stash. Ids leave the stash only once a drain
    * succeeded, so a failed drain retries them next call.
    */
@@ -306,7 +306,8 @@ export class WikiMemory {
   private upsertIdStashGen = 0;
 
   private stashUpsertIds(entityId: string, ids: readonly string[]): void {
-    // Only a ledger strategy drains by id; MiniSearch rebuilds the stale entity instead.
+    // Only a ledger strategy drains the search index by id; MiniSearch rebuilds the stale entity instead.
+    // (Removal delivery has its own stash, stashRemovalIds, independent of the strategy.)
     if (!this.searchService.hasLedger()) return;
     const cap = (this.constructor as typeof WikiMemory).UPSERT_ID_STASH_CAP;
     const stash = this.upsertIdStash.get(entityId) ?? new Map<string, number>();
@@ -318,6 +319,41 @@ export class WikiMemory {
       stash.set(id, ++this.upsertIdStashGen);
     }
     if (stash.size > 0) this.upsertIdStash.set(entityId, stash);
+  }
+
+  /** Max superseded-fact ids held for post-commit removal delivery. */
+  static readonly REMOVAL_STASH_CAP = 10_000;
+  /** Superseded fact ids per entity awaiting a post-commit delivery from syncSearchIndex(). */
+  private removalStash = new Map<string, Set<string>>();
+  private removalStashSize = 0;
+
+  /**
+   * Overflow past the cap drops the id from the stash only: the trigger already
+   * put it on the ledger, so it stays owed and the setup drain or
+   * runPendingMaintenance delivers it later.
+   */
+  private stashRemovalIds(entityId: string, ids: readonly string[]): void {
+    const cap = (this.constructor as typeof WikiMemory).REMOVAL_STASH_CAP;
+    const stash = this.removalStash.get(entityId) ?? new Set<string>();
+    for (const id of ids) {
+      if (stash.has(id)) continue;
+      if (this.removalStashSize >= cap) continue;
+      stash.add(id);
+      this.removalStashSize++;
+    }
+    if (stash.size > 0) this.removalStash.set(entityId, stash);
+  }
+
+  /** Removes and returns the stashed removal ids (one entity, or all). */
+  private takeRemovalIds(entityId?: string): Map<string, string[]> {
+    const out = new Map<string, string[]>();
+    for (const [e, set] of [...this.removalStash]) {
+      if (entityId !== undefined && e !== entityId) continue;
+      out.set(e, [...set]);
+      this.removalStashSize -= set.size;
+      this.removalStash.delete(e);
+    }
+    return out;
   }
 
   /** Snapshot of the stash (one entity, or all) with generations, without removing anything. */
@@ -878,25 +914,13 @@ export class WikiMemory {
    * @throws {TypeError} when `entityId` is given but is not a non-empty string.
    */
   async syncSearchIndex(entityId?: string): Promise<void> {
-    // Capture the ids upsertGraph stashed for this sync before the sync clears them.
     if (entityId !== undefined) assertEntityId(entityId);
-    const stashed = this.peekStashedIds(entityId);
+    // Capture the removal ids before the sync; delivery is non-throwing and
+    // leaves anything unconfirmed owed on the ledger.
+    const removals = this.takeRemovalIds(entityId);
     await this.syncSearchIndexCore(entityId);
-    // Deliver removals for only those ids (non-throwing, no backoff). The
-    // entity's wider backlog belongs to runPendingMaintenance / setup drain.
-    for (const [e, ids] of stashed) {
-      if (ids.size === 0) continue;
-      await this.deliverUpsertRemovals(e, [...ids.keys()]);
-    }
-  }
-
-  private async deliverUpsertRemovals(entityId: string, ids: string[]): Promise<void> {
-    try {
-      const r = await this.vectorRemovalService.drain({ entityId, ids }, { trigger: 'call' });
-      this.vectorRemovalService.emitHookFailed(entityId, r.failedIds, 'upsertGraph', 'call');
-    } catch (err) {
-      console.warn('[WikiMemory] removal drain after syncSearchIndex failed:', err);
-      this.vectorRemovalService.emitHookFailed(entityId, ids, 'upsertGraph', 'call');
+    for (const [e, ids] of removals) {
+      await this.vectorRemovalService.deliverRemovals(e, ids, 'upsertGraph', 'call');
     }
   }
 
@@ -1140,11 +1164,12 @@ export class WikiMemory {
       { diag: { buffer: diagBuffer, operation: 'upsertGraph' } },
     );
     // Core never sees this commit. Under a ledger strategy the triggers already
-    // recorded the rows: stash the node ids, and the facts this call
-    // superseded (as ingestDocument threads them), so the host's post-commit
-    // syncSearchIndex() drains them first, to completion, under any backlog.
+    // recorded the rows: stash the node ids and superseded ids for the search
+    // drain. The superseded ids also go in the removal stash (any strategy), so
+    // the host's post-commit syncSearchIndex() delivers their removals.
     // MiniSearch has no ledger: markStale makes that sync rebuild the entity.
     this.stashUpsertIds(entityId, [...supersededFactIds, ...params.nodes.map((n) => n.id)]);
+    this.stashRemovalIds(entityId, supersededFactIds);
     this.searchService.markStale(entityId);
     diagBuffer.flush(this.options);
     return result;
