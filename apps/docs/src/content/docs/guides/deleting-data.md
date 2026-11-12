@@ -1,6 +1,6 @@
 ---
 title: Deleting data
-description: Forget facts, tasks, documents, or whole entities — with dry runs, soft-delete retention, and GDPR-safe external index cleanup.
+description: Forget facts, tasks, documents, or whole entities — with dry runs, soft-delete retention, and external index cleanup.
 sidebar:
   order: 16
 ---
@@ -47,8 +47,10 @@ slow on mobile.
 If you use an external vector index through `VectorRanker.onEmbeddingPersisted`, deletion has
 to reach that index too:
 
-- `forget()` and `runPrune()` **reject** if the deletion hook fails or times out, so a
-  "forgotten" fact can't stay retrievable elsewhere.
+- `read()` never returns a forgotten fact, whatever your index holds: ranker hits are checked
+  against live rows. What the hook controls is whether the vector stays in *your* index.
+- `forget()` and `runPrune()` call the hook with `vector: null` after their delete commits, and
+  **reject** if a call fails or times out.
 - `deletionHookTimeoutMs` (default 30 s) caps how long each hook call can take. A reasonable
   setting is about 5 s for interactive UX and 60 s for background jobs.
 - `forceDeleteIgnoreRankerHook` skips hook failures. Use it **only** when the external index has
@@ -58,9 +60,22 @@ to reach that index too:
 createWiki(db, { llmProvider, vectorRanker, deletionHookTimeoutMs: 5_000 }); // options beside llmProvider
 ```
 
-Retry hook failures, or queue them for reconciliation. Don't swallow them. `forget()` stops at
-the first id whose hook fails, and a retry calls the hook again for ids it already removed, so
-make your delete idempotent: deleting an id that isn't in the index must succeed.
+:::caution[Current limits of external cleanup]
+External cleanup is attempted once per call and is not yet durable:
+
+- `forget()` and `runPrune()` stop at the first id whose hook fails. The ids after it are not
+  sent until a retry gets past it.
+- A retry calls the hook again for ids it already removed. Make your delete idempotent: deleting
+  an id that isn't in the index must succeed, or the retry fails at the same id every time.
+- Nothing records an unfinished cleanup. If the app is killed after `forget()` commits and before
+  the hooks finish, a later `forget()` of the same target is the only way to resend them.
+- Heal, re-ingest and `importDump` in replace mode call the hook but only report a failure as
+  `hook_failed`; they don't retry. A fact soft-deleted by a merge import, or superseded through
+  `upsertGraph`, never reaches the hook.
+
+To recover, retry the same `forget()` until it resolves, then run `runPrune()`. A durable
+removal queue that retries until every hook call succeeds is planned.
+:::
 
 ## Wipe an entity completely
 

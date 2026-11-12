@@ -784,9 +784,11 @@ export interface VectorRanker {
    * Called after a fact's embedding is successfully persisted to embedding_blob (or cleared).
    * Hosts use this to keep sqlite-vec / external indexes consistent with SQLite as source of truth.
    *
-   * On deletion paths (forget, prune, hard-delete), core awaits this hook to ensure ANN cleanup
-   * completes before the deletion call resolves (GDPR compliance). Hook failures or timeouts on
-   * those paths reject the deletion call.
+   * On forget and prune, core awaits this hook with `vector: null` after the delete commits, and
+   * a failure or timeout rejects the call. Cleanup is not yet durable: the loop stops at the
+   * first failing id, a retry re-sends ids already removed (make deletes idempotent), and a crash
+   * after commit loses the pending calls. Heal, re-ingest and replace-mode import only report
+   * failures (`hook_failed`). See the "Deleting data" guide.
    *
    * Treat `vector` as readonly — core provides a defensive copy, but adapters MUST NOT mutate.
    *
