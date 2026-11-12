@@ -246,7 +246,8 @@ One routine, `drainVectorRemovals(scope, opts)`, in a new `VectorRemovalService`
 - **Heal (G5), re-ingest (G6), replace-mode import (G7).** The post-commit `null` loops are replaced by an awaited drain of the ids that call deleted, under the timeout. A rejection still emits `hook_failed` for that id. The removal stays owed. These paths never throw for it.
 - **`upsertGraph` (G9).**
   - The trigger enqueues inside the host's transaction, and the enqueue rolls back with it.
-  - `syncSearchIndex(entityId?)`, which the host already calls after the commit, drains the entity's pending rows (non-throwing, backoff ignored).
+  - `syncSearchIndex(entityId?)`, which the host already calls after the commit, drains only the ids that `upsertGraph` superseded and stashed for that sync (non-throwing, backoff ignored). With no `entityId`, it drains the stashed ids of every entity. It never drains an entity's whole backlog, because hosts call it after every write; the backlog belongs to `runPendingMaintenance`, `runExternalDeletions` and the setup drain.
+  - The `syncSearchIndex` JSDoc says it calls the removal hook for those ids and can take up to `deletionHookTimeoutMs` per id when the index is slow.
   - The JSDoc says the host's transaction must be opened through the adapter given to `createWiki`.
 - **Embed after delete (G10), for `remember()` and `supersede()` only.** Reembed is already safe by lock.
   - `updateEmbeddingBlob` gains `AND deleted_at IS NULL` and returns the change count. On 0 changes `embedFact` skips the hook.
