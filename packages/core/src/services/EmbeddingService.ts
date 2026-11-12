@@ -328,13 +328,14 @@ export class EmbeddingService {
   /**
    * After an embed (and its vector call) settles: owe a removal if the fact is
    * no longer live, so a vector the host just received is taken back (§5.7, G10).
-   * Never throws. `'enqueued'`: a ledger row was written. `'none'`: no ledger
-   * table or no removal hook. `'live'`: the fact is live. A row already pending is
+   * Never throws. `'enqueued'`: a ledger row was written. `'none'`: no
+   * removal hook (or the hook gate is off). `'live'`: the fact is live. A row already pending is
    * replaced (attempts reset, spec §5.2), so it counts as `'enqueued'` and
    * is sent now: the last call the host sees after this vector is `null`.
    * `'owed'`: the write failed but a pending row already holds the removal.
    * `'write_failed'`: the fact is known not live, the write failed, and its
-   * row is confirmed or missing.
+   * row is confirmed or missing; or the store has no ledger table and the
+   * fact is known not live.
    * `'unknown'`: the liveness read and the guarded write both failed.
    */
   private async recordAfterVectorCall(
@@ -345,7 +346,12 @@ export class EmbeddingService {
     if (!vr || vr.service.gate() !== 'hook') return 'none';
     let live: boolean | undefined;
     try {
-      if (!(await vr.service.ledgerPresent())) return 'none';
+      if (!(await vr.service.ledgerPresent())) {
+        // No ledger (setup() never ran on this store), so nothing durable can
+        // hold the removal. A fact known not live gets a direct null, like the
+        // never-set-up fallbacks of forget and deliverRemovals (§5.5.5).
+        return (await vr.repo.isLive(factId)) ? 'live' : 'write_failed';
+      }
       // A read first: the common case (fact live) opens no write transaction.
       live = await vr.repo.isLive(factId);
     } catch (err) {

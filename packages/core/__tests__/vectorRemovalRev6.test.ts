@@ -105,4 +105,87 @@ describe('revision 6', () => {
     const left = (await raw.getAllAsync(`SELECT id, deleted_at FROM ${P}entries`)) as any[];
     expect(left).toEqual([{ id: 'b', deleted_at: null }]);
   });
+
+  it('46: a restore after a confirmed removal clears embedding failure markers', async () => {
+    const raw = openTestDatabase();
+    const t = open(raw, () => {});
+    await t.wiki.setup();
+    await ins(raw, 'x');
+    await raw.runAsync(
+      `UPDATE ${P}entries SET embedding_blob = X'00000000', embedding_failed_at = 5, embedding_failure_kind = 'provider_error', embedding_attempts = 9 WHERE id = 'x'`,
+    );
+    await softDel(raw, 'x');
+    await raw.runAsync(`UPDATE ${P}vector_removals SET confirmed_at = 7 WHERE fact_id = 'x'`);
+    await restore(raw, 'x');
+    const row = await raw.getFirstAsync(
+      `SELECT embedding_blob, embedding_failed_at, embedding_failure_kind, embedding_attempts FROM ${P}entries WHERE id = 'x'`,
+    );
+    expect(row).toEqual({ embedding_blob: null, embedding_failed_at: null, embedding_failure_kind: null, embedding_attempts: 0 });
+  });
+
+  it('46b: a restore before confirmation keeps the vector and the markers', async () => {
+    const raw = openTestDatabase();
+    const t = open(raw, () => {});
+    await t.wiki.setup();
+    await ins(raw, 'x');
+    await raw.runAsync(`UPDATE ${P}entries SET embedding_failed_at = 5, embedding_attempts = 2 WHERE id = 'x'`);
+    await softDel(raw, 'x');
+    await restore(raw, 'x');
+    const row: any = await raw.getFirstAsync(`SELECT embedding_failed_at, embedding_attempts FROM ${P}entries WHERE id = 'x'`);
+    expect(row).toEqual({ embedding_failed_at: 5, embedding_attempts: 2 });
+  });
+
+  // A store an older engine set up (no ledger), opened without setup().
+  const preLedgerStore = async () => {
+    const raw = openTestDatabase();
+    await open(raw, () => {}).wiki.setup();
+    await raw.execAsync(`
+      DROP TRIGGER ${P}vector_removals_enqueue; DROP TRIGGER ${P}vector_removals_resurrect;
+      DROP TRIGGER ${P}vector_removals_hard_delete; DROP TABLE ${P}vector_removals;`);
+    await ins(raw, 'a1', 'ent');
+    return raw;
+  };
+
+  it('47: on a store without the ledger, a fact deleted during its vector call ends with a null call', async () => {
+    const raw = await preLedgerStore();
+    const t = open(raw, async (c) => {
+      if (c.vector !== null) await softDel(raw, c.factId);
+    });
+    const svc = (t.wiki as any).embeddingService;
+    await svc.storeFactVector({ id: 'a1', entity_id: 'ent' }, new Float32Array([0.1, 0.2]), { operation: 'reembed', trigger: 'call' });
+    expect(t.calls.map((c) => c.vector === null)).toEqual([false, true]);
+  });
+
+  it('47b: on a store without the ledger, a live fact gets no null after its vector call', async () => {
+    const raw = await preLedgerStore();
+    const t = open(raw, () => {});
+    const svc = (t.wiki as any).embeddingService;
+    await svc.storeFactVector({ id: 'a1', entity_id: 'ent' }, new Float32Array([0.1, 0.2]), { operation: 'reembed', trigger: 'call' });
+    expect(t.calls.map((c) => c.vector === null)).toEqual([false]);
+  });
+
+  it('46c: a store set up before migration 11 gets the marker clear once the columns exist', async () => {
+    const { openV8Database } = await import('./helpers/v8Schema');
+    const db = await openV8Database();
+    await open(db, () => {}).wiki.setup();
+    const trig: any = await db.getFirstAsync(
+      `SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = '${P}vector_removals_resurrect'`,
+    );
+    expect(trig.sql).toContain('embedding_failed_at');
+  });
+
+  it('46d: a rev 6 resurrect trigger is replaced on the next setup', async () => {
+    const raw = openTestDatabase();
+    await open(raw, () => {}).wiki.setup();
+    await raw.execAsync(`DROP TRIGGER ${P}vector_removals_resurrect;
+      CREATE TRIGGER ${P}vector_removals_resurrect AFTER UPDATE OF deleted_at ON ${P}entries
+      WHEN OLD.deleted_at IS NOT NULL AND NEW.deleted_at IS NULL
+      BEGIN UPDATE ${P}entries SET embedding_blob = NULL, embedding = NULL WHERE id = NEW.id; END;`);
+    await open(raw, () => {}).wiki.setup();
+    const trig: any = await raw.getFirstAsync(
+      `SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = '${P}vector_removals_resurrect'`,
+    );
+    expect(trig.sql).toContain('embedding_failed_at');
+  });
 });
+

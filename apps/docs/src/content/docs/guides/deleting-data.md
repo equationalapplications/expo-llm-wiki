@@ -83,8 +83,14 @@ The engine can't do these for you:
 When a fact whose removal your index already confirmed comes back (`upsertGraph` re-adds a node,
 an import brings back a live version, or your own SQL sets `deleted_at` back to `NULL`), the engine
 clears its stored vector. The reembed job (`runPendingMaintenance()` or `runReembed()`) then embeds
-it and sends the vector to your hook again. That costs one embedding call per restored fact. A
-fact restored before its removal was confirmed keeps its vector, because your index still has it.
+it and sends the vector to your hook again, and any embedding failure recorded for it is cleared
+so the job doesn't skip it. That costs one embedding call per restored fact. A fact restored
+before its removal was confirmed keeps its vector, because your index was never told to drop it.
+
+One window remains: if the removal call is already in flight when the fact comes back, your index
+can drop the vector while the store keeps its copy, so the reembed job won't send it again. That
+costs recall, not privacy. When recall matters, run `runReembed(entityId)` after a restore: it
+embeds every fact of that entity again (one embedding call each) and sends each vector to your hook.
 
 ### Run and watch the removals
 
