@@ -254,7 +254,7 @@ export class EmbeddingService {
       }
       return;
     }
-    // 'none': live, already owed, or nothing to record. 'unknown': liveness
+    // 'none': live, or nothing to record. 'unknown': liveness
     // couldn't be read and the guarded write failed, so a null could remove a
     // live fact's vector; send nothing (spec rev 6).
     if (outcome !== 'write_failed') return;
@@ -328,7 +328,9 @@ export class EmbeddingService {
    * After an embed (and its vector call) settles: owe a removal if the fact is
    * no longer live, so a vector the host just received is taken back (§5.7, G10).
    * Never throws. `'enqueued'`: a ledger row was written. `'none'`: no ledger
-   * table, no removal hook, the fact is live, or a row was already owed.
+   * table, no removal hook, or the fact is live. A row already pending is
+   * replaced (attempts reset, spec §5.2), so it counts as `'enqueued'` and
+   * is sent now: the last call the host sees after this vector is `null`.
    * `'write_failed'`: the fact is known not live but the write failed.
    * `'unknown'`: the liveness read and the guarded write both failed.
    */
