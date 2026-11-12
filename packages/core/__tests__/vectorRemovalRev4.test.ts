@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { openTestDatabase } from './helpers/sqliteAdapter';
-import { WikiMemory } from '../src/index';
+import { WikiMemory, PrunePartialFailureError } from '../src/index';
 
 // Spec durable-vector-removal revision 4 (§8 tests 26-32).
 
@@ -199,5 +199,111 @@ describe('revision 4', () => {
     expect(r.transient).toBe(true);
     expect(r.pending).toBe(1);
     expect(t.calls).toEqual([]);
+  });
+});
+
+describe('revision 4, re-review', () => {
+  it('a failing entity does not starve the entities after it in runExternalDeletions()', async () => {
+    const raw = await markedStore();
+    await seed(raw, ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'], 'ea');
+    await seed(raw, ['b1'], 'eb');
+    const t = open(raw, (c) => { if (c.entityId === 'ea') throw new Error('nope'); });
+    await t.wiki.setup();
+    await t.wiki.runExternalDeletions();
+    expect(t.calls.some((c) => c.factId === 'b1')).toBe(true);
+    const b = (await ledger(raw)).find((r) => r.fact_id === 'b1');
+    expect(b.confirmed_at).not.toBeNull();
+  });
+
+  it('a timeout still stops the whole drain', async () => {
+    const raw = await markedStore();
+    await seed(raw, ['a1'], 'ea');
+    await seed(raw, ['b1'], 'eb');
+    const t = open(raw, (c) => (c.entityId === 'ea' ? new Promise<void>(() => {}) : undefined), { deletionHookTimeoutMs: 30 });
+    await t.wiki.setup();
+    const r = await t.wiki.runExternalDeletions();
+    expect(r.timedOut).toBe(true);
+    expect(t.calls.map((c) => c.factId)).toEqual(['a1']);
+  });
+
+  it('prune counts and outboxes only the rows it actually deleted when the guard skips one', async () => {
+    const raw = openTestDatabase();
+    await open(raw, () => {}).wiki.setup();
+    const t = open(raw, () => {}, { config: { enableOutbox: true } });
+    await t.wiki.setup();
+    await seed(raw, ['a', 'b']);
+    await t.wiki.runExternalDeletions('e1');
+    const orig = raw.getAllAsync.bind(raw);
+    let fired = false;
+    raw.getAllAsync = async (sql: string, ...args: any[]) => {
+      const out = await orig(sql, ...args);
+      if (!fired && /SELECT fact_id, confirmed_at FROM \S*vector_removals/.test(sql)) {
+        fired = true;
+        // A host raw statement on the shared connection re-owes 'a' mid-transaction.
+        await raw.runAsync(
+          `INSERT OR REPLACE INTO ${P}vector_removals (entity_id, fact_id, enqueued_at) VALUES ('e1', 'a', 5)`,
+        );
+      }
+      return out;
+    };
+    let err: unknown;
+    try {
+      await t.wiki.runPrune('e1', { retainSoftDeletedFor: 0 });
+    } catch (e) {
+      err = e;
+    }
+    raw.getAllAsync = orig;
+    expect(fired).toBe(true);
+    expect(err).toBeInstanceOf(PrunePartialFailureError);
+    expect((err as PrunePartialFailureError).deleted).toBe(1);
+    expect((err as PrunePartialFailureError).remaining).toBe(1);
+    expect((err as PrunePartialFailureError).failedAt).toBe('a');
+    expect(await factExists(raw, 'a')).toBe(true);
+    const out = await raw.getAllAsync(
+      `SELECT record_id FROM ${P}outbox WHERE table_name = 'entries' AND operation = 'DELETE' ORDER BY record_id`,
+    ) as any[];
+    expect(out.map((r) => r.record_id)).toEqual(['b']);
+  });
+
+  it('a ledger read that fails before paging returns transient instead of throwing', async () => {
+    const raw = await markedStore();
+    await seed(raw, ['a']);
+    const t = open(raw, () => {});
+    await t.wiki.setup();
+    const orig = raw.getFirstAsync.bind(raw);
+    raw.getFirstAsync = (sql: string, ...args: any[]) =>
+      /MAX\(seq\)/.test(sql) ? Promise.reject(new Error('busy')) : orig(sql, ...args);
+    const r = await t.wiki.runExternalDeletions();
+    raw.getFirstAsync = orig;
+    expect(r.transient).toBe(true);
+    expect(t.calls).toEqual([]);
+  });
+});
+
+describe('revision 4, import preserved-blob path', () => {
+  it('a delete during an imported vector call ends with null', async () => {
+    const src = openTestDatabase();
+    const s = new WikiMemory(src, { llmProvider: { generateText: async () => '{}', embed: async () => [0.1, 0.2] } } as any);
+    await s.setup();
+    const f = await s.remember('e1', { title: 'a', body: 'b' });
+    const dump = await s.exportDump(['e1']);
+    expect((dump.entities.e1.facts[0] as any).embedding_blob).toBeTruthy();
+
+    const raw = openTestDatabase();
+    const calls: Call[] = [];
+    const wiki = new WikiMemory(raw, {
+      llmProvider: { generateText: async () => '{}' },
+      vectorRanker: {
+        rankBySimilarity: async () => [],
+        onEmbeddingPersisted: async (c: Call) => {
+          calls.push(c);
+          if (c.vector !== null) await raw.runAsync(`UPDATE ${P}entries SET deleted_at = 9 WHERE id = ?`, [c.factId]);
+        },
+      },
+    } as any);
+    await wiki.setup();
+    await wiki.importDump(dump);
+    const mine = calls.filter((c) => c.factId === f.id);
+    expect(mine.map((c) => c.vector === null)).toEqual([false, true]);
   });
 });

@@ -371,7 +371,15 @@ export class MaintenanceService {
             kept = prunableIds.filter((id) => status.get(id) === 'pending');
           }
           if (deletable.length > 0) {
-            deletedEntries = await this.entryRepo.bulkDeletePruned(entityId, cutoff, deletable, tx, { keepUnconfirmedRemovals: hookLedger });
+            const deletedIds: string[] = [];
+            deletedEntries = await this.entryRepo.bulkDeletePruned(entityId, cutoff, deletable, tx, { keepUnconfirmedRemovals: hookLedger, deletedIds });
+            if (hookLedger) {
+              // A removal re-owed inside this transaction (host raw SQL on the
+              // shared connection) made the guard keep its fact: count it as kept.
+              const gone = new Set(deletedIds);
+              kept = [...kept, ...deletable.filter((id) => !gone.has(id))];
+              deletable = deletedIds;
+            }
             if (vrRepo && ledgerOn) {
               // Hook: only confirmed rows of facts now gone. Force, or a store
               // that never had an index: every row. Hookless with the marker:

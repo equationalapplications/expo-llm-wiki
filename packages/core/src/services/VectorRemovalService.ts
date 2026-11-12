@@ -179,18 +179,36 @@ export class VectorRemovalService {
 
     // Every entity is drained one entity at a time: a page read without an
     // entity filter can't use the partial index and scans the whole ledger.
-    const scopes: VectorRemovalScope[] =
-      entityId === undefined
-        ? (await this.repo.entitiesWithPending()).map((e) => ({ entityId: e }))
-        : ids === undefined
-          ? [{ entityId }]
-          : chunk(ids, ID_CHUNK).map((c) => ({ entityId, ids: c }));
-    const maxSeq = await this.repo.maxSeq();
+    let scopes: VectorRemovalScope[];
+    let maxSeq: number;
+    try {
+      scopes =
+        entityId === undefined
+          ? (await this.repo.entitiesWithPending()).map((e) => ({ entityId: e }))
+          : ids === undefined
+            ? [{ entityId }]
+            : chunk(ids, ID_CHUNK).map((c) => ({ entityId, ids: c }));
+      maxSeq = await this.repo.maxSeq();
+    } catch {
+      result.transient = true;
+      try {
+        result.pending = await this.pendingFor(entityId, ids);
+      } catch {
+        // unknown; leave 0 rather than throw
+      }
+      return result;
+    }
+    // A timeout or the deadline ends the whole drain. Five consecutive
+    // rejections end only the current entity, so one failing entity can't
+    // starve the others in a drain of every entity.
+    const perEntity = entityId === undefined;
 
     for (const sc of scopes) {
       if (stop || transient) break;
       let cursor = { maxSeq, attempts: -1, seq: 0 };
-      while (!stop) {
+      let scopeDone = false;
+      if (perEntity) consecutive = 0;
+      while (!stop && !scopeDone) {
         let page: LedgerRow[];
         try {
           page = await this.db.withTransactionAsync((tx) =>
@@ -249,7 +267,8 @@ export class VectorRemovalService {
             }
             firstRejection ??= outcome.cause;
             if (++consecutive >= MAX_CONSECUTIVE_REJECTIONS) {
-              stop = true;
+              if (perEntity) scopeDone = true;
+              else stop = true;
               break;
             }
           }

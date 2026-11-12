@@ -988,8 +988,8 @@ export interface WikiOptions {
    * "cannot start a transaction within a transaction" while one of them is
    * open. Turn it on only if you never open your own transactions on it.
    * When off, `setup()` emits `external_deletion_pending` per entity with
-   * owed removals, and `runPendingMaintenance()`, `runExternalDeletions()`,
-   * `forget()` and `runPrune()` deliver them.
+   * owed removals. `runPendingMaintenance()` and `runExternalDeletions()`
+   * deliver them; `forget()` and `runPrune()` deliver the ids they touch.
    */
   drainExternalDeletionsOnSetup?: boolean;
 

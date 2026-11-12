@@ -816,7 +816,7 @@ export class EntryRepository extends BaseRepository {
     cutoff: number,
     ids: string[],
     tx: SQLiteAdapter,
-    opts: { keepUnconfirmedRemovals?: boolean } = {},
+    opts: { keepUnconfirmedRemovals?: boolean; deletedIds?: string[] } = {},
   ): Promise<number> {
     const executor = this.getExecutor(tx);
     // Spec durable-vector-removal §5.6.4: under a removal hook, never hard-delete
@@ -827,13 +827,24 @@ export class EntryRepository extends BaseRepository {
     let totalChanges = 0;
     const chunkSize = 500;
     for (let i = 0; i < ids.length; i += chunkSize) {
-      const chunk = ids.slice(i, i + chunkSize);
+      let chunk = ids.slice(i, i + chunkSize);
+      if (guard) {
+        // Select first, so the count, the outbox and `deletedIds` name only
+        // rows the guard let through (same transaction, so the set is exact).
+        const rows = await executor.getAllAsync<{ id: string }>(
+          `SELECT id FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ? AND id IN (${chunk.map(() => '?').join(',')})${guard}`,
+          [entityId, cutoff, ...chunk],
+        );
+        chunk = rows.map((r) => r.id);
+        if (chunk.length === 0) continue;
+      }
       const placeholders = chunk.map(() => '?').join(',');
       const result = await executor.runAsync(
         `DELETE FROM ${this.prefix}entries WHERE entity_id = ? AND deleted_at IS NOT NULL AND deleted_at <= ? AND id IN (${placeholders})${guard}`,
         [entityId, cutoff, ...chunk],
       );
       totalChanges += result.changes;
+      if (guard) opts.deletedIds?.push(...chunk);
       // Stage outbox entries for permanently deleted records
       if (result.changes > 0) {
         for (const id of chunk) {

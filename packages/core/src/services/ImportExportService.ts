@@ -563,6 +563,10 @@ export class ImportExportService {
             fact.id,
           );
         }
+        // Same post-check as storeFactVector: a delete during the call ends with null (G10).
+        if (this.embeddingService.hasVectorHook()) {
+          await this.embeddingService.settleAfterVectorCall(entityId, fact.id, 'importDump', 'call');
+        }
       }
     }
 

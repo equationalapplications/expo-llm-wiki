@@ -221,15 +221,23 @@ export class EmbeddingService {
       this.reportEmbed(ctx, fact, 'hook_failed', 'on_embedding_persisted');
     }
     // A vector call was made (resolved or not): if the fact was deleted while
-    // it ran, take the vector back. Every embed path passes here (spec §5.7, G10).
-    if (this.options.vectorRanker?.onEmbeddingPersisted) {
+    // it ran, take the vector back. Every embed path passes here; import's
+    // preserved-blob loop calls settleAfterVectorCall itself (spec §5.7, G10).
+    if (this.hasVectorHook()) {
       await this.settleAfterVectorCall(fact.entity_id, fact.id, ctx?.operation ?? 'externalDeletion', ctx?.trigger ?? 'call');
     }
     return { ok: true, dimension: float32Vector.length };
   }
 
-  /** Never throws: a failure here leaves the removal owed or unrecorded, as before. */
-  private async settleAfterVectorCall(
+  hasVectorHook(): boolean {
+    return !!this.options.vectorRanker?.onEmbeddingPersisted;
+  }
+
+  /**
+   * Run after a vector call (resolved or not) by every path that sends one.
+   * Never throws: a failure here leaves the removal owed or unrecorded, as before.
+   */
+  async settleAfterVectorCall(
     entityId: string,
     factId: string,
     operation: WikiDiagnosticOperation,
