@@ -1,3 +1,22 @@
+## [8.3.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v8.2.0...v8.3.0) (2026-11-12)
+
+### Features
+
+* **core:** forget clearAll can wipe an entity's events; clearAll removes edges and source-ref rows (spec §6) ([c6a7e90](https://github.com/equationalapplications/expo-llm-wiki/commit/c6a7e90053bf31770259ab38712cb2a482085a2a))
+* **okf:** deriveEventId for id-less log events (spec §3.3, §3.4, [#365](https://github.com/equationalapplications/expo-llm-wiki/issues/365)) ([31d99e8](https://github.com/equationalapplications/expo-llm-wiki/commit/31d99e8444e453ada0d3836ca3db662a92487d00))
+* **react:** useWikiForget accepts includeEvents and returns deleted.events (spec §6) ([2eeaaaf](https://github.com/equationalapplications/expo-llm-wiki/commit/2eeaaafe5510bee2379ed1827b32ca381a72b3d5))
+
+### Bug Fixes
+
+* **core:** a derived event id already used in the log takes the next occurrence (spec §3.2 rev 2, [#365](https://github.com/equationalapplications/expo-llm-wiki/issues/365)) ([649a87c](https://github.com/equationalapplications/expo-llm-wiki/commit/649a87c3225ee7df9d4354a6d298be479f14d14a))
+* **core:** derived-id count keys on the hashed summary, so crafted logs parse in linear time (spec §3.2, [#365](https://github.com/equationalapplications/expo-llm-wiki/issues/365)) ([7150daa](https://github.com/equationalapplications/expo-llm-wiki/commit/7150daa47b821e11611c31e8442d750108a0d390))
+* **core:** forget clearAll hard-deletes the entity's source-ref index rows ([b0010bd](https://github.com/equationalapplications/expo-llm-wiki/commit/b0010bd697ff103b65bdfa225c7a433c74adc728))
+* **core:** forget collects deleted ids without a spread ([f119c9e](https://github.com/equationalapplications/expo-llm-wiki/commit/f119c9eb7a4bf02ada1ef19ae8827c69cb858099))
+* **core:** importDump reports a throwing no-vector hook as hook_failed (spec §1, [#367](https://github.com/equationalapplications/expo-llm-wiki/issues/367)) ([c131fb4](https://github.com/equationalapplications/expo-llm-wiki/commit/c131fb40d8be3c87d95b2a8a0fbaa72e9a3f196c))
+* **core:** ops default valid_from is the newest batch date, never later than now (spec §2, [#366](https://github.com/equationalapplications/expo-llm-wiki/issues/366)) ([a573a22](https://github.com/equationalapplications/expo-llm-wiki/commit/a573a228d2bc6ef558f18de6fdbd7023f4ed04df))
+* **core:** parseOkfBundle derives stable ids for id-less log lines and unescapes plain summaries (spec §3.1, §3.6, [#365](https://github.com/equationalapplications/expo-llm-wiki/issues/365)) ([f02cb02](https://github.com/equationalapplications/expo-llm-wiki/commit/f02cb02f610e17755ec545aaf09d60a30631a233))
+* **okf,core:** derived-id walk hashes a line's shared fields once ([2cfac34](https://github.com/equationalapplications/expo-llm-wiki/commit/2cfac3419e43fa510b8a7e95c58e3147c56922a7))
+
 ## [8.2.0](https://github.com/equationalapplications/expo-llm-wiki/compare/v8.1.0...v8.2.0) (2026-11-11)
 
 ### Features
