@@ -130,7 +130,7 @@ report.stoppedReason.reason; // 'complete' | 'deadline' | 'budget_exhausted' | '
 // Nothing is still running at this point, so it's safe to persist the DB file.
 ```
 
-- `getPendingMaintenance()` shows the backlog per entity without calling a model. It also reports `pendingExternalDeletions` when your vector index still owes removals and this process can act on them (a hook is configured, or `forceDeleteIgnoreRankerHook` is on).
+- `getPendingMaintenance()` shows the backlog per entity without calling a model. It also reports `pendingExternalDeletions` when your vector index still owes removals and this process can act on them (a hook is configured, or `forceDeleteIgnoreRankerHook` is on). An entity with only owed removals is listed only while at least one of its rows is outside backoff (never attempted, or last attempted longer ago than `min(2^attempts, 3600)` seconds), so a loop over `getPendingMaintenance()` ends even when the hook keeps failing.
 - `runPendingMaintenance()` also delivers those owed removals first (the `'externalDeletions'` job). That work makes no model call and doesn't use the token budget. If you loop until nothing is pending, bound the iterations: a hook that always rejects keeps removals pending.
 - The budget counts **text-generation tokens only**, not embedding calls. The counts come from
   the provider when you implement `generateTextWithUsage`, and are estimated otherwise.

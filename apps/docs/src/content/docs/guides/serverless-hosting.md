@@ -27,7 +27,7 @@ const wiki = new WikiMemory(db, {
 ## Request lifecycle
 
 1. **Pull** the tenant's `.sqlite` file. Use a conditional fetch (ETag) to skip unchanged files.
-2. **Open.** `new WikiMemory(…)` and `await wiki.setup()`. This is cheap when the schema is current. If your wiki has a removal hook and removals are owed, `setup()` may also start a background drain of them. It makes no model call.
+2. **Open.** `new WikiMemory(…)` and `await wiki.setup()`. This is cheap when the schema is current. If your wiki has a removal hook and removals are owed, `setup()` may also start a background drain of them (under `forceDeleteIgnoreRankerHook` the drain runs too, to discard the owed rows). It makes no model call. On a serverless host, set `drainExternalDeletionsOnSetup: false` and let the `'externalDeletions'` job in `runPendingMaintenance` deliver them: that job honours `deadlineMs`.
 3. **Handle the request:**
    - `write(entityId, { …, occurred_at: clientTimestamp })`
    - `read(entityId, query, { tokenBudget })`
