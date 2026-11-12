@@ -551,7 +551,8 @@ export class MaintenanceService {
 
       await this.db.withTransactionAsync(async (tx) => {
         if (params.clearAll) {
-          deletedEntryIds.push(...await this.entryRepo.findIdsBySource(entityId, null, null, tx, true));
+          // A loop, not push(...ids): a spread of ~120k ids overflows the stack.
+          for (const id of await this.entryRepo.findIdsBySource(entityId, null, null, tx, true)) deletedEntryIds.push(id);
           deletedEntries = await this.entryRepo.bulkSoftDeleteByEntityId(entityId, tx);
           deletedTasks = await this.taskRepo.bulkSoftDeleteByEntityId(entityId, tx);
           // Remove the entity's source_ref_index rows, live or not. The table
@@ -601,7 +602,7 @@ export class MaintenanceService {
           }
 
           if (sourceRef || sourceHash) {
-            deletedEntryIds.push(...await this.entryRepo.findIdsBySource(entityId, sourceRef, sourceHash, tx, true));
+            for (const id of await this.entryRepo.findIdsBySource(entityId, sourceRef, sourceHash, tx, true)) deletedEntryIds.push(id);
           }
 
           const entryPromise = params.entryId ? this.entryRepo.softDelete(params.entryId, entityId, tx).then(r => r.changes > 0) : null;

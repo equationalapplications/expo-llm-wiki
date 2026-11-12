@@ -87,6 +87,22 @@ describe('forget() before migration v9 (#316)', () => {
     expect(await outboxDeletes(db)).toEqual(['b1']);
   });
 
+  it('clearAll + includeEvents on a never-set-up v8 store wipes facts, edges and events, and leaves the index absent (spec import-followups §6)', async () => {
+    const db = await dupFixture();
+    await insertV8Entry(db, { id: 'o1', entityId: 'other', sourceRef: 'o.md', sourceHash: H2, updatedAt: 1 });
+    await db.runAsync(`INSERT INTO ${P}edges (id, entity_id, source_id, target_id, edge_type, created_at) VALUES ('g1', 'ent', 'a1', 'b1', 'rel', 1), ('g2', 'other', 'o1', 'o1', 'rel', 1)`);
+    await db.runAsync(`INSERT INTO ${P}events (id, entity_id, event_type, summary, related_entry_id, created_at) VALUES ('v1', 'ent', 'observation', 'x', NULL, 1), ('v2', 'other', 'observation', 'y', NULL, 1)`);
+    const wiki = new WikiMemory(db, options);
+
+    await expect(wiki.forget('ent', { clearAll: true, includeEvents: true }))
+      .resolves.toEqual({ deleted: { entries: 3, tasks: 0, events: 1 }, metadataReset: true });
+
+    expect(await liveIds(db)).toEqual(['o1']);
+    expect(await sourceRefIndexExists(db)).toBe(false);
+    expect((await db.getAllAsync<{ id: string }>(`SELECT id FROM ${P}edges ORDER BY id`)).map(r => r.id)).toEqual(['g2']);
+    expect((await db.getAllAsync<{ id: string }>(`SELECT id FROM ${P}events ORDER BY id`)).map(r => r.id)).toEqual(['v2']);
+  });
+
   it('case C: forget({ sourceRef }) works after setup({ migrations: "refuse" }) refused the open', async () => {
     const db = await dupFixture();
     const wiki = new WikiMemory(db, options);

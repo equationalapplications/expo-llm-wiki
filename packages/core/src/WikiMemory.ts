@@ -861,7 +861,9 @@ export class WikiMemory {
    * Add `includeEvents: true` to `clearAll` to hard-delete every event too,
    * read or not, and reset the librarian's position: without it a later
    * maintenance run can read the events into facts again. `runPrune()` then
-   * hard-deletes the soft-deleted rows. `dryRun` previews the counts.
+   * hard-deletes the soft-deleted rows once they are older than
+   * `retainSoftDeletedFor` (7 days by default; pass 0 to remove them now).
+   * `dryRun` previews the counts.
    */
   async forget(
     entityId: string,

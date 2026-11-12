@@ -151,6 +151,20 @@ describe('forget({ clearAll: true, includeEvents: true })', () => {
     expect(retry.deleted.events).toBe(0);
   });
 
+  it('wipes an entity with more fact rows than a spread argument list can hold', async () => {
+    const { db, wiki, count } = await mk();
+    const N = 130_000;
+    await db.runAsync(
+      `WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < ?)
+       INSERT INTO llm_wiki_entries (id, entity_id, title, body, tags, confidence, created_at, updated_at, deleted_at)
+       SELECT 'big' || i, 'e1', 't', 'b', '[]', 'certain', 1, 1, CASE WHEN i % 2 = 0 THEN 1 ELSE NULL END FROM n`,
+      [N - 1],
+    );
+    const res = await wiki.forget('e1', { clearAll: true });
+    expect(res.deleted.entries).toBe(N / 2);
+    expect(await count('entries', 'e1', ' AND deleted_at IS NULL')).toBe(0);
+  }, 60_000);
+
   it('emits no diagnostics', async () => {
     const { wiki, diagnostics, write } = await mk();
     await write('e1', 2);
