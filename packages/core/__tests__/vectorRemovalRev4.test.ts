@@ -307,3 +307,52 @@ describe('revision 4, import preserved-blob path', () => {
     expect(mine.map((c) => c.vector === null)).toEqual([false, true]);
   });
 });
+
+describe('orphan sweep at setup()', () => {
+  const hardDelete = (raw: any, id: string) => raw.runAsync(`DELETE FROM ${P}entries WHERE id = ?`, [id]);
+
+  it('a store that never had a hook drops rows whose fact a host hard-deleted', async () => {
+    const raw = openTestDatabase();
+    await open(raw).wiki.setup();
+    await seed(raw, ['gone', 'kept']);
+    await hardDelete(raw, 'gone');
+    await open(raw).wiki.setup();
+    expect((await ledger(raw)).map((r) => r.fact_id)).toEqual(['kept']);
+  });
+
+  it('confirmed rows whose fact is gone are dropped under a hook; pending ones are kept and delivered', async () => {
+    const raw = await markedStore();
+    await seed(raw, ['conf', 'pend']);
+    const h = open(raw, (c) => { if (c.factId === 'pend') throw new Error('nope'); });
+    await h.wiki.setup();
+    await h.wiki.runExternalDeletions('e1');
+    await hardDelete(raw, 'conf');
+    await hardDelete(raw, 'pend');
+    const t = open(raw, () => {});
+    await t.wiki.setup();
+    expect((await ledger(raw)).map((r) => r.fact_id)).toEqual(['pend']);
+    await t.wiki.runExternalDeletions('e1');
+    expect(t.calls.map((c) => c.factId)).toEqual(['pend']);
+    expect(await ledger(raw)).toEqual([]);
+  });
+
+  it('a hookless process on a marked store keeps pending rows whose fact is gone', async () => {
+    const raw = await markedStore();
+    await seed(raw, ['owed']);
+    await hardDelete(raw, 'owed');
+    await open(raw).wiki.setup();
+    const rows = await ledger(raw);
+    expect(rows.map((r) => r.fact_id)).toEqual(['owed']);
+    expect(rows[0].confirmed_at).toBeNull();
+  });
+
+  it('a failing sweep does not fail setup()', async () => {
+    const raw = openTestDatabase();
+    await open(raw).wiki.setup();
+    const orig = raw.runAsync.bind(raw);
+    raw.runAsync = (sql: string, ...args: any[]) =>
+      /DELETE FROM \S*vector_removals[\s\S]*NOT EXISTS/.test(sql) ? Promise.reject(new Error('busy')) : orig(sql, ...args);
+    await expect(open(raw).wiki.setup()).resolves.toBeUndefined();
+    raw.runAsync = orig;
+  });
+});

@@ -467,7 +467,23 @@ export class WikiMemory {
     );
     // FTS5: one budgeted quantum (no global read). MiniSearch: full rebuild, as before.
     await this.searchService.sync(undefined, { deadline: openDeadline });
+    await this.sweepOrphanRemovals();
     await this.startSetupRemovalDrain();
+  }
+
+  /**
+   * Drop ledger rows whose fact a host hard-deleted itself, bypassing prune,
+   * when nothing can still owe them (spec durable-vector-removal §5.3). Never
+   * fails setup().
+   */
+  private async sweepOrphanRemovals(): Promise<void> {
+    try {
+      const includePending =
+        this.vectorRemovalService.gate() !== 'hook' && !(await this.vectorRemovalService.externalIndexInUse());
+      await this.db.withTransactionAsync((tx) => this.vectorRemovalRepo.sweepOrphans(includePending, tx));
+    } catch (err) {
+      console.warn('[WikiMemory] removal ledger sweep failed:', err);
+    }
   }
 
   private setupRemovalDrain: Promise<void> | null = null;

@@ -211,6 +211,20 @@ export class VectorRemovalRepository extends BaseRepository {
     }
   }
 
+  /**
+   * Delete rows whose fact row no longer exists: confirmed ones always, and
+   * pending ones too when `includePending` (nothing can still owe them).
+   * Keyed on `fact_id` store-wide. Returns the count removed.
+   */
+  async sweepOrphans(includePending: boolean, tx?: SQLiteAdapter): Promise<number> {
+    const r = await this.getExecutor(tx).runAsync(
+      `DELETE FROM ${this.prefix}vector_removals
+        WHERE ${includePending ? '1 = 1' : 'confirmed_at IS NOT NULL'}
+          AND NOT EXISTS (SELECT 1 FROM ${this.prefix}entries e WHERE e.id = ${this.prefix}vector_removals.fact_id)`,
+    );
+    return r?.changes ?? 0;
+  }
+
   /** Drop unconfirmed rows. Returns the count removed. */
   async discardPending(entityId?: string, tx?: SQLiteAdapter): Promise<number> {
     const executor = this.getExecutor(tx);
