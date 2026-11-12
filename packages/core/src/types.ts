@@ -1080,6 +1080,32 @@ export class WikiBusyError extends Error {
  * a live row. Mirrors {@link WikiBusyError}'s anchoring of canonical metadata
  * on the error instance for stable observability.
  */
+/**
+ * Thrown by forget() when the external vector index has not confirmed the
+ * removal of every selected id. The local delete stays committed and the
+ * unconfirmed ids stay owed in the ledger.
+ */
+export class WikiExternalDeletionError extends Error {
+  readonly code = 'WIKI_EXTERNAL_DELETION' as const;
+  readonly entityId: string;
+  /** At most 100 ids; see unconfirmedCount for the full count. */
+  readonly unconfirmedIds: string[];
+  readonly unconfirmedCount: number;
+  readonly timedOut: boolean;
+
+  constructor(
+    message: string,
+    params: { entityId: string; unconfirmedIds: string[]; unconfirmedCount: number; timedOut: boolean; cause?: Error },
+  ) {
+    super(message, params.cause ? { cause: params.cause } : undefined);
+    this.name = 'WikiExternalDeletionError';
+    this.entityId = params.entityId;
+    this.unconfirmedIds = params.unconfirmedIds;
+    this.unconfirmedCount = params.unconfirmedCount;
+    this.timedOut = params.timedOut;
+  }
+}
+
 export class WikiDuplicateHashError extends Error {
   readonly canonical: string;
   readonly sourceHash: string;

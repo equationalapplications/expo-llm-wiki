@@ -10,7 +10,9 @@ import { generateId } from '../utils/ids';
 import { resolveLibrarianStrategy, resolveMaintenanceMode } from '../utils/engineDefaults';
 import { parseEmbedding } from '../utils/embedding';
 import { PrunePartialFailureError } from '../types';
-import { HOOK_TIMEOUT_MARKER } from '../types';
+import { HOOK_TIMEOUT_MARKER, WikiExternalDeletionError } from '../types';
+import type { VectorRemovalService } from './VectorRemovalService';
+import type { VectorRemovalRepository } from '../repositories/VectorRemovalRepository';
 import type { WikiOptions, ExtractedFact, ExtractedFactEdge, ExtractedTask, ExtractedFactWithOntology, WikiFact, WikiTask, OntologyUpdates, OntologyBackfillResult, HealResult, DegradedRecord, ReembedResult, ClassifierQuestion, OntologyManifest, WikiDiagnosticTrigger } from '../types';
 import type { SQLiteAdapter, ForgetParams, ForgetResult } from '../types';
 import { EdgeRepository } from '../repositories/EdgeRepository';
@@ -234,6 +236,8 @@ export class MaintenanceService {
     promptService?: PromptService,
     private ontologyService?: OntologyService,
     edgeRepo?: EdgeRepository,
+    private vectorRemoval?: VectorRemovalService,
+    private vectorRemovalRepo?: VectorRemovalRepository,
   ) {
     // Fallback for direct instantiation outside WikiMemory facade (e.g. isolated tests).
     this.promptService = promptService ?? new PromptService(this.options.config?.prompts, resolveGrounding(this.options.config?.grounding));
@@ -548,6 +552,9 @@ export class MaintenanceService {
       let deletedTasks = 0;
       let deletedEvents = 0;
       const deletedEntryIds: string[] = [];
+      // A never-set-up (pre-v9) store has no ledger table; skip ledger work.
+      const ledgerOn = !!this.vectorRemoval
+        && await this.metadataRepo.tableExists(`${this.prefix}vector_removals`);
 
       await this.db.withTransactionAsync(async (tx) => {
         if (params.clearAll) {
@@ -628,6 +635,11 @@ export class MaintenanceService {
           if (taskResult) deletedTasks++;
           deletedEntries += refResult;
         }
+        // Backstop (spec durable-vector-removal §5.5): ids soft-deleted before
+        // the ledger existed get a row so a retry still sends them.
+        if (ledgerOn && this.vectorRemoval?.gate() === 'hook' && deletedEntryIds.length > 0) {
+          await this.vectorRemovalRepo!.backstopEnqueue(entityId, Array.from(new Set(deletedEntryIds)), now, tx);
+        }
       });
 
       // Every branch that soft-deletes entries also enumerates the ids into
@@ -637,19 +649,34 @@ export class MaintenanceService {
       // branch. So the index update is O(deleted), not O(entity) (spec §2.1).
       const uniqueDeletedIds = Array.from(new Set(deletedEntryIds));
       await this.searchService.syncEntries(entityId, uniqueDeletedIds);
-      for (const factId of uniqueDeletedIds) {
+      if (ledgerOn && this.vectorRemoval && uniqueDeletedIds.length > 0) {
+        const firstId = uniqueDeletedIds[0];
+        let result;
         try {
-          await this.embeddingService.notifyEmbeddingPersistedOrThrow(entityId, factId, null);
+          result = await this.vectorRemoval.drain({ entityId, ids: uniqueDeletedIds });
         } catch (hookErr) {
-          const isTimeout = (hookErr as any)?.[HOOK_TIMEOUT_MARKER] === true;
-          if (isTimeout) {
-            throw new Error(`forget(${entityId}/${factId}) failed: ${(hookErr as Error).message}`);
-          }
           const errMsg = (hookErr as Error)?.message ?? '';
           if (errMsg.startsWith('Invalid deletionHookTimeoutMs')) {
-            throw new Error(`forget(${entityId}/${factId}) failed: ${errMsg}`, { cause: hookErr });
+            throw new Error(`forget(${entityId}/${firstId}) failed: ${errMsg}`, { cause: hookErr });
           }
-          throw new Error(`forget(${entityId}/${factId}) failed: ANN cleanup hook rejected`, { cause: this._sanitizeRankerError(hookErr) });
+          throw hookErr;
+        }
+        if (this.vectorRemoval.gate() === 'hook') {
+          const status = await this.vectorRemovalRepo!.statusFor(uniqueDeletedIds);
+          const unconfirmed = uniqueDeletedIds.filter((id) => status.get(id) === 'pending');
+          if (unconfirmed.length > 0) {
+            const cause = result.firstCause;
+            const message = result.timedOut
+              ? `forget(${entityId}/${unconfirmed[0]}) failed: ${cause?.message ?? 'onEmbeddingPersisted timed out'}`
+              : `forget(${entityId}/${unconfirmed[0]}) failed: ANN cleanup hook rejected`;
+            throw new WikiExternalDeletionError(message, {
+              entityId,
+              unconfirmedIds: unconfirmed.slice(0, 100),
+              unconfirmedCount: unconfirmed.length,
+              timedOut: result.timedOut,
+              cause: result.timedOut ? undefined : this._sanitizeRankerError(cause),
+            });
+          }
         }
       }
 

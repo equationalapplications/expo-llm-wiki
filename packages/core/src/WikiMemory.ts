@@ -37,6 +37,8 @@ import { MaintenanceService } from './services/MaintenanceService';
 import { MaintenanceScheduler } from './services/MaintenanceScheduler';
 import { ImportExportService } from './services/ImportExportService';
 import { EmbeddingService } from './services/EmbeddingService';
+import { VectorRemovalService } from './services/VectorRemovalService';
+import { VectorRemovalRepository } from './repositories/VectorRemovalRepository';
 import { RetrievalService } from './services/RetrievalService';
 import { WriteService } from './services/WriteService';
 import { PromptService } from './services/PromptService';
@@ -112,6 +114,8 @@ export class WikiMemory {
   private edgeRepo: EdgeRepository;
   private metadataRepo: MetadataRepository;
   private embeddingService: EmbeddingService;
+  private vectorRemovalRepo: VectorRemovalRepository;
+  private vectorRemovalService: VectorRemovalService;
   private searchService: SearchService;
   private jobManager: JobManager;
   private ingestionService: IngestionService;
@@ -157,6 +161,8 @@ export class WikiMemory {
     );
     this.lintService = new LintService(this.lintRepo, this.ontologyService);
     this.embeddingService = new EmbeddingService(this.db, this.options, this.entryRepo, this.metadataRepo);
+    this.vectorRemovalRepo = new VectorRemovalRepository(this.db, this.prefix);
+    this.vectorRemovalService = new VectorRemovalService(this.db, this.options, this.vectorRemovalRepo, this.embeddingService, this.metadataRepo);
     this.searchService = new SearchService(
       this.entryRepo,
       new MiniSearchIndexStrategy(),
@@ -194,6 +200,8 @@ export class WikiMemory {
       this.promptService,
       this.ontologyService,
       this.edgeRepo,
+      this.vectorRemovalService,
+      this.vectorRemovalRepo,
     );
     this.maintenanceScheduler = new MaintenanceScheduler(
       this.db,
