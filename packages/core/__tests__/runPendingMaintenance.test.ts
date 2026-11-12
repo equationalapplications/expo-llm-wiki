@@ -131,10 +131,13 @@ describe('runPendingMaintenance', () => {
   });
 
   it('deadline is checked between units', async () => {
-    const generateText = vi.fn(async () => { await new Promise((r) => setTimeout(r, 30)); return noFacts; });
+    // The deadline must outlast the work before the first unit (a 10 ms one
+    // flaked under a loaded suite) and expire during it: one 200 ms call
+    // against a 100 ms deadline means exactly one unit runs.
+    const generateText = vi.fn(async () => { await new Promise((r) => setTimeout(r, 200)); return noFacts; });
     const { wiki } = await mk({ generateText });
     for (let i = 0; i < 120; i++) await wiki.write('a', { event_type: 'observation', summary: `e${i}` });
-    const r = await wiki.runPendingMaintenance({ deadlineMs: 10 });
+    const r = await wiki.runPendingMaintenance({ deadlineMs: 100 });
     expect(r.stoppedReason).toEqual({ reason: 'deadline' });
     expect(generateText).toHaveBeenCalledTimes(1);
   });
