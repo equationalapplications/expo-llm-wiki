@@ -23,6 +23,11 @@ export interface VectorRemovalCursor {
 
 const CHUNK = 500;
 
+/** Wait before a failed row is retried by a backoff drain: min(2^attempts, 3600) seconds. */
+export function removalBackoffMs(attempts: number): number {
+  return Math.min(2 ** attempts, 3600) * 1000;
+}
+
 function chunks<T>(xs: T[], n: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n));
@@ -228,6 +233,23 @@ export class VectorRemovalRepository extends BaseRepository {
     const rows = await this.db.getAllAsync<{ entity_id: string }>(
       `SELECT DISTINCT entity_id FROM ${this.prefix}vector_removals
         WHERE confirmed_at IS NULL ORDER BY entity_id`,
+    );
+    return rows.map((r) => r.entity_id);
+  }
+
+  /**
+   * Entities with at least one pending row outside backoff (never attempted,
+   * or last attempted longer ago than removalBackoffMs). Same rule as the drain.
+   */
+  async entitiesWithDuePending(now: number): Promise<string[]> {
+    // (1 << MIN(attempts, 12)) = 2^attempts capped past 3600; keep in step with removalBackoffMs.
+    const rows = await this.db.getAllAsync<{ entity_id: string }>(
+      `SELECT DISTINCT entity_id FROM ${this.prefix}vector_removals
+        WHERE confirmed_at IS NULL
+          AND (last_attempt_at IS NULL
+               OR ? - last_attempt_at >= MIN(1 << MIN(attempts, 12), 3600) * 1000)
+        ORDER BY entity_id`,
+      [now],
     );
     return rows.map((r) => r.entity_id);
   }

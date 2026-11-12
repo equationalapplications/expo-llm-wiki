@@ -51,7 +51,8 @@ export class MaintenanceScheduler {
     const out: PendingMaintenance[] = [];
     const owed = new Map<string, number>();
     if (this.vectorRemovalService.gate() !== 'none' && (await this.vectorRemovalService.ledgerPresent())) {
-      for (const e of await this.vectorRemovalRepo.entitiesWithPending()) {
+      // Only entities with a row outside backoff: a failing hook must not keep the list non-empty.
+      for (const e of await this.vectorRemovalRepo.entitiesWithDuePending(Date.now())) {
         if (entityIds !== undefined && !entityIds.includes(e)) continue;
         owed.set(e, (await this.vectorRemovalRepo.pendingStats(e)).count);
       }
