@@ -42,6 +42,8 @@ Revision 5 (2026-11-12), from a Sonnet (high) review of the whole PR and CodeRab
 Revision 6 (2026-11-12), from CodeRabbit's follow-up on revision 5:
 - **Prune names deleted rows with `DELETE … RETURNING id`** (§5.6). Revision 5's read-back after the DELETE also reported an id that vanished before the statement ran (a host's own hard delete after prune selected it), and staged an outbox `DELETE` for it. `RETURNING` names exactly the rows the statement removed. The engine already relies on `RETURNING` (`markOrphaned`).
 - **When the embed-race record and the direct `null` call both fail, the record is tried once more** (§5.7). The hook wait gives a host's open transaction time to end; a recorded row re-owes a confirmed removal, and the next drain sends it. If that write fails too, nothing durable can hold the obligation, as in the never-set-up fallbacks (§5.5.5): `hook_failed` is the host's signal.
+- **The direct `null` call is sent only for a fact known not live** (§5.7). Revision 5 sent it whenever the embed-race check threw, including when the liveness read itself failed, so a live fact could lose its external vector. Now a failed read still runs the guarded write, whose `NOT EXISTS` decides liveness atomically. If that write fails too, liveness is unknown and nothing is sent: a missed removal is reported (console), a wrong removal would not be.
+- Docs: the security summary names the two cases that keep no record.
 - **Not changed, two rejections:**
   - Serializing removal calls with import's vector writes. That is the accepted window in §5.4: a resurrect during an in-flight `null` costs recall, not privacy, and `runReembed` restores it.
   - Keying obligations by `(entity_id, fact_id)`. `entries.id` is a global primary key, so the failure needs a hookless prune on a marked store and then another entity reusing the same id. That is too narrow to justify changing the ledger's key and every query.
@@ -304,6 +306,7 @@ One routine, `drainVectorRemovals(scope, opts)`, in a new `VectorRemovalService`
   - Then an awaited drain of that id. So the last call the host sees for a deleted id is `null`.
   - **Rev 4.** The check runs in `EmbeddingService.storeFactVector`, after the vector call, so every path that sends a vector has it: remember, supersede, ingest, librarian (both strategies), heal, reembed and import. Import's preserved-blob loop calls the hook directly and runs the same check (`settleAfterVectorCall`) itself. It runs only when a vector call was actually made (the blob was stored and the hook is configured). An embed that ended as `fact_deleted` or failed before the call no longer re-owes a removal already confirmed.
   - **Rev 6.** If the record fails and the direct `null` call fails too, the record is tried once more after the call. A recorded row (even over a confirmed one) is owed again and delivered by the next drain.
+  - **Rev 6.** `null` is sent directly only when a successful read showed the fact not live. If the read fails, the guarded write runs anyway; if it fails too, nothing is sent.
 - **`forceDeleteIgnoreRankerHook` scope (behavior change, called out).**
   - Today heal, ingest and import still call the hook when the flag is set, because `notifyEmbeddingPersisted` has no force check. Under this spec, the flag means "the index is decommissioned": no removal calls anywhere, and the ledger is discarded (§5.3).
   - The legacy spec `docs/superpowers/specs/2026-05-07-vectorranker-security-hardening.md` gets an appended Status note.
@@ -464,7 +467,7 @@ One routine, `drainVectorRemovals(scope, opts)`, in a new `VectorRemovalService`
 35. Hard-deleting a soft-deleted fact drops its confirmed row. On a store without the marker it drops its pending row too. On a marked store the pending row is kept.
 36. A confirm whose fact was hard-deleted meanwhile leaves no row.
 37. The never-set-up fallbacks of forget and deliverRemovals stop at the first timeout.
-38. When the embed-race enqueue fails, the hook gets `null` directly. Rev 6 (38c): when that call fails too, a retried enqueue re-owes the confirmed row and the next drain sends `null`.
+38. When the embed-race enqueue fails, the hook gets `null` directly. Rev 6 (38c): when that call fails too, a retried enqueue re-owes the confirmed row and the next drain sends `null`. Rev 6 (38d): when the liveness read and the write both fail, a live fact gets no `null`. (38e): when only the read fails, the guarded write owes a deleted fact and `null` is delivered.
 39. `runExternalDeletions()` and `getPendingExternalDeletions()` on a never-set-up store return zeros.
 40. `syncSearchIndex()` that throws keeps its stashed ids for the next call.
 41. Under force, importing an unembedded live fact makes no hook call.
