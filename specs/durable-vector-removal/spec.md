@@ -11,6 +11,8 @@ Revision 2 (2026-11-11), after an Opus (high) review of revision 1:
 - The INTENT §7 wording is corrected (§5.11).
 - The test plan is rewritten (§8).
 
+Revision 3 (2026-11-11), from the Task 2 review: calls in flight are keyed by ledger row (`seq`), not by fact (§5.4); the drain's deadline is an absolute time named `deadlineAt`; a failed write transaction stops the drain as transient; liveness is checked per page (§5.4).
+
 **Date:** 2026-11-11
 **Branch:** `docs/spec-durable-vector-removal`, stacked on PR #371 (`docs/spec-import-followups`); retargets to `main` after #371 merges.
 **Source baseline:** `889da3f5` (PR #371 head).
@@ -180,21 +182,28 @@ One routine, `drainVectorRemovals(scope, opts)`, in a new `VectorRemovalService`
 
 - **No `JobManager` lock.** It reads the ledger and `entries`, and writes only the ledger.
 - **Validation.** It validates `deletionHookTimeoutMs` once before draining, and throws the existing `Invalid deletionHookTimeoutMs` error.
-- **Per-id in flight.** Each instance keeps a `Map<factId, Promise>` of calls in flight. A drain that reaches an id already in flight awaits that promise, and doesn't call again. No per-entity coalescing.
+- **Per-row in flight.** Each instance keeps a `Map<factId, { seq, promise }>` of calls in flight.
+  - A drain that reaches the same `seq` already in flight awaits that promise, raced against its own per-call budget, and doesn't call again.
+  - Only the drain that made the call settles the row (confirm or bump), so one call never bumps `attempts` twice.
+  - If the joiner's budget runs out first, it counts as a timeout for the joiner: it stops without settling. The shared call keeps running.
+  - If the in-flight entry has a different `seq` (the fact was re-deleted), the drain awaits it and then makes a fresh call for its own `seq`. A `null` sent before a re-delete never confirms the newer obligation.
+  - No per-entity coalescing.
 - **Snapshot and keyset paging.**
   - At start, the drain reads `maxSeq`.
   - It pages with `WHERE confirmed_at IS NULL AND seq <= :maxSeq AND (attempts, seq) > (:lastAttempts, :lastSeq) ORDER BY attempts, seq LIMIT 100`. Each row is tried at most once per drain, and every drain ends.
   - For `{ entityId, ids }`, it pages over those ids first (§5.5).
 - **Page reads.** Each page is read in one statement, `LEFT JOIN {p}entries`, so the drain knows whether the fact is live, soft-deleted or gone. The read runs inside a short `withTransactionAsync` on the serialized adapter, and no hook is called until that transaction closes.
   - If the read can't begin (for example, the host holds an open transaction on the same connection), the drain stops as transient. Rows aren't touched.
+  - A settling write that fails stops the drain the same way. That page's results are lost, the rows stay pending (safe; at worst a repeat call), and the result carries `transient: true`.
+  - Liveness is read once per page. A fact made live again during its page can still get `null`. That costs recall, not privacy, like the in-flight window below.
 - **Per row:**
   1. If the fact is live, the row is stale (resurrected after the read): delete it `WHERE seq = ?`, no call.
-  2. Otherwise call the hook with `vector: null`. The per-call timeout is `min(deletionHookTimeoutMs, time left before opts.deadlineMs)`.
+  2. Otherwise call the hook with `vector: null`. The per-call timeout is `min(deletionHookTimeoutMs, time left before opts.deadlineAt)`.
   3. **Resolved:** set `confirmed_at WHERE seq = ?`. If the fact row is gone (already hard-deleted), delete the ledger row instead. Writes are batched, one transaction per page.
   4. **Rejected or timed out:** bump `attempts` and `last_attempt_at WHERE seq = ?`. A timeout counts the same, so a hanging id moves behind the others.
-- **Stop conditions:** the first timeout (a dead index costs one timeout per drain, not one per id), 5 consecutive rejections, or `opts.deadlineMs`.
+- **Stop conditions:** the first timeout (a dead index costs one timeout per drain, not one per id), 5 consecutive rejections, or `opts.deadlineAt` (an absolute `Date.now()` time). Public APIs take `deadlineMs`, a duration from the call, and convert it.
 - **Backoff, for automatic drains only:** skip a row whose `last_attempt_at` is within `min(2^attempts, 3600)` s. Calls the host makes ignore backoff.
-- **Result:** `{ confirmed: number; pending: number; failedIds: string[] /* ≤ 100 */; timedOut: boolean }`.
+- **Result:** `{ confirmed: number; pending: number; failedIds: string[] /* ≤ 100 */; timedOut: boolean; transient?: boolean }`. `confirmed` counts rows whose confirmation or gone-row delete actually changed a row.
 - **Known window (accepted).** If a fact is resurrected while its `null` call is in flight, the host's index loses the live fact's vector. That costs recall, not privacy, and `runReembed` restores it.
 
 ### 5.5 `forget()`
