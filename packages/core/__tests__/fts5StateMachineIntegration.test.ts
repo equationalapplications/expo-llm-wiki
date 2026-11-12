@@ -46,7 +46,7 @@ describe('FTS state machine, integration (#280 B7, ≥2k rows)', () => {
     await db.execAsync(`DROP TRIGGER ${fts5TriggerNames(P)[2]}`);
     await open(db);
     expect(await stateOf(db)).toBe('rebuilding');
-    const trig = async () => (await db.getAllAsync(`SELECT name FROM sqlite_master WHERE type = 'trigger'`)).length;
+    const trig = async () => (await db.getAllAsync(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND name NOT LIKE '%vector_removals%'`)).length;
     expect(await trig()).toBe(3);
     await open(db); // mid-rebuild resume
     expect(await trig()).toBe(3);

@@ -95,7 +95,7 @@ describe('migrations v2–v6: FTS removal, embeddings, outbox, okf edges, entity
     expect(fts).toBeNull();
 
     const triggers = await db.getAllAsync<{ name: string }>(
-      `SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name='llm_wiki_entries'`
+      `SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name='llm_wiki_entries' AND name NOT LIKE '%vector_removals%'`
     );
     expect(triggers).toHaveLength(0);
 

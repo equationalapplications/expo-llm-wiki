@@ -146,6 +146,38 @@ export async function setupDatabase(db: SQLiteAdapter, prefix: string) {
       ON ${prefix}outbox (created_at);
   `);
 
+  // Vector-removal ledger (spec durable-vector-removal §5.1-5.2). Filled by
+  // triggers on entries so every soft-delete path, including host raw SQL,
+  // enqueues. No schema_version bump: created on every open.
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS ${prefix}vector_removals (
+      seq             INTEGER PRIMARY KEY AUTOINCREMENT,
+      entity_id       TEXT NOT NULL,
+      fact_id         TEXT NOT NULL UNIQUE,
+      enqueued_at     INTEGER NOT NULL,
+      attempts        INTEGER NOT NULL DEFAULT 0,
+      last_attempt_at INTEGER,
+      confirmed_at    INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS ${prefix}vector_removals_pending
+      ON ${prefix}vector_removals (entity_id, attempts, seq) WHERE confirmed_at IS NULL;
+
+    CREATE TRIGGER IF NOT EXISTS ${prefix}vector_removals_enqueue
+    AFTER UPDATE OF deleted_at ON ${prefix}entries
+    WHEN OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL
+    BEGIN
+      INSERT OR REPLACE INTO ${prefix}vector_removals (entity_id, fact_id, enqueued_at)
+      VALUES (NEW.entity_id, NEW.id, CAST(strftime('%s','now') AS INTEGER) * 1000);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS ${prefix}vector_removals_resurrect
+    AFTER UPDATE OF deleted_at ON ${prefix}entries
+    WHEN OLD.deleted_at IS NOT NULL AND NEW.deleted_at IS NULL
+    BEGIN
+      DELETE FROM ${prefix}vector_removals WHERE fact_id = NEW.id AND confirmed_at IS NULL;
+    END;
+  `);
+
   // OKF v0.2 indexes — gated on column existence so we never try to create an
   // index on a column that hasn't been added yet (upgrade-from-pre-v10 case).
   // The columns themselves are in the CREATE TABLE above (fresh installs get
