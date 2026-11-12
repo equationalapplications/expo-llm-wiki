@@ -2,9 +2,9 @@
 
 Tick a box only after that task's verification passes. Evidence is the commit SHA.
 
-**In flight:** Task 1.
+**In flight:** Task 2.
 
-- [ ] Task 1: Ledger schema, triggers and repository
+- [x] Task 1: Ledger schema, triggers and repository (d9f9985d)
 - [ ] Task 2: Drain service and the hook gate
 - [ ] Task 3: `forget()` on the ledger
 - [ ] Task 4: `runPrune()` on the ledger
