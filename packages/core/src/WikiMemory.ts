@@ -479,10 +479,14 @@ export class WikiMemory {
     if (gate === 'none') return;
     // Assigned before the first await so a concurrent setup() sees it.
     const prelude = (async (): Promise<{ drain: Promise<void> | null }> => {
-      if (gate === 'hook') {
+      if (gate === 'hook' && !(await this.vectorRemovalService.externalIndexInUse())) {
         await this.db.withTransactionAsync((tx) => this.vectorRemovalService.markExternalIndexInUse(tx));
       }
-      if ((await this.vectorRemovalRepo.pendingStats()).count === 0) return { drain: null };
+      if ((await this.vectorRemovalRepo.pendingStats()).count === 0) {
+        // Under force nothing is owed, so the marker has nothing left to guard (spec §5.3).
+        if (gate === 'force') await this.vectorRemovalService.clearExternalIndexMarker();
+        return { drain: null };
+      }
       if (this.options.drainExternalDeletionsOnSetup === false) {
         if (gate === 'hook') await this.vectorRemovalService.emitPending(undefined, 'auto');
         return { drain: null };
@@ -792,8 +796,24 @@ export class WikiMemory {
 
   /** Run pending removals, librarian, heal and reembed work under an optional token budget and deadline (spec §6.2). Awaits the setup removal drain first. */
   async runPendingMaintenance(options?: RunPendingMaintenanceOptions): Promise<RunPendingMaintenanceResult> {
-    await this.setupRemovalDrain;
-    return this.maintenanceScheduler.run(options);
+    let opts = options;
+    const setupDrain = this.setupRemovalDrain;
+    if (setupDrain) {
+      const ms = options?.deadlineMs;
+      if (typeof ms === 'number' && Number.isFinite(ms) && ms >= 0) {
+        // Bound the wait by deadlineMs and hand the scheduler only what is left.
+        const started = Date.now();
+        let handle: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+          setupDrain,
+          new Promise<void>((resolve) => { handle = setTimeout(resolve, ms); }),
+        ]).finally(() => { if (handle) clearTimeout(handle); });
+        opts = { ...options, deadlineMs: Math.max(0, ms - (Date.now() - started)) };
+      } else {
+        await setupDrain;
+      }
+    }
+    return this.maintenanceScheduler.run(opts);
   }
 
   /**
