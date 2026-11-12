@@ -19,8 +19,10 @@ an assessment within 5 business days. The full policy is in [SECURITY.md](https:
   back to keyword search until `runReembed()` completes. Vectors are copied defensively before
   they reach adapters.
 - **Credential scrubbing.** Ranker errors are sanitized before they appear in `error.cause` or callbacks.
-- **Deletes are sent to external indexes.** `forget()` and `runPrune()` call the deletion hook and
-  reject if it fails. The cleanup isn't durable yet, so read its current limits in [Deleting data](/expo-llm-wiki/guides/deleting-data/#right-to-be-forgotten-gdpr).
+- **Deletes are sent to external indexes, and kept owed until confirmed.** The engine records each
+  deleted fact and keeps calling your deletion hook until it succeeds once, across retries and
+  restarts. Your hook must tolerate repeats, and the app has to run again to finish. See
+  [Deleting data](/expo-llm-wiki/guides/deleting-data/#right-to-be-forgotten-gdpr) for what stays with you.
 - **Content-free diagnostics.** `onDiagnostic` never carries fact text or model output.
 
 ## Your responsibilities as the host

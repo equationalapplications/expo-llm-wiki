@@ -27,7 +27,7 @@ const wiki = new WikiMemory(db, {
 ## Request lifecycle
 
 1. **Pull** the tenant's `.sqlite` file. Use a conditional fetch (ETag) to skip unchanged files.
-2. **Open.** `new WikiMemory(…)` and `await wiki.setup()`. This is cheap when the schema is current.
+2. **Open.** `new WikiMemory(…)` and `await wiki.setup()`. This is cheap when the schema is current. If your wiki has a removal hook and removals are owed, `setup()` may also start a background drain of them. It makes no model call.
 3. **Handle the request:**
    - `write(entityId, { …, occurred_at: clientTimestamp })`
    - `read(entityId, query, { tokenBudget })`
@@ -37,6 +37,8 @@ const wiki = new WikiMemory(db, {
    ```
    Nothing is still running when this resolves.
 5. **Push** the file back. It's consistent, because there's no detached work and no open transaction.
+
+`runPendingMaintenance()` waits for that drain. If you skip step 4, call `await wiki.drain()` before you push, so no removal call is still running.
 
 Skipping step 4 is fine. The backlog carries over to the next request or to a queue worker that
 calls `getPendingMaintenance()`.

@@ -1008,6 +1008,12 @@ maintenance claim (INTENT rule 11).
    returns `events: 0`.
 10. The wipe emits no diagnostics.
 
+**Status note (2026-11-11).** Removal of forgotten facts from the host's
+external vector index (the deletion hook in this section's recipe and test 9)
+is now specified in `specs/durable-vector-removal/spec.md`: the engine records
+each owed removal and retries until the hook succeeds. Nothing in this section
+changed.
+
 ## Out of scope
 
 - #278 (sprintf-js / node-forge): waiting on upstream.
