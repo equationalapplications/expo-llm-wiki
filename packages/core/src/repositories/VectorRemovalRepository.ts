@@ -44,12 +44,15 @@ export class VectorRemovalRepository extends BaseRepository {
 
   /** Owe the host a removal for `factId` unless a live row exists (a missing row counts as not live). Returns whether a row was enqueued. */
   async enqueueIfNotLive(entityId: string, factId: string, now: number): Promise<boolean> {
-    const r = await this.db.runAsync(
-      `INSERT OR REPLACE INTO ${this.prefix}vector_removals (entity_id, fact_id, enqueued_at)
-       SELECT ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM ${this.prefix}entries WHERE id = ? AND deleted_at IS NULL)`,
-      [entityId, factId, now, factId],
-    );
-    return (r?.changes ?? 0) > 0;
+    // In its own transaction so it can't join a host's open raw transaction.
+    return this.db.withTransactionAsync(async (tx) => {
+      const r = await tx.runAsync(
+        `INSERT OR REPLACE INTO ${this.prefix}vector_removals (entity_id, fact_id, enqueued_at)
+         SELECT ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM ${this.prefix}entries WHERE id = ? AND deleted_at IS NULL)`,
+        [entityId, factId, now, factId],
+      );
+      return (r?.changes ?? 0) > 0;
+    });
   }
 
   /** Unconfirmed rows after `cursor`, ordered by (attempts, seq). */
@@ -68,7 +71,9 @@ export class VectorRemovalRepository extends BaseRepository {
     ];
     const args: unknown[] = [cursor.maxSeq, cursor.attempts, cursor.attempts, cursor.seq];
     if (scope.entityId !== undefined) {
-      where.push('v.entity_id = ?');
+      // Unary plus keeps SQLite from picking the (entity_id, ...) partial index
+      // and scanning the entity's whole pending set when ids are given.
+      where.push(scope.ids !== undefined ? '+v.entity_id = ?' : 'v.entity_id = ?');
       args.push(scope.entityId);
     }
     if (scope.ids !== undefined) {
@@ -146,7 +151,7 @@ export class VectorRemovalRepository extends BaseRepository {
     for (const c of chunks(ids, CHUNK)) {
       const row = await this.db.getFirstAsync<{ c: number }>(
         `SELECT COUNT(*) AS c FROM ${this.prefix}vector_removals
-          WHERE confirmed_at IS NULL AND entity_id = ? AND fact_id IN (${marks(c.length)})`,
+          WHERE confirmed_at IS NULL AND +entity_id = ? AND fact_id IN (${marks(c.length)})`,
         [entityId, ...c],
       );
       n += row?.c ?? 0;
@@ -163,7 +168,7 @@ export class VectorRemovalRepository extends BaseRepository {
   ): Promise<number> {
     const executor = this.getExecutor(tx);
     let inserted = 0;
-    for (const c of chunks(ids, CHUNK)) {
+    for (const c of chunks(ids, 300)) {
       const values = c.map(() => '(?, ?, ?)').join(',');
       const args = c.flatMap((id) => [entityId, id, now]);
       const r = await executor.runAsync(
