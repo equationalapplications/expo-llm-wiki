@@ -93,7 +93,8 @@ export class VectorRemovalService {
         if (ids.length === 0) return;
         const r = await this.drain({ entityId, ids }, { trigger });
         this.emitHookFailed(entityId, r.failedIds, operation, trigger);
-        if (r.pending > 0) await this.emitPending(entityId, trigger);
+        // Under gate 'none' the drain emits (marker only); under force it discards.
+        if (r.pending > 0 && this.gate() === 'hook') await this.emitPending(entityId, trigger);
         return;
       }
       if (this.gate() !== 'hook') return;

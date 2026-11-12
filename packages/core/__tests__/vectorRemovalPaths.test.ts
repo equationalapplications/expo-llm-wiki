@@ -279,3 +279,23 @@ describe('upsertGraph on the ledger', () => {
     expect((await rows(t.raw)).filter((r) => r.confirmed_at === null).map((r) => r.fact_id)).toEqual(['b1', 'b2', 'b3']);
   });
 });
+
+describe('deliverRemovals pending diagnostic gate (§5.3)', () => {
+  const gen = async () => JSON.stringify({ downgraded: [], deleted: ['d1'], newFacts: [] });
+  const pending = (diags: any[]) => diags.filter((d) => d.code === 'external_deletion_pending');
+
+  it('hookless store without the marker: heal delete emits no external_deletion_pending', async () => {
+    const t = await make(undefined, { config: { orphanAfterDays: null, staleInferredAfterDays: null } }, gen);
+    await ins(t.raw, 'd1');
+    await t.wiki.runHeal('e1');
+    expect(pending(t.diags)).toEqual([]);
+  });
+
+  it('hookless store with the marker: heal delete emits exactly one external_deletion_pending', async () => {
+    const t = await make(undefined, { config: { orphanAfterDays: null, staleInferredAfterDays: null } }, gen);
+    await t.raw.runAsync(`INSERT OR REPLACE INTO ${P}meta (key, value) VALUES ('external_index_in_use', '1')`);
+    await ins(t.raw, 'd1');
+    await t.wiki.runHeal('e1');
+    expect(pending(t.diags)).toHaveLength(1);
+  });
+});
