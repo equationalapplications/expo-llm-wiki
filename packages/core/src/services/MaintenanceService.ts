@@ -268,6 +268,7 @@ export class MaintenanceService {
       let deletedEntries = 0;
       let deletedTasks = 0;
       let deletedEvents = 0;
+      let prunePartial: { failedAt: string; remaining: number; cause: Error } | null = null;
 
       // Spec §4.4 / §10.10: expired and superseded history is soft-deleted
       // here; the soft-delete retention below (on a later run) hard-deletes
@@ -280,6 +281,12 @@ export class MaintenanceService {
             await this.entryRepo.softDeleteByIds(expiredIds, entityId, tx);
           });
           syncedIds = [...expiredIds];
+          // The trigger enqueued them; send removal now, not 7 days later
+          // (spec durable-vector-removal §5.6.1). A failure leaves them
+          // pending, and the hard-delete step below keeps them.
+          if (this.vectorRemoval && await this.ledgerTablePresent()) {
+            await this.vectorRemoval.drain({ entityId, ids: expiredIds });
+          }
         }
       }
 
@@ -287,53 +294,94 @@ export class MaintenanceService {
         const cutoff = now - retainSoftDeletedFor * 86400000;
         const entriesToDelete = await this.entryRepo.getPrunableMetadata(entityId, cutoff);
 
-        const succeeded: Array<{ entity_id: string; id: string }> = [];
-        let failure: { factId: string; cause: unknown } | null = null;
+        const prunableIds = entriesToDelete.map((r) => r.id);
+        const vr = this.vectorRemoval;
+        const vrRepo = this.vectorRemovalRepo;
+        const ledgerOn = !!vr && !!vrRepo && await this.ledgerTablePresent();
+        const gate = vr?.gate() ?? (this.options.forceDeleteIgnoreRankerHook === true ? 'force' : this.options.vectorRanker?.onEmbeddingPersisted ? 'hook' : 'none');
+        // Spec durable-vector-removal §5.6: rows are hard-deleted only when
+        // their removal is confirmed (hook) or the gate allows it.
+        let deletable: string[] = prunableIds;
+        let removeLedger = false;
+        let kept: string[] = [];
+        let timedOut = false;
+        let cause: unknown;
+        let firstFailed: string | undefined;
 
-        for (const row of entriesToDelete) {
-          try {
-            await this.embeddingService.notifyEmbeddingPersistedOrThrow(row.entity_id, row.id, null);
-            succeeded.push({ entity_id: row.entity_id, id: row.id });
-          } catch (err) {
-            failure = { factId: row.id, cause: err };
-            break;
+        if (ledgerOn && vr && vrRepo) {
+          if (gate === 'hook' && prunableIds.length > 0) {
+            await this.db.withTransactionAsync(async (tx) => {
+              await vrRepo.backstopEnqueue(entityId, prunableIds, now, tx);
+            });
           }
+          const result = prunableIds.length > 0
+            ? await vr.drain({ entityId, ids: prunableIds })
+            : { failedIds: [] as string[], timedOut: false, firstCause: undefined as unknown };
+          if (gate === 'hook') {
+            const status = await vrRepo.statusFor(prunableIds);
+            deletable = prunableIds.filter((id) => { const st = status.get(id); return st === 'confirmed' || st === undefined; });
+            kept = prunableIds.filter((id) => status.get(id) === 'pending');
+            timedOut = result.timedOut;
+            cause = result.firstCause;
+            firstFailed = result.failedIds.find((id) => kept.includes(id)) ?? kept[0];
+          } else if (gate === 'force') {
+            removeLedger = true;
+          } else {
+            removeLedger = !(await vr.externalIndexInUse());
+          }
+        } else if (gate === 'hook') {
+          // Store whose setup() never ran: no ledger table, so call the hook
+          // per row and keep the rows that fail (mirrors forget's fallback).
+          const timeoutMs = this.embeddingService.validateDeletionTimeout();
+          deletable = [];
+          let firstRejection: unknown;
+          let timeoutErr: unknown;
+          for (const id of prunableIds) {
+            try {
+              await this.embeddingService.callRemovalHook(entityId, id, timeoutMs);
+              deletable.push(id);
+            } catch (hookErr) {
+              kept.push(id);
+              if ((hookErr as any)?.[HOOK_TIMEOUT_MARKER] === true) timeoutErr ??= hookErr;
+              else firstRejection ??= hookErr;
+            }
+          }
+          timedOut = timeoutErr !== undefined;
+          cause = timeoutErr ?? firstRejection;
+          firstFailed = kept[0];
         }
 
-        const succeededIds = succeeded.map(r => r.id);
         // ids whose documents leave the index. Every pruned row was already
         // soft-deleted (and thus already absent from the live read), so this is
         // drift repair, not the primary removal mechanism — syncEntries still
         // discards each id before re-reading it, so a stale document left
         // behind by a path that never passed ids to syncEntries is scrubbed
         // here (§2.2).
-        syncedIds = [...syncedIds, ...succeededIds];
+        syncedIds = [...syncedIds, ...deletable];
 
         await this.db.withTransactionAsync(async (tx) => {
-          if (succeededIds.length > 0) {
-            deletedEntries = await this.entryRepo.bulkDeletePruned(entityId, cutoff, succeededIds, tx);
+          if (deletable.length > 0) {
+            deletedEntries = await this.entryRepo.bulkDeletePruned(entityId, cutoff, deletable, tx);
+            if (removeLedger && vrRepo) await vrRepo.deleteForFacts(entityId, deletable, tx);
+            else if (gate === 'hook' && ledgerOn && vrRepo) await vrRepo.deleteForFacts(entityId, deletable, tx);
           }
           deletedTasks = await this.taskRepo.bulkDeletePruned(entityId, cutoff, tx);
         });
 
-        if (failure) {
-          await this.searchService.syncEntries(entityId, syncedIds);
-          const remaining = entriesToDelete.length - succeeded.length - 1;
-          const isTimeout = (failure.cause as any)?.[HOOK_TIMEOUT_MARKER] === true;
-
-          if (isTimeout) {
-            throw new PrunePartialFailureError(
-              succeeded.length, failure.factId, remaining, new Error('Deletion hook timed out'), deletedTasks, 0
-            );
+        if (kept.length > 0) {
+          if (timedOut) {
+            prunePartial = { failedAt: firstFailed ?? kept[0], remaining: kept.length, cause: new Error('Deletion hook timed out') };
+          } else if (cause === undefined) {
+            prunePartial = { failedAt: firstFailed ?? kept[0], remaining: kept.length, cause: new Error('external removal not confirmed') };
+          } else {
+            const errMsg = (cause as Error)?.message ?? '';
+            const isValidationError = errMsg.startsWith('Invalid deletionHookTimeoutMs');
+            prunePartial = {
+              failedAt: firstFailed ?? kept[0],
+              remaining: kept.length,
+              cause: isValidationError ? cause as Error : this._sanitizeRankerError(cause),
+            };
           }
-
-          const errMsg = (failure.cause as Error)?.message ?? '';
-          const isValidationError = errMsg.startsWith('Invalid deletionHookTimeoutMs');
-          const sanitizedCause = isValidationError ? failure.cause as Error : this._sanitizeRankerError(failure.cause);
-
-          throw new PrunePartialFailureError(
-            succeeded.length, failure.factId, remaining, sanitizedCause, deletedTasks, 0
-          );
         }
       }
 
@@ -383,6 +431,11 @@ export class MaintenanceService {
       }
 
       await this.searchService.syncEntries(entityId, syncedIds);
+      if (prunePartial) {
+        throw new PrunePartialFailureError(
+          deletedEntries, prunePartial.failedAt, prunePartial.remaining, prunePartial.cause, deletedTasks, deletedEvents,
+        );
+      }
       return { entries: deletedEntries, tasks: deletedTasks, events: deletedEvents };
     } finally {
       this.jobManager.releaseLock('prune', entityId);

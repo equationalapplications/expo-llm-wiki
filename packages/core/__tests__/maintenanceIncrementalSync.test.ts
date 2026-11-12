@@ -40,11 +40,12 @@ function dumpOf(facts: WikiFact[]): MemoryDump {
 async function freshWiki(
   generateText: () => Promise<string> = async () => '{"facts":[]}',
   config: Record<string, unknown> = {},
+  extraOptions: Record<string, unknown> = {},
 ) {
   const db = openTestDatabase();
   // Pinned: these tests count MiniSearch's per-entity read-backs. FTS5 reads
   // nothing back (the trigger ledger drains in SQL; see fts5Integration).
-  const wiki = new WikiMemory(db, { llmProvider: { generateText }, config: { ...LEGACY_AUTO, indexStrategy: 'minisearch', ...config } } as any);
+  const wiki = new WikiMemory(db, { llmProvider: { generateText }, config: { ...LEGACY_AUTO, indexStrategy: 'minisearch', ...config }, ...extraOptions } as any);
   await wiki.setup();
   return { wiki, db };
 }
@@ -169,20 +170,20 @@ describe('incremental keyword index for maintenance passes (#235)', () => {
     const facts = Array.from({ length: 300 }, (_, i) => makeFact(i));
     facts[0] = { ...facts[0], body: 'xylophone marker zero' };
     facts[1] = { ...facts[1], body: 'yeoman marker one' };
-    const { wiki, db } = await freshWiki();
+    // The removal hook rejects fact_0001 only: row 0 is confirmed, row 1
+    // stays pending on the ledger and is kept by prune (durable-vector-removal
+    // §5.6). Was: a spy on notifyEmbeddingPersistedOrThrow failing call 2.
+    const { wiki, db } = await freshWiki(undefined, {}, {
+      vectorRanker: {
+        rankBySimilarity: async () => [],
+        onEmbeddingPersisted: async ({ factId }: { factId: string }) => {
+          if (factId === 'fact_0001') throw new Error('ranker rejected');
+        },
+      },
+    });
     await wiki.importDump(dumpOf(facts), { merge: true });
     await wiki.forget(ENTITY, { entryId: 'fact_0000' });
-    await wiki.forget(ENTITY, { entryId: 'fact_0001' });
-
-    // Break the embedding cleanup hook on the SECOND pruned row: row 0's
-    // notify succeeds, row 1's throws -> failure path with succeeded=[row0].
-    const embedding = wiki.__testAccess.embeddingService;
-    let calls = 0;
-    vi.spyOn(embedding, 'notifyEmbeddingPersistedOrThrow').mockImplementation(async () => {
-      calls += 1;
-      if (calls === 2) throw new Error('ranker rejected');
-      return undefined as never;
-    });
+    await wiki.forget(ENTITY, { entryId: 'fact_0001' }).catch(() => {});
 
     const counts = countIndexReads(wiki);
     await expect(

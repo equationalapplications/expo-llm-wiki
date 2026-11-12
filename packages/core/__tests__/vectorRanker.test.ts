@@ -969,9 +969,8 @@ describe('VectorRanker integration', () => {
         { id: 'fact-a', title: 'apple', body: 'red' },
       ]));
 
-      // First forget the entry to soft-delete it, with a past timestamp
-      await wiki.forget('user-1', { entryId: 'fact-a' });
-
+      // Soft-delete it with a raw update (not forget(), whose confirmed
+      // removal prune would not send again, durable-vector-removal §5.6.6)
       // Manually update the deleted_at to be in the past so prune will delete it
       const pastTimestamp = Date.now() - 100000; // 100 seconds ago
       await db.runAsync(
@@ -1614,11 +1613,9 @@ describe('VectorRanker integration', () => {
         { id: 'fact-b', title: 'apple seed', body: 'small and brown' },
       ]));
 
-      await wiki.forget('user-1', { entryId: 'fact-a' });
-      await wiki.forget('user-1', { entryId: 'fact-b' });
-
-      // Small delay to ensure deleted_at timestamps are before prune cutoff
-      await new Promise((r) => setTimeout(r, 10));
+      // Raw soft-delete: a forget() would confirm the removal first, and prune
+      // does not send a confirmed id again (durable-vector-removal §5.6.6).
+      await db.runAsync(`UPDATE llm_wiki_entries SET deleted_at = ? WHERE id IN ('fact-a','fact-b')`, [Date.now() - 1000]);
 
       const before = hookCallCount;
       await wiki.runPrune('user-1');
@@ -1659,7 +1656,10 @@ describe('VectorRanker integration', () => {
       for (let i = 0; i < 5; i++) {
         await wiki.forget('user-1', { entryId: `fact-${i}` }).catch(() => {});
       }
-      callIndex = 0;
+      // forget() left only fact-2 unconfirmed (its call was index 3), and
+      // prune sends only unconfirmed ids, so start the count at 2 to make
+      // prune's call the third one.
+      callIndex = 2;
 
       // Small delay to ensure deleted_at timestamps are before prune cutoff
       await new Promise((r) => setTimeout(r, 10));

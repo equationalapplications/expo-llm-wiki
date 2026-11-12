@@ -960,7 +960,7 @@ export class EntryRepository extends BaseRepository {
     const now = Date.now();
     const placeholders = ids.map(() => '?').join(',');
     await executor.runAsync(
-      `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE id IN (${placeholders}) AND entity_id = ?`,
+      `UPDATE ${this.prefix}entries SET deleted_at = ?, updated_at = ? WHERE id IN (${placeholders}) AND entity_id = ? AND deleted_at IS NULL`,
       [now, now, ...ids, entityId],
     );
     // Stage outbox entries for soft-deleted records

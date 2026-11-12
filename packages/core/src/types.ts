@@ -1251,6 +1251,13 @@ export interface ForgetResult {
   metadataReset?: boolean;
 }
 
+/**
+ * Thrown by `runPrune()` after it has finished its other work, when the host's
+ * removal hook did not confirm some prunable facts. Those rows are kept, every
+ * other prunable row is hard-deleted. The deleted and kept rows are not
+ * contiguous: `deleted` counts rows hard-deleted, `remaining` counts rows kept,
+ * and `failedAt` names the first unconfirmed id in drain order.
+ */
 export class PrunePartialFailureError extends Error {
   readonly deleted: number;
   readonly failedAt: string;
