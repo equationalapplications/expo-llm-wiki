@@ -13,12 +13,11 @@ ruling (see The general leave-out rule). Rule 7 — a length
 cap bounds the text resent on every librarian call, and prompt volume is
 reported, not billed tokens. Rule 10 — this spec first. Rule 11 — the
 change is verified by cheap targeted tests for plumbing and prompt
-construction — the owner ruling of 2026-11-10 that replaced benchmark
-runs with them (recorded in `specs/targeted-diagnostics` and restated in
-roadmap step 1). The tests do **not** measure restatement reduction or
-false-omission rate; the effect on restatement is unmeasured and no
-accuracy or cost claim is published without a run (rule 11). This is
-roadmap
+construction. This spec claims no accuracy or cost effect at all, so
+rule 11's "measured before it is claimed" is not triggered; the
+2026-11-10 ruling on benchmarks (recorded in `specs/targeted-diagnostics`
+and restated in roadmap step 1) is background, not a claim that these
+unit tests replace benchmark suites. This is roadmap
 step 1 (`docs/ROADMAP.md` — created by PR #378, which merges before
 this PR does; until then the cite points forward). Owner rulings
 2026-11-12 and 2026-11-13. Minor release (8.5.0): see Release.
@@ -174,23 +173,36 @@ is new work, not part of this release.
 
 ### Plumbing
 
-- The three builders gain one optional trailing parameter,
+- The three write-path builders gain one optional trailing parameter,
   `guidance?: string` — the **already-resolved, already-capped**
-  effective text. The builders never call the resolver themselves.
-- Resolution is hoisted to the call boundary: `MaintenanceService`
-  resolves once before the librarian pass; `IngestionService` resolves
-  once **above the per-chunk loop** (`IngestionService.ts:194` builds
-  the ingest prompt per chunk); `getInstructions` resolves once per
-  call.
+  effective text — and `buildInstructionTemplates` gains it as a third
+  parameter, `(ontologyContext, librarianStrategy, guidance?)`. The
+  builders never call the resolver themselves.
+- Resolution is hoisted to the call boundary, **inside
+  `runLibrarianPass`** (`MaintenanceService.ts:896`) — both callers go
+  through it: the manual `runLibrarian`/`doRunLibrarian` path and the
+  scheduler's deferred drain (`MaintenanceScheduler.ts:164` calls
+  `runLibrarianPass` directly, skipping `doRunLibrarian`). Resolving in
+  `doRunLibrarian` would leave default-config (deferred) hosts silently
+  without guidance. A scheduler drain that runs several passes in a row
+  can emit the per-pass diagnostics several times — once per pass is
+  the contract. `IngestionService` resolves once, **next to the
+  ontology-context hoist** (`:182`), so an ingest that acquires locks
+  and then returns early (duplicate hash, no chunks) never runs the
+  resolver and never emits a guidance diagnostic for work it did not
+  do; `getInstructions` resolves once per call.
 - Two new codes join `WikiDiagnosticCode` (`packages/core/src/types.ts`):
   `guidance_too_long` and `guidance_resolver_failed`. The diagnostics
-  channel itself is existing and unchanged. `guidance_resolver_failed`
-  reuses the existing `reason` detail field (`'threw' | 'non_string'`)
-  and carries severity `info`; neither code ever carries guidance text
-  (`WikiDiagnosticDetail` stays identifiers-only). `getInstructions`
-  emits **no** diagnostics — it is a read path; it applies the same
-  fallback silently. The existing `operation` values cover both codes
-  (`ingest`, `librarian`); no new operation is added.
+  channel itself is existing and unchanged. Both are severity `warn` —
+  each means the host's guidance was silently not applied.
+  `guidance_resolver_failed` reuses the existing `reason` detail field,
+  which is typed plain `string`; `'threw' | 'non_string'` is a values
+  convention, and a returned Promise is reported as `non_string`. No
+  detail field ever carries guidance text (`WikiDiagnosticDetail` stays
+  identifiers-only). `getInstructions` emits **no** diagnostics — it is
+  a read path; it applies the same fallback silently. The existing
+  `operation` values cover both codes (`ingest`, `librarian`); no new
+  operation is added.
 - Composition with overrides: whichever template wins — built-in
   default, `PromptOverrides`, a per-call ingest `promptOverride`, or the
   legacy `runtimeOverride` — receives the guidance section appended at
@@ -270,7 +282,13 @@ item 3).
 the effective guidance for that entity and returns the four templates —
 the ingest and librarian templates carrying the guidance section, heal
 and ontology backfill unchanged — so a host rendering its own prompts
-sees exactly what the engine would send. The docs repeat the existing
+sees exactly what the engine would send. On this returned-template
+surface, guidance containing `{{…}}` would sit in the template looking
+like a real placeholder — the engine never expands it, but a host that
+fills the returned template's data placeholders would. The docs
+therefore state that guidance must not contain `{{…}}` placeholder
+syntax, and a test asserts the section still comes back verbatim in the
+returned template. The docs repeat the existing
 warning that this text is returned verbatim and must hold no secrets
 (guidance is host-provided; the engine adds none of the host's data to
 it).
@@ -279,8 +297,10 @@ it).
 
 Guidance changes what ingest *selects* from a document. It never changes
 a stored document fact's text; stored document facts remain immutable
-(rule 5). Stated here; a test in this change asserts it (stored document
-rows byte-identical with and without guidance set).
+(rule 5). The test asserts what rule 5 actually protects: ingest a
+document, then run both librarian strategies and heal with guidance that
+tells the model to rewrite document facts, and assert the stored
+document rows are unchanged.
 
 ## Files touched
 
@@ -325,9 +345,17 @@ claims published (rule 11). Suites live in `packages/core/__tests__/`.
 
 1. **No-guidance parity.** For both strategies and for ingest: with no
    `prompts.guidance` and no resolver return, every built prompt is
-   byte-identical to the current snapshots. The existing
-   `librarianPrompt.test.ts` snapshots are the oracle; any diff is a
-   defect, not an update.
+   byte-identical to today's. The oracle is a set of **golden strings
+   committed from the unmodified code before any change lands** — one
+   per builder that gains the parameter: `buildIngestPrompt` (default,
+   configured override, per-call override), `buildLibrarianPrompt`
+   (no-placeholder and placeholder templates), `buildOpsExtractPrompt`,
+   and `buildInstructionTemplates` for both strategies, each with and
+   without ontology and grounding. (`librarianPrompt.test.ts` has no
+   snapshots today and never calls the ops or ingest builders; the only
+   existing snapshot file covers legacy parity.) A golden-file
+   difference in the engine's prompt construction, after this change,
+   for a no-guidance host, is a defect — not an update.
 2. **Guidance placement.** With guidance set (and with a per-entity
    value overriding the default): the marked section appears exactly
    once, contains the effective value verbatim, the rule sentence
@@ -340,7 +368,11 @@ claims published (rule 11). Suites live in `packages/core/__tests__/`.
 3. **Grounding boundary.** Guidance text never appears in
    `buildGroundingCorpus` output for any writer; the grounding block's
    position is unchanged with and without guidance.
-4. **Cap and diagnostic.** A 2,001-character value produces the
+4. **Scheduler path.** A deferred drain driven by
+   `MaintenanceScheduler` (the 8.0.0 default path) delivers guidance to
+   its librarian passes — drive the scheduler and assert the built
+   prompt carries the entity's effective guidance.
+5. **Cap and diagnostic.** A 2,001-character value produces the
    no-guidance prompt plus a `guidance_too_long` diagnostic carrying
    detail `guidanceLength` and `guidanceSource`; a 2,000-character value
    passes; a value at the boundary counted in UTF-16 units (e.g. 1,000
@@ -350,7 +382,7 @@ claims published (rule 11). Suites live in `packages/core/__tests__/`.
    default. The diagnostic fires once per pass, not once per chunk. The
    ops budget estimate and the real extract prompt receive **identical**
    guidance (assert both built prompts are equal).
-5. **Resolution and resolver failures.** Per-entity wins over default;
+6. **Resolution and resolver failures.** Per-entity wins over default;
    `undefined`/empty/whitespace-only resolver return falls back, and the
    same applies to a whitespace-only default; a resolver that throws,
    returns a Promise (including one that later rejects), or returns a
@@ -359,10 +391,10 @@ claims published (rule 11). Suites live in `packages/core/__tests__/`.
    exactly once per pass (assert the call count); resolver not called
    at all when no default and no resolver are configured (no surprise
    invocations).
-6. **Instructions surface.** `getInstructions(entityId)` reflects the
+7. **Instructions surface.** `getInstructions(entityId)` reflects the
    entity's effective guidance in all returned templates that carry it,
    and omits it where this spec says guidance is not sent.
-7. **Warning text.** `changedDefaultWarnings` with an override under ops
+8. **Warning text.** `changedDefaultWarnings` with an override under ops
    mentions `prompts.guidance` — when `librarian.strategy` is left
    unset via the existing message (its `strategy: 'legacy'` substring
    assertion stays), and via a **second message** when it is set to
