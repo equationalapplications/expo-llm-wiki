@@ -25,7 +25,7 @@ Core LLM Wiki is a family of cross-platform TypeScript packages for long-term LL
 
 ## Why Core LLM Wiki?
 
-- **Bring your own inference.** You provide one `generateText` function. The library builds the prompts, parses the JSON and writes to the database. Works with OpenAI, Gemini, Claude or a local model.
+- **Bring your own inference.** You provide one `generateText` function. The library builds the prompts, parses the JSON and writes to the database. Works with OpenAI, Gemini, Claude or a local model. Steer the librarian with `prompts.guidance`; see the [prompts guide](https://equationalapplications.github.io/expo-llm-wiki/guides/prompts/#host-guidance).
 - **Just SQLite.** Facts, vectors and graph edges live in prefixed tables (`llm_wiki_` by default) in your own database. No vector database, no Neo4j.
 - **Offline first.** Keyword search runs in-process. Semantic search turns on when you provide `embed()` and falls back to keyword search when the network is down.
 - **GraphRAG built in.** Optional seeded ontologies make the model emit typed edges, and `traverseGraph()` walks them with a single recursive SQL query.
