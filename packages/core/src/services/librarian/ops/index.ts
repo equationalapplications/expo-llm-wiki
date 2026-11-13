@@ -30,7 +30,7 @@ export const runOpsLibrarianPass: LibrarianStrategy = async (deps, ctx) => {
 
   await deps.seedWatermark(entityId);
   const wm = await deps.getWatermark(entityId);
-  const sel = await selectBatch(deps, entityId, wm, ctx.meter);
+  const sel = await selectBatch(deps, entityId, wm, ctx.meter, ctx.guidance);
   if ('budgetStop' in sel) return { processedThrough: null, factsWritten: 0, budgetStop: sel.budgetStop };
   if (sel.batch.length === 0) return { processedThrough: null, factsWritten: 0 };
 

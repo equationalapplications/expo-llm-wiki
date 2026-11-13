@@ -894,7 +894,23 @@ export class MaintenanceService {
    * A budget-stopped pass wrote nothing and must not move the watermark.
    */
   async runLibrarianPass(ctx: LibrarianContext): Promise<LibrarianResult> {
-    const result = await runLibrarianStrategy(this.librarianDeps(), ctx);
+    // Specs/librarian-guidance: guidance resolves HERE — once per pass, for
+    // every caller (manual runLibrarian and the scheduler's deferred drain
+    // both go through this method; MaintenanceScheduler.ts calls
+    // runLibrarianPass directly, skipping doRunLibrarian). Any caller-
+    // supplied ctx.guidance is ignored and overwritten. Diagnostics emit
+    // immediately at resolution, never buffered with the pass results.
+    const { guidance, diagnostic } = PromptService.resolveGuidance(this.options.config, ctx.entityId);
+    if (diagnostic) {
+      emitDiagnostic(this.options, {
+        code: diagnostic.code,
+        operation: 'librarian',
+        trigger: ctx.trigger,
+        entityId: ctx.entityId,
+        detail: diagnostic.detail,
+      });
+    }
+    const result = await runLibrarianStrategy(this.librarianDeps(), { ...ctx, guidance });
     if (result.processedThrough && !result.budgetStop) {
       await this.advanceLibrarianWatermark(ctx.entityId, result.processedThrough);
     }

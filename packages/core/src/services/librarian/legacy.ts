@@ -55,6 +55,7 @@ export const runLegacyLibrarianPass: LibrarianStrategy = async (deps, ctx) => {
       currentFacts,
       promptOverride,
       ontologyContext,
+      ctx.guidance,
     );
 
     let responseText: string;

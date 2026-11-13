@@ -66,6 +66,14 @@ export interface LibrarianContext {
   entityId: string;
   trigger: WikiDiagnosticTrigger;
   promptOverride?: string;
+  /**
+   * Specs/librarian-guidance: the effective guidance for this pass, resolved
+   * by `MaintenanceService.runLibrarianPass` (never read as caller input —
+   * that method overwrites whatever a caller supplies here, so "resolved
+   * once per pass" holds for every caller). Strategies pass it to the
+   * prompt builders verbatim.
+   */
+  guidance?: string;
   /** Optional meter (Phase C budgeted maintenance). Legacy honors it:
    * `callLlm` pre-flights the prompt estimate against it, usage is recorded
    * on every call, and the pass returns `budgetStop` when the budget is

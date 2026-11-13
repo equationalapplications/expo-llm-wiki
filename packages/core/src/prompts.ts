@@ -1,5 +1,34 @@
 import type { GroundingWriter, ResolvedGrounding } from './utils/grounding';
 
+/**
+ * Specs/librarian-guidance. The general leave-out rule, ruled by the
+ * owner (issue #375): the engine appends it, after the host guidance
+ * section, only on prompt builds where guidance is actually sent — never
+ * on its own. The text is asserted character-for-character by test.
+ */
+export const LEAVE_OUT_RULE_SENTENCE =
+  'Memory leaves out what a better record already holds, and points to that record.';
+
+/**
+ * Specs/librarian-guidance. Upper bound on the effective guidance text,
+ * counted as UTF-16 code units (`String.prototype.length`) on the value
+ * as sent — verbatim, untrimmed (emptiness is judged on the trimmed
+ * value; the cap on the real one). Guidance over the cap is not sent and
+ * emits `guidance_too_long`; nothing is truncated.
+ */
+export const GUIDANCE_MAX_CHARS = 2000;
+
+/**
+ * The marked section the engine wraps the effective guidance in, appended
+ * to the already-hydrated system prompt after ontology context and before
+ * the grounding block. The guidance text itself is never run through
+ * placeholder hydration, so `{{…}}` inside it cannot change a builder's
+ * template branch or be expanded with data.
+ */
+export function guidanceSection(guidance: string): string {
+  return `--- Host guidance ---\n${guidance}\n--- End host guidance ---\n${LEAVE_OUT_RULE_SENTENCE}`;
+}
+
 export const LIBRARIAN_SYSTEM_PROMPT = `You are a knowledge extraction agent. Your job is to analyze recent episodic events and extract stable facts and actionable tasks about the user or entity.
 Return ONLY a valid JSON object matching this schema:
 {

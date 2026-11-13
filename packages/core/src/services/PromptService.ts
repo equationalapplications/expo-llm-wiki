@@ -6,7 +6,19 @@ import {
   OPS_EXTRACT_SYSTEM_PROMPT,
   OPS_RESOLVE_SYSTEM_PROMPT,
   groundingEvidenceBlock,
+  guidanceSection,
+  GUIDANCE_MAX_CHARS,
 } from '../prompts';
+
+/** Why a pass or call will not carry guidance (specs/librarian-guidance). */
+export interface GuidanceDiagnostic {
+  code: 'guidance_too_long' | 'guidance_resolver_failed';
+  detail?: {
+    guidanceLength?: number;
+    guidanceSource?: 'per_entity' | 'default';
+    reason?: 'threw' | 'non_string';
+  };
+}
 import type { DegradedRecord, PromptOverrides, OntologyPromptContext, WikiInstructions } from '../types';
 import {
   HEAL_ANCHORS_PER_CANDIDATE,
@@ -28,6 +40,75 @@ export class PromptService {
     private grounding: ResolvedGrounding | null = null,
   ) {}
 
+  /**
+   * Specs/librarian-guidance: resolve the effective guidance for one pass
+   * or call — default `config.prompts.guidance`, per-entity
+   * `config.librarian.guidanceForEntity` winning when it returns a
+   * non-empty (trimmed) string. Synchronous: a resolver that throws,
+   * returns a thenable (its rejection is swallowed with a no-op handler;
+   * a throwing `then` counts too), or returns any non-string value is
+   * treated as "no value" and reported in `diagnostic`. Over-cap text
+   * (UTF-16 units, verbatim) is not sent and reported in `diagnostic`.
+   * Emits nothing itself; the caller emits, immediately at resolution.
+   */
+  static resolveGuidance(
+    config: import('../types').WikiConfig | undefined,
+    entityId: string,
+  ): { guidance?: string; diagnostic?: GuidanceDiagnostic } {
+    let source: 'per_entity' | 'default' | null = null;
+    let effective: string | undefined;
+    let resolverDiagnostic: GuidanceDiagnostic | undefined;
+
+    const defaultValue = config?.prompts?.guidance;
+    const resolver = config?.librarian?.guidanceForEntity;
+    let entityValue: unknown;
+    if (resolver) {
+      try {
+        entityValue = resolver(entityId);
+        if (entityValue === undefined) {
+          // Stated fallback: no per-entity value this call.
+        } else if (typeof entityValue === 'string') {
+          if (entityValue.trim() !== '') {
+            source = 'per_entity';
+            effective = entityValue;
+          }
+        } else {
+          // Thenable rejection must never surface as an unhandled
+          // rejection; a `then` that throws is handled by the wrapper.
+          try {
+            (entityValue as { then?: (onOk: () => void, onErr: () => void) => unknown })
+              ?.then?.(() => undefined, () => undefined);
+          } catch { /* treated like any other non-string below */ }
+          resolverDiagnostic = {
+            code: 'guidance_resolver_failed',
+            detail: { reason: 'non_string' },
+          };
+        }
+      } catch {
+        resolverDiagnostic = { code: 'guidance_resolver_failed', detail: { reason: 'threw' } };
+      }
+    }
+
+    if (source === null && defaultValue !== undefined && defaultValue.trim() !== '') {
+      source = 'default';
+      effective = defaultValue;
+    }
+    if (source === null || effective === undefined) {
+      return resolverDiagnostic ? { diagnostic: resolverDiagnostic } : {};
+    }
+
+    // Cap measures the value as sent: verbatim, untrimmed.
+    if (effective.length > GUIDANCE_MAX_CHARS) {
+      return {
+        diagnostic: {
+          code: 'guidance_too_long',
+          detail: { guidanceLength: effective.length, guidanceSource: source },
+        },
+      };
+    }
+    return resolverDiagnostic ? { guidance: effective, diagnostic: resolverDiagnostic } : { guidance: effective };
+  }
+
   /** The resolved grounding config when `writer` is in `grounding.writers`; otherwise null (spec §6.2). */
   groundingFor(writer: GroundingWriter): ResolvedGrounding | null {
     return this.grounding?.writers.has(writer) ? this.grounding : null;
@@ -37,6 +118,18 @@ export class PromptService {
   private appendGrounding(systemPrompt: string, writer: GroundingWriter): string {
     const cfg = this.groundingFor(writer);
     return cfg ? `${systemPrompt}\n\n${groundingEvidenceBlock(writer, cfg)}` : systemPrompt;
+  }
+
+  /**
+   * Specs/librarian-guidance: append the marked guidance section (with the
+   * general leave-out rule) to the ALREADY-HYDRATED system prompt — after
+   * ontology, immediately before grounding. The guidance text is never
+   * run through hydration, so `{{…}}` inside it cannot change a builder's
+   * template branch or be expanded with data. No-op on empty input.
+   */
+  private appendGuidance(systemPrompt: string, guidance?: string): string {
+    if (!guidance) return systemPrompt;
+    return `${systemPrompt}\n\n${guidanceSection(guidance)}`;
   }
 
   private hydrate(template: string, variables: Record<string, unknown>): string {
@@ -93,17 +186,18 @@ export class PromptService {
     documentChunk: string,
     runtimeOverride?: string,
     ontologyContext?: OntologyPromptContext | null,
+    guidance?: string,
   ): { systemPrompt: string; userPrompt: string } {
     const template = runtimeOverride ?? this.globalOverrides?.ingestSystemPrompt ?? INGEST_SYSTEM_PROMPT;
     const hasDocumentChunk = /\{\{\s*documentChunk\s*\}\}/.test(template);
     if (hasDocumentChunk || this.hasOntologyPlaceholders(template)) {
       return {
-        systemPrompt: this.appendGrounding(this.buildSystemPrompt(template, { documentChunk }, ontologyContext), 'ingest'),
+        systemPrompt: this.appendGrounding(this.appendGuidance(this.buildSystemPrompt(template, { documentChunk }, ontologyContext), guidance), 'ingest'),
         userPrompt: hasDocumentChunk ? 'Please extract the facts.' : `Document Chunk:\n${documentChunk}`,
       };
     }
     return {
-      systemPrompt: this.appendGrounding(this.appendOntology(template, ontologyContext), 'ingest'),
+      systemPrompt: this.appendGrounding(this.appendGuidance(this.appendOntology(template, ontologyContext), guidance), 'ingest'),
       userPrompt: `Document Chunk:\n${documentChunk}`,
     };
   }
@@ -113,6 +207,7 @@ export class PromptService {
     currentFacts: unknown[],
     runtimeOverride?: string,
     ontologyContext?: OntologyPromptContext | null,
+    guidance?: string,
   ): { systemPrompt: string; userPrompt: string; groundingCorpus?: string[] } {
     const template = runtimeOverride ?? this.globalOverrides?.librarianSystemPrompt ?? LIBRARIAN_SYSTEM_PROMPT;
     const hasEvents = /\{\{\s*events\s*\}\}/.test(template);
@@ -127,7 +222,7 @@ export class PromptService {
       : {};
     if (hasEvents || hasCurrentFacts || this.hasOntologyPlaceholders(template)) {
       return {
-        systemPrompt: this.appendGrounding(this.buildSystemPrompt(template, { events, currentFacts }, ontologyContext), 'librarian'),
+        systemPrompt: this.appendGrounding(this.appendGuidance(this.buildSystemPrompt(template, { events, currentFacts }, ontologyContext), guidance), 'librarian'),
         userPrompt: (hasEvents || hasCurrentFacts)
           ? 'Please synthesize the context.'
           : `Events:\n${JSON.stringify(events, null, 2)}\n\nCurrent Facts:\n${JSON.stringify(currentFacts, null, 2)}`,
@@ -135,7 +230,7 @@ export class PromptService {
       };
     }
     return {
-      systemPrompt: this.appendGrounding(this.appendOntology(template, ontologyContext), 'librarian'),
+      systemPrompt: this.appendGrounding(this.appendGuidance(this.appendOntology(template, ontologyContext), guidance), 'librarian'),
       userPrompt: `Events:\n${JSON.stringify(events, null, 2)}\n\nCurrent Facts:\n${JSON.stringify(currentFacts, null, 2)}`,
       ...corpusField,
     };
@@ -273,11 +368,12 @@ export class PromptService {
   buildOpsExtractPrompt(
     events: LabeledEvent[],
     ontologyContext?: OntologyPromptContext | null,
+    guidance?: string,
   ): { systemPrompt: string; userPrompt: string; groundingCorpus?: string[] } {
     const lines = events.map((l) => `${l.label} [${new Date(l.at).toISOString()}] (${l.event.event_type}) ${l.event.summary}`);
     const grounding = this.groundingFor('librarian');
     return {
-      systemPrompt: this.appendGrounding(this.appendOntology(OPS_EXTRACT_SYSTEM_PROMPT, ontologyContext), 'librarian'),
+      systemPrompt: this.appendGrounding(this.appendGuidance(this.appendOntology(OPS_EXTRACT_SYSTEM_PROMPT, ontologyContext), guidance), 'librarian'),
       userPrompt: `Events:\n${lines.join('\n')}`,
       ...(grounding ? { groundingCorpus: buildGroundingCorpus(events.map((l) => l.event.summary)) } : {}),
     };
@@ -299,13 +395,14 @@ export class PromptService {
   buildInstructionTemplates(
     ontologyContext: OntologyPromptContext | null,
     librarianStrategy: 'legacy' | 'ops',
+    guidance?: string,
   ): WikiInstructions {
     const o = this.globalOverrides;
     return {
-      ingest: this.appendGrounding(this.buildSystemPrompt(o?.ingestSystemPrompt ?? INGEST_SYSTEM_PROMPT, {}, ontologyContext), 'ingest'),
+      ingest: this.appendGrounding(this.appendGuidance(this.buildSystemPrompt(o?.ingestSystemPrompt ?? INGEST_SYSTEM_PROMPT, {}, ontologyContext), guidance), 'ingest'),
       librarian: librarianStrategy === 'ops'
-        ? this.appendGrounding(this.appendOntology(OPS_EXTRACT_SYSTEM_PROMPT, ontologyContext), 'librarian')
-        : this.appendGrounding(this.buildSystemPrompt(o?.librarianSystemPrompt ?? LIBRARIAN_SYSTEM_PROMPT, {}, ontologyContext), 'librarian'),
+        ? this.appendGrounding(this.appendGuidance(this.appendOntology(OPS_EXTRACT_SYSTEM_PROMPT, ontologyContext), guidance), 'librarian')
+        : this.appendGrounding(this.appendGuidance(this.buildSystemPrompt(o?.librarianSystemPrompt ?? LIBRARIAN_SYSTEM_PROMPT, {}, ontologyContext), guidance), 'librarian'),
       heal: this.appendGrounding(o?.healSystemPrompt ?? HEAL_SYSTEM_PROMPT, 'heal'),
       ontologyBackfill: this.buildSystemPrompt(o?.ontologyBackfillSystemPrompt ?? ONTOLOGY_BACKFILL_SYSTEM_PROMPT, {}, ontologyContext),
     };

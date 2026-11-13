@@ -36,6 +36,7 @@ export async function selectBatch(
   entityId: string,
   wm: LibrarianWatermark | null,
   meter?: UsageMeter,
+  guidance?: string,
 ): Promise<{ batch: LabeledEvent[] } | { budgetStop: { requiredEstimate: number } }> {
   const events: WikiEvent[] = await deps.eventRepo.getAfter(entityId, wm, OPS_MAX_EVENTS_PER_PASS);
   if (events.length === 0) return { batch: [] };
@@ -52,7 +53,7 @@ export async function selectBatch(
   if (meter && meter.budget !== undefined) {
     const ontologyContext = (await deps.ontologyService?.buildPromptContext(entityId)) ?? null;
     for (;;) {
-      const need = RESOLVE_RESERVE_FACTOR * estimatePrompt(deps.promptService.buildOpsExtractPrompt(batch, ontologyContext));
+      const need = RESOLVE_RESERVE_FACTOR * estimatePrompt(deps.promptService.buildOpsExtractPrompt(batch, ontologyContext, guidance));
       if (meter.fits(need)) break;
       if (batch.length === 1) return { budgetStop: { requiredEstimate: need } };
       batch = labelEvents(events.slice(0, Math.max(1, Math.floor(batch.length / 2))));
@@ -64,7 +65,7 @@ export async function selectBatch(
 export async function runExtract(deps: LibrarianDeps, ctx: LibrarianPassContext, batch: LabeledEvent[]): Promise<ExtractOutcome> {
   const { entityId, trigger } = ctx;
   const ontologyContext = (await deps.ontologyService?.buildPromptContext(entityId)) ?? null;
-  const prompt = deps.promptService.buildOpsExtractPrompt(batch, ontologyContext);
+  const prompt = deps.promptService.buildOpsExtractPrompt(batch, ontologyContext, ctx.guidance);
   const text = await callLlm(deps.options, { operation: 'librarian', entityId, trigger, meter: ctx.meter }, prompt);
   const parsed = parseJsonResponse<{ facts?: unknown; tasks?: unknown; ontology_updates?: OntologyUpdates }>(text);
 

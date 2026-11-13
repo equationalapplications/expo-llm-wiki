@@ -180,6 +180,21 @@ export class IngestionService {
       // surfaces before any LLM tokens are spent, not buried under
       // `WikiIngestEmptyError` after the first LLM call. See spec §3.
       const ontologyContext = await this.ontologyService?.buildPromptContext(entityId) ?? null;
+      // Specs/librarian-guidance: guidance resolves here — once per ingest
+      // call, next to the ontology hoist (after the duplicate-hash and
+      // empty-chunk early returns, so a resolver never runs for an ingest
+      // that sends no prompt), before the per-chunk loop. Diagnostics emit
+      // immediately, not with the commit-time chunk diagnostics.
+      const { guidance, diagnostic } = PromptService.resolveGuidance(this.options.config, entityId);
+      if (diagnostic) {
+        emitDiagnostic(this.options, {
+          code: diagnostic.code,
+          operation: 'ingest',
+          trigger: 'call',
+          entityId,
+          detail: diagnostic.detail,
+        });
+      }
       const ingestGrounding = this.promptService.groundingFor('ingest');
 
       const chunkResults = await withConcurrency(
@@ -195,6 +210,7 @@ export class IngestionService {
             chunk,
             params.promptOverride,
             ontologyContext,
+            guidance,
           );
           try {
             const responseText = await callLlm(this.options, { operation: 'ingest', entityId, trigger: 'call' }, { systemPrompt, userPrompt });

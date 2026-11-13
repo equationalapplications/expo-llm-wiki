@@ -36,7 +36,17 @@ export function changedDefaultWarnings(config: WikiConfig | undefined): string[]
   if (config?.prompts?.librarianSystemPrompt !== undefined && config?.librarian?.strategy === undefined) {
     warnings.push(
       "[core-llm-wiki] `prompts.librarianSystemPrompt` is set, but `librarian.strategy` now defaults to 'ops', "
-      + "which does not use it. Set `librarian: { strategy: 'legacy' }` to keep the override.",
+      + "which does not use it. Set `librarian: { strategy: 'legacy' }` to keep the override, or move the domain part "
+      + "of it to `prompts.guidance` (specs/librarian-guidance), which works under both strategies. The whole-prompt "
+      + "override is deprecated and is removed in 9.0.0.",
+    );
+  }
+  if (config?.prompts?.librarianSystemPrompt !== undefined && config?.librarian?.strategy === 'ops') {
+    warnings.push(
+      "[core-llm-wiki] `prompts.librarianSystemPrompt` is set with an explicit `librarian.strategy: 'ops'`, which does "
+      + "not use the override, so it is silently ignored. Move the domain part of it to `prompts.guidance` "
+      + "(specs/librarian-guidance), which works under both strategies. The whole-prompt override is deprecated and is "
+      + "removed in 9.0.0.",
     );
   }
   if (config?.librarian?.strategy === 'legacy' && config?.maintenance === undefined && !hasThreshold) {

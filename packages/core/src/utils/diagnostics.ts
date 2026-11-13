@@ -39,6 +39,8 @@ const SEVERITY: Record<WikiDiagnosticCode, WikiDiagnosticSeverity> = {
   event_created_at_restamped: 'info',
   external_deletion_pending: 'warn',
   external_deletion_discarded: 'warn',
+  guidance_too_long: 'warn',
+  guidance_resolver_failed: 'warn',
 };
 
 // Fixed templates (REQ-DIAG-03): never interpolate content into these.
@@ -67,6 +69,8 @@ const MESSAGE: Record<WikiDiagnosticCode, string> = {
   event_created_at_restamped: 'Imported events that would have sorted behind the librarian position, or had an unusable date, were adjusted: an affected created_at was re-dated just after the current time, or after the librarian position if that is later, keeping their order; an unusable occurred_at was cleared.',
   external_deletion_pending: 'Removals owed to the external vector index are still pending.',
   external_deletion_discarded: 'Pending external vector removals were discarded because forceDeleteIgnoreRankerHook is set.',
+  guidance_too_long: 'The configured guidance exceeded the length cap and was not sent for this pass.',
+  guidance_resolver_failed: 'The per-entity guidance resolver failed; its value was not used for this pass.',
 };
 
 const warnedNonFunction = new WeakSet<object>();
