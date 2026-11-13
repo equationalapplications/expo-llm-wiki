@@ -470,9 +470,12 @@ All zero-token and deterministic unless stated. Suites live in
    estimate and refuses to spend without `--yes` (`--dry-run` for the
    estimate alone, `--out` for the result file). The runner drives the
    real write path: it seeds an in-memory `WikiMemory` with the new
-   manifest and calls `remember()`, so the engine assembles the
-   classification prompt internally through `buildPromptContext` — the
-   runner names no direct call, and what it measures is the prompt
+   manifest, stores each statement untyped with `remember()` (which
+   has no LLM step), and runs the engine's own classifier —
+   `runOntologyBackfill` with the LLM classifier — so the
+   classification prompt is assembled internally through
+   `buildPromptContext`; the runner names no direct call, and what it
+   measures is the prompt
    assembly production actually uses. It sends the fixture
    through the classification prompt to a real provider once and
    reports per-kind results, and next to the kind accuracy reports how
@@ -526,7 +529,32 @@ separate commits.
 
 ## Errata and evidence
 
-Empty at approval. Test plan item 7's measured run records its
-headline numbers here — model, prompt, per-kind results,
-about-proposal rate, and the small-sample caveat — because this file
-is the record that outlives the cycle.
+**Measured run — 2026-11-13** (result file:
+`packages/benchmarks/results/statement-kinds-2026-11-13.json`;
+runner: `benchmarks statement-kinds`, in-memory store, engine's own
+`runOntologyBackfill` LLM classifier, prompt assembled by
+`buildPromptContext` from this manifest):
+
+- **Kind split: 28/28 correct (100%)** — rule 7/7, decision 7/7,
+  lesson 7/7, trap 7/7. Model: GLM-5.3-flash (the host's resolved
+  provider). Fixture: 28 committed statements, 7 per kind, written to
+  discriminate (same subject matter across kinds).
+- **About-proposal rate: 0/28 proposed, 0/28 correct-target.** The
+  classifier proposed no edges despite resolvable seed targets
+  (fixture validation enforces every expected target is a seed node
+  with an exact title match). The kind definitions alone carried the
+  classification; the attachment sentence did not produce edges under
+  this model. Recorded as the known open residual, consistent with
+  the accepted prompt-only enforcement of the abstract type: edge
+  proposal is prompt-steered, and this measurement shows it did not
+  happen for this model on this fixture.
+- **Caveats:** single run, no repeats; small sample (28); one model;
+  judge is exact-match against the fixture's expected kind and target;
+  the runner's classification path (`remember` untyped → backfill
+  classifier) was implemented when `remember()` was found to have no
+  LLM step (spec test-plan sentence amended in this PR, same cycle).
+  No accuracy claim beyond these numbers; the split being dependable
+  for other models is unmeasured.
+- **Follow-up:** the 0/28 about rate is filed as its own issue rather
+  than folded here — it is a delivery-gap question (prompt steering,
+  backfill edge surfacing, or model behavior), not a manifest defect.
