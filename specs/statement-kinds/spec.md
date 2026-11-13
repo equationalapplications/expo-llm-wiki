@@ -120,18 +120,24 @@ The kinds belong to this schema, not to core. The warm-agent manifest
 
 ### The three labels ride existing fields — no new fields
 
-The engine already stores every label the ruling names. The
-descriptions point at them; the engine gains no field:
+The engine already stores every label the ruling names. The engine
+gains no field, and the classification prompt carries none of this:
+the classifier can return only `okf_type` and `edges`
+(`ExtractedFactWithOntology`, `types.ts:680`), so label text in a
+description would be tokens every call pays for with no effect on the
+model. The label mapping lives in the schema package README's
+statements section and in `upgrading-9.md`, where host writers (the
+code that actually sets these fields) read it:
 
 | Label | Field(s) today |
 |---|---|
-| Who vouches | `okf_verified` (chronological entries; latest surfaces as `last_verified_by`), `packages/core/src/types.ts:539`. Caution the `statement` description states: when grounding is on, the grounding writer stamps every grounded fact with a machine verifier (`process:grounding-check`, `packages/core/src/utils/grounding.ts:107`), so a verifier string starting `process:` is a machine, never a person — the human test is the derived `trustTier === 'human-reviewed'` (`types.ts:555`) |
+| Who vouches | `okf_verified` (chronological entries; latest surfaces as `last_verified_by`), `packages/core/src/types.ts:539`. The README text states: when grounding is on, the grounding writer stamps every grounded fact with a machine verifier (`process:grounding-check`, `packages/core/src/utils/grounding.ts:107`), so a verifier string is a machine unless it starts `human:` — only `human:`-prefixed entries produce the derived `trustTier === 'human-reviewed'` (`types.ts:561`) |
 | Standing | `superseded_by` + `valid_to` — set by the existing supersede path (`TemporalService.supersedeInTx` writes only those plus `superseded_at`); `lifecycle_status: 'deprecated'` is set by an explicit `setLifecycleStatus` call (`WikiMemory.ts:1398`) — the host or the memory app makes that call when it accepts the replacement; the engine gains no automatic writer (`types.ts:531`, `:568`) |
 | Dates | `valid_from` / `valid_to` (`types.ts:564`, `:566`) |
 
 "Filled only when the source says so in plain words" is a convention
-for writers, not schema: the `statement` description states it for the
-vouching label. This mapping is what the issue's "where the three
+for writers, not schema: the README and `upgrading-9.md` state it for
+the vouching label. This mapping is what the issue's "where the three
 labels live" question resolves to, and it needs no core change.
 
 ### Areas
@@ -205,13 +211,18 @@ Nothing else is removed. The ruling covers exactly this list.
 
 - **Existing rows stay.** Facts stored with `okf_type` `handoff` or
   `session_recap` keep their rows and their type strings (rule 2:
-  migrations never drop data). Strict mode rejects those types on the
-  write paths that enforce it — `remember()` and document ingest
-  (`RememberService.ts:29`, `IngestionService.ts:633`). Librarian
-  writes run with strict checking off today, so a fact mis-classified
-  as a removed type stores with `okf_type: null` and loses its edges
-  (`OntologyService.ts:111`) — the same behavior any unknown type gets
-  now, unchanged by this release. `importDump` copies `okf_type`
+  migrations never drop data). Stored `handoffFor` edge rows stay too
+  and still traverse — nothing rewrites stored edges. Strict mode
+  rejects those types on the write paths that enforce it — `remember()`
+  and `upsertGraph()` (`RememberService.ts:30`, where `strict` tracks
+  the persisted mode; `upsertGraph` decides strictness from the
+  persisted mode). `ingestDocument` does NOT enforce: it calls the
+  shared graph writer with `strict: false` (`IngestionService.ts:561`,
+  `:860`, `:927`), so after 9.0.0 a document chunk classified as a
+  removed type stores with `okf_type: null`, exactly like the
+  librarian paths (`legacy.ts:156`, `ops/apply.ts:73`) — the same
+  behavior any unknown type gets now, unchanged by this release.
+  `importDump` copies `okf_type`
   verbatim (`ImportExportService.ts:312`), so re-imported old rows
   keep the stale names. Hosts re-type or leave the rows.
 - **Seeded manifests do not re-seed.** `seedManifests` writes only when
@@ -311,7 +322,11 @@ snapshot.
   that names the key (`:20-23`).
 - `packages/benchmarks/` — the new classification-fixture subcommand
   under the CLI's existing `--dry-run`/`--yes` guard (test plan
-  item 7), plus its README command list.
+  item 7), its README command list, and a devDependency on
+  `schema-software-org` for the fixture and manifest.
+- `packages/core/src/index.ts` — additive export of
+  `buildOntologyPromptAppendix` (test plan item 2's plumbing test
+  needs it; the schema package already depends on core).
 - `packages/core/src/WikiMemory.ts` — doc comment line.
 - `packages/core/__tests__/engineDefaults.test.ts` — warning assertions.
 - `packages/core/__tests__/WikiMemory.test.ts`,
@@ -323,7 +338,8 @@ snapshot.
 - `packages/core/__tests__/__fixtures__/capture-guidance-golden.ts` —
   the config-override golden scenario retires; see test plan item 4.
 - Docs in the same PR, latest version only. CHANGELOG and versions stay
-  with release tooling.
+  with release tooling. `docs/ROADMAP.md` gets its step-2 done mark in
+  this PR (see §Release).
 
 ## Test plan
 
@@ -337,11 +353,19 @@ All zero-token and deterministic unless stated. Suites live in
    definition from the table above (verbatim substring); `statement`'s
    description forbids classifying directly as `statement`; each kind's
    description states "holds one claim"; the `statement` description
-   states the vouching convention, names the three label field groups,
-   and carries the attachment sentence (kinds attach with `about` to an
+   carries the attachment sentence (kinds attach with `about` to an
    `area`, the `software_application`, or the `organization`; the
    `statement`-sourced rows apply to every kind); the `area`
-   description names `name` and `patterns_file`.
+   description names `name` and `patterns_file`. Per the labels
+   section, the description carries no vouching or label-field text —
+   the classification prompt carries only what the classifier can act
+   on. The CI plumbing test lives in `packages/schema-software-org`
+   (which already depends on `core-llm-wiki`): core gains an additive
+   export of `buildOntologyPromptAppendix` (`packages/core/src/index.ts`
+   — today it exports only `validateManifest`), the schema package
+   builds the real prompt from its own manifest, and the test asserts
+   the four definitions and the abstract line are present in the built
+   prompt text, not just in the manifest rows.
 3. **Parent and rows.** The four kinds declare `parent_type:
    'statement'`; `statement` declares no parent; the three `about`
    rows and the `partOf` row exist with the declared endpoints; the
@@ -430,22 +454,36 @@ All zero-token and deterministic unless stated. Suites live in
 7. **Rule/decision dependability (cheap, targeted, no benchmark run).**
    A committed fixture holds labeled statement texts (at least 6 per
    kind, written to be discriminating: same subject matter, different
-   kind). A CI test asserts the classification prompt carries all four
+   kind). Each fixture entry carries the statement text, the expected
+   kind, and the expected `about` target — a title and target type —
+   and the runner first inserts seed nodes (one `software_application`,
+   one `area`, one `organization`) so a proposed `about` edge resolves
+   through the title index (`OntologyService.ts:163-172`); without
+   seeded targets every edge would drop `target_not_found` and the
+   reported rate would measure the fixture's shape, not the prompt.
+   A CI test (in the schema package, per item 2) asserts the
+   classification prompt carries all four
    definitions and the abstract-`statement` line — plumbing only,
    zero tokens. The measured runner lives
    in `packages/benchmarks` as a CLI subcommand under the same guard
    as `longmemeval` and `supersession`: it prints a one-screen token
    estimate and refuses to spend without `--yes` (`--dry-run` for the
-   estimate alone, `--out` for the result file). It sends the fixture
+   estimate alone, `--out` for the result file). It builds the prompt
+   through `buildPromptContext`, sends the fixture
    through the classification prompt to a real provider once and
    reports per-kind results, and next to the kind accuracy reports how
    often a correct `about` edge is proposed — the attachment sentence
    in the `statement` description is measured, not just asserted;
    AGENTS.md's benchmark
    gate therefore
-   holds — no token-spending path exists outside that CLI. The runner
-   runs once before merge and the LEDGER records the result with model
-   name, prompt, and the small-sample caveat. This measures the split
+   holds — no token-spending path exists outside that CLI, and the
+   run uses an in-memory store, never a host database. The runner
+   runs once before merge; the result file lands in the benchmarks
+   `results/` tree, and this spec's Errata section records the
+   headline numbers with model name, prompt, and the small-sample
+   caveat — the durable home, because plan.md and LEDGER.md are
+   deleted at cycle close (INTENT.md:335) and rule 11 requires the
+   number to outlive the run. This measures the split
    the issue flags; the spec claims no number in advance.
 
 ## Release
@@ -458,9 +496,15 @@ inside the shared release. `core-llm-wiki`'s breaking change is the
 config key removal, carried by a `refactor!`/`feat!` commit citing the
 owner ruling (2026-11-13: fix now while adoption is near-zero). The
 `BREAKING CHANGE` footer is written with the ruling's citation — the
-AGENTS.md rule bars footers without a ruling; this one has it.
-Commit `docs:` changes separately from the manifest and core changes
-(spec and code in separate commits; AGENTS.md).
+AGENTS.md rule bars footers without a ruling; this one has it. The
+completing PR also adds the 9.0.0 ruling to INTENT.md's amendment
+record, mirroring the 8.0.0 entry (INTENT.md lines 403-411) and the
+librarian-guidance spec's statement of the same
+(`specs/librarian-guidance/spec.md:29-30`), and ticks the ROADMAP
+step-2 done mark it
+describes (`docs/ROADMAP.md:28-31`). Commits follow INTENT.md's
+spec-then-code commit record (INTENT.md:347): spec and code land in
+separate commits.
 
 ## Non-goals
 
@@ -474,3 +518,10 @@ Commit `docs:` changes separately from the manifest and core changes
 - Curated Thoughts twin (#343) and the CTI role pack (#96).
 - Any accuracy claim for the four-way split (rule 11 — measured, not
   claimed).
+
+## Errata and evidence
+
+Empty at approval. Test plan item 7's measured run records its
+headline numbers here — model, prompt, per-kind results,
+about-proposal rate, and the small-sample caveat — because this file
+is the record that outlives the cycle.
