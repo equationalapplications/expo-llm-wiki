@@ -363,6 +363,13 @@ runs and who schedules it.
 
 ## Amendments
 
+- 2026-11-13 — Kurt rules that 9.0.0 removes the `handoff` and
+  `session_recap` node types, the `handoffFor` edge rows, and
+  `prompts.librarianSystemPrompt`, and nothing else; recorded with
+  issue #376, PR #380 and `specs/statement-kinds/`. Why: session records
+  become working memory that is searched as it is, and outside adoption
+  is close to zero, so a clean break costs least now. No rule text
+  changed.
 - 2026-11-13 — Rule 5 gains a Planned note, and `docs/ROADMAP.md` is
   added. The owner ruled that memory has a Sources layer: the original
   material, searched as it is, beside what the librarian extracts from

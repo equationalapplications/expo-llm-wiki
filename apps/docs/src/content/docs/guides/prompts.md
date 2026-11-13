@@ -26,27 +26,8 @@ parser depends on. Always tell the model to return raw JSON in the required shap
 
 Use these if the librarian and heal run from `'auto'` maintenance or `runPendingMaintenance()`.
 
-Under the default `librarian.strategy: 'ops'`, the librarian does **not** read
-`librarianSystemPrompt` — `WikiMemory` warns at construction when it's set. That override
-applies only when you pin `librarian: { strategy: 'legacy' }`. `healSystemPrompt` applies
-under both strategies:
-
-```ts
-createWiki(db, {
-  llmProvider,
-  config: {
-    prompts: {
-      librarianSystemPrompt: `You are an expert curator. Synthesize these thoughts:
-{{events}}
-
-Current facts:
-{{currentFacts}}
-
-Return ONLY valid JSON: { "facts": [{ "title": "string", "body": "string", "tags": ["string"], "confidence": "certain|inferred|tentative" }], "tasks": [{ "description": "string", "priority": 0 }] }. No markdown.`,
-    },
-  },
-});
-```
+`healSystemPrompt` applies under both strategies. To steer the librarian, use
+`prompts.guidance` (below). `prompts.librarianSystemPrompt` was removed in 9.0.0.
 
 ## Host guidance
 
@@ -77,8 +58,8 @@ createWiki(db, {
 **Never put secrets in guidance.**
 :::
 
-:::note[Deprecation]
-`prompts.librarianSystemPrompt` is deprecated and will be removed in 9.0.0. Migrate to `prompts.guidance`.
+:::note[Removed in 9.0.0]
+`prompts.librarianSystemPrompt` was removed in 9.0.0. Its value is ignored; migrate to `prompts.guidance`. See [Upgrading to 9.0.0](/expo-llm-wiki/project/upgrading-9/).
 :::
 
 ## Per-call overrides (one call only)
@@ -104,7 +85,6 @@ legacy-strategy knob.
 | Prompt | Variables |
 |---|---|
 | `ingestSystemPrompt` | `{{documentChunk}}` |
-| `librarianSystemPrompt` | `{{events}}`, `{{currentFacts}}` |
 | `healSystemPrompt` | `{{healCandidates}}`, `{{documentAnchors}}`, `{{allTasks}}`, `{{recentEvents}}` |
 | `ontologyBackfillSystemPrompt` | `{{facts}}` and the ontology placeholders |
 

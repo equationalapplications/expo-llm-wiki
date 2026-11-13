@@ -29,7 +29,7 @@ config: { librarian: { strategy: 'legacy' } } // default: 'ops'
 | Input | The newest events, plus existing facts in the prompt | Events since the last pass only |
 | Dedup | Done by the model | An **embedding gate, with no LLM call**: identical facts are a no-op, novel facts are added, and only *similar-but-different* candidates go to the model |
 | Changes | Rewrites facts | `ADD` / `UPDATE` / `SUPERSEDE` / `NOOP`, in one batched call. Supersede keeps history. |
-| Prompt overrides | `prompts.librarianSystemPrompt` | Ignored (ops uses its own schema) |
+| Prompt overrides | None (`prompts.librarianSystemPrompt` was removed in 9.0.0; use `prompts.guidance`) | `prompts.guidance` |
 
 Gate thresholds (`gate: { k: 5, dupThreshold: 0.89, novelThreshold: 0.30 }`) depend on your
 embedding model. The defaults were calibrated on BGE-small and are provisional for other models.
