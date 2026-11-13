@@ -124,8 +124,8 @@ The engine already stores every label the ruling names. The engine
 gains no field, and the classification prompt carries none of this:
 the classifier can return only `okf_type` and `edges`
 (`ExtractedFactWithOntology`, `types.ts:680`), so label text in a
-description would be tokens every call pays for with no effect on the
-model. The label mapping lives in the schema package README's
+description would be tokens every call pays for with no effect on what
+the classifier can return. The label mapping lives in the schema package README's
 statements section and in `upgrading-9.md`, where host writers (the
 code that actually sets these fields) read it:
 
@@ -468,8 +468,12 @@ All zero-token and deterministic unless stated. Suites live in
    in `packages/benchmarks` as a CLI subcommand under the same guard
    as `longmemeval` and `supersession`: it prints a one-screen token
    estimate and refuses to spend without `--yes` (`--dry-run` for the
-   estimate alone, `--out` for the result file). It builds the prompt
-   through `buildPromptContext`, sends the fixture
+   estimate alone, `--out` for the result file). The runner drives the
+   real write path: it seeds an in-memory `WikiMemory` with the new
+   manifest and calls `remember()`, so the engine assembles the
+   classification prompt internally through `buildPromptContext` — the
+   runner names no direct call, and what it measures is the prompt
+   assembly production actually uses. It sends the fixture
    through the classification prompt to a real provider once and
    reports per-kind results, and next to the kind accuracy reports how
    often a correct `about` edge is proposed — the attachment sentence
@@ -482,7 +486,7 @@ All zero-token and deterministic unless stated. Suites live in
    `results/` tree, and this spec's Errata section records the
    headline numbers with model name, prompt, and the small-sample
    caveat — the durable home, because plan.md and LEDGER.md are
-   deleted at cycle close (INTENT.md:335) and rule 11 requires the
+   deleted at cycle close (INTENT.md:338) and rule 11 requires the
    number to outlive the run. This measures the split
    the issue flags; the spec claims no number in advance.
 
@@ -498,11 +502,12 @@ owner ruling (2026-11-13: fix now while adoption is near-zero). The
 `BREAKING CHANGE` footer is written with the ruling's citation — the
 AGENTS.md rule bars footers without a ruling; this one has it. The
 completing PR also adds the 9.0.0 ruling to INTENT.md's amendment
-record, mirroring the 8.0.0 entry (INTENT.md lines 403-411) and the
-librarian-guidance spec's statement of the same
-(`specs/librarian-guidance/spec.md:29-30`), and ticks the ROADMAP
-step-2 done mark it
-describes (`docs/ROADMAP.md:28-31`). Commits follow INTENT.md's
+record, mirroring the 8.0.0 entry (INTENT.md lines 403-411) — each
+spec states its amendment status explicitly, and the librarian-guidance
+spec does the same when it records that INTENT.md carries no amendment
+for its rulings (`specs/librarian-guidance/spec.md:29-30`) — and ticks
+the ROADMAP step-2 done mark (step at `docs/ROADMAP.md:72`, done-mark
+format at `:28-31`). Commits follow INTENT.md's
 spec-then-code commit record (INTENT.md:347): spec and code land in
 separate commits.
 
