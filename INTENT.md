@@ -28,6 +28,9 @@ Each rule has a **Status** line saying how much of it the code does today:
 Statuses were checked against the code on 2026-10-29 (release 7.13.1).
 Update a status line in the same pull request that changes the behavior.
 
+What is planned next, and in what order, is in `docs/ROADMAP.md`. That
+file carries order only; status stays in the lines described above.
+
 ## Why this repository exists
 
 SynapseTree is one memory engine with two doors: a cloud service and an
@@ -184,6 +187,13 @@ same source.
 not edit it.
 
 **Status: Built.**
+
+**Planned** (owner ruling, 2026-11-13): the engine will also keep a
+document's text as a *source*: stored as it is, searched with no model
+call, and never rewritten. Until that ships, the host keeps the source
+text and the engine keeps a pointer to it on each fact it writes (#377).
+This rule's text is reworded in the pull request that ships the source
+store, not before. See `docs/ROADMAP.md`, step 4.
 
 ### 6. Honest reporting
 
@@ -352,6 +362,16 @@ runs and who schedules it.
 
 ## Amendments
 
+- 2026-11-13 — Rule 5 gains a Planned note, and `docs/ROADMAP.md` is
+  added. The owner ruled that memory has a Sources layer: the original
+  material, searched as it is, beside what the librarian extracts from
+  it. For now the host keeps source text and the engine keeps a pointer
+  on each fact (#377). A source store in the engine is roadmap step 4.
+  Why: a document that can only be found after a model has turned it
+  into facts costs tokens and loses detail, and a fact with no trail to
+  its source cannot be checked. The roadmap is new: it carries the
+  planned order of work, and no status. Owner rulings, 2026-11-12 and
+  2026-11-13. No rule text changed.
 - 2026-11-12 — Rule 7's one background job in deferred mode (the
   2026-11-11 entry below) is now off by default. Hosts turn it on with
   `drainExternalDeletionsOnSetup: true`. Why: the drain's short

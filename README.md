@@ -93,6 +93,7 @@ Both run on sql.js with no backend. You bring your own LLM key.
 - [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)
 - [SynapseTree integration guide](docs/synapsetree-integration.md) for tenant-aware hosts
 - [Benchmarks](docs/benchmarks.md)
+- [Roadmap](docs/ROADMAP.md)
 
 ## Ecosystem
 

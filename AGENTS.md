@@ -34,6 +34,10 @@ the SynapseTree founding charter; never re-rule a charter promise here.
   legacy files in `docs/superpowers/specs/`) has a Status line. Update it
   in the same PR that changes the behavior. Three specs shipped with stale
   "not started" headers until 2026-10-29; do not add a fourth.
+- **The roadmap carries order, not status.** `docs/ROADMAP.md` lists
+  planned work and its gates. Add a step's one-line done mark in the PR
+  that completes it. Rule status stays in `INTENT.md`; spec status stays
+  in the spec.
 - **Spec folders and ledgers.** New work is one folder under `specs/<name>/`
   with `spec.md`, `plan.md`, `LEDGER.md` (`specs/README.md`). Tick a
   ledger box only after that task's verification passes. At session start,
