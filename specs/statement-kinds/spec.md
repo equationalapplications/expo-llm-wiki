@@ -204,7 +204,9 @@ a stated reason:
   hand-editing it violates its own provenance. The SynapseTree
   adaptation lane regenerates it after the engine release ships. The
   mcp-server tests consume the contract as committed; this PR does not
-  change it, so they stay green and in scope for nothing.
+  change it, so they stay green and in scope for nothing. Verified: no
+  mcp-server test asserts the removed type names — the tests check
+  operations, not the type enums.
 - **The legacy spec**
   `docs/superpowers/specs/2026-08-28-schema-ea-executive-ontology-spec.md`
   documents the removed types as of its
@@ -252,6 +254,14 @@ snapshot.
   blocks with the removal notice.
 - `packages/core/src/WikiMemory.ts` — doc comment line.
 - `packages/core/__tests__/engineDefaults.test.ts` — warning assertions.
+- `packages/core/__tests__/WikiMemory.test.ts`,
+  `packages/core/__tests__/services/MaintenanceService.test.ts`,
+  `packages/core/__tests__/services/PromptService.test.ts`,
+  `packages/core/__tests__/librarianGuidance.test.ts`,
+  `packages/core/__tests__/groundingLibrarian.test.ts` — the config
+  override tests convert per test plan item 5.
+- `packages/core/__tests__/__fixtures__/capture-guidance-golden.ts` —
+  the config-override golden scenario retires; see test plan item 5.
 - Docs in the same PR, latest version only. CHANGELOG and versions stay
   with release tooling.
 
@@ -282,7 +292,21 @@ All zero-token and deterministic unless stated. Suites live in
    built librarian prompt is byte-identical to the no-override prompt,
    and `changedDefaultWarnings` emits exactly the removal notice once.
    A host pinning `librarian.strategy: 'legacy'` gets the same single
-   notice, not the #375 messages.
+   notice, not the #375 messages. Six test files set the key today and
+   change with the removal: config-path tests
+   (`WikiMemory.test.ts:215,238,271`, `MaintenanceService.test.ts:101`,
+   `PromptService.test.ts:108`, `groundingLibrarian.test.ts:69`)
+   become removal tests — the key set, the prompt unchanged, one
+   warning; the two `changedDefaultWarnings` assertions in
+   `librarianGuidance.test.ts:229,236` update to the removal notice;
+   per-call behavior tests in `PromptService.test.ts` and
+   `librarianGuidance.test.ts:167,201` move to the builder's
+   `runtimeOverride` parameter, which stays. The golden fixture
+   `__tests__/__fixtures__/capture-guidance-golden.ts:42` exercises
+   the config override as one scenario; that scenario retires with the
+   key, its recorded goldens move out in the same PR, and every
+   remaining scenario stays byte-identical (the diff-empty golden
+   gate proves it).
 6. **Removed types in strict mode.** Seeding the new manifest and
    writing a fact with `okf_type: 'handoff'` is rejected in strict
    mode; a pre-existing stored row with that type still reads back
