@@ -43,7 +43,6 @@ export interface SQLiteAdapter {
 export interface PromptOverrides {
   ingestSystemPrompt?: string;
   /** @deprecated Replaces the whole librarian prompt and only `legacy` reads it. Set `prompts.guidance` (and, per entity, `librarian.guidanceForEntity`) instead; removed in 9.0.0. */
-  librarianSystemPrompt?: string;
   healSystemPrompt?: string;
   ontologyBackfillSystemPrompt?: string;
   /**

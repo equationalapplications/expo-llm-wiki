@@ -105,14 +105,15 @@ describe('PromptService', () => {
       expect(userPrompt).toContain('Current Facts:');
     });
 
-    it('uses global librarianSystemPrompt override', () => {
+    it('ignores the removed librarianSystemPrompt config key', () => {
+      // @ts-expect-error librarianSystemPrompt was removed in 9.0.0
       const svc = new PromptService({ librarianSystemPrompt: 'global lib' });
       const { systemPrompt } = svc.buildLibrarianPrompt([], []);
-      expect(systemPrompt).toBe('global lib');
+      expect(systemPrompt).toBe(LIBRARIAN_SYSTEM_PROMPT);
     });
 
-    it('uses runtime override over global', () => {
-      const svc = new PromptService({ librarianSystemPrompt: 'global lib' });
+    it('uses runtime override', () => {
+      const svc = new PromptService();
       const { systemPrompt } = svc.buildLibrarianPrompt([], [], 'runtime lib');
       expect(systemPrompt).toBe('runtime lib');
     });

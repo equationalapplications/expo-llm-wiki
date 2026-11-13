@@ -56,6 +56,11 @@ describe('8.0.0 engine defaults', () => {
     expect(instructions.librarian).toBe(generateText.mock.calls[0][0].systemPrompt);
   });
 
+  const REMOVED = { librarianSystemPrompt: 'x' } as Record<string, unknown>;
+  const REMOVAL_NOTICE =
+    '[core-llm-wiki] `prompts.librarianSystemPrompt` was removed in 9.0.0 and its value is ignored. '
+    + 'Move the domain part of it to `prompts.guidance`, which works under both librarian strategies.';
+
   describe('changedDefaultWarnings', () => {
     it('is silent for a host that sets nothing or chooses explicitly', () => {
       expect(changedDefaultWarnings(undefined)).toEqual([]);
@@ -65,7 +70,6 @@ describe('8.0.0 engine defaults', () => {
       expect(changedDefaultWarnings({
         librarian: { strategy: 'legacy' },
         maintenance: 'auto',
-        prompts: { librarianSystemPrompt: 'x' },
       })).toEqual([]);
     });
 
@@ -77,10 +81,16 @@ describe('8.0.0 engine defaults', () => {
       }
     });
 
-    it('warns when a custom librarian prompt would silently stop applying', () => {
-      const [warning, ...rest] = changedDefaultWarnings({ prompts: { librarianSystemPrompt: 'x' } });
-      expect(rest).toEqual([]);
-      expect(warning).toContain("strategy: 'legacy'");
+    it('emits one removal notice when the removed librarianSystemPrompt key is present', () => {
+      for (const config of [
+        { prompts: REMOVED },
+        { prompts: REMOVED, librarian: { strategy: 'ops' as const } },
+        { prompts: REMOVED, librarian: { strategy: 'legacy' as const }, maintenance: 'auto' as const },
+      ]) {
+        const [warning, ...rest] = changedDefaultWarnings(config as WikiConfig);
+        expect(rest).toEqual([]);
+        expect(warning).toBe(REMOVAL_NOTICE);
+      }
     });
 
     it('warns when a legacy pin keeps only half of the 7.x behavior', () => {
@@ -105,9 +115,9 @@ describe('8.0.0 engine defaults', () => {
       expect(warn).toHaveBeenCalledTimes(1);
       make({ autoLibrarianThreshold: 5 });
       expect(warn).toHaveBeenCalledTimes(1);
-      make({ prompts: { librarianSystemPrompt: 'x' } });
+      make({ prompts: REMOVED } as WikiConfig);
       expect(warn).toHaveBeenCalledTimes(2);
-      make({ autoLibrarianThreshold: 5, prompts: { librarianSystemPrompt: 'x' } });
+      make({ autoLibrarianThreshold: 5, prompts: REMOVED } as WikiConfig);
       expect(warn).toHaveBeenCalledTimes(2);
     });
   });

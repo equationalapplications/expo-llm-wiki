@@ -39,7 +39,6 @@ function captures(): Record<string, unknown> {
   const plain = new PromptService();
   const overridden = new PromptService({
     ingestSystemPrompt: 'INGEST-OVERRIDE {{documentChunk}}',
-    librarianSystemPrompt: 'LIBRARIAN-OVERRIDE {{events}}',
   });
   const grounded = new PromptService(undefined, GROUNDING);
 
@@ -47,9 +46,9 @@ function captures(): Record<string, unknown> {
     out[`ingest/${name}/default`] = svc.buildIngestPrompt(CHUNK);
     out[`ingest/${name}/runtimeOverride`] = svc.buildIngestPrompt(CHUNK, 'RUNTIME-OVERRIDE {{documentChunk}}');
     out[`ingest/${name}/ontology`] = svc.buildIngestPrompt(CHUNK, undefined, ONTOLOGY);
-    out[`librarian/${name}/builtin`] = svc.buildLibrarianPrompt(EVENTS, []);
+    if (name !== 'overridden') out[`librarian/${name}/builtin`] = svc.buildLibrarianPrompt(EVENTS, []);
     out[`librarian/${name}/runtimeOverride`] = svc.buildLibrarianPrompt(EVENTS, [], 'RUNTIME-OVERRIDE {{events}}');
-    out[`librarian/${name}/ontology`] = svc.buildLibrarianPrompt(EVENTS, [], undefined, ONTOLOGY);
+    if (name !== 'overridden') out[`librarian/${name}/ontology`] = svc.buildLibrarianPrompt(EVENTS, [], undefined, ONTOLOGY);
     out[`opsExtract/${name}`] = svc.buildOpsExtractPrompt(EVENTS);
     out[`opsExtract/${name}/ontology`] = svc.buildOpsExtractPrompt(EVENTS, ONTOLOGY);
   }

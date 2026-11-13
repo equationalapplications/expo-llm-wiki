@@ -847,7 +847,7 @@ export class WikiMemory {
   /**
    * @param options.promptOverride - Applies only to this manual call. Does NOT affect
    * WriteService-triggered auto-runs. For persistent prompt customization across auto-runs,
-   * set `options.config.prompts.librarianSystemPrompt` at WikiMemory construction time.
+   * set `options.config.prompts.guidance` at WikiMemory construction time.
    */
   async runLibrarian(entityId: string, options?: { promptOverride?: string }): Promise<void> {
     return this.maintenanceService.runLibrarian(entityId, options);

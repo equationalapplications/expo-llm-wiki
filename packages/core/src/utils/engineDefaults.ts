@@ -18,9 +18,9 @@ export function resolveMaintenanceMode(config: WikiConfig | undefined): 'auto' |
 
 /**
  * Settings a 7.x host could have set that the 8.0.0 defaults silently ignore:
- * the auto-run thresholds do nothing under `deferred`, and the ops librarian
- * doesn't read `prompts.librarianSystemPrompt`. Names each mismatch so an
- * upgrade doesn't quietly lose maintenance or a custom prompt.
+ * the auto-run thresholds do nothing under `deferred`, and a whole-prompt
+ * librarian override key that 9.0.0 removed is now ignored. Names each
+ * mismatch so an upgrade doesn't quietly lose maintenance or a custom prompt.
  */
 export function changedDefaultWarnings(config: WikiConfig | undefined): string[] {
   const warnings: string[] = [];
@@ -33,20 +33,10 @@ export function changedDefaultWarnings(config: WikiConfig | undefined): string[]
       + "start the librarian or heal. Set `maintenance: 'auto'` or call runPendingMaintenance().",
     );
   }
-  if (config?.prompts?.librarianSystemPrompt !== undefined && config?.librarian?.strategy === undefined) {
+  if ((config?.prompts as Record<string, unknown> | undefined)?.librarianSystemPrompt !== undefined) {
     warnings.push(
-      "[core-llm-wiki] `prompts.librarianSystemPrompt` is set, but `librarian.strategy` now defaults to 'ops', "
-      + "which does not use it. Set `librarian: { strategy: 'legacy' }` to keep the override, or move the domain part "
-      + "of it to `prompts.guidance` (specs/librarian-guidance), which works under both strategies. The whole-prompt "
-      + "override is deprecated and is removed in 9.0.0.",
-    );
-  }
-  if (config?.prompts?.librarianSystemPrompt !== undefined && config?.librarian?.strategy === 'ops') {
-    warnings.push(
-      "[core-llm-wiki] `prompts.librarianSystemPrompt` is set with an explicit `librarian.strategy: 'ops'`, which does "
-      + "not use the override, so it is silently ignored. Move the domain part of it to `prompts.guidance` "
-      + "(specs/librarian-guidance), which works under both strategies. The whole-prompt override is deprecated and is "
-      + "removed in 9.0.0.",
+      "[core-llm-wiki] `prompts.librarianSystemPrompt` was removed in 9.0.0 and its value is ignored. "
+      + "Move the domain part of it to `prompts.guidance`, which works under both librarian strategies.",
     );
   }
   if (config?.librarian?.strategy === 'legacy' && config?.maintenance === undefined && !hasThreshold) {
