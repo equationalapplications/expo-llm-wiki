@@ -331,8 +331,12 @@ All zero-token and deterministic unless stated. Suites live in
    (`manifest.test.ts:81`), the exact-node-set assertion gains the six
    new names and loses `handoff`/`session_recap` (`:88`), the counts
    become 21/42 (`:103`), and the removed types' property-row
-   assertions (`:153`, `:155`) go. The warm-agent row-for-row parity
-   itself passes untouched — no warm-agent row changes.
+   assertions (`:153`, `:155`) go. The new manifest rows are appended
+   after the 28 warm rows — the order test (`:64-73`) requires the
+   warm block first and in upstream order. The warm-agent row-for-row
+   parity itself passes untouched — no warm-agent row changes, and the
+   warm-edge copy test filters on type, source and target, so the new
+   `statement`-sourced `about` rows never match it.
 5. **Override removal (core).** With
    `prompts.librarianSystemPrompt` set on a 9.0.0 engine: the key is
    absent from the type surface (typecheck is the assertion), the
@@ -355,9 +359,14 @@ All zero-token and deterministic unless stated. Suites live in
    warning; the assertions in `engineDefaults.test.ts` (`:68,81,108,
    110`) and the two `changedDefaultWarnings` assertions in
    `librarianGuidance.test.ts:229,236` update to the removal notice;
-   per-call behavior tests in `PromptService.test.ts` and
-   `librarianGuidance.test.ts:167,201` move to the builder's
-   `runtimeOverride` parameter, which stays. The golden fixture
+   `librarianGuidance.test.ts:167` ("composes after a whole-prompt
+   override") is a config-path test and converts the same way, and
+   `:201` is the golden capture scenario, which retires with the key
+   (see the golden fixture entry below). The "runtime override over
+   global" tests (`MaintenanceService.test.ts:112`,
+   `PromptService.test.ts:115`) set the global key only to prove the
+   runtime parameter beats it; with the global key gone they become
+   plain `runtimeOverride` tests. The golden fixture
    `__tests__/__fixtures__/capture-guidance-golden.ts:42` exercises
    the config override as one scenario; that scenario retires with the
    key, its recorded goldens move out in the same PR, and every
@@ -394,12 +403,15 @@ All zero-token and deterministic unless stated. Suites live in
 
 ## Release
 
-Major. `core-llm-wiki` publishes 9.0.0: the config key removal is the
-breaking change, carried by a `refactor!`/`feat!` commit citing the
+Major. One release moves all nine packages to 9.0.0 together —
+`.releaserc.json`'s `prepareCmd` writes the same
+`nextRelease.version` into every package, so `schema-software-org`
+does not publish separately; its breaking change is the type removal
+inside the shared release. `core-llm-wiki`'s breaking change is the
+config key removal, carried by a `refactor!`/`feat!` commit citing the
 owner ruling (2026-11-13: fix now while adoption is near-zero). The
 `BREAKING CHANGE` footer is written with the ruling's citation — the
 AGENTS.md rule bars footers without a ruling; this one has it.
-`schema-software-org` publishes its own major for the type removals.
 Commit `docs:` changes separately from the manifest and core changes
 (spec and code in separate commits; AGENTS.md).
 
