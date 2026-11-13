@@ -27,8 +27,15 @@ Seeded manifests do **not** re-seed. An entity that already has a manifest keeps
 ```ts
 import { schemaSoftwareOrgManifest } from '@equationalapplications/schema-software-org';
 
-await wiki.setOntologyManifest(entityId, schemaSoftwareOrgManifest);
+// Read the entity's current mode first, then pass it back.
+const current = await wiki.getOntologyManifest(entityId);
+await wiki.setOntologyManifest(entityId, schemaSoftwareOrgManifest, {
+  mode: current?.mode,
+});
 ```
+
+Omitting `mode` overwrites the stored per-entity mode (falling back to the config default, or
+`off`), so pass the current mode to keep it.
 
 ## What is new
 

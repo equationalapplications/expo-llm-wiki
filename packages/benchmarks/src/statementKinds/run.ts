@@ -154,7 +154,10 @@ export async function runStatementKinds(opts: RunStatementKindsOpts): Promise<St
         const anchor = hood.nodes.find((n) => n.id === fact.id);
         const targets = hood.edges
           .filter((x) => x.source_id === fact.id && x.edge_type === 'about')
-          .map((x) => seedIds.get(x.target_id) ?? hood.nodes.find((n) => n.id === x.target_id)?.title ?? x.target_id);
+          .map((x) => {
+            const n = hood.nodes.find((m) => m.id === x.target_id);
+            return seedIds.get(x.target_id) ?? (n ? `${n.okf_type ?? 'untyped'}:${n.title}` : x.target_id);
+          });
         const want = `${e.expected_target.type}:${e.expected_target.title}`;
         const actual = anchor?.okf_type ?? null;
         // Alignment guard: the pass typed something, but not this statement's fact.

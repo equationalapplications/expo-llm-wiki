@@ -15,7 +15,7 @@ const entries: StatementFixtureEntry[] = ['alpha one', 'beta two'].map((text) =>
 }));
 
 describe('runStatementKinds misalignment guard', () => {
-  it('a failed statement leaves no untyped fact to poison the next row', async () => {
+  it('an unclassified first statement is not carried into the next prompt', async () => {
     let calls = 0;
     const prompts: string[] = [];
     const fetchImpl = vi.fn(async (_u: string, init?: { body?: string }) => {

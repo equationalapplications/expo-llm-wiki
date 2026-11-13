@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { WikiMemory } from '../src/WikiMemory';
 import { WikiStrictOntologyViolation } from '../src/types';
 import { openTestDatabase } from './helpers/sqliteAdapter';
@@ -46,5 +46,36 @@ describe('statement kinds — strict-mode write path (spec test plan item 5)', (
   it('accepts a concrete kind under strict', async () => {
     const wiki = await seeded();
     expect((await wiki.remember('e1', { title: 'T', body: 'B', okf_type: 'rule' })).okf_type).toBe('rule');
+  });
+});
+
+describe('statement kinds — scripted classification plumbing (spec test plan item 6)', () => {
+  // Plumbing regression guard: the scripted provider forces a typed statement
+  // plus an `about` edge; it says nothing about what a real model does.
+  it('types a statement rule, persists the about edge, and keeps standing labels on supersede', async () => {
+    const generateText = vi.fn<any>();
+    const wiki = new WikiMemory(openTestDatabase(), { llmProvider: { generateText } });
+    await wiki.setup();
+    await wiki.setOntologyManifest('e1', MANIFEST, { mode: 'strict' });
+    const app = await wiki.remember('e1', { title: 'Orbit', body: 'The Orbit app.', okf_type: 'software_application' });
+    const stmt = await wiki.remember('e1', { title: 'Always pin versions', body: 'When adding a dependency, pin it.' });
+    generateText.mockResolvedValue(JSON.stringify({
+      classifications: [
+        { id: stmt.id, okf_type: 'rule', edges: [{ edge_type: 'about', target_title: 'Orbit' }] },
+      ],
+    }));
+    const res = await wiki.runOntologyBackfill('e1', { classifier: 'llm' });
+    expect(res.typed).toBeGreaterThanOrEqual(1);
+    expect(res.edgesAdded).toBe(1);
+
+    const hood = await wiki.traverseGraph('e1', { sourceId: stmt.id, direction: 'outbound', maxDepth: 1, edgeTypes: ['about'] });
+    expect(hood.nodes.find((n) => n.id === stmt.id)?.okf_type).toBe('rule');
+    expect(hood.edges.some((e) => e.source_id === stmt.id && e.target_id === app.id && e.edge_type === 'about')).toBe(true);
+
+    const { newId } = await wiki.supersede('e1', stmt.id, { title: 'Always pin versions v2', body: 'Pin exact versions.' });
+    const [old] = (await wiki.history('e1', stmt.id)).filter((f) => f.id === stmt.id);
+    expect(old.superseded_by).toBe(newId);
+    expect(old.valid_to).toEqual(expect.any(Number));
+    await expect(wiki.setLifecycleStatus(stmt.id, 'e1', 'deprecated')).resolves.toBeUndefined();
   });
 });

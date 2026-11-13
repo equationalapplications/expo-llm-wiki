@@ -9,7 +9,9 @@ byte-parity; docs site builds (53 pages). Spec gate closed by the
 owner 2026-11-13; written-work ladder converged through T4 Fable
 delta ("Approve after conditioned fixes; no blockers"). Measured run
 in Errata: kind split 28/28 on GLM-5.3-flash; about-proposal 0/28
-filed as #381.)
+filed as #381; attachment path shipped unproven — the measured run recorded
+0/28 persisted about edges (#381), and test-plan item 6's stub guards the
+plumbing, not model behavior.)
 **Date:** 2026-11-13
 **Owner rulings:** 2026-11-12 and 2026-11-13, recorded in issue #376 and in
 the vault note `sharper-memory-design-rulings-2026-11-13.md`. The 9.0.0
