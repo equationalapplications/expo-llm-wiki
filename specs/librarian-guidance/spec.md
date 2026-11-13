@@ -6,13 +6,19 @@
 memories separate, and neither value is stored, so nothing mixes. Rule 5 —
 guidance changes what ingest selects, never what a stored document fact
 says; this spec states that invariant and tests it. Rule 6 — over-cap
-guidance is refused with a diagnostic, never silently. Rule 7 — a length
+guidance and resolver failures are refused with a diagnostic, never
+silently; model-side omissions that the leave-out rule itself can cause
+are not engine-diagnosable, and that risk is accepted by the owner's
+ruling (see The general leave-out rule). Rule 7 — a length
 cap bounds the text resent on every librarian call, and prompt volume is
 reported, not billed tokens. Rule 10 — this spec first. Rule 11 — the
-change is measured by cheap targeted tests — the owner ruling of
-2026-11-10 that replaced benchmark runs with them (recorded in
-`specs/targeted-diagnostics` and restated in roadmap step 1); no
-accuracy or cost claim is published without a run. This is roadmap
+change is verified by cheap targeted tests for plumbing and prompt
+construction — the owner ruling of 2026-11-10 that replaced benchmark
+runs with them (recorded in `specs/targeted-diagnostics` and restated in
+roadmap step 1). The tests do **not** measure restatement reduction or
+false-omission rate; the effect on restatement is unmeasured and no
+accuracy or cost claim is published without a run (rule 11). This is
+roadmap
 step 1 (`docs/ROADMAP.md`, landed by PR #378 — cite still points
 forward until that merge). Owner rulings
 2026-11-12 and 2026-11-13. Minor release (8.5.0): see Release.
@@ -64,7 +70,9 @@ count above; it is a sizing figure, not a measured result (rule 11).
 `prompts.guidance` — a short plain-text string, set by the host in
 `WikiConfig.prompts`. Set in two places:
 
-- **Database default:** `config.prompts.guidance`.
+- **Database default:** `config.prompts.guidance`. Same emptiness rule
+  as below: a value that is empty or whitespace-only after trimming
+  counts as unset.
 - **Per entity:** `config.prompts.guidanceForEntity?: (entityId: string)
   => string | undefined`. A per-entity return of a **non-empty string
   wins** — non-empty after trimming, so a whitespace-only return falls
@@ -82,7 +90,11 @@ guidance-shaped, never a write failure: if it throws, returns a Promise,
 or returns any non-string value, the engine treats it as "no value"
 (falls back to the default, or to none) and emits a
 `guidance_resolver_failed` diagnostic carrying the entity id — same
-cadence as the cap diagnostic: at most once per pass or call.
+cadence as the cap diagnostic: at most once per pass or call. A returned
+thenable that later rejects gets a no-op rejection handler attached
+before it is discarded, so a JS host's async resolver can never surface
+as an unhandled rejection; the call's outcome is decided synchronously
+from the return value alone.
 
 ### Where guidance is added
 
@@ -97,7 +109,12 @@ to the three prompts that author fact text from events and documents:
   `PromptService.ts:273-284`).
 
 Marked section shape (exact delimiters fixed at implementation, and
-asserted by test):
+asserted by test). Insertion point: the section is appended to the
+**already-hydrated** system prompt — after ontology context, immediately
+before `appendGrounding` — and the guidance text itself is never run
+through placeholder hydration, so guidance containing
+`{{documentChunk}}` or similar cannot change a builder's template branch
+or be expanded with data (test plan item 2 covers this):
 
 ```
 --- Host guidance ---
@@ -136,6 +153,44 @@ Turning the rule on for every host, always, is EXPLORATORY on the
 roadmap and is gated on a test this repo does not have yet; nothing here
 builds toward it silently.
 
+**The pointer channel in this release.** The ruled sentence says memory
+"points to that record". Today a librarian fact has nowhere structured
+to point: `source_ref` is `null` (`ops/apply.ts:88`, `legacy.ts:168`)
+and the pointer is #377's work. In this release the only channel is the
+fact's own text — the model can name the record it deferred to, e.g.
+"recorded in `docs/ROADMAP.md`". Guidance should name its records by
+title so the model has something concrete to name; the example guidance
+in the handoff ("the code and the specs are the record") works this way.
+A test asserts the rule sentence appears exactly as ruled.
+
+**Omission risk, stated.** The leave-out rule is an instruction to the
+model, and a model following it can omit a fact that no better record
+actually holds — a false omission. No diagnostic can see it: the engine
+receives nothing to report. That is inherent to what was ruled; the
+owner accepts it as the price of not restating records, and the
+alternative (no rule) is the restatement problem this release solves.
+Nothing here measures the false-omission rate; any future measurement
+is new work, not part of this release.
+
+### Plumbing
+
+- The three builders gain one optional trailing parameter,
+  `guidance?: string` — the **already-resolved, already-capped**
+  effective text. The builders never call the resolver themselves.
+- Resolution is hoisted to the call boundary: `MaintenanceService`
+  resolves once before the librarian pass; `IngestionService` resolves
+  once **above the per-chunk loop** (`IngestionService.ts:194` builds
+  the ingest prompt per chunk); `getInstructions` resolves once per
+  call.
+- Two new codes join `WikiDiagnosticCode` (`packages/core/src/types.ts`):
+  `guidance_too_long` and `guidance_resolver_failed`. The diagnostics
+  channel itself is existing and unchanged.
+- Composition with overrides: whichever template wins — built-in
+  default, `PromptOverrides`, a per-call ingest `promptOverride`, or the
+  legacy `runtimeOverride` — receives the guidance section appended at
+  the insertion point above. Guidance composes after every override;
+  nothing suppresses it except "not set" and "over cap".
+
 ### Beside the whole-prompt override
 
 Under `legacy`, `prompts.librarianSystemPrompt` keeps working and
@@ -150,7 +205,10 @@ before `appendGrounding` runs (`PromptService.ts:37`).
 `WikiConfig` docs in this release, with "removed in 9.0.0". The
 `changedDefaultWarnings` message for an override under ops
 (`engineDefaults.ts:36-42`) now points at `prompts.guidance` instead of
-only telling the host to pin `legacy`. Removal itself is #376's release
+only telling the host to pin `legacy`. The warning's condition widens to
+cover a host that sets `librarian.strategy: 'ops'` explicitly: today
+that host gets no warning and a silently ignored override, and the
+updated message should reach it too. Removal itself is #376's release
 (owner ruling 2026-11-13; the 9.0.0 break covers exactly the listed
 removals and nothing else).
 
@@ -166,8 +224,8 @@ result applies to every prompt build in that pass:
 
 - At or under the cap: guidance is sent as specified.
 - Over the cap: the guidance is **not sent** for that call; the prompt is
-  exactly the no-guidance prompt; the engine records a diagnostic
-  (existing diagnostics channel, code `guidance_too_long`, with the
+  exactly the no-guidance prompt; the engine records a diagnostic (code
+  `guidance_too_long` on the existing diagnostics channel, with the
   offending value's length and whether it came from the per-entity value
   or the default). Nothing is truncated and nothing is stored (rule 6).
   The diagnostic is emitted at most once per pass (one librarian pass or
@@ -197,12 +255,13 @@ item 3).
 ### Instructions surface
 
 `WikiMemory.getInstructions(entityId)` (`WikiMemory.ts:697`) resolves
-the effective guidance for that entity and returns the four templates
-with the guidance section in place — so a host rendering its own
-prompts sees exactly what the engine would send. The docs repeat the
-existing warning that this text is returned verbatim and must hold no
-secrets (guidance is host-provided; the engine adds none of the host's
-data to it).
+the effective guidance for that entity and returns the four templates —
+the ingest and librarian templates carrying the guidance section, heal
+and ontology backfill unchanged — so a host rendering its own prompts
+sees exactly what the engine would send. The docs repeat the existing
+warning that this text is returned verbatim and must hold no secrets
+(guidance is host-provided; the engine adds none of the host's data to
+it).
 
 ### Rule 5 invariant
 
@@ -254,7 +313,10 @@ claims published (rule 11). Suites live in `packages/core/__tests__/`.
    once, contains the effective value verbatim, the rule sentence
    follows it, grounding block still last. Under `legacy` with
    `librarianSystemPrompt` also set, the override still leads and the
-   section is appended.
+   section is appended. Guidance text containing `{{...}}` placeholder
+   syntax passes through verbatim and never triggers hydration or
+   changes a builder's template branch. The rule sentence is asserted
+   character-for-character against the ruled text.
 3. **Grounding boundary.** Guidance text never appears in
    `buildGroundingCorpus` output for any writer; the grounding block's
    position is unchanged with and without guidance.
@@ -267,22 +329,25 @@ claims published (rule 11). Suites live in `packages/core/__tests__/`.
    suppresses guidance for that call with **no fallback** to the
    default. The diagnostic fires once per pass, not once per chunk.
 5. **Resolution and resolver failures.** Per-entity wins over default;
-   `undefined`/empty/whitespace-only resolver return falls back; a
-   resolver that throws, returns a Promise, or returns a non-string
-   value falls back and emits `guidance_resolver_failed` with the
-   entity id, at most once per pass; the resolver is called exactly
-   once per pass (assert the call count); resolver not called at all
-   when no default and no resolver are configured (no surprise
+   `undefined`/empty/whitespace-only resolver return falls back, and the
+   same applies to a whitespace-only default; a resolver that throws,
+   returns a Promise (including one that later rejects), or returns a
+   non-string value falls back and emits `guidance_resolver_failed`
+   with the entity id, at most once per pass; the resolver is called
+   exactly once per pass (assert the call count); resolver not called
+   at all when no default and no resolver are configured (no surprise
    invocations).
 6. **Instructions surface.** `getInstructions(entityId)` reflects the
    entity's effective guidance in all returned templates that carry it,
    and omits it where this spec says guidance is not sent.
 7. **Warning text.** `changedDefaultWarnings` with an override under ops
-   mentions `prompts.guidance`.
+   mentions `prompts.guidance` — both when `librarian.strategy` is left
+   unset and when it is set to `'ops'` explicitly.
 
 ## Release
 
-Minor, **8.5.0**. The setting and the marked section are additive. The
+Minor (the number is release tooling's; expected 8.5.0). The setting
+and the marked section are additive. The
 built-in prompts change model output **only for hosts that set
 guidance** — new opt-in behavior, not changed behavior for an existing
 host — because the rule sentence rides the guidance section and nothing
