@@ -393,7 +393,12 @@ All zero-token and deterministic unless stated. Suites live in
    110`) and the two `changedDefaultWarnings` assertions in
    `librarianGuidance.test.ts:229,236` update to the removal notice;
    `librarianGuidance.test.ts:167` ("composes after a whole-prompt
-   override") is a config-path test and converts the same way, and
+   override") also builds the service directly, so it joins the
+   `// @ts-expect-error` group — but it moves the override to the
+   `runtimeOverride` argument of `buildLibrarianPrompt` and keeps its
+   ordering assertions (host guidance section after the override),
+   which stay real behavior the same way the `:112`/`:115` tests
+   become plain `runtimeOverride` tests; and
    `:201` is the golden capture scenario, which retires with the key
    (see the golden fixture entry below). The "runtime override over
    global" tests (`MaintenanceService.test.ts:112`,
@@ -435,7 +440,8 @@ All zero-token and deterministic unless stated. Suites live in
    through the classification prompt to a real provider once and
    reports per-kind results, and next to the kind accuracy reports how
    often a correct `about` edge is proposed — the attachment sentence
-   of M1's fix is measured, not just asserted; AGENTS.md's benchmark
+   in the `statement` description is measured, not just asserted;
+   AGENTS.md's benchmark
    gate therefore
    holds — no token-spending path exists outside that CLI. The runner
    runs once before merge and the LEDGER records the result with model
