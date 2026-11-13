@@ -1,8 +1,8 @@
 # Librarian guidance and the general leave-out rule — ledger
 
-In flight: 1. golden-string fixture capture (unmodified builders)
+In flight: 2. config types (types.ts)
 
-- [ ] 1. Golden strings fixture + generator — evidence: pending
+- [x] 1. Golden strings fixture + generator — evidence: commit after this one; generator re-run diffs empty (verified in-session)
 - [ ] 2. Config types (guidance, guidanceForEntity, deprecation, diagnostic codes + detail fields) — evidence: pending
 - [ ] 3. Constants (GUIDANCE_MAX_CHARS, rule sentence) — evidence: pending
 - [ ] 4. PromptService threading + marked section + rule sentence — evidence: pending
