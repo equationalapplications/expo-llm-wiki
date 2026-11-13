@@ -104,6 +104,14 @@ Rules for the description text (it is the classification signal, D3):
   type at validation is a core change this release does not make (the
   classification prompt is the enforcement, as for every other type).
   A test asserts this text is present in the manifest.
+- The `statement` description also tells the classifier how attachment
+  works, because the prompt shows the manifest as raw JSON and says
+  only "use the row whose types match your fact" (`prompts/ontology.ts`):
+  it states that the four kinds attach with `about` to an `area`,
+  the `software_application`, or the `organization`, and that the
+  `about` rows declared with source `statement` apply to every kind.
+  Without that sentence, a `rule` fact sees no row whose `source_type`
+  is `rule` and never proposes the edge. A test asserts this text.
 - The text stays organization-neutral: it says "the organization",
   never a specific company.
 
@@ -131,9 +139,13 @@ labels live" question resolves to, and it needs no core change.
 One new node type `area`: a named part of a `software_application`,
 such as "deploy" or "billing". One new edge `partOf`
 (`area` → `software_application`). The `area` description states the
-expected frontmatter properties: `name`, `patterns` (the area's file
-globs; the host keeps them in its own repo and they change in the same
-PR as the code, per the ruling). A statement attaches to the most
+expected frontmatter properties: `name`, and `patterns_file` — the
+path, inside the host repo, of the small file that holds the area's
+file globs. The property is a pointer, not a copy: the ruling places
+the patterns in the repo itself, changing in the same PR as the code,
+and the leave-out rule says memory points to the better record rather
+than duplicating it. A stored glob copy would silently diverge from
+the repo file; a stored path cannot. A statement attaches to the most
 specific thing it concerns: an `area`, the whole `software_application`,
 or the `organization`. This is the ruled target set, taken verbatim
 from the ruling sentence ("an area, the whole application, or the
@@ -299,7 +311,7 @@ snapshot.
   that names the key (`:20-23`).
 - `packages/benchmarks/` — the new classification-fixture subcommand
   under the CLI's existing `--dry-run`/`--yes` guard (test plan
-  item 8), plus its README command list.
+  item 7), plus its README command list.
 - `packages/core/src/WikiMemory.ts` — doc comment line.
 - `packages/core/__tests__/engineDefaults.test.ts` — warning assertions.
 - `packages/core/__tests__/WikiMemory.test.ts`,
@@ -307,9 +319,9 @@ snapshot.
   `packages/core/__tests__/services/PromptService.test.ts`,
   `packages/core/__tests__/librarianGuidance.test.ts`,
   `packages/core/__tests__/groundingLibrarian.test.ts` — the config
-  override tests convert per test plan item 5.
+  override tests convert per test plan item 4.
 - `packages/core/__tests__/__fixtures__/capture-guidance-golden.ts` —
-  the config-override golden scenario retires; see test plan item 5.
+  the config-override golden scenario retires; see test plan item 4.
 - Docs in the same PR, latest version only. CHANGELOG and versions stay
   with release tooling.
 
@@ -325,8 +337,11 @@ All zero-token and deterministic unless stated. Suites live in
    definition from the table above (verbatim substring); `statement`'s
    description forbids classifying directly as `statement`; each kind's
    description states "holds one claim"; the `statement` description
-   states the vouching convention and names the three label field
-   groups.
+   states the vouching convention, names the three label field groups,
+   and carries the attachment sentence (kinds attach with `about` to an
+   `area`, the `software_application`, or the `organization`; the
+   `statement`-sourced rows apply to every kind); the `area`
+   description names `name` and `patterns_file`.
 3. **Parent and rows.** The four kinds declare `parent_type:
    'statement'`; `statement` declares no parent; the three `about`
    rows and the `partOf` row exist with the declared endpoints; the
@@ -337,13 +352,19 @@ All zero-token and deterministic unless stated. Suites live in
    (`manifest.test.ts:81`), the exact-node-set assertion gains the six
    new names and loses `handoff`/`session_recap` (`:88`), the counts
    become 21/42 (`:103`), and the removed types' property-row
-   assertions (`:153`, `:155`) go. The new manifest rows are appended
+   assertions (`:153`, `:155`) go. Text that describes the old
+   manifest updates too: the test names at `:88` and `:103` say
+   17/40, the `:96` comment says "5 software-org creativework
+   subtypes" (it becomes 3), and the property-conventions table
+   (`:148-157`) gains an `area` row (`name`, `patterns_file`) so the
+   area's expected properties are tested like every other type's. The
+   new manifest rows are appended
    after the 28 warm rows — the order test (`:64-73`) requires the
    warm block first and in upstream order. The warm-agent row-for-row
    parity itself passes untouched — no warm-agent row changes, and the
    warm-edge copy test filters on type, source and target, so the new
    `statement`-sourced `about` rows never match it.
-5. **Override removal (core).** With
+4. **Override removal (core).** With
    `prompts.librarianSystemPrompt` set on a 9.0.0 engine: the key is
    absent from the type surface (typecheck is the assertion), the
    built librarian prompt is byte-identical to the no-override prompt,
@@ -356,13 +377,19 @@ All zero-token and deterministic unless stated. Suites live in
    removal notice keeps working after the type surface loses the key:
    `changedDefaultWarnings` reads `prompts.librarianSystemPrompt`
    through an untyped shape (`Record<string, unknown>`) — it must
-   detect a key the `PromptOverrides` type no longer declares. Seven
-   test files set the key today and
+   detect a key the `PromptOverrides` type no longer declares. Six
+   test files and one fixture set the key today and
    change with the removal: config-path tests
    (`WikiMemory.test.ts:215,238,271`, `MaintenanceService.test.ts:101`,
    `PromptService.test.ts:108`, `groundingLibrarian.test.ts:69`)
-   become removal tests — the key set, the prompt unchanged, one
-   warning; the assertions in `engineDefaults.test.ts` (`:68,81,108,
+   become removal tests. The ones that build `PromptService` directly
+   (`MaintenanceService.test.ts:101`, `PromptService.test.ts:108`) never
+   pass through `changedDefaultWarnings`, so their object literals
+   carry the removed key under a `// @ts-expect-error` comment — that
+   comment is what makes "typecheck is the assertion" true — and
+   assert only that the prompt is unchanged; warning assertions live
+   only in the `changedDefaultWarnings` and `WikiMemory` tests. The
+   assertions in `engineDefaults.test.ts` (`:68,81,108,
    110`) and the two `changedDefaultWarnings` assertions in
    `librarianGuidance.test.ts:229,236` update to the removal notice;
    `librarianGuidance.test.ts:167` ("composes after a whole-prompt
@@ -378,12 +405,16 @@ All zero-token and deterministic unless stated. Suites live in
    key, its recorded goldens move out in the same PR, and every
    remaining scenario stays byte-identical (the diff-empty golden
    gate proves it).
-6. **Removed types in strict mode.** Seeding the new manifest and
+5. **Removed types in strict mode.** Seeding the new manifest and
    calling `remember()` with `okf_type: 'handoff'` is rejected in
-   strict mode (the enforcing write path); a pre-existing stored row
-   with that type still reads back and re-imports through `importDump`
+   strict mode (the enforcing write path); the same call with
+   `okf_type: 'statement'` is accepted — the test pins today's
+   behavior so the documented prompt-only abstract-type residual is
+   visible and a later validation change shows up as an intended
+   change; a pre-existing stored row
+   with `handoff` still reads back and re-imports through `importDump`
    verbatim (the row is not dropped, and no migration touches it).
-7. **Statement attach end-to-end (stub).** With the manifest seeded and
+6. **Statement attach end-to-end (stub).** With the manifest seeded and
    a scripted stub provider, a librarian pass writes a fact typed
    `rule` with an `about` edge to a `software_application` node, and
    the traversal returns it; a `decision` superseding an older
@@ -391,7 +422,7 @@ All zero-token and deterministic unless stated. Suites live in
    from the supersede path alone, and the test then makes the explicit
    `setLifecycleStatus` call that marks the old row `deprecated` — the
    standing label working through existing mechanics, no core change.
-8. **Rule/decision dependability (cheap, targeted, no benchmark run).**
+7. **Rule/decision dependability (cheap, targeted, no benchmark run).**
    A committed fixture holds labeled statement texts (at least 6 per
    kind, written to be discriminating: same subject matter, different
    kind). A CI test asserts the classification prompt carries all four
@@ -402,7 +433,10 @@ All zero-token and deterministic unless stated. Suites live in
    estimate and refuses to spend without `--yes` (`--dry-run` for the
    estimate alone, `--out` for the result file). It sends the fixture
    through the classification prompt to a real provider once and
-   reports per-kind results; AGENTS.md's benchmark gate therefore
+   reports per-kind results, and next to the kind accuracy reports how
+   often a correct `about` edge is proposed — the attachment sentence
+   of M1's fix is measured, not just asserted; AGENTS.md's benchmark
+   gate therefore
    holds — no token-spending path exists outside that CLI. The runner
    runs once before merge and the LEDGER records the result with model
    name, prompt, and the small-sample caveat. This measures the split
