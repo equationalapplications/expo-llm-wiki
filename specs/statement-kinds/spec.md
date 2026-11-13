@@ -1,7 +1,15 @@
 # Statement kinds (rule, decision, lesson, trap) and areas — the 9.0.0 breaking release
 
-**Status:** Reviewed (2026-11-13 — owner approved the spec gate in-session;
-implementation not started. plan.md and LEDGER.md added per the repo flow.)
+**Status:** Implemented (2026-11-13 — implementation PR #380; commits
+6d933cdb schema, 3a67ded3 core, 8bb87097 schema docs/tests,
+1fb27086 benchmarks subcommand, be81d260 docs/ROADMAP/INTENT,
+2027efb6 measured run + Errata. Suites: core 212 files / 2428 tests,
+schema 2 / 46, benchmarks 16 / 153, all 0 failed; golden fixture
+byte-parity; docs site builds (53 pages). Spec gate closed by the
+owner 2026-11-13; written-work ladder converged through T4 Fable
+delta ("Approve after conditioned fixes; no blockers"). Measured run
+in Errata: kind split 28/28 on GLM-5.3-flash; about-proposal 0/28
+filed as #381.)
 **Date:** 2026-11-13
 **Owner rulings:** 2026-11-12 and 2026-11-13, recorded in issue #376 and in
 the vault note `sharper-memory-design-rulings-2026-11-13.md`. The 9.0.0
