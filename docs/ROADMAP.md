@@ -59,6 +59,12 @@ The general rule is added only when a host sets guidance (owner ruling,
 2026-11-13). A host that sets none gets exactly the prompts it has
 today, so an upgrade changes nothing for it.
 
+Guidance is set in two places: one default for the database, and an
+optional value per entity, which wins. The host passes both in; the
+engine stores neither. The older whole-prompt override
+(`prompts.librarianSystemPrompt`) is marked deprecated in this step's
+release and removed in step 2's.
+
 *Gate:* a spec, checked against INTENT.md. Rule 11 applies: the spec says
 how the change is measured, and no accuracy or cost claim is published
 without a run.
@@ -70,6 +76,13 @@ lesson, trap), defined by content, and an "area" type for a named part of
 a codebase. Memory then holds one node per thing, with typed statements
 attached. Issue
 [#376](https://github.com/equationalapplications/expo-llm-wiki/issues/376).
+
+**This step's release is a major release, 9.0.0** (owner ruling,
+2026-11-13). It removes the `handoff` and `session_recap` node types and
+the `handoffFor` edges from the software-org schema, because session
+records become working memory that is searched as it is. It also removes
+the deprecated `prompts.librarianSystemPrompt` override. The reasoning:
+outside adoption is close to zero, so a clean break costs least now.
 
 *Gate:* a spec. It includes a cheap targeted test of whether a small model
 sorts the kinds dependably.
