@@ -11,7 +11,8 @@ cap bounds the text resent on every librarian call, and prompt volume is
 reported, not billed tokens. Rule 10 — this spec first. Rule 11 — the
 change is measured by cheap targeted tests (the 2026-11-10 owner ruling
 replacing benchmark runs); no accuracy or cost claim is published without
-a run. This is roadmap step 1 (`docs/ROADMAP.md`). Owner rulings
+a run. This is roadmap step 1 (`docs/ROADMAP.md`, landed by PR #378 —
+cite still points forward until that merge). Owner rulings
 2026-11-12 and 2026-11-13. Minor release (8.5.0): see Release.
 
 ## Problem
@@ -63,12 +64,17 @@ count above; it is a sizing figure, not a measured result (rule 11).
 
 - **Database default:** `config.prompts.guidance`.
 - **Per entity:** `config.prompts.guidanceForEntity?: (entityId: string)
-  => string | undefined`. The per-entity value **wins** when it returns
-  a string; an empty or `undefined` return falls back to the default.
+  => string | undefined`. A per-entity return of a **non-empty string
+  wins**; an empty or `undefined` return falls back to the default.
 
 The host passes both in. The engine stores neither (rule 3: nothing to
 mix across memories; rule 2: no schema or table change). The resolver is
-called once per prompt build, so a host may change values between calls.
+synchronous and returns `string | undefined`; it is called once per
+prompt build, so a host may change values between calls. A resolver
+failure is guidance-shaped, never a write failure: if it throws, returns
+a Promise, or returns any non-string value, the engine treats it as "no
+value" (falls back to the default, or to none) and emits a
+`guidance_resolver_failed` diagnostic carrying the entity id.
 
 ### Where guidance is added
 
@@ -149,6 +155,9 @@ host can read the limit). Enforcement is at prompt build:
   (existing diagnostics channel, code `guidance_too_long`, with the
   offending value's length and whether it came from the per-entity value
   or the default). Nothing is truncated and nothing is stored (rule 6).
+  The diagnostic is emitted at most once per pass (one librarian pass or
+  one ingest call), not once per prompt build — a single ingest of many
+  chunks reports the over-cap value once, not once per chunk.
 
 Rationale: truncation would silently change instructions mid-sentence;
 refusal is deterministic and visible. The cap bounds the per-call spend
@@ -193,6 +202,9 @@ assert stored document rows are unaffected by extraction output.
   `buildHealPrompt`, ontology backfill builder.
 - `packages/core/src/services/librarian/types.ts` — `guidance?: string`
   on `LibrarianContext` / `LibrarianPassContext`.
+- `packages/core/src/WikiMemory.ts` — `getInstructions` resolves the
+  entity's effective guidance and passes it to
+  `buildInstructionTemplates`.
 - `packages/core/src/services/MaintenanceService.ts` — resolve effective
   guidance per entity when building the librarian context.
 - `packages/core/src/services/IngestionService.ts` — pass guidance
@@ -229,9 +241,12 @@ claims published (rule 11). Suites live in `packages/core/__tests__/`.
    length and the source (per-entity/default); a 2,000-character value
    passes. Resolver returning a long string over a short default is
    diagnosed as per-entity.
-5. **Resolution.** Per-entity wins over default; `undefined`/empty
-   resolver return falls back; resolver not called at all when no
-   default and no resolver are configured (no surprise invocations).
+5. **Resolution and resolver failures.** Per-entity wins over default;
+   `undefined`/empty resolver return falls back; a resolver that throws,
+   returns a Promise, or returns a non-string value falls back and
+   emits `guidance_resolver_failed` with the entity id; resolver not
+   called at all when no default and no resolver are configured (no
+   surprise invocations).
 6. **Instructions surface.** `getInstructions(entityId)` reflects the
    entity's effective guidance in all returned templates that carry it,
    and omits it where this spec says guidance is not sent.
