@@ -12,8 +12,10 @@ keep their stored `okf_type`; only the manifest rows and one config key
 go. Rule 10 — this spec is the required spec-first step. Rule 11 — the
 spec claims no accuracy or cost number. It states the one cost it knows
 is real: the manifest is serialized into every classification prompt,
-so adopting hosts get six more node rows, four more edge rows, and the
-kind definitions in every call; that growth is unmeasured, and the
+so adopting hosts get four more node rows and two more edge rows in
+every classification call (6 node and 4 edge rows added, 2 node and 2
+edge rows removed, net 17→21 and 40→42), plus the kind definitions;
+that growth is unmeasured, and the
 cheap targeted test in §Test plan measures the rule/decision split, not
 a cost.
 Release: **major (9.0.0)** — see §Release.
@@ -240,6 +242,10 @@ a stated reason:
 - **Frozen benchmark fixtures** (`packages/benchmarks/fixtures/`) embed
   snapshot text that mentions the old rows. They pin recorded benchmark
   outputs (rule 11); benchmark corpora do not track prose changes.
+- **The historical migration page**
+  `apps/docs/src/content/docs/project/upgrading-8.md` names the then-
+  deprecated key as history — migration pages, like dated specs, stay
+  as written; `upgrading-9.md` is the new page.
 
 ### Counts after this change
 
@@ -389,7 +395,8 @@ All zero-token and deterministic unless stated. Suites live in
    A committed fixture holds labeled statement texts (at least 6 per
    kind, written to be discriminating: same subject matter, different
    kind). A CI test asserts the classification prompt carries all four
-   definitions — plumbing only, zero tokens. The measured runner lives
+   definitions and the abstract-`statement` line — plumbing only,
+   zero tokens. The measured runner lives
    in `packages/benchmarks` as a CLI subcommand under the same guard
    as `longmemeval` and `supersession`: it prints a one-screen token
    estimate and refuses to spend without `--yes` (`--dry-run` for the
