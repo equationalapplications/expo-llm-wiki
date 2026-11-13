@@ -1,7 +1,10 @@
 # @equationalapplications/schema-software-org — Spec
 
 **Date:** 2026-08-28
-**Status:** Implemented
+**Status:** Implemented (2026-08-28). Amended 2026-11-13: the 9.0.0
+release (`specs/statement-kinds/`, PR #380) removes the `handoff` and
+`session_recap` node types and the `handoffFor` edge rows this spec
+introduced; this body stays as the historical record.
 **Packages:** `@equationalapplications/schema-software-org` (new)
 **Depends on:** `@equationalapplications/core-llm-wiki` **>= 6.1.0** — the
 release that shipped `OntologyNodeType.parent_type` (see

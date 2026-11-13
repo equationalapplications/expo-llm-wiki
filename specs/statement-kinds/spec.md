@@ -268,8 +268,9 @@ a stated reason:
 - **The legacy spec**
   `docs/superpowers/specs/2026-08-28-schema-ea-executive-ontology-spec.md`
   documents the removed types as of its
-  date. It is a dated historical record (pre-2026-11-01 specs stay as
-  written); the live manifest is the source of truth after 9.0.0.
+  date. It is a dated historical record: its body stays as written.
+  Its Status line still binds and records the 9.0.0 removal in this
+  PR. The live manifest is the source of truth after 9.0.0.
 - **Frozen benchmark fixtures** (`packages/benchmarks/fixtures/`) embed
   snapshot text that mentions the old rows. They pin recorded benchmark
   outputs (rule 11); benchmark corpora do not track prose changes.
@@ -547,15 +548,14 @@ runner: `benchmarks statement-kinds`, in-memory store, engine's own
   lesson 7/7, trap 7/7. Model: GLM-5.3-flash (the host's resolved
   provider). Fixture: 28 committed statements, 7 per kind, written to
   discriminate (same subject matter across kinds).
-- **About-proposal rate: 0/28 proposed, 0/28 correct-target.** The
-  classifier proposed no edges despite resolvable seed targets
-  (fixture validation enforces every expected target is a seed node
-  with an exact title match). The kind definitions alone carried the
-  classification; the attachment sentence did not produce edges under
-  this model. Recorded as the known open residual, consistent with
-  the accepted prompt-only enforcement of the abstract type: edge
-  proposal is prompt-steered, and this measurement shows it did not
-  happen for this model on this fixture.
+- **About-edge rate: 0/28 persisted `about` edges, 0/28
+  correct-target.** The metric counts edges read back from storage
+  after backfill, not model output — a proposal dropped before
+  storage (for example a `target_not_found` diagnostic) also reads as
+  zero, so this number cannot distinguish "no proposals" from
+  "proposals dropped". The kind definitions alone carried the
+  classification; no attachment survived to storage under this model.
+  Root-caused in #381.
 - **Caveats:** single run, no repeats; small sample (28); one model;
   judge is exact-match against the fixture's expected kind and target;
   the runner's classification path (`remember` untyped → backfill
