@@ -8,7 +8,8 @@ import type { WikiConfig, WikiDiagnostic } from '../src/types';
 
 afterEach(() => vi.restoreAllMocks());
 
-const SENTINEL = 'SCHEDULER-GUIDANCE-SENTINEL keep it terse';
+const SENTINEL_TOKEN = 'SCHEDULER-GUIDANCE-SENTINEL';
+const SENTINEL = `${SENTINEL_TOKEN} keep it terse`;
 const SECTION_MARK = '--- Host guidance ---';
 const GROUNDING_MARK = 'EVIDENCE REQUIREMENT:';
 const embed = async (t: string) => [/seattle/i.test(t) ? 1 : 0, /san francisco/i.test(t) ? 1 : 0, /lives|moved/i.test(t) ? 1 : 0, 0.5];
@@ -42,12 +43,12 @@ const addDoc = (db: any) =>
     `INSERT INTO llm_wiki_entries (id, entity_id, title, body, source_type, confidence, created_at, updated_at)
      VALUES ('doc1','u','User lives in Seattle','Doc body about Seattle','immutable_document','certain',1,1)`,
   );
-const addCandidate = (db: any) => {
+const addCandidate = (db: any, title = 'Other inferred fact') => {
   const now = Date.now();
   return db.runAsync(
     `INSERT INTO llm_wiki_entries (id, entity_id, title, body, tags, confidence, source_type, created_at, updated_at)
-     VALUES ('cand','u','Other inferred fact','b','[]','inferred','librarian_inferred',?,?)`,
-    [now, now],
+     VALUES ('cand','u',?,'b','[]','inferred','librarian_inferred',?,?)`,
+    [title, now, now],
   );
 };
 const rowOf = (db: any, id = 'doc1') => db.getFirstAsync(`SELECT * FROM llm_wiki_entries WHERE id = ?`, [id]);
@@ -63,6 +64,23 @@ describe('scheduler path (spec test item 4)', () => {
     expect(sys).toContain(SECTION_MARK);
     expect(sys).toContain(SENTINEL);
     expect(sys).toContain(LEAVE_OUT_RULE_SENTENCE);
+  });
+
+  it('maintenanceScheduler.run() delivers the entity-specific (resolver) guidance, not the default', async () => {
+    const { db, wiki, prompts } = await mk(
+      {
+        prompts: { guidance: 'DEFAULT-GUIDANCE-TOKEN' },
+        librarian: { guidanceForEntity: (id: string) => (id === 'u' ? 'ENTITY-GUIDANCE-TOKEN' : undefined) },
+      },
+      () => ({ facts: [], tasks: [] }),
+    );
+    await addEvent(db, 'I like tea');
+    await wiki.maintenanceScheduler.run({ entityIds: ['u'], jobs: ['librarian'] });
+    expect(prompts.length).toBeGreaterThan(0);
+    const sys = prompts[0].systemPrompt;
+    expect(sys).toContain(SECTION_MARK);
+    expect(sys).toContain('ENTITY-GUIDANCE-TOKEN');
+    expect(sys).not.toContain('DEFAULT-GUIDANCE-TOKEN');
   });
 });
 
@@ -115,10 +133,12 @@ describe('rule 5 — immutable_document is untouchable (spec test item 8)', () =
   it('heal naming the document in downgraded and deleted: row byte-unchanged (guard drops silently)', async () => {
     const { db, wiki, prompts } = await mk({}, () => ({ downgraded: ['doc1'], deleted: ['doc1'], newFacts: [] }));
     await addDoc(db);
-    await addCandidate(db);
+    await addCandidate(db, 'User lives in Seattle area'); // shares keywords so the document is selected as an anchor
+    await (wiki as any).searchService.sync('u'); // rows were inserted via raw SQL; rebuild the keyword index
     const before = await rowOf(db);
     await wiki.runHeal('u');
     expect(prompts.length).toBeGreaterThan(0); // the stub really was asked to heal
+    expect(prompts[0].userPrompt).toContain('doc1'); // the document was actually offered to the model
     expect(await rowOf(db)).toEqual(before);
   });
 });
@@ -150,7 +170,7 @@ describe('grounding corpus excludes guidance (spec test item 3)', () => {
     await addEvent(db, 'Observed the engine printing tables');
     await wiki.runLibrarian('u');
     expect(corpora.length).toBeGreaterThan(0);
-    expect(JSON.stringify(corpora)).not.toContain('SCHEDULER-GUIDANCE-SENTINEL');
+    expect(JSON.stringify(corpora)).not.toContain(SENTINEL_TOKEN);
     const sys = systems[0];
     expect(sys).toContain(SENTINEL);
     expect(sys).toContain(GROUNDING_MARK);
@@ -166,7 +186,21 @@ describe('grounding corpus excludes guidance (spec test item 3)', () => {
     await wiki.write('u', { event_type: 'observation', summary: 'Operator observed the engine' });
     await wiki.runHeal('u');
     expect(corpora.length).toBeGreaterThan(0);
-    expect(JSON.stringify(corpora)).not.toContain('SCHEDULER-GUIDANCE-SENTINEL');
+    expect(JSON.stringify(corpora)).not.toContain(SENTINEL_TOKEN);
+  });
+});
+
+describe('ingest corpus excludes guidance (spec test item 3, ingest writer)', () => {
+  it('a fact quoting the guidance sentinel as evidence fails grounding; the prompt did carry the guidance', async () => {
+    const DOC = 'The Analytical Engine was designed by Charles Babbage in 1837.';
+    const { wiki, diagnostics, prompts } = await mk(
+      { prompts: { guidance: SENTINEL }, grounding: { mode: 'draft', writers: ['ingest'] } },
+      () => ({ facts: [{ title: 'T', body: 'b', tags: [], confidence: 'certain', evidence: [SENTINEL] }] }),
+    );
+    await wiki.ingestDocument('e1', { sourceRef: 'doc.md', sourceHash: 'a'.repeat(64), documentChunk: DOC });
+    expect(prompts[0].systemPrompt).toContain(SENTINEL);
+    expect(prompts[0].systemPrompt).toContain(GROUNDING_MARK);
+    expect(ofCode(diagnostics, 'grounding_failed')).toHaveLength(1);
   });
 });
 
@@ -176,8 +210,11 @@ describe('instructions surface read diagnostic (spec test item 7)', () => {
     const t = await over.wiki.getInstructions('e');
     const d = ofCode(over.diagnostics, 'guidance_too_long');
     expect(d).toHaveLength(1);
-    expect(d[0]).toMatchObject({ operation: 'read' });
-    expect(t.ingest).not.toContain(SECTION_MARK);
+    expect(d[0]).toMatchObject({ operation: 'read', detail: { guidanceLength: 2001, guidanceSource: 'default' } });
+    for (const k of ['ingest', 'librarian'] as const) {
+      expect(t[k]).not.toContain(SECTION_MARK);
+      expect(t[k]).not.toContain(LEAVE_OUT_RULE_SENTENCE);
+    }
   });
 
   it('within-cap guidance: no diagnostic; ingest/librarian carry the section; heal/backfill do not', async () => {
