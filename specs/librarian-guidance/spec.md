@@ -24,13 +24,11 @@ the `ops` chain. `prompts.librarianSystemPrompt` replaces the whole
 prompt and only `legacy` reads it (`PromptService.buildLibrarianPrompt`,
 `packages/core/src/services/PromptService.ts:117`); `ops` — the default
 since 8.0.0 — sends the fixed `OPS_EXTRACT_SYSTEM_PROMPT` and takes no
-host text at all (`PromptService.ts:273-291`). A host that sets the
+host text at all (`PromptService.ts:273-284`). A host that sets the
 override gets pointed back to `legacy` by `changedDefaultWarnings`
 (`packages/core/src/utils/engineDefaults.ts:36`). A whole-prompt
 override also replaces the JSON output contract the engine parses, and
 freezes the host out of every later improvement to the built-in prompt.
-(`ops` sends the fixed prompts at `PromptService.ts:273-284` —
-`buildOpsExtractPrompt` — which takes no host text.)
 
 Separately, memory keeps too much that a better record already holds.
 In a prototype over one product's notes, roughly a third of extracted
@@ -69,16 +67,22 @@ count above; it is a sizing figure, not a measured result (rule 11).
 - **Database default:** `config.prompts.guidance`.
 - **Per entity:** `config.prompts.guidanceForEntity?: (entityId: string)
   => string | undefined`. A per-entity return of a **non-empty string
-  wins**; an empty or `undefined` return falls back to the default.
+  wins** — non-empty after trimming, so a whitespace-only return falls
+  back to the default; a non-empty value is otherwise sent verbatim, no
+  trimming applied; an empty or `undefined` return falls back to the
+  default.
 
 The host passes both in. The engine stores neither (rule 3: nothing to
 mix across memories; rule 2: no schema or table change). The resolver is
-synchronous and returns `string | undefined`; it is called once per
-prompt build, so a host may change values between calls. A resolver
-failure is guidance-shaped, never a write failure: if it throws, returns
-a Promise, or returns any non-string value, the engine treats it as "no
-value" (falls back to the default, or to none) and emits a
-`guidance_resolver_failed` diagnostic carrying the entity id.
+synchronous and returns `string | undefined`; it is resolved **once per
+pass or call** — one librarian pass, one ingest call, one
+`getInstructions` call — not once per prompt build, so values may change
+between passes but never mid-pass. A resolver failure is
+guidance-shaped, never a write failure: if it throws, returns a Promise,
+or returns any non-string value, the engine treats it as "no value"
+(falls back to the default, or to none) and emits a
+`guidance_resolver_failed` diagnostic carrying the entity id — same
+cadence as the cap diagnostic: at most once per pass or call.
 
 ### Where guidance is added
 
@@ -152,9 +156,13 @@ removals and nothing else).
 
 ### Length cap and diagnostic
 
-The effective guidance text is capped at **2,000 characters** (constant
-exported from `packages/core/src/prompts.ts` or a constants module, so a
-host can read the limit). Enforcement is at prompt build:
+The effective guidance text is capped at **2,000 characters**, counted
+as UTF-16 code units (`String.prototype.length` — the measure the
+implementation and the diagnostic both report; an emoji counts as 2).
+The constant is exported from `packages/core/src/prompts.ts` (or a
+constants module, so a host can read the limit). Enforcement happens at
+resolution — once per pass or call, alongside the resolver — and the
+result applies to every prompt build in that pass:
 
 - At or under the cap: guidance is sent as specified.
 - Over the cap: the guidance is **not sent** for that call; the prompt is
@@ -253,16 +261,19 @@ claims published (rule 11). Suites live in `packages/core/__tests__/`.
 4. **Cap and diagnostic.** A 2,001-character value produces the
    no-guidance prompt plus a `guidance_too_long` diagnostic carrying the
    length and the source (per-entity/default); a 2,000-character value
-   passes. A resolver returning a long string over a short default is
-   diagnosed as per-entity, and suppresses guidance for that call with
-   **no fallback** to the default. The diagnostic fires once per pass,
-   not once per chunk.
+   passes; a value at the boundary counted in UTF-16 units (e.g. 1,000
+   two-unit characters) behaves by the same count. A resolver returning
+   a long string over a short default is diagnosed as per-entity, and
+   suppresses guidance for that call with **no fallback** to the
+   default. The diagnostic fires once per pass, not once per chunk.
 5. **Resolution and resolver failures.** Per-entity wins over default;
-   `undefined`/empty resolver return falls back; a resolver that throws,
-   returns a Promise, or returns a non-string value falls back and
-   emits `guidance_resolver_failed` with the entity id; resolver not
-   called at all when no default and no resolver are configured (no
-   surprise invocations).
+   `undefined`/empty/whitespace-only resolver return falls back; a
+   resolver that throws, returns a Promise, or returns a non-string
+   value falls back and emits `guidance_resolver_failed` with the
+   entity id, at most once per pass; the resolver is called exactly
+   once per pass (assert the call count); resolver not called at all
+   when no default and no resolver are configured (no surprise
+   invocations).
 6. **Instructions surface.** `getInstructions(entityId)` reflects the
    entity's effective guidance in all returned templates that carry it,
    and omits it where this spec says guidance is not sent.
