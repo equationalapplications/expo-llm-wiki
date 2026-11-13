@@ -17,6 +17,7 @@
     "@equationalapplications/core-llm-wiki": "workspace:*"
   },
   "devDependencies": {
+    "@equationalapplications/schema-software-org": "workspace:*",
     "@types/better-sqlite3": "9.6.0",
     "@types/node": "26.6.5",
     "better-sqlite3": "13.0.3",

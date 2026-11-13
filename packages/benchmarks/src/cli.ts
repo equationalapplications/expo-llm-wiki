@@ -22,6 +22,14 @@
  *       guard: prints the scenario count and a flat per-scenario token
  *       estimate, refuses to spend without `--yes`.
  *
+ *   statement-kinds [--dry-run | --yes] [--out <file>]
+ *       Classify the committed rule/decision/lesson/trap fixture through the
+ *       real remember() + ontology-backfill path against an in-memory store
+ *       seeded with the schema-software-org manifest. Reports per-kind
+ *       accuracy and the `about`-edge proposal rate. Same guard: prints the
+ *       statement count and a flat per-statement estimate, refuses to spend
+ *       without `--yes`.
+ *
  *   calibrate [--out <file>]
  *       Offline gate-threshold calibration (Task 1 of PR-D2). Walks every
  *       supersession scenario, embeds each candidate against every existing
@@ -51,6 +59,7 @@ import { sampleQuestionIds } from './longmemeval/sample';
 import { loadDataset, LmeQuestion } from './longmemeval/dataset';
 import { runLongMemEval } from './longmemeval/run';
 import { runSupersession, Scenario } from './supersession/run';
+import { runStatementKinds, loadStatementFixture, renderStatementKindsSummary, StatementFixtureEntry, STATEMENT_KINDS_TOKENS_PER_STATEMENT } from './statementKinds/run';
 import { calibrationRows, recommendThresholds, CalibrationRow } from './calibrate';
 import { compareReports } from './compare';
 import { writeFileAtomic } from './fsSafe';
@@ -557,6 +566,82 @@ export async function runSupersessionCommand(deps: SupersessionDeps): Promise<Co
 }
 
 // --------------------------------------------------------------------------
+// statement-kinds subcommand
+// --------------------------------------------------------------------------
+
+export interface StatementKindsDeps {
+  argv: string[];
+  env?: Record<string, string | undefined>;
+  /** The entries from `fixtures/statement-kinds.json`. */
+  entries?: StatementFixtureEntry[];
+  fetchImpl?: (input: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<Response>;
+  stdout?: (line: string) => void;
+  stderr?: (line: string) => void;
+}
+
+/**
+ * Handle the `statement-kinds` subcommand. Same guard as `supersession`:
+ * `--dry-run` short-circuits before endpoint resolution; without `--yes` the
+ * estimate prints and the command exits 1 having spent nothing.
+ */
+export async function runStatementKindsCommand(deps: StatementKindsDeps): Promise<CommandResult> {
+  const stdout = deps.stdout ?? ((line: string) => process.stdout.write(line));
+  const stderr = deps.stderr ?? ((line: string) => process.stderr.write(line));
+  const parsed = parseArgs(deps.argv);
+  if (parsed.command !== 'statement-kinds' && parsed.command !== '') {
+    stderr(`Unknown command: ${parsed.command}\n`);
+    return { exitCode: 2 };
+  }
+  const dryRun = parsed.flags['dry-run'] === true;
+  const yes = parsed.flags.yes === true;
+  const outArg = typeof parsed.flags.out === 'string' ? parsed.flags.out : undefined;
+  if (!deps.entries) {
+    stderr('Internal error: entries must be provided by the caller\n');
+    return { exitCode: 2 };
+  }
+  const tokenEstimate = deps.entries.length * STATEMENT_KINDS_TOKENS_PER_STATEMENT;
+  const printEstimate = (model: string): void => {
+    stdout(
+      [
+        `model: ${model}`,
+        `statements: ${deps.entries!.length}`,
+        `input tokens (estimate): ${tokenEstimate.toLocaleString('en-US')}`,
+      ].join('\n') + '\n',
+    );
+  };
+
+  if (dryRun) {
+    printEstimate('(dry-run: not resolved)');
+    return { exitCode: 0 };
+  }
+
+  let endpoint: ChatEndpoint;
+  try {
+    endpoint = endpointFromEnv('BENCH', deps.env);
+  } catch (e) {
+    stderr(`${(e as Error).message}\n`);
+    return { exitCode: 2 };
+  }
+  printEstimate(endpoint.model);
+  if (!yes) {
+    stdout('Re-run with --yes to spend these tokens.\n');
+    return { exitCode: 1 };
+  }
+
+  const report = await runStatementKinds({
+    entries: deps.entries,
+    endpoint,
+    ...(deps.fetchImpl !== undefined ? { fetchImpl: deps.fetchImpl } : {}),
+  });
+  const engine = await engineInfo();
+  const reportFile = outArg ? resolveOutPath(outArg) : join(defaultResultsDir(), `statement-kinds-${engine.version}-${nowStamp()}.json`);
+  writeFileAtomic(reportFile, JSON.stringify(report, null, 2));
+  stdout(`\nWrote report to ${reportFile}\n\n`);
+  stdout(renderStatementKindsSummary(report));
+  return { exitCode: 0 };
+}
+
+// --------------------------------------------------------------------------
 // calibrate subcommand
 // --------------------------------------------------------------------------
 
@@ -876,6 +961,12 @@ async function main(): Promise<void> {
     process.exitCode = r.exitCode;
     return;
   }
+  if (command === 'statement-kinds') {
+    const entries = loadStatementFixture(join(REPO_ROOT, 'packages', 'benchmarks', 'fixtures', 'statement-kinds.json'));
+    const r = await runStatementKindsCommand({ argv, entries });
+    process.exitCode = r.exitCode;
+    return;
+  }
   if (command === 'calibrate') {
     const scenariosFile = join(REPO_ROOT, 'packages', 'benchmarks', 'fixtures', 'supersession', 'scenarios.json');
     const scenarios = JSON.parse(readFileSync(scenariosFile, 'utf8')) as Scenario[];
@@ -905,6 +996,7 @@ function renderHelp(): string {
     '  sample --seed <n>              Write fixtures/longmemeval-sample.json',
     '  longmemeval [flags]            Run the LongMemEval pipeline',
     '  supersession [flags]           Run the supersession suite (Task 8)',
+    '  statement-kinds [flags]        Classify the rule/decision/lesson/trap fixture',
     '  calibrate [--out <file>]        Offline gate-threshold calibration (Task 1 of PR-D2)',
     '  compare <before.json> <after.json> [--out <file>]',
     '                                  Offline Markdown comparison (Task 2 of PR-D2)',

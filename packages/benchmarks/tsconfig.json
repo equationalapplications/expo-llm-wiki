@@ -9,7 +9,8 @@
     "skipLibCheck": true,
     "baseUrl": ".",
     "paths": {
-      "@equationalapplications/core-llm-wiki": ["../core/src/index.ts"]
+      "@equationalapplications/core-llm-wiki": ["../core/src/index.ts"],
+      "@equationalapplications/schema-software-org": ["../schema-software-org/src/index.ts"]
     },
     "types": ["node"]
   },
