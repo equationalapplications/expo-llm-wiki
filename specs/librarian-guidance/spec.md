@@ -20,7 +20,10 @@ and restated in roadmap step 1) is background, not a claim that these
 unit tests replace benchmark suites. This is roadmap
 step 1 (`docs/ROADMAP.md` — created by PR #378, which merges before
 this PR does; until then the cite points forward). Owner rulings
-2026-11-12 and 2026-11-13. Minor release (8.5.0): see Release.
+2026-11-12 and 2026-11-13 (recorded in the issue #375 body and the
+2026-11-13 handoff; INTENT.md carries no amendment for them — the
+handoff states the design is settled without one). Minor release
+(8.5.0): see Release.
 
 ## Problem
 
@@ -67,17 +70,22 @@ count above; it is a sizing figure, not a measured result (rule 11).
 ### The setting
 
 `prompts.guidance` — a short plain-text string, set by the host in
-`WikiConfig.prompts`. Set in two places:
+`WikiConfig`. Set in two places:
 
 - **Database default:** `config.prompts.guidance`. Same emptiness rule
   as below: a value that is empty or whitespace-only after trimming
   counts as unset.
-- **Per entity:** `config.prompts.guidanceForEntity?: (entityId: string)
-  => string | undefined`. A per-entity return of a **non-empty string
-  wins** — non-empty after trimming, so a whitespace-only return falls
-  back to the default; a non-empty value is otherwise sent verbatim, no
-  trimming applied; an empty or `undefined` return falls back to the
-  default.
+- **Per entity:** `config.librarian.guidanceForEntity?: (entityId:
+  string) => string | undefined`. A per-entity return of a
+  **non-empty string wins** — non-empty after trimming, so a
+  whitespace-only return falls back to the default; a non-empty value
+  is otherwise sent verbatim, no trimming applied; an empty or
+  `undefined` return falls back to the default. The resolver lives
+  under `librarian`, not `prompts`: `WikiConfig.prompts` stays a struct
+  of plain strings (it is returned verbatim by the instructions
+  surface, and a host that clones or JSON-logs its config expects no
+  functions under it — a function under `prompts` would silently
+  disappear from such a log).
 
 The host passes both in. The engine stores neither (rule 3: nothing to
 mix across memories; rule 2: no schema or table change). The resolver is
@@ -92,8 +100,11 @@ or returns any non-string value, the engine treats it as "no value"
 cadence as the cap diagnostic: at most once per pass or call. A returned
 thenable that later rejects gets a no-op rejection handler attached
 before it is discarded, so a JS host's async resolver can never surface
-as an unhandled rejection; the call's outcome is decided synchronously
-from the return value alone.
+as an unhandled rejection; attaching that handler is itself wrapped in
+try/catch — a thenable whose `then` throws is treated exactly like a
+`non_string` return (diagnostic, fallback). The call's outcome is
+decided synchronously from the return value alone; a rejecting Promise
+never rejects into the write path.
 
 ### Where guidance is added
 
@@ -171,13 +182,27 @@ alternative (no rule) is the restatement problem this release solves.
 Nothing here measures the false-omission rate; any future measurement
 is new work, not part of this release.
 
+**Ingest self-reference, stated.** On `INGEST_SYSTEM_PROMPT` the rule
+has a self-referential edge: the chunk being ingested can itself be a
+host-named record. A host whose guidance says "the specs are the
+record", ingesting its own specs, can see near-empty *derived*
+extraction with no diagnostic — the model treats the chunk as already
+held. That is the feature working, not a defect: the document itself is
+still stored as immutable document facts (rule 5); only the derived
+statements thin out. The owner's ruling covers ingest, and this note is
+the stated acceptance of that behavior.
+
 ### Plumbing
 
 - The three write-path builders gain one optional trailing parameter,
   `guidance?: string` — the **already-resolved, already-capped**
   effective text — and `buildInstructionTemplates` gains it as a third
   parameter, `(ontologyContext, librarianStrategy, guidance?)`. The
-  builders never call the resolver themselves.
+  builders never call the resolver themselves. The `guidance` field on
+  `LibrarianContext` is written by `runLibrarianPass`, never read as
+  input: any caller-supplied value is ignored and overwritten by the
+  value `runLibrarianPass` resolves, so "resolved once per pass,
+  inside `runLibrarianPass`" holds for every caller.
 - Resolution is hoisted to the call boundary, **inside
   `runLibrarianPass`** (`MaintenanceService.ts:896`) — both callers go
   through it: the manual `runLibrarian`/`doRunLibrarian` path and the
@@ -190,7 +215,12 @@ is new work, not part of this release.
   ontology-context hoist** (`:182`), so an ingest that acquires locks
   and then returns early (duplicate hash, no chunks) never runs the
   resolver and never emits a guidance diagnostic for work it did not
-  do; `getInstructions` resolves once per call.
+  do; `getInstructions` resolves once per call. The two guidance
+  diagnostics are emitted **immediately at resolution** — not buffered
+  with the ingest chunk diagnostics that deliver at commit — so a later
+  ingest failure (e.g. `WikiIngestEmptyError`) cannot swallow the
+  signal that guidance was ignored for tokens already about to be
+  spent.
 - Two new codes join `WikiDiagnosticCode` (`packages/core/src/types.ts`):
   `guidance_too_long` and `guidance_resolver_failed`. The diagnostics
   channel itself is existing and unchanged. Both are severity `warn` —
@@ -199,9 +229,15 @@ is new work, not part of this release.
   which is typed plain `string`; `'threw' | 'non_string'` is a values
   convention, and a returned Promise is reported as `non_string`. No
   detail field ever carries guidance text (`WikiDiagnosticDetail` stays
-  identifiers-only). `getInstructions` emits **no** diagnostics — it is
-  a read path; it applies the same fallback silently. The existing
-  `operation` values cover both codes (`ingest`, `librarian`); no new
+  identifiers-only). `getInstructions` **does** emit one diagnostic:
+  when the entity's effective guidance is over cap, it emits
+  `guidance_too_long` with `operation: 'read'` (precedent:
+  `read_budget` is emitted from a read) so a host rendering its own
+  prompts gets the same signal the write paths give — otherwise the
+  instructions surface would be the one place guidance silently
+  disappears. The existing
+  `operation` values cover the codes: `ingest` and `librarian` on the
+  write paths, `read` for the `getInstructions` emission; no new
   operation is added.
 - Composition with overrides: whichever template wins — built-in
   default, `PromptOverrides`, a per-call ingest `promptOverride`, or the
@@ -238,7 +274,10 @@ removals and nothing else).
 The effective guidance text is capped at **2,000 characters**, counted
 as UTF-16 code units (`String.prototype.length` — the measure the
 implementation and the diagnostic both report; an emoji counts as 2).
-The constant is exported from `packages/core/src/prompts.ts` (or a
+The cap measures the value **as sent** — verbatim, untrimmed; emptiness
+is judged on the trimmed value, the cap on the real one, so a
+1,990-character value with 20 leading spaces is over cap. The constant
+is exported from `packages/core/src/prompts.ts` (or a
 constants module, so a host can read the limit). Enforcement happens at
 resolution — once per pass or call, alongside the resolver — and the
 result applies to every prompt build in that pass:
@@ -272,7 +311,13 @@ Guidance is part of the instructions and can never count as grounding
 evidence. The grounding block already instructs the model not to quote
 its instructions; the grounding corpus is built from event and document
 text only (`buildGroundingCorpus`, `utils/grounding.ts`) and is
-unchanged. A test asserts the guidance text never appears in a built
+unchanged. One interaction stated: a fact whose body only *names* a
+record ("recorded in `docs/ROADMAP.md`") has no evidence substring in
+the source, so under grounding it lands as an unreviewed draft with
+`grounding_missing` — pointer facts under grounding produce draft
+inflation by design; hosts pairing grounding with record-naming
+guidance should expect it. A test asserts the guidance text never
+appears in a built
 grounding corpus and that the grounding block remains last (test plan
 item 3).
 
@@ -297,15 +342,20 @@ it).
 
 Guidance changes what ingest *selects* from a document. It never changes
 a stored document fact's text; stored document facts remain immutable
-(rule 5). The test asserts what rule 5 actually protects: ingest a
-document, then run both librarian strategies and heal with guidance that
-tells the model to rewrite document facts, and assert the stored
-document rows are unchanged.
+(rule 5). The test asserts what rule 5 actually protects, with stub
+responses that genuinely attempt the rewrite: ops resolve returning
+`UPDATE`/`SUPERSEDE` whose target is an `immutable_document` fact; heal
+returning that fact's id in its `downgraded` and `deleted` lists; the
+legacy librarian returning a fact whose title matches the document
+fact's. With those attempts in flight, the stored document rows must be
+byte-unchanged and the refusal diagnostics must fire — otherwise the
+test passes vacuously, since a stub returning `facts: []` proves
+nothing.
 
 ## Files touched
 
 - `packages/core/src/types.ts` — `prompts.guidance`,
-  `prompts.guidanceForEntity`; `@deprecated` on
+  `librarian.guidanceForEntity`; `@deprecated` on
   `prompts.librarianSystemPrompt`; two `WikiDiagnosticCode` entries and
   two `WikiDiagnosticDetail` fields (`guidanceLength`,
   `guidanceSource`).
@@ -376,7 +426,9 @@ claims published (rule 11). Suites live in `packages/core/__tests__/`.
    no-guidance prompt plus a `guidance_too_long` diagnostic carrying
    detail `guidanceLength` and `guidanceSource`; a 2,000-character value
    passes; a value at the boundary counted in UTF-16 units (e.g. 1,000
-   two-unit characters) behaves by the same count. A resolver returning
+   two-unit characters) behaves by the same count; a 1,990-character
+   value with 20 leading spaces is **over** cap (the cap measures the
+   value as sent, verbatim). A resolver returning
    a long string over a short default is diagnosed as per-entity, and
    suppresses guidance for that call with **no fallback** to the
    default. The diagnostic fires once per pass, not once per chunk. The
@@ -393,7 +445,10 @@ claims published (rule 11). Suites live in `packages/core/__tests__/`.
    invocations).
 7. **Instructions surface.** `getInstructions(entityId)` reflects the
    entity's effective guidance in all returned templates that carry it,
-   and omits it where this spec says guidance is not sent.
+   and omits it where this spec says guidance is not sent; over-cap
+   guidance there emits `guidance_too_long` with `operation: 'read'`
+   and no diagnostic when within cap; guidance containing `{{…}}` comes
+   back verbatim in the returned template.
 8. **Warning text.** `changedDefaultWarnings` with an override under ops
    mentions `prompts.guidance` — when `librarian.strategy` is left
    unset via the existing message (its `strategy: 'legacy'` substring
