@@ -10,9 +10,12 @@ other removal rides this release.
 **Intent check:** Rule 2 — the removals drop no stored data: fact rows
 keep their stored `okf_type`; only the manifest rows and one config key
 go. Rule 10 — this spec is the required spec-first step. Rule 11 — the
-spec claims no accuracy or cost effect. The rule/decision dependability
-question is measured by the cheap targeted test in §Test plan, and the
-result is recorded with its model and caveats, not claimed in advance.
+spec claims no accuracy or cost number. It states the one cost it knows
+is real: the manifest is serialized into every classification prompt,
+so adopting hosts get six more node rows, four more edge rows, and the
+kind definitions in every call; that growth is unmeasured, and the
+cheap targeted test in §Test plan measures the rule/decision split, not
+a cost.
 Release: **major (9.0.0)** — see §Release.
 
 ## Problem
@@ -52,7 +55,7 @@ The whole-prompt override exists in code today: the `@deprecated` key
 `globalOverrides` fallback (`PromptService.ts:212`) and
 `buildInstructionTemplates`'s `o?.librarianSystemPrompt` read
 (`PromptService.ts:405`, reached on the `legacy` strategy branch) —
-the two warning blocks (`engineDefaults.ts:36-52`), and the doc comment
+the two warning blocks (`engineDefaults.ts:36-51`), and the doc comment
 (`WikiMemory.ts:850`). A grep from the repo root finds the `handoff`
 and `session_recap` type names outside the schema package in five
 places, none of them core code: the legacy historical spec (a dated
@@ -92,8 +95,13 @@ Rules for the description text (it is the classification signal, D3):
   wrong retirement (the prototype retired three decisions on one
   conflated claim).
 - `statement` itself is declared abstract in its description: classify
-  a fact as one of the four kinds, never as `statement`. A test asserts
-  this text is present.
+  a fact as one of the four kinds, never as `statement`. This is
+  prompt-level guidance only — the engine's `resolveNodeType` accepts
+  any manifest type, so a fact typed `statement` would pass strict
+  mode today. The spec accepts that residual: rejecting the abstract
+  type at validation is a core change this release does not make (the
+  classification prompt is the enforcement, as for every other type).
+  A test asserts this text is present in the manifest.
 - The text stays organization-neutral: it says "the organization",
   never a specific company.
 
@@ -107,7 +115,7 @@ descriptions point at them; the engine gains no field:
 
 | Label | Field(s) today |
 |---|---|
-| Who vouches | `okf_verified` (chronological entries; latest surfaces as `last_verified_by`), `packages/core/src/types.ts:539` |
+| Who vouches | `okf_verified` (chronological entries; latest surfaces as `last_verified_by`), `packages/core/src/types.ts:539`. Caution the `statement` description states: when grounding is on, the grounding writer stamps every grounded fact with a machine verifier (`process:grounding-check`, `packages/core/src/utils/grounding.ts:107`), so a verifier string starting `process:` is a machine, never a person — the human test is the derived `trustTier === 'human-reviewed'` (`types.ts:555`) |
 | Standing | `superseded_by` + `valid_to` — set by the existing supersede path (`TemporalService.supersedeInTx` writes only those plus `superseded_at`); `lifecycle_status: 'deprecated'` is set by an explicit `setLifecycleStatus` call (`WikiMemory.ts:1398`) — the host or the memory app makes that call when it accepts the replacement; the engine gains no automatic writer (`types.ts:531`, `:568`) |
 | Dates | `valid_from` / `valid_to` (`types.ts:564`, `:566`) |
 
@@ -125,7 +133,13 @@ expected frontmatter properties: `name`, `patterns` (the area's file
 globs; the host keeps them in its own repo and they change in the same
 PR as the code, per the ruling). A statement attaches to the most
 specific thing it concerns: an `area`, the whole `software_application`,
-or the `organization`.
+or the `organization`. This is the ruled target set, taken verbatim
+from the ruling sentence ("an area, the whole application, or the
+organization"). A statement about a `service`, `role`, or `person`
+attaches today through the thing it concerns — the application that
+owns the service, the area that covers it, or the organization — and
+widening the set later is an additive manifest change (a minor
+release), not this one.
 
 ### The attach edge
 
@@ -161,11 +175,13 @@ pattern (D6) already keeps the row count down.
    (`PromptService.ts:212`) and the `o?.librarianSystemPrompt` read in
    `buildInstructionTemplates` (`PromptService.ts:405`, the `legacy`
    strategy branch) — the two warning blocks in
-   `changedDefaultWarnings` (`engineDefaults.ts:36-52`), and the doc
-   comment reference (`WikiMemory.ts:850`). The builder's own
-   `runtimeOverride` parameter stays — it is the builder-level channel
-   tests and per-call callers use; only the config key and its reads
-   go. The rule is: no config path reaches `librarianSystemPrompt`
+   `changedDefaultWarnings` (`engineDefaults.ts:36-51`; line 52 opens
+   the unrelated legacy/`maintenance` warning and stays), the doc
+   comment that names the key (`engineDefaults.ts:20-23`, reworded),
+   and the doc comment reference (`WikiMemory.ts:850`). The builder's
+   own `runtimeOverride` parameter stays — it is the builder-level
+   channel tests and per-call callers use; only the config key and its
+   reads go. The rule is: no config path reaches `librarianSystemPrompt`
    after 9.0.0, on either librarian strategy; if implementation finds
    a config-fed caller this list misses, the caller goes too.
 
@@ -175,9 +191,15 @@ Nothing else is removed. The ruling covers exactly this list.
 
 - **Existing rows stay.** Facts stored with `okf_type` `handoff` or
   `session_recap` keep their rows and their type strings (rule 2:
-  migrations never drop data). Strict mode rejects new writes of those
-  types — the type is no longer in the manifest. Hosts re-type or
-  leave the rows.
+  migrations never drop data). Strict mode rejects those types on the
+  write paths that enforce it — `remember()` and document ingest
+  (`RememberService.ts:29`, `IngestionService.ts:633`). Librarian
+  writes run with strict checking off today, so a fact mis-classified
+  as a removed type stores with `okf_type: null` and loses its edges
+  (`OntologyService.ts:111`) — the same behavior any unknown type gets
+  now, unchanged by this release. `importDump` copies `okf_type`
+  verbatim (`ImportExportService.ts:312`), so re-imported old rows
+  keep the stale names. Hosts re-type or leave the rows.
 - **Seeded manifests do not re-seed.** `seedManifests` writes only when
   no manifest row exists for the entity (`types.ts`, `OntologyConfig`).
   A host upgrading from 8.x must call `setOntologyManifest` to adopt
@@ -247,8 +269,9 @@ snapshot.
   `mcp-server`, `schema-org`, `prisma-outbox` — the one package-table
   count row each.
 - `apps/docs/src/content/docs/packages/ontologies.md` and
-  `apps/docs/src/content/docs/concepts/knowledge-graph.md` — counts and
-  a short statements section.
+  `apps/docs/src/content/docs/concepts/knowledge-graph.md` — counts,
+  the removed rows out of the live catalog (`ontologies.md:69,72`),
+  and a short statements section.
 - `apps/docs/src/content/docs/guides/prompts.md`,
   `apps/docs/src/content/docs/reference/configuration.md`,
   `apps/docs/src/content/docs/guides/maintenance.md` — the
@@ -266,7 +289,11 @@ snapshot.
 - `packages/core/src/services/PromptService.ts` — delete both config
   reads of `librarianSystemPrompt` (`:212`, `:405`).
 - `packages/core/src/utils/engineDefaults.ts` — replace the two warning
-  blocks with the removal notice.
+  blocks (`:36-51`) with the removal notice; reword the doc comment
+  that names the key (`:20-23`).
+- `packages/benchmarks/` — the new classification-fixture subcommand
+  under the CLI's existing `--dry-run`/`--yes` guard (test plan
+  item 8), plus its README command list.
 - `packages/core/src/WikiMemory.ts` — doc comment line.
 - `packages/core/__tests__/engineDefaults.test.ts` — warning assertions.
 - `packages/core/__tests__/WikiMemory.test.ts`,
@@ -298,9 +325,14 @@ All zero-token and deterministic unless stated. Suites live in
    'statement'`; `statement` declares no parent; the three `about`
    rows and the `partOf` row exist with the declared endpoints; the
    two `handoffFor` rows and the two removed node types are absent
-   (negative assertions, so a silent restore fails).
-4. **Warm-agent parity unchanged.** The existing D2 parity test passes
-   untouched — no warm-agent row changes.
+   (negative assertions, so a silent restore fails). The same file's
+   count-bearing assertions update with the manifest: the warm-agent
+   parity filter stays 28 rows, its "+12" assertion becomes "+14"
+   (`manifest.test.ts:81`), the exact-node-set assertion gains the six
+   new names and loses `handoff`/`session_recap` (`:88`), the counts
+   become 21/42 (`:103`), and the removed types' property-row
+   assertions (`:153`, `:155`) go. The warm-agent row-for-row parity
+   itself passes untouched — no warm-agent row changes.
 5. **Override removal (core).** With
    `prompts.librarianSystemPrompt` set on a 9.0.0 engine: the key is
    absent from the type surface (typecheck is the assertion), the
@@ -310,13 +342,18 @@ All zero-token and deterministic unless stated. Suites live in
    notice too; the assertion is that the notice is present and the
    #375 warning texts are absent — a legacy-pinned host with no
    `maintenance` also collects the pre-existing legacy/deferred
-   warning, so the assertion must not demand a single message. Six
+   warning, so the assertion must not demand a single message. The
+   removal notice keeps working after the type surface loses the key:
+   `changedDefaultWarnings` reads `prompts.librarianSystemPrompt`
+   through an untyped shape (`Record<string, unknown>`) — it must
+   detect a key the `PromptOverrides` type no longer declares. Seven
    test files set the key today and
    change with the removal: config-path tests
    (`WikiMemory.test.ts:215,238,271`, `MaintenanceService.test.ts:101`,
    `PromptService.test.ts:108`, `groundingLibrarian.test.ts:69`)
    become removal tests — the key set, the prompt unchanged, one
-   warning; the two `changedDefaultWarnings` assertions in
+   warning; the assertions in `engineDefaults.test.ts` (`:68,81,108,
+   110`) and the two `changedDefaultWarnings` assertions in
    `librarianGuidance.test.ts:229,236` update to the removal notice;
    per-call behavior tests in `PromptService.test.ts` and
    `librarianGuidance.test.ts:167,201` move to the builder's
@@ -327,12 +364,13 @@ All zero-token and deterministic unless stated. Suites live in
    remaining scenario stays byte-identical (the diff-empty golden
    gate proves it).
 6. **Removed types in strict mode.** Seeding the new manifest and
-   writing a fact with `okf_type: 'handoff'` is rejected in strict
-   mode; a pre-existing stored row with that type still reads back
-   (the row is not dropped, and no migration touches it).
+   calling `remember()` with `okf_type: 'handoff'` is rejected in
+   strict mode (the enforcing write path); a pre-existing stored row
+   with that type still reads back and re-imports through `importDump`
+   verbatim (the row is not dropped, and no migration touches it).
 7. **Statement attach end-to-end (stub).** With the manifest seeded and
    a scripted stub provider, a librarian pass writes a fact typed
-   `rule` with an `about` edge to an `software_application` node, and
+   `rule` with an `about` edge to a `software_application` node, and
    the traversal returns it; a `decision` superseding an older
    `decision` carries `superseded_by` and `valid_to` on the old row
    from the supersede path alone, and the test then makes the explicit
@@ -342,13 +380,17 @@ All zero-token and deterministic unless stated. Suites live in
    A committed fixture holds labeled statement texts (at least 6 per
    kind, written to be discriminating: same subject matter, different
    kind). A CI test asserts the classification prompt carries all four
-   definitions — plumbing only. A separate opt-in runner
-   (environment-flag gated, so CI never spends tokens) sends the
-   fixture through the classification prompt to a real provider once
-   and reports per-kind results. The runner runs once before merge and
-   the LEDGER records the result with model name, prompt, and the
-   small-sample caveat. This measures the split the issue flags; the
-   spec claims no number in advance.
+   definitions — plumbing only, zero tokens. The measured runner lives
+   in `packages/benchmarks` as a CLI subcommand under the same guard
+   as `longmemeval` and `supersession`: it prints a one-screen token
+   estimate and refuses to spend without `--yes` (`--dry-run` for the
+   estimate alone, `--out` for the result file). It sends the fixture
+   through the classification prompt to a real provider once and
+   reports per-kind results; AGENTS.md's benchmark gate therefore
+   holds — no token-spending path exists outside that CLI. The runner
+   runs once before merge and the LEDGER records the result with model
+   name, prompt, and the small-sample caveat. This measures the split
+   the issue flags; the spec claims no number in advance.
 
 ## Release
 
