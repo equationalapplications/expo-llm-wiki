@@ -34,7 +34,9 @@ await wiki.setOntologyManifest(entityId, schemaSoftwareOrgManifest);
 
 The manifest gains four statement kinds (`rule`, `decision`, `lesson`, `trap`), defined by
 content, an `area` type for a named part of an application, and the `partOf` and `about` edges that
-attach them. Counts go from 17 node types and 40 edges to 21 and 42. See
+attach them. Counts go from 17 node types and 40 edges to 21 and 42. Note: edge attachment is
+prompt-steered; the first measured run recorded 0 of 28 persisted `about` edges (issue #381), so
+treat attachment as unproven. See
 [Ontologies](/expo-llm-wiki/packages/ontologies/#statements-and-areas) and the
 [schema package README](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/schema-software-org/README.md)
 for the labels.

@@ -96,7 +96,7 @@ Each statement holds one claim. Classify a fact as one of the four kinds, never 
 
 ### Attachment
 
-A statement attaches with `about` to the most specific thing it concerns: an `area`, a `software_application`, or the `organization`. An `area` is a part of one application (`partOf`).
+A statement attaches with `about` to the most specific thing it concerns: an `area`, a `software_application`, or the `organization`. An `area` is a part of one application (`partOf`). Attachment is prompt-steered: the model proposes the edge during classification. In the first measured run (2026-11-13, GLM-5.3-flash, 28 statements — see `packages/benchmarks/results/statement-kinds-2026-11-13.json` and follow-up issue #381) no `about` edge survived to storage, so treat attachment as unproven until #381 resolves; kind classification itself measured 28/28.
 
 ### Areas and patterns
 
