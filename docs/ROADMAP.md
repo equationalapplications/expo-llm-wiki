@@ -41,8 +41,11 @@ use, the engine's librarian keeps too much: many true statements that only
 repeat what a better record already says, and that go stale when that
 record changes. These four steps are the engine's part of fixing that.
 
-Steps 1 to 3 have no ruled order among themselves. Step 4 comes after
-step 3.
+The order is ruled (owner, 2026-11-13): step 1, then steps 2, 3 and 4.
+Curated Thoughts builds its own half of step 1
+([curated-thoughts#343](https://github.com/equationalapplications/curated-thoughts/issues/343))
+straight after it, before step 2, because its librarian does not use
+this engine's prompts.
 
 ### Step 1 — Librarian guidance and the general leave-out rule — PLANNED
 
