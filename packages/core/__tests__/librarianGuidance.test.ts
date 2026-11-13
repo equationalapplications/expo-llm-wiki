@@ -68,9 +68,14 @@ describe('librarian guidance — resolution (specs/librarian-guidance §5)', () 
   });
 
   it('a Promise return is a non-string resolver failure; its rejection never surfaces', async () => {
-    const boom = Promise.reject(new Error('async boom'));
-    boom.catch(() => {}); // local guard; resolveGuidance must attach its own
-    const r = PromptService.resolveGuidance({ librarian: { guidanceForEntity: () => boom } }, 'e1');
+    // No local catch on this rejection: resolveGuidance must attach its own
+    // no-op rejection handler synchronously. If it stops doing so, the
+    // rejection surfaces after the tick below and fails the worker — the
+    // test is falsifiable for that contract.
+    const r = PromptService.resolveGuidance(
+      { librarian: { guidanceForEntity: () => Promise.reject(new Error('async boom')) } },
+      'e1',
+    );
     expect(r.guidance).toBeUndefined();
     expect(r.diagnostic).toEqual({ code: 'guidance_resolver_failed', detail: { reason: 'non_string' } });
     // give a microtask tick — an unhandled rejection would fail the worker

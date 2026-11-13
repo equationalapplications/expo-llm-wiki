@@ -458,7 +458,9 @@ claims published (rule 11). Suites live in `packages/core/__tests__/`.
    mentions `prompts.guidance` — when `librarian.strategy` is left
    unset via the existing message (its `strategy: 'legacy'` substring
    assertion stays), and via a **second message** when it is set to
-   `'ops'` explicitly. `getInstructions` emits no diagnostics.
+   `'ops'` explicitly. `getInstructions` emits none of these warnings
+   (the only diagnostic it can emit is the read-path guidance
+   diagnostic of test item 7).
 
 ## Release
 
@@ -501,3 +503,8 @@ now, remove in 9.0.0 with the #376 breaks).
   (`contradicts_document`). The harness test compensates by proving
   the document was genuinely offered to the model (anchor selection
   asserted via the built prompt) before asserting byte parity.
+- Test plan item 8 wording corrected post-review (CodeRabbit
+  finding, 2026-11-13): its "`getInstructions` emits no diagnostics"
+  sentence contradicted test item 7's ratified read-path
+  `guidance_too_long`. Item 8 now says only that `getInstructions`
+  emits none of the changed-default warnings. No behavior change.
