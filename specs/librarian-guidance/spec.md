@@ -19,8 +19,8 @@ roadmap step 1). The tests do **not** measure restatement reduction or
 false-omission rate; the effect on restatement is unmeasured and no
 accuracy or cost claim is published without a run (rule 11). This is
 roadmap
-step 1 (`docs/ROADMAP.md`, landed by PR #378 — cite still points
-forward until that merge). Owner rulings
+step 1 (`docs/ROADMAP.md` — created by PR #378, which merges before
+this PR does; until then the cite points forward). Owner rulings
 2026-11-12 and 2026-11-13. Minor release (8.5.0): see Release.
 
 ## Problem
@@ -184,7 +184,13 @@ is new work, not part of this release.
   call.
 - Two new codes join `WikiDiagnosticCode` (`packages/core/src/types.ts`):
   `guidance_too_long` and `guidance_resolver_failed`. The diagnostics
-  channel itself is existing and unchanged.
+  channel itself is existing and unchanged. `guidance_resolver_failed`
+  reuses the existing `reason` detail field (`'threw' | 'non_string'`)
+  and carries severity `info`; neither code ever carries guidance text
+  (`WikiDiagnosticDetail` stays identifiers-only). `getInstructions`
+  emits **no** diagnostics — it is a read path; it applies the same
+  fallback silently. The existing `operation` values cover both codes
+  (`ingest`, `librarian`); no new operation is added.
 - Composition with overrides: whichever template wins — built-in
   default, `PromptOverrides`, a per-call ingest `promptOverride`, or the
   legacy `runtimeOverride` — receives the guidance section appended at
@@ -205,10 +211,13 @@ before `appendGrounding` runs (`PromptService.ts:37`).
 `WikiConfig` docs in this release, with "removed in 9.0.0". The
 `changedDefaultWarnings` message for an override under ops
 (`engineDefaults.ts:36-42`) now points at `prompts.guidance` instead of
-only telling the host to pin `legacy`. The warning's condition widens to
-cover a host that sets `librarian.strategy: 'ops'` explicitly: today
-that host gets no warning and a silently ignored override, and the
-updated message should reach it too. Removal itself is #376's release
+only telling the host to pin `legacy`. A **second message** covers a
+host that set `librarian.strategy: 'ops'` explicitly — today that host
+gets no warning and a silently ignored override, and the existing
+message's "now defaults to 'ops'" text is false for it. The existing
+message and its test assertions (including the `strategy: 'legacy'`
+substring at `engineDefaults.test.ts:83`) stay; the new case adds a
+message, it does not replace one. Removal itself is #376's release
 (owner ruling 2026-11-13; the 9.0.0 break covers exactly the listed
 removals and nothing else).
 
@@ -225,9 +234,12 @@ result applies to every prompt build in that pass:
 - At or under the cap: guidance is sent as specified.
 - Over the cap: the guidance is **not sent** for that call; the prompt is
   exactly the no-guidance prompt; the engine records a diagnostic (code
-  `guidance_too_long` on the existing diagnostics channel, with the
-  offending value's length and whether it came from the per-entity value
-  or the default). Nothing is truncated and nothing is stored (rule 6).
+  `guidance_too_long` on the existing diagnostics channel — detail
+  `guidanceLength` (number, UTF-16 units) and `guidanceSource:
+  'per_entity' | 'default'`, both added to `WikiDiagnosticDetail`,
+  which stays identifiers-only; severity `warn`) with the offending
+  value's length and whether it came from the per-entity value or the
+  default. Nothing is truncated and nothing is stored (rule 6).
   The diagnostic is emitted at most once per pass (one librarian pass or
   one ingest call), not once per prompt build — a single ingest of many
   chunks reports the over-cap value once, not once per chunk. The flag
@@ -274,7 +286,9 @@ rows byte-identical with and without guidance set).
 
 - `packages/core/src/types.ts` — `prompts.guidance`,
   `prompts.guidanceForEntity`; `@deprecated` on
-  `prompts.librarianSystemPrompt`.
+  `prompts.librarianSystemPrompt`; two `WikiDiagnosticCode` entries and
+  two `WikiDiagnosticDetail` fields (`guidanceLength`,
+  `guidanceSource`).
 - `packages/core/src/services/PromptService.ts` — guidance resolution
   helper (default → per-entity, cap check, marked section, rule
   sentence); threaded through `buildIngestPrompt`,
@@ -283,6 +297,12 @@ rows byte-identical with and without guidance set).
   `buildHealPrompt`, ontology backfill builder.
 - `packages/core/src/services/librarian/types.ts` — `guidance?: string`
   on `LibrarianContext` / `LibrarianPassContext`.
+- `packages/core/src/services/librarian/legacy.ts` and
+  `packages/core/src/services/librarian/ops/extract.ts` — pass the
+  resolved guidance to `buildLibrarianPrompt` and to **both**
+  `buildOpsExtractPrompt` calls (the budget estimate at `extract.ts:55`
+  and the real call at `:67` must receive identical guidance, or batch
+  sizing undercounts by up to the cap).
 - `packages/core/src/WikiMemory.ts` — `getInstructions` resolves the
   entity's effective guidance and passes it to
   `buildInstructionTemplates`.
@@ -321,13 +341,15 @@ claims published (rule 11). Suites live in `packages/core/__tests__/`.
    `buildGroundingCorpus` output for any writer; the grounding block's
    position is unchanged with and without guidance.
 4. **Cap and diagnostic.** A 2,001-character value produces the
-   no-guidance prompt plus a `guidance_too_long` diagnostic carrying the
-   length and the source (per-entity/default); a 2,000-character value
+   no-guidance prompt plus a `guidance_too_long` diagnostic carrying
+   detail `guidanceLength` and `guidanceSource`; a 2,000-character value
    passes; a value at the boundary counted in UTF-16 units (e.g. 1,000
    two-unit characters) behaves by the same count. A resolver returning
    a long string over a short default is diagnosed as per-entity, and
    suppresses guidance for that call with **no fallback** to the
-   default. The diagnostic fires once per pass, not once per chunk.
+   default. The diagnostic fires once per pass, not once per chunk. The
+   ops budget estimate and the real extract prompt receive **identical**
+   guidance (assert both built prompts are equal).
 5. **Resolution and resolver failures.** Per-entity wins over default;
    `undefined`/empty/whitespace-only resolver return falls back, and the
    same applies to a whitespace-only default; a resolver that throws,
@@ -341,8 +363,10 @@ claims published (rule 11). Suites live in `packages/core/__tests__/`.
    entity's effective guidance in all returned templates that carry it,
    and omits it where this spec says guidance is not sent.
 7. **Warning text.** `changedDefaultWarnings` with an override under ops
-   mentions `prompts.guidance` — both when `librarian.strategy` is left
-   unset and when it is set to `'ops'` explicitly.
+   mentions `prompts.guidance` — when `librarian.strategy` is left
+   unset via the existing message (its `strategy: 'legacy'` substring
+   assertion stays), and via a **second message** when it is set to
+   `'ops'` explicitly. `getInstructions` emits no diagnostics.
 
 ## Release
 
