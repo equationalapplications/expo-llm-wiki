@@ -1,6 +1,6 @@
 # @equationalapplications/schema-software-org
 
-A custom minimal ontology manifest for an executive agent operating on behalf of a software organization — 17 node types, 40 edges, a superset of the warm-agent manifest in which the warm-agent rows are copied verbatim except for one intentional override of `product` (which delegates to `software_application` / `service`), data-only with no runtime code.
+A custom minimal ontology manifest for an executive agent operating on behalf of a software organization — 21 node types, 42 edges, a superset of the warm-agent manifest in which the warm-agent rows are copied verbatim except for one intentional override of `product` (which delegates to `software_application` / `service`), data-only with no runtime code.
 
 [![npm version](https://img.shields.io/npm/v/%40equationalapplications%2Fschema-software-org?label=schema-software-org)](https://www.npmjs.com/package/@equationalapplications/schema-software-org) [![npm downloads](https://img.shields.io/npm/dm/%40equationalapplications%2Fschema-software-org?label=downloads)](https://www.npmjs.com/package/@equationalapplications/schema-software-org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -27,9 +27,13 @@ A custom minimal ontology manifest for an executive agent operating on behalf of
 | `service` | — | A running hosted capability the organization consumes or operates, vendor-run or self-run — databases, APIs, CI, auth, monitoring. Distinct from software_application (the codebase the organization ships) and product (third-party tools it owns). The organization's own backend is a software_application as source and a service as a deployed dependency. Expected frontmatter properties: provider, dashboard_url, status, tier (critical/important/optional). |
 | `role` | — | A functional role a person fills within the organization. Expected frontmatter properties: role_name, scope, capabilities. |
 | `design_spec` | `creativework` | A technical or product design specification. Expected frontmatter properties: status (draft/approved/implemented/superseded), spec_for (software_application or service slug), branch. |
-| `handoff` | `creativework` | An operational handoff or session transition document. Expected frontmatter properties: session_id, outcome (pending/complete/blocked), open_items. |
 | `procedure` | `creativework` | A checklist, workflow, or how-to document. Expected frontmatter properties: trigger (when to use it), last_reviewed, applies_to (software_application or service slug). |
-| `session_recap` | `creativework` | A dated recap of one working session. Use only for session records — ordinary facts are not memories. Expected frontmatter properties: session_date, key_decisions (comma-separated list). |
+| `statement` | — | Abstract parent of the four statement kinds. Classify a fact as one of the four kinds, never as `statement`. |
+| `rule` | `statement` | A situation, and what to do in it. |
+| `decision` | `statement` | What was chosen, what was rejected, and why. |
+| `lesson` | `statement` | What went wrong, and what to do differently. |
+| `trap` | `statement` | A likely wrong assumption, and the fact that corrects it. |
+| `area` | — | A named part of a `software_application`, such as deploy or billing. Expected frontmatter properties: name, patterns_file. |
 | `reference_doc` | `creativework` | A product doc, service description, or architecture reference. Expected frontmatter properties: source_url, application (software_application slug). |
 
 ## Edge Catalog
@@ -69,13 +73,48 @@ A custom minimal ontology manifest for an executive agent operating on behalf of
 | `specifies` | design_spec → service | Spec is about this service. |
 | `documents` | procedure → software_application | Procedure applies to this software application. |
 | `documents` | procedure → service | Procedure applies to this service. |
-| `handoffFor` | handoff → software_application | Handoff is for this software application. |
-| `handoffFor` | handoff → service | Handoff is for this service. |
+| `partOf` | area → software_application | This area is a named part of this software application. |
+| `about` | statement → area | This statement (any of the four kinds) concerns this area. |
+| `about` | statement → software_application | This statement concerns this software application as a whole. |
+| `about` | statement → organization | This statement concerns the organization. |
 | `supersedes` | creativework → creativework | This document replaces an older one. |
 | `hasRole` | person → role | Person fills this role. |
 | `operates` | role → software_application | Role operates this software application. |
 | `provides` | organization → service | Organization provides this service. |
 | `maintains` | person → software_application | Person maintains this software application. |
+
+## Statements and areas
+
+A statement is one claim the organization wants to keep. There are four kinds:
+
+- `rule`: a situation, and what to do in it.
+- `decision`: what was chosen, what was rejected, and why.
+- `lesson`: what went wrong, and what to do differently.
+- `trap`: a likely wrong assumption, and the fact that corrects it.
+
+Each statement holds one claim. Classify a fact as one of the four kinds, never as `statement`.
+
+### Attachment
+
+A statement attaches with `about` to the most specific thing it concerns: an `area`, a `software_application`, or the `organization`. An `area` is a part of one application (`partOf`).
+
+### Areas and patterns
+
+An `area` stores `patterns_file`: the path, inside the repo, of the file that holds the area's file globs. It is a pointer, not a copy. Area matching reads the repo's own patterns file, so the patterns change in the same PR as the code.
+
+### The three labels
+
+The labels use fields that already exist. No new fields.
+
+| Label | Field(s) |
+|---|---|
+| Who vouches | `okf_verified` (entries in order; the latest shows as `last_verified_by`) |
+| Standing | `superseded_by` and `valid_to` (set by supersede); `lifecycle_status: 'deprecated'` (set by an explicit `setLifecycleStatus` call) |
+| Dates | `valid_from` and `valid_to` |
+
+**Who vouches.** When grounding is on, the grounding writer stamps every grounded fact with a machine verifier, `process:grounding-check`. A verifier string is a machine unless it starts with `human:`. Only `human:`-prefixed entries give `trustTier === 'human-reviewed'`. Fill a label only when the source says so in plain words.
+
+**Standing.** Supersede writes `superseded_by` and `valid_to`. It does not set `deprecated`. The host or the memory app calls `setLifecycleStatus` when it accepts the replacement. The engine never does this by itself.
 
 ## Property Conventions
 
@@ -132,7 +171,7 @@ Requires `@equationalapplications/core-llm-wiki` **>= 6.1.0** — that is the re
 
 | Package | Purpose |
 | ----- | ----- |
-| [**@equationalapplications/schema-software-org**](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/schema-software-org/README.md) | Software-organization executive ontology manifest — 17 node types, 40 edges, warm-agent superset, data-only |
+| [**@equationalapplications/schema-software-org**](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/schema-software-org/README.md) | Software-organization executive ontology manifest — 21 node types, 42 edges, warm-agent superset, data-only |
 | [@equationalapplications/mcp-server](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/mcp-server/README.md) | MCP server exposing SynapseTree memory tools to coding agents |
 | [@equationalapplications/core-llm-wiki](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/core/README.md) | Persistent episodic memory |
 | [@equationalapplications/expo-llm-wiki](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/expo/README.md) | Persistent episodic memory for Expo/React Native |
