@@ -1,8 +1,11 @@
 # Librarian guidance and the general leave-out rule
 
-**Status:** Reviewed (spec gate closed by the owner, 2026-11-13 —
-Fable gate + full written-work ladder converged, all findings
-addressed; merge ask and design points ratified in-session)
+**Status:** Implemented (2026-11-13 — implementation PR #379; harness
+tests c01c7809 + 9035ae14, docs ad70e8e6; full core suite 211 files /
+2426 tests green, golden fixture byte-parity, docs site builds. Spec
+gate closed by the owner 2026-11-13 — Fable gate + full written-work
+ladder converged, all findings addressed; merge ask and design points
+ratified in-session)
 **Date:** 2026-11-13
 **Intent check:** Rule 3 — the per-entity value keeps one database's many
 memories separate, and neither value is stored, so nothing mixes. Rule 5 —
@@ -481,3 +484,20 @@ now, remove in 9.0.0 with the #376 breaks).
 - Any check of a statement against real code. The leave-out rule is an
   instruction to the model; nothing in the engine can verify it.
 - The always-on variant of the leave-out rule (EXPLORATORY, roadmap).
+
+## Errata (2026-11-13, at implementation close)
+
+- Test plan item 6 (rule 5, falsifiable): the spec predicted a
+  `fact_deduplicated` refusal diagnostic when the legacy librarian
+  emits a fact matching a document fact's title. `legacy.ts`
+  fuzzy-dedupes only against `librarian_inferred` rows, so no
+  diagnostic fires and the stub's fact is written as a separate row.
+  The asserted invariant is the document row staying byte-unchanged —
+  that holds and the test proves it. Rule 5 is intact; only the
+  predicted diagnostic does not exist.
+- Same item: heal refuses attempts against `immutable_document` ids
+  silently (the per-batch mutableIds guard has no diagnostic), so
+  "refusal diagnostics fire" holds only on the ops path
+  (`contradicts_document`). The harness test compensates by proving
+  the document was genuinely offered to the model (anchor selection
+  asserted via the built prompt) before asserting byte parity.
