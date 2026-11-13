@@ -9,10 +9,12 @@ says; this spec states that invariant and tests it. Rule 6 — over-cap
 guidance is refused with a diagnostic, never silently. Rule 7 — a length
 cap bounds the text resent on every librarian call, and prompt volume is
 reported, not billed tokens. Rule 10 — this spec first. Rule 11 — the
-change is measured by cheap targeted tests (the 2026-11-10 owner ruling
-replacing benchmark runs); no accuracy or cost claim is published without
-a run. This is roadmap step 1 (`docs/ROADMAP.md`, landed by PR #378 —
-cite still points forward until that merge). Owner rulings
+change is measured by cheap targeted tests — the owner ruling of
+2026-11-10 that replaced benchmark runs with them (recorded in
+`specs/targeted-diagnostics` and restated in roadmap step 1); no
+accuracy or cost claim is published without a run. This is roadmap
+step 1 (`docs/ROADMAP.md`, landed by PR #378 — cite still points
+forward until that merge). Owner rulings
 2026-11-12 and 2026-11-13. Minor release (8.5.0): see Release.
 
 ## Problem
@@ -27,6 +29,8 @@ override gets pointed back to `legacy` by `changedDefaultWarnings`
 (`packages/core/src/utils/engineDefaults.ts:36`). A whole-prompt
 override also replaces the JSON output contract the engine parses, and
 freezes the host out of every later improvement to the built-in prompt.
+(`ops` sends the fixed prompts at `PromptService.ts:273-284` —
+`buildOpsExtractPrompt` — which takes no host text.)
 
 Separately, memory keeps too much that a better record already holds.
 In a prototype over one product's notes, roughly a third of extracted
@@ -86,7 +90,7 @@ to the three prompts that author fact text from events and documents:
 - `LIBRARIAN_SYSTEM_PROMPT` (legacy librarian — `buildLibrarianPrompt`,
   `PromptService.ts:117`);
 - `OPS_EXTRACT_SYSTEM_PROMPT` (ops extract — `buildOpsExtractPrompt`,
-  `PromptService.ts:273-291`).
+  `PromptService.ts:273-284`).
 
 Marked section shape (exact delimiters fixed at implementation, and
 asserted by test):
@@ -115,10 +119,13 @@ the guidance section:
 > that record.
 
 It is added **only when a host sets guidance** — i.e. only on a prompt
-build where the effective guidance is non-empty. With no guidance
-anywhere in play, every prompt is byte-identical to today's (test plan
-§4.1). No record is named in the rule, so it changes little for a host
-with none; but the engine still withholds it, because the ruling is
+build where the effective guidance is **sent**: non-empty and within
+the cap. An over-cap value is not sent (§Length cap and diagnostic), so
+the prompt carries neither the guidance section nor the rule sentence.
+With no guidance anywhere in play, every prompt is byte-identical to
+today's (test plan item 1). No record is named in the rule, so it
+changes little for a host with none; but the engine still withholds
+it, because the ruling is
 that an upgrade changes nothing for a host that opted into nothing.
 
 Turning the rule on for every host, always, is EXPLORATORY on the
@@ -157,7 +164,13 @@ host can read the limit). Enforcement is at prompt build:
   or the default). Nothing is truncated and nothing is stored (rule 6).
   The diagnostic is emitted at most once per pass (one librarian pass or
   one ingest call), not once per prompt build — a single ingest of many
-  chunks reports the over-cap value once, not once per chunk.
+  chunks reports the over-cap value once, not once per chunk. The flag
+  lives on the pass/call state and is never persisted across passes.
+  Over-cap never falls back to the other value: the winning value (the
+  per-entity one when it returned a non-empty string, else the default)
+  is suppressed for that call, and the prompt is the no-guidance prompt.
+  Falling back would silently substitute different instructions, which
+  is worse than none.
 
 Rationale: truncation would silently change instructions mid-sentence;
 refusal is deterministic and visible. The cap bounds the per-call spend
@@ -170,7 +183,8 @@ evidence. The grounding block already instructs the model not to quote
 its instructions; the grounding corpus is built from event and document
 text only (`buildGroundingCorpus`, `utils/grounding.ts`) and is
 unchanged. A test asserts the guidance text never appears in a built
-grounding corpus and that the grounding block remains last (§4.3).
+grounding corpus and that the grounding block remains last (test plan
+item 3).
 
 ### Instructions surface
 
@@ -186,8 +200,8 @@ data to it).
 
 Guidance changes what ingest *selects* from a document. It never changes
 a stored document fact's text; stored document facts remain immutable
-(rule 5). Stated here and enforced by the existing ingest tests, which
-assert stored document rows are unaffected by extraction output.
+(rule 5). Stated here; a test in this change asserts it (stored document
+rows byte-identical with and without guidance set).
 
 ## Files touched
 
@@ -239,8 +253,10 @@ claims published (rule 11). Suites live in `packages/core/__tests__/`.
 4. **Cap and diagnostic.** A 2,001-character value produces the
    no-guidance prompt plus a `guidance_too_long` diagnostic carrying the
    length and the source (per-entity/default); a 2,000-character value
-   passes. Resolver returning a long string over a short default is
-   diagnosed as per-entity.
+   passes. A resolver returning a long string over a short default is
+   diagnosed as per-entity, and suppresses guidance for that call with
+   **no fallback** to the default. The diagnostic fires once per pass,
+   not once per chunk.
 5. **Resolution and resolver failures.** Per-entity wins over default;
    `undefined`/empty resolver return falls back; a resolver that throws,
    returns a Promise, or returns a non-string value falls back and
