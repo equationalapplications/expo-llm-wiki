@@ -1,7 +1,7 @@
 # Statement kinds (rule, decision, lesson, trap) and areas — the 9.0.0 breaking release
 
-**Status:** Draft (plan.md and LEDGER.md land in this folder when this
-spec's review gate closes, per the repo flow)
+**Status:** Reviewed (2026-11-13 — owner approved the spec gate in-session;
+implementation not started. plan.md and LEDGER.md added per the repo flow.)
 **Date:** 2026-11-13
 **Owner rulings:** 2026-11-12 and 2026-11-13, recorded in issue #376 and in
 the vault note `sharper-memory-design-rulings-2026-11-13.md`. The 9.0.0
