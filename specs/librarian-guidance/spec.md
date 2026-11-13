@@ -1,6 +1,8 @@
 # Librarian guidance and the general leave-out rule
 
-**Status:** Draft
+**Status:** Reviewed (spec gate closed by the owner, 2026-11-13 —
+Fable gate + full written-work ladder converged, all findings
+addressed; merge ask and design points ratified in-session)
 **Date:** 2026-11-13
 **Intent check:** Rule 3 — the per-entity value keeps one database's many
 memories separate, and neither value is stored, so nothing mixes. Rule 5 —
@@ -18,8 +20,8 @@ rule 11's "measured before it is claimed" is not triggered; the
 2026-11-10 ruling on benchmarks (recorded in `specs/targeted-diagnostics`
 and restated in roadmap step 1) is background, not a claim that these
 unit tests replace benchmark suites. This is roadmap
-step 1 (`docs/ROADMAP.md` — created by PR #378, which merges before
-this PR does; until then the cite points forward). Owner rulings
+step 1 (`docs/ROADMAP.md`, landed by PR #378 on 2026-11-13, merge
+commit `ff13e74a`). Owner rulings
 2026-11-12 and 2026-11-13 (recorded in the issue #375 body and the
 2026-11-13 handoff; INTENT.md carries no amendment for them — the
 handoff states the design is settled without one). Minor release
