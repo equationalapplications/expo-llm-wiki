@@ -42,9 +42,20 @@ export interface SQLiteAdapter {
 
 export interface PromptOverrides {
   ingestSystemPrompt?: string;
+  /** @deprecated Replaces the whole librarian prompt and only `legacy` reads it. Set `prompts.guidance` (and, per entity, `librarian.guidanceForEntity`) instead; removed in 9.0.0. */
   librarianSystemPrompt?: string;
   healSystemPrompt?: string;
   ontologyBackfillSystemPrompt?: string;
+  /**
+   * Short domain guidance added, in a marked section, to the prompts that
+   * author fact text (ingest, legacy librarian, ops extract), plus the
+   * general leave-out rule sentence. Database-level default; per entity,
+   * `librarian.guidanceForEntity` wins when it returns a non-empty string.
+   * Capped at 2,000 characters (UTF-16 units); over-cap guidance is not
+   * sent and emits `guidance_too_long`. Holds no secrets: it is sent to
+   * the model on every authoring call.
+   */
+  guidance?: string;
 }
 
 export type OntologyMode = 'strict' | 'emergent' | 'off';
@@ -269,6 +280,16 @@ export interface LibrarianGateConfig {
 export interface LibrarianConfig {
   strategy?: 'legacy' | 'ops';
   gate?: LibrarianGateConfig;
+  /**
+   * Per-entity librarian guidance (specs/librarian-guidance). Returns the
+   * short domain instruction for `entityId`, or `undefined`/empty to fall
+   * back to `config.prompts.guidance`. Called synchronously once per
+   * librarian pass / ingest call; a throw or non-string return is treated
+   * as no value (fallback + `guidance_resolver_failed` diagnostic). The
+   * engine stores neither value. Lives under `librarian`, not `prompts`,
+   * so `WikiConfig.prompts` stays a struct of plain strings.
+   */
+  guidanceForEntity?: (entityId: string) => string | undefined;
 }
 
 export interface WikiConfig {
@@ -837,7 +858,9 @@ export type WikiDiagnosticCode =
   | 'event_created_at_clamped'
   | 'event_created_at_restamped'
   | 'external_deletion_pending'
-  | 'external_deletion_discarded';
+  | 'external_deletion_discarded'
+  | 'guidance_too_long'
+  | 'guidance_resolver_failed';
 
 /** The service run that emitted the diagnostic. */
 export type WikiDiagnosticOperation =
@@ -886,6 +909,10 @@ export interface WikiDiagnosticDetail {
   oldestEnqueuedAt?: number;
   /** external_deletion_pending only: highest attempt count among pending rows. */
   maxAttempts?: number;
+  /** guidance_too_long only: length of the refused value in UTF-16 code units. */
+  guidanceLength?: number;
+  /** guidance_too_long only: which configured value was refused. */
+  guidanceSource?: 'per_entity' | 'default';
 }
 
 export interface WikiDiagnostic {

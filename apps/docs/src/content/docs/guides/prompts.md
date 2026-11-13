@@ -48,6 +48,39 @@ Return ONLY valid JSON: { "facts": [{ "title": "string", "body": "string", "tags
 });
 ```
 
+## Host guidance
+
+Guidance steers the librarian without replacing any prompt, so the JSON contract stays intact.
+Set a default, and optionally resolve it per entity:
+
+```ts
+createWiki(db, {
+  llmProvider,
+  config: {
+    prompts: { guidance: 'Only keep durable project decisions. Skip small talk.' },
+    librarian: {
+      strategy: 'ops',
+      guidanceForEntity: (entityId) => (entityId.startsWith('support-') ? 'Focus on customer issues.' : undefined),
+    },
+  },
+});
+```
+
+- **Resolution order:** `prompts.guidance` is the default; a non-empty `librarian.guidanceForEntity(entityId)` result overrides it for that entity. Emptiness is judged on the trimmed value.
+- **Cap:** 2,000 UTF-16 code units (`GUIDANCE_MAX_CHARS`). Over-cap guidance is refused with `guidance_too_long`. There is no fallback to the default.
+- **No template variables:** neither `prompts.guidance` nor `guidanceForEntity` may contain `{{…}}`.
+- **Where it lands:** guidance composes after every override and reaches ingest, the librarian (both strategies), ops extract, and `getInstructions`.
+- **Where it never lands:** heal and ontology backfill.
+
+:::caution
+`getInstructions` returns guidance verbatim, so it is echoed back to anyone with `memory:read`.
+**Never put secrets in guidance.**
+:::
+
+:::note[Deprecation]
+`prompts.librarianSystemPrompt` is deprecated and will be removed in 9.0.0. Migrate to `prompts.guidance`.
+:::
+
 ## Per-call overrides (one call only)
 
 ```ts

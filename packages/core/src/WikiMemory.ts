@@ -697,7 +697,20 @@ export class WikiMemory {
   async getInstructions(entityId: string): Promise<WikiInstructions> {
     assertEntityId(entityId);
     const ontologyContext = await this.ontologyService.buildPromptContext(entityId);
-    return this.promptService.buildInstructionTemplates(ontologyContext, resolveLibrarianStrategy(this.options.config));
+    // Specs/librarian-guidance: same resolution as the write paths. A read
+    // path that silently drops over-cap guidance would be the one place
+    // guidance disappears without a signal, so over-cap emits here too.
+    const { guidance, diagnostic } = PromptService.resolveGuidance(this.options.config, entityId);
+    if (diagnostic) {
+      emitDiagnostic(this.options, {
+        code: diagnostic.code,
+        operation: 'read',
+        trigger: 'call',
+        entityId,
+        detail: diagnostic.detail,
+      });
+    }
+    return this.promptService.buildInstructionTemplates(ontologyContext, resolveLibrarianStrategy(this.options.config), guidance);
   }
 
   /**

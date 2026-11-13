@@ -70,7 +70,7 @@ createWiki(db, {
 | Field | Default | Description |
 |---|---|---|
 | `maintenance` | `'deferred'` | `'deferred'` means you call `runPendingMaintenance()` yourself. `'auto'` starts the librarian and heal from `write()` |
-| `librarian` | `{ strategy: 'ops' }` | `{ strategy: 'ops' \| 'legacy', gate: { k, dupThreshold, novelThreshold } }` |
+| `librarian` | `{ strategy: 'ops' }` | `{ strategy: 'ops' \| 'legacy', gate: { k, dupThreshold, novelThreshold }, guidanceForEntity?: (entityId) => string \| undefined }`. `guidanceForEntity` returns per-entity [host guidance](/expo-llm-wiki/guides/prompts/#host-guidance); a non-empty result overrides `prompts.guidance` for that entity |
 | `autoLibrarianThreshold` | `20` | `'auto'` maintenance only: events before the librarian auto-runs |
 | `autoLibrarianTokenThreshold` | — | `'auto'` maintenance only: also triggers on pending text size (about N tokens) |
 | `autoHealThreshold` | `100` | `'auto'` maintenance only: events before heal auto-runs. Also the `healDue` rule in `getPendingMaintenance()` |
@@ -95,7 +95,8 @@ createWiki(db, {
 | Field | Applies to |
 |---|---|
 | `prompts.ingestSystemPrompt` | `ingestDocument()` |
-| `prompts.librarianSystemPrompt` | Librarian runs, manual and auto (legacy strategy only) |
+| `prompts.guidance` | Host guidance appended to ingest, librarian (both strategies), ops extract and `getInstructions`. Never heal or ontology backfill. Max 2,000 UTF-16 code units; no `{{…}}` |
+| `prompts.librarianSystemPrompt` | Librarian runs, manual and auto (legacy strategy only). Deprecated — removed in 9.0.0; use `prompts.guidance`. |
 | `prompts.healSystemPrompt` | Heal runs, manual and auto |
 | `prompts.ontologyBackfillSystemPrompt` | `runOntologyBackfill()` |
 
