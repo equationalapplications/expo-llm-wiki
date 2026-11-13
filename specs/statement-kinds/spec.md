@@ -555,7 +555,7 @@ runner: `benchmarks statement-kinds`, in-memory store, engine's own
   zero, so this number cannot distinguish "no proposals" from
   "proposals dropped". The kind definitions alone carried the
   classification; no attachment survived to storage under this model.
-  Root-caused in #381.
+  Opened for diagnosis as #381.
 - **Caveats:** single run, no repeats; small sample (28); one model;
   judge is exact-match against the fixture's expected kind and target;
   the runner's classification path (`remember` untyped → backfill

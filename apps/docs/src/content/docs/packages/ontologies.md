@@ -81,8 +81,10 @@ statement → software_application, statement → organization).
 A statement is one claim the organization wants to keep, classified by what it says: a `rule`
 (a situation and what to do), a `decision` (what was chosen, rejected and why), a `lesson` (what
 went wrong and what to do differently), or a `trap` (a likely wrong assumption and the fact that
-corrects it). Each statement holds one claim, and attaches with `about` to the most specific thing
-it concerns: an `area`, a `software_application`, or the organization. See the
+corrects it). Each statement holds one claim, and is designed to attach with `about` to the most specific thing
+it concerns: an `area`, a `software_application`, or the organization. Edge attachment is
+prompt-steered and unproven so far — the first measured run recorded 0 of 28 persisted edges
+(issue #381). See the
 [schema package README](https://github.com/equationalapplications/expo-llm-wiki/blob/main/packages/schema-software-org/README.md)
 for the labels and the full edge table.
 
