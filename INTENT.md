@@ -191,9 +191,10 @@ not edit it.
 **Planned** (owner ruling, 2026-11-13): the engine will also keep a
 document's text as a *source*: stored as it is, searched with no model
 call, and never rewritten. Until that ships, the host keeps the source
-text and the engine keeps a pointer to it on each fact it writes (#377).
-This rule's text is reworded in the pull request that ships the source
-store, not before. See `docs/ROADMAP.md`, step 4.
+text. A pointer from each fact the librarian writes back to its source
+is planned too (#377); today those facts carry none. This rule's text is
+reworded in the pull request that ships the source store, not before.
+See `docs/ROADMAP.md`, steps 3 and 4.
 
 ### 6. Honest reporting
 
@@ -365,8 +366,9 @@ runs and who schedules it.
 - 2026-11-13 — Rule 5 gains a Planned note, and `docs/ROADMAP.md` is
   added. The owner ruled that memory has a Sources layer: the original
   material, searched as it is, beside what the librarian extracts from
-  it. For now the host keeps source text and the engine keeps a pointer
-  on each fact (#377). A source store in the engine is roadmap step 4.
+  it. For now the host keeps source text. Two things are planned and
+  not built: a pointer on each fact the librarian writes (#377, roadmap
+  step 3) and a source store in the engine (roadmap step 4).
   Why: a document that can only be found after a model has turned it
   into facts costs tokens and loses detail, and a fact with no trail to
   its source cannot be checked. The roadmap is new: it carries the
