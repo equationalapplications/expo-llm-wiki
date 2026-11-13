@@ -50,10 +50,14 @@ this engine's prompts.
 ### Step 1 — Librarian guidance and the general leave-out rule — PLANNED
 
 A host can add a few plain lines of guidance to the librarian, and they
-work on the `ops` chain as well as the `legacy` one. The built-in prompts
-gain one general rule: memory leaves out what a better record already
-holds, and points to that record. Issue
+work on the `ops` chain as well as the `legacy` one. With guidance comes
+one general rule, added by the engine: memory leaves out what a better
+record already holds, and points to that record. Issue
 [#375](https://github.com/equationalapplications/expo-llm-wiki/issues/375).
+
+The general rule is added only when a host sets guidance (owner ruling,
+2026-11-13). A host that sets none gets exactly the prompts it has
+today, so an upgrade changes nothing for it.
 
 *Gate:* a spec, checked against INTENT.md. Rule 11 applies: the spec says
 how the change is measured, and no accuracy or cost claim is published
@@ -105,6 +109,17 @@ steps deliver without it.
 *Who follows:* the hosts that hand documents to the engine each carry a
 roadmap entry of their own: SynapseTree, clanker and Curated Journal.
 Curated Thoughts needs no change.
+
+## Exploratory — named so nobody builds them by accident
+
+- **The general leave-out rule for every host, always.** Today's ruling
+  ties the rule to guidance (step 1). Turning it on for every host would
+  change what existing hosts' models write on upgrade, without those
+  hosts doing anything. Before this is explored, one step makes it safe:
+  a cheap targeted test that runs a fixed set of events from a host with
+  no better record to point to (a companion app, for example) through
+  the old and the new prompts and shows that no fact is lost. Without
+  that test, this stays unbuilt.
 
 ## What is intentionally absent
 
