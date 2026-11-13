@@ -79,13 +79,13 @@ describe('warm-agent parity (D2)', () => {
     // shrank) or grows (a stale row got resurrected) without affecting the
     // 28 warm-agent rows the filter compares.
     expect(schemaSoftwareOrgManifest.edge_types).toHaveLength(
-      schemaOrgWarmAgentManifest.edge_types.length + 12,
+      schemaOrgWarmAgentManifest.edge_types.length + 14,
     );
   });
 });
 
 describe('shape and counts', () => {
-  it('ships exactly the 17 declared node types', () => {
+  it('ships exactly the 21 declared node types', () => {
     expect(new Set(schemaSoftwareOrgManifest.node_types.map(n => n.type))).toEqual(
       new Set([
         // 9 warm-agent (D2)
@@ -93,16 +93,17 @@ describe('shape and counts', () => {
         'creativework', 'review', 'product',
         // 3 software-org base types (D5)
         'software_application', 'service', 'role',
-        // 5 software-org creativework subtypes
-        'design_spec', 'handoff', 'procedure', 'session_recap',
-        'reference_doc',
+        // 3 software-org creativework subtypes
+        'design_spec', 'procedure', 'reference_doc',
+        // statement (abstract), its four kinds, and area
+        'statement', 'rule', 'decision', 'lesson', 'trap', 'area',
       ]),
     );
   });
 
-  it('has exactly 17 node types and 40 edge types', () => {
-    expect(schemaSoftwareOrgManifest.node_types).toHaveLength(17);
-    expect(schemaSoftwareOrgManifest.edge_types).toHaveLength(40);
+  it('has exactly 21 node types and 42 edge types', () => {
+    expect(schemaSoftwareOrgManifest.node_types).toHaveLength(21);
+    expect(schemaSoftwareOrgManifest.edge_types).toHaveLength(42);
   });
 
   it('has no duplicate node slugs', () => {
@@ -150,15 +151,66 @@ describe('property conventions (D3)', () => {
     ['service', ['provider', 'dashboard_url', 'status', 'tier']],
     ['role', ['role_name', 'scope', 'capabilities']],
     ['design_spec', ['status', 'spec_for', 'branch']],
-    ['handoff', ['session_id', 'outcome', 'open_items']],
     ['procedure', ['trigger', 'last_reviewed', 'applies_to']],
-    ['session_recap', ['session_date', 'key_decisions']],
     ['reference_doc', ['source_url', 'application']],
+    ['area', ['name', 'patterns_file']],
   ])('%s lists its expected frontmatter properties', (slug, props) => {
     const description = descriptionOf(slug as string);
     for (const prop of props as string[]) {
       expect(description, `${slug} should mention ${prop}`).toContain(prop);
     }
+  });
+});
+
+describe('statement kinds', () => {
+  const KINDS: Record<string, string> = {
+    rule: 'A situation, and what to do in it.',
+    decision: 'What was chosen, what was rejected, and why.',
+    lesson: 'What went wrong, and what to do differently.',
+    trap: 'A likely wrong assumption, and the fact that corrects it.',
+  };
+  const nodes = schemaSoftwareOrgManifest.node_types;
+  const edges = schemaSoftwareOrgManifest.edge_types;
+
+  it('drops handoff and session_recap and the handoffFor rows', () => {
+    expect(nodes.find(n => n.type === 'handoff')).toBeUndefined();
+    expect(nodes.find(n => n.type === 'session_recap')).toBeUndefined();
+    expect(edges.filter(e => e.type === 'handoffFor')).toHaveLength(0);
+  });
+
+  it('the four kinds are children of statement; statement has no parent', () => {
+    for (const k of Object.keys(KINDS)) {
+      expect(nodes.find(n => n.type === k)?.parent_type, k).toBe('statement');
+    }
+    expect(nodes.find(n => n.type === 'statement')?.parent_type).toBeUndefined();
+  });
+
+  it('declares the about and partOf rows with the ruled endpoints', () => {
+    const about = edges.filter(e => e.type === 'about' && e.source_type === 'statement');
+    expect(about.map(e => e.target_type).sort()).toEqual(
+      ['area', 'organization', 'software_application']);
+    const partOf = edges.filter(e => e.type === 'partOf');
+    expect(partOf).toHaveLength(1);
+    expect(partOf[0].source_type).toBe('area');
+    expect(partOf[0].target_type).toBe('software_application');
+  });
+
+  it('each kind carries its definition and "holds one claim"', () => {
+    for (const [k, def] of Object.entries(KINDS)) {
+      expect(descriptionOf(k), k).toContain(def);
+      expect(descriptionOf(k), k).toContain('holds one claim');
+    }
+  });
+
+  it('statement is abstract and states how attachment works', () => {
+    const d = descriptionOf('statement');
+    expect(d).toContain('classify a fact as one of the four kinds, never as `statement`');
+    expect(d).toContain('attach with `about` to an `area`, the `software_application`, or the `organization`');
+    expect(d).toContain('`about` rows declared with source `statement` apply to every kind');
+  });
+
+  it('area description names name and patterns_file', () => {
+    expect(descriptionOf('area')).toContain('A named part of a `software_application`, such as deploy or billing.');
   });
 });
 

@@ -202,18 +202,6 @@ exports[`content drift guard > matches snapshot (content drift guard) 1`] = `
       "type": "documents",
     },
     {
-      "description": "Handoff is for this software application.",
-      "source_type": "handoff",
-      "target_type": "software_application",
-      "type": "handoffFor",
-    },
-    {
-      "description": "Handoff is for this service.",
-      "source_type": "handoff",
-      "target_type": "service",
-      "type": "handoffFor",
-    },
-    {
       "description": "This document replaces an older one.",
       "source_type": "creativework",
       "target_type": "creativework",
@@ -242,6 +230,30 @@ exports[`content drift guard > matches snapshot (content drift guard) 1`] = `
       "source_type": "person",
       "target_type": "software_application",
       "type": "maintains",
+    },
+    {
+      "description": "This area is a named part of this software application.",
+      "source_type": "area",
+      "target_type": "software_application",
+      "type": "partOf",
+    },
+    {
+      "description": "This statement (any of the four kinds) concerns this area.",
+      "source_type": "statement",
+      "target_type": "area",
+      "type": "about",
+    },
+    {
+      "description": "This statement (any of the four kinds) concerns this software application as a whole.",
+      "source_type": "statement",
+      "target_type": "software_application",
+      "type": "about",
+    },
+    {
+      "description": "This statement (any of the four kinds) concerns the organization.",
+      "source_type": "statement",
+      "target_type": "organization",
+      "type": "about",
     },
   ],
   "node_types": [
@@ -299,24 +311,42 @@ exports[`content drift guard > matches snapshot (content drift guard) 1`] = `
       "type": "design_spec",
     },
     {
-      "description": "An operational handoff or session transition document. Expected frontmatter properties: session_id, outcome (pending/complete/blocked), open_items.",
-      "parent_type": "creativework",
-      "type": "handoff",
-    },
-    {
       "description": "A checklist, workflow, or how-to document. Expected frontmatter properties: trigger (when to use it), last_reviewed, applies_to (software_application or service slug).",
       "parent_type": "creativework",
       "type": "procedure",
     },
     {
-      "description": "A dated recap of one working session. Use only for session records — ordinary facts are not memories. Expected frontmatter properties: session_date, key_decisions (comma-separated list).",
-      "parent_type": "creativework",
-      "type": "session_recap",
-    },
-    {
       "description": "A product doc, service description, or architecture reference. Expected frontmatter properties: source_url, application (software_application slug).",
       "parent_type": "creativework",
       "type": "reference_doc",
+    },
+    {
+      "description": "Abstract parent of the four statement kinds (rule, decision, lesson, trap); classify a fact as one of the four kinds, never as \`statement\`. The four kinds attach with \`about\` to an \`area\`, the \`software_application\`, or the \`organization\`, and the \`about\` rows declared with source \`statement\` apply to every kind.",
+      "type": "statement",
+    },
+    {
+      "description": "A situation, and what to do in it. Each rule holds one claim.",
+      "parent_type": "statement",
+      "type": "rule",
+    },
+    {
+      "description": "What was chosen, what was rejected, and why. Each decision holds one claim.",
+      "parent_type": "statement",
+      "type": "decision",
+    },
+    {
+      "description": "What went wrong, and what to do differently. Each lesson holds one claim.",
+      "parent_type": "statement",
+      "type": "lesson",
+    },
+    {
+      "description": "A likely wrong assumption, and the fact that corrects it. Each trap holds one claim.",
+      "parent_type": "statement",
+      "type": "trap",
+    },
+    {
+      "description": "A named part of a \`software_application\`, such as deploy or billing. Expected frontmatter properties: name, patterns_file (path, inside the host repo, of the file that holds the area's file globs — a pointer, not a copy).",
+      "type": "area",
     },
   ],
 }
