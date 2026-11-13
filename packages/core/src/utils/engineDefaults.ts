@@ -33,6 +33,8 @@ export function changedDefaultWarnings(config: WikiConfig | undefined): string[]
       + "start the librarian or heal. Set `maintenance: 'auto'` or call runPendingMaintenance().",
     );
   }
+  // Deliberately untyped read: the key left the type surface, so TS hosts get the
+  // intended compile error; only untyped JS hosts can reach this notice.
   if ((config?.prompts as Record<string, unknown> | undefined)?.librarianSystemPrompt !== undefined) {
     warnings.push(
       "[core-llm-wiki] `prompts.librarianSystemPrompt` was removed in 9.0.0 and its value is ignored. "

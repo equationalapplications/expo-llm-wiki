@@ -81,6 +81,8 @@ export interface StatementRow {
   about_proposed: boolean;
   about_correct: boolean;
   error?: string;
+  /** Backfill typed a different fact than this statement's (alignment guard). */
+  misaligned?: true;
 }
 
 export interface KindAccuracy { total: number; correct: number; accuracy: number }
@@ -112,12 +114,14 @@ export interface RunStatementKindsOpts {
   entries: StatementFixtureEntry[];
   endpoint: ChatEndpoint;
   fetchImpl?: FetchLike;
+  /** Collected once per run by the caller and reused for the report's engine block. */
+  engine: Awaited<ReturnType<typeof engineInfo>>;
 }
 
 export async function runStatementKinds(opts: RunStatementKindsOpts): Promise<StatementKindsReport> {
   const fetchImpl = opts.fetchImpl ?? (fetch as unknown as FetchLike);
   const provider = createProvider(opts.endpoint, fetchImpl);
-  const engine = await engineInfo();
+  const engine = opts.engine;
   const handle = openDb(); // in-memory, never a host database
   try {
     const llmProvider: LLMProvider = { generateText: (p) => provider.generateText(p) };
@@ -140,10 +144,12 @@ export async function runStatementKinds(opts: RunStatementKindsOpts): Promise<St
     const rows: StatementRow[] = [];
     for (const e of opts.entries) {
       const base = { text: e.text, expected_kind: e.expected_kind, expected_target: e.expected_target };
+      let createdId: string | undefined;
       try {
         const fact = await wiki.remember(ENTITY, { title: e.text.slice(0, 80), body: e.text });
+        createdId = fact.id;
         // One fact per pass so each call classifies exactly this statement.
-        await wiki.runOntologyBackfill(ENTITY, { classifier: 'llm', batchSize: 1 });
+        const bf = await wiki.runOntologyBackfill(ENTITY, { classifier: 'llm', batchSize: 1 });
         const hood = await wiki.traverseGraph(ENTITY, { sourceId: fact.id, direction: 'outbound', maxDepth: 1, edgeTypes: ['about'] });
         const anchor = hood.nodes.find((n) => n.id === fact.id);
         const targets = hood.edges
@@ -151,6 +157,11 @@ export async function runStatementKinds(opts: RunStatementKindsOpts): Promise<St
           .map((x) => seedIds.get(x.target_id) ?? hood.nodes.find((n) => n.id === x.target_id)?.title ?? x.target_id);
         const want = `${e.expected_target.type}:${e.expected_target.title}`;
         const actual = anchor?.okf_type ?? null;
+        // Alignment guard: the pass typed something, but not this statement's fact.
+        const misaligned = bf.typed > 0 && actual === null;
+        // Untyped after the pass (engine skipped it, or typed another fact):
+        // drop it so a later row's batchSize:1 backfill cannot pick it up.
+        if (actual === null) await wiki.forget(ENTITY, { entryId: fact.id });
         rows.push({
           ...base,
           actual_kind: actual,
@@ -158,8 +169,16 @@ export async function runStatementKinds(opts: RunStatementKindsOpts): Promise<St
           about_targets: targets,
           about_proposed: targets.length > 0,
           about_correct: targets.includes(want),
+          ...(misaligned ? { misaligned: true as const } : {}),
         });
       } catch (err) {
+        // Delete the leftover untyped fact so it cannot be picked up by a later
+        // row's batchSize:1 backfill and poison that row.
+        if (createdId !== undefined) {
+          try {
+            await wiki.forget(ENTITY, { entryId: createdId });
+          } catch { /* best effort; the row below still records the error */ }
+        }
         // One bad statement must not discard the paid-for rest of the run.
         rows.push({ ...base, actual_kind: null, kind_correct: false, about_targets: [], about_proposed: false, about_correct: false, error: err instanceof Error ? err.message : String(err) });
       }

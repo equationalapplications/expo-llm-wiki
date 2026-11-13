@@ -628,12 +628,13 @@ export async function runStatementKindsCommand(deps: StatementKindsDeps): Promis
     return { exitCode: 1 };
   }
 
+  const engine = await engineInfo();
   const report = await runStatementKinds({
     entries: deps.entries,
     endpoint,
+    engine,
     ...(deps.fetchImpl !== undefined ? { fetchImpl: deps.fetchImpl } : {}),
   });
-  const engine = await engineInfo();
   const reportFile = outArg ? resolveOutPath(outArg) : join(defaultResultsDir(), `statement-kinds-${engine.version}-${nowStamp()}.json`);
   writeFileAtomic(reportFile, JSON.stringify(report, null, 2));
   stdout(`\nWrote report to ${reportFile}\n\n`);
