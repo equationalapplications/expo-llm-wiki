@@ -9,9 +9,11 @@
 >
 > v1.1 amendment (2026-11-14): records the owner's ruling on step 4's
 > scope (the store only), names three things left out of it as
-> exploratory, and adds the done mark that step 1 was missing under the
-> done-mark rule's new exception (issue #392). No order
-> change.
+> exploratory, adds the done mark that step 1 was missing, adds the
+> done-mark rule's exception for retroactive marks, allows gate lines
+> to note a met gate, links step 4 to its issue #390, and rewords
+> step 4's `ingestDocument()` gate bullet to match the ruled scope.
+> No order change.
 >
 > Scope note: this is the first roadmap for this repository. It starts
 > with the "sharper memory" work ruled in that week. It is not an inventory
@@ -39,11 +41,15 @@ request. Exception: a mark a completing PR failed to write may be added
 afterwards by a pull request that says so and cites the issue tracking
 the omission.
 
+**Met gates.** A step's gate line may note that the gate is met, with
+the date and the pull request that met it; beside done marks, this is
+the only status the file carries.
+
 **This file carries order, not status.** How much of a charter rule the
 code does today is the rule's Status line in INTENT.md. How far a piece of
 work has got is its spec's Status line. Neither is repeated here.
 
-## Sharper memory (ruled 2026-11-12 and 2026-11-13)
+## Sharper memory (ruled 2026-11-12 to 2026-11-14)
 
 The charter says memory should get sharper with time, not just bigger. In
 use, the engine's librarian keeps too much: many true statements that only
@@ -74,8 +80,7 @@ Guidance is set in two places: one default for the database, and an
 optional value per entity, which wins. The host passes both in; the
 engine stores neither. The older whole-prompt override
 (`prompts.librarianSystemPrompt`) is marked deprecated in this step's
-planned release and removed in step 2's. After the 8.5.0 release
-failure (#391), that deprecation notice reached no published version.
+planned release and removed in step 2's.
 
 *Gate:* a spec, checked against INTENT.md. Rule 11 applies: the spec says
 how the change is measured, and no accuracy or cost claim is published
@@ -175,7 +180,7 @@ Curated Thoughts needs no change.
   document's text, the text is the evidence, and facts drawn from it
   could be replaced or sharpened like any other statement. This changes
   what rule 5 means, so it needs its own ruling before anyone explores
-  it.
+  it. Named on 2026-11-14 and left out of step 4; not ruled.
 - **Working memory in the source store.** Records that are never
   extracted and that drop out of search with age. Under step 4's ruling
   nothing in the store is extracted unless the host asks, so only the
