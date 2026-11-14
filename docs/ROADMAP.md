@@ -71,7 +71,7 @@ without a run.
 
 ### Step 2 — Statement kinds and areas in the software-org schema — PLANNED
 
-Done — merged 2026-11-13, PR #380, spec [statement-kinds](../specs/statement-kinds/spec.md)
+Done — PR #380, spec [statement-kinds](../specs/statement-kinds/spec.md)
 
 The software-org schema gains four kinds of statement (rule, decision,
 lesson, trap), defined by content, and an "area" type for a named part of
