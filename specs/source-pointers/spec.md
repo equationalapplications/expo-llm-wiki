@@ -1,14 +1,15 @@
 # Source pointers on librarian facts
 
-**Status:** Draft (rev 12) — converged. The owner gate passed
-2026-11-13 for the four scope decisions, and the owner answered the
+**Status:** Reviewed (rev 13) — converged. The owner gate passed
+2026-11-13 for the four scope decisions, the owner answered the
 charter-level question on 2026-11-14 (verified quotes survive prune,
 export, and the outbox inside the fact's own record — §Pruned events,
-ruling folded there). Awaiting the reviewer re-gate on this revision,
-then the owner spec stop; plan.md and LEDGER.md land in the same
-commit that flips this Status to Reviewed (INTENT.md, "How changes
-are made", step 1).
-**Date:** 2026-11-13 (revs 9–12: 2026-11-14)
+ruling folded there), the reviewer re-gate PASSED on this revision
+series, and the owner gave the spec stop 2026-11-14. plan.md and
+LEDGER.md land in this commit per INTENT.md, "How changes are made",
+step 1; the final cleanup commit flips this Status to Implemented and
+deletes both files.
+**Date:** 2026-11-13 (revs 9–13: 2026-11-14)
 **Owner rulings:** 2026-11-13 (issue #377: the provenance scope, the
 additive-schema rule, and the four checks against INTENT.md);
 2026-11-14 (§Pruned events: quote retention is accepted — consolidation
